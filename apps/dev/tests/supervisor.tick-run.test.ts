@@ -157,7 +157,7 @@ describe("superviseTick", () => {
     expect(io.spawnSlot).not.toHaveBeenCalled();
   });
 
-  it("stop-file → terminate all live workers and report stopped", async () => {
+  it("stop-file → stop claiming and leave live workers draining", async () => {
     const { deps, io } = makeDeps({ isAlive: vi.fn(() => true) });
     const state = initSupervisorState(2);
     state.slots[0]!.pid = 100;
@@ -166,8 +166,7 @@ describe("superviseTick", () => {
     const result = await superviseTick(state, deps, config({ target: 2 }), () => true);
 
     expect(result.stopped).toBe(true);
-    expect(io.killTree).toHaveBeenCalledWith(100);
-    expect(io.killTree).toHaveBeenCalledWith(200);
+    expect(io.killTree).not.toHaveBeenCalled();
     expect(io.spawnSlot).not.toHaveBeenCalled();
   });
 });
@@ -328,10 +327,13 @@ describe("reconcileDeadWorkerClaim", () => {
 
     expect(issue).toBe(807);
     // No-sentinel envelope carrying the afk.log tail.
-    expect(io.comment).toHaveBeenCalledTimes(1);
-    const body = io.comment.mock.calls[0]![1] as string;
+    expect(io.comment).toHaveBeenCalledTimes(2);
+    const body = io.comment.mock.calls.find((call) =>
+      String(call[1]).includes('data-attempt-status="no-sentinel"'),
+    )![1] as string;
     expect(body).toContain('data-attempt-status="no-sentinel"');
     expect(body).toContain("agent finished after 1 iteration");
+    expect(io.comment.mock.calls.some((call) => String(call[1]).includes("kind=concede"))).toBe(true);
     // running → ready-for-agent CLEAN (no blocked label rides along).
     expect(io.editLabels).toHaveBeenCalledWith(807, ["ready-for-agent"], ["running"]);
   });
@@ -359,7 +361,9 @@ describe("reconcileDeadWorkerClaim", () => {
     deps.recoveryEnv = { RED_AFK_RETRY_CRASH: "2" };
 
     await reconcileDeadWorkerClaim(crashInfo(), deps);
-    expect(io.comment).not.toHaveBeenCalled();
+    expect(io.comment).toHaveBeenCalledOnce();
+    expect(String(io.comment.mock.calls[0]?.[1])).toContain("kind=concede");
+    expect(String(io.comment.mock.calls[0]?.[1])).not.toContain('data-attempt-status="no-sentinel"');
     expect(io.editLabels).toHaveBeenCalledWith(807, ["ready-for-agent"], ["running"]);
   });
 
@@ -514,8 +518,8 @@ describe("runSupervisor", () => {
     expect(io.spawnSlot).toHaveBeenCalledTimes(2);
     expect(io.spawnSlot).toHaveBeenCalledWith(0);
     expect(io.spawnSlot).toHaveBeenCalledWith(1);
-    // Stop-file honoured → workers terminated.
-    expect(io.killTree).toHaveBeenCalled();
+    // Stop-file honoured → supervisor exits while detached workers drain.
+    expect(io.killTree).not.toHaveBeenCalled();
     // Stopped on the first tick: guardedTick calls sleep(ceiling) once per tick,
     // but the inter-tick CADENCE sleep is never reached (the loop returns first).
     expect(io.sleep).toHaveBeenCalledTimes(1);

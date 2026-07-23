@@ -8,6 +8,9 @@ import {
   fleetRegistryPath,
   readCastleLaneRecords,
   readFleetProfile,
+  readHostCapabilityProfile,
+  runnerFromExplicitEnv,
+  resolveHostCapabilities,
   upsertFleetProfile,
   type CastleLaneRecord,
 } from "@reddb-io/red-castle/engine";
@@ -42,7 +45,48 @@ export interface FleetStopResult {
   pid?: number;
 }
 
+export interface FleetStopOptions {
+  force?: boolean;
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const FLEET_USAGE = `Usage: red-skills-dev fleet [target] [options]
+       red-skills-dev fleet status [--fleet <name>]
+       red-skills-dev fleet stop [--fleet <name>] [--force]
+       red-skills-dev fleet logs [--fleet <name>]
+
+Options:
+  --runner <runner>
+  --request <text>, -r <text>
+  --fleet <name>
+  --budget-usd <amount>
+  --shrink-mode <hard-kill|drain-then-retire>
+  --help, -h
+`;
+
+const WORKER_PASSTHROUGH_FLAGS = new Set([
+  "--spec",
+  "--issues",
+  "--selector",
+  "-n",
+  "--once",
+  "--model",
+  "--effort",
+  "--alternate",
+  "--fallback-runner",
+  "--boot-only",
+  "--reconcile-issue",
+  "--origin",
+  "--kind",
+  "--lane",
+  "--pre-pr",
+  "--local-merge",
+  "--yolo",
+  "--verify",
+  "--go-verify-retries",
+  "--run-mode",
+]);
 
 function parsePositiveNumber(raw: string | undefined, flag: string): number {
   if (raw === undefined) throw new Error(`${flag} requires a value`);
@@ -57,7 +101,19 @@ function parseShrinkMode(raw: string | undefined, flag: string): ElasticShrinkMo
   throw new Error(`${flag} must be hard-kill or drain-then-retire`);
 }
 
-function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boolean; fleet: string; target: number; request?: string; runnerFlag?: string; drainBudgetUsd?: number; shrinkMode?: ElasticShrinkMode; passthrough: string[] } {
+function parseFleetArgs(args: readonly string[]): {
+  stop: boolean;
+  status: boolean;
+  fleet: string;
+  target: number;
+  targetExplicit: boolean;
+  request?: string;
+  runnerFlag?: string;
+  drainBudgetUsd?: number;
+  shrinkMode?: ElasticShrinkMode;
+  force: boolean;
+  passthrough: string[];
+} {
   const passthrough: string[] = [];
   let stop = false;
   let status = false;
@@ -66,6 +122,7 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
   let runnerFlag: string | undefined;
   let drainBudgetUsd: number | undefined;
   let shrinkMode: ElasticShrinkMode | undefined;
+  let force = false;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -75,6 +132,10 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
     }
     if (arg === "status") {
       status = true;
+      continue;
+    }
+    if (arg === "--force") {
+      force = true;
       continue;
     }
     // The fleet name is consumed here (parseFleetFlag re-reads it) so it never
@@ -126,9 +187,42 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
       target = Number(arg);
       continue;
     }
+    if (arg.startsWith("-")) {
+      const flag = arg.split("=", 1)[0]!;
+      if (!WORKER_PASSTHROUGH_FLAGS.has(flag)) {
+        throw new Error(`unknown fleet flag: ${flag}`);
+      }
+    }
     passthrough.push(arg);
   }
-  return { stop, status, fleet: parseFleetFlag(args) ?? DEFAULT_FLEET_NAME, target: target ?? 2, request, runnerFlag, drainBudgetUsd, shrinkMode, passthrough };
+  return {
+    stop,
+    status,
+    fleet: parseFleetFlag(args) ?? DEFAULT_FLEET_NAME,
+    target: target ?? 2,
+    targetExplicit: target !== undefined,
+    request,
+    runnerFlag,
+    drainBudgetUsd,
+    shrinkMode,
+    force,
+    passthrough,
+  };
+}
+
+/**
+ * Launch runner cascade (#2545): explicit --runner flag > the operator's
+ * RED_AFK_RUNNER env AT THIS LAUNCH > the registered profile. The profile must
+ * never shadow the env the operator just set — that is exactly the "fresh
+ * relaunch keeps the stale runner" trap: kill fleet, relaunch with
+ * RED_AFK_RUNNER=claude, supervisor resumes codex from fleets.toonl.
+ */
+export function resolveLaunchRunnerPin(
+  flag: string | undefined,
+  env: NodeJS.ProcessEnv,
+  profileRunner: string | undefined,
+): string | undefined {
+  return flag ?? runnerFromExplicitEnv(env.RED_AFK_RUNNER) ?? profileRunner;
 }
 
 export async function writeResizeRequest(
@@ -167,6 +261,7 @@ export async function stopFleet(
   root = process.cwd(),
   stdout: NodeJS.WritableStream = process.stdout,
   fleetName?: string,
+  options: FleetStopOptions = {},
 ): Promise<FleetStopResult> {
   const paths = afkPaths(root, fleetName);
   const stateAfk = dirname(paths.supervisorPidPath);
@@ -193,66 +288,64 @@ export async function stopFleet(
   }
   await rm(paths.supervisorWatchdogPidPath, { force: true });
   await rm(paths.supervisorWatchdogPidStartPath, { force: true });
-  // Detached workers survive the supervisor's death (#2056): they are spawned
-  // `detached: true` so they are NOT in the supervisor's process tree. Every stop
-  // path must sweep them — otherwise a "stopped" report is a lie while orphaned
-  // workers keep claiming, committing, and merging. Reuse the watchdog's
-  // detached-worker killer + claim reconcile so no issue is stranded in `running`.
+  // Graceful stop deliberately leaves detached one-shot workers to finish.
+  // Only explicit force reuses the watchdog's fleet-scoped worker killer and
+  // reconciles claims for workers that hard teardown actually terminated.
   const io = buildWatchdogIO(root, stdout, paths.fleet);
-  const sweepOrphans = async (): Promise<void> => {
-    const killed = await io.killWorkers();
-    if (killed > 0) {
+  const killAttributedWorkersAndReconcile = async () => {
+    const result = await io.killWorkers();
+    if (result.killed > 0) {
       await io.reconcile();
-      stdout.write(`terminated ${killed} orphaned worker${killed === 1 ? "" : "s"} and reconciled their claims.\n`);
+      stdout.write(
+        `terminated ${result.killed} fleet-attributed worker${result.killed === 1 ? "" : "s"} and reconciled their claims.\n`,
+      );
     }
+    return result;
   };
   const liveSupervisor = await discoverLiveSupervisorPid(stateAfk, isLivePid, { fleet: paths.fleet });
   if (!liveSupervisor) {
     const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
     if (supervisor.status === "stale" && supervisor.pid !== undefined) {
-      await sweepOrphans();
       stdout.write(`no fleet running (reason=dead supervisor pid; stale files cleaned).\n`);
       return { status: "stale", ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}) };
     }
-    await sweepOrphans();
     stdout.write("no fleet running (reason=no supervisor pid).\n");
     return { status: "none" };
   }
   const pid = liveSupervisor.pid;
+  if (options.force) {
+    const dead = await killTreeAndWait(pid);
+    if (!dead) {
+      stdout.write(`✗ supervisor pid=${pid} survived forced termination; stop remains armed.\n`);
+      return { status: "timeout", pid };
+    }
+    await rm(pidFile, { force: true });
+    await rm(paths.supervisorPidStartPath, { force: true });
+    await rm(stopFile, { force: true });
+    await rm(paths.supervisorRecoveryPath, { force: true });
+    const workerResult = await killAttributedWorkersAndReconcile();
+    if (workerResult.survivors.length > 0) {
+      const survivor = workerResult.survivors[0]!;
+      stdout.write(
+        `✗ fleet-attributed worker pid=${survivor} survived forced termination.\n`,
+      );
+      return { status: "timeout", pid: survivor };
+    }
+    stdout.write(`🛑 fleet stopped (reason=forced teardown; supervisor pid=${pid} killed).\n`);
+    return { status: "stopped", pid };
+  }
+
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (!isLivePid(pid)) {
-      // The supervisor's own terminateAll should have killed its slots on clean
-      // exit, but sweep detached survivors anyway — a slot the loop lost track of
-      // (moved-pid, mid-spawn) would otherwise outlive the "stopped" report.
-      await sweepOrphans();
       stdout.write(`🛑 fleet stopped (reason=operator stop requested; supervisor pid=${pid} exited).\n`);
       return { status: "stopped", pid };
     }
     await sleep(1_000);
   }
 
-  // Graceful stop timed out: a SIGTERM-ignoring supervisor (and its worker tree)
-  // is still alive. Never report "stopped" while survivors linger (#580) —
-  // escalate to the shared wait-and-escalate killer (SIGTERM → SIGKILL → confirm)
-  // and only report stopped once the tree is confirmed gone.
   stdout.write(
-    `warn: supervisor pid=${pid} did not exit within 30s of the stop file; escalating to SIGTERM/SIGKILL.\n`,
-  );
-  const dead = await killTreeAndWait(pid);
-  if (dead) {
-    // SIGKILL skips the supervisor's own `finally`, so clean its control files.
-    await rm(pidFile, { force: true });
-    await rm(paths.supervisorPidStartPath, { force: true });
-    await rm(stopFile, { force: true });
-    await rm(paths.supervisorRecoveryPath, { force: true });
-    // killTree of the supervisor pid misses the detached workers — sweep them.
-    await sweepOrphans();
-    stdout.write(`🛑 fleet stopped (reason=graceful stop timeout; supervisor pid=${pid} killed).\n`);
-    return { status: "stopped", pid };
-  }
-  stdout.write(
-    `✗ supervisor pid=${pid} survived SIGKILL; still live — see .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl.\n`,
+    `warn: supervisor pid=${pid} did not exit within 30s of the stop file; stop remains armed (use --force for hard teardown).\n`,
   );
   return { status: "timeout", pid };
 }
@@ -579,7 +672,7 @@ export async function statusFleet(
 
 export async function launchFleet(args: readonly string[], root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetLaunchResult> {
   const parsed = parseFleetArgs(args);
-  if (!Number.isInteger(parsed.target) || parsed.target < 0) throw new Error("fleet target must be a non-negative integer");
+  const enginePaths = createEnginePaths(join(root, ".red"));
   const paths = afkPaths(root, parsed.fleet);
   const stateAfk = dirname(paths.supervisorPidPath);
   await mkdir(paths.tmpDir, { recursive: true });
@@ -587,13 +680,19 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   // One-time boot migration: relocate legacy `.red/tmp` / state artifacts to
   // their canonical state or supervisor tmp lane before any supervisor path is read/written.
   await migrateLegacyDevPaths(root).catch(() => undefined);
+  const hostProfile = await readHostCapabilityProfile(enginePaths);
+  const target = parsed.targetExplicit
+    ? parsed.target
+    : resolveHostCapabilities(hostProfile).defaultFleetWidth;
+  if (!Number.isInteger(target) || target < 0)
+    throw new Error("fleet target must be a non-negative integer");
   const pidFile = paths.supervisorPidPath;
   const logFile = paths.supervisorLogPath;
   const priorFleetState = await readFleetState(paths.fleetStatePath).catch(() => null);
   // A registered fleet launches from its PROFILE: the registry supplies the
   // runner and the work-scope selector, and explicit flags still override.
   const profile = await readFleetProfile(
-    fleetRegistryPath(createEnginePaths(join(root, ".red"))),
+    fleetRegistryPath(enginePaths),
     paths.fleet,
   ).catch(() => undefined);
   const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
@@ -618,18 +717,25 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
         throw new Error("fleet launch failed: supervisor self-heal watchdog did not arm");
       }
       const shrinkMode = parsed.shrinkMode ?? cfg.shrinkMode;
-      const directiveRunner = parsed.runnerFlag ? detectRunner({ flag: parsed.runnerFlag }).runner : undefined;
-      await writeResizeRequest(paths.supervisorResizePath, parsed.target, shrinkMode, directiveRunner);
+      const directiveRunner = parsed.runnerFlag
+        ? detectRunner({ flag: parsed.runnerFlag }).runner
+        : undefined;
+      await writeResizeRequest(
+        paths.supervisorResizePath,
+        target,
+        shrinkMode,
+        directiveRunner,
+      );
       const ack = directiveAck(await readFleetState(paths.fleetStatePath), {
-        target: parsed.target,
+        target,
         shrinkMode,
         ...(directiveRunner !== undefined ? { runner: directiveRunner } : {}),
       });
       stdout.write(
-        `fleet directive ${ack} (supervisor pid=${existing}, target=${parsed.target}` +
+        `fleet directive ${ack} (supervisor pid=${existing}, target=${target}` +
           `${directiveRunner !== undefined ? `, runner=${directiveRunner}` : ""}, shrink-mode=${shrinkMode})\n`,
       );
-      return { status: "resized", pid: existing, target: parsed.target, log: logFile };
+      return { status: "resized", pid: existing, target, log: logFile };
     }
     const staleForS = liveness.lastHeartbeatEpoch !== null ? io.now() - liveness.lastHeartbeatEpoch : null;
     io.log(
@@ -640,7 +746,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   }
 
   const detection = detectRunner({
-    flag: parsed.runnerFlag ?? parseRunnerFlag(args) ?? profile?.runner,
+    flag: resolveLaunchRunnerPin(parsed.runnerFlag ?? parseRunnerFlag(args), process.env, profile?.runner),
     processTree: callerProcessTreeNative(),
     scriptPath: process.argv[1],
   });
@@ -655,8 +761,9 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
 
   const supervisorPid = await spawnSupervisor({
     root,
-    target: parsed.target,
+    target,
     runner: detection.runner,
+    base: profile?.base,
     passthrough: [...parsed.passthrough, ...scoped],
     request: parsed.request,
     drainBudgetUsd: parsed.drainBudgetUsd,
@@ -683,7 +790,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   }
 
   // Persist the profile so CLI-launched fleets are always in the registry (#2358).
-  await upsertFleetProfile(fleetRegistryPath(createEnginePaths(join(root, ".red"))), {
+  await upsertFleetProfile(fleetRegistryPath(enginePaths), {
     name: paths.fleet,
     runner: detection.runner,
     ...(profile?.selector ? { selector: profile.selector } : {}),
@@ -691,16 +798,25 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     ...(profile?.base ? { base: profile.base } : {}),
   }).catch(() => undefined);
 
-  const named = paths.fleet === DEFAULT_FLEET_NAME ? "" : ` --fleet ${paths.fleet}`;
-  stdout.write(`🚀 fleet ${paths.fleet} launched (supervisor pid=${supervisorPid}, target=${parsed.target})\n`);
+  const named =
+    paths.fleet === DEFAULT_FLEET_NAME ? "" : ` --fleet ${paths.fleet}`;
+  stdout.write(
+    `🚀 fleet ${paths.fleet} launched (supervisor pid=${supervisorPid}, target=${target})\n`,
+  );
   stdout.write(`   self-heal: armed (watchdog pid=${watchdogPid})\n`);
   stdout.write(`   log:   .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n`);
   stdout.write(`   stop:  /dev:afk fleet stop${named}\n`);
-  stdout.write(`   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl manually.\n`);
-  return { status: "launched", pid: supervisorPid, target: parsed.target, log: logFile };
+  stdout.write(
+    `   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl manually.\n`,
+  );
+  return { status: "launched", pid: supervisorPid, target, log: logFile };
 }
 
 export async function fleetCommand(args: string[], cwd = process.cwd()): Promise<number> {
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(FLEET_USAGE);
+    return 0;
+  }
   if (args[0] === "logs") {
     try {
       await logsFleet(args.slice(1), cwd);
@@ -711,12 +827,12 @@ export async function fleetCommand(args: string[], cwd = process.cwd()): Promise
       return 1;
     }
   }
-  const parsed = parseFleetArgs(args);
   try {
+    const parsed = parseFleetArgs(args);
     if (parsed.status) {
       await statusFleet(cwd, process.stdout, parsed.fleet);
     } else if (parsed.stop) {
-      await stopFleet(cwd, process.stdout, parsed.fleet);
+      await stopFleet(cwd, process.stdout, parsed.fleet, { force: parsed.force });
     } else {
       await launchFleet(args, cwd);
     }

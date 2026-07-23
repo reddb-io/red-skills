@@ -9,9 +9,15 @@ disable-model-invocation: true
 
 <what-to-do>
 
-**Wrapper over the dev runtime — see [`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md) for the Run shim and output-format rules.**
+**Client of the `castle` MCP — the review tools are the primary surface.**
+Call the read tool matching the requested period — `daily_review` (default) or
+`weekly_review`, both `{}` — and present the structured TOON report; the tool
+surface and host prefix rule live in [`../afk/MCP.md`](../afk/MCP.md).
 
-Run the subcommand that matches the requested period:
+When the MCP is unreachable, name that and fall back to the `red-skills-dev`
+CLI — same engine, same cores (see
+[`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md) for the Run
+shim and output-format rules):
 
 | Period flag | Subcommand |
 | --- | --- |

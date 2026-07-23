@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ConfigValues } from "./config.js";
 
@@ -15,8 +15,8 @@ import type { ConfigValues } from "./config.js";
  *   - within a point, built-in DEFAULTS run first (fixed registration order,
  *     never reorderable), then user-declared commands in declaration order;
  *   - users can *shadow* a built-in default by placing a same-named script in
- *     `.red/hooks/` (the shadow wins over the library script); to disable a
- *     default entirely, shadow it with a no-op script that exits 0;
+ *     `.red/hooks/` (the shadow wins over the library script), or disable one
+ *     with `afk.hooks.defaults.<name>: false`;
  *   - a bare string is shorthand for a one-element list.
  *
  * The resolution is pure: it reads the already-parsed flat config map and a
@@ -207,9 +207,8 @@ export interface ResolveHooksOptions {
  * into its elements with blanks dropped. An unknown hook name throws
  * `UnknownHookError`.
  *
- * The `afk.hooks.defaults.<name>: false` toggle is no longer honored — shadow
- * the built-in with a same-named no-op script in `.red/hooks/` instead. Old
- * configs that still carry the key are silently ignored (no error).
+ * `afk.hooks.defaults.<name>: false` disables that built-in default. A
+ * project-local same-named script may still shadow an enabled default.
  *
  * Supports two forms for multi-command hooks: a newline-joined block scalar or
  * a YAML list. The YAML parser flattens a list into indexed keys of the form
@@ -226,13 +225,15 @@ export function resolveHooks(
   // validating hook names eagerly. Entries accumulate as {index, command}
   // pairs so YAML-list indexed keys (`name.N`) sort before bare-string entries
   // (which use MAX_SAFE_INTEGER as their sort key).
-  const userEntries = new Map<HookName, Array<{ index: number; command: string }>>();
+  const userEntries = new Map<
+    HookName,
+    Array<{ index: number; command: string }>
+  >();
 
   for (const [key, value] of Object.entries(config)) {
     if (!key.startsWith(HOOKS_PREFIX)) continue;
 
-    // afk.hooks.defaults.* keys are legacy disable toggles — silently ignored
-    // now that same-filename shadowing in .red/hooks/ replaces them.
+    // Defaults are applied below; they are not lifecycle point declarations.
     if (key.startsWith(DEFAULTS_PREFIX)) continue;
 
     const rawName = key.slice(HOOKS_PREFIX.length);
@@ -251,7 +252,10 @@ export function resolveHooks(
     const entries = userEntries.get(name) ?? [];
     commands.forEach((command, offset) => {
       entries.push({
-        index: explicitIndex === undefined ? Number.MAX_SAFE_INTEGER + offset : explicitIndex + offset,
+        index:
+          explicitIndex === undefined
+            ? Number.MAX_SAFE_INTEGER + offset
+            : explicitIndex + offset,
         command,
       });
     });
@@ -275,9 +279,11 @@ export function resolveHooks(
   for (const name of CANONICAL_HOOK_NAMES) {
     const list: string[] = [];
 
-    const defaults = HOOK_DEFAULTS_REGISTRY[name as keyof typeof HOOK_DEFAULTS_REGISTRY];
+    const defaults =
+      HOOK_DEFAULTS_REGISTRY[name as keyof typeof HOOK_DEFAULTS_REGISTRY];
     if (defaults) {
       for (const defaultName of defaults) {
+        if (config[`${DEFAULTS_PREFIX}${defaultName}`] === "false") continue;
         const command = defaultCommand(defaultName);
         if (command !== undefined) list.push(command);
       }
@@ -286,7 +292,15 @@ export function resolveHooks(
     // Directory scripts (library + project, merged, shadowed) run after defaults
     // and before inline config entries.
     if (libraryHooksDir !== undefined || projectHooksDir !== undefined) {
-      list.push(...resolveDirScripts(name, libraryHooksDir, projectHooksDir, listFiles, dirExists));
+      list.push(
+        ...resolveDirScripts(
+          name,
+          libraryHooksDir,
+          projectHooksDir,
+          listFiles,
+          dirExists,
+        ),
+      );
     }
 
     const userCommands = userLists.get(name);
@@ -324,15 +338,34 @@ export function validateHookConfig(config: ConfigValues): void {
  * wins over the library script — this is the mechanism by which operators customize
  * or disable a built-in default (place a no-op script in `.red/hooks/red-<name>`).
  *
- * Returns `undefined` when neither the shadow nor the library script is present,
- * mirroring the shell loader's `-x "$hooks_dir/<script>"` presence guard. The
- * `exists` predicate is injectable for testing.
+ * Cargo and Gradle applicability is decided here from project build-file
+ * presence, before any shell action can execute. Returns `undefined` when the
+ * project does not apply or neither the shadow nor library script is present.
+ * Filesystem operations are injectable for tests.
  */
 export function scriptDefaultResolver(
   libHooksDir: string,
-  projectHooksDir?: string,
-  exists: (path: string) => boolean = existsSync,
+  projectHooksDirOrOptions?:
+    | string
+    | {
+        projectHooksDir?: string;
+        projectRoot?: string;
+        exists?: (path: string) => boolean;
+        isFile?: (path: string) => boolean;
+        listFiles?: ListFiles;
+      },
+  legacyExists: (path: string) => boolean = existsSync,
 ): HookDefaultResolver {
+  const options =
+    typeof projectHooksDirOrOptions === "string"
+      ? {
+          projectHooksDir: projectHooksDirOrOptions,
+          exists: legacyExists,
+        }
+      : (projectHooksDirOrOptions ?? {});
+  const exists = options.exists ?? existsSync;
+  const isFile = options.isFile ?? ((path: string) => statSync(path).isFile());
+  const listFiles = options.listFiles ?? ((dir: string) => readdirSync(dir));
   const scripts: Record<HookDefaultName, string> = {
     cargo: "red-cargo",
     gradle: "red-gradle",
@@ -341,13 +374,36 @@ export function scriptDefaultResolver(
     validation: "red-validation",
   };
   return (name) => {
+    if (options.projectRoot !== undefined) {
+      if (
+        name === "cargo" &&
+        (!exists(join(options.projectRoot, "Cargo.toml")) ||
+          !isFile(join(options.projectRoot, "Cargo.toml")))
+      ) {
+        return undefined;
+      }
+      if (name === "gradle") {
+        let hasGradleBuild = false;
+        try {
+          hasGradleBuild = listFiles(options.projectRoot).some(
+            (file) =>
+              file.startsWith("build.gradle") &&
+              isFile(join(options.projectRoot!, file)),
+          );
+        } catch {
+          hasGradleBuild = false;
+        }
+        if (!hasGradleBuild) return undefined;
+      }
+    }
+
     const filename = scripts[name];
     // Project shadow wins over library script.
-    if (projectHooksDir) {
-      const shadowPath = `${projectHooksDir}/${filename}`;
+    if (options.projectHooksDir) {
+      const shadowPath = join(options.projectHooksDir, filename);
       if (exists(shadowPath)) return shadowPath;
     }
-    const libPath = `${libHooksDir}/${filename}`;
+    const libPath = join(libHooksDir, filename);
     return exists(libPath) ? libPath : undefined;
   };
 }

@@ -27,7 +27,7 @@ import { appendRecordToonlRow } from "../core/jsonl-log.js";
 import {
   afkPaths,
   resolveRepoSlug,
-  collectPrecheckFacts,
+  collectBootPrecheckFacts,
   collectBootOptions,
   buildBootDeps,
   readFleetState,
@@ -59,8 +59,13 @@ import {
   castleStateSnapshotPath,
   createEnginePaths,
   createCastleLaneWriters,
+  createFileHealLedgerStore,
+  createFileIssueCuratorStore,
+  createGitHubTrackerAdapter,
+  runIssueStateCurator,
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
+import { createFileBootBreakerStore } from "../core/supervisor/boot-breaker.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import { resolveFleetFromArgs, FLEET_NAME_ENV } from "../core/fleet-name.js";
 import { createSupervisorExitRecorder } from "../core/supervisor-exit.js";
@@ -471,7 +476,7 @@ export function buildSupervisorBootSweeps(
   const paths = afkPaths(root, fleet);
   return async (): Promise<void> => {
     const nowS = Math.floor(Date.now() / 1000);
-    const facts = await collectPrecheckFacts(ctx);
+    const facts = await collectBootPrecheckFacts(ctx, { log });
     const bootstrap: BootstrapInput = {
       tmpDir: paths.tmpDir,
       stateDir: paths.stateDir,
@@ -730,6 +735,32 @@ function buildSupervisorDeps(
     wake: buildStateChangeWake(join(tmpDir, "workers")),
     // Env for the bounded stalled re-claim cap (#402): RED_AFK_RETRY_STALLED.
     recoveryEnv: process.env,
+    // ADR 0122 heal ledger (#2526): the death-sweep consults the same castle
+    // store the boot healer writes, so worker-death heals and probe heals
+    // share one per-issue budget.
+    healLedger: createFileHealLedgerStore(createEnginePaths(join(root, ".red"))),
+    // Crashloop circuit breaker (#2527): fingerprint every boot-sweep halt; on
+    // the Nth consecutive identical signature stop feeding the respawn loop and
+    // run the ADR 0122 resident healer (issue-state curator) immediately for the
+    // implicated state, instead of burning respawn budget on a deterministic
+    // failure. A successful boot resets the run.
+    bootBreaker: {
+      store: createFileBootBreakerStore(createEnginePaths(join(root, ".red"))),
+      threshold: Number(process.env["RED_AFK_BOOT_BREAKER_K"]) > 0
+        ? Number(process.env["RED_AFK_BOOT_BREAKER_K"])
+        : undefined,
+      heal: async () => {
+        const paths = createEnginePaths(join(root, ".red"));
+        const tracker = createGitHubTrackerAdapter({
+          claimLockRoot: join(paths.tmpRoot, "claims"),
+        });
+        const result = await runIssueStateCurator({
+          tracker,
+          store: createFileIssueCuratorStore(paths),
+        });
+        return `curator sweep ran: ${JSON.stringify(result).slice(0, 200)}`;
+      },
+    },
     // Derived human-readable messages are stored in the structured supervisor
     // lane, not dual-written to a prose supervisor log.
     log: logLine,

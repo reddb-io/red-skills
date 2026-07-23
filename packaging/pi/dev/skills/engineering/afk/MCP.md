@@ -52,11 +52,13 @@ claim keeps two fleets on the same backlog from double-claiming an issue.
 | `fleet_status` | read | Supervisor pid, slots, churn, and live workers for one fleet. |
 | `fleet_create` | mutating | Persist a named profile and spawn its supervisor. |
 | `fleet_edit` | mutating | Update a profile; sends a live resize directive when asked. |
-| `fleet_stop` | mutating | Stop one named fleet and its detached workers. |
+| `fleet_stop` | mutating | Gracefully stop one named fleet; pass `force: true` to hard-stop only its attributed workers. |
 | `fleet_register` | mutating | Adopt an already-running supervisor into the registry without restarting it. |
 
 `selector` scopes what a fleet drains — `{spec, lane, label, issues}`. Omit
-`fleet` on the read and stop tools to address the `default` fleet. Use
+`fleet` on the read and stop tools to address the `default` fleet. Graceful
+stop leaves in-flight detached workers to finish; force never kills workers
+stamped for another fleet or unstamped standalone workers. Use
 `fleet_register` when a CLI-launched fleet shows up in `fleet_status` but
 not in `fleet_list` — it persists the profile in-place so `fleet_edit` works
 immediately after.
@@ -108,12 +110,27 @@ never tracks the base branch as red (#2380).
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `claim_status` | read | Parsed claim markers for one issue and the worker holding it. |
-| `claim_release` | mutating | Concede every un-conceded claim so the issue is claimable again. |
+| `claim_status` | read | Parsed claim markers for one issue (`issue`) or a batch (`issues`), keyed per issue. |
+| `claim_release` | mutating | Concede every un-conceded claim so the issue — or each issue in a batch — is claimable again. |
+| `hitl_resolve` | mutating | One atomic human decision on a parked issue: `requeue`, `retake`, `park`, or `close`, with the rationale posted for the audit trail. |
 
 `claim_release` is the cure for a ghost claim — an issue that instantly reports
 `1/1 100%` with no attempt. Release it through the tool, never by flipping
 labels by hand.
+
+### Merge driver — armed PRs land without native auto-merge
+
+| Tool | Mode | What it does |
+| --- | --- | --- |
+| `merge_arm` | mutating | Hand one open PR to the castle merge driver — it owns the PR to a terminal state. |
+| `merge_status` | read | The driver's durable per-PR records: armed set, attempts, terminal classifications. |
+| `merge_release` | mutating | Stop driver ownership of one PR (record kept as `released`). |
+
+The driver (#2512) runs in the castle resident on a fixed cadence: BEHIND →
+update-branch, green at head → merge with the merge-commit strategy (never an
+admin override), transient faults → bounded retries, DIRTY or failing checks →
+terminal `needs-medic`/`needs-human` classification instead of a loop. Its
+state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 
 ### Worktree — the disposable pool
 

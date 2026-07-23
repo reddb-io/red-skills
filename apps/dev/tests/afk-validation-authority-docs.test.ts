@@ -17,6 +17,10 @@ async function readAfkOperations(): Promise<string> {
   return readFile(join(ROOT, AFK, "docs", "OPERATIONS.md"), "utf8");
 }
 
+async function readAfkSafety(): Promise<string> {
+  return readFile(join(ROOT, AFK, "SAFETY.md"), "utf8");
+}
+
 describe("afk validation-authority docs contract (#1334)", () => {
   it("AGENT-PROMPT carries a binding Validation Authority section", async () => {
     const prompt = await readAgentPrompt();
@@ -61,5 +65,25 @@ describe("afk validation-authority docs contract (#1334)", () => {
     expect(operations).toContain("## Issue Lifecycle (the `/afk` slice)");
     expect(operations).toContain("Empty queue + non-empty backlog = flow bug");
     expect(operations).toContain("gate census");
+  });
+});
+
+describe("afk primary-checkout safety contract (#2479)", () => {
+  it("never snapshots a dirty primary before a worker reaches Landing", async () => {
+    const [safety, operations] = await Promise.all([readAfkSafety(), readAfkOperations()]);
+
+    expect(safety).toContain("AFK never stages or commits the primary checkout");
+    expect(operations).toContain(
+      "A crash or gate failure before Landing leaves a dirty primary checkout byte-for-byte untouched.",
+    );
+  });
+
+  it("protects the direct Landing merge inside its isolated worktree", async () => {
+    const [safety, operations] = await Promise.all([readAfkSafety(), readAfkOperations()]);
+
+    expect(safety).toContain("isolated landing worktree");
+    expect(operations).toContain(
+      "`pre_merge_sha` is captured inside that isolated worktree immediately before `merge --no-ff`",
+    );
   });
 });

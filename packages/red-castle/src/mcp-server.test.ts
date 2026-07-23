@@ -83,6 +83,10 @@ function deps(): CastleMcpDependencies {
       records: [],
       holder: null,
     })),
+    mergeArm: vi.fn(async (input) => ({ armed: input })),
+    mergeStatus: vi.fn(async () => ({ prs: [] })),
+    mergeRelease: vi.fn(async (input) => ({ released: input })),
+    hitlResolve: vi.fn(async (input) => ({ resolved: input })),
     claimRelease: vi.fn(async (input) => ({
       issue: input.issue,
       conceded: ["w80UR"],
@@ -145,6 +149,10 @@ describe("castle MCP tools", () => {
       "cascade_status",
       "claim_status",
       "claim_release",
+      "merge_arm",
+      "merge_status",
+      "merge_release",
+      "hitl_resolve",
       "worktree_list",
       "worktree_remove",
       "wait_start",
@@ -190,6 +198,20 @@ describe("castle MCP tools", () => {
     ).resolves.toEqual([
       { at: "2026-07-21T00:00:00.000Z", kind: "worker.started" },
     ]);
+  });
+
+  it("forwards explicit force on fleet_stop hard teardown (#2472)", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools
+      .find((tool) => tool.name === "fleet_stop")!
+      .invoke({ fleet: "codex", force: true });
+
+    expect(d.fleetStop).toHaveBeenCalledWith({
+      name: "codex",
+      force: true,
+    });
   });
 
   it("dispatches and stops workers through mutating worker tools", async () => {

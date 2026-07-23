@@ -132,7 +132,9 @@ describe("resolveFreshBase (worker base freshness)", () => {
   it("parks typed when origin cannot refresh the mirror instead of falling back to the primary branch", async () => {
     const { exec } = recordingExec((_cmd, args) => {
       const joined = args.join(" ");
-      if (joined === "fetch origin main") return fail();
+      if (joined === "fetch origin main") {
+        return { code: 128, stdout: "", stderr: "fatal: bad object refs/worktree/HEAD" };
+      }
       if (joined === "rev-parse --verify --quiet origin/main") return ok("remote-tip\n");
       return fail();
     });
@@ -144,6 +146,7 @@ describe("resolveFreshBase (worker base freshness)", () => {
       sha: "remote-tip",
       source: "mirror",
       remoteReachable: false,
+      message: expect.stringContaining("fatal: bad object refs/worktree/HEAD"),
     });
   });
 });

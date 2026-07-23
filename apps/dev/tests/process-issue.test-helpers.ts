@@ -42,6 +42,8 @@ export interface Trace {
   closed: number[];
   swept: number[];
   pushedAttempt: string[][];
+  /** Git/forge calls made by Landing; empty means the attempt never touched integration. */
+  mergeCalls: string[][];
   deletedRemote: string[][];
   postedEnvelopes: Array<{ issue: number; status: string }>;
   envelopeBodies: string[];
@@ -274,6 +276,7 @@ export function harness(opts: HarnessOptions = {}): {
     closed: [],
     swept: [],
     pushedAttempt: [],
+    mergeCalls: [],
     deletedRemote: [],
     postedEnvelopes: [],
     envelopeBodies: [],
@@ -435,6 +438,7 @@ export function harness(opts: HarnessOptions = {}): {
       },
     },
     mergeExec: async (argv) => {
+      trace.mergeCalls.push([...argv]);
       const j = argv.join(" ");
       if (/^git -C \/repo fetch origin afk\/.*9-.* --quiet$/.test(j)) {
         return { code: 0, stdout: "", stderr: "" };

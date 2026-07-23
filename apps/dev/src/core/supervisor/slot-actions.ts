@@ -96,52 +96,16 @@ export async function handleDeadSlot(
 
   const cleanExit = exitCode === 0;
 
-  if (cleanExit) {
-    if (queueDepth === 0) {
-      // Clean drain with empty queue → idle-park (no sweep, no discard envelope).
-      state.pid = null;
-      state.idleParked = true;
-      return { parked: true };
-    }
-    // Clean drain but queue has work → respawn immediately without feeding the breaker.
-    state.spawning = true;
-    try {
-      const spawned = await spawn();
-      if (spawned === null) {
-        state.pid = null;
-        return { parked: true };
-      }
-      state.pid = spawned.pid;
-      state.spawnEpoch = spawned.spawnEpoch;
-    } finally {
-      state.spawning = false;
-    }
-    state.stalled = false;
-    state.stallSinceEpoch = 0;
-    state.reaped = false;
-    // Clean-exit respawn: on_slot_spawn + on_respawn. Best-effort.
-    if (deps.dispatchFleetHook) {
-      try {
-        await deps.dispatchFleetHook("on_slot_spawn", {
-          event: "on_slot_spawn",
-          runner: config.runner,
-          slot,
-          ...(state.pid !== null ? { pid: state.pid } : {}),
-        });
-        await deps.dispatchFleetHook("on_respawn", {
-          event: "on_respawn",
-          runner: config.runner,
-          slot,
-          ...(state.pid !== null ? { pid: state.pid } : {}),
-        });
-      } catch {
-        // best-effort
-      }
-    }
-    return { parked: false };
+  if (cleanExit && queueDepth === 0) {
+    // Clean drain with empty queue → idle-park (no sweep, no discard envelope).
+    state.pid = null;
+    state.idleParked = true;
+    return { parked: true };
   }
 
-  // Non-clean exit: record against the circuit breaker.
+  // A fast worker death while work remains is a boot-death signal regardless
+  // of its exit code. Session errors can return cleanly, so excluding exit 0
+  // makes deterministic boot crashloops invisible to the slot circuit.
   const now = deps.now();
   const decision = recordDeath(state.deaths, state.spawnEpoch, now, config);
   state.deaths = decision.deaths;
@@ -170,7 +134,7 @@ export async function handleDeadSlot(
   state.stalled = false;
   state.stallSinceEpoch = 0;
   state.reaped = false;
-  // Non-clean respawn: on_slot_spawn + on_respawn. Best-effort.
+  // Respawn after a death: on_slot_spawn + on_respawn. Best-effort.
   if (deps.dispatchFleetHook) {
     try {
       await deps.dispatchFleetHook("on_slot_spawn", {

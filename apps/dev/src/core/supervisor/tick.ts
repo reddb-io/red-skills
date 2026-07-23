@@ -18,7 +18,7 @@ import {
   shrinkFleetToTarget,
 } from "./resize.js";
 import { pollStallDetector, resolveReapContest } from "./reaper.js";
-import { dispatchReconcileIfPossible, handleDeadSlot, terminateAll } from "./slot-actions.js";
+import { dispatchReconcileIfPossible, handleDeadSlot } from "./slot-actions.js";
 import type { SupervisorConfig } from "./config.js";
 import type { TickResult } from "./result.js";
 import type { SupervisorState } from "./state.js";
@@ -61,6 +61,9 @@ async function refreshTrunkMirrorIfDue(
       message: err instanceof Error ? err.message : String(err),
     };
   }
+  if (outcome.status === "failed") {
+    deps.log?.(`trunk mirror refresh failed: ${outcome.message ?? "unknown git error"}`);
+  }
   state.lastTrunkFreshness = outcome;
   return outcome;
 }
@@ -89,7 +92,6 @@ export async function superviseTick(
   };
 
   if (stopRequested()) {
-    await terminateAll(state, deps);
     result.stopped = true;
     return result;
   }

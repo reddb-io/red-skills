@@ -18,11 +18,6 @@ import {
   type ConflictFinding,
 } from "../../core/merge-conflict-reconcile.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
-import {
-  toMemoryPayload,
-  resolveMemoryCli,
-  type AttemptRecordPayload,
-} from "../../core/attempt-record.js";
 import { isRunner, type Runner } from "../../types/runner.js";
 import {
   afkPaths,
@@ -39,14 +34,11 @@ import {
 import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
-import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
-import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
-import { Output } from "@reddb-io/red-castle";
+import { Output, createFsIssueLeaseStore } from "@reddb-io/red-castle";
 import * as ghx from "../../runtime/gh.js";
 import * as gitx from "../../runtime/git.js";
 import * as fsx from "../../runtime/fs.js";
 import { migrateLegacyDevPaths } from "../../runtime/red-path-migration.js";
-import { configFile } from "@reddb-io/shared/red-paths.js";
 import type { GhContext } from "../../runtime/gh.js";
 import { buildReviewGh } from "../../runtime/review-gh.js";
 import type { GitContext } from "../../runtime/git.js";
@@ -75,11 +67,12 @@ import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
-import { runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
+import { createEnginePaths, createFileHealLedgerStore, runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
-import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { isLivePid } from "../../runtime/kill-tree.js";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../../core/worker-paths.js";
@@ -106,11 +99,11 @@ import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-brid
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
-import { renderClaimComment } from "../../core/claim.js";
 
 import { deriveActivity } from "./activity.js";
 import { makeImplementerRunAgent } from "./implementer-run-agent.js";
 import { makeAgentConflictResolver, makeMechanicalConflictResolver } from "./reconcile.js";
+import { makeRecordAttempt, makeRecordOutcomeEvent } from "./recording.js";
 import {
   castleWorktreeUnder,
   decodeLocMemoSnapshot,
@@ -211,6 +204,12 @@ export function buildProcessDeps(
         }
       : undefined;
 
+  const configuredLandingWait = getConfig(config, "afk.landing.wait");
+  const landingWait: NonNullable<ProcessIssueDeps["landingWait"]> =
+    configuredLandingWait === "ci" || configuredLandingWait === "none"
+      ? configuredLandingWait
+      : "merge";
+
   // CI-aware merge (#812). Default off → the unlocked admin-merge fires
   // immediately (fine on a base with NO required status checks). When
   // `afk.merge.ci_aware` is true, the unlocked landing first polls the PR's merge
@@ -220,7 +219,7 @@ export function buildProcessDeps(
   // poll budget comes from `RED_AFK_MERGE_CI_TIMEOUT_S` (default 1800s) at a fixed
   // 10s cadence; on timeout the open, MERGEABLE PR is handed off (no agent re-run).
   const ciAwait =
-    getConfig(config, "afk.merge.ci_aware") === "true"
+    getConfig(config, "afk.merge.ci_aware") === "true" || landingWait !== "merge"
       ? {
           sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
           intervalMs: 10_000,
@@ -362,18 +361,28 @@ export function buildProcessDeps(
     // gate (a cross-host predecessor's log isn't on this filesystem).
     recoveredWorkerDeathCause: (recoveredWorker) =>
       deathCauseForRecoveredWorker(paths.tmpDir, recoveredWorker, hostFingerprintPrefix()),
-    claimLock: {
-      // Atomic POSIX mkdir lock (#434): a non-recursive mkdir that fails EEXIST,
-      // so two simultaneous boots cannot both claim the same issue. The prior
-      // pathExists+ensureDir form was check-then-act and raced into dup PRs.
-      acquire: (issue) => fsx.tryAcquireClaimDir(`${paths.tmpDir}/claims/${issue}`, process.pid),
-      release: async (issue) => {
-        await fsx.removeDir(`${paths.tmpDir}/claims/${issue}`);
-      },
-    },
+    // Local per-host issue lease — the ONE lease implementation, in castle
+    // (#2578). Its leaf `<claims>/<issue>/` dir is the atomic POSIX mkdir lock
+    // (#434); a dead holder is reclaimed through the #568 atomic-rename steal.
+    // `pidAlive` injects this host's `kill -0` verdict (castle stays liveness-IO
+    // free); the owner token is the ADR 0066 worker identity, so a release only
+    // removes the lease we actually hold. The owner-token liveness is `unknown`
+    // here because the pid signal alone arbitrates same-host steals on this path.
+    claimLock: (() => {
+      const store = createFsIssueLeaseStore(join(paths.tmpDir, "claims"), {
+        pid: process.pid,
+        pidAlive: (p) => (fsx.pidAlive(String(p)) ? "alive" : "dead"),
+      });
+      const owner = workerIdentity(workerId);
+      return {
+        acquire: async (issue) => (await store.acquire(issue, owner, () => "unknown")).acquired,
+        release: (issue) => store.release(issue, owner),
+      };
+    })(),
     fs: {
       ensureAttemptDir: (dir) => fsx.ensureDir(dir),
       writeHandoff: (path, content) => fsx.writeHandoff(path, content),
+      readText: (path) => fsx.readText(path),
       // $ITER_DIR/validation.jsonl — the machine-readable feedback sidecar the
       // Memory bridge consumes (SKILL.md §Validation Sidecar).
       writeValidationSidecar: (path, lines) => fsx.writeValidationSidecar(path, lines),
@@ -456,6 +465,78 @@ export function buildProcessDeps(
     fallbackRunner,
     waitForReview,
     ciAwait,
+    landingWait,
+    landingTailObserver:
+      landingWait === "merge"
+        ? undefined
+        : async (task) => {
+            if (!exec) {
+              // Fleet slots are `run --once` processes. Keeping the wait as an
+              // in-process promise would keep that OS process alive and would
+              // not release the supervisor slot at all. The production path
+              // therefore hands the tail to one detached, ephemeral observer.
+              // `rsp wait pr` itself consumes the resident webhook singleton
+              // when present and falls back to its per-wait forwarder when not.
+              const timeoutS = resolveCiTimeoutSeconds(process.env);
+              const script = [
+                'if [ "$1" = "wait" ]; then',
+                '  rsp wait pr "$2" --timeout "$3" --reason "finish AFK landing for issue $5" || exit $?',
+                "fi",
+                'gh -R "$4" pr merge "$2" --merge --delete-branch || exit $?',
+                'gh -R "$4" issue close "$5" --reason completed >/dev/null 2>&1 || true',
+                'gh -R "$4" issue edit "$5" --remove-label running >/dev/null 2>&1 || true',
+              ].join("\n");
+              const child = spawn(
+                "sh",
+                [
+                  "-c",
+                  script,
+                  "landing-tail",
+                  task.waitForCi ? "wait" : "ready",
+                  String(task.prNumber),
+                  `${timeoutS}s`,
+                  ctx.repo,
+                  String(task.issue),
+                ],
+                {
+                  cwd: ctx.root,
+                  env: process.env,
+                  detached: true,
+                  stdio: "ignore",
+                },
+              );
+              child.unref();
+              // The detached observer owns completion. A permanently pending
+              // promise carries that fact to processIssue without keeping the
+              // event loop alive; an orphaned observer is intentionally left as
+              // the deadend-audit class described by the Spec.
+              return await new Promise<never>(() => undefined);
+            }
+            if (task.waitForCi) {
+              // `rsp wait pr` is the shared wait/webhook observer: it consumes
+              // the resident singleton's event lane when a holder exists and
+              // transparently starts the established per-wait forwarder when
+              // it does not. A non-success verdict falls back to the landing
+              // primitive's one-shot classifier so conflict/failed/pending keep
+              // their existing terminal routes.
+              const timeoutS = resolveCiTimeoutSeconds(process.env);
+              const waited = await exec(
+                "rsp",
+                [
+                  "wait",
+                  "pr",
+                  String(task.prNumber),
+                  "--timeout",
+                  `${timeoutS}s`,
+                  "--reason",
+                  `finish AFK landing for issue ${task.issue}`,
+                ],
+                { cwd: ctx.root },
+              );
+              if (waited.code === 0) return task.run(true);
+            }
+            return task.run();
+          },
     worktreeLaunchesPr,
     landLock,
     nativeMergeQueue,
@@ -521,7 +602,10 @@ export function buildProcessDeps(
       base: {
         readLockedBranch: () => readLockedBranch(lockPath),
         configLockedBranch: getConfig(config, "dev.lock.branch") || undefined,
-        configTrunk: getConfig(config, "dev.trunk") || undefined,
+        configTrunk:
+          (process.env.RED_AFK_TRUNK ?? "").trim() ||
+          getConfig(config, "dev.trunk") ||
+          undefined,
         fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
       },
       isLocked: () => isLocked(lockPath),
@@ -950,6 +1034,9 @@ export function buildProcessDeps(
     historyClock: { ts: new Date().toISOString(), epoch: Math.floor(Date.now() / 1000) },
     // BOUNDED auto-recovery reads its RED_AFK_RETRY_* caps from the process env.
     recoveryEnv: process.env,
+    // ADR 0122 heal ledger (#2576): merge-retry accounting shared with the
+    // death-sweep and boot healer — one per-issue budget across all belts.
+    healLedger: createFileHealLedgerStore(createEnginePaths(join(ctx.root, ".red"))),
     // ADR 0017: best-effort AFK→Memory "reasoning attempt" recording. Serialise
     // the payload to a temp JSON file under the attempt dir, then exec the memory
     // CLI DIRECTLY (`<memoryCli> attempt record --root <root>` with the payload on
@@ -1068,124 +1155,6 @@ function makeIssueClassifier(
       return result.code === 0 ? result.stdout.trim() : undefined;
     });
   };
-}
-
-/** Read the `version` field of a JSON manifest file, or undefined when the file
- * is missing / unparseable / has no version. The version-keyed cache-bundle
- * candidate in {@link resolveMemoryCli} uses this to locate the fetched CLI. */
-function readManifestVersion(path: string): string | undefined {
-  try {
-    const v = (JSON.parse(readFileSync(path, "utf8")) as { version?: unknown }).version;
-    return typeof v === "string" && v.length > 0 ? v : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Build the best-effort `recordAttempt` port (ADR 0017). On each call it resolves
- * the memory CLI ({@link resolveMemoryCli}, which gates on the ADR 0009 opt-in
- * config + the bridge's candidate order), writes the payload to a temp JSON file
- * under the current attempt dir, and execs the memory CLI DIRECTLY:
- * `<memoryCli> attempt record --root <gitRoot>` with the payload piped on stdin
- * — exactly what the bridge's `memory_record_attempt` did, minus the shell hop.
- * `MEMORY_REPO_ROOT` is set in the child env (as the bridge expected) so an
- * in-repo memory checkout resolves. When no CLI resolves the call is a silent
- * no-op (memory not installed). Every error (write failure, non-zero exit, spawn
- * error) is SWALLOWED — at most one warn line is written.
- *
- * `exec` is the test-injection seam (mirrors the rest of buildProcessDeps); in
- * production it is undefined and the real `execTool` is used.
- */
-function makeRecordAttempt(
-  gitRoot: string,
-  current: CurrentAttempt,
-  exec?: ExecFn,
-): (payload: AttemptRecordPayload) => Promise<void> {
-  return async (payload: AttemptRecordPayload): Promise<void> => {
-    try {
-      const env = { ...process.env, MEMORY_REPO_ROOT: process.env.MEMORY_REPO_ROOT ?? gitRoot };
-      const memoryCli = resolveMemoryCli(gitRoot, env, {
-        exists: existsSync,
-        readJsonVersion: readManifestVersion,
-        readText: (path) => {
-          try {
-            return readFileSync(path, "utf8");
-          } catch {
-            return undefined;
-          }
-        },
-      });
-      if (!memoryCli) return; // memory not opted-in / no CLI resolves — silent skip.
-      const dir = current.attemptDir || gitRoot;
-      const payloadFile = join(dir, `memory-attempt-${payload.issueNumber}.json`);
-      await fsx.ensureDir(dir);
-      const json = toMemoryPayload(payload);
-      await writeFile(payloadFile, json, "utf8");
-      const run = exec ?? (await import("../../runtime/exec.js")).execTool;
-      const [cmd, ...head] = memoryCli;
-      await run(cmd, [...head, "attempt", "record", "--root", gitRoot], {
-        cwd: gitRoot,
-        env,
-        input: json,
-      });
-    } catch (err) {
-      process.stderr.write(`[afk] memory attempt-record skipped (best-effort): ${String(err)}\n`);
-    }
-  };
-}
-
-function makeRecordOutcomeEvent(
-  gitRoot: string,
-  current: CurrentAttempt,
-  exec?: ExecFn,
-): (event: OutcomeEvent) => Promise<void> {
-  return async (event: OutcomeEvent): Promise<void> => {
-    try {
-      const configPath = configFile(gitRoot);
-      const configText = readFileSync(configPath, "utf8");
-      if (!pluginEnabledInConfig(configText, "brain")) return;
-      const env = { ...process.env, BRAIN_REPO_ROOT: process.env.BRAIN_REPO_ROOT ?? gitRoot };
-      const brainCli = resolveBrainCli(gitRoot, env);
-      if (!brainCli) return;
-      const dir = current.attemptDir || gitRoot;
-      await fsx.ensureDir(dir);
-      const json = JSON.stringify(event);
-      await writeFile(join(dir, `brain-outcome-event-${event.context?.issueNumber ?? "unknown"}.json`), json, "utf8");
-      const run = exec ?? (await import("../../runtime/exec.js")).execTool;
-      const [cmd, ...head] = brainCli;
-      await run(cmd, [...head, "outcome-event", "record", "--root", gitRoot], {
-        cwd: gitRoot,
-        env,
-        input: json,
-      });
-    } catch (err) {
-      process.stderr.write(`[afk] brain outcome-event skipped (best-effort): ${String(err)}\n`);
-    }
-  };
-}
-
-function resolveBrainCli(gitRoot: string, env: NodeJS.ProcessEnv): string[] | undefined {
-  const override = env.RED_BRAIN_CLI;
-  if (override) return existsSync(override) ? ["node", override] : undefined;
-  const pathHit = findOnPath("brain", env.PATH);
-  if (pathHit) return ["brain"];
-  const pluginRoot = env.CLAUDE_PLUGIN_ROOT ?? env.CODEX_PLUGIN_ROOT;
-  if (pluginRoot) {
-    const sibling = join(pluginRoot, "..", "brain", "dist", "cli.js");
-    if (existsSync(sibling)) return ["node", sibling];
-  }
-  const inRepo = join(gitRoot, "plugins", "brain", "dist", "cli.js");
-  if (existsSync(inRepo)) return ["node", inRepo];
-  return undefined;
-}
-
-function findOnPath(bin: string, pathValue: string | undefined): string | undefined {
-  for (const dir of (pathValue ?? "").split(":").filter(Boolean)) {
-    const candidate = join(dir, bin);
-    if (existsSync(candidate)) return candidate;
-  }
-  return undefined;
 }
 
 /** Per-issue mutable context the session-scoped process deps close over — the

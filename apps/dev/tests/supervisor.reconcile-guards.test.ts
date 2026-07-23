@@ -144,7 +144,7 @@ describe("idle-drain: exit 0 idle-parks without tripping the circuit breaker", (
     expect(io.spawnSlot).not.toHaveBeenCalled();
   });
 
-  it("exit 0 with non-empty queue respawns immediately without counting as fast-death", async () => {
+  it("exit 0 with non-empty queue respawns and counts a fast boot death", async () => {
     const { deps, io } = makeDeps({
       isAlive: vi.fn(() => false),
       readyQueueDepth: vi.fn(async () => 2),
@@ -163,7 +163,7 @@ describe("idle-drain: exit 0 idle-parks without tripping the circuit breaker", (
     expect(result.parked).toEqual([]);
     expect(slot.idleParked).toBe(false);
     expect(slot.parked).toBe(false);
-    expect(slot.deaths).toEqual([]);
+    expect(slot.deaths).toEqual([NOW]);
     expect(slot.pid).toBe(8888);
     expect(io.spawnSlot).toHaveBeenCalledWith(0);
   });

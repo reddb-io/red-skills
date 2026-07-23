@@ -510,6 +510,22 @@ describe("recordDeath", () => {
 });
 
 describe("circuit trip and sweep", () => {
+  it("trips after K fast clean boot deaths while the queue still has work", async () => {
+    const { deps, io } = makeDeps();
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.deaths = [NOW - 40, NOW - 30, NOW - 20, NOW - 10];
+    slot.spawnEpoch = NOW - 5;
+    io.lastExitCode.mockReturnValue(0);
+
+    const { parked } = await handleDeadSlot(0, slot, deps, config(), 1);
+
+    expect(parked).toBe(true);
+    expect(slot.parked).toBe(true);
+    expect(slot.deaths).toEqual([NOW - 40, NOW - 30, NOW - 20, NOW - 10, NOW]);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+  });
+
   it("parks a fatal host-config death without retrying or feeding the fast-death circuit", async () => {
     const { deps, io } = makeDeps();
     const state = initSupervisorState(1);
@@ -552,10 +568,13 @@ describe("circuit trip and sweep", () => {
     expect(slot.swept).toBe(true);
     expect(io.spawnSlot).not.toHaveBeenCalled();
     // Discard envelope posted + labels restored for the claimed issue.
-    expect(io.comment).toHaveBeenCalledOnce();
-    const [issue, body] = io.comment.mock.calls[0]!;
+    expect(io.comment).toHaveBeenCalledTimes(2);
+    const [issue, body] = io.comment.mock.calls.find((call) =>
+      String(call[1]).includes('data-attempt-status="discarded"'),
+    )!;
     expect(issue).toBe(7);
     expect(body).toContain('data-attempt-status="discarded"');
+    expect(io.comment.mock.calls.some((call) => String(call[1]).includes("kind=concede"))).toBe(true);
     expect(io.editLabels).toHaveBeenCalledWith(
       7,
       ["ready-for-agent", "runner-error"],
@@ -653,10 +672,13 @@ describe("circuit trip — real FS integration (slot-log boot-stamp path)", () =
       expect(slot.parked).toBe(true);
 
       // Discard envelope posted only for the worker that held a claim (#99).
-      expect(io.comment).toHaveBeenCalledOnce();
-      const [issue, body] = io.comment.mock.calls[0]!;
+      expect(io.comment).toHaveBeenCalledTimes(2);
+      const [issue, body] = io.comment.mock.calls.find((call) =>
+        String(call[1]).includes('data-attempt-status="discarded"'),
+      )!;
       expect(issue).toBe(99);
       expect(body).toContain('data-attempt-status="discarded"');
+      expect(io.comment.mock.calls.some((call) => String(call[1]).includes("kind=concede"))).toBe(true);
       // Fast-death count must reflect the circuit ring (5 deaths), not 0.
       expect(body).toContain("fast deaths: 5");
       expect(body).toContain("slot parked after 5 fast deaths");
@@ -868,11 +890,14 @@ describe("pollStallDetector reaper gating", () => {
 
     expect(reaped).toEqual([0]);
     expect(io.killTree).toHaveBeenCalledWith(4242);
-    expect(io.comment).toHaveBeenCalledOnce();
-    const [issue, body] = io.comment.mock.calls[0]!;
+    expect(io.comment).toHaveBeenCalledTimes(2);
+    const [issue, body] = io.comment.mock.calls.find((call) =>
+      String(call[1]).includes('data-attempt-status="no-sentinel"'),
+    )!;
     expect(issue).toBe(190);
     expect(body).toContain('data-attempt-status="no-sentinel"');
     expect(body).toContain("stalled tool call");
+    expect(io.comment.mock.calls.some((call) => String(call[1]).includes("kind=concede"))).toBe(true);
     // #1197: the retry first opens a bounded contest window. The issue is not
     // ready-for-agent yet, so a second worker cannot double-run it while the
     // original branch may still report late commits.
@@ -1049,8 +1074,10 @@ describe("pollStallDetector reaper gating", () => {
     expect(reaped).toEqual([0]);
     expect(io.killTree).toHaveBeenCalledWith(4242);
     // The reap envelope plus a self-explanatory "budget exhausted" page comment.
-    expect(io.comment).toHaveBeenCalledTimes(2);
-    const pageBody = io.comment.mock.calls[1]![1] as string;
+    expect(io.comment).toHaveBeenCalledTimes(3);
+    const pageBody = io.comment.mock.calls.find((call) =>
+      String(call[1]).includes("ready-for-human"),
+    )![1] as string;
     expect(pageBody).toContain("ready-for-human");
     expect(pageBody).toContain("attempt 3/3");
     // Escalation carries blocked:stalled (allowed alongside ready-for-human) and

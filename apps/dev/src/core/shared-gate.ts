@@ -115,64 +115,6 @@ export interface SharedGateResult {
   intentEscalated: number;
 }
 
-// ---------- gate runner ----------
-
-/**
- * Dependencies for the shared gate — all effects injected for testability.
- */
-export interface SharedGateDeps {
-  /** Apply a mechanical finding in-tree and commit it. */
-  applyMechanical: MechanicalApply;
-  /** Escalate one intent finding to the context-appropriate sink. */
-  escalateIntent: EscalationSink;
-}
-
-/**
- * Run the shared validation gate over `findings`.
- *
- * For each finding:
- *   - **Mechanical** → `deps.applyMechanical(finding)` (auto-apply + commit).
- *   - **Intent** → `deps.escalateIntent(finding)` (context-aware sink).
- *
- * The gate is GREEN (`passed: true`) when every intent finding resolves with
- * `"approved"`. A single `"parked"` or `"skipped"` (when the caller treats skip
- * as blocking) outcome makes the gate RED. The convention followed here is:
- *   - `"approved"` → non-blocking (maintainer accepted the change)
- *   - `"parked"`   → blocking (headless sink requested human review)
- *   - `"skipped"`  → blocking (interactive sink: skip = do not land)
- *
- * PURE SEQUENCING — no decision logic lives here beyond the classification +
- * routing; all judgment (interactive prompt wording, park comment text) stays in
- * the injected sinks.
- */
-export async function runSharedGate(
-  findings: readonly GateFinding[],
-  deps: SharedGateDeps,
-): Promise<SharedGateResult> {
-  const resolutions: FindingResolution[] = [];
-  let mechanicalApplied = 0;
-  let intentEscalated = 0;
-  let passed = true;
-
-  for (const finding of findings) {
-    const classification = classifyFinding(finding);
-
-    if (classification === "mechanical") {
-      await deps.applyMechanical(finding);
-      resolutions.push({ finding, classification, applied: true });
-      mechanicalApplied++;
-    } else {
-      const escalationOutcome = await deps.escalateIntent(finding);
-      resolutions.push({ finding, classification, escalationOutcome });
-      intentEscalated++;
-      if (escalationOutcome !== "approved") {
-        passed = false;
-      }
-    }
-  }
-
-  return { passed, resolutions, mechanicalApplied, intentEscalated };
-}
 
 /**
  * The TOON JSON-IO guard allowlist path. Defined here (a typescript-free leaf
@@ -275,29 +217,3 @@ export function gateVerdict(outcomes: readonly GateStageOutcome[]): GateVerdict 
   return { ok: true };
 }
 
-// ---------- built-in sink factories ----------
-
-/**
- * Build the headless escalation sink. Parks on any intent finding: logs the
- * finding to `parkIntent` (caller handles label/comment write) and returns
- * `"parked"` — always blocking, always requiring human review.
- */
-export function makeHeadlessSink(parkIntent: (finding: GateFinding) => Promise<void>): EscalationSink {
-  return async (finding) => {
-    await parkIntent(finding);
-    return "parked";
-  };
-}
-
-/**
- * Build the interactive escalation sink. Delegates the approve/skip decision to
- * the injected `promptUser` callback (the CLI prompt or test double). Returns
- * whatever the prompt returns — the sink itself carries no prompt wording.
- */
-export function makeInteractiveSink(
-  promptUser: (finding: GateFinding) => Promise<"approved" | "skipped">,
-): EscalationSink {
-  return async (finding) => {
-    return promptUser(finding);
-  };
-}

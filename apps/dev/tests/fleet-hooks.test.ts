@@ -716,7 +716,7 @@ describe("supervisor: pre_fleet / post_fleet", () => {
     expect(io.spawnSlot).not.toHaveBeenCalled();
   });
 
-  it("fires post_fleet after workers are terminated on stop", async () => {
+  it("fires post_fleet without terminating in-flight workers on graceful stop (#2472)", async () => {
     const firedHooks: string[] = [];
     const dispatchFleetHookFn = vi.fn(async (name: FleetHookName) => {
       firedHooks.push(name);
@@ -734,7 +734,7 @@ describe("supervisor: pre_fleet / post_fleet", () => {
     await runSupervisor(state, deps, config(), () => true);
 
     expect(firedHooks).toContain("post_fleet");
-    // post_fleet fires last (after terminateAll).
+    expect(killTree).not.toHaveBeenCalled();
     const postIdx = firedHooks.lastIndexOf("post_fleet");
     expect(postIdx).toBeGreaterThanOrEqual(0);
   });

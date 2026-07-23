@@ -13,6 +13,7 @@
 // here. No real process / fs / gh call lives in this file.
 
 import { classifySupervisor, type SupervisorHealth, type SupervisorLiveness } from "./supervisor.js";
+import { isBreakerOpen } from "./supervisor/boot-breaker.js";
 
 /**
  * Injected IO for one watchdog pass. Each closure is best-effort — the same
@@ -28,13 +29,12 @@ export interface WatchdogIO {
   /** kill_tree the wedged supervisor pid + its descendants. */
   killTree(pid: number): Promise<void>;
   /**
-   * Kill all still-alive worker processes that survived the supervisor's death
-   * (#579). Workers are spawned `detached: true` (nohup'd) so they are NOT
-   * children of the supervisor and killTree misses them. Best-effort: a failed
-   * kill on one worker must not block the rest of the recovery sequence.
-   * Returns the number of live workers actually killed (#2056).
+   * Kill still-alive worker processes attributed to this watchdog's named fleet.
+   * Workers are spawned `detached: true` (nohup'd) so they are NOT children of
+   * the supervisor and killTree misses them. Another fleet's workers and
+   * unstamped standalone workers are never targets. Best-effort per worker.
    */
-  killWorkers(): Promise<number>;
+  killWorkers(): Promise<{ killed: number; survivors: number[] }>;
   /** Remove the supervisor pid + stop control files so a relaunch is unblocked. */
   clearControlFiles(): Promise<void>;
   /** Reconcile claims/labels the wedged supervisor left so no issue is stranded
@@ -58,6 +58,11 @@ export interface WatchdogIO {
   readRestartLedger?(): Promise<number[]>;
   /** Persist the pruned dead-supervisor restart ledger after a respawn. Best-effort. */
   writeRestartLedger?(epochs: number[]): Promise<void>;
+  /** Read the crashloop circuit breaker ledger (#2527). Best-effort: a
+   * missing/corrupt ledger reads as null (closed). When the breaker is OPEN the
+   * dead-supervisor safety net refuses to respawn into the same failing
+   * configuration — the healer + alert already fired at trip time. */
+  readBootBreaker?(): Promise<import("./supervisor/boot-breaker.js").BootBreakerLedger | null>;
   /** Durable quiescent-recovery marker. It survives the supervisor pid file
    * being removed between teardown and a successful replacement boot. */
   isRecoveryPending?(): Promise<boolean>;
@@ -157,6 +162,9 @@ export interface WatchdogResult {
   /** True when a dead supervisor met the respawn condition but the crash-loop
    * bound was already reached, so the net logged the loop instead of respawning. */
   crashLoopSuppressed: boolean;
+  /** True when the crashloop circuit breaker (#2527) is open, so the net refused
+   * to respawn into a configuration proven to kill every boot identically. */
+  bootBreakerSuppressed?: boolean;
 }
 
 export interface SupervisorWatchdogLoopOptions {
@@ -354,6 +362,27 @@ async function recoverDeadSupervisor(
   }
   // The operator asked to stop — never resurrect a supervisor mid-shutdown.
   if (signals.stopRequested) return base;
+
+  // Crashloop circuit breaker (#2527): an OPEN breaker means N consecutive
+  // boots died with byte-identical signatures — a deterministic failure that a
+  // respawn can only repeat. The healer and alert already fired at trip time;
+  // refuse the respawn until a successful boot (or an operator relaunch) closes it.
+  if (io.readBootBreaker) {
+    let breaker: import("./supervisor/boot-breaker.js").BootBreakerLedger | null = null;
+    try {
+      breaker = await io.readBootBreaker();
+    } catch {
+      breaker = null;
+    }
+    if (isBreakerOpen(breaker)) {
+      io.log(
+        `⛔ watchdog: boot breaker is OPEN (${breaker!.count} identical boot deaths, ` +
+          `signature=${breaker!.signature}) — NOT respawning supervisor pid=${pid}. ` +
+          `Fix the implicated state, then relaunch the fleet to reset the breaker.`,
+      );
+      return { ...base, bootBreakerSuppressed: true };
+    }
+  }
 
   let ledger: number[] = [];
   try {

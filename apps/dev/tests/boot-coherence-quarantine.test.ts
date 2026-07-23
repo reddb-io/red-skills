@@ -1,11 +1,6 @@
-// boot-coherence-quarantine.test.ts — label/body coherence probe quarantine behaviour at boot (#2386).
-//
-// A single incoherent issue (ready-for-agent + active Current blocker in body) must
-// never halt every worker boot. The probe quarantines the issue autonomously —
-// ready-for-agent → needs-triage + one comment — and boot continues.
-
+import { runCastleWorkerDrain } from "@reddb-io/red-castle/engine";
 import { describe, expect, it, vi } from "vitest";
-import { BootHaltError, makeDeps, options, runBoot } from "./boot.helpers.js";
+import { makeDeps, options, runBoot } from "./boot.helpers.js";
 
 const BLOCKER_BODY = [
   "## Current blocker",
@@ -19,148 +14,149 @@ const BLOCKER_BODY = [
   "<!-- /red:blocker-state -->",
 ].join("\n");
 
-const INCOHERENT_ISSUE = {
-  number: 1971,
-  title: "Some work item",
-  labels: ["ready-for-agent", "priority:normal"],
-  body: BLOCKER_BODY,
-};
+interface MutableIssue {
+  number: number;
+  title: string;
+  labels: string[];
+  body: string;
+}
 
-function coherenceOptions(over: { issues?: typeof INCOHERENT_ISSUE[]; fail?: boolean } = {}) {
-  const fail = over.fail ?? false;
+function poisonedIssue(): MutableIssue {
+  return {
+    number: 1971,
+    title: "Poisoned work item",
+    labels: ["ready-for-agent", "ready-for-human", "priority:normal"],
+    body: BLOCKER_BODY,
+  };
+}
+
+function healthyIssue(): MutableIssue {
+  return {
+    number: 1972,
+    title: "Healthy sibling",
+    labels: ["ready-for-agent", "priority:normal"],
+    body: "## Agent brief\n\nShip the healthy slice.",
+  };
+}
+
+function coherenceOptions(issues: MutableIssue[]) {
   return options({
     operationalProbes: {
       remoteUrls: [],
       labelBodyCoherence: {
-        listOpenReadyIssues: async () => over.issues ?? [INCOHERENT_ISSUE],
-      },
-    },
-    precheck: {
-      ghInstalled: true,
-      ghAuthenticated: true,
-      isGitRepo: true,
-      remoteUrls: ["git@github.com:reddb-io/red-skills.git"],
-      hasMainBranch: true,
-      currentBranch: "main",
-      pnpmInstalled: true,
-      labelBodyCoherence: {
-        listOpenReadyIssues: async () => over.issues ?? [INCOHERENT_ISSUE],
+        listOpenReadyIssues: async () => issues.filter((issue) => issue.labels.includes("ready-for-agent")),
       },
     },
   });
 }
 
-describe("runBoot label/body coherence probe quarantine", () => {
-  it("quarantines the incoherent issue and boots normally instead of halting", async () => {
-    const { deps, ghCalls } = makeDeps();
-
-    const result = await runBoot(deps, coherenceOptions());
-
-    expect(result.bootstrap).toEqual({ ok: true });
-    const edit = ghCalls.editLabels.find((e) => e.issue === 1971);
-    expect(edit).toBeDefined();
-    expect(edit?.remove).toContain("ready-for-agent");
-    expect(edit?.add).toContain("needs-triage");
-    const comment = ghCalls.comment.find((c) => c.issue === 1971);
-    expect(comment).toBeDefined();
-    expect(comment?.body).toContain("quarantined this issue");
-    expect(comment?.body).toContain("ready-for-agent");
-    expect(comment?.body).toContain("kind=validation");
+function wireIssueMutations(
+  deps: ReturnType<typeof makeDeps>["deps"],
+  issues: MutableIssue[],
+  overrides: { failLabels?: boolean; failBody?: boolean } = {},
+) {
+  const editLabels = vi.fn(async (number: number, remove: string[], add: string[]) => {
+    if (overrides.failLabels) throw new Error("label mutation failed");
+    const issue = issues.find((candidate) => candidate.number === number)!;
+    issue.labels = issue.labels.filter((label) => !remove.includes(label));
+    issue.labels.push(...add.filter((label) => !issue.labels.includes(label)));
   });
-
-  it("idempotent on second boot: probe sees no ready-labelled issues so no label edit or comment fires", async () => {
-    const { deps, ghCalls } = makeDeps();
-
-    const result = await runBoot(
-      deps,
-      options({
-        operationalProbes: {
-          remoteUrls: [],
-          labelBodyCoherence: {
-            // Second boot: the issue was already quarantined so it no longer has
-            // ready-for-agent and the probe returns an empty list.
-            listOpenReadyIssues: async () => [],
-          },
-        },
-      }),
-    );
-
-    expect(result.bootstrap).toEqual({ ok: true });
-    expect(ghCalls.editLabels.filter((e) => e.issue === 1971)).toHaveLength(0);
-    expect(ghCalls.comment.filter((c) => c.issue === 1971)).toHaveLength(0);
+  const editBody = vi.fn(async (number: number, body: string) => {
+    if (overrides.failBody) throw new Error("body mutation failed");
+    issues.find((candidate) => candidate.number === number)!.body = body;
   });
+  deps.gh.editLabels = editLabels;
+  Object.assign(deps.gh, {
+    editBody,
+    // The transition API reads live labels before planning (#2528).
+    viewLabels: async (number: number) =>
+      issues.find((candidate) => candidate.number === number)?.labels ?? [],
+  });
+  return { editLabels, editBody };
+}
 
-  it("halts with BootHaltError when the quarantine label edit fails", async () => {
+async function drainAfterBoot(
+  deps: ReturnType<typeof makeDeps>["deps"],
+  issues: MutableIssue[],
+) {
+  const processed: number[] = [];
+  const result = await runCastleWorkerDrain(
+    {
+      gh: {
+        listCandidates: async () => issues.filter((issue) => issue.labels.includes("ready-for-agent")),
+      },
+      runBoot,
+      bootDeps: deps,
+      bootOptions: coherenceOptions(issues),
+      processIssue: async (_processDeps: object, input: { issue: number; runner: "codex" }) => {
+        processed.push(input.issue);
+        return { outcome: "done" as const };
+      },
+      processDeps: {},
+      buildProcessInput: (issue) => ({ issue: issue.number, runner: "codex" as const }),
+      emit: () => undefined,
+    },
+    {
+      runner: "codex",
+      workerId: "wTEST",
+      filter: { kind: "all" },
+      issueTemplate: {},
+    },
+  );
+  return { processed, result };
+}
+
+describe("ADR 0122 boot quarantine posture", () => {
+  it("quarantines one incoherent issue and claims its healthy sibling in the same boot", async () => {
+    const issues = [poisonedIssue(), healthyIssue()];
     const { deps } = makeDeps();
-    const origEditLabels = deps.gh.editLabels;
-    deps.gh.editLabels = async (issue, remove, add) => {
-      if (issue === 1971) throw new Error("gh API error: 503");
-      return origEditLabels(issue, remove, add);
-    };
+    const mutations = wireIssueMutations(deps, issues);
 
-    await expect(runBoot(deps, coherenceOptions())).rejects.toBeInstanceOf(BootHaltError);
-  });
+    const { processed, result } = await drainAfterBoot(deps, issues);
 
-  it("names the probe in the BootHaltError when quarantine fails", async () => {
-    const { deps } = makeDeps();
-    deps.gh.editLabels = async () => {
-      throw new Error("gh API error");
-    };
-
-    await expect(runBoot(deps, coherenceOptions())).rejects.toMatchObject({
-      phase: "operational-probe",
-      probe: { id: "afk.label-body-coherence" },
-    });
-  });
-
-  it("continues boot when comment posting fails but label edit succeeds", async () => {
-    const { deps, ghCalls } = makeDeps();
-    deps.gh.comment = async (issue, body) => {
-      if (issue === 1971) throw new Error("comment API error");
-    };
-
-    const result = await runBoot(deps, coherenceOptions());
-
-    expect(result.bootstrap).toEqual({ ok: true });
-    const edit = ghCalls.editLabels.find((e) => e.issue === 1971);
-    expect(edit?.remove).toContain("ready-for-agent");
-    expect(edit?.add).toContain("needs-triage");
-  });
-
-  it("logs the quarantined issue and blocker summary at supervisor level", async () => {
-    const log = vi.fn();
-    const { deps } = makeDeps({ log });
-
-    await runBoot(deps, coherenceOptions());
-
-    expect(log).toHaveBeenCalledWith(
-      expect.stringContaining("quarantined #1971"),
+    expect(result.boot.bootstrap).toEqual({ ok: true });
+    expect(processed).toEqual([1972]);
+    // #2528: the transition API cures the WHOLE poison shape in one atomic edit —
+    // the stacked ready-for-human role leaves together with ready-for-agent.
+    expect(mutations.editLabels).toHaveBeenCalledWith(
+      1971,
+      ["ready-for-agent", "ready-for-human"],
+      ["quarantine"],
     );
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("ready-for-agent→needs-triage"));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("kind=validation"));
+    expect(issues[0]?.labels).toContain("quarantine");
+    expect(issues[0]?.labels).not.toContain("ready-for-agent");
+    expect(issues[0]?.body).toContain("<!-- afk:quarantine v1 issue=#1971 -->");
+    expect(issues[0]?.body).toContain("ready-for-human");
+    expect(issues[0]?.body).toContain("kind=validation");
   });
 
-  it("quarantines multiple incoherent issues in one boot sweep", async () => {
-    const { deps, ghCalls } = makeDeps();
-    const issues = [
-      { number: 100, title: "A", labels: ["ready-for-agent"], body: BLOCKER_BODY },
-      { number: 200, title: "B", labels: ["ready-for-agent"], body: BLOCKER_BODY },
-    ];
+  it.each(["labels", "body"] as const)(
+    "does not globally halt or dispatch the poisoned issue when its %s mutation fails",
+    async (failure) => {
+      const issues = [poisonedIssue(), healthyIssue()];
+      const { deps } = makeDeps();
+      wireIssueMutations(deps, issues, {
+        failLabels: failure === "labels",
+        failBody: failure === "body",
+      });
 
-    const result = await runBoot(deps, coherenceOptions({ issues }));
+      const { processed, result } = await drainAfterBoot(deps, issues);
 
-    expect(result.bootstrap).toEqual({ ok: true });
-    expect(ghCalls.editLabels.filter((e) => [100, 200].includes(e.issue))).toHaveLength(2);
-  });
+      expect(result.boot.bootstrap).toEqual({ ok: true });
+      expect(result.boot.quarantinedIssues).toEqual([1971]);
+      expect(processed).toEqual([1972]);
+    },
+  );
 
-  it("comment body includes the issue number, labels, and blocker evidence", async () => {
-    const { deps, ghCalls } = makeDeps();
+  it("is idempotent after the issue has left the executable queue", async () => {
+    const issues = [poisonedIssue()];
+    const { deps } = makeDeps();
+    const mutations = wireIssueMutations(deps, issues);
 
-    await runBoot(deps, coherenceOptions());
+    await runBoot(deps, coherenceOptions(issues));
+    await runBoot(deps, coherenceOptions(issues));
 
-    const comment = ghCalls.comment.find((c) => c.issue === 1971);
-    expect(comment?.body).toContain("<!-- afk:quarantine v1 issue=#1971 -->");
-    expect(comment?.body).toContain("ready-for-agent");
-    expect(comment?.body).toContain("Fix recipe");
+    expect(mutations.editLabels).toHaveBeenCalledTimes(1);
+    expect(mutations.editBody).toHaveBeenCalledTimes(1);
   });
 });

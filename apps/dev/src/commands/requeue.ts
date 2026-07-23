@@ -25,6 +25,11 @@ import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import { planRequeue, type RequeuePlan } from "../core/requeue.js";
+import {
+  applyTransition,
+  isRefused,
+  planTransition,
+} from "../core/state-transition.js";
 import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../core/claim.js";
 import { LABEL_READY } from "../core/triage-labels.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
@@ -82,7 +87,7 @@ export interface RequeueExecutionInput {
 }
 
 export type RequeueExecutionOutcome =
-  | "applied"
+  | "requeued"
   | "no-op"
   | "dry-run"
   | "closed"
@@ -103,10 +108,20 @@ export interface RequeueExecutionResult {
   addLabels?: string[];
 }
 
+export interface RequeueBaseFreshnessResult {
+  ok: boolean;
+  evidence: string;
+}
+
+export type RequeueBaseFreshnessVerifier = (
+  issueBody: string,
+) => Promise<RequeueBaseFreshnessResult>;
+
 export interface RequeueExecutionOptions {
   cwd?: string;
   gh?: RequeueGh;
   adoptRunner?: RequeueAdoptRunner;
+  verifyBaseFreshness?: RequeueBaseFreshnessVerifier;
   /** Optional sink for the adopt gate's live progress. MCP callers omit it. */
   progress?: NodeJS.WritableStream;
 }
@@ -168,6 +183,34 @@ function ghFor(cwd: string, repo: string): RequeueGh {
     postClaim: async (issue, body) => {
       await ghx.postClaimComment({ cwd, repo }, issue, body);
     },
+  };
+}
+
+async function verifyFreshBase(
+  cwd: string,
+  issueBody: string,
+): Promise<RequeueBaseFreshnessResult> {
+  const paths = afkPaths(cwd);
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  const base = await resolveBase(
+    { issueBody },
+    {
+      readLockedBranch: () => readLockedBranch(branchLockPath(cwd)),
+      configLockedBranch: getConfig(config, "dev.lock.branch") || undefined,
+      configTrunk: getConfig(config, "dev.trunk") || undefined,
+      fetchIssueBody: async () => undefined,
+    },
+  );
+  const resolved = await gitx.resolveFreshBase({ cwd }, { base });
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      evidence: resolved.message ?? `could not refresh base ${base}`,
+    };
+  }
+  return {
+    ok: true,
+    evidence: `refreshed ${base} from origin/${base}`,
   };
 }
 
@@ -475,9 +518,10 @@ async function runAdoptLanding(
  * — apply the one-shot requeue transition. A non-parked issue is a no-op (exit
  * 0). `--dry-run` prints the plan without mutating. The `gh` dependency is
  * injectable for tests; production wires the gh CLI. When `--adopt-branch` is
- * given, the branch is adopted via the no-agent landing lane (ADR 0055
- * reconcile) after the requeue transition; `adoptRunnerOverride` is injectable
- * for tests.
+ * given for a non-parked issue, the branch is adopted via the no-agent landing
+ * lane (ADR 0055 reconcile); `adoptRunnerOverride` is injectable for tests. A
+ * requeueable parked issue applies its queue transition directly so the
+ * no-agent landing result cannot overwrite the requested requeue.
  */
 export async function executeRequeue(
   input: RequeueExecutionInput,
@@ -538,6 +582,26 @@ export async function executeRequeue(
     }
   }
 
+  const isBaseStale =
+    plan.activeBlocker?.kind === "base-stale" ||
+    plan.removeLabels.includes("blocked:base-stale");
+  if (plan.requeueable && isBaseStale) {
+    const freshness = await (
+      options.verifyBaseFreshness ?? ((body) => verifyFreshBase(cwd, body))
+    )(issueState.body);
+    if (!freshness.ok) {
+      return {
+        issue: input.issue,
+        plan,
+        applied: false,
+        outcome: "refused",
+        exitCode: 1,
+        reason: `base freshness verification failed: ${freshness.evidence}`,
+        ...(adoptBranch ? { adoptBranch } : {}),
+      };
+    }
+  }
+
   if (input.dryRun) {
     return {
       issue: input.issue,
@@ -549,7 +613,6 @@ export async function executeRequeue(
     };
   }
 
-  const withholdReady = adoptBranch !== undefined;
   let readyWithheld = false;
   let removeLabels: string[] | undefined;
   let addLabels: string[] | undefined;
@@ -557,16 +620,36 @@ export async function executeRequeue(
     await sweepRequeueClaims(gh, input.issue);
     if (plan.bodyChanged) await gh.editBody(input.issue, plan.body);
     await gh.comment(input.issue, directiveComment(plan, guidance));
-    addLabels = withholdReady
-      ? plan.addLabels.filter((label) => label !== LABEL_READY)
-      : [...plan.addLabels];
-    removeLabels =
-      withholdReady && issueState.labels.includes(LABEL_READY)
-        ? [...plan.removeLabels, LABEL_READY]
-        : [...plan.removeLabels];
-    await gh.editLabels(input.issue, removeLabels, addLabels);
-    if (withholdReady) readyWithheld = true;
-  } else if (adoptBranch && issueState.labels.includes(LABEL_READY)) {
+    const lifecyclePlan = planTransition(issueState.labels, { kind: "queue" });
+    if (isRefused(lifecyclePlan)) {
+      throw new Error(`requeue transition refused: ${lifecyclePlan.reason}`);
+    }
+    removeLabels = [...plan.removeLabels];
+    addLabels = [...plan.addLabels];
+    await applyTransition(
+      {
+        editIssue: async (issue, edit) => {
+          await gh.editLabels(issue, [...edit.remove], [...edit.add]);
+          return true;
+        },
+        readBody: async () => plan.body,
+      },
+      input.issue,
+      { remove: removeLabels, add: addLabels },
+    );
+    return {
+      issue: input.issue,
+      plan,
+      applied: true,
+      removeLabels,
+      addLabels,
+      outcome: "requeued",
+      exitCode: 0,
+      ...(adoptBranch ? { adoptBranch } : {}),
+    };
+  }
+
+  if (adoptBranch && issueState.labels.includes(LABEL_READY)) {
     await gh.editLabels(input.issue, [LABEL_READY], []);
     readyWithheld = true;
   }
@@ -578,21 +661,15 @@ export async function executeRequeue(
     ...(removeLabels ? { removeLabels } : {}),
     ...(addLabels ? { addLabels } : {}),
   };
-  if (!adoptBranch) {
-    return { ...baseResult, outcome: "applied", exitCode: 0 };
-  }
+  if (!adoptBranch) return { ...baseResult, outcome: "no-op", exitCode: 0 };
 
   const restoreQueueLabel = async (): Promise<void> => {
     if (readyWithheld) await gh.editLabels(input.issue, [], [LABEL_READY]);
   };
-  const postLabels = plan.requeueable
-    ? issueState.labels.filter(
-        (label) => !plan.removeLabels.includes(label) && label !== LABEL_READY,
-      )
-    : issueState.labels.filter((label) => label !== LABEL_READY);
+  const postLabels = issueState.labels.filter((label) => label !== LABEL_READY);
   const adoptData: RequeueAdoptData = {
     title: "",
-    body: plan.requeueable ? plan.body : issueState.body,
+    body: issueState.body,
     labels: postLabels,
   };
 
@@ -651,7 +728,7 @@ function renderRequeueResult(
         `add=[${result.plan?.addLabels.join(",") ?? ""}]` +
         `${result.adoptBranch ? ` adopt-branch=${result.adoptBranch}` : ""}\n`,
     );
-  } else if (result.outcome === "applied") {
+  } else if (result.outcome === "requeued") {
     stdout.write(
       `Requeue #${issue}: cleared blocker=${result.plan?.bodyChanged ?? false}, ` +
         `removed [${result.removeLabels?.join(",") ?? ""}], ` +
@@ -678,6 +755,7 @@ export async function requeueCommand(
   stdout: NodeJS.WritableStream = process.stdout,
   ghOverride?: RequeueGh,
   adoptRunnerOverride?: RequeueAdoptRunner,
+  baseFreshnessVerifierOverride?: RequeueBaseFreshnessVerifier,
 ): Promise<number> {
   const { values, positionals } = parseFlags(args, REQUEUE_FLAG_SCHEMA);
   const issue = parseIssue(positionals[0]);
@@ -694,11 +772,6 @@ export async function requeueCommand(
   }
   const adoptBranch =
     (values["adopt-branch"] as string | undefined)?.trim() || undefined;
-  if (adoptBranch) {
-    stdout.write(
-      `Requeue #${issue}: adopting branch \`${adoptBranch}\` through the no-agent landing lane (ADR 0055)…\n`,
-    );
-  }
   const result = await executeRequeue(
     {
       issue,
@@ -711,6 +784,7 @@ export async function requeueCommand(
       cwd,
       gh: ghOverride,
       adoptRunner: adoptRunnerOverride,
+      verifyBaseFreshness: baseFreshnessVerifierOverride,
       progress: stdout,
     },
   );

@@ -1,5 +1,6 @@
 import { recordWake, waitForNextWake } from "../event-wake.js";
 import { BootHaltError } from "../boot.js";
+import { bootDeathSignature, recordBootDeath } from "./boot-breaker.js";
 import {
   validateStallThresholds,
   validateSupervisorProgressThreshold,
@@ -13,6 +14,54 @@ import { superviseTick } from "./tick.js";
 import { guardedTick } from "./guarded-tick.js";
 import type { SupervisorState } from "./state.js";
 import type { HeartbeatSlotPid, SupervisorDeps } from "./types.js";
+
+/**
+ * Record one boot-sweep halt against the crashloop circuit breaker (#2527).
+ * Below the threshold this only persists the ledger — the watchdog keeps its
+ * normal respawn behaviour. On the death that reaches N consecutive identical
+ * signatures: the healer runs immediately for the implicated state, a loud
+ * alert is logged, and a `supervisor.breaker` event is emitted; the persisted
+ * open ledger then makes the watchdog refuse to respawn into the same failing
+ * configuration. Best-effort throughout — breaker bookkeeping must never mask
+ * the original halt.
+ */
+async function recordBootBreakerDeath(deps: SupervisorDeps, err: BootHaltError): Promise<void> {
+  const breaker = deps.bootBreaker;
+  if (!breaker) return;
+  try {
+    const signature = bootDeathSignature(err);
+    const prior = await breaker.store.read();
+    const decision = recordBootDeath(prior, signature, deps.now(), breaker.threshold);
+    await breaker.store.write(decision.ledger);
+    if (!decision.tripped) return;
+    let healOutcome = "no healer wired";
+    if (breaker.heal) {
+      try {
+        healOutcome = await breaker.heal(err);
+      } catch (healErr) {
+        healOutcome = `healer failed: ${healErr instanceof Error ? healErr.message : String(healErr)}`;
+      }
+    }
+    deps.log?.(
+      `⛔ boot breaker TRIPPED: ${decision.ledger.count} consecutive identical boot deaths ` +
+        `(signature=${signature}) — respawn suppressed, healer invoked (${healOutcome}). ` +
+        `Fix the implicated state, then relaunch the fleet to reset the breaker.`,
+    );
+    await emitSupervisorEvent(deps, {
+      kind: "supervisor.breaker",
+      payload: {
+        status: "tripped",
+        signature,
+        count: decision.ledger.count,
+        heal_outcome: healOutcome,
+      },
+    });
+  } catch (breakerErr) {
+    deps.log?.(
+      `boot breaker bookkeeping failed: ${breakerErr instanceof Error ? breakerErr.message : String(breakerErr)}`,
+    );
+  }
+}
 
 export interface SupervisorAdoptionResult {
   adopted: HeartbeatSlotPid[];
@@ -96,6 +145,14 @@ export async function runSupervisor(
         kind: "supervisor.boot-sweep",
         payload: { status: "passed" },
       });
+      // A successful boot closes the crashloop breaker (#2527): the failing
+      // configuration is provably gone, so the consecutive-signature run resets.
+      try {
+        await deps.bootBreaker?.store.write(null);
+      } catch {
+        // best-effort: a failed reset only risks a stale-open breaker, which the
+        // next trip evaluation overwrites.
+      }
     } catch (err) {
       if (err instanceof BootHaltError) {
         deps.log?.(`boot sweeps halted: ${err.message}`);
@@ -103,6 +160,7 @@ export async function runSupervisor(
           kind: "supervisor.boot-sweep",
           payload: { status: "halted", reason: err.message },
         });
+        await recordBootBreakerDeath(deps, err);
         return;
       }
       deps.log?.(
@@ -216,7 +274,8 @@ export async function runSupervisor(
       },
     });
     if (result.stopped) {
-      // post_fleet: informational — fires after all workers are terminated.
+      // post_fleet: informational — fires after this supervisor stops claiming;
+      // detached one-shot workers may still be draining in-flight Tickets.
       // Best-effort: hook failure is logged but never prevents clean exit.
       if (deps.dispatchFleetHook) {
         try {

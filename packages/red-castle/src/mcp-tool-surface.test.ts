@@ -48,8 +48,9 @@ const SURFACE: ReadonlyArray<{
   {
     name: "fleet_stop",
     title: "Stop AFK fleet",
-    description: "MUTATING: stop one named fleet and its detached workers.",
-    schema: ["fleet"],
+    description:
+      "MUTATING: gracefully stop one named fleet; force hard teardown explicitly.",
+    schema: ["fleet", "force"],
   },
   {
     name: "fleet_register",
@@ -213,15 +214,51 @@ const SURFACE: ReadonlyArray<{
     name: "claim_status",
     title: "Read AFK claim",
     description:
-      "Return the parsed claim marker records for one issue and the worker currently holding it.",
-    schema: ["issue"],
+      "Return the parsed claim marker records and current holder for one issue (`issue`) " +
+      "or a batch (`issues`), keyed per issue.",
+    schema: ["issue", "issues"],
   },
   {
     name: "claim_release",
     title: "Release AFK claim",
     description:
-      "MUTATING: post a concede marker for every un-conceded claim holder so the issue becomes claimable again.",
-    schema: ["issue"],
+      "MUTATING: post a concede marker for every un-conceded claim holder so the issue (`issue`) " +
+      "or each issue in a batch (`issues`) becomes claimable again.",
+    schema: ["issue", "issues"],
+  },
+  {
+    name: "merge_arm",
+    title: "Arm PR for the merge driver",
+    description:
+      "MUTATING: hand one open PR to the castle merge driver — it owns the PR to a terminal state " +
+      "(update-branch when BEHIND, merge-commit once green at head, bounded retries, " +
+      "needs-medic/needs-human classification) without GitHub native auto-merge.",
+    schema: ["pr"],
+  },
+  {
+    name: "merge_status",
+    title: "Read merge driver state",
+    description:
+      "Return the driver's durable per-PR records: armed set, attempts, last observed state, " +
+      "and terminal classifications.",
+    schema: [],
+  },
+  {
+    name: "merge_release",
+    title: "Release PR from the merge driver",
+    description:
+      "MUTATING: stop driver ownership of one PR. The record is kept as released for observability.",
+    schema: ["pr"],
+  },
+  {
+    name: "hitl_resolve",
+    title: "Resolve parked issue with a human decision",
+    description:
+      "MUTATING: encode one human decision on a parked issue atomically — " +
+      "requeue (concede dangling claims, strip park labels, ready-for-agent), " +
+      "retake (route to the no-agent landing lane), park (keep ready-for-human, record why), " +
+      "or close. The rationale is posted as an issue comment for the audit trail.",
+    schema: ["issue", "decision", "rationale"],
   },
   {
     name: "worktree_list",

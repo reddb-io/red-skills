@@ -38,7 +38,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **A bug you can reproduce or diagnose now** -> `/diagnose`; if the user is
   only reporting a bug for later, use `/report-bug`.
 - **A parked human decision** -> `/hitl`; if the blocker is resolved and the
-  Ticket only needs queue promotion, use `/retake`.
+  Ticket only needs queue promotion, use `/retake`. A `quarantine` Ticket is
+  still owned by the castle curator; route it to `/hitl` only after the bounded
+  curator re-checks have changed it to `ready-for-human`.
 - **A manual implementation slice** -> `/implement`, using `/tdd` for the build
   loop and `/code-review` before handing the branch to `/retake`.
 - **Validation or visible confirmation** -> `/verify`; for browser-visible state,
@@ -52,7 +54,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   Fleet lifecycle, worker dispatch, runners and live steer, gate, landing,
   claim, worktrees, hygiene, and observability are all tools on one canonical
   interface (ADR 0120); `/afk` and `/go` are its clients. The tool surface is
-  `plugins/dev/skills/engineering/afk/MCP.md`.
+  `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
+  throughput through `/afk` config: `afk.landing.wait` chooses release after
+  merge, green CI, or PR-open; route that choice to the AFK config reference.
 - **Carrying one effort end to end** -> `/manager`. It is the liaison over the
   lanes above, not a replacement for them: `$dev:manager <intent>` starts or
   continues an effort and `manager status` renders its brief. Routing and
@@ -102,7 +106,9 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 
 Capability references registered by owner:
 `castle` MCP (the canonical castle interface) ->
-`plugins/dev/skills/engineering/afk/MCP.md`.
+`plugins/dev/skills/engineering/afk/MCP.md`;
+`/afk` landing-tail throughput (`afk.landing.wait`) ->
+`plugins/dev/skills/engineering/afk/docs/CONFIG.md`.
 
 Troubleshooting references registered by owner:
 `/afk` -> `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md`;

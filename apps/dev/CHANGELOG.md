@@ -1,5 +1,69 @@
 # @reddb-io/dev
 
+## 2.86.2
+
+### Patch Changes
+
+- @reddb-io/shared@2.86.2
+- @reddb-io/build-info@2.86.2
+
+## 2.86.1
+
+### Patch Changes
+
+- @reddb-io/shared@2.86.1
+- @reddb-io/build-info@2.86.1
+
+## 2.86.0
+
+### Patch Changes
+
+- @reddb-io/shared@2.86.0
+- @reddb-io/build-info@2.86.0
+
+## 2.85.1
+
+### Patch Changes
+
+- @reddb-io/shared@2.85.1
+- @reddb-io/build-info@2.85.1
+
+## 2.85.0
+
+### Patch Changes
+
+- @reddb-io/shared@2.85.0
+- @reddb-io/build-info@2.85.0
+
+## 2.84.1
+
+### Patch Changes
+
+- c86e487: Claim explicitly dispatched issues before shared boot hygiene, expose booting workers in vitals, and serialize validation gates host-wide.
+  - @reddb-io/shared@2.84.1
+  - @reddb-io/build-info@2.84.1
+
+## 2.84.0
+
+### Patch Changes
+
+- @reddb-io/shared@2.84.0
+- @reddb-io/build-info@2.84.0
+
+## 2.83.0
+
+### Patch Changes
+
+- @reddb-io/shared@2.83.0
+- @reddb-io/build-info@2.83.0
+
+## 2.82.0
+
+### Patch Changes
+
+- @reddb-io/shared@2.82.0
+- @reddb-io/build-info@2.82.0
+
 ## 2.81.0
 
 ### Minor Changes

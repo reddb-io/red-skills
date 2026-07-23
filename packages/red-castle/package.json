@@ -7,14 +7,13 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./mcp-server": "./src/mcp-server.ts",
     "./engine": "./src/engine/index.ts",
     "./engine/contracts": "./src/engine/contracts/index.ts",
     "./engine/terminal-events": "./src/engine/terminal-events.ts",
     "./engine/lifecycle-hooks": "./src/engine/lifecycle-hooks.ts",
     "./sandboxes/docker": "./src/sandboxes/docker.ts",
-    "./sandboxes/vercel": "./src/sandboxes/vercel.ts",
     "./sandboxes/podman": "./src/sandboxes/podman.ts",
-    "./sandboxes/daytona": "./src/sandboxes/daytona.ts",
     "./sandboxes/no-sandbox": "./src/sandboxes/no-sandbox.ts"
   },
   "scripts": {
@@ -27,7 +26,6 @@
     "format:check": "prettier --check .",
     "sandcastle": "npm run build:dist && tsx .red-castle/run.ts",
     "test-podman": "npm run build:dist && tsx --env-file=.red-castle/.env .red-castle/test-podman.ts",
-    "test-vercel": "npm run build:dist && tsx --env-file=.red-castle/.env .red-castle/test-vercel.ts",
     "test-interactive": "npm run build:dist && tsx --env-file=.red-castle/.env .red-castle/test-interactive.ts"
   },
   "keywords": [
@@ -56,7 +54,6 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@daytona/sdk": "^0.164.0",
     "@types/node": "^25.5.0",
     "@typescript/native-preview": "^7.0.0-dev.20260317.1",
     "prettier": "^3.5.3",
@@ -64,18 +61,6 @@
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^3.2.0"
-  },
-  "peerDependencies": {
-    "@daytona/sdk": "^0.164.0",
-    "@vercel/sandbox": ">=1.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@vercel/sandbox": {
-      "optional": true
-    },
-    "@daytona/sdk": {
-      "optional": true
-    }
   },
   "files": [
     "src"

@@ -1,6 +1,6 @@
 # Additional built-in sandbox providers
 
-Sandcastle does not grow the set of **built-in** sandbox providers on request. The shipped list (Docker, Podman, Vercel, Daytona, and the no-op `noSandbox`) is deliberately curated.
+Sandcastle does not grow the set of **built-in** sandbox providers on request. The shipped list (Docker, Podman, and the no-op `noSandbox`) is deliberately curated — and this fork prunes it further than upstream: the upstream Vercel and Daytona providers were removed because RedSkills runs agents only on local container runtimes (see the divergence note in `CLAUDE.md`).
 
 ## Why this is out of scope
 

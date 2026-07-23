@@ -27,6 +27,7 @@
 /** The literal `## Blocked by` heading line, allowing only trailing whitespace.
  * Mirrors awk `/^## Blocked by[[:space:]]*$/`. */
 import { LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT, LABEL_DEPENDENCY, LABEL_READY, LABEL_RUNNING, LABEL_HUMAN } from "./triage-labels.js";
+import { isRefused, planTransition } from "./state-transition.js";
 import {
   renderIssueReferenceList,
   resolveIssueReferences,
@@ -302,8 +303,19 @@ export async function executeUnblockSweep(
   const promoted: number[] = [];
   for (const p of plans) {
     const held = labelsByIssue.get(p.number) ?? [];
-    const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
-    await gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);
+    // Promote through the ADR 0122 transition API (#2528) when the candidate's
+    // labels were listed: one atomic edit that consumes every req:* edge and
+    // provably leaves exactly one state role. The legacy edit survives only for
+    // a label-less candidate (degraded listing), where no plan can be proven.
+    const plan = held.length > 0 ? planTransition(held, { kind: "promote" }) : undefined;
+    if (plan && !isRefused(plan)) {
+      await gh.editLabels(p.number, [...plan.remove], [...plan.add]);
+    } else if (plan && isRefused(plan)) {
+      continue;
+    } else {
+      const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
+      await gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);
+    }
     const reqs = p.refs.map(refToNumber).filter((n): n is number => n !== null);
     const comment = p.reqLabels.length > 0 && reqs.length > 0
       ? await cascadeAuditCommentFor(reqs, gh.issueReference)

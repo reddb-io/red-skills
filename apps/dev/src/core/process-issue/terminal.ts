@@ -66,6 +66,7 @@ import {
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
+import { isRefused, planTransition } from "../state-transition.js";
 import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "../attempt-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
@@ -110,6 +111,7 @@ import {
 } from "../issue-lifecycle.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
+import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import { editLabelsTagged, routeRecovery } from "./recovery.js";
 export async function writeValidationSidecar(
   deps: ProcessIssueDeps,
@@ -472,7 +474,21 @@ export async function emitDone(
 export async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   deps.recordWorkerEvent?.("worker.blocked", { outcome: "merge-conflict", reason: _reason });
-  const decision = await routeRecovery(deps, input.issue, "merge-conflict", recoveryOrdinalFor(input));
+  // Durable retry accounting (#2576): the worker-local attempt ordinal resets
+  // to 1 on every replacement worker (ADR 0103 flat workspaces), so the
+  // RED_AFK_RETRY_MERGE cap alone never trips across reclaims — the 2026-07-23
+  // incidents looped 100+ identical land-failed cycles. The ADR 0122 heal
+  // ledger supplies the per-issue consecutive count that survives replacement.
+  let ordinal = recoveryOrdinalFor(input);
+  if (deps.healLedger) {
+    try {
+      const heal = await recordIssueHeal(deps.healLedger, input.issue, deps.nowEpoch() * 1000);
+      ordinal = Math.max(ordinal, heal.history.length);
+    } catch {
+      // best-effort: a ledger fault falls back to worker-local accounting.
+    }
+  }
+  const decision = await routeRecovery(deps, input.issue, "merge-conflict", ordinal);
   if (decision === "escalate") {
     await writeCurrentBlockerBestEffort(
       deps,
@@ -481,7 +497,7 @@ export async function mergeFailed(c: StageCommon, _reason: string, locked = fals
     );
   }
   const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
-    log: "(no merge log captured)",
+    log: _reason || "(no merge log captured)",
   });
   await recordAttemptBestEffort(c, "merge-conflict", {
     durationS: deps.nowEpoch() - c.startedEpoch,
@@ -725,9 +741,23 @@ export async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: numbe
       for (const n of reqIds) reqs.push({ n, closed: await resolveClosed(n) });
       dependents.push({ number: dep.number, reqs });
     }
+    const labelsByNumber = new Map(dependentsRaw.map((dep) => [dep.number, dep.labels]));
     const plans = planCloseCascade(closedIssue, dependents);
     for (const p of plans) {
-      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
+      // Promote through the ADR 0122 transition API (#2528): one atomic edit
+      // that consumes every req:* edge and provably leaves exactly one state
+      // role, so a cascade can never stack ready-for-agent onto a park.
+      const current = labelsByNumber.get(p.number);
+      const plan = current ? planTransition(current, { kind: "promote" }) : undefined;
+      if (plan && !isRefused(plan)) {
+        await deps.gh.editLabels(p.number, [...plan.remove], [...plan.add]);
+      } else {
+        if (plan && isRefused(plan)) {
+          deps.appendIterLog(`🤖 close-cascade promote refused for #${p.number}: ${plan.reason}`);
+          continue;
+        }
+        await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
+      }
       const reqs = p.refs.map((ref) => Number(ref.slice(1))).filter((n) => Number.isFinite(n));
       await deps.gh.comment(p.number, await cascadeAuditCommentFor(reqs, deps.gh.issueReference));
     }

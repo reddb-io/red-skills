@@ -14,7 +14,7 @@ A TypeScript library for orchestrating AI coding agents in isolated sandboxes:
 2. Sandcastle handles sandboxing the agent with a configurable branch strategy.
 3. The commits made on the branches get merged back.
 
-Sandcastle is provider-agnostic — it ships with built-in providers for Docker, Podman, and Vercel, and you can create your own. Great for parallelizing multiple AFK agents, creating review pipelines, or even just orchestrating your own agents.
+Sandcastle is provider-agnostic — it ships with built-in providers for Docker and Podman, and you can create your own. Great for parallelizing multiple AFK agents, creating review pipelines, or even just orchestrating your own agents.
 
 ## Prerequisites
 
@@ -22,7 +22,6 @@ Sandcastle is provider-agnostic — it ships with built-in providers for Docker,
 - A sandbox provider — Sandcastle needs an isolated environment to run agents in. Built-in options:
   - [Docker Desktop](https://www.docker.com/) — most common for local development
   - [Podman](https://podman.io/) — rootless alternative to Docker
-  - [Vercel](https://vercel.com/) — cloud-based Firecracker microVMs via `@vercel/sandbox`
   - Or [create your own](#custom-sandbox-providers) using `createBindMountSandboxProvider` or `createIsolatedSandboxProvider`
 
 ## Quick start
@@ -60,7 +59,7 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
 await run({
   agent: claudeCode("claude-opus-4-8"),
-  sandbox: docker(), // or podman(), vercel(), or your own provider
+  sandbox: docker(), // or podman(), or your own provider
   promptFile: ".red-castle/prompt.md",
 });
 ```
@@ -73,7 +72,6 @@ Sandcastle uses a `SandboxProvider` to create isolated environments. The `sandbo
 | ---------- | ------------------------------------------ | ---------- | ------------------------------------------- |
 | Docker     | `@ai-hero/sandcastle/sandboxes/docker`     | Bind-mount | `run()`, `createSandbox()`, `interactive()` |
 | Podman     | `@ai-hero/sandcastle/sandboxes/podman`     | Bind-mount | `run()`, `createSandbox()`, `interactive()` |
-| Vercel     | `@ai-hero/sandcastle/sandboxes/vercel`     | Isolated   | `run()`, `createSandbox()`, `interactive()` |
 | No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `run()`, `createSandbox()`, `interactive()` |
 
 Worktree methods (`wt.run()`, `wt.interactive()`, `wt.createSandbox()`) accept the same providers as their top-level counterparts. `wt.interactive()` defaults to `noSandbox()` when no sandbox is specified.
@@ -81,10 +79,9 @@ Worktree methods (`wt.run()`, `wt.interactive()`, `wt.createSandbox()`) accept t
 ```typescript
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { podman } from "@ai-hero/sandcastle/sandboxes/podman";
-import { vercel } from "@ai-hero/sandcastle/sandboxes/vercel";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 
-// Docker, Podman, and Vercel are interchangeable in run() and createSandbox():
+// Docker and Podman are interchangeable in run() and createSandbox():
 await run({
   agent: claudeCode("claude-opus-4-8"),
   sandbox: docker(),
@@ -147,7 +144,7 @@ const result = await run({
   // Optional second arg for provider-specific options like effort level.
   agent: claudeCode("claude-opus-4-8", { effort: "high" }),
 
-  // Sandbox provider — required. Any SandboxProvider works (docker, podman, vercel, or custom).
+  // Sandbox provider — required. Any SandboxProvider works (docker, podman, or custom).
   // Provider-specific config (like imageName, mounts) lives inside the provider factory call.
   sandbox: docker({
     imageName: "sandcastle:local",
@@ -728,7 +725,7 @@ console.log(result.output.score); // typed as number
 
 When extraction or validation fails, `run()` throws a `StructuredOutputError`. Alongside `tag`, `rawMatched`, `cause`, `commits`, `branch`, and `preservedWorktreePath`, the error carries the `sessionId` (and `sessionFilePath`, when the session was captured) of the run that produced the bad output.
 
-Pass `maxRetries` to have Sandcastle handle the retry loop for you. Each retry resumes the same agent session and feeds back a token-efficient description of the error, so the agent can re-emit a corrected tag without redoing the work. Retries require an agent provider that supports session resumption (`claudeCode`, `codex`, `pi`) — calling `run()` with `maxRetries > 0` against a non-resumable provider (`cursor`, `opencode`, `copilot`) throws immediately.
+Pass `maxRetries` to have Sandcastle handle the retry loop for you. Each retry resumes the same agent session and feeds back a token-efficient description of the error, so the agent can re-emit a corrected tag without redoing the work. Retries require an agent provider that supports session resumption (`claudeCode`, `codex`, `pi`) — calling `run()` with `maxRetries > 0` against a non-resumable provider (`opencode`) throws immediately.
 
 ```ts
 const result = await run({
@@ -790,7 +787,7 @@ Every interactive prompt has a paired `--flag` so the entire init can run non-in
 | Option                    | Required | Default                      | Description                                                                                                    |
 | ------------------------- | -------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `--image-name`            | No       | `sandcastle:<repo-dir-name>` | Docker image name                                                                                              |
-| `--agent`                 | No       | Interactive prompt           | Agent to use (`claude-code`, `pi`, `codex`, `cursor`, `opencode`, `copilot`)                                   |
+| `--agent`                 | No       | Interactive prompt           | Agent to use (`claude-code`, `pi`, `codex`, `opencode`)                                   |
 | `--model`                 | No       | Agent's default model        | Model to use (e.g. `claude-sonnet-4-6`). Defaults to agent's default                                           |
 | `--sandbox`               | No       | Interactive prompt           | Sandbox provider to use (`docker`, `podman`)                                                                   |
 | `--template`              | No       | Interactive prompt           | Template to scaffold (e.g. `blank`, `simple-loop`)                                                             |
@@ -849,7 +846,7 @@ Removes the Podman image.
 
 | Option                     | Type               | Default                       | Description                                                                                                                                                                                                                  |
 | -------------------------- | ------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent`                    | AgentProvider      | —                             | **Required.** Agent provider (e.g. `claudeCode("claude-opus-4-8")`, `pi("claude-sonnet-4-6")`, `codex("gpt-5.4")`, `cursor("composer-2")`, `opencode("opencode/big-pickle")`, `copilot("claude-sonnet-4.5")`)                |
+| `agent`                    | AgentProvider      | —                             | **Required.** Agent provider (e.g. `claudeCode("claude-opus-4-8")`, `pi("claude-sonnet-4-6")`, `codex("gpt-5.4")`, `opencode("opencode/big-pickle")`)                |
 | `sandbox`                  | SandboxProvider    | —                             | **Required.** Sandbox provider (e.g. `docker()`, `podman()`, `docker({ imageName: "sandcastle:local" })`)                                                                                                                    |
 | `cwd`                      | string             | `process.cwd()`               | Host repo directory — anchor for `.red-castle/` artifacts and git operations. Relative paths resolve against `process.cwd()`.                                                                                                |
 | `prompt`                   | string             | —                             | Inline prompt (mutually exclusive with `promptFile`)                                                                                                                                                                         |
@@ -1039,7 +1036,7 @@ Environment variables are also resolved automatically from `.red-castle/.env` an
 
 ## Custom Sandbox Providers
 
-Sandcastle ships with built-in providers for Docker, Podman, and Vercel, but you can create your own. A sandbox provider tells Sandcastle how to execute commands in an isolated environment. There are two kinds:
+Sandcastle ships with built-in providers for Docker and Podman, but you can create your own. A sandbox provider tells Sandcastle how to execute commands in an isolated environment. There are two kinds:
 
 - **Bind-mount** — the sandbox can mount a host directory. Sandcastle creates a worktree on the host and the provider mounts it in. No file sync needed. Use this for Docker, Podman, or any local container runtime.
 - **Isolated** — the sandbox has its own filesystem (e.g. a cloud VM). The provider handles syncing code in and out via `copyIn` and `copyFileOut`. Use this when the sandbox cannot access the host filesystem.
@@ -1338,7 +1335,6 @@ const result = await run({
 For real-world examples, see:
 
 - [`src/sandboxes/docker.ts`](src/sandboxes/docker.ts) — bind-mount provider using Docker containers (with SELinux label support)
-- [`src/sandboxes/vercel.ts`](src/sandboxes/vercel.ts) — isolated provider using Vercel Firecracker microVMs via `@vercel/sandbox`
 - [`src/sandboxes/podman.ts`](src/sandboxes/podman.ts) — bind-mount provider using Podman containers (with SELinux label support)
 - [`src/sandboxes/test-isolated.ts`](src/sandboxes/test-isolated.ts) — isolated provider using temp directories (used in tests)
 
