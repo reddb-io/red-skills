@@ -38,5 +38,6 @@ export class ResidentReadCache {
 }
 
 export const QUEUE_STATUS_KEY = "queue_status";
+export const DEADEND_AUDIT_KEY = "deadend_audit";
 export const claimStatusKey = (issue: number): string => `claim_status:${issue}`;
 export const cascadeStatusKey = (issue: number): string => `cascade_status:${issue}`;

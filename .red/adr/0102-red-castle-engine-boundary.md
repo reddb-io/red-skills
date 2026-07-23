@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted. Records the locked boundary decision from wayfinder map #1875 and
-source Ticket #1877.
+Accepted; amended by ADR 0124, which replaces the remaining-surface list with
+the host-adapter criterion. Records the locked boundary decision from wayfinder
+map #1875 and source Ticket #1877.
 
 ## Context
 
