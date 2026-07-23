@@ -510,6 +510,22 @@ describe("recordDeath", () => {
 });
 
 describe("circuit trip and sweep", () => {
+  it("trips after K fast clean boot deaths while the queue still has work", async () => {
+    const { deps, io } = makeDeps();
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.deaths = [NOW - 40, NOW - 30, NOW - 20, NOW - 10];
+    slot.spawnEpoch = NOW - 5;
+    io.lastExitCode.mockReturnValue(0);
+
+    const { parked } = await handleDeadSlot(0, slot, deps, config(), 1);
+
+    expect(parked).toBe(true);
+    expect(slot.parked).toBe(true);
+    expect(slot.deaths).toEqual([NOW - 40, NOW - 30, NOW - 20, NOW - 10, NOW]);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+  });
+
   it("parks a fatal host-config death without retrying or feeding the fast-death circuit", async () => {
     const { deps, io } = makeDeps();
     const state = initSupervisorState(1);

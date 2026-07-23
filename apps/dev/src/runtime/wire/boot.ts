@@ -15,6 +15,8 @@ import { parseClaimRecords } from "../../core/claim.js";
 import {
   collectFleetTruthProbeInput,
   HOST_PREREQUISITE_COMMANDS,
+  type ClaimHygieneCommentInput,
+  type ClaimHygieneIssueInput,
   type HostPrerequisiteProbeInput,
 } from "../../core/operational-probes.js";
 import { resolveSupervisorConfig } from "../../core/supervisor.js";
@@ -114,6 +116,30 @@ export interface CollectPrecheckFactsOptions {
 
 export interface CollectBootPrecheckFactsOptions extends CollectPrecheckFactsOptions {
   readonly log?: (line: string) => void;
+}
+
+export interface ClaimHygieneIssueScanDeps {
+  readonly listCandidates: (label: string) => Promise<readonly { readonly number: number }[]>;
+  readonly listClaimComments: (issue: number) => Promise<readonly ClaimHygieneCommentInput[]>;
+}
+
+/** Claim hygiene spans both executable and active lifecycle states. A fleet
+ * relaunch must see claims stranded on `running` issues before workers spawn,
+ * even when a later label reconcile would return those issues to the queue. */
+export async function collectClaimHygieneIssues(
+  deps: ClaimHygieneIssueScanDeps,
+): Promise<readonly ClaimHygieneIssueInput[]> {
+  const pools = await Promise.all([
+    deps.listCandidates(LABEL_READY),
+    deps.listCandidates(LABEL_RUNNING),
+  ]);
+  const issueNumbers = [...new Set(pools.flat().map((candidate) => candidate.number))];
+  return Promise.all(
+    issueNumbers.map(async (number) => ({
+      number,
+      comments: await deps.listClaimComments(number),
+    })),
+  );
 }
 
 /**
@@ -294,15 +320,11 @@ export async function collectPrecheckFacts(
     claimHygiene: ctx.repo
       ? {
           ownWorkerPrefix: hostFingerprintPrefix(),
-          listOpenQueueIssues: async () => {
-            const candidates = await ghx.listCandidates(ghCtx, LABEL_READY);
-            return Promise.all(
-              candidates.map(async (candidate) => ({
-                number: candidate.number,
-                comments: await ghx.listClaimComments(ghCtx, candidate.number),
-              })),
-            );
-          },
+          listOpenQueueIssues: () =>
+            collectClaimHygieneIssues({
+              listCandidates: (label) => ghx.listCandidates(ghCtx, label),
+              listClaimComments: (issue) => ghx.listClaimComments(ghCtx, issue),
+            }),
           workerPidState,
           // Enables the ADR 0066 TTL classification of unknown-pid markers
           // (#2525): an own-namespace claim whose owner stopped refreshing past
