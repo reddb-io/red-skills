@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { runOperationalProbes } from "../src/core/operational-probes.js";
+import {
+  HOST_PREREQUISITE_COMMANDS,
+  runHostPrerequisiteProbe,
+} from "../src/core/operational-probes/host-prerequisites.js";
 import type { ExecFn } from "../src/runtime/exec.js";
 import { collectHostPrerequisiteProbeInput } from "../src/runtime/wire/boot.js";
 import { facts, makeDeps, options, runBoot } from "./boot.helpers.js";
@@ -180,4 +184,70 @@ describe("AFK host prerequisite boot probe", () => {
     });
     expect(calls).toEqual([]);
   });
+
+  it("fires before claim acquisition or any boot sweep when a prerequisite is missing", async () => {
+    const { deps, calls } = makeDeps();
+
+    await expect(
+      runBoot(
+        deps,
+        options({
+          precheck: facts({
+            hostPrerequisites: {
+              commands: {
+                bash: true,
+                git: true,
+                jq: true,
+                gh: true,
+                node: false,
+                timeout: true,
+                ps: true,
+              },
+              bashVersion: "GNU bash, version 5.2.15(1)-release",
+            },
+          }),
+        }),
+      ),
+    ).rejects.toMatchObject({
+      phase: "host-prereq",
+      probe: {
+        evidence: expect.stringContaining("node"),
+        canonicalFix: expect.stringContaining("command -v node"),
+      },
+    });
+    // Probe is step 0 of runBoot — no fs, gh, or git IO ran.
+    // Structurally, the session loop (claim acquisition, snapshots, hooks)
+    // only starts after runBoot returns successfully, so it is unreachable
+    // when the probe halts here.
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("each missing host tool produces a named halt with its fix string", () => {
+  type Cmd = (typeof HOST_PREREQUISITE_COMMANDS)[number];
+  const allPresent: Record<Cmd, boolean> = {
+    bash: true,
+    git: true,
+    jq: true,
+    gh: true,
+    node: true,
+    timeout: true,
+    ps: true,
+  };
+
+  for (const tool of HOST_PREREQUISITE_COMMANDS) {
+    it(`${tool} missing → halt names "${tool}" with command-v fix`, () => {
+      const result = runHostPrerequisiteProbe({
+        remoteUrls: [],
+        hostPrerequisites: {
+          commands: { ...allPresent, [tool]: false },
+          bashVersion: "GNU bash, version 5.2.15(1)-release",
+        },
+      });
+
+      expect(result.verdict).toBe("red");
+      expect(result.evidence).toContain(tool);
+      expect(result.canonicalFix).toContain(`command -v ${tool}`);
+    });
+  }
 });
