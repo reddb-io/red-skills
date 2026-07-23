@@ -1197,6 +1197,7 @@ export async function collectStatuslineAggregate(root: string) {
           churn_deaths: fleetChip.churnDeaths ?? 0,
           churn_respawns: fleetChip.churnRespawns ?? 0,
           churn_window_s: fleetChip.churnWindowS ?? 0,
+          breaker_count: fleetChip.breaker?.count ?? 0,
           bundle_version: fleetChip.bundleVersion ?? null,
         }
       : null,

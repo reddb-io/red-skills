@@ -264,6 +264,7 @@ export interface FleetHeartbeatEmitResult {
 
 export type SupervisorEventKind =
   | "supervisor.boot-sweep"
+  | "supervisor.breaker"
   | "supervisor.tick"
   | "supervisor.dead-slot-reconcile"
   | "supervisor.wake"
@@ -340,6 +341,22 @@ export interface SupervisorDeps {
    * an issue that keeps killing workers surfaces as a signal (#2526).
    */
   healLedger?: import("@reddb-io/red-castle/engine").HealLedgerStore;
+  /**
+   * Optional crashloop circuit breaker (ADR 0122 amendment, #2527). Consulted
+   * on every boot-sweep halt: N consecutive identical boot-death signatures
+   * trip the breaker — the supervisor stops feeding the respawn loop, the
+   * resident healer is invoked immediately for the implicated state, and a
+   * loud alert record is emitted. A different signature or one successful boot
+   * resets the run.
+   */
+  bootBreaker?: {
+    store: import("./boot-breaker.js").BootBreakerStore;
+    /** Consecutive identical signatures that trip; default BOOT_BREAKER_DEFAULT_THRESHOLD. */
+    threshold?: number;
+    /** Invoke the resident healer once for the implicated state. Returns a
+     * short outcome description for the alert record. Best-effort. */
+    heal?(err: import("../boot.js").BootHaltError): Promise<string>;
+  };
   /**
    * Optional liveness sink: one line per supervise tick (the CLI appends it to
    * supervisor.log.toonl). Makes a healthy fleet's heartbeat — and a wedged one's

@@ -12,6 +12,8 @@ import type { SupervisorLiveness } from "../core/supervisor.js";
 import type { HeartbeatSlotPid } from "../core/supervisor.js";
 import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
 import { isRefused, planTransition } from "../core/state-transition.js";
+import { createEnginePaths } from "@reddb-io/red-castle/engine";
+import { createFileBootBreakerStore } from "../core/supervisor/boot-breaker.js";
 import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
 import { listStaleClaimDirs, removeDir } from "./fs.js";
 import { countReadyForAgent } from "./gh.js";
@@ -251,6 +253,14 @@ export function buildWatchdogIO(
       const liveWorkers = await liveWorkerCount();
       const stopRequested = await fileExists(stopFile);
       return { readyForAgent, target, liveWorkers, stopRequested };
+    },
+
+    readBootBreaker: async () => {
+      try {
+        return await createFileBootBreakerStore(createEnginePaths(join(root, ".red"))).read();
+      } catch {
+        return null;
+      }
     },
 
     readRestartLedger: async (): Promise<number[]> => {
