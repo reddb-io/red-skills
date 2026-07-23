@@ -85,6 +85,38 @@ describe("operational probe registry", () => {
     ]);
   });
 
+  it("self-heals a pointer behind a cached lane but halts when the pointer is ahead of every lane", async () => {
+    const selfHealable = await runOperationalProbes({
+      remoteUrls: [],
+      bundleCoherence: {
+        installedVersion: "2.79.1",
+        pointerVersion: "2.79.0",
+        laneNewestVersion: "2.80.0",
+      },
+    });
+    const incoherent = await runOperationalProbes({
+      remoteUrls: [],
+      bundleCoherence: {
+        installedVersion: "2.79.1",
+        pointerVersion: "2.80.0",
+      },
+    });
+
+    expect(selfHealable.findings).toEqual([]);
+    expect(selfHealable.probes.find((probe) => probe.id === "afk.bundle-coherence")).toMatchObject({
+      verdict: "ok",
+      data: { findings: ["pointer-behind-lane"], selfHealable: ["pointer-behind-lane"] },
+    });
+    expect(incoherent.findings).toEqual([
+      expect.objectContaining({
+        id: "afk.bundle-coherence",
+        verdict: "red",
+        evidence: expect.stringContaining("pointer-ahead-of-lane"),
+        canonicalFix: expect.stringContaining("cached lane"),
+      }),
+    ]);
+  });
+
   it("reports stale failed bundle checks even without npm truth", async () => {
     const report = await runOperationalProbes({
       remoteUrls: [],
