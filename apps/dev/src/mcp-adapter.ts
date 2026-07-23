@@ -51,7 +51,7 @@ import type {
   WorkerSteerInput,
   WorkerStopInput,
   WorktreeRemoveInput,
-} from "../../../packages/red-castle/src/mcp-server.js";
+} from "@reddb-io/red-castle/mcp-server";
 import { listWaits as listRspWaits } from "../../rsp/src/wait/registry.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { collectDashboardReport } from "./commands/dashboard.js";

@@ -7,6 +7,7 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./mcp-server": "./src/mcp-server.ts",
     "./engine": "./src/engine/index.ts",
     "./engine/contracts": "./src/engine/contracts/index.ts",
     "./engine/terminal-events": "./src/engine/terminal-events.ts",

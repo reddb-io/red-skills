@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCastleMcpTools,
   type CastleMcpDependencies,
-} from "../../../packages/red-castle/src/mcp-server.js";
+} from "@reddb-io/red-castle/mcp-server";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const AFK = "plugins/dev/skills/engineering/afk";
