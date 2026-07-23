@@ -31,7 +31,7 @@ describe("runBoot tmp janitor", () => {
           pid: 200, ppid: 10, pgid: 190, sid: 10, ageS: 600,
           cwd: "/p/.red/tmp/workers/wTEST/2432/worktree", command: "node (vitest 2)",
         }],
-      } as NonNullable<Parameters<typeof options>[0]["tmpJanitor"]>,
+      } as NonNullable<NonNullable<Parameters<typeof options>[0]>["tmpJanitor"]>,
     }));
 
     expect(reapProcessGroup).toHaveBeenCalledWith(190);

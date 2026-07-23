@@ -159,8 +159,8 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
       }
     };
 
-    child.stdout.on("data", (chunk: Buffer) => capture("stdout", chunk));
-    child.stderr.on("data", (chunk: Buffer) => capture("stderr", chunk));
+    child.stdout?.on("data", (chunk: Buffer) => capture("stdout", chunk));
+    child.stderr?.on("data", (chunk: Buffer) => capture("stderr", chunk));
     child.on("error", (error) => {
       spawnError = error;
     });
