@@ -86,6 +86,28 @@ describe("castle MCP client docs contract", () => {
     }
   });
 
+  it("makes every castle-verb skill an MCP-first client of its tools", async () => {
+    // Skill → the tools its SKILL.md must name (plus the shared client markers).
+    const clients: ReadonlyArray<readonly [string, readonly string[]]> = [
+      ["hitl", ["requeue", "hitl_resolve"]],
+      ["triage", ["triage"]],
+      ["retake", ["retake", "requeue"]],
+      ["dashboard", ["dashboard"]],
+      ["daily-review", ["daily_review", "weekly_review"]],
+    ];
+
+    for (const [skillName, skillTools] of clients) {
+      const skill = await readRepoFile(
+        `plugins/dev/skills/engineering/${skillName}/SKILL.md`,
+      );
+      expect(skill, `/${skillName} should name the castle MCP`).toContain("`castle` MCP");
+      expect(skill, `/${skillName} should link the tool surface doc`).toContain("../afk/MCP.md");
+      for (const tool of skillTools) {
+        expect(skill, `/${skillName} should route through ${tool}`).toContain(`\`${tool}\``);
+      }
+    }
+  });
+
   it("keeps the ask-red router pointing at the castle MCP", async () => {
     const askRed = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
 

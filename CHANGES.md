@@ -2798,3 +2798,10 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **upstream**: —
 - **why**: Spec #2290 slice #2291 — the Manager's first functional slice needs an operator surface for the walking skeleton (start an effort, persist it, render its status brief) per ADR 0109.
 - **what changed**: added `plugins/dev/skills/engineering/manager/SKILL.md` (wrapper over `red-skills-dev manager`); registered it in `plugins/dev/.claude-plugin/plugin.json`, the root `README.md` skill map, and the `engineering/` bucket README; added the `/manager` route and inventory entry to `ask-red`; regenerated the Codex manifest.
+
+## hitl, triage, retake, dashboard, daily-review (engineering) — MCP-first client rewrite
+
+- **status**: modified
+- **upstream**: —
+- **why**: ADR 0120 made red-castle's `castle` MCP the canonical interface, but these five castle-verb skills still hand-rolled the flows (raw `gh` label flips in `/hitl` and `/triage`) or invoked the `red-skills-dev` CLI as the primary path — outside the doc-contract test's bijection, so they drifted silently.
+- **what changed**: each SKILL.md now names its castle tools as the primary surface with the CLI as documented fallback — `/hitl` → `requeue` + `hitl_resolve`, `/triage` → `triage`, `/retake` → `retake` + `requeue`, `/dashboard` → `dashboard`, `/daily-review` → `daily_review`/`weekly_review`; `apps/dev/tests/castle-mcp-client-docs.test.ts` gained a per-skill routing assertion binding all five to the tool surface.
