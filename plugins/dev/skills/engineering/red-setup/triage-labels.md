@@ -13,6 +13,7 @@ The skills speak in terms of canonical triage roles. Map them here to the actual
 | `ready-for-agent`  | `ready-for-agent`    | `/triage`, `/to-tickets`               | `/afk` (when claiming)              |
 | `running`          | `running`            | `/afk` (when claiming an issue)       | `/afk` (on close, blocker, or release) |
 | `ready-for-human`  | `ready-for-human`    | `/triage`, `/afk` (on blocker)        | maintainer                          |
+| `quarantine`       | `quarantine`         | AFK boot probes, castle healer        | castle curator (release or HITL park) |
 | `wontfix`          | `wontfix`            | `/triage` (then close)                | rarely — usually issue closes       |
 | `needs-slicing`    | `needs-slicing`      | `/to-spec` (on publish)                | `/to-tickets` (when slices are created) |
 | `type:spec`         | `type:spec`           | `/to-spec` (on publish)                | never — type marker, permanent       |
@@ -98,6 +99,9 @@ The issue body contains a complete `## Agent brief` section (see `triage/AGENT-B
 
 ### `ready-for-human`
 The issue requires human decision or resolution before it can proceed or be delegated. Two sources: `/triage` decides it during evaluation (e.g. architectural call, design review needed), or `/afk` promotes it from `running` after a blocker (inner agent gave up, merge conflict couldn't be auto-resolved, both runners exhausted). When `/afk` promotes, the worktree is **preserved at the moment of blocker** so the human can inspect or resolve the blocker in place.
+
+### `quarantine`
+An issue-local safety hold for mechanically detected queue incoherence (ADR 0122). The probe removes `ready-for-agent`, adds `quarantine`, and appends its diagnosis to the issue body; healthy sibling issues continue through the same boot. The castle resident curator periodically re-runs the coherence check. It removes `quarantine` and restores `ready-for-agent` when the defect dissolves, or replaces `quarantine` with `ready-for-human` after three failed re-checks so `/hitl` owns the judgment. The per-issue heal ledger uses the same hold instead of applying a third heal within 24 hours.
 
 ### `wontfix`
 Will not be actioned. Applied by `/triage`. For bugs, paired with a polite explanation and close. For enhancements, paired with a `.out-of-scope/*.md` entry (see `triage/OUT-OF-SCOPE.md`).
