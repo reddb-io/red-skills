@@ -24,6 +24,7 @@ export * from "./terminal-events.js";
 export * from "./validation-cone.js";
 export * from "./worker-drain.js";
 export * from "./config.js";
+export * from "./federated-fleet-view.js";
 export * from "./fleet-registry.js";
 export * from "./host-capability-profile.js";
 export * from "./issue-state-curator.js";
