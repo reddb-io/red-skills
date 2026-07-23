@@ -656,10 +656,13 @@ describe("circuit trip — real FS integration (slot-log boot-stamp path)", () =
       expect(slot.parked).toBe(true);
 
       // Discard envelope posted only for the worker that held a claim (#99).
-      expect(io.comment).toHaveBeenCalledOnce();
-      const [issue, body] = io.comment.mock.calls[0]!;
+      expect(io.comment).toHaveBeenCalledTimes(2);
+      const [issue, body] = io.comment.mock.calls.find((call) =>
+        String(call[1]).includes('data-attempt-status="discarded"'),
+      )!;
       expect(issue).toBe(99);
       expect(body).toContain('data-attempt-status="discarded"');
+      expect(io.comment.mock.calls.some((call) => String(call[1]).includes("kind=concede"))).toBe(true);
       // Fast-death count must reflect the circuit ring (5 deaths), not 0.
       expect(body).toContain("fast deaths: 5");
       expect(body).toContain("slot parked after 5 fast deaths");
@@ -1055,8 +1058,10 @@ describe("pollStallDetector reaper gating", () => {
     expect(reaped).toEqual([0]);
     expect(io.killTree).toHaveBeenCalledWith(4242);
     // The reap envelope plus a self-explanatory "budget exhausted" page comment.
-    expect(io.comment).toHaveBeenCalledTimes(2);
-    const pageBody = io.comment.mock.calls[1]![1] as string;
+    expect(io.comment).toHaveBeenCalledTimes(3);
+    const pageBody = io.comment.mock.calls.find((call) =>
+      String(call[1]).includes("ready-for-human"),
+    )![1] as string;
     expect(pageBody).toContain("ready-for-human");
     expect(pageBody).toContain("attempt 3/3");
     // Escalation carries blocked:stalled (allowed alongside ready-for-human) and
