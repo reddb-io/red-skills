@@ -9,6 +9,7 @@ import {
   createEnginePaths,
   fleetRegistryPath,
   readFleetProfile,
+  upsertFleetProfile,
   writeHostCapabilityProfile,
 } from "@reddb-io/red-castle/engine";
 import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
@@ -58,6 +59,10 @@ describe("CLI fleet N launch — profile upsert", () => {
   it("registers the named fleet's profile when --fleet is supplied", async () => {
     const cwd = await root();
     const silent = { write: () => true } as unknown as NodeJS.WritableStream;
+    await upsertFleetProfile(
+      fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
+      { name: "alpha", runner: "codex", base: "develop" },
+    );
 
     await launchFleet(["2", "--runner", "codex", "--fleet", "alpha"], cwd, silent);
 
@@ -65,7 +70,10 @@ describe("CLI fleet N launch — profile upsert", () => {
       fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
       "alpha",
     );
-    expect(profile).toMatchObject({ name: "alpha", runner: "codex" });
+    expect(profile).toMatchObject({ name: "alpha", runner: "codex", base: "develop" });
+    expect(spawnSupervisor).toHaveBeenCalledWith(
+      expect.objectContaining({ fleet: "alpha", base: "develop" }),
+    );
   });
 
   it("uses the host profile's default width when the launch omits a target", async () => {
