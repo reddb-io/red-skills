@@ -965,6 +965,8 @@ describe("processIssue — pre_worktree hook abort (BOUNDED-recoverable: policy)
     expect(haEdit.add).not.toContain("blocked:policy");
     expect(trace.ensuredLabels).not.toContain("blocked:policy");
     expect(trace.runAgentCalls).toEqual([]);
+    expect(trace.mergeCalls).toEqual([]);
+    expect(trace.pushedAttempt).toEqual([]);
     expect(result.hooksFired).toEqual(["pre_worktree"]);
     // the restore comment is posted on retry; no budget-exhausted page.
     expect(trace.comments.some((c) => /Restored `ready-for-agent`/.test(c.body))).toBe(true);
@@ -982,6 +984,8 @@ describe("processIssue — pre_worktree hook abort (BOUNDED-recoverable: policy)
     expect(haEdit.add).toContain("blocked:policy");
     expect(trace.ensuredLabels).toContain("blocked:policy");
     expect(trace.runAgentCalls).toEqual([]);
+    expect(trace.mergeCalls).toEqual([]);
+    expect(trace.pushedAttempt).toEqual([]);
     // the budget-exhausted page is posted; the restore comment is not.
     expect(
       trace.comments.some((c) =>
