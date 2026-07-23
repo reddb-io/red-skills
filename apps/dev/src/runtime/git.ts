@@ -34,6 +34,12 @@ export interface GitContext {
    * explicit quota reason.
    */
   quotaBackoff?: GhQuotaBackoffOpts;
+  /**
+   * Optional ceiling for GitHub probes routed through mergeExec. Landing waits
+   * also carry their own helper-level timeout for injected tests; this kills the
+   * real `gh` child in production.
+   */
+  ghProbeTimeoutMs?: number;
 }
 
 function opts(ctx: GitContext): ExecOptions {
@@ -544,7 +550,10 @@ export function mergeExec(ctx: GitContext): MergeExec {
     // commands (git push / gh pr merge) the close path issues.
     const [head, ...rest] = args;
     const exec = ctx.exec ?? execTool;
-    const fn = (): Promise<ExecOutput> => exec(head ?? "git", rest, opts(ctx));
+    const commandOpts = head === "gh" && ctx.ghProbeTimeoutMs
+      ? { ...opts(ctx), timeoutMs: ctx.ghProbeTimeoutMs }
+      : opts(ctx);
+    const fn = (): Promise<ExecOutput> => exec(head ?? "git", rest, commandOpts);
     // Apply quota backoff only to `gh`-headed commands: git commands do not
     // make GitHub API calls and must never be silently delayed.
     const r = (ctx.quotaBackoff && head === "gh")
