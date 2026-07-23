@@ -429,6 +429,11 @@ export async function buildBootDeps(
         );
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
+      editBody: async (issue, body) => {
+        if (!(await ghx.editBody(ghCtx, issue, body))) {
+          throw new Error(`failed to update quarantine diagnosis for issue #${issue}`);
+        }
+      },
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
       attachSubIssue: (parent, child) => ghx.attachSubIssue(ghCtx, parent, child),
       issueReference: (issue) => ghx.issueReference(ghCtx, issue),
