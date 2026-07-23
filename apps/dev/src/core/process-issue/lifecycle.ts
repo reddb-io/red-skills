@@ -429,9 +429,9 @@ export async function processIssue(
     handoff: handoffPath,
     output_shaping: outputShaping.variant,
   });
-  const taskClass =
-    (await deps
-      .classifyIssue?.(
+  const taskClass = deps.classifyIssue
+    ? (await deps
+      .classifyIssue(
         buildIssueClassificationMetadata({
           issue,
           title: input.title,
@@ -439,7 +439,8 @@ export async function processIssue(
           labels,
         }),
       )
-      .catch(() => undefined)) ?? "think";
+      .catch(() => undefined)) ?? "simple"
+    : "think";
   if (
     !(await fireHook(
       "pre_attempt",
@@ -591,6 +592,22 @@ export async function processIssue(
   let gateGreenSkip = resumeIsGateGreen;
   while (true) {
     const initialTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
+    const routedEffort = initialTier.effort ?? "";
+    deps.appendIterLog(
+      `🤖 /afk route #${issue}: tier=${activeTaskClass} runner=${activeRunner} model=${initialTier.model} effort=${routedEffort || "default"}.`,
+    );
+    deps.markState?.({
+      "current.runner": activeRunner,
+      "current.model_tier": activeTaskClass,
+      "current.model": initialTier.model,
+      "current.effort": routedEffort,
+    });
+    deps.recordWorkerEvent?.("worker.routed", {
+      runner: activeRunner,
+      model_tier: activeTaskClass,
+      model: initialTier.model,
+      effort: routedEffort,
+    });
     let run: RunAgentResult;
     if (gateGreenSkip) {
       // Consume the flag — subsequent loop iterations (e.g. go-verify retries)

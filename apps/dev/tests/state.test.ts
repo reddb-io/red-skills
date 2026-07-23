@@ -188,6 +188,30 @@ describe("state", () => {
     expect(after.current.last_event_at).toBe("2026-07-06T20:01:00.000Z");
   });
 
+  it("replaces the provisional spawn model with the resolved issue route", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
+    const path = join(dir, "afk.state.toon");
+
+    initStateSync(path, {
+      worker_id: "wROUT",
+      pid: 4242,
+      "current.model": "claude-think-model",
+      "current.effort": "high",
+    });
+
+    const after = await updateState(path, {
+      "current.model_tier": "simple",
+      "current.model": "claude-simple-model",
+      "current.effort": "medium",
+    });
+
+    expect(after.current).toMatchObject({
+      model_tier: "simple",
+      model: "claude-simple-model",
+      effort: "medium",
+    });
+  });
+
   it("preserves live pid and current identity when stamping the validating phase", async () => {
     const dir = await mkdtemp(join(tmpdir(), "afk-state-"));
     const path = join(dir, "afk.state.toon");

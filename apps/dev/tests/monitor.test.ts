@@ -78,6 +78,18 @@ describe("monitor — compact line", () => {
     expect(renderWorkerCompactLine(go, 1780140600)).toContain(" org=go  ");
   });
 
+  it("shows the classifier-selected model tier on the active worker row", () => {
+    const base = baseWorker();
+    const routed = baseWorker({
+      state: {
+        ...base.state,
+        current: { ...base.state.current, model_tier: "simple" },
+      },
+    });
+
+    expect(renderWorkerCompactLine(routed, 1780140600)).toContain(" tier:simple");
+  });
+
   it("appends per-worker token spend (and $cost when reported) when usage streamed", () => {
     const base = baseWorker();
     const withCost = baseWorker({

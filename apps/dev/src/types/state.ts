@@ -31,6 +31,9 @@ export const AfkCurrentSchema = z.object({
   /** Model identifier resolved for this attempt (e.g. `claude-opus-4-8`). Stamped
    * once at attempt start. Used by the statusline to show which model is running. */
   model: z.string().default(""),
+  /** Classifier-selected AFK tier that resolved `model`/`effort`. Kept beside
+   * the concrete runner settings so monitor readers can explain the route. */
+  model_tier: z.string().default(""),
   /** Effort level resolved for this attempt (e.g. `high`, `max`). Paired with
    * `model` on the statusline runner label. */
   effort: z.string().default(""),

@@ -94,6 +94,7 @@ function currentFromSnapshot(
       snapshot.started_at ?? snapshot.updated_at,
     ),
     model: stringField(current, "model") || undefined,
+    model_tier: stringField(current, "model_tier") || undefined,
     effort: stringField(current, "effort") || undefined,
     input_tokens: numberField(current, "input_tokens"),
     output_tokens: numberField(current, "output_tokens"),
