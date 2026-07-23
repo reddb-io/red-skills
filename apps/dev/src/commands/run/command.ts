@@ -28,7 +28,7 @@ import { isRunner, type Runner } from "../../types/runner.js";
 import { zeroAttemptDispatchFailure } from "../../core/go.js";
 import {
   afkPaths,
-  collectPrecheckFacts,
+  collectBootPrecheckFacts,
   collectBootOptions,
   collectMonitorInputs,
   buildBootDeps,
@@ -196,7 +196,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
     return runReconcileWorker(flags.reconcileIssue, runner, ctx, paths, workerId);
   }
 
-  const facts = await collectPrecheckFacts(ctx);
+  const facts = await collectBootPrecheckFacts(ctx, {
+    log: (line) => process.stdout.write(`[afk] ${line}\n`),
+  });
   const nowS = Math.floor(Date.now() / 1000);
 
   // Fleet supervisor owns the boot (#623): a worker spawned by the supervisor
