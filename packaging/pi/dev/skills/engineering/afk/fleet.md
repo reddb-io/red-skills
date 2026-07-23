@@ -17,7 +17,7 @@ fleet. Read [`MCP.md`](./MCP.md) for host prefixing and mutation modes.
 | resize / switch | `fleet_edit` | Same fields, all optional but `name`; sends the live resize directive instead of a second supervisor. |
 | ground truth | `fleet_status` | Supervisor pid, slots, churn, live workers for one fleet. |
 | inventory | `fleet_list` | Every registered profile. |
-| shutdown | `fleet_stop` | Stops that fleet and its detached workers. |
+| shutdown | `fleet_stop` | Gracefully stops that fleet's supervisor; `force: true` hard-stops only workers attributed to that fleet. |
 | logs | `logs` | One structured lane per call (`supervisor` / `worker` / `monitor` / `liveness`). |
 
 **A named fleet is a full profile, not just a worker count**: runner +
@@ -108,20 +108,22 @@ not part of the current fleet contract.
    - Codex monitor unavailable: `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/default/supervisor.log.toonl manually.`
    - Bare/unknown: `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/default/supervisor.log.toonl manually.`
 
-### `/dev:afk fleet stop` — graceful shutdown
+### `/dev:afk fleet stop [--force]` — graceful shutdown or scoped hard teardown
 
 Steps, in order:
 
-1. **Liveness check.** Read `.red/tmp/supervisors/default/afk-supervisor.pid`. The three cases:
-   - File missing → print `no fleet running.` and continue to step 3 (still try runner-specific monitor teardown).
-   - File present but `kill -0` fails → stale. Print `no fleet running (stale pid file at .red/tmp/supervisors/default/afk-supervisor.pid — cleaning).`, `rm -f` it, and continue to step 3.
+1. **Liveness check.** Read the named fleet's pinned supervisor identity. The three cases:
+   - File missing → print `no fleet running.` and continue to step 3. Do not inspect or kill worker directories: an absent fleet owns no teardown target.
+   - File present but the pinned identity is stale → clean its supervisor files, print `no fleet running (reason=dead supervisor pid; stale files cleaned).`, and continue to step 3. Do not kill detached workers.
    - File present and PID alive → continue to step 2.
-2. **Touch the stop file.** `touch .red/tmp/supervisors/default/afk-supervisor.stop`. The supervisor's health-check cycle (default `RED_AFK_POLL_S=15s`) picks it up and runs `cleanup`, which SIGTERMs every worker, removes the PID file, removes the stop file, and exits. Wait up to **30 s** for the PID file to disappear (poll every 1 s, deadline-bounded — never bare `while`). If it's gone, print `🛑 fleet stopped (supervisor pid=<pid> exited).`. If the deadline trips, print one warning line naming the PID and the log path, and continue to step 3 anyway — the stop file is still there and the supervisor will pick it up eventually.
+2. **Publish stop intent.** Write the named fleet's stop file and terminate its watchdog so it cannot relaunch the supervisor.
+   - Default graceful stop: the supervisor stops spawning/claiming and exits. Its detached one-shot workers are deliberately left alive to finish their in-flight Tickets; a later relaunch may adopt survivors. Wait up to **30 s** for the supervisor to exit. If it remains live, return `timeout` and leave the stop file armed; never escalate implicitly.
+   - Explicit force (`fleet_stop { fleet, force: true }`, CLI fallback `fleet stop --fleet <name> --force`): terminate the named supervisor immediately, then kill only detached workers whose castle worker snapshot has `supervisor_id` equal to the named fleet. Workers stamped for another fleet and unstamped standalone workers are untouched. Reconcile claims only when scoped workers were actually killed.
 3. **Tear down runner-specific monitors.**
    - Claude Code: no automatic monitor cron to cancel. Print `no auto-monitor cron (manual monitoring only).`
    - Codex: do not stop workers through the monitor agent. It auto-closes when it observes no supervisor/live workers, and the user may close it manually. Print `Codex monitor agent will self-close when it observes fleet stopped.`
    - Bare/unknown: print `no native monitor teardown for this runner.`
-4. **Idempotency.** Re-running `/dev:afk fleet stop` after a successful stop just hits the "file missing" branch in step 1 and the runner-specific teardown no-op in step 3. Exit 0 either way.
+4. **Idempotency.** Re-running `/dev:afk fleet stop` after a successful stop just hits the "file missing" branch in step 1 and the runner-specific teardown no-op in step 3. It never broadens into a repo-wide worker sweep.
 
 ### `/dev:afk fleet logs` — local structured log reader
 

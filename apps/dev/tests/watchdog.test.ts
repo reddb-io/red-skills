@@ -53,7 +53,7 @@ function makeIo(
     now: vi.fn(() => NOW),
     liveness: vi.fn(async () => liveness),
     killTree: vi.fn(async () => {}),
-    killWorkers: vi.fn(async () => {}),
+    killWorkers: vi.fn(async () => ({ killed: 0, survivors: [] })),
     clearControlFiles: vi.fn(async () => {}),
     reconcile: vi.fn(async () => {}),
     relaunch: vi.fn(async () => true),

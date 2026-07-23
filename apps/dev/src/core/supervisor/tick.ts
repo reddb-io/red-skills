@@ -18,7 +18,7 @@ import {
   shrinkFleetToTarget,
 } from "./resize.js";
 import { pollStallDetector, resolveReapContest } from "./reaper.js";
-import { dispatchReconcileIfPossible, handleDeadSlot, terminateAll } from "./slot-actions.js";
+import { dispatchReconcileIfPossible, handleDeadSlot } from "./slot-actions.js";
 import type { SupervisorConfig } from "./config.js";
 import type { TickResult } from "./result.js";
 import type { SupervisorState } from "./state.js";
@@ -92,7 +92,6 @@ export async function superviseTick(
   };
 
   if (stopRequested()) {
-    await terminateAll(state, deps);
     result.stopped = true;
     return result;
   }

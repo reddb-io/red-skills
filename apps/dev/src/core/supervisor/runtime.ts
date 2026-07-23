@@ -274,7 +274,8 @@ export async function runSupervisor(
       },
     });
     if (result.stopped) {
-      // post_fleet: informational — fires after all workers are terminated.
+      // post_fleet: informational — fires after this supervisor stops claiming;
+      // detached one-shot workers may still be draining in-flight Tickets.
       // Best-effort: hook failure is logged but never prevents clean exit.
       if (deps.dispatchFleetHook) {
         try {

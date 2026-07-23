@@ -28,7 +28,7 @@ export interface TickResult {
   retiredSlots: number[];
   /** True when a live directive changed the fleet runner this tick. */
   runnerChanged: boolean;
-  /** True when the stop-file was honoured and all workers terminated. */
+  /** True when the stop-file was honoured and the supervisor stopped claiming. */
   stopped: boolean;
   /** Ready-queue depth sampled at the start of this tick (0 on an abandoned
    * tick or when readyQueueDepth is unavailable). Used by emitFleetHeartbeat

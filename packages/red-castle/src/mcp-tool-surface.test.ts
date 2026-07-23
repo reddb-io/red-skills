@@ -48,8 +48,9 @@ const SURFACE: ReadonlyArray<{
   {
     name: "fleet_stop",
     title: "Stop AFK fleet",
-    description: "MUTATING: stop one named fleet and its detached workers.",
-    schema: ["fleet"],
+    description:
+      "MUTATING: gracefully stop one named fleet; force hard teardown explicitly.",
+    schema: ["fleet", "force"],
   },
   {
     name: "fleet_register",
