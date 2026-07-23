@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { dispose, policyKeyFor, type Disposition } from "../src/core/disposition.js";
-import type { AttemptOutcome } from "../src/core/attempt-outcome.js";
+import type { WorkerOutcome } from "../src/core/worker-outcome.js";
 
-// dispose() is the PURE attempt-disposition composer: it turns an AttemptOutcome
+// dispose() is the PURE attempt-disposition composer: it turns an WorkerOutcome
 // + the real attempt number + the env into ONE Disposition descriptor, composing
 // recoveryReasonFor / recoveryDecision / recoveryCap / blockedLabelFor /
 // envelopeStatusFor plus the standard escalation comment. It owns the TOTAL
@@ -14,7 +14,7 @@ import type { AttemptOutcome } from "../src/core/attempt-outcome.js";
 // recovery.ts; `null` marks a non-recoverable outcome (always escalate, no
 // retry budget, no escalation comment).
 interface Row {
-  outcome: AttemptOutcome;
+  outcome: WorkerOutcome;
   typedLabel: string | null;
   envelopeStatus: Disposition["envelopeStatus"];
   policyKey: string | null;

@@ -8,7 +8,7 @@ import type { SupervisorConfig } from "./config.js";
 import type { TickResult } from "./result.js";
 import type { SlotState, SupervisorState } from "./state.js";
 import type { ReconcileCandidate, SpawnPolicy, SupervisorDeps } from "./types.js";
-import { HOST_CONFIG_EXIT_CODE } from "../attempt-outcome.js";
+import { HOST_CONFIG_EXIT_CODE } from "../worker-outcome.js";
 
 export async function handleDeadSlot(
   slot: number,

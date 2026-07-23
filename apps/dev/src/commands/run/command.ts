@@ -97,7 +97,7 @@ import { createActivityMeter } from "../../core/activity-meter.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
-import { HOST_CONFIG_EXIT_CODE } from "../../core/attempt-outcome.js";
+import { HOST_CONFIG_EXIT_CODE } from "../../core/worker-outcome.js";
 
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";

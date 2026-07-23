@@ -28,7 +28,7 @@
 // backoff (vs the immediate re-queue) is still future work — the cap is what
 // prevents the runaway loop today.
 
-import type { RecoveryReason } from "./attempt-outcome.js";
+import type { RecoveryReason } from "./worker-outcome.js";
 
 // `RecoveryReason` (the recoverable policy keys) is now owned by attempt-outcome,
 // the single owner of the outcome vocabulary. recovery.ts CONSUMES it: its cap
