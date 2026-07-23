@@ -45,10 +45,10 @@ export function selectOrphanTestRunners(
 
 async function collectOrphanTestRunners(tmpDir: string): Promise<OrphanTestRunnerProcess[]> {
   if (process.platform === "win32") return [];
-  const ps = await execTool("ps", ["-eo", "pid=,ppid=,pgid=,sid=,etimes=,comm=,args="]);
+  const ps = await execTool("ps", ["-eo", "pid=,ppid=,pgid=,sid=,etimes=,args="]);
   if (ps.code !== 0) return [];
   const snapshots = await Promise.all(ps.stdout.split("\n").map(async (line) => {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line);
     if (!match) return null;
     const pid = Number(match[1]);
     let cwd: string;
@@ -64,7 +64,7 @@ async function collectOrphanTestRunners(tmpDir: string): Promise<OrphanTestRunne
       sid: Number(match[4]),
       ageS: Number(match[5]),
       cwd,
-      command: `${match[6]} ${match[7]}`.trim(),
+      command: match[6]!.trim(),
     } satisfies OrphanTestRunnerProcess;
   }));
   return selectOrphanTestRunners(
