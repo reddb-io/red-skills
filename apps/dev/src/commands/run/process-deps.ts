@@ -479,23 +479,10 @@ export function buildProcessDeps(
               effort: conflictTier.effort,
             })
           : claudeSpawnArgs({ prompt, worktree: cwd });
-      await runLinkedSubagent({
-        runner,
-        phase: "merge-resolver",
-        invocation,
-        cwd,
-        bridge: castleBridge,
-        exec: exec ?? execTool,
-      });
+      await runLinkedSubagent({ runner, phase: "merge-resolver", invocation, cwd, bridge: castleBridge, exec: exec ?? execTool });
     },
     resolveMechanicalConflict: makeMechanicalConflictResolver(gitCtx),
-    resolveAgentConflict: makeAgentConflictResolver({
-      config,
-      runner,
-      paths,
-      bridge: castleBridge,
-      exec: exec ?? execTool,
-    }),
+    resolveAgentConflict: makeAgentConflictResolver({ config, runner, paths, bridge: castleBridge, exec: exec ?? execTool }),
     maxAgentConflictResolveAttempts: 2,
     // Isolated landing worktree for the LOCKED path (#572): a detached worktree at
     // <base> so the locked merge/push/rollback never `git -C`'s the primary
