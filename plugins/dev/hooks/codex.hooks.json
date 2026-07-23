@@ -31,7 +31,7 @@
           },
           {
             "type": "command",
-            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/branch-lock-codex.sh\"; if [ -x \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
+            "command": "sh -c 'tmp=\"$(mktemp)\"; trap \"rm -f \\\"$tmp\\\"\" EXIT; timeout \"${RED_SKILLS_HOOK_STDIN_TIMEOUT_S:-5s}\" cat >\"$tmp\" 2>/dev/null || true; hook=\"${CODEX_PLUGIN_ROOT}/hooks/branch-lock-codex.sh\"; if [ -f \"$hook\" ]; then timeout \"${RED_SKILLS_HOOK_TIMEOUT_S:-3s}\" bash \"$hook\" <\"$tmp\" || printf \"{}\"; else printf \"{}\"; fi'"
           },
           {
             "type": "command",

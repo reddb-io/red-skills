@@ -41,9 +41,13 @@ describe("castle lifecycle hooks", () => {
 
   it("discovers skin hook bodies with project shadows and pre_worktree defaults", () => {
     const root = tempDir();
+    const projectRoot = join(root, "project");
     const libraryHooksDir = join(root, "plugin", "hooks");
     const projectHooksDir = join(root, ".red", "hooks");
-    const cargo = touch(join(libraryHooksDir, "red-cargo"));
+    touch(join(projectRoot, "Cargo.toml"));
+    touch(join(projectRoot, "build.gradle.kts"));
+    const cargo = touch(join(projectHooksDir, "red-cargo"));
+    touch(join(libraryHooksDir, "red-cargo"));
     const gradle = touch(join(libraryHooksDir, "red-gradle"));
     const libWorkerStart = touch(join(libraryHooksDir, "worker_start"));
     const projectWorkerStart = touch(join(projectHooksDir, "worker_start"));
@@ -63,6 +67,7 @@ describe("castle lifecycle hooks", () => {
       {
         libraryHooksDir,
         projectHooksDir,
+        projectRoot,
       },
     );
 
@@ -80,6 +85,37 @@ describe("castle lifecycle hooks", () => {
       "echo post-merge-a",
       "echo post-merge-b",
     ]);
+  });
+
+  it("resolves no build hook commands for a project with no matching build files", () => {
+    const root = tempDir();
+    const libraryHooksDir = join(root, "plugin", "hooks");
+    touch(join(libraryHooksDir, "red-cargo"));
+    touch(join(libraryHooksDir, "red-gradle"));
+
+    const resolved = resolveCastleHooks(
+      {},
+      { libraryHooksDir, projectRoot: join(root, "project") },
+    );
+
+    expect(resolved.pre_worktree).toEqual([]);
+  });
+
+  it("does not resolve a matching build hook when config disables that default", () => {
+    const root = tempDir();
+    const projectRoot = join(root, "project");
+    const libraryHooksDir = join(root, "plugin", "hooks");
+    touch(join(projectRoot, "Cargo.toml"));
+    touch(join(projectRoot, "build.gradle"));
+    touch(join(libraryHooksDir, "red-cargo"));
+    const gradle = touch(join(libraryHooksDir, "red-gradle"));
+
+    const resolved = resolveCastleHooks(
+      { "afk.hooks.defaults.cargo": "false" },
+      { libraryHooksDir, projectRoot },
+    );
+
+    expect(resolved.pre_worktree).toEqual([gradle]);
   });
 
   it("invokes bodies with the frozen RED_AFK env contract and mutable stdin JSON", async () => {
