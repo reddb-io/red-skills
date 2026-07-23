@@ -97,4 +97,41 @@ describe("ADR 0122 boot heal budget", () => {
     expect(editLabels).toHaveBeenCalledWith(444, ["ready-for-agent"], ["quarantine"]);
     expect(editBody.mock.calls[0]?.[1]).toContain("kind: claim-hygiene");
   });
+
+  it("locally excludes an own claim whose worker liveness is unknown", async () => {
+    const { deps } = makeDeps();
+    deps.gh.editLabels = vi.fn(async () => undefined);
+    Object.assign(deps.gh, {
+      viewBody: async () => "Original body",
+      editBody: vi.fn(async () => undefined),
+    });
+
+    const result = await runBoot(
+      deps,
+      options({
+        operationalProbes: {
+          remoteUrls: [],
+          claimHygiene: {
+            ownWorkerPrefix: "local:",
+            listOpenQueueIssues: async () => [
+              {
+                number: 445,
+                comments: [
+                  {
+                    id: 10,
+                    body: "<!-- afk:claim v1 worker=local:wMystery kind=claim runner=codex -->",
+                    createdAt: "2026-07-23T00:00:00Z",
+                  },
+                ],
+              },
+            ],
+            workerPidState: () => "unknown",
+          },
+        },
+      }),
+    );
+
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(result.quarantinedIssues).toEqual([445]);
+  });
 });
