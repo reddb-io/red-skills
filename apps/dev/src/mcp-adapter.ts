@@ -29,6 +29,7 @@ import type {
   CascadeStatusInput,
   CastleMcpDependencies,
   ClaimIssueInput,
+  HitlResolveInput,
   DailyReviewInput,
   EventsSinceInput,
   FleetCreateInput,
@@ -60,6 +61,7 @@ import {
   resolveSupervisorConfig,
 } from "./core/supervisor.js";
 import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
+import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import * as ghx from "./runtime/gh.js";
 import { isLivePid } from "./runtime/kill-tree.js";
 import { spawnSupervisor } from "./runtime/supervisor-spawn.js";
@@ -143,6 +145,7 @@ export interface DevAfkMcpOperations {
   cascadeStatus(input: CascadeStatusInput): Promise<unknown>;
   claimStatus(input: ClaimIssueInput): Promise<unknown>;
   claimRelease(input: ClaimIssueInput): Promise<unknown>;
+  hitlResolve(input: HitlResolveInput): Promise<unknown>;
   mergeArm(input: { pr: number }): Promise<unknown>;
   mergeStatus(): Promise<unknown>;
   mergeRelease(input: { pr: number }): Promise<unknown>;
@@ -661,43 +664,92 @@ export function createDefaultDevAfkMcpOperations(
     async claimStatus(input) {
       const context = await resolveRepoContext(root);
       const gh = { cwd: context.root, repo: context.repo };
-      const records = parseClaimRecords(await ghx.listClaimComments(gh, input.issue));
-      const latest = latestClaimPerWorker(records);
-      const holders = [...latest.values()].filter((record) => record.kind === "claim");
-      return {
-        issue: input.issue,
-        records: records.map((record) => ({
-          comment_id: record.commentId,
-          worker: record.worker,
-          kind: record.kind,
-          runner: record.runner ?? "",
-          created_at: record.createdAt ?? "",
-        })),
-        holders: holders.map((record) => ({
-          worker: record.worker,
-          comment_id: record.commentId,
-          runner: record.runner ?? "",
-          created_at: record.createdAt ?? "",
-        })),
+      const statusOf = async (issue: number) => {
+        const records = parseClaimRecords(await ghx.listClaimComments(gh, issue));
+        const latest = latestClaimPerWorker(records);
+        const holders = [...latest.values()].filter((record) => record.kind === "claim");
+        return {
+          issue,
+          records: records.map((record) => ({
+            comment_id: record.commentId,
+            worker: record.worker,
+            kind: record.kind,
+            runner: record.runner ?? "",
+            created_at: record.createdAt ?? "",
+          })),
+          holders: holders.map((record) => ({
+            worker: record.worker,
+            comment_id: record.commentId,
+            runner: record.runner ?? "",
+            created_at: record.createdAt ?? "",
+          })),
+        };
       };
+      // Single-issue form keeps its historic shape; the batch form (#2369) is
+      // keyed per issue, with per-issue errors instead of one failed call.
+      if (input.issue !== undefined) return statusOf(input.issue);
+      const issues = input.issues ?? [];
+      if (issues.length === 0) return { error: "provide `issue` or a non-empty `issues`" };
+      const byIssue: Record<string, unknown> = {};
+      for (const issue of issues) {
+        try {
+          byIssue[String(issue)] = await statusOf(issue);
+        } catch (error) {
+          byIssue[String(issue)] = { issue, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+      return { issues: byIssue };
     },
     async claimRelease(input) {
       const context = await resolveRepoContext(root);
       const gh = { cwd: context.root, repo: context.repo };
-      const records = parseClaimRecords(await ghx.listClaimComments(gh, input.issue));
-      const holders = [...latestClaimPerWorker(records).values()].filter(
-        (record) => record.kind === "claim",
-      );
-      const conceded: string[] = [];
-      for (const holder of holders) {
-        await ghx.postClaimComment(
-          gh,
-          input.issue,
-          renderClaimComment({ worker: holder.worker, runner: holder.runner }, "concede", "released"),
+      const releaseOf = async (issue: number) => {
+        const records = parseClaimRecords(await ghx.listClaimComments(gh, issue));
+        const holders = [...latestClaimPerWorker(records).values()].filter(
+          (record) => record.kind === "claim",
         );
-        conceded.push(holder.worker);
+        const conceded: string[] = [];
+        for (const holder of holders) {
+          await ghx.postClaimComment(
+            gh,
+            issue,
+            renderClaimComment({ worker: holder.worker, runner: holder.runner }, "concede", "released"),
+          );
+          conceded.push(holder.worker);
+        }
+        return { issue, conceded };
+      };
+      if (input.issue !== undefined) return releaseOf(input.issue);
+      const issues = input.issues ?? [];
+      if (issues.length === 0) return { error: "provide `issue` or a non-empty `issues`" };
+      const byIssue: Record<string, unknown> = {};
+      for (const issue of issues) {
+        try {
+          byIssue[String(issue)] = await releaseOf(issue);
+        } catch (error) {
+          byIssue[String(issue)] = { issue, error: error instanceof Error ? error.message : String(error) };
+        }
       }
-      return { issue: input.issue, conceded };
+      return { issues: byIssue };
+    },
+    async hitlResolve(input) {
+      const context = await resolveRepoContext(root);
+      const gh = { cwd: context.root, repo: context.repo };
+      return resolveHitlDecision(
+        {
+          comment: (issue, body) => ghx.comment(gh, issue, body),
+          closeIssue: (issue) => ghx.closeIssue(gh, issue),
+          viewLabels: (issue) => ghx.viewLabels(gh, issue),
+          editLabels: async (issue, remove, add) => {
+            await ghx.editLabels(gh, issue, remove, add);
+          },
+          releaseClaims: async (issue) => {
+            const released = (await this.claimRelease({ issue })) as { conceded?: string[] };
+            return released.conceded ?? [];
+          },
+        },
+        input,
+      );
     },
     async waitStart(input) {
       const id = randomUUID();
@@ -1388,6 +1440,8 @@ export function withCachedDeps(
       return result;
     },
     claimStatus: async (input) => {
+      // Batch reads (#2369) bypass the single-issue cache key.
+      if (input.issue === undefined) return deps.claimStatus(input);
       const key = claimStatusKey(input.issue);
       const cached = cache.get(key);
       if (cached !== undefined) return cached;
@@ -1404,7 +1458,9 @@ export function withCachedDeps(
       return result;
     },
     claimRelease: async (input) => {
-      cache.invalidate(claimStatusKey(input.issue));
+      for (const issue of input.issues ?? (input.issue !== undefined ? [input.issue] : [])) {
+        cache.invalidate(claimStatusKey(issue));
+      }
       return deps.claimRelease(input);
     },
     landBranch: async (input) => {
@@ -1561,6 +1617,7 @@ export function createCastleMcpDependencies(
     cascadeStatus: (input) => operations.cascadeStatus(input),
     claimStatus: (input) => operations.claimStatus(input),
     claimRelease: (input) => operations.claimRelease(input),
+    hitlResolve: (input) => operations.hitlResolve(input),
     mergeArm: (input) => operations.mergeArm(input),
     mergeStatus: () => operations.mergeStatus(),
     mergeRelease: (input) => operations.mergeRelease(input),
