@@ -8,6 +8,8 @@ import {
   fleetRegistryPath,
   readCastleLaneRecords,
   readFleetProfile,
+  readHostCapabilityProfile,
+  resolveHostCapabilities,
   upsertFleetProfile,
   type CastleLaneRecord,
 } from "@reddb-io/red-castle/engine";
@@ -57,7 +59,18 @@ function parseShrinkMode(raw: string | undefined, flag: string): ElasticShrinkMo
   throw new Error(`${flag} must be hard-kill or drain-then-retire`);
 }
 
-function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boolean; fleet: string; target: number; request?: string; runnerFlag?: string; drainBudgetUsd?: number; shrinkMode?: ElasticShrinkMode; passthrough: string[] } {
+function parseFleetArgs(args: readonly string[]): {
+  stop: boolean;
+  status: boolean;
+  fleet: string;
+  target: number;
+  targetExplicit: boolean;
+  request?: string;
+  runnerFlag?: string;
+  drainBudgetUsd?: number;
+  shrinkMode?: ElasticShrinkMode;
+  passthrough: string[];
+} {
   const passthrough: string[] = [];
   let stop = false;
   let status = false;
@@ -128,7 +141,18 @@ function parseFleetArgs(args: readonly string[]): { stop: boolean; status: boole
     }
     passthrough.push(arg);
   }
-  return { stop, status, fleet: parseFleetFlag(args) ?? DEFAULT_FLEET_NAME, target: target ?? 2, request, runnerFlag, drainBudgetUsd, shrinkMode, passthrough };
+  return {
+    stop,
+    status,
+    fleet: parseFleetFlag(args) ?? DEFAULT_FLEET_NAME,
+    target: target ?? 2,
+    targetExplicit: target !== undefined,
+    request,
+    runnerFlag,
+    drainBudgetUsd,
+    shrinkMode,
+    passthrough,
+  };
 }
 
 export async function writeResizeRequest(
@@ -579,7 +603,7 @@ export async function statusFleet(
 
 export async function launchFleet(args: readonly string[], root = process.cwd(), stdout: NodeJS.WritableStream = process.stdout): Promise<FleetLaunchResult> {
   const parsed = parseFleetArgs(args);
-  if (!Number.isInteger(parsed.target) || parsed.target < 0) throw new Error("fleet target must be a non-negative integer");
+  const enginePaths = createEnginePaths(join(root, ".red"));
   const paths = afkPaths(root, parsed.fleet);
   const stateAfk = dirname(paths.supervisorPidPath);
   await mkdir(paths.tmpDir, { recursive: true });
@@ -587,13 +611,19 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   // One-time boot migration: relocate legacy `.red/tmp` / state artifacts to
   // their canonical state or supervisor tmp lane before any supervisor path is read/written.
   await migrateLegacyDevPaths(root).catch(() => undefined);
+  const hostProfile = await readHostCapabilityProfile(enginePaths);
+  const target = parsed.targetExplicit
+    ? parsed.target
+    : resolveHostCapabilities(hostProfile).defaultFleetWidth;
+  if (!Number.isInteger(target) || target < 0)
+    throw new Error("fleet target must be a non-negative integer");
   const pidFile = paths.supervisorPidPath;
   const logFile = paths.supervisorLogPath;
   const priorFleetState = await readFleetState(paths.fleetStatePath).catch(() => null);
   // A registered fleet launches from its PROFILE: the registry supplies the
   // runner and the work-scope selector, and explicit flags still override.
   const profile = await readFleetProfile(
-    fleetRegistryPath(createEnginePaths(join(root, ".red"))),
+    fleetRegistryPath(enginePaths),
     paths.fleet,
   ).catch(() => undefined);
   const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
@@ -618,18 +648,25 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
         throw new Error("fleet launch failed: supervisor self-heal watchdog did not arm");
       }
       const shrinkMode = parsed.shrinkMode ?? cfg.shrinkMode;
-      const directiveRunner = parsed.runnerFlag ? detectRunner({ flag: parsed.runnerFlag }).runner : undefined;
-      await writeResizeRequest(paths.supervisorResizePath, parsed.target, shrinkMode, directiveRunner);
+      const directiveRunner = parsed.runnerFlag
+        ? detectRunner({ flag: parsed.runnerFlag }).runner
+        : undefined;
+      await writeResizeRequest(
+        paths.supervisorResizePath,
+        target,
+        shrinkMode,
+        directiveRunner,
+      );
       const ack = directiveAck(await readFleetState(paths.fleetStatePath), {
-        target: parsed.target,
+        target,
         shrinkMode,
         ...(directiveRunner !== undefined ? { runner: directiveRunner } : {}),
       });
       stdout.write(
-        `fleet directive ${ack} (supervisor pid=${existing}, target=${parsed.target}` +
+        `fleet directive ${ack} (supervisor pid=${existing}, target=${target}` +
           `${directiveRunner !== undefined ? `, runner=${directiveRunner}` : ""}, shrink-mode=${shrinkMode})\n`,
       );
-      return { status: "resized", pid: existing, target: parsed.target, log: logFile };
+      return { status: "resized", pid: existing, target, log: logFile };
     }
     const staleForS = liveness.lastHeartbeatEpoch !== null ? io.now() - liveness.lastHeartbeatEpoch : null;
     io.log(
@@ -655,7 +692,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
 
   const supervisorPid = await spawnSupervisor({
     root,
-    target: parsed.target,
+    target,
     runner: detection.runner,
     passthrough: [...parsed.passthrough, ...scoped],
     request: parsed.request,
@@ -683,7 +720,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   }
 
   // Persist the profile so CLI-launched fleets are always in the registry (#2358).
-  await upsertFleetProfile(fleetRegistryPath(createEnginePaths(join(root, ".red"))), {
+  await upsertFleetProfile(fleetRegistryPath(enginePaths), {
     name: paths.fleet,
     runner: detection.runner,
     ...(profile?.selector ? { selector: profile.selector } : {}),
@@ -691,13 +728,18 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     ...(profile?.base ? { base: profile.base } : {}),
   }).catch(() => undefined);
 
-  const named = paths.fleet === DEFAULT_FLEET_NAME ? "" : ` --fleet ${paths.fleet}`;
-  stdout.write(`🚀 fleet ${paths.fleet} launched (supervisor pid=${supervisorPid}, target=${parsed.target})\n`);
+  const named =
+    paths.fleet === DEFAULT_FLEET_NAME ? "" : ` --fleet ${paths.fleet}`;
+  stdout.write(
+    `🚀 fleet ${paths.fleet} launched (supervisor pid=${supervisorPid}, target=${target})\n`,
+  );
   stdout.write(`   self-heal: armed (watchdog pid=${watchdogPid})\n`);
   stdout.write(`   log:   .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n`);
   stdout.write(`   stop:  /dev:afk fleet stop${named}\n`);
-  stdout.write(`   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl manually.\n`);
-  return { status: "launched", pid: supervisorPid, target: parsed.target, log: logFile };
+  stdout.write(
+    `   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl manually.\n`,
+  );
+  return { status: "launched", pid: supervisorPid, target, log: logFile };
 }
 
 export async function fleetCommand(args: string[], cwd = process.cwd()): Promise<number> {
