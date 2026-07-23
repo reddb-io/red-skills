@@ -1,6 +1,7 @@
 ---
 name: to-spec
 description: Turn the current conversation context into a Spec and publish it to the project issue tracker. Use when user wants to create a Spec from the current context.
+argument-hint: "[--tags a,b]"
 ---
 
 **Synthesize the current conversation into a Spec and publish it — no interview, no implementation.** Just synthesize what you already know from the conversation.
@@ -27,7 +28,7 @@ Check with the user that these seams match their expectations.
 
 4. Write the Spec using the template below, then publish it to the project issue tracker.
 
-   **Labels on publish:** apply `type:spec` and `needs-slicing`. **Do not apply `ready-for-agent` to a Spec — a Spec is not an implementable unit; `/to-tickets` must slice it first.** `/afk` hard-filters anything tagged `type:spec` so an accidental `ready-for-agent` will be ignored, but the right pre-condition is to not set it in the first place.
+   **Labels on publish:** apply `type:spec` and `needs-slicing`. With `--tags a,b` (or tags recorded during the `/start` grilling session), also apply the territory `tag:<value>` labels — create each missing one first with `gh label create "tag:<v>"` (on-demand creation, same pattern as `req:N`); `/to-tickets` propagates them to every child Ticket. **Do not apply `ready-for-agent` to a Spec — a Spec is not an implementable unit; `/to-tickets` must slice it first.** `/afk` hard-filters anything tagged `type:spec` so an accidental `ready-for-agent` will be ignored, but the right pre-condition is to not set it in the first place.
 
    The next step after publish is `/to-tickets` (manual or scheduled) which consumes `needs-slicing` Specs, generates child issues with `spec:{N}` + `ready-for-agent`, and removes `needs-slicing` from the parent.
 

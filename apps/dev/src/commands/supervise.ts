@@ -376,7 +376,8 @@ function parseAdoptSlotPids(raw: string | undefined): HeartbeatSlotPid[] {
  * runner-swap policy flags each slot's `run --once` must carry, so a supervised
  * fleet honours the same Spec/Ticket filter + alternate/fallback policy a single
  * `/afk run` would. Recognises the value flags `--spec` / `--issues` /
- * `--selector` (a named fleet's work scope) / `--request`
+ * `--selector` (a named fleet's work scope) / `--tags` / `--user` (territory
+ * facets, folded into the selector by each slot's own flag parse) / `--request`
  * (with `-r`) and the boolean flags `--alternate` / `--fallback-runner`, all in
  * both `--flag value` and `--flag=value` forms. Unknown args are dropped (the
  * supervisor only forwards the known filter/policy surface). Returns the argv
@@ -388,6 +389,8 @@ export function slotFilterArgs(args: readonly string[]): string[] {
     ["--spec", "--spec"],
     ["--issues", "--issues"],
     ["--selector", "--selector"],
+    ["--tags", "--tags"],
+    ["--user", "--user"],
     ["--request", "--request"],
     ["-r", "--request"],
   ]);

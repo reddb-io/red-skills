@@ -12,7 +12,7 @@
 // dispatch DECISIONS — lane label, disposable body, namespaced root, engine
 // argv, gate context — are pure and unit-testable with zero gh or subprocess.
 
-import { LABEL_GO_LANE } from "./triage-labels.js";
+import { LABEL_GO_LANE, tagLabel } from "./triage-labels.js";
 
 export { LABEL_GO_LANE };
 
@@ -109,6 +109,9 @@ export interface GoDodSpec {
   request?: string;
   /** True when the repo already has a configured harness/backpressure gate. */
   hasHarness?: boolean;
+  /** Territory tags stamped on the minted issue as `tag:<value>` labels (bare
+   * values). Missing labels are auto-created before the mint. */
+  tags?: string[];
 }
 
 function firstLine(s: string): string {
@@ -158,7 +161,8 @@ export function buildDisposableIssue(demand: string, dodSpec: GoDodSpec = {}): D
     "out of `ready-for-agent` so the running fleet cannot claim it. The dedicated",
     "`/go` worker processes it directly and the issue auto-closes when its PR merges.",
   ].join("\n");
-  return { title, body, labels: [LABEL_GO_LANE] };
+  const tagLabels = (dodSpec.tags ?? []).map(tagLabel);
+  return { title, body, labels: [LABEL_GO_LANE, ...tagLabels] };
 }
 
 /**
@@ -238,7 +242,11 @@ export async function dispatchGo(
   opts: { runner?: string; mode?: GoMode; yolo?: boolean } & GoDodSpec = {},
 ): Promise<GoDispatchResult> {
   const spec = buildDisposableIssue(demand, opts);
-  await deps.ensureLabel(LABEL_GO_LANE);
+  // Every label the mint stamps must exist first — the lane label AND any
+  // territory `tag:<v>` labels (auto-created on first use, D4).
+  for (const label of spec.labels) {
+    await deps.ensureLabel(label);
+  }
   const issue = await deps.createIssue(spec);
   const engineExit = await deps.runEngine(
     buildGoEngineArgs({

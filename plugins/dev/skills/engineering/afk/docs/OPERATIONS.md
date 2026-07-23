@@ -196,16 +196,20 @@ The systemic fix is the `red-issues-needs-triage.yml` workflow installed by `/re
 
 ## Issue Selection
 
-Pull: `gh issue list --label ready-for-agent --state open --json number,title,labels,body --limit 100`. Drop every `type:spec` issue before any filter (log `/to-tickets N` warning for each). Prepend `priority:urgent` issues before any filter, oldest first.
+Pull: `gh issue list --label ready-for-agent --state open --json number,title,labels,body,author --limit 100`. Drop every `type:spec` issue before any filter (log `/to-tickets N` warning for each). A territory scope (`--tags`/`--user`, filters 4–5) applies BEFORE the urgent prepend — an urgent issue outside the territory is never pulled across the boundary. Then prepend `priority:urgent` issues before the remaining filters, oldest first.
 
 Filters:
-1. `--issues N…`: match requested numbers against the full post-Spec `ready-for-agent` set, urgent included; keep those numbers in argument order; error if missing or not `ready-for-agent`; Specs rejected.
+1. `--issues N…`: match requested numbers against the full post-Spec `ready-for-agent` set, urgent included; keep those numbers in argument order; error if missing or not `ready-for-agent`; Specs rejected. Never combined with `--tags`/`--user` (refused at flag parse).
 2. `--spec N`: keep non-urgent issues with `spec: #N` in body, parent link, or `spec:N` label; Spec itself excluded.
 3. Default: all remaining non-urgent `ready-for-agent`, `priority:high` first, then ascending by number.
+4. `--tags a,b`: keep only issues carrying EVERY requested `tag:<value>` label (AND). Strict untagged exclusion: an issue with no `tag:` labels never matches a tag-scoped run. `/afk` never creates `tag:<v>` labels — creation surfaces (`/go --tags`, `/to-spec`, `/to-tickets`) do.
+5. `--user login|@me`: keep only issues AUTHORED by that login (`@me` is resolved to a concrete login at launch, so persisted fleet selectors never store `@me`). Matching is client-side over the pulled candidate pool, which is capped at 200 — in a repo with more than 200 open `ready-for-agent` issues an authored issue beyond the cap is invisible to this filter.
+
+Filters 4–5 fold into the same fleet `selector` as `--spec` (facets AND together); `--tags`/`--user` + `--spec` narrows to that Spec's tickets inside the territory.
 
 Final queue: `[urgent…] + [filtered…]`, deduped. Empty → `<promise>NO MORE TASKS</promise>`, exit 0.
 
-**Empty queue + non-empty backlog = flow bug, not a stop (binding on the invoking agent).** "Nothing ready" and "nothing to do" are different claims — never report the second when only the first is true. When the queue is empty but open non-Spec issues exist, print a one-line **gate census** — counts per gate: `blocked:dependency`, `ready-for-human`, `needs-triage`/`needs-info`, `type:spec` — and name the highest-leverage unblock. In particular, audit `blocked:dependency` edges whose `req:*` target no longer really pends: a **delivered-but-open Spec** strands every dependent, because the unblock cascade fires on *close*, and Specs close on manual bookkeeping (on 2026-07-02 two fully-delivered Specs froze 14 slices this way). The mission is maximizing autonomous drainage; humans gate only genuine decisions.
+**Empty queue + non-empty backlog = flow bug, not a stop (binding on the invoking agent).** "Nothing ready" and "nothing to do" are different claims — never report the second when only the first is true. When the queue is empty but open non-Spec issues exist, print a one-line **gate census** — counts per gate: `blocked:dependency`, `ready-for-human`, `needs-triage`/`needs-info`, `type:spec` — and name the highest-leverage unblock. When a territory scope was active (`--tags`/`--user`), also report whether the requested `tag:<v>` labels exist at all — a typo'd or never-created tag label yields a silently empty scoped queue, and `/afk` never creates tag labels itself. In particular, audit `blocked:dependency` edges whose `req:*` target no longer really pends: a **delivered-but-open Spec** strands every dependent, because the unblock cascade fires on *close*, and Specs close on manual bookkeeping (on 2026-07-02 two fully-delivered Specs froze 14 slices this way). The mission is maximizing autonomous drainage; humans gate only genuine decisions.
 
 ## Issue Lifecycle (the `/afk` slice)
 

@@ -38,7 +38,7 @@ export type {
   FleetNameInput,
   FleetRegisterInput,
 } from "./mcp/fleet.js";
-export type { EventsSinceInput, LogsInput, WorkerVitalsInput } from "./mcp/observability.js";
+export type { EventsSinceInput, LogsInput, QueueStatusInput, WorkerVitalsInput } from "./mcp/observability.js";
 export type {
   WorkerDispatchInput,
   WorkerStatusInput,

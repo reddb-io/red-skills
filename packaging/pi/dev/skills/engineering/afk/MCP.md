@@ -165,7 +165,7 @@ state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `queue_status` | read | `ready-for-agent` and `ready-for-human` queue candidates. |
+| `queue_status` | read | `ready-for-agent` and `ready-for-human` queue candidates. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
 | `events_since` | read | Castle history events and worker lane records after an opaque cursor, plus the next cursor. |
 
 `queue_status` is the first call of any drain: an empty `ready-for-agent` queue

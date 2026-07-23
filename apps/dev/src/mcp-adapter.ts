@@ -20,6 +20,7 @@ import {
   readFleetProfiles,
   removeFleetProfile,
   upsertFleetProfile,
+  parseFleetSelector,
   RUNNER_SPECS,
   detectRunner,
   type CastleLaneRecord,
@@ -39,6 +40,7 @@ import type {
   GateRunInput,
   LandBranchInput,
   LogsInput,
+  QueueStatusInput,
   RequeueToolInput,
   RespondToolInput,
   RetakeToolInput,
@@ -61,6 +63,7 @@ import {
   resolveSupervisorConfig,
 } from "./core/supervisor.js";
 import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
+import { matchesSelector } from "./core/session.js";
 import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import * as ghx from "./runtime/gh.js";
 import { isLivePid } from "./runtime/kill-tree.js";
@@ -792,6 +795,22 @@ function registryPath(root: string): string {
   return fleetRegistryPath(createEnginePaths(join(root, ".red")));
 }
 
+/**
+ * Concretize a `@me` user facet on an MCP-supplied selector before it is
+ * persisted or matched, so fleets.toonl and scoped queue previews always carry
+ * a real login (D2: `@me` never survives past the dispatch boundary).
+ */
+async function concretizeSelectorUser<T extends { user?: string }>(
+  root: string,
+  selector: T | undefined,
+): Promise<T | undefined> {
+  if (!selector || selector.user !== "@me") return selector;
+  const context = await resolveRepoContext(root);
+  return ghx.resolveSelectorUser(selector, () =>
+    ghx.resolveViewerLogin({ cwd: root, repo: context.repo }),
+  );
+}
+
 function profileForCreate(input: FleetCreateInput): FleetProfile {
   return {
     name: input.name,
@@ -895,7 +914,13 @@ async function fleetStatus(root: string, input: FleetNameInput) {
   };
 }
 
-async function createFleet(root: string, input: FleetCreateInput) {
+async function createFleet(root: string, rawInput: FleetCreateInput) {
+  const input: FleetCreateInput = {
+    ...rawInput,
+    ...(rawInput.selector
+      ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
+      : {}),
+  };
   const path = registryPath(root);
   const existing = await readFleetProfile(path, input.name);
   const paths = afkPaths(root, input.name);
@@ -982,7 +1007,13 @@ async function createFleet(root: string, input: FleetCreateInput) {
   return { status: "launched", profile, pid, target: input.target };
 }
 
-async function editFleet(root: string, input: FleetEditInput) {
+async function editFleet(root: string, rawInput: FleetEditInput) {
+  const input: FleetEditInput = {
+    ...rawInput,
+    ...(rawInput.selector
+      ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
+      : {}),
+  };
   const path = registryPath(root);
   const existing = await readFleetProfile(path, input.name);
   if (!existing)
@@ -1295,7 +1326,13 @@ export type StatuslineAggregate = Awaited<
   ReturnType<typeof collectStatuslineAggregate>
 >;
 
-async function registerFleet(root: string, input: FleetRegisterInput) {
+async function registerFleet(root: string, rawInput: FleetRegisterInput) {
+  const input: FleetRegisterInput = {
+    ...rawInput,
+    ...(rawInput.selector
+      ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
+      : {}),
+  };
   const path = registryPath(root);
   const paths = afkPaths(root, input.name);
   const running = await discoverLiveSupervisorPid(
@@ -1422,10 +1459,13 @@ export function withCachedDeps(
 ): CastleMcpDependencies {
   return {
     ...deps,
-    queueStatus: async () => {
+    queueStatus: async (input) => {
+      // Scoped previews bypass the cache: the cache key is selector-blind, so a
+      // scoped result must never be stored as (or served from) the full view.
+      if (input?.selector) return deps.queueStatus(input);
       const cached = cache.get(QUEUE_STATUS_KEY);
       if (cached !== undefined) return cached;
-      const result = await deps.queueStatus();
+      const result = await deps.queueStatus(input);
       cache.set(QUEUE_STATUS_KEY, result);
       return result;
     },
@@ -1506,13 +1546,22 @@ export function createCastleMcpDependencies(
       );
       return limit === undefined ? records : records.slice(-limit);
     },
-    queueStatus: async () => {
+    queueStatus: async (input?: QueueStatusInput) => {
       const context = await resolveRepoContext(root);
       const gh = { cwd: root, repo: context.repo };
-      const [readyForAgent, readyForHuman] = await Promise.all([
+      let [readyForAgent, readyForHuman] = await Promise.all([
         listCandidates(gh),
         listHitlCandidates(gh),
       ]);
+      // Scoped preview: apply a fleet selector (tags/user/spec/lane/…) over the
+      // ready pool, mirroring exactly what a fleet with that selector would see.
+      if (input?.selector) {
+        const selector = await concretizeSelectorUser(
+          root,
+          parseFleetSelector(input.selector),
+        );
+        readyForAgent = readyForAgent.filter((c) => matchesSelector(c, selector ?? {}));
+      }
       return {
         ready_for_agent: readyForAgent.map(
           ({ body: _body, ...candidate }) => candidate,

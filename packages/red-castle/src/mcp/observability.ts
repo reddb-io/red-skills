@@ -1,5 +1,6 @@
 import { z } from "zod/v3";
 import type { CastleMcpTool } from "./tool.js";
+import { fleetSelectorShape, type FleetSelectorInput } from "./fleet.js";
 
 export interface LogsInput {
   lane: "worker" | "supervisor" | "monitor" | "liveness";
@@ -17,13 +18,17 @@ export interface EventsSinceInput {
   cursor?: string;
 }
 
+export interface QueueStatusInput {
+  selector?: FleetSelectorInput;
+}
+
 export interface ObservabilityDependencies {
   logs(input: LogsInput): Promise<unknown>;
   workerVitals(input: WorkerVitalsInput): Promise<unknown>;
   dashboard(input: { periodDays: number }): Promise<unknown>;
   monitor(): Promise<unknown>;
   history(input: { limit?: number }): Promise<unknown>;
-  queueStatus(): Promise<unknown>;
+  queueStatus(input?: QueueStatusInput): Promise<unknown>;
   eventsSince(input: EventsSinceInput): Promise<unknown>;
 }
 
@@ -93,9 +98,14 @@ export function createObservabilityTools(
       name: "queue_status",
       title: "Read AFK queues",
       description:
-        "Return ready-for-agent and ready-for-human queue candidates.",
-      inputSchema: {},
-      invoke: () => deps.queueStatus(),
+        "Return ready-for-agent and ready-for-human queue candidates. Pass `selector` to preview one fleet's scoped view of the ready queue (same facets as fleet selectors, e.g. tags/user).",
+      inputSchema: {
+        selector: z.object(fleetSelectorShape).optional(),
+      },
+      invoke: (input) =>
+        deps.queueStatus({
+          selector: input.selector as FleetSelectorInput | undefined,
+        }),
     },
     {
       name: "events_since",

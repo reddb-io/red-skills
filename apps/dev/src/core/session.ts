@@ -64,6 +64,9 @@ export interface IssueCandidate {
   title: string;
   body: string;
   labels: string[];
+  /** GitHub login of the issue author (creator); a `user` selector facet never
+   * matches a candidate without it. */
+  author?: string;
 }
 
 /** The selection filter, mirroring FILTER_KIND/FILTER_VALUE. `issues` keeps the
@@ -96,12 +99,25 @@ function matchesSpec(c: IssueCandidate, spec: number): boolean {
  * (AND), so `{spec, lane}` keeps only that Spec's Tickets inside that lane. An
  * empty selector matches everything — a fleet with no scope drains the whole
  * backlog, exactly like the `all` filter.
+ *
+ * Keep in sync with `matchesFleetSelector` in
+ * `packages/red-castle/src/engine/worker-drain.ts` — the castle copy drives the
+ * live drain; this copy backs the dev-side previews.
  */
 export function matchesSelector(c: IssueCandidate, selector: FleetSelector): boolean {
   if (selector.spec !== undefined && !matchesSpec(c, selector.spec)) return false;
   if (selector.lane !== undefined && !hasLabel(c, `lane:${selector.lane}`)) return false;
   if (selector.label !== undefined && !hasLabel(c, selector.label)) return false;
   if (selector.issues !== undefined && !selector.issues.includes(c.number)) return false;
+  // AND over every requested tag: a candidate missing any of them — including
+  // a fully untagged candidate — falls outside the territory.
+  if (selector.tags !== undefined && !selector.tags.every((tag) => hasLabel(c, `tag:${tag}`)))
+    return false;
+  if (
+    selector.user !== undefined &&
+    (c.author === undefined || c.author.toLowerCase() !== selector.user.toLowerCase())
+  )
+    return false;
   return true;
 }
 

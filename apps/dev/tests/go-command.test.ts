@@ -76,6 +76,19 @@ describe("parseGoArgs", () => {
     });
   });
 
+  it("parses --tags into bare territory tag values in both flag forms", () => {
+    expect(parseGoArgs(["do it", "--tags", "infra,backend"])).toMatchObject({
+      demand: "do it",
+      tags: ["infra", "backend"],
+    });
+    expect(parseGoArgs(["--tags=infra", "do it"])).toMatchObject({
+      demand: "do it",
+      tags: ["infra"],
+    });
+    expect(() => parseGoArgs(["do it", "--tags"])).toThrow(/requires a value/);
+    expect(() => parseGoArgs(["do it", "--tags", ","])).toThrow(/at least one tag value/);
+  });
+
   it("throws when --dod, --verify, or --request has no value", () => {
     expect(() => parseGoArgs(["do it", "--dod"])).toThrow(/requires a value/);
     expect(() => parseGoArgs(["do it", "--verify"])).toThrow(/requires a value/);

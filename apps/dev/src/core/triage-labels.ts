@@ -32,6 +32,14 @@ export const LABEL_GO_LANE = "lane:go";
 // mode — no commits, no branch push, no PR, no merge. The agent posts a report
 // comment and the issue auto-closes; nothing lands on main.
 export const LABEL_SCOUT_LANE = "lane:scout";
+// Territory-scoping label family: `tag:<value>` labels partition one shared
+// `ready-for-agent` pool between several humans' fleets. Stamped at creation
+// time (`/go --tags`, `/to-spec`, `/to-tickets`), consumed by `/afk --tags`
+// (selector `tags` facet, AND semantics). Never drives lifecycle transitions.
+export const TAG_LABEL_PREFIX = "tag:";
+export function tagLabel(value: string): string {
+  return `${TAG_LABEL_PREFIX}${value}`;
+}
 
 // Per-issue MANUAL-LANDING mode (issue #1049). A `ready-for-agent` issue carrying
 // THIS label runs the full normal AFK pipeline — claim, worktree, inner agent,
