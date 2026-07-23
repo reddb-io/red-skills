@@ -1,5 +1,12 @@
 # @reddb-io/dev
 
+## 2.84.0
+
+### Patch Changes
+
+- @reddb-io/shared@2.84.0
+- @reddb-io/build-info@2.84.0
+
 ## 2.83.0
 
 ### Patch Changes
