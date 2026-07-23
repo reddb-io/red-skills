@@ -39,7 +39,7 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 ## Dirty Primary Checkout
 
 AFK never stages or commits the primary checkout. A dirty primary remains
-untouched through boot, claim, the worker attempt, feedback and backpressure
+untouched through boot, claim, the worker, feedback and backpressure
 gates, and Landing. In particular, AFK never creates a pre-merge snapshot
 commit on boot or claim. A worker crash or failed gate therefore leaves the
 operator's index, working tree, and commit history unchanged.
