@@ -16,6 +16,7 @@ export * from "./gate-constants.js";
 export * from "./gate-executor.js";
 export * from "./gate-sink.js";
 export * from "./heal-ledger.js";
+export * from "./lane-follower.js";
 export * from "./lane-writers.js";
 export * from "./land-lock.js";
 export * from "./landing.js";
