@@ -1,7 +1,7 @@
 import { access, mkdtemp, mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyTmpJanitorReport, collectTmpJanitorReport, selectOrphanTestRunners } from "../src/runtime/tmp-janitor.js";
 import { LOGS_TTL_S, SCRATCH_TTL_S } from "../src/core/tmp-janitor.js";
 
@@ -39,6 +39,29 @@ describe("tmp janitor runtime", () => {
       { ...base, pid: 204, cwd: "/repo/packages/dev" },
       { ...base, pid: 205, command: "node server.js" },
     ], tmp)).toEqual([base]);
+  });
+
+  it("reaps and logs every orphan test-runner group during a fixing sweep", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const report = await collectTmpJanitorReport(tmp, NOW, () => "UNKNOWN");
+    report.orphanTestRunners = [{
+      pid: 200,
+      ppid: 10,
+      pgid: 190,
+      sid: 10,
+      ageS: 600,
+      cwd: join(tmp, "workers", "wTEST", "2432", "worktree"),
+      command: "node (vitest 2)",
+    }];
+    const reapProcessGroup = vi.fn(async () => true);
+    const log = vi.fn();
+
+    const applied = await applyTmpJanitorReport(tmp, report, { reapProcessGroup, log });
+
+    expect(reapProcessGroup).toHaveBeenCalledWith(190);
+    expect(applied.orphanTestRunners).toEqual([{ pid: 200, pgid: 190 }]);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("pid=200 pgid=190"));
   });
 
   it("reports and fixes expired lanes, closed dead workers, and audited unknown root dirs", async () => {
