@@ -86,6 +86,34 @@ describe("castle gate executor", () => {
     expect(input.backpressureExec).not.toHaveBeenCalled();
   });
 
+  it("refuses an over-class gate with an explicit verdict before executing commands", async () => {
+    const input = baseInput();
+    input.hostProfile = {
+      machineIdHash: "8cb3eafdcbd2",
+      runners: ["codex"],
+      maxGateWeight: "light-cone",
+      defaultFleetWidth: 1,
+    };
+    input.gateWeight = "heavy-cone";
+    input.backpressureCommands = ["pnpm smoke"];
+
+    const result = await runCastleGate(input);
+
+    expect(result).toMatchObject({
+      ok: false,
+      admission: {
+        admitted: false,
+        verdict: "refused-over-class",
+        required: "heavy-cone",
+        maximum: "light-cone",
+      },
+      checks: [],
+      sidecar: [],
+    });
+    expect(input.feedbackExec).not.toHaveBeenCalled();
+    expect(input.backpressureExec).not.toHaveBeenCalled();
+  });
+
   it("a diff touching .github/workflows/ passes through the gate without blocking", async () => {
     const input = baseInput();
     input.changedFiles = [".github/workflows/ci.yml", "packages/core/src/index.ts"];

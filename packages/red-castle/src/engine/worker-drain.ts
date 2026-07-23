@@ -1,5 +1,9 @@
 import type { FleetSelector } from "./fleet-registry.js";
 import type { Runner } from "./runner-types.js";
+import {
+  resolveHostCapabilities,
+  type HostCapabilityProfile,
+} from "./host-capability-profile.js";
 
 export interface CastleIssueCandidate {
   number: number;
@@ -185,6 +189,8 @@ export interface CastleWorkerDrainContext<TIssueTemplate = unknown> {
   sweepsSkipped?: boolean;
   issueTemplate: TIssueTemplate;
   policy?: CastleWorkerDrainPolicy;
+  /** This machine's durable capability declaration. Absent keeps legacy permissive routing. */
+  hostProfile?: HostCapabilityProfile;
 }
 
 export interface CastleWorkerDrainProcessed {
@@ -356,6 +362,7 @@ export async function runCastleWorkerDrain<
     let hostConfigStop = false;
     let stopReason: CastleWorkerStopReason | undefined;
     let activeRunner: Runner = ctx.runner;
+    const hostCapabilities = resolveHostCapabilities(ctx.hostProfile);
 
     for (let i = 0; i < queue.length; i++) {
       if (ctx.policy?.supervisorKilled?.()) {
@@ -381,7 +388,17 @@ export async function runCastleWorkerDrain<
 
       const candidate = queue[i]!;
       const issueRunner = ctx.alternate ? activeRunner : ctx.runner;
-      if (deps.runnerCircuit && (await deps.runnerCircuit.isOpen(issueRunner))) {
+      if (!hostCapabilities.runners.includes(issueRunner)) {
+        stopReason = "runner-unavailable";
+        deps.emit(
+          `runner ${issueRunner} unavailable in host capability profile — skipping dispatch`,
+        );
+        break;
+      }
+      if (
+        deps.runnerCircuit &&
+        (await deps.runnerCircuit.isOpen(issueRunner))
+      ) {
         runnerTransientStop = true;
         stopReason = "runner-unavailable";
         deps.emit(`runner ${issueRunner} circuit open — stopping before claiming more issues`);

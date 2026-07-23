@@ -9,6 +9,7 @@ import {
   type CastleWorkerOutcome,
 } from "./worker-drain.js";
 import type { Runner } from "./runner-types.js";
+import type { HostCapabilityProfile } from "./host-capability-profile.js";
 
 const boot = { precheck: { ok: true } };
 const processDeps = {};
@@ -40,6 +41,7 @@ interface DrainHarnessOptions {
     name: CastleSessionHookName,
     context: string,
   ) => Promise<{ aborted: boolean }>;
+  hostProfile?: HostCapabilityProfile;
 }
 
 function makeDrainHarness(options: DrainHarnessOptions = {}) {
@@ -91,6 +93,7 @@ function makeDrainHarness(options: DrainHarnessOptions = {}) {
         iterCap: options.iterCap,
         issueTemplate: {},
         policy: options.policy,
+        hostProfile: options.hostProfile,
       },
     );
 
@@ -409,6 +412,32 @@ describe("castle worker drain", () => {
     });
     expect(harness.emitted).toEqual([
       "runner claude circuit open — stopping before claiming more issues",
+      "worker stop: runner-unavailable",
+    ]);
+  });
+
+  it("skips dispatch before claiming when the host profile lacks the selected runner", async () => {
+    const harness = makeDrainHarness({
+      runner: "claude",
+      hostProfile: {
+        machineIdHash: "8cb3eafdcbd2",
+        runners: ["codex"],
+        maxGateWeight: "full-workspace",
+        defaultFleetWidth: 2,
+      },
+    });
+
+    const result = await harness.run();
+
+    expect(harness.builtInputs).toEqual([]);
+    expect(harness.processIssue).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      blocked: 0,
+      failed: 0,
+      stopReason: "runner-unavailable",
+    });
+    expect(harness.emitted).toEqual([
+      "runner claude unavailable in host capability profile — skipping dispatch",
       "worker stop: runner-unavailable",
     ]);
   });
