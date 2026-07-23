@@ -34,6 +34,35 @@ async function waitUntilDead(pid: number, timeoutMs = 2_000): Promise<void> {
 }
 
 describe("killTreeAndWait", () => {
+  it.skipIf(process.platform === "win32")("confirms a worker fork is gone after its group leader exits", async () => {
+    const leader = spawn(
+      "sh",
+      ["-c", 'sh -c \'trap "" TERM; while :; do sleep 1; done\' </dev/null >/dev/null 2>&1 & child=$!; printf "%s\\n" "$child"; wait'],
+      { detached: true, stdio: ["ignore", "pipe", "ignore"] },
+    );
+    const childPid = await new Promise<number>((resolve) => {
+      leader.stdout.once("data", (chunk: Buffer) => resolve(Number(chunk.toString().trim())));
+    });
+
+    try {
+      expect(await killTreeAndWait(leader.pid!, { pollMs: 25, graceTries: 2, killTries: 20 })).toBe(true);
+      await expect.poll(() => {
+        try {
+          process.kill(childPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }, { timeout: 2_000 }).toBe(false);
+    } finally {
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {
+        // The expected path already reaped it.
+      }
+    }
+  });
+
   it("SIGTERMs and returns dead WITHOUT escalating when the tree exits in the grace window", async () => {
     // Dies after 3 grace polls — well under the 20-tick grace.
     const { io, signals } = fakeIO({ aliveFor: 3 });

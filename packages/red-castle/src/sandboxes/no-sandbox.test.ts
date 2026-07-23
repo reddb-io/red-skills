@@ -95,6 +95,49 @@ describe("noSandbox", () => {
   });
 
   describe("handle", () => {
+    itPosix("aborting exec reaps the complete host process group", async () => {
+      const handle = await noSandbox().create({
+        worktreePath: process.cwd(),
+        env: {},
+      });
+      const controller = new AbortController();
+      let publishChildPid!: (pid: number) => void;
+      const childPidReady = new Promise<number>((resolve) => {
+        publishChildPid = resolve;
+      });
+      const options = {
+        signal: controller.signal,
+        onLine: (line: string) => publishChildPid(Number(line)),
+      } as Parameters<typeof handle.exec>[1] & { signal: AbortSignal };
+      const running = handle.exec(
+        'sh -c \'trap "" TERM; while :; do sleep 1; done\' </dev/null >/dev/null 2>&1 & child=$!; printf "%s\\n" "$child"; wait',
+        options,
+      );
+      const childPid = await childPidReady;
+
+      try {
+        controller.abort();
+        await Promise.race([
+          running,
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("exec abort did not settle")), 2_000)),
+        ]);
+        await expect.poll(() => {
+          try {
+            process.kill(childPid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        }, { timeout: 2_000 }).toBe(false);
+      } finally {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {
+          // The expected path already reaped it.
+        }
+      }
+    });
+
     it("exec runs a command on the host and returns output", async () => {
       const provider = noSandbox();
       const handle = await provider.create({

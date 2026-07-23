@@ -35,6 +35,34 @@ describe("execTool", () => {
     expect(r.code).toBe(KILLED_EXIT_CODE);
   });
 
+  it.skipIf(process.platform === "win32")("reaps fork children when a gate parent times out", async () => {
+    const r = await execTool(
+      "sh",
+      ["-c", 'sh -c \'trap "" TERM; while :; do sleep 1; done\' </dev/null >/dev/null 2>&1 & child=$!; printf "%s\\n" "$child"; wait'],
+      { timeoutMs: 150 },
+    );
+    const childPid = Number(r.stdout.trim());
+
+    try {
+      expect(r.code).toBe(KILLED_EXIT_CODE);
+      expect(Number.isInteger(childPid)).toBe(true);
+      await expect.poll(() => {
+        try {
+          process.kill(childPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }, { timeout: 2_000 }).toBe(false);
+    } finally {
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {
+        // The expected path already reaped it.
+      }
+    }
+  });
+
   it("reports a signal-killed command as a non-zero failure (PRD #567)", async () => {
     // A process that kills itself with a signal also leaves error.code null with
     // a non-null error.signal — likewise a failure, not success.

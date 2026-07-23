@@ -23,7 +23,7 @@ import { resolveSupervisorConfig } from "../../core/supervisor.js";
 import { evaluateFastForwardLocalTarget, fastForwardLocalTarget } from "../../core/merge.js";
 import { liveIssueFromBranch, type IssueMeta } from "../../core/branch-cleanup.js";
 import { readWorkerState } from "../../core/worker-state-reader.js";
-import { isLivePid } from "../kill-tree.js";
+import { isLivePid, killTreeAndWait } from "../kill-tree.js";
 import { execTool, type ExecFn } from "../exec.js";
 import { collectTmpJanitorReport } from "../tmp-janitor.js";
 import { issueMeta, type GhContext, type IssueStateRow } from "../gh.js";
@@ -472,6 +472,7 @@ export async function buildBootDeps(
           : "owner-live";
       },
       reapDeadEmptyWorkerShells: fsx.reapDeadEmptyWorkerShells,
+      reapProcessGroup: (pgid) => killTreeAndWait(pgid),
     },
     gh: {
       editLabels: async (issue, remove, add) => {

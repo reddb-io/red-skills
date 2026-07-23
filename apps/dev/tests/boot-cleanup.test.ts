@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   attempt,
   DAY,
@@ -15,6 +15,29 @@ import {
 } from "./boot.helpers.js";
 
 describe("runBoot tmp janitor", () => {
+  it("reaps orphan test-runner groups and records an audit row", async () => {
+    const { deps } = makeDeps();
+    const reapProcessGroup = vi.fn(async () => true);
+    (deps.fs as BootDeps["fs"] & { reapProcessGroup: typeof reapProcessGroup }).reapProcessGroup = reapProcessGroup;
+    const result = await runBoot(deps, options({
+      tmpJanitor: {
+        plan: {
+          logs: { reclaim: [], spare: [] }, scratch: { reclaim: [], spare: [] },
+          diagnostics: { reclaim: [], spare: [] }, feedbackWorktrees: { reclaim: [], spare: [] },
+          legacySlotLogs: { reclaim: [], spare: [] }, unknownTmpRoots: [],
+        },
+        staleWorkers: { reclaim: [], spare: [] },
+        orphanTestRunners: [{
+          pid: 200, ppid: 10, pgid: 190, sid: 10, ageS: 600,
+          cwd: "/p/.red/tmp/workers/wTEST/2432/worktree", command: "node (vitest 2)",
+        }],
+      } as NonNullable<NonNullable<Parameters<typeof options>[0]>["tmpJanitor"]>,
+    }));
+
+    expect(reapProcessGroup).toHaveBeenCalledWith(190);
+    expect(result.tmpJanitor?.orphanTestRunners).toEqual([{ pid: 200, pgid: 190 }]);
+  });
+
   it("reclaims expired named lanes, closed-issue dead workers, and audited unknown tmp roots", async () => {
     const { deps, fsCalls } = makeDeps({ workerPidLive: async () => false });
     const result = await runBoot(
@@ -55,6 +78,7 @@ describe("runBoot tmp janitor", () => {
       unknownTmpRoots: ["/p/.red/tmp/work-old"],
       protectedLiveWorkers: [],
       protectedLiveFeedback: [],
+      orphanTestRunners: [],
       removals: [
         { path: "/p/.red/tmp/logs/old", livenessVerdict: "not-worker-workspace" },
         { path: "/p/.red/tmp/scratch/old", livenessVerdict: "not-worker-workspace" },
