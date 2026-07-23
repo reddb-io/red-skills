@@ -272,6 +272,14 @@ describe("isTransientRunnerError", () => {
     expect(isTransientRunnerError(new Error("cwd does not exist: /tmp/worker-attempt"))).toBe(false);
   });
 
+  it("matches a gitconfig lock collision during sandbox setup — infra-transient, never a no-sentinel death (#2494)", () => {
+    expect(
+      isTransientRunnerError(
+        new Error('Command failed (exit 255): git config --global --add safe.directory "x"\nerror: could not lock config file /home/user/.gitconfig: File exists'),
+      ),
+    ).toBe(true);
+  });
+
   it("matches provider server-side overload (529 / overloaded_error / 503) — temporary, not a crash", () => {
     expect(
       isTransientRunnerError(
