@@ -221,6 +221,34 @@ describe("AFK host prerequisite boot probe", () => {
     // when the probe halts here.
     expect(calls).toEqual([]);
   });
+
+  it("all-present: boot continues past the host-prereq step without halting", async () => {
+    const { deps } = makeDeps();
+
+    // When all prerequisites are present the probe returns ok and runBoot
+    // proceeds to the precheck/bootstrap steps (it does not throw BootHaltError).
+    const result = await runBoot(
+      deps,
+      options({
+        precheck: facts({
+          hostPrerequisites: {
+            commands: {
+              bash: true,
+              git: true,
+              jq: true,
+              gh: true,
+              node: true,
+              timeout: true,
+              ps: true,
+            },
+            bashVersion: "GNU bash, version 5.2.15(1)-release",
+          },
+        }),
+      }),
+    );
+
+    expect(result.precheck?.ok).toBe(true);
+  });
 });
 
 describe("each missing host tool produces a named halt with its fix string", () => {
