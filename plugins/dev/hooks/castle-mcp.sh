@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 set -u
 
 root="${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}"

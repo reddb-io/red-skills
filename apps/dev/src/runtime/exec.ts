@@ -215,6 +215,10 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
       resolve({ code: code ?? 0, stdout, stderr });
     });
     if (opts.input !== undefined && child.stdin) {
+      // A hook that ignores stdin (or exits first) closes the pipe under us.
+      // Without this listener that EPIPE is an unhandled 'error' event and
+      // takes the whole worker down; the child's exit code is the real signal.
+      child.stdin.on("error", () => {});
       child.stdin.end(opts.input);
     }
     if (opts.onStdoutLine && child.stdout) {

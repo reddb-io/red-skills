@@ -196,6 +196,28 @@ exit-code policy table above:
   into a shell command string; if a hook must deny a command, emit JSON that asks
   the host to deny it.
 
+### Hook Interpreter Contract
+
+**A shipped hook is a bash script, and every invocation site names bash
+explicitly.** Concretely: each shipped hook carries a `#!/usr/bin/env bash`
+shebang, the lifecycle dispatcher runs commands through `bash -c`
+(`runtime/hooks.ts`), and a manifest that hands a script path to an interpreter
+writes `bash "$hook"` — never `sh "$hook"`. Bash ≥ 3.2 is a hard host
+prerequisite checked at boot (`afk.host-prerequisites`), so the interpreter is
+proven present before any hook runs.
+
+**The host's `/bin/sh` is never assumed to be bash.** Claude, Codex, and the MCP
+launcher configs invoke us as `sh -c '<wrapper>'`, and on Debian/Ubuntu that
+`sh` is dash. So the wrapper bodies inside `claude.hooks.json`,
+`codex.hooks.json`, and `.mcp.json` stay strictly POSIX — no `[[ ]]`, no
+`(( ))`, no arrays, no `local`, no `source`, no process substitution — and reach
+the real logic by invoking bash. Bash-only constructs live behind the shebang,
+never in a wrapper.
+
+`apps/dev/tests/shipped-hooks-posix.test.ts` pins both halves: it executes every
+shipped hook in a sandbox whose `sh` is dash, and lints/parses every wrapper
+body with dash. A `#!/bin/sh` hook or an `sh "$hook"` invocation site fails it.
+
 Run `scripts/audit-hook-hardening-contract.sh` before shipping changes to
 `plugins/*/hooks/`, AFK library hooks, or hook launcher wrappers. The audit is
 intentionally greppable: it catches pattern-matchable regressions and includes a
