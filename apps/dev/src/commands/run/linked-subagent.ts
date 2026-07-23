@@ -49,6 +49,27 @@ function codexSignal(line: string): LinkedSignal | null {
   return null;
 }
 
+function claudeSignal(line: string): LinkedSignal | null {
+  if (!line.startsWith("{")) return null;
+  try {
+    const event = JSON.parse(line) as {
+      type?: string;
+      message?: {
+        content?: Array<{
+          type?: string;
+          input?: { command?: string; path?: string };
+        }>;
+      };
+    };
+    if (event.type !== "assistant" || !Array.isArray(event.message?.content)) return null;
+    const tool = event.message.content.find((block) => block.type === "tool_use");
+    const detail = tool?.input?.command ?? tool?.input?.path;
+    return typeof detail === "string" ? { signal: "tool", tool: detail } : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface RunLinkedSubagentInput {
   runner: Runner;
   phase: "merge-resolver" | "rebase-resolver";
@@ -85,8 +106,7 @@ export async function runLinkedSubagent(input: RunLinkedSubagentInput): Promise<
     result = await run(input.invocation.command, input.invocation.args, {
       cwd: input.cwd,
       onStdoutLine: (line) => {
-        if (input.runner !== "codex") return;
-        const signal = codexSignal(line);
+        const signal = input.runner === "codex" ? codexSignal(line) : claudeSignal(line);
         if (signal) enqueue(signal);
       },
     });
