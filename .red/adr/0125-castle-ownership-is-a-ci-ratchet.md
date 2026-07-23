@@ -2,7 +2,7 @@
 
 - **Status**: accepted
 - **Date**: 2026-07-21
-- **Related**: ADR 0102 (castle engine boundary), ADR 0113 (truth versus host boundary), ADR 0120 (absorb the proven implementation), Ticket #2233 (executable draft)
+- **Related**: ADR 0102 (castle engine boundary), ADR 0113 (truth versus host boundary), ADR 0124 (absorb the proven implementation), Ticket #2233 (executable draft)
 
 ## Context
 

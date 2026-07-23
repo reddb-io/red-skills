@@ -5,7 +5,7 @@
 - **Amends**: ADR 0102 (the dev remainder is defined by the host-adapter criterion)
 - **Supersedes**: ADR 0107 (unused-engine expand/migrate/contract waves)
 - **Preserves**: ADR 0106 (published AFK config names and destination ownership)
-- **Related**: ADR 0113 (castle owns truth; dev owns the host boundary), ADRs 0116–0119 (harvested twin decisions), ADR 0121 (ownership drift ratchet)
+- **Related**: ADR 0113 (castle owns truth; dev owns the host boundary), ADRs 0116–0119 (harvested twin decisions), ADR 0125 (ownership drift ratchet)
 
 ## Context
 
@@ -45,7 +45,7 @@ The crossing proceeds one coherent engine verb at a time. For each verb:
 
 There is one runtime authority throughout. No engine-selection flag, parallel
 production matrix, or unused expand wave is introduced. A crossing is complete
-only when its touched-package checks pass and the ownership ratchet in ADR 0121
+only when its touched-package checks pass and the ownership ratchet in ADR 0125
 no longer reports that verb in dev.
 
 ADR 0102's phrase “remaining dev plugin surface” is therefore amended by a

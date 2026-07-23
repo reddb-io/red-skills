@@ -2,10 +2,10 @@
 
 ## Status
 
-Superseded by ADR 0120. The expand-first waves produced an unconsumed engine;
+Superseded by ADR 0124. The expand-first waves produced an unconsumed engine;
 the successor absorbs the proven dev implementation and deletes the twin.
 
-superseded-by: 0120
+superseded-by: 0124
 
 ## Context
 
