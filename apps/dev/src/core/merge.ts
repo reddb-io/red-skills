@@ -860,6 +860,13 @@ export interface LandPrInput {
    * to either trust fresh green CI or run their local fallback gate.
    */
   beforeMerge?: (input: { prNumber: number; ciEvidence?: CiGreenEvidence }) => Promise<{ ok: true } | { ok: false }>;
+  /**
+   * Optional slot-release boundary (#2427). `none` returns after the PR is
+   * resolved; `ci` returns after CI is green. The returned deferred tail owns
+   * the remaining merge work. Absent preserves the historical synchronous
+   * PR-open → CI → merge flow byte-for-byte.
+   */
+  releaseAt?: "ci" | "none";
 }
 
 /** Why an UNLOCKED landing did not admin-merge, so the caller can route the
@@ -884,6 +891,16 @@ export interface LandPrResult {
   ciEvidence?: CiGreenEvidence;
   /** Set on `ok:false` — the distinct failure mode (#812). */
   reason?: LandPrFailReason;
+  /** Remaining landing tail when `releaseAt` stopped before the merge. */
+  deferred?: {
+    prNumber: number;
+    waitForCi: boolean;
+    /**
+     * Finish the tail. A shared observer that already established green CI
+     * passes `true` so the per-worker CI poll is not repeated.
+     */
+    run(ciAlreadyGreen?: boolean): Promise<LandPrResult>;
+  };
 }
 
 const PR_BODY_PREFIX = "Automated AFK landing for #";
@@ -1126,7 +1143,7 @@ export async function fastForwardLocalTarget(
 export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResult> {
   // `locked` is retained for caller compatibility; mirror promotion is identical
   // for both lock states.
-  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue, beforeMerge } = input;
+  const { repo, gitRepo, remote, branch, target, n, title, mergeTitle, worktree, waitForReview, ciAwait, onPrResolved, mergeQueue, beforeMerge, releaseAt } = input;
 
   // 1. Make the attempt branch's origin state certain before opening the PR.
   if (worktree) {
@@ -1159,65 +1176,94 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     }
   }
 
-  // 2b. Opt-in advisory-review wait (afk.merge.wait_for_review, ADR 0048). Hold
-  // until the configured review check concludes, then fall through to merge
-  // regardless of its verdict — the review is advisory; drift-guard (pre_merge)
-  // + in-process backpressure stay the binding gates. Default (absent) → no wait.
-  if (waitForReview) {
-    await waitForReviewCheck(exec, repo, prNumber, waitForReview);
+  const mergeAfterCi = async (ciEvidence?: CiGreenEvidence): Promise<LandPrResult> => {
+    const beforeMergeCiEvidence = mergeQueue ? undefined : ciEvidence;
+    if (beforeMerge && !(await beforeMerge({ prNumber, ...(beforeMergeCiEvidence ? { ciEvidence: beforeMergeCiEvidence } : {}) })).ok) {
+      return { ok: false, prNumber, reason: "before-merge-failed" };
+    }
+
+    // 3. Merge: branch protection is honored rather than bypassed (#1103). With
+    // a native merge queue, `--auto` enqueues and the forge serializes the tail.
+    const mergeArgs = ["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"];
+    if (mergeQueue) mergeArgs.push("--auto");
+    if (mergeTitle) mergeArgs.push("--subject", mergeTitle);
+    const merge = await exec(mergeArgs);
+    if (merge.code !== 0) return { ok: false, prNumber, reason: "merge-failed" };
+
+    if (mergeQueue) return { ok: true, prNumber };
+
+    const mergedCommit = await exec([
+      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeCommit", "--jq", ".mergeCommit.oid",
+    ]);
+    const mergeSha = mergedCommit.code === 0 ? mergedCommit.stdout.trim() : "";
+    await promoteFleetTrunkMirror(exec, { gitRepo, remote, target });
+    return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}), ...(ciEvidence ? { ciEvidence } : {}) };
+  };
+
+  const waitThenMerge = async (ciAlreadyGreen = false): Promise<LandPrResult> => {
+    // 2b. Advisory review remains advisory and is part of the observer-owned tail
+    // when the slot releases at PR-open.
+    if (waitForReview) {
+      await waitForReviewCheck(exec, repo, prNumber, waitForReview);
+    }
+
+    let ciEvidence: CiGreenEvidence | undefined;
+    if (ciAwait && !ciAlreadyGreen) {
+      const baseOid = await exec(["git", "-C", gitRepo, "rev-parse", `${remote}/${target}`]);
+      const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, {
+        ...ciAwait,
+        baseBranch: ciAwait.baseBranch ?? target,
+        expectedBaseOid: ciAwait.expectedBaseOid ?? (baseOid.code === 0 ? baseOid.stdout.trim() : undefined),
+      });
+      ciEvidence = ready.ciEvidence;
+      if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
+      if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
+      if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+    }
+    return mergeAfterCi(ciEvidence);
+  };
+
+  if (releaseAt === "none") {
+    return {
+      ok: true,
+      prNumber,
+      deferred: {
+        prNumber,
+        waitForCi: ciAwait !== undefined,
+        run: waitThenMerge,
+      },
+    };
   }
 
-  // 2c. Opt-in CI-aware merge (#812). Merging a just-opened PR with checks still
-  // pending is rejected. Poll until the PR settles, then route the distinct failure
-  // modes instead of collapsing them to merge-conflict:
-  //   - conflict   → caller's bounded merge-conflict recovery (correct here).
-  //   - ci-failed  → a distinct outcome targeting the failed check, not a re-run.
-  //   - ci-pending → timeout: hand off the OPEN, MERGEABLE PR (never re-run the agent).
-  //   - merge      → fall through to the merge below.
-  let ciEvidence: CiGreenEvidence | undefined;
-  if (ciAwait) {
-    const baseOid = await exec(["git", "-C", gitRepo, "rev-parse", `${remote}/${target}`]);
-    const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, {
-      ...ciAwait,
-      baseBranch: ciAwait.baseBranch ?? target,
-      expectedBaseOid: ciAwait.expectedBaseOid ?? (baseOid.code === 0 ? baseOid.stdout.trim() : undefined),
-    });
-    ciEvidence = ready.ciEvidence;
-    if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
-    if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
-    if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+  if (releaseAt === "ci") {
+    let ciEvidence: CiGreenEvidence | undefined;
+    if (waitForReview) {
+      await waitForReviewCheck(exec, repo, prNumber, waitForReview);
+    }
+    if (ciAwait) {
+      const baseOid = await exec(["git", "-C", gitRepo, "rev-parse", `${remote}/${target}`]);
+      const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, {
+        ...ciAwait,
+        baseBranch: ciAwait.baseBranch ?? target,
+        expectedBaseOid: ciAwait.expectedBaseOid ?? (baseOid.code === 0 ? baseOid.stdout.trim() : undefined),
+      });
+      ciEvidence = ready.ciEvidence;
+      if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
+      if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
+      if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+    }
+    return {
+      ok: true,
+      prNumber,
+      deferred: {
+        prNumber,
+        waitForCi: false,
+        run: () => mergeAfterCi(ciEvidence),
+      },
+    };
   }
 
-  const beforeMergeCiEvidence = mergeQueue ? undefined : ciEvidence;
-  if (beforeMerge && !(await beforeMerge({ prNumber, ...(beforeMergeCiEvidence ? { ciEvidence: beforeMergeCiEvidence } : {}) })).ok) {
-    return { ok: false, prNumber, reason: "before-merge-failed" };
-  }
-
-  // 3. Merge: branch protection is honored rather than bypassed (#1103). With a
-  // native merge queue on `<target>` (#1337), `--auto` ENQUEUES instead: the forge
-  // serializes the entries and rebases + revalidates each onto the current tip, so
-  // two workers landing at once can never race on a non-fast-forward push.
-  const mergeArgs = ["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"];
-  if (mergeQueue) mergeArgs.push("--auto");
-  if (mergeTitle) mergeArgs.push("--subject", mergeTitle);
-  const merge = await exec(mergeArgs);
-  if (merge.code !== 0) return { ok: false, prNumber, reason: "merge-failed" };
-
-  // An ENQUEUED PR has not merged yet — the queue lands it asynchronously once it
-  // drains, so there is no merge commit on `origin/<target>` to promote to. Skip
-  // the local fast-forward rather than pulling a tip that does not carry this work.
-  if (mergeQueue) return { ok: true, prNumber };
-
-  const mergedCommit = await exec([
-    "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeCommit", "--jq", ".mergeCommit.oid",
-  ]);
-  const mergeSha = mergedCommit.code === 0 ? mergedCommit.stdout.trim() : "";
-
-  // 4. Promote the fleet-owned mirror to the freshly merged origin tip. This is
-  // ref-only and decoupled from the primary checkout's branch and working tree.
-  await promoteFleetTrunkMirror(exec, { gitRepo, remote, target });
-
-  return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}), ...(ciEvidence ? { ciEvidence } : {}) };
+  return waitThenMerge();
 }
 
 /**
