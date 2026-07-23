@@ -640,8 +640,10 @@ describe("processIssue — BLOCKED", () => {
 
 
 describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
-  it("EMPTY branch → on_attempt_error → ready-for-human, no post_attempt", async () => {
-    // No work on the branch: a real crash, kept as today's terminal no-sentinel.
+  it("worker crash before Landing never snapshots or integrates the primary checkout", async () => {
+    // No work on the branch: a real crash while the operator may have unrelated
+    // dirty primary WIP. The attempt must terminate before every Landing git/
+    // forge call; in particular it cannot stage or commit a primary snapshot.
     const { deps, input, trace } = harness({ outcome: "no-sentinel", changedFiles: [] });
     const result = await processIssue(deps, input);
 
@@ -659,6 +661,8 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
       "current.last_exit_code": 1,
       "current.failure_kind": "crash",
     });
+    expect(trace.mergeCalls).toEqual([]);
+    expect(trace.pushedAttempt).toEqual([]);
     // on_attempt_error fires; post_attempt does NOT (ADR 0028).
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
     // #568: the no-sentinel terminal also releases the per-issue claim.
