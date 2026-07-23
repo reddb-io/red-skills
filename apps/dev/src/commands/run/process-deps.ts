@@ -118,6 +118,8 @@ import {
   readCapturedWorktreePath,
 } from "./state.js";
 
+const LANDING_GH_PROBE_TIMEOUT_MS = 60_000;
+
 export function parseSlot(val: string | undefined): number | undefined {
   if (val === undefined) return undefined;
   const n = parseInt(val, 10);
@@ -140,7 +142,7 @@ export function buildProcessDeps(
   workerId = "unknown",
 ): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
-  const gitCtx: GitContext = { cwd: ctx.root, exec };
+  const gitCtx: GitContext = { cwd: ctx.root, exec, ghProbeTimeoutMs: LANDING_GH_PROBE_TIMEOUT_MS };
   const paths = afkPaths(ctx.root);
   const castleBridge = createCastleWorkerLaneBridge({
     redRoot: join(ctx.root, ".red"),
@@ -208,6 +210,7 @@ export function buildProcessDeps(
       ? {
           check: getConfig(config, "afk.merge.review_check") || "CodeRabbit",
           sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+          probeTimeoutMs: LANDING_GH_PROBE_TIMEOUT_MS,
         }
       : undefined;
 
@@ -225,6 +228,7 @@ export function buildProcessDeps(
           sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
           intervalMs: 10_000,
           maxPolls: Math.max(1, Math.ceil(resolveCiTimeoutSeconds(process.env) / 10)),
+          probeTimeoutMs: LANDING_GH_PROBE_TIMEOUT_MS,
         }
       : undefined;
 
