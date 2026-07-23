@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { castleLanePath, createEnginePaths, readCastleLaneRecords } from "@reddb-io/red-castle/engine";
 import { buildProcessDeps } from "../src/commands/run.js";
 import { makeFeedbackWorktree } from "../src/runtime/feedback-worktree.js";
 import { deleteLocalBranch } from "../src/runtime/git.js";
@@ -84,6 +85,60 @@ function makeFakeExec(repoRoot: string): { exec: ExecFn; trace: TraceEntry[] } {
 }
 
 describe("wiring integration — real buildProcessDeps over a fake exec", () => {
+  it("feeds a landing conflict resolver's native stream into its parent Worker lane (#2480)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-wiring-linked-resolver-"));
+    const attemptDir = join(root, ".red", "tmp", "workers", "wLINK", "2480");
+    mkdirSync(attemptDir, { recursive: true });
+    writeFileSync(join(attemptDir, "afk.state.toon"), JSON.stringify({
+      worker_id: "wLINK",
+      pid: process.pid,
+      runner: "codex",
+      current: { number: 2480, phase: "merge", activity: "landing" },
+    }));
+    const exec: ExecFn = async (command, _args, options) => {
+      if (command === "codex") {
+        options?.onStdoutLine?.(JSON.stringify({
+          type: "item.started",
+          item: { type: "command_execution", command: "git add resolved.ts" },
+        }));
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
+    const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
+    const deps = buildProcessDeps(
+      ctx,
+      "gpt-5.5",
+      "none",
+      feedback,
+      { attemptDir },
+      false,
+      "codex",
+      exec,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "wLINK",
+    );
+
+    await deps.conflictResolver?.("resolve the conflict", root);
+
+    const records = await readCastleLaneRecords(
+      castleLanePath(createEnginePaths(join(root, ".red")), "worker", "wLINK"),
+    );
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "worker.subagent_heartbeat",
+        payload: expect.objectContaining({
+          phase: "merge-resolver",
+          signal: "tool",
+          tool: "git add resolved.ts",
+        }),
+      }),
+    ]));
+  });
+
   it("returns a failed local branch deletion through the runtime git boundary", async () => {
     const exec: ExecFn = async () => ({ code: 1, stdout: "", stderr: "branch is checked out" });
 
