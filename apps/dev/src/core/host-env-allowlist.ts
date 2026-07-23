@@ -1,3 +1,5 @@
+import type { AgentRunner } from "@reddb-io/red-castle/engine";
+
 /**
  * Host-env allowlist for the no-sandbox agent process (issue #1368).
  *
@@ -49,13 +51,16 @@ export const AFK_HOST_ENV_ALLOWLIST: readonly string[] = [
 ];
 
 /**
- * Resolve the effective allowlist. `RED_AFK_HOST_ENV_ALLOW` extends the
- * default with comma-separated extra entries; the single literal `*` is the
- * escape hatch that disables minimization entirely (returns undefined →
- * red-castle inherits the full host env, the pre-#1368 behavior).
+ * Resolve the effective allowlist. Codex drops the default `CLAUDE*` entry so
+ * Claude Code shell-snapshot pointers cannot leak into its child shell.
+ * `RED_AFK_HOST_ENV_ALLOW` extends the runner default with comma-separated
+ * extra entries; the single literal `*` is the escape hatch that disables
+ * minimization entirely (returns undefined → red-castle inherits the full host
+ * env, the pre-#1368 behavior).
  */
 export function resolveHostEnvAllowlist(
   env: NodeJS.ProcessEnv = process.env,
+  runner?: AgentRunner,
 ): readonly string[] | undefined {
   const raw = env.RED_AFK_HOST_ENV_ALLOW ?? "";
   const extra = raw
@@ -63,5 +68,9 @@ export function resolveHostEnvAllowlist(
     .map((s) => s.trim())
     .filter(Boolean);
   if (extra.includes("*")) return undefined;
-  return extra.length > 0 ? [...AFK_HOST_ENV_ALLOWLIST, ...extra] : AFK_HOST_ENV_ALLOWLIST;
+  const defaults =
+    runner === "codex"
+      ? AFK_HOST_ENV_ALLOWLIST.filter((entry) => entry !== "CLAUDE*")
+      : AFK_HOST_ENV_ALLOWLIST;
+  return extra.length > 0 ? [...defaults, ...extra] : defaults;
 }

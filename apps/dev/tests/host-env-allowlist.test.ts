@@ -48,14 +48,37 @@ describe("AFK_HOST_ENV_ALLOWLIST", () => {
 });
 
 describe("resolveHostEnvAllowlist", () => {
-  it("returns the default list when the override is unset", () => {
-    expect(resolveHostEnvAllowlist({})).toBe(AFK_HOST_ENV_ALLOWLIST);
+  it("projects no Claude shell state into a codex worker by default", () => {
+    const hostEnv = {
+      PATH: "/bin",
+      CODEX_HOME: "/home/x/.codex",
+      RED_AFK_RUNNER: "codex",
+      CLAUDE_CODE_ENTRYPOINT: "cli",
+      CLAUDE_ENV_FILE: "/tmp/shell-snapshot",
+      BASH_ENV: "/tmp/bash-env",
+      ENV: "/tmp/sh-env",
+    };
+    const allowlist = resolveHostEnvAllowlist(hostEnv, "codex");
+
+    expect(pickAllowedEnv(hostEnv, allowlist!)).toEqual({
+      PATH: "/bin",
+      CODEX_HOME: "/home/x/.codex",
+      RED_AFK_RUNNER: "codex",
+    });
   });
 
-  it("extends the default with comma-separated extra entries", () => {
-    const out = resolveHostEnvAllowlist({ RED_AFK_HOST_ENV_ALLOW: "FOO, BAR_*" });
-    expect(out).toContain("FOO");
-    expect(out).toContain("BAR_*");
+  it("keeps the existing default list for a claude worker", () => {
+    expect(resolveHostEnvAllowlist({}, "claude")).toBe(AFK_HOST_ENV_ALLOWLIST);
+  });
+
+  it("honors explicit operator additions for a codex worker", () => {
+    const out = resolveHostEnvAllowlist(
+      { RED_AFK_HOST_ENV_ALLOW: "CLAUDE*, BASH_ENV, ENV" },
+      "codex",
+    );
+    expect(out).toContain("CLAUDE*");
+    expect(out).toContain("BASH_ENV");
+    expect(out).toContain("ENV");
     expect(out).toContain("PATH");
   });
 
