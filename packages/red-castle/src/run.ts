@@ -503,9 +503,10 @@ export interface RunOptions<A extends AgentProvider = AgentProvider> {
   /**
    * Live-steer provider. Called before each iteration after the first; resolves
    * the steer text to inject as a `specialUserRequestBlock`, or `undefined` when
-   * no steer is pending.
+   * no steer is pending. Receives the 1-based iteration ordinal so the provider
+   * can record which iteration consumed the steer.
    */
-  readonly steerProvider?: () => Promise<string | undefined>;
+  readonly steerProvider?: (iteration: number) => Promise<string | undefined>;
   /**
    * An `AbortSignal` that cancels the run when aborted.
    *

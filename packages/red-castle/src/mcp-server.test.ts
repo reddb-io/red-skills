@@ -81,6 +81,10 @@ function deps(): CastleMcpDependencies {
       worker: input.worker,
       steer: "written",
     })),
+    steerStatus: vi.fn(async (input) => ({
+      worker: input.worker,
+      status: "none",
+    })),
     workerRequest: vi.fn(async (input) => ({
       status: "completed",
       request: input.text,
@@ -169,6 +173,7 @@ describe("castle MCP tools", () => {
       "runner_list",
       "runner_detect",
       "runner_steer",
+      "steer_status",
       "worker_request",
       "requeue",
       "retake",
@@ -317,6 +322,18 @@ describe("castle MCP tools", () => {
     expect(
       tools.find((tool) => tool.name === "runner_steer")!.description,
     ).toMatch(/^MUTATING:/);
+  });
+
+  it("reads steer status for a worker via steer_status", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools
+        .find((tool) => tool.name === "steer_status")!
+        .invoke({ worker: "wVM2Z" }),
+    ).resolves.toMatchObject({ worker: "wVM2Z", status: "none" });
+    expect(d.steerStatus).toHaveBeenCalledWith({ worker: "wVM2Z" });
   });
 
   it("wraps structured requeue, retake, reap, and unblock-sweep cores", async () => {

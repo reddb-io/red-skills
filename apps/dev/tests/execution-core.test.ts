@@ -434,6 +434,58 @@ describe("buildRunOptions", () => {
     expect(command).toContain("git push backup -u");
     expect(command).toContain("git push backup HEAD --force-with-lease");
   });
+
+  it("omits steerProvider when no steerFile is given", () => {
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
+    expect(opts.steerProvider).toBeUndefined();
+  });
+
+  it("creates a steerProvider that reads the file and returns its text on the first call (#2337)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "steer-test-"));
+    const steerPath = join(tmp, "steer.toon");
+    const { encode } = await import("@reddb-io/toon");
+    writeFileSync(steerPath, encode({ text: "focus on the failing test" }), "utf8");
+    const consumed: number[] = [];
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), {
+      ...baseInput,
+      steerFile: steerPath,
+      onSteerConsumed: (iteration) => consumed.push(iteration),
+    });
+    expect(opts.steerProvider).toBeTypeOf("function");
+    const text = await opts.steerProvider!(2);
+    expect(text).toBe("focus on the failing test");
+    expect(existsSync(steerPath)).toBe(false);
+    expect(consumed).toEqual([2]);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("steerProvider calls onSteerConsumed with the exact iteration number (#2337)", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "steer-iter-"));
+    const steerPath = join(tmp, "steer.toon");
+    const { encode } = await import("@reddb-io/toon");
+    writeFileSync(steerPath, encode({ text: "check logs" }), "utf8");
+    const consumed: number[] = [];
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), {
+      ...baseInput,
+      steerFile: steerPath,
+      onSteerConsumed: (iteration) => consumed.push(iteration),
+    });
+    await opts.steerProvider!(5);
+    expect(consumed).toEqual([5]);
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("steerProvider returns undefined and does not call onSteerConsumed when file is absent (#2337)", async () => {
+    const consumed: number[] = [];
+    const opts = buildRunOptions(makeDeps(async () => fakeResult()), {
+      ...baseInput,
+      steerFile: "/nonexistent/path/steer.toon",
+      onSteerConsumed: (iteration) => consumed.push(iteration),
+    });
+    const text = await opts.steerProvider!(3);
+    expect(text).toBeUndefined();
+    expect(consumed).toEqual([]);
+  });
 });
 
 describe("buildContinuousPushHook (issue #191)", () => {
