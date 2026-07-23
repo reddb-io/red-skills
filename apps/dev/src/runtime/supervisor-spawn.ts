@@ -6,7 +6,7 @@
 
 import { spawn } from "node:child_process";
 import { closeSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { ElasticShrinkMode, HeartbeatSlotPid } from "../core/supervisor.js";
 import { afkPaths } from "./wire.js";
@@ -16,6 +16,23 @@ import { migrateLegacyDevPaths } from "./red-path-migration.js";
 import { isSupervisorIdentityLive, readSupervisorIdentity, reapStaleSupervisorState } from "./supervisor-state.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Resolve the dev CLI bundle path from argv[1]. In MCP context argv[1] is the
+ * castle-mcp bundle, which has no `__supervise` entry point; the sibling dev
+ * bundle does. Falls back to argv1 unchanged so the CLI path (argv[1] already
+ * is the dev bundle or a shim) is unaffected.
+ */
+export function resolveDevScriptPath(argv1: string): string {
+  const file = basename(argv1);
+  if (file === "castle-mcp.bundle.min.mjs") {
+    return join(dirname(argv1), "dev.bundle.min.mjs");
+  }
+  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(argv1), file.replace(/^castle-mcp-/, "dev-"));
+  }
+  return argv1;
+}
 
 function isLivePid(pid: number): boolean {
   try {
@@ -106,7 +123,7 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
     stderrFd = undefined;
   }
   try {
-    const child = spawn(process.execPath, [process.argv[1]!, "__supervise", ...childArgs], {
+    const child = spawn(process.execPath, [resolveDevScriptPath(process.argv[1] ?? ""), "__supervise", ...childArgs], {
       cwd: opts.root,
       env,
       detached: true,
