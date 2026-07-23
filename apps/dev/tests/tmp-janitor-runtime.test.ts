@@ -2,7 +2,7 @@ import { access, mkdtemp, mkdir, readdir, rm, utimes, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { applyTmpJanitorReport, collectTmpJanitorReport } from "../src/runtime/tmp-janitor.js";
+import { applyTmpJanitorReport, collectTmpJanitorReport, selectOrphanTestRunners } from "../src/runtime/tmp-janitor.js";
 import { LOGS_TTL_S, SCRATCH_TTL_S } from "../src/core/tmp-janitor.js";
 
 const NOW = 1_800_000_000;
@@ -19,6 +19,28 @@ afterEach(async () => {
 });
 
 describe("tmp janitor runtime", () => {
+  it("selects only old reparented test runners inside the tmp workspace", () => {
+    const tmp = "/repo/.red/tmp";
+    const base = {
+      pid: 200,
+      ppid: 10,
+      pgid: 190,
+      sid: 10,
+      ageS: 600,
+      cwd: `${tmp}/workers/wTEST/2432/worktree`,
+      command: "node (vitest 2)",
+    };
+
+    expect(selectOrphanTestRunners([
+      base,
+      { ...base, pid: 201, ppid: 199 },
+      { ...base, pid: 202, pgid: 10 },
+      { ...base, pid: 203, ageS: 30 },
+      { ...base, pid: 204, cwd: "/repo/packages/dev" },
+      { ...base, pid: 205, command: "node server.js" },
+    ], tmp)).toEqual([base]);
+  });
+
   it("reports and fixes expired lanes, closed dead workers, and audited unknown root dirs", async () => {
     const root = await tempRoot();
     const tmp = join(root, ".red", "tmp");
