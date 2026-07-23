@@ -407,7 +407,26 @@ async function tryBootAutoApplyClaimHygiene(
 ): Promise<{ handled: boolean; quarantined: number[] }> {
   if (finding.id !== CLAIM_HYGIENE_PROBE_ID) return { handled: false, quarantined: [] };
   const data = autoHealableClaimHygiene(finding);
-  if (!data) return { handled: false, quarantined: [] };
+  if (!data) {
+    const raw = finding.data as {
+      actions?: Array<{ issue?: unknown }>;
+      foreign?: Array<{ issue?: unknown }>;
+      unknown?: Array<{ issue?: unknown }>;
+    } | undefined;
+    const issueNumbers = [...new Set(
+      [...(raw?.actions ?? []), ...(raw?.foreign ?? []), ...(raw?.unknown ?? [])]
+        .map((entry) => Number(entry.issue))
+        .filter((issue) => Number.isSafeInteger(issue) && issue > 0),
+    )];
+    for (const issue of issueNumbers) {
+      await quarantineClaimIssue(
+        deps,
+        issue,
+        "Claim ownership or liveness requires judgment; the fleet skipped this issue.",
+      );
+    }
+    return { handled: true, quarantined: issueNumbers };
+  }
   const concedeClaim = deps.concedeClaim;
   if (!concedeClaim) return { handled: false, quarantined: [] };
 
@@ -419,22 +438,12 @@ async function tryBootAutoApplyClaimHygiene(
       const decision = await recordIssueHeal(deps.healLedger, issue, deps.nowS * 1000);
       if (decision.action !== "quarantine") continue;
       quarantined.push(issue);
-      const marker = `<!-- afk:quarantine v1 issue=#${issue} -->`;
       const history = decision.history.map((timestamp) => new Date(timestamp).toISOString()).join(", ");
-      const diagnosis = `${marker}\n🤖 Claim healer quarantined this issue after 3 heals within 24h.\n\n**Heal history:** ${history}\n`;
-      try {
-        const body = await deps.gh.viewBody?.(issue);
-        if (body !== undefined && !body.includes(marker)) {
-          await deps.gh.editBody?.(issue, `${body.replace(/\s+$/, "")}\n\n## Quarantine diagnosis\n\n${diagnosis}`);
-        }
-      } catch (error) {
-        deps.log?.(`boot claim-heal diagnosis failed for #${issue}: ${String(error)}`);
-      }
-      try {
-        await deps.gh.editLabels(issue, [LABEL_READY], [LABEL_QUARANTINE]);
-      } catch (error) {
-        deps.log?.(`boot claim-heal quarantine label failed for #${issue}: ${String(error)}`);
-      }
+      await quarantineClaimIssue(
+        deps,
+        issue,
+        `Claim healer stopped after 3 heals within 24h. Heal history: ${history}`,
+      );
     }
   }
 
@@ -458,6 +467,49 @@ async function tryBootAutoApplyClaimHygiene(
     }
   }
   return { handled: true, quarantined };
+}
+
+async function quarantineClaimIssue(
+  deps: BootDeps,
+  issue: number,
+  summary: string,
+): Promise<void> {
+  const marker = `<!-- afk:quarantine v1 issue=#${issue} -->`;
+  try {
+    const body = await deps.gh.viewBody?.(issue);
+    if (body !== undefined && !body.includes(marker)) {
+      const blocker = body.includes("<!-- red:blocker-state v1 -->")
+        ? ""
+        : [
+            "## Current blocker",
+            "",
+            "<!-- red:blocker-state v1 -->",
+            "status: blocked",
+            "kind: claim-hygiene",
+            `summary: ${summary}`,
+            "next: Resolve the claim state, then clear this blocker for curator release.",
+            "<!-- /red:blocker-state -->",
+            "",
+          ].join("\n");
+      const diagnosis = [
+        marker,
+        "🤖 Claim-hygiene probe quarantined this issue instead of halting the fleet.",
+        "",
+        `**Diagnosis:** ${summary}`,
+      ].join("\n");
+      await deps.gh.editBody?.(
+        issue,
+        `${body.replace(/\s+$/, "")}\n\n${blocker}## Quarantine diagnosis\n\n${diagnosis}\n`,
+      );
+    }
+  } catch (error) {
+    deps.log?.(`boot claim-hygiene diagnosis failed for #${issue}: ${String(error)}`);
+  }
+  try {
+    await deps.gh.editLabels(issue, [LABEL_READY], [LABEL_QUARANTINE]);
+  } catch (error) {
+    deps.log?.(`boot claim-hygiene quarantine label failed for #${issue}: ${String(error)}`);
+  }
 }
 
 /**
