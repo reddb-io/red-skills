@@ -50,6 +50,7 @@ interface ClaimHygieneReportEntry {
 interface ClaimHygieneProbeData {
   readonly actions: readonly ClaimHygieneConcedeAction[];
   readonly foreign: readonly ClaimHygieneReportEntry[];
+  readonly unknown: readonly ClaimHygieneReportEntry[];
   readonly liveOwn: number;
   readonly unknownOwn: number;
 }
@@ -106,6 +107,7 @@ function classifyClaimHygiene(input: ClaimHygieneProbeInput, issues: readonly Cl
   const ownNamespace = (input.ownNamespace ?? "afk").toLowerCase();
   const actions: ClaimHygieneConcedeAction[] = [];
   const foreign: ClaimHygieneReportEntry[] = [];
+  const unknown: ClaimHygieneReportEntry[] = [];
   let liveOwn = 0;
   let unknownOwn = 0;
 
@@ -135,11 +137,17 @@ function classifyClaimHygiene(input: ClaimHygieneProbeInput, issues: readonly Cl
         liveOwn += 1;
       } else {
         unknownOwn += 1;
+        unknown.push({
+          issue: claim.issue,
+          markerComment: marker.commentId,
+          namespace: marker.namespace,
+          worker: marker.worker,
+        });
       }
     }
   }
 
-  return { actions, foreign, liveOwn, unknownOwn };
+  return { actions, foreign, unknown, liveOwn, unknownOwn };
 }
 
 function actionEvidence(actions: readonly ClaimHygieneConcedeAction[]): string {
@@ -255,7 +263,7 @@ export async function applyClaimHygieneFix(
     const issueFinding: OperationalProbeResult = {
       ...finding,
       evidence: actionEvidence(actions),
-      data: { actions, foreign: [], liveOwn: 0, unknownOwn: 0 } satisfies ClaimHygieneProbeData,
+      data: { actions, foreign: [], unknown: [], liveOwn: 0, unknownOwn: 0 } satisfies ClaimHygieneProbeData,
     };
     if (!(await deps.confirm(issueFinding))) {
       declined += 1;
