@@ -46,6 +46,8 @@ export interface Harness {
   agentResolverDirs: string[];
   /** landing visibility phase transitions published for statusline (#1427). */
   landingPhases: string[];
+  /** landing heartbeat events with per-step detail (#2433). */
+  landingEvents: { phase: string; detail: Record<string, unknown> }[];
 }
 
 export interface Opts {
@@ -153,6 +155,7 @@ export function harness(opts: Opts = {}): Harness {
   const mechanicalResolverDirs: string[] = [];
   const agentResolverDirs: string[] = [];
   const landingPhases: string[] = [];
+  const landingEvents: { phase: string; detail: Record<string, unknown> }[] = [];
   let mergeResolved = false;
   let prCreated = false;
 
@@ -330,8 +333,11 @@ export function harness(opts: Opts = {}): Harness {
     requirePostMergeValidation: opts.requirePostMergeValidation,
     // Global land-lock (#1337): only wired when the test opts in.
     landLock: opts.landLock,
-    landingPhase: async (phase) => {
-      landingPhases.push(phase);
+    landingPhase: async (phase, detail = {}) => {
+      if (landingPhases[landingPhases.length - 1] !== phase || detail.step === "re-validation") {
+        landingPhases.push(phase);
+      }
+      landingEvents.push({ phase, detail });
     },
   };
 
@@ -376,6 +382,7 @@ export function harness(opts: Opts = {}): Harness {
     mechanicalResolverDirs,
     agentResolverDirs,
     landingPhases,
+    landingEvents,
   };
 }
 
