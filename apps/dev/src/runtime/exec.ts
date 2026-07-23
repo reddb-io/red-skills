@@ -174,8 +174,19 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
 
     child.on("close", async (code, signal) => {
       if (timeout) clearTimeout(timeout);
-      if (signal !== null) await terminate();
-      else if (termination) await termination;
+      const cleaned = signal !== null
+        ? await terminate()
+        : termination
+          ? await termination
+          : true;
+      if (!cleaned) {
+        resolve({
+          code: KILLED_EXIT_CODE,
+          stdout,
+          stderr: `${stderr}${stderr ? "\n" : ""}process-group cleanup could not be confirmed`,
+        });
+        return;
+      }
 
       if (overflow) {
         resolve({
