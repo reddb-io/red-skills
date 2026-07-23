@@ -12,10 +12,16 @@ import {
   armPr,
   createFileMergeDriverStore,
   createGitHubTrackerAdapter,
+  createLaneFollower,
   createSingletonLeaseStore,
+  listCastleLaneFiles,
   runIssueStateCurator,
   runMergeDriverPass,
 } from "@reddb-io/red-castle/engine";
+import {
+  registerLaneEventSubscription,
+  type LaneSubscriptionServer,
+} from "./lane-subscription.js";
 import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
 import { createMedicIo } from "./runtime/medic-io.js";
 import { createFileMedicStore, runMedicPass } from "./core/pr-medic.js";
@@ -42,7 +48,7 @@ function toon(value: unknown): string {
   });
 }
 
-export function createCastleMcpServer(): McpServer {
+export function createCastleMcpServer(root = process.cwd()): McpServer {
   const server = new McpServer({ name: "castle", version: buildInfo.version });
   const registerTool = server.registerTool.bind(server) as (
     name: string,
@@ -70,6 +76,13 @@ export function createCastleMcpServer(): McpServer {
       }),
     );
   }
+  const paths = createEnginePaths(join(root, ".red"));
+  registerLaneEventSubscription(
+    server.server as unknown as LaneSubscriptionServer,
+    createLaneFollower({
+      list: () => listCastleLaneFiles(paths, ["worker", "supervisor"]),
+    }),
+  );
   return server;
 }
 
