@@ -303,13 +303,21 @@ function progressCell(phase: string, activity: string): string {
   return [phase, activity].filter(Boolean).join("·");
 }
 
+// Lifecycle-bar ramp: three steps of the statusline's wine family, so the bar
+// reads as part of the identity zone instead of a green/yellow traffic light.
+// The failure cursor stays the saturated {@link RED} — clearly hotter than the
+// pale-pink healthy cursor.
+const BAR_DONE = "\x1b[38;2;240;110;120m"; // completed cells: full-bodied red
+const BAR_CURRENT = "\x1b[38;2;255;214;214m"; // healthy cursor: brightest pale pink in the ramp
+const BAR_AHEAD = "\x1b[38;2;146;84;94m"; // future cells: receded dark wine
+
 function lifecycleBar(phase: string, failed: boolean): string {
   const macroPhase = LANDING_PHASES.has(phase) ? "merging" : phase;
   const current = Math.max(0, (AFK_PHASE_ORDER as readonly string[]).indexOf(macroPhase));
   if (current === AFK_PHASE_ORDER.length - 1) {
-    return `${GREEN}${"█".repeat(AFK_PHASE_ORDER.length)}${SOFT}`;
+    return `${BAR_DONE}${"█".repeat(AFK_PHASE_ORDER.length)}${SOFT}`;
   }
-  return `${GREEN}${"█".repeat(current)}${failed ? RED : YELLOW}▶${DIM}${"░".repeat(AFK_PHASE_ORDER.length - current - 1)}${SOFT}`;
+  return `${BAR_DONE}${"█".repeat(current)}${failed ? RED : BAR_CURRENT}▶${BAR_AHEAD}${"░".repeat(AFK_PHASE_ORDER.length - current - 1)}${SOFT}`;
 }
 
 function workerCells(worker: CompactWorker, now: number): WorkerCells {
