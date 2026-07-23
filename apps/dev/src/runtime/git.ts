@@ -49,6 +49,82 @@ function runGit(ctx: GitContext, args: readonly string[]): Promise<ExecOutput> {
   return (ctx.exec ?? execTool)("git", args, opts(ctx));
 }
 
+interface PorcelainWorktree {
+  path: string;
+  head?: string;
+  locked?: string;
+}
+
+export interface BrokenWorktreeQuarantine {
+  path: string;
+  reason: string;
+  removed: boolean;
+  error?: string;
+}
+
+function parseWorktreePorcelain(output: string): PorcelainWorktree[] {
+  const worktrees: PorcelainWorktree[] = [];
+  let current: PorcelainWorktree | undefined;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (current) worktrees.push(current);
+      current = { path: line.slice("worktree ".length) };
+    } else if (current && line.startsWith("HEAD ")) {
+      current.head = line.slice("HEAD ".length).trim();
+    } else if (current && (line === "locked" || line.startsWith("locked "))) {
+      current.locked = line.slice("locked".length).trim();
+    }
+  }
+  if (current) worktrees.push(current);
+  return worktrees;
+}
+
+/**
+ * Remove linked worktrees that can poison every repository-level git command.
+ * Git leaves an `initializing` lock while `worktree add` is in flight; a killed
+ * creator can strand that lock with a HEAD whose object was later collected.
+ * `git worktree remove --force` refuses locked entries, so quarantine first
+ * unlocks, then force-removes, and finally prunes the shared registry.
+ *
+ * The first porcelain entry is the primary checkout and is never eligible.
+ * Healthy linked worktrees, including deliberately locked ones whose reason is
+ * not `initializing`, are left untouched.
+ */
+export async function quarantineBrokenWorktrees(
+  ctx: GitContext,
+): Promise<BrokenWorktreeQuarantine[]> {
+  const listed = await runGit(ctx, ["worktree", "list", "--porcelain"]);
+  if (listed.code !== 0) return [];
+
+  const quarantined: BrokenWorktreeQuarantine[] = [];
+  const linked = parseWorktreePorcelain(listed.stdout).slice(1);
+  for (const worktree of linked) {
+    const initializing = worktree.locked === "initializing";
+    const head = worktree.head;
+    const headExists = head
+      ? (await runGit(ctx, ["cat-file", "-e", `${head}^{commit}`])).code === 0
+      : false;
+    if (!initializing && headExists) continue;
+
+    const reasons = [initializing ? "initializing-lock" : "", !headExists ? "dangling-head" : ""]
+      .filter(Boolean)
+      .join(",");
+    await runGit(ctx, ["worktree", "unlock", worktree.path]);
+    const removed = await runGit(ctx, ["worktree", "remove", "--force", worktree.path]);
+    quarantined.push({
+      path: worktree.path,
+      reason: reasons,
+      removed: removed.code === 0,
+      ...(removed.code === 0
+        ? {}
+        : { error: removed.stderr.trim() || `git worktree remove exited ${removed.code}` }),
+    });
+  }
+
+  if (quarantined.length > 0) await runGit(ctx, ["worktree", "prune"]);
+  return quarantined;
+}
+
 export async function isGitRepo(ctx: GitContext): Promise<boolean> {
   const r = await runGit(ctx, ["rev-parse", "--is-inside-work-tree"]);
   return r.code === 0 && r.stdout.trim() === "true";
@@ -264,6 +340,7 @@ export async function resolveFreshBase(
     }
     const updated = await runGit(ctx, ["update-ref", FLEET_TRUNK_REF, remoteSha]);
     if (updated.code !== 0) {
+      const detail = updated.stderr.trim() || `git update-ref exited ${updated.code}`;
       return {
         ok: false,
         base,
@@ -272,7 +349,7 @@ export async function resolveFreshBase(
         source: "mirror",
         remoteReachable: true,
         reason: "base-stale",
-        message: `could not update fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}`,
+        message: `could not update fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}: ${detail}`,
       };
     }
     return {
@@ -285,6 +362,10 @@ export async function resolveFreshBase(
     };
   }
 
+  const detail = fetch.code !== 0
+    ? fetch.stderr.trim() || `git fetch exited ${fetch.code}`
+    : `${remoteRef} did not resolve after fetch`;
+
   return {
     ok: false,
     base,
@@ -293,7 +374,7 @@ export async function resolveFreshBase(
     source: "mirror",
     remoteReachable: false,
     reason: "base-stale",
-    message: `could not refresh fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}`,
+    message: `could not refresh fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}: ${detail}`,
   };
 }
 

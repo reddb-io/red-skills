@@ -111,6 +111,33 @@ export interface CollectPrecheckFactsOptions {
   readonly hostPrerequisiteExec?: ExecFn;
 }
 
+export interface CollectBootPrecheckFactsOptions extends CollectPrecheckFactsOptions {
+  readonly log?: (line: string) => void;
+}
+
+/**
+ * Boot-only precheck collector. The worktree quarantine must run before any
+ * fetch-backed operational probe: a single initializing worktree with a
+ * dangling HEAD can otherwise make the probe itself fail on every boot.
+ * Read-only callers such as red-doctor continue to use collectPrecheckFacts.
+ */
+export async function collectBootPrecheckFacts(
+  ctx: RepoContext,
+  options: CollectBootPrecheckFactsOptions = {},
+): Promise<PrecheckFacts> {
+  const quarantined = await gitx.quarantineBrokenWorktrees({ cwd: ctx.root });
+  for (const worktree of quarantined) {
+    if (worktree.removed) {
+      options.log?.(`boot janitor quarantined worktree path=${worktree.path} reason=${worktree.reason}`);
+    } else {
+      options.log?.(
+        `boot janitor failed to quarantine worktree path=${worktree.path} reason=${worktree.reason}: ${worktree.error ?? "unknown git error"}`,
+      );
+    }
+  }
+  return collectPrecheckFacts(ctx, options);
+}
+
 export async function collectHostPrerequisiteProbeInput(
   exec: ExecFn = execTool,
 ): Promise<HostPrerequisiteProbeInput> {

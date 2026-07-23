@@ -135,6 +135,7 @@ describe("superviseTick — continuous trunk freshness (#2074)", () => {
       refreshedAtEpoch: NOW,
       intervalS: 60,
     });
+    expect(io.logLines).toContain("trunk mirror refresh failed: fetch failed");
   });
 
   it("surfaces the latest freshness outcome in heartbeat and structured tick events", async () => {
@@ -462,7 +463,7 @@ describe("half-open circuit breaker: probe outcome — re-park on failure", () =
     await handleDeadSlot(0, slot, deps, config({ circuitK: 5, halfOpenBaseS: 60, halfOpenCapS: 3600 }));
     expect(slot.parked).toBe(true);
     expect(slot.swept).toBe(true);
-    expect(io.comment).toHaveBeenCalledTimes(1); // discard envelope posted
+    expect(io.comment).toHaveBeenCalledTimes(2); // discard envelope + claim concession
 
     // Now simulate a probe fast-death: swept should block re-sweep.
     io.comment.mockClear();

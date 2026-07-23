@@ -324,13 +324,14 @@ export function reconcileClaim(
   };
 
   // Did WE just post the marker we are reconciling? True when `self.commentId`
-  // out-orders every marker the list already carries for our identity — i.e. our
-  // claim is the freshest word on the issue. A caller re-reconciling an OLD claim
+  // is at least as new as every marker the list already carries — i.e. our claim
+  // is the freshest word on the issue. Equality is required because verified
+  // read-back includes our just-posted marker. A caller re-reconciling an OLD claim
   // of its own (the returning stale owner) is not fresh, and stays subject to the
   // staleness predicate that reclaimed its issue.
   const selfPostedFresh =
     Number.isFinite(self.commentId) &&
-    records.every((r) => r.worker !== self.worker || r.commentId < self.commentId);
+    records.every((r) => r.commentId <= self.commentId);
 
   for (const r of records) ingest(r);
   // Always merge self in (read-after-write safety). Our own marker is a `claim`.

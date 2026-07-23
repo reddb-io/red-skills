@@ -64,7 +64,7 @@ describe("runBoot precheck short-circuit", () => {
                   surface: "graphql",
                 });
               },
-              countRestQueue: async () => 3,
+              listRestQueue: async () => [3],
             },
           }),
         }),
@@ -77,6 +77,78 @@ describe("runBoot precheck short-circuit", () => {
       },
     });
     expect(calls).toEqual([]);
+  });
+
+  it("keeps a worker session alive and logs info when queue skew clears on re-sample", async () => {
+    const log = vi.fn();
+    const { deps, fsCalls } = makeDeps({ log });
+    const listEngineCandidates = vi.fn()
+      .mockResolvedValueOnce([2448])
+      .mockResolvedValueOnce([2448, 2449]);
+    const listRestQueue = vi.fn().mockResolvedValue([2448, 2449]);
+
+    const result = await runBoot(
+      deps,
+      options({
+        skipSweeps: true,
+        precheck: facts({
+          queueVisibility: {
+            listEngineCandidates,
+            listRestQueue,
+            resampleDelayMs: 0,
+          },
+        }),
+      }),
+    );
+
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(fsCalls.workerPid).toHaveLength(1);
+    expect(log).toHaveBeenCalledWith(
+      "info: transient queue mismatch cleared on re-sample; first differing issues: #2449",
+    );
+  });
+
+  it("auto-concedes a seeded same-machine dead-pid ghost claim and continues boot", async () => {
+    const concedeClaim = vi.fn(async (_issue: number, _body: string) => {});
+    const log = vi.fn();
+    const { deps, fsCalls } = makeDeps({ log });
+    deps.concedeClaim = concedeClaim;
+
+    const result = await runBoot(
+      deps,
+      options({
+        skipSweeps: true,
+        operationalProbes: {
+          remoteUrls: [],
+          claimHygiene: {
+            ownWorkerPrefix: "testhost:",
+            listOpenQueueIssues: async () => [
+              {
+                number: 2473,
+                comments: [
+                  {
+                    id: 10,
+                    body: "<!-- afk:claim v1 worker=testhost:wGHOST kind=claim runner=codex -->",
+                  },
+                ],
+              },
+            ],
+            workerPidState: () => "dead",
+          },
+        },
+      }),
+    );
+
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(fsCalls.workerPid).toHaveLength(1);
+    expect(concedeClaim).toHaveBeenCalledOnce();
+    expect(concedeClaim.mock.calls[0]?.[0]).toBe(2473);
+    expect(concedeClaim.mock.calls[0]?.[1]).toContain(
+      "worker=testhost:wGHOST kind=concede runner=codex",
+    );
+    expect(log).toHaveBeenCalledWith(
+      "boot operational probe auto-fix applied: afk.claim-hygiene; posted 1 concede marker",
+    );
   });
 
   it("auto-applies guarded base-freshness before bootstrap and logs the before/after SHAs", async () => {
