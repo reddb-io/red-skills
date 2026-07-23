@@ -1,5 +1,12 @@
 # @reddb-io/brain
 
+## 2.85.1
+
+### Patch Changes
+
+- @reddb-io/shared@2.85.1
+- @reddb-io/build-info@2.85.1
+
 ## 2.85.0
 
 ### Patch Changes
