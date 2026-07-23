@@ -139,5 +139,18 @@ export const LABEL_TYPE_SCOUT = "type:scout";
 // Never applied to Specs, Tickets, or any other child artifact.
 export const LABEL_MANAGER_MAP = "type:manager-map";
 
+// Provenance label (issue #2603). Auto-applied by the labeling workflow to any
+// issue or PR whose author lacks repository write access — the mechanical marker
+// the AFK claim path reads to HOLD unapproved external-origin work for human
+// review. Auto-created when missing; never drives lifecycle transitions on its
+// own. A maintainer releases such an issue with an `/approve-external` comment
+// resolved through the write-access trust resolver (see trust-gate.ts).
+export const LABEL_ORIGIN_EXTERNAL = "origin:external";
+
+/** The comment marker a maintainer posts to release an `origin:external` issue
+ * into the executable queue. Authorization is resolved through the existing
+ * write-access trust resolver (`resolveActorTrust`), NOT by the marker alone. */
+export const EXTERNAL_APPROVAL_MARKER = "/approve-external";
+
 // Auxiliary labels
 export const LABEL_RUNNER_ERROR = "runner-error";
