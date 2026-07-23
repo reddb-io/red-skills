@@ -34,6 +34,9 @@ jobs:
       - name: Test workflow security pins
         run: scripts/test-workflow-security-pins.sh
 
+      - name: Test workflow fork posture
+        run: scripts/test-workflow-fork-posture.sh
+
       - name: Test canary channel promotion contract
         run: scripts/test-afk-promote-channel.sh
 
