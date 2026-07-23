@@ -33,7 +33,8 @@ import {
 import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
-import { Output, createFsIssueLeaseStore } from "@reddb-io/red-castle";
+import { makeClaimLock } from "./claim-lease.js";
+import { Output } from "@reddb-io/red-castle";
 import * as ghx from "../../runtime/gh.js";
 import * as gitx from "../../runtime/git.js";
 import * as fsx from "../../runtime/fs.js";
@@ -67,7 +68,7 @@ import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
 import { createEnginePaths, createFileHealLedgerStore, runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
-import { formatPrevFailureContext, readPrevFailureContext } from "../../core/prev-failure.js";
+import { lookupPrevFailureContext } from "../../core/prev-failure.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -89,7 +90,7 @@ import {
   deathCauseForRecoveredWorker,
 } from "../../core/process-safety.js";
 import { join } from "node:path";
-import { hostFingerprintPrefix, workerIdentity } from "../../core/host-identity.js";
+import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { appendAgentRecord, appendRecordToonlTaggedRow } from "../../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../../core/state.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
@@ -367,24 +368,7 @@ export function buildProcessDeps(
     // gate (a cross-host predecessor's log isn't on this filesystem).
     recoveredWorkerDeathCause: (recoveredWorker) =>
       deathCauseForRecoveredWorker(paths.tmpDir, recoveredWorker, hostFingerprintPrefix()),
-    // Local per-host issue lease — the ONE lease implementation, in castle
-    // (#2578). Its leaf `<claims>/<issue>/` dir is the atomic POSIX mkdir lock
-    // (#434); a dead holder is reclaimed through the #568 atomic-rename steal.
-    // `pidAlive` injects this host's `kill -0` verdict (castle stays liveness-IO
-    // free); the owner token is the ADR 0066 worker identity, so a release only
-    // removes the lease we actually hold. The owner-token liveness is `unknown`
-    // here because the pid signal alone arbitrates same-host steals on this path.
-    claimLock: (() => {
-      const store = createFsIssueLeaseStore(join(paths.tmpDir, "claims"), {
-        pid: process.pid,
-        pidAlive: (p) => (fsx.pidAlive(String(p)) ? "alive" : "dead"),
-      });
-      const owner = workerIdentity(workerId);
-      return {
-        acquire: async (issue) => (await store.acquire(issue, owner, () => "unknown")).acquired,
-        release: (issue) => store.release(issue, owner),
-      };
-    })(),
+    claimLock: makeClaimLock(paths.tmpDir, workerId),
     fs: {
       ensureAttemptDir: (dir) => fsx.ensureDir(dir),
       writeHandoff: (path, content) => fsx.writeHandoff(path, content),
@@ -624,14 +608,7 @@ export function buildProcessDeps(
       issueUrl: (issue) => ghx.issueUrl(ghCtx, issue),
       // The ONE ADR 0103 carry-forward: on an automatic re-queue, surface the
       // previous failure reason + its Envelope reference in the next prompt.
-      prevFailureContext: async (issue) => {
-        try {
-          const context = await readPrevFailureContext(paths.tmpDir, issue);
-          return context ? formatPrevFailureContext(context) : undefined;
-        } catch {
-          return undefined;
-        }
-      },
+      prevFailureContext: (issue) => lookupPrevFailureContext(paths.tmpDir, issue),
       handoffEnrichment: ({ issue: _issue, ...metadata }) =>
         buildHandoffEnrichment(metadata, {
           readText: (path) => readFile(join(ctx.root, path), "utf8"),

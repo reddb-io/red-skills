@@ -94,6 +94,20 @@ export function formatPrevFailureContext(context: PrevFailureContext): string {
   return lines.join("\n");
 }
 
+/** Safe lookup wrapper for the run wiring: absent or unreadable context reads
+ * as `undefined` — the carry-forward is best-effort by contract (ADR 0103). */
+export async function lookupPrevFailureContext(
+  root: string,
+  issue: number,
+): Promise<string | undefined> {
+  try {
+    const context = await readPrevFailureContext(root, issue);
+    return context ? formatPrevFailureContext(context) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function validateIdentity(root: string, issue: number): number {
   if (!root) throw new Error("root is required");
   if (!isPositiveIntegerToken(issue)) throw new Error(`invalid issue: ${issue}`);
