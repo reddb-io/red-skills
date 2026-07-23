@@ -3,6 +3,7 @@ import {
   parseTrustPolicy,
   evaluateTrustGate,
   evaluateClaimTrust,
+  evaluateExternalOriginGate,
   describeTrustPosture,
   planTrustStrip,
   resolveActorTrust,
@@ -11,6 +12,7 @@ import {
   type TrustProvenance,
   type ActorTrustLookup,
   type ActorTrustSignals,
+  type ExternalOriginState,
 } from "../src/core/trust-gate.js";
 import type { ConfigValues } from "../src/core/config.js";
 
@@ -288,6 +290,81 @@ describe("evaluateClaimTrust — visibility-aware claim decision (#1101)", () =>
     // when (hypothetically) failClosed were set alongside a list.
     const hybrid: TrustPolicy = { enabled: false, allowlist: ["alice"], visibility: "public", failClosed: true };
     const v = await evaluateClaimTrust(hybrid, prov("alice", "alice"), noLookup);
+    expect(v.executable).toBe(true);
+  });
+});
+
+describe("evaluateExternalOriginGate — origin:external hold (#2603)", () => {
+  const ext = (external: boolean, approved: boolean, approver?: string): ExternalOriginState => ({
+    external,
+    approved,
+    approver,
+  });
+
+  it("passes a non-external issue through untouched", () => {
+    const v = evaluateExternalOriginGate(ext(false, false));
+    expect(v.executable).toBe(true);
+    expect(v.holdForApproval).toBeUndefined();
+  });
+
+  it("passes when no external state is supplied at all", () => {
+    expect(evaluateExternalOriginGate(undefined).executable).toBe(true);
+  });
+
+  it("HOLDS an unapproved external issue and marks it for approval parking", () => {
+    const v = evaluateExternalOriginGate(ext(true, false));
+    expect(v.executable).toBe(false);
+    expect(v.holdForApproval).toBe(true);
+    expect(v.reason).toContain("origin:external");
+    expect(v.reason).toContain("/approve-external");
+  });
+
+  it("releases an approved external issue", () => {
+    const v = evaluateExternalOriginGate(ext(true, true, "maint"));
+    expect(v.executable).toBe(true);
+    expect(v.holdForApproval).toBeUndefined();
+  });
+});
+
+describe("evaluateClaimTrust — external-origin integration (#2603)", () => {
+  const noLookup: ActorTrustLookup = async () => ({});
+  const maintainerLookup = (...maintainers: string[]): ActorTrustLookup => {
+    const set = new Set(maintainers);
+    return async (actor: string) => ({ hasWriteAccess: set.has(actor), inCodeowners: false });
+  };
+  const external = (approved: boolean, approver?: string): ExternalOriginState => ({
+    external: true,
+    approved,
+    approver,
+  });
+
+  it("HOLDS an unapproved external issue BEFORE any posture check (permissive repo)", async () => {
+    const v = await evaluateClaimTrust(permissive, prov("stranger", "stranger"), noLookup, external(false));
+    expect(v.executable).toBe(false);
+    expect(v.holdForApproval).toBe(true);
+  });
+
+  it("HOLDS an unapproved external issue even when it is somehow allowlisted (strict)", async () => {
+    const v = await evaluateClaimTrust(policy, prov("alice", "bob"), noLookup, external(false));
+    expect(v.executable).toBe(false);
+    expect(v.holdForApproval).toBe(true);
+  });
+
+  it("an APPROVED external issue vouches for its untrusted author on the fail-closed path", async () => {
+    // author is an external stranger; the maintainer /approve-external vouches, and
+    // the promoter is a maintainer → executable.
+    const v = await evaluateClaimTrust(failClosed, prov("stranger", "maint"), maintainerLookup("maint"), external(true, "maint"));
+    expect(v.executable).toBe(true);
+  });
+
+  it("an APPROVED external issue still requires a maintainer PROMOTER on the fail-closed path", async () => {
+    const v = await evaluateClaimTrust(failClosed, prov("stranger", "intruder"), maintainerLookup("maint"), external(true, "maint"));
+    expect(v.executable).toBe(false);
+    expect(v.reason).toContain("untrusted ready-for-agent promoter");
+  });
+
+  it("leaves the non-external claim decision unchanged when no external state is passed", async () => {
+    const v = await evaluateClaimTrust(failClosed, prov("maint", "maint2"), maintainerLookup("maint", "maint2"));
     expect(v.executable).toBe(true);
   });
 });

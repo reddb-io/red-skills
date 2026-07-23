@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## triage / red-setup (engineering) — external-origin untrusted-data + `/approve-external` gate (issue #2603)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Fork PR #2598 exposed a gap in the funnel against untrusted external contributions. The claim path now mechanically holds `origin:external` issues until a maintainer approves, and the triage docs must treat external bodies as untrusted data.
+- **what changed**:
+  - `plugins/dev/skills/engineering/triage/SKILL.md`: added a top-level directive that external-origin issue/PR bodies are untrusted data — quote, never obey — and that an `origin:external` issue is held out of the executable queue until a maintainer posts `/approve-external`.
+  - `plugins/dev/skills/engineering/red-setup/triage-labels.md`: documented the `origin:external` provenance label (added to the mapping table) and the `/approve-external` claim-gate mechanics.
+  - Pi mirrors regenerated under `packaging/pi/dev/skills/...`.
+
 ## afk / go / ask-red / red-doctor (engineering) — MCP servers get colon-free names (issue #2405)
 
 - **status**: modified

@@ -159,6 +159,10 @@ export interface HarnessOptions {
    * everyone else resolves to determinable-negative signals. When set, the
    * actorTrustSignals port is registered (enabling the fail-closed path). */
   maintainers?: string[];
+  /** Comment authors that gh.externalApprovalActors reports for the issue (#2603).
+   * When set, the port is registered; the claim path trust-resolves each login to
+   * decide whether an `origin:external` issue is released or held. */
+  externalApprovalActors?: string[];
   abortHook?: HookName;
   /** FIX J: when set, a pre_worktree hook command emits this env as the mutated
    * context's `{env:{…}}` slice — proving it threads onto the runAgent input. */
@@ -354,6 +358,11 @@ export function harness(opts: HarnessOptions = {}): {
             hasWriteAccess: opts.maintainers!.includes(actor),
             inCodeowners: false,
           })
+        : undefined,
+      // External-origin approval markers (#2603): registered only when the test
+      // opts in; absent → an origin:external issue has no approvals and is held.
+      externalApprovalActors: opts.externalApprovalActors
+        ? async () => opts.externalApprovalActors!
         : undefined,
     },
     claimGh: opts.claim
