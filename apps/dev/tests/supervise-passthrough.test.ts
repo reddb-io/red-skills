@@ -170,7 +170,7 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
     };
     expect(formatBootSweepResult(result)).toBe(
       "boot sweeps complete: orphans removed=2 restored=1 kept=1 | attempt-cap reclaimed=1 | " +
-        "branches remote=0 local=2 | tmp-janitor expired=0 workers=0 unknown=0 protected=0 | " +
+        "branches remote=0 local=2 | tmp-janitor expired=0 workers=0 orphan-runners=0 unknown=0 protected=0 | " +
         "docs-sweep clean files=0 | unblocked=1 | stragglers unlabeled=2 triage=1 info=0",
     );
   });
@@ -195,6 +195,7 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
         expiredLanes: [".red/tmp/worktrees/feedback/afk-wDEAD-2450-gate"],
         staleWorkers: [],
         unknownTmpRoots: [],
+        orphanTestRunners: [],
         protectedLiveWorkers: [],
         protectedLiveFeedback: [],
         removals: [

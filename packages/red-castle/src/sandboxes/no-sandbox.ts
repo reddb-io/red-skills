@@ -21,6 +21,42 @@ import type {
 } from "../SandboxProvider.js";
 import { BoundedTail, MAX_TAIL_CHARS } from "../boundedTail.js";
 
+const PROCESS_GROUP_POLL_MS = 50;
+const PROCESS_GROUP_GRACE_TRIES = 10;
+const PROCESS_GROUP_KILL_TRIES = 20;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+function processGroupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function terminateProcessGroup(pgid: number): Promise<boolean> {
+  const signal = (value: NodeJS.Signals): void => {
+    try {
+      process.kill(-pgid, value);
+    } catch {
+      // The group already exited.
+    }
+  };
+  signal("SIGTERM");
+  for (let i = 0; i < PROCESS_GROUP_GRACE_TRIES; i += 1) {
+    if (!processGroupAlive(pgid)) return true;
+    await sleep(PROCESS_GROUP_POLL_MS);
+  }
+  signal("SIGKILL");
+  for (let i = 0; i < PROCESS_GROUP_KILL_TRIES; i += 1) {
+    if (!processGroupAlive(pgid)) return true;
+    await sleep(PROCESS_GROUP_POLL_MS);
+  }
+  return !processGroupAlive(pgid);
+}
+
 export interface NoSandboxOptions {
   /** Environment variables injected by this provider. Merged at launch time. */
   readonly env?: Record<string, string>;
@@ -100,6 +136,7 @@ export const noSandbox = (options?: NoSandboxOptions): NoSandboxProvider => ({
           cwd?: string;
           sudo?: boolean;
           stdin?: string;
+          signal?: AbortSignal;
         },
       ): Promise<ExecResult> => {
         // sudo is a no-op for no-sandbox — the user is already on the host
@@ -124,7 +161,33 @@ export const noSandbox = (options?: NoSandboxOptions): NoSandboxProvider => ({
               "pipe",
             ],
             windowsVerbatimArguments: isWindows,
+            detached: !isWindows,
           });
+          let termination: Promise<boolean> | undefined;
+          const terminate = (): Promise<boolean> => {
+            if (termination) return termination;
+            if (proc.pid === undefined) return Promise.resolve(true);
+            if (isWindows) {
+              proc.kill("SIGKILL");
+              return Promise.resolve(true);
+            }
+            termination = terminateProcessGroup(proc.pid);
+            return termination;
+          };
+          const onAbort = (): void => {
+            void terminate();
+          };
+          opts?.signal?.addEventListener("abort", onAbort, { once: true });
+          if (opts?.signal?.aborted) onAbort();
+          const settle = async (code: number | null, result: Omit<ExecResult, "exitCode">): Promise<void> => {
+            opts?.signal?.removeEventListener("abort", onAbort);
+            if (code === null && !termination) void terminate();
+            if (termination && !(await termination)) {
+              reject(new Error("exec failed: process-group cleanup could not be confirmed"));
+              return;
+            }
+            resolve({ ...result, exitCode: code ?? (opts?.signal?.aborted ? 124 : 0) });
+          };
 
           if (opts?.stdin !== undefined) {
             proc.stdin!.write(opts.stdin);
@@ -132,6 +195,7 @@ export const noSandbox = (options?: NoSandboxOptions): NoSandboxProvider => ({
           }
 
           proc.on("error", (error) => {
+            opts?.signal?.removeEventListener("abort", onAbort);
             reject(new Error(`exec failed: ${error.message}`));
           });
 
@@ -148,10 +212,9 @@ export const noSandbox = (options?: NoSandboxOptions): NoSandboxProvider => ({
               stderrTail.push(chunk.toString());
             });
             proc.on("close", (code) => {
-              resolve({
+              void settle(code, {
                 stdout: stdoutTail.toString(),
                 stderr: stderrTail.toString(),
-                exitCode: code ?? 0,
               });
             });
           } else {
@@ -164,10 +227,9 @@ export const noSandbox = (options?: NoSandboxOptions): NoSandboxProvider => ({
               stderrChunks.push(chunk.toString());
             });
             proc.on("close", (code) => {
-              resolve({
+              void settle(code, {
                 stdout: stdoutChunks.join(""),
                 stderr: stderrChunks.join(""),
-                exitCode: code ?? 0,
               });
             });
           }

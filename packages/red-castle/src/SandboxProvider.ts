@@ -43,6 +43,8 @@ export interface BindMountSandboxHandle {
       cwd?: string;
       sudo?: boolean;
       stdin?: string;
+      /** Cancels the complete provider-owned process tree. */
+      signal?: AbortSignal;
     },
   ): Promise<ExecResult>;
   /**
@@ -120,6 +122,8 @@ export interface IsolatedSandboxHandle {
       cwd?: string;
       sudo?: boolean;
       stdin?: string;
+      /** Cancels the complete provider-owned process tree. */
+      signal?: AbortSignal;
     },
   ): Promise<ExecResult>;
   /**
@@ -212,6 +216,8 @@ export interface NoSandboxHandle {
       cwd?: string;
       sudo?: boolean;
       stdin?: string;
+      /** Cancels the complete provider-owned process tree. */
+      signal?: AbortSignal;
     },
   ): Promise<ExecResult>;
   /**

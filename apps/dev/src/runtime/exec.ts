@@ -1,13 +1,50 @@
 // runtime/exec.ts — the single real-process boundary.
 //
 // Every gh/git/pnpm closure assembled in this runtime/ tree ultimately routes
-// through `execTool`, a thin promisified wrapper over node:child_process
-// execFile. It NEVER throws on a non-zero exit (the orchestrators decide what a
+// through `execTool`, a bounded wrapper over node:child_process spawn. It NEVER
+// throws on a non-zero exit (the orchestrators decide what a
 // non-zero code means); it resolves with {code,stdout,stderr} so callers can
 // branch on the code. The thin `git` / `gh` / `pnpm` helpers fix the command
 // head so call sites read as argv arrays.
 
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
+
+const PROCESS_GROUP_POLL_MS = 50;
+const PROCESS_GROUP_GRACE_TRIES = 10;
+const PROCESS_GROUP_KILL_TRIES = 20;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+function processGroupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function signalProcessGroup(pgid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pgid, signal);
+  } catch {
+    // The group already exited.
+  }
+}
+
+async function terminateProcessGroup(pgid: number): Promise<boolean> {
+  signalProcessGroup(pgid, "SIGTERM");
+  for (let i = 0; i < PROCESS_GROUP_GRACE_TRIES; i += 1) {
+    if (!processGroupAlive(pgid)) return true;
+    await sleep(PROCESS_GROUP_POLL_MS);
+  }
+  signalProcessGroup(pgid, "SIGKILL");
+  for (let i = 0; i < PROCESS_GROUP_KILL_TRIES; i += 1) {
+    if (!processGroupAlive(pgid)) return true;
+    await sleep(PROCESS_GROUP_POLL_MS);
+  }
+  return !processGroupAlive(pgid);
+}
 
 export interface ExecOutput {
   code: number;
@@ -63,9 +100,8 @@ export const MAXBUFFER_EXIT_CODE = 126;
 
 /**
  * Exit code reported for a command killed by the exec timeout or an external
- * signal. Node's execFile leaves `error.code` null in that case (the numeric
- * exit slot is empty when the child died from a signal), so without this the
- * old `typeof code === "number" ? code : 0` fallthrough read a killed/timed-out
+ * signal. Node leaves the numeric exit slot empty when a child dies from a
+ * signal, so without this the old fallthrough read a killed/timed-out
  * command as success — a slow model classification, or a future timed-out land,
  * silently passing (PRD #567). 124 mirrors GNU `timeout(1)`'s killed-process
  * code so any caller branching on `code !== 0` reads the kill as a failure.
@@ -83,51 +119,101 @@ export const KILLED_EXIT_CODE = 124;
  */
 export function execTool(cmd: string, args: readonly string[], opts: ExecOptions = {}): Promise<ExecOutput> {
   return new Promise((resolve) => {
-    const child = execFile(
-      cmd,
-      [...args],
-      {
-        cwd: opts.cwd,
-        env: opts.env ?? process.env,
-        timeout: opts.timeoutMs ?? 0,
-        maxBuffer: opts.maxBuffer ?? DEFAULT_MAX_BUFFER,
-        encoding: "utf8",
-      },
-      (error, stdout, stderr) => {
-        if (error && (error as NodeJS.ErrnoException).code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
-          // Output exceeded maxBuffer: Node killed the child. The command may
-          // well have SUCCEEDED (a green-but-verbose test suite) — only its
-          // output was too large. Surface a DISTINCT code + a stable
-          // `maxBuffer length exceeded` marker on stderr so the feedback gate's
-          // INFRA classifier routes it through bounded `validation-infra`
-          // recovery instead of paging a human for a config problem.
-          resolve({
-            code: MAXBUFFER_EXIT_CODE,
-            stdout: String(stdout ?? ""),
-            stderr: `command output exceeded the capture ceiling (maxBuffer length exceeded); ${String((error as Error).message)}`,
-          });
-          return;
-        }
-        if (error && typeof (error as NodeJS.ErrnoException).code === "string") {
-          // Spawn failure (ENOENT etc.) — surface as 127 like a shell would.
-          resolve({ code: 127, stdout: String(stdout ?? ""), stderr: String((error as Error).message) });
-          return;
-        }
-        if (error && (error.killed || error.signal != null)) {
-          // Timed out (timeoutMs deadline) or killed by an external signal. The
-          // numeric exit code is null here, so report a non-zero failure instead
-          // of letting the kill read as success.
-          resolve({
-            code: KILLED_EXIT_CODE,
-            stdout: String(stdout ?? ""),
-            stderr: String(stderr ?? "") || String((error as Error).message),
-          });
-          return;
-        }
-        const code = error && typeof error.code === "number" ? error.code : 0;
-        resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
-      },
-    );
+    const maxBuffer = opts.maxBuffer ?? DEFAULT_MAX_BUFFER;
+    const child = spawn(cmd, [...args], {
+      cwd: opts.cwd,
+      env: opts.env ?? process.env,
+      // POSIX setsid: child.pid is the process-group ID for the complete gate.
+      detached: process.platform !== "win32",
+      stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let overflow = false;
+    let timedOut = false;
+    let spawnError: Error | undefined;
+    let termination: Promise<boolean> | undefined;
+
+    const terminate = (): Promise<boolean> => {
+      if (termination) return termination;
+      if (child.pid === undefined) return Promise.resolve(true);
+      if (process.platform === "win32") {
+        child.kill("SIGKILL");
+        return Promise.resolve(true);
+      }
+      termination = terminateProcessGroup(child.pid);
+      return termination;
+    };
+
+    const capture = (stream: "stdout" | "stderr", chunk: Buffer): void => {
+      const used = stream === "stdout" ? stdoutBytes : stderrBytes;
+      if (used + chunk.byteLength > maxBuffer) {
+        overflow = true;
+        void terminate();
+        return;
+      }
+      if (stream === "stdout") {
+        stdoutBytes += chunk.byteLength;
+        stdout += chunk.toString();
+      } else {
+        stderrBytes += chunk.byteLength;
+        stderr += chunk.toString();
+      }
+    };
+
+    child.stdout?.on("data", (chunk: Buffer) => capture("stdout", chunk));
+    child.stderr?.on("data", (chunk: Buffer) => capture("stderr", chunk));
+    child.on("error", (error) => {
+      spawnError = error;
+    });
+
+    const timeout = opts.timeoutMs && opts.timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          void terminate();
+        }, opts.timeoutMs)
+      : undefined;
+
+    child.on("close", async (code, signal) => {
+      if (timeout) clearTimeout(timeout);
+      const cleaned = signal !== null
+        ? await terminate()
+        : termination
+          ? await termination
+          : true;
+      if (!cleaned) {
+        resolve({
+          code: KILLED_EXIT_CODE,
+          stdout,
+          stderr: `${stderr}${stderr ? "\n" : ""}process-group cleanup could not be confirmed`,
+        });
+        return;
+      }
+
+      if (overflow) {
+        resolve({
+          code: MAXBUFFER_EXIT_CODE,
+          stdout,
+          stderr: "command output exceeded the capture ceiling (maxBuffer length exceeded)",
+        });
+        return;
+      }
+      if (spawnError) {
+        resolve({ code: 127, stdout, stderr: spawnError.message });
+        return;
+      }
+      if (timedOut || signal !== null) {
+        resolve({
+          code: KILLED_EXIT_CODE,
+          stdout,
+          stderr: stderr || `command terminated by ${signal ?? "timeout"}`,
+        });
+        return;
+      }
+      resolve({ code: code ?? 0, stdout, stderr });
+    });
     if (opts.input !== undefined && child.stdin) {
       child.stdin.end(opts.input);
     }
