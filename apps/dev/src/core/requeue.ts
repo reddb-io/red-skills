@@ -11,8 +11,10 @@
 // are its IO callers.
 //
 // #860 narrows the scope to explicitly supported transient parks. Alongside
-// `blocked:validation` and `blocked:spec`, `blocked:infra` is requeueable because
-// a recovered infrastructure fault needs no new human decision. Mixed
+// `blocked:validation` and `blocked:spec`, `blocked:infra` and
+// `blocked:base-stale` are requeueable because a recovered mechanical fault
+// needs no new human decision. The IO caller freshness-gates `base-stale`
+// before applying this pure plan. Mixed
 // `blocked:*` states and label/body kind mismatches are refused without mutation
 // and direct the maintainer to `/hitl`.
 
@@ -40,7 +42,12 @@ export const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-co
  * any other human-input kind still requires `/hitl` (the interactive decision
  * path); those must not be auto-cleared without the full HITL interview.
  */
-export const REQUEUE_SUPPORTED_KINDS = new Set(["validation", "spec", "infra"]);
+export const REQUEUE_SUPPORTED_KINDS = new Set([
+  "validation",
+  "spec",
+  "infra",
+  "base-stale",
+]);
 
 export interface RequeueInput {
   /** The current issue body markdown. */
@@ -54,7 +61,8 @@ export interface RequeueInput {
 }
 
 /**
- * Is `kind` requeueable? The supported set is `{validation, spec, infra}`.
+ * Is `kind` requeueable? The supported set is
+ * `{validation, spec, infra, base-stale}`.
  */
 function kindRequeueable(kind: string): boolean {
   return REQUEUE_SUPPORTED_KINDS.has(kind);
@@ -122,8 +130,9 @@ export function isRequeueComplete(body: string, labels: readonly string[]): bool
  * is active so the transition can never degrade into a label-only flip.
  *
  * Narrowed to explicit transient parks: `blocked:validation`, `blocked:spec`,
- * and `blocked:infra`. Mixed `blocked:*` states and label/body kind mismatches
- * set `refuseForHitl: true` and direct the caller to `/hitl` instead.
+ * `blocked:infra`, and freshness-gated `blocked:base-stale`. Mixed `blocked:*`
+ * states and label/body kind mismatches set `refuseForHitl: true` and direct
+ * the caller to `/hitl` instead.
  */
 export function planRequeue(input: RequeueInput): RequeuePlan {
   const activeBlocker = parseCurrentBlocker(input.body);
@@ -165,7 +174,7 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   // Unsupported label kind → /hitl handles other human-input blocker types.
   if (labelKind !== null && !kindRequeueable(labelKind)) {
     return refuse(
-      `blocked:${labelKind} is not in the supported set (validation, spec, infra): use /hitl`,
+      `blocked:${labelKind} is not in the supported set (validation, spec, infra, base-stale): use /hitl`,
       true,
       activeBlocker,
       input.body,
@@ -179,7 +188,7 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
     !kindRequeueable(activeBlocker.kind)
   ) {
     return refuse(
-      `active blocker kind "${activeBlocker.kind}" is not in the supported set (validation, spec, infra): use /hitl`,
+      `active blocker kind "${activeBlocker.kind}" is not in the supported set (validation, spec, infra, base-stale): use /hitl`,
       true,
       activeBlocker,
       input.body,
