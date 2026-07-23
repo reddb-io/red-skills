@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from "
 import { dirname, join } from "node:path";
 import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
-import { LABEL_HUMAN, LABEL_READY } from "../../core/triage-labels.js";
+import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY } from "../../core/triage-labels.js";
 import * as ghx from "../gh.js";
 import { afkPaths, type RepoContext } from "./paths.js";
 import { parsePositive } from "./settings.js";
@@ -57,6 +57,7 @@ export async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: 
 interface StatuslineCache {
   queue: number;
   human: number;
+  quarantine?: number;
   ts: number;
 }
 
@@ -90,6 +91,7 @@ export function readStatuslineCache(path: string): StatuslineCache | null {
     return {
       queue: Number(parsed.queue ?? 0),
       human: Number(parsed.human ?? 0),
+      quarantine: Number(parsed.quarantine ?? 0),
       ts: Number(parsed.ts ?? 0),
     };
   } catch {
@@ -191,10 +193,12 @@ export function applyStatuslineCountCacheLabelDelta(
   const deltaFor = (label: string): number => (added.has(label) ? 1 : 0) - (removed.has(label) ? 1 : 0);
   const queueDelta = deltaFor(LABEL_READY);
   const humanDelta = deltaFor(LABEL_HUMAN);
-  if (queueDelta === 0 && humanDelta === 0) return false;
+  const quarantineDelta = deltaFor(LABEL_QUARANTINE);
+  if (queueDelta === 0 && humanDelta === 0 && quarantineDelta === 0) return false;
   writeStatuslineCacheAtomic(cachePath, {
     queue: Math.max(0, cached.queue + queueDelta),
     human: Math.max(0, cached.human + humanDelta),
+    quarantine: Math.max(0, (cached.quarantine ?? 0) + quarantineDelta),
     ts: nowS,
   });
   return true;
