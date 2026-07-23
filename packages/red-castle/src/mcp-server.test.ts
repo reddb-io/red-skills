@@ -35,6 +35,7 @@ function deps(): CastleMcpDependencies {
       ready_for_agent: [],
       ready_for_human: [],
     })),
+    deadendAudit: vi.fn(async () => ({ total: 0, classes: [] })),
     eventsSince: vi.fn(async (input) => {
       if (input.cursor === undefined) {
         return { events: [], history: [], lane_records: [], cursor: "eyJ2IjoxLCJhdCI6IjIwMjYtMDctMjJUMDA6MDA6MDAuMDAwWiJ9" };
@@ -132,6 +133,7 @@ describe("castle MCP tools", () => {
       "history",
       "queue_status",
       "events_since",
+      "deadend_audit",
       "worker_dispatch",
       "worker_status",
       "worker_stop",

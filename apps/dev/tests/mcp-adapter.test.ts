@@ -789,5 +789,6 @@ function fakeOperations(): DevAfkMcpOperations {
     weeklyReview: vi.fn(async () => ({ kind: "weekly" })),
     triage: vi.fn(async (input) => ({ issue: input.issue, action: "apply" })),
     respond: vi.fn(async () => ({ action: "ignored" })),
+    deadendAudit: vi.fn(async () => ({ total: 0, classes: [] })),
   };
 }
