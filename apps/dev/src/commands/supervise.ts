@@ -59,6 +59,7 @@ import {
   castleStateSnapshotPath,
   createEnginePaths,
   createCastleLaneWriters,
+  createFileHealLedgerStore,
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
@@ -730,6 +731,10 @@ function buildSupervisorDeps(
     wake: buildStateChangeWake(join(tmpDir, "workers")),
     // Env for the bounded stalled re-claim cap (#402): RED_AFK_RETRY_STALLED.
     recoveryEnv: process.env,
+    // ADR 0122 heal ledger (#2526): the death-sweep consults the same castle
+    // store the boot healer writes, so worker-death heals and probe heals
+    // share one per-issue budget.
+    healLedger: createFileHealLedgerStore(createEnginePaths(join(root, ".red"))),
     // Derived human-readable messages are stored in the structured supervisor
     // lane, not dual-written to a prose supervisor log.
     log: logLine,

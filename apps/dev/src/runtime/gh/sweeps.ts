@@ -46,7 +46,7 @@ export async function orphanState(
 export async function crashedClaimState(
   ctx: GhContext,
   issue: number,
-): Promise<{ ghOk: boolean; stillRunning: boolean; envelopePosted: boolean }> {
+): Promise<{ ghOk: boolean; stillRunning: boolean; envelopePosted: boolean; labels?: string[] }> {
   const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,labels,comments"]);
   if (r.code !== 0) return { ghOk: false, stillRunning: false, envelopePosted: false };
   try {
@@ -60,7 +60,7 @@ export async function crashedClaimState(
     const envelopePosted = Array.isArray(parsed.comments)
       ? parsed.comments.some((c) => String(c.body ?? "").includes("data-attempt-status"))
       : false;
-    return { ghOk: true, stillRunning, envelopePosted };
+    return { ghOk: true, stillRunning, envelopePosted, labels };
   } catch {
     return { ghOk: false, stillRunning: false, envelopePosted: false };
   }
