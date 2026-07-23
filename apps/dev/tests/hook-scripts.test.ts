@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, readFileSync, mkdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  mkdirSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execTool } from "../src/runtime/exec.js";
@@ -16,7 +22,23 @@ import { execTool } from "../src/runtime/exec.js";
 
 const here = new URL(import.meta.url).pathname; // .../apps/dev/tests/hook-scripts.test.ts
 const repoRoot = here.slice(0, here.indexOf("/apps/dev/"));
-const hooksDir = join(repoRoot, "plugins", "dev", "skills", "engineering", "afk", "hooks");
+const hooksDir = join(
+  repoRoot,
+  "plugins",
+  "dev",
+  "skills",
+  "engineering",
+  "afk",
+  "hooks",
+);
+const afkSkillDir = join(
+  repoRoot,
+  "plugins",
+  "dev",
+  "skills",
+  "engineering",
+  "afk",
+);
 
 function scriptPath(name: string): string {
   return join(hooksDir, name);
@@ -42,19 +64,39 @@ async function runScript(
   return { code: r.code, stdout: r.stdout };
 }
 
+describe("Gradle shell portability", () => {
+  it("keeps the cheap Gradle leaf and legacy applicability surfaces POSIX-parseable", async () => {
+    for (const relative of [
+      "hooks/red-gradle",
+      "detectors/gradle.sh",
+      "defaults/gradle-pre-worktree.sh",
+    ]) {
+      const result = await execTool("sh", ["-n", join(afkSkillDir, relative)]);
+      expect(result.code, relative).toBe(0);
+    }
+  });
+});
+
 describe("red-cargo parity", () => {
-  it("pass-through with empty stdout when no Cargo.toml present", async () => {
+  it("acts as a leaf without repeating Cargo.toml detection", async () => {
     if (skipIfMissing("red-cargo")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-cargo-"));
-    const r = await runScript("red-cargo", { PROJECT_ROOT: tmp, RED_AFK_SLOT: "2" }, "{}");
+    const base = join(tmp, "cargo-target");
+    const r = await runScript(
+      "red-cargo",
+      { PROJECT_ROOT: tmp, RED_AFK_SLOT: "2", RED_AFK_CARGO_TARGET_BASE: base },
+      "{}",
+    );
     expect(r.code).toBe(0);
-    expect(r.stdout.trim()).toBe("");
+    expect(JSON.parse(r.stdout.trim()).env.CARGO_TARGET_DIR).toBe(
+      `${base}/slot-2`,
+    );
   });
 
   it("injects CARGO_TARGET_DIR into env when Cargo.toml present", async () => {
     if (skipIfMissing("red-cargo")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-cargo-"));
-    writeFileSync(join(tmp, "Cargo.toml"), "[package]\nname = \"test\"\n");
+    writeFileSync(join(tmp, "Cargo.toml"), '[package]\nname = "test"\n');
     const base = join(tmp, "cargo-target");
     const r = await runScript(
       "red-cargo",
@@ -69,7 +111,7 @@ describe("red-cargo parity", () => {
   it("merges with existing env object in context", async () => {
     if (skipIfMissing("red-cargo")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-cargo-"));
-    writeFileSync(join(tmp, "Cargo.toml"), "[package]\nname = \"test\"\n");
+    writeFileSync(join(tmp, "Cargo.toml"), '[package]\nname = "test"\n');
     const base = join(tmp, "cargo-target");
     const ctx = JSON.stringify({ env: { EXISTING_VAR: "kept" } });
     const r = await runScript(
@@ -85,23 +127,34 @@ describe("red-cargo parity", () => {
 });
 
 describe("red-gradle parity", () => {
-  it("pass-through when no build.gradle present", async () => {
+  it("acts as a leaf without repeating build.gradle detection", async () => {
     if (skipIfMissing("red-gradle")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-gradle-"));
+    const base = join(tmp, "gradle-home");
     const r = await runScript(
       "red-gradle",
-      { PROJECT_ROOT: tmp, RED_AFK_SLOT: "1", RED_AFK_GRADLE_USER_HOME_BASE: "/tmp/gradle" },
+      {
+        PROJECT_ROOT: tmp,
+        RED_AFK_SLOT: "1",
+        RED_AFK_GRADLE_USER_HOME_BASE: base,
+      },
       "{}",
     );
     expect(r.code).toBe(0);
-    expect(r.stdout.trim()).toBe("");
+    expect(JSON.parse(r.stdout.trim()).env.GRADLE_USER_HOME).toBe(
+      `${base}/slot-1`,
+    );
   });
 
   it("pass-through when RED_AFK_GRADLE_USER_HOME_BASE is unset (opt-in)", async () => {
     if (skipIfMissing("red-gradle")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-gradle-"));
     writeFileSync(join(tmp, "build.gradle"), "// gradle");
-    const r = await runScript("red-gradle", { PROJECT_ROOT: tmp, RED_AFK_SLOT: "0" }, "{}");
+    const r = await runScript(
+      "red-gradle",
+      { PROJECT_ROOT: tmp, RED_AFK_SLOT: "0" },
+      "{}",
+    );
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe("");
   });
@@ -113,7 +166,11 @@ describe("red-gradle parity", () => {
     const base = join(tmp, "gradle-home");
     const r = await runScript(
       "red-gradle",
-      { PROJECT_ROOT: tmp, RED_AFK_SLOT: "2", RED_AFK_GRADLE_USER_HOME_BASE: base },
+      {
+        PROJECT_ROOT: tmp,
+        RED_AFK_SLOT: "2",
+        RED_AFK_GRADLE_USER_HOME_BASE: base,
+      },
       "{}",
     );
     expect(r.code).toBe(0);
@@ -134,8 +191,15 @@ describe("red-heartbeat parity", () => {
     if (skipIfMissing("red-heartbeat")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-heartbeat-"));
     const logPath = join(tmp, "afk.log");
-    writeFileSync(logPath, "[heartbeat] iteration started for #1 at 2026-01-01T00:00:00Z\n");
-    const r = await runScript("red-heartbeat", { RED_AFK_ITER_LOG: logPath }, "{}");
+    writeFileSync(
+      logPath,
+      "[heartbeat] iteration started for #1 at 2026-01-01T00:00:00Z\n",
+    );
+    const r = await runScript(
+      "red-heartbeat",
+      { RED_AFK_ITER_LOG: logPath },
+      "{}",
+    );
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe("");
     const content = readFileSync(logPath, "utf8");
@@ -144,7 +208,11 @@ describe("red-heartbeat parity", () => {
 
   it("skips boundary marker write when RED_AFK_ITER_LOG file does not exist", async () => {
     if (skipIfMissing("red-heartbeat")) return;
-    const r = await runScript("red-heartbeat", { RED_AFK_ITER_LOG: "/tmp/no-such-file-xyz.log" }, "{}");
+    const r = await runScript(
+      "red-heartbeat",
+      { RED_AFK_ITER_LOG: "/tmp/no-such-file-xyz.log" },
+      "{}",
+    );
     expect(r.code).toBe(0);
   });
 
@@ -159,7 +227,9 @@ describe("red-heartbeat parity", () => {
 describe("red-envelope parity", () => {
   it("no-ops when RED_AFK_STATE_FILE is unset", async () => {
     if (skipIfMissing("red-envelope")) return;
-    const ctx = JSON.stringify({ result: { status: "success", outcome: "done" } });
+    const ctx = JSON.stringify({
+      result: { status: "success", outcome: "done" },
+    });
     const r = await runScript("red-envelope", {}, ctx);
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe("");
@@ -167,8 +237,14 @@ describe("red-envelope parity", () => {
 
   it("no-ops when state file does not exist", async () => {
     if (skipIfMissing("red-envelope")) return;
-    const ctx = JSON.stringify({ result: { status: "fail", outcome: "no-sentinel" } });
-    const r = await runScript("red-envelope", { RED_AFK_STATE_FILE: "/tmp/no-such-state.json" }, ctx);
+    const ctx = JSON.stringify({
+      result: { status: "fail", outcome: "no-sentinel" },
+    });
+    const r = await runScript(
+      "red-envelope",
+      { RED_AFK_STATE_FILE: "/tmp/no-such-state.json" },
+      ctx,
+    );
     expect(r.code).toBe(0);
   });
 
@@ -176,9 +252,18 @@ describe("red-envelope parity", () => {
     if (skipIfMissing("red-envelope")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-envelope-"));
     const stateFile = join(tmp, "afk.state.toon");
-    writeFileSync(stateFile, JSON.stringify({ current: { activity: "running" } }));
-    const ctx = JSON.stringify({ result: { status: "success", outcome: "done" } });
-    const r = await runScript("red-envelope", { RED_AFK_STATE_FILE: stateFile }, ctx);
+    writeFileSync(
+      stateFile,
+      JSON.stringify({ current: { activity: "running" } }),
+    );
+    const ctx = JSON.stringify({
+      result: { status: "success", outcome: "done" },
+    });
+    const r = await runScript(
+      "red-envelope",
+      { RED_AFK_STATE_FILE: stateFile },
+      ctx,
+    );
     expect(r.code).toBe(0);
     expect(r.stdout.trim()).toBe("");
     const state = JSON.parse(readFileSync(stateFile, "utf8"));
@@ -191,7 +276,11 @@ describe("red-envelope parity", () => {
     const tmp = mkdtempSync(join(tmpdir(), "red-envelope-"));
     const stateFile = join(tmp, "afk.state.toon");
     writeFileSync(stateFile, JSON.stringify({ current: {} }));
-    const r = await runScript("red-envelope", { RED_AFK_STATE_FILE: stateFile, RED_AFK_RESULT_STATUS: "fail" }, "{}");
+    const r = await runScript(
+      "red-envelope",
+      { RED_AFK_STATE_FILE: stateFile, RED_AFK_RESULT_STATUS: "fail" },
+      "{}",
+    );
     expect(r.code).toBe(0);
     const state = JSON.parse(readFileSync(stateFile, "utf8"));
     expect(state.current.result_status).toBe("fail");
@@ -213,7 +302,11 @@ describe("red-validation parity", () => {
     if (skipIfMissing("red-validation")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-validation-"));
     const ctx = JSON.stringify({ issue: { number: 2 }, workspace: tmp });
-    const r = await runScript("red-validation", { RED_AFK_WORKSPACE: tmp }, ctx);
+    const r = await runScript(
+      "red-validation",
+      { RED_AFK_WORKSPACE: tmp },
+      ctx,
+    );
     expect(r.code).toBe(0);
     const out = JSON.parse(r.stdout.trim());
     expect(out.result.validation_status).toBe("skipped");
@@ -224,12 +317,25 @@ describe("red-validation parity", () => {
     if (skipIfMissing("red-validation")) return;
     const tmp = mkdtempSync(join(tmpdir(), "red-validation-"));
     // package.json with no scripts → all skipped → passes
-    writeFileSync(join(tmp, "package.json"), JSON.stringify({ name: "test", scripts: {} }));
-    const ctx = JSON.stringify({ issue: { number: 3 }, workspace: tmp, merge_commit: { sha: "abc" } });
-    const r = await runScript("red-validation", { RED_AFK_WORKSPACE: tmp }, ctx);
+    writeFileSync(
+      join(tmp, "package.json"),
+      JSON.stringify({ name: "test", scripts: {} }),
+    );
+    const ctx = JSON.stringify({
+      issue: { number: 3 },
+      workspace: tmp,
+      merge_commit: { sha: "abc" },
+    });
+    const r = await runScript(
+      "red-validation",
+      { RED_AFK_WORKSPACE: tmp },
+      ctx,
+    );
     expect(r.code).toBe(0);
     const out = JSON.parse(r.stdout.trim());
-    expect(["passed", "failed", "skipped"]).toContain(out.result.validation_status);
+    expect(["passed", "failed", "skipped"]).toContain(
+      out.result.validation_status,
+    );
     // original context fields preserved
     expect(out.issue.number).toBe(3);
     expect(out.merge_commit.sha).toBe("abc");
