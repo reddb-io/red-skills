@@ -172,6 +172,27 @@ describe("dispatchGo", () => {
     expect(result).toEqual({ issue: 1234, engineExit: 0 });
   });
 
+  it("stamps territory tags on the minted issue and ensures every label first", async () => {
+    const ensureLabel = vi.fn(async (_name: string) => {});
+    const createIssue = vi.fn(async (_spec: DisposableIssueSpec) => 77);
+    const runEngine = vi.fn(async (_args: string[]) => 0);
+
+    await dispatchGo({ ensureLabel, createIssue, runEngine }, "wire the deploy", {
+      tags: ["infra", "backend"],
+    });
+
+    expect(ensureLabel.mock.calls.map((c) => c[0])).toEqual([
+      LABEL_GO_LANE,
+      "tag:infra",
+      "tag:backend",
+    ]);
+    expect(createIssue.mock.calls[0]![0].labels).toEqual([
+      LABEL_GO_LANE,
+      "tag:infra",
+      "tag:backend",
+    ]);
+  });
+
   it("ensures the lane BEFORE minting into it", async () => {
     const order: string[] = [];
     await dispatchGo(

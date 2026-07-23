@@ -37,13 +37,15 @@ interface ParsedGoArgs {
   dod?: string;
   verifyCommand?: string;
   request?: string;
+  tags?: string[];
 }
 
 /** Parse `/go` args: the demand is every non-flag token joined; `--runner X`
  * optionally pins the backend; `--request X` forwards per-dispatch steering to
  * the inner agent prompt; `--mode {no-mistakes|direct-PR|local-only}` selects
  * the dispatch mode (default `direct-PR`); the opt-in `+yolo` token bumps
- * autonomy; `--scout` switches to read-only investigation mode. A leading `--`
+ * autonomy; `--scout` switches to read-only investigation mode; `--tags a,b`
+ * stamps territory `tag:<value>` labels on the minted issue. A leading `--`
  * is tolerated so `/go -- --literal` passes a dashed demand through. */
 export function parseGoArgs(
   args: readonly string[],
@@ -56,6 +58,12 @@ export function parseGoArgs(
   let dod: string | undefined;
   let verifyCommand: string | undefined;
   let request: string | undefined;
+  let tags: string[] | undefined;
+  const parseTagList = (raw: string): string[] => {
+    const values = raw.split(",").map((t) => t.trim()).filter(Boolean);
+    if (values.length === 0) throw new Error("--tags requires at least one tag value");
+    return values;
+  };
   let sawDoubleDash = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -108,6 +116,16 @@ export function parseGoArgs(
       request = arg.slice("--request=".length);
       continue;
     }
+    if (!sawDoubleDash && arg === "--tags") {
+      const value = args[++i];
+      if (value === undefined) throw new Error("--tags requires a value");
+      tags = parseTagList(value);
+      continue;
+    }
+    if (!sawDoubleDash && arg.startsWith("--tags=")) {
+      tags = parseTagList(arg.slice("--tags=".length));
+      continue;
+    }
     // Unknown flag before the `--` separator is an error, never demand text
     // (#1045): folding e.g. `--resume 1043` into the demand silently minted a
     // junk issue about a flag the user meant as a command. A literal dashed
@@ -115,13 +133,13 @@ export function parseGoArgs(
     if (!sawDoubleDash && arg.startsWith("-")) {
       throw new Error(
         `unknown flag ${JSON.stringify(arg)}: expected --runner, --request, --mode, --scout, or +yolo. ` +
-          `Also accepted for standard /go: --dod and --verify. ` +
+          `Also accepted for standard /go: --dod, --verify, and --tags. ` +
           `Pass a literal dashed demand after a "--" separator.`,
       );
     }
     positional.push(arg);
   }
-  return { demand: positional.join(" ").trim(), runner, mode, yolo, scout, dod, verifyCommand, request };
+  return { demand: positional.join(" ").trim(), runner, mode, yolo, scout, dod, verifyCommand, request, tags };
 }
 
 export async function goCommand(args: string[], cwd = process.cwd()): Promise<number> {
@@ -198,6 +216,7 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
         dod: parsed.dod,
         verifyCommand: parsed.verifyCommand,
         request: parsed.request,
+        tags: parsed.tags,
         hasHarness: configuredBackpressure.length > 0,
       } satisfies { runner?: string; mode: GoMode; yolo: boolean } & GoDodSpec,
     );

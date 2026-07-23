@@ -1,7 +1,7 @@
 ---
 name: start
 description: Grilling session that challenges your plan against the existing domain model, sharpens terminology, and updates documentation (.red/CONTEXT.md, ADRs) inline as decisions crystallise. Use when user wants to stress-test a plan against their project's language and documented decisions.
-argument-hint: "[plan to grill: prose, URL, path, or empty]"
+argument-hint: "[plan to grill: prose, URL, path, or empty] [--tags a,b]"
 ---
 
 <what-to-do>
@@ -69,6 +69,7 @@ Paste the content, point to another path, or say "skip" and we'll grill on what 
 - ✅ **Do** update `.red/CONTEXT.md` inline the moment a term is resolved (one term → one edit → next question). This is a side effect of the interview, not a separate phase.
 - ✅ **Do** offer an ADR only when the three-condition test in `<supporting-info>` passes.
 - ✅ **Do** treat mid-grilling refs symmetrically to boot refs: when the user introduces a URL or file path at any turn, ingest via `/wiki ingest`, emit the same receipt line, then continue with the next question.
+- ✅ **Do** record a `--tags a,b` argument as a session decision ("this work belongs to territory tags a, b") so a downstream `/to-spec` applies the `tag:<value>` labels on publish. `/start` itself still creates no issues and no labels — the tags only travel forward.
 
 **Question format template:**
 

@@ -2805,3 +2805,10 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **upstream**: —
 - **why**: ADR 0120 made red-castle's `castle` MCP the canonical interface, but these five castle-verb skills still hand-rolled the flows (raw `gh` label flips in `/hitl` and `/triage`) or invoked the `red-skills-dev` CLI as the primary path — outside the doc-contract test's bijection, so they drifted silently.
 - **what changed**: each SKILL.md now names its castle tools as the primary surface with the CLI as documented fallback — `/hitl` → `requeue` + `hitl_resolve`, `/triage` → `triage`, `/retake` → `retake` + `requeue`, `/dashboard` → `dashboard`, `/daily-review` → `daily_review`/`weekly_review`; `apps/dev/tests/castle-mcp-client-docs.test.ts` gained a per-skill routing assertion binding all five to the tool surface.
+
+## afk, go, to-spec, to-tickets, start (engineering) — territory scoping via tag labels
+
+- **status**: modified
+- **upstream**: —
+- **why**: several humans run fleets against ONE shared `ready-for-agent` pool; without territory scoping any fleet grabs any ticket (a backend-tuned fleet doing frontend work badly). New `tag:<value>` label family + author filter partition the pool without binding issues to users.
+- **what changed**: `/afk` gained `--tags a,b` (selector `tags` facet — AND over `tag:<v>` labels, untagged issues excluded from tag-scoped fleets) and `--user login|@me` (issue author facet, `@me` resolved to a concrete login at dispatch/persist time); `/go` gained `--tags` stamping the labels on the minted `lane:go` issue (auto-created when missing); `/to-spec` and `/to-tickets` gained `--tags` with Spec→Ticket inheritance and on-demand `gh label create`; `/start` records `--tags` as a session decision for the downstream Spec; `triage-labels.md` documents the `tag:<value>` auxiliary family; fleet selectors (`fleet.md`, MCP `fleet_*`/`queue_status`) carry the new `tags`/`user` facets.
