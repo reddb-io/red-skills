@@ -6,9 +6,10 @@ describe("dev:afk MCP entrypoint routing", () => {
     const supervise = vi.fn(async () => 0);
     const connect = vi.fn(async () => undefined);
     const startCurator = vi.fn(async () => undefined);
+    const startMergeDriver = vi.fn(async () => undefined);
 
     await expect(
-      main(["__supervise", "--fleet", "codex"], { supervise, connect, startCurator }),
+      main(["__supervise", "--fleet", "codex"], { supervise, connect, startCurator, startMergeDriver }),
     ).resolves.toBe(0);
 
     expect(supervise).toHaveBeenCalledWith(["--fleet", "codex"]);
@@ -22,6 +23,9 @@ describe("dev:afk MCP entrypoint routing", () => {
     await expect(
       main([], {
         supervise: async () => 0,
+        startMergeDriver: async () => {
+          calls.push("merge-driver");
+        },
         startCurator: async () => {
           calls.push("curator");
         },
@@ -31,7 +35,7 @@ describe("dev:afk MCP entrypoint routing", () => {
       }),
     ).resolves.toBe(0);
 
-    expect(calls).toEqual(["curator", "connect"]);
+    expect(calls).toEqual(["curator", "merge-driver", "connect"]);
   });
 
   it("awaits resident cleanup after the MCP transport closes", async () => {

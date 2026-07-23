@@ -117,6 +117,20 @@ never tracks the base branch as red (#2380).
 `1/1 100%` with no attempt. Release it through the tool, never by flipping
 labels by hand.
 
+### Merge driver — armed PRs land without native auto-merge
+
+| Tool | Mode | What it does |
+| --- | --- | --- |
+| `merge_arm` | mutating | Hand one open PR to the castle merge driver — it owns the PR to a terminal state. |
+| `merge_status` | read | The driver's durable per-PR records: armed set, attempts, terminal classifications. |
+| `merge_release` | mutating | Stop driver ownership of one PR (record kept as `released`). |
+
+The driver (#2512) runs in the castle resident on a fixed cadence: BEHIND →
+update-branch, green at head → merge with the merge-commit strategy (never an
+admin override), transient faults → bounded retries, DIRTY or failing checks →
+terminal `needs-medic`/`needs-human` classification instead of a loop. Its
+state survives resident restarts in `.red/state/castle/merge-driver.toon`.
+
 ### Worktree — the disposable pool
 
 | Tool | Mode | What it does |
