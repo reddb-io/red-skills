@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -191,6 +191,35 @@ describe("fleet_create startup probe", () => {
       readFleetProfile(
         fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
         "fast-death",
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("surfaces the spawn error and writes spawn-failure.toon when the process cannot be started", async () => {
+    const cwd = await root();
+    const paths = afkPaths(cwd, "spawn-error");
+    vi.mocked(spawnSupervisor).mockRejectedValueOnce(
+      Object.assign(new Error("spawn /bad/node ENOENT"), {
+        code: "ENOENT",
+        syscall: "spawn",
+      }),
+    );
+
+    const failure = await createCastleMcpDependencies(cwd)
+      .fleetCreate({ name: "spawn-error", runner: "codex", target: 1 })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/spawn \/bad\/node ENOENT/);
+
+    const spawnFailurePath = join(paths.supervisorRuntimeDir, "spawn-failure.toon");
+    const artifact = await readFile(spawnFailurePath, "utf8");
+    expect(artifact).toMatch(/spawn \/bad\/node ENOENT/);
+
+    await expect(
+      readFleetProfile(
+        fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
+        "spawn-error",
       ),
     ).resolves.toBeUndefined();
   });
