@@ -756,6 +756,28 @@ describe("waitForMergeReady (#812 poll loop)", () => {
     expect(calls.filter((c) => c.join(" ").includes("pr view")).length).toBe(3);
     expect(sleeps).toBe(2);
   });
+
+  it("bounds a hung GitHub merge probe and reports the wait heartbeat before timing out", async () => {
+    const polls: unknown[] = [];
+    const exec: Exec = async (argv) => {
+      if (argv.join(" ").includes("pr view")) {
+        return await new Promise<never>(() => {});
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const r = await waitForMergeReadyWithEvidence(exec, "o/r", 9, {
+      sleep: noSleep,
+      maxPolls: 1,
+      probeTimeoutMs: 1,
+      onPoll: (event) => {
+        polls.push(event);
+      },
+    });
+    expect(r).toEqual({ readiness: "pending" });
+    expect(polls).toEqual([
+      expect.objectContaining({ kind: "merge", prNumber: 9, attempt: 1, maxPolls: 1, probeTimeoutMs: 1 }),
+    ]);
+  });
 });
 
 describe("landPr CI-aware wiring (#812)", () => {

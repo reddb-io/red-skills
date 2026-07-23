@@ -418,10 +418,14 @@ export interface WaitForReviewInput {
   check: string;
   /** Injected sleep between polls. */
   sleep: Sleep;
+  /** Best-effort liveness callback fired before each bounded probe. */
+  onPoll?: (event: LandingWaitPollEvent) => void | Promise<void>;
   /** Max poll attempts before proceeding fail-open. Default 30. */
   maxPolls?: number;
   /** Delay between polls, in ms. Default 10000. */
   intervalMs?: number;
+  /** Max time for one GitHub probe before treating that poll as pending. */
+  probeTimeoutMs?: number;
 }
 
 /** Why {@link waitForReviewCheck} stopped waiting. All three proceed to merge —
@@ -461,6 +465,33 @@ function isTerminalState(state: string): boolean {
   return s !== "" && s !== "PENDING";
 }
 
+export interface LandingWaitPollEvent {
+  kind: "review" | "merge";
+  prNumber: number;
+  attempt: number;
+  maxPolls: number;
+  intervalMs: number;
+  probeTimeoutMs?: number;
+  check?: string;
+}
+
+async function boundedProbe(exec: () => Promise<ExecResult>, timeoutMs: number | undefined): Promise<ExecResult> {
+  if (!timeoutMs || timeoutMs <= 0) return await exec();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      exec(),
+      new Promise<ExecResult>((resolve) => {
+        timer = setTimeout(() => {
+          resolve({ code: 124, stdout: "", stderr: `GitHub probe timed out after ${timeoutMs}ms` });
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /**
  * Poll `gh pr checks <num>` until the configured review check reaches a terminal
  * state, the budget is exhausted, or the check never registers. Returns the
@@ -481,7 +512,19 @@ export async function waitForReviewCheck(
   let everSeen = false;
 
   for (let attempt = 0; attempt < maxPolls; attempt++) {
-    const res = await exec(["gh", "-R", repo, "pr", "checks", String(prNumber), "--json", "name,state"]);
+    await input.onPoll?.({
+      kind: "review",
+      prNumber,
+      attempt: attempt + 1,
+      maxPolls,
+      intervalMs,
+      ...(input.probeTimeoutMs ? { probeTimeoutMs: input.probeTimeoutMs } : {}),
+      check: input.check,
+    });
+    const res = await boundedProbe(
+      () => exec(["gh", "-R", repo, "pr", "checks", String(prNumber), "--json", "name,state"]),
+      input.probeTimeoutMs,
+    );
     const match = parsePrChecks(res.stdout).find((c) => c.name.toLowerCase().includes(needle));
     if (match !== undefined) {
       everSeen = true;
@@ -535,10 +578,14 @@ export interface MergeReadinessResult {
 export interface CiAwaitInput {
   /** Injected sleep between polls. */
   sleep: Sleep;
+  /** Best-effort liveness callback fired before each bounded probe. */
+  onPoll?: (event: LandingWaitPollEvent) => void | Promise<void>;
   /** Max poll attempts before the wait times out (→ ci-pending handoff). Default 60. */
   maxPolls?: number;
   /** Delay between polls, in ms. Default 10000. */
   intervalMs?: number;
+  /** Max time for one GitHub probe before treating that poll as pending. */
+  probeTimeoutMs?: number;
   /** Base branch whose required checks must be proven green before CI evidence is usable. */
   baseBranch?: string;
   /** Current fetched base SHA; CI evidence is usable only when GitHub sees this base. */
@@ -673,11 +720,19 @@ export function parseMergeStateView(stdout: string): MergeStateView {
   }
 }
 
-async function requiredCheckContexts(exec: Exec, repo: string, baseBranch: string | undefined): Promise<string[]> {
+async function requiredCheckContexts(
+  exec: Exec,
+  repo: string,
+  baseBranch: string | undefined,
+  probeTimeoutMs: number | undefined,
+): Promise<string[]> {
   if (!baseBranch) return [];
-  const res = await exec([
-    "gh", "api", `repos/${repo}/branches/${encodeURIComponent(baseBranch)}/protection/required_status_checks/contexts`,
-  ]);
+  const res = await boundedProbe(
+    () => exec([
+      "gh", "api", `repos/${repo}/branches/${encodeURIComponent(baseBranch)}/protection/required_status_checks/contexts`,
+    ]),
+    probeTimeoutMs,
+  );
   if (res.code !== 0) return [];
   try {
     const parsed: unknown = JSON.parse(res.stdout);
@@ -776,12 +831,23 @@ export async function waitForMergeReadyWithEvidence(
 ): Promise<MergeReadinessResult> {
   const maxPolls = input.maxPolls ?? 60;
   const intervalMs = input.intervalMs ?? 10_000;
-  const requiredChecks = await requiredCheckContexts(exec, repo, input.baseBranch);
+  const requiredChecks = await requiredCheckContexts(exec, repo, input.baseBranch, input.probeTimeoutMs);
 
   for (let attempt = 0; attempt < maxPolls; attempt++) {
-    const res = await exec([
-      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
-    ]);
+    await input.onPoll?.({
+      kind: "merge",
+      prNumber,
+      attempt: attempt + 1,
+      maxPolls,
+      intervalMs,
+      ...(input.probeTimeoutMs ? { probeTimeoutMs: input.probeTimeoutMs } : {}),
+    });
+    const res = await boundedProbe(
+      () => exec([
+        "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
+      ]),
+      input.probeTimeoutMs,
+    );
     const view = parseMergeStateView(res.stdout);
     const verdict = classifyMergeState(view);
     if (verdict !== "pending") {

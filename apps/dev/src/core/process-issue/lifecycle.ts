@@ -60,7 +60,7 @@ import {
   type CiAwaitInput,
 } from "../merge.js";
 import type { LandLock } from "../land-lock.js";
-import { doLanding, type LandingPostMergeValidation } from "../landing.js";
+import { doLanding, type LandingPhase, type LandingPostMergeValidation } from "../landing.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
   emitEnvelope,
@@ -986,7 +986,7 @@ export async function processIssue(
   if (openPr && deps.reviewGate && shouldRequestReview(activeTaskClass, deps.reviewGate)) {
     return await handoffForReview(common, activeTaskClass, validationSidecar);
   }
-  const markLandingPhase = (phase: "gate" | "push-pr" | "merge" | "cascade"): void => {
+  const markLandingPhase = (phase: LandingPhase, detail: Record<string, unknown> = {}): void => {
     const startedAt = deps.nowIso();
     deps.markState?.({
       "current.activity": "landing",
@@ -994,6 +994,15 @@ export async function processIssue(
       "current.started_at": startedAt,
     });
     deps.markPhase?.(phase);
+    deps.appendIterLog(
+      `🤖 /afk landing heartbeat: phase=${phase}` +
+        (typeof detail.step === "string" ? ` step=${detail.step}` : "") +
+        (typeof detail.status === "string" ? ` status=${detail.status}` : ""),
+    );
+    deps.recordWorkerEvent?.("worker.landing_heartbeat", {
+      phase,
+      ...detail,
+    });
   };
   const runAdversarialReview = async (pr: number): Promise<"abort" | void> => {
     const config = deps.adversarialReview;
@@ -1184,8 +1193,11 @@ export async function processIssue(
       mergeSha,
       validationSummary: [noSourceDiffWarning, validationSidecar.join("\n")].filter(Boolean).join("\n"),
     });
+    markLandingPhase("close", { step: "close-issue", status: "start" });
     await deps.gh.close(issue);
+    markLandingPhase("close", { step: "labels", status: "start" });
     await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
+    markLandingPhase("close", { step: "delete-remote", status: "start" });
     await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
     let cleanupError: string | undefined;
     try {
