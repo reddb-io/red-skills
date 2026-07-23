@@ -1,4 +1,5 @@
-import { renderClaimComment } from "../claim.js";
+import { renderClaimComment, type ClaimRecord } from "../claim.js";
+import { classifyClaim, DEFAULT_CLAIM_STALENESS } from "../claim-staleness.js";
 import type {
   ClaimHygieneIssueInput,
   ClaimHygieneProbeInput,
@@ -50,6 +51,7 @@ interface ClaimHygieneReportEntry {
 interface ClaimHygieneProbeData {
   readonly actions: readonly ClaimHygieneConcedeAction[];
   readonly foreign: readonly ClaimHygieneReportEntry[];
+  readonly unknown: readonly ClaimHygieneReportEntry[];
   readonly liveOwn: number;
   readonly unknownOwn: number;
 }
@@ -106,6 +108,7 @@ function classifyClaimHygiene(input: ClaimHygieneProbeInput, issues: readonly Cl
   const ownNamespace = (input.ownNamespace ?? "afk").toLowerCase();
   const actions: ClaimHygieneConcedeAction[] = [];
   const foreign: ClaimHygieneReportEntry[] = [];
+  const unknown: ClaimHygieneReportEntry[] = [];
   let liveOwn = 0;
   let unknownOwn = 0;
 
@@ -133,13 +136,39 @@ function classifyClaimHygiene(input: ClaimHygieneProbeInput, issues: readonly Cl
         });
       } else if (pidState === "live") {
         liveOwn += 1;
+      } else if (
+        input.nowS !== undefined &&
+        classifyClaim(
+          { createdAt: marker.createdAt } as ClaimRecord,
+          input.nowS,
+          input.staleness ?? DEFAULT_CLAIM_STALENESS,
+        ) === "stale"
+      ) {
+        // Unknown pid BUT the marker aged past the ADR 0066 TTL window: the
+        // owner stopped refreshing long enough to be presumed dead, so the
+        // claim is concedable without ever proving the pid (#2525). Unknown-pid
+        // ghosts stop red-halting boots once their TTL runs out.
+        actions.push({
+          issue: claim.issue,
+          markerComment: marker.commentId,
+          namespace: marker.namespace,
+          worker: marker.worker,
+          runner: marker.runner,
+          pidState: "expired",
+        });
       } else {
         unknownOwn += 1;
+        unknown.push({
+          issue: claim.issue,
+          markerComment: marker.commentId,
+          namespace: marker.namespace,
+          worker: marker.worker,
+        });
       }
     }
   }
 
-  return { actions, foreign, liveOwn, unknownOwn };
+  return { actions, foreign, unknown, liveOwn, unknownOwn };
 }
 
 function actionEvidence(actions: readonly ClaimHygieneConcedeAction[]): string {
@@ -255,7 +284,7 @@ export async function applyClaimHygieneFix(
     const issueFinding: OperationalProbeResult = {
       ...finding,
       evidence: actionEvidence(actions),
-      data: { actions, foreign: [], liveOwn: 0, unknownOwn: 0 } satisfies ClaimHygieneProbeData,
+      data: { actions, foreign: [], unknown: [], liveOwn: 0, unknownOwn: 0 } satisfies ClaimHygieneProbeData,
     };
     if (!(await deps.confirm(issueFinding))) {
       declined += 1;

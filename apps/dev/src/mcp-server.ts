@@ -3,11 +3,22 @@ import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { encode, type JsonValue } from "@reddb-io/toon";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCastleMcpTools } from "../../../packages/red-castle/src/mcp-server.js";
+import {
+  createEnginePaths,
+  createFileIssueCuratorStore,
+  createGitHubTrackerAdapter,
+  createSingletonLeaseStore,
+  runIssueStateCurator,
+} from "@reddb-io/red-castle/engine";
 import { superviseCommand } from "./commands/supervise.js";
 import { createCastleMcpDependencies } from "./mcp-adapter.js";
+import {
+  createResidentWebhook,
+  type ResidentWebhook,
+} from "./resident-webhook.js";
 
 const buildInfo = readBuildInfo("castle");
 
@@ -48,12 +59,90 @@ export function createCastleMcpServer(): McpServer {
   return server;
 }
 
+export interface ResidentMcpConnection {
+  readonly server: { onclose?: () => void };
+  connect(transport: StdioServerTransport): Promise<void>;
+}
+
+export interface ConnectResidentMcpOptions {
+  readonly server: ResidentMcpConnection;
+  readonly transport: StdioServerTransport;
+  readonly resident: ResidentWebhook;
+}
+
+export async function connectResidentMcp(
+  options: ConnectResidentMcpOptions,
+): Promise<void> {
+  await options.resident.start();
+  let notifyClosed!: () => void;
+  const closed = new Promise<void>((resolveClosed) => {
+    notifyClosed = resolveClosed;
+  });
+  options.server.server.onclose = notifyClosed;
+  try {
+    await options.server.connect(options.transport);
+    await closed;
+  } finally {
+    await options.resident.stop();
+  }
+}
+
 async function run(): Promise<void> {
-  await createCastleMcpServer().connect(new StdioServerTransport());
+  const server = createCastleMcpServer();
+  const close = () => {
+    void server.close();
+  };
+  process.once("SIGINT", close);
+  process.once("SIGTERM", close);
+  try {
+    await connectResidentMcp({
+      server,
+      transport: new StdioServerTransport(),
+      resident: createResidentWebhook({ root: process.cwd() }),
+    });
+  } finally {
+    process.removeListener("SIGINT", close);
+    process.removeListener("SIGTERM", close);
+  }
+}
+
+export const RESIDENT_CURATOR_INTERVAL_MS = 5 * 60 * 1000;
+
+/** Start the ADR 0122 periodic reconciliation owner inside the castle resident.
+ * The singleton lease prevents multiple stdio hosts for the same repo from
+ * racing the durable ledger. The first sweep is detached from MCP startup; a
+ * slow or unavailable tracker never delays the stdio handshake. */
+export async function startResidentIssueCurator(root = process.cwd()): Promise<void> {
+  const paths = createEnginePaths(join(root, ".red"));
+  const owner = { pid: process.pid, startTime: new Date().toISOString() };
+  const lease = await createSingletonLeaseStore(paths).acquire("issue-curator", owner);
+  if (!lease.acquired) return;
+
+  const tracker = createGitHubTrackerAdapter({
+    claimLockRoot: join(paths.tmpRoot, "claims"),
+  });
+  const store = createFileIssueCuratorStore(paths);
+  let running = false;
+  const sweep = async (): Promise<void> => {
+    if (running) return;
+    running = true;
+    try {
+      await runIssueStateCurator({ tracker, store });
+    } catch {
+      // Repo-level transport/state faults retry on the permanent periodic belt;
+      // they must not terminate the resident or block its MCP surface.
+    } finally {
+      running = false;
+    }
+  };
+  void sweep();
+  const timer = setInterval(() => void sweep(), RESIDENT_CURATOR_INTERVAL_MS);
+  timer.unref();
 }
 
 export interface McpEntrypointDependencies {
   supervise(args: string[]): Promise<number>;
+  startCurator(): Promise<void>;
   connect(): Promise<void>;
 }
 
@@ -64,6 +153,7 @@ export async function main(
   argv = process.argv.slice(2),
   dependencies: McpEntrypointDependencies = {
     supervise: superviseCommand,
+    startCurator: startResidentIssueCurator,
     connect: run,
   },
 ): Promise<number> {
@@ -78,6 +168,7 @@ export async function main(
     );
     return 0;
   }
+  await dependencies.startCurator();
   await dependencies.connect();
   return 0;
 }

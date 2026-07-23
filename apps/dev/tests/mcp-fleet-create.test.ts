@@ -6,6 +6,7 @@ import {
   fleetRegistryPath,
   readFleetProfile,
   removeFleetProfile,
+  upsertFleetProfile,
 } from "@reddb-io/red-castle/engine";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -63,6 +64,85 @@ describe("fleet_create startup probe", () => {
       target: 2,
       profile: { name: "healthy", runner: "codex" },
     });
+  });
+
+  it("respawns a dead registered fleet from its persisted profile", async () => {
+    const cwd = await root();
+    await upsertFleetProfile(
+      fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
+      {
+        name: "recoverable",
+        runner: "claude",
+        selector: { spec: 2467 },
+      },
+    );
+    vi.mocked(spawnSupervisor).mockResolvedValue(43121);
+
+    await expect(
+      createCastleMcpDependencies(cwd).fleetCreate({
+        name: "recoverable",
+        runner: "codex",
+        target: 2,
+      }),
+    ).resolves.toMatchObject({
+      status: "launched",
+      pid: 43121,
+      target: 2,
+      profile: {
+        name: "recoverable",
+        runner: "claude",
+        selector: { spec: 2467 },
+      },
+    });
+    expect(spawnSupervisor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fleet: "recoverable",
+        runner: "claude",
+        passthrough: ["--selector", JSON.stringify({ spec: 2467 })],
+      }),
+    );
+  });
+
+  it("passes persisted slot pids to the respawn for worker adoption", async () => {
+    const cwd = await root();
+    const paths = afkPaths(cwd, "adopting");
+    await mkdir(dirname(paths.fleetStatePath), { recursive: true });
+    await writeFile(
+      paths.fleetStatePath,
+      JSON.stringify({
+        ts: "2026-07-23T03:00:00Z",
+        epoch: 1_774_493_200,
+        runner: "codex",
+        ready_for_agent: 0,
+        slots: { busy: 2, free: 0, total: 2, parked: 0 },
+        spawns_this_tick: 0,
+        slot_pids: [
+          { slot: 0, pid: 51_001 },
+          { slot: 1, pid: 51_002 },
+        ],
+      }),
+      "utf8",
+    );
+    await upsertFleetProfile(
+      fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
+      { name: "adopting", runner: "codex" },
+    );
+    vi.mocked(spawnSupervisor).mockResolvedValue(43122);
+
+    await createCastleMcpDependencies(cwd).fleetCreate({
+      name: "adopting",
+      runner: "codex",
+      target: 2,
+    });
+
+    expect(spawnSupervisor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adoptSlotPids: [
+          { slot: 0, pid: 51_001 },
+          { slot: 1, pid: 51_002 },
+        ],
+      }),
+    );
   });
 
   it("surfaces only this launch's supervisor death evidence and rolls back the profile", async () => {

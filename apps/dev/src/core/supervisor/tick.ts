@@ -61,6 +61,9 @@ async function refreshTrunkMirrorIfDue(
       message: err instanceof Error ? err.message : String(err),
     };
   }
+  if (outcome.status === "failed") {
+    deps.log?.(`trunk mirror refresh failed: ${outcome.message ?? "unknown git error"}`);
+  }
   state.lastTrunkFreshness = outcome;
   return outcome;
 }

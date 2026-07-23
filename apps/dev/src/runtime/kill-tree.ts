@@ -35,24 +35,39 @@ export function signalTree(pid: number, signal: NodeJS.Signals): void {
   }
 }
 
+/** Signal only the process group (`kill -<signal> -<pgid>` semantics). Unlike
+ * signalTree, this deliberately does not fall back to the leader: it is the
+ * final escalation for descendants that survived the normal tree signal. */
+export function signalProcessGroup(pid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    // already gone, or no process group remains
+  }
+}
+
 /** Injectable IO so the escalation path is deterministically testable without
  * real processes or wall-clock waits. */
 export interface KillTreeIO {
   isAlive(pid: number): boolean;
   signal(pid: number, signal: NodeJS.Signals): void;
+  /** Explicit process-group signal used by the final SIGKILL fallback. Optional
+   * so existing injected IO remains source-compatible. */
+  signalGroup?(pid: number, signal: NodeJS.Signals): void;
   sleep(ms: number): Promise<void>;
 }
 
 const defaultIO: KillTreeIO = {
   isAlive: isLivePid,
   signal: signalTree,
+  signalGroup: signalProcessGroup,
   sleep: realSleep,
 };
 
 export interface KillTreeOptions {
   /** SIGTERM grace poll iterations before escalating to SIGKILL (default 20). */
   graceTries?: number;
-  /** Post-SIGKILL confirm poll iterations (default 10). */
+  /** Confirm poll iterations after each SIGKILL escalation (default 10). */
   killTries?: number;
   /** Poll interval in ms between liveness checks (default 100). */
   pollMs?: number;
@@ -63,9 +78,11 @@ export interface KillTreeOptions {
 /**
  * SIGTERM the tree, wait for a graceful exit (polling up to `graceTries`×`pollMs`
  * ≈ 2s), then escalate to SIGKILL and poll again (up to `killTries`×`pollMs` ≈
- * 1s) to CONFIRM the process is gone. Returns true when the tree is confirmed
- * dead, false only when it survived SIGKILL (e.g. an uninterruptible-sleep
- * worker) — the caller must NOT tear down a worktree on a `false` return.
+ * 1s) to CONFIRM the process is gone. If the leader survives, send one explicit
+ * process-group SIGKILL and confirm again. Returns true when the tree is
+ * confirmed dead, false only when it survived the group SIGKILL (e.g. an
+ * uninterruptible-sleep worker) — the caller must NOT tear down a worktree on a
+ * `false` return.
  */
 export async function killTreeAndWait(pid: number, options: KillTreeOptions = {}): Promise<boolean> {
   const io = options.io ?? defaultIO;
@@ -79,6 +96,12 @@ export async function killTreeAndWait(pid: number, options: KillTreeOptions = {}
     await io.sleep(pollMs);
   }
   io.signal(pid, "SIGKILL");
+  for (let i = 0; i < killTries; i += 1) {
+    if (!io.isAlive(pid)) return true;
+    await io.sleep(pollMs);
+  }
+  if (!io.isAlive(pid)) return true;
+  io.signalGroup?.(pid, "SIGKILL");
   for (let i = 0; i < killTries; i += 1) {
     if (!io.isAlive(pid)) return true;
     await io.sleep(pollMs);

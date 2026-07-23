@@ -1,5 +1,6 @@
 import {
   LABEL_HUMAN,
+  LABEL_QUARANTINE,
   LABEL_READY,
 } from "../../core/triage-labels.js";
 import type {
@@ -9,7 +10,7 @@ import type {
 } from "../../core/operational-probes.js";
 import type { ExecOutput } from "../exec.js";
 import { listCandidates } from "./candidates.js";
-import { isRecord, repoArgs, runGh, runRsp, type GhContext } from "./common.js";
+import { apiPath, isRecord, repoArgs, runGh, runRsp, type GhContext } from "./common.js";
 
 async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
   const r = await runGh(ctx, 
@@ -27,6 +28,7 @@ async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
 export interface StatuslineQueueCounts {
   queue: number;
   human: number;
+  quarantine: number;
 }
 
 function statuslineSearchQuery(repo: string, label: string): string {
@@ -46,22 +48,29 @@ function queueVisibilityError(
   });
 }
 
-async function countOpenIssuesByLabelViaRest(ctx: GhContext, label: string): Promise<number> {
-  if (!ctx.repo) return 0;
+async function listOpenIssuesByLabelViaRest(ctx: GhContext, label: string): Promise<number[]> {
+  if (!ctx.repo) return [];
   const r = await runGh(ctx, [
     "api",
+    "--paginate",
     "--method",
     "GET",
-    "search/issues",
+    apiPath(ctx, "issues"),
     "-f",
-    `q=repo:${ctx.repo} is:issue is:open label:"${label}"`,
+    "state=open",
+    "-f",
+    `labels=${label}`,
+    "-f",
+    "per_page=100",
     "--jq",
-    ".total_count",
+    ".[] | select(.pull_request == null) | .number",
   ]);
-  if (r.code !== 0) throw queueVisibilityError("rest", r, "gh api REST issue search failed");
-  const count = Number(r.stdout.trim());
-  if (!Number.isFinite(count)) throw queueVisibilityError("rest", r, "gh api REST issue search returned a non-numeric count");
-  return count;
+  if (r.code !== 0) throw queueVisibilityError("rest", r, "gh api REST issue listing failed");
+  const issues = r.stdout.trim() === "" ? [] : r.stdout.trim().split(/\s+/).map(Number);
+  if (issues.some((issue) => !Number.isInteger(issue) || issue <= 0)) {
+    throw queueVisibilityError("rest", r, "gh api REST issue listing returned a non-numeric issue number");
+  }
+  return issues;
 }
 
 export function queueVisibilityProbeInput(ctx: GhContext, label: string = LABEL_READY): QueueVisibilityProbeInput {
@@ -81,9 +90,9 @@ export function queueVisibilityProbeInput(ctx: GhContext, label: string = LABEL_
           stderr: failure.stderr,
         });
       }
-      return candidates.length;
+      return candidates.map((candidate) => candidate.number);
     },
-    countRestQueue: () => countOpenIssuesByLabelViaRest(ctx, label),
+    listRestQueue: () => listOpenIssuesByLabelViaRest(ctx, label),
   };
 }
 
@@ -108,16 +117,18 @@ async function countSearchViaRsp(ctx: GhContext, query: string): Promise<number 
 
 /** Count both statusline queue buckets with one GraphQL search request. */
 export async function countStatuslineQueueCounts(ctx: GhContext): Promise<StatuslineQueueCounts> {
-  if (!ctx.repo) return { queue: 0, human: 0 };
-  const [queue, human] = await Promise.all([
+  if (!ctx.repo) return { queue: 0, human: 0, quarantine: 0 };
+  const [queue, human, quarantine] = await Promise.all([
     countSearchViaRsp(ctx, statuslineSearchQuery(ctx.repo, LABEL_READY)),
     countSearchViaRsp(ctx, statuslineSearchQuery(ctx.repo, LABEL_HUMAN)),
+    countSearchViaRsp(ctx, statuslineSearchQuery(ctx.repo, LABEL_QUARANTINE)),
   ]);
-  if (queue != null && human != null) return { queue, human };
+  if (queue != null && human != null && quarantine != null) return { queue, human, quarantine };
   const query = `
-    query($ready: String!, $human: String!) {
+    query($ready: String!, $human: String!, $quarantine: String!) {
       ready: search(type: ISSUE, query: $ready) { issueCount }
       human: search(type: ISSUE, query: $human) { issueCount }
+      quarantine: search(type: ISSUE, query: $quarantine) { issueCount }
     }
   `;
   const r = await runGh(ctx, [
@@ -129,21 +140,25 @@ export async function countStatuslineQueueCounts(ctx: GhContext): Promise<Status
     `ready=${statuslineSearchQuery(ctx.repo, LABEL_READY)}`,
     "-F",
     `human=${statuslineSearchQuery(ctx.repo, LABEL_HUMAN)}`,
+    "-F",
+    `quarantine=${statuslineSearchQuery(ctx.repo, LABEL_QUARANTINE)}`,
   ]);
-  if (r.code !== 0) return { queue: 0, human: 0 };
+  if (r.code !== 0) return { queue: 0, human: 0, quarantine: 0 };
   try {
     const parsed = JSON.parse(r.stdout) as {
       data?: {
         ready?: { issueCount?: unknown };
         human?: { issueCount?: unknown };
+        quarantine?: { issueCount?: unknown };
       };
     };
     return {
       queue: Number(parsed.data?.ready?.issueCount ?? 0),
       human: Number(parsed.data?.human?.issueCount ?? 0),
+      quarantine: Number(parsed.data?.quarantine?.issueCount ?? 0),
     };
   } catch {
-    return { queue: 0, human: 0 };
+    return { queue: 0, human: 0, quarantine: 0 };
   }
 }
 

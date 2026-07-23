@@ -891,13 +891,14 @@ describe("monitor — tick_at (standing wall-clock rule)", () => {
 });
 
 describe("monitor — remote facts age markers (#1029)", () => {
-  const freshRemote: MonitorRemote = { queue: 3, human: 1, cacheAgeS: 20, stale: false };
+  const freshRemote: MonitorRemote = { queue: 3, human: 1, quarantine: 4, cacheAgeS: 20, stale: false };
   const staleRemote: MonitorRemote = { queue: 5, human: 2, cacheAgeS: 90, stale: true };
 
   it("TOON output includes remote queue/human when provided", () => {
     const out = renderCompactDashboardToon([baseWorker()], fixtureEvents, 1780140600, null, freshRemote);
     expect(out).toContain("queue: 3");
     expect(out).toContain("human: 1");
+    expect(out).toContain("quarantine: 4");
     expect(out).toContain("cache_age_s: 20");
     expect(out).toContain("stale: 0");
   });
@@ -920,6 +921,7 @@ describe("monitor — remote facts age markers (#1029)", () => {
     const out = renderCompactDashboard([baseWorker()], fixtureEvents, 1780140600, null, freshRemote);
     expect(out).toContain("queue:3");
     expect(out).toContain("human:1");
+    expect(out).toContain("quarantine:4");
     expect(out).not.toContain("[stale");
   });
 

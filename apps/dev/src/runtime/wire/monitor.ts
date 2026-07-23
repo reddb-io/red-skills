@@ -33,6 +33,7 @@ export interface MonitorInputs {
    * Absent when the cache file has never been written (no statusline run yet). */
   remoteQueue?: number;
   remoteHuman?: number;
+  remoteQuarantine?: number;
   /** Age of the statusline cache in seconds. Undefined when no cache file exists.
    * The monitor render shows a stale marker when this exceeds the resolved
    * statusline cache TTL ({@link resolveStatuslineCacheTtl}). */
@@ -377,7 +378,12 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
   const cached = readStatuslineCache(paths.statuslineCachePath);
   const nowS = Math.floor(Date.now() / 1000);
   const remoteExtra = cached !== null
-    ? { remoteQueue: cached.queue, remoteHuman: cached.human, remoteCacheAgeS: nowS - cached.ts }
+    ? {
+        remoteQueue: cached.queue,
+        remoteHuman: cached.human,
+        remoteQuarantine: cached.quarantine ?? 0,
+        remoteCacheAgeS: nowS - cached.ts,
+      }
     : {};
 
   return { workers, events, fleet, ...remoteExtra };

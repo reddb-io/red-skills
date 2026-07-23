@@ -10,19 +10,26 @@ describe("gh statusline counts", () => {
       const query = args.find((arg) => String(arg).startsWith("q="));
       return {
         code: 0,
-        stdout: JSON.stringify({ total_count: String(query).includes("ready-for-human") ? 2 : 7 }),
+        stdout: JSON.stringify({
+          total_count: String(query).includes("ready-for-human")
+            ? 2
+            : String(query).includes("quarantine")
+              ? 4
+              : 7,
+        }),
         stderr: "",
       };
     };
 
     const counts = await countStatuslineQueueCounts({ cwd: "/repo", repo: "o/r", exec });
 
-    expect(counts).toEqual({ queue: 7, human: 2 });
-    expect(calls).toHaveLength(2);
+    expect(counts).toEqual({ queue: 7, human: 2, quarantine: 4 });
+    expect(calls).toHaveLength(3);
     expect(calls.every((call) => call.tool === "rsp")).toBe(true);
     expect(calls[0]!.args.slice(0, 2)).toEqual(["gh-api-json", "search/issues"]);
     expect(calls[0]!.args).toContain('q=repo:o/r is:issue is:open label:"ready-for-agent"');
     expect(calls[1]!.args).toContain('q=repo:o/r is:issue is:open label:"ready-for-human"');
+    expect(calls[2]!.args).toContain('q=repo:o/r is:issue is:open label:"quarantine"');
   });
 
   it("fetches ready and human counts with one GraphQL request", async () => {
@@ -31,23 +38,32 @@ describe("gh statusline counts", () => {
       calls.push({ tool, args });
       return {
         code: 0,
-        stdout: JSON.stringify({ data: { ready: { issueCount: 7 }, human: { issueCount: 2 } } }),
+        stdout: JSON.stringify({
+          data: {
+            ready: { issueCount: 7 },
+            human: { issueCount: 2 },
+            quarantine: { issueCount: 4 },
+          },
+        }),
         stderr: "",
       };
     };
 
     const counts = await countStatuslineQueueCounts({ cwd: "/repo", repo: "o/r", exec });
 
-    expect(counts).toEqual({ queue: 7, human: 2 });
-    expect(calls).toHaveLength(3);
+    expect(counts).toEqual({ queue: 7, human: 2, quarantine: 4 });
+    expect(calls).toHaveLength(4);
     expect(calls[0]!.tool).toBe("rsp");
     expect(calls[1]!.tool).toBe("rsp");
-    expect(calls[2]!.tool).toBe("gh");
-    expect(calls[2]!.args.slice(0, 2)).toEqual(["api", "graphql"]);
-    expect(calls[2]!.args.join(" ")).toContain("ready: search");
-    expect(calls[2]!.args.join(" ")).toContain("human: search");
-    expect(calls[2]!.args).toContain('ready=repo:o/r is:issue is:open label:"ready-for-agent"');
-    expect(calls[2]!.args).toContain('human=repo:o/r is:issue is:open label:"ready-for-human"');
+    expect(calls[2]!.tool).toBe("rsp");
+    expect(calls[3]!.tool).toBe("gh");
+    expect(calls[3]!.args.slice(0, 2)).toEqual(["api", "graphql"]);
+    expect(calls[3]!.args.join(" ")).toContain("ready: search");
+    expect(calls[3]!.args.join(" ")).toContain("human: search");
+    expect(calls[3]!.args.join(" ")).toContain("quarantine: search");
+    expect(calls[3]!.args).toContain('ready=repo:o/r is:issue is:open label:"ready-for-agent"');
+    expect(calls[3]!.args).toContain('human=repo:o/r is:issue is:open label:"ready-for-human"');
+    expect(calls[3]!.args).toContain('quarantine=repo:o/r is:issue is:open label:"quarantine"');
   });
 });
 

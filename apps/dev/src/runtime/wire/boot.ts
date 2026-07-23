@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
+import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/red-castle/engine";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { auditConfigLoad, loadConfig, getConfig } from "../../core/config.js";
 import { compareSemver, fetchNpmNewestDevBundleVersion, readDevBundleCacheState } from "../../core/bundle-version.js";
@@ -109,6 +110,33 @@ export async function collectBootOptions(
 export interface CollectPrecheckFactsOptions {
   readonly includeNpmBundleCoherence?: boolean;
   readonly hostPrerequisiteExec?: ExecFn;
+}
+
+export interface CollectBootPrecheckFactsOptions extends CollectPrecheckFactsOptions {
+  readonly log?: (line: string) => void;
+}
+
+/**
+ * Boot-only precheck collector. The worktree quarantine must run before any
+ * fetch-backed operational probe: a single initializing worktree with a
+ * dangling HEAD can otherwise make the probe itself fail on every boot.
+ * Read-only callers such as red-doctor continue to use collectPrecheckFacts.
+ */
+export async function collectBootPrecheckFacts(
+  ctx: RepoContext,
+  options: CollectBootPrecheckFactsOptions = {},
+): Promise<PrecheckFacts> {
+  const quarantined = await gitx.quarantineBrokenWorktrees({ cwd: ctx.root });
+  for (const worktree of quarantined) {
+    if (worktree.removed) {
+      options.log?.(`boot janitor quarantined worktree path=${worktree.path} reason=${worktree.reason}`);
+    } else {
+      options.log?.(
+        `boot janitor failed to quarantine worktree path=${worktree.path} reason=${worktree.reason}: ${worktree.error ?? "unknown git error"}`,
+      );
+    }
+  }
+  return collectPrecheckFacts(ctx, options);
 }
 
 export async function collectHostPrerequisiteProbeInput(
@@ -276,6 +304,10 @@ export async function collectPrecheckFacts(
             );
           },
           workerPidState,
+          // Enables the ADR 0066 TTL classification of unknown-pid markers
+          // (#2525): an own-namespace claim whose owner stopped refreshing past
+          // the stale window is concedable without proving the pid.
+          nowS: Math.floor(Date.now() / 1000),
         }
       : undefined,
     labelBodyCoherence: ctx.repo
@@ -429,6 +461,12 @@ export async function buildBootDeps(
         );
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
+      editBody: async (issue, body) => {
+        if (!(await ghx.editBody(ghCtx, issue, body))) {
+          throw new Error(`failed to update quarantine diagnosis for issue #${issue}`);
+        }
+      },
+      viewBody: (issue) => ghx.issueBody(ghCtx, issue),
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
       attachSubIssue: (parent, child) => ghx.attachSubIssue(ghCtx, parent, child),
       issueReference: (issue) => ghx.issueReference(ghCtx, issue),
@@ -447,6 +485,7 @@ export async function buildBootDeps(
           await ghx.postClaimComment(ghCtx, issue, body);
         }
       : undefined,
+    healLedger: createFileHealLedgerStore(createEnginePaths(join(ctx.root, ".red"))),
     lookups: {
       // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
       // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
