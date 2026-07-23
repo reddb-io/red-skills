@@ -239,6 +239,18 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
 
+  // Concretize a `--user @me` territory facet before anything consumes the
+  // filter, so the castle drain, the session preview, and every forwarded
+  // `--selector` all carry a real login.
+  if (sessionCtx.filter.kind === "selector" && sessionCtx.filter.selector.user === "@me") {
+    sessionCtx.filter = {
+      kind: "selector",
+      selector: await ghx.resolveSelectorUser(sessionCtx.filter.selector, () =>
+        ghx.resolveViewerLogin(ghCtx),
+      ),
+    };
+  }
+
   // Boot discovery: orphan dirs, attempt-cap groups, branch refs, unblock
   // candidates. Resolved from disk/branches; gh state lookups stay lazy in the
   // boot deps.

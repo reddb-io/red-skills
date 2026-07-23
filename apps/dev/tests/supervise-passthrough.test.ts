@@ -122,6 +122,13 @@ describe("slotFilterArgs (gap 5: supervised fleet forwards the filter)", () => {
     expect(slotFilterArgs(["-r", "go fast"])).toEqual(["--request", "go fast"]);
   });
 
+  it("forwards the --tags/--user territory facets in both flag forms", () => {
+    expect(slotFilterArgs(["--tags", "backend,infra"])).toEqual(["--tags", "backend,infra"]);
+    expect(slotFilterArgs(["--tags=backend"])).toEqual(["--tags", "backend"]);
+    expect(slotFilterArgs(["--user", "octocat"])).toEqual(["--user", "octocat"]);
+    expect(slotFilterArgs(["--user=@me"])).toEqual(["--user", "@me"]);
+  });
+
   it("accepts the --flag=value form", () => {
     expect(slotFilterArgs(["--spec=42", "--request=do it"])).toEqual([
       "--spec",
@@ -163,7 +170,7 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
     };
     expect(formatBootSweepResult(result)).toBe(
       "boot sweeps complete: orphans removed=2 restored=1 kept=1 | attempt-cap reclaimed=1 | " +
-        "branches remote=0 local=2 | tmp-janitor expired=0 workers=0 unknown=0 protected=0 | " +
+        "branches remote=0 local=2 | tmp-janitor expired=0 workers=0 orphan-runners=0 unknown=0 protected=0 | " +
         "docs-sweep clean files=0 | unblocked=1 | stragglers unlabeled=2 triage=1 info=0",
     );
   });
@@ -188,6 +195,7 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
         expiredLanes: [".red/tmp/worktrees/feedback/afk-wDEAD-2450-gate"],
         staleWorkers: [],
         unknownTmpRoots: [],
+        orphanTestRunners: [],
         protectedLiveWorkers: [],
         protectedLiveFeedback: [],
         removals: [

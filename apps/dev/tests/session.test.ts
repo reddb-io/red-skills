@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   genWorkerId,
+  matchesSelector,
   runModeForCandidate,
   slugify,
   type IssueCandidate,
@@ -29,6 +30,23 @@ describe("runModeForCandidate (type:scout fleet routing)", () => {
     expect(runModeForCandidate(cand(5, ["ready-for-agent"]), "scout")).toBe("scout");
   });
 
+});
+
+// ---------- matchesSelector (parity with castle matchesFleetSelector) ----------
+
+describe("matchesSelector territory facets (kept in sync with the castle copy)", () => {
+  it("ANDs every requested tag and excludes untagged candidates outright", () => {
+    const both = cand(1, ["ready-for-agent", "tag:backend", "tag:infra"]);
+    expect(matchesSelector(both, { tags: ["backend", "infra"] })).toBe(true);
+    expect(matchesSelector(cand(2, ["ready-for-agent", "tag:backend"]), { tags: ["backend", "infra"] })).toBe(false);
+    expect(matchesSelector(cand(3), { tags: ["backend"] })).toBe(false);
+  });
+
+  it("matches the user facet against the author case-insensitively and never without one", () => {
+    expect(matchesSelector(cand(1, undefined, { author: "OctoCat" }), { user: "octocat" })).toBe(true);
+    expect(matchesSelector(cand(2, undefined, { author: "octocat" }), { user: "someone" })).toBe(false);
+    expect(matchesSelector(cand(3), { user: "octocat" })).toBe(false);
+  });
 });
 
 // ---------- slugify ----------

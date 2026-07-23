@@ -69,6 +69,8 @@ const WORKER_PASSTHROUGH_FLAGS = new Set([
   "--spec",
   "--issues",
   "--selector",
+  "--tags",
+  "--user",
   "-n",
   "--once",
   "--model",
