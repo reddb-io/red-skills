@@ -9,6 +9,7 @@ import { constants } from "node:fs";
 import {
   access,
   appendFile,
+  link,
   mkdir,
   readdir,
   readFile,
@@ -57,58 +58,78 @@ export async function writeWorkerPid(pidFile: string, pid: number): Promise<void
   await writeFile(pidFile, String(pid), "utf8");
 }
 
-/** Monotonic per-process counter so concurrent stale-claim reclaims (even from
- * the same pid) each rename to a UNIQUE temp dir — the atomic rename of the
- * shared claim dir is what serialises the winners, so the temp targets must not
- * collide. */
+/** Monotonic per-process counter for unique claim candidates and stale paths. */
 let claimReclaimSeq = 0;
 
 /**
- * Atomically claim `dir` as a fresh lock directory. A plain `mkdir` (NOT
- * recursive) is the POSIX-atomic primitive: it fails with `EEXIST` when another
- * caller already holds the lock, so exactly one of N racing callers wins. The
- * recursive `ensureDir` (`mkdir -p`) is idempotent and CANNOT serve as a lock —
- * the prior check-then-act `pathExists` + `ensureDir` claim let two simultaneous
- * boots both pass the existence check and both create the dir, claiming the same
- * issue and opening duplicate PRs (#434). Only the leaf is exclusive; the parent
- * (`<tmpDir>/claims`) is created recursively first. On a win the holder's `pid`
- * is written to `<dir>/pid` so the boot-time stale-claim sweep can reclaim the
- * lock if the holder dies (the sweep reads exactly this file).
+ * Atomically claim `dir` by publishing a fully-written `pid` file with link(2).
+ * Creating the directory and then writing its pid left a visibility gap: a
+ * concurrent caller could see the empty directory, classify it as stale, and
+ * return a second successful claim. A hard link is exclusive (`EEXIST` for every
+ * loser) and publishes the already-written pid contents in one filesystem
+ * operation. The boot-time stale-claim sweep keeps reading `<dir>/pid`.
  */
 export async function tryAcquireClaimDir(dir: string, pid: number): Promise<boolean> {
   await mkdir(dirname(dir), { recursive: true });
-  const claimOnce = async (): Promise<"acquired" | "held"> => {
+  const candidate = `${dir}.candidate-${pid}-${claimReclaimSeq++}`;
+  await writeFile(candidate, String(pid), { encoding: "utf8", flag: "wx" });
+
+  const ensureClaimDir = async (): Promise<boolean> => {
     try {
-      await mkdir(dir); // non-recursive → EEXIST when already held
+      await mkdir(dir);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      try {
+        if ((await stat(dir)).isDirectory()) return true;
+      } catch {
+        return ensureClaimDir();
+      }
+      const poisoned = `${dir}.stale-${pid}-${claimReclaimSeq++}`;
+      try {
+        await rename(dir, poisoned);
+      } catch {
+        return false;
+      }
+      await rm(poisoned, { recursive: true, force: true });
+      return ensureClaimDir();
+    }
+  };
+
+  const publishCandidate = async (): Promise<"acquired" | "held" | "missing"> => {
+    try {
+      await link(candidate, join(dir, "pid"));
       return "acquired";
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "EEXIST") return "held";
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") return "held";
+      if (code === "ENOENT" || code === "ENOTDIR") return "missing";
       throw err;
     }
   };
 
-  if ((await claimOnce()) === "held") {
-    if (await claimPathHeldByLivePid(dir)) return false;
+  try {
+    if (!(await ensureClaimDir())) return false;
+    const initial = await publishCandidate();
+    if (initial === "acquired") return true;
+    if (initial === "missing" || await claimPathHeldByLivePid(dir)) return false;
+
     // Dead holder → reclaim ATOMICALLY. The prior `rm` + re-`mkdir` was a TOCTOU:
     // two boots that both observed the dead pid would both rm the dir and both
     // mkdir it, each believing it held the lock — the #434 duplicate-claim race
     // reappeared on the recovery path that fires after any worker crash (#568).
-    // rename(2) is atomic, so of N racing reclaimers exactly one rename of the
-    // SAME stale dir succeeds; the losers get ENOENT and bail. Only the winner
-    // deletes it and re-claims through the exclusive mkdir, which still
-    // serialises against any fresh claimer that slipped in after the rename.
     const stealing = `${dir}.stale-${pid}-${claimReclaimSeq++}`;
-    await rm(stealing, { recursive: true, force: true }).catch(() => {});
     try {
       await rename(dir, stealing);
     } catch {
-      return false; // lost the steal race — another reclaimer already moved it
+      return false;
     }
     await rm(stealing, { recursive: true, force: true });
-    if ((await claimOnce()) !== "acquired") return false; // a fresh claimer won the re-mkdir
+    if (!(await ensureClaimDir())) return false;
+    return (await publishCandidate()) === "acquired";
+  } finally {
+    await rm(candidate, { force: true });
   }
-  await writeFile(join(dir, "pid"), String(pid), "utf8");
-  return true;
 }
 
 /** True when `dir` is a claim-lock dir whose recorded `pid` file names a live
