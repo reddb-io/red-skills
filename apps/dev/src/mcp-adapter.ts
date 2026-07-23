@@ -79,9 +79,9 @@ import {
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
 import { resolveProject } from "./commands/statusline.js";
-import { stopCommand } from "./commands/stop.js";
+import { executeStopWorker } from "./commands/stop.js";
 import { executeRequeue } from "./commands/requeue.js";
-import { retakeCommand } from "./commands/retake.js";
+import { executeRetake } from "./commands/retake.js";
 import {
   dispatchGo,
   type DisposableIssueSpec,
@@ -112,9 +112,9 @@ import {
 } from "./core/branch-cleanup.js";
 import { executeUnblockSweep } from "./core/boot-sweep.js";
 import { collectReapInputs } from "./runtime/wire/reap.js";
-import { activityReviewCommand } from "./commands/activity-review.js";
-import { triageCommand } from "./commands/triage.js";
-import { respondCommand } from "./commands/respond.js";
+import { collectActivityReview } from "./commands/activity-review.js";
+import { executeTriage } from "./commands/triage.js";
+import { executeRespond } from "./commands/respond.js";
 import {
   ResidentReadCache,
   QUEUE_STATUS_KEY,
@@ -165,40 +165,6 @@ export interface DevAfkMcpRuntime {
   executeRequeue(root: string, input: RequeueToolInput): Promise<unknown>;
   /** Injected in tests to intercept hook execution without spawning a shell. */
   hookExec?: HookExec;
-}
-
-function captureStream(): {
-  stream: Writable;
-  text(): string;
-} {
-  let output = "";
-  return {
-    stream: new Writable({
-      write(chunk, _encoding, callback) {
-        output += String(chunk);
-        callback();
-      },
-    }),
-    text: () => output,
-  };
-}
-
-function parsedCommandOutput(
-  output: string,
-  exitCode: number,
-  format: "json" | "toon",
-): unknown {
-  const trimmed = output.trim();
-  if (trimmed === "") return { exit_code: exitCode };
-  try {
-    const value = format === "json" ? JSON.parse(trimmed) : decodeToon(trimmed);
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      return { ...(value as Record<string, unknown>), exit_code: exitCode };
-    }
-    return { value, exit_code: exitCode };
-  } catch {
-    return { output: trimmed, exit_code: exitCode };
-  }
 }
 
 function dispatchArgs(input: DispatchOperationInput): string[] {
@@ -445,26 +411,15 @@ export function createDefaultDevAfkMcpOperations(
       };
     },
     async stopWorker(cwd, input) {
-      const capture = captureStream();
-      const exitCode = await stopCommand(
-        ["--worker", input.worker],
-        cwd,
-        capture.stream,
-      );
-      return {
-        ...(parsedCommandOutput(capture.text(), exitCode, "toon") as object),
-        recycle: input.recycle,
-      };
+      const result = await executeStopWorker(input.worker, afkPaths(cwd).tmpDir);
+      return { ...result, recycle: input.recycle };
     },
     requeue: (input) => runtime.executeRequeue(root, input),
-    async retake(input) {
-      const args = [String(input.issue), "--json"];
-      if (input.repo) args.push("--repo", input.repo);
-      if (input.prLimit) args.push("--pr-limit", String(input.prLimit));
-      const capture = captureStream();
-      const exitCode = await retakeCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "json");
-    },
+    retake: (input) =>
+      executeRetake(
+        { issue: input.issue, repo: input.repo, prLimit: input.prLimit },
+        { cwd: root },
+      ),
     async reap() {
       const context = await resolveRepoContext(root);
       const inputs = await collectReapInputs(context);
@@ -761,34 +716,25 @@ export function createDefaultDevAfkMcpOperations(
       const pid = await runtime.launchRspWait(args, root);
       return { id, pid, result_file: resultFile, status: "spawned" };
     },
-    async dailyReview(_input) {
-      const capture = captureStream();
-      const exitCode = await activityReviewCommand("daily", [], root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "toon");
-    },
-    async weeklyReview(_input) {
-      const capture = captureStream();
-      const exitCode = await activityReviewCommand("weekly", [], root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "toon");
-    },
-    async triage(input) {
-      const args: string[] = [String(input.issue), "--decision", input.decision, "--json"];
-      if (input.summon) args.push("--summon");
-      if (input.repo) args.push("--repo", input.repo);
-      const capture = captureStream();
-      const exitCode = await triageCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "json");
-    },
-    async respond(input) {
-      const args: string[] = ["--body", input.body, "--number", String(input.number)];
-      if (input.author) args.push("--author", input.author);
-      if (input.is_pr) args.push("--is-pr");
-      if (input.runner) args.push("--runner", input.runner);
-      if (input.repo) args.push("--repo", input.repo);
-      const capture = captureStream();
-      const exitCode = await respondCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "toon");
-    },
+    dailyReview: (_input) => collectActivityReview("daily", { cwd: root }),
+    weeklyReview: (_input) => collectActivityReview("weekly", { cwd: root }),
+    triage: (input) =>
+      executeTriage(
+        { issue: input.issue, decision: input.decision, summon: input.summon, repo: input.repo },
+        { cwd: root },
+      ),
+    respond: (input) =>
+      executeRespond(
+        {
+          body: input.body,
+          number: input.number,
+          author: input.author,
+          isPr: input.is_pr,
+          runner: input.runner,
+          repo: input.repo,
+        },
+        { cwd: root },
+      ),
   };
 }
 

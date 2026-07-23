@@ -143,6 +143,45 @@ async function restoreClaimLabels(root: string, issue: number): Promise<boolean>
   return true;
 }
 
+/** The single-worker stop outcome — the object the CLI encodes to TOON and the MCP op returns. */
+export interface StopWorkerResult {
+  op: "stop-worker";
+  worker: string;
+  worker_pid: number | null;
+  worker_status: "none" | "stale" | "stopped" | "timeout";
+}
+
+/**
+ * Value-returning single-worker stop core: read the worker pid, classify it
+ * (`none`/`stale`), else SIGTERM its tree and report `stopped`/`timeout`. Returns
+ * the structured outcome — the CLI encodes it to TOON, the MCP `worker_stop`/
+ * `worker_recycle` ops return it verbatim (TOON-encoded at the transport boundary).
+ * Throws on a malformed worker id.
+ */
+export async function executeStopWorker(
+  workerId: string,
+  tmpDir: string,
+  io: StopIO = defaultIO,
+): Promise<StopWorkerResult> {
+  if (!isValidWorkerId(workerId)) {
+    throw new Error(`invalid worker id: ${JSON.stringify(workerId)}`);
+  }
+  const pid = await io.readWorkerPid(workerPidFile(tmpDir, workerId));
+  if (pid === null) {
+    return { op: "stop-worker", worker: workerId, worker_pid: null, worker_status: "none" };
+  }
+  if (!io.isLivePid(pid)) {
+    return { op: "stop-worker", worker: workerId, worker_pid: pid, worker_status: "stale" };
+  }
+  const dead = await io.killTreeAndWait(pid);
+  return {
+    op: "stop-worker",
+    worker: workerId,
+    worker_pid: pid,
+    worker_status: dead ? "stopped" : "timeout",
+  };
+}
+
 async function stopWorker(
   workerId: string,
   tmpDir: string,
@@ -153,32 +192,7 @@ async function stopWorker(
     process.stderr.write(`[afk stop] invalid worker id: ${JSON.stringify(workerId)}\n`);
     return 1;
   }
-
-  const pidFile = workerPidFile(tmpDir, workerId);
-  const pid = await io.readWorkerPid(pidFile);
-
-  if (pid === null) {
-    stdout.write(
-      encodeToon({ op: "stop-worker", worker: workerId, worker_pid: null, worker_status: "none" }) + "\n",
-    );
-    return 0;
-  }
-
-  if (!io.isLivePid(pid)) {
-    stdout.write(
-      encodeToon({ op: "stop-worker", worker: workerId, worker_pid: pid, worker_status: "stale" }) + "\n",
-    );
-    return 0;
-  }
-
-  const dead = await io.killTreeAndWait(pid);
-  stdout.write(
-    encodeToon({
-      op: "stop-worker",
-      worker: workerId,
-      worker_pid: pid,
-      worker_status: dead ? "stopped" : "timeout",
-    }) + "\n",
-  );
-  return dead ? 0 : 1;
+  const result = await executeStopWorker(workerId, tmpDir, io);
+  stdout.write(encodeToon(result as unknown as Parameters<typeof encodeToon>[0]) + "\n");
+  return result.worker_status === "timeout" ? 1 : 0;
 }

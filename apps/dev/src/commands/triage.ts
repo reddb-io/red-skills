@@ -152,6 +152,36 @@ export async function runTriage(
   return { issue: opts.issue, action, author, applied: { decision: opts.decision, transition } };
 }
 
+/** The flag shape the MCP triage op and the CLI command both feed to the value core. */
+export interface TriageExecInput {
+  issue: number;
+  decision: TriageDecision;
+  summon?: boolean;
+  repo?: string;
+}
+
+/**
+ * Value-returning triage core: load the per-repo trust policy, resolve the repo,
+ * and run the trust-gated transition, returning the {@link TriageOutcome}. The CLI
+ * command renders it; the MCP `triage` op returns it verbatim (TOON-encoded at the
+ * transport boundary). No stdout, no exit code.
+ */
+export async function executeTriage(
+  input: TriageExecInput,
+  opts: { cwd?: string } = {},
+): Promise<TriageOutcome> {
+  const cwd = opts.cwd ?? process.cwd();
+  const config = loadConfig(resolveConfigPath(cwd), { warn: () => undefined });
+  const policy = parseTrustPolicy(config);
+  const repo = input.repo ?? (await resolveRepoContext(cwd)).repo;
+  const ctx: GhContext = { cwd, repo };
+  return runTriage(ctx, policy, {
+    issue: input.issue,
+    decision: input.decision,
+    summon: input.summon === true,
+  });
+}
+
 interface TriageFlags {
   issue: number;
   decision: TriageDecision;
@@ -235,16 +265,10 @@ export async function triageCommand(
     return 2;
   }
 
-  const config = loadConfig(resolveConfigPath(cwd), { warn: () => undefined });
-  const policy = parseTrustPolicy(config);
-  const repo = flags.repo ?? (await resolveRepoContext(cwd)).repo;
-  const ctx: GhContext = { cwd, repo };
-
-  const outcome = await runTriage(ctx, policy, {
-    issue: flags.issue,
-    decision: flags.decision,
-    summon: flags.summon,
-  });
+  const outcome = await executeTriage(
+    { issue: flags.issue, decision: flags.decision, summon: flags.summon, repo: flags.repo },
+    { cwd },
+  );
 
   if (flags.json) {
     stdout.write(`${JSON.stringify(outcome)}\n`);
