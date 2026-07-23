@@ -9,6 +9,7 @@ import { createCastleMcpTools } from "../../../packages/red-castle/src/mcp-serve
 import {
   createEnginePaths,
   createFileIssueCuratorStore,
+  armPr,
   createFileMergeDriverStore,
   createGitHubTrackerAdapter,
   createSingletonLeaseStore,
@@ -16,6 +17,8 @@ import {
   runMergeDriverPass,
 } from "@reddb-io/red-castle/engine";
 import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
+import { createMedicIo } from "./runtime/medic-io.js";
+import { createFileMedicStore, runMedicPass } from "./core/pr-medic.js";
 import { resolveRepoContext } from "./runtime/wire.js";
 import { superviseCommand } from "./commands/supervise.js";
 import { createCastleMcpDependencies } from "./mcp-adapter.js";
@@ -135,11 +138,31 @@ export async function startResidentMergeDriver(root = process.cwd()): Promise<vo
       const armed = Object.values(state.prs).some((record) => record.status === "armed");
       if (armed) {
         const context = await resolveRepoContext(root);
-        await runMergeDriverPass(
+        const entries = await runMergeDriverPass(
           createMergeDriverIo({ cwd: context.root, repo: context.repo }),
           store,
           { nowEpoch: Math.floor(Date.now() / 1000) },
         );
+        // PR medic (#2513): a terminal needs-medic classification gets ONE
+        // bounded mechanical healing round before any human sees it. A healed
+        // push re-arms the PR so the driver resumes ownership; the medic's own
+        // ledger escalates after MEDIC_MAX_ROUNDS failed rounds.
+        for (const entry of entries) {
+          if (entry.action !== "terminal-medic") continue;
+          try {
+            const medic = await runMedicPass(
+              createMedicIo(context.root),
+              createFileMedicStore(paths),
+              entry.pr,
+              { nowEpoch: Math.floor(Date.now() / 1000) },
+            );
+            if (medic.outcome === "healed") {
+              await armPr(store, entry.pr, Math.floor(Date.now() / 1000));
+            }
+          } catch {
+            // A failed heal leaves the terminal classification standing.
+          }
+        }
       }
     } catch {
       // Transport faults retry on the next interval; the resident never dies here.
