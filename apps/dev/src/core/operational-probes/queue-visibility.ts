@@ -22,9 +22,28 @@ export interface QueueVisibilityProbeData {
   readonly label: string;
   readonly engineCount?: number;
   readonly restCount?: number;
+  readonly engineIssues?: readonly number[];
+  readonly restIssues?: readonly number[];
+  readonly differingIssues?: readonly number[];
+  readonly transient?: boolean;
   readonly classification?: QueueVisibilityFailureClass;
   readonly surface?: QueueVisibilityTransportSurface;
 }
+
+interface QueueVisibilitySnapshot {
+  readonly engineIssues: readonly number[];
+  readonly restIssues: readonly number[];
+}
+
+type QueueVisibilitySample =
+  | { readonly ok: true; readonly snapshot: QueueVisibilitySnapshot }
+  | {
+      readonly ok: false;
+      readonly error: unknown;
+      readonly engineIssues?: readonly number[];
+    };
+
+const DEFAULT_RESAMPLE_DELAY_MS = 250;
 
 const SSO_FIX =
   "Run `gh auth refresh -h github.com -s repo,read:org,workflow`, then open the GitHub organization SSO authorization prompt for the affected org and authorize the gh token.";
@@ -91,6 +110,62 @@ function failureEvidence(classification: QueueVisibilityFailureClass, surface: Q
   return `queue listing failed (${classification}, surface=${surface})`;
 }
 
+function normalizeIssueNumbers(issues: readonly number[]): number[] {
+  return [...new Set(issues.filter((issue) => Number.isInteger(issue) && issue > 0))].sort((a, b) => a - b);
+}
+
+function differingIssues(snapshot: QueueVisibilitySnapshot): number[] {
+  const engine = new Set(snapshot.engineIssues);
+  const rest = new Set(snapshot.restIssues);
+  return [...engine].filter((issue) => !rest.has(issue))
+    .concat([...rest].filter((issue) => !engine.has(issue)))
+    .sort((a, b) => a - b);
+}
+
+function issueNumbersEvidence(issues: readonly number[]): string {
+  return issues.map((issue) => `#${issue}`).join(", ");
+}
+
+async function sampleQueueVisibility(input: NonNullable<OperationalProbeContext["queueVisibility"]>): Promise<QueueVisibilitySample> {
+  let engineIssues: readonly number[];
+  try {
+    engineIssues = normalizeIssueNumbers(await input.listEngineCandidates());
+  } catch (error) {
+    return { ok: false, error };
+  }
+
+  try {
+    return {
+      ok: true,
+      snapshot: {
+        engineIssues,
+        restIssues: normalizeIssueNumbers(await input.listRestQueue()),
+      },
+    };
+  } catch (error) {
+    return { ok: false, error, engineIssues };
+  }
+}
+
+function transportFailureResult(label: string, sample: Extract<QueueVisibilitySample, { ok: false }>): OperationalProbeResult {
+  const classification = classifyQueueVisibilityTransportFailure(sample.error);
+  const surface = transportSurface(sample.error);
+  const engineCount = sample.engineIssues?.length;
+  return {
+    id: QUEUE_VISIBILITY_PROBE_ID,
+    name: QUEUE_VISIBILITY_PROBE_NAME,
+    verdict: "red",
+    evidence: failureEvidence(classification, surface),
+    canonicalFix: fixForClassification(classification),
+    data: {
+      label,
+      ...(engineCount === undefined ? {} : { engineCount, engineIssues: sample.engineIssues }),
+      classification,
+      surface,
+    } satisfies QueueVisibilityProbeData,
+  };
+}
+
 export async function runQueueVisibilityProbe(context: OperationalProbeContext): Promise<OperationalProbeResult> {
   const input = context.queueVisibility;
   const label = input?.label ?? "ready-for-agent";
@@ -104,56 +179,73 @@ export async function runQueueVisibilityProbe(context: OperationalProbeContext):
     };
   }
 
-  let engineCount: number;
-  try {
-    engineCount = await input.listEngineCandidates();
-  } catch (error) {
-    const classification = classifyQueueVisibilityTransportFailure(error);
-    const surface = transportSurface(error);
-    return {
-      id: QUEUE_VISIBILITY_PROBE_ID,
-      name: QUEUE_VISIBILITY_PROBE_NAME,
-      verdict: "red",
-      evidence: failureEvidence(classification, surface),
-      canonicalFix: fixForClassification(classification),
-      data: { label, classification, surface } satisfies QueueVisibilityProbeData,
-    };
-  }
+  const first = await sampleQueueVisibility(input);
+  if (!first.ok) return transportFailureResult(label, first);
 
-  let restCount: number;
-  try {
-    restCount = await input.countRestQueue();
-  } catch (error) {
-    const classification = classifyQueueVisibilityTransportFailure(error);
-    const surface = transportSurface(error);
-    return {
-      id: QUEUE_VISIBILITY_PROBE_ID,
-      name: QUEUE_VISIBILITY_PROBE_NAME,
-      verdict: "red",
-      evidence: failureEvidence(classification, surface),
-      canonicalFix: fixForClassification(classification),
-      data: { label, engineCount, classification, surface } satisfies QueueVisibilityProbeData,
-    };
-  }
+  const firstDifference = differingIssues(first.snapshot);
+  if (firstDifference.length > 0) {
+    const delayMs = input.resampleDelayMs ?? DEFAULT_RESAMPLE_DELAY_MS;
+    if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 
-  if (engineCount !== restCount) {
+    const second = await sampleQueueVisibility(input);
+    if (!second.ok) return transportFailureResult(label, second);
+
+    const secondDifference = differingIssues(second.snapshot);
+    if (secondDifference.length === 0) {
+      const engineCount = second.snapshot.engineIssues.length;
+      const restCount = second.snapshot.restIssues.length;
+      return {
+        id: QUEUE_VISIBILITY_PROBE_ID,
+        name: QUEUE_VISIBILITY_PROBE_NAME,
+        verdict: "ok",
+        evidence: `info: transient queue mismatch cleared on re-sample; first differing issues: ${issueNumbersEvidence(firstDifference)}`,
+        canonicalFix: QUEUE_VISIBILITY_CANONICAL_FIX,
+        data: {
+          label,
+          engineCount,
+          restCount,
+          engineIssues: second.snapshot.engineIssues,
+          restIssues: second.snapshot.restIssues,
+          differingIssues: firstDifference,
+          transient: true,
+        } satisfies QueueVisibilityProbeData,
+      };
+    }
+
+    const engineCount = second.snapshot.engineIssues.length;
+    const restCount = second.snapshot.restIssues.length;
     return {
       id: QUEUE_VISIBILITY_PROBE_ID,
       name: QUEUE_VISIBILITY_PROBE_NAME,
       verdict: "red",
-      evidence: `engine sees ${engineCount} open ${label}; REST sees ${restCount}`,
+      evidence: `engine sees ${engineCount} open ${label}; REST sees ${restCount}; differing issues: ${issueNumbersEvidence(secondDifference)}`,
       canonicalFix: QUEUE_VISIBILITY_CANONICAL_FIX,
-      data: { label, engineCount, restCount } satisfies QueueVisibilityProbeData,
+      data: {
+        label,
+        engineCount,
+        restCount,
+        engineIssues: second.snapshot.engineIssues,
+        restIssues: second.snapshot.restIssues,
+        differingIssues: secondDifference,
+      } satisfies QueueVisibilityProbeData,
     };
   }
 
+  const engineCount = first.snapshot.engineIssues.length;
+  const restCount = first.snapshot.restIssues.length;
   return {
     id: QUEUE_VISIBILITY_PROBE_ID,
     name: QUEUE_VISIBILITY_PROBE_NAME,
     verdict: "ok",
     evidence: `engine and REST both see ${engineCount} open ${label}`,
     canonicalFix: QUEUE_VISIBILITY_CANONICAL_FIX,
-    data: { label, engineCount, restCount } satisfies QueueVisibilityProbeData,
+    data: {
+      label,
+      engineCount,
+      restCount,
+      engineIssues: first.snapshot.engineIssues,
+      restIssues: first.snapshot.restIssues,
+    } satisfies QueueVisibilityProbeData,
   };
 }
 
