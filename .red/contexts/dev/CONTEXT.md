@@ -83,8 +83,8 @@ Issue comments that are human-authored, contain no **Directive block**, and are 
 _Avoid_: chatter, background comment
 
 **Envelope**:
-A structured `<details data-attempt-status="...">` issue-thread ledger entry posted after an AFK attempt.
-_Avoid_: report, attempt log, audit comment
+A structured `<details data-attempt-status="...">` issue-thread ledger entry posted by an AFK Worker.
+_Avoid_: report, worker log, audit comment
 
 **Task mirror**:
 A read-only reflection of AFK worker state onto a runner-native background-task surface.
@@ -103,7 +103,7 @@ The repo's configured focal branch — the default base every AFK **Worktree** f
 _Avoid_: main (as a hardcoded assumption), default branch, primary branch
 
 **Landing**:
-How a completed **Attempt**'s worker branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031, write target moved to the remote by ADR 0083): a locked branch is integrated on `origin/<locked-branch>` for human promotion by pull (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the attempt history (`landPr`). Never writes to the **Primary checkout**. Owns the push → integrate → land → post-merge sequence as one operation.
+How a completed **Worker**'s branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031, write target moved to the remote by ADR 0083): a locked branch is integrated on `origin/<locked-branch>` for human promotion by pull (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the worker history (`landPr`). Never writes to the **Primary checkout**. Owns the push → integrate → land → post-merge sequence as one operation.
 _Avoid_: merge, merge-back, integrate (these are sub-steps of Landing, not the operation)
 
 **Baseline comparison**:
@@ -219,11 +219,11 @@ A Codex TUI sub-agent used only as a read-only AFK state presentation surface.
 _Avoid_: AFK worker, supervisor
 
 **Execution environment**:
-A non-interactive runtime that drives `/afk --issues N --runner opencode --once` for one attempt per invocation. The two target surfaces are the GitHub Actions lane (the published `reusable-afk-attempt.yml` reusable workflow in `reddb-io/red-skills`) and the k8s lane (a container image + `Job` manifest the team runs on a self-hosted cluster). Both share the same runtime contract — one attempt, one issue, one PR, no fleet — and differ only in trigger and secret-injection surface. Issue [#631](https://github.com/reddb-io/red-skills/issues/631) (ADR 0059) tracks the k8s piece; the GHA piece lands in this slice.
+A non-interactive runtime that drives `/afk --issues N --runner opencode --once` for one issue per invocation. The two target surfaces are the GitHub Actions lane (the published `reusable-afk-attempt.yml` reusable workflow in `reddb-io/red-skills`) and the k8s lane (a container image + `Job` manifest the team runs on a self-hosted cluster). Both share the same runtime contract — one issue, one PR, no fleet — and differ only in trigger and secret-injection surface. Issue [#631](https://github.com/reddb-io/red-skills/issues/631) (ADR 0059) tracks the k8s piece; the GHA piece lands in this slice.
 _Avoid_: GHA-only, k8s-only, CI lane, production lane
 
 **Actions lane**:
-The GitHub Actions surface of the **Execution environment** — the published `reusable-afk-attempt.yml` reusable workflow in `reddb-io/red-skills/.github/workflows/`. The file exposes **three triggers in one**: `workflow_call` (caller invokes directly), `workflow_dispatch` (manual from the Actions UI), and `issues: types: [labeled]` (auto-fires when the `ready-for-agent` label is applied; the `if:` filter restricts to exactly that label). The trust gate is rigorous by default (author + label-applier must be in the caller-supplied allowlist). Per invocation: one attempt, one issue, one PR, no admin-merge.
+The GitHub Actions surface of the **Execution environment** — the published `reusable-afk-attempt.yml` reusable workflow in `reddb-io/red-skills/.github/workflows/`. The file exposes **three triggers in one**: `workflow_call` (caller invokes directly), `workflow_dispatch` (manual from the Actions UI), and `issues: types: [labeled]` (auto-fires when the `ready-for-agent` label is applied; the `if:` filter restricts to exactly that label). The trust gate is rigorous by default (author + label-applier must be in the caller-supplied allowlist). Per invocation: one Worker, one issue, one PR, no admin-merge.
 _Avoid_: GHA, reusable workflow (when referring to the lane), CI job
 
  slot
@@ -414,7 +414,7 @@ _Avoid_: deleted ADR, rewritten decision, superseded (the status/pointer, not th
 - A delegable **HITL resolution** moves the **Issue** to `ready-for-agent` and removes all labels that keep it in the **HITL queue**.
 - An **Issue** accumulates **Envelopes**, **Directive blocks**, **Human guidance**, and **Thread discussion**.
 - A **Fleet supervisor** maintains AFK workers; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
-- A **Worker** owns many **Attempts**; each **Attempt** resolves exactly one **Issue** and holds one **Worktree**. The **Worker**'s `worker.pid` is the single liveness signal consumers read.
+- A **Fleet supervisor** manages many **Workers**; each **Worker** resolves exactly one **Issue** and holds one **Worktree**. The **Worker**'s `worker.pid` is the single liveness signal consumers read.
 - A **Worker kind** distinguishes `/afk`, `/go`, and `/go --scout` inside the shared castle worker root without creating separate live worker namespaces.
 - A **Branch lock** constrains the **Primary checkout**; AFK **Worktrees** remain exempt.
 - A **Pinned branch** constrains AFK base and merge target; a **Branch lock**, when set, overrides it (precedence lock > pin > main) and additionally toggles how completed work lands (locked → local locked branch; unlocked → admin-merged PR).
