@@ -1,5 +1,11 @@
 # @reddb-io/code-nav-mcp
 
+## 2.84.0
+
+### Patch Changes
+
+- @reddb-io/build-info@2.84.0
+
 ## 2.83.0
 
 ### Patch Changes

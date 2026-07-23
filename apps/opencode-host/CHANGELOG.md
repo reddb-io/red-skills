@@ -1,5 +1,18 @@
 # @reddb-io/red-skills
 
+## 2.84.0
+
+### Minor Changes
+
+- 9292d02: Event ingestion transport (#2514, Spec #2511 slice 3): the castle resident's webhook lane gains an ETag conditional-polling transport — `If-None-Match` reads where 304s are rate-limit-free, cadence honoring `X-Poll-Interval`, repo events deduped by id, and check-run snapshot diffing that emits exactly one `check.completed` delivery per transition for merge-driver-armed PR heads. The default resident transport is now a composite: the `gh webhook forward` child when its handshake holds, the poller as the always-armed fallback filling the same lane — consumers never see which transport delivered.
+- 8179a82: Merge driver (#2512, Spec #2511 slice 1): a castle-resident loop that lands armed PRs without GitHub native auto-merge — BEHIND → update-branch, green at head → merge-commit (never an admin override), transient faults → bounded retries (25-pass budget), DIRTY/failing checks → terminal needs-medic/needs-human classification. Durable state in `.red/state/castle/merge-driver.toon` survives resident restarts. New castle MCP tools: `merge_arm`, `merge_status`, `merge_release`.
+- 0bb78ad: PR medic (#2513, Spec #2511 slice 2): when the merge driver classifies a PR needs-medic, a bounded mechanical healing round runs in an isolated feedback-lane worktree before any escalation — stale staged Pi mirrors are regenerated, registered identifier renames applied, and additive conflicts union-resolved; anything semantic escalates untouched. Two failed rounds per PR escalate to needs-human, every action ledgered in `.red/state/castle/pr-medic.toon`; a healed push re-arms the PR on the driver.
+
+### Patch Changes
+
+- @reddb-io/shared@2.84.0
+- @reddb-io/build-info@2.84.0
+
 ## 2.83.0
 
 ### Minor Changes
