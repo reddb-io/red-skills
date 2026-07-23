@@ -101,7 +101,9 @@ export const makeSandboxFromHandle = (
 ): SandboxService => ({
   exec: (command, options) =>
     Effect.tryPromise({
-      try: () => handle.exec(command, options),
+      // Effect aborts this signal whenever a race (idle/completion timeout,
+      // hard-silence reaper, goal moot, caller cancellation) interrupts exec.
+      try: (signal) => handle.exec(command, { ...options, signal }),
       catch: (e) =>
         new ExecError({
           command,
