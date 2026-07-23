@@ -11,7 +11,6 @@ import { join } from "node:path";
 import type { SupervisorLiveness } from "../core/supervisor.js";
 import type { HeartbeatSlotPid } from "../core/supervisor.js";
 import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
-import { createEnginePaths } from "@reddb-io/red-castle/engine";
 import { createFileBootBreakerStore } from "../core/supervisor/boot-breaker.js";
 import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
 import { listStaleClaimDirs, removeDir } from "./fs.js";
