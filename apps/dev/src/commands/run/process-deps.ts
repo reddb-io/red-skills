@@ -312,11 +312,11 @@ export function buildProcessDeps(
       listByLabel: (label) => ghx.listByLabel(ghCtx, label),
       issueClosed: (n) => ghx.issueClosed(ghCtx, n),
       issueReference: (n) => ghx.issueReference(ghCtx, n),
-      // Trust-gate provenance (#621): author + ready-for-agent label actor, read
-      // from the issue timeline. Consulted at claim time only when an allowlist
-      // is configured (plugins.dev.afk.trust-gate.allowlist) or the repo fails
-      // closed (public + no allowlist, #1101).
-      issueTrust: (issue) => ghx.issueTrust(ghCtx, issue),
+      // Trust-gate provenance (#621): author + promoter label actor, read from the
+      // issue timeline. The promoter label is the LANE the claim was selected under
+      // (`ready-for-agent`, `lane:go`, `lane:scout`) so a /go/scout issue resolves its
+      // maintainer minter, not an absent `ready-for-agent` actor (#2602, #1101).
+      issueTrust: (issue, promoterLabel) => ghx.issueTrust(ghCtx, issue, promoterLabel),
       // Repository visibility (#1101): folds into the trust policy so a PUBLIC
       // repo with no allowlist fails closed while a private one stays permissive.
       repoVisibility: () => ghx.repoVisibility(ghCtx),

@@ -251,7 +251,11 @@ export async function processIssue(
   const trustPolicy = parseTrustPolicy(deps.hooks.config, visibility);
   let provenance: TrustProvenance | undefined;
   if (deps.gh.issueTrust) {
-    provenance = await deps.gh.issueTrust(issue);
+    // Resolve the promoter from the LANE label the issue was claimed under (#2602):
+    // `lane:go` / `lane:scout` issues never carry `ready-for-agent`, so the lane
+    // label's own applier is the promoter analog. For /afk, `laneLabel` is
+    // `ready-for-agent` — unchanged behaviour.
+    provenance = await deps.gh.issueTrust(issue, laneLabel);
   }
   const trustLookup = deps.gh.actorTrustSignals
     ? (login: string) => deps.gh.actorTrustSignals!(login)

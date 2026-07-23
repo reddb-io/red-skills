@@ -841,6 +841,77 @@ describe("processIssue — origin:external claim gate (#2603)", () => {
 });
 
 
+describe("processIssue — lane-aware claim provenance (#2602)", () => {
+  it("resolves the promoter from the lane:go label (a lane:go issue never carries ready-for-agent)", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "maint", readyForAgentActor: "maint" },
+    });
+    await processIssue(deps, input);
+    // The claim reads provenance under the lane label the issue was selected
+    // under, not a hardcoded `ready-for-agent` that a lane:go issue never has.
+    expect(trace.issueTrustCalls).toEqual(["lane:go"]);
+  });
+
+  it("scout lane resolves provenance under lane:scout", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:scout"],
+      laneLabel: "lane:scout",
+      runMode: "scout",
+      outcome: "done",
+      trust: { author: "maint", readyForAgentActor: "maint" },
+    });
+    await processIssue(deps, input);
+    expect(trace.issueTrustCalls).toEqual(["lane:scout"]);
+  });
+
+  it("/afk defaults the promoter label to ready-for-agent (unchanged fleet behaviour)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "maint", readyForAgentActor: "maint" },
+    });
+    await processIssue(deps, input);
+    expect(trace.issueTrustCalls).toEqual(["ready-for-agent"]);
+  });
+
+  it("PUBLIC repo + fail-closed + lane:go minted by a maintainer → executable", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      visibility: "public",
+      maintainers: ["maint"],
+      outcome: "done",
+      feedbackOk: true,
+      // Provenance the lane-aware resolver returns: the lane:go applier IS the
+      // maintainer minter, so the fail-closed promoter check passes.
+      trust: { author: "maint", readyForAgentActor: "maint" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+  });
+
+  it("PUBLIC repo + fail-closed + lane:go applied by an untrusted actor → still refused", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      visibility: "public",
+      maintainers: ["maint"],
+      trust: { author: "maint", readyForAgentActor: "stranger" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(
+      trace.iterLogs.some((l) => /trust gate refused #9 \[fail-closed\].*promoter/.test(l)),
+    ).toBe(true);
+  });
+});
+
 describe("processIssue — claim sheds stale blocked:* on promote to running (#402)", () => {
   it("removes every blocked:* label the issue carried in the SAME claim edit", async () => {
     const { deps, input, trace } = harness({

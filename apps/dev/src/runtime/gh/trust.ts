@@ -6,10 +6,18 @@ import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
 export async function issueTrust(
   ctx: GhContext,
   issue: number,
+  promoterLabel: string = LABEL_READY,
 ): Promise<{ author?: string; authorSourceTrust?: SourceTrustLevel; readyForAgentActor?: string }> {
+  // The PROMOTER label is the lane label the issue was selected under (#2602):
+  // `ready-for-agent` for the fleet, `lane:go` / `lane:scout` for the isolated
+  // /go/scout lanes. A lane:go/lane:scout issue never carries `ready-for-agent`
+  // (lane isolation is by design), so resolving the promoter from the lane
+  // label's own `labeled` event is what lets the trust gate see the maintainer
+  // who minted the dispatch — otherwise every /go dies at claim time under any
+  // non-permissive posture.
   const [author, actor] = await Promise.all([
     issueAuthorProfile(ctx, issue),
-    readyForAgentActor(ctx, issue),
+    labelActor(ctx, issue, promoterLabel),
   ]);
   return { author: author.login, authorSourceTrust: author.sourceTrust, readyForAgentActor: actor };
 }
@@ -86,11 +94,13 @@ async function issueAuthorProfileLegacy(
   }
 }
 
-/** Read the login of the actor who applied `ready-for-agent` from the issue
- * timeline (REST `…/issues/{n}/timeline`). Returns the MOST RECENT `labeled`
- * event for the label — a re-applied label reflects the latest promoter.
- * undefined when the read fails or no such event exists. */
-async function readyForAgentActor(ctx: GhContext, issue: number): Promise<string | undefined> {
+/** Read the login of the actor who applied `label` from the issue timeline
+ * (REST `…/issues/{n}/timeline`). Returns the MOST RECENT `labeled` event for
+ * the label — a re-applied label reflects the latest promoter. undefined when
+ * the read fails or no such event exists. `label` is the promoter label the
+ * claim was selected under (`ready-for-agent`, `lane:go`, `lane:scout`), so the
+ * lane label's applier is the promoter analog for the isolated lanes (#2602). */
+async function labelActor(ctx: GhContext, issue: number, label: string): Promise<string | undefined> {
   const r = await runGh(ctx, [
     "api",
     `repos/{owner}/{repo}/issues/${issue}/timeline`,
@@ -108,7 +118,7 @@ async function readyForAgentActor(ctx: GhContext, issue: number): Promise<string
     let actor: string | undefined;
     for (const ev of events) {
       const e = ev as { event?: string; label?: { name?: string }; actor?: { login?: string } };
-      if (e.event === "labeled" && e.label?.name === LABEL_READY && e.actor?.login) {
+      if (e.event === "labeled" && e.label?.name === label && e.actor?.login) {
         actor = String(e.actor.login); // keep the last (most recent) match
       }
     }
