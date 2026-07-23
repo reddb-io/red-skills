@@ -1,5 +1,11 @@
+import { spawn } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
-import { killTreeAndWait, type KillTreeIO } from "../src/runtime/kill-tree.js";
+import {
+  isLivePid,
+  killTreeAndWait,
+  signalProcessGroup,
+  type KillTreeIO,
+} from "../src/runtime/kill-tree.js";
 
 // A deterministic fake of the tree-killer IO: `aliveFor` ticks of liveness, with
 // each await sleep() advancing one tick. Records every signal sent so the
@@ -17,6 +23,14 @@ function fakeIO(opts: { aliveFor: number }): { io: KillTreeIO; signals: NodeJS.S
     },
   };
   return { io, signals, ticks: () => elapsed };
+}
+
+async function waitUntilDead(pid: number, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (isLivePid(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (isLivePid(pid)) throw new Error(`process ${pid} survived tree reap`);
 }
 
 describe("killTreeAndWait", () => {
@@ -52,6 +66,89 @@ describe("killTreeAndWait", () => {
     expect(dead).toBe(false);
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
   });
+
+  it("falls back to group SIGKILL when the leader survives the first SIGKILL", async () => {
+    let leaderAlive = true;
+    let wedgedChildAlive = true;
+    const signals: string[] = [];
+    const io = {
+      isAlive: () => leaderAlive,
+      signal: (_pid: number, signal: NodeJS.Signals) => {
+        signals.push(`tree:${signal}`);
+        // The wedged leader and child ignore the normal TERM/KILL escalation.
+      },
+      signalGroup: (_pid: number, signal: NodeJS.Signals) => {
+        signals.push(`group:${signal}`);
+        leaderAlive = false;
+        wedgedChildAlive = false;
+      },
+      sleep: async () => {},
+    } satisfies KillTreeIO & {
+      signalGroup(pid: number, signal: NodeJS.Signals): void;
+    };
+
+    const dead = await killTreeAndWait(123, {
+      io,
+      graceTries: 1,
+      killTries: 1,
+      pollMs: 0,
+    });
+
+    expect(dead).toBe(true);
+    expect(wedgedChildAlive).toBe(false);
+    expect(signals).toEqual(["tree:SIGTERM", "tree:SIGKILL", "group:SIGKILL"]);
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "fully reaps a SIGTERM-ignoring leader with a flat-cpu wedged child",
+    async () => {
+      const childProgram = 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1_000)';
+      const leaderProgram = `
+        const { spawn } = require("node:child_process");
+        process.on("SIGTERM", () => {});
+        const child = spawn(process.execPath, ["-e", ${JSON.stringify(childProgram)}], {
+          stdio: "ignore",
+        });
+        process.stdout.write(String(child.pid) + "\\n");
+        setInterval(() => {}, 1_000);
+      `;
+      const leader = spawn(process.execPath, ["-e", leaderProgram], {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      if (!leader.pid || !leader.stdout) throw new Error("leader process did not expose pid/stdout");
+      const leaderPid = leader.pid;
+      let childPid = 0;
+
+      try {
+        childPid = await new Promise<number>((resolve, reject) => {
+          leader.stdout!.once("data", (chunk) => resolve(Number(String(chunk).trim())));
+          leader.once("error", reject);
+          leader.once("exit", () => reject(new Error("leader exited before reporting its child")));
+        });
+        expect(childPid).toBeGreaterThan(1);
+
+        const dead = await killTreeAndWait(leaderPid, {
+          graceTries: 2,
+          killTries: 20,
+          pollMs: 10,
+        });
+
+        expect(dead).toBe(true);
+        await waitUntilDead(leaderPid);
+        await waitUntilDead(childPid);
+      } finally {
+        signalProcessGroup(leaderPid, "SIGKILL");
+        if (childPid > 1) {
+          try {
+            process.kill(childPid, "SIGKILL");
+          } catch {
+            // already gone
+          }
+        }
+      }
+    },
+  );
 
   it("honours custom grace/kill try budgets", async () => {
     const sleep = vi.fn(async () => {});
