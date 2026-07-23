@@ -78,5 +78,6 @@ export type {
 } from "./tracker/claim.js";
 export { CLAIM_WIRE_FIXTURES } from "./tracker/claim-wire-fixture.js";
 export type { ClaimWireFixture } from "./tracker/claim-wire-fixture.js";
+export * from "./tracker/claim-staleness.js";
 export * from "./tracker/port.js";
 export * from "./tracker/github/adapter.js";
