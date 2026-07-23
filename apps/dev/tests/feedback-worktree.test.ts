@@ -275,6 +275,58 @@ describe("makeFeedbackWorktree install (#458)", () => {
   });
 });
 
+describe("host-wide validation gate semaphore (#2487)", () => {
+  it("never runs a reconcile gate command alongside a live worker gate command", async () => {
+    let held = false;
+    const waiters: Array<() => void> = [];
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let maxActive = 0;
+
+    const ioFor = (): FeedbackWorktreeIO => {
+      const base = fakeIO(0, true, 0, { enabled: false }).io;
+      return {
+        ...base,
+        gateLock: async () => {
+          if (held) await new Promise<void>((resolve) => waiters.push(resolve));
+          held = true;
+          return async () => {
+            held = false;
+            waiters.shift()?.();
+          };
+        },
+        pnpm: async (args, opts) => {
+          if (args[0] === "install") return base.pnpm(args, opts);
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await new Promise<void>((resolve) => releases.push(resolve));
+          active -= 1;
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      } as FeedbackWorktreeIO;
+    };
+
+    const worker = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", ioFor(), {
+      cacheEnabled: false,
+    });
+    const reconcile = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", ioFor(), {
+      cacheEnabled: false,
+    });
+
+    const first = worker.pnpm(["pnpm", "-C", "afk/wLIVE/1-work", "test"]);
+    while (releases.length < 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    const second = reconcile.pnpm(["pnpm", "-C", "afk/wBOOT/2-reconcile", "test"]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(maxActive).toBe(1);
+    releases.shift()?.();
+    while (releases.length < 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    releases.shift()?.();
+    await Promise.all([first, second]);
+    expect(maxActive).toBe(1);
+  });
+});
+
 // #2339: the post-merge integration gate (#1335) hands the feedback executors
 // the isolated rebase/landing worktree DIR, not a branch name. Treating that dir
 // as a branch made `git fetch origin <dir>` fail, blocked ALL validation

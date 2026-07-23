@@ -102,8 +102,61 @@ import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
 import { renderClaimComment } from "../../core/claim.js";
+import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 
 const DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;
+
+export interface BootWorkerStateInput {
+  tmpDir: string;
+  workerId: string;
+  pid: number;
+  pidStartTime?: string;
+  runner: Runner;
+  origin: string;
+  kind: string;
+  model?: string;
+  effort?: string;
+  nowMs?: () => number;
+}
+
+/**
+ * Publish the pre-claim worker row before boot discovery or sweeps begin.
+ * The synthetic `boot` attempt is replaced by the real issue attempt at pick.
+ */
+export async function initBootWorkerState(input: BootWorkerStateInput): Promise<string> {
+  const attemptDir = join(workerDirPath(input.tmpDir, input.workerId), "boot");
+  const statePath = join(attemptDir, "afk.state.toon");
+  const nowMs = input.nowMs ?? (() => Date.now());
+  const startedAt = new Date(nowMs()).toISOString();
+  initStateSync(statePath, {
+    worker_id: input.workerId,
+    pid: input.pid,
+    pid_start_time: input.pidStartTime ?? "",
+    runner: input.runner,
+    origin: input.origin,
+    started_at: startedAt,
+    "current.kind": input.kind,
+    "current.number": "",
+    "current.started_at": startedAt,
+    "current.runner": input.runner,
+    "current.model": input.model ?? "",
+    "current.effort": input.effort ?? "",
+    "current.activity": "boot",
+    "current.phase": "boot",
+  });
+  writeIdentitySync(attemptDir, {
+    worker_id: input.workerId,
+    runner: input.runner,
+    origin: input.origin,
+    number: "",
+    started_at: startedAt,
+  });
+  await new LivenessLane({
+    path: join(attemptDir, LIVENESS_LANE_FILENAME),
+    clock: nowMs,
+  }).record("iteration-start");
+  return statePath;
+}
 
 export function decodeLocMemoSnapshot(text: string): LocMemo | null {
   try {
