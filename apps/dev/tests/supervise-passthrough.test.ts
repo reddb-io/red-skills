@@ -122,6 +122,13 @@ describe("slotFilterArgs (gap 5: supervised fleet forwards the filter)", () => {
     expect(slotFilterArgs(["-r", "go fast"])).toEqual(["--request", "go fast"]);
   });
 
+  it("forwards the --tags/--user territory facets in both flag forms", () => {
+    expect(slotFilterArgs(["--tags", "backend,infra"])).toEqual(["--tags", "backend,infra"]);
+    expect(slotFilterArgs(["--tags=backend"])).toEqual(["--tags", "backend"]);
+    expect(slotFilterArgs(["--user", "octocat"])).toEqual(["--user", "octocat"]);
+    expect(slotFilterArgs(["--user=@me"])).toEqual(["--user", "@me"]);
+  });
+
   it("accepts the --flag=value form", () => {
     expect(slotFilterArgs(["--spec=42", "--request=do it"])).toEqual([
       "--spec",

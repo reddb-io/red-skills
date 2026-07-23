@@ -1,7 +1,7 @@
 ---
 name: go
 description: Middle tier of the dispatch spectrum — `/goal` → `/go` → `/afk`. Use for genuinely untracked, ad-hoc, one-off demands only; anything that is or should be a tracked issue belongs to `/afk`. Mints a disposable issue, spins a dedicated worker, and brings back a PR. Add `--scout "<question>"` for a read-only investigation that posts a report comment and mutates nothing.
-argument-hint: "\"<approved-task>\" --dod \"<definition-of-done>\" [--request \"<inner-agent-instruction>\"] [--verify \"<cmd>\"] [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [+yolo] | --scout \"<question>\" [--runner ...]"
+argument-hint: "\"<approved-task>\" --dod \"<definition-of-done>\" [--request \"<inner-agent-instruction>\"] [--verify \"<cmd>\"] [--tags a,b] [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [+yolo] | --scout \"<question>\" [--runner ...]"
 disable-model-invocation: true
 ---
 
@@ -86,9 +86,11 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 
 **`--verify "<cmd>"`** adds a one-off inline machine check for this dispatch. Use it only when the repo lacks a configured harness/backpressure and the maintainer approved the command during the confirmation gate.
 
+**`--tags a,b`** stamps territory `tag:<value>` labels (bare values, comma-separated) on the minted disposable issue, so the dispatch is visible under the same territory filters `/afk --tags` uses. Missing `tag:<value>` labels are auto-created before the mint — never pre-create them by hand.
+
 **What standard `/go` does, in order (all reused from the AFK engine — not a parallel path):**
 
-1. **Mints a disposable tracking issue** in the isolated `lane:go` lane — labelled `lane:go` and **never** `ready-for-agent`, so a running fleet's candidate listing can never surface it. The issue is minted only after Task+DoD approval; its body carries the approved Task, the approved semantic Definition of Done, and the machine gate reference.
+1. **Mints a disposable tracking issue** in the isolated `lane:go` lane — labelled `lane:go` and **never** `ready-for-agent`, so a running fleet's candidate listing can never surface it. With `--tags`, the mint also stamps the requested `tag:<value>` territory labels (auto-created when missing). The issue is minted only after Task+DoD approval; its body carries the approved Task, the approved semantic Definition of Done, and the machine gate reference.
 2. **Spins a castle worker** under the shared `.red/tmp/workers/` root. It does not create a separate worker namespace; the worker state carries `origin=go` and `current.kind=go`, and observability surfaces use those stamps to keep `/go` distinct from the `/afk` fleet.
 3. **Processes the issue in an isolated worktree** created by the castle engine, using the stamped kind as provenance for monitor/statusline display.
 4. **Runs the shared validation gate** with the **interactive** (pause/ask) escalation sink: mechanical findings auto-apply + commit; an intent finding pauses and asks you to approve / fix / skip.

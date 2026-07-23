@@ -4,6 +4,7 @@ export type { GhContext } from "./gh/common.js";
 export { ghInstalled, ghAuthenticated } from "./gh/auth.js";
 export type { CandidateListDiagnostics, IssueStateRow } from "./gh/candidates.js";
 export { listCandidates, listHitlCandidates, listIssueStates } from "./gh/candidates.js";
+export { resolveViewerLogin, resolveSelectorUser } from "./gh/viewer.js";
 export {
   viewLabels,
   editLabels,

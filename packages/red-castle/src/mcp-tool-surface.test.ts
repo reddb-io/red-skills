@@ -97,8 +97,9 @@ const SURFACE: ReadonlyArray<{
   {
     name: "queue_status",
     title: "Read AFK queues",
-    description: "Return ready-for-agent and ready-for-human queue candidates.",
-    schema: [],
+    description:
+      "Return ready-for-agent and ready-for-human queue candidates. Pass `selector` to preview one fleet's scoped view of the ready queue (same facets as fleet selectors, e.g. tags/user).",
+    schema: ["selector"],
   },
   {
     name: "events_since",
