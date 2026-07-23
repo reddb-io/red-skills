@@ -139,6 +139,27 @@ import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBas
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
 import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+
+function setupFailureExcerpt(log: string | null | undefined): string | undefined {
+  const lines = (log ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("[heartbeat]"));
+  let setupFailure = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!;
+    if (
+      /command failed in sandbox/i.test(line) ||
+      /(?:sandbox|bootstrap|setup).*(?:error|fail)/i.test(line)
+    ) {
+      setupFailure = index;
+      break;
+    }
+  }
+  if (setupFailure < 0) return undefined;
+  return lines.slice(setupFailure, setupFailure + 4).join("\n");
+}
+
 export async function processIssue(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
@@ -689,9 +710,16 @@ export async function processIssue(
         (!deps.lookups.branchPresent || (await deps.lookups.branchPresent(workerBranch)));
       if (!branchHasWork) {
         await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
+        const attemptLog = await deps.fs
+          .readText?.(`${input.attemptDir}/afk.log`)
+          .catch(() => null);
+        const diagnostic =
+          setupFailureExcerpt(attemptLog) ??
+          (run.stdout ? run.stdout.split("\n").slice(-1)[0] || undefined : undefined) ??
+          "(no captured stdout)";
         return await terminalFailure(common, "no-sentinel", "no-sentinel", {
           notes: "_(no Notes appended; inner agent exited without a sentinel and the branch carries no work)_",
-          log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
+          log: diagnostic,
         });
       }
       salvaged = true;

@@ -33,7 +33,7 @@ vi.mock("../src/runtime/supervisor-watchdog-spawn.js", () => ({
   spawnSupervisorWatchdog: vi.fn(async () => 43211),
 }));
 
-import { launchFleet, logsFleet, statusFleet, stopFleet } from "../src/commands/fleet.js";
+import { fleetCommand, launchFleet, logsFleet, statusFleet, stopFleet } from "../src/commands/fleet.js";
 import { isLivePid } from "../src/runtime/kill-tree.js";
 import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
 import { spawnSupervisorWatchdog } from "../src/runtime/supervisor-watchdog-spawn.js";
@@ -81,6 +81,43 @@ describe("fleet command stale supervisor state", () => {
     vi.mocked(spawnSupervisor).mockResolvedValue(43210);
     vi.mocked(spawnSupervisorWatchdog).mockClear();
     vi.mocked(spawnSupervisorWatchdog).mockResolvedValue(43211);
+  });
+
+  it("prints help without spawning a supervisor (#2536)", async () => {
+    const root = scratch();
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    try {
+      const code = await fleetCommand(["--help"], root);
+
+      expect(code).toBe(0);
+      expect(writes.join("")).toContain("Usage: red-skills-dev fleet");
+      expect(spawnSupervisor).not.toHaveBeenCalled();
+    } finally {
+      stdout.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unknown flag before spawning a supervisor (#2536)", async () => {
+    const root = scratch();
+    const errors: string[] = [];
+    const stderr = vi.spyOn(console, "error").mockImplementation((message) => {
+      errors.push(String(message));
+    });
+    try {
+      const code = await fleetCommand(["2", "--name", "drain"], root);
+
+      expect(code).not.toBe(0);
+      expect(errors.join("\n")).toContain("--name");
+      expect(spawnSupervisor).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("launchFleet removes dead supervisor pid/state/log files before spawning", async () => {
