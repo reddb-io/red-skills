@@ -21,7 +21,7 @@ describe("ADR 0122 boot heal budget", () => {
     const { deps } = makeDeps();
     const concedeClaim = vi.fn(async () => undefined);
     const editLabels = vi.fn(async () => undefined);
-    const editBody = vi.fn(async () => undefined);
+    const editBody = vi.fn(async (_issue: number, _body: string) => undefined);
     deps.concedeClaim = concedeClaim;
     deps.gh.editLabels = editLabels;
     Object.assign(deps.gh, {
@@ -60,7 +60,7 @@ describe("ADR 0122 boot heal budget", () => {
   it("quarantines a judgment-requiring claim defect without halting boot", async () => {
     const { deps } = makeDeps();
     const editLabels = vi.fn(async () => undefined);
-    const editBody = vi.fn(async () => undefined);
+    const editBody = vi.fn(async (_issue: number, _body: string) => undefined);
     deps.gh.editLabels = editLabels;
     Object.assign(deps.gh, {
       viewBody: async () => "Original body",
