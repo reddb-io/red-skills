@@ -12,6 +12,7 @@ import {
   type ActivityReviewIssue,
   type ActivityReviewKind,
   type ActivityReviewPullRequest,
+  type ActivityReviewReport,
   type ActivityReviewTokenSummary,
 } from "../core/activity-review.js";
 import {
@@ -461,14 +462,18 @@ function activeWorkerFromMonitor(worker: Awaited<ReturnType<typeof collectMonito
   };
 }
 
-export async function activityReviewCommand(
+/**
+ * Value-returning activity-review core: gather the GitHub/git/monitor/history/token
+ * facts for the review window and build the {@link ActivityReviewReport}. The CLI
+ * command renders it (TOON/JSON/human); the MCP `daily_review`/`weekly_review` ops
+ * return it verbatim (TOON-encoded at the transport boundary). No stdout.
+ */
+export async function collectActivityReview(
   kind: ActivityReviewKind,
-  args: string[],
-  cwd = process.cwd(),
-  stdout: NodeJS.WritableStream = process.stdout,
-  exec: ExecFn = execTool,
-): Promise<number> {
-  const flags = parseFlags(args);
+  opts: { cwd?: string; exec?: ExecFn } = {},
+): Promise<ActivityReviewReport> {
+  const cwd = opts.cwd ?? process.cwd();
+  const exec = opts.exec ?? execTool;
   const now = new Date();
   const interval = activityReviewInterval(kind, now);
   const ctx = await resolveRepoContext(cwd);
@@ -526,6 +531,18 @@ export async function activityReviewCommand(
   if (!ctx.repo) {
     report.warnings.push("Could not resolve GitHub repo; GitHub-derived metrics may be empty.");
   }
+  return report;
+}
+
+export async function activityReviewCommand(
+  kind: ActivityReviewKind,
+  args: string[],
+  cwd = process.cwd(),
+  stdout: NodeJS.WritableStream = process.stdout,
+  exec: ExecFn = execTool,
+): Promise<number> {
+  const flags = parseFlags(args);
+  const report = await collectActivityReview(kind, { cwd, exec });
 
   const rendered =
     flags.format === "json"

@@ -1,6 +1,6 @@
 # Additional built-in agent providers
 
-Sandcastle does not grow the set of **built-in** agent providers on request. The shipped list (Claude Code, Codex, Cursor, OpenCode, GitHub Copilot CLI, Pi) is deliberately curated.
+Sandcastle does not grow the set of **built-in** agent providers on request. The shipped list (Claude Code, Codex, OpenCode, Pi) is deliberately curated — and this fork prunes it further than upstream: the upstream Cursor, GitHub Copilot CLI, and Devin providers were removed because RedSkills' engine only ever selects `claudeCode`, `codex`, and `opencode` factories (`RUNNER_SPECS`), with `pi` kept for the implementer-environment projection (see the divergence note in `CLAUDE.md`).
 
 ## Why this is out of scope
 

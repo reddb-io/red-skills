@@ -99,7 +99,6 @@ import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-brid
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
-import { renderClaimComment } from "../../core/claim.js";
 
 import { deriveActivity } from "./activity.js";
 import { makeImplementerRunAgent } from "./implementer-run-agent.js";

@@ -7,7 +7,7 @@ import {
   createEnginePaths,
 } from "@reddb-io/red-castle/engine";
 import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
-import { createCastleMcpTools } from "../../../packages/red-castle/src/mcp-server.js";
+import { createCastleMcpTools } from "@reddb-io/red-castle/mcp-server";
 
 let tempRoot: string | undefined;
 

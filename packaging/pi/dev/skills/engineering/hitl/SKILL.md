@@ -10,6 +10,14 @@ argument-hint: "[--issue N | --skip N,N]"
 
 The **HITL queue** is open, non-Spec Issues labelled `ready-for-human`. Specs (`type:spec`) are planning artifacts and are never selected by this workflow. For when to reach for `/retake` instead, see **`/hitl` vs `/retake`** in `<supporting-info>`.
 
+**Mutations go through the `castle` MCP; `gh` is for reading.** The queue is
+read with `gh issue list`/`view`, but every state transition this skill applies
+is a castle tool: `requeue` for the delegable transition, `hitl_resolve` for the
+atomic park/close/retake dispositions with the rationale on the audit trail.
+The tool surface and prefix rule live in [`../afk/MCP.md`](../afk/MCP.md); when
+the MCP is unreachable, name that and fall back to the `red-skills-dev` CLI —
+same engine, same cores. Never apply the transition by flipping labels by hand.
+
 <what-to-do>
 
 **Step 1 — Select.** Pick the highest-priority open `ready-for-human` issue that is not a Spec.
@@ -103,29 +111,32 @@ Show the maintainer the exact planned changes:
 
 Wait for explicit approval before writing.
 
-**Step 6 — Apply.** Post the Directive comment and update labels and body atomically.
+**Step 6 — Apply.** Execute the approved disposition through the castle tools — one atomic transition, never a hand-rolled label flip.
 
-Always post a Directive block comment — use the **Directive block template** in `<supporting-info>`.
+First do the issue-body work that is yours: update or create `## Agent brief`
+(delegable cases) or `## Current blocker` with the next pending decision
+(non-delegable). Then apply the transition:
 
-If delegable:
+If delegable — the `requeue` tool (MUTATING), `{issue, guidance}` where the
+guidance is the maintainer's answer. It performs the whole transition
+atomically: archives the active `## Current blocker` into `## Resolved
+blockers`, posts the guidance as the auditable Directive comment, removes
+`ready-for-human` and every stale `blocked:*` label, adds `ready-for-agent`.
+CLI fallback: `red-skills-dev requeue N --guidance "..."`.
 
-1. Clear the issue-body `## Current blocker` section to `None` and add a checked entry under `## Resolved blockers`.
-2. Update or create the issue-body `## Agent brief` section.
-3. Remove `ready-for-human` and every stale `blocked:*` label — the blocker is resolved, so the reason that parked the issue must not survive into `ready-for-agent`.
-4. Add `ready-for-agent`.
+If delegable-manual-landing (see Step 4 for what this mode is and why AFK must
+not auto-merge it): run the same `requeue` tool, then add the `landing:manual`
+label (#1049) so `/afk` runs the full pipeline but parks the PR for the human
+merge click. Record disposition `delegable-manual-landing` in the guidance; the
+issue auto-closes via the PR's `Closes #N` back-reference.
 
-If delegable-manual-landing (see Step 4 for what this mode is and why AFK must not auto-merge it):
-
-1. Do the plain-delegable body work — clear `## Current blocker` to `None`, add a checked `## Resolved blockers` entry, update or create `## Agent brief` (the *coding* is delegable).
-2. Remove `ready-for-human` and every stale `blocked:*` label, then add **both** `ready-for-agent` **and** `landing:manual` (#1049).
-3. Post the Directive with disposition `delegable-manual-landing`. The human merges the resulting PR; the issue auto-closes via the PR's `Closes #N` back-reference (no manual close needed).
-
-If non-delegable:
-
-1. Keep or add `ready-for-human`.
-2. Do not add `ready-for-agent`.
-3. Update or create `## Current blocker` with the next pending decision.
-4. Make sure the Directive block names the next pending decision.
+If non-delegable — the `hitl_resolve` tool (MUTATING),
+`{issue, decision: "park", rationale}` with the next pending decision as the
+rationale. It keeps the issue in the HITL queue and posts the audit-trail
+comment. Use `decision: "close"` when the resolution is that the issue should
+not exist, and `decision: "retake"` when the right next step is the `/retake`
+diagnosis. Make sure the recorded rationale names the next pending decision
+(the **Directive block template** in `<supporting-info>` is the shape to keep).
 
 ## Hard rules
 

@@ -2,7 +2,7 @@
  * cross-host-smoke.test.ts — deterministic Task-mirror smoke test (issue #889).
  *
  * Replays three fixed Worker-state snapshots through the full pipeline:
- *   readWorkers() → [claude mirrorPlan | codex codexSinkPlan | opencode openCodeHostSinkPlan]
+ *   readWorkers() → [claude mirrorPlan | codex codexSinkPlan]
  *
  * No live agent, no live OpenCode server, no native Claude/Codex host API.
  * Run as a quick operator check that parity claims hold and fallbacks degrade cleanly.
@@ -15,12 +15,6 @@ import {
   taskMirrorCapability,
   type WorkerStateRead,
 } from "../src/core/mirror.js";
-import {
-  OPENCODE_HOST_NO_SERVER_NOTICE,
-  OPENCODE_HOST_UNREACHABLE_NOTICE,
-  openCodeHostSinkPlan,
-  type OpenCodeHostClient,
-} from "../src/core/opencode-host.js";
 import { AfkStateSchema } from "../src/types/state.js";
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
@@ -172,65 +166,6 @@ describe("Codex host (monitor-agent fallback — no native task API)", () => {
 
 // ── OpenCode host adapter (prototype, capability-gated) ──────────────────────
 
-describe("OpenCode host adapter (prototype, capability-gated)", () => {
-  it("capability (runner): headless — no host session to mirror into", () => {
-    const cap = taskMirrorCapability("opencode");
-    expect(cap.surface).toBe("headless");
-    expect(cap.agentDriven).toBe(false);
-    expect(cap.nativeTaskApi).toBe(false);
-  });
-
-  it("no host client configured → no-op + notice (headless path preserved)", async () => {
-    const result = await openCodeHostSinkPlan(WORKERS, undefined, "sess-smoke");
-    expect(result.mirrored).toBe(false);
-    expect(result.plan).toEqual([]);
-    expect(result.notice).toBe(OPENCODE_HOST_NO_SERVER_NOTICE);
-  });
-
-  it("host client reachable → publishes the shared mirror plan (same vocabulary as Claude)", async () => {
-    const published: unknown[][] = [];
-    const client: OpenCodeHostClient = {
-      async available() { return true; },
-      async readTasks() { return []; },
-      async publishTasks(_sid, calls) { published.push([...calls]); },
-    };
-    const result = await openCodeHostSinkPlan(WORKERS, client, "sess-smoke");
-    expect(result.mirrored).toBe(true);
-    expect(result.notice).toBeUndefined();
-    expect(result.plan).toEqual(mirrorPlan(WORKERS, []));
-    expect(published).toHaveLength(1);
-  });
-
-  it("host client unreachable → clean no-op + notice (worker is unaffected)", async () => {
-    const client: OpenCodeHostClient = {
-      async available() { return false; },
-      async readTasks() { return []; },
-      async publishTasks() {},
-    };
-    const result = await openCodeHostSinkPlan(WORKERS, client, "sess-smoke");
-    expect(result.mirrored).toBe(false);
-    expect(result.plan).toEqual([]);
-    expect(result.notice).toBe(OPENCODE_HOST_UNREACHABLE_NOTICE);
-  });
-
-  it("host client throws during probe → degrades to the same no-op path (never throws)", async () => {
-    const client: OpenCodeHostClient = {
-      async available() { throw new Error("ECONNREFUSED"); },
-      async readTasks() { return []; },
-      async publishTasks() {},
-    };
-    await expect(openCodeHostSinkPlan(WORKERS, client, "sess-smoke")).resolves.toMatchObject({
-      mirrored: false,
-      plan: [],
-      notice: OPENCODE_HOST_UNREACHABLE_NOTICE,
-    });
-  });
-
-  it("notices name the headless Agent runner to prevent confusing host surface with runner", () => {
-    expect(OPENCODE_HOST_NO_SERVER_NOTICE).toContain("headless");
-    expect(OPENCODE_HOST_UNREACHABLE_NOTICE).toContain("headless");
-  });
-});
 
 // ── cross-host parity contract ────────────────────────────────────────────────
 
@@ -249,15 +184,4 @@ describe("cross-host parity contract", () => {
     expect(nativeCount).toBe(1);
   });
 
-  it("the shared mirror plan is identical whether driven by Claude or an OpenCode host with capability", async () => {
-    const claudePlan = mirrorPlan(WORKERS, []);
-    const published: unknown[] = [];
-    const client: OpenCodeHostClient = {
-      async available() { return true; },
-      async readTasks() { return []; },
-      async publishTasks(_sid, calls) { published.push(...calls); },
-    };
-    const { plan: opencodePlan } = await openCodeHostSinkPlan(WORKERS, client, "sess-parity");
-    expect(opencodePlan).toEqual(claudePlan);
-  });
 });

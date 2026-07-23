@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { encode, type JsonValue } from "@reddb-io/toon";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCastleMcpTools } from "../../../packages/red-castle/src/mcp-server.js";
+import { createCastleMcpTools } from "@reddb-io/red-castle/mcp-server";
 import {
   createEnginePaths,
   createFileIssueCuratorStore,

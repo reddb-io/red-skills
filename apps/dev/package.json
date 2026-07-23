@@ -7,7 +7,6 @@
   "type": "module",
   "scripts": {
     "dev": "node --import tsx src/cli.ts",
-    "prototype:manager-portfolio": "node --import tsx src/prototypes/manager-portfolio-explorer.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/dev.bundle.min.mjs --asset dev.bundle.min.mjs --minify",
     "bundle:mcp": "node ../../scripts/bundle-app.mjs --entry src/mcp-server.ts --outfile ../../dist/castle-mcp.bundle.min.mjs --asset castle-mcp.bundle.min.mjs --minify",

@@ -100,8 +100,6 @@ import { createActivityMeter } from "../../core/activity-meter.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
-import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
-import { renderClaimComment } from "../../core/claim.js";
 import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 
 const DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;

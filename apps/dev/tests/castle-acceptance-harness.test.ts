@@ -16,7 +16,7 @@ import {
   renderCompactDashboardToon,
   writeCastleStateSnapshot,
   type CastleStateSnapshot,
-  type TrackerClaimComment,
+  type RawClaimComment,
   type TrackerClaimStore,
 } from "@reddb-io/red-castle/engine";
 import { afterEach, describe, expect, it } from "vitest";
@@ -37,7 +37,7 @@ const PROVEN_TICKET = {
 
 class MemoryClaimStore implements TrackerClaimStore {
   private nextId = 1;
-  readonly comments = new Map<number, TrackerClaimComment[]>();
+  readonly comments = new Map<number, RawClaimComment[]>();
 
   async postClaim(issue: number, body: string): Promise<number> {
     const id = this.nextId++;
@@ -47,7 +47,7 @@ class MemoryClaimStore implements TrackerClaimStore {
     return id;
   }
 
-  async listClaims(issue: number): Promise<TrackerClaimComment[]> {
+  async listClaims(issue: number): Promise<RawClaimComment[]> {
     return [...(this.comments.get(issue) ?? [])];
   }
 
