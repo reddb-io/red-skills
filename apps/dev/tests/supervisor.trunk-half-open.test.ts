@@ -135,6 +135,7 @@ describe("superviseTick — continuous trunk freshness (#2074)", () => {
       refreshedAtEpoch: NOW,
       intervalS: 60,
     });
+    expect(io.logLines).toContain("trunk mirror refresh failed: fetch failed");
   });
 
   it("surfaces the latest freshness outcome in heartbeat and structured tick events", async () => {
