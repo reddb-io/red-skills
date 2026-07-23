@@ -552,10 +552,13 @@ describe("circuit trip and sweep", () => {
     expect(slot.swept).toBe(true);
     expect(io.spawnSlot).not.toHaveBeenCalled();
     // Discard envelope posted + labels restored for the claimed issue.
-    expect(io.comment).toHaveBeenCalledOnce();
-    const [issue, body] = io.comment.mock.calls[0]!;
+    expect(io.comment).toHaveBeenCalledTimes(2);
+    const [issue, body] = io.comment.mock.calls.find((call) =>
+      String(call[1]).includes('data-attempt-status="discarded"'),
+    )!;
     expect(issue).toBe(7);
     expect(body).toContain('data-attempt-status="discarded"');
+    expect(io.comment.mock.calls.some((call) => String(call[1]).includes("kind=concede"))).toBe(true);
     expect(io.editLabels).toHaveBeenCalledWith(
       7,
       ["ready-for-agent", "runner-error"],
