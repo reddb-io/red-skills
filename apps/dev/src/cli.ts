@@ -68,42 +68,8 @@ export type CliCommand =
   | "__watchdog";
 
 export interface ParsedCli {
-  command: CliCommand | "help";
+  command: CliCommand;
   args: string[];
-}
-
-/** Commands surfaced by `--help`. Hidden (`__`-prefixed) commands are omitted;
- * `version` is appended because the router handles it like any command while
- * `--version`/`-v` are special-cased in `parseCli`. */
-export function renderUsage(): string {
-  const visible = Object.keys(CLI_ROUTER.commands).filter((name) => !name.startsWith("__"));
-  return [
-    "red-skills-dev — RedSkills dev runtime (AFK engine host CLI; the castle MCP is the canonical interface)",
-    "",
-    "Usage:",
-    "  red-skills-dev <command> [args]",
-    "  red-skills-dev --version | -v",
-    "  red-skills-dev --help | -h",
-    "",
-    "Commands:",
-    ...visible.map((name) => `  ${name}`),
-    "",
-    "A bare flag-led invocation (e.g. `--issues 42`, `--runner codex --once`) is the",
-    "legacy default-/afk interface and forwards to `run`. `--help` never does (#2581).",
-    "",
-  ].join("\n");
-}
-
-/** True when this argv asks for help. A leading `help`/`--help`/`-h` always is;
- * a `--help`/`-h` anywhere in a flag-led (default-`run`) invocation also is,
- * because the run surface has no help of its own and must never boot a worker
- * drain for a usage request (#2581). Explicit subcommands keep owning their own
- * `--help` handling (fleet, manager). */
-function isHelpInvocation(argv: readonly string[]): boolean {
-  const first = argv[0];
-  if (first === "help" || first === "--help" || first === "-h") return true;
-  const flagLed = first === undefined || first.startsWith("-") || first === "run";
-  return flagLed && argv.some((a) => a === "--help" || a === "-h");
 }
 
 /**
@@ -156,11 +122,52 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
   errorOnUnknownCommand: true,
 };
 
+/** Run-surface flags the flag-led default invocation may open with — the
+ * documented legacy `/afk` interface (`--issues 42`, `--spec 7`, …). Any OTHER
+ * leading flag is an error, never a silent queue drain (#2581: `--help` booted
+ * a live worker and iterated the queue). */
+const RUN_SURFACE_LEADING_FLAGS = new Set([
+  "--spec",
+  "--issues",
+  "--selector",
+  "--runner",
+  "--alternate",
+  "--fallback-runner",
+  "--request",
+  "-r",
+  "-n",
+  "--once",
+  "--boot-only",
+  "--base",
+]);
+
+export const CLI_USAGE = `Usage: red-skills-dev <command> [options]
+
+Commands: run (default), monitor, fleet, stop, go, manager, dashboard,
+  daily-review, weekly-review, reap, requeue, retake, review, respond, triage,
+  red-doctor, statusline, version, …
+
+Flag-led invocations route to the run surface: --issues N, --spec N,
+  --selector <json>, --runner <r>, -n <count>, --once, --boot-only.
+
+Run \`red-skills-dev <command> --help\` for a command's own usage.
+Docs: plugins/dev/skills/engineering/afk/SKILL.md
+`;
+
+export class HelpRequested extends Error {}
+
 export function parseCli(argv: readonly string[]): ParsedCli {
   if (argv[0] === "--version" || argv[0] === "-v") return { command: "version", args: argv.slice(1) };
-  // Help short-circuits BEFORE routing: the flag-led fallthrough to the `run`
-  // default must never swallow a usage request into a live worker drain (#2581).
-  if (isHelpInvocation(argv)) return { command: "help", args: [] };
+  // Help must short-circuit BEFORE any routing can reach the run default —
+  // a usage request never boots a worker or touches the queue (#2581).
+  if (argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") throw new HelpRequested();
+  const first = argv[0];
+  if (first !== undefined && first.startsWith("-")) {
+    const flagName = first.split("=")[0]!;
+    if (!RUN_SURFACE_LEADING_FLAGS.has(flagName)) {
+      throw new UnknownCommandError(first, [...RUN_SURFACE_LEADING_FLAGS]);
+    }
+  }
   return routeCommand(argv, CLI_ROUTER);
 }
 
@@ -169,14 +176,29 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
     parsed = parseCli(argv);
   } catch (error) {
+    if (error instanceof HelpRequested) {
+      process.stdout.write(CLI_USAGE);
+      return 0;
+    }
     if (error instanceof UnknownCommandError) {
       process.stderr.write(`[afk] ${error.message}\n`);
+      process.stderr.write(CLI_USAGE);
       return 2;
     }
     throw error;
   }
-  if (parsed.command === "help") {
-    process.stdout.write(renderUsage());
+  // `<command> --help` prints usage and exits BEFORE dispatch for every
+  // command (#2581 acceptance) — commands with richer usage (e.g. fleet) are
+  // never reached with a help flag, so their own handlers stay as docs.
+  if (
+    parsed.command !== "go" &&
+    (parsed.args.includes("--help") || parsed.args.includes("-h"))
+  ) {
+    if (parsed.command === "fleet") return fleetCommand(parsed.args);
+    process.stdout.write(
+      `Usage: red-skills-dev ${parsed.command} [options]\n` +
+        `No detailed usage registered for this command yet; see the afk skill docs.\n`,
+    );
     return 0;
   }
   if (parsed.command === "version") {
