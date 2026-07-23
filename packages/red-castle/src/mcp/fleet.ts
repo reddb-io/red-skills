@@ -6,6 +6,8 @@ export interface FleetSelectorInput {
   lane?: string;
   label?: string;
   issues?: number[];
+  tags?: string[];
+  user?: string;
 }
 
 export interface FleetCreateInput {
@@ -56,7 +58,11 @@ const fleetSelectorShape = {
   lane: z.string().min(1).optional(),
   label: z.string().min(1).optional(),
   issues: z.array(z.number().int().positive()).optional(),
+  tags: z.array(z.string().min(1)).optional(),
+  user: z.string().min(1).optional(),
 };
+
+export { fleetSelectorShape };
 
 const fleetConfig = z.record(
   z.string(),

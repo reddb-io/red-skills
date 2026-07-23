@@ -10,6 +10,10 @@ export interface CastleIssueCandidate {
   title: string;
   body: string;
   labels: readonly string[];
+  /** GitHub login of the issue author (creator). Optional because older
+   * candidate sources may not project it; a `user` selector facet never
+   * matches a candidate without it. */
+  author?: string;
 }
 
 export type CastleSelectionFilter =
@@ -29,6 +33,16 @@ export function matchesFleetSelector(
   if (selector.lane !== undefined && !hasLabel(candidate, `lane:${selector.lane}`)) return false;
   if (selector.label !== undefined && !hasLabel(candidate, selector.label)) return false;
   if (selector.issues !== undefined && !selector.issues.includes(candidate.number)) return false;
+  // AND over every requested tag: a candidate missing any of them — including
+  // a fully untagged candidate — falls outside the territory.
+  if (selector.tags !== undefined && !selector.tags.every((tag) => hasLabel(candidate, `tag:${tag}`)))
+    return false;
+  if (
+    selector.user !== undefined &&
+    (candidate.author === undefined ||
+      candidate.author.toLowerCase() !== selector.user.toLowerCase())
+  )
+    return false;
   return true;
 }
 

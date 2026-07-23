@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CASTLE_NO_MORE_TASKS,
+  matchesFleetSelector,
   runCastleWorkerDrain,
   selectCastleIssues,
   type CastleIssueCandidate,
@@ -124,6 +125,42 @@ describe("castle worker drain", () => {
         (row) => row.number,
       ),
     ).toEqual([10, 30]);
+  });
+
+  it("ANDs every requested tag facet and excludes untagged candidates outright", () => {
+    const both = candidate(1, ["ready-for-agent", "tag:backend", "tag:infra"]);
+    const oneOfTwo = candidate(2, ["ready-for-agent", "tag:backend"]);
+    const untagged = candidate(3);
+
+    const selector = { tags: ["backend", "infra"] };
+    expect(matchesFleetSelector(both, selector)).toBe(true);
+    // AND semantics: carrying one of the two requested tags is not enough.
+    expect(matchesFleetSelector(oneOfTwo, selector)).toBe(false);
+    // Strict untagged exclusion: no tag labels at all → outside every tag scope.
+    expect(matchesFleetSelector(untagged, selector)).toBe(false);
+  });
+
+  it("matches the user facet against the author case-insensitively and never without one", () => {
+    const authored = { ...candidate(1), author: "FilipeForattini" };
+    const anonymous = candidate(2);
+
+    expect(matchesFleetSelector(authored, { user: "filipeforattini" })).toBe(true);
+    expect(matchesFleetSelector(authored, { user: "gustavo" })).toBe(false);
+    expect(matchesFleetSelector(anonymous, { user: "filipeforattini" })).toBe(false);
+  });
+
+  it("never prepends an urgent issue that sits outside the tag scope", () => {
+    const candidates = [
+      candidate(30, ["ready-for-agent", "tag:infra"]),
+      candidate(10, ["ready-for-agent", "priority:urgent"]),
+    ];
+
+    expect(
+      selectCastleIssues(candidates, {
+        kind: "selector",
+        selector: { tags: ["infra"] },
+      }).map((row) => row.number),
+    ).toEqual([30]);
   });
 
   it("runs the castle-owned drain loop through claim/work and preserves progress output", async () => {
