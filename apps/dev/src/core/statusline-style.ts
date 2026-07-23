@@ -354,8 +354,9 @@ function renderWorkerLines(
  * A visual sibling of line 1: the `wID` is BOLD + red, and every k=v token
  * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tls=`/`rsn=`/`txt=`) reuses the
  * same {@link kv} colour convention line 1 uses — light-red KEY, default-fg
- * VALUE — so no token is a distinct blob. EVERY key on this line is EXACTLY 3
- * letters (house rule, issue #1176). The vitals use the shared monitor/statusline
+ * VALUE — so no token is a distinct blob. Existing keys stay exactly 3 letters
+ * (house rule, issue #1176); the proof-of-life token keeps the canonical `hb=`
+ * spelling from #2480. The vitals use the shared monitor/statusline
  * vocabulary `tls`/`rsn`/`txt` for tools, reasoning, and text activity.
  * `iss=` carries the bare ISSUE NUMBER read from the worker's `current.number`
  * (populated on claim for BOTH `/afk` and `/go` lanes), NOT the old done/total
