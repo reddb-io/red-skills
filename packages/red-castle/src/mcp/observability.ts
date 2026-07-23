@@ -1,4 +1,13 @@
 import { z } from "zod/v3";
+import {
+  monitorContract,
+  queueStatusContract,
+  workerVitalsContract,
+  type MonitorOutput,
+  type QueueStatusOutput,
+  type WorkerVitalsOutput,
+  type WorkerVitalsProjectedOutput,
+} from "./contracts.js";
 import type { CastleMcpTool } from "./tool.js";
 import { fleetSelectorShape, type FleetSelectorInput } from "./fleet.js";
 
@@ -24,11 +33,14 @@ export interface QueueStatusInput {
 
 export interface ObservabilityDependencies {
   logs(input: LogsInput): Promise<unknown>;
-  workerVitals(input: WorkerVitalsInput): Promise<unknown>;
+  /** Returns the projected shape when `input.fields` narrows the records. */
+  workerVitals(
+    input: WorkerVitalsInput,
+  ): Promise<WorkerVitalsOutput | WorkerVitalsProjectedOutput>;
   dashboard(input: { periodDays: number }): Promise<unknown>;
-  monitor(): Promise<unknown>;
+  monitor(): Promise<MonitorOutput>;
   history(input: { limit?: number }): Promise<unknown>;
-  queueStatus(input?: QueueStatusInput): Promise<unknown>;
+  queueStatus(input?: QueueStatusInput): Promise<QueueStatusOutput>;
   eventsSince(input: EventsSinceInput): Promise<unknown>;
 }
 
@@ -58,6 +70,7 @@ export function createObservabilityTools(
         live_only: z.boolean().default(true),
         fields: z.array(z.string().min(1)).optional(),
       },
+      outputContract: workerVitalsContract,
       invoke: (input) =>
         deps.workerVitals({
           live_only: (input.live_only ?? true) as boolean,
@@ -81,6 +94,7 @@ export function createObservabilityTools(
       description:
         "Return the current workers, history events, and fleet monitor inputs.",
       inputSchema: {},
+      outputContract: monitorContract,
       invoke: () => deps.monitor(),
     },
     {
@@ -102,6 +116,7 @@ export function createObservabilityTools(
       inputSchema: {
         selector: z.object(fleetSelectorShape).optional(),
       },
+      outputContract: queueStatusContract,
       invoke: (input) =>
         deps.queueStatus({
           selector: input.selector as FleetSelectorInput | undefined,

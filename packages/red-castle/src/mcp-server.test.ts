@@ -8,10 +8,30 @@ function deps(): CastleMcpDependencies {
   return {
     fleetList: vi.fn(async () => []),
     fleetStatus: vi.fn(async () => ({
-      supervisor: { pid: 42, alive: true, health: "healthy" },
+      fleet: "default",
+      supervisor: {
+        pid: 42,
+        alive: true,
+        health: "healthy" as const,
+        runner: "codex",
+        target: 2,
+        bundle_version: "2.76.1",
+        bundle_latest: "2.76.1",
+        version_skew: 0,
+        heartbeat_age_s: 3,
+      },
       slots: { busy: 1, free: 1, parked: 0, total: 2 },
       churn: { deaths: 0, respawns: 0, window_s: 300 },
-      live_workers: [{ id: "worker-1", pid: 43, issue: "2305" }],
+      live_workers: [
+        {
+          id: "worker-1",
+          pid: 43,
+          issue: "2305",
+          activity: "impl",
+          origin: "afk",
+        },
+      ],
+      unattributed_workers: [],
     })),
     fleetCreate: vi.fn(async (input) => ({
       status: "launched",
@@ -34,6 +54,7 @@ function deps(): CastleMcpDependencies {
     queueStatus: vi.fn(async () => ({
       ready_for_agent: [],
       ready_for_human: [],
+      counts: { ready_for_agent: 0, ready_for_human: 0 },
     })),
     deadendAudit: vi.fn(async () => ({ total: 0, classes: [] })),
     eventsSince: vi.fn(async (input) => {

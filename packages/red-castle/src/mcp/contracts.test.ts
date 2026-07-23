@@ -1,0 +1,189 @@
+import { describe, expect, it, vi } from "vitest";
+import {
+  createCastleMcpTools,
+  type CastleMcpDependencies,
+} from "../mcp-server.js";
+import {
+  CASTLE_MCP_CONTRACT_VERSION,
+  applyOutputContracts,
+  fleetStatusOutputSchema,
+  monitorOutputSchema,
+  queueStatusOutputSchema,
+  workerVitalsContract,
+  workerVitalsOutputSchema,
+  type FleetStatusOutput,
+} from "./contracts.js";
+import type { CastleMcpTool } from "./tool.js";
+
+const FLEET_STATUS: FleetStatusOutput = {
+  fleet: "default",
+  supervisor: {
+    pid: 42,
+    alive: true,
+    health: "healthy",
+    runner: "codex",
+    target: 2,
+    bundle_version: "2.76.1",
+    bundle_latest: "2.76.1",
+    version_skew: 0,
+    heartbeat_age_s: 3,
+  },
+  slots: { busy: 1, free: 1, parked: 0, total: 2 },
+  churn: { deaths: 0, respawns: 0, window_s: 300 },
+  live_workers: [
+    { id: "worker-1", pid: 43, issue: "2305", activity: "impl", origin: "afk" },
+  ],
+  unattributed_workers: [
+    {
+      id: "worker-2",
+      pid: 44,
+      issue: "2306",
+      activity: "impl",
+      origin: "afk",
+      fleet: "other",
+    },
+    // A worker that recorded no fleet name at all — exercises the nullable arm.
+    {
+      id: "worker-3",
+      pid: 45,
+      issue: "2307",
+      activity: "review",
+      origin: "go",
+      fleet: null,
+    },
+  ],
+};
+
+function tool(output: unknown): CastleMcpTool {
+  return {
+    name: "fleet_status",
+    title: "Get AFK fleet status",
+    description: "…",
+    inputSchema: {},
+    outputContract: {
+      version: CASTLE_MCP_CONTRACT_VERSION,
+      schema: fleetStatusOutputSchema,
+    },
+    invoke: async () => output,
+  };
+}
+
+describe("observability output contracts", () => {
+  it("declares a versioned contract on every observability tool", () => {
+    const tools = createCastleMcpTools({} as CastleMcpDependencies);
+    const contracted = [
+      "fleet_status",
+      "worker_vitals",
+      "monitor",
+      "queue_status",
+    ];
+
+    for (const name of contracted) {
+      const declared = tools.find((t) => t.name === name)?.outputContract;
+      expect(declared, name).toBeDefined();
+      expect(declared?.version).toBe(CASTLE_MCP_CONTRACT_VERSION);
+    }
+  });
+
+  it("passes a conforming payload through byte-identically", async () => {
+    const withExtra = { ...FLEET_STATUS, experimental_note: "additive" };
+    const [wrapped] = applyOutputContracts([tool(withExtra)]);
+
+    // Unknown keys survive: validation is enforcement, never serialization.
+    await expect(wrapped!.invoke({})).resolves.toBe(withExtra);
+  });
+
+  it("turns shape drift into a named, located error", async () => {
+    const drifted = {
+      ...FLEET_STATUS,
+      slots: { ...FLEET_STATUS.slots, total: "2" },
+    };
+    const [wrapped] = applyOutputContracts([tool(drifted)]);
+
+    await expect(wrapped!.invoke({})).rejects.toThrow(
+      /fleet_status output violates contract 1\.0\.0: slots\.total/,
+    );
+  });
+
+  it("relaxes presence — never type — for a projected call", async () => {
+    const projected: CastleMcpTool = {
+      name: "worker_vitals",
+      title: "Read worker vitals",
+      description: "…",
+      inputSchema: {},
+      outputContract: workerVitalsContract,
+      invoke: async (input) =>
+        (input.fields as string[] | undefined)?.length
+          ? [{ live: true, liveness: "active" }]
+          : [],
+    };
+    const [wrapped] = applyOutputContracts([projected]);
+
+    await expect(
+      wrapped!.invoke({ fields: ["live", "liveness"] }),
+    ).resolves.toEqual([{ live: true, liveness: "active" }]);
+    // An empty projection is no projection: the full shape still applies.
+    await expect(wrapped!.invoke({ fields: [] })).resolves.toEqual([]);
+  });
+
+  it("still rejects a projected field carrying the wrong type", async () => {
+    const drifted: CastleMcpTool = {
+      name: "worker_vitals",
+      title: "Read worker vitals",
+      description: "…",
+      inputSchema: {},
+      outputContract: workerVitalsContract,
+      invoke: async () => [{ live: "yes" }],
+    };
+    const [wrapped] = applyOutputContracts([drifted]);
+
+    await expect(wrapped!.invoke({ fields: ["live"] })).rejects.toThrow(
+      /worker_vitals output violates contract 1\.0\.0: 0\.live/,
+    );
+  });
+
+  it("leaves an uncontracted tool untouched", async () => {
+    const uncontracted: CastleMcpTool = {
+      name: "history",
+      title: "Read Castle history",
+      description: "…",
+      inputSchema: {},
+      invoke: async () => "anything at all",
+    };
+    const [wrapped] = applyOutputContracts([uncontracted]);
+
+    expect(wrapped).toBe(uncontracted);
+    await expect(wrapped!.invoke({})).resolves.toBe("anything at all");
+  });
+
+  it("validates the observability payloads a live tool call returns", async () => {
+    const deps = {
+      fleetStatus: vi.fn(async () => FLEET_STATUS),
+      workerVitals: vi.fn(async () => []),
+      monitor: vi.fn(async () => ({ workers: [], events: [], fleet: null })),
+      queueStatus: vi.fn(async () => ({
+        ready_for_agent: [
+          { number: 2335, title: "E1", labels: ["type:ticket"] },
+        ],
+        ready_for_human: [],
+        counts: { ready_for_agent: 1, ready_for_human: 0 },
+      })),
+    } as unknown as CastleMcpDependencies;
+    const tools = createCastleMcpTools(deps);
+    const invoke = (name: string) =>
+      tools.find((t) => t.name === name)!.invoke({});
+
+    expect(
+      fleetStatusOutputSchema.safeParse(await invoke("fleet_status")).success,
+    ).toBe(true);
+    expect(
+      workerVitalsOutputSchema.safeParse(await invoke("worker_vitals")).success,
+    ).toBe(true);
+    expect(monitorOutputSchema.safeParse(await invoke("monitor")).success).toBe(
+      true,
+    );
+    expect(
+      queueStatusOutputSchema.safeParse(await invoke("queue_status")).success,
+    ).toBe(true);
+  });
+});
