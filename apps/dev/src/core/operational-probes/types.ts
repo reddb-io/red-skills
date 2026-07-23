@@ -85,8 +85,9 @@ export interface QueueVisibilityTransportFailure {
 
 export interface QueueVisibilityProbeInput {
   readonly label?: string;
-  readonly listEngineCandidates: () => Promise<number>;
-  readonly countRestQueue: () => Promise<number>;
+  readonly listEngineCandidates: () => Promise<readonly number[]>;
+  readonly listRestQueue: () => Promise<readonly number[]>;
+  readonly resampleDelayMs?: number;
 }
 
 export interface FleetTruthProbeInput {

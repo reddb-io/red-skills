@@ -68,12 +68,14 @@ import {
   CLAIM_HYGIENE_PROBE_ID,
   formatOperationalProbeFinding,
   LABEL_BODY_COHERENCE_PROBE_ID,
+  QUEUE_VISIBILITY_PROBE_ID,
   runOperationalProbes,
   type BaseFreshnessProbeData,
   type LabelBodyCoherenceAction,
   type LabelBodyCoherenceProbeData,
   type OperationalProbeContext,
   type OperationalProbeReport,
+  type QueueVisibilityProbeData,
 } from "./operational-probes.js";
 import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
@@ -713,6 +715,11 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
 
   // ---- 1a. operational probes ----
   const operationalProbes = await runOperationalProbes(options.operationalProbes ?? options.precheck);
+  const queueVisibility = operationalProbes.probes.find((probe) => probe.id === QUEUE_VISIBILITY_PROBE_ID);
+  const queueVisibilityData = queueVisibility?.data as QueueVisibilityProbeData | undefined;
+  if (queueVisibility?.verdict === "ok" && queueVisibilityData?.transient === true) {
+    deps.log?.(queueVisibility.evidence);
+  }
   // A dangling `afk:claim` from THIS machine's dead-pid worker is provably safe
   // to concede, so auto-heal such claim-hygiene findings here instead of letting
   // one stranded claim throw BootHaltError and kill every supervisor boot
