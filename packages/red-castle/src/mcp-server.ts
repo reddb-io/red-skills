@@ -66,6 +66,7 @@ export type {
 export type {
   RunnerDetectInput,
   WorkerSteerInput,
+  WorkerSteerStatusInput,
   WorkerRequestInput,
 } from "./mcp/runner.js";
 export type { RequeueToolInput, RetakeToolInput } from "./mcp/hygiene.js";

@@ -163,6 +163,13 @@ const SURFACE: ReadonlyArray<{
     schema: ["worker", "text"],
   },
   {
+    name: "steer_status",
+    title: "Read steer status",
+    description:
+      "Return the live-steer status for a worker: none (no steer ever written), pending (written, not yet consumed), or consumed (consumed at a specific iteration).",
+    schema: ["worker"],
+  },
+  {
     name: "worker_request",
     title: "Dispatch worker with request",
     description:
