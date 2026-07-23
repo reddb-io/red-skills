@@ -157,6 +157,21 @@ describe("tryAcquireClaimDir (#434 atomic claim)", () => {
     }
   });
 
+  it("lets exactly one claimer initialize an empty claim directory", async () => {
+    const root = scratch();
+    try {
+      const dir = join(root, "claims", "937");
+      mkdirSync(dir, { recursive: true });
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => tryAcquireClaimDir(dir, process.pid)),
+      );
+      expect(results.filter((won) => won)).toHaveLength(1);
+      expect(readFileSync(join(dir, "pid"), "utf8")).toBe(String(process.pid));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not overwrite the original holder's pid when a later claim loses", async () => {
     const root = scratch();
     try {
