@@ -140,6 +140,7 @@ export async function collectStatuslineAfk(
   const cached = readStatuslineCache(cachePath);
   let queue = cached?.queue ?? 0;
   let human = cached?.human ?? 0;
+  let quarantine = cached?.quarantine ?? 0;
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo || inferGitHubRepoSlug(ctx.root) };
   let refreshSucceeded = false;
@@ -147,8 +148,9 @@ export async function collectStatuslineAfk(
     const counts = await ghx.countStatuslineQueueCounts(ghCtx);
     queue = counts.queue;
     human = counts.human;
+    quarantine = counts.quarantine;
     refreshSucceeded = true;
-    writeStatuslineCacheAtomic(cachePath, { queue, human, ts: nowS });
+    writeStatuslineCacheAtomic(cachePath, { queue, human, quarantine, ts: nowS });
   };
 
   let cacheAgeS: number | undefined;
@@ -179,7 +181,7 @@ export async function collectStatuslineAfk(
       : undefined;
 
   return {
-    workers, queue, human, blocked, added, removed,
+    workers, queue, human, quarantine, blocked, added, removed,
     locIsPeak: locIsPeak || undefined,
     waiting, tokens, costUsd,
     runner, resolved, issues, phases,

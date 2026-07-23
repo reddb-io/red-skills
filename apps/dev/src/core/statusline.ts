@@ -75,6 +75,8 @@ export interface AfkInput {
   queue: number;
   /** `rh` — cached ready-for-human count. */
   human: number;
+  /** `qtn` — cached ADR 0122 issue quarantine count. */
+  quarantine?: number;
   /** `bk` — summed blocked count. */
   blocked: number;
   /** `adN` — summed insertions. */
@@ -411,6 +413,10 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
   if (afk.human > 0) {
     const hmSuffix = ageSuffix && afk.queue === 0 ? ageSuffix : "";
     tokens.push({ label: "hmn=", value: String(afk.human), suffix: hmSuffix });
+  }
+  if (afk.quarantine !== undefined && afk.quarantine > 0) {
+    const qtnSuffix = ageSuffix && afk.queue === 0 && afk.human === 0 ? ageSuffix : "";
+    tokens.push({ label: "qtn=", value: String(afk.quarantine), suffix: qtnSuffix });
   }
   if (afk.blocked > 0) kpi("blk=", String(afk.blocked));
   const diff: string[] = [];
