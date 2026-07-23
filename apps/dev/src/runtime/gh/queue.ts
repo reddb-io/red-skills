@@ -1,5 +1,6 @@
 import {
   LABEL_HUMAN,
+  LABEL_QUARANTINE,
   LABEL_READY,
 } from "../../core/triage-labels.js";
 import type {
@@ -27,6 +28,7 @@ async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
 export interface StatuslineQueueCounts {
   queue: number;
   human: number;
+  quarantine: number;
 }
 
 function statuslineSearchQuery(repo: string, label: string): string {
@@ -108,16 +110,18 @@ async function countSearchViaRsp(ctx: GhContext, query: string): Promise<number 
 
 /** Count both statusline queue buckets with one GraphQL search request. */
 export async function countStatuslineQueueCounts(ctx: GhContext): Promise<StatuslineQueueCounts> {
-  if (!ctx.repo) return { queue: 0, human: 0 };
-  const [queue, human] = await Promise.all([
+  if (!ctx.repo) return { queue: 0, human: 0, quarantine: 0 };
+  const [queue, human, quarantine] = await Promise.all([
     countSearchViaRsp(ctx, statuslineSearchQuery(ctx.repo, LABEL_READY)),
     countSearchViaRsp(ctx, statuslineSearchQuery(ctx.repo, LABEL_HUMAN)),
+    countSearchViaRsp(ctx, statuslineSearchQuery(ctx.repo, LABEL_QUARANTINE)),
   ]);
-  if (queue != null && human != null) return { queue, human };
+  if (queue != null && human != null && quarantine != null) return { queue, human, quarantine };
   const query = `
-    query($ready: String!, $human: String!) {
+    query($ready: String!, $human: String!, $quarantine: String!) {
       ready: search(type: ISSUE, query: $ready) { issueCount }
       human: search(type: ISSUE, query: $human) { issueCount }
+      quarantine: search(type: ISSUE, query: $quarantine) { issueCount }
     }
   `;
   const r = await runGh(ctx, [
@@ -129,21 +133,25 @@ export async function countStatuslineQueueCounts(ctx: GhContext): Promise<Status
     `ready=${statuslineSearchQuery(ctx.repo, LABEL_READY)}`,
     "-F",
     `human=${statuslineSearchQuery(ctx.repo, LABEL_HUMAN)}`,
+    "-F",
+    `quarantine=${statuslineSearchQuery(ctx.repo, LABEL_QUARANTINE)}`,
   ]);
-  if (r.code !== 0) return { queue: 0, human: 0 };
+  if (r.code !== 0) return { queue: 0, human: 0, quarantine: 0 };
   try {
     const parsed = JSON.parse(r.stdout) as {
       data?: {
         ready?: { issueCount?: unknown };
         human?: { issueCount?: unknown };
+        quarantine?: { issueCount?: unknown };
       };
     };
     return {
       queue: Number(parsed.data?.ready?.issueCount ?? 0),
       human: Number(parsed.data?.human?.issueCount ?? 0),
+      quarantine: Number(parsed.data?.quarantine?.issueCount ?? 0),
     };
   } catch {
-    return { queue: 0, human: 0 };
+    return { queue: 0, human: 0, quarantine: 0 };
   }
 }
 
