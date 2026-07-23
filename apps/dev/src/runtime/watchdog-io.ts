@@ -17,7 +17,7 @@ import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
 import { listStaleClaimDirs, removeDir } from "./fs.js";
 import { countReadyForAgent } from "./gh.js";
 import { editLabels, viewLabels } from "./gh.js";
-import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
+import { LABEL_HUMAN, LABEL_RUNNING } from "../core/triage-labels.js";
 import { detectRunner } from "../core/runner-detection.js";
 import { callerProcessTreeNative } from "./caller-process.js";
 import { spawnSupervisor, stampFreshFleetHeartbeat } from "./supervisor-spawn.js";

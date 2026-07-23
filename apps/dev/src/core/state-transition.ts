@@ -156,10 +156,14 @@ export function planTransition(
         if (!current.includes(label)) add.add(label);
       }
       break;
-    case "promote":
+    case "promote": {
       for (const l of blockedPresent) remove.add(l);
-      for (const l of reqLabels) remove.add(l);
+      // Numeric req order keeps the emitted mutation deterministic regardless
+      // of the tracker's label listing order.
+      const byIssue = (l: string): number => Number(l.slice(REQ_PREFIX.length)) || 0;
+      for (const l of [...reqLabels].sort((a, b) => byIssue(a) - byIssue(b))) remove.add(l);
       break;
+    }
     default:
       for (const l of blockedPresent) remove.add(l);
       break;
