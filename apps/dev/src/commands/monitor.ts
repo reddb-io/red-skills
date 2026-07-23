@@ -9,6 +9,9 @@ import { collectMonitorInputs, afkPaths, resolveRepoContext, resolveStatuslineCa
 import { resolveSupervisorConfig } from "../core/supervisor.js";
 import { runWatchdog } from "../core/watchdog.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
+import { createFileBootBreakerStore, isBreakerOpen } from "../core/supervisor/boot-breaker.js";
+import { createEnginePaths } from "@reddb-io/red-castle/engine";
+import { join } from "node:path";
 import { loadConfig, getConfig } from "../core/config.js";
 import {
   runCompanionPass,
@@ -240,6 +243,20 @@ export async function monitorCommand(
       : undefined;
   // TOON is the default agent-facing wire format (PRD #928 / ADR 0081); `--plain`
   // restores the legacy compact text dashboard for a human TTY glance.
+  // Crashloop breaker alert (#2527): an OPEN breaker is the loudest fleet fact
+  // there is — render it above the dashboard so no operator can miss it.
+  try {
+    const breaker = await createFileBootBreakerStore(createEnginePaths(join(cwd, ".red"))).read();
+    if (isBreakerOpen(breaker)) {
+      stdout.write(
+        `⛔ boot breaker OPEN: ${breaker!.count} identical boot deaths — ` +
+          `signature=${breaker!.signature}; respawn suppressed, healer invoked. ` +
+          `Fix the implicated state, then relaunch the fleet.\n`,
+      );
+    }
+  } catch {
+    // best-effort: breaker visibility must never break monitoring.
+  }
   const dashboard = args.includes("--plain")
     ? renderCompactDashboard(workers, events, now, fleet, remote)
     : renderCompactDashboardToon(workers, events, now, fleet, remote);

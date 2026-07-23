@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { type JsonValue as ToonValue } from "@reddb-io/toon";
 import { encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
 import type { CompactWorker } from "../../core/monitor.js";
@@ -8,6 +8,8 @@ import type { WorkerVitals } from "../../types/state.js";
 import type { GhContext } from "../gh.js";
 import { discoverLiveSupervisorPid } from "../supervisor-state.js";
 import { isLivePid } from "../kill-tree.js";
+import { createEnginePaths } from "@reddb-io/red-castle/engine";
+import { createFileBootBreakerStore, isBreakerOpen } from "../../core/supervisor/boot-breaker.js";
 import * as ghx from "../gh.js";
 import * as gitx from "../git.js";
 import { readAllWorkerStates, currentRenderableWorkerRecords } from "../../core/worker-state-reader.js";
@@ -206,11 +208,33 @@ export async function collectStatuslineFleet(
   nowS: number = Math.floor(Date.now() / 1000),
 ): Promise<FleetInput | undefined> {
   const paths = afkPaths(ctx.root);
+  // Crashloop breaker (#2527): an OPEN breaker means the supervisor is
+  // deliberately dead — the liveness gates below would hide exactly the fleets
+  // that most need a loud statusline, so the breaker token renders regardless.
+  let breaker: { count: number } | undefined;
+  try {
+    const ledger = await createFileBootBreakerStore(createEnginePaths(join(ctx.root, ".red"))).read();
+    if (isBreakerOpen(ledger)) breaker = { count: ledger!.count };
+  } catch {
+    breaker = undefined;
+  }
   const state = await readFleetState(paths.fleetStatePath);
-  if (!state) return undefined;
-  if (nowS - state.epoch > maxAgeS) return undefined;
+  if (!state) {
+    return breaker ? { runner: "?", busy: 0, total: 0, queue: 0, breaker } : undefined;
+  }
+  const breakerFallback = (): FleetInput | undefined =>
+    breaker
+      ? {
+          runner: state.runner,
+          busy: 0,
+          total: state.slotsTotal,
+          queue: state.readyForAgent,
+          breaker,
+        }
+      : undefined;
+  if (nowS - state.epoch > maxAgeS) return breakerFallback();
   const supervisor = await discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid);
-  if (!supervisor) return undefined;
+  if (!supervisor) return breakerFallback();
   const workers = currentRenderableWorkerRecords(
     await readAllWorkerStates(paths.tmpDir, { nowMs: nowS * 1000 }),
   );
@@ -222,6 +246,7 @@ export async function collectStatuslineFleet(
     total: state.slotsTotal,
     queue: state.readyForAgent,
     parked: state.slotsParked,
+    breaker,
     degraded: state.slotsBusy > 0 && freshWorkers === 0,
     churnDeaths: state.churnDeaths,
     churnRespawns: state.churnRespawns,
