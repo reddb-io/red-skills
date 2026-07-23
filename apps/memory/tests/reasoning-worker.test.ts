@@ -8,15 +8,15 @@ import { readConfig, resolveStoreUri } from "../src/config.js";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph, initMarkdownOnly } from "../src/init.js";
 import {
-  attemptNodeLabel,
+  workerNodeLabel,
   fileNodeLabel,
   issueNodeLabel,
   parseParentPrdFromBody,
   prdNodeLabel,
-  recordReasoningAttempt,
+  recordReasoningWorker,
   validationNodeLabel,
-  type ReasoningAttemptPayload,
-} from "../src/reasoning/attempt-writer.js";
+  type ReasoningWorkerPayload,
+} from "../src/reasoning/worker-writer.js";
 import { defaultTier } from "../src/schema.js";
 import { graphRecallResult } from "../src/graph-recall.js";
 import { recall } from "../src/engine.js";
@@ -74,7 +74,7 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
 
-const samplePayload: ReasoningAttemptPayload = {
+const samplePayload: ReasoningWorkerPayload = {
   repository: "reddb-io/red-skills",
   issueNumber: 96,
   attemptNumber: 1,
@@ -144,26 +144,26 @@ describe("parseParentPrdFromBody", () => {
 
 describe("schema: engineering-graph node types (PRD #95)", () => {
   test("attempt defaults to the reasoning tier; issue/prd/validation default to durable", () => {
-    expect(defaultTier("attempt")).toBe("reasoning");
+    expect(defaultTier("worker")).toBe("reasoning");
     expect(defaultTier("issue")).toBe("durable");
     expect(defaultTier("prd")).toBe("durable");
     expect(defaultTier("validation")).toBe("durable");
   });
 });
 
-describe("recordReasoningAttempt", () => {
+describe("recordReasoningWorker", () => {
   test(
     "records an attempt node defaulting to the reasoning tier",
     async () => {
       const store = await openStore();
-      const { attemptRid } = await recordReasoningAttempt(store, samplePayload);
+      const { workerRid } = await recordReasoningWorker(store, samplePayload);
 
-      const node = await store.getNode(attemptRid);
-      expect(node?.node_type).toBe("attempt");
+      const node = await store.getNode(workerRid);
+      expect(node?.node_type).toBe("worker");
       expect(node?.properties.tier).toBe("reasoning");
       expect(node?.properties.expires_at).toBeUndefined();
       expect(node?.label).toBe(
-        attemptNodeLabel("reddb-io/red-skills", 96, 1, "claude"),
+        workerNodeLabel("reddb-io/red-skills", 96, 1, "claude"),
       );
     },
     TIMEOUT,
@@ -173,8 +173,8 @@ describe("recordReasoningAttempt", () => {
     "keeps operational evidence inspectable as attempt properties",
     async () => {
       const store = await openStore();
-      const { attemptRid } = await recordReasoningAttempt(store, samplePayload);
-      const node = await store.getNode(attemptRid);
+      const { workerRid } = await recordReasoningWorker(store, samplePayload);
+      const node = await store.getNode(workerRid);
       const props = (node?.properties ?? {}) as Record<string, unknown>;
 
       expect(props.status).toBe("done");
@@ -199,7 +199,7 @@ describe("recordReasoningAttempt", () => {
     "stamps user-hook executions onto the attempt node and drops the field when none ran",
     async () => {
       const store = await openStore();
-      const withHooks = await recordReasoningAttempt(store, {
+      const withHooks = await recordReasoningWorker(store, {
         ...samplePayload,
         hooks: [
           { lifecycle: "pre_pick", command: "scripts/filter.sh --label ready-for-agent", exit_code: 0 },
@@ -210,28 +210,28 @@ describe("recordReasoningAttempt", () => {
           { lifecycle: "post_merge", command: "", exit_code: 0 } as never,
         ],
       });
-      const node = await store.getNode(withHooks.attemptRid);
+      const node = await store.getNode(withHooks.workerRid);
       expect(node?.properties.hooks).toEqual([
         { lifecycle: "pre_pick", command: "scripts/filter.sh --label ready-for-agent", exit_code: 0 },
         { lifecycle: "post_pick", command: "scripts/audit.sh", exit_code: 1 },
       ]);
 
-      const withoutHooks = await recordReasoningAttempt(store, {
+      const withoutHooks = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 2,
         envelopeHash: "envh-no-hooks",
         hooks: undefined,
       });
-      const empty = await store.getNode(withoutHooks.attemptRid);
+      const empty = await store.getNode(withoutHooks.workerRid);
       expect(empty?.properties.hooks).toBeUndefined();
 
-      const withEmptyArray = await recordReasoningAttempt(store, {
+      const withEmptyArray = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 3,
         envelopeHash: "envh-empty-hooks",
         hooks: [],
       });
-      const stillEmpty = await store.getNode(withEmptyArray.attemptRid);
+      const stillEmpty = await store.getNode(withEmptyArray.workerRid);
       expect(stillEmpty?.properties.hooks).toBeUndefined();
     },
     TIMEOUT,
@@ -241,7 +241,7 @@ describe("recordReasoningAttempt", () => {
     "recall surfaces include the attempt hooks field in CLI hits and context_md",
     async () => {
       const store = await openStore();
-      await recordReasoningAttempt(store, {
+      await recordReasoningWorker(store, {
         ...samplePayload,
         summary: "filterhook attempt for recall coverage",
         hooks: [
@@ -250,7 +250,7 @@ describe("recordReasoningAttempt", () => {
         ],
       });
       const { hits } = await graphRecallResult(store, "filterhook recall coverage", 10);
-      const attemptHit = hits.find((h) => h.node_type === "attempt");
+      const attemptHit = hits.find((h) => h.node_type === "worker");
       expect(attemptHit?.hooks).toEqual([
         { lifecycle: "pre_pick", command: "scripts/filter.sh", exit_code: 0 },
         { lifecycle: "post_pick", command: "scripts/audit.sh", exit_code: 2 },
@@ -265,7 +265,7 @@ describe("recordReasoningAttempt", () => {
     "creates durable validation nodes from structured sidecar records and links them with TESTED_BY",
     async () => {
       const store = await openStore();
-      const r = await recordReasoningAttempt(store, {
+      const r = await recordReasoningWorker(store, {
         ...samplePayload,
         validationRecords: [
           {
@@ -300,10 +300,10 @@ describe("recordReasoningAttempt", () => {
       expect(first?.properties.duration_ms).toBe(1234);
       expect(first?.properties.summary).toBe("vitest run completed");
 
-      const edge = await store.findEdge(r.attemptRid, r.validationRids[0], "TESTED_BY");
+      const edge = await store.findEdge(r.workerRid, r.validationRids[0], "TESTED_BY");
       expect(edge).toBe(r.testedByEdges[0]);
 
-      const attempt = await store.getNode(r.attemptRid);
+      const attempt = await store.getNode(r.workerRid);
       expect(attempt?.properties.validation_summary).toBe(samplePayload.validationSummary);
     },
     TIMEOUT,
@@ -313,7 +313,7 @@ describe("recordReasoningAttempt", () => {
     "re-recording the same structured validations is idempotent",
     async () => {
       const store = await openStore();
-      const payload: ReasoningAttemptPayload = {
+      const payload: ReasoningWorkerPayload = {
         ...samplePayload,
         validationRecords: [
           {
@@ -324,8 +324,8 @@ describe("recordReasoningAttempt", () => {
         ],
       };
 
-      const first = await recordReasoningAttempt(store, payload);
-      const second = await recordReasoningAttempt(store, {
+      const first = await recordReasoningWorker(store, payload);
+      const second = await recordReasoningWorker(store, {
         ...payload,
         validationRecords: [
           {
@@ -353,12 +353,12 @@ describe("recordReasoningAttempt", () => {
     "missing or malformed validation records create no validation graph data",
     async () => {
       const store = await openStore();
-      const missing = await recordReasoningAttempt(store, {
+      const missing = await recordReasoningWorker(store, {
         ...samplePayload,
         touchedFiles: [],
         validationRecords: undefined,
       });
-      const malformed = await recordReasoningAttempt(store, {
+      const malformed = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 2,
         envelopeHash: "envh-malformed",
@@ -368,7 +368,7 @@ describe("recordReasoningAttempt", () => {
           "not an object",
           { name: "", status: "passed" },
           { name: "test:plugins/memory" },
-        ] as unknown as ReasoningAttemptPayload["validationRecords"],
+        ] as unknown as ReasoningWorkerPayload["validationRecords"],
       });
 
       expect(missing.validationRids).toEqual([]);
@@ -386,7 +386,7 @@ describe("recordReasoningAttempt", () => {
     "creates a minimal issue node and connects it to the attempt with CONTAINS",
     async () => {
       const store = await openStore();
-      const { attemptRid, issueRid, containsEdge } = await recordReasoningAttempt(
+      const { workerRid, issueRid, containsEdge } = await recordReasoningWorker(
         store,
         samplePayload,
       );
@@ -400,7 +400,7 @@ describe("recordReasoningAttempt", () => {
 
       // CONTAINS: issue → attempt (work hierarchy).
       expect(containsEdge).toBeGreaterThan(0);
-      const found = await store.findEdge(issueRid, attemptRid, "CONTAINS");
+      const found = await store.findEdge(issueRid, workerRid, "CONTAINS");
       expect(found).toBe(containsEdge);
     },
     TIMEOUT,
@@ -410,7 +410,7 @@ describe("recordReasoningAttempt", () => {
     "creates minimal file nodes for touched paths and TOUCHED edges from attempt → file",
     async () => {
       const store = await openStore();
-      const { attemptRid, fileRids, touchedEdges } = await recordReasoningAttempt(
+      const { workerRid, fileRids, touchedEdges } = await recordReasoningWorker(
         store,
         samplePayload,
       );
@@ -427,7 +427,7 @@ describe("recordReasoningAttempt", () => {
         // Minimal node: no language / symbols / extracted source.
         expect(file?.properties.language).toBeUndefined();
 
-        const edge = await store.findEdge(attemptRid, fileRids[i], "TOUCHED");
+        const edge = await store.findEdge(workerRid, fileRids[i], "TOUCHED");
         expect(edge).toBe(touchedEdges[i]);
       }
     },
@@ -438,17 +438,17 @@ describe("recordReasoningAttempt", () => {
     "is idempotent: re-recording the same attempt does not duplicate nodes or edges",
     async () => {
       const store = await openStore();
-      const first = await recordReasoningAttempt(store, samplePayload);
+      const first = await recordReasoningWorker(store, samplePayload);
 
       // Re-record with refined notes / validation summary — identity is stable
       // on AFK coordinates, not on observational evidence.
-      const second = await recordReasoningAttempt(store, {
+      const second = await recordReasoningWorker(store, {
         ...samplePayload,
         notes: "refined notes after the fact",
         validationSummary: "tests pass (rerun)",
       });
 
-      expect(second.attemptRid).toBe(first.attemptRid);
+      expect(second.workerRid).toBe(first.workerRid);
       expect(second.issueRid).toBe(first.issueRid);
       expect(second.fileRids).toEqual(first.fileRids);
       expect(second.touchedEdges).toEqual(first.touchedEdges);
@@ -466,13 +466,13 @@ describe("recordReasoningAttempt", () => {
     "reuses the same file node across attempts that touched the same path",
     async () => {
       const store = await openStore();
-      const r1 = await recordReasoningAttempt(store, {
+      const r1 = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 1,
         envelopeHash: "envh-aaa",
         touchedFiles: ["plugins/memory/src/schema.ts"],
       });
-      const r2 = await recordReasoningAttempt(store, {
+      const r2 = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 2,
         envelopeHash: "envh-bbb",
@@ -481,7 +481,7 @@ describe("recordReasoningAttempt", () => {
 
       expect(r1.fileRids[0]).toBe(r2.fileRids[0]);
       // Two distinct attempts on the same issue.
-      expect(r1.attemptRid).not.toBe(r2.attemptRid);
+      expect(r1.workerRid).not.toBe(r2.workerRid);
       expect(r1.issueRid).toBe(r2.issueRid);
 
       const { nodes } = await store.stats();
@@ -495,13 +495,13 @@ describe("recordReasoningAttempt", () => {
     "an empty touched-files list still records the attempt and issue",
     async () => {
       const store = await openStore();
-      const r = await recordReasoningAttempt(store, {
+      const r = await recordReasoningWorker(store, {
         ...samplePayload,
         touchedFiles: [],
       });
       expect(r.fileRids).toEqual([]);
       expect(r.touchedEdges).toEqual([]);
-      const attempt = await store.getNode(r.attemptRid);
+      const attempt = await store.getNode(r.workerRid);
       expect(attempt?.properties.touched_files).toEqual([]);
     },
     TIMEOUT,
@@ -511,7 +511,7 @@ describe("recordReasoningAttempt", () => {
     "parses prd: #N from the issue body and creates a minimal prd node + prd CONTAINS issue",
     async () => {
       const store = await openStore();
-      const r = await recordReasoningAttempt(store, {
+      const r = await recordReasoningWorker(store, {
         ...samplePayload,
         issueBody: "## Parent\n\nprd: #95\n\nbody body",
       });
@@ -528,7 +528,7 @@ describe("recordReasoningAttempt", () => {
       const issue = await store.getNode(r.issueRid);
       expect(issue?.properties.parent_prd).toBe(95);
 
-      const attempt = await store.getNode(r.attemptRid);
+      const attempt = await store.getNode(r.workerRid);
       expect(attempt?.properties.parent_prd).toBe(95);
 
       const edge = await store.findEdge(r.prdRid!, r.issueRid, "CONTAINS");
@@ -541,7 +541,7 @@ describe("recordReasoningAttempt", () => {
     "accepts parent-prd: #N as the alternate marker form",
     async () => {
       const store = await openStore();
-      const r = await recordReasoningAttempt(store, {
+      const r = await recordReasoningWorker(store, {
         ...samplePayload,
         issueBody: "parent-prd: #95\n\n## What to build\n\n…",
       });
@@ -555,7 +555,7 @@ describe("recordReasoningAttempt", () => {
     "does not infer a parent PRD from labels, title text, comments, links, or branch names",
     async () => {
       const store = await openStore();
-      const r = await recordReasoningAttempt(store, {
+      const r = await recordReasoningWorker(store, {
         ...samplePayload,
         // Every weak signal at once: hash-style mentions in prose, an issue
         // link, a parent-looking phrase, a markdown reference. None of these
@@ -590,13 +590,13 @@ describe("recordReasoningAttempt", () => {
     "still creates issue CONTAINS attempt when no parent PRD is declared",
     async () => {
       const store = await openStore();
-      const r = await recordReasoningAttempt(store, {
+      const r = await recordReasoningWorker(store, {
         ...samplePayload,
         issueBody: undefined,
       });
       expect(r.prdRid).toBeUndefined();
       expect(r.containsEdge).toBeGreaterThan(0);
-      const edge = await store.findEdge(r.issueRid, r.attemptRid, "CONTAINS");
+      const edge = await store.findEdge(r.issueRid, r.workerRid, "CONTAINS");
       expect(edge).toBe(r.containsEdge);
     },
     TIMEOUT,
@@ -608,19 +608,19 @@ describe("recordReasoningAttempt", () => {
       const store = await openStore();
       // Record out of order — 2 first, then 1, then 3 — to prove the chain is
       // rebuilt deterministically each time rather than recording-time linked.
-      const r2 = await recordReasoningAttempt(store, {
+      const r2 = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 2,
         envelopeHash: "envh-2",
         touchedFiles: [],
       });
-      const r1 = await recordReasoningAttempt(store, {
+      const r1 = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 1,
         envelopeHash: "envh-1",
         touchedFiles: [],
       });
-      const r3 = await recordReasoningAttempt(store, {
+      const r3 = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 3,
         envelopeHash: "envh-3",
@@ -629,14 +629,14 @@ describe("recordReasoningAttempt", () => {
 
       // Chain after final record: 1 → 2 → 3.
       expect(r3.precedesEdges).toHaveLength(2);
-      const e12 = await store.findEdge(r1.attemptRid, r2.attemptRid, "PRECEDES");
-      const e23 = await store.findEdge(r2.attemptRid, r3.attemptRid, "PRECEDES");
+      const e12 = await store.findEdge(r1.workerRid, r2.workerRid, "PRECEDES");
+      const e23 = await store.findEdge(r2.workerRid, r3.workerRid, "PRECEDES");
       expect(e12).not.toBeNull();
       expect(e23).not.toBeNull();
 
       // No skip edges and no reverse edges.
-      const e13 = await store.findEdge(r1.attemptRid, r3.attemptRid, "PRECEDES");
-      const e21 = await store.findEdge(r2.attemptRid, r1.attemptRid, "PRECEDES");
+      const e13 = await store.findEdge(r1.workerRid, r3.workerRid, "PRECEDES");
+      const e21 = await store.findEdge(r2.workerRid, r1.workerRid, "PRECEDES");
       expect(e13).toBeNull();
       expect(e21).toBeNull();
     },
@@ -648,14 +648,14 @@ describe("recordReasoningAttempt", () => {
     async () => {
       const store = await openStore();
       const body = "prd: #95\n\nbody";
-      const a1 = await recordReasoningAttempt(store, {
+      const a1 = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 1,
         envelopeHash: "envh-1",
         issueBody: body,
         touchedFiles: [],
       });
-      const a2 = await recordReasoningAttempt(store, {
+      const a2 = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 2,
         envelopeHash: "envh-2",
@@ -664,7 +664,7 @@ describe("recordReasoningAttempt", () => {
       });
 
       // Re-record both, in either order, with refined notes.
-      const a2b = await recordReasoningAttempt(store, {
+      const a2b = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 2,
         envelopeHash: "envh-2",
@@ -672,7 +672,7 @@ describe("recordReasoningAttempt", () => {
         touchedFiles: [],
         notes: "refined",
       });
-      const a1b = await recordReasoningAttempt(store, {
+      const a1b = await recordReasoningWorker(store, {
         ...samplePayload,
         attemptNumber: 1,
         envelopeHash: "envh-1",
@@ -681,8 +681,8 @@ describe("recordReasoningAttempt", () => {
         notes: "refined",
       });
 
-      expect(a1b.attemptRid).toBe(a1.attemptRid);
-      expect(a2b.attemptRid).toBe(a2.attemptRid);
+      expect(a1b.workerRid).toBe(a1.workerRid);
+      expect(a2b.workerRid).toBe(a2.workerRid);
       expect(a1b.issueRid).toBe(a1.issueRid);
       expect(a1b.prdRid).toBe(a1.prdRid);
 
@@ -699,7 +699,7 @@ describe("recordReasoningAttempt", () => {
     "dedupes repeated paths in the touched-files input",
     async () => {
       const store = await openStore();
-      const r = await recordReasoningAttempt(store, {
+      const r = await recordReasoningWorker(store, {
         ...samplePayload,
         touchedFiles: ["a.ts", "a.ts", "  ", "b.ts"],
       });
@@ -772,7 +772,7 @@ describe("CLI attempt learn", () => {
               summary: "vitest suite passed; raw stdout in /tmp/bg-task.output",
             },
           ],
-        } satisfies ReasoningAttemptPayload),
+        } satisfies ReasoningWorkerPayload),
       );
       expect(done.status, done.stderr).toBe(0);
 
@@ -800,7 +800,7 @@ describe("CLI attempt learn", () => {
               summary: "WIP: test still running before the next validation pass",
             },
           ],
-        } satisfies ReasoningAttemptPayload),
+        } satisfies ReasoningWorkerPayload),
       );
       expect(blocked.status, blocked.stderr).toBe(0);
 
@@ -860,7 +860,7 @@ describe("CLI attempt learn", () => {
               summary: "vitest suite passed",
             },
           ],
-        } satisfies ReasoningAttemptPayload),
+        } satisfies ReasoningWorkerPayload),
       );
       expect(recorded.status, recorded.stderr).toBe(0);
 

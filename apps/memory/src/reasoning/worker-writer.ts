@@ -1,5 +1,5 @@
 /**
- * Reasoning attempt writer — the Memory-side path for recording one AFK
+ * Reasoning worker writer — the Memory-side path for recording one AFK
  * terminal attempt as a graph object. PRD #95.
  *
  * Writes:
@@ -32,7 +32,7 @@ import type { MemoryStore } from "../graph-store.js";
 import type { MemoryNode } from "../schema.js";
 
 /** Terminal AFK outcomes the writer is expected to record. */
-export type ReasoningAttemptStatus =
+export type ReasoningWorkerStatus =
   | "done"
   | "blocked"
   | "no-sentinel"
@@ -44,7 +44,7 @@ export type ReasoningAttemptStatus =
  * recall query like *"what filter did this attempt run with?"* answers from
  * graph properties instead of re-reading the raw Envelope.
  */
-export interface AttemptHookRecord {
+export interface WorkerHookRecord {
   /** Lifecycle point the hook ran at, e.g. `pre_pick`, `post_pick`. */
   lifecycle: string;
   /** The hook command line as registered. */
@@ -73,7 +73,7 @@ export interface ValidationSidecarRecord {
  * the dedupe hash — everything else is observational evidence stored on the
  * node for later recall and inspection.
  */
-export interface ReasoningAttemptPayload {
+export interface ReasoningWorkerPayload {
   /** Canonical repo identifier, e.g. `reddb-io/red-skills`. */
   repository: string;
   /** GitHub issue number this attempt belonged to. */
@@ -81,7 +81,7 @@ export interface ReasoningAttemptPayload {
   /** Attempt ordinal as recorded by the orchestrator (1-based). */
   attemptNumber: number;
   /** Terminal outcome reported by AFK. */
-  status: ReasoningAttemptStatus | string;
+  status: ReasoningWorkerStatus | string;
   /** Canonical issue type bucket, e.g. `bug`, `prd`, or `unknown`. */
   issueType?: string;
   /** AFK model tier used for the attempt, e.g. `validate`, `simple`, `complex`, or `think`. */
@@ -131,14 +131,14 @@ export interface ReasoningAttemptPayload {
    * user hooks declared produces an `attempt` node without the property,
    * keeping the schema empty-array-free.
    */
-  hooks?: AttemptHookRecord[];
+  hooks?: WorkerHookRecord[];
   /** Short why/outcome summary; one or two sentences. */
   summary?: string;
 }
 
-/** What `recordReasoningAttempt` actually wrote, for callers and tests. */
-export interface ReasoningAttemptReceipt {
-  attemptRid: number;
+/** What `recordReasoningWorker` actually wrote, for callers and tests. */
+export interface ReasoningWorkerReceipt {
+  workerRid: number;
   issueRid: number;
   /** Rid of the parent `prd` node, when the issue body declared one. */
   prdRid?: number;
@@ -154,11 +154,11 @@ export interface ReasoningAttemptReceipt {
   validationRids: number[];
   /** `TESTED_BY` edges, one per validation node. */
   testedByEdges: number[];
-  /** `CONTAINS` edge from issue → attempt. */
+  /** `CONTAINS` edge from issue → worker run. */
   containsEdge: number;
   /**
-   * `PRECEDES` edges connecting consecutive attempts on this issue in
-   * attempt-number order. Empty when this is the only known attempt.
+   * `PRECEDES` edges connecting consecutive worker runs on this issue in
+   * run-number order. Empty when this is the only known run.
    */
   precedesEdges: number[];
   /** Touched paths after dedupe and normalisation. */
@@ -175,10 +175,10 @@ export interface ReasoningAttemptReceipt {
  * `TOUCHED` rows. The writer does **not** call `/memory:ingest` or trigger any
  * file scan — minimal `file` nodes carry only their path.
  */
-export async function recordReasoningAttempt(
+export async function recordReasoningWorker(
   store: MemoryStore,
-  payload: ReasoningAttemptPayload,
-): Promise<ReasoningAttemptReceipt> {
+  payload: ReasoningWorkerPayload,
+): Promise<ReasoningWorkerReceipt> {
   // Parse the parent PRD strictly from the issue body — no inference from
   // labels, title text, comments, links, or branch names is permitted (AC #3).
   const parentPrd = parseParentPrdFromBody(payload.issueBody);
@@ -231,17 +231,17 @@ export async function recordReasoningAttempt(
 
   const touched = dedupeTouchedFiles(payload.touchedFiles);
   const hooks = normaliseHookRecords(payload.hooks);
-  const attemptLabel = attemptNodeLabel(
+  const workerLabel = workerNodeLabel(
     payload.repository,
     payload.issueNumber,
     payload.attemptNumber,
     payload.workerId,
   );
-  const attemptNode: MemoryNode = {
-    label: attemptLabel,
-    node_type: "attempt",
+  const workerNode: MemoryNode = {
+    label: workerLabel,
+    node_type: "worker",
     properties: {
-      title: payload.summary ?? attemptLabel,
+      title: payload.summary ?? workerLabel,
       content: payload.summary,
       repository: payload.repository,
       issue_number: payload.issueNumber,
@@ -269,11 +269,11 @@ export async function recordReasoningAttempt(
       ...(hooks.length > 0 ? { hooks } : {}),
       summary: payload.summary,
       source: "afk",
-      // Identity is the AFK attempt coordinates plus envelope hash when known.
-      // Re-recording the same terminal attempt — even with new notes — reuses
-      // this rid; a fresh attempt number or worker id forks a new node.
+      // Identity is the AFK worker coordinates plus envelope hash when known.
+      // Re-recording the same terminal run — even with new notes — reuses
+      // this rid; a fresh run number or worker id forks a new node.
       hash: contentHash(
-        "attempt",
+        "worker",
         payload.repository,
         String(payload.issueNumber),
         String(payload.attemptNumber),
@@ -282,14 +282,14 @@ export async function recordReasoningAttempt(
       ),
     },
   };
-  const attemptRid = await store.upsertNode(attemptNode);
+  const workerRid = await store.upsertNode(workerNode);
 
   // Work hierarchy: issue CONTAINS attempt. The parent PRD edge (when
   // present) is the separate `prd CONTAINS issue` written above.
   const containsEdge = await store.upsertEdge({
     label: "CONTAINS",
     from_rid: issueRid,
-    to_rid: attemptRid,
+    to_rid: workerRid,
   });
 
   const fileRids: number[] = [];
@@ -312,7 +312,7 @@ export async function recordReasoningAttempt(
     touchedEdges.push(
       await store.upsertEdge({
         label: "TOUCHED",
-        from_rid: attemptRid,
+        from_rid: workerRid,
         to_rid: fileRid,
       }),
     );
@@ -358,7 +358,7 @@ export async function recordReasoningAttempt(
     testedByEdges.push(
       await store.upsertEdge({
         label: "TESTED_BY",
-        from_rid: attemptRid,
+        from_rid: workerRid,
         to_rid: validationRid,
       }),
     );
@@ -376,7 +376,7 @@ export async function recordReasoningAttempt(
   );
 
   return {
-    attemptRid,
+    workerRid,
     issueRid,
     prdRid,
     parentPrd: parentPrd ?? undefined,
@@ -414,8 +414,8 @@ export function parseParentPrdFromBody(body: string | undefined): number | null 
 }
 
 /**
- * Rebuild the deterministic PRECEDES chain for every attempt currently known
- * for `(repository, issueNumber)`. Attempts are sorted by `attempt_number`
+ * Rebuild the deterministic PRECEDES chain for every worker run currently known
+ * for `(repository, issueNumber)`. Runs are sorted by `attempt_number`
  * ascending and consecutive pairs get one `PRECEDES` edge each. `upsertEdge`
  * dedupes on (from, to, label), so calling this repeatedly is a no-op once
  * the chain is in place.
@@ -426,8 +426,8 @@ async function linkPrecedesChain(
   issueNumber: number,
 ): Promise<number[]> {
   const all = await store.listNodes();
-  const attempts = all
-    .filter((n) => n.node_type === "attempt")
+  const workerRuns = all
+    .filter((n) => n.node_type === "worker")
     .filter(
       (n) =>
         n.properties.repository === repository &&
@@ -442,18 +442,18 @@ async function linkPrecedesChain(
   // Deterministic order: attempt_number ascending. Ties (same attempt_number
   // across distinct worker ids) fall back to rid ascending so the chain is
   // stable across re-records.
-  attempts.sort((a, b) => {
+  workerRuns.sort((a, b) => {
     if (a.attemptNumber !== b.attemptNumber) return a.attemptNumber - b.attemptNumber;
     return a.rid - b.rid;
   });
 
   const edges: number[] = [];
-  for (let i = 1; i < attempts.length; i++) {
+  for (let i = 1; i < workerRuns.length; i++) {
     edges.push(
       await store.upsertEdge({
         label: "PRECEDES",
-        from_rid: attempts[i - 1].rid,
-        to_rid: attempts[i].rid,
+        from_rid: workerRuns[i - 1].rid,
+        to_rid: workerRuns[i].rid,
       }),
     );
   }
@@ -470,14 +470,14 @@ export function prdNodeLabel(repository: string, prdNumber: number): string {
   return `prd:${repository}#${prdNumber}`;
 }
 
-/** Stable, human-readable label for an attempt node. */
-export function attemptNodeLabel(
+/** Stable, human-readable label for a worker run node. */
+export function workerNodeLabel(
   repository: string,
   issueNumber: number,
   attemptNumber: number,
   workerId?: string,
 ): string {
-  const base = `attempt:${repository}#${issueNumber}/${attemptNumber}`;
+  const base = `worker:${repository}#${issueNumber}/${attemptNumber}`;
   return workerId ? `${base}@${workerId}` : base;
 }
 
@@ -513,10 +513,10 @@ function dedupeTouchedFiles(paths: string[] | undefined): string[] {
 }
 
 function normaliseHookRecords(
-  records: AttemptHookRecord[] | undefined,
-): AttemptHookRecord[] {
+  records: WorkerHookRecord[] | undefined,
+): WorkerHookRecord[] {
   if (!Array.isArray(records)) return [];
-  const out: AttemptHookRecord[] = [];
+  const out: WorkerHookRecord[] = [];
   for (const record of records) {
     if (record == null || typeof record !== "object") continue;
     const raw = record as unknown as Record<string, unknown>;

@@ -81,7 +81,7 @@ export const INTEGRATION_TESTS: readonly string[] = [
   "provenance-cli.test.ts",
   "readiness.test.ts",
   "readiness-viewer.test.ts",
-  "reasoning-attempt.test.ts",
+  "reasoning-worker.test.ts",
   "recall-latency.test.ts",
   "refresh-cli.test.ts",
   "routing-guide.test.ts",

@@ -4,79 +4,79 @@ import { contentHash } from "../hash.js";
 import type { MemoryStore, StoredNode } from "../graph-store.js";
 import type { MemoryNode, NodeType } from "../schema.js";
 
-export type AttemptLearningKind =
+export type WorkerLearningKind =
   | "durable_fact"
   | "failure"
   | "validation"
   | "skill_improvement";
 
-export interface AttemptLearningEvidence {
+export interface WorkerLearningEvidence {
   rid: number;
   label: string;
   nodeType: NodeType;
   description: string;
 }
 
-export interface AttemptLearningProposal {
+export interface WorkerLearningProposal {
   id: string;
-  kind: AttemptLearningKind;
+  kind: WorkerLearningKind;
   title: string;
   recommendation: string;
   targetNodeType: NodeType;
   confidence: "EXTRACTED" | "INFERRED";
-  evidence: AttemptLearningEvidence[];
+  evidence: WorkerLearningEvidence[];
   evidenceSummary: string;
 }
 
-export interface RejectedAttemptLearning {
+export interface RejectedWorkerLearning {
   kind: "temporary_progress" | "raw_operational_log";
   action: "rejected" | "downgraded";
   reason: string;
-  evidence: AttemptLearningEvidence[];
+  evidence: WorkerLearningEvidence[];
 }
 
-export interface AttemptLearningReport {
-  proposals: AttemptLearningProposal[];
-  rejected: RejectedAttemptLearning[];
+export interface WorkerLearningReport {
+  proposals: WorkerLearningProposal[];
+  rejected: RejectedWorkerLearning[];
 }
 
-export interface AttemptLearningApplyResult {
+export interface WorkerLearningApplyResult {
   applied: number;
   nodeRids: number[];
   edgeRids: number[];
 }
 
-export async function buildAttemptLearningReport(
+export async function buildWorkerLearningReport(
   store: MemoryStore,
-): Promise<AttemptLearningReport> {
+): Promise<WorkerLearningReport> {
   const nodes = await store.listNodes();
   const edges = await store.listEdges();
-  const attempts = nodes
-    .filter((node) => node.node_type === "attempt")
-    .sort(compareAttemptNodes);
+  const workerNodes = nodes
+    .filter((node) => node.node_type === "worker")
+    .sort(compareWorkerNodes);
   const validations = nodes
     .filter((node) => node.node_type === "validation")
     .sort((a, b) => a.rid - b.rid);
 
-  const proposals: AttemptLearningProposal[] = [];
-  const rejected: RejectedAttemptLearning[] = [];
+  const proposals: WorkerLearningProposal[] = [];
+  const rejected: RejectedWorkerLearning[] = [];
 
-  for (const attempt of attempts) {
-    const evidence = [attemptEvidence(attempt)];
-    const summary = stringProp(attempt, "summary") ?? stringProp(attempt, "content") ?? "";
-    const notes = stringProp(attempt, "notes") ?? "";
+  for (const workerNode of workerNodes) {
+    const evidence = [workerEvidence(workerNode)];
+    const summary = stringProp(workerNode, "summary") ?? stringProp(workerNode, "content") ?? "";
+    const notes = stringProp(workerNode, "notes") ?? "";
 
-    const rejection = rejectionForAttemptText(notes || summary, evidence);
+    const rejection = rejectionForWorkerText(notes || summary, evidence);
     if (rejection) rejected.push(rejection);
 
-    if (isTerminalFailure(attempt)) {
+    if (isTerminalFailure(workerNode)) {
       proposals.push(
         proposal({
           kind: "failure",
-          title: `Failure: ${String(attempt.properties.status ?? "attempt failed")} on ${attempt.label}`,
+          title: `Failure: ${String(workerNode.properties.status ?? "worker failed")} on ${workerNode.label}`,
           recommendation: compactText(
             summary ||
-              `${attempt.label} ended with status ${String(attempt.properties.status ?? "unknown")}.`,
+              `${workerNode.label} ended with status ${String(workerNode.properties.status ?? "unknown")}.`,
           ),
           targetNodeType: "problem",
           confidence: "EXTRACTED",
@@ -84,7 +84,7 @@ export async function buildAttemptLearningReport(
         }),
       );
 
-      const skillPath = skillPathFromAttempt(attempt);
+      const skillPath = skillPathFromWorker(workerNode);
       if (skillPath) {
         proposals.push(
           proposal({
@@ -92,7 +92,7 @@ export async function buildAttemptLearningReport(
             title: `Skill improvement candidate: ${skillPath}`,
             recommendation: compactText(
               `Review ${skillPath} for missing prerequisites, validation guidance, or recovery steps related to ${String(
-                attempt.properties.error_class ?? attempt.properties.status ?? "the failed attempt",
+                workerNode.properties.error_class ?? workerNode.properties.status ?? "the failed worker",
               )}.`,
             ),
             targetNodeType: "workflow",
@@ -107,7 +107,7 @@ export async function buildAttemptLearningReport(
       proposals.push(
         proposal({
           kind: "durable_fact",
-          title: `Durable fact from ${attempt.label}`,
+          title: `Durable fact from ${workerNode.label}`,
           recommendation: compactText(summary),
           targetNodeType: "decision",
           confidence: "INFERRED",
@@ -121,7 +121,7 @@ export async function buildAttemptLearningReport(
     const evidence = [validationEvidence(validation)];
     const failed = isFailedValidation(validation);
     const validationSummary = String(validation.properties.summary ?? "");
-    const validationRejection = rejectionForAttemptText(validationSummary, evidence);
+    const validationRejection = rejectionForWorkerText(validationSummary, evidence);
     if (validationRejection) rejected.push(validationRejection);
     proposals.push(
       proposal({
@@ -202,41 +202,41 @@ export async function buildAttemptLearningReport(
   };
 }
 
-export async function writeAttemptLearningProposalFile(
+export async function writeWorkerLearningProposalFile(
   rootDir: string,
-  report: AttemptLearningReport,
+  report: WorkerLearningReport,
 ): Promise<string | null> {
   if (report.proposals.length === 0) return null;
   const fingerprint = reportFingerprint(report);
   const proposalDir = join(rootDir, ".red", "memory", "proposals");
   await mkdir(proposalDir, { recursive: true });
-  const file = `attempt-learning-${fingerprint.slice(0, 12)}.md`;
+  const file = `worker-learning-${fingerprint.slice(0, 12)}.md`;
   const path = join(proposalDir, file);
-  await writeFile(path, renderAttemptLearningProposal(report, fingerprint), "utf8");
+  await writeFile(path, renderWorkerLearningProposal(report, fingerprint), "utf8");
   return toPosix(relative(rootDir, path));
 }
 
-export function parseAttemptLearningProposal(body: string): AttemptLearningReport {
+export function parseWorkerLearningProposal(body: string): WorkerLearningReport {
   const match = body.match(/```json memory-learning-proposal\s*([\s\S]*?)```/);
   if (!match) throw new Error("proposal needs a structured memory-learning-proposal block");
   const raw = JSON.parse(match[1]) as unknown;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     throw new Error("memory-learning-proposal must be a JSON object");
   }
-  const obj = raw as Partial<AttemptLearningReport>;
+  const obj = raw as Partial<WorkerLearningReport>;
   if (!Array.isArray(obj.proposals)) {
     throw new Error("memory-learning-proposal.proposals is required");
   }
   return {
-    proposals: obj.proposals as AttemptLearningProposal[],
-    rejected: Array.isArray(obj.rejected) ? (obj.rejected as RejectedAttemptLearning[]) : [],
+    proposals: obj.proposals as WorkerLearningProposal[],
+    rejected: Array.isArray(obj.rejected) ? (obj.rejected as RejectedWorkerLearning[]) : [],
   };
 }
 
-export async function applyAttemptLearningProposal(
+export async function applyWorkerLearningProposal(
   store: MemoryStore,
-  report: AttemptLearningReport,
-): Promise<AttemptLearningApplyResult> {
+  report: WorkerLearningReport,
+): Promise<WorkerLearningApplyResult> {
   const nodeRids: number[] = [];
   const edgeRids: number[] = [];
 
@@ -248,14 +248,14 @@ export async function applyAttemptLearningProposal(
         title: item.title,
         content: item.recommendation,
         summary: item.evidenceSummary,
-        source: "attempt-learning",
+        source: "worker-learning",
         confidence: item.confidence,
-        tags: ["attempt-learning", item.kind],
-        hash: contentHash("attempt-learning", item.id),
+        tags: ["worker-learning", item.kind],
+        hash: contentHash("worker-learning", item.id),
         provenance: {
           source_kind: "derived",
-          writer: "memory attempt learn apply",
-          command: "memory attempt learn apply",
+          writer: "memory worker learn apply",
+          command: "memory worker learn apply",
           confidence: item.confidence,
           evidence: item.evidence.map((e) => e.description),
         },
@@ -269,7 +269,7 @@ export async function applyAttemptLearningProposal(
           label: "LEARNED_FROM",
           from_rid: nodeRid,
           to_rid: evidence.rid,
-          properties: { reason: item.kind, source: "attempt-learning" },
+          properties: { reason: item.kind, source: "worker-learning" },
         }),
       );
     }
@@ -279,11 +279,11 @@ export async function applyAttemptLearningProposal(
 }
 
 function proposal(
-  input: Omit<AttemptLearningProposal, "id" | "evidenceSummary">,
-): AttemptLearningProposal {
+  input: Omit<WorkerLearningProposal, "id" | "evidenceSummary">,
+): WorkerLearningProposal {
   const evidenceSummary = input.evidence.map((e) => e.description).join("; ");
   const id = contentHash(
-    "attempt-learning",
+    "worker-learning",
     input.kind,
     input.title,
     input.recommendation,
@@ -292,9 +292,9 @@ function proposal(
   return { ...input, id, evidenceSummary };
 }
 
-function dedupeProposals(items: AttemptLearningProposal[]): AttemptLearningProposal[] {
+function dedupeProposals(items: WorkerLearningProposal[]): WorkerLearningProposal[] {
   const seen = new Set<string>();
-  const out: AttemptLearningProposal[] = [];
+  const out: WorkerLearningProposal[] = [];
   for (const item of items) {
     if (seen.has(item.id)) continue;
     seen.add(item.id);
@@ -303,7 +303,7 @@ function dedupeProposals(items: AttemptLearningProposal[]): AttemptLearningPropo
   return out;
 }
 
-function compareAttemptNodes(a: StoredNode, b: StoredNode): number {
+function compareWorkerNodes(a: StoredNode, b: StoredNode): number {
   const repo = String(a.properties.repository ?? "").localeCompare(
     String(b.properties.repository ?? ""),
   );
@@ -316,7 +316,7 @@ function compareAttemptNodes(a: StoredNode, b: StoredNode): number {
   return a.rid - b.rid;
 }
 
-function attemptEvidence(attempt: StoredNode): AttemptLearningEvidence {
+function workerEvidence(attempt: StoredNode): WorkerLearningEvidence {
   const status = String(attempt.properties.status ?? "unknown");
   const summary = compactText(
     String(attempt.properties.summary ?? attempt.properties.content ?? attempt.properties.title ?? ""),
@@ -324,12 +324,12 @@ function attemptEvidence(attempt: StoredNode): AttemptLearningEvidence {
   return {
     rid: attempt.rid,
     label: attempt.label,
-    nodeType: "attempt",
-    description: `attempt rid=${attempt.rid} label=${attempt.label} status=${status}${summary ? ` summary=${summary}` : ""}`,
+    nodeType: "worker",
+    description: `worker rid=${attempt.rid} label=${attempt.label} status=${status}${summary ? ` summary=${summary}` : ""}`,
   };
 }
 
-function validationEvidence(validation: StoredNode): AttemptLearningEvidence {
+function validationEvidence(validation: StoredNode): WorkerLearningEvidence {
   return {
     rid: validation.rid,
     label: validation.label,
@@ -340,10 +340,10 @@ function validationEvidence(validation: StoredNode): AttemptLearningEvidence {
   };
 }
 
-function rejectionForAttemptText(
+function rejectionForWorkerText(
   text: string,
-  evidence: AttemptLearningEvidence[],
-): RejectedAttemptLearning | null {
+  evidence: WorkerLearningEvidence[],
+): RejectedWorkerLearning | null {
   if (!text) return null;
   if (/\b(raw stdout|raw stderr|operational log|tail of .*log|bg-task|\/tmp\/)\b/i.test(text)) {
     return {
@@ -357,7 +357,7 @@ function rejectionForAttemptText(
     return {
       kind: "temporary_progress",
       action: "downgraded",
-      reason: "temporary progress is attempt evidence, not a durable learning",
+      reason: "temporary progress is worker evidence, not a durable learning",
       evidence,
     };
   }
@@ -379,7 +379,7 @@ function isDurableFactCandidate(text: string): boolean {
   );
 }
 
-function skillPathFromAttempt(attempt: StoredNode): string | null {
+function skillPathFromWorker(attempt: StoredNode): string | null {
   const touched = attempt.properties.touched_files;
   if (!Array.isArray(touched)) return null;
   for (const item of touched) {
@@ -445,16 +445,16 @@ function compactText(text: string): string {
   return text.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
-function reportFingerprint(report: AttemptLearningReport): string {
-  return contentHash("attempt-learning-report", ...report.proposals.map((p) => p.id));
+function reportFingerprint(report: WorkerLearningReport): string {
+  return contentHash("worker-learning-report", ...report.proposals.map((p) => p.id));
 }
 
-function renderAttemptLearningProposal(
-  report: AttemptLearningReport,
+function renderWorkerLearningProposal(
+  report: WorkerLearningReport,
   fingerprint: string,
 ): string {
   const kinds = [...new Set(report.proposals.map((p) => p.kind))].join(", ");
-  return `# Attempt Learning Proposal
+  return `# Worker Learning Proposal
 
 Status: approval-gated
 Generated: ${new Date().toISOString()}
@@ -475,7 +475,7 @@ ${report.rejected.length === 0 ? "- none" : report.rejected.map((r) => `- [${r.a
 
 ## Apply Policy
 
-This proposal is approval-gated. Generating it wrote this file only; it did not create durable Memory nodes. Apply only after review with \`memory attempt learn apply <proposal> --yes\`.
+This proposal is approval-gated. Generating it wrote this file only; it did not create durable Memory nodes. Apply only after review with \`memory worker learn apply <proposal> --yes\`.
 
 \`\`\`json memory-learning-proposal
 ${JSON.stringify(report, null, 2)}

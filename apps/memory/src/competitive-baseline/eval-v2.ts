@@ -324,13 +324,13 @@ async function runReasoningReplaySubCheck(): Promise<{
   detail: string;
 }> {
   const { buildReasoningReplay } = await import("../reasoning/reasoning-replay.js");
-  const { recordReasoningAttempt } = await import("../reasoning/attempt-writer.js");
+  const { recordReasoningWorker } = await import("../reasoning/worker-writer.js");
   const root = await mkdtemp(join(tmpdir(), "memory-reasoning-replay-subcheck-"));
   try {
     const init = await initGraph(root, { project: "reasoning-replay-subcheck" });
     const store = await MemoryStore.open({ uri: init.storeUri, project: "reasoning-replay-subcheck" });
     try {
-      await recordReasoningAttempt(store, {
+      await recordReasoningWorker(store, {
         repository: "reddb-io/red-skills",
         issueNumber: 169,
         attemptNumber: 1,
@@ -461,13 +461,13 @@ async function runWhatifSubCheck(): Promise<{
   detail: string;
 }> {
   const { buildWhatifReport } = await import("../whatif.js");
-  const { recordReasoningAttempt } = await import("../reasoning/attempt-writer.js");
+  const { recordReasoningWorker } = await import("../reasoning/worker-writer.js");
   const root = await mkdtemp(join(tmpdir(), "memory-whatif-subcheck-"));
   try {
     const init = await initGraph(root, { project: "whatif-subcheck" });
     const store = await MemoryStore.open({ uri: init.storeUri, project: "whatif-subcheck" });
     try {
-      await recordReasoningAttempt(store, {
+      await recordReasoningWorker(store, {
         repository: "reddb-io/red-skills",
         issueNumber: 172,
         attemptNumber: 1,
