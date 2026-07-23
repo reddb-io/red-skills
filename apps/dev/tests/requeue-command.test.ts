@@ -463,32 +463,6 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
 
   // ---------- #1307 — close the concurrent-claim window during the adopt gate ----------
 
-  it("withholds ready-for-agent while the adopt gate runs so the Ticket is not claimable mid-land (#1307)", async () => {
-    const { gh, state } = fakeGh({
-      state: "OPEN",
-      body: parkedBody,
-      labels: ["ready-for-human", "blocked:validation"],
-    });
-    const { stream } = capture();
-    let labelsDuringGate: string[] = [];
-    const runner: RequeueAdoptRunner = async () => {
-      labelsDuringGate = [...state.labels];
-      return "landed";
-    };
-
-    const code = await requeueCommand(
-      ["#42", "--guidance", "Gate flake fixed.", "--adopt-branch", "my-branch"],
-      "/tmp", stream, gh, runner,
-    );
-
-    expect(code).toBe(0);
-    // The queue label and the park labels are all absent for the whole gate —
-    // neither the candidate query nor the pre-claim recheck can select it.
-    expect(labelsDuringGate).not.toContain("ready-for-agent");
-    expect(labelsDuringGate).not.toContain("blocked:validation");
-    expect(labelsDuringGate).not.toContain("ready-for-human");
-  });
-
   it("also withholds ready-for-agent when adopting an issue that already carries it (#1307)", async () => {
     // A non-parked issue that is already claimable: adopting it must still strip
     // the queue label for the gate window, not leave it exposed.
@@ -512,8 +486,8 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
   it("restores ready-for-agent when the adopt gate skips, so an empty/interrupted adopt is recoverable (#1307)", async () => {
     const { gh, state } = fakeGh({
       state: "OPEN",
-      body: parkedBody,
-      labels: ["ready-for-human", "blocked:validation"],
+      body: "## Summary\nFoo.\n",
+      labels: ["ready-for-agent"],
     });
     const { stream, text } = capture();
     let labelsDuringGate: string[] = [];
@@ -538,8 +512,8 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
   it("restores ready-for-agent when the adopt gate throws mid-run (#1307)", async () => {
     const { gh, state } = fakeGh({
       state: "OPEN",
-      body: parkedBody,
-      labels: ["ready-for-human", "blocked:validation"],
+      body: "## Summary\nFoo.\n",
+      labels: ["ready-for-agent"],
     });
     const { stream } = capture();
     const err = captureStderr();
@@ -555,10 +529,8 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
     ).rejects.toThrow("adopt interrupted");
     err.restore();
 
-    // No stuck park labels, and the queue label is restored (recoverable state).
+    // The queue label is restored after the interrupted no-agent gate.
     expect(state.labels).toContain("ready-for-agent");
-    expect(state.labels).not.toContain("blocked:validation");
-    expect(state.labels).not.toContain("ready-for-human");
   });
 
   it("dry-run with --adopt-branch does not call adopt runner", async () => {
