@@ -214,31 +214,13 @@ export async function runnerCircuitOpen(
 }
 
 /**
- * Resolve the red-castle worktree from the filesystem. Red-castle creates the
- * agent's worktree at `{attemptDir}/.red-castle/worktrees/{slug}` as a worktree
- * of the red-trunk MIRROR, not the primary checkout, so it never appears in the
- * primary's `git worktree list` — {@link worktreePathUnder} (which lists the
- * primary via `gitCtx`) returns undefined for it, and the heartbeat then fell
- * back to the non-existent legacy `{attemptDir}/worktree` and read a permanent
- * `+0 -0` diff (blank `loc` on the statusline for every red-castle worker). This
- * reads the real layout directly: the single `.git`-bearing subdirectory of
- * `{attemptDir}/.red-castle/worktrees/`.
+ * Resolve the current worker worktree from its conventional direct-child path.
+ * Castle-branded nested paths are intentionally excluded from this reader;
+ * only hygiene sweeps retain compatibility with that retired grammar.
  */
 export function castleWorktreeUnder(attemptDir: string): string | undefined {
-  const dir = join(attemptDir, ".red-castle", "worktrees");
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return undefined; // no castle worktree tree yet (attempt not started / cleaned)
-  }
-  for (const name of entries) {
-    const candidate = join(dir, name);
-    // A git worktree carries a `.git` gitdir pointer (a file for a linked
-    // worktree). Its presence distinguishes the real worktree from stray dirs.
-    if (existsSync(join(candidate, ".git"))) return candidate;
-  }
-  return undefined;
+  const candidate = join(attemptDir, "worktree");
+  return existsSync(join(candidate, ".git")) ? candidate : undefined;
 }
 
 /**
@@ -254,7 +236,7 @@ export function castleWorktreeUnder(attemptDir: string): string | undefined {
 export function readCapturedWorktreePath(attemptDir: string): string | undefined {
   try {
     const recorded = readFileSync(join(attemptDir, ".worktree-path"), "utf8").trim();
-    return recorded || undefined;
+    return recorded === join(attemptDir, "worktree") ? recorded : undefined;
   } catch {
     return undefined;
   }

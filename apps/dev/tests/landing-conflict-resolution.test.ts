@@ -39,7 +39,16 @@ describe("doLanding — first-attempt mechanical conflict resolution (#2072)", (
 
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
+    expect(r).toEqual({
+      ok: true,
+      locked: false,
+      mergeSha: "abc1234",
+      postMergeValidation: {
+        path: "local-rerun",
+        prNumber: 42,
+        reason: "PR #42 CI evidence was absent or unusable; local post-merge validation fallback ran.",
+      },
+    });
     expect(h.mechanicalResolverDirs).toEqual([RWT]);
     expect(h.postMergeGateDirs).toEqual([RWT]);
     expect(joined(h.mergeCalls).some((c) => c === `git -C ${RWT} rebase --abort`)).toBe(false);
@@ -111,7 +120,16 @@ describe("doLanding — agent-tier semantic conflict resolution (#2075)", () => 
 
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
+    expect(r).toEqual({
+      ok: true,
+      locked: false,
+      mergeSha: "abc1234",
+      postMergeValidation: {
+        path: "local-rerun",
+        prNumber: 42,
+        reason: "PR #42 CI evidence was absent or unusable; local post-merge validation fallback ran.",
+      },
+    });
     expect(h.mechanicalResolverDirs).toEqual([RWT]);
     expect(h.agentResolverDirs).toEqual([RWT]);
     expect(h.postMergeGateDirs).toEqual([RWT]);
@@ -132,7 +150,7 @@ describe("doLanding — agent-tier semantic conflict resolution (#2075)", () => 
 
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: false, reason: "post-merge-gate", locked: false });
+    expect(r).toEqual({ ok: false, reason: "post-merge-gate", locked: false, prNumber: 42 });
     expect(h.mechanicalResolverDirs).toEqual([RWT]);
     expect(h.agentResolverDirs).toEqual([RWT]);
     expect(h.postMergeGateDirs).toEqual([RWT]);

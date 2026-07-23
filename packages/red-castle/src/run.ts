@@ -380,7 +380,11 @@ const buildVerboseRawLineSink = (
         const payload = toonl
           ? (existsSync(logPath) ? "" : `${FILE_LOG_TOONL_HEADER}\n`) +
             encodeLines()
-              .push({ at: new Date().toISOString(), kind: "verbose", msg: line })
+              .push({
+                at: new Date().toISOString(),
+                kind: "verbose",
+                msg: line,
+              })
               .split("\n")
               .slice(1)
               .join("\n")
@@ -423,6 +427,11 @@ export interface RunOptions<A extends AgentProvider = AgentProvider> {
    * - Defaults to `process.cwd()` when omitted.
    */
   readonly cwd?: string;
+  /**
+   * Explicit host path for branch-strategy worktrees. Relative paths resolve
+   * from `cwd`. Omitted callers retain `.red-castle/worktrees/<name>`.
+   */
+  readonly worktreePath?: string;
   /** Inline prompt string (mutually exclusive with promptFile) */
   readonly prompt?: string;
   /**
@@ -779,6 +788,9 @@ export async function run(
       Layer.succeed(SandboxConfig, {
         env,
         hostRepoDir,
+        worktreePath: options.worktreePath
+          ? path.resolve(hostRepoDir, options.worktreePath)
+          : undefined,
         copyToWorktree: options.copyToWorktree,
         name: options.name,
         sandboxProvider: options.sandbox,
@@ -860,7 +872,9 @@ export async function run(
       signal: options.signal,
       skipPromptExpansion: isInlinePrompt,
       timeouts: options.timeouts,
-      ...(options.steerProvider ? { steerProvider: options.steerProvider } : {}),
+      ...(options.steerProvider
+        ? { steerProvider: options.steerProvider }
+        : {}),
     });
 
     const completion = buildCompletionMessage(

@@ -4,7 +4,7 @@ This file serves the `afk monitor` branch: the readonly aggregated dashboard
 across all live workers, the native-task mirror and its self-cancel teardown, and
 the Codex monitor agent. Reached from *When To Use* (`/afk monitor`).
 
-## Observability reads come from the `dev:afk` MCP
+## Observability reads come from the `castle` MCP
 
 **Every observability verb is a read tool — free to call, and never a reason to
 touch a mutating one.** The tools return structured TOON; the bundle's `monitor`

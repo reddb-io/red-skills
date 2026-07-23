@@ -1,7 +1,7 @@
 import type { z } from "zod/v3";
 
 /**
- * One published dev:afk MCP tool. A description starting with `MUTATING:` is
+ * One published castle MCP tool. A description starting with `MUTATING:` is
  * the declared mutation mode — the client docs contract reads that prefix.
  *
  * `dangerClass` marks tools that the posture gate intercepts.  Domain modules

@@ -29,7 +29,7 @@ function documentedTools(doc: string): DocumentedTool[] {
 }
 
 describe("castle MCP client docs contract", () => {
-  it("documents every dev:afk MCP tool exactly once in MCP.md", async () => {
+  it("documents every castle MCP tool exactly once in MCP.md", async () => {
     const doc = await readRepoFile(MCP_DOC);
     const documented = documentedTools(doc).map((entry) => entry.name);
 
@@ -49,15 +49,15 @@ describe("castle MCP client docs contract", () => {
   it("names the server, the host prefix rule, and the CLI fallback", async () => {
     const doc = await readRepoFile(MCP_DOC);
 
-    expect(doc).toContain("dev:afk");
+    expect(doc).toContain("`castle` MCP");
     expect(doc).toContain("mcp__");
     expect(doc).toContain("red-skills-dev");
   });
 
-  it("makes /afk drive the castle through the dev:afk MCP tools", async () => {
+  it("makes /afk drive the castle through the castle MCP tools", async () => {
     const skill = await readRepoFile(`${AFK}/SKILL.md`);
 
-    expect(skill).toContain("dev:afk");
+    expect(skill).toContain("`castle` MCP");
     expect(skill).toContain("[`MCP.md`](./MCP.md)");
     for (const tool of ["queue_status", "worker_dispatch", "fleet_status", "monitor"]) {
       expect(skill, `/afk should route through ${tool}`).toContain(`\`${tool}\``);
@@ -67,7 +67,7 @@ describe("castle MCP client docs contract", () => {
   it("makes /go dispatch through the same MCP surface", async () => {
     const skill = await readRepoFile("plugins/dev/skills/engineering/go/SKILL.md");
 
-    expect(skill).toContain("dev:afk");
+    expect(skill).toContain("`castle` MCP");
     expect(skill).toContain("../afk/MCP.md");
     expect(skill).toContain("`worker_dispatch`");
   });
@@ -86,10 +86,10 @@ describe("castle MCP client docs contract", () => {
     }
   });
 
-  it("keeps the ask-red router pointing at the dev:afk MCP", async () => {
+  it("keeps the ask-red router pointing at the castle MCP", async () => {
     const askRed = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
 
-    expect(askRed).toContain("dev:afk");
+    expect(askRed).toContain("`castle` MCP");
     expect(askRed).toContain(MCP_DOC);
   });
 

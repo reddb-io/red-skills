@@ -142,21 +142,18 @@ export function buildNoLeakCommitMsgHook(): HostHookCommand {
  * Record the real worktree path so the heartbeat's loc diff targets it directly.
  *
  * `onWorktreeReady` runs ON THE HOST with cwd = the worktree the castle just
- * created (`{attemptDir}/.red-castle/worktrees/{slug}`), so its `pwd` is the
- * ground-truth absolute worktree path. We write it into the attempt dir (three
- * levels up: slug → worktrees → .red-castle → attemptDir) as `.worktree-path`.
+ * created (`{workerWorkspace}/worktree`), so its `pwd` is the ground-truth
+ * absolute worktree path. We write it into the parent worker workspace as
+ * `.worktree-path`.
  *
  * The heartbeat reads that file instead of RECONSTRUCTING the worktree from
  * `attemptDir` — reconstruction (`git worktree list` on the primary + a
- * filesystem probe) proved to return the dead legacy `{attemptDir}/worktree`
- * path at runtime for red-castle mirror-owned worktrees, so every codex tick
- * read a permanent `+0 -0`. Per ADR 0103 the castle owns the worktree (keyed
- * `workerId-issueId`, no attempt level); having it publish its own path is the
- * single source of truth. Best-effort: a write failure just leaves the heartbeat
- * on its reconstruction fallback.
+ * filesystem probe) proved unreliable for mirror-owned worktrees; having castle
+ * publish its own path remains the single source of truth. Best-effort: a write
+ * failure leaves the heartbeat on its conventional-path fallback.
  */
 export function buildWorktreePathCaptureHook(): HostHookCommand {
-  return { command: `sh -c 'pwd > ../../../.worktree-path 2>/dev/null || true'` };
+  return { command: `sh -c 'pwd > ../.worktree-path 2>/dev/null || true'` };
 }
 
 /** POSIX single-quote escaping: wrap in single quotes, replacing each embedded

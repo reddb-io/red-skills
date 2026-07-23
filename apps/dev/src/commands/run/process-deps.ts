@@ -31,7 +31,6 @@ import {
   collectMonitorInputs,
   buildBootDeps,
   buildMinimalBootDeps,
-  makeRunAgent,
   resolveRepoContext,
   resolveRunSettings,
   type RepoContext,
@@ -64,6 +63,7 @@ import { resolveSandboxImageName } from "../../core/execution/sandbox-image.js";
 import { parseTrustPolicy, resolveActorTrust } from "../../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../../core/output-shaping.js";
+import { buildHandoffEnrichment } from "../../core/handoff-enrichment.js";
 import {
   classifyIssue,
   resolveReviewGate,
@@ -101,6 +101,7 @@ import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-s
 import { buildProgressHeartbeat, formatIterationMarker } from "../../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath, type LocMemo } from "../../core/loc-memo.js";
 import { createActivityMeter } from "../../core/activity-meter.js";
+import { resolveImplementerPluginRoots } from "../../runtime/implementer-environment.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
@@ -108,6 +109,7 @@ import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core
 import { renderClaimComment } from "../../core/claim.js";
 
 import { deriveActivity } from "./activity.js";
+import { makeImplementerRunAgent } from "./implementer-run-agent.js";
 import { makeAgentConflictResolver, makeMechanicalConflictResolver } from "./reconcile.js";
 import {
   castleWorktreeUnder,
@@ -172,6 +174,16 @@ export function buildProcessDeps(
 
   // ---- lifecycle hooks: load config + resolve built-in defaults + real exec ----
   const config = loadConfig(paths.configPath, { warn: () => undefined });
+  let configText = "";
+  try {
+    configText = readFileSync(paths.configPath, "utf8");
+  } catch {
+    // The strict activation gate stays closed when config is absent/unreadable.
+  }
+  const implementerPluginRoots = resolveImplementerPluginRoots({
+    repoRoot: ctx.root,
+    env: process.env,
+  });
   // Trust policy for the guidance-channel source-trust projection (issue #1100).
   const trustPolicy = parseTrustPolicy(config);
   // Repo-level container image for the isolation path (#2340) — resolved off the
@@ -420,14 +432,11 @@ export function buildProcessDeps(
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
     postAttemptFormat: feedback.postAttemptFormat,
     postAttemptFormatCommands: readPostAttemptFormat(config),
-    // Inject the worker's steer-file path so the live-steer MCP surface
-    // (runner_steer) can write a pending directive that the Orchestrator picks
-    // up between iterations without AFK knowing about the file at claim time.
-    runAgent: (() => {
-      const inner = makeRunAgent(sandbox, process.env, maxIterations, laneIdle, sandboxImage);
-      const steerFilePath = join(ctx.root, ".red", "tmp", "workers", workerId, "steer.toon");
-      return (input: Parameters<typeof inner>[0]) => inner({ ...input, steerFile: steerFilePath });
-    })(),
+    runAgent: makeImplementerRunAgent({
+      root: ctx.root, workerId, current, config, configText,
+      pluginRoots: implementerPluginRoots, castleBridge, sandbox,
+      maxIterations, laneIdle, sandboxImage,
+    }),
     sandboxMode: sandbox,
     sandboxAvailable: async (mode) => {
       const run = exec ?? execTool;
@@ -534,6 +543,20 @@ export function buildProcessDeps(
           return undefined;
         }
       },
+      handoffEnrichment: ({ issue: _issue, ...metadata }) =>
+        buildHandoffEnrichment(metadata, {
+          readText: (path) => readFile(join(ctx.root, path), "utf8"),
+          gitLog: async (paths) => {
+            if (paths.length === 0) return "";
+            const run = exec ?? execTool;
+            const result = await run(
+              "git",
+              ["log", "-n", "24", "--format=%H%x1f%s%x1f%b%x1e", "--", ...paths],
+              { cwd: ctx.root, timeoutMs: 5_000, maxBuffer: 512 * 1024 },
+            );
+            return result.code === 0 ? result.stdout : "";
+          },
+        }),
       changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
       diffstat: (branch, base) => gitx.diffstat(gitCtx, branch, base),
       // FIX E: confirm the sandcastle worker branch actually landed on the host
@@ -551,6 +574,42 @@ export function buildProcessDeps(
       // Branch-resume discovery (issue #2397): list all remote afk/* refs so the
       // lifecycle can detect a prior pushed branch and resume instead of rebuilding.
       discoverBranches: () => gitx.listRemoteBranches(gitCtx, "afk/"),
+      // Attempt-adoption sanity check (#2416): one cheap open-PR census before
+      // any agent run. The lifecycle owns exact body/head matching and adoption.
+      discoverOpenPullRequests: async () => {
+        const run = exec ?? execTool;
+        const result = await run(
+          "gh",
+          [
+            "pr",
+            "list",
+            "--repo",
+            ctx.repo,
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            "number,headRefName,body",
+          ],
+          { cwd: ctx.root },
+        );
+        if (result.code !== 0) return [];
+        try {
+          const rows = JSON.parse(result.stdout || "[]") as unknown;
+          if (!Array.isArray(rows)) return [];
+          return rows
+            .map((row) => row as { number?: unknown; headRefName?: unknown; body?: unknown })
+            .map((row) => ({
+              number: Number(row.number ?? 0),
+              headRefName: String(row.headRefName ?? ""),
+              body: typeof row.body === "string" ? row.body : undefined,
+            }))
+            .filter((row) => row.number > 0 && row.headRefName.length > 0);
+        } catch {
+          return [];
+        }
+      },
     },
     envelope: {
       git: gitx.gitExec(gitCtx),
@@ -737,14 +796,11 @@ export function buildProcessDeps(
       const lastProgressAt = new Date(info.lastProgressMs).toISOString();
       const head = info.head ?? "";
       void (async () => {
-        // The castle creates the agent's worktree at
-        // `{attemptDir}/.red-castle/worktrees/{slug}` (keyed workerId-issueId,
-        // ADR 0103 — no attempt level), NOT the legacy `{attemptDir}/worktree`
-        // the state seeds. Source of truth = the path the castle RECORDS from its
+        // The castle creates the agent's worktree at the conventional direct
+        // `{workerWorkspace}/worktree` child. Source of truth = the path it records from its
         // `onWorktreeReady` hook (its `pwd` in the real worktree); reconstructing
-        // it from `attemptDir` (a `git worktree list` probe on the primary + a
-        // filesystem walk) returned the dead legacy path at runtime for
-        // mirror-owned worktrees, so every codex tick read a permanent `+0 -0`.
+        // it from the primary's worktree registry is unreliable for mirror-owned
+        // worktrees, so every codex tick once read a permanent `+0 -0`.
         // The probe/legacy fallbacks stay only for the window before the hook
         // runs. Persist the resolved path into `current.worktree` so the monitor
         // (which reads that field for its own diffstat) gets the live path too.

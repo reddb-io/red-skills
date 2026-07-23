@@ -42,6 +42,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     circuitWindowS: 90,
     stallThresholdS: 30,
     stallKillThresholdS: 90,
+    issueWallClockMaxS: 2700,
     runner: "claude",
     pollIntervalS: 15,
     eventFallbackS: 60,

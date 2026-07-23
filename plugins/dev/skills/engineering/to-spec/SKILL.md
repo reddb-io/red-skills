@@ -91,6 +91,14 @@ A list of testing decisions that were made. Include:
 - Which seams or modules will be tested
 - Prior art for the tests (i.e. similar types of tests in the codebase)
 
+## Acceptance Criteria
+
+machine-checkable criteria that downstream `/to-tickets` children can inherit or specialize. Every item must name a verifiable artifact: a test, command, fixture, or pinned observable behavior.
+
+- [ ] Running `<focused command>` passes for the shipped behavior.
+- [ ] The failing fixture or reproduction demonstrates the behavior before the implementation.
+- [ ] The pinned observable behavior remains true after re-running the command or workflow.
+
 ## Out of Scope
 
 A description of the things that are out of scope for this Spec.

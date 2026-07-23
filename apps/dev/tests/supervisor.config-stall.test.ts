@@ -35,6 +35,7 @@ import {
   slotLogDir,
   slotLogPath,
   stalledVerdict,
+  wallClockVerdict,
   aliveVerdict,
   config,
   liveness,
@@ -54,6 +55,8 @@ import type {
   LivenessVerdict,
   FakeIo,
 } from "./supervisor-test-helpers.js";
+import type { FleetHookContext, FleetHookDispatchResult } from "../src/core/fleet-hook-dispatcher.js";
+import type { FleetHookName } from "../src/core/fleet-hook-config.js";
 
 describe("validateStallThresholds", () => {
   it("passes when KILL > STALL", () => {
@@ -324,6 +327,24 @@ describe("resolveSupervisorConfig", () => {
     expect(c.progressStaleS).toBe(900);
   });
 
+  it("resolves the per-issue wall-clock ceiling from env, then config, then default (#2286)", () => {
+    // Generous default (45 min) — a runaway backstop, not a pace-setter.
+    expect(resolveSupervisorConfig({}).issueWallClockMaxS).toBe(2700);
+    expect(resolveSupervisorConfig({ RED_AFK_ISSUE_WALL_CLOCK_MAX_S: "3600" }).issueWallClockMaxS).toBe(3600);
+    expect(
+      resolveSupervisorConfig({}, (key) => (key === "afk.issue_wall_clock_max_s" ? "1800" : "")).issueWallClockMaxS,
+    ).toBe(1800);
+    // env wins over config.
+    expect(
+      resolveSupervisorConfig({ RED_AFK_ISSUE_WALL_CLOCK_MAX_S: "3600" }, (key) =>
+        key === "afk.issue_wall_clock_max_s" ? "1800" : "",
+      ).issueWallClockMaxS,
+    ).toBe(3600);
+    // 0 / garbage would reap on claim — floor back to the default.
+    expect(resolveSupervisorConfig({ RED_AFK_ISSUE_WALL_CLOCK_MAX_S: "0" }).issueWallClockMaxS).toBe(2700);
+    expect(resolveSupervisorConfig({ RED_AFK_ISSUE_WALL_CLOCK_MAX_S: "bad" }).issueWallClockMaxS).toBe(2700);
+  });
+
   it("resolves the drain USD budget from env or config and rejects typo values", () => {
     expect(resolveSupervisorConfig({}).drainBudgetUsd).toBeUndefined();
     expect(resolveSupervisorConfig({ RED_AFK_DRAIN_MAX_COST_USD: "12.50" }).drainBudgetUsd).toBe(12.5);
@@ -489,6 +510,26 @@ describe("recordDeath", () => {
 });
 
 describe("circuit trip and sweep", () => {
+  it("parks a fatal host-config death without retrying or feeding the fast-death circuit", async () => {
+    const { deps, io } = makeDeps();
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.deaths = [NOW - 40, NOW - 30, NOW - 20, NOW - 10];
+    slot.spawnEpoch = NOW - 5;
+    io.lastExitCode.mockReturnValue(78);
+
+    const { parked } = await handleDeadSlot(0, slot, deps, config());
+
+    expect(parked).toBe(true);
+    expect(slot.parked).toBe(true);
+    expect(slot.fatalReason).toBe("host-config");
+    expect(slot.deaths).toEqual([NOW - 40, NOW - 30, NOW - 20, NOW - 10]);
+    expect(slot.swept).toBe(false);
+    expect(io.spawnSlot).not.toHaveBeenCalled();
+    expect(io.parkedSlotWork).not.toHaveBeenCalled();
+    expect(io.logLines).toContainEqual(expect.stringContaining("fatal host configuration"));
+  });
+
   it("trips after K fast deaths, parks the slot, and runs the trip sweep", async () => {
     const { deps, io } = makeDeps({
       parkedSlotWork: vi.fn(
@@ -716,7 +757,89 @@ describe("pollStallDetector reaper gating", () => {
       0,
       cfg.stallThresholdS * 1000,
       cfg.stallKillThresholdS * 1000,
+      cfg.issueWallClockMaxS * 1000,
     );
+  });
+
+  it("forwards the per-issue wall-clock ceiling to the liveness verdict (#2286 wiring)", async () => {
+    // Wiring lock: issueWallClockMaxMs must arrive as issueWallClockMaxS * 1000.
+    // A refactor that drops the 4th arg silently disables the age-based ceiling.
+    const verdict = vi.fn((): LivenessVerdict => stalledVerdict(120));
+    const { deps } = makeDeps({
+      workerLivenessVerdict: verdict,
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "vitest", cpu: 0 }]),
+    });
+    const cfg = config({ issueWallClockMaxS: 1800 });
+
+    await pollStallDetector(stalledState(), deps, cfg);
+
+    expect(verdict).toHaveBeenCalledWith(0, cfg.stallThresholdS * 1000, cfg.stallKillThresholdS * 1000, 1_800_000);
+  });
+
+  it("reaps a wall-clock-exceeded slot on the SAME tick it is first flagged (#2286)", async () => {
+    // The ceiling is its own deadline: the attempt already spent its budget, so
+    // the reaper must not wait out a second, silence-shaped countdown it would
+    // never accumulate behind a fresh lane. The kill still goes through
+    // decideReaperSignal + the on_stall_reap gate.
+    const dispatchFleetHook = vi.fn(
+      async (_name: FleetHookName, _context: FleetHookContext): Promise<FleetHookDispatchResult> => ({
+        aborted: false,
+        vetoed: false,
+        executions: [],
+      }),
+    );
+    const { deps, io } = makeDeps({
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => wallClockVerdict(3_000)),
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
+      resolveIterDir: vi.fn(
+        (): IterDirInfo => ({
+          path: "/w/wTEST/190-a1",
+          issue: 190,
+          workerId: "wTEST",
+          branch: "afk/wTEST/190-some-work",
+          logTail: "[afk] inner: still editing, never converging",
+          notes: "",
+          durationS: 3000,
+          attempt: 1,
+        }),
+      ),
+      attemptBranchHead: vi.fn(async () => "aaa111"),
+    });
+    deps.dispatchFleetHook = dispatchFleetHook;
+    // Never previously flagged: the ceiling fires on first detection.
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = 4242;
+    slot.spawnEpoch = NOW - 3_000;
+
+    const reaped = await pollStallDetector(state, deps, config());
+
+    expect(reaped).toEqual([0]);
+    expect(io.killTree).toHaveBeenCalledWith(4242);
+    expect(dispatchFleetHook.mock.calls.map((call) => call[0])).toContain("on_stall_reap");
+  });
+
+  it("honours an on_stall_reap veto for a wall-clock-exceeded slot (#2286)", async () => {
+    const { deps, io } = makeDeps({
+      workerLivenessVerdict: vi.fn((): LivenessVerdict => wallClockVerdict(3_000)),
+      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
+    });
+    deps.dispatchFleetHook = vi.fn(
+      async (name: FleetHookName, _context: FleetHookContext): Promise<FleetHookDispatchResult> => ({
+        aborted: false,
+        vetoed: name === "on_stall_reap",
+        executions: [],
+      }),
+    );
+    const state = initSupervisorState(1);
+    const slot = state.slots[0]!;
+    slot.pid = 4242;
+    slot.spawnEpoch = NOW - 3_000;
+
+    const reaped = await pollStallDetector(state, deps, config());
+
+    expect(reaped).toEqual([]);
+    expect(io.killTree).not.toHaveBeenCalled();
   });
 
   it("retries a genuinely-stalled slot UNDER the cap (kill + envelope + CLEAN re-queue)", async () => {

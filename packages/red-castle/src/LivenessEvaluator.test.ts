@@ -178,6 +178,99 @@ describe("evaluateLiveness — hard-silence backstop (#2203)", () => {
   });
 });
 
+describe("evaluateLiveness — issue wall-clock ceiling (#2286)", () => {
+  it("fresh lane + live descendants but age past the ceiling → stalled", () => {
+    // Activity-independence: neither a fresh lane nor a live agent tree may
+    // veto the per-issue wall-clock ceiling. The descendant probe is not even
+    // consulted, because activity is irrelevant to an age-based cap.
+    let probed = false;
+    const verdict = evaluateLiveness({
+      laneRecencyMs: 1_999_000,
+      now: 2_000_000, // laneAgeMs = 1_000ms → lane fresh
+      laneIdleMs: 5_000,
+      issueClaimedAtMs: 0, // claimed 2_000_000ms ago
+      issueWallClockMaxMs: 1_800_000, // 30 min
+      crossCheckArmed: true,
+      hasLiveDescendants: () => {
+        probed = true;
+        return true;
+      },
+    });
+    expect(verdict.status).toBe("stalled");
+    expect(verdict.laneFresh).toBe(true);
+    expect(verdict.wallClockExceeded).toBe(true);
+    expect(verdict.issueAgeMs).toBe(2_000_000);
+    expect(probed).toBe(false);
+  });
+
+  it("uses a reason distinct from the silence-based caps", () => {
+    const wallClock = evaluateLiveness({
+      laneRecencyMs: 1_999_000,
+      now: 2_000_000,
+      laneIdleMs: 5_000,
+      issueClaimedAtMs: 0,
+      issueWallClockMaxMs: 1_800_000,
+      crossCheckArmed: true,
+    });
+    const hardSilence = evaluateLiveness({
+      laneRecencyMs: 1_000,
+      now: 2_000_000,
+      laneIdleMs: 5_000,
+      laneHardIdleMs: 1_800_000,
+      crossCheckArmed: true,
+    });
+    expect(wallClock.reason).toContain("issue wall-clock ceiling");
+    expect(wallClock.reason).not.toContain("hard-silence");
+    expect(hardSilence.reason).not.toContain("issue wall-clock ceiling");
+  });
+
+  it("fires under a disarmed cross-check too (container past the ceiling)", () => {
+    const verdict = evaluateLiveness({
+      laneRecencyMs: 1_999_000,
+      now: 2_000_000,
+      laneIdleMs: 5_000,
+      issueClaimedAtMs: 0,
+      issueWallClockMaxMs: 1_800_000,
+      crossCheckArmed: false,
+    });
+    expect(verdict.status).toBe("stalled");
+    expect(verdict.wallClockExceeded).toBe(true);
+  });
+
+  it("does not fire under the ceiling — a fresh lane still reads alive", () => {
+    const verdict = evaluateLiveness({
+      laneRecencyMs: 999_000,
+      now: 1_000_000,
+      laneIdleMs: 5_000,
+      issueClaimedAtMs: 0, // 1_000_000ms old, under the 30-min ceiling
+      issueWallClockMaxMs: 1_800_000,
+      crossCheckArmed: true,
+    });
+    expect(verdict.status).toBe("alive");
+    expect(verdict.wallClockExceeded).toBeUndefined();
+    expect(verdict.issueAgeMs).toBeUndefined();
+  });
+
+  it("an unset ceiling or unknown claim epoch disables the cap", () => {
+    const noCeiling = evaluateLiveness({
+      laneRecencyMs: 1_999_000,
+      now: 2_000_000,
+      laneIdleMs: 5_000,
+      issueClaimedAtMs: 0,
+      crossCheckArmed: true,
+    });
+    const noClaimEpoch = evaluateLiveness({
+      laneRecencyMs: 1_999_000,
+      now: 2_000_000,
+      laneIdleMs: 5_000,
+      issueWallClockMaxMs: 1_800_000,
+      crossCheckArmed: true,
+    });
+    expect(noCeiling.status).toBe("alive");
+    expect(noClaimEpoch.status).toBe("alive");
+  });
+});
+
 describe("evaluateLiveness — lane idle, cross-check disarmed (container)", () => {
   it("cannot corroborate without the host tree → unknown, probe never called", () => {
     let probed = false;

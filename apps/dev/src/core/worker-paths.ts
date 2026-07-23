@@ -86,6 +86,50 @@ export function parseWorkerAttemptPath(path: string): WorkerAttemptIdentity | nu
   return { worker, issue: Number(issue), attempt: 1 };
 }
 
+/** The git worktree for a new worker, colocated directly inside its workspace. */
+export function buildWorkerWorktreePath(
+  root: string,
+  worker: string,
+  issueValue: string | number,
+  attemptValue: string | number,
+): string {
+  return `${buildWorkerAttemptPath(root, worker, issueValue, attemptValue)}/worktree`;
+}
+
+/**
+ * Strict reader for the current worker-worktree grammar. Castle-branded nested
+ * paths deliberately do not match; only hygiene sweeps retain that legacy
+ * knowledge through {@link parseReapableWorkerWorktreePath}.
+ */
+export function parseWorkerWorktreePath(path: string): WorkerAttemptIdentity | null {
+  if (!path) return null;
+  const normalized = path.replace(/\/$/, "");
+  const match = normalized.match(
+    /(?:^|\/)(?:workers|go-workers|scout-workers)\/([^/]+)\/([1-9][0-9]*)\/worktree$/,
+  );
+  if (!match) return null;
+  const [, worker, issue] = match;
+  if (!isValidWorkerId(worker)) return null;
+  return { worker, issue: Number(issue), attempt: 1 };
+}
+
+/**
+ * HYGIENE-ONLY worktree parser. Accepts the current `{issue}/worktree` path
+ * plus castle-branded nested paths (including pre-ADR-0103 attempt suffixes)
+ * so a mixed live fleet never introduces an orphan class during rollout.
+ */
+export function parseReapableWorkerWorktreePath(path: string): WorkerAttemptIdentity | null {
+  if (!path) return null;
+  const normalized = path.replace(/\/$/, "");
+  const match = normalized.match(
+    /(?:^|\/)(?:workers|go-workers|scout-workers)\/([^/]+)\/([1-9][0-9]*)(?:-a([1-9][0-9]*))?\/(?:worktree|\.red-castle\/worktrees\/[^/]+)$/,
+  );
+  if (!match) return null;
+  const [, worker, issue, attempt] = match;
+  if (!isValidWorkerId(worker)) return null;
+  return { worker, issue: Number(issue), attempt: attempt ? Number(attempt) : 1 };
+}
+
 /**
  * HYGIENE-ONLY parser: accepts BOTH the flat `{issue}` grammar and the retired
  * legacy `{issue}-a{n}` grammar. Sweeps (orphan/cap reaps) must keep seeing

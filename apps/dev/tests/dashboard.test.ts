@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decode } from "@reddb-io/toon";
 import {
+  aggregateImplementerRuntimeMetrics,
   buildDashboardReport,
   parseDueDate,
   renderDashboardReport,
@@ -20,6 +21,29 @@ const issue = (over: Partial<DashboardIssue>): DashboardIssue => ({
 });
 
 describe("dashboard report", () => {
+  it("aggregates per-run implementer deltas for the throughput reader", () => {
+    expect(
+      aggregateImplementerRuntimeMetrics([
+        {
+          runner_startup_before_ms: 900,
+          runner_startup_after_ms: 500,
+          skill_manifest_before_bytes: 4000,
+          skill_manifest_after_bytes: 1000,
+        },
+        {
+          runner_startup_before_ms: 700,
+          runner_startup_after_ms: 400,
+          skill_manifest_before_bytes: 3000,
+          skill_manifest_after_bytes: 900,
+        },
+      ]),
+    ).toEqual({
+      samples: 2,
+      runner_startup_ms: { before: 800, after: 450, delta: -350 },
+      skill_manifest_bytes: { before: 3500, after: 950, delta: -2550 },
+    });
+  });
+
   it("counts operational issue states, local workers, and due-date buckets", () => {
     const report = buildDashboardReport({
       now: new Date("2026-06-05T12:00:00Z"),
@@ -116,7 +140,16 @@ describe("dashboard report", () => {
     const report = buildDashboardReport({
       now: new Date("2026-06-05T12:00:00Z"),
       periodDays: 7,
-      localWorkers: { live: 0, stale: 0, total: 0 },
+      localWorkers: {
+        live: 1,
+        stale: 0,
+        total: 1,
+        implementer_runtime: {
+          samples: 1,
+          runner_startup_ms: { before: 840, after: 510, delta: -330 },
+          skill_manifest_bytes: { before: 4200, after: 1300, delta: -2900 },
+        },
+      },
       issues: [],
       pullRequests: [],
       releases: [],
@@ -124,6 +157,9 @@ describe("dashboard report", () => {
     const text = renderDashboardReport(report);
     expect(text).toContain("RedSkills dashboard (7d)");
     expect(text).toContain("Operations");
+    expect(text).toContain("implementer runtime samples: 1");
+    expect(text).toContain("runner startup: 840ms → 510ms (-330ms)");
+    expect(text).toContain("skill manifest: 4200B → 1300B (-2900B)");
     expect(text).toContain("DORA proxies");
   });
 

@@ -79,10 +79,15 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("confirm each");
   });
 
-  it("audits required host binaries read-only with red-setup as the fix-home", async () => {
+  it("audits the host toolchain read-only and documents gated fixes", async () => {
     const skill = await readDoctorSkill();
 
-    expect(skill).toContain("Required host binaries");
+    expect(skill).toContain("Host toolchain");
+    expect(skill).toContain("gh >= 2.47.0");
+    expect(skill).toContain("asdf");
+    expect(skill).toContain("apt");
+    expect(skill).toContain("brew");
+    expect(skill).toContain("direct binary");
     expect(skill).toContain("TQ_VERSION");
     expect(skill).toContain("Absence or version drift is a red finding");
     expect(skill).toContain("catalog-derived pin, recorded config pin, and observed `tq --version`");
@@ -90,11 +95,14 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("names all three values");
     expect(skill).toContain("apps/dev/src/core/host-binary-doctor.ts");
     expect(skill).toContain("never run installer scripts during Pass 1");
-    expect(skill).toContain("Required host binaries");
+    expect(skill).toContain("never execute an upgrade or installer during Pass 1");
 
     const apply = await readDoctorApply();
-    expect(apply).toContain("Required host binaries `❌` (check 18)");
-    expect(apply).toContain("delegate to `/red-setup`");
+    expect(apply).toContain("Host toolchain `❌` (check 18)");
+    expect(apply).toContain("asdf install github-cli latest && asdf global github-cli latest && asdf reshim github-cli");
+    expect(apply).toContain("apt, brew, and direct-binary gh remedies remain printed instructions");
+    expect(apply).toContain("install pinned `tq` with the canonical checksum-verified toon installer");
+    expect(apply).toContain("confirm each");
   });
 
   it("validates AFK hook/backpressure commands statically and never executes them", async () => {
@@ -242,6 +250,21 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("delegate to the dev durable path migration entrypoint");
     expect(apply).toContain("red-path-migration");
     expect(apply).toContain("Never hand-delete `.red/state/afk/`");
+  });
+
+  it("reports executable ticket acceptance-criteria lint read-only with triage as the fix-home", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Executable ticket acceptance-criteria lint");
+    expect(skill).toContain("ready-for-agent");
+    expect(skill).toContain("machine-checkable acceptance criteria");
+    expect(skill).toContain("apps/dev/src/core/executable-acceptance.ts");
+    expect(skill).toContain("never edit labels and never post comments");
+    expect(skill).toContain("executable ticket acceptance-criteria lint (check 23)");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Executable ticket acceptance-criteria lint (check 23)");
+    expect(apply).toContain("delegate to `/triage`");
   });
 
   it("documents the operational probe families, fix authority, and fleet boot refusal", async () => {

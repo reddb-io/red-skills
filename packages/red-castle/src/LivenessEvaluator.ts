@@ -55,6 +55,13 @@ export interface LivenessVerdict {
    * **and** consulted (i.e. the lane was not fresh); absent otherwise.
    */
   readonly liveDescendants?: boolean;
+  /**
+   * Age (ms) since the attempt claimed its issue. Present only when the
+   * wall-clock ceiling (#2286) fired; absent otherwise.
+   */
+  readonly issueAgeMs?: number;
+  /** True when the verdict was decided by the wall-clock ceiling (#2286). */
+  readonly wallClockExceeded?: boolean;
   /** Human-readable explanation of how the status was reached. */
   readonly reason: string;
 }
@@ -86,6 +93,21 @@ export interface EvaluateLivenessInput {
    * be well above `laneIdleMs`.
    */
   readonly laneHardIdleMs?: number;
+  /**
+   * Epoch-ms at which this attempt claimed its issue. Feeds the wall-clock
+   * ceiling below; `undefined` (claim epoch unknown) disables the ceiling.
+   */
+  readonly issueClaimedAtMs?: number;
+  /**
+   * Activity-independent wall-clock-per-issue ceiling (#2286) — the age-based
+   * twin of `laneHardIdleMs`. Once the attempt has held its issue for at least
+   * this many ms, the verdict is `stalled` no matter how alive it looks: an
+   * attempt that keeps its lane fresh and its tree busy while never converging
+   * (a retry loop, a self-feeding edit/test cycle) is invisible to every
+   * silence-based cap, yet still holds a slot forever. `undefined` disables the
+   * ceiling.
+   */
+  readonly issueWallClockMaxMs?: number;
 }
 
 /**
@@ -105,6 +127,30 @@ export function evaluateLiveness(
   const laneAgeMs =
     laneRecencyMs === undefined ? undefined : Math.max(0, now - laneRecencyMs);
   const laneFresh = laneAgeMs !== undefined && laneAgeMs <= laneIdleMs;
+
+  // Wall-clock-per-issue ceiling (#2286): age since claim, evaluated FIRST so
+  // no activity signal can veto it. Lane freshness and live descendants both
+  // measure *activity*, and the failure this catches is a busy attempt that
+  // never converges — it stays fresh and stays alive while holding a slot
+  // forever. The reaper still gates the irreversible kill behind
+  // decideReaperSignal + the on_stall_reap hook.
+  if (
+    input.issueWallClockMaxMs !== undefined &&
+    input.issueClaimedAtMs !== undefined
+  ) {
+    const issueAgeMs = Math.max(0, now - input.issueClaimedAtMs);
+    if (issueAgeMs >= input.issueWallClockMaxMs) {
+      return {
+        status: "stalled",
+        laneFresh,
+        laneAgeMs,
+        crossCheckArmed,
+        issueAgeMs,
+        wallClockExceeded: true,
+        reason: `issue wall-clock ceiling exceeded (${issueAgeMs}ms >= ${input.issueWallClockMaxMs}ms since claim) — activity-independent`,
+      };
+    }
+  }
 
   if (laneFresh) {
     return {

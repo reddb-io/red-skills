@@ -282,7 +282,10 @@ export async function resolveReapContest(
 export async function pollStallDetector(
   state: SupervisorState,
   deps: SupervisorDeps,
-  config: Pick<SupervisorConfig, "stallThresholdS" | "stallKillThresholdS" | "runner" | "reapContestWindowS">,
+  config: Pick<
+    SupervisorConfig,
+    "stallThresholdS" | "stallKillThresholdS" | "runner" | "reapContestWindowS" | "issueWallClockMaxS"
+  >,
 ): Promise<number[]> {
   const now = deps.now();
   const reaped: number[] = [];
@@ -300,6 +303,7 @@ export async function pollStallDetector(
       i,
       config.stallThresholdS * 1000,
       config.stallKillThresholdS * 1000,
+      config.issueWallClockMaxS * 1000,
     );
     const flagged = verdict !== null && verdict.status === "stalled";
 
@@ -308,8 +312,13 @@ export async function pollStallDetector(
         slot.stalled = true;
         // Anchor the stall window to the last observed lane activity. When the
         // lane record age is known, compute the epoch; otherwise anchor to now.
-        const stallSince =
-          verdict.laneAgeMs !== undefined
+        // The wall-clock ceiling (#2286) is its own deadline — the attempt has
+        // ALREADY exceeded its budget — so it anchors the window to the kill
+        // threshold and escalates on this same tick instead of waiting out a
+        // second, silence-shaped countdown it would never accumulate.
+        const stallSince = verdict.wallClockExceeded
+          ? now - config.stallKillThresholdS
+          : verdict.laneAgeMs !== undefined
             ? now - Math.round(verdict.laneAgeMs / 1000)
             : now;
         slot.stallSinceEpoch = stallSince;

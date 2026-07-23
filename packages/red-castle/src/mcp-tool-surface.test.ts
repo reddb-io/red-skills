@@ -5,7 +5,7 @@ import {
 } from "./mcp-server.js";
 
 /**
- * Frozen snapshot of the aggregated dev:afk MCP tool surface.
+ * Frozen snapshot of the aggregated castle MCP tool surface.
  *
  * Domain modules may be split, merged, or reordered internally; this table is
  * the contract that the composed surface — order, names, titles, descriptions,
@@ -98,6 +98,13 @@ const SURFACE: ReadonlyArray<{
     title: "Read AFK queues",
     description: "Return ready-for-agent and ready-for-human queue candidates.",
     schema: [],
+  },
+  {
+    name: "events_since",
+    title: "Poll events since cursor",
+    description:
+      "Return castle history events and worker lane records after an opaque cursor, plus the next cursor. Omit cursor to get a fresh baseline cursor with no events. Unknown or expired cursors are refused with a re-baseline prompt.",
+    schema: ["cursor"],
   },
   {
     name: "worker_dispatch",
@@ -278,9 +285,16 @@ const SURFACE: ReadonlyArray<{
       "MUTATING: parse a /dev comment summon, authorize the commenter, and route the advisory or mutation verb.",
     schema: ["body", "number", "author", "is_pr", "runner", "repo"],
   },
+  {
+    name: "statusline_aggregate",
+    title: "Read statusline aggregate",
+    description:
+      "Return the castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) as structured data, using the same collector cores and cache discipline as the command-backed statusLine. Host-side fields (session model/effort, context %, usage quotas) are out of scope.",
+    schema: [],
+  },
 ];
 
-describe("aggregated dev:afk MCP tool surface", () => {
+describe("aggregated castle MCP tool surface", () => {
   const tools = createCastleMcpTools({} as CastleMcpDependencies);
 
   it("composes the frozen tool surface in order", () => {

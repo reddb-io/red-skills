@@ -169,6 +169,17 @@ describe("WorktreeManager.create", () => {
     expect(s.isDirectory()).toBe(true);
   });
 
+  it("creates a worktree at an explicit conventional workspace path", async () => {
+    const repoDir = await setupRepo();
+    const workspace = await mkdtemp(join(tmpdir(), "worker-workspace-"));
+    const worktreePath = join(workspace, "worktree");
+
+    const { path } = await run(create(repoDir, { path: worktreePath }));
+
+    expect(path).toBe(worktreePath);
+    expect((await stat(path)).isDirectory()).toBe(true);
+  });
+
   it("returns the branch name", async () => {
     const repoDir = await setupRepo();
     const { branch } = await run(create(repoDir));
@@ -724,6 +735,21 @@ describe("WorktreeManager.remove", () => {
       cwd: repoDir,
     });
     expect(stdout).not.toContain(path);
+  });
+
+  it("removes an explicit-path worktree through its owning repo", async () => {
+    const repoDir = await setupRepo();
+    const workspace = await mkdtemp(join(tmpdir(), "worker-workspace-"));
+    const worktreePath = join(workspace, "worktree");
+    await run(create(repoDir, { path: worktreePath }));
+
+    await run(remove(worktreePath, repoDir));
+
+    await expect(stat(worktreePath)).rejects.toThrow();
+    const { stdout } = await execAsync("git worktree list --porcelain", {
+      cwd: repoDir,
+    });
+    expect(stdout).not.toContain(worktreePath);
   });
 });
 

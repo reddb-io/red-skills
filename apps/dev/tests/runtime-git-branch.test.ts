@@ -311,44 +311,54 @@ describe("worktreePathForBranch", () => {
 });
 
 describe("worktreePathUnder (sandcastle-blind heartbeat fix)", () => {
-  // sandcastle registers its worktree under the attempt dir; the legacy
-  // `{attemptDir}/worktree` path the state seeds never exists.
+  // Castle registers the worktree at the conventional direct child.
   const porcelain = [
     "worktree /repo",
     "HEAD aaaaaaa",
     "branch refs/heads/main",
     "",
-    "worktree /repo/.red/tmp/workers/wQDOR/894-a1/.red-castle/worktrees/afk-wQDOR-894-x",
+    "worktree /repo/.red/tmp/workers/wQDOR/894/worktree",
     "HEAD bbbbbbb",
     "branch refs/heads/afk/wQDOR/894-x",
     "",
   ].join("\n");
 
-  it("resolves the real sandcastle worktree registered under the attempt dir", async () => {
+  it("resolves the conventional worktree registered under the worker workspace", async () => {
     const { exec, calls } = recordingExec(() => ok(porcelain));
     const ctx: GitContext = { cwd: "/repo", exec };
-    expect(await worktreePathUnder(ctx, "/repo/.red/tmp/workers/wQDOR/894-a1")).toBe(
-      "/repo/.red/tmp/workers/wQDOR/894-a1/.red-castle/worktrees/afk-wQDOR-894-x",
+    expect(await worktreePathUnder(ctx, "/repo/.red/tmp/workers/wQDOR/894")).toBe(
+      "/repo/.red/tmp/workers/wQDOR/894/worktree",
     );
     expect(calls[0]).toEqual(["git", "worktree", "list", "--porcelain"]);
   });
 
   it("tolerates a trailing slash on the prefix", async () => {
     const { exec } = recordingExec(() => ok(porcelain));
-    expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894-a1/")).toBe(
-      "/repo/.red/tmp/workers/wQDOR/894-a1/.red-castle/worktrees/afk-wQDOR-894-x",
+    expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894/")).toBe(
+      "/repo/.red/tmp/workers/wQDOR/894/worktree",
     );
   });
 
-  it("does not match a sibling attempt dir that only shares a prefix string", async () => {
-    // `894-a1` must not match `894-a10` (guards the `startsWith(prefix + '/')` form).
+  it("does not accept a castle-branded nested path through the normal reader", async () => {
+    const legacy = [
+      "worktree /repo/.red/tmp/workers/wQDOR/894/.red-castle/worktrees/afk-wQDOR-894-x",
+      "branch refs/heads/afk/wQDOR/894-x",
+      "",
+    ].join("\n");
+    const { exec } = recordingExec(() => ok(legacy));
+    expect(
+      await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894"),
+    ).toBeUndefined();
+  });
+
+  it("does not match a sibling workspace that only shares a prefix string", async () => {
     const { exec } = recordingExec(() => ok(porcelain));
-    expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894-a")).toBeUndefined();
+    expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/89")).toBeUndefined();
   });
 
   it("returns undefined when no worktree is registered under the prefix yet", async () => {
     const { exec } = recordingExec(() => ok("worktree /repo\nbranch refs/heads/main\n"));
-    expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894-a1")).toBeUndefined();
+    expect(await worktreePathUnder({ cwd: "/repo", exec }, "/repo/.red/tmp/workers/wQDOR/894")).toBeUndefined();
   });
 });
 

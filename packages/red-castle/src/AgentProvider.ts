@@ -897,6 +897,8 @@ export interface CodexOptions {
    * rather than the filesystem sandbox.
    */
   readonly approvalsReviewer?: "user" | "auto_review";
+  /** Per-invocation `-c key=value` overrides (for example plugin/skill gates). */
+  readonly configOverrides?: readonly string[];
 }
 
 export const codex = (
@@ -925,6 +927,9 @@ export const codex = (
       options?.approvalsReviewer === "auto_review"
         ? ` -a on-request -s danger-full-access -c ${shellEscape(`approvals_reviewer="auto_review"`)}`
         : " --dangerously-bypass-approvals-and-sandbox";
+    const configFlags = (options?.configOverrides ?? [])
+      .map((override) => ` -c ${shellEscape(override)}`)
+      .join("");
     // Codex distinguishes fork from resume at the verb level — `codex exec
     // fork <id>` leaves the parent rollout intact; `codex exec resume <id>`
     // appends to it. See ADR 0018.
@@ -938,7 +943,7 @@ export const codex = (
     }
     const stdinArg = resumeSession ? " -" : "";
     return {
-      command: `${base} --json${approvalsFlags} -m ${shellEscape(model)}${effortFlag}${stdinArg}`,
+      command: `${base} --json${approvalsFlags} -m ${shellEscape(model)}${effortFlag}${configFlags}${stdinArg}`,
       // codex has no system-prompt flag — prepend the contract to the stdin prompt.
       stdin: withSystemPrompt(systemPrompt, prompt),
     };
@@ -1441,6 +1446,10 @@ export interface ClaudeCodeOptions {
     | "auto"
     | "dontAsk"
     | "bypassPermissions";
+  /** Claude settings layers allowed for this invocation. */
+  readonly settingSources?: readonly ("user" | "project" | "local")[];
+  /** Explicit plugin directories loaded for this invocation only. */
+  readonly pluginDirs?: readonly string[];
 }
 
 export const claudeCode = (
@@ -1468,6 +1477,12 @@ export const claudeCode = (
         ? " --dangerously-skip-permissions"
         : "";
     const effortFlag = options?.effort ? ` --effort ${options.effort}` : "";
+    const settingSourcesFlag = options?.settingSources?.length
+      ? ` --setting-sources ${shellEscape(options.settingSources.join(","))}`
+      : "";
+    const pluginDirFlags = (options?.pluginDirs ?? [])
+      .map((dir) => ` --plugin-dir ${shellEscape(dir)}`)
+      .join("");
     // claude is the only runner with a per-invocation system-prompt flag — use
     // it so the contract is a real appended system prompt (kept out of the user
     // turn, cached separately) rather than prefixed into the prompt body.
@@ -1482,7 +1497,7 @@ export const claudeCode = (
     // resumed one. See ADR 0018.
     const forkFlag = resumeSession && forkSession ? " --fork-session" : "";
     return {
-      command: `claude --print --verbose${permissionFlag} --output-format stream-json --model ${shellEscape(model)}${effortFlag}${systemFlag}${resumeFlag}${forkFlag} -p -`,
+      command: `claude --print --verbose${permissionFlag} --output-format stream-json --model ${shellEscape(model)}${effortFlag}${settingSourcesFlag}${pluginDirFlags}${systemFlag}${resumeFlag}${forkFlag} -p -`,
       stdin: prompt,
     };
   },

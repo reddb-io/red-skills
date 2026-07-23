@@ -26,13 +26,18 @@ Live process artifacts live in tmp lanes:
 - `tmp/supervisors/<id>/`
 - `tmp/workers/<workerId>/`
 - `tmp/monitors/<id>/`
-- `tmp/workers/<workerId>/<issue>/.red-castle/worktrees/<branch-slug>/` — the
-  worker's git worktree. **Amended 2026-07-21:** the originally ratified
+- `tmp/workers/<workerId>/<issue>/worktree/` — the worker's git worktree.
+  **Amended 2026-07-21:** the originally ratified
   `tmp/worktrees/workers/<workerId>-<ticket>/` sub-lane was never materialised;
   the shipped engine anchors the worktree inside the worker's own workspace
   (the castle creates it at its `cwd`), which keeps every per-worker artifact
   under one reclaimable directory. This amendment ratifies the shipped
   behavior; the dead `workerWorktree` engine path builders were deleted.
+  **Re-amended 2026-07-22:** the castle-branded
+  `.red-castle/worktrees/<branch-slug>/` nesting violated the lane doctrine even
+  though its colocation was correct. New workers therefore use the conventional
+  direct `worktree/` child. Hygiene sweeps alone retain the nested grammar until
+  the live fleet and its TTL window age out; normal builders and readers do not.
 
 Human worktree lanes such as `manual`, `feedback`, `landing`, `rebase`,
 `cascade`, `adopt`, `reconcile`, and `docs` keep their homes under

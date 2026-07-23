@@ -67,8 +67,20 @@ import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, validateHookConfig, UnknownHookError, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
-import { runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
-import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
+import {
+  createEnginePaths,
+  readHostCapabilityProfile,
+  runCastleWorkerDrain,
+  type CastleSessionHookName,
+  type CastleWorkerDrainDeps,
+  type HostCapabilityProfile,
+} from "@reddb-io/red-castle/engine";
+import {
+  attemptLedgerContext,
+  formatAttemptContext,
+  highestAttempt,
+  type AttemptDirEntry,
+} from "../../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -98,6 +110,7 @@ import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
 import { renderClaimComment } from "../../core/claim.js";
+import { HOST_CONFIG_EXIT_CODE } from "../../core/attempt-outcome.js";
 
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
@@ -130,6 +143,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // canonical state or supervisor tmp lanes before this worker reads/writes supervisor/circuit state
   // (issue #1685). Idempotent + best-effort — a second boot is a no-op.
   await migrateLegacyDevPaths(cwd).catch(() => undefined);
+  const hostProfile = await readHostCapabilityProfile(
+    createEnginePaths(join(ctx.root, ".red")),
+  );
 
   // Boot guard (#1027): refuse to start if a fleet supervisor is already live.
   // Supervisor-dispatched paths bypass this: --reconcile-issue workers are
@@ -190,7 +206,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // runs the full sweep suite exactly as before.
   const sweepsDone = process.env.RED_AFK_SWEEPS_DONE === "1";
 
-  const sessionCtx: SessionContext = {
+  const sessionCtx: SessionContext & { hostProfile?: HostCapabilityProfile } = {
     runner,
     workerId,
     iterCap: flags.iterCap,
@@ -201,6 +217,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     // Reported by the --boot-only line so the dry-run states whether this worker
     // ran the sweeps or inherited them from the supervisor.
     sweepsSkipped: sweepsDone,
+    ...(hostProfile !== undefined ? { hostProfile } : {}),
     issueTemplate: {
       tmpDir: paths.tmpDir,
       repo: ctx.repo,
@@ -517,6 +534,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
   if (summary.runnerTransient) {
     process.stderr.write(`[afk] runner transport/setup failed — exiting 75 (EX_TEMPFAIL); rerun when the runner backend is healthy\n`);
     return 75;
+  }
+  if (summary.hostConfig) {
+    process.stderr.write(
+      `[afk] fatal host configuration — exiting ${HOST_CONFIG_EXIT_CODE} (EX_CONFIG); fix the required shell/workspace before restarting this worker\n`,
+    );
+    return HOST_CONFIG_EXIT_CODE;
   }
 
   // A targeted dispatch that attempted nothing is a failure, never a clean drain

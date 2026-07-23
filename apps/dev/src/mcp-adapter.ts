@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
@@ -19,6 +19,7 @@ import {
   upsertFleetProfile,
   RUNNER_SPECS,
   detectRunner,
+  type CastleLaneRecord,
   type FleetProfile,
 } from "@reddb-io/red-castle/engine";
 import type {
@@ -26,6 +27,7 @@ import type {
   CastleMcpDependencies,
   ClaimIssueInput,
   DailyReviewInput,
+  EventsSinceInput,
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
@@ -62,10 +64,16 @@ import { discoverLiveSupervisorPid } from "./runtime/supervisor-state.js";
 import {
   afkPaths,
   collectMonitorInputs,
+  collectStatuslineAfk,
+  collectStatuslineDocs,
+  collectStatuslineFleet,
+  collectStatuslineRepo,
+  inferGitHubRepoSlug,
   readFleetState,
   resolveRepoContext,
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
+import { resolveProject } from "./commands/statusline.js";
 import { stopCommand } from "./commands/stop.js";
 import { executeRequeue } from "./commands/requeue.js";
 import { retakeCommand } from "./commands/retake.js";
@@ -102,6 +110,12 @@ import { collectReapInputs } from "./runtime/wire/reap.js";
 import { activityReviewCommand } from "./commands/activity-review.js";
 import { triageCommand } from "./commands/triage.js";
 import { respondCommand } from "./commands/respond.js";
+import {
+  ResidentReadCache,
+  QUEUE_STATUS_KEY,
+  claimStatusKey,
+  cascadeStatusKey,
+} from "./resident-read-cache.js";
 
 interface DispatchOperationInput extends WorkerDispatchInput {
   request?: string;
@@ -235,11 +249,11 @@ async function launchDetachedRun(
 
 export function resolveDevCliBundle(mcpBundle: string): string {
   const file = basename(mcpBundle);
-  if (file === "afk-mcp.bundle.min.mjs") {
+  if (file === "castle-mcp.bundle.min.mjs") {
     return join(dirname(mcpBundle), "dev.bundle.min.mjs");
   }
-  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "dev-"));
+  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "dev-"));
   }
   throw new Error(
     `cannot dispatch worker: unrecognized MCP bundle name ${JSON.stringify(file)}`,
@@ -248,11 +262,11 @@ export function resolveDevCliBundle(mcpBundle: string): string {
 
 export function resolveRspCliBundle(mcpBundle: string): string {
   const file = basename(mcpBundle);
-  if (file === "afk-mcp.bundle.min.mjs") {
+  if (file === "castle-mcp.bundle.min.mjs") {
     return join(dirname(mcpBundle), "rsp.bundle.min.mjs");
   }
-  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "rsp-"));
+  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "rsp-"));
   }
   throw new Error(
     `cannot spawn rsp wait: unrecognized MCP bundle name ${JSON.stringify(file)}`,
@@ -831,6 +845,14 @@ async function createFleet(root: string, input: FleetCreateInput) {
   }
 
   const profile = await upsertFleetProfile(path, profileForCreate(input));
+  let supervisorLogStart: number | undefined;
+  try {
+    supervisorLogStart = (await stat(paths.supervisorLogPath)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      supervisorLogStart = 0;
+    }
+  }
   const pid = await spawnSupervisor({
     root,
     target: input.target,
@@ -841,8 +863,40 @@ async function createFleet(root: string, input: FleetCreateInput) {
       : [],
   });
   if (pid === null) {
-    await removeFleetProfile(path, profile.name).catch(() => false);
-    throw new Error(`fleet ${JSON.stringify(profile.name)} failed to start`);
+    let rollbackConfirmed = false;
+    try {
+      const removed = await removeFleetProfile(path, profile.name);
+      rollbackConfirmed =
+        removed || (await readFleetProfile(path, profile.name)) === undefined;
+    } catch {
+      // The failure below must not claim that registry rollback succeeded.
+    }
+    let tail = "";
+    if (supervisorLogStart !== undefined) {
+      try {
+        const bytes = await readFile(paths.supervisorLogPath);
+        const launchBytes =
+          bytes.length < supervisorLogStart
+            ? bytes
+            : bytes.subarray(supervisorLogStart);
+        tail = launchBytes
+          .toString("utf8")
+          .split(/\r?\n/)
+          .slice(-20)
+          .join("\n");
+      } catch {
+        // The explicit no-output marker below still distinguishes an empty boot
+        // from a caller-visible but unexplained registry rollback.
+      }
+    }
+    const evidence = tail || "(no supervisor log output was captured)";
+    const rollback = rollbackConfirmed
+      ? "profile rolled back."
+      : "profile rollback was attempted but could not be confirmed.";
+    throw new Error(
+      `fleet ${JSON.stringify(profile.name)} failed to start: supervisor pid file did not appear; ` +
+        `${rollback} log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${evidence}`,
+    );
   }
   return { status: "launched", profile, pid, target: input.target };
 }
@@ -940,6 +994,8 @@ async function workerVitals(root: string, opts: { live_only?: boolean } = {}) {
         number: state.current.number,
         runner: state.current.runner,
         retries: state.current.retries,
+        model: state.current.model,
+        effort: state.current.effort,
         phase: state.current.phase,
         iteration: state.current.iteration,
         activity: state.current.activity,
@@ -1065,6 +1121,96 @@ async function removeDisposableWorktree(root: string, input: WorktreeRemoveInput
   return { path: relative(root, target), removed: !existsSync(target) };
 }
 
+/**
+ * The castle-side statusline aggregate, assembled from the SAME collector cores
+ * the command-backed `statusline` render path uses — `resolveProject`,
+ * `collectStatuslineRepo`, `collectStatuslineDocs`, `collectStatuslineAfk`,
+ * `collectStatuslineFleet` — plus the `fleet_status` and `worker_vitals`
+ * projections, so the tool never grows a parallel implementation.
+ *
+ * Every collector reads local state or the TTL cache the collectors already
+ * own (ADR 0084: no synchronous network fetch in a render path), so this tool
+ * is as cheap as one statusline tick.
+ *
+ * Host-side render inputs (session model/effort, context %, 5h/7d usage) come
+ * from the Claude Code statusline stdin payload and are deliberately absent —
+ * the tool must not fake them.
+ */
+export async function collectStatuslineAggregate(root: string) {
+  const repoCtx = {
+    root,
+    repo: inferGitHubRepoSlug(root),
+    remote: "origin",
+  };
+
+  const [project, repoStats, docs, afkBlock, fleetChip, fleet, workers] =
+    await Promise.all([
+      resolveProject(root),
+      collectStatuslineRepo(repoCtx),
+      collectStatuslineDocs(repoCtx).catch(() => undefined),
+      collectStatuslineAfk(repoCtx).catch(() => null),
+      collectStatuslineFleet(repoCtx).catch(() => undefined),
+      fleetStatus(root, {}).catch(() => null),
+      workerVitals(root),
+    ]);
+
+  return {
+    project: {
+      basename: project.basename,
+      branch: project.branch || null,
+      detached_sha: project.detachedSha ?? null,
+      version: project.version ?? readBuildInfo("dev").version,
+      latest_cached_version: project.latestCachedVersion ?? null,
+      pointer_version: project.pointerVersion ?? null,
+      docs_unlanded: docs?.count ?? 0,
+    },
+    repo: {
+      open_prs: repoStats.openPrs ?? 0,
+      today_prs: repoStats.todayPrs ?? 0,
+      open_issues: repoStats.openIssues ?? 0,
+      local_added: repoStats.localAdded ?? 0,
+      local_removed: repoStats.localRemoved ?? 0,
+      cache_age_s: repoStats.cacheAgeS ?? null,
+    },
+    docs: { unlanded: docs?.count ?? 0 },
+    fleet,
+    /** The repo-summary fleet CHIP the header line renders: the two facts the
+     * `fleet_status` snapshot does not carry (supervisor-reported queue depth
+     * and the busy-but-no-fresh-worker `degraded` marker), from the statusline
+     * fleet collector. Null when no fresh supervisor snapshot exists. */
+    fleet_chip: fleetChip
+      ? {
+          runner: fleetChip.runner,
+          busy: fleetChip.busy,
+          total: fleetChip.total,
+          queue: fleetChip.queue,
+          parked: fleetChip.parked ?? 0,
+          degraded: fleetChip.degraded ?? false,
+          churn_deaths: fleetChip.churnDeaths ?? 0,
+          churn_respawns: fleetChip.churnRespawns ?? 0,
+          churn_window_s: fleetChip.churnWindowS ?? 0,
+          bundle_version: fleetChip.bundleVersion ?? null,
+        }
+      : null,
+    workers,
+    /** The aggregated AFK block exactly as the plain single-line form renders
+     * it — summed across live workers, including the fleet runner/model/effort
+     * label the per-worker rows carry individually. Null when no live worker. */
+    afk: afkBlock,
+    queue: {
+      ready_for_agent: afkBlock?.queue ?? 0,
+      ready_for_human: afkBlock?.human ?? 0,
+      cache_age_s: afkBlock?.cacheAgeS ?? null,
+    },
+  };
+}
+
+/** The `statusline_aggregate` payload contract, inferred from its single
+ * producer so a field-coverage test can pin the shape without restating it. */
+export type StatuslineAggregate = Awaited<
+  ReturnType<typeof collectStatuslineAggregate>
+>;
+
 async function registerFleet(root: string, input: FleetRegisterInput) {
   const path = registryPath(root);
   const paths = afkPaths(root, input.name);
@@ -1086,11 +1232,163 @@ async function registerFleet(root: string, input: FleetRegisterInput) {
   return { status: "registered", profile, pid: running.pid };
 }
 
-export function createDevAfkMcpDependencies(
+const CURSOR_VERSION = 1;
+const CURSOR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+
+function encodeCursor(at: string): string {
+  return Buffer.from(JSON.stringify({ v: CURSOR_VERSION, at })).toString(
+    "base64url",
+  );
+}
+
+function decodeCursor(
+  cursor: string,
+): { at: string } | { refused: true; reason: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    return {
+      refused: true,
+      reason:
+        "Unknown cursor format; call queue_status or worker_status to re-baseline.",
+    };
+  }
+  if (
+    raw === null ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    (raw as Record<string, unknown>).v !== CURSOR_VERSION ||
+    typeof (raw as Record<string, unknown>).at !== "string"
+  ) {
+    return {
+      refused: true,
+      reason:
+        "Unknown cursor format; call queue_status or worker_status to re-baseline.",
+    };
+  }
+  const at = (raw as Record<string, unknown>).at as string;
+  const atMs = Date.parse(at);
+  if (!Number.isFinite(atMs) || Date.now() - atMs > CURSOR_MAX_AGE_MS) {
+    return {
+      refused: true,
+      reason:
+        "Cursor expired; call queue_status or worker_status to re-baseline.",
+    };
+  }
+  return { at };
+}
+
+async function readAllWorkerLaneRecordsSince(
+  paths: ReturnType<typeof createEnginePaths>,
+  since: string,
+): Promise<CastleLaneRecord[]> {
+  const { readdir } = await import("node:fs/promises");
+  let ids: string[];
+  try {
+    ids = (await readdir(paths.workersRoot, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const records: CastleLaneRecord[] = [];
+  for (const id of ids) {
+    const lanePath = castleLanePath(paths, "worker", id);
+    const workerRecords = await readCastleLaneRecords(lanePath);
+    records.push(...workerRecords.filter((r) => r.at >= since));
+  }
+  return records;
+}
+
+async function eventsSinceImpl(
+  root: string,
+  input: EventsSinceInput,
+): Promise<unknown> {
+  if (input.cursor === undefined) {
+    return { history: [], lane_records: [], cursor: encodeCursor(new Date().toISOString()) };
+  }
+  const decoded = decodeCursor(input.cursor);
+  if ("refused" in decoded) return decoded;
+
+  const { at: since } = decoded;
+  const paths = createEnginePaths(join(root, ".red"));
+  const [historyRecords, laneRecords] = await Promise.all([
+    readCastleHistoryRecords(paths.castleHistory),
+    readAllWorkerLaneRecordsSince(paths, since),
+  ]);
+
+  return {
+    history: historyRecords.filter((r) => r.ts >= since),
+    lane_records: laneRecords,
+    cursor: encodeCursor(new Date().toISOString()),
+  };
+}
+
+/**
+ * Wrap the GitHub-backed read deps with a short-TTL cache. Repeated calls
+ * within the TTL cost zero GitHub requests. Mutating tools invalidate the
+ * affected keys so the next read reflects the new state immediately.
+ *
+ * Exported for unit-testing the cache wiring with fake deps.
+ */
+export function withCachedDeps(
+  deps: CastleMcpDependencies,
+  cache: ResidentReadCache,
+): CastleMcpDependencies {
+  return {
+    ...deps,
+    queueStatus: async () => {
+      const cached = cache.get(QUEUE_STATUS_KEY);
+      if (cached !== undefined) return cached;
+      const result = await deps.queueStatus();
+      cache.set(QUEUE_STATUS_KEY, result);
+      return result;
+    },
+    claimStatus: async (input) => {
+      const key = claimStatusKey(input.issue);
+      const cached = cache.get(key);
+      if (cached !== undefined) return cached;
+      const result = await deps.claimStatus(input);
+      cache.set(key, result);
+      return result;
+    },
+    cascadeStatus: async (input) => {
+      const key = cascadeStatusKey(input.issue);
+      const cached = cache.get(key);
+      if (cached !== undefined) return cached;
+      const result = await deps.cascadeStatus(input);
+      cache.set(key, result);
+      return result;
+    },
+    claimRelease: async (input) => {
+      cache.invalidate(claimStatusKey(input.issue));
+      return deps.claimRelease(input);
+    },
+    landBranch: async (input) => {
+      cache.invalidate(cascadeStatusKey(input.issue));
+      return deps.landBranch(input);
+    },
+    requeue: async (input) => {
+      cache.invalidate(QUEUE_STATUS_KEY);
+      return deps.requeue(input);
+    },
+    unblockSweep: async () => {
+      cache.invalidate(QUEUE_STATUS_KEY);
+      return deps.unblockSweep();
+    },
+    triage: async (input) => {
+      cache.invalidate(QUEUE_STATUS_KEY);
+      return deps.triage(input);
+    },
+  };
+}
+
+export function createCastleMcpDependencies(
   root = process.cwd(),
   operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
 ): CastleMcpDependencies {
-  return {
+  const baseDeps: CastleMcpDependencies = {
     fleetList: () => readFleetProfiles(registryPath(root)),
     fleetStatus: (input) => fleetStatus(root, input),
     fleetCreate: (input) => createFleet(root, input),
@@ -1228,5 +1526,8 @@ export function createDevAfkMcpDependencies(
     weeklyReview: (input) => operations.weeklyReview(input),
     triage: (input) => operations.triage(input),
     respond: (input) => operations.respond(input),
+    statuslineAggregate: () => collectStatuslineAggregate(root),
+    eventsSince: (input) => eventsSinceImpl(root, input),
   };
+  return withCachedDeps(baseDeps, new ResidentReadCache());
 }

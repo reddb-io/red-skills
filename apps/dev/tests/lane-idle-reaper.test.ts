@@ -318,6 +318,7 @@ describe("resolveLaneIdleStallConfig — boot validation + env consistency with 
       stallThresholdS: 600,
       stallKillThresholdS: 1800,
       stallPollS: DEFAULT_STALL_POLL_S,
+      issueWallClockMaxS: 2700,
     });
   });
 
@@ -328,7 +329,13 @@ describe("resolveLaneIdleStallConfig — boot validation + env consistency with 
         RED_AFK_STALL_KILL_THRESHOLD_S: "900",
         RED_AFK_STALL_POLL_S: "15",
       }),
-    ).toEqual({ stallThresholdS: 300, stallKillThresholdS: 900, stallPollS: 15 });
+    ).toEqual({ stallThresholdS: 300, stallKillThresholdS: 900, stallPollS: 15, issueWallClockMaxS: 2700 });
+  });
+
+  it("resolves the per-issue wall-clock ceiling and floors typo values (#2286)", () => {
+    expect(resolveLaneIdleStallConfig({ RED_AFK_ISSUE_WALL_CLOCK_MAX_S: "3600" }).issueWallClockMaxS).toBe(3600);
+    expect(resolveLaneIdleStallConfig({ RED_AFK_ISSUE_WALL_CLOCK_MAX_S: "0" }).issueWallClockMaxS).toBe(2700);
+    expect(resolveLaneIdleStallConfig({ RED_AFK_ISSUE_WALL_CLOCK_MAX_S: "nope" }).issueWallClockMaxS).toBe(2700);
   });
 
   it("floors a zero / non-numeric poll back to the default (never busy-spins)", () => {
@@ -343,6 +350,11 @@ describe("resolveLaneIdleStallConfig — boot validation + env consistency with 
         RED_AFK_STALL_THRESHOLD_S: "xyz",
         RED_AFK_STALL_KILL_THRESHOLD_S: "-5",
       }),
-    ).toEqual({ stallThresholdS: 600, stallKillThresholdS: 1800, stallPollS: DEFAULT_STALL_POLL_S });
+    ).toEqual({
+      stallThresholdS: 600,
+      stallKillThresholdS: 1800,
+      stallPollS: DEFAULT_STALL_POLL_S,
+      issueWallClockMaxS: 2700,
+    });
   });
 });

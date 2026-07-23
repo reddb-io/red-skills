@@ -34,7 +34,7 @@ Every writer under `.red/state/`, `.red/tmp/`, or `.red/researches/` owns a name
 | `.red/state/statusline/` | durable state | dev/statusline | Statusline caches that should survive tmp cleanup. |
 | `.red/state/branch-lock.yaml` | durable state | branch lock | Local branch lock state. |
 | `.red/state/red-skills.rdb` | durable state | shared Repo store | The shared RedDB file used by memory and rsp collections. This supersedes ADR 0095's `.red/red.rdb` location and the temporary `.red/tmp/red-skills.rdb` write-contract location. |
-| `.red/tmp/workers/` | disposable scratch | AFK | AFK worker lanes. **Amended 2026-07-21:** naming is flat `{worker}/{issue}` — the `-a{n}` attempt ordinal is retired (ADR 0103); stale workspaces are swept by the AFK orphan policy. |
+| `.red/tmp/workers/` | disposable scratch | AFK | AFK worker lanes. **Amended 2026-07-21:** naming is flat `{worker}/{issue}` — the `-a{n}` attempt ordinal is retired (ADR 0103); stale workspaces are swept by the AFK orphan policy. **Amended 2026-07-22:** each workspace owns its git checkout at the conventional direct child `{worker}/{issue}/worktree`; castle-branded nested worktree paths are hygiene-only inputs until their TTL window expires. |
 | `.red/tmp/rsp/` | disposable scratch | rsp | Ephemeral rsp guards (resident wake lock). Registered 2026-07-21 to end the loose `rsp.wake.lock` at the tmp root. |
 | `.red/tmp/go-workers/` | disposable scratch | `/go` | Disposable issue workers. Existing collision-safe worker/attempt naming stays. |
 | `.red/tmp/scout-workers/` | disposable scratch | scout | Scout workers. Existing collision-safe worker/attempt naming stays. |

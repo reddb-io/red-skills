@@ -16,7 +16,7 @@ import {
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { afterEach, describe, expect, it } from "vitest";
-import { createDevAfkMcpDependencies } from "../src/mcp-adapter.js";
+import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
 import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 
 // Snapshot timestamps are fixed; liveness records use real wall-clock time so
@@ -115,7 +115,7 @@ describe("fleet_status worker partition (#2345)", () => {
     await writeFile(join(alphaSupervisorDir, "state.toon"), fleetState);
     await writeFile(join(betaSupervisorDir, "state.toon"), fleetState);
 
-    const mcp = createDevAfkMcpDependencies(root);
+    const mcp = createCastleMcpDependencies(root);
 
     // fleetStatus returns Promise<unknown> — cast through any to access fields.
     const alphaStatus = (await mcp.fleetStatus({ name: "alpha" })) as {

@@ -75,7 +75,7 @@ const gitAt = (cwd: string, args: string[]): Promise<ExecOut> => runReal("git", 
 const revParse = async (cwd: string, ref: string): Promise<string> =>
   (await gitAt(cwd, ["rev-parse", ref])).stdout.trim();
 
-const WORKER_BRANCH = "afk/wAAAA/9-fix-the-thing"; // buildRefFromSlug("afk","wAAAA",9,"fix-the-thing")
+const WORKER_BRANCH = "afk/9-fix-the-thing"; // deterministic per issue (#2416)
 const WORKER_MARKER = "E2E-WORKER-CHANGE";
 const MAINLINE_MARKER = "E2E-MAINLINE-CHANGE";
 const SRC_FILE = ["src", "x.ts"];
