@@ -11,6 +11,10 @@ export const LABEL_READY = "ready-for-agent";
 export const LABEL_RUNNING = "running";
 export const LABEL_HUMAN = "ready-for-human";
 export const LABEL_CONTESTED = "contested";
+/** ADR 0122 issue-local safety hold. Quarantined issues are excluded from the
+ * executable queue until the castle curator can prove coherence or park them
+ * for HITL after its bounded re-check budget. */
+export const LABEL_QUARANTINE = "quarantine";
 // PR-object entry label (PRD #745, issue #746): a maintainer applies this to a
 // PR to request the advisory cloud review. It is the only PR-specific label —
 // the review then transitions the PR through the shared lifecycle vocabulary
