@@ -25,6 +25,8 @@ import {
 } from "../core/host-toolchain-doctor.js";
 import { getConfig, loadConfig } from "../core/config.js";
 import { auditExecutableAcceptanceCriteria, type ExecutableAcceptanceDoctorReport } from "../core/executable-acceptance-doctor.js";
+import { collectDeadendAuditReport } from "../runtime/deadend-audit-report.js";
+import { emptyDeadendReport, type DeadendAuditReport } from "../core/deadend-audit.js";
 import { LABEL_READY } from "../core/triage-labels.js";
 import { fastForwardLocalTarget } from "../core/merge.js";
 import { execTool } from "../runtime/exec.js";
@@ -130,6 +132,7 @@ function renderHuman(
   executableAcceptanceReport: ExecutableAcceptanceDoctorReport,
   report: TmpJanitorReport,
   hostReport: HostToolchainReport,
+  deadendReport: DeadendAuditReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
@@ -178,6 +181,12 @@ function renderHuman(
     ...workers.map((path) => `  ${path}`),
     `unknown tmp roots: ${unknown.length}`,
     ...unknown.map((path) => `  ${path}`),
+    "",
+    "red-doctor deadend audit",
+    `deadends: ${deadendReport.total}`,
+    ...deadendReport.classes.flatMap((cls) =>
+      cls.findings.map((finding) => `  ${finding.deadendClass} ${finding.subject} → cure: ${finding.cure} (${finding.detail})`),
+    ),
   ];
   if (applied) {
     lines.push(
@@ -201,6 +210,7 @@ function renderToon(
   executableAcceptanceReport: ExecutableAcceptanceDoctorReport,
   report: TmpJanitorReport,
   hostReport: HostToolchainReport,
+  deadendReport: DeadendAuditReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
@@ -255,6 +265,19 @@ function renderToon(
         kind: finding.kind,
         verdict: finding.verdict,
         fix: finding.canonicalFix,
+      })),
+    },
+    deadendAudit: {
+      total: deadendReport.total,
+      classes: deadendReport.classes.map((cls) => ({
+        deadendClass: cls.deadendClass,
+        cure: cls.cure,
+        count: cls.count,
+        findings: cls.findings.map((finding) => ({
+          subject: finding.subject,
+          cure: finding.cure,
+          detail: finding.detail,
+        })),
       })),
     },
     executableAcceptance: {
@@ -364,10 +387,16 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
       },
     );
     const applied = flags.fix ? await applyTmpJanitorReport(paths.tmpDir, report) : undefined;
+    // Detection only — /red-doctor consumes the same read-only deadend audit
+    // the `deadend_audit` MCP tool serves; it renders findings and never mutates.
+    // A gather failure degrades to an empty section, never a failed doctor.
+    const deadendReport = await collectDeadendAuditReport(ctx.root).catch(() =>
+      emptyDeadendReport(Date.now()),
+    );
     process.stdout.write(
       flags.json
-        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, applied, probeFixes, hostFixes)
-        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, applied, probeFixes, hostFixes),
+        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, applied, probeFixes, hostFixes)
+        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, applied, probeFixes, hostFixes),
     );
     return 0;
   } catch (error) {

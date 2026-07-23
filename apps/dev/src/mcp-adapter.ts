@@ -128,9 +128,11 @@ import { executeRespond } from "./commands/respond.js";
 import {
   ResidentReadCache,
   QUEUE_STATUS_KEY,
+  DEADEND_AUDIT_KEY,
   claimStatusKey,
   cascadeStatusKey,
 } from "./resident-read-cache.js";
+import { collectDeadendAuditReport } from "./runtime/deadend-audit-report.js";
 
 interface DispatchOperationInput extends WorkerDispatchInput {
   request?: string;
@@ -168,6 +170,7 @@ export interface DevAfkMcpOperations {
   weeklyReview(input: WeeklyReviewInput): Promise<unknown>;
   triage(input: TriageToolInput): Promise<unknown>;
   respond(input: RespondToolInput): Promise<unknown>;
+  deadendAudit(): Promise<unknown>;
 }
 
 export interface DevAfkMcpRuntime {
@@ -779,6 +782,7 @@ export function createDefaultDevAfkMcpOperations(
         },
         { cwd: root },
       ),
+    deadendAudit: () => collectDeadendAuditReport(root),
   };
 }
 
@@ -1523,6 +1527,15 @@ export function withCachedDeps(
       cache.set(key, result);
       return result;
     },
+    deadendAudit: async () => {
+      // The resident cron refreshes this envelope; repeated tool calls within
+      // the refresh window are served from cache and cost zero GitHub quota.
+      const cached = cache.get(DEADEND_AUDIT_KEY);
+      if (cached !== undefined) return cached;
+      const result = await deps.deadendAudit();
+      cache.set(DEADEND_AUDIT_KEY, result);
+      return result;
+    },
     claimRelease: async (input) => {
       for (const issue of input.issues ?? (input.issue !== undefined ? [input.issue] : [])) {
         cache.invalidate(claimStatusKey(issue));
@@ -1717,6 +1730,7 @@ export function createCastleMcpDependencies(
     weeklyReview: (input) => operations.weeklyReview(input),
     triage: (input) => operations.triage(input),
     respond: (input) => operations.respond(input),
+    deadendAudit: () => operations.deadendAudit(),
     statuslineAggregate: () => collectStatuslineAggregate(root),
     eventsSince: (input) => eventsSinceImpl(root, input),
   };
