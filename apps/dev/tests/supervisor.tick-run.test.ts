@@ -157,7 +157,7 @@ describe("superviseTick", () => {
     expect(io.spawnSlot).not.toHaveBeenCalled();
   });
 
-  it("stop-file → terminate all live workers and report stopped", async () => {
+  it("stop-file → stop claiming and leave live workers draining", async () => {
     const { deps, io } = makeDeps({ isAlive: vi.fn(() => true) });
     const state = initSupervisorState(2);
     state.slots[0]!.pid = 100;
@@ -166,8 +166,7 @@ describe("superviseTick", () => {
     const result = await superviseTick(state, deps, config({ target: 2 }), () => true);
 
     expect(result.stopped).toBe(true);
-    expect(io.killTree).toHaveBeenCalledWith(100);
-    expect(io.killTree).toHaveBeenCalledWith(200);
+    expect(io.killTree).not.toHaveBeenCalled();
     expect(io.spawnSlot).not.toHaveBeenCalled();
   });
 });
@@ -519,8 +518,8 @@ describe("runSupervisor", () => {
     expect(io.spawnSlot).toHaveBeenCalledTimes(2);
     expect(io.spawnSlot).toHaveBeenCalledWith(0);
     expect(io.spawnSlot).toHaveBeenCalledWith(1);
-    // Stop-file honoured → workers terminated.
-    expect(io.killTree).toHaveBeenCalled();
+    // Stop-file honoured → supervisor exits while detached workers drain.
+    expect(io.killTree).not.toHaveBeenCalled();
     // Stopped on the first tick: guardedTick calls sleep(ceiling) once per tick,
     // but the inter-tick CADENCE sleep is never reached (the loop returns first).
     expect(io.sleep).toHaveBeenCalledTimes(1);
