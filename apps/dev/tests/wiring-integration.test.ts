@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildProcessDeps } from "../src/commands/run.js";
@@ -84,6 +84,46 @@ function makeFakeExec(repoRoot: string): { exec: ExecFn; trace: TraceEntry[] } {
 }
 
 describe("wiring integration — real buildProcessDeps over a fake exec", () => {
+  it("wires landing.wait=none through rsp's shared wait with per-wait fallback", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-wiring-landing-tail-"));
+    mkdirSync(join(root, ".red"), { recursive: true });
+    writeFileSync(
+      join(root, ".red", "config.yaml"),
+      "plugins:\n  dev:\n    enabled: true\n    afk:\n      landing:\n        wait: none\n",
+    );
+    const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
+    const { exec, trace } = makeFakeExec(root);
+    const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
+    const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") };
+    const deps = buildProcessDeps(ctx, "claude-opus-4-8", "none", feedback, current, false, "claude", exec);
+    const run = vi.fn(async (_ciAlreadyGreen?: boolean) => ({ ok: true as const, locked: false }));
+
+    const result = await deps.landingTailObserver!({
+      issue: 42,
+      prNumber: 77,
+      waitForCi: true,
+      run,
+    });
+
+    expect(deps.landingWait).toBe("none");
+    expect(deps.ciAwait).toBeDefined();
+    expect(result).toEqual({ ok: true, locked: false });
+    expect(run).toHaveBeenCalledWith(true);
+    expect(trace).toContainEqual({
+      cmd: "rsp",
+      args: [
+        "wait",
+        "pr",
+        "77",
+        "--timeout",
+        "1800s",
+        "--reason",
+        "finish AFK landing for issue 42",
+      ],
+      cwd: root,
+    });
+  });
+
   it("returns a failed local branch deletion through the runtime git boundary", async () => {
     const exec: ExecFn = async () => ({ code: 1, stdout: "", stderr: "branch is checked out" });
 
