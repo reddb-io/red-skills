@@ -275,7 +275,12 @@ function budgetSpent(snapshot: CastleWorkerDrainBudgetSnapshot | undefined): boo
 export async function runCastleWorkerDrain<
   TBootDeps,
   TBootOptions,
-  TBootResult extends { precheck: { ok: boolean } },
+  TBootResult extends {
+    precheck: { ok: boolean };
+    /** Issue-local exclusions discovered by boot probes. These remain effective
+     * for this drain even if the remote label mutation failed. */
+    quarantinedIssues?: readonly number[];
+  },
   TProcessDeps,
   TProcessInput extends { runner: Runner },
   TProcessResult extends CastleWorkerProcessResult,
@@ -341,7 +346,12 @@ export async function runCastleWorkerDrain<
 
     await fireSessionHook("pre_pick", JSON.stringify({ filter: ctx.filter }));
     const candidates = await deps.gh.listCandidates();
-    const queue = selectCastleIssues(candidates, ctx.filter, deps.labels);
+    const quarantined = new Set(boot.quarantinedIssues ?? []);
+    const queue = selectCastleIssues(
+      candidates.filter((candidate) => !quarantined.has(candidate.number)),
+      ctx.filter,
+      deps.labels,
+    );
     const total = queue.length;
     await fireSessionHook("post_pick", JSON.stringify({ issues: queue.map((candidate) => candidate.number) }));
 
