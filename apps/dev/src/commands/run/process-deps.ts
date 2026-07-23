@@ -211,6 +211,12 @@ export function buildProcessDeps(
         }
       : undefined;
 
+  const configuredLandingWait = getConfig(config, "afk.landing.wait");
+  const landingWait: NonNullable<ProcessIssueDeps["landingWait"]> =
+    configuredLandingWait === "ci" || configuredLandingWait === "none"
+      ? configuredLandingWait
+      : "merge";
+
   // CI-aware merge (#812). Default off → the unlocked admin-merge fires
   // immediately (fine on a base with NO required status checks). When
   // `afk.merge.ci_aware` is true, the unlocked landing first polls the PR's merge
@@ -220,7 +226,7 @@ export function buildProcessDeps(
   // poll budget comes from `RED_AFK_MERGE_CI_TIMEOUT_S` (default 1800s) at a fixed
   // 10s cadence; on timeout the open, MERGEABLE PR is handed off (no agent re-run).
   const ciAwait =
-    getConfig(config, "afk.merge.ci_aware") === "true"
+    getConfig(config, "afk.merge.ci_aware") === "true" || landingWait !== "merge"
       ? {
           sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
           intervalMs: 10_000,
@@ -456,6 +462,37 @@ export function buildProcessDeps(
     fallbackRunner,
     waitForReview,
     ciAwait,
+    landingWait,
+    landingTailObserver:
+      landingWait === "merge"
+        ? undefined
+        : async (task) => {
+            if (task.waitForCi) {
+              // `rsp wait pr` is the shared wait/webhook observer: it consumes
+              // the resident singleton's event lane when a holder exists and
+              // transparently starts the established per-wait forwarder when
+              // it does not. A non-success verdict falls back to the landing
+              // primitive's one-shot classifier so conflict/failed/pending keep
+              // their existing terminal routes.
+              const run = exec ?? execTool;
+              const timeoutS = resolveCiTimeoutSeconds(process.env);
+              const waited = await run(
+                "rsp",
+                [
+                  "wait",
+                  "pr",
+                  String(task.prNumber),
+                  "--timeout",
+                  `${timeoutS}s`,
+                  "--reason",
+                  `finish AFK landing for issue ${task.issue}`,
+                ],
+                { cwd: ctx.root },
+              );
+              if (waited.code === 0) return task.run(true);
+            }
+            return task.run();
+          },
     worktreeLaunchesPr,
     landLock,
     nativeMergeQueue,
