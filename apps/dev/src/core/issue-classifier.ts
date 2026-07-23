@@ -50,6 +50,7 @@ const RISK_KEYWORDS = [
 
 const THINK_KEYWORDS =
   /\b(architecture|architectural|adr|design decision|routing decision|strategy|tradeoff|choose|classifier|planner|planning)\b/i;
+const SPEC_FAMILY_LABEL = /^spec:\d+$/i;
 
 const DOC_EXTENSIONS = new Set(["md", "mdx", "txt", "rst", "adoc"]);
 const VALIDATION_WORDS = /\b(validate|validation|lint|format|formatting|schema check|typecheck|type check)\b/i;
@@ -88,6 +89,9 @@ export async function classifyIssue(
   metadata: IssueClassificationMetadata,
   modelCall?: IssueClassifierModelCall,
 ): Promise<TaskClass> {
+  const explicitTier = explicitTierLabel(metadata.labels);
+  if (explicitTier) return explicitTier;
+
   const deterministic = deterministicTaskClass(metadata);
   const modelTier = modelCall ? parseTaskClass(await modelCall({ prompt: classifierPrompt(metadata), metadata })) : undefined;
 
@@ -96,6 +100,14 @@ export async function classifyIssue(
   }
 
   return maxTier(deterministic, modelTier ?? "validate");
+}
+
+function explicitTierLabel(labels: readonly string[]): TaskClass | undefined {
+  for (const label of labels) {
+    const match = /^tier:(validate|simple|complex|think)$/i.exec(label.trim());
+    if (match) return match[1]!.toLowerCase() as TaskClass;
+  }
+  return undefined;
 }
 
 /**
@@ -194,6 +206,7 @@ export function classifierPrompt(metadata: IssueClassificationMetadata): string 
 function deterministicTaskClass(metadata: IssueClassificationMetadata): TaskClass {
   const searchable = `${metadata.title}\n${metadata.summary}\n${metadata.labels.join("\n")}`;
   if (THINK_KEYWORDS.test(searchable)) return "think";
+  if (metadata.labels.some((label) => SPEC_FAMILY_LABEL.test(label.trim()))) return "complex";
   if (metadata.riskKeywords.length > 0) return "complex";
   if (metadata.scopePaths.length >= 3 || metadata.referencedFileCount >= 6 || metadata.diffSize === "large") {
     return "complex";
