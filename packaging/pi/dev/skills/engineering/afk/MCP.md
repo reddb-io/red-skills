@@ -73,8 +73,12 @@ immediately after.
 | `worker_recycle` | mutating | Terminate one fleet worker so its supervisor refills the slot. |
 | `worker_request` | mutating | Dispatch a worker with a special request injected at spawn time. |
 
-`worker_dispatch` takes **exactly one** of `issue` or `demand`; `mode`
-(`no-mistakes` / `direct-PR` / `local-only`) is valid only for a `demand`.
+`worker_dispatch` takes **exactly one** of `issue` or `demand`; `mode` is valid
+only for a `demand`. Go modes (`no-mistakes` / `direct-PR` / `local-only`) run
+the standard AFK engine and open a PR. The `scout` mode runs a **read-only
+investigation**: it mints a disposable `lane:scout` issue, runs the engine with
+`run_mode=scout` (no push, no PR, no merge), and posts the agent's report as a
+comment before closing the issue. Scout cannot be combined with `issue`.
 
 ### Runner — backends and live steering
 
