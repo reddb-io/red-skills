@@ -593,7 +593,10 @@ export function buildProcessDeps(
       base: {
         readLockedBranch: () => readLockedBranch(lockPath),
         configLockedBranch: getConfig(config, "dev.lock.branch") || undefined,
-        configTrunk: getConfig(config, "dev.trunk") || undefined,
+        configTrunk:
+          (process.env.RED_AFK_TRUNK ?? "").trim() ||
+          getConfig(config, "dev.trunk") ||
+          undefined,
         fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
       },
       isLocked: () => isLocked(lockPath),
