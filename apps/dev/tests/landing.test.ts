@@ -414,6 +414,23 @@ describe("doLanding — CI-aware merge (#812)", () => {
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
   });
 
+  it("a wedged merge poll emits landing heartbeats for every bounded poll before parking", async () => {
+    const h = harness({ locked: false, ciAware: "ci-pending" });
+    const r = await doLanding(h.deps, h.input, h.hooks);
+    expect(r).toEqual({ ok: false, reason: "ci-pending", locked: false, prNumber: 42 });
+    expect(h.landingEvents.filter((event) => event.detail.step === "merge-poll")).toEqual([
+      expect.objectContaining({
+        phase: "wait",
+        detail: expect.objectContaining({ status: "poll", pr_number: 42, attempt: 1, max_polls: 2 }),
+      }),
+      expect.objectContaining({
+        phase: "wait",
+        detail: expect.objectContaining({ status: "poll", pr_number: 42, attempt: 2, max_polls: 2 }),
+      }),
+    ]);
+    expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
+  });
+
   it("a real DIRTY conflict preserves the PR number for the caller's merge-conflict handoff", async () => {
     const h = harness({ locked: false, ciAware: "conflict" });
     const r = await doLanding(h.deps, h.input, h.hooks);
@@ -799,7 +816,7 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     expect(h.postMergeGateDirs).toEqual([]);
     // The admin-merge still happened.
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(true);
-    expect(h.landingPhases).toEqual(["gate", "push-pr", "cascade"]);
+    expect(h.landingPhases).toEqual(["gate", "push-pr", "wait", "cascade"]);
   });
 
   it("PR path: skipped CI evidence → falls back to the local rebase-worktree gate", async () => {
