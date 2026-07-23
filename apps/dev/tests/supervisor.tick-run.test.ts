@@ -328,10 +328,13 @@ describe("reconcileDeadWorkerClaim", () => {
 
     expect(issue).toBe(807);
     // No-sentinel envelope carrying the afk.log tail.
-    expect(io.comment).toHaveBeenCalledTimes(1);
-    const body = io.comment.mock.calls[0]![1] as string;
+    expect(io.comment).toHaveBeenCalledTimes(2);
+    const body = io.comment.mock.calls.find((call) =>
+      String(call[1]).includes('data-attempt-status="no-sentinel"'),
+    )![1] as string;
     expect(body).toContain('data-attempt-status="no-sentinel"');
     expect(body).toContain("agent finished after 1 iteration");
+    expect(io.comment.mock.calls.some((call) => String(call[1]).includes("kind=concede"))).toBe(true);
     // running → ready-for-agent CLEAN (no blocked label rides along).
     expect(io.editLabels).toHaveBeenCalledWith(807, ["ready-for-agent"], ["running"]);
   });
