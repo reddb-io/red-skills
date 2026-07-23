@@ -127,14 +127,14 @@ else
   fail "publish workflow must expose workflow_dispatch and schedule retry triggers"
 fi
 
-# changesets/action writes its PR branch with GITHUB_TOKEN. GitHub deliberately
-# suppresses a pull_request workflow run for that push, so the branch itself
-# must be covered by the workspace CI push trigger or the Version Packages PR
-# can never receive the required test/typecheck contexts.
-if grep -qF 'branches: [main, automation/toon-bump, changeset-release/main]' "$WORKSPACE_CI"; then
-  pass "Version Packages PR branch receives workspace CI checks"
+# changesets/action writes its PR through RELEASE_PAT, so GitHub emits the
+# normal pull_request event. Keeping a push trigger for that branch would run
+# the workspace gate twice for the same Version Packages PR head.
+if grep -qF 'branches: [main, automation/toon-bump]' "$WORKSPACE_CI" &&
+   ! grep -qF 'changeset-release/main' "$WORKSPACE_CI"; then
+  pass "Version Packages PR relies on its PAT-authored pull_request checks"
 else
-  fail "red-workspace-ci must push-trigger changeset-release/main"
+  fail "red-workspace-ci must not duplicate Version Packages PR checks with a push trigger"
 fi
 
 # Deferred tags form a FIFO publication queue. Publishing newest-first can move
