@@ -77,6 +77,7 @@ function makeFakeDeps(): Pick<
   | "requeue"
   | "unblockSweep"
   | "triage"
+  | "deadendAudit"
 > & { callCounts: Record<string, number> } {
   const callCounts: Record<string, number> = {};
   function count(name: string): void {
@@ -92,6 +93,7 @@ function makeFakeDeps(): Pick<
     requeue: vi.fn(async () => { count("requeue"); return { applied: true }; }),
     unblockSweep: vi.fn(async () => { count("unblockSweep"); return { promoted: [] }; }),
     triage: vi.fn(async () => { count("triage"); return { action: "apply" }; }),
+    deadendAudit: vi.fn(async () => { count("deadendAudit"); return { total: 0, classes: [] }; }),
   };
 }
 
@@ -106,6 +108,18 @@ describe("withCachedDeps — zero gh calls within TTL", () => {
     await wrapped.queueStatus();
 
     expect(fake.callCounts["queueStatus"]).toBe(1);
+  });
+
+  it("serves deadendAudit from cache on repeated calls within TTL — zero gh", async () => {
+    const fake = makeFakeDeps();
+    const cache = new ResidentReadCache(15_000);
+    const wrapped = withCachedDeps(fake as unknown as CastleMcpDependencies, cache);
+
+    await wrapped.deadendAudit();
+    await wrapped.deadendAudit();
+    await wrapped.deadendAudit();
+
+    expect(fake.callCounts["deadendAudit"]).toBe(1);
   });
 
   it("invalidates queue_status when requeue is called", async () => {

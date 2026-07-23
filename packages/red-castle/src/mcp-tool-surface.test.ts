@@ -109,6 +109,13 @@ const SURFACE: ReadonlyArray<{
     schema: ["cursor"],
   },
   {
+    name: "deadend_audit",
+    title: "Audit AFK deadends",
+    description:
+      "Return the read-only deadend audit: dangling claims, red PRs with dead owners, superseded PRs, executable Tickets carrying an active Current blocker, dependency blocks whose req targets all closed, human-queue age outliers, and stale worktrees — each class paired with its recommended cure. Cache-backed: repeated calls within the refresh window cost zero GitHub quota.",
+    schema: [],
+  },
+  {
     name: "worker_dispatch",
     title: "Dispatch AFK worker",
     description:
