@@ -61,6 +61,10 @@ export interface ExecOptions {
   maxBuffer?: number;
   /** Optional stdin payload written to the child. */
   input?: string;
+  /** Best-effort delivery of each complete stdout line while the child runs.
+   * The normal captured stdout remains unchanged. Callback failures are
+   * swallowed so observability cannot affect command execution. */
+  onStdoutLine?: (line: string) => void;
 }
 
 /**
@@ -212,6 +216,25 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
     });
     if (opts.input !== undefined && child.stdin) {
       child.stdin.end(opts.input);
+    }
+    if (opts.onStdoutLine && child.stdout) {
+      let pending = "";
+      const deliver = (line: string): void => {
+        try {
+          opts.onStdoutLine?.(line);
+        } catch {
+          // Observability callbacks must never affect the child process.
+        }
+      };
+      child.stdout.on("data", (chunk) => {
+        pending += String(chunk);
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop() ?? "";
+        for (const line of lines) deliver(line);
+      });
+      child.stdout.on("end", () => {
+        if (pending) deliver(pending);
+      });
     }
   });
 }

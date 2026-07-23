@@ -9,6 +9,16 @@ describe("execTool", () => {
     expect(r.stderr).toBe("err");
   });
 
+  it("streams complete stdout lines while preserving the captured stdout (#2480)", async () => {
+    const lines: string[] = [];
+    const r = await execTool("sh", ["-c", "printf 'first\\nsecond\\n'"], {
+      onStdoutLine: (line) => lines.push(line),
+    });
+
+    expect(lines).toEqual(["first", "second"]);
+    expect(r.stdout).toBe("first\nsecond\n");
+  });
+
   it("resolves a missing binary as 127 instead of rejecting", async () => {
     const r = await execTool("definitely-no-such-binary-xyz", []);
     expect(r.code).toBe(127);
