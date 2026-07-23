@@ -3,17 +3,461 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
+  acquireClaim,
   acquireIssueLease,
+  ClaimVerificationError,
   createFsIssueLeaseStore,
-  parseTrackerClaimRecords,
-  renderTrackerClaimComment,
+  parseClaimRecords,
+  reconcileClaim,
+  renderClaimComment,
+  renderRecoveryAudit,
   retireIssueLease,
-  type TrackerClaimComment,
+  type ClaimGh,
+  type ClaimRecord,
+  type ClaimSelf,
+  type RawClaimComment,
   type TrackerClaimStore,
 } from "./claim.js";
+import { CLAIM_WIRE_FIXTURES } from "./claim-wire-fixture.js";
+
+// A claim record at `id` from `worker` (claim unless kind given).
+function rec(commentId: number, worker: string, kind: "claim" | "concede" = "claim"): ClaimRecord {
+  return { commentId, worker, kind };
+}
+
+function self(worker: string, commentId: number): ClaimSelf {
+  return { worker, commentId };
+}
+
+// ---- pinned wire format ----
+
+describe("claim wire fixtures", () => {
+  it.each(CLAIM_WIRE_FIXTURES.map((f) => [f.name, f] as const))(
+    "parses %s",
+    (_name, fixture) => {
+      expect(parseClaimRecords([fixture.comment])).toEqual(fixture.expected);
+    },
+  );
+
+  it("pins the render output literally — a change here is a wire-format decision", () => {
+    expect(
+      renderClaimComment(
+        { worker: "host:w1", runner: "claude", createdAt: "2026-06-10T23:10:24Z" },
+        "claim",
+      ),
+    ).toBe(
+      "<!-- afk:claim v1 worker=host:w1 kind=claim runner=claude ts=2026-06-10T23:10:24Z -->\n" +
+        "🤖 AFK claim by worker `host:w1` (runner `claude`).",
+    );
+    expect(renderClaimComment({ worker: "host:w1" }, "concede", "lost")).toBe(
+      "<!-- afk:claim v1 worker=host:w1 kind=concede reason=lost -->\n" +
+        "🤖 AFK worker `host:w1` conceded this issue (lost the claim race to an earlier claimant).",
+    );
+    expect(renderClaimComment({ worker: "host:w1" }, "concede", "released")).toBe(
+      "<!-- afk:claim v1 worker=host:w1 kind=concede reason=released -->\n" +
+        "🤖 AFK worker `host:w1` conceded this issue (released the claim it held).",
+    );
+    expect(renderClaimComment({ worker: "host:w1" }, "concede")).toBe(
+      "<!-- afk:claim v1 worker=host:w1 kind=concede -->\n" +
+        "🤖 AFK worker `host:w1` conceded this issue (lost the claim race or released).",
+    );
+  });
+
+  it("round-trips every render variant through the parser", () => {
+    for (const kind of ["claim", "concede"] as const) {
+      for (const reason of [undefined, "lost", "released", "unspecified"] as const) {
+        const body = renderClaimComment(
+          { worker: "h:w", runner: "codex", createdAt: "2026-07-01T00:00:00Z" },
+          kind,
+          reason,
+        );
+        const [record] = parseClaimRecords([{ id: 9, body }]);
+        expect(record).toMatchObject({
+          commentId: 9,
+          worker: "h:w",
+          kind,
+          runner: "codex",
+          createdAt: "2026-07-01T00:00:00Z",
+        });
+      }
+    }
+  });
+});
+
+// ---- marker layer ----
+
+describe("claim marker round-trip", () => {
+  it("renders a parseable claim marker carrying the worker identity", () => {
+    const body = renderClaimComment({ worker: "mbp.local:w6HSO-3", runner: "claude" }, "claim");
+    expect(body).toContain("<!-- afk:claim v1 worker=mbp.local:w6HSO-3 kind=claim runner=claude -->");
+    const parsed = parseClaimRecords([{ id: 42, body }]);
+    expect(parsed).toEqual([
+      { commentId: 42, worker: "mbp.local:w6HSO-3", kind: "claim", runner: "claude", createdAt: undefined },
+    ]);
+  });
+
+  it("renders a concede marker", () => {
+    const body = renderClaimComment({ worker: "h:w" }, "concede");
+    expect(parseClaimRecords([{ id: 7, body }])[0]).toMatchObject({ kind: "concede", worker: "h:w" });
+  });
+
+  it("falls back to the comment createdAt when the marker omits ts", () => {
+    const body = renderClaimComment({ worker: "h:w" });
+    const [r] = parseClaimRecords([{ id: 1, body, createdAt: "2026-06-10T00:00:00Z" }]);
+    expect(r?.createdAt).toBe("2026-06-10T00:00:00Z");
+  });
+});
+
+describe("parseClaimRecords garbage tolerance", () => {
+  it("skips non-marker comments, malformed markers, and worker-less markers", () => {
+    const comments: RawClaimComment[] = [
+      { id: 1, body: "just a normal human comment, no marker" },
+      { id: 2, body: "<!-- afk:claim v1 kind=claim -->\nmissing worker" },
+      { id: 3, body: "<!-- afk:claim worker=h:good kind=claim -->\nok" },
+      { id: 4, body: "<!-- afk:somethingelse worker=h:nope -->" },
+      // non-numeric id is dropped defensively
+      { id: NaN, body: "<!-- afk:claim worker=h:bad -->" },
+    ];
+    const parsed = parseClaimRecords(comments);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]).toMatchObject({ commentId: 3, worker: "h:good" });
+  });
+
+  it("a decision survives a thread full of garbage around one real claim", () => {
+    const comments: RawClaimComment[] = [
+      { id: 10, body: "lgtm" },
+      { id: 11, body: renderClaimComment({ worker: "h:me" }) },
+      { id: 12, body: "<!-- afk:claim total garbage no equals -->" },
+      { id: 13, body: "" },
+    ];
+    const decision = reconcileClaim(parseClaimRecords(comments), self("h:me", 11));
+    expect(decision.verdict).toBe("won");
+  });
+});
+
+// ---- reconciler layer ----
+
+describe("reconcileClaim interleavings", () => {
+  it("solo win: only our own claim contends", () => {
+    const d = reconcileClaim([], self("h:me", 100));
+    expect(d).toMatchObject({ verdict: "won", winner: "h:me" });
+    expect(d.reason).toBe("solo claim");
+  });
+
+  it("same-host duel: two workers on one host, lowest comment id wins", () => {
+    const records = [rec(50, "host:a"), rec(60, "host:b")];
+    expect(reconcileClaim(records, self("host:a", 50)).verdict).toBe("won");
+    const bLost = reconcileClaim(records, self("host:b", 60));
+    expect(bLost.verdict).toBe("lost");
+    expect(bLost.winner).toBe("host:a");
+  });
+
+  it("cross-host duel: earliest server-assigned id wins regardless of host", () => {
+    const records = [rec(70, "hostA:w1"), rec(65, "hostB:w9")];
+    expect(reconcileClaim(records, self("hostB:w9", 65)).verdict).toBe("won");
+    expect(reconcileClaim(records, self("hostA:w1", 70)).verdict).toBe("lost");
+  });
+
+  it("late-arrival concede: a worker whose claim id is higher loses to the earlier claim", () => {
+    const records = [
+      { ...rec(50, "other:host"), createdAt: "2026-07-07T03:08:14Z" },
+      rec(200, "h:me"),
+    ];
+    const d = reconcileClaim(records, self("h:me", 200));
+    expect(d.verdict).toBe("lost");
+    expect(d.winner).toBe("other:host");
+    expect(d.winnerClaimId).toBe(50);
+    expect(d.winnerCreatedAt).toBe("2026-07-07T03:08:14Z");
+  });
+
+  it("a flapping claimant cannot jump the queue by re-claiming", () => {
+    const records = [rec(10, "other"), rec(90, "other"), rec(50, "h:me")];
+    expect(reconcileClaim(records, self("h:me", 50)).verdict).toBe("lost");
+  });
+
+  it("conceded earlier winner drops out: the next-earliest live claim wins", () => {
+    const records = [rec(10, "other"), rec(80, "other", "concede"), rec(50, "h:me")];
+    const d = reconcileClaim(records, self("h:me", 50));
+    expect(d.verdict).toBe("won");
+    expect(d.winner).toBe("h:me");
+  });
+
+  it("our own concede (latest word) means we no longer contend", () => {
+    const records = [rec(50, "h:me"), rec(90, "h:me", "concede")];
+    const d = reconcileClaim(records, self("h:me", 50));
+    expect(d.verdict).toBe("lost");
+  });
+});
+
+describe("reconcileClaim stale-claim recovery (injected liveness)", () => {
+  it("recovers a dead cross-host winner via isStale", () => {
+    const records = [rec(10, "dead:host"), rec(50, "h:me")];
+    expect(reconcileClaim(records, self("h:me", 50)).verdict).toBe("lost");
+    const d = reconcileClaim(records, self("h:me", 50), {
+      isStale: (r) => r.worker === "dead:host",
+    });
+    expect(d.verdict).toBe("won");
+    expect(d.winner).toBe("h:me");
+  });
+
+  it("never marks ourselves stale away from a win we hold", () => {
+    const records = [rec(50, "h:me")];
+    const d = reconcileClaim(records, self("h:me", 50), { isStale: () => false });
+    expect(d.verdict).toBe("won");
+  });
+
+  it("reports the recovered stale worker that out-ordered us (#627 audit input)", () => {
+    const records = [rec(10, "dead:host"), rec(50, "h:me")];
+    const d = reconcileClaim(records, self("h:me", 50), { isStale: (r) => r.worker === "dead:host" });
+    expect(d.verdict).toBe("won");
+    expect(d.recovered).toEqual(["dead:host"]);
+  });
+
+  it("does not report a stale claim posted AFTER our claim as recovered", () => {
+    const records = [rec(50, "h:me"), rec(80, "dead:host")];
+    const d = reconcileClaim(records, self("h:me", 50), { isStale: (r) => r.worker === "dead:host" });
+    expect(d.verdict).toBe("won");
+    expect(d.recovered).toEqual([]);
+  });
+
+  it("reports no recovery when we lose", () => {
+    const records = [rec(10, "live:host"), rec(20, "dead:host"), rec(50, "h:me")];
+    const d = reconcileClaim(records, self("h:me", 50), { isStale: (r) => r.worker === "dead:host" });
+    expect(d.verdict).toBe("lost");
+    expect(d.winner).toBe("live:host");
+    expect(d.recovered).toEqual([]);
+  });
+
+  it("the returning stale owner concedes — the staleness predicate resolves the race", () => {
+    const records = [rec(10, "dead:host"), rec(50, "h:me")];
+    const fromOwner = reconcileClaim(records, self("dead:host", 10), {
+      isStale: (r) => r.worker === "dead:host",
+    });
+    expect(fromOwner.verdict).toBe("lost");
+    expect(fromOwner.winner).toBe("h:me");
+  });
+});
+
+describe("renderRecoveryAudit", () => {
+  it("names the releasing worker and the recovered claimants", () => {
+    const one = renderRecoveryAudit({ worker: "h:me" }, ["dead:host"]);
+    expect(one).toContain("h:me");
+    expect(one).toContain("dead:host");
+    expect(one).toContain("a stale claim");
+    const many = renderRecoveryAudit({ worker: "h:me" }, ["a:1", "b:2"]);
+    expect(many).toContain("stale claims");
+    expect(many).toContain("`a:1`, `b:2`");
+  });
+
+  it("appends a predecessor death cause when deathFor resolves one", () => {
+    const out = renderRecoveryAudit({ worker: "h:me" }, ["h:dead"], (w) =>
+      w === "h:dead" ? "uncatchable death (likely SIGKILL/OOM)" : null,
+    );
+    expect(out).toContain("stopped refreshing"); // base wording preserved
+    expect(out).toContain("Predecessor cause (process-safety diagnostic)");
+    expect(out).toContain("`h:dead`: uncatchable death (likely SIGKILL/OOM)");
+  });
+
+  it("pluralizes and joins multiple resolved causes, skipping the unresolved", () => {
+    const out = renderRecoveryAudit({ worker: "h:me" }, ["h:a", "h:b", "other:c"], (w) =>
+      w === "h:a" ? "clean exit (code 1)" : w === "h:b" ? "terminated by SIGTERM" : null,
+    );
+    expect(out).toContain("Predecessor causes (process-safety diagnostic)");
+    expect(out).toContain("`h:a`: clean exit (code 1)");
+    expect(out).toContain("`h:b`: terminated by SIGTERM");
+    expect(out).not.toContain("`other:c`:");
+  });
+
+  it("keeps the original wording when deathFor is absent or resolves nothing", () => {
+    const noLookup = renderRecoveryAudit({ worker: "h:me" }, ["h:dead"]);
+    expect(noLookup).not.toContain("Predecessor cause");
+    const allNull = renderRecoveryAudit({ worker: "h:me" }, ["h:dead"], () => null);
+    expect(allNull).not.toContain("Predecessor cause");
+  });
+});
+
+// ---- orchestrator (injected IO) ----
+
+function fakeGh(
+  existing: RawClaimComment[],
+): ClaimGh & { posted: string[]; conceded: string[]; audited: string[] } {
+  let nextId = (existing.at(-1)?.id ?? 0) + 1;
+  const posted: string[] = [];
+  const conceded: string[] = [];
+  const audited: string[] = [];
+  return {
+    posted,
+    conceded,
+    audited,
+    async postClaim(_issue, body) {
+      const id = nextId++;
+      posted.push(body);
+      existing.push({ id, body });
+      return id;
+    },
+    async listClaims() {
+      return existing.slice();
+    },
+    async concede(_issue, body) {
+      conceded.push(body);
+    },
+    async audit(_issue, body) {
+      audited.push(body);
+    },
+  };
+}
+
+describe("acquireClaim orchestration", () => {
+  it("wins solo and posts no concede", async () => {
+    const gh = fakeGh([]);
+    const d = await acquireClaim(gh, { worker: "h:me", runner: "claude" }, 5);
+    expect(d.verdict).toBe("won");
+    expect(gh.posted).toHaveLength(1);
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("loses to an earlier claim and concedes cleanly", async () => {
+    const gh = fakeGh([{ id: 1, body: renderClaimComment({ worker: "other:host" }) }]);
+    const d = await acquireClaim(gh, { worker: "h:me", runner: "claude" }, 5);
+    expect(d.verdict).toBe("lost");
+    expect(d.winner).toBe("other:host");
+    expect(gh.conceded).toHaveLength(1);
+    expect(gh.conceded[0]).toContain("conceded");
+  });
+
+  it("suppressConcede skips the concede side effect", async () => {
+    const gh = fakeGh([{ id: 1, body: renderClaimComment({ worker: "other:host" }) }]);
+    const d = await acquireClaim(gh, { worker: "h:me" }, 5, { suppressConcede: true });
+    expect(d.verdict).toBe("lost");
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("recovers a stale cross-host claim and posts exactly one audit comment (#627)", async () => {
+    const gh = fakeGh([{ id: 1, body: renderClaimComment({ worker: "dead:host" }) }]);
+    const d = await acquireClaim(gh, { worker: "h:me", runner: "claude" }, 5, {
+      isStale: (r) => r.worker === "dead:host",
+    });
+    expect(d.verdict).toBe("won");
+    expect(d.recovered).toEqual(["dead:host"]);
+    expect(gh.audited).toHaveLength(1);
+    expect(gh.audited[0]).toContain("cross-host recovery");
+    expect(gh.audited[0]).toContain("dead:host");
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("posts no audit comment on an ordinary solo win", async () => {
+    const gh = fakeGh([]);
+    const d = await acquireClaim(gh, { worker: "h:me" }, 5);
+    expect(d.verdict).toBe("won");
+    expect(gh.audited).toHaveLength(0);
+  });
+});
+
+// ---- sole claimant on a freshly minted issue (#2385) ----
+//
+// Three `/go` dispatches in a row claimed the issue the engine had just minted,
+// immediately conceded it with no other claimant present, and reported success
+// over zero work. The claim substrate must make that verdict unreachable: a sole
+// claimant always wins its own mint, and an unverifiable claim fails loudly.
+describe("sole-claimant verification (#2385)", () => {
+  it("wins its own freshly minted issue even when the staleness predicate rejects everything", () => {
+    const d = reconcileClaim([], self("h:me", 10), { isStale: () => true });
+    expect(d.verdict).toBe("won");
+    expect(d.winner).toBe("h:me");
+  });
+
+  it("still loses to a live earlier claimant while self is stale-exempt", () => {
+    const d = reconcileClaim([rec(5, "other:host")], self("h:me", 10), {
+      isStale: (r) => r.worker === "h:me",
+    });
+    expect(d.verdict).toBe("lost");
+    expect(d.winner).toBe("other:host");
+  });
+
+  it("throws instead of conceding when our own claim id is unusable", () => {
+    expect(() => reconcileClaim([], self("h:me", Number.NaN))).toThrow(ClaimVerificationError);
+  });
+
+  it("retries the read-back until our claim marker is visible", async () => {
+    const gh = fakeGh([]);
+    const real = gh.listClaims.bind(gh);
+    let calls = 0;
+    gh.listClaims = async (issue: number) => {
+      calls += 1;
+      return calls < 3 ? [] : real(issue); // eventual consistency after the POST
+    };
+    const slept: number[] = [];
+    const d = await acquireClaim(gh, { worker: "h:me" }, 5, {
+      sleep: async (ms) => void slept.push(ms),
+    });
+    expect(d.verdict).toBe("won");
+    expect(calls).toBe(3);
+    expect(slept).toHaveLength(2);
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("keeps the verified fresh claim alive when pre-boot liveness rejects its marker", async () => {
+    const gh = fakeGh([]);
+    const d = await acquireClaim(gh, { worker: "h:me" }, 5, {
+      isStale: (record) => record.worker === "h:me",
+    });
+
+    expect(d).toMatchObject({ verdict: "won", winner: "h:me" });
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("fails loudly — never 'lost' — when the read-back never shows our claim", async () => {
+    const gh = fakeGh([]);
+    gh.listClaims = async () => []; // e.g. every `gh api` list call failed
+    await expect(
+      acquireClaim(gh, { worker: "h:me" }, 5, { sleep: async () => undefined }),
+    ).rejects.toBeInstanceOf(ClaimVerificationError);
+    expect(gh.conceded).toHaveLength(0);
+  });
+
+  it("fails loudly when every read-back attempt throws", async () => {
+    const gh = fakeGh([]);
+    gh.listClaims = async () => {
+      throw new Error("gh api: network unreachable");
+    };
+    await expect(
+      acquireClaim(gh, { worker: "h:me" }, 5, { sleep: async () => undefined }),
+    ).rejects.toThrow(/network unreachable/);
+    expect(gh.conceded).toHaveLength(0);
+  });
+});
+
+// ---- concede wording (#2385) ----
+describe("concede reason wording", () => {
+  it("names the lost race distinctly from a voluntary release", () => {
+    const lost = renderClaimComment({ worker: "h:me" }, "concede", "lost");
+    const released = renderClaimComment({ worker: "h:me" }, "concede", "released");
+    expect(lost).toContain("reason=lost");
+    expect(lost).toContain("lost the claim race to an earlier claimant");
+    expect(released).toContain("reason=released");
+    expect(released).toContain("released the claim it held");
+    expect(released).not.toContain("lost the claim race");
+  });
+
+  it("keeps the legacy ambiguous wording when no reason is supplied", () => {
+    const legacy = renderClaimComment({ worker: "h:me" }, "concede");
+    expect(legacy).toContain("lost the claim race or released");
+    expect(legacy).not.toContain("reason=");
+  });
+
+  it("parses a reason-bearing concede marker as a concede", () => {
+    const [record] = parseClaimRecords([
+      { id: 7, body: renderClaimComment({ worker: "h:me" }, "concede", "released") },
+    ]);
+    expect(record?.kind).toBe("concede");
+    expect(record?.worker).toBe("h:me");
+  });
+});
+
+// ---- local FS lease composition (castle-only layer) ----
 
 function memoryStore(
-  existing: TrackerClaimComment[] = [],
+  existing: RawClaimComment[] = [],
 ): TrackerClaimStore & {
   posted: string[];
   conceded: string[];
@@ -66,7 +510,7 @@ describe("tracker dual lease", () => {
         "<!-- afk:claim v1 worker=host:w1 kind=claim runner=codex -->",
       );
       expect(
-        parseTrackerClaimRecords(await store.listClaims(1907)),
+        parseClaimRecords(await store.listClaims(1907)),
       ).toMatchObject([{ worker: "host:w1", kind: "claim" }]);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -106,7 +550,7 @@ describe("tracker dual lease", () => {
   it("recovers an older remote claim only from an injected dead liveness verdict", async () => {
     const oldClaim = {
       id: 1,
-      body: renderTrackerClaimComment({ worker: "host:dead" }, "claim"),
+      body: renderClaimComment({ worker: "host:dead" }, "claim"),
       createdAt: "2000-01-01T00:00:00Z",
     };
     const liveStore = memoryStore([oldClaim]);
@@ -124,6 +568,12 @@ describe("tracker dual lease", () => {
         winner: "host:dead",
       });
       expect(liveStore.conceded).toHaveLength(1);
+      // A lost race concedes with the distinct #2385 reason.
+      expect(liveStore.conceded[0]).toContain("reason=lost");
+      // The lost race also released the local lease.
+      await expect(
+        readFile(join(liveRoot, "1907", "owner"), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(liveRoot, { recursive: true, force: true });
     }
@@ -170,11 +620,39 @@ describe("tracker dual lease", () => {
 
       expect(store.conceded).toHaveLength(1);
       expect(store.conceded[0]).toContain("kind=concede");
+      // A voluntary retirement names its reason (#2385), never the lost race.
+      expect(store.conceded[0]).toContain("reason=released");
       await expect(
         readFile(join(root, "1907", "owner"), "utf8"),
       ).rejects.toMatchObject({
         code: "ENOENT",
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("releases the local lease when claim verification fails loudly (#2385)", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      const local = createFsIssueLeaseStore(root);
+      const store = memoryStore();
+      store.listClaims = async () => []; // read-back never shows our marker
+
+      await expect(
+        acquireIssueLease({
+          issue: 1907,
+          identity: { worker: "host:w1" },
+          local,
+          remote: store,
+          liveness: () => "unknown",
+          sleep: async () => undefined,
+        }),
+      ).rejects.toBeInstanceOf(ClaimVerificationError);
+      // The dispatch failed loudly, but the host slot is not stranded.
+      await expect(
+        readFile(join(root, "1907", "owner"), "utf8"),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -39,17 +39,34 @@ export * from "./runner-types.js";
 export * from "./singleton-event-lane.js";
 export * from "./singleton-lease.js";
 export {
+  CLAIM_MARKER_VERSION,
+  ClaimVerificationError,
+  acquireClaim,
   acquireIssueLease,
   createFsIssueLeaseStore,
+  parseClaimRecords,
   parseTrackerClaimRecords,
+  reconcileClaim,
   reconcileTrackerClaims,
+  renderClaimComment,
+  renderRecoveryAudit,
   renderTrackerClaimComment,
   retireIssueLease,
   TRACKER_CLAIM_MARKER_VERSION,
 } from "./tracker/claim.js";
 export type {
+  AcquireClaimOptions,
+  ClaimDecision,
+  ClaimGh,
+  ClaimKind,
+  ClaimReconcileOptions,
+  ClaimRecord,
+  ClaimSelf,
+  ClaimVerdict,
+  ConcedeReason,
   LocalIssueLeaseStore,
   LocalLeaseDecision,
+  RawClaimComment,
   RetireIssueLeaseOptions,
   TrackerClaimComment,
   TrackerClaimIdentity,
@@ -59,5 +76,7 @@ export type {
   TrackerClaimVerdict,
   AcquireIssueLeaseOptions,
 } from "./tracker/claim.js";
+export { CLAIM_WIRE_FIXTURES } from "./tracker/claim-wire-fixture.js";
+export type { ClaimWireFixture } from "./tracker/claim-wire-fixture.js";
 export * from "./tracker/port.js";
 export * from "./tracker/github/adapter.js";

@@ -1,42 +1,559 @@
+// Atomic GitHub-native claim substrate (ADR 0066, issue #622, PRD #614) —
+// unified single implementation (red-skills boundary consolidation).
+//
+// This module is the ONE owner of the claim wire format. The battle-proven
+// implementation absorbed here previously lived in the consuming host
+// (`apps/dev/src/core/claim.ts`, now a re-export shim); the earlier
+// tracker-local twin (`renderTrackerClaimComment`/`parseTrackerClaimRecords`/
+// `reconcileTrackerClaims`) is deleted — it had no production callers and
+// predated the #2385 fail-loud hardening. The castle-only local FS lease layer
+// (`createFsIssueLeaseStore`, `acquireIssueLease`, `retireIssueLease`) is
+// retained and rebuilt on the absorbed core.
+//
+// Replaces the racy three-layer label claim (host-local mkdir lock → `running`
+// label pre-check → label edit) with a GitHub-native primitive any claimant on
+// any host can use: local fleet workers, other users' fleets, and GitHub Actions
+// runners. The chosen ordered primitive is **structured claim-comment ordering**:
+// every claimant posts a structured `<!-- afk:claim … -->` marker comment; GitHub
+// assigns each comment a globally monotonic, server-side `id`, which is the total
+// order across all hosts. The earliest active claim wins. See ADR 0066 for the
+// rejected alternatives (assignee CAS, check-run).
+//
+// Structure — three layers, the diff one pure:
+//
+//   marker      renderClaimComment(self) / parseClaimRecords(comments) — the wire
+//     format. parseClaimRecords is garbage-tolerant: any comment that is not a
+//     well-formed afk:claim marker is silently skipped, so arbitrary issue chatter
+//     (and malformed/forged markers) never corrupts the decision.
+//
+//   reconciler  reconcileClaim(records, self, opts) — PURE. Given the parsed claim
+//     records plus the claimant's own identity + comment id, returns won | lost
+//     and the winner. No I/O. Liveness/staleness is injected via opts.isStale,
+//     so cross-host stale-claim recovery stays a pure function of injected facts.
+//
+//   orchestrator  acquireClaim(gh, self, issue, opts) — the thin impure shell with
+//     the GitHub client injected: post our claim → list claim markers → reconcile →
+//     concede (best-effort) if we lost. The verdict is computed by the pure layer;
+//     this layer only performs the side effects.
+//
+// Labels (`running` etc.) are no longer the lock. They remain an observability
+// PROJECTION applied best-effort by the caller and are never consulted to
+// arbitrate a winner.
+
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { Runner } from "../runner-types.js";
 
-export const TRACKER_CLAIM_MARKER_VERSION = 1;
+/** Marker schema version. Bump only on an incompatible wire-format change so old
+ * markers left on long-lived issues still parse (or are cleanly ignored). */
+export const CLAIM_MARKER_VERSION = 1;
 
-export type TrackerClaimKind = "claim" | "concede";
+/** What a claimant is currently expressing. A `claim` contends for the issue; a
+ * `concede` withdraws a prior claim (posted when a worker loses the race or
+ * releases voluntarily). */
+export type ClaimKind = "claim" | "concede";
+
+/** Why a `concede` was posted. The two causes are operationally opposite — one
+ * says another worker owns the issue, the other says we owned it and let go —
+ * and the single ambiguous sentence they used to share ("lost the claim race or
+ * released") turned a crashed worker's release into a phantom claim race in
+ * every post-mortem (#2385). `unspecified` keeps legacy callers rendering the
+ * old wording. */
+export type ConcedeReason = "lost" | "released" | "unspecified";
+
+const CONCEDE_WORDING: Record<ConcedeReason, string> = {
+  lost: "lost the claim race to an earlier claimant",
+  released: "released the claim it held",
+  unspecified: "lost the claim race or released",
+};
+
+/** One parsed claim marker. `commentId` is GitHub's server-assigned monotonic
+ * comment id — the total order that makes the primitive atomic across hosts. */
+export interface ClaimRecord {
+  /** Server-assigned monotonic issue-comment id. The cross-host total order. */
+  commentId: number;
+  /** Claimant identity, `host:worker_id` — unique per worker process per host. */
+  worker: string;
+  kind: ClaimKind;
+  /** Runner that posted the marker (advisory; for logs/observability). */
+  runner?: string;
+  /** Server-assigned ISO createdAt (advisory; backs opts.isStale staleness). */
+  createdAt?: string;
+}
+
+/** The claimant's own identity and the id GitHub assigned to its claim comment. */
+export interface ClaimSelf {
+  /** Our `host:worker_id`. */
+  worker: string;
+  /** The comment id GitHub returned for OUR posted claim. */
+  commentId: number;
+  runner?: Runner;
+  createdAt?: string;
+}
+
+export type ClaimVerdict = "won" | "lost";
+
+/**
+ * A claim could not be VERIFIED — our own just-posted marker never came back
+ * from the read-back, or reconciliation dropped it. Thrown, never folded into a
+ * `lost` verdict: "we could not check" is not "somebody else won" (#2385). The
+ * caller surfaces it as a session error so the dispatch fails loudly instead of
+ * conceding an issue nobody else contends.
+ */
+export class ClaimVerificationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ClaimVerificationError";
+  }
+}
+
+export interface ClaimDecision {
+  verdict: ClaimVerdict;
+  /** The winning claimant's `worker` key, or null when no live claim contends
+   * (only possible if `self` was not supplied to the reconciler — a usage error
+   * the orchestrator never triggers). */
+  winner: string | null;
+  /** One-line rationale, for logs. */
+  reason: string;
+  /** The winning claimant's earliest claim comment id, for operator diagnostics. */
+  winnerClaimId?: number;
+  /** The timestamp attached to the winning claimant's latest marker, when known. */
+  winnerCreatedAt?: string;
+  /** Stale cross-host claimants this decision RECOVERED — workers whose latest
+   * marker `isStale` rejected and who would otherwise have held an earlier claim
+   * than the winner. Empty unless a stale claim was superseded. Drives the single
+   * audit comment the orchestrator posts on a recovery (issue #627). */
+  recovered: string[];
+}
+
+export interface ClaimReconcileOptions {
+  /** Injected liveness/staleness predicate. A record for which this returns
+   * true is treated as a dead/expired claim and does not contend — this is how
+   * a stale cross-host winner is recovered. Pure: the caller computes staleness
+   * (TTL on createdAt, known-dead worker set, …) and injects the verdict so the
+   * reconciler stays I/O-free. Defaults to "never stale". */
+  isStale?: (record: ClaimRecord) => boolean;
+}
+
+// ---------- marker layer ----------
+
+const MARKER_OPEN = "<!-- afk:claim";
+// e.g. `<!-- afk:claim v1 worker=mbp.local:w6HSO-3 kind=claim runner=claude ts=2026-06-10T23:10:24Z -->`
+const MARKER_RE = /<!--\s*afk:claim\s+([^>]*?)\s*-->/g;
+
+function escapeField(value: string): string {
+  // Fields are space-delimited key=value pairs inside an HTML comment. Strip the
+  // characters that would break parsing; identities are already constrained to
+  // host/worker charsets, this is defence-in-depth against a forged title.
+  return value.replace(/[\s>]/g, "_");
+}
+
+/** Render the one-line audit comment posted when a claim recovered a stale
+ * cross-host claim — the visible record that the issue returned to the
+ * executable pool because an owner stopped refreshing (#627).
+ *
+ * When `deathFor` is supplied, it resolves each recovered owner's death cause
+ * (from its process-safety diagnostic log, when same-host and readable). Any
+ * resolved causes are appended so the comment SAYS why the predecessor died —
+ * "uncatchable death (likely SIGKILL/OOM) at ~HH:MM" — instead of only
+ * "stopped refreshing". This is what makes the Pattern 5 diagnostic actionable:
+ * the next worker's recovery comment carries the forensic verdict. `deathFor`
+ * returning null (cross-host, no log, or still-running) omits that owner's
+ * clause, so the comment degrades to the original wording when nothing is
+ * known. */
+export function renderRecoveryAudit(
+  self: { worker: string },
+  recovered: readonly string[],
+  deathFor?: (recoveredWorker: string) => string | null,
+): string {
+  const who = recovered.map((w) => `\`${w}\``).join(", ");
+  const base =
+    `🤖 AFK cross-host recovery: worker \`${self.worker}\` released ${recovered.length === 1 ? "a stale claim" : "stale claims"} ` +
+    `held by ${who} (owner stopped refreshing past the staleness window) and re-claimed this issue.`;
+  if (!deathFor) return base;
+  const causes = recovered
+    .map((w) => {
+      const cause = deathFor(w);
+      return cause ? `\`${w}\`: ${cause}` : null;
+    })
+    .filter((c): c is string => c !== null);
+  if (causes.length === 0) return base;
+  return `${base}\n\nPredecessor cause${causes.length === 1 ? "" : "s"} (process-safety diagnostic): ${causes.join("; ")}.`;
+}
+
+/** Render the structured claim/concede marker comment a claimant posts. The
+ * leading HTML-comment marker carries the machine fields; the trailing line is
+ * the human-visible projection in the issue thread. */
+export function renderClaimComment(
+  self: { worker: string; runner?: string; createdAt?: string },
+  kind: ClaimKind = "claim",
+  reason?: ConcedeReason,
+): string {
+  const fields = [
+    `v${CLAIM_MARKER_VERSION}`,
+    `worker=${escapeField(self.worker)}`,
+    `kind=${kind}`,
+  ];
+  if (kind === "concede" && reason) fields.push(`reason=${escapeField(reason)}`);
+  if (self.runner) fields.push(`runner=${escapeField(self.runner)}`);
+  if (self.createdAt) fields.push(`ts=${escapeField(self.createdAt)}`);
+  const marker = `${MARKER_OPEN} ${fields.join(" ")} -->`;
+  const human =
+    kind === "claim"
+      ? `🤖 AFK claim by worker \`${self.worker}\`${self.runner ? ` (runner \`${self.runner}\`)` : ""}.`
+      : `🤖 AFK worker \`${self.worker}\` conceded this issue (${CONCEDE_WORDING[reason ?? "unspecified"]}).`;
+  return `${marker}\n${human}`;
+}
+
+/** A raw issue comment as read from GitHub (`gh issue view --json comments` /
+ * the issue timeline). Only the fields the parser needs. */
+export interface RawClaimComment {
+  /** Server-assigned monotonic comment id. */
+  id: number;
+  body: string;
+  createdAt?: string;
+}
+
+function parseFields(raw: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const tok of raw.split(/\s+/)) {
+    const eq = tok.indexOf("=");
+    if (eq <= 0) continue;
+    out.set(tok.slice(0, eq), tok.slice(eq + 1));
+  }
+  return out;
+}
+
+/**
+ * Parse claim markers out of a comment list (the marker layer). Garbage-tolerant
+ * by construction: a comment with no marker, a malformed marker, or a marker
+ * missing the required `worker` field is skipped, never throwing. A single
+ * comment may legitimately carry at most one marker; if a forged body embeds
+ * several, each is read but they all share the comment's id (same order slot), so
+ * no forger can claim a lower id than GitHub actually assigned them.
+ */
+export function parseClaimRecords(comments: readonly RawClaimComment[]): ClaimRecord[] {
+  const out: ClaimRecord[] = [];
+  for (const c of comments) {
+    if (typeof c.id !== "number" || !Number.isFinite(c.id) || typeof c.body !== "string") {
+      continue;
+    }
+    MARKER_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = MARKER_RE.exec(c.body)) !== null) {
+      const fields = parseFields(m[1] ?? "");
+      const worker = fields.get("worker");
+      if (!worker) continue; // malformed marker — skip, stay garbage-tolerant.
+      const kindRaw = fields.get("kind");
+      const kind: ClaimKind = kindRaw === "concede" ? "concede" : "claim";
+      out.push({
+        commentId: c.id,
+        worker,
+        kind,
+        runner: fields.get("runner"),
+        createdAt: fields.get("ts") ?? c.createdAt,
+      });
+    }
+  }
+  return out;
+}
+
+// ---------- reconciler layer (PURE) ----------
+
+interface Contender {
+  worker: string;
+  /** Earliest claim comment id — the order key (first-claim-wins). */
+  claimId: number;
+}
+
+/**
+ * Decide the single winner from the claim records plus our own identity (the
+ * pure reconciler). Algorithm:
+ *
+ *   1. Fold records per worker into their current intent: the marker with the
+ *      highest commentId (their latest word) decides whether they still contend.
+ *      A worker whose latest marker is `concede` has withdrawn.
+ *   2. A contending worker's order key is its EARLIEST `claim` id — re-posting a
+ *      claim never improves your position, so a flapping claimant cannot jump the
+ *      queue.
+ *   3. Drop contenders the injected `isStale` predicate rejects (dead/expired) —
+ *      this is cross-host stale-claim recovery.
+ *   4. `self` is always merged in at `self.commentId` (read-after-write may not
+ *      yet reflect our own comment), so the decision is stable.
+ *   5. The lowest surviving claimId wins. Ties (same id — impossible from GitHub,
+ *      possible only in malformed input) break by worker string for determinism.
+ *
+ * Returns `won` iff `self.worker` is that winner.
+ */
+export function reconcileClaim(
+  records: readonly ClaimRecord[],
+  self: ClaimSelf,
+  opts: ClaimReconcileOptions = {},
+): ClaimDecision {
+  const isStale = opts.isStale ?? (() => false);
+
+  // An unusable identity means the claim could not be VERIFIED at all — an
+  // unparseable POST response or a blank worker key. Never fold that into
+  // "lost": the caller must retry or fail, not concede to nobody (#2385).
+  if (!Number.isFinite(self.commentId) || self.worker === "") {
+    throw new ClaimVerificationError(
+      `claim verification failed: unusable claimant identity (worker ${JSON.stringify(self.worker)}, ` +
+        `comment id ${String(self.commentId)})`,
+    );
+  }
+
+  // Per-worker fold: earliest claim id + latest marker (kind + record).
+  interface Fold {
+    earliestClaimId: number | null;
+    latestId: number;
+    latestKind: ClaimKind;
+    latestRecord: ClaimRecord;
+  }
+  const folds = new Map<string, Fold>();
+
+  const ingest = (r: ClaimRecord) => {
+    if (!Number.isFinite(r.commentId) || r.worker === "") return;
+    const f = folds.get(r.worker);
+    if (f === undefined) {
+      folds.set(r.worker, {
+        earliestClaimId: r.kind === "claim" ? r.commentId : null,
+        latestId: r.commentId,
+        latestKind: r.kind,
+        latestRecord: r,
+      });
+      return;
+    }
+    if (r.kind === "claim" && (f.earliestClaimId === null || r.commentId < f.earliestClaimId)) {
+      f.earliestClaimId = r.commentId;
+    }
+    if (r.commentId >= f.latestId) {
+      f.latestId = r.commentId;
+      f.latestKind = r.kind;
+      f.latestRecord = r;
+    }
+  };
+
+  // Did WE just post the marker we are reconciling? True when `self.commentId`
+  // is at least as new as every marker the list already carries — i.e. our claim
+  // is the freshest word on the issue. Equality is required because verified
+  // read-back includes our just-posted marker. A caller re-reconciling an OLD claim
+  // of its own (the returning stale owner) is not fresh, and stays subject to the
+  // staleness predicate that reclaimed its issue.
+  const selfPostedFresh =
+    Number.isFinite(self.commentId) &&
+    records.every((r) => r.commentId <= self.commentId);
+
+  for (const r of records) ingest(r);
+  // Always merge self in (read-after-write safety). Our own marker is a `claim`.
+  ingest({
+    commentId: self.commentId,
+    worker: self.worker,
+    kind: "claim",
+    runner: self.runner,
+    createdAt: self.createdAt,
+  });
+
+  const contenders: Contender[] = [];
+  // Stale claimants that would have out-ordered us, captured so the orchestrator
+  // can post one audit comment recording the cross-host recovery (#627).
+  const stale: Contender[] = [];
+  for (const [worker, f] of folds) {
+    if (f.latestKind === "concede") continue; // withdrew
+    if (f.earliestClaimId === null) continue; // only ever conceded — not a claim
+    // A JUST-POSTED self is never stale (#2385): we wrote that marker moments
+    // ago, so a predicate rejecting it can only be a clock-skew or
+    // timestamp-parse defect — and dropping ourselves made a SOLE claimant fall
+    // through to "no live claim contends" and concede its own freshly minted
+    // issue. A returning owner re-reading its OLD claim stays stale-eligible.
+    if (!(worker === self.worker && selfPostedFresh) && isStale(f.latestRecord)) {
+      stale.push({ worker, claimId: f.earliestClaimId }); // dead/expired — recovered
+      continue;
+    }
+    contenders.push({ worker, claimId: f.earliestClaimId });
+  }
+
+  if (contenders.length === 0) {
+    if (selfPostedFresh) {
+      // Unreachable for a just-posted claim: `self` is merged in as a live claim
+      // above and is stale-exempt, so an empty contender set means our own
+      // identity was unusable (empty worker key). That is a VERIFICATION
+      // failure, never a lost race — fail loudly instead of conceding (#2385).
+      throw new ClaimVerificationError(
+        `claim verification failed on the reconciler: our own claim (worker ${JSON.stringify(self.worker)}, ` +
+          `comment id ${String(self.commentId)}) did not survive reconciliation — no live claim contends`,
+      );
+    }
+    // Not a fresh post: we are re-reading an old claim of ours that has since
+    // been conceded or aged out. Nobody contends and we do not hold it.
+    return { verdict: "lost", winner: null, reason: "no live claim contends", recovered: [] };
+  }
+
+  contenders.sort((a, b) => a.claimId - b.claimId || (a.worker < b.worker ? -1 : 1));
+  // Non-empty by the guard above; index access is checked under this tsconfig.
+  const winner = contenders[0]!;
+
+  // A recovery is real only when we WIN and a stale claimant out-ordered us —
+  // i.e. it would have beaten the winner had it not aged out. A stale claim that
+  // posted AFTER the winner never held the issue, so it is not "recovered".
+  const recovered =
+    winner.worker === self.worker
+      ? stale.filter((s) => s.claimId < winner.claimId).map((s) => s.worker).sort()
+      : [];
+
+  if (winner.worker === self.worker) {
+    return {
+      verdict: "won",
+      winner: winner.worker,
+      winnerClaimId: winner.claimId,
+      winnerCreatedAt: folds.get(winner.worker)?.latestRecord.createdAt,
+      reason:
+        contenders.length === 1
+          ? "solo claim"
+          : `earliest of ${contenders.length} live claims (id ${winner.claimId})`,
+      recovered,
+    };
+  }
+  return {
+    verdict: "lost",
+    winner: winner.worker,
+    winnerClaimId: winner.claimId,
+    winnerCreatedAt: folds.get(winner.worker)?.latestRecord.createdAt,
+    reason: `worker ${winner.worker} holds earlier claim (id ${winner.claimId} < our ${self.commentId})`,
+    recovered: [],
+  };
+}
+
+// ---------- orchestrator layer (injected IO) ----------
+
+/** GitHub side effects the claim orchestrator drives. Each maps to a `gh` call;
+ * kept out of the module so the decision stays I/O-free. */
+export interface ClaimGh {
+  /** Post our claim marker comment; resolve the new comment's server id. */
+  postClaim(issue: number, body: string): Promise<number>;
+  /** Read the issue's claim marker comments ({id, body, createdAt}). */
+  listClaims(issue: number): Promise<RawClaimComment[]>;
+  /** Post a concede marker (best-effort; a failed concede is non-fatal — our
+   * claim simply ages out via staleness). */
+  concede(issue: number, body: string): Promise<void>;
+  /** Post the single human-visible audit comment when this claim RECOVERED a
+   * stale cross-host claim (#627). Optional + best-effort: a failed audit does
+   * not abandon the won claim. Omitted by legacy callers (no audit posted). */
+  audit?(issue: number, body: string): Promise<void>;
+}
+
+export interface AcquireClaimOptions extends ClaimReconcileOptions {
+  /** Skip posting the human-facing concede when we lose (kept for tests). */
+  suppressConcede?: boolean;
+  /**
+   * Resolve a recovered stale-claim owner's death cause for the recovery audit
+   * comment (Pattern 5 — make the diagnostic actionable). Injected so claim.ts
+   * stays pure; the runtime binds it to `deathCauseForRecoveredWorker`.
+   * Absent → the comment keeps its original wording.
+   */
+  deathFor?: (recoveredWorker: string) => string | null;
+  /** Read-back attempts allowed before a claim is declared unverifiable (#2385).
+   * GitHub's comment list is read-your-write in practice but not guaranteed, and
+   * the gh layer degrades a failed list call to an empty array — both looked
+   * exactly like "nobody claimed, including us". Default 3. */
+  verifyAttempts?: number;
+  /** Milliseconds to wait between read-back attempts. Default 1000. */
+  verifyDelayMs?: number;
+  /** Injected sleep so the retry loop is testable without a real clock. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_VERIFY_ATTEMPTS = 3;
+const DEFAULT_VERIFY_DELAY_MS = 1000;
+
+const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Read the issue's claim markers back until OUR OWN marker is visible (the
+ * verification step). Retries a list that has not yet propagated and a list call
+ * that failed outright; throws `ClaimVerificationError` when every attempt is
+ * exhausted. Never returns a list that lacks our marker — that ambiguity is what
+ * made a sole claimant concede its own freshly minted issue (#2385).
+ */
+async function listVerifiedClaims(
+  gh: ClaimGh,
+  issue: number,
+  commentId: number,
+  opts: AcquireClaimOptions,
+): Promise<RawClaimComment[]> {
+  const attempts = Math.max(1, opts.verifyAttempts ?? DEFAULT_VERIFY_ATTEMPTS);
+  const delayMs = opts.verifyDelayMs ?? DEFAULT_VERIFY_DELAY_MS;
+  const sleep = opts.sleep ?? realSleep;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (attempt > 0 && delayMs > 0) await sleep(delayMs);
+    let raw: RawClaimComment[];
+    try {
+      raw = await gh.listClaims(issue);
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+    if (raw.some((c) => c.id === commentId)) return raw;
+    lastError = new Error(`our claim comment ${commentId} was absent from ${raw.length} listed comment(s)`);
+  }
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new ClaimVerificationError(
+    `claim verification failed on #${issue} after ${attempts} read-back attempt(s): ${detail}`,
+  );
+}
+
+/**
+ * Attempt to claim `issue` for `self` via the GitHub-native primitive: post our
+ * claim marker, read all markers, run the pure reconciler, and concede cleanly if
+ * we lost. Returns the decision; the caller (process-issue) maps `lost` to the
+ * `claim-lost` outcome (no envelope, next issue picked) and projects labels only
+ * on `won`.
+ */
+export async function acquireClaim(
+  gh: ClaimGh,
+  self: { worker: string; runner?: Runner; createdAt?: string },
+  issue: number,
+  opts: AcquireClaimOptions = {},
+): Promise<ClaimDecision> {
+  const commentId = await gh.postClaim(
+    issue,
+    renderClaimComment({ worker: self.worker, runner: self.runner, createdAt: self.createdAt }, "claim"),
+  );
+  const raw = await listVerifiedClaims(gh, issue, commentId, opts);
+  const records = parseClaimRecords(raw);
+  const decision = reconcileClaim(records, { ...self, commentId }, opts);
+  if (decision.verdict === "lost" && !opts.suppressConcede) {
+    await gh.concede(
+      issue,
+      renderClaimComment({ worker: self.worker, runner: self.runner }, "concede", "lost"),
+    );
+  }
+  // One audit comment when we won by recovering a stale cross-host claim (#627).
+  // Best-effort: a failed audit never abandons the won claim.
+  if (decision.verdict === "won" && decision.recovered.length > 0 && gh.audit) {
+    try {
+      await gh.audit(issue, renderRecoveryAudit({ worker: self.worker }, decision.recovered, opts.deathFor));
+    } catch {
+      // best-effort observability; the claim is already won.
+    }
+  }
+  return decision;
+}
+
+// ---------- local FS lease layer (castle-only, composed over the core) ----------
+
 export type TrackerClaimLiveness = "alive" | "dead" | "unknown";
-export type TrackerClaimVerdict = "won" | "lost";
 
 export interface TrackerClaimIdentity {
   readonly worker: string;
   readonly runner?: string;
 }
 
-export interface TrackerClaimComment {
-  readonly id: number;
-  readonly body: string;
-  readonly createdAt?: string;
-}
-
-export interface TrackerClaimRecord {
-  readonly commentId: number;
-  readonly worker: string;
-  readonly kind: TrackerClaimKind;
-  readonly runner?: string;
-  readonly createdAt?: string;
-}
-
-export interface TrackerClaimDecision {
-  readonly verdict: TrackerClaimVerdict;
-  readonly winner: string | null;
-  readonly reason: string;
-  readonly winnerClaimId?: number;
-  readonly recovered: string[];
-}
-
+/** Remote claim store the lease composition drives — structurally a `ClaimGh`
+ * without the optional audit hook. */
 export interface TrackerClaimStore {
   postClaim(issue: number, body: string): Promise<number>;
-  listClaims(issue: number): Promise<TrackerClaimComment[]>;
+  listClaims(issue: number): Promise<RawClaimComment[]>;
   concede(issue: number, body: string): Promise<void>;
 }
 
@@ -64,6 +581,13 @@ export interface AcquireIssueLeaseOptions {
   readonly local: LocalIssueLeaseStore;
   readonly remote: TrackerClaimStore;
   readonly liveness: (worker: string) => TrackerClaimLiveness;
+  /** Optional additional record-level staleness (TTL on `ts`/createdAt), OR-ed
+   * with the worker-level `liveness === "dead"` bridge. */
+  readonly isStale?: (record: ClaimRecord) => boolean;
+  /** Read-back verification knobs forwarded to `acquireClaim` (#2385). */
+  readonly verifyAttempts?: number;
+  readonly verifyDelayMs?: number;
+  readonly sleep?: (ms: number) => Promise<void>;
 }
 
 export interface RetireIssueLeaseOptions {
@@ -73,163 +597,17 @@ export interface RetireIssueLeaseOptions {
   readonly remote: TrackerClaimStore;
 }
 
-const MARKER_OPEN = "<!-- afk:claim";
-const MARKER_RE = /<!--\s*afk:claim\s+([^>]*?)\s*-->/g;
-
-function escapeField(value: string): string {
-  return value.replace(/[\s>]/g, "_");
-}
-
-export function renderTrackerClaimComment(
-  identity: TrackerClaimIdentity,
-  kind: TrackerClaimKind = "claim",
-): string {
-  const fields = [
-    `v${TRACKER_CLAIM_MARKER_VERSION}`,
-    `worker=${escapeField(identity.worker)}`,
-    `kind=${kind}`,
-  ];
-  if (identity.runner) fields.push(`runner=${escapeField(identity.runner)}`);
-  const marker = `${MARKER_OPEN} ${fields.join(" ")} -->`;
-  const human =
-    kind === "claim"
-      ? `AFK claim by worker \`${identity.worker}\`${identity.runner ? ` (runner \`${identity.runner}\`)` : ""}.`
-      : `AFK worker \`${identity.worker}\` conceded this issue.`;
-  return `${marker}\n${human}`;
-}
-
-export function parseTrackerClaimRecords(
-  comments: readonly TrackerClaimComment[],
-): TrackerClaimRecord[] {
-  const out: TrackerClaimRecord[] = [];
-  for (const comment of comments) {
-    if (!Number.isFinite(comment.id) || typeof comment.body !== "string")
-      continue;
-    MARKER_RE.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = MARKER_RE.exec(comment.body)) !== null) {
-      const fields = parseFields(match[1] ?? "");
-      const worker = fields.get("worker");
-      if (!worker) continue;
-      const kind = fields.get("kind") === "concede" ? "concede" : "claim";
-      out.push({
-        commentId: comment.id,
-        worker,
-        kind,
-        runner: fields.get("runner"),
-        createdAt: fields.get("ts") ?? comment.createdAt,
-      });
-    }
-  }
-  return out;
-}
-
-function parseFields(raw: string): Map<string, string> {
-  const fields = new Map<string, string>();
-  for (const token of raw.split(/\s+/)) {
-    const eq = token.indexOf("=");
-    if (eq <= 0) continue;
-    fields.set(token.slice(0, eq), token.slice(eq + 1));
-  }
-  return fields;
-}
-
-export function reconcileTrackerClaims(
-  records: readonly TrackerClaimRecord[],
-  self: { readonly worker: string; readonly commentId: number },
-  liveness: (worker: string) => TrackerClaimLiveness,
-): TrackerClaimDecision {
-  interface Fold {
-    earliestClaimId: number | null;
-    latestId: number;
-    latestKind: TrackerClaimKind;
-  }
-
-  const folds = new Map<string, Fold>();
-  const ingest = (record: TrackerClaimRecord): void => {
-    if (!Number.isFinite(record.commentId) || record.worker === "") return;
-    const existing = folds.get(record.worker);
-    if (!existing) {
-      folds.set(record.worker, {
-        earliestClaimId: record.kind === "claim" ? record.commentId : null,
-        latestId: record.commentId,
-        latestKind: record.kind,
-      });
-      return;
-    }
-    if (
-      record.kind === "claim" &&
-      (existing.earliestClaimId === null ||
-        record.commentId < existing.earliestClaimId)
-    ) {
-      existing.earliestClaimId = record.commentId;
-    }
-    if (record.commentId >= existing.latestId) {
-      existing.latestId = record.commentId;
-      existing.latestKind = record.kind;
-    }
-  };
-
-  for (const record of records) ingest(record);
-  ingest({ commentId: self.commentId, worker: self.worker, kind: "claim" });
-
-  const contenders: Array<{ worker: string; claimId: number }> = [];
-  const dead: Array<{ worker: string; claimId: number }> = [];
-  for (const [worker, fold] of folds) {
-    if (fold.latestKind === "concede" || fold.earliestClaimId === null)
-      continue;
-    const verdict = liveness(worker);
-    if (verdict === "dead") {
-      dead.push({ worker, claimId: fold.earliestClaimId });
-      continue;
-    }
-    contenders.push({ worker, claimId: fold.earliestClaimId });
-  }
-
-  contenders.sort(
-    (a, b) => a.claimId - b.claimId || a.worker.localeCompare(b.worker),
-  );
-  const winner = contenders[0];
-  if (!winner) {
-    return {
-      verdict: "lost",
-      winner: null,
-      reason: "no live claim contends",
-      recovered: [],
-    };
-  }
-
-  const recovered =
-    winner.worker === self.worker
-      ? dead
-          .filter((claim) => claim.claimId < winner.claimId)
-          .map((claim) => claim.worker)
-          .sort()
-      : [];
-  if (winner.worker === self.worker) {
-    return {
-      verdict: "won",
-      winner: self.worker,
-      winnerClaimId: winner.claimId,
-      reason:
-        contenders.length === 1
-          ? "solo claim"
-          : `earliest of ${contenders.length} live claims`,
-      recovered,
-    };
-  }
-  return {
-    verdict: "lost",
-    winner: winner.worker,
-    winnerClaimId: winner.claimId,
-    reason: `worker ${winner.worker} holds earlier claim`,
-    recovered: [],
-  };
-}
-
+/**
+ * Dual lease: the local mkdir lease serializes claimants on one host, then the
+ * GitHub-native `acquireClaim` arbitrates across hosts. Worker-level liveness
+ * bridges into the record-level staleness predicate (`dead` → stale), so a dead
+ * owner's remote claim is recovered exactly as a TTL-stale one would be. On a
+ * lost race — or a thrown `ClaimVerificationError` — the local lease is
+ * released so the host slot never strands.
+ */
 export async function acquireIssueLease(
   options: AcquireIssueLeaseOptions,
-): Promise<TrackerClaimDecision> {
+): Promise<ClaimDecision> {
   const local = await options.local.acquire(
     options.issue,
     options.identity.worker,
@@ -244,34 +622,41 @@ export async function acquireIssueLease(
     };
   }
 
-  const commentId = await options.remote.postClaim(
-    options.issue,
-    renderTrackerClaimComment(options.identity, "claim"),
-  );
-  const records = parseTrackerClaimRecords(
-    await options.remote.listClaims(options.issue),
-  );
-  const decision = reconcileTrackerClaims(
-    records,
-    { worker: options.identity.worker, commentId },
-    options.liveness,
-  );
-  if (decision.verdict === "lost") {
-    await options.remote.concede(
+  const isStale = (record: ClaimRecord): boolean =>
+    options.liveness(record.worker) === "dead" ||
+    (options.isStale?.(record) ?? false);
+
+  let decision: ClaimDecision;
+  try {
+    decision = await acquireClaim(
+      options.remote,
+      { worker: options.identity.worker, runner: options.identity.runner as Runner | undefined },
       options.issue,
-      renderTrackerClaimComment(options.identity, "concede"),
+      {
+        isStale,
+        verifyAttempts: options.verifyAttempts,
+        verifyDelayMs: options.verifyDelayMs,
+        sleep: options.sleep,
+      },
     );
+  } catch (error) {
+    await options.local.release(options.issue, options.identity.worker);
+    throw error;
+  }
+  if (decision.verdict === "lost") {
     await options.local.release(options.issue, options.identity.worker);
   }
   return decision;
 }
 
+/** Voluntary release: concede the remote claim (`reason=released`) and release
+ * the local lease. */
 export async function retireIssueLease(
   options: RetireIssueLeaseOptions,
 ): Promise<void> {
   await options.remote.concede(
     options.issue,
-    renderTrackerClaimComment(options.identity, "concede"),
+    renderClaimComment(options.identity, "concede", "released"),
   );
   await options.local.release(options.issue, options.identity.worker);
 }
@@ -358,4 +743,34 @@ async function readLeaseOwner(leaseDir: string): Promise<string | undefined> {
 
 function issueLeaseDir(root: string, issue: number): string {
   return join(root, String(issue));
+}
+
+// ---------- deprecated twin aliases (removed by the dead-code sweep) ----------
+
+/** @deprecated Use {@link CLAIM_MARKER_VERSION}. */
+export const TRACKER_CLAIM_MARKER_VERSION = CLAIM_MARKER_VERSION;
+/** @deprecated Use {@link ClaimKind}. */
+export type TrackerClaimKind = ClaimKind;
+/** @deprecated Use {@link ClaimVerdict}. */
+export type TrackerClaimVerdict = ClaimVerdict;
+/** @deprecated Use {@link RawClaimComment}. */
+export type TrackerClaimComment = RawClaimComment;
+/** @deprecated Use {@link ClaimRecord}. */
+export type TrackerClaimRecord = ClaimRecord;
+/** @deprecated Use {@link renderClaimComment}. */
+export const renderTrackerClaimComment = (
+  identity: TrackerClaimIdentity,
+  kind: ClaimKind = "claim",
+): string => renderClaimComment(identity, kind);
+/** @deprecated Use {@link parseClaimRecords}. */
+export const parseTrackerClaimRecords = parseClaimRecords;
+/** @deprecated Use {@link reconcileClaim} with an injected `isStale`. */
+export function reconcileTrackerClaims(
+  records: readonly ClaimRecord[],
+  self: { readonly worker: string; readonly commentId: number },
+  liveness: (worker: string) => TrackerClaimLiveness,
+): ClaimDecision {
+  return reconcileClaim(records, self, {
+    isStale: (record) => liveness(record.worker) === "dead",
+  });
 }
