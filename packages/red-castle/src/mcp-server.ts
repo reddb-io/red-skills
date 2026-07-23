@@ -4,6 +4,7 @@ import { createMergeTools, type MergeDependencies } from "./mcp/merge.js";
 import { createHitlTools, type HitlDependencies } from "./mcp/hitl.js";
 import { createFleetTools, type FleetDependencies } from "./mcp/fleet.js";
 import { createGateTools, type GateDependencies } from "./mcp/gate.js";
+import { createDeadendTools, type DeadendDependencies } from "./mcp/deadend.js";
 import { createHygieneTools, type HygieneDependencies } from "./mcp/hygiene.js";
 import { createLandingTools, type LandingDependencies } from "./mcp/landing.js";
 import {
@@ -39,6 +40,7 @@ export type {
   FleetRegisterInput,
 } from "./mcp/fleet.js";
 export type { EventsSinceInput, LogsInput, QueueStatusInput, WorkerVitalsInput } from "./mcp/observability.js";
+export type { DeadendDependencies } from "./mcp/deadend.js";
 export type {
   WorkerDispatchInput,
   WorkerStatusInput,
@@ -73,6 +75,7 @@ export interface CastleMcpDependencies
   extends
     FleetDependencies,
     ObservabilityDependencies,
+    DeadendDependencies,
     WorkerDependencies,
     RunnerDependencies,
     HygieneDependencies,
@@ -103,6 +106,7 @@ export function createCastleMcpTools(
   const tools = [
     ...createFleetTools(deps),
     ...createObservabilityTools(deps),
+    ...createDeadendTools(deps),
     ...createWorkerTools(deps),
     ...createRunnerTools(deps),
     ...createHygieneTools(deps),
