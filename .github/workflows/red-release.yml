@@ -7,9 +7,10 @@ name: red-release
 #
 #   1. Collects the pending changesets under .changeset/.
 #   2. Runs `pnpm release:version` (changeset version + scripts/sync-version.mjs)
-#      on a bot branch and opens/updates the "chore(release): version packages"
-#      PR against main. That PR passes branch protection exactly like any human
-#      PR — no admin bypass token, no GH006 fallback, no direct push.
+#      on a release branch and opens/updates the "chore(release): version
+#      packages" PR against main through the PAT-backed release identity. That
+#      PR passes branch protection exactly like any human PR — no admin bypass,
+#      no GH006 fallback, no direct push.
 #   3. When the Version Packages PR itself merges, main arrives here with ZERO
 #      pending changesets and a version no tag points at yet. That is the cut
 #      signal: tag `vX.Y.Z` and hand off to red-publish.yml, which owns the
@@ -75,7 +76,9 @@ jobs:
           title: "chore(release): version packages"
           setupGitUser: true
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A GITHUB_TOKEN-authored PR leaves pull_request workflow runs waiting
+          # for manual approval. The PAT identity makes required checks start.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
 
       # No pending changesets means the Version Packages PR has already merged
       # (or there was nothing to release). Cut the tag only when the version in

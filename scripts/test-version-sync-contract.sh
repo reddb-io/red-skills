@@ -148,20 +148,20 @@ for retired in \
   fi
 done
 
-# Match the token being USED by the release flow, not the word appearing in
-# prose. RELEASE_PAT remains a legitimate credential for unrelated workflows
-# such as HITL merges; this contract only retires its version-bump bypass path.
+# Match the retired token being USED by the release flow, not the word appearing
+# in prose. The Version Packages PR deliberately uses RELEASE_PAT so GitHub
+# treats its pull_request checks like those from a maintainer-authored PR.
 release_workflows=(
   .github/workflows/red-release.yml
   .github/workflows/red-publish.yml
 )
-if grep -nE 'secrets\.(RED_RELEASE_TOKEN|RELEASE_PAT)|\$\{?RED_RELEASE_TOKEN' \
+if grep -nE 'secrets\.RED_RELEASE_TOKEN|\$\{?RED_RELEASE_TOKEN' \
      "${release_workflows[@]}" >/dev/null 2>&1; then
-  fail "the admin-bypass token must not survive in the release workflows"
-  grep -nE 'secrets\.(RED_RELEASE_TOKEN|RELEASE_PAT)|\$\{?RED_RELEASE_TOKEN' \
+  fail "the retired RED_RELEASE_TOKEN must not survive in the release workflows"
+  grep -nE 'secrets\.RED_RELEASE_TOKEN|\$\{?RED_RELEASE_TOKEN' \
     "${release_workflows[@]}" >&2 || true
 else
-  pass "no RED_RELEASE_TOKEN / RELEASE_PAT path survives in the release flow"
+  pass "no RED_RELEASE_TOKEN path survives in the release flow"
 fi
 
 # --- the version workflow proposes, it never pushes -------------------------
@@ -178,6 +178,12 @@ if grep -qF 'version: pnpm release:version' "$RELEASE_WORKFLOW"; then
   pass "changesets/action versions through pnpm release:version (changeset version + sync)"
 else
   fail "changesets/action must version through pnpm release:version so the manifest sync runs"
+fi
+
+if grep -qF 'GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}' "$RELEASE_WORKFLOW"; then
+  pass "changesets/action uses RELEASE_PAT so Version Packages PR checks start automatically"
+else
+  fail "changesets/action must use secrets.RELEASE_PAT for the Version Packages PR"
 fi
 
 # The whole point of the migration: main is written by merged PRs only.
