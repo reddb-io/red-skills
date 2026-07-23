@@ -1,3 +1,4 @@
+import { clearCurrentBlocker, parseCurrentBlocker } from "./blocker-state.js";
 import { isRefused, planTransition } from "./state-transition.js";
 
 /**
@@ -17,6 +18,10 @@ export interface HitlResolveDeps {
   editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
   /** Concede every dangling claim holder; returns the conceded worker ids. */
   releaseClaims(issue: number): Promise<string[]>;
+  /** Read the raw issue body markdown. */
+  viewBody(issue: number): Promise<string>;
+  /** Overwrite the issue body with the new markdown. */
+  editBody(issue: number, body: string): Promise<void>;
 }
 
 export interface HitlResolveResult {
@@ -60,6 +65,22 @@ export async function resolveHitlDecision(
   // (promote) instead of refusing the way the automated queue path must.
   const conceded = await deps.releaseClaims(input.issue);
   if (conceded.length > 0) actions.push(`claims conceded: ${conceded.join(", ")}`);
+
+  // Clear any active Current blocker so the issue passes the coherence probe
+  // after the label transition. A hitl_resolve is an explicit human decision,
+  // so every blocker kind is accepted here regardless of the narrower set the
+  // CLI requeue operator enforces (#2597).
+  const body = await deps.viewBody(input.issue);
+  const activeBlocker = parseCurrentBlocker(body);
+  if (activeBlocker) {
+    const clearedBody = clearCurrentBlocker(body, {
+      summary: activeBlocker.summary,
+      resolution: input.rationale.trim() || "Resolved via hitl_resolve.",
+    });
+    await deps.editBody(input.issue, clearedBody);
+    actions.push(`body blocker cleared (kind=${activeBlocker.kind})`);
+  }
+
   const hasReqEdges = labels.some((label) => label.startsWith("req:"));
   const plan = planTransition(labels, { kind: hasReqEdges ? "promote" : "queue" });
   if (isRefused(plan)) {

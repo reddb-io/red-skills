@@ -751,6 +751,10 @@ export function createDefaultDevAfkMcpOperations(
             const released = (await this.claimRelease({ issue })) as { conceded?: string[] };
             return released.conceded ?? [];
           },
+          viewBody: async (issue) => (await ghx.issueBody(gh, issue)) ?? "",
+          editBody: async (issue, body) => {
+            await ghx.editBody(gh, issue, body);
+          },
         },
         input,
       );
