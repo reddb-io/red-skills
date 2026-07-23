@@ -67,10 +67,13 @@ import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
 import { createEnginePaths, createFileHealLedgerStore, runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
-import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
+import { formatPrevFailureContext, readPrevFailureContext } from "../../core/prev-failure.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
+import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
+import { configFile } from "@reddb-io/shared/red-paths.js";
 import { spawn } from "node:child_process";
 import { isLivePid } from "../../runtime/kill-tree.js";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../../core/runner-spawn.js";
@@ -103,7 +106,6 @@ import { deriveActivity } from "./activity.js";
 import { makeImplementerRunAgent } from "./implementer-run-agent.js";
 import { makeAgentConflictResolver, makeMechanicalConflictResolver } from "./reconcile.js";
 import { runLinkedSubagent } from "./linked-subagent.js";
-import { makeRecordAttempt, makeRecordOutcomeEvent } from "./recording.js";
 import {
   castleWorktreeUnder,
   decodeLocMemoSnapshot,
@@ -620,12 +622,12 @@ export function buildProcessDeps(
           resolveActorTrust(trustPolicy, actor, (login) => ghx.actorTrustSignals(ghCtx, login)),
         ),
       issueUrl: (issue) => ghx.issueUrl(ghCtx, issue),
-      // Restart-informed retry block (#255): read the prior attempt's markers
-      // (failure.reason / snapshot-branch.ref) via the attempt-ledger.
-      priorAttemptContext: async (issue) => {
+      // The ONE ADR 0103 carry-forward: on an automatic re-queue, surface the
+      // previous failure reason + its Envelope reference in the next prompt.
+      prevFailureContext: async (issue) => {
         try {
-          const context = await attemptLedgerContext(paths.tmpDir, issue);
-          return context ? formatAttemptContext(context) : undefined;
+          const context = await readPrevFailureContext(paths.tmpDir, issue);
+          return context ? formatPrevFailureContext(context) : undefined;
         } catch {
           return undefined;
         }
@@ -1047,7 +1049,6 @@ export function buildProcessDeps(
     // no-op when memory is absent / not opted-in — replacing the old shell-bridge
     // hop. ALL errors are swallowed (one warn line), so a memory failure can
     // NEVER fail the close.
-    recordAttempt: makeRecordAttempt(ctx.root, current, exec),
     recordOutcomeEvent: makeRecordOutcomeEvent(ctx.root, current, exec),
     // Spec cascade rebase (issue #1007): after a successful DONE landing, rebase
     // every open sibling branch (same spec:N, not held by a live worker) onto the
@@ -1158,6 +1159,59 @@ function makeIssueClassifier(
       return result.code === 0 ? result.stdout.trim() : undefined;
     });
   };
+}
+
+function makeRecordOutcomeEvent(
+  gitRoot: string,
+  current: CurrentAttempt,
+  exec?: ExecFn,
+): (event: OutcomeEvent) => Promise<void> {
+  return async (event: OutcomeEvent): Promise<void> => {
+    try {
+      const configPath = configFile(gitRoot);
+      const configText = readFileSync(configPath, "utf8");
+      if (!pluginEnabledInConfig(configText, "brain")) return;
+      const env = { ...process.env, BRAIN_REPO_ROOT: process.env.BRAIN_REPO_ROOT ?? gitRoot };
+      const brainCli = resolveBrainCli(gitRoot, env);
+      if (!brainCli) return;
+      const dir = current.attemptDir || gitRoot;
+      await fsx.ensureDir(dir);
+      const json = JSON.stringify(event);
+      await writeFile(join(dir, `brain-outcome-event-${event.context?.issueNumber ?? "unknown"}.json`), json, "utf8");
+      const run = exec ?? (await import("../../runtime/exec.js")).execTool;
+      const [cmd, ...head] = brainCli;
+      await run(cmd, [...head, "outcome-event", "record", "--root", gitRoot], {
+        cwd: gitRoot,
+        env,
+        input: json,
+      });
+    } catch (err) {
+      process.stderr.write(`[afk] brain outcome-event skipped (best-effort): ${String(err)}\n`);
+    }
+  };
+}
+
+function resolveBrainCli(gitRoot: string, env: NodeJS.ProcessEnv): string[] | undefined {
+  const override = env.RED_BRAIN_CLI;
+  if (override) return existsSync(override) ? ["node", override] : undefined;
+  const pathHit = findOnPath("brain", env.PATH);
+  if (pathHit) return ["brain"];
+  const pluginRoot = env.CLAUDE_PLUGIN_ROOT ?? env.CODEX_PLUGIN_ROOT;
+  if (pluginRoot) {
+    const sibling = join(pluginRoot, "..", "brain", "dist", "cli.js");
+    if (existsSync(sibling)) return ["node", sibling];
+  }
+  const inRepo = join(gitRoot, "plugins", "brain", "dist", "cli.js");
+  if (existsSync(inRepo)) return ["node", inRepo];
+  return undefined;
+}
+
+function findOnPath(bin: string, pathValue: string | undefined): string | undefined {
+  for (const dir of (pathValue ?? "").split(":").filter(Boolean)) {
+    const candidate = join(dir, bin);
+    if (existsSync(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 /** Per-issue mutable context the session-scoped process deps close over — the

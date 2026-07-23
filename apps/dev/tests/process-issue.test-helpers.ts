@@ -8,7 +8,6 @@ import { SCOUT_EXIT_PROTOCOL } from "../src/core/handoff.js";
 import type { HookName } from "../src/core/hook-config.js";
 import type { ConfigValues } from "../src/core/config.js";
 import type { AgentEffort, RunAgentInput, RunAgentResult, SandboxMode } from "../src/core/execution.js";
-import type { AttemptRecordPayload } from "../src/core/attempt-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import type { IssueClassificationMetadata } from "../src/core/issue-classifier.js";
 import type { TrustProvenance } from "../src/core/trust-gate.js";
@@ -70,8 +69,6 @@ export interface Trace {
     effort?: AgentEffort;
     maxIterations: number;
   }>;
-  /** Memory reasoning-attempt records fired after a terminal envelope. */
-  recordedAttempts: AttemptRecordPayload[];
   /** Brain outcome events fired after terminal attempt completion. */
   outcomeEvents: OutcomeEvent[];
   /** Metadata handed to the per-issue classifier before runAgent. */
@@ -183,7 +180,7 @@ export interface HarnessOptions {
    * mirror refresh failure — the regression path for #2436). */
   freshBaseFail?: boolean;
   /** Restart-informed context block returned by the attempt ledger lookup. */
-  priorAttemptContext?: string;
+  prevFailureContext?: string;
   /** The configured Trunk (`plugins.dev.trunk`, ADR 0083) injected into base resolution. */
   configTrunk?: string;
   /** When set, the locked `git merge --no-ff` returns this rc (1 → conflict). */
@@ -211,10 +208,6 @@ export interface HarnessOptions {
   goVerifyRetries?: number;
   /** /afk post-DONE gate-correction convergence budget (#2285). */
   stallConvergenceBudget?: number;
-  /** When set, register the ADR 0017 `recordAttempt` port. "throw" makes it
-   * reject (proving a memory failure never fails the close); "ok" records the
-   * payload; undefined omits the port entirely (older-caller safety). */
-  recordAttempt?: "ok" | "throw";
   /** When set, register the Brain outcome-event sink. "throw"/"hang" model Brain down/slow. */
   recordOutcomeEvent?: "ok" | "throw" | "hang";
   /** When false, omit the optional fs.writeValidationSidecar port (older-caller
@@ -288,7 +281,6 @@ export function harness(opts: HarnessOptions = {}): {
     backpressureReviews: [],
     adversarialReviews: [],
     adversarialReviewContexts: [],
-    recordedAttempts: [],
     outcomeEvents: [],
     classifierCalls: [],
     iterLogs: [],
@@ -688,8 +680,8 @@ export function harness(opts: HarnessOptions = {}): {
       async issueUrl() {
         return "https://github.com/o/r/issues/9";
       },
-      async priorAttemptContext() {
-        return opts.priorAttemptContext;
+      async prevFailureContext() {
+        return opts.prevFailureContext;
       },
       async changedFiles(branch, base) {
         trace.changedFileCalls.push({ branch, base });
@@ -733,15 +725,6 @@ export function harness(opts: HarnessOptions = {}): {
       trace.statePatches.push(patch);
     },
     recoveryEnv: opts.recoveryEnv ?? {},
-    // ADR 0017 recording port: omitted by default (older-caller safety). "ok"
-    // records the payload; "throw" rejects, proving a memory failure never
-    // fails the close.
-    recordAttempt: opts.recordAttempt
-      ? async (payload) => {
-          if (opts.recordAttempt === "throw") throw new Error("memory exploded");
-          trace.recordedAttempts.push(payload);
-        }
-      : undefined,
     recordOutcomeEvent: opts.recordOutcomeEvent
       ? async (event) => {
           if (opts.recordOutcomeEvent === "throw") throw new Error("brain exploded");

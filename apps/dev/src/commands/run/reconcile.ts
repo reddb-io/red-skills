@@ -18,11 +18,6 @@ import {
   type ConflictFinding,
 } from "../../core/merge-conflict-reconcile.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
-import {
-  toMemoryPayload,
-  resolveMemoryCli,
-  type AttemptRecordPayload,
-} from "../../core/attempt-record.js";
 import { isRunner, type Runner } from "../../types/runner.js";
 import {
   afkPaths,
@@ -66,7 +61,6 @@ import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
 import { runCastleWorkerDrain, createFsIssueLeaseStore, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
-import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";

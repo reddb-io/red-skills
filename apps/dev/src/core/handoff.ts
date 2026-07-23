@@ -5,7 +5,7 @@
 // The whole module is pure string assembly: no `gh`, no `jq`, no network, no
 // filesystem. The orchestrator injects everything that touches the world —
 // the issue comments (already projected to `{author, body, createdAt}`), the
-// already-fetched prior-attempt-context block (issue #255), the resolved
+// already-fetched prev-failure-context block (ADR 0103), the resolved
 // source url and `started` timestamp — so the layout is deterministic and
 // unit-testable.
 //
@@ -19,7 +19,7 @@
 // Top-level XML wrappers appear in template order, and any section that would
 // be empty is omitted entirely — byte-for-byte matching the bash:
 //   <issue-body> · <handoff-enrichment> · <previous-attempts> · <human-guidance-thread> ·
-//   <prior-attempt-context> · <thread-discussion> · <agent-notes>
+//   <prev-failure-context> · <thread-discussion> · <agent-notes>
 
 import { AGENT_OUTPUT_TAG } from "@reddb-io/red-castle";
 import { renderAmbientSkill, type RspInstructionRunner } from "../../../rsp/src/ambient-skill.js";
@@ -63,11 +63,11 @@ export interface HandoffInput {
   /** Issue comments in chronological order. */
   comments: HandoffComment[];
   /**
-   * Already-fetched restart-informed retry block (issue #255). Empty/undefined
-   * on a first attempt, so `<prior-attempt-context>` is omitted and the
-   * first-attempt handoff is byte-for-byte unchanged.
+   * Already-fetched carry-forward block: the previous terminal failure reason
+   * plus its Envelope reference (ADR 0103). Empty/undefined on a Ticket's first
+   * run, so `<prev-failure-context>` is omitted entirely.
    */
-  priorAttemptContext?: string;
+  prevFailureContext?: string;
   /**
    * The unified self-repair loop's explicit repair instruction for THIS attempt
    * (#940). When the prior iteration failed with an invalid structured output, a
@@ -324,8 +324,8 @@ export const UNTRUSTED_PAYLOAD_NOTICE =
 /**
  * Assemble the full handoff.md content. Pure: no network, no filesystem. The
  * top-level XML wrappers appear in template order; any empty section is omitted
- * entirely (matching the bash `build_retry_handoff_body`). `<prior-attempt-context>`
- * is omitted whenever `priorAttemptContext` is empty/undefined (first attempt).
+ * entirely (matching the bash `build_retry_handoff_body`). `<prev-failure-context>`
+ * is omitted whenever `prevFailureContext` is empty/undefined (a first run).
  */
 export function buildHandoff(input: HandoffInput): string {
   const lines: string[] = [];
@@ -375,7 +375,7 @@ export function buildHandoff(input: HandoffInput): string {
   const attempts = buildPreviousAttempts(input.comments);
   const guidance = buildHumanGuidance(input.comments);
   const discussion = buildThreadDiscussion(input.comments);
-  const priorCtx = input.priorAttemptContext ?? "";
+  const prevFailure = input.prevFailureContext ?? "";
   const repairInstruction = input.repairInstruction ?? "";
 
   if (isPresent(repairInstruction)) {
@@ -399,11 +399,11 @@ export function buildHandoff(input: HandoffInput): string {
     lines.push("</human-guidance-thread>");
   }
 
-  if (isPresent(priorCtx)) {
+  if (isPresent(prevFailure)) {
     lines.push("");
-    lines.push("<prior-attempt-context>");
-    lines.push(priorCtx);
-    lines.push("</prior-attempt-context>");
+    lines.push("<prev-failure-context>");
+    lines.push(prevFailure);
+    lines.push("</prev-failure-context>");
   }
 
   if (isPresent(discussion)) {

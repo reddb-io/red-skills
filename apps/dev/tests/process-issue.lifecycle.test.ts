@@ -131,15 +131,14 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
 
   it("pre-cleans a merge-conflict retry branch before sandcastle can reuse a stale worktree", async () => {
     const fetchedBases: string[] = [];
-    const priorAttemptContext = [
-      "prev-attempt: 1",
-      "prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing",
+    const prevFailureContext = [
+      "prev-envelope: https://github.com/o/r/issues/9",
       "prev-failure-reason:",
       "merge-conflict",
     ].join("\n");
     const { deps, input, trace } = harness({
       attempt: 2,
-      priorAttemptContext,
+      prevFailureContext,
       fetchedBases,
       outcome: "done",
       feedbackOk: true,
@@ -157,20 +156,19 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
       },
     ]);
     expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
-    expect(trace.handoffs[0]?.content).toContain("prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing");
+    expect(trace.handoffs[0]?.content).toContain("prev-envelope: https://github.com/o/r/issues/9");
     expect(trace.handoffs[0]?.content).toContain("prev-failure-reason:\nmerge-conflict");
   });
 
   it("keeps non-conflict same-run reuse eligible for the stale-base check only", async () => {
-    const priorAttemptContext = [
-      "prev-attempt: 1",
-      "prev-snapshot-branch: origin/afk-attempts/wOLD/9-fix-the-thing",
+    const prevFailureContext = [
+      "prev-envelope: https://github.com/o/r/issues/9",
       "prev-failure-reason:",
       "validation failed",
     ].join("\n");
     const { deps, input, trace } = harness({
       attempt: 2,
-      priorAttemptContext,
+      prevFailureContext,
       outcome: "done",
       feedbackOk: true,
     });

@@ -24,7 +24,6 @@ interface Trace {
   postedEnvelopes: Array<{ issue: number; status: string }>;
   deletedLocalBranches: string[];
   sidecarWrites: Array<{ path: string; lines: string[] }>;
-  recordedOutcomes: string[];
   listByLabelCalls: string[];
   firedHooks: string[];
   iterLogs: string[];
@@ -55,7 +54,6 @@ interface HarnessOptions {
   dependentsByLabel?: Record<string, { number: number; labels: string[] }[]>;
   closedIssues?: number[];
   withSidecarPort?: boolean;
-  recordAttempt?: boolean;
 }
 
 function harness(opts: HarnessOptions = {}): {
@@ -74,7 +72,6 @@ function harness(opts: HarnessOptions = {}): {
     postedEnvelopes: [],
     deletedLocalBranches: [],
     sidecarWrites: [],
-    recordedOutcomes: [],
     listByLabelCalls: [],
     firedHooks: [],
     iterLogs: [],
@@ -223,11 +220,6 @@ function harness(opts: HarnessOptions = {}): {
     markStage: async (stage) => {
       trace.stageMarks.push(stage);
     },
-    recordAttempt: opts.recordAttempt
-      ? async (payload) => {
-          trace.recordedOutcomes.push(payload.status);
-        }
-      : undefined,
   };
 
   const input: ReconcileInput = {

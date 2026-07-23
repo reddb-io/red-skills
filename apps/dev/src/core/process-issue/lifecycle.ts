@@ -78,7 +78,7 @@ import {
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
-import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "../attempt-record.js";
+import { deriveIssueType } from "../outcome-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "../blocker-state.js";
@@ -138,7 +138,7 @@ import {
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
 import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
-import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 
 function setupFailureExcerpt(log: string | null | undefined): string | undefined {
   const lines = (log ?? "")
@@ -159,6 +159,7 @@ function setupFailureExcerpt(log: string | null | undefined): string | undefined
   if (setupFailure < 0) return undefined;
   return lines.slice(setupFailure, setupFailure + 4).join("\n");
 }
+
 
 export async function processIssue(
   deps: ProcessIssueDeps,
@@ -301,7 +302,7 @@ export async function processIssue(
   }
   const comments = await deps.lookups.comments(issue);
   const url = await deps.lookups.issueUrl(issue);
-  const priorAttemptContext = await deps.lookups.priorAttemptContext(issue);
+  const prevFailureContext = await deps.lookups.prevFailureContext(issue);
   // Attempt adoption (#2416): inspect open PRs before the worker branch is
   // materialised. A matching PR is authoritative existing work and takes the
   // no-agent validate-and-land path. The issue comment makes every concurrent
@@ -332,7 +333,7 @@ export async function processIssue(
     : explicitRestart
       ? null
       : discoverResumableBranch(allBranches, issue);
-  const failureReason = extractFailureReason(priorAttemptContext);
+  const failureReason = extractFailureReason(prevFailureContext);
   const resumeIsGateGreen = adoptedPullRequest !== null ||
     (resumableBranch !== null && isGateGreenBranch(failureReason));
   if (adoptedPullRequest) {
@@ -365,7 +366,7 @@ export async function processIssue(
     attempt: input.attempt,
     url,
     comments,
-    priorAttemptContext,
+    prevFailureContext,
     specRef: input.specRef,
     mergeGateCommands: deps.backpressureCommands ?? [],
     outputShaping,
@@ -453,7 +454,7 @@ export async function processIssue(
     await deps.git.prepareFreshWorkerBranch?.({
       branch,
       baseRef,
-      force: isMergeConflictRetry(priorAttemptContext),
+      force: isMergeConflictRetry(prevFailureContext),
     });
   }
   let activeRunner: Runner = toAgentRunner(input.runner);
@@ -1188,11 +1189,7 @@ export async function processIssue(
     deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
     await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
     const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope, noSourceDiffWarning);
-    await recordAttemptBestEffort(common, "done", {
-      durationS,
-      mergeSha,
-      validationSummary: [noSourceDiffWarning, validationSidecar.join("\n")].filter(Boolean).join("\n"),
-    });
+    await recordOutcomeBestEffort(common, "done", { durationS });
     markLandingPhase("close", { step: "close-issue", status: "start" });
     await deps.gh.close(issue);
     markLandingPhase("close", { step: "labels", status: "start" });

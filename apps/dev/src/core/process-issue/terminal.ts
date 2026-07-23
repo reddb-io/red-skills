@@ -67,7 +67,7 @@ import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookNa
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
 import { isRefused, planTransition } from "../state-transition.js";
-import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "../attempt-record.js";
+import { deriveOutcomeRecord } from "../outcome-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
 import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "../blocker-state.js";
@@ -125,40 +125,15 @@ export async function writeValidationSidecar(
   } catch {
   }
 }
-export async function recordAttemptBestEffort(
+export async function recordOutcomeBestEffort(
   c: StageCommon,
   outcome: ProcessOutcome,
-  fields: { durationS?: number; mergeSha?: string; notes?: string; validationSummary?: string } = {},
+  fields: { durationS?: number } = {},
 ): Promise<void> {
   const { deps, input } = c;
-  const payload = buildAttemptRecordPayload({
-    repo: input.repo,
-    issue: input.issue,
-    attempt: input.attempt,
-    outcome,
-    issueType: c.issueType,
-    modelTier: c.modelTier,
-    title: input.title,
-    body: input.body,
-    workerId: input.workerId,
-    branch: c.branch,
-    durationS: fields.durationS,
-    diffstat: undefined,
-    mergeSha: fields.mergeSha,
-    notes: fields.notes,
-    validationSummary: fields.validationSummary,
-  });
-  if (deps.recordAttempt) {
-    try {
-      await deps.recordAttempt(payload);
-    } catch (err) {
-      deps.appendIterLog(
-        `🤖 /afk memory attempt-record for #${input.issue} failed (best-effort; ignored): ${String(err)}`,
-      );
-    }
-  }
   if (!deps.recordOutcomeEvent) return;
   try {
+    const durationS = fields.durationS;
     const event: OutcomeEvent = {
       schemaVersion: 1,
       id: `afk:${input.repo}:${input.issue}:${input.attempt}`,
@@ -171,17 +146,20 @@ export async function recordAttemptBestEffort(
         model: c.model,
         effort: c.effort,
       },
-      outcome: payload.outcome,
+      outcome: deriveOutcomeRecord(outcome),
       cost: { signal: "unknown" },
       context: {
         repository: input.repo,
         issueNumber: input.issue,
         attemptNumber: input.attempt,
-        issueType: payload.issueType,
+        issueType: c.issueType,
         workerId: input.workerId,
         branch: c.branch,
-        durationMs: payload.durationMs,
-        status: payload.status,
+        durationMs:
+          durationS !== undefined && Number.isFinite(durationS) && durationS >= 0
+            ? Math.round(durationS * 1000)
+            : undefined,
+        status: String(outcome),
       },
     };
     void deps.recordOutcomeEvent(event).catch((err) => {
@@ -424,10 +402,8 @@ export async function terminalFailure(
     await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, sections));
   }
   const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
-  await recordAttemptBestEffort(c, outcome, {
+  await recordOutcomeBestEffort(c, outcome, {
     durationS: deps.nowEpoch() - c.startedEpoch,
-    notes: record.notes,
-    validationSummary: record.validationSummary,
   });
   await releaseOwnedClaim(deps, input);
   return preservedTerminal({
@@ -499,9 +475,8 @@ export async function mergeFailed(c: StageCommon, _reason: string, locked = fals
   const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
     log: _reason || "(no merge log captured)",
   });
-  await recordAttemptBestEffort(c, "merge-conflict", {
+  await recordOutcomeBestEffort(c, "merge-conflict", {
     durationS: deps.nowEpoch() - c.startedEpoch,
-    notes: _reason,
   });
   await releaseOwnedClaim(deps, input);
   return preservedTerminal({
@@ -537,9 +512,8 @@ export async function ciBlocked(
     `🤖 /afk: ${reason}. The implementation is complete and committed on ${prRef} (MERGEABLE — not a merge conflict). ` +
       `Holding for a human / CI-aware finisher to land the existing PR; the inner agent was NOT re-run (#812).`,
   );
-  await recordAttemptBestEffort(c, outcome, {
+  await recordOutcomeBestEffort(c, outcome, {
     durationS: deps.nowEpoch() - c.startedEpoch,
-    notes: reason,
   });
   await releaseOwnedClaim(deps, input);
   return {
@@ -574,9 +548,8 @@ export async function prLandingBlocked(
     `🤖 /afk: ${reason} on ${prRef}. Holding for a human / PR finisher to land the existing PR; ` +
       `the inner agent was NOT re-run.`,
   );
-  await recordAttemptBestEffort(c, outcome, {
+  await recordOutcomeBestEffort(c, outcome, {
     durationS: deps.nowEpoch() - c.startedEpoch,
-    notes: `${prRef}: ${reason}`,
   });
   await releaseOwnedClaim(deps, input);
   return {
@@ -607,9 +580,8 @@ export async function trunkDivergedBlocked(
   await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("trunk-diverged", { log: detail }));
   const posted = await emitFailure(c, envelopeStatusFor("trunk-diverged"), "trunk-diverged", { log: detail });
   await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
-  await recordAttemptBestEffort(c, "trunk-diverged", {
+  await recordOutcomeBestEffort(c, "trunk-diverged", {
     durationS: deps.nowEpoch() - c.startedEpoch,
-    notes: detail,
   });
   await releaseOwnedClaim(deps, input);
   return {
@@ -649,10 +621,8 @@ export async function handoffForReview(
     input.issue,
     `🤖 /afk: non-mechanical change (\`${taskClass}\`) — opened PR #${opened.prNumber} and applied \`${reviewLabel}\` for a fresh-agent review before merge. Holding the fast-merge per the review gate (ADR 0064 §10).`,
   );
-  await recordAttemptBestEffort(c, "review-requested", {
+  await recordOutcomeBestEffort(c, "review-requested", {
     durationS: deps.nowEpoch() - c.startedEpoch,
-    validationSummary: validationSidecar.join("\n"),
-    notes: `review-requested: PR #${opened.prNumber} labelled ${reviewLabel}`,
   });
   await releaseOwnedClaim(deps, input);
   return {
@@ -705,10 +675,8 @@ export async function handoffForManualLanding(
     `🤖 /afk: ${reason}. ${prUrl ? `${prUrl} — ` : ""}the implementation is complete and committed. ` +
       `Holding for a human to land the existing PR (merge it to auto-close this issue); the inner agent was NOT re-run (#1049).`,
   );
-  await recordAttemptBestEffort(c, "manual-landing", {
+  await recordOutcomeBestEffort(c, "manual-landing", {
     durationS: deps.nowEpoch() - c.startedEpoch,
-    validationSummary: validationSidecar.join("\n"),
-    notes: `manual-landing: ${prRef} held for human merge`,
   });
   await releaseOwnedClaim(deps, input);
   return {

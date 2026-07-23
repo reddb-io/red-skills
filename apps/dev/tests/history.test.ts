@@ -11,6 +11,7 @@ import {
   readHistoryRecords,
   readDoneBuckets,
   renderSparkline,
+  requeueOrdinal,
   type HistoryRecord,
   type HistoryTrimTool,
 } from "../src/core/history.js";
@@ -328,5 +329,32 @@ describe("history format sniffing", () => {
 
     await historyAppend(converted, { ts: "converted", epoch: 2 }, "blocked", { worker: "wB", issue: 2 });
     expect((await readHistoryRecords(converted)).map((record) => record.ts)).toEqual(["converted"]);
+  });
+});
+
+describe("requeueOrdinal — the ADR 0103 retry-cap counter", () => {
+  const record = (issue: number, event: string): HistoryRecord => ({
+    ts: "t",
+    epoch: 0,
+    worker: "wA",
+    issue,
+    event,
+    duration_s: 0,
+    runner: "claude",
+  });
+
+  it("is 1 for a Ticket the ledger has never seen", () => {
+    expect(requeueOrdinal([], 249)).toBe(1);
+    expect(requeueOrdinal([record(250, "blocked")], 249)).toBe(1);
+  });
+
+  it("counts one per terminal record for the Ticket, ignoring other Tickets", () => {
+    const records = [record(249, "blocked"), record(250, "blocked"), record(249, "merge-conflict")];
+    expect(requeueOrdinal(records, 249)).toBe(3);
+  });
+
+  it("resets the budget after a done so a reopened Ticket starts fresh", () => {
+    const records = [record(249, "blocked"), record(249, "done"), record(249, "blocked")];
+    expect(requeueOrdinal(records, 249)).toBe(2);
   });
 });

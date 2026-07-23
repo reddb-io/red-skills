@@ -9,12 +9,12 @@ installProcessSafety(noopSafetyLogger);
 
 const PRIOR_BRANCH = "afk/wOLD1/9-fix-the-thing";
 
-/** A priorAttemptContext whose failure reason is post-gate (gate was green). */
+/** A prevFailureContext whose failure reason is post-gate (gate was green). */
 function gateGreenContext(reason = "landing-quota-exceeded"): string {
   return `prev-attempt: 1\nprev-snapshot-branch: ${PRIOR_BRANCH}\nprev-failure-reason:\n${reason}\n`;
 }
 
-/** A priorAttemptContext whose failure reason is a gate-stage failure. */
+/** A prevFailureContext whose failure reason is a gate-stage failure. */
 function gateStageFailed(reason = "feedback-failed"): string {
   return `prev-attempt: 1\nprev-snapshot-branch: ${PRIOR_BRANCH}\nprev-failure-reason:\n${reason}\n`;
 }
@@ -26,7 +26,7 @@ const PRIOR_REFS: BranchRef[] = [
 describe("branch-resume: gate-green fast path (issue #2397)", () => {
   it("skips runAgent and re-validates directly when prior branch is gate-green", async () => {
     const { deps, input, trace } = harness({
-      priorAttemptContext: gateGreenContext(),
+      prevFailureContext: gateGreenContext(),
     });
     deps.lookups.discoverBranches = async () => PRIOR_REFS;
 
@@ -46,7 +46,7 @@ describe("branch-resume: gate-green fast path (issue #2397)", () => {
 
   it("does NOT call prepareFreshWorkerBranch when a resumable branch is found", async () => {
     const { deps, input, trace } = harness({
-      priorAttemptContext: gateGreenContext(),
+      prevFailureContext: gateGreenContext(),
     });
     deps.lookups.discoverBranches = async () => PRIOR_REFS;
 
@@ -59,7 +59,7 @@ describe("branch-resume: gate-green fast path (issue #2397)", () => {
 
   it("includes <resume-from-branch> section in the handoff for gate-green branch", async () => {
     const { deps, input, trace } = harness({
-      priorAttemptContext: gateGreenContext(),
+      prevFailureContext: gateGreenContext(),
     });
     deps.lookups.discoverBranches = async () => PRIOR_REFS;
 
@@ -77,7 +77,7 @@ describe("branch-resume: gate-green fast path (issue #2397)", () => {
 describe("branch-resume: non-gate-green resume path (issue #2397)", () => {
   it("runs the agent when the prior branch exists but failed at a gate stage", async () => {
     const { deps, input, trace } = harness({
-      priorAttemptContext: gateStageFailed("feedback-failed"),
+      prevFailureContext: gateStageFailed("feedback-failed"),
     });
     deps.lookups.discoverBranches = async () => PRIOR_REFS;
 
@@ -92,7 +92,7 @@ describe("branch-resume: non-gate-green resume path (issue #2397)", () => {
 
   it("includes <resume-from-branch> in handoff for non-gate-green branch (agent continues)", async () => {
     const { deps, input, trace } = harness({
-      priorAttemptContext: gateStageFailed("no-sentinel"),
+      prevFailureContext: gateStageFailed("no-sentinel"),
     });
     deps.lookups.discoverBranches = async () => PRIOR_REFS;
 
@@ -109,7 +109,7 @@ describe("branch-resume: non-gate-green resume path (issue #2397)", () => {
 
   it("does NOT call prepareFreshWorkerBranch when a prior branch exists (even non-gate-green)", async () => {
     const { deps, input, trace } = harness({
-      priorAttemptContext: gateStageFailed(),
+      prevFailureContext: gateStageFailed(),
     });
     deps.lookups.discoverBranches = async () => PRIOR_REFS;
 
@@ -124,7 +124,7 @@ describe("branch-resume: non-gate-green resume path (issue #2397)", () => {
 describe("branch-resume: explicit restart override (issue #2397)", () => {
   it("runs the agent and calls prepareFreshWorkerBranch when guidance says restart", async () => {
     const { deps, input, trace } = harness({
-      priorAttemptContext: gateGreenContext(),
+      prevFailureContext: gateGreenContext(),
       // Inject a trusted restart directive via comments override
     });
     // Inject a trusted restart directive via discoverBranches + comments override
@@ -151,7 +151,7 @@ describe("branch-resume: explicit restart override (issue #2397)", () => {
 
   it("omits <resume-from-branch> from handoff when restart is requested", async () => {
     const { deps, input, trace } = harness({
-      priorAttemptContext: gateGreenContext(),
+      prevFailureContext: gateGreenContext(),
     });
     deps.lookups.discoverBranches = async () => PRIOR_REFS;
     deps.lookups.comments = async () => [
