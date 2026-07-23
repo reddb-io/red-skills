@@ -352,26 +352,44 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
     expect(err.text()).toContain("--guidance");
   });
 
-  it("applies requeue transition then calls adopt runner for a parked issue", async () => {
-    const { gh, calls } = fakeGh({
+  it("applies the planned requeue atomically instead of parking a guided adopt", async () => {
+    const fixture = fakeGh({
       state: "OPEN",
       body: parkedBody,
       labels: ["ready-for-human", "blocked:validation"],
     });
-    const { stream, text } = capture();
     let adoptCalled = false;
-    const runner: RequeueAdoptRunner = async () => { adoptCalled = true; return "landed"; };
+    const runner: RequeueAdoptRunner = async () => {
+      adoptCalled = true;
+      return "parked";
+    };
 
-    const code = await requeueCommand(
-      ["#42", "--guidance", "Gate flake fixed.", "--adopt-branch", "my-branch"],
-      "/tmp", stream, gh, runner,
+    const result = await executeRequeue(
+      {
+        issue: 42,
+        guidance: "Fix the remaining failures on the existing branch.",
+        adoptBranch: "my-branch",
+      },
+      { cwd: "/tmp", gh: fixture.gh, adoptRunner: runner },
     );
 
-    expect(code).toBe(0);
-    expect(calls.editBody).toBe(1);
-    expect(calls.editLabels).toBe(1);
-    expect(adoptCalled).toBe(true);
-    expect(text()).toContain("validated and landed");
+    expect(result).toMatchObject({
+      applied: true,
+      outcome: "requeued",
+      exitCode: 0,
+      addLabels: ["ready-for-agent"],
+      removeLabels: ["ready-for-human", "blocked:validation"],
+    });
+    expect(result.addLabels).toEqual(result.plan?.addLabels);
+    expect(result.removeLabels).toEqual(result.plan?.removeLabels);
+    expect(fixture.calls.editBody).toBe(1);
+    expect(fixture.calls.editLabels).toBe(1);
+    expect(fixture.lastAdd).toEqual(["ready-for-agent"]);
+    expect(fixture.lastRemove).toEqual(["ready-for-human", "blocked:validation"]);
+    expect(fixture.state.labels).toContain("ready-for-agent");
+    expect(fixture.state.labels).not.toContain("ready-for-human");
+    expect(fixture.state.labels).not.toContain("blocked:validation");
+    expect(adoptCalled).toBe(false);
   });
 
   it("calls adopt runner even when issue is not parked (fresh issue, no blockers)", async () => {
