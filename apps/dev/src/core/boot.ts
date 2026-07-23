@@ -430,7 +430,7 @@ async function tryBootAutoApplyClaimHygiene(
   const concedeClaim = deps.concedeClaim;
   if (!concedeClaim) return { handled: false, quarantined: [] };
 
-  const actions = data.actions as readonly Array<{ issue: number }>;
+  const actions: ReadonlyArray<{ issue: number }> = data.actions;
   const issueNumbers = [...new Set(actions.map((action) => action.issue))];
   const quarantined: number[] = [];
   if (deps.healLedger) {
