@@ -115,7 +115,7 @@ describe("applyTransition", () => {
     const p = plan(["ready-for-agent"], { kind: "quarantine", diagnosis: "probe: X" });
     await applyTransition({ editIssue, readBody }, 7, p);
     expect(editIssue).toHaveBeenCalledTimes(1);
-    const edit = editIssue.mock.calls[0]![1] as { body?: string };
+    const edit = (editIssue.mock.calls[0] as unknown as [number, { body?: string }])[1];
     expect(edit.body).toContain("## What");
     expect(edit.body).toContain("probe: X");
   });
