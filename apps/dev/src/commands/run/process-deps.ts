@@ -34,7 +34,7 @@ import {
 import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
 import { workerDir as workerDirPath, workerPidFile } from "../../core/worker-paths.js";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
-import { Output } from "@reddb-io/red-castle";
+import { Output, createFsIssueLeaseStore } from "@reddb-io/red-castle";
 import * as ghx from "../../runtime/gh.js";
 import * as gitx from "../../runtime/git.js";
 import * as fsx from "../../runtime/fs.js";
@@ -361,15 +361,24 @@ export function buildProcessDeps(
     // gate (a cross-host predecessor's log isn't on this filesystem).
     recoveredWorkerDeathCause: (recoveredWorker) =>
       deathCauseForRecoveredWorker(paths.tmpDir, recoveredWorker, hostFingerprintPrefix()),
-    claimLock: {
-      // Atomic POSIX mkdir lock (#434): a non-recursive mkdir that fails EEXIST,
-      // so two simultaneous boots cannot both claim the same issue. The prior
-      // pathExists+ensureDir form was check-then-act and raced into dup PRs.
-      acquire: (issue) => fsx.tryAcquireClaimDir(`${paths.tmpDir}/claims/${issue}`, process.pid),
-      release: async (issue) => {
-        await fsx.removeDir(`${paths.tmpDir}/claims/${issue}`);
-      },
-    },
+    // Local per-host issue lease — the ONE lease implementation, in castle
+    // (#2578). Its leaf `<claims>/<issue>/` dir is the atomic POSIX mkdir lock
+    // (#434); a dead holder is reclaimed through the #568 atomic-rename steal.
+    // `pidAlive` injects this host's `kill -0` verdict (castle stays liveness-IO
+    // free); the owner token is the ADR 0066 worker identity, so a release only
+    // removes the lease we actually hold. The owner-token liveness is `unknown`
+    // here because the pid signal alone arbitrates same-host steals on this path.
+    claimLock: (() => {
+      const store = createFsIssueLeaseStore(join(paths.tmpDir, "claims"), {
+        pid: process.pid,
+        pidAlive: (p) => (fsx.pidAlive(String(p)) ? "alive" : "dead"),
+      });
+      const owner = workerIdentity(workerId);
+      return {
+        acquire: async (issue) => (await store.acquire(issue, owner, () => "unknown")).acquired,
+        release: (issue) => store.release(issue, owner),
+      };
+    })(),
     fs: {
       ensureAttemptDir: (dir) => fsx.ensureDir(dir),
       writeHandoff: (path, content) => fsx.writeHandoff(path, content),
