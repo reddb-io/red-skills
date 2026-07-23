@@ -171,9 +171,14 @@ state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 | --- | --- | --- |
 | `queue_status` | read | `ready-for-agent` and `ready-for-human` queue candidates. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
 | `events_since` | read | Castle history events and worker lane records after an opaque cursor, plus the next cursor. |
+| `deadend_audit` | read | Every stuck AFK pattern with its recommended cure: dangling claims, red PRs with dead owners, superseded PRs, executable Tickets carrying an active Current blocker, dependency blocks whose `req:*` targets all closed, human-queue age outliers, and stale worktrees. Cache-backed — repeated calls within the refresh window cost zero GitHub quota. Detection only. |
 
 `queue_status` is the first call of any drain: an empty `ready-for-agent` queue
 with a non-empty open backlog is a flow bug to census, not a clean stop.
+
+`deadend_audit` is the census surface for that flow bug: it names each stuck
+pattern and the cure to apply, without mutating anything. The resident cron
+refreshes it and `/red-doctor` renders the same report.
 
 `events_since` is the incremental read surface: use it instead of re-calling
 `queue_status`, `worker_status`, or `fleet_status` on every polling tick. **Cost
