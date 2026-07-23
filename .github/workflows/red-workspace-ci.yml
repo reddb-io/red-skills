@@ -15,11 +15,10 @@ name: red-workspace-ci
 on:
   pull_request:
   push:
-    # automation/toon-bump and changeset-release/main are written with
-    # GITHUB_TOKEN, whose events never trigger pull_request workflows. The push
-    # trigger attaches these check runs to each head SHA so both automation PRs
-    # still receive the required test/typecheck adjudication.
-    branches: [main, automation/toon-bump, changeset-release/main]
+    # automation/toon-bump is written with GITHUB_TOKEN, whose events never
+    # trigger pull_request workflows. The Version Packages PR uses RELEASE_PAT
+    # and receives the normal pull_request checks instead.
+    branches: [main, automation/toon-bump]
 
 permissions:
   contents: read
