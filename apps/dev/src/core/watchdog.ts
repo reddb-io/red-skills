@@ -29,13 +29,12 @@ export interface WatchdogIO {
   /** kill_tree the wedged supervisor pid + its descendants. */
   killTree(pid: number): Promise<void>;
   /**
-   * Kill all still-alive worker processes that survived the supervisor's death
-   * (#579). Workers are spawned `detached: true` (nohup'd) so they are NOT
-   * children of the supervisor and killTree misses them. Best-effort: a failed
-   * kill on one worker must not block the rest of the recovery sequence.
-   * Returns the number of live workers actually killed (#2056).
+   * Kill still-alive worker processes attributed to this watchdog's named fleet.
+   * Workers are spawned `detached: true` (nohup'd) so they are NOT children of
+   * the supervisor and killTree misses them. Another fleet's workers and
+   * unstamped standalone workers are never targets. Best-effort per worker.
    */
-  killWorkers(): Promise<number>;
+  killWorkers(): Promise<{ killed: number; survivors: number[] }>;
   /** Remove the supervisor pid + stop control files so a relaunch is unblocked. */
   clearControlFiles(): Promise<void>;
   /** Reconcile claims/labels the wedged supervisor left so no issue is stranded

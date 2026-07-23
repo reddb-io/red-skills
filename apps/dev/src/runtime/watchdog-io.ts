@@ -11,7 +11,6 @@ import { join } from "node:path";
 import type { SupervisorLiveness } from "../core/supervisor.js";
 import type { HeartbeatSlotPid } from "../core/supervisor.js";
 import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
-import { createEnginePaths } from "@reddb-io/red-castle/engine";
 import { createFileBootBreakerStore } from "../core/supervisor/boot-breaker.js";
 import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
 import { listStaleClaimDirs, removeDir } from "./fs.js";
@@ -23,6 +22,11 @@ import { callerProcessTreeNative } from "./caller-process.js";
 import { spawnSupervisor, stampFreshFleetHeartbeat } from "./supervisor-spawn.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import { appendRecordToonl } from "../core/jsonl-log.js";
+import {
+  castleStateSnapshotPath,
+  createEnginePaths,
+  readCastleStateSnapshot,
+} from "@reddb-io/red-castle/engine";
 // The wait-and-escalate killer (SIGTERM → grace → SIGKILL → confirm) is shared
 // with the fleet reaper and `fleet stop` (#580). It matters for recovery
 // correctness here too: the supervisor's own `finally` removes the pid/stop
@@ -69,6 +73,7 @@ export function buildWatchdogIO(
   const stopFile = paths.supervisorStopPath;
   const logFile = paths.supervisorLogPath;
   const restartLedgerFile = paths.supervisorRestartsPath;
+  const enginePaths = createEnginePaths(join(root, ".red"));
 
   // Carried from liveness() → relaunch() so a recovered fleet keeps its target
   // and runner. Falls back to a 2-slot, freshly-detected-runner fleet when the
@@ -128,34 +133,41 @@ export function buildWatchdogIO(
       await killTreeAndWait(pid);
     },
 
-    killWorkers: async (): Promise<number> => {
+    killWorkers: async (): Promise<{ killed: number; survivors: number[] }> => {
       // Workers are spawned detached (nohup'd) so they are NOT children of the
-      // supervisor — killTree misses them. Enumerate every worker dir and kill
-      // any still-alive PID recorded in worker.pid. Best-effort per worker: a
-      // failed read or kill on one worker must not block the rest. Returns the
-      // number of live workers actually killed so callers can report it (#2056).
+      // supervisor — killTree misses them. A hard teardown may kill only workers
+      // whose castle snapshot attributes them to this named fleet; another
+      // fleet's workers and unstamped standalone workers are never collateral.
       let workerDirs: string[];
       try {
         workerDirs = await readdir(paths.workersRoot);
       } catch {
-        return 0;
+        return { killed: 0, survivors: [] };
       }
       let killed = 0;
+      const survivors: number[] = [];
       for (const workerDir of workerDirs) {
         const pidPath = join(paths.workersRoot, workerDir, "worker.pid");
         try {
+          const snapshot = await readCastleStateSnapshot(
+            castleStateSnapshotPath(enginePaths, "worker", workerDir),
+          );
+          if (snapshot?.supervisor_id !== paths.fleet) continue;
           const raw = (await readFile(pidPath, "utf8")).trim();
           if (!/^[1-9][0-9]*$/.test(raw)) continue;
           const workerPid = Number(raw);
           if (isLivePid(workerPid)) {
-            await killTreeAndWait(workerPid);
-            killed += 1;
+            if (await killTreeAndWait(workerPid)) {
+              killed += 1;
+            } else {
+              survivors.push(workerPid);
+            }
           }
         } catch {
           // best-effort: missing/bad pid file is not an error.
         }
       }
-      return killed;
+      return { killed, survivors };
     },
 
     clearControlFiles: async () => {

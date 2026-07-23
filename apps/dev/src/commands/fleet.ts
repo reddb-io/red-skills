@@ -44,6 +44,10 @@ export interface FleetStopResult {
   pid?: number;
 }
 
+export interface FleetStopOptions {
+  force?: boolean;
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function parsePositiveNumber(raw: string | undefined, flag: string): number {
@@ -69,6 +73,7 @@ function parseFleetArgs(args: readonly string[]): {
   runnerFlag?: string;
   drainBudgetUsd?: number;
   shrinkMode?: ElasticShrinkMode;
+  force: boolean;
   passthrough: string[];
 } {
   const passthrough: string[] = [];
@@ -79,6 +84,7 @@ function parseFleetArgs(args: readonly string[]): {
   let runnerFlag: string | undefined;
   let drainBudgetUsd: number | undefined;
   let shrinkMode: ElasticShrinkMode | undefined;
+  let force = false;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -88,6 +94,10 @@ function parseFleetArgs(args: readonly string[]): {
     }
     if (arg === "status") {
       status = true;
+      continue;
+    }
+    if (arg === "--force") {
+      force = true;
       continue;
     }
     // The fleet name is consumed here (parseFleetFlag re-reads it) so it never
@@ -151,6 +161,7 @@ function parseFleetArgs(args: readonly string[]): {
     runnerFlag,
     drainBudgetUsd,
     shrinkMode,
+    force,
     passthrough,
   };
 }
@@ -191,6 +202,7 @@ export async function stopFleet(
   root = process.cwd(),
   stdout: NodeJS.WritableStream = process.stdout,
   fleetName?: string,
+  options: FleetStopOptions = {},
 ): Promise<FleetStopResult> {
   const paths = afkPaths(root, fleetName);
   const stateAfk = dirname(paths.supervisorPidPath);
@@ -217,66 +229,64 @@ export async function stopFleet(
   }
   await rm(paths.supervisorWatchdogPidPath, { force: true });
   await rm(paths.supervisorWatchdogPidStartPath, { force: true });
-  // Detached workers survive the supervisor's death (#2056): they are spawned
-  // `detached: true` so they are NOT in the supervisor's process tree. Every stop
-  // path must sweep them — otherwise a "stopped" report is a lie while orphaned
-  // workers keep claiming, committing, and merging. Reuse the watchdog's
-  // detached-worker killer + claim reconcile so no issue is stranded in `running`.
+  // Graceful stop deliberately leaves detached one-shot workers to finish.
+  // Only explicit force reuses the watchdog's fleet-scoped worker killer and
+  // reconciles claims for workers that hard teardown actually terminated.
   const io = buildWatchdogIO(root, stdout, paths.fleet);
-  const sweepOrphans = async (): Promise<void> => {
-    const killed = await io.killWorkers();
-    if (killed > 0) {
+  const killAttributedWorkersAndReconcile = async () => {
+    const result = await io.killWorkers();
+    if (result.killed > 0) {
       await io.reconcile();
-      stdout.write(`terminated ${killed} orphaned worker${killed === 1 ? "" : "s"} and reconciled their claims.\n`);
+      stdout.write(
+        `terminated ${result.killed} fleet-attributed worker${result.killed === 1 ? "" : "s"} and reconciled their claims.\n`,
+      );
     }
+    return result;
   };
   const liveSupervisor = await discoverLiveSupervisorPid(stateAfk, isLivePid, { fleet: paths.fleet });
   if (!liveSupervisor) {
     const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
     if (supervisor.status === "stale" && supervisor.pid !== undefined) {
-      await sweepOrphans();
       stdout.write(`no fleet running (reason=dead supervisor pid; stale files cleaned).\n`);
       return { status: "stale", ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}) };
     }
-    await sweepOrphans();
     stdout.write("no fleet running (reason=no supervisor pid).\n");
     return { status: "none" };
   }
   const pid = liveSupervisor.pid;
+  if (options.force) {
+    const dead = await killTreeAndWait(pid);
+    if (!dead) {
+      stdout.write(`✗ supervisor pid=${pid} survived forced termination; stop remains armed.\n`);
+      return { status: "timeout", pid };
+    }
+    await rm(pidFile, { force: true });
+    await rm(paths.supervisorPidStartPath, { force: true });
+    await rm(stopFile, { force: true });
+    await rm(paths.supervisorRecoveryPath, { force: true });
+    const workerResult = await killAttributedWorkersAndReconcile();
+    if (workerResult.survivors.length > 0) {
+      const survivor = workerResult.survivors[0]!;
+      stdout.write(
+        `✗ fleet-attributed worker pid=${survivor} survived forced termination.\n`,
+      );
+      return { status: "timeout", pid: survivor };
+    }
+    stdout.write(`🛑 fleet stopped (reason=forced teardown; supervisor pid=${pid} killed).\n`);
+    return { status: "stopped", pid };
+  }
+
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (!isLivePid(pid)) {
-      // The supervisor's own terminateAll should have killed its slots on clean
-      // exit, but sweep detached survivors anyway — a slot the loop lost track of
-      // (moved-pid, mid-spawn) would otherwise outlive the "stopped" report.
-      await sweepOrphans();
       stdout.write(`🛑 fleet stopped (reason=operator stop requested; supervisor pid=${pid} exited).\n`);
       return { status: "stopped", pid };
     }
     await sleep(1_000);
   }
 
-  // Graceful stop timed out: a SIGTERM-ignoring supervisor (and its worker tree)
-  // is still alive. Never report "stopped" while survivors linger (#580) —
-  // escalate to the shared wait-and-escalate killer (SIGTERM → SIGKILL → confirm)
-  // and only report stopped once the tree is confirmed gone.
   stdout.write(
-    `warn: supervisor pid=${pid} did not exit within 30s of the stop file; escalating to SIGTERM/SIGKILL.\n`,
-  );
-  const dead = await killTreeAndWait(pid);
-  if (dead) {
-    // SIGKILL skips the supervisor's own `finally`, so clean its control files.
-    await rm(pidFile, { force: true });
-    await rm(paths.supervisorPidStartPath, { force: true });
-    await rm(stopFile, { force: true });
-    await rm(paths.supervisorRecoveryPath, { force: true });
-    // killTree of the supervisor pid misses the detached workers — sweep them.
-    await sweepOrphans();
-    stdout.write(`🛑 fleet stopped (reason=graceful stop timeout; supervisor pid=${pid} killed).\n`);
-    return { status: "stopped", pid };
-  }
-  stdout.write(
-    `✗ supervisor pid=${pid} survived SIGKILL; still live — see .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl.\n`,
+    `warn: supervisor pid=${pid} did not exit within 30s of the stop file; stop remains armed (use --force for hard teardown).\n`,
   );
   return { status: "timeout", pid };
 }
@@ -758,7 +768,7 @@ export async function fleetCommand(args: string[], cwd = process.cwd()): Promise
     if (parsed.status) {
       await statusFleet(cwd, process.stdout, parsed.fleet);
     } else if (parsed.stop) {
-      await stopFleet(cwd, process.stdout, parsed.fleet);
+      await stopFleet(cwd, process.stdout, parsed.fleet, { force: parsed.force });
     } else {
       await launchFleet(args, cwd);
     }

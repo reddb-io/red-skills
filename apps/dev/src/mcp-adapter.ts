@@ -1408,7 +1408,9 @@ export function createCastleMcpDependencies(
           callback();
         },
       });
-      const result = await stopFleet(root, silent, input.name);
+      const result = await stopFleet(root, silent, input.name, {
+        ...(input.force ? { force: true } : {}),
+      });
       return { fleet: input.name ?? "default", ...result };
     },
     fleetRegister: (input) => registerFleet(root, input),

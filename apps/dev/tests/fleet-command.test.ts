@@ -3,7 +3,12 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { decode } from "@reddb-io/toon";
-import { createCastleLaneWriters, createEnginePaths } from "@reddb-io/red-castle/engine";
+import {
+  castleStateSnapshotPath,
+  createCastleLaneWriters,
+  createEnginePaths,
+  writeCastleStateSnapshot,
+} from "@reddb-io/red-castle/engine";
 
 const killTreeMocks = vi.hoisted(() => ({
   isLivePid: vi.fn((_pid: number) => false),
@@ -38,8 +43,12 @@ function scratch(): string {
   return mkdtempSync(join(tmpdir(), "afk-fleet-command-"));
 }
 
-function writeSupervisorArtifacts(root: string, pid: number | string): Record<string, string> {
-  const paths0 = afkPaths(root);
+function writeSupervisorArtifacts(
+  root: string,
+  pid: number | string,
+  fleet?: string,
+): Record<string, string> {
+  const paths0 = afkPaths(root, fleet);
   const stateAfk = dirname(paths0.supervisorPidPath);
   mkdirSync(stateAfk, { recursive: true });
   const paths = {
@@ -139,7 +148,7 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
-  it("stopFleet kills orphaned detached workers when the supervisor pid is stale (#2056)", async () => {
+  it("stopFleet leaves detached workers alone when the supervisor pid is stale (#2472)", async () => {
     const root = scratch();
     try {
       writeSupervisorArtifacts(root, 999_999_999); // dead supervisor pid
@@ -157,9 +166,7 @@ describe("fleet command stale supervisor state", () => {
       const result = await stopFleet(root, stream());
 
       expect(result.status).toBe("stale");
-      // Every live orphan was killed — "stopped" is never a lie while workers merge.
-      expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(111111);
-      expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(222222);
+      expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -182,6 +189,24 @@ describe("fleet command stale supervisor state", () => {
       expect(existsSync(paths.supervisorWatchdogPidPath)).toBe(false);
       expect(existsSync(paths.supervisorWatchdogPidStartPath)).toBe(false);
       expect(existsSync(paths.supervisorStopPath)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stopFleet performs zero worker kills when no fleet is registered (#2472)", async () => {
+    const root = scratch();
+    try {
+      const workersRoot = join(root, ".red", "tmp", "workers");
+      mkdirSync(join(workersRoot, "wSOLO"), { recursive: true });
+      writeFileSync(join(workersRoot, "wSOLO", "worker.pid"), "333333", "utf8");
+      vi.mocked(isLivePid).mockImplementation((pid: number) => pid === 333333);
+      killTreeMocks.killTreeAndWait.mockResolvedValue(true);
+
+      const result = await stopFleet(root, stream(), "missing");
+
+      expect(result).toEqual({ status: "none" });
+      expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -328,19 +353,115 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
-  it("stopFleet leaves live supervisor files untouched", async () => {
+  it("stopFleet leaves a detached in-flight worker running after graceful supervisor exit (#2472)", async () => {
     const root = scratch();
     try {
       const paths = writeSupervisorArtifacts(root, 12345);
-      vi.mocked(isLivePid).mockReturnValueOnce(true).mockReturnValue(false);
+      const workersRoot = join(root, ".red", "tmp", "workers");
+      mkdirSync(join(workersRoot, "wDRAIN"), { recursive: true });
+      writeFileSync(join(workersRoot, "wDRAIN", "worker.pid"), "444444", "utf8");
+      let supervisorChecks = 0;
+      vi.mocked(isLivePid).mockImplementation((pid: number) => {
+        if (pid === 444444) return true;
+        if (pid === 12345) {
+          supervisorChecks += 1;
+          return supervisorChecks === 1;
+        }
+        return false;
+      });
+      killTreeMocks.killTreeAndWait.mockResolvedValue(true);
 
       const result = await stopFleet(root, stream());
 
       expect(result.status).toBe("stopped");
+      expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalledWith(444444);
       expect(existsSync(paths.pid)).toBe(true);
       expect(existsSync(paths.state)).toBe(true);
       expect(existsSync(paths.log)).toBe(true);
       expect(existsSync(paths.firehose)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("force stop kills only workers attributed to the named fleet (#2472)", async () => {
+    const root = scratch();
+    try {
+      writeSupervisorArtifacts(root, 12345, "alpha");
+      const workersRoot = join(root, ".red", "tmp", "workers");
+      const workers = [
+        { id: "wALPHA", pid: 555001, fleet: "alpha" },
+        { id: "wBETA", pid: 555002, fleet: "beta" },
+        { id: "wSOLO", pid: 555003, fleet: undefined },
+      ];
+      const enginePaths = createEnginePaths(join(root, ".red"));
+      for (const worker of workers) {
+        mkdirSync(join(workersRoot, worker.id), { recursive: true });
+        writeFileSync(join(workersRoot, worker.id, "worker.pid"), String(worker.pid), "utf8");
+        await writeCastleStateSnapshot(
+          castleStateSnapshotPath(enginePaths, "worker", worker.id),
+          {
+            kind: "worker",
+            id: worker.id,
+            worker_id: worker.id,
+            version: 1,
+            updated_at: new Date().toISOString(),
+            pid: worker.pid,
+            current: { origin: "afk" },
+            ...(worker.fleet ? { supervisor_id: worker.fleet } : {}),
+          },
+        );
+      }
+      vi.mocked(isLivePid).mockImplementation((pid: number) =>
+        pid === 12345 || workers.some((worker) => worker.pid === pid)
+      );
+      killTreeMocks.killTreeAndWait.mockResolvedValue(true);
+
+      const result = await stopFleet(root, stream(), "alpha", { force: true });
+
+      expect(result).toEqual({ status: "stopped", pid: 12345 });
+      expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(12345);
+      expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(555001);
+      expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalledWith(555002);
+      expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalledWith(555003);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("force stop reports timeout when an attributed worker survives hard teardown (#2472)", async () => {
+    const root = scratch();
+    try {
+      writeSupervisorArtifacts(root, 12345, "alpha");
+      const workerId = "wSTUCK";
+      const workerPid = 666001;
+      const workersRoot = join(root, ".red", "tmp", "workers");
+      mkdirSync(join(workersRoot, workerId), { recursive: true });
+      writeFileSync(join(workersRoot, workerId, "worker.pid"), String(workerPid), "utf8");
+      const enginePaths = createEnginePaths(join(root, ".red"));
+      await writeCastleStateSnapshot(
+        castleStateSnapshotPath(enginePaths, "worker", workerId),
+        {
+          kind: "worker",
+          id: workerId,
+          worker_id: workerId,
+          version: 1,
+          updated_at: new Date().toISOString(),
+          pid: workerPid,
+          supervisor_id: "alpha",
+          current: { origin: "afk" },
+        },
+      );
+      vi.mocked(isLivePid).mockImplementation((pid: number) =>
+        pid === 12345 || pid === workerPid
+      );
+      killTreeMocks.killTreeAndWait
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(false);
+
+      const result = await stopFleet(root, stream(), "alpha", { force: true });
+
+      expect(result).toEqual({ status: "timeout", pid: workerPid });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
