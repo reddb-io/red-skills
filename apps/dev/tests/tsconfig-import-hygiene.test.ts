@@ -23,7 +23,7 @@ const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
   "src/commands/run/command.ts": 84,
   "src/commands/run/flags.ts": 131,
   "src/commands/run/process-deps.ts": 73,
-  "src/commands/run/reconcile.ts": 108,
+  "src/commands/run/reconcile.ts": 107,
   "src/commands/run/state.ts": 127,
   "src/commands/statusline.ts": 1,
   "src/commands/stop.ts": 5,
