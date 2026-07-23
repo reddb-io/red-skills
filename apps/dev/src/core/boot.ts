@@ -84,6 +84,7 @@ import {
 import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
+import { isRefused, planTransition, type StateTransition } from "./state-transition.js";
 
 // ---------- precheck (hard preconditions) ----------
 
@@ -508,10 +509,43 @@ async function quarantineClaimIssue(
     deps.log?.(`boot claim-hygiene diagnosis failed for #${issue}: ${String(error)}`);
   }
   try {
-    await deps.gh.editLabels(issue, [LABEL_READY], [LABEL_QUARANTINE]);
+    await applyBootStateTransition(deps, issue, { kind: "quarantine", diagnosis: "" }, [
+      [LABEL_READY],
+      [LABEL_QUARANTINE],
+    ]);
   } catch (error) {
     deps.log?.(`boot claim-hygiene quarantine label failed for #${issue}: ${String(error)}`);
   }
+}
+
+/**
+ * Route one boot-sweep state-label mutation through the ADR 0122 transition API
+ * (#2528). Reads the issue's current labels, plans the atomic transition, and
+ * applies it as ONE label edit — so a poison shape (state roles stacked, park
+ * labels surviving a queue) is unconstructible from any boot path. A refused
+ * plan is a poison signal: it is logged and NOT worked around with a raw edit.
+ * `legacyEdit` ([remove, add]) is applied only when the label read itself fails,
+ * preserving the pre-#2528 best-effort behavior for degraded trackers.
+ */
+async function applyBootStateTransition(
+  deps: BootDeps,
+  issue: number,
+  transition: StateTransition,
+  legacyEdit: [string[], string[]],
+): Promise<void> {
+  let labels: string[];
+  try {
+    labels = await deps.gh.viewLabels(issue);
+  } catch {
+    await deps.gh.editLabels(issue, legacyEdit[0], legacyEdit[1]);
+    return;
+  }
+  const plan = planTransition(labels, transition);
+  if (isRefused(plan)) {
+    deps.log?.(`boot ${transition.kind} transition refused for #${issue}: ${plan.reason}`);
+    return;
+  }
+  await deps.gh.editLabels(issue, [...plan.remove], [...plan.add]);
 }
 
 /**
@@ -543,7 +577,10 @@ async function tryBootAutoApplyLabelBodyCoherence(
       deps.log?.(`boot coherence probe body diagnosis failed for #${action.issue}: ${String(error)}`);
     }
     try {
-      await deps.gh.editLabels(action.issue, [LABEL_READY], [LABEL_QUARANTINE]);
+      await applyBootStateTransition(deps, action.issue, { kind: "quarantine", diagnosis: "" }, [
+        [LABEL_READY],
+        [LABEL_QUARANTINE],
+      ]);
       deps.log?.(
         `boot coherence probe quarantined #${action.issue}: ready-for-agent→quarantine; blocker kind=${action.blocker.kind} summary=${JSON.stringify(action.blocker.summary)}`,
       );
@@ -1051,8 +1088,21 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
         continue;
       }
       const parked = currentLabels.includes(LABEL_HUMAN) || currentLabels.some((l) => l.startsWith("blocked:"));
-      const addLabels = parked ? [] : [LABEL_READY];
-      await deps.gh.editLabels(p.issue, [LABEL_RUNNING], addLabels);
+      if (parked) {
+        // A parked issue only sheds the stale `running` projection — the park
+        // itself is the authoritative state and must survive the sweep (#968).
+        await deps.gh.editLabels(p.issue, [LABEL_RUNNING], []);
+      } else {
+        const plan = planTransition(currentLabels, { kind: "queue" });
+        if (isRefused(plan)) {
+          // A refused queue (e.g. dangling req:* edges without blocked:dependency)
+          // is a poison signal — shed `running` but never re-admit the issue.
+          deps.log?.(`boot claim-sweep queue refused for #${p.issue}: ${plan.reason}`);
+          await deps.gh.editLabels(p.issue, [LABEL_RUNNING], []);
+        } else {
+          await deps.gh.editLabels(p.issue, [...plan.remove], [...plan.add]);
+        }
+      }
       const claimedIssue = claimed.find((c) => c.issue === p.issue);
       const deadOwners = new Set(claimedIssue?.deadOwners ?? []);
       const concededOwners = p.concededOwners ?? [];
@@ -1135,7 +1185,10 @@ async function runOrphanCleanup(
         await deps.fs.removeDir(dir.path);
         removed.push(dir.path);
       } else {
-        await deps.gh.editLabels(dir.issue!, [LABEL_RUNNING], [LABEL_READY]);
+        await applyBootStateTransition(deps, dir.issue!, { kind: "queue" }, [
+          [LABEL_RUNNING],
+          [LABEL_READY],
+        ]);
         await deps.gh.comment(
           dir.issue!,
           "🤖 /afk orchestrator died mid-issue; restoring ready-for-agent.",
@@ -1165,7 +1218,12 @@ async function runOrphanCleanup(
         const currentLabels = await deps.gh.viewLabels(claim.issue);
         const parked = currentLabels.includes(LABEL_HUMAN) || currentLabels.some((l) => l.startsWith("blocked:"));
         if (currentLabels.includes(LABEL_RUNNING) && !parked) {
-          await deps.gh.editLabels(claim.issue, [LABEL_RUNNING], [LABEL_READY]);
+          const plan = planTransition(currentLabels, { kind: "queue" });
+          if (isRefused(plan)) {
+            deps.log?.(`boot stale-claim queue refused for #${claim.issue}: ${plan.reason}`);
+          } else {
+            await deps.gh.editLabels(claim.issue, [...plan.remove], [...plan.add]);
+          }
         }
       } catch {
         // Best-effort: stale local claim dirs are still safe to remove.

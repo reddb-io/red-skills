@@ -66,6 +66,7 @@ import {
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
+import { isRefused, planTransition } from "../state-transition.js";
 import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "../attempt-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
@@ -725,9 +726,23 @@ export async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: numbe
       for (const n of reqIds) reqs.push({ n, closed: await resolveClosed(n) });
       dependents.push({ number: dep.number, reqs });
     }
+    const labelsByNumber = new Map(dependentsRaw.map((dep) => [dep.number, dep.labels]));
     const plans = planCloseCascade(closedIssue, dependents);
     for (const p of plans) {
-      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
+      // Promote through the ADR 0122 transition API (#2528): one atomic edit
+      // that consumes every req:* edge and provably leaves exactly one state
+      // role, so a cascade can never stack ready-for-agent onto a park.
+      const current = labelsByNumber.get(p.number);
+      const plan = current ? planTransition(current, { kind: "promote" }) : undefined;
+      if (plan && !isRefused(plan)) {
+        await deps.gh.editLabels(p.number, [...plan.remove], [...plan.add]);
+      } else {
+        if (plan && isRefused(plan)) {
+          deps.appendIterLog(`🤖 close-cascade promote refused for #${p.number}: ${plan.reason}`);
+          continue;
+        }
+        await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
+      }
       const reqs = p.refs.map((ref) => Number(ref.slice(1))).filter((n) => Number.isFinite(n));
       await deps.gh.comment(p.number, await cascadeAuditCommentFor(reqs, deps.gh.issueReference));
     }

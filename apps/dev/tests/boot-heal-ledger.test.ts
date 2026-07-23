@@ -27,6 +27,7 @@ describe("ADR 0122 boot heal budget", () => {
     Object.assign(deps.gh, {
       viewBody: async () => "Original body",
       editBody,
+      viewLabels: async () => ["ready-for-agent"],
     });
     Object.assign(deps, { healLedger: memoryLedger() });
     const bootOptions = options({
@@ -65,6 +66,7 @@ describe("ADR 0122 boot heal budget", () => {
     Object.assign(deps.gh, {
       viewBody: async () => "Original body",
       editBody,
+      viewLabels: async () => ["ready-for-agent"],
     });
 
     const result = await runBoot(
