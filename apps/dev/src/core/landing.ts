@@ -37,6 +37,7 @@ import {
   type CiAwaitInput,
   type CiGreenEvidence,
   type Exec as MergeExec,
+  type LandingWaitPollEvent,
   type WaitForReviewInput,
 } from "./merge.js";
 import { resolveLandSerialization, type LandLock } from "./land-lock.js";
@@ -164,8 +165,10 @@ export interface LandingDeps {
    * agent has exited. Uses the normal WorkerVitals `phase` field, not a parallel
    * state vocabulary.
    */
-  landingPhase?(phase: "gate" | "push-pr" | "merge" | "cascade"): void | Promise<void>;
+  landingPhase?(phase: LandingPhase, detail?: Record<string, unknown>): void | Promise<void>;
 }
+
+export type LandingPhase = "gate" | "push-pr" | "merge" | "cascade" | "wait" | "close";
 
 /** Static per-landing inputs the caller already resolved. */
 export interface LandingInput {
@@ -390,16 +393,19 @@ export async function doLanding(
   // attempt produces a false "zero-diff" land-failed (the true cause is a push
   // failure, not a merge conflict). Fail early with the real reason so no work
   // is silently lost and the issue is not mis-labelled blocked:merge-conflict.
-  await deps.landingPhase?.("gate");
+  await deps.landingPhase?.("gate", { step: "push", status: "start" });
   const pushed = await pushAttempt(deps.remoteGit, input.repoDir, input.branch, input.branch);
   if (!pushed.ok) {
     return { ok: false, reason: "land-failed", locked };
   }
+  await deps.landingPhase?.("gate", { step: "push", status: "done" });
 
   // 2. pre_merge hook.
+  await deps.landingPhase?.("gate", { step: "pre_merge", status: "start" });
   if (!(await deps.fireHook("pre_merge", hooks.preMerge()))) {
     return { ok: false, reason: "pre_merge-abort", locked };
   }
+  await deps.landingPhase?.("gate", { step: "pre_merge", status: "done" });
 
   // 3. Serialize the land (#1337). Everything below — integrate/rebase onto the
   // fresh base, revalidate the integrated tree, merge, push — is the critical
@@ -471,8 +477,10 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
 
   let postMergeValidation: LandingPostMergeValidation | undefined;
   let missingPostMergeFallback = false;
+  const waitForReview = decorateReviewWait(deps, input);
+  const ciAwait = decorateCiAwait(deps, input);
   try {
-    await deps.landingPhase?.("push-pr");
+    await deps.landingPhase?.("push-pr", { step: "pr", status: "start" });
     const r = await landPr(deps.mergeExec, {
       repo: input.repo,
       gitRepo: input.repoDir,
@@ -482,8 +490,8 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       n: input.issue,
       title: input.title,
       mergeTitle: landingMergeTitle(input),
-      waitForReview: deps.waitForReview,
-      ciAwait: deps.ciAwait,
+      waitForReview,
+      ciAwait,
       // Non-blocking backpressure evidence review (#1279): threaded through so
       // landPr can attach the ledger the moment it resolves the PR number.
       onPrResolved: deps.onPrResolved,
@@ -503,7 +511,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
           return { ok: false };
         }
         if (!deps.postMergeGate) return { ok: true };
-        await deps.landingPhase?.("gate");
+        await deps.landingPhase?.("gate", { step: "re-validation", pr_number: prNumber, status: "start" });
         const gateResult = await deps.postMergeGate!(prepared.dir);
         postMergeValidation = {
           path: "local-rerun",
@@ -601,6 +609,7 @@ async function preparePrRebaseWorktree(
     };
   }
   try {
+    await deps.landingPhase?.("gate", { step: "rebase", status: "start" });
     const rebased = await preMergeRebase(deps.mergeExec, {
       repo: dir,
       remote: input.remote,
@@ -626,6 +635,7 @@ async function preparePrRebaseWorktree(
         },
       };
     }
+    await deps.landingPhase?.("gate", { step: "rebase", status: "done" });
     return { ok: true, dir };
   } catch (error) {
     await deps.removeRebaseWorktree?.(dir);
@@ -676,7 +686,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     if (!deps.postMergeGate) {
       postMergeValidation = undefined;
     } else {
-      await deps.landingPhase?.("gate");
+      await deps.landingPhase?.("gate", { step: "re-validation", status: "start" });
       const gateResult = await deps.postMergeGate(landDir);
       if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
       postMergeValidation = {
@@ -714,7 +724,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
       "merge-base", "--is-ancestor", `origin/${input.base}`, branchTip,
     ]);
     if (fastForwardable.code === 0) {
-      await deps.landingPhase?.("merge");
+      await deps.landingPhase?.("merge", { step: "fast-forward", status: "start" });
       const ff = await deps.mergeExec(["git", "-C", landDir, "merge", "--ff-only", branchTip]);
       if (ff.code !== 0) return { ok: false, reason: "land-failed", locked: input.locked };
       const push = await deps.mergeExec([
@@ -739,7 +749,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
       };
     }
 
-    await deps.landingPhase?.("merge");
+    await deps.landingPhase?.("merge", { step: "merge", status: "start" });
     const merged = await landMerge(deps.mergeExec, {
       repo: landDir,
       remote: input.remote,
@@ -798,6 +808,47 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
   } finally {
     await deps.removeLandingWorktree?.(landDir);
   }
+}
+
+function decorateReviewWait(deps: LandingDeps, input: LandingInput): WaitForReviewInput | undefined {
+  if (!deps.waitForReview) return undefined;
+  return {
+    ...deps.waitForReview,
+    onPoll: async (event) => {
+      await deps.waitForReview?.onPoll?.(event);
+      await emitLandingWaitHeartbeat(deps, input, event);
+    },
+  };
+}
+
+function decorateCiAwait(deps: LandingDeps, input: LandingInput): CiAwaitInput | undefined {
+  if (!deps.ciAwait) return undefined;
+  return {
+    ...deps.ciAwait,
+    onPoll: async (event) => {
+      await deps.ciAwait?.onPoll?.(event);
+      await emitLandingWaitHeartbeat(deps, input, event);
+    },
+  };
+}
+
+async function emitLandingWaitHeartbeat(
+  deps: LandingDeps,
+  input: LandingInput,
+  event: LandingWaitPollEvent,
+): Promise<void> {
+  const step = event.kind === "review" ? "review-wait" : "merge-poll";
+  await deps.landingPhase?.("wait", {
+    step,
+    status: "poll",
+    issue: input.issue,
+    pr_number: event.prNumber,
+    attempt: event.attempt,
+    max_polls: event.maxPolls,
+    interval_ms: event.intervalMs,
+    ...(event.probeTimeoutMs ? { probe_timeout_ms: event.probeTimeoutMs } : {}),
+    ...(event.check ? { check: event.check } : {}),
+  });
 }
 
 async function resolveRemoteBranchTip(
