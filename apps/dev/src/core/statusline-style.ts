@@ -48,6 +48,7 @@ import {
   type StatuslinePreset,
   type StatuslineInput,
 } from "./statusline.js";
+import { AFK_PHASE_ORDER } from "./mirror.js";
 import { formatDiff, workerFields, type CompactWorker } from "./monitor.js";
 
 /** Truecolor SGR helpers. */
@@ -61,6 +62,7 @@ const SOFT = "\x1b[38;2;224;138;148m"; // transparent-zone general font: a light
 const DIM = "\x1b[38;2;201;150;158m"; // identity-zone branch/version
 const GREEN = "\x1b[38;2;96;214;128m"; // healthy rsp resident
 const RED = "\x1b[38;2;255;95;95m"; // unreachable rsp resident
+const YELLOW = "\x1b[38;2;240;200;120m"; // current lifecycle stage
 const GOLD = "\x1b[38;2;240;200;120m"; // » accent
 const BOLD = "\x1b[1m";
 const NOBOLD = "\x1b[22m";
@@ -69,12 +71,26 @@ const RESET = "\x1b[0m";
 const BRANCH_MAX = 28;
 const WORKER_GUTTER = "  ";
 
-type WorkerColumn = "workerId" | "run" | "org" | "iss" | "phase" | "elapsed" | "heartbeat" | "loc" | "tks" | "tls" | "rsn" | "txt";
+type WorkerColumn =
+  | "workerId"
+  | "run"
+  | "org"
+  | "iss"
+  | "lifecycle"
+  | "phase"
+  | "elapsed"
+  | "heartbeat"
+  | "loc"
+  | "tks"
+  | "tls"
+  | "rsn"
+  | "txt";
 const WORKER_COLUMNS: readonly WorkerColumn[] = [
   "workerId",
   "run",
   "org",
   "iss",
+  "lifecycle",
   "phase",
   "elapsed",
   "heartbeat",
@@ -84,7 +100,7 @@ const WORKER_COLUMNS: readonly WorkerColumn[] = [
   "rsn",
   "txt",
 ];
-const SHORT_WORKER_COLUMNS: readonly WorkerColumn[] = ["workerId", "iss", "phase", "elapsed", "heartbeat"];
+const SHORT_WORKER_COLUMNS: readonly WorkerColumn[] = ["workerId", "iss", "lifecycle", "phase", "elapsed", "heartbeat"];
 type WorkerCells = Record<WorkerColumn, string>;
 type WorkerWidths = Record<WorkerColumn, number>;
 const NO_AGENT_ORIGINS = new Set(["requeue"]);
@@ -287,6 +303,15 @@ function progressCell(phase: string, activity: string): string {
   return [phase, activity].filter(Boolean).join("·");
 }
 
+function lifecycleBar(phase: string, failed: boolean): string {
+  const macroPhase = LANDING_PHASES.has(phase) ? "merging" : phase;
+  const current = Math.max(0, (AFK_PHASE_ORDER as readonly string[]).indexOf(macroPhase));
+  if (current === AFK_PHASE_ORDER.length - 1) {
+    return `${GREEN}${"█".repeat(AFK_PHASE_ORDER.length)}${SOFT}`;
+  }
+  return `${GREEN}${"█".repeat(current)}${failed ? RED : YELLOW}▶${DIM}${"░".repeat(AFK_PHASE_ORDER.length - current - 1)}${SOFT}`;
+}
+
 function workerCells(worker: CompactWorker, now: number): WorkerCells {
   const f = workerFields(worker, now);
   const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
@@ -294,11 +319,13 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
     .join(" ");
   const landing = LANDING_PHASES.has(f.phase);
   const noAgent = landing || (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin));
+  const failed = worker.state.blocked > 0 || worker.state.failed > 0;
   return {
     workerId: f.workerId,
     run: `run=${runVal}`,
     org: `org=${landing ? "landing" : f.origin || "afk"}`,
     iss: f.issue === null ? "" : `iss=${String(f.issue)}`,
+    lifecycle: f.issue === null ? "" : lifecycleBar(f.phase, failed),
     phase: f.issue === null ? "" : progressCell(f.phase, f.activity),
     elapsed: f.elapsed,
     heartbeat: `hb=${heartbeatDisplay(worker)}`,
@@ -366,10 +393,12 @@ function renderWorkerLines(
  * the monitor. `now` is an epoch in seconds. */
 export function renderWorkerLine(worker: CompactWorker, now: number, preset: StatuslinePreset = "full"): string {
   const f = workerFields(worker, now);
+  const failed = worker.state.blocked > 0 || worker.state.failed > 0;
   if (preset === "short") {
     const parts: string[] = [`${BOLD}${f.workerId}${NOBOLD}`];
     if (f.issue !== null) {
       parts.push(kv("iss", String(f.issue)));
+      parts.push(lifecycleBar(f.phase, failed));
       const progress = progressCell(f.phase, f.activity);
       if (progress) parts.push(progress);
     }
@@ -397,6 +426,7 @@ export function renderWorkerLine(worker: CompactWorker, now: number, preset: Sta
   // dropped.
   if (f.issue !== null) {
     parts.push(kv("iss", String(f.issue)));
+    parts.push(lifecycleBar(f.phase, failed));
     const progress = progressCell(f.phase, f.activity);
     if (progress) parts.push(progress);
   }
