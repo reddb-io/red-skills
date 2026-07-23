@@ -15,6 +15,7 @@ import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-s
 import type { AttemptProgressInfo } from "../src/core/execution.js";
 import { installProcessSafety, noopSafetyLogger } from "../src/core/process-safety.js";
 import type { AdversarialReviewFindings } from "../src/core/adversarial-review.js";
+import type { LandLock } from "../src/core/land-lock.js";
 
 export {
   SCOUT_EXIT_PROTOCOL,
@@ -261,6 +262,10 @@ export interface HarnessOptions {
   liveWorkers?: string[];
   /** When true, cascadeRebase.rebaseAndPush returns ok=false for every branch. */
   cascadeRebaseFail?: boolean;
+  /** Inject a land-lock port into ProcessIssueDeps.landLock (#2596). A
+   * `{ acquire: async () => null }` stub models a permanent hold — the landing
+   * times out and the issue self-requeues. */
+  landLock?: LandLock;
 }
 
 export function harness(opts: HarnessOptions = {}): {
@@ -659,6 +664,7 @@ export function harness(opts: HarnessOptions = {}): {
     removeLandingWorktree: async () => {},
     makeRebaseWorktree: async () => "/rwt",
     removeRebaseWorktree: async () => {},
+    landLock: opts.landLock,
     hooks: {
       config,
       resolveOptions: {

@@ -140,7 +140,7 @@ import {
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
 import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
-import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 
 function setupFailureExcerpt(log: string | null | undefined): string | undefined {
   const lines = (log ?? "")
@@ -1384,6 +1384,9 @@ export async function processIssue(
     }
     if (landing.reason === "ci-failed" || landing.reason === "ci-pending") {
       return await ciBlocked(common, landing.reason, landing.prNumber);
+    }
+    if (landing.reason === "land-lock-timeout") {
+      return await landLockBackoff(common);
     }
     if (landing.reason === "infra") {
       const reason = landing.infraReason ?? "landing infrastructure precondition failed";
