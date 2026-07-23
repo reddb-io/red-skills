@@ -46,5 +46,11 @@ export { collectStatuslineDocs, collectDocsSweepInput, landDocsSweep } from "./w
 export type { ReapInputs } from "./wire/reap.js";
 export { collectReapInputs } from "./wire/reap.js";
 
-export type { CollectPrecheckFactsOptions } from "./wire/boot.js";
-export { collectBootOptions, collectPrecheckFacts, buildBootDeps, buildMinimalBootDeps } from "./wire/boot.js";
+export type { CollectPrecheckFactsOptions, CollectBootPrecheckFactsOptions } from "./wire/boot.js";
+export {
+  collectBootOptions,
+  collectPrecheckFacts,
+  collectBootPrecheckFacts,
+  buildBootDeps,
+  buildMinimalBootDeps,
+} from "./wire/boot.js";
