@@ -57,13 +57,17 @@ describe("fleet_create startup probe", () => {
         name: "healthy",
         runner: "codex",
         target: 2,
+        base: "develop",
       }),
     ).resolves.toMatchObject({
       status: "launched",
       pid: 43120,
       target: 2,
-      profile: { name: "healthy", runner: "codex" },
+      profile: { name: "healthy", runner: "codex", base: "develop" },
     });
+    expect(spawnSupervisor).toHaveBeenCalledWith(
+      expect.objectContaining({ base: "develop" }),
+    );
   });
 
   it("respawns a dead registered fleet from its persisted profile", async () => {
