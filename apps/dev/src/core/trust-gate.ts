@@ -97,6 +97,42 @@ export interface TrustProvenance {
 export interface TrustVerdict {
   executable: boolean;
   reason?: string;
+  /** DERIVED (issue #2603): the refusal is an `origin:external` HOLD, not a plain
+   * trust-gate rejection. The claim path parks such an issue as `ready-for-human`
+   * (awaiting a maintainer `/approve-external`) instead of merely un-claiming it. */
+  holdForApproval?: boolean;
+}
+
+/** The external-origin state resolved at claim time (issue #2603). `external` is
+ * whether the issue carries the `origin:external` label; `approved` is whether a
+ * maintainer `/approve-external` marker was found AND its author resolved as a
+ * repository maintainer through {@link resolveActorTrust}. Both booleans are
+ * pre-resolved by the runtime, keeping this module IO-free and unit-testable. */
+export interface ExternalOriginState {
+  /** The issue carries the `origin:external` label. */
+  external: boolean;
+  /** A maintainer `/approve-external` marker was found and trust-resolved. */
+  approved: boolean;
+  /** The approving maintainer login, for the log line (present when approved). */
+  approver?: string;
+}
+
+/**
+ * The pure external-origin gate (issue #2603). An `origin:external` issue is
+ * HELD (parked for human review) until a maintainer `/approve-external` marker
+ * is present. Non-external issues, and approved external issues, pass through.
+ * Runs INDEPENDENTLY of the trust posture — an unapproved external issue is held
+ * even on a permissive private repo, even if somehow already `ready-for-agent`.
+ */
+export function evaluateExternalOriginGate(state: ExternalOriginState | undefined): TrustVerdict {
+  if (!state?.external || state.approved) return { executable: true };
+  return {
+    executable: false,
+    holdForApproval: true,
+    reason:
+      "origin:external issue lacks a maintainer '/approve-external' marker — " +
+      "held for human review (a maintainer with write access must approve it)",
+  };
 }
 
 /** Parse a comma / whitespace / newline-separated login list into a trimmed,
@@ -253,18 +289,31 @@ export async function resolveActorTrust(
  *                     The author is checked first; either untrusted → HOLD.
  * `lookup` is only consulted on the fail-closed path; the strict/permissive paths
  * never touch gh, so a caller with no `ActorTrustLookup` can pass a stub.
+ *
+ * `external` (issue #2603) layers the {@link evaluateExternalOriginGate} on top:
+ * an UNAPPROVED `origin:external` issue is HELD first, before any posture check.
+ * An APPROVED external issue vouches for its (untrusted) author on the fail-closed
+ * path — the maintainer `/approve-external` stands in for author trust — while the
+ * `ready-for-agent` promoter is still required to be a maintainer.
  */
 export async function evaluateClaimTrust(
   policy: TrustPolicy,
   provenance: TrustProvenance,
   lookup: ActorTrustLookup,
+  external?: ExternalOriginState,
 ): Promise<TrustVerdict> {
+  const externalVerdict = evaluateExternalOriginGate(external);
+  if (!externalVerdict.executable) return externalVerdict;
+
   if (policy.enabled) return evaluateTrustGate(policy, provenance);
   if (!policy.failClosed) return { executable: true };
 
-  const author = await resolveActorTrust(policy, provenance.author, lookup);
-  if (!author.executable) {
-    return { executable: false, reason: `untrusted author — ${author.reason} (held for maintainer summon)` };
+  const authorVouched = external?.external === true && external.approved === true;
+  if (!authorVouched) {
+    const author = await resolveActorTrust(policy, provenance.author, lookup);
+    if (!author.executable) {
+      return { executable: false, reason: `untrusted author — ${author.reason} (held for maintainer summon)` };
+    }
   }
   const actor = await resolveActorTrust(policy, provenance.readyForAgentActor, lookup);
   if (!actor.executable) {
