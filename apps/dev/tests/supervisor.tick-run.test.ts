@@ -362,7 +362,9 @@ describe("reconcileDeadWorkerClaim", () => {
     deps.recoveryEnv = { RED_AFK_RETRY_CRASH: "2" };
 
     await reconcileDeadWorkerClaim(crashInfo(), deps);
-    expect(io.comment).not.toHaveBeenCalled();
+    expect(io.comment).toHaveBeenCalledOnce();
+    expect(String(io.comment.mock.calls[0]?.[1])).toContain("kind=concede");
+    expect(String(io.comment.mock.calls[0]?.[1])).not.toContain('data-attempt-status="no-sentinel"');
     expect(io.editLabels).toHaveBeenCalledWith(807, ["ready-for-agent"], ["running"]);
   });
 
