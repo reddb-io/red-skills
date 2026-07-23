@@ -353,9 +353,10 @@ export interface OrchestrateOptions {
   /**
    * Live-steer provider. Called BEFORE each iteration after the first; resolves
    * the steer text to inject as a `specialUserRequestBlock` into that iteration's
-   * prompt, or `undefined` when no steer is pending.
+   * prompt, or `undefined` when no steer is pending. Receives the 1-based
+   * iteration ordinal so the provider can record which iteration consumed the steer.
    */
-  readonly steerProvider?: () => Promise<string | undefined>;
+  readonly steerProvider?: (iteration: number) => Promise<string | undefined>;
 }
 
 /** Per-iteration result carrying an optional session ID. */
@@ -432,7 +433,7 @@ export const orchestrate = (
       // Check for live steer between iterations (only from i=2 onward).
       const iterSteerText: string | undefined =
         i > 1 && options.steerProvider
-          ? yield* Effect.promise(() => options.steerProvider!())
+          ? yield* Effect.promise(() => options.steerProvider!(i))
           : undefined;
 
       const sandboxResult = yield* factory.withSandbox(
