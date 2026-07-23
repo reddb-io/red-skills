@@ -227,7 +227,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(t).not.toContain("stats="); // vitals are not a nested blob
   });
 
-  it("makes EVERY k=v key on the statusline worker line exactly 3 letters (house rule, issue #1176)", () => {
+  it("keeps legacy k=v keys at 3 letters and the canonical proof-of-life key as hb (#1176, #2480)", () => {
     const t = stripAnsi(renderWorkerLine(worker(), NOW));
     // Collect every key that precedes an `=` and assert each is 3 chars.
     const keys = [...t.matchAll(/([A-Za-z]+)=/g)].map((m) => m[1]);
