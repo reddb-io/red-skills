@@ -80,6 +80,7 @@ import { attemptLedgerContext, formatAttemptContext, highestAttempt, type Attemp
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import { isLivePid } from "../../runtime/kill-tree.js";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../../core/runner-spawn.js";
 import { buildWorkerAttemptPath } from "../../core/worker-paths.js";
@@ -467,6 +468,48 @@ export function buildProcessDeps(
       landingWait === "merge"
         ? undefined
         : async (task) => {
+            if (!exec) {
+              // Fleet slots are `run --once` processes. Keeping the wait as an
+              // in-process promise would keep that OS process alive and would
+              // not release the supervisor slot at all. The production path
+              // therefore hands the tail to one detached, ephemeral observer.
+              // `rsp wait pr` itself consumes the resident webhook singleton
+              // when present and falls back to its per-wait forwarder when not.
+              const timeoutS = resolveCiTimeoutSeconds(process.env);
+              const script = [
+                'if [ "$1" = "wait" ]; then',
+                '  rsp wait pr "$2" --timeout "$3" --reason "finish AFK landing for issue $5" || exit $?',
+                "fi",
+                'gh -R "$4" pr merge "$2" --merge --delete-branch || exit $?',
+                'gh -R "$4" issue close "$5" --reason completed >/dev/null 2>&1 || true',
+                'gh -R "$4" issue edit "$5" --remove-label running >/dev/null 2>&1 || true',
+              ].join("\n");
+              const child = spawn(
+                "sh",
+                [
+                  "-c",
+                  script,
+                  "landing-tail",
+                  task.waitForCi ? "wait" : "ready",
+                  String(task.prNumber),
+                  `${timeoutS}s`,
+                  ctx.repo,
+                  String(task.issue),
+                ],
+                {
+                  cwd: ctx.root,
+                  env: process.env,
+                  detached: true,
+                  stdio: "ignore",
+                },
+              );
+              child.unref();
+              // The detached observer owns completion. A permanently pending
+              // promise carries that fact to processIssue without keeping the
+              // event loop alive; an orphaned observer is intentionally left as
+              // the deadend-audit class described by the Spec.
+              return await new Promise<never>(() => undefined);
+            }
             if (task.waitForCi) {
               // `rsp wait pr` is the shared wait/webhook observer: it consumes
               // the resident singleton's event lane when a holder exists and
@@ -474,9 +517,8 @@ export function buildProcessDeps(
               // it does not. A non-success verdict falls back to the landing
               // primitive's one-shot classifier so conflict/failed/pending keep
               // their existing terminal routes.
-              const run = exec ?? execTool;
               const timeoutS = resolveCiTimeoutSeconds(process.env);
-              const waited = await run(
+              const waited = await exec(
                 "rsp",
                 [
                   "wait",
