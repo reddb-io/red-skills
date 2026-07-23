@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { type JsonValue as ToonValue } from "@reddb-io/toon";
 import { encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
 import type { CompactWorker } from "../../core/monitor.js";
@@ -8,11 +8,21 @@ import type { WorkerVitals } from "../../types/state.js";
 import type { GhContext } from "../gh.js";
 import { discoverLiveSupervisorPid } from "../supervisor-state.js";
 import { isLivePid } from "../kill-tree.js";
-import { createEnginePaths } from "@reddb-io/red-castle/engine";
+import {
+  castleLanePath,
+  castleStateSnapshotPath,
+  createEnginePaths,
+  readCastleLaneRecords,
+  readCastleStateSnapshot,
+  type CastleLaneRecord,
+  type CastleStateSnapshot,
+  type EnginePaths,
+} from "@reddb-io/red-castle/engine";
 import { createFileBootBreakerStore, isBreakerOpen } from "../../core/supervisor/boot-breaker.js";
 import * as ghx from "../gh.js";
 import * as gitx from "../git.js";
 import { readAllWorkerStates, currentRenderableWorkerRecords } from "../../core/worker-state-reader.js";
+import { allWorkersRoots } from "../../core/worker-paths.js";
 import { afkPaths, type RepoContext } from "./paths.js";
 import { readFleetState } from "./monitor.js";
 import {
@@ -275,6 +285,7 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
   const nowMs = Date.now();
   const records = currentRenderableWorkerRecords(await readAllWorkerStates(paths.tmpDir, { nowMs }));
   const workers: CompactWorker[] = [];
+  const enginePaths = createEnginePaths(join(ctx.root, ".red"));
   for (const { state, active, live: pidLive, liveness, livenessVerdict } of records) {
     // The shared current-worker selector applies the `renderableLive` gate and
     // collapses retained sibling attempt dirs to one row per worker.
@@ -282,6 +293,7 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
     // straight from the state file (the heartbeat owns it for every runner).
     const added = state.current.loc_added;
     const removed = state.current.loc_removed;
+    const observability = await readWorkerObservability(enginePaths, state.worker_id);
     workers.push({
       state: {
         worker_id: state.worker_id,
@@ -289,6 +301,7 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
         runner: state.runner,
         started_at: state.started_at,
         origin: state.origin || undefined,
+        fleet: observability.snapshot?.supervisor_id || observability.fleet,
         total: state.total,
         done: state.done,
         blocked: state.blocked,
@@ -318,6 +331,21 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
       diffRemoved: removed,
     });
   }
+  const represented = new Set(workers.map((worker) => worker.state.worker_id));
+  for (const workersRoot of allWorkersRoots(paths.tmpDir)) {
+    for (const entry of workerDirectories(workersRoot)) {
+      if (represented.has(entry.name)) continue;
+      const worker = await bootWorkerFromDirectory(
+        join(workersRoot, entry.name),
+        entry.name,
+        enginePaths,
+        nowMs,
+      );
+      if (!worker) continue;
+      workers.push(worker);
+      represented.add(entry.name);
+    }
+  }
   // Deterministic order: oldest worker first (by top-level start, then per-attempt).
   workers.sort((a, b) => {
     const ka = a.state.started_at || a.state.current.started_at || "";
@@ -325,6 +353,150 @@ export async function collectStatuslineWorkers(ctx: RepoContext): Promise<Compac
     return ka < kb ? -1 : ka > kb ? 1 : 0;
   });
   return workers;
+}
+
+function workerDirectories(workersRoot: string): Array<{ name: string }> {
+  try {
+    return readdirSync(workersRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({ name: entry.name }));
+  } catch {
+    return [];
+  }
+}
+
+function stringField(
+  record: Record<string, unknown> | undefined,
+  ...fields: string[]
+): string | undefined {
+  if (!record) return undefined;
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+interface WorkerObservability {
+  snapshot?: CastleStateSnapshot;
+  latest?: CastleLaneRecord;
+  heartbeatAt?: string;
+  fleet?: string;
+}
+
+async function readWorkerObservability(
+  paths: EnginePaths,
+  workerId: string,
+): Promise<WorkerObservability> {
+  const [snapshot, lane, liveness] = await Promise.all([
+    readCastleStateSnapshot(castleStateSnapshotPath(paths, "worker", workerId)).catch(() => undefined),
+    readCastleLaneRecords(castleLanePath(paths, "worker", workerId)).catch(() => []),
+    readCastleLaneRecords(castleLanePath(paths, "liveness", workerId)).catch(() => []),
+  ]);
+  const latest = lane.at(-1);
+  return {
+    snapshot,
+    latest,
+    heartbeatAt: liveness.at(-1)?.at,
+    fleet:
+      latest?.supervisor_id ||
+      stringField(latest?.payload, "supervisor_id", "fleet"),
+  };
+}
+
+function liveWorkerPid(workerDir: string): { pid: number; startedAt: string } | null {
+  const path = join(workerDir, "worker.pid");
+  try {
+    const pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 0 || !isLivePid(pid)) return null;
+    return { pid, startedAt: statSync(path).mtime.toISOString() };
+  } catch {
+    return null;
+  }
+}
+
+function workspaceIssue(workerDir: string): number | undefined {
+  try {
+    return readdirSync(workerDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^[1-9][0-9]*$/.test(entry.name))
+      .map((entry) => ({
+        issue: Number(entry.name),
+        mtimeMs: statSync(join(workerDir, entry.name)).mtimeMs,
+      }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || b.issue - a.issue)[0]?.issue;
+  } catch {
+    return undefined;
+  }
+}
+
+function issueField(value: unknown): number | string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) return value.trim();
+  return undefined;
+}
+
+async function bootWorkerFromDirectory(
+  workerDir: string,
+  workerId: string,
+  paths: EnginePaths,
+  nowMs: number,
+): Promise<CompactWorker | null> {
+  const anchor = liveWorkerPid(workerDir);
+  if (!anchor) return null;
+  const { snapshot, latest, heartbeatAt, fleet } = await readWorkerObservability(paths, workerId);
+  const current = snapshot?.current;
+  const payload = latest?.payload;
+  const issue =
+    workspaceIssue(workerDir) ??
+    issueField(current?.number ?? current?.issue) ??
+    latest?.issue ??
+    "";
+  const heartbeat = heartbeatAt || latest?.at || snapshot?.updated_at || anchor.startedAt;
+  const laneAgeMs = Math.max(0, nowMs - Date.parse(heartbeat));
+  const laneFresh = laneAgeMs <= 180_000;
+  const namespace = basename(dirname(workerDir));
+  const origin =
+    stringField(payload, "origin", "kind") ||
+    stringField(current, "origin", "kind") ||
+    (namespace === "go-workers" ? "go" : namespace === "scout-workers" ? "scout" : undefined);
+
+  return {
+    state: {
+      worker_id: workerId,
+      pid: anchor.pid,
+      runner:
+        snapshot?.runner ||
+        stringField(payload, "runner") ||
+        stringField(current, "runner") ||
+        "",
+      started_at: snapshot?.started_at || anchor.startedAt,
+      origin,
+      fleet: snapshot?.supervisor_id || fleet,
+      total: issue === "" ? 0 : 1,
+      done: 0,
+      blocked: 0,
+      failed: 0,
+      current: {
+        number: issue,
+        title: stringField(current, "title", "slug") || "",
+        phase: stringField(payload, "phase") || stringField(current, "phase") || "boot",
+        activity:
+          stringField(payload, "activity", "stage", "probe", "task") ||
+          stringField(current, "activity") ||
+          (latest?.kind === "worker.heartbeat"
+            ? ""
+            : latest?.kind.replace(/^worker\./, "") || ""),
+        started_at: heartbeat,
+        model: stringField(payload, "model") || stringField(current, "model"),
+        effort: stringField(payload, "effort") || stringField(current, "effort"),
+      },
+    },
+    liveness: laneFresh ? "active" : "quiet-but-live",
+    live: laneFresh,
+    pidLive: true,
+    diffAdded: 0,
+    diffRemoved: 0,
+  };
 }
 
 interface RepoStatsCache {
