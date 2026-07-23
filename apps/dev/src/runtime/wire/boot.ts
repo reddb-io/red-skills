@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
+import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/red-castle/engine";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { auditConfigLoad, loadConfig, getConfig } from "../../core/config.js";
 import { compareSemver, fetchNpmNewestDevBundleVersion, readDevBundleCacheState } from "../../core/bundle-version.js";
@@ -434,6 +435,7 @@ export async function buildBootDeps(
           throw new Error(`failed to update quarantine diagnosis for issue #${issue}`);
         }
       },
+      viewBody: (issue) => ghx.issueBody(ghCtx, issue),
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
       attachSubIssue: (parent, child) => ghx.attachSubIssue(ghCtx, parent, child),
       issueReference: (issue) => ghx.issueReference(ghCtx, issue),
@@ -452,6 +454,7 @@ export async function buildBootDeps(
           await ghx.postClaimComment(ghCtx, issue, body);
         }
       : undefined,
+    healLedger: createFileHealLedgerStore(createEnginePaths(join(ctx.root, ".red"))),
     lookups: {
       // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
       // naming an issue whose claims/{N}/pid is a LIVE process is claim-race
