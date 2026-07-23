@@ -69,11 +69,12 @@ const RESET = "\x1b[0m";
 const BRANCH_MAX = 28;
 const WORKER_GUTTER = "  ";
 
-type WorkerColumn = "workerId" | "run" | "org" | "iss" | "phase" | "elapsed" | "loc" | "tks" | "tls" | "rsn" | "txt";
+type WorkerColumn = "workerId" | "run" | "org" | "fleet" | "iss" | "phase" | "elapsed" | "loc" | "tks" | "tls" | "rsn" | "txt";
 const WORKER_COLUMNS: readonly WorkerColumn[] = [
   "workerId",
   "run",
   "org",
+  "fleet",
   "iss",
   "phase",
   "elapsed",
@@ -277,6 +278,7 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
     workerId: f.workerId,
     run: `run=${runVal}`,
     org: `org=${landing ? "landing" : f.origin || "afk"}`,
+    fleet: `flt=${worker.state.fleet || "unattributed"}`,
     iss: f.issue === null ? "" : `iss=${String(f.issue)}`,
     phase: f.issue === null ? "" : progressCell(f.phase, f.activity),
     elapsed: f.elapsed,
@@ -325,7 +327,7 @@ function renderWorkerLines(
 
 /** The TERSE per-worker line for the Claude Code statusline (issue #1175, #1176):
  *
- *   <wID>  run=<runner> <model> <effort>  org=<afk|go>  iss=<issue-number>  <phase>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
+ *   <wID>  run=<runner> <model> <effort>  org=<afk|go>  flt=<name|unattributed>  iss=<issue-number>  <phase>  <elapsed>  loc=+A -R  tks=<h>  tls=<t> rsn=<r> txt=<x>
  *
  * A visual sibling of line 1: the `wID` is BOLD + red, and every k=v token
  * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tls=`/`rsn=`/`txt=`) reuses the
@@ -365,6 +367,10 @@ export function renderWorkerLine(worker: CompactWorker, now: number, preset: Sta
   // worker, so default the display to afk.
   const landing = LANDING_PHASES.has(f.phase);
   parts.push(kv("org", landing ? "landing" : f.origin || "afk"));
+  // flt=<name|unattributed> — ownership is independent of origin: targeted,
+  // `/go`, and secondary-supervisor Workers can share an origin while belonging
+  // to different fleets (or no fleet at all).
+  parts.push(kv("flt", worker.state.fleet || "unattributed"));
   // iss=<issue-number> from current.number (both /afk and /go lanes); the
   // <phase·activity> cell follows bare and the legacy standalone #<n> token is
   // dropped.

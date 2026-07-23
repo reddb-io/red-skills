@@ -247,6 +247,15 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(stripAnsi(renderWorkerLine(afk, NOW))).toContain("org=afk");
   });
 
+  it("shows named-fleet attribution and marks standalone Workers as unattributed", () => {
+    const attributed = worker({
+      state: { ...worker().state, fleet: "alpha" },
+    });
+
+    expect(stripAnsi(renderWorkerLine(attributed, NOW))).toContain("flt=alpha");
+    expect(stripAnsi(renderWorkerLine(worker(), NOW))).toContain("flt=unattributed");
+  });
+
   it("short preset keeps only worker id, issue, status, and timer", () => {
     const t = stripAnsi(renderWorkerLine(worker(), NOW, "short"));
     expect(t).toContain("w1");
