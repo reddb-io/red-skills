@@ -90,6 +90,9 @@ export interface Trace {
   handoffs: Array<{ path: string; content: string }>;
   /** Fresh-branch preparation calls before sandcastle can reuse a worktree. */
   freshWorkerBranchCalls: Array<{ branch: string; baseRef: string; force: boolean }>;
+  /** Promoter labels passed into gh.issueTrust at claim time (#2602): the lane the
+   * claim was selected under, so /go/scout provenance resolves from the lane label. */
+  issueTrustCalls: Array<string | undefined>;
 }
 
 export interface HarnessOptions {
@@ -291,6 +294,7 @@ export function harness(opts: HarnessOptions = {}): {
     pnpmArgs: [],
     handoffs: [],
     freshWorkerBranchCalls: [],
+    issueTrustCalls: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -336,7 +340,12 @@ export function harness(opts: HarnessOptions = {}): {
       },
       // Trust-gate provenance port (#621): registered only when the test opts in,
       // so legacy-shaped tests omit it and the gate never fires (permissive).
-      issueTrust: opts.trust ? async () => opts.trust! : undefined,
+      issueTrust: opts.trust
+        ? async (_issue: number, promoterLabel?: string) => {
+            trace.issueTrustCalls.push(promoterLabel);
+            return opts.trust!;
+          }
+        : undefined,
       // Visibility-aware default ports (#1101): registered only when the test opts
       // in, so legacy-shaped tests omit them and the default stays permissive.
       repoVisibility: opts.visibility ? async () => opts.visibility! : undefined,
