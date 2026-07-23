@@ -45,14 +45,10 @@ export {
   acquireIssueLease,
   createFsIssueLeaseStore,
   parseClaimRecords,
-  parseTrackerClaimRecords,
   reconcileClaim,
-  reconcileTrackerClaims,
   renderClaimComment,
   renderRecoveryAudit,
-  renderTrackerClaimComment,
   retireIssueLease,
-  TRACKER_CLAIM_MARKER_VERSION,
 } from "./tracker/claim.js";
 export type {
   AcquireClaimOptions,
@@ -68,12 +64,8 @@ export type {
   LocalLeaseDecision,
   RawClaimComment,
   RetireIssueLeaseOptions,
-  TrackerClaimComment,
   TrackerClaimIdentity,
-  TrackerClaimKind,
-  TrackerClaimRecord,
   TrackerClaimStore,
-  TrackerClaimVerdict,
   AcquireIssueLeaseOptions,
 } from "./tracker/claim.js";
 export { CLAIM_WIRE_FIXTURES } from "./tracker/claim-wire-fixture.js";

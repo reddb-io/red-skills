@@ -745,32 +745,3 @@ function issueLeaseDir(root: string, issue: number): string {
   return join(root, String(issue));
 }
 
-// ---------- deprecated twin aliases (removed by the dead-code sweep) ----------
-
-/** @deprecated Use {@link CLAIM_MARKER_VERSION}. */
-export const TRACKER_CLAIM_MARKER_VERSION = CLAIM_MARKER_VERSION;
-/** @deprecated Use {@link ClaimKind}. */
-export type TrackerClaimKind = ClaimKind;
-/** @deprecated Use {@link ClaimVerdict}. */
-export type TrackerClaimVerdict = ClaimVerdict;
-/** @deprecated Use {@link RawClaimComment}. */
-export type TrackerClaimComment = RawClaimComment;
-/** @deprecated Use {@link ClaimRecord}. */
-export type TrackerClaimRecord = ClaimRecord;
-/** @deprecated Use {@link renderClaimComment}. */
-export const renderTrackerClaimComment = (
-  identity: TrackerClaimIdentity,
-  kind: ClaimKind = "claim",
-): string => renderClaimComment(identity, kind);
-/** @deprecated Use {@link parseClaimRecords}. */
-export const parseTrackerClaimRecords = parseClaimRecords;
-/** @deprecated Use {@link reconcileClaim} with an injected `isStale`. */
-export function reconcileTrackerClaims(
-  records: readonly ClaimRecord[],
-  self: { readonly worker: string; readonly commentId: number },
-  liveness: (worker: string) => TrackerClaimLiveness,
-): ClaimDecision {
-  return reconcileClaim(records, self, {
-    isStale: (record) => liveness(record.worker) === "dead",
-  });
-}
