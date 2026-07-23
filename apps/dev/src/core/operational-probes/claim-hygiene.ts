@@ -1,4 +1,5 @@
-import { renderClaimComment } from "../claim.js";
+import { renderClaimComment, type ClaimRecord } from "../claim.js";
+import { classifyClaim, DEFAULT_CLAIM_STALENESS } from "../claim-staleness.js";
 import type {
   ClaimHygieneIssueInput,
   ClaimHygieneProbeInput,
@@ -135,6 +136,26 @@ function classifyClaimHygiene(input: ClaimHygieneProbeInput, issues: readonly Cl
         });
       } else if (pidState === "live") {
         liveOwn += 1;
+      } else if (
+        input.nowS !== undefined &&
+        classifyClaim(
+          { createdAt: marker.createdAt } as ClaimRecord,
+          input.nowS,
+          input.staleness ?? DEFAULT_CLAIM_STALENESS,
+        ) === "stale"
+      ) {
+        // Unknown pid BUT the marker aged past the ADR 0066 TTL window: the
+        // owner stopped refreshing long enough to be presumed dead, so the
+        // claim is concedable without ever proving the pid (#2525). Unknown-pid
+        // ghosts stop red-halting boots once their TTL runs out.
+        actions.push({
+          issue: claim.issue,
+          markerComment: marker.commentId,
+          namespace: marker.namespace,
+          worker: marker.worker,
+          runner: marker.runner,
+          pidState: "expired",
+        });
       } else {
         unknownOwn += 1;
         unknown.push({
