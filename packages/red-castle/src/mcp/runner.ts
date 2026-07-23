@@ -16,6 +16,10 @@ export interface WorkerSteerInput {
   text: string;
 }
 
+export interface WorkerSteerStatusInput {
+  worker: string;
+}
+
 export interface WorkerRequestInput extends WorkerDispatchInput {
   text: string;
 }
@@ -24,6 +28,7 @@ export interface RunnerDependencies {
   runnerList(): Promise<unknown>;
   runnerDetect(input: RunnerDetectInput): Promise<unknown>;
   runnerSteer(input: WorkerSteerInput): Promise<unknown>;
+  steerStatus(input: WorkerSteerStatusInput): Promise<unknown>;
   workerRequest(input: WorkerRequestInput): Promise<unknown>;
 }
 
@@ -60,6 +65,17 @@ export function createRunnerTools(deps: RunnerDependencies): CastleMcpTool[] {
         text: z.string().min(1),
       },
       invoke: (input) => deps.runnerSteer(input as unknown as WorkerSteerInput),
+    },
+    {
+      name: "steer_status",
+      title: "Read steer status",
+      description:
+        "Return the live-steer status for a worker: none (no steer ever written), pending (written, not yet consumed), or consumed (consumed at a specific iteration).",
+      inputSchema: {
+        worker: z.string().min(1),
+      },
+      invoke: (input) =>
+        deps.steerStatus(input as unknown as WorkerSteerStatusInput),
     },
     {
       name: "worker_request",
