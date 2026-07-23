@@ -450,7 +450,10 @@ export interface SandcastleDeps {
    * for arming the progress guard + heartbeat under isolation. Ignored for the
    * host-native `none` mode (no container to mount into).
    */
-  sandboxFor: (mode: SandboxMode, opts?: { mountPath?: string; imageName?: string }) => RunOptions["sandbox"];
+  sandboxFor: (
+    mode: SandboxMode,
+    opts?: { mountPath?: string; imageName?: string; runner?: AgentRunner },
+  ) => RunOptions["sandbox"];
   /**
    * Optional warn sink for degrade-safe diagnostics (FIX D effort drop, FIX F
    * continuous-push-under-isolation notice). Defaults to `console.warn` in the
@@ -727,6 +730,7 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     sandbox: deps.sandboxFor(input.sandboxMode ?? "none", {
       ...(input.cwd ? { mountPath: input.cwd } : {}),
       ...(input.sandboxImage ? { imageName: input.sandboxImage } : {}),
+      runner: input.runner,
     }),
     // Re-anchor castle state + git ops at the worker workspace and place the
     // actual worktree at its conventional direct child. Omitting cwd preserves
@@ -1210,7 +1214,7 @@ export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
     // disables minimization (pre-#1368 behavior). Per-attempt env delivered by
     // mutating process.env (the FIX J lane) stays visible because those keys
     // (CARGO*, RED_*) are allowlisted.
-    const hostEnvAllowlist = resolveHostEnvAllowlist(process.env);
+    const hostEnvAllowlist = resolveHostEnvAllowlist(process.env, opts?.runner);
     return noSandboxMod.noSandbox(hostEnvAllowlist ? { hostEnvAllowlist } : undefined);
   };
   return { run: core.run as SandcastleDeps["run"], agentFor, sandboxFor, warn };

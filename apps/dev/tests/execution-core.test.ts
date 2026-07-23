@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import type { RunOptions } from "@reddb-io/red-castle";
 import {
   buildRunOptions,
+  defaultSandcastleDeps,
   buildContinuousPushHook,
   buildNoLeakCommitMsgHook,
   interpretOutcome,
@@ -219,6 +220,21 @@ describe("buildRunOptions", () => {
     const opts = buildRunOptions(makeDeps(async () => fakeResult()), baseInput);
     expect(opts.sandbox).toEqual({ __sandbox: "none" });
     expect(opts.idleTimeoutSeconds).toBe(DEFAULT_IDLE_TIMEOUT_S);
+  });
+
+  it("projects the selected runner into sandbox construction", () => {
+    let received: unknown;
+    const deps: SandcastleDeps = {
+      ...makeDeps(async () => fakeResult()),
+      sandboxFor: (_mode, opts) => {
+        received = opts;
+        return { __sandbox: "none" } as never;
+      },
+    };
+
+    buildRunOptions(deps, { ...baseInput, runner: "codex", model: "gpt-5.4" });
+
+    expect(received).toEqual({ runner: "codex" });
   });
 
   it("sets maxIterations to DEFAULT_MAX_ITERATIONS when unset (issue #322 regression guard)", () => {
@@ -624,6 +640,38 @@ describe("runAgent", () => {
 });
 
 describe("defaultSandcastleDeps agentFor (FIX D — degrade safely, never throw)", () => {
+  it("spawns a codex no-sandbox worker without Claude shell state", async () => {
+    const previous = {
+      CLAUDE_CODE_ENTRYPOINT: process.env.CLAUDE_CODE_ENTRYPOINT,
+      CLAUDE_ENV_FILE: process.env.CLAUDE_ENV_FILE,
+      BASH_ENV: process.env.BASH_ENV,
+      ENV: process.env.ENV,
+    };
+    Object.assign(process.env, {
+      CLAUDE_CODE_ENTRYPOINT: "host-cli",
+      CLAUDE_ENV_FILE: "/tmp/shell-snapshot",
+      BASH_ENV: "/tmp/bash-env",
+      ENV: "/tmp/sh-env",
+    });
+
+    try {
+      const deps = await defaultSandcastleDeps();
+      const sandbox = deps.sandboxFor("none", { runner: "codex" });
+      if (sandbox.tag !== "none") throw new Error("expected no-sandbox provider");
+      const handle = await sandbox.create({ worktreePath: process.cwd(), env: {} });
+      const result = await handle.exec(
+        `printf 'claude=[%s] snapshot=[%s] bash=[%s] env=[%s]' "$CLAUDE_CODE_ENTRYPOINT" "$CLAUDE_ENV_FILE" "$BASH_ENV" "$ENV"`,
+      );
+
+      expect(result.stdout).toBe("claude=[] snapshot=[] bash=[] env=[]");
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("drops codex+max (omits effort) with a warn and still builds an agent", async () => {
     const { defaultSandcastleDeps } = await import("../src/core/execution.js");
     const deps = await defaultSandcastleDeps();
