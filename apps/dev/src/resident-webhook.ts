@@ -12,7 +12,6 @@ import {
 import {
   GITHUB_WEBHOOK_DELIVERY_KIND,
   GITHUB_WEBHOOK_SINGLETON,
-  WebhookForwarder,
 } from "@reddb-io/shared/github-webhook.js";
 import { resolveRepoRoot } from "@reddb-io/shared/repo-root.js";
 import { readPidStartTime } from "./core/state.js";
