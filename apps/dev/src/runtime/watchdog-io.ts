@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { SupervisorLiveness } from "../core/supervisor.js";
 import type { HeartbeatSlotPid } from "../core/supervisor.js";
 import type { DeadSupervisorSignals, WatchdogIO } from "../core/watchdog.js";
+import { isRefused, planTransition } from "../core/state-transition.js";
 import { afkPaths, readFleetState, resolveRepoSlug } from "./wire.js";
 import { listStaleClaimDirs, removeDir } from "./fs.js";
 import { countReadyForAgent } from "./gh.js";
@@ -175,7 +176,12 @@ export function buildWatchdogIO(
           const labels = await viewLabels(gh, claim.issue);
           const parked = labels.includes(LABEL_HUMAN) || labels.some((label) => label.startsWith("blocked:"));
           if (labels.includes(LABEL_RUNNING) && !parked) {
-            const edited = await editLabels(gh, claim.issue, [LABEL_RUNNING], [LABEL_READY]);
+            // Queue through the ADR 0122 transition API (#2528): a refused plan
+            // (dangling req:* edges) sheds nothing here — the boot sweep's own
+            // transition path owns that cure.
+            const plan = planTransition(labels, { kind: "queue" });
+            if (isRefused(plan)) continue;
+            const edited = await editLabels(gh, claim.issue, [...plan.remove], [...plan.add]);
             if (!edited) continue;
           }
           await removeDir(claim.path);

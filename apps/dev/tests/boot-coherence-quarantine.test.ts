@@ -66,7 +66,12 @@ function wireIssueMutations(
     issues.find((candidate) => candidate.number === number)!.body = body;
   });
   deps.gh.editLabels = editLabels;
-  Object.assign(deps.gh, { editBody });
+  Object.assign(deps.gh, {
+    editBody,
+    // The transition API reads live labels before planning (#2528).
+    viewLabels: async (number: number) =>
+      issues.find((candidate) => candidate.number === number)?.labels ?? [],
+  });
   return { editLabels, editBody };
 }
 
@@ -111,7 +116,13 @@ describe("ADR 0122 boot quarantine posture", () => {
 
     expect(result.boot.bootstrap).toEqual({ ok: true });
     expect(processed).toEqual([1972]);
-    expect(mutations.editLabels).toHaveBeenCalledWith(1971, ["ready-for-agent"], ["quarantine"]);
+    // #2528: the transition API cures the WHOLE poison shape in one atomic edit —
+    // the stacked ready-for-human role leaves together with ready-for-agent.
+    expect(mutations.editLabels).toHaveBeenCalledWith(
+      1971,
+      ["ready-for-agent", "ready-for-human"],
+      ["quarantine"],
+    );
     expect(issues[0]?.labels).toContain("quarantine");
     expect(issues[0]?.labels).not.toContain("ready-for-agent");
     expect(issues[0]?.body).toContain("<!-- afk:quarantine v1 issue=#1971 -->");
