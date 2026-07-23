@@ -340,6 +340,7 @@ export async function resolveFreshBase(
     }
     const updated = await runGit(ctx, ["update-ref", FLEET_TRUNK_REF, remoteSha]);
     if (updated.code !== 0) {
+      const detail = updated.stderr.trim() || `git update-ref exited ${updated.code}`;
       return {
         ok: false,
         base,
@@ -348,7 +349,7 @@ export async function resolveFreshBase(
         source: "mirror",
         remoteReachable: true,
         reason: "base-stale",
-        message: `could not update fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}`,
+        message: `could not update fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}: ${detail}`,
       };
     }
     return {
@@ -361,6 +362,10 @@ export async function resolveFreshBase(
     };
   }
 
+  const detail = fetch.code !== 0
+    ? fetch.stderr.trim() || `git fetch exited ${fetch.code}`
+    : `${remoteRef} did not resolve after fetch`;
+
   return {
     ok: false,
     base,
@@ -369,7 +374,7 @@ export async function resolveFreshBase(
     source: "mirror",
     remoteReachable: false,
     reason: "base-stale",
-    message: `could not refresh fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}`,
+    message: `could not refresh fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}: ${detail}`,
   };
 }
 
