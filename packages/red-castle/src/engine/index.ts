@@ -27,6 +27,7 @@ export * from "./config.js";
 export * from "./fleet-registry.js";
 export * from "./host-capability-profile.js";
 export * from "./issue-state-curator.js";
+export * from "./merge-driver.js";
 export * from "./contracts/index.js";
 export * from "./minimax-env.js";
 export * from "./opencode-env.js";

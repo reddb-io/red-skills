@@ -9,10 +9,14 @@ import { createCastleMcpTools } from "../../../packages/red-castle/src/mcp-serve
 import {
   createEnginePaths,
   createFileIssueCuratorStore,
+  createFileMergeDriverStore,
   createGitHubTrackerAdapter,
   createSingletonLeaseStore,
   runIssueStateCurator,
+  runMergeDriverPass,
 } from "@reddb-io/red-castle/engine";
+import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
+import { resolveRepoContext } from "./runtime/wire.js";
 import { superviseCommand } from "./commands/supervise.js";
 import { createCastleMcpDependencies } from "./mcp-adapter.js";
 import {
@@ -107,6 +111,46 @@ async function run(): Promise<void> {
 }
 
 export const RESIDENT_CURATOR_INTERVAL_MS = 5 * 60 * 1000;
+export const RESIDENT_MERGE_DRIVER_INTERVAL_MS = 90 * 1000;
+
+/** Start the #2512 merge driver inside the castle resident: every interval it
+ * reloads the durable armed set from `.red/state/castle/merge-driver.toon` and
+ * runs one pass (update-branch when BEHIND, merge-commit when green, bounded
+ * retries, terminal classification). A singleton lease keeps multiple stdio
+ * hosts for the same repo off the same store; an empty armed set costs one
+ * file read and no gh call. */
+export async function startResidentMergeDriver(root = process.cwd()): Promise<void> {
+  const paths = createEnginePaths(join(root, ".red"));
+  const owner = { pid: process.pid, startTime: new Date().toISOString() };
+  const lease = await createSingletonLeaseStore(paths).acquire("merge-driver", owner);
+  if (!lease.acquired) return;
+
+  const store = createFileMergeDriverStore(paths);
+  let running = false;
+  const pass = async (): Promise<void> => {
+    if (running) return;
+    running = true;
+    try {
+      const state = await store.read();
+      const armed = Object.values(state.prs).some((record) => record.status === "armed");
+      if (armed) {
+        const context = await resolveRepoContext(root);
+        await runMergeDriverPass(
+          createMergeDriverIo({ cwd: context.root, repo: context.repo }),
+          store,
+          { nowEpoch: Math.floor(Date.now() / 1000) },
+        );
+      }
+    } catch {
+      // Transport faults retry on the next interval; the resident never dies here.
+    } finally {
+      running = false;
+    }
+  };
+  void pass();
+  const timer = setInterval(() => void pass(), RESIDENT_MERGE_DRIVER_INTERVAL_MS);
+  timer.unref();
+}
 
 /** Start the ADR 0122 periodic reconciliation owner inside the castle resident.
  * The singleton lease prevents multiple stdio hosts for the same repo from
@@ -143,6 +187,7 @@ export async function startResidentIssueCurator(root = process.cwd()): Promise<v
 export interface McpEntrypointDependencies {
   supervise(args: string[]): Promise<number>;
   startCurator(): Promise<void>;
+  startMergeDriver(): Promise<void>;
   connect(): Promise<void>;
 }
 
@@ -154,6 +199,7 @@ export async function main(
   dependencies: McpEntrypointDependencies = {
     supervise: superviseCommand,
     startCurator: startResidentIssueCurator,
+    startMergeDriver: startResidentMergeDriver,
     connect: run,
   },
 ): Promise<number> {
@@ -169,6 +215,7 @@ export async function main(
     return 0;
   }
   await dependencies.startCurator();
+  await dependencies.startMergeDriver();
   await dependencies.connect();
   return 0;
 }

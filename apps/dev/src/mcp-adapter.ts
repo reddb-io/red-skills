@@ -7,9 +7,12 @@ import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
+  armPr,
   castleLanePath,
   createCastleLaneWriters,
   createEnginePaths,
+  createFileMergeDriverStore,
+  releasePr,
   fleetRegistryPath,
   readCastleHistoryRecords,
   readCastleLaneRecords,
@@ -140,6 +143,9 @@ export interface DevAfkMcpOperations {
   cascadeStatus(input: CascadeStatusInput): Promise<unknown>;
   claimStatus(input: ClaimIssueInput): Promise<unknown>;
   claimRelease(input: ClaimIssueInput): Promise<unknown>;
+  mergeArm(input: { pr: number }): Promise<unknown>;
+  mergeStatus(): Promise<unknown>;
+  mergeRelease(input: { pr: number }): Promise<unknown>;
   waitStart(input: WaitStartInput): Promise<unknown>;
   dailyReview(input: DailyReviewInput): Promise<unknown>;
   weeklyReview(input: WeeklyReviewInput): Promise<unknown>;
@@ -624,6 +630,33 @@ export function createDefaultDevAfkMcpOperations(
           req_labels: plan.reqLabels,
         })),
       };
+    },
+    async mergeArm(input: { pr: number }) {
+      const store = createFileMergeDriverStore(createEnginePaths(join(root, ".red")));
+      const record = await armPr(store, input.pr, Math.floor(Date.now() / 1000));
+      return { armed: { pr: record.pr, status: record.status, armed_at_epoch: record.armedAtEpoch } };
+    },
+    async mergeStatus() {
+      const store = createFileMergeDriverStore(createEnginePaths(join(root, ".red")));
+      const state = await store.read();
+      return {
+        prs: Object.values(state.prs).map((record) => ({
+          pr: record.pr,
+          status: record.status,
+          attempts: record.attempts,
+          armed_at_epoch: record.armedAtEpoch,
+          updated_at_epoch: record.updatedAtEpoch,
+          last_state: record.lastState ?? "",
+          note: record.note ?? "",
+        })),
+      };
+    },
+    async mergeRelease(input: { pr: number }) {
+      const store = createFileMergeDriverStore(createEnginePaths(join(root, ".red")));
+      const record = await releasePr(store, input.pr, Math.floor(Date.now() / 1000));
+      return record === null
+        ? { released: null, note: "pr was not owned by the driver" }
+        : { released: { pr: record.pr, status: record.status } };
     },
     async claimStatus(input) {
       const context = await resolveRepoContext(root);
@@ -1528,6 +1561,9 @@ export function createCastleMcpDependencies(
     cascadeStatus: (input) => operations.cascadeStatus(input),
     claimStatus: (input) => operations.claimStatus(input),
     claimRelease: (input) => operations.claimRelease(input),
+    mergeArm: (input) => operations.mergeArm(input),
+    mergeStatus: () => operations.mergeStatus(),
+    mergeRelease: (input) => operations.mergeRelease(input),
     worktreeList: () => listDisposableWorktrees(root),
     worktreeRemove: (input) => removeDisposableWorktree(root, input),
     waitStart: (input) => operations.waitStart(input),

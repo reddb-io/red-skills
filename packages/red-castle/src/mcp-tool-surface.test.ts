@@ -225,6 +225,30 @@ const SURFACE: ReadonlyArray<{
     schema: ["issue"],
   },
   {
+    name: "merge_arm",
+    title: "Arm PR for the merge driver",
+    description:
+      "MUTATING: hand one open PR to the castle merge driver — it owns the PR to a terminal state " +
+      "(update-branch when BEHIND, merge-commit once green at head, bounded retries, " +
+      "needs-medic/needs-human classification) without GitHub native auto-merge.",
+    schema: ["pr"],
+  },
+  {
+    name: "merge_status",
+    title: "Read merge driver state",
+    description:
+      "Return the driver's durable per-PR records: armed set, attempts, last observed state, " +
+      "and terminal classifications.",
+    schema: [],
+  },
+  {
+    name: "merge_release",
+    title: "Release PR from the merge driver",
+    description:
+      "MUTATING: stop driver ownership of one PR. The record is kept as released for observability.",
+    schema: ["pr"],
+  },
+  {
     name: "worktree_list",
     title: "List disposable worktrees",
     description:
