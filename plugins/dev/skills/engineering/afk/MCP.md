@@ -87,6 +87,7 @@ comment before closing the issue. Scout cannot be combined with `issue`.
 | `runner_list` | read | The canonical runner specification registry. |
 | `runner_detect` | read | The runner an override or this host resolves to. |
 | `runner_steer` | mutating | Inject a prompt into a **live** worker's next iteration. |
+| `steer_status` | read | Whether a worker's live steer is none, pending, or consumed. |
 
 `runner_steer` is the steering surface for a run already in flight;
 `worker_request` is the spawn-time equivalent. Reach for steer before killing a
