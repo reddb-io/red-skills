@@ -755,6 +755,34 @@ describe("processIssue — BLOCKED", () => {
 
 
 describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
+  it("surfaces a sandbox setup failure from afk.log when runner stdout is empty (#2536)", async () => {
+    const { deps, input, trace } = harness({ outcome: "no-sentinel", changedFiles: [] });
+    Object.assign(deps.fs, {
+      readText: async () =>
+        [
+          "[heartbeat] iteration started for #9",
+          "Setting up sandbox",
+          'Command failed in sandbox (git config --global user.name "Worker"): Command failed (exit 255)',
+          "error: could not lock config file [REDACTED_HOME]/.gitconfig: File exists",
+        ].join("\n"),
+    });
+    deps.runAgent = async (runInput) => ({
+      outcome: "no-sentinel",
+      branch: runInput.branch,
+      commits: [],
+      stdout: "",
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("no-sentinel");
+    expect(parseCurrentBlocker(trace.bodyEdits.at(-1)!.body)).toMatchObject({
+      kind: "runner",
+      summary: expect.stringContaining("Command failed in sandbox"),
+    });
+    expect(trace.envelopeBodies.at(-1)).toContain("Command failed in sandbox");
+  });
+
   it("worker crash before Landing never snapshots or integrates the primary checkout", async () => {
     // No work on the branch: a real crash while the operator may have unrelated
     // dirty primary WIP. The attempt must terminate before every Landing git/

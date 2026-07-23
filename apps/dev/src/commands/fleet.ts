@@ -51,6 +51,43 @@ export interface FleetStopOptions {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const FLEET_USAGE = `Usage: red-skills-dev fleet [target] [options]
+       red-skills-dev fleet status [--fleet <name>]
+       red-skills-dev fleet stop [--fleet <name>] [--force]
+       red-skills-dev fleet logs [--fleet <name>]
+
+Options:
+  --runner <runner>
+  --request <text>, -r <text>
+  --fleet <name>
+  --budget-usd <amount>
+  --shrink-mode <hard-kill|drain-then-retire>
+  --help, -h
+`;
+
+const WORKER_PASSTHROUGH_FLAGS = new Set([
+  "--spec",
+  "--issues",
+  "--selector",
+  "-n",
+  "--once",
+  "--model",
+  "--effort",
+  "--alternate",
+  "--fallback-runner",
+  "--boot-only",
+  "--reconcile-issue",
+  "--origin",
+  "--kind",
+  "--lane",
+  "--pre-pr",
+  "--local-merge",
+  "--yolo",
+  "--verify",
+  "--go-verify-retries",
+  "--run-mode",
+]);
+
 function parsePositiveNumber(raw: string | undefined, flag: string): number {
   if (raw === undefined) throw new Error(`${flag} requires a value`);
   const n = Number(raw);
@@ -149,6 +186,12 @@ function parseFleetArgs(args: readonly string[]): {
     if (/^[0-9]+$/.test(arg) && target === undefined) {
       target = Number(arg);
       continue;
+    }
+    if (arg.startsWith("-")) {
+      const flag = arg.split("=", 1)[0]!;
+      if (!WORKER_PASSTHROUGH_FLAGS.has(flag)) {
+        throw new Error(`unknown fleet flag: ${flag}`);
+      }
     }
     passthrough.push(arg);
   }
@@ -769,6 +812,10 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
 }
 
 export async function fleetCommand(args: string[], cwd = process.cwd()): Promise<number> {
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(FLEET_USAGE);
+    return 0;
+  }
   if (args[0] === "logs") {
     try {
       await logsFleet(args.slice(1), cwd);
@@ -779,8 +826,8 @@ export async function fleetCommand(args: string[], cwd = process.cwd()): Promise
       return 1;
     }
   }
-  const parsed = parseFleetArgs(args);
   try {
+    const parsed = parseFleetArgs(args);
     if (parsed.status) {
       await statusFleet(cwd, process.stdout, parsed.fleet);
     } else if (parsed.stop) {

@@ -146,6 +146,7 @@ export interface ProcessClaimLock {
 export interface ProcessFs {
   ensureAttemptDir(dir: string): Promise<void>;
   writeHandoff(path: string, content: string): Promise<void>;
+  readText?(path: string): Promise<string | null>;
   writeValidationSidecar?(path: string, lines: string[]): Promise<void>;
   completionSweep(issue: number): Promise<string[]>;
 }

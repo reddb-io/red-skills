@@ -374,6 +374,7 @@ export function buildProcessDeps(
     fs: {
       ensureAttemptDir: (dir) => fsx.ensureDir(dir),
       writeHandoff: (path, content) => fsx.writeHandoff(path, content),
+      readText: (path) => fsx.readText(path),
       // $ITER_DIR/validation.jsonl — the machine-readable feedback sidecar the
       // Memory bridge consumes (SKILL.md §Validation Sidecar).
       writeValidationSidecar: (path, lines) => fsx.writeValidationSidecar(path, lines),
