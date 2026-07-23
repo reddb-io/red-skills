@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { resolveDevScriptPath } from "./supervisor-spawn.js";
 import { afkPaths } from "./wire.js";
 import { readPidStartTime } from "../core/state.js";
 import { isSupervisorIdentityLive, readSupervisorIdentity } from "./supervisor-state.js";
@@ -42,7 +43,7 @@ export async function spawnSupervisorWatchdog(
 
   const child = spawn(
     process.execPath,
-    [process.argv[1]!, "__watchdog", "--fleet", paths.fleet],
+    [resolveDevScriptPath(process.argv[1] ?? ""), "__watchdog", "--fleet", paths.fleet],
     {
       cwd: options.root,
       env: process.env,
