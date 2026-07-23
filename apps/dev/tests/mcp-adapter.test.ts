@@ -211,7 +211,7 @@ describe("castle MCP host adapter", () => {
   it("routes scout demand dispatches through the scout operation", async () => {
     const cwd = await root();
     const operations = fakeOperations();
-    const deps = createDevAfkMcpDependencies(cwd, operations);
+    const deps = createCastleMcpDependencies(cwd, operations);
 
     await expect(
       deps.workerDispatch({
