@@ -376,6 +376,12 @@ export interface RunAgentInput {
    */
   steerFile?: string;
   /**
+   * Called when the steer file is consumed, with the 1-based iteration ordinal of
+   * the iteration that consumed it. Used to write a `worker.steer_consumed` lane
+   * record so `steer_status` can report `consumed`.
+   */
+  onSteerConsumed?: (iteration: number) => void;
+  /**
    * Lane-idle stall reaper (issue #363) — the solo-path port of the fleet's
    * passive stall detector + hard stall reaper, and (with the attempt-progress
    * guard removed, ADR 0103) the ONLY in-run stall authority. It cuts an *idle*
@@ -763,14 +769,17 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     ...(logging ? { logging } : {}),
     ...(input.steerFile
       ? {
-          steerProvider: async () => {
+          steerProvider: async (iteration: number) => {
             const { readFile, unlink } = await import("node:fs/promises");
             const { decode } = await import("@reddb-io/toon");
             try {
               const content = await readFile(input.steerFile!, "utf8");
               const doc = decode(content) as Record<string, unknown>;
               const text = typeof doc.text === "string" ? doc.text : undefined;
-              if (text) await unlink(input.steerFile!).catch(() => {});
+              if (text) {
+                await unlink(input.steerFile!).catch(() => {});
+                input.onSteerConsumed?.(iteration);
+              }
               return text;
             } catch {
               return undefined;
