@@ -283,7 +283,7 @@ export interface FeedbackWorktree {
    * (`style: <cmd>`), and pushes `HEAD:<branch>` to origin. `cwd` is the
    * branch token (materialised the same way as the pnpm/backpressure executors).
    */
-  postAttemptFormat: PostWorkerFormatExec;
+  postWorkerFormat: PostWorkerFormatExec;
   /** Remove every worktree this manager created in THIS session (best-effort). */
   cleanup(): Promise<void>;
 }
@@ -615,7 +615,7 @@ export function makeFeedbackWorktree(
   // name doubles as the `cwd` token (the same convention as backpressure). A
   // worktree setup failure, a dirty-check failure, or a push failure all resolve
   // non-zero (committed:false) — the caller aborts when code !== 0.
-  const postAttemptFormat: PostWorkerFormatExec = async ({ command, cwd, timeoutMs }) => {
+  const postWorkerFormat: PostWorkerFormatExec = async ({ command, cwd, timeoutMs }) => {
     const dir = await pathFor(cwd);
     if (dir === null) {
       return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${cwd}; format aborted`, committed: false };
@@ -659,7 +659,7 @@ export function makeFeedbackWorktree(
     pnpm,
     layout,
     backpressure,
-    postAttemptFormat,
+    postWorkerFormat,
     async cleanup() {
       for (const dest of created) {
         await io.worktreeRemove(gitCtx, dest);

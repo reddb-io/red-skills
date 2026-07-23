@@ -259,8 +259,8 @@ export interface ProcessIssueDeps {
   postBackpressureReview?: (pr: number, body: string) => Promise<void>;
   goVerifyRetries?: number;
   stallConvergenceBudget?: number;
-  postAttemptFormat?: PostWorkerFormatExec;
-  postAttemptFormatCommands?: readonly string[];
+  postWorkerFormat?: PostWorkerFormatExec;
+  postWorkerFormatCommands?: readonly string[];
   runAgent(input: RunAgentInput): Promise<RunAgentResult>;
   sandboxMode?: SandboxMode;
   sandboxAvailable?(mode: ContainerSandboxMode): Promise<boolean>;

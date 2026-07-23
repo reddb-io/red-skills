@@ -48,7 +48,7 @@ import type { GhContext } from "../../runtime/gh.js";
 import { buildReviewGh } from "../../runtime/review-gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readPostWorkerFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../../core/config.js";
 import { parseTrustPolicy, resolveActorTrust } from "../../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../../core/output-shaping.js";

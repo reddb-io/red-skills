@@ -837,12 +837,12 @@ export async function processIssue(
       );
       return await mergeFailed(common, "worker branch absent — sandcastle commits did not reach the host");
     }
-    const postAttemptFormatCommands = deps.postAttemptFormatCommands ?? [];
-    if (deps.postAttemptFormat && postAttemptFormatCommands.length > 0) {
+    const postWorkerFormatCommands = deps.postWorkerFormatCommands ?? [];
+    if (deps.postWorkerFormat && postWorkerFormatCommands.length > 0) {
       markProcessSafetyStep("post-agent:post-attempt-format");
-      const pfmt = await runPostWorkerFormat(deps.postAttemptFormat, {
+      const pfmt = await runPostWorkerFormat(deps.postWorkerFormat, {
         worktree: workerBranch,
-        commands: postAttemptFormatCommands,
+        commands: postWorkerFormatCommands,
         now: deps.nowEpoch,
       });
       for (const line of pfmt.log) deps.appendIterLog(`🤖 /afk: ${line}`);
