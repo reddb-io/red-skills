@@ -80,10 +80,45 @@ const specBlocker = {
   next: "Human must clarify before work proceeds.",
 };
 
+const baseStaleBlocker = {
+  status: "blocked" as const,
+  kind: "base-stale",
+  summary: "The worker could not refresh its base.",
+  next: "Refresh the local base from origin, then requeue.",
+};
+
 const parkedBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(validationBlocker)}\n`;
 const specBodyMismatch = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(specBlocker)}\n`;
+const baseStaleBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(baseStaleBlocker)}\n`;
 
 describe("requeue command — happy path", () => {
+  it("requeues blocked:base-stale through the CLI after freshness is verified", async () => {
+    const fixture = fakeGh({
+      state: "OPEN",
+      body: baseStaleBody,
+      labels: ["ready-for-human", "blocked:base-stale"],
+    });
+    const { stream } = capture();
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Base freshness verified."],
+      "/tmp",
+      stream,
+      fixture.gh,
+      undefined,
+      async () => ({ ok: true, evidence: "origin/main is fresh" }),
+    );
+
+    expect(code).toBe(0);
+    expect(fixture.calls.editBody).toBe(1);
+    expect(fixture.calls.editLabels).toBe(1);
+    expect(fixture.lastRemove).toEqual(
+      expect.arrayContaining(["ready-for-human", "blocked:base-stale"]),
+    );
+    expect(fixture.lastAdd).toEqual(["ready-for-agent"]);
+    expect(isRequeueComplete(fixture.state.body, fixture.state.labels)).toBe(true);
+  });
+
   it("returns a stable structured result for a non-parked no-op", async () => {
     const { gh, calls } = fakeGh({
       state: "OPEN",
@@ -220,6 +255,36 @@ describe("requeue command — usage errors (exit 2)", () => {
 });
 
 describe("requeue command — /hitl refusals (exit 1, no mutation)", () => {
+  it("refuses blocked:base-stale without mutation when freshness verification still fails", async () => {
+    const { gh, calls } = fakeGh({
+      state: "OPEN",
+      body: baseStaleBody,
+      labels: ["ready-for-human", "blocked:base-stale"],
+    });
+
+    const result = await executeRequeue(
+      { issue: 42, guidance: "Retry after refreshing the base." },
+      {
+        cwd: "/tmp",
+        gh,
+        verifyBaseFreshness: async () => ({
+          ok: false,
+          evidence: "could not refresh origin/main: remote unavailable",
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({
+      applied: false,
+      outcome: "refused",
+      exitCode: 1,
+      reason: expect.stringContaining(
+        "could not refresh origin/main: remote unavailable",
+      ),
+    });
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+  });
+
   it("refuses mixed blocked:* labels and exits 1 without mutation", async () => {
     const { gh, calls } = fakeGh({
       state: "OPEN",
