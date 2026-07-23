@@ -56,4 +56,45 @@ describe("ADR 0122 boot heal budget", () => {
     expect(editBody.mock.calls[0]?.[1]).toContain("3 heals within 24h");
     expect(third.quarantinedIssues).toEqual([333]);
   });
+
+  it("quarantines a judgment-requiring claim defect without halting boot", async () => {
+    const { deps } = makeDeps();
+    const editLabels = vi.fn(async () => undefined);
+    const editBody = vi.fn(async () => undefined);
+    deps.gh.editLabels = editLabels;
+    Object.assign(deps.gh, {
+      viewBody: async () => "Original body",
+      editBody,
+    });
+
+    const result = await runBoot(
+      deps,
+      options({
+        operationalProbes: {
+          remoteUrls: [],
+          claimHygiene: {
+            ownWorkerPrefix: "local:",
+            listOpenQueueIssues: async () => [
+              {
+                number: 444,
+                comments: [
+                  {
+                    id: 9,
+                    body: "<!-- stn:claim v1 worker=foreign:wOther kind=claim runner=codex -->",
+                    createdAt: "2026-07-23T00:00:00Z",
+                  },
+                ],
+              },
+            ],
+            workerPidState: () => "foreign",
+          },
+        },
+      }),
+    );
+
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(result.quarantinedIssues).toEqual([444]);
+    expect(editLabels).toHaveBeenCalledWith(444, ["ready-for-agent"], ["quarantine"]);
+    expect(editBody.mock.calls[0]?.[1]).toContain("kind: claim-hygiene");
+  });
 });
