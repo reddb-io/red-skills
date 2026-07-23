@@ -12,7 +12,7 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildQueueStatus,
-  createDevAfkMcpDependencies,
+  createCastleMcpDependencies,
 } from "../src/mcp-adapter.js";
 
 /**
@@ -101,7 +101,7 @@ async function writeFleetState(root: string): Promise<void> {
 describe("dev:afk observability output contracts", () => {
   it("builds a fleet_status payload that satisfies the declared contract", async () => {
     const root = await fixtureRoot();
-    const status = await createDevAfkMcpDependencies(root).fleetStatus({});
+    const status = await createCastleMcpDependencies(root).fleetStatus({});
 
     expect(fleetStatusOutputSchema.parse(status)).toMatchObject({
       fleet: "default",
@@ -112,7 +112,7 @@ describe("dev:afk observability output contracts", () => {
 
   it("builds a worker_vitals payload that satisfies the declared contract", async () => {
     const root = await fixtureRoot();
-    const vitals = await createDevAfkMcpDependencies(root).workerVitals({});
+    const vitals = await createCastleMcpDependencies(root).workerVitals({});
 
     expect(vitals).toHaveLength(1);
     expect(workerVitalsOutputSchema.parse(vitals)[0]).toMatchObject({
@@ -127,7 +127,7 @@ describe("dev:afk observability output contracts", () => {
 
   it("builds a monitor payload that satisfies the declared contract", async () => {
     const root = await fixtureRoot();
-    const monitor = await createDevAfkMcpDependencies(root).monitor();
+    const monitor = await createCastleMcpDependencies(root).monitor();
 
     const parsed = monitorOutputSchema.parse(monitor);
     expect(parsed.fleet).toMatchObject({ runner: "claude", slotsTotal: 2 });
@@ -138,7 +138,7 @@ describe("dev:afk observability output contracts", () => {
 
   it("keeps a worker_vitals `fields` projection callable through the contract", async () => {
     const root = await fixtureRoot();
-    const tools = createCastleMcpTools(createDevAfkMcpDependencies(root));
+    const tools = createCastleMcpTools(createCastleMcpDependencies(root));
     const workerVitals = tools.find((tool) => tool.name === "worker_vitals")!;
 
     // A caller-requested projection is a deliberate narrowing of the declared

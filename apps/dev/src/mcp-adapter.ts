@@ -1499,7 +1499,9 @@ export function withCachedDeps(
       // Scoped previews bypass the cache: the cache key is selector-blind, so a
       // scoped result must never be stored as (or served from) the full view.
       if (input?.selector) return deps.queueStatus(input);
-      const cached = cache.get(QUEUE_STATUS_KEY);
+      const cached = cache.get(QUEUE_STATUS_KEY) as
+        | Awaited<ReturnType<typeof deps.queueStatus>>
+        | undefined;
       if (cached !== undefined) return cached;
       const result = await deps.queueStatus(input);
       cache.set(QUEUE_STATUS_KEY, result);
