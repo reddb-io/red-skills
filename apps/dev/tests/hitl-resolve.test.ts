@@ -5,19 +5,37 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { resolveHitlDecision, type HitlResolveDeps } from "../src/core/hitl-resolve.js";
+import { parseCurrentBlocker } from "../src/core/blocker-state.js";
 
-function makeDeps(labels: string[], conceded: string[] = []): HitlResolveDeps & {
+const ACTIVE_BLOCKER_BODY = `## Current blocker
+
+<!-- red:blocker-state v1 -->
+status: blocked
+kind: runner
+summary: Idle-timeout crash during attempt 2.
+next: Requeue when the runner environment stabilises.
+<!-- /red:blocker-state -->
+`;
+
+function makeDeps(labels: string[], conceded: string[] = [], body = ""): HitlResolveDeps & {
   comment: ReturnType<typeof vi.fn>;
   closeIssue: ReturnType<typeof vi.fn>;
   editLabels: ReturnType<typeof vi.fn>;
   releaseClaims: ReturnType<typeof vi.fn>;
+  viewBody: ReturnType<typeof vi.fn>;
+  editBody: ReturnType<typeof vi.fn>;
 } {
+  let currentBody = body;
   return {
     comment: vi.fn(async () => undefined),
     closeIssue: vi.fn(async () => undefined),
     viewLabels: vi.fn(async () => labels),
     editLabels: vi.fn(async () => undefined),
     releaseClaims: vi.fn(async () => conceded),
+    viewBody: vi.fn(async () => currentBody),
+    editBody: vi.fn(async (_, newBody: string) => {
+      currentBody = newBody;
+    }),
   };
 }
 
@@ -91,5 +109,50 @@ describe("hitl_resolve decisions (#2369)", () => {
     expect(deps.comment).toHaveBeenCalledTimes(1);
     expect(deps.editLabels).not.toHaveBeenCalled();
     expect(deps.releaseClaims).not.toHaveBeenCalled();
+  });
+
+  it("requeue: clears an active body blocker of any kind (runner) and archives the rationale (#2597)", async () => {
+    const deps = makeDeps(["ready-for-human", "blocked:runner"], [], ACTIVE_BLOCKER_BODY);
+
+    const result = await resolveHitlDecision(deps, {
+      issue: 2428,
+      decision: "requeue",
+      rationale: "runner environment has stabilised; safe to retry",
+    });
+
+    expect(deps.viewBody).toHaveBeenCalledWith(2428);
+    expect(deps.editBody).toHaveBeenCalledTimes(1);
+    const writtenBody = deps.editBody.mock.calls[0]![1] as string;
+    expect(parseCurrentBlocker(writtenBody)).toBeNull();
+    expect(writtenBody).toContain("Resolved blockers");
+    expect(result.actions.some((a) => a.includes("body blocker cleared"))).toBe(true);
+    expect(result.actions.some((a) => a.includes("kind=runner"))).toBe(true);
+  });
+
+  it("requeue: skips editBody when the issue has no active body blocker", async () => {
+    const deps = makeDeps(["ready-for-human"], [], "## Background\n\nNo blocker here.\n");
+
+    await resolveHitlDecision(deps, {
+      issue: 99,
+      decision: "requeue",
+      rationale: "just flipping labels",
+    });
+
+    expect(deps.editBody).not.toHaveBeenCalled();
+  });
+
+  it("requeue: after clearing blocker, issue body passes the coherence probe — no ready-for-agent + active-blocker pair (#2597)", async () => {
+    const deps = makeDeps(["ready-for-human", "blocked:runner"], [], ACTIVE_BLOCKER_BODY);
+
+    await resolveHitlDecision(deps, {
+      issue: 2428,
+      decision: "requeue",
+      rationale: "runner stabilised",
+    });
+
+    const writtenBody = deps.editBody.mock.calls[0]![1] as string;
+    // Coherence probe: ready-for-agent issues must NOT carry an active Current blocker.
+    // After hitl requeue the body blocker must be absent.
+    expect(parseCurrentBlocker(writtenBody)).toBeNull();
   });
 });
