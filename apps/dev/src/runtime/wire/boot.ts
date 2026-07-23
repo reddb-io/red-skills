@@ -304,6 +304,10 @@ export async function collectPrecheckFacts(
             );
           },
           workerPidState,
+          // Enables the ADR 0066 TTL classification of unknown-pid markers
+          // (#2525): an own-namespace claim whose owner stopped refreshing past
+          // the stale window is concedable without proving the pid.
+          nowS: Math.floor(Date.now() / 1000),
         }
       : undefined,
     labelBodyCoherence: ctx.repo

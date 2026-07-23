@@ -103,10 +103,20 @@ export interface RequeueExecutionResult {
   addLabels?: string[];
 }
 
+export interface RequeueBaseFreshnessResult {
+  ok: boolean;
+  evidence: string;
+}
+
+export type RequeueBaseFreshnessVerifier = (
+  issueBody: string,
+) => Promise<RequeueBaseFreshnessResult>;
+
 export interface RequeueExecutionOptions {
   cwd?: string;
   gh?: RequeueGh;
   adoptRunner?: RequeueAdoptRunner;
+  verifyBaseFreshness?: RequeueBaseFreshnessVerifier;
   /** Optional sink for the adopt gate's live progress. MCP callers omit it. */
   progress?: NodeJS.WritableStream;
 }
@@ -168,6 +178,34 @@ function ghFor(cwd: string, repo: string): RequeueGh {
     postClaim: async (issue, body) => {
       await ghx.postClaimComment({ cwd, repo }, issue, body);
     },
+  };
+}
+
+async function verifyFreshBase(
+  cwd: string,
+  issueBody: string,
+): Promise<RequeueBaseFreshnessResult> {
+  const paths = afkPaths(cwd);
+  const config = loadConfig(paths.configPath, { warn: () => undefined });
+  const base = await resolveBase(
+    { issueBody },
+    {
+      readLockedBranch: () => readLockedBranch(branchLockPath(cwd)),
+      configLockedBranch: getConfig(config, "dev.lock.branch") || undefined,
+      configTrunk: getConfig(config, "dev.trunk") || undefined,
+      fetchIssueBody: async () => undefined,
+    },
+  );
+  const resolved = await gitx.resolveFreshBase({ cwd }, { base });
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      evidence: resolved.message ?? `could not refresh base ${base}`,
+    };
+  }
+  return {
+    ok: true,
+    evidence: `refreshed ${base} from origin/${base}`,
   };
 }
 
@@ -538,6 +576,26 @@ export async function executeRequeue(
     }
   }
 
+  const isBaseStale =
+    plan.activeBlocker?.kind === "base-stale" ||
+    plan.removeLabels.includes("blocked:base-stale");
+  if (plan.requeueable && isBaseStale) {
+    const freshness = await (
+      options.verifyBaseFreshness ?? ((body) => verifyFreshBase(cwd, body))
+    )(issueState.body);
+    if (!freshness.ok) {
+      return {
+        issue: input.issue,
+        plan,
+        applied: false,
+        outcome: "refused",
+        exitCode: 1,
+        reason: `base freshness verification failed: ${freshness.evidence}`,
+        ...(adoptBranch ? { adoptBranch } : {}),
+      };
+    }
+  }
+
   if (input.dryRun) {
     return {
       issue: input.issue,
@@ -678,6 +736,7 @@ export async function requeueCommand(
   stdout: NodeJS.WritableStream = process.stdout,
   ghOverride?: RequeueGh,
   adoptRunnerOverride?: RequeueAdoptRunner,
+  baseFreshnessVerifierOverride?: RequeueBaseFreshnessVerifier,
 ): Promise<number> {
   const { values, positionals } = parseFlags(args, REQUEUE_FLAG_SCHEMA);
   const issue = parseIssue(positionals[0]);
@@ -711,6 +770,7 @@ export async function requeueCommand(
       cwd,
       gh: ghOverride,
       adoptRunner: adoptRunnerOverride,
+      verifyBaseFreshness: baseFreshnessVerifierOverride,
       progress: stdout,
     },
   );
