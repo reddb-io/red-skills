@@ -27,6 +27,7 @@
 /** The literal `## Blocked by` heading line, allowing only trailing whitespace.
  * Mirrors awk `/^## Blocked by[[:space:]]*$/`. */
 import { LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT, LABEL_DEPENDENCY, LABEL_READY, LABEL_RUNNING, LABEL_HUMAN } from "./triage-labels.js";
+import { isRefused, planTransition } from "./state-transition.js";
 import {
   renderIssueReferenceList,
   resolveIssueReferences,
@@ -302,8 +303,19 @@ export async function executeUnblockSweep(
   const promoted: number[] = [];
   for (const p of plans) {
     const held = labelsByIssue.get(p.number) ?? [];
-    const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
-    await gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);
+    // Promote through the ADR 0122 transition API (#2528) when the candidate's
+    // labels were listed: one atomic edit that consumes every req:* edge and
+    // provably leaves exactly one state role. The legacy edit survives only for
+    // a label-less candidate (degraded listing), where no plan can be proven.
+    const plan = held.length > 0 ? planTransition(held, { kind: "promote" }) : undefined;
+    if (plan && !isRefused(plan)) {
+      await gh.editLabels(p.number, [...plan.remove], [...plan.add]);
+    } else if (plan && isRefused(plan)) {
+      continue;
+    } else {
+      const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
+      await gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);
+    }
     const reqs = p.refs.map(refToNumber).filter((n): n is number => n !== null);
     const comment = p.reqLabels.length > 0 && reqs.length > 0
       ? await cascadeAuditCommentFor(reqs, gh.issueReference)
@@ -418,9 +430,9 @@ export async function executeMixedBlockedNormalize(
 
 // ---------- reconcile sweep ----------
 
-/** Pattern for an AFK live-iteration worker branch (`afk/{worker}/{N}-{slug}`).
- * Mirrors the LIVE_REF_RE capture in branch-cleanup.ts. */
-const AFK_LIVE_BRANCH_RE = /^afk\/[A-Za-z0-9._-]+\/([0-9]+)-[a-z0-9-]+$/;
+/** Pattern for deterministic `afk/{N}-{slug}` and legacy
+ * `afk/{worker}/{N}-{slug}` branches. Mirrors branch-cleanup.ts. */
+const AFK_LIVE_BRANCH_RE = /^afk\/(?:([0-9]+)-[a-z0-9-]+|[A-Za-z0-9._-]+\/([0-9]+)-[a-z0-9-]+)$/;
 
 /**
  * Extract the issue number from an `afk/{worker}/{N}-{slug}` live-iteration
@@ -429,7 +441,7 @@ const AFK_LIVE_BRANCH_RE = /^afk\/[A-Za-z0-9._-]+\/([0-9]+)-[a-z0-9-]+$/;
  */
 export function issueFromAFKBranch(branch: string): number | null {
   const m = AFK_LIVE_BRANCH_RE.exec(branch);
-  return m ? Number(m[1]) : null;
+  return m ? Number(m[1] ?? m[2]) : null;
 }
 
 /**

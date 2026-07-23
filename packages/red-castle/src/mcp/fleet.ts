@@ -30,12 +30,25 @@ export interface FleetNameInput {
   name?: string;
 }
 
+export interface FleetStopInput extends FleetNameInput {
+  force?: boolean;
+}
+
+export interface FleetRegisterInput {
+  name?: string;
+  runner: string;
+  selector?: FleetSelectorInput;
+  config?: Record<string, string | number | boolean>;
+  base?: string;
+}
+
 export interface FleetDependencies {
   fleetList(): Promise<unknown>;
   fleetStatus(input: FleetNameInput): Promise<unknown>;
   fleetCreate(input: FleetCreateInput): Promise<unknown>;
   fleetEdit(input: FleetEditInput): Promise<unknown>;
-  fleetStop(input: FleetNameInput): Promise<unknown>;
+  fleetStop(input: FleetStopInput): Promise<unknown>;
+  fleetRegister(input: FleetRegisterInput): Promise<unknown>;
 }
 
 const fleetSelectorShape = {
@@ -101,10 +114,31 @@ export function createFleetTools(deps: FleetDependencies): CastleMcpTool[] {
     {
       name: "fleet_stop",
       title: "Stop AFK fleet",
-      description: "MUTATING: stop one named fleet and its detached workers.",
-      inputSchema: { fleet: z.string().min(1).optional() },
-      invoke: ({ fleet }) =>
-        deps.fleetStop({ name: fleet as string | undefined }),
+      description:
+        "MUTATING: gracefully stop one named fleet; force hard teardown explicitly.",
+      inputSchema: {
+        fleet: z.string().min(1).optional(),
+        force: z.boolean().optional(),
+      },
+      invoke: ({ fleet, force }) =>
+        deps.fleetStop({
+          name: fleet as string | undefined,
+          force: force as boolean | undefined,
+        }),
+    },
+    {
+      name: "fleet_register",
+      title: "Adopt AFK fleet",
+      description:
+        "MUTATING: persist a profile for an already-running supervisor without restarting it.",
+      inputSchema: {
+        name: z.string().min(1).optional(),
+        runner: z.string().min(1),
+        selector: z.object(fleetSelectorShape).optional(),
+        config: fleetConfig.optional(),
+        base: z.string().min(1).optional(),
+      },
+      invoke: (input) => deps.fleetRegister(input as unknown as FleetRegisterInput),
     },
   ];
 }

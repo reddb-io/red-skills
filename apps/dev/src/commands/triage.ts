@@ -25,18 +25,25 @@ import {
   type TriageDecision,
   type TriageTransition,
 } from "../core/auto-triage.js";
-import { LABEL_TRIAGE_SUMMON } from "../core/triage-labels.js";
+import { LABEL_NEEDS_TRIAGE, LABEL_READY, LABEL_TRIAGE_SUMMON } from "../core/triage-labels.js";
 import { parseTrustPolicy, type TrustPolicy } from "../core/trust-gate.js";
 import { loadConfig } from "../core/config.js";
 import {
   closeIssue,
   comment,
+  editComment,
   editLabels,
   ensureLabel,
   issueAuthor,
+  readIssueBody,
+  readIssueComments,
   viewLabels,
   type GhContext,
 } from "../runtime/gh.js";
+import {
+  lintExecutableAcceptanceCriteria,
+  planAcceptanceCriteriaRecipeCommentUpdate,
+} from "../core/executable-acceptance.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { resolveRepoContext } from "../runtime/wire.js";
 
@@ -53,7 +60,7 @@ export interface TriageOptions {
 
 export interface TriageOutcome {
   issue: number;
-  action: AutoTriageAction;
+  action: AutoTriageAction | "acceptance-lint-failed" | "acceptance-lint-held";
   author?: string;
   /** Set only when the transition was applied. */
   applied?: { decision: TriageDecision; transition: TriageTransition };
@@ -86,6 +93,46 @@ export async function runTriage(
     };
   }
 
+  if (opts.decision === "ready-for-agent") {
+    const bodyRead = await readIssueBody(ctx, opts.issue);
+    if (!bodyRead.ok) {
+      return {
+        issue: opts.issue,
+        action: "acceptance-lint-held",
+        author,
+        reason: `acceptance-criteria lint could not read the issue body: ${bodyRead.reason}`,
+      };
+    }
+    const lint = lintExecutableAcceptanceCriteria(bodyRead.body);
+    if (!lint.ok) {
+      await ensureLabel(ctx, LABEL_NEEDS_TRIAGE);
+      const remove = [LABEL_READY, LABEL_TRIAGE_SUMMON].filter((label) => labels.includes(label));
+      const add = labels.includes(LABEL_NEEDS_TRIAGE) ? [] : [LABEL_NEEDS_TRIAGE];
+      if (remove.length > 0 || add.length > 0) await editLabels(ctx, opts.issue, remove, add);
+      const comments = await readIssueComments(ctx, opts.issue);
+      if (!comments.ok) {
+        return {
+          issue: opts.issue,
+          action: "acceptance-lint-failed",
+          author,
+          reason: `${lint.reason}; recipe comment not posted because ${comments.reason}`,
+        };
+      }
+      const plan = planAcceptanceCriteriaRecipeCommentUpdate(comments.comments, lint);
+      if (plan.action === "create") {
+        await comment(ctx, opts.issue, plan.body);
+      } else if (plan.action === "update" && plan.id !== undefined) {
+        await editComment(ctx, plan.id, plan.body);
+      }
+      return {
+        issue: opts.issue,
+        action: "acceptance-lint-failed",
+        author,
+        reason: lint.reason,
+      };
+    }
+  }
+
   const transition = planTriageTransition(opts.decision);
   // Shed the summon label too, if it was the release channel.
   const remove = labels.includes(LABEL_TRIAGE_SUMMON)
@@ -103,6 +150,36 @@ export async function runTriage(
   if (transition.close) await closeIssue(ctx, opts.issue);
 
   return { issue: opts.issue, action, author, applied: { decision: opts.decision, transition } };
+}
+
+/** The flag shape the MCP triage op and the CLI command both feed to the value core. */
+export interface TriageExecInput {
+  issue: number;
+  decision: TriageDecision;
+  summon?: boolean;
+  repo?: string;
+}
+
+/**
+ * Value-returning triage core: load the per-repo trust policy, resolve the repo,
+ * and run the trust-gated transition, returning the {@link TriageOutcome}. The CLI
+ * command renders it; the MCP `triage` op returns it verbatim (TOON-encoded at the
+ * transport boundary). No stdout, no exit code.
+ */
+export async function executeTriage(
+  input: TriageExecInput,
+  opts: { cwd?: string } = {},
+): Promise<TriageOutcome> {
+  const cwd = opts.cwd ?? process.cwd();
+  const config = loadConfig(resolveConfigPath(cwd), { warn: () => undefined });
+  const policy = parseTrustPolicy(config);
+  const repo = input.repo ?? (await resolveRepoContext(cwd)).repo;
+  const ctx: GhContext = { cwd, repo };
+  return runTriage(ctx, policy, {
+    issue: input.issue,
+    decision: input.decision,
+    summon: input.summon === true,
+  });
 }
 
 interface TriageFlags {
@@ -188,16 +265,10 @@ export async function triageCommand(
     return 2;
   }
 
-  const config = loadConfig(resolveConfigPath(cwd), { warn: () => undefined });
-  const policy = parseTrustPolicy(config);
-  const repo = flags.repo ?? (await resolveRepoContext(cwd)).repo;
-  const ctx: GhContext = { cwd, repo };
-
-  const outcome = await runTriage(ctx, policy, {
-    issue: flags.issue,
-    decision: flags.decision,
-    summon: flags.summon,
-  });
+  const outcome = await executeTriage(
+    { issue: flags.issue, decision: flags.decision, summon: flags.summon, repo: flags.repo },
+    { cwd },
+  );
 
   if (flags.json) {
     stdout.write(`${JSON.stringify(outcome)}\n`);
@@ -205,6 +276,14 @@ export async function triageCommand(
   }
 
   if (outcome.action === "hold-for-summon") {
+    stdout.write(`triage: #${outcome.issue} held — ${outcome.reason}\n`);
+    return 0;
+  }
+  if (outcome.action === "acceptance-lint-failed") {
+    stdout.write(`triage: #${outcome.issue} kept in needs-triage — ${outcome.reason}\n`);
+    return 0;
+  }
+  if (outcome.action === "acceptance-lint-held") {
     stdout.write(`triage: #${outcome.issue} held — ${outcome.reason}\n`);
     return 0;
   }

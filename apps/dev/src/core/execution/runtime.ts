@@ -14,6 +14,7 @@
 
 import type { AgentStreamEvent, RunOptions, RunResult, LivenessVerdict } from "@reddb-io/red-castle";
 import { extractAgentOutput } from "@reddb-io/red-castle";
+import { join } from "node:path";
 import { buildLineRedactor } from "../../runtime/outbound-redaction.js";
 import { resolveHostEnvAllowlist } from "../host-env-allowlist.js";
 import { isRunnerExhausted } from "../runner-spawn.js";
@@ -100,6 +101,7 @@ export type AgentOutcome =
   | "signal-killed"
   | "exhausted"
   | "runner-transient"
+  | "host-config"
   | "goal-moot";
 
 /** Unix signal exit-code convention: exit code = 128 + signal number. */
@@ -319,6 +321,8 @@ export interface RunAgentInput {
    * that the agent's build actually sees CARGO_TARGET_DIR is pending #284.
    */
   env?: Record<string, string>;
+  /** Runner-native projection of the repo-enabled implementer skill surface. */
+  implementer?: ImplementerRuntimeProjection;
   /**
    * Absolute path sandcastle drains its own file-log to (the `logging.path` of
    * the "file" mode). AFK points this at the attempt dir's `afk.log` — our ONE
@@ -432,7 +436,11 @@ export interface RunAgentResult {
 /** Provider factories + the sandcastle `run` entrypoint, injected for testing. */
 export interface SandcastleDeps {
   run: (options: RunOptions) => Promise<RunResult>;
-  agentFor: (runner: AgentRunner, model: string, opts?: { effort?: AgentEffort }) => RunOptions["agent"];
+  agentFor: (
+    runner: AgentRunner,
+    model: string,
+    opts?: { effort?: AgentEffort; implementer?: ImplementerRuntimeProjection },
+  ) => RunOptions["agent"];
   /**
    * Build the sandbox provider for a mode. `opts.mountPath` (issue #405) is the
    * absolute host attempt dir: under docker/podman it is added as a bind-mount at
@@ -442,7 +450,10 @@ export interface SandcastleDeps {
    * for arming the progress guard + heartbeat under isolation. Ignored for the
    * host-native `none` mode (no container to mount into).
    */
-  sandboxFor: (mode: SandboxMode, opts?: { mountPath?: string; imageName?: string }) => RunOptions["sandbox"];
+  sandboxFor: (
+    mode: SandboxMode,
+    opts?: { mountPath?: string; imageName?: string; runner?: AgentRunner },
+  ) => RunOptions["sandbox"];
   /**
    * Optional warn sink for degrade-safe diagnostics (FIX D effort drop, FIX F
    * continuous-push-under-isolation notice). Defaults to `console.warn` in the
@@ -494,9 +505,23 @@ export const OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY";
  * `defaultSandcastleDeps` supplies the real `core.{claudeCode,codex,opencode}`.
  */
 export interface AgentFactories {
-  claudeCode: (model: string, options?: { effort?: AgentEffort; env?: Record<string, string> }) => RunOptions["agent"];
-  codex: (model: string, options?: { effort?: AgentEffort }) => RunOptions["agent"];
+  claudeCode: (model: string, options?: {
+    effort?: AgentEffort;
+    env?: Record<string, string>;
+    settingSources?: readonly ("user" | "project" | "local")[];
+    pluginDirs?: readonly string[];
+  }) => RunOptions["agent"];
+  codex: (model: string, options?: {
+    effort?: AgentEffort;
+    configOverrides?: readonly string[];
+  }) => RunOptions["agent"];
   opencode: (model: string, options?: { variant?: string; env?: Record<string, string> }) => RunOptions["agent"];
+}
+
+export interface ImplementerRuntimeProjection {
+  claudePluginDirs: readonly string[];
+  codexConfigOverrides: readonly string[];
+  opencodeConfigDir: string;
 }
 
 /**
@@ -523,7 +548,7 @@ export function buildAgent(
   factories: AgentFactories,
   runner: AgentRunner,
   model: string,
-  opts: { effort?: AgentEffort } | undefined,
+  opts: { effort?: AgentEffort; implementer?: ImplementerRuntimeProjection } | undefined,
   env: NodeJS.ProcessEnv,
   warn?: (message: string) => void,
 ): RunOptions["agent"] {
@@ -539,7 +564,10 @@ export function buildAgent(
   if (spec.channel === "variant") {
     const options: { variant?: string; env?: Record<string, string> } = {};
     if (requested !== undefined) options.variant = requested;
-    if (authEnv) options.env = authEnv;
+    const projectionEnv = opts?.implementer
+      ? { OPENCODE_CONFIG_DIR: opts.implementer.opencodeConfigDir }
+      : undefined;
+    if (authEnv || projectionEnv) options.env = { ...authEnv, ...projectionEnv };
     return factories.opencode(model, Object.keys(options).length > 0 ? options : undefined);
   }
 
@@ -565,12 +593,23 @@ export function buildAgent(
   // `forcedModel` (claude-minimax → MiniMax-M3) discards the resolved tier model.
   const targetModel = spec.forcedModel ?? model;
   if (spec.factory === "codex") {
-    // The codex provider takes no `env` seam; codex never resolves an auth env.
-    return factories.codex(targetModel, effort !== undefined ? { effort } : undefined);
+    const options: { effort?: AgentEffort; configOverrides?: readonly string[] } = {};
+    if (effort !== undefined) options.effort = effort;
+    if (opts?.implementer) options.configOverrides = opts.implementer.codexConfigOverrides;
+    return factories.codex(targetModel, Object.keys(options).length > 0 ? options : undefined);
   }
-  const options: { effort?: AgentEffort; env?: Record<string, string> } = {};
+  const options: {
+    effort?: AgentEffort;
+    env?: Record<string, string>;
+    settingSources?: readonly ("user" | "project" | "local")[];
+    pluginDirs?: readonly string[];
+  } = {};
   if (effort !== undefined) options.effort = effort;
   if (authEnv) options.env = authEnv;
+  if (opts?.implementer) {
+    options.settingSources = ["project", "local"];
+    options.pluginDirs = opts.implementer.claudePluginDirs;
+  }
   return factories.claudeCode(targetModel, Object.keys(options).length > 0 ? options : undefined);
 }
 
@@ -677,7 +716,10 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
       }
     : undefined;
   return {
-    agent: deps.agentFor(input.runner, input.model, { effort: input.effort }),
+    agent: deps.agentFor(input.runner, input.model, {
+      effort: input.effort,
+      ...(input.implementer ? { implementer: input.implementer } : {}),
+    }),
     // Bind-mount the host attempt dir into the container at the identical path
     // (issue #405) so the proof-of-life lane + the worktree sandcastle creates
     // under it are host-visible mid-run — the precondition for arming the guard +
@@ -688,11 +730,13 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     sandbox: deps.sandboxFor(input.sandboxMode ?? "none", {
       ...(input.cwd ? { mountPath: input.cwd } : {}),
       ...(input.sandboxImage ? { imageName: input.sandboxImage } : {}),
+      runner: input.runner,
     }),
-    // Re-anchor sandcastle's `.red-castle/` dir + git ops at the caller's cwd
-    // (AFK's per-attempt dir under .red/) so nothing is generated at the repo
-    // root. Omitted → sandcastle defaults to process.cwd().
+    // Re-anchor castle state + git ops at the worker workspace and place the
+    // actual worktree at its conventional direct child. Omitting cwd preserves
+    // red-castle's standalone defaults.
     ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(input.cwd ? { worktreePath: join(input.cwd, "worktree") } : {}),
     // Deliver the handoff INLINE (verbatim), not as a `promptFile` template:
     // red-castle expands `{{KEY}}` + `` !`cmd` `` only for templates, which
     // crashed prompt resolution on opaque issue-body content (#756, #758). AFK
@@ -767,7 +811,7 @@ export function isExhaustionError(error: unknown): boolean {
  * worker crashes that kill the orchestrator and orphan the issue in `running`.
  *
  * Covers two families: (a) Codex transport/setup hiccups (websocket, thread
- * start, spawn/cwd); and (b) **provider server-side overload** — a `529
+ * start); and (b) **provider server-side overload** — a `529
  * Overloaded` / `overloaded_error` (Anthropic) or `503 Service Unavailable`,
  * which is temporary and server-side, not your code or your quota. Before this,
  * a 529 matched neither the exhaustion nor the transient pattern, so it hit the
@@ -783,7 +827,30 @@ export function isTransientRunnerError(error: unknown): boolean {
 }
 
 const runnerTransientPattern =
-  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|HTTP error:\s*503 Service Unavailable|\b529\b|overloaded|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|spawn sh ENOENT|cwd does not exist|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET/i;
+  /failed to connect to websocket|HTTP error:\s*502 Bad Gateway|HTTP error:\s*503 Service Unavailable|\b529\b|overloaded|wss:\/\/chatgpt\.com\/backend-api\/codex\/responses|thread\/start failed|failed to load configuration|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|could not lock config file/i;
+
+type HostConfigFailure = "missing-interpreter" | "missing-cwd";
+
+function hostConfigFailure(error: unknown): HostConfigFailure | null {
+  if (error === null || error === undefined) return null;
+  const parts: string[] = [];
+  collectErrorStrings(error, parts, new Set(), 0);
+  if (parts.some((part) => /spawn\s+sh\s+ENOENT/i.test(part))) return "missing-interpreter";
+  if (parts.some((part) => /cwd does not exist/i.test(part))) return "missing-cwd";
+  return null;
+}
+
+/** Permanent runner-host defects that cannot heal through cooldown or fallback. */
+export function isHostConfigRunnerError(error: unknown): boolean {
+  return hostConfigFailure(error) !== null;
+}
+
+function hostConfigOperatorMessage(error: unknown): string {
+  if (hostConfigFailure(error) === "missing-interpreter") {
+    return "afk: fatal host configuration: required POSIX shell `sh` could not be spawned (spawn sh ENOENT). Install or restore the required shell, then rerun; this failure is not retryable.";
+  }
+  return "afk: fatal host configuration: the worker current directory does not exist. Restore the configured workspace/current directory, then rerun; this failure is not retryable.";
+}
 
 /** Recursively gather string values reachable from an error-ish value, bounded
  * by depth and a visited set so cyclic Effect `Cause` graphs terminate. */
@@ -821,6 +888,7 @@ function defaultSchedule(fn: () => void, ms: number): () => void {
  * whose message matches the exhaustion patterns (the common case — the provider
  * raises on a 429 / usage-limit), or by completing with exhaustion text on
  * stdout. Both map to the `exhausted` outcome (no commits, no sentinel). A
+ * missing interpreter/current-directory defect maps to fatal `host-config`; a
  * transient transport / server-overload error maps to `runner-transient`; any
  * OTHER thrown error maps to `no-sentinel` (a recoverable crash) rather than
  * propagating — so an unrecognized runner failure never kills the drain or
@@ -1014,6 +1082,14 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
     if (isExhaustionError(error)) {
       return { outcome: "exhausted", branch: input.branch, commits: [], stdout: "" };
     }
+    if (isHostConfigRunnerError(error)) {
+      return {
+        outcome: "host-config",
+        branch: input.branch,
+        commits: [],
+        stdout: hostConfigOperatorMessage(error),
+      };
+    }
     if (isTransientRunnerError(error)) {
       return {
         outcome: "runner-transient",
@@ -1138,7 +1214,7 @@ export async function defaultSandcastleDeps(): Promise<SandcastleDeps> {
     // disables minimization (pre-#1368 behavior). Per-attempt env delivered by
     // mutating process.env (the FIX J lane) stays visible because those keys
     // (CARGO*, RED_*) are allowlisted.
-    const hostEnvAllowlist = resolveHostEnvAllowlist(process.env);
+    const hostEnvAllowlist = resolveHostEnvAllowlist(process.env, opts?.runner);
     return noSandboxMod.noSandbox(hostEnvAllowlist ? { hostEnvAllowlist } : undefined);
   };
   return { run: core.run as SandcastleDeps["run"], agentFor, sandboxFor, warn };

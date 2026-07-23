@@ -66,6 +66,7 @@ import {
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
+import { isRefused, planTransition } from "../state-transition.js";
 import { buildAttemptRecordPayload, deriveIssueType, type AttemptRecordPayload } from "../attempt-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
@@ -101,7 +102,6 @@ import {
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
   LABEL_LANDING_MANUAL,
-  LABEL_SENSITIVE_PATH,
   LABEL_SPEC,
 } from "../triage-labels.js";
 import {
@@ -109,9 +109,9 @@ import {
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
-import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
+import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import { editLabelsTagged, routeRecovery } from "./recovery.js";
 export async function writeValidationSidecar(
   deps: ProcessIssueDeps,
@@ -209,6 +209,10 @@ export interface StageCommon {
   effort?: AgentEffort;
   resolvedBase?: WorkerBaseResolution;
   backpressureChecks?: readonly BackpressureCheck[];
+  /** When true, emitFailure suppresses the `live branch:` link in the envelope
+   * diff section — used for pre-push boot failures where the worker branch was
+   * never pushed to origin. */
+  noBranchLink?: boolean;
 }
 export async function emitBackpressureReview(
   c: StageCommon,
@@ -239,7 +243,7 @@ export async function emitFailure(
     branch: c.branch,
     attempt: input.attempt,
     diff: diffLabel,
-    repo: input.repo,
+    repo: c.noBranchLink ? "" : input.repo,
     repoDir: input.repoDir,
     worktreeRel: input.attemptDir,
     diffstat: "",
@@ -279,6 +283,13 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
         kind: "runner",
         summary: oneLine(sections.log, "Inner agent exited without an AFK completion sentinel."),
         next: "Review the attempt log and decide whether to retry or revise the issue brief.",
+      };
+    case "host-config":
+      return {
+        status: "blocked",
+        kind: "host-config",
+        summary: oneLine(sections.log ?? sections.notes, "Required runner host configuration is unavailable."),
+        next: "Install or restore the required shell/workspace on the host, then requeue this issue.",
       };
     case "stalled":
       return {
@@ -322,13 +333,6 @@ export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodi
         summary: oneLine(sections.log, "Local trunk diverged from origin; landing aborted (ADR 0083)."),
         next: "Reconcile the primary checkout's local trunk with origin (no reset/stash/force-push), then requeue.",
       };
-    case "sensitive-path":
-      return {
-        status: "blocked",
-        kind: "sensitive-path",
-        summary: oneLine(sections.log, "Diff touches a sensitive path (CI workflow, lifecycle script, git hook, or .red/ config)."),
-        next: "Review the sensitive change, then requeue if it is safe to land.",
-      };
     case "base-stale":
       return {
         status: "blocked",
@@ -362,8 +366,8 @@ export const ACTIONABLE_BLOCKER_KINDS = new Set([
   "stalled",
   "decision",
   "trunk-diverged",
-  "sensitive-path",
   "infra",
+  "host-config",
 ]);
 export function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
   if (!existing) return false;
@@ -470,7 +474,21 @@ export async function emitDone(
 export async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   deps.recordWorkerEvent?.("worker.blocked", { outcome: "merge-conflict", reason: _reason });
-  const decision = await routeRecovery(deps, input.issue, "merge-conflict", recoveryOrdinalFor(input));
+  // Durable retry accounting (#2576): the worker-local attempt ordinal resets
+  // to 1 on every replacement worker (ADR 0103 flat workspaces), so the
+  // RED_AFK_RETRY_MERGE cap alone never trips across reclaims — the 2026-07-23
+  // incidents looped 100+ identical land-failed cycles. The ADR 0122 heal
+  // ledger supplies the per-issue consecutive count that survives replacement.
+  let ordinal = recoveryOrdinalFor(input);
+  if (deps.healLedger) {
+    try {
+      const heal = await recordIssueHeal(deps.healLedger, input.issue, deps.nowEpoch() * 1000);
+      ordinal = Math.max(ordinal, heal.history.length);
+    } catch {
+      // best-effort: a ledger fault falls back to worker-local accounting.
+    }
+  }
+  const decision = await routeRecovery(deps, input.issue, "merge-conflict", ordinal);
   if (decision === "escalate") {
     await writeCurrentBlockerBestEffort(
       deps,
@@ -479,7 +497,7 @@ export async function mergeFailed(c: StageCommon, _reason: string, locked = fals
     );
   }
   const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
-    log: "(no merge log captured)",
+    log: _reason || "(no merge log captured)",
   });
   await recordAttemptBestEffort(c, "merge-conflict", {
     durationS: deps.nowEpoch() - c.startedEpoch,
@@ -596,37 +614,6 @@ export async function trunkDivergedBlocked(
   await releaseOwnedClaim(deps, input);
   return {
     outcome: "trunk-diverged",
-    issue: input.issue,
-    branch: c.branch,
-    base: c.base,
-    locked,
-    hooksFired: c.hooksFired,
-    envelopePosted: posted,
-    preserved: true,
-    swept: false,
-  };
-}
-export async function sensitivePathGuarded(
-  c: StageCommon,
-  hits: Array<{ path: string; reason: string }>,
-  locked: boolean,
-): Promise<ProcessIssueResult> {
-  const { deps, input } = c;
-  const hitList = hits.map((h) => `\`${h.path}\` (${h.reason})`).join(", ");
-  const detail =
-    `Landing blocked: the diff touches sensitive path(s) that require human review before auto-landing — ` +
-    `${hitList}. The attempt branch is intact. Requeue after reviewing the change.`;
-  await routeRecovery(deps, input.issue, "sensitive-path", recoveryOrdinalFor(input));
-  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure("sensitive-path", { log: detail }));
-  const posted = await emitFailure(c, envelopeStatusFor("sensitive-path"), "sensitive-path", { log: detail });
-  await deps.gh.comment(input.issue, `🤖 /afk: ${detail}`);
-  await recordAttemptBestEffort(c, "sensitive-path", {
-    durationS: deps.nowEpoch() - c.startedEpoch,
-    notes: detail,
-  });
-  await releaseOwnedClaim(deps, input);
-  return {
-    outcome: "sensitive-path",
     issue: input.issue,
     branch: c.branch,
     base: c.base,
@@ -754,9 +741,23 @@ export async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: numbe
       for (const n of reqIds) reqs.push({ n, closed: await resolveClosed(n) });
       dependents.push({ number: dep.number, reqs });
     }
+    const labelsByNumber = new Map(dependentsRaw.map((dep) => [dep.number, dep.labels]));
     const plans = planCloseCascade(closedIssue, dependents);
     for (const p of plans) {
-      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
+      // Promote through the ADR 0122 transition API (#2528): one atomic edit
+      // that consumes every req:* edge and provably leaves exactly one state
+      // role, so a cascade can never stack ready-for-agent onto a park.
+      const current = labelsByNumber.get(p.number);
+      const plan = current ? planTransition(current, { kind: "promote" }) : undefined;
+      if (plan && !isRefused(plan)) {
+        await deps.gh.editLabels(p.number, [...plan.remove], [...plan.add]);
+      } else {
+        if (plan && isRefused(plan)) {
+          deps.appendIterLog(`🤖 close-cascade promote refused for #${p.number}: ${plan.reason}`);
+          continue;
+        }
+        await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
+      }
       const reqs = p.refs.map((ref) => Number(ref.slice(1))).filter((n) => Number.isFinite(n));
       await deps.gh.comment(p.number, await cascadeAuditCommentFor(reqs, deps.gh.issueReference));
     }

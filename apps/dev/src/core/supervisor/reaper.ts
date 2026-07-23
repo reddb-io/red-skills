@@ -1,6 +1,8 @@
 import { encode as encodeToon } from "@reddb-io/toon";
+import { renderClaimComment } from "../claim.js";
 import { decideReaperSignal, deriveSnapshot } from "../reaper-signal.js";
 import { dispose } from "../disposition.js";
+import { workerIdentity } from "../host-identity.js";
 import { validateIssueLifecycleTransition } from "../issue-lifecycle.js";
 import {
   LABEL_CONTESTED,
@@ -65,6 +67,14 @@ export async function sweepParkedSlot(
           work.supervisorLogPath,
         );
         await deps.gh.comment(pair.issue, body);
+        await deps.gh.comment(
+          pair.issue,
+          renderClaimComment(
+            { worker: workerIdentity(worker.workerId), runner: config.runner },
+            "concede",
+            "released",
+          ),
+        );
         await deps.gh.editLabels(
           pair.issue,
           [LABEL_READY, LABEL_RUNNER_ERROR],
@@ -125,6 +135,10 @@ export async function reapStalledSlot(
   // exactly like the per-issue routeRecovery escalation.
   if (info && info.issue !== null) {
     await deps.gh.comment(info.issue, buildReaperEnvelope(info));
+    await deps.gh.comment(
+      info.issue,
+      renderClaimComment({ worker: workerIdentity(info.workerId) }, "concede", "released"),
+    );
     // The composer owns the bounded re-claim decision + label sets + the
     // budget-exhausted page comment (core/disposition, total map → `stalled` is
     // recoverable, #402). gh.editLabels here is the (issue, add, remove) shape,
@@ -282,7 +296,10 @@ export async function resolveReapContest(
 export async function pollStallDetector(
   state: SupervisorState,
   deps: SupervisorDeps,
-  config: Pick<SupervisorConfig, "stallThresholdS" | "stallKillThresholdS" | "runner" | "reapContestWindowS">,
+  config: Pick<
+    SupervisorConfig,
+    "stallThresholdS" | "stallKillThresholdS" | "runner" | "reapContestWindowS" | "issueWallClockMaxS"
+  >,
 ): Promise<number[]> {
   const now = deps.now();
   const reaped: number[] = [];
@@ -300,6 +317,7 @@ export async function pollStallDetector(
       i,
       config.stallThresholdS * 1000,
       config.stallKillThresholdS * 1000,
+      config.issueWallClockMaxS * 1000,
     );
     const flagged = verdict !== null && verdict.status === "stalled";
 
@@ -308,8 +326,13 @@ export async function pollStallDetector(
         slot.stalled = true;
         // Anchor the stall window to the last observed lane activity. When the
         // lane record age is known, compute the epoch; otherwise anchor to now.
-        const stallSince =
-          verdict.laneAgeMs !== undefined
+        // The wall-clock ceiling (#2286) is its own deadline — the attempt has
+        // ALREADY exceeded its budget — so it anchors the window to the kill
+        // threshold and escalates on this same tick instead of waiting out a
+        // second, silence-shaped countdown it would never accumulate.
+        const stallSince = verdict.wallClockExceeded
+          ? now - config.stallKillThresholdS
+          : verdict.laneAgeMs !== undefined
             ? now - Math.round(verdict.laneAgeMs / 1000)
             : now;
         slot.stallSinceEpoch = stallSince;

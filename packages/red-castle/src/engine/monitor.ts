@@ -125,6 +125,7 @@ export function buildSparkline(
 export interface MonitorRemote {
   queue: number;
   human: number;
+  quarantine?: number;
   /** Age of the underlying statusline cache file in seconds. */
   cacheAgeS: number;
   /** True when cacheAgeS exceeds the statusline TTL — render shows a stale marker. */
@@ -178,6 +179,11 @@ export interface CompactState {
    * Absent / `""` means unknown (pre-field or origin flag not passed). The
    * dashboard header aggregates non-empty values into per-source counts. */
   origin?: string;
+  /** Named fleet the worker was spawned by (from the castle snapshot's
+   * `supervisor_id`). Absent for standalone runs and legacy workers that
+   * pre-date the fleet stamp. Used by `fleet_status` to partition workers
+   * across fleets (issue #2345). */
+  fleet?: string;
   total: number;
   done: number;
   blocked: number;
@@ -587,7 +593,7 @@ export function renderCompactDashboard(
   }
   // Remote facts (queue/human) with stale marker when the TTL cache is old.
   const remoteLine = remote
-    ? `\nqueue:${remote.queue} human:${remote.human}${remote.stale ? ` [stale ${formatElapsed(remote.cacheAgeS)} ago]` : ""}`
+    ? `\nqueue:${remote.queue} human:${remote.human}${remote.quarantine === undefined ? "" : ` quarantine:${remote.quarantine}`}${remote.stale ? ` [stale ${formatElapsed(remote.cacheAgeS)} ago]` : ""}`
     : "";
   // Standing rule: every tick report states the current wall-clock time.
   const tickLine = `\ntick at: ${new Date(now * 1000).toISOString()}`;
@@ -735,6 +741,7 @@ export function renderCompactDashboardToon(
     root.remote = {
       queue: remote.queue,
       human: remote.human,
+      ...(remote.quarantine === undefined ? {} : { quarantine: remote.quarantine }),
       cache_age_s: remote.cacheAgeS,
       stale: remote.stale ? 1 : 0,
     };

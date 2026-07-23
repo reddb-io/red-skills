@@ -1,0 +1,104 @@
+import { join } from "node:path";
+
+import type { CastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
+import type { ConfigValues } from "../../core/config.js";
+import { getConfig } from "../../core/config.js";
+import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
+import { updateState } from "../../core/state.js";
+import {
+  prepareImplementerEnvironment,
+  type ImplementerPluginRoots,
+  type PreparedImplementerEnvironment,
+} from "../../runtime/implementer-environment.js";
+import { makeRunAgent, type RunSettings } from "../../runtime/wire.js";
+
+interface ImplementerRunAgentOptions {
+  root: string;
+  workerId: string;
+  current: { attemptDir: string };
+  config: ConfigValues;
+  configText: string;
+  pluginRoots: ImplementerPluginRoots;
+  castleBridge: CastleWorkerLaneBridge;
+  sandbox: RunSettings["sandbox"];
+  maxIterations?: number;
+  laneIdle?: LaneIdleStallConfig;
+  sandboxImage?: string;
+}
+
+/** Decorate the real runner with the per-attempt implementer projection and metrics. */
+export function makeImplementerRunAgent(
+  options: ImplementerRunAgentOptions,
+): ReturnType<typeof makeRunAgent> {
+  const inner = makeRunAgent(
+    options.sandbox,
+    process.env,
+    options.maxIterations,
+    options.laneIdle,
+    options.sandboxImage,
+  );
+  const steerFilePath = join(
+    options.root,
+    ".red",
+    "tmp",
+    "workers",
+    options.workerId,
+    "steer.toon",
+  );
+  let preparedDir = "";
+  let prepared: PreparedImplementerEnvironment | undefined;
+
+  return (input) => {
+    const attemptDir = input.cwd ?? options.current.attemptDir;
+    if (!prepared || preparedDir !== attemptDir) {
+      const baseline = Number(
+        getConfig(options.config, "afk.implementer.runner_startup_baseline_ms"),
+      );
+      prepared = prepareImplementerEnvironment({
+        attemptDir,
+        configText: options.configText,
+        pluginRoots: options.pluginRoots,
+        ...(Number.isFinite(baseline) && baseline > 0
+          ? { historicalRunnerStartupMs: baseline }
+          : {}),
+      });
+      preparedDir = attemptDir;
+    }
+
+    const environment = prepared;
+    const launchStarted = performance.now();
+    let startupRecorded = false;
+    const originalOnAgentEvent = input.onAgentEvent;
+    return inner({
+      ...input,
+      steerFile: steerFilePath,
+      implementer: environment.runtime,
+      onAgentEvent: (event) => {
+        if (!startupRecorded) {
+          startupRecorded = true;
+          environment.recordRunnerStartup(
+            Math.max(0, Math.round(performance.now() - launchStarted)),
+          );
+          void updateState(join(attemptDir, "afk.state.toon"), {
+            "current.implementer_runner_startup_before_ms":
+              environment.metrics.runner_startup_ms.before,
+            "current.implementer_runner_startup_after_ms":
+              environment.metrics.runner_startup_ms.after,
+            "current.implementer_skill_manifest_before_bytes":
+              environment.metrics.skill_manifest_bytes.before,
+            "current.implementer_skill_manifest_after_bytes":
+              environment.metrics.skill_manifest_bytes.after,
+          })
+            .then(() =>
+              options.castleBridge.record("worker.implementer-environment", {
+                artifact: "implementer-runtime.toon",
+                ...environment.metrics,
+              }),
+            )
+            .catch(() => {});
+        }
+        originalOnAgentEvent?.(event);
+      },
+    });
+  };
+}

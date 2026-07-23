@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   CANONICAL_HOOK_NAMES,
@@ -39,6 +42,72 @@ function resolve(config: Record<string, string>): ResolvedHooks {
 }
 
 describe("hook-config resolution", () => {
+  it("does not resolve cargo or gradle defaults when the project has no matching build files", () => {
+    const root = mkdtempSync(join(tmpdir(), "hook-config-node-project-"));
+    const libraryHooksDir = join(root, "library-hooks");
+    mkdirSync(libraryHooksDir);
+    writeFileSync(join(libraryHooksDir, "red-cargo"), "#!/usr/bin/env bash\n");
+    writeFileSync(join(libraryHooksDir, "red-gradle"), "#!/usr/bin/env bash\n");
+
+    const resolved = resolveHooks(
+      {},
+      {
+        defaultCommand: scriptDefaultResolver(libraryHooksDir, {
+          projectRoot: root,
+        }),
+      },
+    );
+
+    expect(resolved.pre_worktree).toEqual([]);
+  });
+
+  it("does not resolve a matching build hook when config disables that default", () => {
+    const root = mkdtempSync(join(tmpdir(), "hook-config-build-project-"));
+    const libraryHooksDir = join(root, "library-hooks");
+    mkdirSync(libraryHooksDir);
+    writeFileSync(join(root, "Cargo.toml"), '[package]\nname = "demo"\n');
+    writeFileSync(join(root, "build.gradle.kts"), "// gradle\n");
+    writeFileSync(join(libraryHooksDir, "red-cargo"), "#!/usr/bin/env bash\n");
+    writeFileSync(join(libraryHooksDir, "red-gradle"), "#!/usr/bin/env bash\n");
+
+    const resolved = resolveHooks(
+      { "afk.hooks.defaults.cargo": "false" },
+      {
+        defaultCommand: scriptDefaultResolver(libraryHooksDir, {
+          projectRoot: root,
+        }),
+      },
+    );
+
+    expect(resolved.pre_worktree).toEqual([
+      join(libraryHooksDir, "red-gradle"),
+    ]);
+  });
+
+  it("uses a project shadow after Node determines the build hook applies", () => {
+    const root = mkdtempSync(join(tmpdir(), "hook-config-shadow-project-"));
+    const libraryHooksDir = join(root, "library-hooks");
+    const projectHooksDir = join(root, ".red", "hooks");
+    mkdirSync(libraryHooksDir);
+    mkdirSync(projectHooksDir, { recursive: true });
+    writeFileSync(join(root, "Cargo.toml"), '[package]\nname = "demo"\n');
+    writeFileSync(join(libraryHooksDir, "red-cargo"), "#!/usr/bin/env bash\n");
+    const shadow = join(projectHooksDir, "red-cargo");
+    writeFileSync(shadow, "#!/usr/bin/env bash\n");
+
+    const resolved = resolveHooks(
+      {},
+      {
+        defaultCommand: scriptDefaultResolver(libraryHooksDir, {
+          projectHooksDir,
+          projectRoot: root,
+        }),
+      },
+    );
+
+    expect(resolved.pre_worktree).toEqual([shadow]);
+  });
+
   it("attaches built-in defaults to their lifecycle points", () => {
     const resolved = resolve({});
     expect(resolved.pre_worktree).toEqual([
@@ -62,9 +131,16 @@ describe("hook-config resolution", () => {
 
   it("preserves declaration order within a user hook list", () => {
     const resolved = resolve({
-      "afk.hooks.post_session": ["first", "second", "third", "fourth"].join("\n"),
+      "afk.hooks.post_session": ["first", "second", "third", "fourth"].join(
+        "\n",
+      ),
     });
-    expect(resolved.post_session).toEqual(["first", "second", "third", "fourth"]);
+    expect(resolved.post_session).toEqual([
+      "first",
+      "second",
+      "third",
+      "fourth",
+    ]);
   });
 
   it("runs built-in defaults first, then user-declared commands", () => {
@@ -79,12 +155,9 @@ describe("hook-config resolution", () => {
     ]);
   });
 
-  it("silently ignores legacy defaults.<name>: false toggles (no error, no disable)", () => {
-    // Old configs may still carry afk.hooks.defaults.cargo: false — these are
-    // now silently ignored (shadowing in .red/hooks/ is the new mechanism).
+  it("disables a built-in default via defaults.<name>: false", () => {
     const resolved = resolve({ "afk.hooks.defaults.cargo": "false" });
-    // cargo is still present — the legacy toggle no longer disables it.
-    expect(resolved.pre_worktree).toEqual([DEFAULT_CMDS.cargo, DEFAULT_CMDS.gradle]);
+    expect(resolved.pre_worktree).toEqual([DEFAULT_CMDS.gradle]);
   });
 
   it("shadows a default via scriptDefaultResolver when projectHooksDir has a same-named script", () => {
@@ -103,14 +176,18 @@ describe("hook-config resolution", () => {
     );
     expect(resolverGradle("gradle")).toBe("/lib/hooks/red-gradle");
     // heartbeat has no shadow and lib also missing → undefined.
-    const resolverMissing = scriptDefaultResolver("/lib/hooks", "/project/.red/hooks", () => false);
+    const resolverMissing = scriptDefaultResolver(
+      "/lib/hooks",
+      "/project/.red/hooks",
+      () => false,
+    );
     expect(resolverMissing("heartbeat")).toBeUndefined();
   });
 
   it("throws a hard error on an unknown hook name", () => {
-    expect(() => resolve({ "afk.hooks.pre_doesnotexist": "echo nope" })).toThrow(
-      /unknown hook name 'pre_doesnotexist'/,
-    );
+    expect(() =>
+      resolve({ "afk.hooks.pre_doesnotexist": "echo nope" }),
+    ).toThrow(/unknown hook name 'pre_doesnotexist'/);
   });
 
   it("mixes bare-string and block-list points, defaults intact", () => {
@@ -134,7 +211,10 @@ describe("hook-config resolution", () => {
     expect(CANONICAL_HOOK_NAMES).toContain("post_attempt");
     expect(CANONICAL_HOOK_NAMES).not.toContain("post_worker");
     expect(HOOK_DEFAULTS_REGISTRY.pre_worktree).toEqual(["cargo", "gradle"]);
-    expect(HOOK_DEFAULTS_REGISTRY.post_attempt).toEqual(["heartbeat", "envelope"]);
+    expect(HOOK_DEFAULTS_REGISTRY.post_attempt).toEqual([
+      "heartbeat",
+      "envelope",
+    ]);
     expect(HOOK_DEFAULTS_REGISTRY.post_merge).toEqual(["validation"]);
   });
 
@@ -162,9 +242,15 @@ describe("hook-config resolution", () => {
       "afk.hooks.pre_session.2": "echo third",
     });
     const scalarForm = resolve({
-      "afk.hooks.pre_session": ["echo first", "echo second", "echo third"].join("\n"),
+      "afk.hooks.pre_session": ["echo first", "echo second", "echo third"].join(
+        "\n",
+      ),
     });
-    expect(listForm.pre_session).toEqual(["echo first", "echo second", "echo third"]);
+    expect(listForm.pre_session).toEqual([
+      "echo first",
+      "echo second",
+      "echo third",
+    ]);
     expect(listForm.pre_session).toEqual(scalarForm.pre_session);
   });
 

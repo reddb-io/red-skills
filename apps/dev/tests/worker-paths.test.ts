@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   allWorkersRoots,
   buildWorkerAttemptPath,
+  buildWorkerWorktreePath,
   issueAttemptsGlob,
   livePidsGlob,
+  parseReapableWorkerWorktreePath,
   parseWorkerAttemptPath,
+  parseWorkerWorktreePath,
   WORKER_NAMESPACES,
   workerDir,
   workerPidFile,
@@ -25,6 +28,32 @@ describe("worker paths", () => {
     const path = buildWorkerAttemptPath(".red/tmp/", "wZ2R4", 142, 3);
     expect(path).toBe(".red/tmp/workers/wZ2R4/142");
     expect(parseWorkerAttemptPath(`${path}/`)).toEqual({ worker: "wZ2R4", issue: 142, attempt: 1 });
+  });
+
+  it("builds and parses the conventional worktree directly inside the worker workspace", () => {
+    const path = buildWorkerWorktreePath(".red/tmp/", "wZ2R4", 142, 3);
+    expect(path).toBe(".red/tmp/workers/wZ2R4/142/worktree");
+    expect(parseWorkerWorktreePath(`${path}/`)).toEqual({
+      worker: "wZ2R4",
+      issue: 142,
+      attempt: 1,
+    });
+  });
+
+  it("accepts castle-branded nested worktrees through the hygiene parser only", () => {
+    const legacy =
+      ".red/tmp/workers/wZ2R4/142/.red-castle/worktrees/afk-wZ2R4-142-flatten";
+    expect(parseWorkerWorktreePath(legacy)).toBeNull();
+    expect(parseReapableWorkerWorktreePath(legacy)).toEqual({
+      worker: "wZ2R4",
+      issue: 142,
+      attempt: 1,
+    });
+    expect(parseReapableWorkerWorktreePath(".red/tmp/workers/wZ2R4/142/worktree")).toEqual({
+      worker: "wZ2R4",
+      issue: 142,
+      attempt: 1,
+    });
   });
 
   it("ignores retained legacy attempt-suffixed directories (readers drop the -a level, ADR 0103)", () => {

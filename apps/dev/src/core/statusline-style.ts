@@ -365,6 +365,9 @@ export function renderWorkerLine(worker: CompactWorker, now: number, preset: Sta
   // worker, so default the display to afk.
   const landing = LANDING_PHASES.has(f.phase);
   parts.push(kv("org", landing ? "landing" : f.origin || "afk"));
+  // Per-worker fleet attribution is deliberately NOT rendered (#2568): which
+  // fleet owns a worker stays available in fleet_status/worker_status; on the
+  // statusline it was noise.
   // iss=<issue-number> from current.number (both /afk and /go lanes); the
   // <phase·activity> cell follows bare and the legacy standalone #<n> token is
   // dropped.

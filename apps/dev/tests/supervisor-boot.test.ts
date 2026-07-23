@@ -140,7 +140,7 @@ describe("runSupervisor — supervisor owns the boot (#623)", () => {
           id: "git.remote.https-forbidden",
           name: "SSH-only git remotes",
           verdict: "red",
-          evidence: "1 forbidden https remote observed",
+          evidence: "git fetch failed: fatal: bad object refs/worktree/HEAD",
           canonicalFix: "Use SSH git remotes for local AFK boot.",
         });
       }),
@@ -151,6 +151,7 @@ describe("runSupervisor — supervisor owns the boot (#623)", () => {
 
     expect(spawnSlot).not.toHaveBeenCalled();
     expect(log.mock.calls.some((c) => String(c[0]).includes("SSH-only git remotes"))).toBe(true);
+    expect(log.mock.calls.some((c) => String(c[0]).includes("fatal: bad object refs/worktree/HEAD"))).toBe(true);
     expect(log.mock.calls.some((c) => String(c[0]).includes("Use SSH git remotes"))).toBe(true);
   });
 

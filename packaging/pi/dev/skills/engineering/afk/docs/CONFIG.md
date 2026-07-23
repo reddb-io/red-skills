@@ -13,9 +13,33 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 - **The directory must be opted in** (ADR 0116). Without an explicit `plugins.dev.enabled: true` (ADR 0067), the loader returns the documented defaults and **none** of the file's settings — every table below reads as its default. This is decided in the loader, not only at process entry, so no caller can read a disabled directory's settings.
 - **Retired keys are dropped and warned** (ADR 0117). A key on the tombstone list (`afk.attempt_timeout`, retired when the commit-anchored progress guard replaced the wall-clock cap) warns `RETIRED — it no longer does anything` and is unreadable. An **unknown** key stays silent for forward compatibility: silence means "not yet", a warning means "not any more".
 
+### Implementer environment
+
+An AFK inner agent does not inherit the host's full plugin, MCP, hook, or
+statusline environment. Castle projects the existing activation gates into a
+discovery-closed constraint owned by each runner-spec row:
+
+| Existing gate | Inner-agent surface |
+|---|---|
+| `plugins.dev.enabled: true` | Dev essentials and the `navigator` code-navigation MCP (always present for an AFK implementer) |
+| `plugins.memory.enabled: true` | Memory plugin and `red-memory` MCP |
+| `plugins.brain.enabled: true` | Brain plugin and `brain` MCP |
+| `plugins.red-ui.enabled: true` | `red-ui` MCP |
+| `rsp.enabled: true` | rsp MCP/instructions and runner integration |
+
+There is deliberately no implementer payload or allowlist key. Each optional
+surface is present only when its existing gate is exactly `true`; enabling one
+gate does not enable any sibling surface. Claude starts bare with strict MCP
+loading and explicit settings, Codex receives explicit plugin/MCP config,
+OpenCode receives an isolated config projection, and Pi disables discovery and
+receives explicit skills/extensions. Statusline integration, Castle's operator
+MCP, and non-essential host hooks are absent from every projection.
+
 | Config key | Env override | Default | Meaning |
 |---|---|---|---|
 | `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Caller runner identity/default backend consumed before ambient sniffing. |
+| `plugins.dev.afk.implementer.skills` | — | implementer profile | Optional comma-separated exact allowlist of `plugin:skill` entries for inner workers. It replaces the trimmed dev implementer profile (so it can widen or narrow it), while ADR 0067 activation remains authoritative: a skill from a disabled plugin is never exposed. |
+| `plugins.dev.afk.implementer.runner_startup_baseline_ms` | — | _(unset)_ | Optional historical unprojected runner-startup baseline (invocation to first stream event). When present, each worker artifact and dashboard report compare it with the actual projected startup sample; when absent, the first projected sample self-baselines with a zero delta and is marked `unavailable`. |
 | `afk.model` | — | runner-specific | Legacy global model override. Prefer tiered `afk.models.<runner>.<tier>.model` so Codex never receives a Claude-only model. |
 | `afk.models.<runner>` | — | runner-specific | Legacy per-runner scalar model override. Used only when no explicit tier model is set. |
 | `afk.models.claude.<tier>.model` | — | tier-specific | Claude Code model id for `validate`, `simple`, `complex`, or `think`. |
@@ -23,6 +47,7 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `afk.models.codex.<tier>.model` | — | tier-specific | Codex model id for `validate`, `simple`, `complex`, or `think`. |
 | `afk.models.codex.<tier>.effort` | — | tier-specific | Codex effort for that tier. |
 | `afk.sandbox` | `RED_AFK_SANDBOX` | `none` | Isolation backend (`none` \| `docker` \| `podman`, ADR 0033). |
+| — | `RED_AFK_HOST_ENV_ALLOW` | runner-aware allowlist | Comma-separated exact names or `*`-suffixed prefixes appended to the no-sandbox worker's default host-env allowlist. Codex workers omit `CLAUDE*`, `BASH_ENV`, and `ENV` by default so a Claude host's shell-snapshot state cannot reach Codex; Claude workers retain the existing defaults. Explicit entries may re-admit those variables, and the literal `*` restores full host-environment inheritance. |
 | `afk.sandbox_image` | `RED_AFK_SANDBOX_IMAGE` | `sandcastle:<repo-dir>` | Container image the `docker`/`podman` backend runs (issue #2340). Resolved off the **repo root**, so one prebuilt image serves every worker, issue, and attempt — never off the per-attempt worktree, which produced an unbuildable `sandcastle:<issue-number>` tag and crashed every forced-isolation attempt. Build it once with `sandcastle docker build-image --image-name <image>`; when it is missing, the untrusted-author isolation policy parks the issue `ready-for-human` naming that exact command instead of burning the retry budget on a mid-run crash. |
 | `afk.max_iterations` | `RED_AFK_MAX_ITERATIONS` | `12` | Sandcastle re-invocation ceiling (issue #322) — the safety cap for "the agent never emits `<promise>DONE</promise>` or `<promise>BLOCKED</promise>`". The completion sentinel is the real terminator, so a normal issue finishes in 1–3 iterations; this leaves headroom without letting repeated no-sentinel failures run for too long. A non-numeric / zero / negative value in either the env or the config is ignored (falls through to the default) so a typo can never disable the cap or pin the agent to 1. |
 | — | `RED_AFK_IDLE_TIMEOUT_S` | `600` | Sandcastle's per-iteration **silence** watchdog (seconds): an iteration that produces no stream output for this long is aborted. The actual termination bound on a quiet hang. Env-only; typo-safe (non-numeric / zero / negative is ignored → default). |
@@ -37,6 +62,7 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `afk.validation.heavy_available_memory_mb` | — | `4096` | Minimum free-memory threshold for admitting known-heavy validation work (#1758). Heavy validation admission serializes when another heavy validation is active, and otherwise waits until this much memory is available. |
 | `afk.output_shaping.terse_steering` | — | `false` | Opt-in AFK output-shaping experiment (#1638). When true, even-numbered issues receive a phrasing-only terse steering block; odd-numbered issues are the holdout. The assignment is persisted in worker state beside heartbeat output-token counters and reported by `afk-output-shaping`. |
 | `afk.worktree_launches_pull_request` | — | `true` | Landing **mode**, decoupled from the branch-lock (ADR 0030 amended, #842). `true` (default) → the attempt lands via an **admin-merged PR** into the resolved base; `false` → a **direct merge** into that base (offline, no PR — only the post-commit push the worker already does). The branch-lock now only resolves the *target* base (lock > pin > main, ADR 0031); this flag decides PR-vs-direct **independently**. So: no lock + `true` → admin-PR to `main`; no lock + `false` → direct merge to `main`; lock=`X` + `true` → admin-PR to `X`; lock=`X` + `false` → direct merge to `X`. *How* a PR merges (admin vs `wait_for_review` vs `review_gate`) stays governed by `afk.merge.*`. **Migration:** the default `true` flips the old *locked* behaviour (which direct-merged) — a locked repo now gets an admin-PR to its lock branch; set `false` to keep the old offline/direct-promotion flow. |
+| `afk.landing.wait` | — | `merge` | Worker-slot release point across the PR landing tail (#2427): `merge` keeps today’s byte-compatible flow and releases only after merge + Ticket close; `ci` releases once required CI is green; `none` releases as soon as the PR opens. For `ci`/`none`, the background landing observer finishes merge + close. It uses the resident’s shared webhook lane when available and the established per-wait forwarder otherwise. **Trade-off:** earlier release pipelines more Tickets through each fleet slot, but leaves a larger asynchronous tail; if that observer dies, the open PR/running Ticket is an orphan for the deadend audit/healer instead of work the slot still owns. |
 | `afk.merge.wait_for_review` | — | `false` | Merge-gate policy (ADR 0048). When `false` (default), the unlocked admin-merge proceeds **ignoring advisory review checks** (e.g. CodeRabbit) — the binding gates are `drift-guard` (the `pre_merge` hook) + in-process backpressure/feedback. When `true`, the unlocked landing **waits** for the configured review check to conclude before merging, then merges regardless of its verdict (the review stays advisory). `drift-guard` is a hard gate either way. |
 | `afk.merge.review_check` | — | `CodeRabbit` | Name (case-insensitive substring) of the advisory review check `wait_for_review` polls via `gh pr checks`. Only consulted when `afk.merge.wait_for_review` is `true`. |
 | `afk.merge.ci_aware` | — | `false` | CI-aware merge (#812). When `false` (default), the unlocked admin-merge fires immediately — correct only on a base with **no** required status checks. When `true`, the unlocked landing first polls `gh pr view --json mergeStateStatus,statusCheckRollup` until the PR settles, then admin-merges **only** once it is genuinely ready (`CLEAN`, or `BLOCKED` solely by a required review `--admin` waives). Required for any `enforce_admins` base, where an admin-merge **cannot** bypass required checks: a real conflict / `DIRTY` / `BEHIND` → `blocked:merge-conflict`; a **failed** required check → `blocked:ci`; checks still **pending** at the timeout → `blocked:ci` with the open PR preserved (never re-runs the inner agent). |
@@ -51,8 +77,17 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 | `afk.drain.max_cost_usd` | `RED_AFK_DRAIN_MAX_COST_USD` / `fleet --budget-usd` | _(unset)_ | Per-drain USD budget for the fleet supervisor. Spend is read from WorkerVitals (`current.cost_usd`) in worker state files, not a parallel ledger. Tiers are OK below 75%, WARNING at 75%, CRITICAL at 90%, and HARD_STOP at 100%. CRITICAL spawns new workers with one model-tier-policy downgrade; HARD_STOP stops all new spawns, lets in-flight workers finish, and records a TOON budget event in `.red/tmp/supervisors/default/supervisor.log.toonl`. |
 
 ```yaml
+plugins:
+  dev:
+    afk:
+      implementer:
+        skills: dev:tdd, dev:diagnose # optional exact worker allowlist; activation gates still apply
+        runner_startup_baseline_ms: 840 # optional measured pre-projection historical baseline
+
 afk:
   worktree_launches_pull_request: true   # true → admin-PR landing; false → direct merge (offline). Decoupled from the lock (#842)
+  landing:
+    wait: merge             # merge | ci | none; earlier release increases throughput and lengthens the async tail
   models:
     claude:
       think:

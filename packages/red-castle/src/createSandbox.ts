@@ -420,7 +420,7 @@ const buildSandboxHandle = (
                 branch,
               });
               return Layer.provide(
-                FileDisplay.layer(resolvedLogging.path),
+                FileDisplay.layer(resolvedLogging.path, resolvedLogging.format),
                 NodeFileSystem.layer,
               );
             })()
@@ -614,6 +614,7 @@ const buildSandboxHandle = (
                 applyToHost,
                 timeouts,
                 keepSourceBranch: mergeToHead,
+                hostSharedGitConfig: ctx.providerTag === "none",
               },
               sandbox,
               (ctx) =>
@@ -832,9 +833,15 @@ export const createSandboxFromWorktree = async (
   if (sandboxOnReady?.length || hostOnReady?.length) {
     await Effect.runPromise(
       Effect.gen(function* () {
-        yield* sandbox.exec(
-          `git config --global --add safe.directory "${sandboxRepoDir}"`,
-        );
+        // safe.directory exists for cross-UID bind mounts. Under `none` the
+        // exec IS the host shell: the worktree is same-UID (the check never
+        // fires) and `--global` writes the REAL user gitconfig — a shared
+        // file whose lock races across concurrent workers (#2494).
+        if (options.sandbox.tag !== "none") {
+          yield* sandbox.exec(
+            `git config --global --add safe.directory "${sandboxRepoDir}"`,
+          );
+        }
         const sandboxEffects = (sandboxOnReady ?? []).map((hook) =>
           sandbox.exec(hook.command, {
             cwd: sandboxRepoDir,
@@ -1020,9 +1027,13 @@ export const createSandbox = async (
 
           if (sandboxOnReady?.length || hostOnReady?.length) {
             yield* Effect.gen(function* () {
-              yield* sandbox.exec(
-                `git config --global --add safe.directory "${sandboxRepoDir}"`,
-              );
+              // Same gate as the run() path: never write the HOST's global
+              // gitconfig from a `none` sandbox (#2494).
+              if (options.sandbox.tag !== "none") {
+                yield* sandbox.exec(
+                  `git config --global --add safe.directory "${sandboxRepoDir}"`,
+                );
+              }
               const sandboxEffects = (sandboxOnReady ?? []).map((hook) =>
                 sandbox.exec(hook.command, {
                   cwd: sandboxRepoDir,

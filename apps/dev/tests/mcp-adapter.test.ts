@@ -10,12 +10,15 @@ import {
   castleLanePath,
   createEnginePaths,
   fleetRegistryPath,
+  readFleetProfile,
   upsertFleetProfile,
 } from "@reddb-io/red-castle/engine";
+import { afkPaths } from "../src/runtime/wire.js";
+import { recordBootError } from "../src/commands/run/state.js";
 import {
   buildMcpLandingFireHook,
   createDefaultDevAfkMcpOperations,
-  createDevAfkMcpDependencies,
+  createCastleMcpDependencies,
   dispatchLogPath,
   resolveDevCliBundle,
   resolveRspCliBundle,
@@ -23,6 +26,7 @@ import {
 } from "../src/mcp-adapter.js";
 import { dispatchInput } from "../../../packages/red-castle/src/mcp/worker.js";
 import type { HookExec } from "../src/core/hook-dispatcher.js";
+import { readPidStartTime } from "../src/core/state.js";
 
 const roots: string[] = [];
 
@@ -33,19 +37,19 @@ afterEach(async () => {
 });
 
 async function root(): Promise<string> {
-  const value = await mkdtemp(join(tmpdir(), "dev-afk-mcp-"));
+  const value = await mkdtemp(join(tmpdir(), "dev-castle-mcp-"));
   roots.push(value);
   return value;
 }
 
-describe("dev:afk MCP host adapter", () => {
+describe("castle MCP host adapter", () => {
   it("resolves the sibling dev CLI bundle from local and cached MCP assets", () => {
     expect(
-      resolveDevCliBundle(join("dist", "afk-mcp.bundle.min.mjs")),
+      resolveDevCliBundle(join("dist", "castle-mcp.bundle.min.mjs")),
     ).toBe(join("dist", "dev.bundle.min.mjs"));
     expect(
       resolveDevCliBundle(
-        join("cache", "afk-mcp-2.76.1.bundle.min.mjs"),
+        join("cache", "castle-mcp-2.76.1.bundle.min.mjs"),
       ),
     ).toBe(join("cache", "dev-2.76.1.bundle.min.mjs"));
   });
@@ -66,7 +70,7 @@ describe("dev:afk MCP host adapter", () => {
       selector: { spec: 2303 },
     });
 
-    await expect(createDevAfkMcpDependencies(cwd).fleetList()).resolves.toEqual(
+    await expect(createCastleMcpDependencies(cwd).fleetList()).resolves.toEqual(
       [
         {
           name: "codex",
@@ -86,7 +90,7 @@ describe("dev:afk MCP host adapter", () => {
       issue: 2305,
       payload: { runner: "codex" },
     });
-    const deps = createDevAfkMcpDependencies(cwd);
+    const deps = createCastleMcpDependencies(cwd);
 
     await expect(
       deps.logs({ lane: "worker", id: "worker-1" }),
@@ -103,6 +107,40 @@ describe("dev:afk MCP host adapter", () => {
     ).rejects.toThrow("escapes its Castle lane root");
   });
 
+  it("surfaces a session-error death in the worker lane and default worker vitals", async () => {
+    const cwd = await root();
+    const workerId = "wER01";
+    const workerDir = join(cwd, ".red", "tmp", "workers", workerId);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    try {
+      await recordBootError(workerDir, "session-error", new Error("bundle coherence halted dispatch"));
+    } finally {
+      stderr.mockRestore();
+    }
+
+    const deps = createCastleMcpDependencies(cwd);
+    await expect(deps.logs({ lane: "worker", id: workerId })).resolves.toEqual([
+      expect.objectContaining({
+        kind: "worker.session-error",
+        worker_id: workerId,
+        payload: expect.objectContaining({
+          type: "session-error",
+          message: "bundle coherence halted dispatch",
+        }),
+      }),
+    ]);
+    await expect(deps.workerVitals({ live_only: true })).resolves.toEqual([
+      expect.objectContaining({
+        worker: expect.objectContaining({ id: workerId }),
+        alert: expect.objectContaining({
+          type: "session-error",
+          message: "bundle coherence halted dispatch",
+        }),
+      }),
+    ]);
+  });
+
   it("bounds logs reads by limit and filters by kind before the limit", async () => {
     const cwd = await root();
     const paths = createEnginePaths(join(cwd, ".red"));
@@ -117,7 +155,7 @@ describe("dev:afk MCP host adapter", () => {
       });
     }
 
-    const deps = createDevAfkMcpDependencies(cwd);
+    const deps = createCastleMcpDependencies(cwd);
 
     // limit=2 returns the NEWEST 2 records
     await expect(
@@ -146,7 +184,7 @@ describe("dev:afk MCP host adapter", () => {
   it("routes issue and demand dispatches through their value operations", async () => {
     const cwd = await root();
     const operations = fakeOperations();
-    const deps = createDevAfkMcpDependencies(cwd, operations);
+    const deps = createCastleMcpDependencies(cwd, operations);
 
     await expect(
       deps.workerDispatch({ issue: 2306, runner: "codex" }),
@@ -292,7 +330,7 @@ describe("dev:afk MCP host adapter", () => {
   it("injects worker_request only into a newly dispatched worker", async () => {
     const cwd = await root();
     const operations = fakeOperations();
-    const deps = createDevAfkMcpDependencies(cwd, operations);
+    const deps = createCastleMcpDependencies(cwd, operations);
 
     await deps.workerRequest({
       issue: 2306,
@@ -310,7 +348,7 @@ describe("dev:afk MCP host adapter", () => {
   it("stops and recycles workers through the shared stop operation", async () => {
     const cwd = await root();
     const operations = fakeOperations();
-    const deps = createDevAfkMcpDependencies(cwd, operations);
+    const deps = createCastleMcpDependencies(cwd, operations);
 
     await expect(
       deps.workerStop({ worker: "wVM2Z", recycle: false }),
@@ -328,7 +366,7 @@ describe("dev:afk MCP host adapter", () => {
 
   it("returns runner specs and deterministic explicit detection", async () => {
     const cwd = await root();
-    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const deps = createCastleMcpDependencies(cwd, fakeOperations());
 
     await expect(deps.runnerList()).resolves.toMatchObject({
       codex: { channel: "effort", factory: "codex" },
@@ -344,7 +382,7 @@ describe("dev:afk MCP host adapter", () => {
   it("returns structured hygiene operation results", async () => {
     const cwd = await root();
     const operations = fakeOperations();
-    const deps = createDevAfkMcpDependencies(cwd, operations);
+    const deps = createCastleMcpDependencies(cwd, operations);
 
     await expect(
       deps.requeue({ issue: 2306, guidance: "Retry after repair." }),
@@ -362,7 +400,7 @@ describe("dev:afk MCP host adapter", () => {
   it("routes the sensitive gate, landing, and claim tools through their operations", async () => {
     const cwd = await root();
     const operations = fakeOperations();
-    const deps = createDevAfkMcpDependencies(cwd, operations);
+    const deps = createCastleMcpDependencies(cwd, operations);
 
     await expect(
       deps.gateRun({ branch: "afk/w80UR/2307-castle-mcp-s4" }),
@@ -391,7 +429,7 @@ describe("dev:afk MCP host adapter", () => {
   it("routes review and triage tools through their operations", async () => {
     const cwd = await root();
     const operations = fakeOperations();
-    const deps = createDevAfkMcpDependencies(cwd, operations);
+    const deps = createCastleMcpDependencies(cwd, operations);
 
     await expect(deps.dailyReview({})).resolves.toMatchObject({
       kind: "daily",
@@ -426,7 +464,7 @@ describe("dev:afk MCP host adapter", () => {
     await mkdir(join(cwd, ".red", "tmp", "worktrees", "feedback", "afk-2307"), {
       recursive: true,
     });
-    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const deps = createCastleMcpDependencies(cwd, fakeOperations());
 
     await expect(deps.worktreeList()).resolves.toEqual([
       {
@@ -446,14 +484,59 @@ describe("dev:afk MCP host adapter", () => {
   });
 });
 
+describe("fleet_register — adopt a live unregistered fleet", () => {
+  it("persists the profile for a live fleet without touching the supervisor", async () => {
+    const cwd = await root();
+    const paths = afkPaths(cwd);
+    await mkdir(paths.supervisorRuntimeDir, { recursive: true });
+    await writeFile(paths.supervisorPidPath, String(process.pid), "utf8");
+    await writeFile(paths.supervisorPidStartPath, readPidStartTime(process.pid)!, "utf8");
+
+    const result = await createCastleMcpDependencies(cwd).fleetRegister({
+      runner: "claude",
+      selector: { spec: 2303 },
+    }) as Record<string, unknown>;
+
+    expect(result).toMatchObject({ status: "registered", pid: process.pid });
+    expect(result.profile).toMatchObject({ name: "default", runner: "claude", selector: { spec: 2303 } });
+
+    const profile = await readFleetProfile(
+      fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
+      "default",
+    );
+    expect(profile).toEqual({ name: "default", runner: "claude", selector: { spec: 2303 } });
+  });
+
+  it("refuses adoption when the fleet supervisor is not running", async () => {
+    const cwd = await root();
+    await expect(
+      createCastleMcpDependencies(cwd).fleetRegister({ runner: "claude" }),
+    ).rejects.toThrow(/not running/);
+  });
+
+  it("fleet_edit works immediately after fleet_register persists the profile", async () => {
+    const cwd = await root();
+    const paths = afkPaths(cwd, "alpha");
+    await mkdir(paths.supervisorRuntimeDir, { recursive: true });
+    await writeFile(paths.supervisorPidPath, String(process.pid), "utf8");
+    await writeFile(paths.supervisorPidStartPath, readPidStartTime(process.pid)!, "utf8");
+
+    const deps = createCastleMcpDependencies(cwd);
+    await deps.fleetRegister({ name: "alpha", runner: "claude" });
+    await expect(
+      deps.fleetEdit({ name: "alpha", runner: "codex" }),
+    ).resolves.toMatchObject({ status: "edited" });
+  });
+});
+
 describe("rsp wait MCP tools", () => {
   it("resolves the sibling rsp CLI bundle from local and cached MCP assets", () => {
     expect(
-      resolveRspCliBundle(join("dist", "afk-mcp.bundle.min.mjs")),
+      resolveRspCliBundle(join("dist", "castle-mcp.bundle.min.mjs")),
     ).toBe(join("dist", "rsp.bundle.min.mjs"));
     expect(
       resolveRspCliBundle(
-        join("cache", "afk-mcp-2.76.1.bundle.min.mjs"),
+        join("cache", "castle-mcp-2.76.1.bundle.min.mjs"),
       ),
     ).toBe(join("cache", "rsp-2.76.1.bundle.min.mjs"));
   });
@@ -501,7 +584,7 @@ describe("rsp wait MCP tools", () => {
 
   it("lists active waits from the registry directory", async () => {
     const cwd = await root();
-    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const deps = createCastleMcpDependencies(cwd, fakeOperations());
     await expect(deps.waitList()).resolves.toEqual([]);
   });
 
@@ -521,16 +604,86 @@ describe("rsp wait MCP tools", () => {
       "utf8",
     );
 
-    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const deps = createCastleMcpDependencies(cwd, fakeOperations());
     const result = await deps.waitStatus({ id }) as Record<string, unknown>;
     expect(result).toMatchObject({ id, status: "finished", result: { schema: "rsp.wait.result" } });
   });
 
   it("returns running status with active registry when result file is absent", async () => {
     const cwd = await root();
-    const deps = createDevAfkMcpDependencies(cwd, fakeOperations());
+    const deps = createCastleMcpDependencies(cwd, fakeOperations());
     const result = await deps.waitStatus({ id: "no-such-wait" }) as Record<string, unknown>;
     expect(result).toMatchObject({ id: "no-such-wait", status: "running", waits: [] });
+  });
+});
+
+describe("statusline_aggregate MCP tool", () => {
+  it("returns the payload shape with project, repo, fleet, workers, and queue", async () => {
+    const cwd = await root();
+    const deps = createCastleMcpDependencies(cwd, fakeOperations());
+
+    const result = await deps.statuslineAggregate() as Record<string, unknown>;
+
+    const project = result.project as Record<string, unknown>;
+    expect(typeof project.basename).toBe("string");
+    expect(typeof project.version).toBe("string");
+    expect(typeof project.docs_unlanded).toBe("number");
+    expect(project.branch === null || typeof project.branch === "string").toBe(true);
+
+    const repo = result.repo as Record<string, unknown>;
+    expect(typeof repo.open_prs).toBe("number");
+    expect(typeof repo.today_prs).toBe("number");
+    expect(typeof repo.open_issues).toBe("number");
+    expect(repo.cache_age_s === null || typeof repo.cache_age_s === "number").toBe(true);
+
+    expect(Array.isArray(result.workers)).toBe(true);
+    expect("fleet" in result).toBe(true);
+
+    const queue = result.queue as Record<string, unknown>;
+    expect(typeof queue.ready_for_agent).toBe("number");
+    expect(typeof queue.ready_for_human).toBe("number");
+    expect(queue.cache_age_s === null || typeof queue.cache_age_s === "number").toBe(true);
+  });
+
+  it("exposes model and effort on each worker record when present", async () => {
+    const cwd = await root();
+    const paths = createEnginePaths(join(cwd, ".red"));
+    const attemptDir = join(paths.workersRoot, "wTST1", "2344");
+    await mkdir(attemptDir, { recursive: true });
+    await writeFile(
+      join(attemptDir, "afk.state.toon"),
+      JSON.stringify({
+        version: 1,
+        worker_id: "wTST1",
+        pid: process.pid,
+        runner: "claude",
+        origin: "afk",
+        started_at: new Date().toISOString(),
+        current: {
+          number: 2344,
+          runner: "claude",
+          model: "claude-opus-4-8",
+          effort: "high",
+          phase: "coding",
+          activity: "editing",
+          retries: 0,
+          iteration: 1,
+          loc_added: 10,
+          loc_removed: 3,
+        },
+      }),
+      "utf8",
+    );
+
+    const deps = createCastleMcpDependencies(cwd, fakeOperations());
+    const result = await deps.statuslineAggregate() as { workers: Array<Record<string, unknown>> };
+
+    expect(result.workers).toHaveLength(1);
+    const worker = result.workers[0] as { worker: { current: Record<string, unknown> } };
+    expect(worker.worker.current).toMatchObject({
+      model: "claude-opus-4-8",
+      effort: "high",
+    });
   });
 });
 
@@ -603,6 +756,10 @@ describe("buildMcpLandingFireHook — lifecycle hook wiring", () => {
 
 function fakeOperations(): DevAfkMcpOperations {
   return {
+    hitlResolve: vi.fn(async (input) => ({ resolved: input })),
+    mergeArm: vi.fn(async (input) => ({ armed: input })),
+    mergeStatus: vi.fn(async () => ({ prs: [] })),
+    mergeRelease: vi.fn(async (input) => ({ released: input })),
     dispatchIssue: vi.fn(async () => ({ kind: "afk" as const, exit_code: 0 })),
     dispatchDemand: vi.fn(async () => ({ kind: "go" as const, exit_code: 0 })),
     dispatchScout: vi.fn(async () => ({ kind: "scout" as const, exit_code: 0 })),

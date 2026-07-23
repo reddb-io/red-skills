@@ -169,6 +169,38 @@ describe("WorktreeManager.create", () => {
     expect(s.isDirectory()).toBe(true);
   });
 
+  it("creates a worktree at an explicit conventional workspace path", async () => {
+    const repoDir = await setupRepo();
+    const workspace = await mkdtemp(join(tmpdir(), "worker-workspace-"));
+    const worktreePath = join(workspace, "worktree");
+
+    const { path } = await run(create(repoDir, { path: worktreePath }));
+
+    expect(path).toBe(worktreePath);
+    expect((await stat(path)).isDirectory()).toBe(true);
+  });
+
+  it("cleans a locked dangling worktree when initialization fails", async () => {
+    const repoDir = await setupRepo();
+    const workspace = await mkdtemp(join(tmpdir(), "worker-workspace-"));
+    const worktreePath = join(workspace, "worktree");
+    await run(create(repoDir, { branch: "init-crash", path: worktreePath }));
+    const gitDir = (await execAsync("git rev-parse --absolute-git-dir", { cwd: repoDir })).stdout.trim();
+    const [entryName] = await readdir(join(gitDir, "worktrees"));
+    const entry = join(gitDir, "worktrees", entryName!);
+    await writeFile(join(entry, "locked"), "initializing\n");
+    await writeFile(join(entry, "HEAD"), `${"0".repeat(40)}\n`);
+
+    await expect(
+      run(create(repoDir, { branch: "init-crash", path: worktreePath })),
+    ).rejects.toThrow();
+
+    const { stdout } = await execAsync("git worktree list --porcelain", {
+      cwd: repoDir,
+    });
+    expect(stdout).not.toContain(worktreePath);
+  });
+
   it("returns the branch name", async () => {
     const repoDir = await setupRepo();
     const { branch } = await run(create(repoDir));
@@ -724,6 +756,21 @@ describe("WorktreeManager.remove", () => {
       cwd: repoDir,
     });
     expect(stdout).not.toContain(path);
+  });
+
+  it("removes an explicit-path worktree through its owning repo", async () => {
+    const repoDir = await setupRepo();
+    const workspace = await mkdtemp(join(tmpdir(), "worker-workspace-"));
+    const worktreePath = join(workspace, "worktree");
+    await run(create(repoDir, { path: worktreePath }));
+
+    await run(remove(worktreePath, repoDir));
+
+    await expect(stat(worktreePath)).rejects.toThrow();
+    const { stdout } = await execAsync("git worktree list --porcelain", {
+      cwd: repoDir,
+    });
+    expect(stdout).not.toContain(worktreePath);
   });
 });
 

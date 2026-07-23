@@ -14,14 +14,14 @@ export const LABEL_BODY_COHERENCE_PROBE_NAME = "AFK label/body coherence";
 export const LABEL_BODY_COHERENCE_CANONICAL_FIX =
   "For ready-for-agent issues whose body still carries an active Current blocker, confirm per issue and archive the blocker into Resolved blockers while clearing Current blocker to None.";
 
-interface LabelBodyCoherenceAction {
+export interface LabelBodyCoherenceAction {
   readonly issue: number;
   readonly labels: readonly string[];
   readonly blocker: CurrentBlocker;
   readonly body: string;
 }
 
-interface LabelBodyCoherenceProbeData {
+export interface LabelBodyCoherenceProbeData {
   readonly actions: readonly LabelBodyCoherenceAction[];
 }
 
@@ -94,6 +94,28 @@ function labelBodyCoherenceData(finding: OperationalProbeResult): LabelBodyCoher
   const rec = data as Partial<LabelBodyCoherenceProbeData>;
   if (!Array.isArray(rec.actions)) return undefined;
   return rec as LabelBodyCoherenceProbeData;
+}
+
+export function buildLabelBodyCoherenceQuarantineComment(action: LabelBodyCoherenceAction): string {
+  const ref = action.blocker.ref ? ` ref=${action.blocker.ref}` : "";
+  return [
+    `<!-- afk:quarantine v1 issue=#${action.issue} -->`,
+    `🤖 /afk coherence probe quarantined this issue: it carried \`ready-for-agent\` while the body still contained an active \`Current blocker\`.`,
+    ``,
+    `**Incoherence:** labels=\`[${action.labels.join(",")}]\` body-blocker=\`{kind=${action.blocker.kind}${ref} summary=${JSON.stringify(action.blocker.summary)}}\``,
+    ``,
+    `**Fix recipe:** Archive or clear the \`## Current blocker\` section in the body, then restore \`ready-for-agent\`.`,
+  ].join("\n");
+}
+
+/** Append the issue-local ADR 0122 diagnosis without rewriting the operator's
+ * existing body. The marker makes retries idempotent even when a prior label
+ * mutation failed after the body write. */
+export function appendLabelBodyCoherenceQuarantineDiagnosis(action: LabelBodyCoherenceAction): string {
+  const marker = `<!-- afk:quarantine v1 issue=#${action.issue} -->`;
+  if (action.body.includes(marker)) return action.body;
+  const body = action.body.replace(/\s+$/, "");
+  return `${body}\n\n## Quarantine diagnosis\n\n${buildLabelBodyCoherenceQuarantineComment(action)}\n`;
 }
 
 function archiveBody(action: LabelBodyCoherenceAction): string {

@@ -19,6 +19,16 @@ export interface OperationalProbeContext {
   readonly claimHygiene?: ClaimHygieneProbeInput;
   readonly labelBodyCoherence?: LabelBodyCoherenceProbeInput;
   readonly baseFreshness?: BaseFreshnessProbeInput;
+  readonly hostPrerequisites?: HostPrerequisiteProbeInput;
+}
+
+export type HostPrerequisiteCommand = "bash" | "git" | "jq" | "gh" | "node" | "timeout" | "ps";
+
+export interface HostPrerequisiteProbeInput {
+  readonly commands: Readonly<Record<HostPrerequisiteCommand, boolean>>;
+  readonly bashVersion?: string;
+  readonly bashVersionExitCode?: number;
+  readonly bashVersionError?: string;
 }
 
 export interface ConfigNamespacingProbeInput {
@@ -75,8 +85,9 @@ export interface QueueVisibilityTransportFailure {
 
 export interface QueueVisibilityProbeInput {
   readonly label?: string;
-  readonly listEngineCandidates: () => Promise<number>;
-  readonly countRestQueue: () => Promise<number>;
+  readonly listEngineCandidates: () => Promise<readonly number[]>;
+  readonly listRestQueue: () => Promise<readonly number[]>;
+  readonly resampleDelayMs?: number;
 }
 
 export interface FleetTruthProbeInput {
@@ -105,7 +116,10 @@ export interface BundleCoherenceProbeInput {
   readonly lastError?: string;
 }
 
-export type ClaimHygieneWorkerPidState = "live" | "dead" | "foreign" | "unknown";
+/** `expired` is not a pid observation: it marks an unknown-pid own-namespace
+ * marker whose latest timestamp aged past the ADR 0066 claim-TTL window, so it
+ * is concedable without ever proving the pid (#2525). */
+export type ClaimHygieneWorkerPidState = "live" | "dead" | "foreign" | "unknown" | "expired";
 
 export interface ClaimHygieneCommentInput {
   readonly id: number;
@@ -123,6 +137,11 @@ export interface ClaimHygieneProbeInput {
   readonly ownWorkerPrefix: string;
   readonly listOpenQueueIssues: () => Promise<readonly ClaimHygieneIssueInput[]>;
   readonly workerPidState: (worker: string) => ClaimHygieneWorkerPidState;
+  /** Injected clock (epoch seconds) enabling the claim-TTL classification of
+   * unknown-pid own-namespace markers (#2525). Absent → TTL check skipped. */
+  readonly nowS?: number;
+  /** Claim staleness policy; defaults to the ADR 0066 window. */
+  readonly staleness?: import("../claim-staleness.js").ClaimStalenessConfig;
 }
 
 export interface LabelBodyCoherenceIssueInput {

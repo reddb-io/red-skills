@@ -8,11 +8,43 @@
 
 import type { BranchRef } from "./branch-cleanup.js";
 
-const LIVE_REF_ISSUE_RE = /^afk\/[^/]+\/([0-9]+)-[a-z0-9-]+$/;
+const LIVE_REF_ISSUE_RE = /^afk\/(?:([0-9]+)-[a-z0-9-]+|[^/]+\/([0-9]+)-[a-z0-9-]+)$/;
 
 function issueFromRef(branch: string): number | null {
   const m = LIVE_REF_ISSUE_RE.exec(branch);
-  return m ? Number(m[1]) : null;
+  return m ? Number(m[1] ?? m[2]) : null;
+}
+
+/** Minimal open-PR projection needed by attempt bootstrap. */
+export interface AttemptPullRequest {
+  number: number;
+  headRefName: string;
+  body?: string;
+}
+
+/** True when an open PR names the issue through an AFK head branch or a closing
+ * reference in its body. Both deterministic and legacy AFK heads are accepted
+ * so an issue requeued during migration adopts rather than duplicates work. */
+export function pullRequestMatchesAttempt(pr: AttemptPullRequest, issue: number): boolean {
+  if (issueFromRef(pr.headRefName) === issue) return true;
+  const escaped = String(issue).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#${escaped}\\b`, "i").test(pr.body ?? "");
+}
+
+/** Select the branch to adopt. Prefer the deterministic issue head (the
+ * structural collision backstop), then the newest matching legacy PR. */
+export function selectAttemptPullRequest(
+  prs: readonly AttemptPullRequest[],
+  issue: number,
+): AttemptPullRequest | null {
+  const matches = prs.filter((pr) => pullRequestMatchesAttempt(pr, issue));
+  if (matches.length === 0) return null;
+  return matches.reduce((best, current) => {
+    const bestDeterministic = issueFromRef(best.headRefName) === issue && best.headRefName.split("/").length === 2;
+    const currentDeterministic = issueFromRef(current.headRefName) === issue && current.headRefName.split("/").length === 2;
+    if (currentDeterministic !== bestDeterministic) return currentDeterministic ? current : best;
+    return current.number > best.number ? current : best;
+  });
 }
 
 /**
@@ -79,20 +111,34 @@ export function isExplicitRestartRequested(humanGuidance: string): boolean {
  * Build the content for the `<resume-from-branch>` handoff section.
  * Gate-green variant: agent verifies + gates, no re-implementation.
  * Non-gate-green variant: agent continues from where the branch left off.
+ *
+ * Both variants open with a MANDATORY base sync (issue #2481): an adopted
+ * branch carries every prior attempt's commits on an ever-staler base, and
+ * deferring the sync to landing turns small drift into a massive sequential
+ * rebase. Resolving conflicts now — while the agent is present and the drift
+ * is at its smallest — is the cheap moment.
  */
-export function buildResumeInstruction(branch: string, isGateGreen: boolean): string {
+export function buildResumeInstruction(branch: string, isGateGreen: boolean, base = "main"): string {
+  const syncFirst = [
+    `FIRST, before anything else, sync the branch with the current base:`,
+    `run \`git fetch origin ${base}\` then \`git rebase origin/${base}\`.`,
+    "If the rebase conflicts, resolve every conflict NOW (honor both sides),",
+    "`git rebase --continue`, and push the synced branch with",
+    "`git push --force-with-lease`. Only then proceed.",
+  ].join(" ");
   if (isGateGreen) {
     return [
       `Branch \`${branch}\` was pushed in a prior attempt and its gate already passed.`,
-      "Checkout this branch in your worktree, verify the base is still fresh,",
-      "re-run the merge gate, and emit `<promise>DONE</promise>` when it passes.",
+      `Checkout this branch in your worktree. ${syncFirst}`,
+      "Re-run the merge gate, and emit `<promise>DONE</promise>` when it passes.",
       "Do NOT re-implement — the work is already there.",
     ].join(" ");
   }
   return [
     `Branch \`${branch}\` was pushed in a prior attempt.`,
-    "Checkout this branch in your worktree and continue from where it left off —",
-    "do NOT start over. Run `git log --oneline origin/main..HEAD` to see what was",
+    `Checkout this branch in your worktree. ${syncFirst}`,
+    "Continue from where it left off —",
+    `do NOT start over. Run \`git log --oneline origin/${base}..HEAD\` to see what was`,
     "already committed, then satisfy the merge gate and emit `<promise>DONE</promise>`.",
   ].join(" ");
 }

@@ -42,6 +42,8 @@ export interface Trace {
   closed: number[];
   swept: number[];
   pushedAttempt: string[][];
+  /** Git/forge calls made by Landing; empty means the attempt never touched integration. */
+  mergeCalls: string[][];
   deletedRemote: string[][];
   postedEnvelopes: Array<{ issue: number; status: string }>;
   envelopeBodies: string[];
@@ -177,6 +179,9 @@ export interface HarnessOptions {
   fallbackRunner?: boolean;
   /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
   fetchedBases?: string[];
+  /** When true, resolveFreshBase returns ok:false (simulating a boot-time
+   * mirror refresh failure — the regression path for #2436). */
+  freshBaseFail?: boolean;
   /** Restart-informed context block returned by the attempt ledger lookup. */
   priorAttemptContext?: string;
   /** The configured Trunk (`plugins.dev.trunk`, ADR 0083) injected into base resolution. */
@@ -204,6 +209,8 @@ export interface HarnessOptions {
   recoveryEnv?: Record<string, string>;
   /** /go post-DONE machine-gate retry cap injected by run.ts. */
   goVerifyRetries?: number;
+  /** /afk post-DONE gate-correction convergence budget (#2285). */
+  stallConvergenceBudget?: number;
   /** When set, register the ADR 0017 `recordAttempt` port. "throw" makes it
    * reject (proving a memory failure never fails the close); "ok" records the
    * payload; undefined omits the port entirely (older-caller safety). */
@@ -244,7 +251,7 @@ export interface HarnessOptions {
   adversarialExtractError?: string;
   /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
    * `gh pr view` verdict the unlocked landing polls before admin-merging. */
-  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict";
+  ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict" | "skipped";
   /** Exit code for the final `gh pr merge` command. Defaults to 0. */
   prMergeCode?: number;
   /** Spec cascade rebase (#1007): remote afk/* branches returned by
@@ -269,6 +276,7 @@ export function harness(opts: HarnessOptions = {}): {
     closed: [],
     swept: [],
     pushedAttempt: [],
+    mergeCalls: [],
     deletedRemote: [],
     postedEnvelopes: [],
     envelopeBodies: [],
@@ -400,12 +408,24 @@ export function harness(opts: HarnessOptions = {}): {
       async deleteLocalBranch() {},
       async resolveFreshBase({ base, remote }) {
         if (opts.fetchedBases) opts.fetchedBases.push(base);
+        if (opts.freshBaseFail) {
+          return {
+            ok: false,
+            base,
+            baseRef: `${remote}/${base}`,
+            sha: "",
+            source: "mirror" as const,
+            remoteReachable: false,
+            reason: "base-stale" as const,
+            message: `could not refresh fleet trunk mirror red-trunk from ${remote}/${base}`,
+          };
+        }
         return {
           ok: true,
           base,
           baseRef: "red-trunk",
           sha: `${remote}/${base}-tip`,
-          source: "mirror",
+          source: "mirror" as const,
           remoteReachable: true,
         };
       },
@@ -418,14 +438,15 @@ export function harness(opts: HarnessOptions = {}): {
       },
     },
     mergeExec: async (argv) => {
+      trace.mergeCalls.push([...argv]);
       const j = argv.join(" ");
-      if (j === "git -C /repo fetch origin afk/wAAAA/9-fix-the-thing --quiet") {
+      if (/^git -C \/repo fetch origin afk\/.*9-.* --quiet$/.test(j)) {
         return { code: 0, stdout: "", stderr: "" };
       }
-      if (j === "git -C /repo rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
+      if (/^git -C \/repo rev-parse --verify --quiet origin\/afk\/.*9-/.test(j)) {
         return { code: 0, stdout: `${DEFAULT_BRANCH_TIP}\n`, stderr: "" };
       }
-      if (j === "git -C /wt rev-parse --verify --quiet origin/afk/wAAAA/9-fix-the-thing") {
+      if (/^git -C \/wt rev-parse --verify --quiet origin\/afk\/.*9-/.test(j)) {
         return { code: 0, stdout: `${DEFAULT_BRANCH_TIP}\n`, stderr: "" };
       }
       if (j.includes("merge-base --is-ancestor origin/")) {
@@ -462,16 +483,23 @@ export function harness(opts: HarnessOptions = {}): {
       if (j.includes("rev-list") && j.includes("--count")) {
         return { code: 0, stdout: "3\n", stderr: "" };
       }
+      if (j.includes("rev-parse origin/main")) {
+        return { code: 0, stdout: "0r1g1nsha\n", stderr: "" };
+      }
+      if (j.includes("api repos/o/r/branches/main/protection/required_status_checks/contexts")) {
+        return { code: 0, stdout: JSON.stringify(["ci"]), stderr: "" };
+      }
       if (j.includes("pr view") && j.includes("--json mergeCommit")) {
         return { code: 0, stdout: "forge-merge-sha\n", stderr: "" };
       }
       // #812 CI-aware poll: drive the mergeStateStatus + rollup per opts.ciAware.
       if (j.includes("pr view")) {
-        const map: Record<string, { mergeStateStatus: string; statusCheckRollup: unknown[] }> = {
-          merge: { mergeStateStatus: "CLEAN", statusCheckRollup: [] },
-          "ci-failed": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ state: "FAILURE" }] },
-          "ci-pending": { mergeStateStatus: "BLOCKED", statusCheckRollup: [{ status: "IN_PROGRESS" }] },
-          conflict: { mergeStateStatus: "DIRTY", statusCheckRollup: [] },
+        const map: Record<string, { mergeStateStatus: string; mergeable: string; baseRefOid: string; statusCheckRollup: unknown[] }> = {
+          merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] },
+          "ci-failed": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", state: "FAILURE" }] },
+          "ci-pending": { mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", status: "IN_PROGRESS" }] },
+          conflict: { mergeStateStatus: "DIRTY", mergeable: "CONFLICTING", baseRefOid: "0r1g1nsha", statusCheckRollup: [] },
+          skipped: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SKIPPED" }] },
         };
         return { code: 0, stdout: JSON.stringify(map[opts.ciAware ?? "merge"]), stderr: "" };
       }
@@ -559,6 +587,7 @@ export function harness(opts: HarnessOptions = {}): {
         }
       : undefined,
     goVerifyRetries: opts.goVerifyRetries,
+    stallConvergenceBudget: opts.stallConvergenceBudget,
     sandboxMode: opts.sandboxMode ?? "none",
     sandboxAvailable: async (mode) => (opts.availableSandboxes ?? ["docker", "podman"]).includes(mode),
     sandboxImage: opts.sandboxImage,

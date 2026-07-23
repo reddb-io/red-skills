@@ -76,7 +76,9 @@ export interface SupervisorFs {
   /**
    * Red-castle evaluator verdict for the slot's current attempt (ADR 0083 §3).
    * The `laneIdleMs` parameter sets the idle threshold so the supervisor can
-   * use its configured stall window rather than the display threshold.
+   * use its configured stall window rather than the display threshold, and
+   * `issueWallClockMaxMs` carries the activity-independent per-issue ceiling
+   * (#2286) so an attempt that never converges cannot hold a slot forever.
    * Returns null when no iter dir is found (worker between iterations or died
    * pre-claim). Replaces the old `agentLaneMtime` firehose-mtime check.
    */
@@ -84,6 +86,7 @@ export interface SupervisorFs {
     slot: number,
     laneIdleMs: number,
     laneHardIdleMs?: number,
+    issueWallClockMaxMs?: number,
   ): LivenessVerdict | null;
   /** Resolve the slot's current iteration dir + the state it carries, or null
    * when the worker is between iterations / died pre-claim. Mirrors
@@ -154,6 +157,9 @@ export interface SupervisorGh {
     ghOk: boolean;
     stillRunning: boolean;
     envelopePosted: boolean;
+    /** The issue's current labels, when the impl fetched them — enables the
+     * death-sweep's atomic transition planning (#2526). */
+    labels?: string[];
   }>;
 }
 
@@ -258,6 +264,7 @@ export interface FleetHeartbeatEmitResult {
 
 export type SupervisorEventKind =
   | "supervisor.boot-sweep"
+  | "supervisor.breaker"
   | "supervisor.tick"
   | "supervisor.dead-slot-reconcile"
   | "supervisor.wake"
@@ -327,6 +334,29 @@ export interface SupervisorDeps {
    * built-in cap) when absent, so tests can omit it.
    */
   recoveryEnv?: RecoveryEnv;
+  /**
+   * Optional ADR 0122 heal ledger (castle engine store). When present, the
+   * death-sweep consults it before re-queueing a dead worker's issue: the 3rd
+   * heal of the same issue in the window quarantines instead of retrying, so
+   * an issue that keeps killing workers surfaces as a signal (#2526).
+   */
+  healLedger?: import("@reddb-io/red-castle/engine").HealLedgerStore;
+  /**
+   * Optional crashloop circuit breaker (ADR 0122 amendment, #2527). Consulted
+   * on every boot-sweep halt: N consecutive identical boot-death signatures
+   * trip the breaker — the supervisor stops feeding the respawn loop, the
+   * resident healer is invoked immediately for the implicated state, and a
+   * loud alert record is emitted. A different signature or one successful boot
+   * resets the run.
+   */
+  bootBreaker?: {
+    store: import("./boot-breaker.js").BootBreakerStore;
+    /** Consecutive identical signatures that trip; default BOOT_BREAKER_DEFAULT_THRESHOLD. */
+    threshold?: number;
+    /** Invoke the resident healer once for the implicated state. Returns a
+     * short outcome description for the alert record. Best-effort. */
+    heal?(err: import("../boot.js").BootHaltError): Promise<string>;
+  };
   /**
    * Optional liveness sink: one line per supervise tick (the CLI appends it to
    * supervisor.log.toonl). Makes a healthy fleet's heartbeat — and a wedged one's

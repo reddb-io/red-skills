@@ -13,7 +13,122 @@ import {
   upsertCurrentBlocker,
 } from "./process-issue.test-helpers.js";
 import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./process-issue.test-helpers.js";
+import { vi } from "vitest";
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
+  describe("landing.wait slot release (#2427)", () => {
+    type DeferredTail = {
+      prNumber: number;
+      waitForCi: boolean;
+      run(): Promise<unknown>;
+    };
+
+    function recordMergeCalls(deps: ProcessIssueDeps): string[] {
+      const calls: string[] = [];
+      const inner = deps.mergeExec;
+      deps.mergeExec = async (argv) => {
+        calls.push(argv.join(" "));
+        return inner(argv);
+      };
+      return calls;
+    }
+
+    it("defaults to merge and preserves the synchronous merge → close → release flow", async () => {
+      const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false });
+      const calls = recordMergeCalls(deps);
+      let observed = false;
+      Object.assign(deps, {
+        landingTailObserver: async () => {
+          observed = true;
+          throw new Error("default merge mode must not hand off");
+        },
+      });
+
+      const result = await processIssue(deps, input);
+
+      expect(result).toMatchObject({ outcome: "done", swept: true });
+      expect(observed).toBe(false);
+      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(true);
+      expect(trace.closed).toEqual([9]);
+      expect(trace.released).toEqual([9]);
+    });
+
+    it("landing.wait=ci releases after green CI and lets the observer merge and close", async () => {
+      const { deps, input, trace } = harness({
+        outcome: "done",
+        feedbackOk: true,
+        locked: false,
+        ciAware: "merge",
+      });
+      const calls = recordMergeCalls(deps);
+      let tail!: DeferredTail;
+      let releaseTail!: () => void;
+      const tailGate = new Promise<void>((resolve) => {
+        releaseTail = resolve;
+      });
+      let completion!: Promise<unknown>;
+      Object.assign(deps, {
+        landingWait: "ci",
+        landingTailObserver: (task: DeferredTail) => {
+          tail = task;
+          completion = tailGate.then(() => task.run());
+          return completion;
+        },
+      });
+
+      const result = await processIssue(deps, input);
+
+      expect(result).toMatchObject({ outcome: "done", swept: false });
+      expect(tail).toMatchObject({ prNumber: 42, waitForCi: false });
+      expect(calls.some((call) => call.includes("--json mergeStateStatus"))).toBe(true);
+      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(false);
+      expect(trace.closed).toEqual([]);
+      expect(trace.released).toEqual([9]);
+
+      releaseTail();
+      await completion;
+      await vi.waitFor(() => expect(trace.closed).toEqual([9]));
+      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(true);
+    });
+
+    it("landing.wait=none releases as soon as the PR resolves and the observer waits, merges, and closes", async () => {
+      const { deps, input, trace } = harness({
+        outcome: "done",
+        feedbackOk: true,
+        locked: false,
+        ciAware: "merge",
+      });
+      const calls = recordMergeCalls(deps);
+      let tail!: DeferredTail;
+      let releaseTail!: () => void;
+      const tailGate = new Promise<void>((resolve) => {
+        releaseTail = resolve;
+      });
+      let completion!: Promise<unknown>;
+      Object.assign(deps, {
+        landingWait: "none",
+        landingTailObserver: (task: DeferredTail) => {
+          tail = task;
+          completion = tailGate.then(() => task.run());
+          return completion;
+        },
+      });
+
+      const result = await processIssue(deps, input);
+
+      expect(result).toMatchObject({ outcome: "done", swept: false });
+      expect(tail).toMatchObject({ prNumber: 42, waitForCi: true });
+      expect(calls.some((call) => call.includes("--json mergeStateStatus"))).toBe(false);
+      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(false);
+      expect(trace.closed).toEqual([]);
+      expect(trace.released).toEqual([9]);
+
+      releaseTail();
+      await completion;
+      await vi.waitFor(() => expect(trace.closed).toEqual([9]));
+      expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(true);
+    });
+  });
+
   it("pre-cleans a merge-conflict retry branch before sandcastle can reuse a stale worktree", async () => {
     const fetchedBases: string[] = [];
     const priorAttemptContext = [
@@ -36,7 +151,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(fetchedBases).toEqual(["main"]);
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
-        branch: "afk/wAAAA/9-fix-the-thing",
+        branch: "afk/9-fix-the-thing",
         baseRef: "red-trunk",
         force: true,
       },
@@ -65,7 +180,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(result.outcome).toBe("done");
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
-        branch: "afk/wAAAA/9-fix-the-thing",
+        branch: "afk/9-fix-the-thing",
         baseRef: "red-trunk",
         force: false,
       },
@@ -79,7 +194,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
 
     expect(result.outcome).toBe("done");
     expect(result.issue).toBe(9);
-    expect(result.branch).toBe("afk/wAAAA/9-fix-the-thing");
+    expect(result.branch).toBe("afk/9-fix-the-thing");
     expect(result.base).toBe("main");
     expect(result.locked).toBe(false);
     expect(result.mergeSha).toBe("forge-merge-sha");
@@ -87,7 +202,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
 
     // sandcastle ran once, on the worker branch, with the handoff as promptFile.
     expect(trace.runAgentCalls.length).toBe(1);
-    expect(trace.runAgentCalls[0]?.branch).toBe("afk/wAAAA/9-fix-the-thing");
+    expect(trace.runAgentCalls[0]?.branch).toBe("afk/9-fix-the-thing");
     expect(trace.runAgentCalls[0]?.handoffPath).toBe("/tmp/afk/workers/wAAAA/9-a1/handoff.md");
     expect(trace.runAgentCalls[0]?.runner).toBe("claude");
     expect(trace.runAgentCalls[0]?.model).toBe("claude-opus-4-8");
@@ -185,6 +300,8 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
     // exactly ONE agent run — the completed work is never re-run.
     expect(trace.runAgentCalls.length).toBe(1);
+    expect(trace.sidecarWrites.at(-1)?.lines.some((line) => line.includes("post-merge:satisfied-by-ci"))).toBe(true);
+    expect(trace.workerEvents.some((event) => event.kind === "worker.post_merge_validation" && event.payload?.path === "satisfied-by-ci")).toBe(true);
   });
 
   it("a FAILED required check → ci-failed, blocked:ci (NOT merge-conflict), PR preserved, agent not re-run", async () => {
@@ -638,8 +755,38 @@ describe("processIssue — BLOCKED", () => {
 
 
 describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
-  it("EMPTY branch → on_attempt_error → ready-for-human, no post_attempt", async () => {
-    // No work on the branch: a real crash, kept as today's terminal no-sentinel.
+  it("surfaces a sandbox setup failure from afk.log when runner stdout is empty (#2536)", async () => {
+    const { deps, input, trace } = harness({ outcome: "no-sentinel", changedFiles: [] });
+    Object.assign(deps.fs, {
+      readText: async () =>
+        [
+          "[heartbeat] iteration started for #9",
+          "Setting up sandbox",
+          'Command failed in sandbox (git config --global user.name "Worker"): Command failed (exit 255)',
+          "error: could not lock config file [REDACTED_HOME]/.gitconfig: File exists",
+        ].join("\n"),
+    });
+    deps.runAgent = async (runInput) => ({
+      outcome: "no-sentinel",
+      branch: runInput.branch,
+      commits: [],
+      stdout: "",
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("no-sentinel");
+    expect(parseCurrentBlocker(trace.bodyEdits.at(-1)!.body)).toMatchObject({
+      kind: "runner",
+      summary: expect.stringContaining("Command failed in sandbox"),
+    });
+    expect(trace.envelopeBodies.at(-1)).toContain("Command failed in sandbox");
+  });
+
+  it("worker crash before Landing never snapshots or integrates the primary checkout", async () => {
+    // No work on the branch: a real crash while the operator may have unrelated
+    // dirty primary WIP. The attempt must terminate before every Landing git/
+    // forge call; in particular it cannot stage or commit a primary snapshot.
     const { deps, input, trace } = harness({ outcome: "no-sentinel", changedFiles: [] });
     const result = await processIssue(deps, input);
 
@@ -657,6 +804,8 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
       "current.last_exit_code": 1,
       "current.failure_kind": "crash",
     });
+    expect(trace.mergeCalls).toEqual([]);
+    expect(trace.pushedAttempt).toEqual([]);
     // on_attempt_error fires; post_attempt does NOT (ADR 0028).
     expect(result.hooksFired).toEqual(["pre_worktree", "pre_attempt", "on_attempt_error"]);
     // #568: the no-sentinel terminal also releases the per-issue claim.
@@ -801,6 +950,25 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     const { deps, input, trace } = harness({ outcome: "done" });
     await processIssue(deps, input);
     expect(trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<merge-gate>");
+  });
+
+  it("injects repository enrichment and silently keeps the base handoff when discovery fails (#2402)", async () => {
+    const enriched = harness({ outcome: "done" });
+    enriched.deps.lookups.handoffEnrichment = async (metadata) => {
+      expect(metadata).toMatchObject({ issue: 9, labels: ["ready-for-agent"], title: "Fix the thing" });
+      return "context:\n  name: Dev";
+    };
+    await processIssue(enriched.deps, enriched.input);
+    expect(enriched.trace.runAgentCalls[0]?.handoffContent ?? "").toContain(
+      "<handoff-enrichment>\ncontext:\n  name: Dev\n</handoff-enrichment>",
+    );
+
+    const degraded = harness({ outcome: "done" });
+    degraded.deps.lookups.handoffEnrichment = async () => {
+      throw new Error("git log unavailable");
+    };
+    await expect(processIssue(degraded.deps, degraded.input)).resolves.toMatchObject({ outcome: "done" });
+    expect(degraded.trace.runAgentCalls[0]?.handoffContent ?? "").not.toContain("<handoff-enrichment>");
   });
 
   it("alternates output-shaping steering by issue and stamps the measurement arm (#1638)", async () => {
@@ -1318,5 +1486,28 @@ describe("processIssue — active Current blocker preflight", () => {
     expect(labelTrace(trace)[0]).toBe("-ready-for-agent+blocked:stalled|+running");
     expect(trace.comments.map((c) => c.body).some((body) => body.includes("preflight stopped"))).toBe(false);
     expect(trace.ensuredLabels).not.toContain("blocked:spec");
+  });
+});
+
+describe("processIssue — trunk-mirror boot failure (#2436)", () => {
+  it("parks as runner-transient (not base-stale) when resolveFreshBase fails", async () => {
+    // Regression: attempts on issues with prose like "branch: when the PR lands"
+    // in their body caused parseBranchPin to extract "when" as the branch pin,
+    // which made resolveFreshBase({ base: "when" }) fail.  The issue was then
+    // parked as base-stale (non-recoverable → human), misrepresenting an
+    // unstarted issue as finished work awaiting merge.  The fix classifies this
+    // as runner-transient so the fleet auto-retries up to the bounded cap.
+    const { deps, input, trace } = harness({ freshBaseFail: true });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("runner-transient");
+    // No agent work ran — no runAgent calls.
+    expect(trace.runAgentCalls).toEqual([]);
+    // No fresh branch was prepared — the branch was never pushed.
+    expect(trace.freshWorkerBranchCalls).toEqual([]);
+    // Park comment must not contain a live-branch link (branch was never pushed).
+    const envelope = trace.envelopeBodies[0] ?? "";
+    expect(envelope).not.toMatch(/live branch:/);
   });
 });

@@ -5,17 +5,16 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 ## Repository Layout Invariants
 
 - The **primary checkout** stays on `main` at all times. Never `git checkout`, `git switch`, or `git branch -m` inside it.
-- All work happens in **worktrees** under `.red/tmp/workers/{id}/{N}-a{n}/worktree/` (inside the primary checkout but gitignored) on a branch named `afk/{id}/{N}-{slug}`.
-- The worktree branch is mirrored to `origin/afk/{id}/{N}-{slug}` for remote backup. The orchestrator pushes the worktree branch via the PR's admin-merge (unlocked) or direct merge + push of the locked branch (locked); it does not push `main` directly.
+- All work happens in **worktrees** under `.red/tmp/workers/{id}/{N}-a{n}/worktree/` (inside the primary checkout but gitignored) on the deterministic issue branch `afk/{N}-{slug}`.
+- The worktree branch is mirrored to `origin/afk/{N}-{slug}` for remote backup. One issue has one head branch across workers, so a ghost requeue collides structurally instead of creating a silent parallel attempt. The orchestrator pushes the worktree branch via the PR's admin-merge (unlocked) or direct merge + push of the locked branch (locked); it does not push `main` directly.
 
 ## Git Operations
 
 **Allowed in primary checkout:**
-- `git fetch`, `git pull --ff-only`, `git merge --no-ff <local-branch>`, `git push` (SSH only).
-- `git add`, `git commit` (for the pre-merge snapshot when primary is dirty).
+- `git fetch`.
 - `git worktree add|remove|list`.
-- `git rebase` (integration step only: `git rebase origin/{pinned}` to integrate the fetched base before merging, per the Merge section below).
-- `git push --force-with-lease` (mirroring only: `git push origin -u HEAD:refs/heads/afk/{id}/{N}-{slug} --force-with-lease` to push the worktree branch onto the remote-tracked `afk/*` namespace, and per-worktree post-commit hook `git push origin HEAD --force-with-lease`, both per the Per-Issue Loop Worktree section below).
+- `git push --force-with-lease` (mirroring only: `git push origin -u HEAD:refs/heads/afk/{N}-{slug} --force-with-lease` to push the worktree branch onto the remote-tracked `afk/*` namespace, and per-worktree post-commit hook `git push origin HEAD --force-with-lease`, both per the Per-Issue Loop Worktree section below).
+- A guarded post-Landing `git merge --ff-only` may advance a clean, on-trunk primary whose local tip is a strict ancestor of the fetched remote tip. A dirty or diverged primary is never promoted.
 - Read-only: `git status`, `git log`, `git diff`, `git show`, `git branch`.
 
 **Allowed in worktree:**
@@ -39,27 +38,33 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 
 ## Dirty Primary Checkout
 
-If `git -C primary status --porcelain` is non-empty before a merge:
+AFK never stages or commits the primary checkout. A dirty primary remains
+untouched through boot, claim, the worker attempt, feedback and backpressure
+gates, and Landing. In particular, AFK never creates a pre-merge snapshot
+commit on boot or claim. A worker crash or failed gate therefore leaves the
+operator's index, working tree, and commit history unchanged.
 
-1. `git -C primary add -A`
-2. `git -C primary commit -m "chore(afk): pre-merge snapshot for #{N}"`
-3. Proceed with merge.
-
-Never `git stash`, `git restore`, or discard the dirty state.
+Landing does not need that snapshot: the unlocked path merges remotely through
+a PR, while the direct path fetches, integrates, merges, pushes, and rolls back
+inside an isolated landing worktree. The direct path captures its rollback
+anchor immediately before `merge --no-ff`; a rejected push resets only that
+disposable worktree. Never `git stash`, `git restore`, or discard dirty primary
+state.
 
 ## Merge Conflicts
 
 One self-resolve attempt: re-enter the inner agent with the conflict diff in the handoff file Notes. If the inner can't resolve cleanly:
 
-1. `git -C primary merge --abort`.
+1. Abort the merge in the isolated landing worktree.
 2. Comment the conflict diff on the issue.
 3. Re-label `ready-for-human`, remove `running`.
-4. Move to the next issue. **Do not** `git reset` or `git restore` to "clean up" — the merge abort is sufficient.
+4. Move to the next issue. The primary checkout was never the merge target and needs no cleanup.
 
 ## Worktree Lifecycle
 
 - Created from `origin/{pinned}` after `git fetch` (where `{pinned}` is the resolved base branch: lock > pin > main).
-- Branch name: `afk/{id}/{N}-{slug}` (literal `afk/` + worker ID + issue number + slug). Slug is the issue title lowercased, non-alphanumerics → `-`, truncated to 40 chars.
+- Before fresh work starts, list open PRs and adopt any whose body closes `#{N}` or whose head is the deterministic/legacy AFK branch for `#{N}`. Cross-link every matching PR on the issue. A fresh branch is allowed only when no open attempt exists (or after an explicit commented supersede + PR close).
+- Branch name: `afk/{N}-{slug}` (literal `afk/` + issue number + slug). Worker/runner provenance belongs in the PR body and handoff record, not the ref. Slug is the issue title lowercased, non-alphanumerics → `-`, truncated to 40 chars.
 - Removed only after successful merge **and** push. Never remove a worktree with uncommitted changes — that loses work.
 - If cleanup fails (e.g. worktree busy), leave it in place and print the path for manual recovery.
 

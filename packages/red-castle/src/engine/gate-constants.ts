@@ -13,30 +13,6 @@ export const MECHANICAL_KINDS = [
 ] as const;
 export type MechanicalKind = (typeof MECHANICAL_KINDS)[number];
 
-export const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
-  /^\.github\/workflows\//,
-  /^\.github\/actions\//,
-  /(?:^|\/)\.git\/hooks\//,
-  /^\.husky\//,
-  /^\.githooks\//,
-  /^\.red\/tmp\//,
-  /^\.red\//,
-  /^plugins\/[^/]+\/hooks\//,
-  /^plugins\/[^/]+\/scripts\//,
-];
-
-export const LIFECYCLE_SCRIPT_NAMES = [
-  "preinstall",
-  "install",
-  "postinstall",
-  "prepare",
-  "prepublish",
-  "prepublishOnly",
-  "prepack",
-  "pack",
-  "postpack",
-] as const;
-
 export const ROOT_TRIGGER_FILES = [
   "pnpm-lock.yaml",
   "pnpm-workspace.yaml",

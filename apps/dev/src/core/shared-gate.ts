@@ -115,140 +115,13 @@ export interface SharedGateResult {
   intentEscalated: number;
 }
 
-// ---------- gate runner ----------
 
-/**
- * Dependencies for the shared gate — all effects injected for testability.
- */
-export interface SharedGateDeps {
-  /** Apply a mechanical finding in-tree and commit it. */
-  applyMechanical: MechanicalApply;
-  /** Escalate one intent finding to the context-appropriate sink. */
-  escalateIntent: EscalationSink;
-}
-
-/**
- * Run the shared validation gate over `findings`.
- *
- * For each finding:
- *   - **Mechanical** → `deps.applyMechanical(finding)` (auto-apply + commit).
- *   - **Intent** → `deps.escalateIntent(finding)` (context-aware sink).
- *
- * The gate is GREEN (`passed: true`) when every intent finding resolves with
- * `"approved"`. A single `"parked"` or `"skipped"` (when the caller treats skip
- * as blocking) outcome makes the gate RED. The convention followed here is:
- *   - `"approved"` → non-blocking (maintainer accepted the change)
- *   - `"parked"`   → blocking (headless sink requested human review)
- *   - `"skipped"`  → blocking (interactive sink: skip = do not land)
- *
- * PURE SEQUENCING — no decision logic lives here beyond the classification +
- * routing; all judgment (interactive prompt wording, park comment text) stays in
- * the injected sinks.
- */
-export async function runSharedGate(
-  findings: readonly GateFinding[],
-  deps: SharedGateDeps,
-): Promise<SharedGateResult> {
-  const resolutions: FindingResolution[] = [];
-  let mechanicalApplied = 0;
-  let intentEscalated = 0;
-  let passed = true;
-
-  for (const finding of findings) {
-    const classification = classifyFinding(finding);
-
-    if (classification === "mechanical") {
-      await deps.applyMechanical(finding);
-      resolutions.push({ finding, classification, applied: true });
-      mechanicalApplied++;
-    } else {
-      const escalationOutcome = await deps.escalateIntent(finding);
-      resolutions.push({ finding, classification, escalationOutcome });
-      intentEscalated++;
-      if (escalationOutcome !== "approved") {
-        passed = false;
-      }
-    }
-  }
-
-  return { passed, resolutions, mechanicalApplied, intentEscalated };
-}
-
-// ---------- sensitive-path guard (issue #1102) ----------
-
-/**
- * The CLOSED, AUDITABLE set of sensitive path patterns. A diff touching ANY
- * path that matches one of these patterns is an intent-class change that can
- * never auto-land — it pages ready-for-human regardless of test/CI status.
- *
- * Issue #1102 enumerates exactly these patterns. To add a new one, amend this
- * list AND update the issue. The default is SAFE: anything not on this list
- * proceeds normally.
- */
 /**
  * The TOON JSON-IO guard allowlist path. Defined here (a typescript-free leaf
- * module) rather than in `toon-json-guard.ts` so runtime code — `process-issue`
- * consumes it for the diff-aware exemption — never imports the guard, which
- * pulls the full `typescript` compiler into the bundle (it is test-only).
+ * module) rather than in `toon-json-guard.ts` so runtime code never imports
+ * the guard, which pulls the full `typescript` compiler into the bundle.
  */
 export const ALLOWLIST_PATH = ".red/contracts/toon-json-file-io-allowlist.json";
-
-export const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
-  /^\.github\/workflows\//,     // CI workflow files
-  /^\.github\/actions\//,       // composite actions executed by CI workflows
-  /(?:^|\/)\.git\/hooks\//,    // git hooks directory
-  /^\.husky\//,                // Husky hooks
-  /^\.githooks\//,             // alternative git hooks directory
-  /^\.red\/tmp\//,              // RedSkills runtime worktree lane; lockstep with command-guard.sh
-  /^\.red\//,                  // .red/ trust/gate config and gate's own config
-  /^plugins\/[^/]+\/hooks\//,  // agent plugin hooks — execute on every agent action
-  /^plugins\/[^/]+\/scripts\//, // agent plugin launcher scripts invoked by hooks
-];
-
-/**
- * The CLOSED set of npm lifecycle script names. A diff that adds or alters any
- * of these keys inside a `package.json` file is treated as a sensitive change
- * because lifecycle scripts execute arbitrary code during `npm install`.
- */
-export const LIFECYCLE_SCRIPT_NAMES: readonly string[] = [
-  "preinstall",
-  "install",
-  "postinstall",
-  "prepare",
-  "prepublish",
-  "prepublishOnly",
-  "prepack",
-  "pack",
-  "postpack",
-];
-
-/** A single match produced by the sensitive-path guard. */
-export interface SensitivePathHit {
-  /** The changed file path (or description) that triggered the guard. */
-  path: string;
-  /** Human-readable reason why this path is sensitive. */
-  reason: string;
-}
-
-/**
- * Return true when `filePath` matches any entry in {@link SENSITIVE_PATH_PATTERNS}.
- * PURE predicate — no IO.
- */
-export function isSensitivePath(filePath: string): boolean {
-  return SENSITIVE_PATH_PATTERNS.some((p) => p.test(filePath));
-}
-
-/**
- * Return true when `diffText` contains any added line (`+` prefix) that sets a
- * key from {@link LIFECYCLE_SCRIPT_NAMES} inside a `package.json`. Checks only
- * lines starting with `+` (added/changed) to avoid false-positives on removed
- * scripts. PURE predicate — no IO.
- */
-export function hasLifecycleScriptInDiff(diffText: string): boolean {
-  const names = LIFECYCLE_SCRIPT_NAMES.join("|");
-  const re = new RegExp(`^\\+\\s*"(${names})"\\s*:`, "m");
-  return re.test(diffText);
-}
 
 /**
  * Trust-preserving exemption for the TOON JSON-IO guard allowlist
@@ -296,67 +169,15 @@ export function allowlistExternalWidened(oldContent: string, newContent: string)
   return false;
 }
 
-/**
- * Scan `changedFiles` (repo-relative paths from the branch diff) and
- * `packageJsonDiff` (unified diff of any `package.json` files in the branch)
- * for sensitive-path hits. Returns an empty array when the diff is clean.
- * PURE — no IO.
- *
- * Callers provide both inputs from a single `git diff` pass so this function
- * stays IO-free and fully unit-testable.
- */
-export function checkSensitivePaths(
-  changedFiles: string[],
-  packageJsonDiff: string,
-  allowlistExemption?: { path: string; safe: boolean },
-): SensitivePathHit[] {
-  const hits: SensitivePathHit[] = [];
-
-  for (const p of changedFiles) {
-    if (isSensitivePath(p)) {
-      // Diff-aware exemption: a shrink-only edit to the TOON guard allowlist (no
-      // `external` entry added or changed) is safe to auto-land, so a migration
-      // slice that only removes converted `migrate` entries does not park.
-      if (allowlistExemption && p === allowlistExemption.path && allowlistExemption.safe) continue;
-      hits.push({ path: p, reason: sensitivePathReason(p) });
-    }
-  }
-
-  if (packageJsonDiff && hasLifecycleScriptInDiff(packageJsonDiff)) {
-    const pkgPaths = changedFiles.filter((p) => /(?:^|\/)package\.json$/.test(p));
-    hits.push({
-      path: pkgPaths.length > 0 ? pkgPaths.join(", ") : "package.json",
-      reason: "lifecycle script added or altered in package.json",
-    });
-  }
-
-  return hits;
-}
-
-function sensitivePathReason(filePath: string): string {
-  if (/^\.github\/workflows\//.test(filePath)) return "CI workflow file";
-  if (/^\.github\/actions\//.test(filePath)) return "CI composite action";
-  if (/(?:^|\/)\.git\/hooks\//.test(filePath) || /^\.husky\//.test(filePath) || /^\.githooks\//.test(filePath))
-    return "git hook";
-  if (/^\.red\//.test(filePath)) return "trust/gate configuration";
-  if (/^plugins\/[^/]+\/hooks\//.test(filePath)) return "agent plugin hook";
-  if (/^plugins\/[^/]+\/scripts\//.test(filePath)) return "agent plugin launcher script";
-  return "sensitive path";
-}
-
 // ---------- ordered gate verdict (ADR 0119, issue #2245) ----------
 
 /**
  * The gate's stages, in CHEAP → EXPENSIVE order.
  *
- * `trust` is a handful of regexes over a diff the attempt already computed;
  * `feedback` is the package test/typecheck/lint suite; `backpressure` is the
- * operator's extra commands. Ordering them this way is the whole point: a diff
- * that touches a CI workflow or a lifecycle script can never auto-land, so
- * running the suite first burns minutes to reach a verdict the trust scan
- * already decided. Later stages do not run once an earlier one blocks.
+ * operator's extra commands. Later stages do not run once an earlier one blocks.
  */
-export const GATE_STAGE_ORDER = ["trust", "feedback", "backpressure"] as const;
+export const GATE_STAGE_ORDER = ["feedback", "backpressure"] as const;
 
 export type GateStage = (typeof GATE_STAGE_ORDER)[number];
 
@@ -367,8 +188,6 @@ export interface GateStageOutcome {
   ok: boolean;
   /** True when the stage was not wired or had nothing to run; never blocks. */
   skipped?: boolean;
-  /** The hits that blocked a failed `trust` stage. */
-  sensitivePaths?: readonly SensitivePathHit[];
 }
 
 /** ONE verdict for the whole gate: green, or the first stage that blocked it. */
@@ -377,8 +196,6 @@ export interface GateVerdict {
   ok: boolean;
   /** The earliest blocking stage in {@link GATE_STAGE_ORDER}. */
   failedStage?: GateStage;
-  /** Carried through when `failedStage` is `trust`. */
-  sensitivePaths?: readonly SensitivePathHit[];
 }
 
 /**
@@ -395,40 +212,8 @@ export function gateVerdict(outcomes: readonly GateStageOutcome[]): GateVerdict 
   );
   for (const outcome of ordered) {
     if (outcome.skipped === true || outcome.ok) continue;
-    return {
-      ok: false,
-      failedStage: outcome.stage,
-      ...(outcome.sensitivePaths && outcome.sensitivePaths.length > 0
-        ? { sensitivePaths: outcome.sensitivePaths }
-        : {}),
-    };
+    return { ok: false, failedStage: outcome.stage };
   }
   return { ok: true };
 }
 
-// ---------- built-in sink factories ----------
-
-/**
- * Build the headless escalation sink. Parks on any intent finding: logs the
- * finding to `parkIntent` (caller handles label/comment write) and returns
- * `"parked"` — always blocking, always requiring human review.
- */
-export function makeHeadlessSink(parkIntent: (finding: GateFinding) => Promise<void>): EscalationSink {
-  return async (finding) => {
-    await parkIntent(finding);
-    return "parked";
-  };
-}
-
-/**
- * Build the interactive escalation sink. Delegates the approve/skip decision to
- * the injected `promptUser` callback (the CLI prompt or test double). Returns
- * whatever the prompt returns — the sink itself carries no prompt wording.
- */
-export function makeInteractiveSink(
-  promptUser: (finding: GateFinding) => Promise<"approved" | "skipped">,
-): EscalationSink {
-  return async (finding) => {
-    return promptUser(finding);
-  };
-}

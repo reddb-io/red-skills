@@ -348,6 +348,51 @@ async function applyRetakePlan(
   return applied;
 }
 
+/** The retake flags the MCP op and the CLI command both feed to the value core. */
+export interface RetakeExecInput {
+  issue: number;
+  repo?: string;
+  prLimit?: number;
+  /** Execute the recommended apply plan (mutating). Defaults to false. */
+  apply?: boolean;
+}
+
+/** The structured retake report the JSON command branch prints and the MCP op returns. */
+export interface RetakeResult extends RetakeFacts {
+  recommendation: ReturnType<typeof recommendRetake>;
+  applyPlan: RetakeApplyPlan | undefined;
+  appliedOperations: string[] | undefined;
+}
+
+/**
+ * Value-returning retake core: gather the issue/PR/branch/worktree/worker facts,
+ * compute the recommended next action, and (when `apply`) execute the apply plan.
+ * Returns the same object the CLI `--json` branch stringifies; the MCP `retake` op
+ * returns it verbatim (TOON-encoded at the transport boundary). No stdout.
+ */
+export async function executeRetake(
+  input: RetakeExecInput,
+  opts: { cwd?: string; exec?: ExecFn } = {},
+): Promise<RetakeResult> {
+  const cwd = opts.cwd ?? process.cwd();
+  const exec = opts.exec ?? execTool;
+  const flags: RetakeFlags = {
+    issue: input.issue,
+    apply: input.apply ?? false,
+    json: true,
+    repo: input.repo,
+    prLimit: input.prLimit ?? 200,
+  };
+  const facts = await collectRetakeFacts(exec, cwd, flags);
+  const recommendation = recommendRetake(facts);
+  const applyPlan = flags.apply ? planRetakeApply(facts) : undefined;
+  const appliedOperations =
+    flags.apply && applyPlan !== undefined
+      ? await applyRetakePlan(exec, cwd, applyPlan)
+      : undefined;
+  return { ...facts, recommendation, applyPlan, appliedOperations };
+}
+
 export async function retakeCommand(
   args: string[],
   cwd = process.cwd(),
@@ -355,17 +400,14 @@ export async function retakeCommand(
   exec: ExecFn = execTool,
 ): Promise<number> {
   const flags = parseRetakeFlags(args);
-  const facts = await collectRetakeFacts(exec, cwd, flags);
-  const recommendation = recommendRetake(facts);
-  const applyPlan = flags.apply ? planRetakeApply(facts) : undefined;
-  const appliedOperations = flags.apply && flags.json && applyPlan !== undefined
-    ? await applyRetakePlan(exec, cwd, applyPlan)
-    : undefined;
   if (flags.json) {
-    stdout.write(`${JSON.stringify({ ...facts, recommendation, applyPlan, appliedOperations }, null, 2)}\n`);
-  } else {
-    stdout.write(`${renderRetakeReport(facts)}\n`);
+    const result = await executeRetake(flags, { cwd, exec });
+    stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
   }
-  if (applyPlan !== undefined && !flags.json) await applyRetakePlan(exec, cwd, applyPlan, stdout);
+  const facts = await collectRetakeFacts(exec, cwd, flags);
+  stdout.write(`${renderRetakeReport(facts)}\n`);
+  const applyPlan = flags.apply ? planRetakeApply(facts) : undefined;
+  if (applyPlan !== undefined) await applyRetakePlan(exec, cwd, applyPlan, stdout);
   return 0;
 }

@@ -54,6 +54,13 @@ describe("runBoot tmp janitor", () => {
       staleWorkers: ["/p/.red/tmp/workers/wOLD"],
       unknownTmpRoots: ["/p/.red/tmp/work-old"],
       protectedLiveWorkers: [],
+      protectedLiveFeedback: [],
+      removals: [
+        { path: "/p/.red/tmp/logs/old", livenessVerdict: "not-worker-workspace" },
+        { path: "/p/.red/tmp/scratch/old", livenessVerdict: "not-worker-workspace" },
+        { path: "/p/.red/tmp/workers/wOLD", livenessVerdict: "worker-dead" },
+        { path: "/p/.red/tmp/work-old", livenessVerdict: "not-worker-workspace" },
+      ],
     });
   });
 
@@ -87,6 +94,32 @@ describe("runBoot tmp janitor", () => {
 
     expect(fsCalls.removeDir).toEqual([]);
     expect(result.tmpJanitor?.protectedLiveWorkers).toEqual(["/p/.red/tmp/workers/wLIVE"]);
+  });
+
+  it("rechecks feedback ownership before removal and records the liveness verdict", async () => {
+    const { deps, fsCalls } = makeDeps();
+    deps.fs.feedbackWorktreeLiveness = async () => "owner-live";
+    const feedback = "/p/.red/tmp/worktrees/feedback/afk-wLIVE-2450-live-gate";
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: {
+            logs: { reclaim: [], spare: [] },
+            scratch: { reclaim: [], spare: [] },
+            diagnostics: { reclaim: [], spare: [] },
+            feedbackWorktrees: { reclaim: [{ path: feedback, mtimeS: 1 }], spare: [] },
+            legacySlotLogs: { reclaim: [], spare: [] },
+            unknownTmpRoots: [],
+          },
+          staleWorkers: { reclaim: [], spare: [] },
+        },
+      }),
+    );
+
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(result.tmpJanitor?.protectedLiveFeedback).toEqual([feedback]);
+    expect(result.tmpJanitor?.removals).toEqual([]);
   });
 });
 
@@ -125,6 +158,7 @@ describe("runBoot orphan cleanup applies each fate", () => {
     expect(r.orphanCleanup).toEqual({ removed: ["/d/running"], restored: [7], kept: [], legacyWiped: [], claimsReleased: [] });
     // edit + comment fire before the rm.
     expect(calls.filter((c) => c.startsWith("gh.") || c === "fs.removeDir:/d/running")).toEqual([
+      "gh.viewLabels:7",
       "gh.editLabels:7",
       "gh.comment:7",
       "fs.removeDir:/d/running",
@@ -599,6 +633,20 @@ describe("runBoot cross-host stale-claim sweep (#627)", () => {
     ]);
     expect(ghCalls.comment).toHaveLength(1);
     expect(ghCalls.comment[0].issue).toBe(55);
+  });
+
+  it("sheds running but refuses the queue when dangling req:* edges remain (#2528)", async () => {
+    // Poison shape: the issue still carries req:* edges without blocked:dependency.
+    // The transition API refuses the queue — re-admitting it would hand a worker
+    // an issue whose dependencies were never proven closed. Only `running` goes.
+    const claimedIssues = async () => [{ issue: 66, records: [claim(10, "host1:wYY", 99999)] }];
+    const viewLabels = async (_issue: number) => ["running", "req:2526"];
+    const { deps, ghCalls } = makeDeps({ claimedIssues, viewLabels });
+    const r = await runBoot(deps, options());
+    expect(r.staleClaimSweep).toEqual({ released: [66] });
+    expect(ghCalls.editLabels).toEqual([
+      { issue: 66, remove: ["running"], add: [] },
+    ]);
   });
 
   it("skips (no-op) when running is already gone at viewLabels time (race)", async () => {

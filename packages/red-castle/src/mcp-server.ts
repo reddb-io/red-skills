@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import { createClaimTools, type ClaimDependencies } from "./mcp/claim.js";
+import { createMergeTools, type MergeDependencies } from "./mcp/merge.js";
+import { createHitlTools, type HitlDependencies } from "./mcp/hitl.js";
 import { createFleetTools, type FleetDependencies } from "./mcp/fleet.js";
 import { createGateTools, type GateDependencies } from "./mcp/gate.js";
 import { createHygieneTools, type HygieneDependencies } from "./mcp/hygiene.js";
 import { createLandingTools, type LandingDependencies } from "./mcp/landing.js";
 import {
   createObservabilityTools,
+  type EventsSinceInput,
   type ObservabilityDependencies,
 } from "./mcp/observability.js";
 import {
@@ -13,7 +16,12 @@ import {
   type ReviewDependencies,
 } from "./mcp/review.js";
 import { createRunnerTools, type RunnerDependencies } from "./mcp/runner.js";
+import {
+  createStatuslineTools,
+  type StatuslineDependencies,
+} from "./mcp/statusline.js";
 import type { CastleMcpTool } from "./mcp/tool.js";
+import { applyDangerPosture, type DangerPosture } from "./mcp/posture.js";
 import { createWaitTools, type WaitDependencies } from "./mcp/wait.js";
 import { createWorkerTools, type WorkerDependencies } from "./mcp/worker.js";
 import {
@@ -22,13 +30,15 @@ import {
 } from "./mcp/worktree.js";
 
 export type { CastleMcpTool } from "./mcp/tool.js";
+export type { DangerPosture } from "./mcp/posture.js";
 export type {
   FleetSelectorInput,
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
+  FleetRegisterInput,
 } from "./mcp/fleet.js";
-export type { LogsInput } from "./mcp/observability.js";
+export type { EventsSinceInput, LogsInput, WorkerVitalsInput } from "./mcp/observability.js";
 export type {
   WorkerDispatchInput,
   WorkerStatusInput,
@@ -43,6 +53,8 @@ export type { RequeueToolInput, RetakeToolInput } from "./mcp/hygiene.js";
 export type { GateRunInput } from "./mcp/gate.js";
 export type { LandBranchInput, CascadeStatusInput } from "./mcp/landing.js";
 export type { ClaimIssueInput } from "./mcp/claim.js";
+export type { MergeArmInput } from "./mcp/merge.js";
+export type { HitlResolveInput, HitlDecision } from "./mcp/hitl.js";
 export type { WorktreeRemoveInput } from "./mcp/worktree.js";
 export type { WaitStartInput, WaitStatusInput } from "./mcp/wait.js";
 export type {
@@ -67,19 +79,28 @@ export interface CastleMcpDependencies
     GateDependencies,
     LandingDependencies,
     ClaimDependencies,
+    MergeDependencies,
+    HitlDependencies,
     WorktreeDependencies,
     WaitDependencies,
-    ReviewDependencies {}
+    ReviewDependencies,
+    StatuslineDependencies {}
 
 /**
- * Compose the published dev:afk tool surface from the per-domain registries.
+ * Compose the published castle tool surface from the per-domain registries.
  * The concatenation order IS the published order — `mcp-tool-surface.test.ts`
  * freezes it.
+ *
+ * `posture` controls how tools that declare a `dangerClass` are gated:
+ *   - `"allow"` (default) — unchanged behavior.
+ *   - `"confirm"` — dangerous tools require `confirmation: true` in the input.
+ *   - `"deny"` — dangerous tools always return a structured refusal.
  */
 export function createCastleMcpTools(
   deps: CastleMcpDependencies,
+  posture: DangerPosture = "allow",
 ): CastleMcpTool[] {
-  return [
+  const tools = [
     ...createFleetTools(deps),
     ...createObservabilityTools(deps),
     ...createWorkerTools(deps),
@@ -88,8 +109,12 @@ export function createCastleMcpTools(
     ...createGateTools(deps),
     ...createLandingTools(deps),
     ...createClaimTools(deps),
+    ...createMergeTools(deps),
+    ...createHitlTools(deps),
     ...createWorktreeTools(deps),
     ...createWaitTools(deps),
     ...createReviewTools(deps),
+    ...createStatuslineTools(deps),
   ];
+  return applyDangerPosture(tools, posture);
 }

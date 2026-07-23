@@ -15,6 +15,7 @@ export * from "./attempt-reader.js";
 export * from "./gate-constants.js";
 export * from "./gate-executor.js";
 export * from "./gate-sink.js";
+export * from "./heal-ledger.js";
 export * from "./lane-writers.js";
 export * from "./land-lock.js";
 export * from "./landing.js";
@@ -24,6 +25,9 @@ export * from "./validation-cone.js";
 export * from "./worker-drain.js";
 export * from "./config.js";
 export * from "./fleet-registry.js";
+export * from "./host-capability-profile.js";
+export * from "./issue-state-curator.js";
+export * from "./merge-driver.js";
 export * from "./contracts/index.js";
 export * from "./minimax-env.js";
 export * from "./opencode-env.js";
@@ -32,26 +36,40 @@ export * from "./runner-detection.js";
 export * from "./runner-spawn.js";
 export * from "./runner-spec.js";
 export * from "./runner-types.js";
+export * from "./singleton-event-lane.js";
+export * from "./singleton-lease.js";
 export {
+  CLAIM_MARKER_VERSION,
+  ClaimVerificationError,
+  acquireClaim,
   acquireIssueLease,
   createFsIssueLeaseStore,
-  parseTrackerClaimRecords,
-  reconcileTrackerClaims,
-  renderTrackerClaimComment,
+  parseClaimRecords,
+  reconcileClaim,
+  renderClaimComment,
+  renderRecoveryAudit,
   retireIssueLease,
-  TRACKER_CLAIM_MARKER_VERSION,
 } from "./tracker/claim.js";
 export type {
+  AcquireClaimOptions,
+  ClaimDecision,
+  ClaimGh,
+  ClaimKind,
+  ClaimReconcileOptions,
+  ClaimRecord,
+  ClaimSelf,
+  ClaimVerdict,
+  ConcedeReason,
   LocalIssueLeaseStore,
   LocalLeaseDecision,
+  RawClaimComment,
   RetireIssueLeaseOptions,
-  TrackerClaimComment,
   TrackerClaimIdentity,
-  TrackerClaimKind,
-  TrackerClaimRecord,
   TrackerClaimStore,
-  TrackerClaimVerdict,
   AcquireIssueLeaseOptions,
 } from "./tracker/claim.js";
+export { CLAIM_WIRE_FIXTURES } from "./tracker/claim-wire-fixture.js";
+export type { ClaimWireFixture } from "./tracker/claim-wire-fixture.js";
+export * from "./tracker/claim-staleness.js";
 export * from "./tracker/port.js";
 export * from "./tracker/github/adapter.js";

@@ -15,6 +15,7 @@ describe("buildWorkerEnv / passthroughKeys (gap 4: passthrough denylist)", () =>
       PATH: "/usr/bin",
       RED_AFK_SKIP_PERF: "1",
       RED_AFK_SKIP_COMPETITIVE_BASELINE: "1",
+      RED_AFK_TRUNK: "develop",
       RED_AFK_TARGET: "4",
       RED_AFK_POLL_S: "15",
       RED_AFK_CIRCUIT_K: "5",
@@ -24,6 +25,7 @@ describe("buildWorkerEnv / passthroughKeys (gap 4: passthrough denylist)", () =>
     // operator vars survive
     expect(env.RED_AFK_SKIP_PERF).toBe("1");
     expect(env.RED_AFK_SKIP_COMPETITIVE_BASELINE).toBe("1");
+    expect(env.RED_AFK_TRUNK).toBe("develop");
     expect(env.PATH).toBe("/usr/bin");
     // every internal knob is stripped
     for (const denied of PASSTHROUGH_DENYLIST) {
@@ -176,6 +178,29 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
     };
     expect(formatBootSweepResult(result)).toBe(
       "boot sweeps: precheck FAILED (not-on-trunk: current=main expected=feat/x source=pin) — workers will run their own precheck",
+    );
+  });
+
+  it("logs every janitor removal with its target and liveness verdict", () => {
+    const result: BootResult = {
+      precheck: { ok: true, warnings: [] },
+      tmpJanitor: {
+        expiredLanes: [".red/tmp/worktrees/feedback/afk-wDEAD-2450-gate"],
+        staleWorkers: [],
+        unknownTmpRoots: [],
+        protectedLiveWorkers: [],
+        protectedLiveFeedback: [],
+        removals: [
+          {
+            path: ".red/tmp/worktrees/feedback/afk-wDEAD-2450-gate",
+            livenessVerdict: "owner-dead",
+          },
+        ],
+      },
+    };
+
+    expect(formatBootSweepResult(result)).toContain(
+      "remove=.red/tmp/worktrees/feedback/afk-wDEAD-2450-gate liveness=owner-dead",
     );
   });
 });

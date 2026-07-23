@@ -119,6 +119,7 @@ function compactStateFromSnapshot(
     runner: snapshot.runner ?? "",
     started_at: snapshot.started_at ?? snapshot.updated_at,
     origin: stringField(current, "origin", stringField(current, "kind")) || undefined,
+    fleet: snapshot.supervisor_id || undefined,
     total,
     done,
     blocked: numberField(current, "blocked"),

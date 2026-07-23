@@ -10,9 +10,13 @@
 // command (reached from `/retake`) and `/hitl` (the interactive decision path)
 // are its IO callers.
 //
-// #860 narrows the scope: only `blocked:validation` and `blocked:spec` issues
-// are accepted. Mixed `blocked:*` states and label/body kind mismatches are
-// refused without mutation and direct the maintainer to `/hitl`.
+// #860 narrows the scope to explicitly supported transient parks. Alongside
+// `blocked:validation` and `blocked:spec`, `blocked:infra` and
+// `blocked:base-stale` are requeueable because a recovered mechanical fault
+// needs no new human decision. The IO caller freshness-gates `base-stale`
+// before applying this pure plan. Mixed
+// `blocked:*` states and label/body kind mismatches are refused without mutation
+// and direct the maintainer to `/hitl`.
 
 import {
   clearCurrentBlocker,
@@ -38,15 +42,12 @@ export const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-co
  * any other human-input kind still requires `/hitl` (the interactive decision
  * path); those must not be auto-cleared without the full HITL interview.
  */
-export const REQUEUE_SUPPORTED_KINDS = new Set(["validation", "spec"]);
-
-/**
- * The `sensitive-path` blocker kind (`blocked:sensitive-path`, #1102). A bare
- * requeue must STILL refuse it (→ /hitl); it becomes requeueable ONLY when the
- * caller is adopting a human-reviewed branch (`--adopt-branch`, #1171). See
- * {@link kindRequeueable}.
- */
-const SENSITIVE_PATH_KIND = "sensitive-path";
+export const REQUEUE_SUPPORTED_KINDS = new Set([
+  "validation",
+  "spec",
+  "infra",
+  "base-stale",
+]);
 
 export interface RequeueInput {
   /** The current issue body markdown. */
@@ -55,27 +56,16 @@ export interface RequeueInput {
   labels: readonly string[];
   /** Human guidance recorded before requeueing; archived into `## Resolved blockers`. Required to apply the transition. */
   guidance?: string;
-  /**
-   * True when this requeue is paired with `--adopt-branch` (#1171): a maintainer
-   * has reviewed a hand-done branch and is landing it through the ADR-0055
-   * no-agent lane. Only then is a `blocked:sensitive-path` park clearable — the
-   * human review is what authorises bypassing the landing guard. A bare requeue
-   * (default false) STILL refuses `sensitive-path` → /hitl.
-   */
+  /** True when paired with `--adopt-branch`: a maintainer has reviewed a hand-done branch and is landing it through the ADR-0055 no-agent lane. */
   adoptBranch?: boolean;
 }
 
 /**
- * Is `kind` requeueable given whether this is an `--adopt-branch` land (#1171)?
- * The base supported set is `{validation, spec}` (#860). `sensitive-path` is the
- * one kind gated on the adopt path: a landing-time guard (#1102) re-parks the
- * same protected diff on every fresh attempt, so it can only be cleared by a
- * human explicitly adopting the reviewed branch — never by a bare requeue.
+ * Is `kind` requeueable? The supported set is
+ * `{validation, spec, infra, base-stale}`.
  */
-function kindRequeueable(kind: string, adoptBranch: boolean): boolean {
-  if (REQUEUE_SUPPORTED_KINDS.has(kind)) return true;
-  if (adoptBranch && kind === SENSITIVE_PATH_KIND) return true;
-  return false;
+function kindRequeueable(kind: string): boolean {
+  return REQUEUE_SUPPORTED_KINDS.has(kind);
 }
 
 export interface RequeuePlan {
@@ -139,15 +129,15 @@ export function isRequeueComplete(body: string, labels: readonly string[]): bool
  * labels, and add `ready-for-agent`. The body is always rewritten when a blocker
  * is active so the transition can never degrade into a label-only flip.
  *
- * Narrowed to `blocked:validation` and `blocked:spec` only (#860). Mixed
- * `blocked:*` states and label/body kind mismatches set `refuseForHitl: true`
- * and direct the caller to `/hitl` instead.
+ * Narrowed to explicit transient parks: `blocked:validation`, `blocked:spec`,
+ * `blocked:infra`, and freshness-gated `blocked:base-stale`. Mixed `blocked:*`
+ * states and label/body kind mismatches set `refuseForHitl: true` and direct
+ * the caller to `/hitl` instead.
  */
 export function planRequeue(input: RequeueInput): RequeuePlan {
   const activeBlocker = parseCurrentBlocker(input.body);
   const blocked = blockedLabelsIn(input.labels);
   const hasHuman = input.labels.includes(LABEL_HUMAN);
-  const adoptBranch = input.adoptBranch === true;
 
   // "Parked" = something marks this issue as needing the human lane. Without an
   // active blocker, a blocked:* label, or ready-for-human there is nothing to
@@ -182,13 +172,9 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   const labelKind = blocked.length === 1 ? blocked[0].slice("blocked:".length) : null;
 
   // Unsupported label kind → /hitl handles other human-input blocker types.
-  // `sensitive-path` is the exception: requeueable ONLY under `--adopt-branch`
-  // (#1171), so a bare requeue still lands here and is directed to /hitl.
-  if (labelKind !== null && !kindRequeueable(labelKind, adoptBranch)) {
+  if (labelKind !== null && !kindRequeueable(labelKind)) {
     return refuse(
-      labelKind === SENSITIVE_PATH_KIND
-        ? `blocked:${labelKind} is only clearable via /requeue --adopt-branch (human-reviewed land): use /hitl or re-run with --adopt-branch`
-        : `blocked:${labelKind} is not in the supported set (validation, spec): use /hitl`,
+      `blocked:${labelKind} is not in the supported set (validation, spec, infra, base-stale): use /hitl`,
       true,
       activeBlocker,
       input.body,
@@ -199,12 +185,10 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   if (
     activeBlocker !== null &&
     !MECHANICAL_BLOCKER_KINDS.has(activeBlocker.kind) &&
-    !kindRequeueable(activeBlocker.kind, adoptBranch)
+    !kindRequeueable(activeBlocker.kind)
   ) {
     return refuse(
-      activeBlocker.kind === SENSITIVE_PATH_KIND
-        ? `active blocker kind "${activeBlocker.kind}" is only clearable via /requeue --adopt-branch (human-reviewed land): use /hitl or re-run with --adopt-branch`
-        : `active blocker kind "${activeBlocker.kind}" is not in the supported set (validation, spec): use /hitl`,
+      `active blocker kind "${activeBlocker.kind}" is not in the supported set (validation, spec, infra, base-stale): use /hitl`,
       true,
       activeBlocker,
       input.body,

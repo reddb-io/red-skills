@@ -47,6 +47,7 @@ describe("operational probe registry", () => {
     const decoded = decode(toon) as { probes: Array<{ id: string; verdict: string }>; findings: unknown[] };
 
     expect(decoded.probes).toEqual([
+      { id: "afk.host-prerequisites", name: "AFK host prerequisites", verdict: "ok" },
       { id: "git.remote.https-forbidden", name: "SSH-only git remotes", verdict: "red" },
       { id: "afk.queue-visibility", name: "AFK queue visibility", verdict: "ok" },
       { id: "afk.focal-branch-resolution", name: "AFK focal branch resolution", verdict: "ok" },
@@ -80,6 +81,38 @@ describe("operational probe registry", () => {
         verdict: "red",
         evidence: expect.stringContaining("findings=pointer-behind-lane,pointer-behind-npm,lane-behind-npm"),
         canonicalFix: expect.stringContaining("reconcile the stable pointer"),
+      }),
+    ]);
+  });
+
+  it("self-heals a pointer behind a cached lane but halts when the pointer is ahead of every lane", async () => {
+    const selfHealable = await runOperationalProbes({
+      remoteUrls: [],
+      bundleCoherence: {
+        installedVersion: "2.79.1",
+        pointerVersion: "2.79.0",
+        laneNewestVersion: "2.80.0",
+      },
+    });
+    const incoherent = await runOperationalProbes({
+      remoteUrls: [],
+      bundleCoherence: {
+        installedVersion: "2.79.1",
+        pointerVersion: "2.80.0",
+      },
+    });
+
+    expect(selfHealable.findings).toEqual([]);
+    expect(selfHealable.probes.find((probe) => probe.id === "afk.bundle-coherence")).toMatchObject({
+      verdict: "ok",
+      data: { findings: ["pointer-behind-lane"], selfHealable: ["pointer-behind-lane"] },
+    });
+    expect(incoherent.findings).toEqual([
+      expect.objectContaining({
+        id: "afk.bundle-coherence",
+        verdict: "red",
+        evidence: expect.stringContaining("pointer-ahead-of-lane"),
+        canonicalFix: expect.stringContaining("cached lane"),
       }),
     ]);
   });
@@ -261,25 +294,50 @@ describe("operational probe registry", () => {
     expect(setRemoteUrl).toHaveBeenCalledWith("origin", "git@example.invalid:acme/widgets.git");
   });
 
-  it("runs the engine listing seam and flags an engine-vs-REST queue mismatch", async () => {
-    const listEngineCandidates = vi.fn(async () => 0);
-    const countRestQueue = vi.fn(async () => 11);
+  it("re-samples a transient queue mismatch and records its recovery as info", async () => {
+    const listEngineCandidates = vi.fn()
+      .mockResolvedValueOnce([2448])
+      .mockResolvedValueOnce([2448, 2449]);
+    const listRestQueue = vi.fn().mockResolvedValue([2448, 2449]);
 
     const report = await runOperationalProbes({
       remoteUrls: [],
       queueVisibility: {
         listEngineCandidates,
-        countRestQueue,
+        listRestQueue,
+        resampleDelayMs: 0,
       },
     });
 
-    expect(listEngineCandidates).toHaveBeenCalledOnce();
-    expect(countRestQueue).toHaveBeenCalledOnce();
+    expect(listEngineCandidates).toHaveBeenCalledTimes(2);
+    expect(listRestQueue).toHaveBeenCalledTimes(2);
+    expect(report.findings).toEqual([]);
+    expect(report.probes.find((probe) => probe.id === "afk.queue-visibility")).toMatchObject({
+      verdict: "ok",
+      evidence: "info: transient queue mismatch cleared on re-sample; first differing issues: #2449",
+    });
+  });
+
+  it("flags a persistent engine-vs-REST queue mismatch with differing issue numbers", async () => {
+    const listEngineCandidates = vi.fn(async () => []);
+    const listRestQueue = vi.fn(async () => [11, 12, 13]);
+
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      queueVisibility: {
+        listEngineCandidates,
+        listRestQueue,
+        resampleDelayMs: 0,
+      },
+    });
+
+    expect(listEngineCandidates).toHaveBeenCalledTimes(2);
+    expect(listRestQueue).toHaveBeenCalledTimes(2);
     expect(report.findings).toEqual([
       expect.objectContaining({
         id: "afk.queue-visibility",
         verdict: "red",
-        evidence: "engine sees 0 open ready-for-agent; REST sees 11",
+        evidence: "engine sees 0 open ready-for-agent; REST sees 3; differing issues: #11, #12, #13",
       }),
     ]);
   });
@@ -295,7 +353,7 @@ describe("operational probe registry", () => {
             stderr: payload,
           });
         },
-        countRestQueue: async () => 1,
+        listRestQueue: async () => [1],
       },
     });
 
@@ -313,8 +371,8 @@ describe("operational probe registry", () => {
     const rateLimited = await runOperationalProbes({
       remoteUrls: [],
       queueVisibility: {
-        listEngineCandidates: async () => 1,
-        countRestQueue: async () => {
+        listEngineCandidates: async () => [1],
+        listRestQueue: async () => {
           throw Object.assign(new Error("gh api failed"), {
             surface: "rest",
             stderr: payload,
@@ -328,7 +386,7 @@ describe("operational probe registry", () => {
         listEngineCandidates: async () => {
           throw Object.assign(new Error("socket hang up"), { surface: "unknown" });
         },
-        countRestQueue: async () => 0,
+        listRestQueue: async () => [],
       },
     });
 

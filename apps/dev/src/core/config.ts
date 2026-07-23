@@ -140,6 +140,11 @@ export const CONFIG_DEFAULTS = {
   // Resolved from the namespaced `plugins.dev.afk.*` block with the legacy bare
   // `afk.*` fallback (ADR 0042), like every other accessor here.
   "afk.worktree_launches_pull_request": "true",
+  // Landing-tail slot release (#2427). `merge` is the byte-compatible default:
+  // the worker owns PR-open, CI, merge, and close. `ci` releases after green CI;
+  // `none` releases after PR-open. The shared wait/webhook observer finishes the
+  // remaining tail, with rsp wait's per-wait fallback when no resident exists.
+  "afk.landing.wait": "merge",
   // PR review gate (ADR 0064 §10, #749). When AFK opens a PR for a
   // completed attempt, the issue-classifier tier decides mechanical vs
   // non-mechanical: non-mechanical changes get `ready-for-review` (firing the
@@ -230,6 +235,13 @@ export const CONFIG_DEFAULTS = {
   "afk.validation.node_max_old_space_mb": "2048",
   "afk.validation.vitest_max_workers": "1",
   "afk.validation.heavy_available_memory_mb": "4096",
+  // Post-DONE gate-correction convergence budget (#2285). After an inner agent
+  // emits DONE, if the feedback/backpressure gate still fails the worker re-seeds
+  // the agent with a bounded correction handoff instead of immediately parking.
+  // This cap limits consecutive failed gate cycles on one issue before the engine
+  // stops re-seeding and deterministically parks ready-for-human + blocked:validation
+  // with the last failing validation tail. Override with RED_AFK_STALL_CONVERGENCE_BUDGET.
+  "afk.stallConvergenceBudget": "3",
   // Spec cascade rebase (issue #1007). After a successful DONE landing, rebase
   // every open sibling branch (same spec:N, not held by a live worker) onto the
   // new base HEAD so the next worker to pick up a sibling starts from a

@@ -65,7 +65,13 @@ import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
-import { runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
+import {
+  createCastleLaneWriters,
+  createEnginePaths,
+  runCastleWorkerDrain,
+  type CastleSessionHookName,
+  type CastleWorkerDrainDeps,
+} from "@reddb-io/red-castle/engine";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -83,7 +89,7 @@ import {
   safetyLogPath,
   deathCauseForRecoveredWorker,
 } from "../../core/process-safety.js";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { hostFingerprintPrefix, workerIdentity } from "../../core/host-identity.js";
 import { appendAgentRecord, appendRecordToonlTaggedRow } from "../../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../../core/state.js";
@@ -94,10 +100,61 @@ import { createActivityMeter } from "../../core/activity-meter.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
-import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
-import { renderClaimComment } from "../../core/claim.js";
+import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 
 const DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;
+
+export interface BootWorkerStateInput {
+  tmpDir: string;
+  workerId: string;
+  pid: number;
+  pidStartTime?: string;
+  runner: Runner;
+  origin: string;
+  kind: string;
+  model?: string;
+  effort?: string;
+  nowMs?: () => number;
+}
+
+/**
+ * Publish the pre-claim worker row before boot discovery or sweeps begin.
+ * The synthetic `boot` attempt is replaced by the real issue attempt at pick.
+ */
+export async function initBootWorkerState(input: BootWorkerStateInput): Promise<string> {
+  const attemptDir = join(workerDirPath(input.tmpDir, input.workerId), "boot");
+  const statePath = join(attemptDir, "afk.state.toon");
+  const nowMs = input.nowMs ?? (() => Date.now());
+  const startedAt = new Date(nowMs()).toISOString();
+  initStateSync(statePath, {
+    worker_id: input.workerId,
+    pid: input.pid,
+    pid_start_time: input.pidStartTime ?? "",
+    runner: input.runner,
+    origin: input.origin,
+    started_at: startedAt,
+    "current.kind": input.kind,
+    "current.number": "",
+    "current.started_at": startedAt,
+    "current.runner": input.runner,
+    "current.model": input.model ?? "",
+    "current.effort": input.effort ?? "",
+    "current.activity": "boot",
+    "current.phase": "boot",
+  });
+  writeIdentitySync(attemptDir, {
+    worker_id: input.workerId,
+    runner: input.runner,
+    origin: input.origin,
+    number: "",
+    started_at: startedAt,
+  });
+  await new LivenessLane({
+    path: join(attemptDir, LIVENESS_LANE_FILENAME),
+    clock: nowMs,
+  }).record("iteration-start");
+  return statePath;
+}
 
 export function decodeLocMemoSnapshot(text: string): LocMemo | null {
   try {
@@ -150,6 +207,13 @@ export async function recordBootError(workerDir: string, type: "boot-error" | "s
   };
   await fsx.ensureDir(workerDir);
   await writeFile(join(workerDir, `${type}.log`), encodeBootErrorPayload(payload), "utf8");
+  const workerId = basename(workerDir);
+  const redRoot = dirname(dirname(dirname(workerDir)));
+  await createCastleLaneWriters(createEnginePaths(redRoot)).worker(workerId).append({
+    kind: `worker.${type}`,
+    worker_id: workerId,
+    payload: { type, at: payload.at, message },
+  });
   process.stderr.write(`[afk] ${type}: ${message}\n`);
 }
 
@@ -201,31 +265,13 @@ export async function runnerCircuitOpen(
 }
 
 /**
- * Resolve the red-castle worktree from the filesystem. Red-castle creates the
- * agent's worktree at `{attemptDir}/.red-castle/worktrees/{slug}` as a worktree
- * of the red-trunk MIRROR, not the primary checkout, so it never appears in the
- * primary's `git worktree list` — {@link worktreePathUnder} (which lists the
- * primary via `gitCtx`) returns undefined for it, and the heartbeat then fell
- * back to the non-existent legacy `{attemptDir}/worktree` and read a permanent
- * `+0 -0` diff (blank `loc` on the statusline for every red-castle worker). This
- * reads the real layout directly: the single `.git`-bearing subdirectory of
- * `{attemptDir}/.red-castle/worktrees/`.
+ * Resolve the current worker worktree from its conventional direct-child path.
+ * Castle-branded nested paths are intentionally excluded from this reader;
+ * only hygiene sweeps retain compatibility with that retired grammar.
  */
 export function castleWorktreeUnder(attemptDir: string): string | undefined {
-  const dir = join(attemptDir, ".red-castle", "worktrees");
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return undefined; // no castle worktree tree yet (attempt not started / cleaned)
-  }
-  for (const name of entries) {
-    const candidate = join(dir, name);
-    // A git worktree carries a `.git` gitdir pointer (a file for a linked
-    // worktree). Its presence distinguishes the real worktree from stray dirs.
-    if (existsSync(join(candidate, ".git"))) return candidate;
-  }
-  return undefined;
+  const candidate = join(attemptDir, "worktree");
+  return existsSync(join(candidate, ".git")) ? candidate : undefined;
 }
 
 /**
@@ -241,7 +287,7 @@ export function castleWorktreeUnder(attemptDir: string): string | undefined {
 export function readCapturedWorktreePath(attemptDir: string): string | undefined {
   try {
     const recorded = readFileSync(join(attemptDir, ".worktree-path"), "utf8").trim();
-    return recorded || undefined;
+    return recorded === join(attemptDir, "worktree") ? recorded : undefined;
   } catch {
     return undefined;
   }

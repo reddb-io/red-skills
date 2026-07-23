@@ -60,7 +60,8 @@ These run in `reddb-io/red-skills` only. Listed so the catalogue is complete.
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `red-release.yml` | push to `main` | Auto-release: conventional-commit version bump, build the per-plugin bundles, publish a GitHub Release with the assets. Defers while a `running` issue (an active fleet) exists. |
+| `red-release.yml` | push to `main` | Maintains the changesets **Version Packages PR** and, once it merges, cuts the `vX.Y.Z` tag. Pushes no commit to `main` (ADR 0121). |
+| `red-publish.yml` | `vX.Y.Z` tag push, hourly retry | Publishes the tagged release: builds the per-plugin bundles, publishes to npm, cuts the GitHub Release with the assets. Defers while a `running` issue (an active fleet) exists. |
 | `red-memory-drift-guard.yml` | `pull_request` | Fails a PR that changes a watched memory surface (`.red/adr/**`, the glossary) without a `Memory-Ingested:`/`Memory-NoIngest:` audit marker. |
 | `red-memory-bench.yml` | `pull_request`, push to `main` | Memory deterministic-core regression gate. |
 | `red-memory-wiki-extract.yml` | PR merge | Extracts LLM-Wiki pages from the merged PR. |

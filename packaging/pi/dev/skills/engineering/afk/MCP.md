@@ -1,6 +1,6 @@
-# The `dev:afk` MCP — the castle's complete capability interface
+# The `castle` MCP — the castle's complete capability interface
 
-**red-castle is the AFK MCP: `dev:afk` is the one canonical interface to every
+**red-castle is the AFK MCP: `castle` is the one canonical interface to every
 castle capability, and every other surface is a client of it.** `/afk`, `/go`,
 the `red-skills-dev` CLI, and any future command-center UI all drive the same
 tools over the same value-returning cores (ADR 0120). This file is the client
@@ -8,13 +8,15 @@ contract; the skills that reference it never restate the tool list.
 
 ## How to reach the tools
 
-The server is registered as `dev:afk` in `plugins/dev/.mcp.json`, so a host that
+The server is registered as `castle` in `plugins/dev/.mcp.json`, so a host that
 loaded the `dev` plugin already has it. **Hosts prefix MCP tool names — call the
 tool your host actually exposes, not the bare name.** Claude Code and Codex
 surface plugin MCP tools as `mcp__<server-slug>__<tool>` (for example
-`mcp__…__fleet_status`); resolve the exact identifier with a tool search for the
-bare name in the table below before the first call, then reuse it for the rest
-of the session. Tables and prose here always use the bare name.
+`mcp__plugin_dev_castle__fleet_status` under Claude Code); the slug is derived
+from the server name, so it never contains a colon — codex rejects `:` in server
+names. Resolve the exact identifier with a tool search for the bare name in the
+table below before the first call, then reuse it for the rest of the session.
+Tables and prose here always use the bare name.
 
 Every tool returns TOON, never prose: one structured document per call, encoded
 by the server. Read the fields; do not re-parse rendered text.
@@ -23,8 +25,10 @@ by the server. Read the fields; do not re-parse rendered text.
 CLI — never hand-roll the operation.** The CLI is the same engine behind the
 same cores, so the fallback is a transport change, not a behavior change.
 Resolve the runtime through [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md):
-an installed `red-skills-dev` shim on `PATH` first, otherwise the ADR 0091
-npm direct-run form `npx -y -p @reddb-io/red-skills@<version> red-skills-dev …`.
+the canonical ADR 0091 npm direct-run form
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev …`, which works on
+every installation; an installed shim on `PATH` is only a warm-cache
+optimization for the same command.
 
 ## Mutation modes are binding
 
@@ -48,10 +52,16 @@ claim keeps two fleets on the same backlog from double-claiming an issue.
 | `fleet_status` | read | Supervisor pid, slots, churn, and live workers for one fleet. |
 | `fleet_create` | mutating | Persist a named profile and spawn its supervisor. |
 | `fleet_edit` | mutating | Update a profile; sends a live resize directive when asked. |
-| `fleet_stop` | mutating | Stop one named fleet and its detached workers. |
+| `fleet_stop` | mutating | Gracefully stop one named fleet; pass `force: true` to hard-stop only its attributed workers. |
+| `fleet_register` | mutating | Adopt an already-running supervisor into the registry without restarting it. |
 
 `selector` scopes what a fleet drains — `{spec, lane, label, issues}`. Omit
-`fleet` on the read and stop tools to address the `default` fleet.
+`fleet` on the read and stop tools to address the `default` fleet. Graceful
+stop leaves in-flight detached workers to finish; force never kills workers
+stamped for another fleet or unstamped standalone workers. Use
+`fleet_register` when a CLI-launched fleet shows up in `fleet_status` but
+not in `fleet_list` — it persists the profile in-place so `fleet_edit` works
+immediately after.
 
 ### Worker — one worker's lifecycle
 
@@ -100,12 +110,27 @@ never tracks the base branch as red (#2380).
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `claim_status` | read | Parsed claim markers for one issue and the worker holding it. |
-| `claim_release` | mutating | Concede every un-conceded claim so the issue is claimable again. |
+| `claim_status` | read | Parsed claim markers for one issue (`issue`) or a batch (`issues`), keyed per issue. |
+| `claim_release` | mutating | Concede every un-conceded claim so the issue — or each issue in a batch — is claimable again. |
+| `hitl_resolve` | mutating | One atomic human decision on a parked issue: `requeue`, `retake`, `park`, or `close`, with the rationale posted for the audit trail. |
 
 `claim_release` is the cure for a ghost claim — an issue that instantly reports
 `1/1 100%` with no attempt. Release it through the tool, never by flipping
 labels by hand.
+
+### Merge driver — armed PRs land without native auto-merge
+
+| Tool | Mode | What it does |
+| --- | --- | --- |
+| `merge_arm` | mutating | Hand one open PR to the castle merge driver — it owns the PR to a terminal state. |
+| `merge_status` | read | The driver's durable per-PR records: armed set, attempts, terminal classifications. |
+| `merge_release` | mutating | Stop driver ownership of one PR (record kept as `released`). |
+
+The driver (#2512) runs in the castle resident on a fixed cadence: BEHIND →
+update-branch, green at head → merge with the merge-commit strategy (never an
+admin override), transient faults → bounded retries, DIRTY or failing checks →
+terminal `needs-medic`/`needs-human` classification instead of a loop. Its
+state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 
 ### Worktree — the disposable pool
 
@@ -130,19 +155,33 @@ labels by hand.
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `logs` | read | Raw `CastleLaneRecord` entries from one lane (`worker`/`supervisor`/`monitor`/`liveness`). |
-| `worker_vitals` | read | Liveness-qualified state of every local worker. |
+| `worker_vitals` | read | Liveness-qualified state of every local worker (includes `model` and `effort` per worker). |
 | `dashboard` | read | The operational dashboard over a `periodDays` window. |
 | `monitor` | read | Current workers, history events, and fleet monitor inputs. |
 | `history` | read | Structured castle history records, newest last. |
+| `statusline_aggregate` | read | Castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
 
 ### Queue — what is drainable now
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `queue_status` | read | `ready-for-agent` and `ready-for-human` queue candidates. |
+| `events_since` | read | Castle history events and worker lane records after an opaque cursor, plus the next cursor. |
 
 `queue_status` is the first call of any drain: an empty `ready-for-agent` queue
 with a non-empty open backlog is a flow bug to census, not a clean stop.
+
+`events_since` is the incremental read surface: use it instead of re-calling
+`queue_status`, `worker_status`, or `fleet_status` on every polling tick. **Cost
+guidance:** omit `cursor` on the first call to get a baseline cursor with no
+events; store that cursor; pass it on every subsequent tick to receive only
+what changed. The resident caches `queue_status`, `claim_status`, and
+`cascade_status` for ~15 s — within that window those reads are free. Use
+`events_since` for longer-running monitors where you need sub-second awareness
+of history completions and worker phase changes without polling GitHub directly.
+Unknown or expired cursors (> 7 days old) are refused with a terse `refused:
+true` response; re-baseline by calling `queue_status` and `worker_status` to
+rebuild state, then call `events_since` with no cursor to get a fresh handle.
 
 ### Wait — programmatic outcome polling
 

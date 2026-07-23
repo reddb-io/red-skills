@@ -23,10 +23,11 @@ function deps(): CastleMcpDependencies {
       status: "stopped",
       name: input.name,
     })),
+    fleetRegister: vi.fn(async () => ({ status: "registered" })),
     logs: vi.fn(async () => [
       { at: "2026-07-21T00:00:00.000Z", kind: "worker.started" },
     ]),
-    workerVitals: vi.fn(async () => []),
+    workerVitals: vi.fn(async (_input) => []),
     dashboard: vi.fn(async () => ({ schema_version: "red.dev.dashboard.v1" })),
     monitor: vi.fn(async () => ({ workers: [], events: [], fleet: null })),
     history: vi.fn(async () => []),
@@ -34,6 +35,12 @@ function deps(): CastleMcpDependencies {
       ready_for_agent: [],
       ready_for_human: [],
     })),
+    eventsSince: vi.fn(async (input) => {
+      if (input.cursor === undefined) {
+        return { events: [], history: [], lane_records: [], cursor: "eyJ2IjoxLCJhdCI6IjIwMjYtMDctMjJUMDA6MDA6MDAuMDAwWiJ9" };
+      }
+      return { refused: true, reason: "Unknown cursor format; call queue_status or worker_status to re-baseline." };
+    }),
     workerDispatch: vi.fn(async (input) => ({
       status: "completed",
       target: input.issue ?? input.demand,
@@ -76,6 +83,10 @@ function deps(): CastleMcpDependencies {
       records: [],
       holder: null,
     })),
+    mergeArm: vi.fn(async (input) => ({ armed: input })),
+    mergeStatus: vi.fn(async () => ({ prs: [] })),
+    mergeRelease: vi.fn(async (input) => ({ released: input })),
+    hitlResolve: vi.fn(async (input) => ({ resolved: input })),
     claimRelease: vi.fn(async (input) => ({
       issue: input.issue,
       conceded: ["w80UR"],
@@ -95,10 +106,17 @@ function deps(): CastleMcpDependencies {
     weeklyReview: vi.fn(async () => ({ kind: "weekly" })),
     triage: vi.fn(async (input) => ({ issue: input.issue, action: "apply" })),
     respond: vi.fn(async () => ({ action: "ignored" })),
+    statuslineAggregate: vi.fn(async () => ({
+      project: { basename: "red-skills", branch: "main", version: "2.78.0", docs_unlanded: 0 },
+      repo: { open_prs: 3, today_prs: 1, open_issues: 24, cache_age_s: null },
+      fleet: null,
+      workers: [],
+      queue: { ready_for_agent: 2, ready_for_human: 1, cache_age_s: null },
+    })),
   };
 }
 
-describe("dev:afk MCP tools", () => {
+describe("castle MCP tools", () => {
   it("publishes the Fleet and Observability domains", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
       "fleet_list",
@@ -106,12 +124,14 @@ describe("dev:afk MCP tools", () => {
       "fleet_create",
       "fleet_edit",
       "fleet_stop",
+      "fleet_register",
       "logs",
       "worker_vitals",
       "dashboard",
       "monitor",
       "history",
       "queue_status",
+      "events_since",
       "worker_dispatch",
       "worker_status",
       "worker_stop",
@@ -129,6 +149,10 @@ describe("dev:afk MCP tools", () => {
       "cascade_status",
       "claim_status",
       "claim_release",
+      "merge_arm",
+      "merge_status",
+      "merge_release",
+      "hitl_resolve",
       "worktree_list",
       "worktree_remove",
       "wait_start",
@@ -138,6 +162,7 @@ describe("dev:afk MCP tools", () => {
       "weekly_review",
       "triage",
       "respond",
+      "statusline_aggregate",
     ]);
   });
 
@@ -173,6 +198,20 @@ describe("dev:afk MCP tools", () => {
     ).resolves.toEqual([
       { at: "2026-07-21T00:00:00.000Z", kind: "worker.started" },
     ]);
+  });
+
+  it("forwards explicit force on fleet_stop hard teardown (#2472)", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools
+      .find((tool) => tool.name === "fleet_stop")!
+      .invoke({ fleet: "codex", force: true });
+
+    expect(d.fleetStop).toHaveBeenCalledWith({
+      name: "codex",
+      force: true,
+    });
   });
 
   it("dispatches and stops workers through mutating worker tools", async () => {
@@ -351,6 +390,108 @@ describe("dev:afk MCP tools", () => {
     expect(
       tools.find((tool) => tool.name === "wait_start")!.description,
     ).toMatch(/^MUTATING:/);
+  });
+
+  it("reads the statusline aggregate through the Statusline domain", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools.find((tool) => tool.name === "statusline_aggregate")!.invoke({}),
+    ).resolves.toMatchObject({
+      project: { basename: "red-skills", branch: "main" },
+      repo: { open_issues: 24 },
+      queue: { ready_for_agent: 2, ready_for_human: 1 },
+    });
+    expect(d.statuslineAggregate).toHaveBeenCalledOnce();
+  });
+
+  it("passes live_only and fields through to the worker_vitals dep", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools.find((tool) => tool.name === "worker_vitals")!.invoke({});
+    expect(d.workerVitals).toHaveBeenCalledWith(
+      expect.objectContaining({ live_only: true }),
+    );
+
+    await tools
+      .find((tool) => tool.name === "worker_vitals")!
+      .invoke({ live_only: false, fields: ["worker", "live"] });
+    expect(d.workerVitals).toHaveBeenLastCalledWith({
+      live_only: false,
+      fields: ["worker", "live"],
+    });
+  });
+
+  it("passes live_only and fields through to the worker_status dep", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools.find((tool) => tool.name === "worker_status")!.invoke({});
+    expect(d.workerStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ live_only: true }),
+    );
+
+    await tools
+      .find((tool) => tool.name === "worker_status")!
+      .invoke({ worker: "wVM2Z", live_only: false, fields: ["worker"] });
+    expect(d.workerStatus).toHaveBeenLastCalledWith({
+      worker: "wVM2Z",
+      live_only: false,
+      fields: ["worker"],
+    });
+  });
+
+  it("returns a terse refusal when worker_dispatch receives both issue and demand", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools
+        .find((tool) => tool.name === "worker_dispatch")!
+        .invoke({ issue: 2306, demand: "fix the gate" }),
+    ).resolves.toMatchObject({
+      refused: true,
+      reason: expect.stringContaining("exactly one"),
+    });
+    expect(d.workerDispatch).not.toHaveBeenCalled();
+  });
+
+  it("returns a terse refusal when worker_request receives both issue and demand", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools
+        .find((tool) => tool.name === "worker_request")!
+        .invoke({ issue: 2306, demand: "fix the gate", text: "Use TDD." }),
+    ).resolves.toMatchObject({
+      refused: true,
+      reason: expect.stringContaining("exactly one"),
+    });
+    expect(d.workerRequest).not.toHaveBeenCalled();
+  });
+
+  it("returns a baseline cursor when events_since is called without a cursor", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    const result = await tools.find((tool) => tool.name === "events_since")!.invoke({});
+    expect(result).toMatchObject({ cursor: expect.any(String) });
+    expect(d.eventsSince).toHaveBeenCalledWith({ cursor: undefined });
+  });
+
+  it("returns a terse refusal for an unknown cursor", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(
+      tools.find((tool) => tool.name === "events_since")!.invoke({ cursor: "not-a-valid-cursor" }),
+    ).resolves.toMatchObject({ refused: true, reason: expect.stringContaining("re-baseline") });
+    expect(
+      tools.find((tool) => tool.name === "events_since")!.description,
+    ).not.toMatch(/^MUTATING:/);
   });
 
   it("enumerates and removes disposable worktrees", async () => {

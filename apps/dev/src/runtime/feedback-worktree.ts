@@ -27,9 +27,21 @@
 // dominant cost when 5+ workers race-claim the same branch (Pattern 7 of the
 // claude-minimax spike investigation). The flag is opt-out via
 // `cacheEnabled: false` for callers that need a strict per-session manager.
+//
+// A worktree path is a SINGLETON across every process on the host — most
+// sharply the `feedback/main` baseline every landing revalidation probes
+// against. Materialising it (`worktree add` + `pnpm install`) therefore runs
+// under a host-wide file lock (#2437): concurrent landings serialize instead of
+// corrupting each other's setup, and the waiter re-checks the cache once it has
+// the lock, so the usual outcome of losing the race is a free cache hit. When
+// the wait itself times out, setup is reported as RETRYABLE — a failed setup is
+// only latched (blocking the rest of the session) after three consecutive
+// failures, because latching the first one turned one collision into a whole
+// ~25-minute revalidation cycle failing every check as inconclusive.
 
 import { accessSync, constants, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { dirname, isAbsolute, join } from "node:path";
 import {
   buildFeedbackSubprocessEnv,
   type Exec as PnpmExec,
@@ -39,6 +51,7 @@ import type { BackpressureExec } from "../core/backpressure.js";
 import type { PostAttemptFormatExec } from "../core/post-attempt-format.js";
 import { execTool, pnpm as runPnpm, type ExecOptions, type ExecOutput } from "./exec.js";
 import * as gitx from "./git.js";
+import { createPathLock } from "./land-lock.js";
 
 /**
  * Is `token` an ALREADY-MATERIALISED checkout rather than a branch name (#2339)?
@@ -157,7 +170,45 @@ export interface FeedbackWorktreeIO {
   pnpm(args: readonly string[], opts: ExecOptions): Promise<ExecOutput>;
   /** Run an arbitrary tool (used by the backpressure `sh -c` executor). */
   exec(cmd: string, args: readonly string[], opts: ExecOptions): Promise<ExecOutput>;
+  /**
+   * Host-wide mutual exclusion over ONE worktree path (#2437). The feedback
+   * baseline worktree (`feedback/main`) is a singleton shared by every landing
+   * revalidation on this host; without a lock two concurrent revalidations
+   * `worktree add` + `pnpm install` the same directory and the loser's setup
+   * fails ("already exists" / a half-installed `node_modules`), failing EVERY
+   * check of a ~25-minute cycle as `inconclusive`. Resolves to a release
+   * closure once the caller owns `dest`, or `null` when the wait timed out
+   * (the caller then treats setup as retryable, never as a hard failure).
+   *
+   * Optional: an injected IO without it (every test fake) serializes only
+   * in-process, which is all a single-process fixture needs.
+   */
+  lock?(dest: string): Promise<(() => Promise<void>) | null>;
+  /**
+   * Host-wide capacity-one semaphore for validation commands. Every live worker
+   * and no-agent reconcile manager binds the same `.red/state` lock.
+   */
+  gateLock?(root: string): Promise<(() => Promise<void>) | null>;
 }
+
+/**
+ * How long a landing revalidation waits for the baseline worktree before giving
+ * up. The holder keeps the lock only for `worktree add` + `pnpm install` +
+ * rebase (never for the test run itself), so the real contention window is a
+ * couple of minutes; 10 is generous headroom on a loaded fleet host and still
+ * far under the revalidation cycle it protects.
+ */
+const WORKTREE_LOCK_WAIT_MS = 10 * 60_000;
+/** A holder that has not finished a materialise in this long has crashed. */
+const WORKTREE_LOCK_STALE_MS = 20 * 60_000;
+const GATE_LOCK_WAIT_MS = 60 * 60_000;
+const GATE_LOCK_STALE_MS = 24 * 60 * 60_000;
+/**
+ * Consecutive failed setups before a branch is latched as permanently broken.
+ * Above 1 so a transient contention loss is retried; low enough that a genuine
+ * lockfile drift costs three installs, not one per check in the cycle.
+ */
+const MAX_SETUP_ATTEMPTS = 3;
 
 const defaultIO: FeedbackWorktreeIO = {
   worktreeAdd: gitx.worktreeAdd,
@@ -188,6 +239,30 @@ const defaultIO: FeedbackWorktreeIO = {
   },
   pnpm: runPnpm,
   exec: execTool,
+  lock: async (dest) => {
+    // The lock file sits BESIDE the worktree, not inside it — `git worktree
+    // add` refuses a non-empty destination, so a lock file within `dest` would
+    // block the very operation it guards.
+    await mkdir(dirname(dest), { recursive: true });
+    return createPathLock(`${dest}.lock`, `feedback-worktree:${dest}`, {
+      waitTimeoutMs: WORKTREE_LOCK_WAIT_MS,
+      staleAfterMs: WORKTREE_LOCK_STALE_MS,
+      pollMs: 500,
+    }).acquire();
+  },
+  gateLock: async (root) => {
+    const stateDir = join(root, ".red", "state");
+    await mkdir(stateDir, { recursive: true });
+    return createPathLock(
+      join(stateDir, "validation-gate.lock"),
+      `validation-gate:${process.pid}`,
+      {
+        waitTimeoutMs: GATE_LOCK_WAIT_MS,
+        staleAfterMs: GATE_LOCK_STALE_MS,
+        pollMs: 500,
+      },
+    ).acquire();
+  },
 };
 
 export interface FeedbackWorktree {
@@ -267,12 +342,68 @@ export function makeFeedbackWorktree(
   // removes. A cache hit (worktree reused from a prior session) is NOT in
   // this set, so cleanup leaves it alone.
   const created = new Set<string>();
+  // In-flight materialise per branch: two validation calls for the same branch
+  // in ONE process must share a single setup, not race each other into a
+  // duplicate `worktree add`.
+  const inflight = new Map<string, Promise<string | null>>();
+  // Consecutive setup failures per branch (#2437). A setup failure is treated
+  // as TRANSIENT until proven otherwise — contention on the shared baseline
+  // worktree looks exactly like a hard failure at the first attempt, and
+  // latching it made one collision fail every remaining check of the cycle.
+  const setupFailures = new Map<string, number>();
+
+  async function runValidationCommand(
+    run: () => Promise<ExecOutput>,
+  ): Promise<ExecOutput> {
+    if (!io.gateLock) return run();
+    const release = await io.gateLock(root);
+    if (release === null) {
+      return {
+        code: 1,
+        stdout: "",
+        stderr: "host-wide validation gate lock timed out; validation blocked",
+      };
+    }
+    try {
+      return await run();
+    } finally {
+      await release();
+    }
+  }
+
+  /**
+   * Record a failed materialise. The branch is only latched as permanently
+   * broken (`resolved -> null`, every later call short-circuits) after
+   * {@link MAX_SETUP_ATTEMPTS} consecutive failures; before that the next
+   * validation call retries the baseline step from scratch.
+   */
+  function noteSetupFailure(branch: string): null {
+    const attempts = (setupFailures.get(branch) ?? 0) + 1;
+    setupFailures.set(branch, attempts);
+    if (attempts >= MAX_SETUP_ATTEMPTS) resolved.set(branch, null);
+    return null;
+  }
 
   async function pathFor(branch: string): Promise<string | null> {
     if (!branch) return root;
     const cached = resolved.get(branch);
     if (cached !== undefined) return cached;
+    const pending = inflight.get(branch);
+    if (pending !== undefined) return pending;
+    const run = materialise(branch).finally(() => inflight.delete(branch));
+    inflight.set(branch, run);
+    return run;
+  }
 
+  /** True when the worktree already at `dest` is at the live branch HEAD. */
+  async function cacheHit(branch: string, dest: string): Promise<boolean> {
+    if (!cacheEnabled) return false;
+    const expectedSha = await io.branchHead(gitCtx, branch);
+    const actualSha = await io.worktreeHead(gitCtx, dest);
+    return Boolean(expectedSha && actualSha && expectedSha === actualSha);
+  }
+
+  async function materialise(branch: string): Promise<string | null> {
     // The token is ALREADY a materialised checkout (#2339). The post-merge
     // integration gate (#1335) hands the gate the isolated rebase/landing
     // worktree DIR, not a branch name — the caller provisioned it, so there is
@@ -295,18 +426,65 @@ export function makeFeedbackWorktree(
     // of the claude-minimax spike investigation). SHA mismatch is the only
     // invalidation signal; no mtime/TTL GC. Cached worktrees are not torn down
     // by `cleanup()` so the next session reuses them.
-    if (cacheEnabled) {
-      const expectedSha = await io.branchHead(gitCtx, branch);
-      const actualSha = await io.worktreeHead(gitCtx, dest);
-      if (expectedSha && actualSha && expectedSha === actualSha) {
-        resolved.set(branch, dest);
-        return dest; // cache hit — don't add to `created`, don't re-install
-      }
-      // Mismatch (or dest is not a worktree, or lookup failed): fall through
-      // to a clean re-materialise.
+    if (await cacheHit(branch, dest)) {
+      resolved.set(branch, dest);
+      return dest; // cache hit — don't add to `created`, don't re-install
+    }
+    // Mismatch (or dest is not a worktree, or lookup failed): fall through
+    // to a clean re-materialise — under the host-wide lock (#2437), because a
+    // worktree path is a singleton and two processes materialising it at once
+    // corrupt each other's setup.
+    const release = io.lock ? await io.lock(dest) : null;
+    if (io.lock && release === null) {
+      // Timed out waiting for the holder. This is CONTENTION, not corruption:
+      // report it as a retryable setup failure so the next validation call
+      // tries again (the holder will normally have finished by then) instead
+      // of latching the whole revalidation cycle as blocked.
+      process.stderr.write(
+        `warn: feedback worktree ${dest} is busy (lock wait timed out); ` +
+          `baseline setup for ${branch} will be retried\n`,
+      );
+      return noteSetupFailure(branch);
+    }
+    try {
+      return await materialiseLocked(branch, dest, release !== null);
+    } finally {
+      await release?.();
+    }
+  }
+
+  /**
+   * The materialise steps that require exclusive ownership of `dest`.
+   * `locked` says the caller actually took a lock and so may have WAITED — only
+   * then is a second cache probe worth its two git calls.
+   */
+  async function materialiseLocked(
+    branch: string,
+    dest: string,
+    locked: boolean,
+  ): Promise<string | null> {
+    // Re-check the cache now that we hold the lock: while we waited, the prior
+    // holder very likely materialised the exact worktree we want. Turning the
+    // lost race into a cache hit is what makes contention free rather than
+    // merely survivable — the loser does no add and no install.
+    if (locked && (await cacheHit(branch, dest))) {
+      resolved.set(branch, dest);
+      return dest;
     }
 
-    const added = await io.worktreeAdd(gitCtx, dest, branch);
+    let added = await io.worktreeAdd(gitCtx, dest, branch);
+    if (!added.ok) {
+      // Self-heal: a stale registered-but-removed (or registered-but-dirty)
+      // worktree at `dest` causes git to refuse the add with "already exists" /
+      // "not empty". Remove-force the path and retry once so a single orphaned
+      // feedback/main worktree never permanently blocks the baseline probe.
+      const isAlreadyExists =
+        /already exists|is not empty/i.test(added.stderr ?? "");
+      if (isAlreadyExists) {
+        await io.worktreeRemove(gitCtx, dest);
+        added = await io.worktreeAdd(gitCtx, dest, branch);
+      }
+    }
     if (!added.ok) {
       // Carry the underlying git stderr (#2339): the field report that opened
       // this only had "add failed", so the real cause (`fatal: couldn't find
@@ -315,8 +493,7 @@ export function makeFeedbackWorktree(
         `error: feedback worktree add failed for ${branch}; blocking validation: ` +
           `${added.stderr?.trim() || "no git detail"}\n`,
       );
-      resolved.set(branch, null);
-      return null;
+      return noteSetupFailure(branch);
     }
     // A freshly added worktree has NO node_modules. Without an install here,
     // the feedback gate's `pnpm -C <dest> test/build` calls fail with
@@ -333,8 +510,7 @@ export function makeFeedbackWorktree(
         `error: feedback worktree install failed for ${branch} (exit ${ins.code}); ` +
           `blocking validation\n${ins.stderr.trim()}\n`,
       );
-      resolved.set(branch, null);
-      return null;
+      return noteSetupFailure(branch);
     }
     // AFK runner improvement (Pattern 2): best-effort rebase onto the session
     // base so a worker test written against a now-moved main validates against
@@ -354,6 +530,7 @@ export function makeFeedbackWorktree(
     }
     created.add(dest);
     resolved.set(branch, dest);
+    setupFailures.delete(branch);
     return dest;
   }
 
@@ -400,11 +577,13 @@ export function makeFeedbackWorktree(
       }
       const rewritten = scope === "." ? base : join(base, scope);
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
-      const r = await io.pnpm(["-C", rewritten, ...rest], { cwd: root, env });
+      const r = await runValidationCommand(
+        () => io.pnpm(["-C", rewritten, ...rest], { cwd: root, env }),
+      );
       return { code: r.code, stdout: r.stdout, stderr: r.stderr };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
-    const r = await io.pnpm(head, { cwd: root, env });
+    const r = await runValidationCommand(() => io.pnpm(head, { cwd: root, env }));
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
@@ -422,7 +601,9 @@ export function makeFeedbackWorktree(
       return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${cwd}; validation blocked` };
     }
     const env = buildFeedbackSubprocessEnv(process.env, resourceBudget);
-    const r = await io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env });
+    const r = await runValidationCommand(
+      () => io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env }),
+    );
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
@@ -485,6 +666,7 @@ export function makeFeedbackWorktree(
       }
       created.clear();
       resolved.clear();
+      setupFailures.clear();
     },
   };
 }

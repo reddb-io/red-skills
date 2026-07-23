@@ -33,12 +33,14 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 
 ## 2. Route By On-Ramp
 
-- **Incoming bugs or requests** -> `/triage`, then `/afk` once Tickets become
-  ready for agents.
+- **Incoming bugs, requests, or executable ticket readiness** -> `/triage`, then `/afk` once Tickets become
+  ready for agents. `/triage` owns the acceptance-criteria lint for `ready-for-agent` candidates; `/red-doctor` reports the same check read-only when auditing queue health.
 - **A bug you can reproduce or diagnose now** -> `/diagnose`; if the user is
   only reporting a bug for later, use `/report-bug`.
 - **A parked human decision** -> `/hitl`; if the blocker is resolved and the
-  Ticket only needs queue promotion, use `/retake`.
+  Ticket only needs queue promotion, use `/retake`. A `quarantine` Ticket is
+  still owned by the castle curator; route it to `/hitl` only after the bounded
+  curator re-checks have changed it to `ready-for-human`.
 - **A manual implementation slice** -> `/implement`, using `/tdd` for the build
   loop and `/code-review` before handing the branch to `/retake`.
 - **Validation or visible confirmation** -> `/verify`; for browser-visible state,
@@ -48,11 +50,13 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   rsp usage gains, skill quality, or repository context. For operational
   troubleshooting, route to the owning reference: `/afk`, `/go`, `/hitl`, or
   rsp.
-- **Operating the castle itself** -> the `dev:afk` MCP, not a shell command.
+- **Operating the castle itself** -> the `castle` MCP, not a shell command.
   Fleet lifecycle, worker dispatch, runners and live steer, gate, landing,
   claim, worktrees, hygiene, and observability are all tools on one canonical
   interface (ADR 0120); `/afk` and `/go` are its clients. The tool surface is
-  `plugins/dev/skills/engineering/afk/MCP.md`.
+  `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
+  throughput through `/afk` config: `afk.landing.wait` chooses release after
+  merge, green CI, or PR-open; route that choice to the AFK config reference.
 - **Carrying one effort end to end** -> `/manager`. It is the liaison over the
   lanes above, not a replacement for them: `$dev:manager <intent>` starts or
   continues an effort and `manager status` renders its brief. Routing and
@@ -101,8 +105,10 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
 
 Capability references registered by owner:
-`dev:afk` MCP (the canonical castle interface) ->
-`plugins/dev/skills/engineering/afk/MCP.md`.
+`castle` MCP (the canonical castle interface) ->
+`plugins/dev/skills/engineering/afk/MCP.md`;
+`/afk` landing-tail throughput (`afk.landing.wait`) ->
+`plugins/dev/skills/engineering/afk/docs/CONFIG.md`.
 
 Troubleshooting references registered by owner:
 `/afk` -> `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md`;
@@ -121,7 +127,9 @@ through `/memory:view`, `memory docs reference-graph`, and
 
 - `/red-doctor` checks RedSkills adoption drift, including whether this router still
   covers the registered skill set, reports/fixes ADR 0098 tmp janitor hygiene, and
-  runs the shared operational probe registry that fleet boot also consumes.
+  runs the shared operational probe registry that fleet boot also consumes. The host toolchain
+  drift routes here too: it checks `gh >= 2.47.0` and pinned `tq` read-only, while
+  `/red-doctor --fix` gates the user-level asdf upgrade and canonical tq installer.
 - `/red-gains` reports whether rsp is paying for itself: latency, throughput,
   token savings, command-family winners, and degradation health from telemetry;
   use `apps/rsp/docs/TROUBLESHOOTING.md` for rsp hook silence, resident/store,
@@ -142,7 +150,7 @@ through `/memory:view`, `memory docs reference-graph`, and
   Merge, split, and supersede-a-live-decision never apply in-session — they become
   supersede-and-replace Spec work items for `/to-tickets` + `/afk`.
 - `/model-tier-policy` answers runner/model tier choices; `runner_list` and
-  `runner_detect` on the `dev:afk` MCP answer which backend a host resolves to.
+  `runner_detect` on the `castle` MCP answer which backend a host resolves to.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding
   or productivity routes that feed the main flow.
 - `/branch-lock`, `/git-guardrails-claude-code`, `/migrate-to-shoehorn`, and

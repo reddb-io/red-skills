@@ -60,6 +60,7 @@ Confirm with the user:
 
 - Install `red-issues-needs-triage.yml` (verbatim — name unchanged; it is a standalone `red-*` copy-installable, not a reusable caller) into `.github/workflows/`? Default: yes.
 - Does the `needs-triage` label exist in the issue tracker? If not, create it (`gh label create needs-triage --description "Maintainer needs to evaluate"`).
+- Does the `quarantine` label exist? If not, create it idempotently (`gh label create quarantine --color D93F0B --description "Issue-local AFK safety hold; castle curator releases or parks for HITL"`). ADR 0122 boot probes apply this label instead of halting the fleet on one incoherent issue.
 - Does the `runner-error` label exist? If not, create it (`gh label create runner-error --color B60205 --description "AFK supervisor circuit-tripped; runner was misconfigured"`). The `/afk` fleet supervisor falls back to creating it on the fly during a circuit trip, but provisioning it here keeps colour/description consistent across repos.
 - Does the `blocked:dependency` label exist? If not, create it (`gh label create blocked:dependency --color D4C5F9 --description "Waiting on other issues (req:N edges); auto-unblocks when the last dependency closes"`). `req:N` edge labels are created on demand by `/to-tickets` (`gh label create req:<n>`) like `spec:N`, so they need no upfront provisioning.
 - Provision the Wayfinder labels `/wayfinder` uses to type map and child Tickets: `wayfinder:map`, `wayfinder:research`, `wayfinder:grilling`, `wayfinder:prototype`, and `wayfinder:task` (suggested colour `C5DEF5`). They are descriptive labels: AFK routing still comes only from `ready-for-agent` / `blocked:dependency`, and HITL routing still comes from `ready-for-human`.
@@ -135,7 +136,7 @@ After installing, verify:
 ```bash
 command -v red-skills-dev
 command -v rsp
-red-skills-dev dashboard --json
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev dashboard --json
 rsp git status
 ```
 

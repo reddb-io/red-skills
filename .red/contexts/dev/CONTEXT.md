@@ -26,6 +26,18 @@ _Avoid_: loose label, tag bucket
 The operator-facing set of non-Spec **Tickets** that need human decision resolution, selected by `ready-for-human`.
 _Avoid_: human backlog, HITL backlog
 
+**Quarantine**:
+An issue-local AFK safety hold (`quarantine` with `ready-for-agent` removed) applied when a boot probe finds state that requires judgment, or when the **Heal ledger** refuses a third repair in 24 hours. The probe appends its diagnosis to the Ticket body; healthy siblings keep draining.
+_Avoid_: global probe halt, needs-triage fallback, test quarantine
+
+**Issue curator**:
+The castle resident's periodic reconciliation owner for **Quarantine**. It re-runs issue coherence, restores `ready-for-agent` when the defect dissolves, and parks `ready-for-human` for **HITL resolution** after three failed re-checks.
+_Avoid_: supervisor sweep, manual quarantine cleanup
+
+**Heal ledger**:
+Durable per-Ticket repair history in the castle **State tier**. It permits at most two mechanically provable heals per rolling 24-hour window; the third repair request becomes **Quarantine** with the history included in the diagnosis.
+_Avoid_: retry counter, attempt ledger
+
 **HITL resolution**:
 A maintainer-led session that resolves the human decision pending on an **Issue** and, when delegation becomes safe, moves it to `ready-for-agent` with an updated `## Agent brief`.
 _Avoid_: manual implementation, human fix session
@@ -138,21 +150,21 @@ _Avoid_: hand-authored `opencode.json` per project, second source of truth for t
 The provider-facing runner set (`AgentRunner` = claude | codex | opencode | claude-minimax) and the single descriptor table that owns each runner's provider policy — its accepted efforts, whether effort rides the numeric `effort` knob or OpenCode's free-form `variant` channel, any forced model (claude-minimax → MiniMax-M3), and its auth-env resolver. `toAgentRunner` projects the broader orchestrator **Runner** (which also includes the runner-neutral `hermes`) onto this set, collapsing any provider-less runner to `claude`. Adding a provider becomes one table row instead of parallel edits across `buildAgent`, `effortForProvider`, and the tier-table coercion.
 _Avoid_: runner detection (that resolves *which* Runner to use; a Runner spec defines *what each provider runner accepts*)
 
-**Attempt**:
-One numbered AFK execution of an **Issue**, materialised at `.red/tmp/workers/{wid}/{issue}-a{n}/`. The `a{n}` counter is per-**Issue** across all **Workers**, so each retry — even by a different worker — is a fresh attempt directory.
-_Avoid_: iteration, run, retry dir
+**Implementer environment**:
+The loaded surface (plugins, MCP servers, hooks, rsp) an inner agent receives when a **Worker** spawns it. Derived strictly from the repo's `.red/config.yaml` activation gates — a plugin or rsp rides along only when its existing `enabled: true` key says so (ADR 0067 strict opt-in is the payload declaration); everything else stays out of the spawn. Minimal by construction, never by a separate list.
+_Avoid_: implementer payload list, full-environment inheritance
 
-**Attempt Outcome**:
-How an **Attempt** ended, and what that ending *means* for the **Issue**: the single concept (owned by `core/attempt-outcome.ts`) that maps a terminal result to its `blocked:<reason>` label (`blockedLabelFor`), its envelope status (`envelopeStatusFor`), and its bounded-recovery policy key (`recoveryReasonFor`). The historical three-enum smear (`ProcessOutcome` / `BlockedReason` / `RecoveryReason`) is resolved — adding an outcome now touches one set of exhaustive switches.
-_Avoid_: process outcome, blocked reason, recovery reason (these were the three views now unified, not separate concepts)
+**Worker outcome**:
+How a **Worker**'s execution of an **Issue** ended, and what that ending *means* for the **Issue**: the single concept that maps a terminal result to its `blocked:<reason>` label, its envelope status, and its bounded-recovery policy key. The historical three-enum smear (`ProcessOutcome` / `BlockedReason` / `RecoveryReason`) is resolved — adding an outcome now touches one set of exhaustive switches.
+_Avoid_: attempt outcome (retired vocabulary — "attempt" is purged repo-wide), process outcome, blocked reason, recovery reason (these were the three views now unified, not separate concepts)
 
-**Attempt disposition**:
-What AFK *does* about an **Attempt Outcome** — the single owner that composes the outcome's recovery decision (retry vs escalate, from the cap policy plus the real attempt number), its typed `blocked:*` label, its envelope status, and the standard escalation announcement into one pure descriptor. The worker per-issue path (`routeRecovery`), the no-agent **reconcile** path, and the **Fleet supervisor** stall-reaper all consume the same disposition instead of each re-deriving labels, statuses, and comments. It owns the total `outcome → policy key` map (including `stalled`, which the per-issue `recoveryReasonFor` view deliberately omits).
-_Avoid_: recovery routing, park logic (these are the per-site applications of one Attempt disposition)
+**Worker disposition**:
+What AFK *does* about a **Worker outcome** — the single owner that composes the outcome's recovery decision (retry vs escalate, from the cap policy), its typed `blocked:*` label, its envelope status, and the standard escalation announcement into one pure descriptor. The worker per-issue path, the no-agent **reconcile** path, and the **Fleet supervisor** stall-reaper all consume the same disposition instead of each re-deriving labels, statuses, and comments.
+_Avoid_: attempt disposition (retired vocabulary), recovery routing, park logic (per-site applications of one disposition)
 
 **Worktree**:
-An isolated `git worktree` created by AFK per **Attempt** under `.red/tmp/workers/{wid}/{issue}-a{n}/worktree/`.
-_Avoid_: afk clone, sandbox checkout
+An isolated `git worktree` created by AFK per **Worker** execution, inside the worker's workspace under `.red/tmp/workers/{wid}/{issue}/`. One worker = one issue execution = one worktree; a retry is a fresh worker, not a numbered sub-directory (ADR 0103).
+_Avoid_: afk clone, sandbox checkout, attempt worktree
 
 **Red lifecycle tier**:
 One of the canonical `.red/` lifecycles from ADR 0098: tracked knowledge/config, plugin stores, durable machine state under `.red/state/`, or disposable scratch under `.red/tmp/`. The lifecycle decides whether a path is versioned, plugin-owned, durable-local, or safely deletable.

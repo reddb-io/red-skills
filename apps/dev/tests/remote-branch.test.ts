@@ -26,16 +26,17 @@ function fakeGit(result: Partial<GitExecResult> = {}): { git: GitExec; calls: st
 
 describe("remote-branch ref construction", () => {
   it("builds and validates only the live namespace from a slug", () => {
-    expect(buildRefFromSlug("afk", "wABC", 42, "fix-thing")).toBe("afk/wABC/42-fix-thing");
+    expect(buildRefFromSlug("afk", "wABC", 42, "fix-thing")).toBe("afk/42-fix-thing");
     // @ts-expect-error namespace narrowed to the one valid value
     expect(buildRefFromSlug("afk-attempts", "wABC", "42", "fix-thing")).toBeNull();
-    expect(isValidRef("afk/wABC/42-fix-thing")).toBe(true);
+    expect(isValidRef("afk/42-fix-thing")).toBe(true);
+    expect(isValidRef("afk/wABC/42-fix-thing")).toBe(true); // migration compatibility
     expect(isValidRef("afk-attempts/wABC/42-fix-thing")).toBe(false);
     expect(isValidRef("afk/wABC/42-fix/thing")).toBe(false);
   });
 
   it("rejects malformed inputs instead of building a bad ref", () => {
-    expect(buildRefFromSlug("afk", "../bad", 1, "slug")).toBeNull(); // worker with slash
+    expect(buildRefFromSlug("afk", "../bad", 1, "slug")).toBe("afk/1-slug"); // worker provenance is not in the ref
     expect(buildRefFromSlug("afk", "wOK", "1x", "slug")).toBeNull(); // non-numeric issue
     expect(buildRefFromSlug("afk", "wOK", 1, "Bad Slug")).toBeNull(); // un-slugified
     expect(buildRefFromSlug("afk", "wOK", 1, "nested/slug")).toBeNull(); // slug with slash
@@ -45,7 +46,7 @@ describe("remote-branch ref construction", () => {
 
   it("slugifies titles the same way as branch-ref.sh", () => {
     expect(slugifyRef("Fix the Thing!!")).toBe("fix-the-thing");
-    expect(buildRef("afk", "wABC", 7, "Fix the Thing!!")).toBe("afk/wABC/7-fix-the-thing");
+    expect(buildRef("afk", "wABC", 7, "Fix the Thing!!")).toBe("afk/7-fix-the-thing");
   });
 
   it("never ends in a trailing dash even when the 40-char slice lands mid-word (#442)", () => {

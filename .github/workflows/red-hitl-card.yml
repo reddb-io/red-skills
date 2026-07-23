@@ -69,9 +69,25 @@ jobs:
     if: >-
       github.event_name == 'issue_comment' &&
       github.event.action == 'created' &&
+      github.event.comment.user.type == 'User' &&
+      contains(fromJSON('["filipeforattini"]'), github.event.comment.user.login) &&
+      !startsWith(github.event.comment.body, '🤖') &&
+      !startsWith(github.event.comment.body, '⛔') &&
+      !startsWith(github.event.comment.body, '⚠️') &&
+      !startsWith(github.event.comment.body, '<!-- red:hitl-card') &&
+      !startsWith(github.event.comment.body, '<details data-kind="directive">') &&
       !github.event.issue.pull_request &&
       contains(toJSON(github.event.issue.labels), '"ready-for-human"')
+    concurrency:
+      group: red-hitl-card-act-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
+    # /approve merges the linked PR, which needs contents: write — the
+    # workflow-level block stays read-only for render/refresh.
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -83,11 +99,19 @@ jobs:
 
       - name: Execute card command
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Merging into protected main is declined for the default integration
+          # token; the org RELEASE_PAT (admin PAT) performs the /approve merge.
+          # Absent the secret, degrade to the default token (merge may fail).
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
           RED_AFK_SANDBOX: none
           # Pass via env to avoid shell-injection from public comment text.
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          COMMENT_AUTHOR_TYPE: ${{ github.event.comment.user.type }}
+          # Human directives and machine receipts have separate explicit
+          # identities so PAT-backed automation cannot masquerade as a user.
+          HITL_CARD_ALLOWED_AUTHORS: filipeforattini
+          HITL_CARD_RECEIPT_IDENTITIES: filipeforattini:User,github-actions[bot]:Bot
         run: |
           set -euo pipefail
           LAUNCHER="plugins/dev/skills/engineering/afk/bin/afk.mjs"
@@ -95,6 +119,9 @@ jobs:
             --issue "${{ github.event.issue.number }}" \
             --body "$COMMENT_BODY" \
             --author "$COMMENT_AUTHOR" \
+            --author-type "$COMMENT_AUTHOR_TYPE" \
+            --allowed-authors "$HITL_CARD_ALLOWED_AUTHORS" \
+            --receipt-identities "$HITL_CARD_RECEIPT_IDENTITIES" \
             --repo "${{ github.repository }}"
 
   # ─── refresh ───────────────────────────────────────────────────────────────

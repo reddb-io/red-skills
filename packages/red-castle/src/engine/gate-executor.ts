@@ -3,13 +3,23 @@ import {
   DEFAULT_BACKPRESSURE_TIMEOUT_MS,
   FEEDBACK_SCRIPTS,
   KILLED_EXIT_CODE,
-  LIFECYCLE_SCRIPT_NAMES,
   MECHANICAL_KINDS,
-  SENSITIVE_PATH_PATTERNS,
   type FeedbackScript,
 } from "./gate-constants.js";
-import type { GateFinding, GateSink, GateSinkOutcome, SensitivePathHit } from "./gate-sink.js";
-import { computeValidationScope, scopesForValidationScope, type PackageLayout, type ValidationScope, type WorkspaceGraph } from "./validation-cone.js";
+import type { GateFinding, GateSink, GateSinkOutcome } from "./gate-sink.js";
+import {
+  computeValidationScope,
+  scopesForValidationScope,
+  type PackageLayout,
+  type ValidationScope,
+  type WorkspaceGraph,
+} from "./validation-cone.js";
+import {
+  evaluateHostGateAdmission,
+  type GateWeightClass,
+  type HostCapabilityProfile,
+  type HostGateAdmission,
+} from "./host-capability-profile.js";
 
 export type ValidationStatus = "passed" | "failed" | "skipped";
 
@@ -49,7 +59,6 @@ export interface ValidationCheck {
 export interface RunCastleGateInput {
   worktree: string;
   changedFiles: readonly string[];
-  packageJsonDiff?: string;
   layout: ScriptLayout;
   graph: WorkspaceGraph;
   findings?: readonly GateFinding[];
@@ -60,6 +69,10 @@ export interface RunCastleGateInput {
   applyMechanical: (finding: GateFinding) => Promise<void>;
   now: () => number;
   backpressureTimeoutMs?: number;
+  /** This machine's durable capability declaration. Absent keeps legacy permissive routing. */
+  hostProfile?: HostCapabilityProfile;
+  /** Explicit gate weight when the caller has already classified the run. */
+  gateWeight?: GateWeightClass;
 }
 
 export interface CastleGateResult {
@@ -69,47 +82,16 @@ export interface CastleGateResult {
   sidecar: string[];
   sinkOutcomes: GateSinkOutcome[];
   mechanicalApplied: number;
+  admission: HostGateAdmission;
+}
+
+function gateWeightForScope(scope: ValidationScope): GateWeightClass {
+  if (scope.type === "whole-workspace") return "full-workspace";
+  return scope.packages.length > 1 ? "heavy-cone" : "light-cone";
 }
 
 export function classifyFinding(finding: GateFinding): "mechanical" | "intent" {
   return (MECHANICAL_KINDS as readonly string[]).includes(finding.kind) ? "mechanical" : "intent";
-}
-
-export function isSensitivePath(filePath: string): boolean {
-  return SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(filePath));
-}
-
-export function hasLifecycleScriptInDiff(diffText: string): boolean {
-  const names = LIFECYCLE_SCRIPT_NAMES.join("|");
-  return new RegExp(`^\\+\\s*"(${names})"\\s*:`, "m").test(diffText);
-}
-
-export function checkSensitivePaths(
-  changedFiles: readonly string[],
-  packageJsonDiff = "",
-): SensitivePathHit[] {
-  const hits: SensitivePathHit[] = [];
-  for (const file of changedFiles) {
-    if (isSensitivePath(file)) hits.push({ path: file, reason: sensitivePathReason(file) });
-  }
-  if (packageJsonDiff !== "" && hasLifecycleScriptInDiff(packageJsonDiff)) {
-    const packageFiles = changedFiles.filter((file) => /(?:^|\/)package\.json$/.test(file));
-    hits.push({
-      path: packageFiles.length > 0 ? packageFiles.join(", ") : "package.json",
-      reason: "lifecycle script added or altered in package.json",
-    });
-  }
-  return hits;
-}
-
-function sensitivePathReason(filePath: string): string {
-  if (/^\.github\/workflows\//.test(filePath)) return "CI workflow file";
-  if (/^\.github\/actions\//.test(filePath)) return "CI composite action";
-  if (/(?:^|\/)\.git\/hooks\//.test(filePath) || /^\.husky\//.test(filePath) || /^\.githooks\//.test(filePath)) return "git hook";
-  if (/^\.red\//.test(filePath)) return "trust/gate configuration";
-  if (/^plugins\/[^/]+\/hooks\//.test(filePath)) return "agent plugin hook";
-  if (/^plugins\/[^/]+\/scripts\//.test(filePath)) return "agent plugin launcher script";
-  return "sensitive path";
 }
 
 function scopeLabel(scope: string): string {
@@ -234,18 +216,34 @@ async function runBackpressureChecks(
   return ok;
 }
 
-export async function runCastleGate(input: RunCastleGateInput): Promise<CastleGateResult> {
-  const validationScope = computeValidationScope(input.changedFiles, input.layout, input.graph);
+export async function runCastleGate(
+  input: RunCastleGateInput,
+): Promise<CastleGateResult> {
+  const validationScope = computeValidationScope(
+    input.changedFiles,
+    input.layout,
+    input.graph,
+  );
+  const admission = evaluateHostGateAdmission(
+    input.hostProfile,
+    input.gateWeight ?? gateWeightForScope(validationScope),
+  );
   const checks: ValidationCheck[] = [];
   const sidecar: string[] = [];
   const sinkOutcomes: GateSinkOutcome[] = [];
   let mechanicalApplied = 0;
   let ok = true;
 
-  for (const hit of checkSensitivePaths(input.changedFiles, input.packageJsonDiff)) {
-    const outcome = await input.sink.sensitivePath(hit);
-    sinkOutcomes.push(outcome);
-    if (outcome !== "approved") ok = false;
+  if (!admission.admitted) {
+    return {
+      ok: false,
+      validationScope,
+      checks,
+      sidecar,
+      sinkOutcomes,
+      mechanicalApplied,
+      admission,
+    };
   }
 
   for (const finding of input.findings ?? []) {
@@ -266,5 +264,13 @@ export async function runCastleGate(input: RunCastleGateInput): Promise<CastleGa
     ok = ok && await runBackpressureChecks(input, checks, sidecar);
   }
 
-  return { ok, validationScope, checks, sidecar, sinkOutcomes, mechanicalApplied };
+  return {
+    ok,
+    validationScope,
+    checks,
+    sidecar,
+    sinkOutcomes,
+    mechanicalApplied,
+    admission,
+  };
 }

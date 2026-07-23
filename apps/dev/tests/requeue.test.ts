@@ -23,6 +23,20 @@ const decisionBlocker = {
   next: "Human must decide before work can proceed.",
 };
 
+const infraBlocker = {
+  status: "blocked" as const,
+  kind: "infra",
+  summary: "The runner could not create its worktree.",
+  next: "Retry after the transient infrastructure fault clears.",
+};
+
+const baseStaleBlocker = {
+  status: "blocked" as const,
+  kind: "base-stale",
+  summary: "The worker could not refresh its base.",
+  next: "Refresh the local base from origin, then requeue.",
+};
+
 const parkedBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
   validationBlocker,
 )}\n\n## Acceptance\n- [ ] Done\n`;
@@ -35,15 +49,12 @@ const decisionBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${forma
   decisionBlocker,
 )}\n`;
 
-const sensitivePathBlocker = {
-  status: "blocked" as const,
-  kind: "sensitive-path",
-  summary: "Diff touches .github/workflows/ci.yml — protected path.",
-  next: "Human must review the protected diff before it can land.",
-};
+const infraBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
+  infraBlocker,
+)}\n`;
 
-const sensitivePathBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
-  sensitivePathBlocker,
+const baseStaleBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
+  baseStaleBlocker,
 )}\n`;
 
 describe("requeue — label flip invariant", () => {
@@ -64,7 +75,7 @@ describe("requeue — label flip invariant", () => {
   });
 });
 
-describe("requeue — supported kinds (validation, spec)", () => {
+describe("requeue — supported kinds (validation, spec, infra, base-stale)", () => {
   it("clears the active blocker in the rewritten body instead of requiring manual editing", () => {
     const plan = planRequeue({
       body: parkedBody,
@@ -128,6 +139,34 @@ describe("requeue — supported kinds (validation, spec)", () => {
     expect(plan.requeueable).toBe(true);
     expect(plan.refuseForHitl).toBe(false);
     expect(plan.removeLabels).toEqual(expect.arrayContaining(["ready-for-human", "blocked:spec"]));
+    expect(plan.addLabels).toEqual(["ready-for-agent"]);
+  });
+
+  it("requeues a transient blocked:infra park through the standard tool", () => {
+    const plan = planRequeue({
+      body: infraBody,
+      labels: ["ready-for-human", "blocked:infra"],
+      guidance: "Runner recovered; retry the worktree setup.",
+    });
+    expect(plan.requeueable).toBe(true);
+    expect(plan.refuseForHitl).toBe(false);
+    expect(plan.activeBlocker?.kind).toBe("infra");
+    expect(plan.removeLabels).toEqual(expect.arrayContaining(["ready-for-human", "blocked:infra"]));
+    expect(plan.addLabels).toEqual(["ready-for-agent"]);
+  });
+
+  it("plans a freshness-gated blocked:base-stale requeue without requiring /hitl", () => {
+    const plan = planRequeue({
+      body: baseStaleBody,
+      labels: ["ready-for-human", "blocked:base-stale"],
+      guidance: "Base freshness verified.",
+    });
+    expect(plan.requeueable).toBe(true);
+    expect(plan.refuseForHitl).toBe(false);
+    expect(plan.activeBlocker?.kind).toBe("base-stale");
+    expect(plan.removeLabels).toEqual(
+      expect.arrayContaining(["ready-for-human", "blocked:base-stale"]),
+    );
     expect(plan.addLabels).toEqual(["ready-for-agent"]);
   });
 });
@@ -194,61 +233,8 @@ describe("requeue — refusals that direct to /hitl", () => {
   });
 });
 
-describe("requeue — sensitive-path is adopt-branch-only (#1171)", () => {
-  it("refuses a bare requeue of a blocked:sensitive-path park (→ /hitl)", () => {
-    const plan = planRequeue({
-      body: sensitivePathBody,
-      labels: ["ready-for-human", "blocked:sensitive-path"],
-      guidance: "Reviewed the CI diff.",
-      // adoptBranch omitted → bare requeue must still refuse.
-    });
-    expect(plan.requeueable).toBe(false);
-    expect(plan.refuseForHitl).toBe(true);
-    expect(plan.reason).toMatch(/adopt-branch/);
-    expect(plan.bodyChanged).toBe(false);
-    expect(plan.addLabels).toHaveLength(0);
-    expect(plan.removeLabels).toHaveLength(0);
-  });
-
-  it("clears a blocked:sensitive-path park when --adopt-branch is set", () => {
-    const plan = planRequeue({
-      body: sensitivePathBody,
-      labels: ["ready-for-human", "blocked:sensitive-path"],
-      guidance: "Maintainer reviewed the workflow diff; land it.",
-      adoptBranch: true,
-    });
-    expect(plan.requeueable).toBe(true);
-    expect(plan.refuseForHitl).toBe(false);
-    expect(plan.activeBlocker?.kind).toBe("sensitive-path");
-    expect(plan.bodyChanged).toBe(true);
-    expect(plan.body).toContain("## Resolved blockers");
-    expect(plan.removeLabels).toEqual(
-      expect.arrayContaining(["ready-for-human", "blocked:sensitive-path"]),
-    );
-    expect(plan.addLabels).toEqual(["ready-for-agent"]);
-  });
-
-  it("refuses a body-only sensitive-path blocker on a bare requeue but clears it under --adopt-branch", () => {
-    const bare = planRequeue({
-      body: sensitivePathBody,
-      labels: ["ready-for-human"],
-      guidance: "Reviewed.",
-    });
-    expect(bare.requeueable).toBe(false);
-    expect(bare.refuseForHitl).toBe(true);
-    expect(bare.reason).toMatch(/adopt-branch/);
-
-    const adopt = planRequeue({
-      body: sensitivePathBody,
-      labels: ["ready-for-human"],
-      guidance: "Reviewed.",
-      adoptBranch: true,
-    });
-    expect(adopt.requeueable).toBe(true);
-    expect(adopt.activeBlocker?.kind).toBe("sensitive-path");
-  });
-
-  it("does NOT widen other unsupported kinds — decision still refuses even under --adopt-branch", () => {
+describe("requeue — unsupported kinds refuse even under --adopt-branch", () => {
+  it("decision kind refuses even under --adopt-branch (not in the supported set)", () => {
     const plan = planRequeue({
       body: decisionBody,
       labels: ["ready-for-human", "blocked:decision"],

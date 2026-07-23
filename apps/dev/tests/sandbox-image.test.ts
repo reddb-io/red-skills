@@ -6,10 +6,10 @@ import {
 } from "../src/core/execution/sandbox-image.js";
 
 const REPO_ROOT = "/srv/checkouts/red-skills";
-// The per-attempt worktree red-castle runs in — the path whose LAST segment used
+// The worker worktree red-castle runs in — the path whose LAST segment used
 // to become the image tag (`sandcastle:2338`, issue #2340).
 const ATTEMPT_WORKTREE =
-  `${REPO_ROOT}/.red/tmp/workers/wHKWN/2340/.red-castle/worktrees/afk-wHKWN-2340-untrusted-author-sandbox`;
+  `${REPO_ROOT}/.red/tmp/workers/wHKWN/2340/worktree`;
 
 describe("defaultSandboxImageName", () => {
   it("derives a repo-level tag from the checkout directory name", () => {

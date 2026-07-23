@@ -5,14 +5,17 @@ import {
   FEEDBACK_TTL_S,
   KNOWN_TMP_LANES,
   LOGS_TTL_S,
+  parseFeedbackWorktreeWorkerSlug,
   planDiagnosticsJanitor,
   planFeedbackWorktreeJanitor,
   planLogsJanitor,
+  planOrphanFeedbackWorktreeSweep,
   planScratchJanitor,
   planTmpJanitor,
   planWorkerDirJanitor,
   SCRATCH_TTL_S,
   type JanitorEntry,
+  type OrphanFeedbackEntry,
   type WorkerDirJanitorEntry,
 } from "../src/core/tmp-janitor.js";
 
@@ -312,5 +315,94 @@ describe("planWorkerDirJanitor", () => {
   it("spares dead worker dirs with no issue-bearing attempts", () => {
     const entry = worker({ issues: [] });
     expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
+  });
+});
+
+// ---------- parseFeedbackWorktreeWorkerSlug ----------
+
+describe("parseFeedbackWorktreeWorkerSlug", () => {
+  it("extracts the worker ID from a canonical AFK feedback worktree slug", () => {
+    expect(parseFeedbackWorktreeWorkerSlug("afk-wOF09-2379-tmp-janitor-fix")).toBe("wOF09");
+  });
+
+  it("extracts the worker ID from a minimal valid slug", () => {
+    expect(parseFeedbackWorktreeWorkerSlug("afk-w1-42-fix")).toBe("w1");
+  });
+
+  it("extracts the worker ID when the slug has uppercase letters", () => {
+    expect(parseFeedbackWorktreeWorkerSlug("afk-W5LB-1234-some-slug")).toBe("W5LB");
+  });
+
+  it("returns null for the trunk/baseline worktree (no 'afk-' prefix)", () => {
+    expect(parseFeedbackWorktreeWorkerSlug("main")).toBeNull();
+  });
+
+  it("returns null for a feature branch slug without an issue number", () => {
+    // 'afk-worker' lacks the '<issueN>-' part
+    expect(parseFeedbackWorktreeWorkerSlug("afk-worker")).toBeNull();
+  });
+
+  it("returns null for an empty string", () => {
+    expect(parseFeedbackWorktreeWorkerSlug("")).toBeNull();
+  });
+
+  it("returns null for a non-AFK slug", () => {
+    expect(parseFeedbackWorktreeWorkerSlug("feature-123-fix")).toBeNull();
+  });
+});
+
+// ---------- planOrphanFeedbackWorktreeSweep ----------
+
+describe("planOrphanFeedbackWorktreeSweep", () => {
+  function fbEntry(basename: string, ownerAlive: boolean | null): OrphanFeedbackEntry {
+    return { path: `/red/tmp/worktrees/feedback/${basename}`, basename, mtimeS: NOW, ownerAlive };
+  }
+
+  it("returns empty plans for an empty entry list", () => {
+    expect(planOrphanFeedbackWorktreeSweep([], false)).toEqual({ reclaim: [], spare: [] });
+  });
+
+  it("reclaims an AFK worker entry whose owning worker is dead (ownerAlive: false)", () => {
+    const dead = fbEntry("afk-wOF09-2379-fix", false);
+    expect(planOrphanFeedbackWorktreeSweep([dead], false)).toEqual({ reclaim: [dead], spare: [] });
+  });
+
+  it("spares an AFK worker entry whose owning worker is still alive (ownerAlive: true)", () => {
+    const live = fbEntry("afk-wP5LB-2379-fix", true);
+    expect(planOrphanFeedbackWorktreeSweep([live], true)).toEqual({ reclaim: [], spare: [live] });
+  });
+
+  it("reclaims a non-worker entry (e.g. main) when no workers are alive", () => {
+    const main = fbEntry("main", null);
+    expect(planOrphanFeedbackWorktreeSweep([main], false)).toEqual({ reclaim: [main], spare: [] });
+  });
+
+  it("spares a non-worker entry (e.g. main) when at least one worker is alive", () => {
+    const main = fbEntry("main", null);
+    expect(planOrphanFeedbackWorktreeSweep([main], true)).toEqual({ reclaim: [], spare: [main] });
+  });
+
+  it("partitions a mixed set: dead-owner reclaimed, live-owner spared, main reclaimed when no workers", () => {
+    const dead = fbEntry("afk-wOLD-1-fix", false);
+    const live = fbEntry("afk-wNEW-2-fix", true);
+    const main = fbEntry("main", null);
+    // anyWorkerAlive = true because wNEW is alive
+    const plan = planOrphanFeedbackWorktreeSweep([dead, live, main], true);
+    expect(plan.reclaim).toEqual([dead]);
+    expect(plan.spare).toEqual([live, main]);
+  });
+
+  it("reclaims main alongside dead-owner entries when no workers alive at all", () => {
+    const dead = fbEntry("afk-wOLD-1-fix", false);
+    const main = fbEntry("main", null);
+    const plan = planOrphanFeedbackWorktreeSweep([dead, main], false);
+    expect(plan.reclaim).toEqual([dead, main]);
+    expect(plan.spare).toEqual([]);
+  });
+
+  it("spares a live-owner entry even when anyWorkerAlive is false (ownerAlive: true wins)", () => {
+    // Should not happen in practice, but the rule is clear: ownerAlive: true → spare.
+    const live = fbEntry("afk-wABC-10-fix", true);
+    expect(planOrphanFeedbackWorktreeSweep([live], false)).toEqual({ reclaim: [], spare: [live] });
   });
 });

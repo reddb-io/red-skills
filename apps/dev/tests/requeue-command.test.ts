@@ -80,18 +80,45 @@ const specBlocker = {
   next: "Human must clarify before work proceeds.",
 };
 
-const sensitivePathBlocker = {
+const baseStaleBlocker = {
   status: "blocked" as const,
-  kind: "sensitive-path",
-  summary: "Diff touches .github/workflows/ci.yml.",
-  next: "Human must review the protected diff before it can land.",
+  kind: "base-stale",
+  summary: "The worker could not refresh its base.",
+  next: "Refresh the local base from origin, then requeue.",
 };
 
 const parkedBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(validationBlocker)}\n`;
 const specBodyMismatch = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(specBlocker)}\n`;
-const sensitivePathBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(sensitivePathBlocker)}\n`;
+const baseStaleBody = `## Summary\nDo it.\n\n## Current blocker\n\n${formatCurrentBlocker(baseStaleBlocker)}\n`;
 
 describe("requeue command — happy path", () => {
+  it("requeues blocked:base-stale through the CLI after freshness is verified", async () => {
+    const fixture = fakeGh({
+      state: "OPEN",
+      body: baseStaleBody,
+      labels: ["ready-for-human", "blocked:base-stale"],
+    });
+    const { stream } = capture();
+
+    const code = await requeueCommand(
+      ["#42", "--guidance", "Base freshness verified."],
+      "/tmp",
+      stream,
+      fixture.gh,
+      undefined,
+      async () => ({ ok: true, evidence: "origin/main is fresh" }),
+    );
+
+    expect(code).toBe(0);
+    expect(fixture.calls.editBody).toBe(1);
+    expect(fixture.calls.editLabels).toBe(1);
+    expect(fixture.lastRemove).toEqual(
+      expect.arrayContaining(["ready-for-human", "blocked:base-stale"]),
+    );
+    expect(fixture.lastAdd).toEqual(["ready-for-agent"]);
+    expect(isRequeueComplete(fixture.state.body, fixture.state.labels)).toBe(true);
+  });
+
   it("returns a stable structured result for a non-parked no-op", async () => {
     const { gh, calls } = fakeGh({
       state: "OPEN",
@@ -228,6 +255,36 @@ describe("requeue command — usage errors (exit 2)", () => {
 });
 
 describe("requeue command — /hitl refusals (exit 1, no mutation)", () => {
+  it("refuses blocked:base-stale without mutation when freshness verification still fails", async () => {
+    const { gh, calls } = fakeGh({
+      state: "OPEN",
+      body: baseStaleBody,
+      labels: ["ready-for-human", "blocked:base-stale"],
+    });
+
+    const result = await executeRequeue(
+      { issue: 42, guidance: "Retry after refreshing the base." },
+      {
+        cwd: "/tmp",
+        gh,
+        verifyBaseFreshness: async () => ({
+          ok: false,
+          evidence: "could not refresh origin/main: remote unavailable",
+        }),
+      },
+    );
+
+    expect(result).toMatchObject({
+      applied: false,
+      outcome: "refused",
+      exitCode: 1,
+      reason: expect.stringContaining(
+        "could not refresh origin/main: remote unavailable",
+      ),
+    });
+    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
+  });
+
   it("refuses mixed blocked:* labels and exits 1 without mutation", async () => {
     const { gh, calls } = fakeGh({
       state: "OPEN",
@@ -295,26 +352,44 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
     expect(err.text()).toContain("--guidance");
   });
 
-  it("applies requeue transition then calls adopt runner for a parked issue", async () => {
-    const { gh, calls } = fakeGh({
+  it("applies the planned requeue atomically instead of parking a guided adopt", async () => {
+    const fixture = fakeGh({
       state: "OPEN",
       body: parkedBody,
       labels: ["ready-for-human", "blocked:validation"],
     });
-    const { stream, text } = capture();
     let adoptCalled = false;
-    const runner: RequeueAdoptRunner = async () => { adoptCalled = true; return "landed"; };
+    const runner: RequeueAdoptRunner = async () => {
+      adoptCalled = true;
+      return "parked";
+    };
 
-    const code = await requeueCommand(
-      ["#42", "--guidance", "Gate flake fixed.", "--adopt-branch", "my-branch"],
-      "/tmp", stream, gh, runner,
+    const result = await executeRequeue(
+      {
+        issue: 42,
+        guidance: "Fix the remaining failures on the existing branch.",
+        adoptBranch: "my-branch",
+      },
+      { cwd: "/tmp", gh: fixture.gh, adoptRunner: runner },
     );
 
-    expect(code).toBe(0);
-    expect(calls.editBody).toBe(1);
-    expect(calls.editLabels).toBe(1);
-    expect(adoptCalled).toBe(true);
-    expect(text()).toContain("validated and landed");
+    expect(result).toMatchObject({
+      applied: true,
+      outcome: "requeued",
+      exitCode: 0,
+      addLabels: ["ready-for-agent"],
+      removeLabels: ["ready-for-human", "blocked:validation"],
+    });
+    expect(result.addLabels).toEqual(result.plan?.addLabels);
+    expect(result.removeLabels).toEqual(result.plan?.removeLabels);
+    expect(fixture.calls.editBody).toBe(1);
+    expect(fixture.calls.editLabels).toBe(1);
+    expect(fixture.lastAdd).toEqual(["ready-for-agent"]);
+    expect(fixture.lastRemove).toEqual(["ready-for-human", "blocked:validation"]);
+    expect(fixture.state.labels).toContain("ready-for-agent");
+    expect(fixture.state.labels).not.toContain("ready-for-human");
+    expect(fixture.state.labels).not.toContain("blocked:validation");
+    expect(adoptCalled).toBe(false);
   });
 
   it("calls adopt runner even when issue is not parked (fresh issue, no blockers)", async () => {
@@ -386,106 +461,7 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
     expect(adoptCalled).toBe(false);
   });
 
-  it("bare requeue of a blocked:sensitive-path park still refuses → /hitl (exit 1, no adopt)", async () => {
-    const { gh, calls } = fakeGh({
-      state: "OPEN",
-      body: sensitivePathBody,
-      labels: ["ready-for-human", "blocked:sensitive-path"],
-    });
-    const { stream } = capture();
-    const err = captureStderr();
-
-    const code = await requeueCommand(["#42", "--guidance", "Reviewed the CI diff."], "/tmp", stream, gh);
-    err.restore();
-
-    expect(code).toBe(1);
-    expect(err.text()).toContain("refused");
-    expect(err.text()).toMatch(/adopt-branch/);
-    expect(calls.editBody + calls.editLabels + calls.comment).toBe(0);
-  });
-
-  it("--adopt-branch clears a blocked:sensitive-path park, flags the guard bypass, and lands", async () => {
-    const { gh, calls, state } = fakeGh({
-      state: "OPEN",
-      body: sensitivePathBody,
-      labels: ["ready-for-human", "blocked:sensitive-path"],
-    });
-    const { stream, text } = capture();
-    let adoptApproved: boolean | undefined;
-    const runner: RequeueAdoptRunner = async (_issue, _branch, issueData) => {
-      adoptApproved = issueData.sensitivePathApproved;
-      return "landed";
-    };
-
-    const code = await requeueCommand(
-      ["#42", "--guidance", "Maintainer reviewed the workflow diff; land it.", "--adopt-branch", "afk/w/9-fix"],
-      "/tmp", stream, gh, runner,
-    );
-
-    expect(code).toBe(0);
-    // Transition applied: blocker cleared, sensitive-path label dropped.
-    expect(calls.editBody).toBe(1);
-    expect(calls.editLabels).toBe(1);
-    expect(state.labels).not.toContain("blocked:sensitive-path");
-    // #1307: `ready-for-agent` is WITHHELD for the adopt gate — the Ticket must
-    // not be claimable while the gate runs, and a landed gate closes it anyway.
-    expect(state.labels).not.toContain("ready-for-agent");
-    // Guard bypass flag threaded to the adopt runner.
-    expect(adoptApproved).toBe(true);
-    // Audit comment posted in addition to the directive comment (never silent).
-    expect(calls.comment).toBeGreaterThanOrEqual(2);
-    expect(text()).toContain("validated and landed");
-  });
-
-  it("a NON-sensitive adopt does not set the guard-bypass flag (defaults false)", async () => {
-    const { gh } = fakeGh({
-      state: "OPEN",
-      body: parkedBody,
-      labels: ["ready-for-human", "blocked:validation"],
-    });
-    const { stream } = capture();
-    let adoptApproved: boolean | undefined = true;
-    const runner: RequeueAdoptRunner = async (_issue, _branch, issueData) => {
-      adoptApproved = issueData.sensitivePathApproved;
-      return "landed";
-    };
-
-    const code = await requeueCommand(
-      ["#42", "--guidance", "Gate flake fixed.", "--adopt-branch", "my-branch"],
-      "/tmp", stream, gh, runner,
-    );
-
-    expect(code).toBe(0);
-    expect(adoptApproved).toBe(false);
-  });
-
   // ---------- #1307 — close the concurrent-claim window during the adopt gate ----------
-
-  it("withholds ready-for-agent while the adopt gate runs so the Ticket is not claimable mid-land (#1307)", async () => {
-    const { gh, state } = fakeGh({
-      state: "OPEN",
-      body: parkedBody,
-      labels: ["ready-for-human", "blocked:validation"],
-    });
-    const { stream } = capture();
-    let labelsDuringGate: string[] = [];
-    const runner: RequeueAdoptRunner = async () => {
-      labelsDuringGate = [...state.labels];
-      return "landed";
-    };
-
-    const code = await requeueCommand(
-      ["#42", "--guidance", "Gate flake fixed.", "--adopt-branch", "my-branch"],
-      "/tmp", stream, gh, runner,
-    );
-
-    expect(code).toBe(0);
-    // The queue label and the park labels are all absent for the whole gate —
-    // neither the candidate query nor the pre-claim recheck can select it.
-    expect(labelsDuringGate).not.toContain("ready-for-agent");
-    expect(labelsDuringGate).not.toContain("blocked:validation");
-    expect(labelsDuringGate).not.toContain("ready-for-human");
-  });
 
   it("also withholds ready-for-agent when adopting an issue that already carries it (#1307)", async () => {
     // A non-parked issue that is already claimable: adopting it must still strip
@@ -510,8 +486,8 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
   it("restores ready-for-agent when the adopt gate skips, so an empty/interrupted adopt is recoverable (#1307)", async () => {
     const { gh, state } = fakeGh({
       state: "OPEN",
-      body: parkedBody,
-      labels: ["ready-for-human", "blocked:validation"],
+      body: "## Summary\nFoo.\n",
+      labels: ["ready-for-agent"],
     });
     const { stream, text } = capture();
     let labelsDuringGate: string[] = [];
@@ -536,8 +512,8 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
   it("restores ready-for-agent when the adopt gate throws mid-run (#1307)", async () => {
     const { gh, state } = fakeGh({
       state: "OPEN",
-      body: parkedBody,
-      labels: ["ready-for-human", "blocked:validation"],
+      body: "## Summary\nFoo.\n",
+      labels: ["ready-for-agent"],
     });
     const { stream } = capture();
     const err = captureStderr();
@@ -553,10 +529,8 @@ describe("requeue command — adopt mode (--adopt-branch)", () => {
     ).rejects.toThrow("adopt interrupted");
     err.restore();
 
-    // No stuck park labels, and the queue label is restored (recoverable state).
+    // The queue label is restored after the interrupted no-agent gate.
     expect(state.labels).toContain("ready-for-agent");
-    expect(state.labels).not.toContain("blocked:validation");
-    expect(state.labels).not.toContain("ready-for-human");
   });
 
   it("dry-run with --adopt-branch does not call adopt runner", async () => {

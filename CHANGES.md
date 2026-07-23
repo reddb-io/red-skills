@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## afk / go / ask-red / red-doctor (engineering) — MCP servers get colon-free names (issue #2405)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Codex rejects `:` in MCP server names, so every `dev:*` form was unusable. The MCP is the castle manager and `afk` names only one of its clients, so the AFK server becomes `castle`; `code-nav` becomes `navigator` for the same colon-free, role-named treatment.
+- **what changed**:
+  - `plugins/dev/.mcp.json`: `dev:afk` → `castle`, `code-nav` → `navigator`; error strings follow. Host tool prefix becomes `mcp__plugin_dev_castle__*`.
+  - Launcher `hooks/afk-mcp.sh` → `hooks/castle-mcp.sh`; bundle `afk-mcp.bundle.min.mjs` → `castle-mcp.bundle.min.mjs`; npm bin `red-skills-afk-mcp` → `red-skills-castle-mcp`; `readBuildInfo("afk")` → `"castle"` and `readBuildInfo("code-nav")` → `"navigator"`.
+  - `afk/MCP.md`, `afk/SKILL.md`, `afk/fleet.md`, `afk/monitor.md`, `go/SKILL.md`, `ask-red/SKILL.md`, `red-doctor/SKILL.md`, and `README.md` name the new servers; `/dev:afk …` slash-command forms are untouched (they name the skill, not the server).
+  - Codex and Pi manifests regenerated; `scripts/validate-install-metadata.sh` now asserts both the `navigator` and `castle` launcher entries.
+
 ## afk / go / ask-red (engineering) — CLI and skills become `dev:afk` MCP clients (issue #2309)
 
 - **status**: modified
@@ -2787,3 +2798,10 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **upstream**: —
 - **why**: Spec #2290 slice #2291 — the Manager's first functional slice needs an operator surface for the walking skeleton (start an effort, persist it, render its status brief) per ADR 0109.
 - **what changed**: added `plugins/dev/skills/engineering/manager/SKILL.md` (wrapper over `red-skills-dev manager`); registered it in `plugins/dev/.claude-plugin/plugin.json`, the root `README.md` skill map, and the `engineering/` bucket README; added the `/manager` route and inventory entry to `ask-red`; regenerated the Codex manifest.
+
+## hitl, triage, retake, dashboard, daily-review (engineering) — MCP-first client rewrite
+
+- **status**: modified
+- **upstream**: —
+- **why**: ADR 0120 made red-castle's `castle` MCP the canonical interface, but these five castle-verb skills still hand-rolled the flows (raw `gh` label flips in `/hitl` and `/triage`) or invoked the `red-skills-dev` CLI as the primary path — outside the doc-contract test's bijection, so they drifted silently.
+- **what changed**: each SKILL.md now names its castle tools as the primary surface with the CLI as documented fallback — `/hitl` → `requeue` + `hitl_resolve`, `/triage` → `triage`, `/retake` → `retake` + `requeue`, `/dashboard` → `dashboard`, `/daily-review` → `daily_review`/`weekly_review`; `apps/dev/tests/castle-mcp-client-docs.test.ts` gained a per-skill routing assertion binding all five to the tool surface.

@@ -212,6 +212,47 @@ describe("makeFeedbackWorktree install (#458)", () => {
     expect(calls.filter((c) => c.op === "script")).toHaveLength(0);
   });
 
+  it("self-heals a stale worktree on 'already exists' — removes and recreates (#2379)", async () => {
+    // Model: first worktreeAdd fails with "already exists"; the manager removes
+    // the stale worktree and retries; the retry succeeds.
+    const calls: Array<{ op: string; dest: string }> = [];
+    let addAttempt = 0;
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async (_ctx, dest) => {
+        addAttempt += 1;
+        calls.push({ op: "add", dest });
+        if (addAttempt === 1) {
+          return { ok: false, stderr: "fatal: '/dest' already exists" };
+        }
+        return { ok: true, stderr: "" };
+      },
+      worktreeRemove: async (_ctx, dest) => {
+        calls.push({ op: "remove", dest });
+      },
+      pnpm: async (args, opts) => {
+        const isInstall = args[0] === "install";
+        calls.push({ op: isInstall ? "install" : "script", dest: opts.cwd ?? "" });
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      exec: async (_cmd, _args, opts) => {
+        calls.push({ op: "script", dest: opts.cwd ?? "" });
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
+
+    const result = await fb.pnpm(["pnpm", "-C", "afk/w1/42-fix", "test"]);
+
+    // Self-heal succeeds: the gate runs normally.
+    expect(result.code).toBe(0);
+    // First add failed, then remove, then second add, then install, then script.
+    expect(calls.map((c) => c.op)).toEqual(["add", "remove", "add", "install", "script"]);
+    expect(addAttempt).toBe(2);
+  });
+
   it("surfaces the underlying git stderr on a failed worktree add (#2339)", async () => {
     const { io } = fakeIO(0, false, 0, { enabled: false });
     const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
@@ -231,6 +272,58 @@ describe("makeFeedbackWorktree install (#458)", () => {
     // Field reports had to GUESS the root cause from "add failed" alone (#2338).
     const line = written.find((l) => l.includes("feedback worktree add failed"));
     expect(line).toContain("fatal: couldn't find remote ref refs/heads/nope");
+  });
+});
+
+describe("host-wide validation gate semaphore (#2487)", () => {
+  it("never runs a reconcile gate command alongside a live worker gate command", async () => {
+    let held = false;
+    const waiters: Array<() => void> = [];
+    const releases: Array<() => void> = [];
+    let active = 0;
+    let maxActive = 0;
+
+    const ioFor = (): FeedbackWorktreeIO => {
+      const base = fakeIO(0, true, 0, { enabled: false }).io;
+      return {
+        ...base,
+        gateLock: async () => {
+          if (held) await new Promise<void>((resolve) => waiters.push(resolve));
+          held = true;
+          return async () => {
+            held = false;
+            waiters.shift()?.();
+          };
+        },
+        pnpm: async (args, opts) => {
+          if (args[0] === "install") return base.pnpm(args, opts);
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await new Promise<void>((resolve) => releases.push(resolve));
+          active -= 1;
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      } as FeedbackWorktreeIO;
+    };
+
+    const worker = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", ioFor(), {
+      cacheEnabled: false,
+    });
+    const reconcile = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", ioFor(), {
+      cacheEnabled: false,
+    });
+
+    const first = worker.pnpm(["pnpm", "-C", "afk/wLIVE/1-work", "test"]);
+    while (releases.length < 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    const second = reconcile.pnpm(["pnpm", "-C", "afk/wBOOT/2-reconcile", "test"]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(maxActive).toBe(1);
+    releases.shift()?.();
+    while (releases.length < 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    releases.shift()?.();
+    await Promise.all([first, second]);
+    expect(maxActive).toBe(1);
   });
 });
 
@@ -633,5 +726,211 @@ describe("gate test subprocess env (#1215 / #1224 Part C)", () => {
       expect(env.NODE_OPTIONS).toContain("--max-old-space-size=1536");
       expect(env.VITEST_MAX_WORKERS).toBe("2");
     }
+  });
+});
+
+// #2437: the `feedback/main` baseline worktree is a singleton shared by every
+// landing revalidation on the host. Three landing tails failed in one night with
+// `feedback worktree setup failed for main; validation blocked` while a sibling
+// worker was landing — the loser of an unserialized `worktree add` + `pnpm
+// install` race. Each collision burned a full ~25-minute revalidation cycle.
+describe("makeFeedbackWorktree — shared baseline serialization (#2437)", () => {
+  const BRANCH = "main";
+  const DEST = "/root/.red/tmp/feedback/main";
+  const SHA = "base1234";
+
+  /**
+   * Two managers (modelling two worker PROCESSES) over one shared baseline
+   * worktree. `shas[DEST]` is the on-disk state both see, so a materialise by
+   * one manager is visible to the other — exactly the shared-singleton
+   * semantics of the real directory.
+   *
+   * `worktreeAdd` is deliberately hostile: it refuses with git's real "already
+   * exists" while another add/install is in flight, and it takes a turn of the
+   * event loop, so an unserialized pair of managers reproduces the field
+   * failure. `lock` is a shared in-memory mutex keyed by path, standing in for
+   * the O_EXCL lock file the production IO uses.
+   */
+  function sharedBaselineIO(opts: { serialize: boolean }): {
+    ioFor: () => FeedbackWorktreeIO;
+    calls: Array<{ op: Op; dest: string }>;
+    maxConcurrentSetups: () => number;
+  } {
+    const calls: Array<{ op: Op; dest: string }> = [];
+    const shas: Record<string, string> = {};
+    const busy = new Set<string>();
+    let setupsInFlight = 0;
+    let maxSetups = 0;
+    // One mutex per path, shared by every manager this helper builds.
+    const held = new Set<string>();
+    const waiters: Array<() => void> = [];
+
+    const io = (): FeedbackWorktreeIO => ({
+      worktreeAdd: async (_ctx, dest) => {
+        calls.push({ op: "add", dest });
+        if (busy.has(dest)) {
+          return { ok: false, stderr: `fatal: '${dest}' already exists` };
+        }
+        busy.add(dest);
+        setupsInFlight += 1;
+        maxSetups = Math.max(maxSetups, setupsInFlight);
+        await Promise.resolve();
+        return { ok: true, stderr: "" };
+      },
+      pnpm: async (args, opts2) => {
+        const isInstall = args[0] === "install";
+        // An install runs with `cwd` at the worktree; a check runs from the
+        // primary root with the worktree in its rewritten `-C` arg.
+        const cIdx = args.indexOf("-C");
+        const dest = isInstall ? (opts2.cwd ?? "") : (args[cIdx + 1] ?? opts2.cwd ?? "");
+        calls.push({ op: isInstall ? "install" : "script", dest });
+        if (!isInstall) return { code: 0, stdout: "", stderr: "" };
+        // The install is the long pole — yield so a concurrent manager gets a
+        // chance to collide with it.
+        await Promise.resolve();
+        shas[opts2.cwd ?? ""] = SHA;
+        busy.delete(opts2.cwd ?? "");
+        setupsInFlight -= 1;
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      exec: async (_cmd, _args, opts2) => {
+        calls.push({ op: "script", dest: opts2.cwd ?? "" });
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      worktreeRemove: async (_ctx, dest) => {
+        calls.push({ op: "remove", dest });
+        busy.delete(dest);
+        delete shas[dest];
+      },
+      branchHead: async (_ctx, branch) => (branch === BRANCH ? SHA : null),
+      worktreeHead: async (_ctx, dest) => shas[dest] ?? null,
+      rebase: async () => ({ ok: true }),
+      ...(opts.serialize
+        ? {
+            lock: async (dest: string) => {
+              while (held.has(dest)) {
+                await new Promise<void>((resolve) => waiters.push(resolve));
+              }
+              held.add(dest);
+              return async () => {
+                held.delete(dest);
+                for (const wake of waiters.splice(0)) wake();
+              };
+            },
+          }
+        : {}),
+    });
+
+    return { ioFor: io, calls, maxConcurrentSetups: () => maxSetups };
+  }
+
+  it("serializes two concurrent revalidations — the loser gets a cache hit, not a failure", async () => {
+    const shared = sharedBaselineIO({ serialize: true });
+    const a = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", shared.ioFor());
+    const b = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", shared.ioFor());
+
+    const [ra, rb] = await Promise.all([
+      a.pnpm(["pnpm", "-C", BRANCH, "test"]),
+      b.pnpm(["pnpm", "-C", BRANCH, "test"]),
+    ]);
+
+    // Neither revalidation is blocked — this is the whole point of the fix.
+    expect(ra.code).toBe(0);
+    expect(rb.code).toBe(0);
+    // Only ONE manager materialised: the waiter re-checked the cache under the
+    // lock, found the freshly-installed worktree, and skipped add + install.
+    expect(shared.calls.filter((c) => c.op === "add")).toHaveLength(1);
+    expect(shared.calls.filter((c) => c.op === "install")).toHaveLength(1);
+    expect(shared.maxConcurrentSetups()).toBe(1);
+    // Both still ran their check against the shared baseline.
+    expect(shared.calls.filter((c) => c.op === "script" && c.dest === DEST)).toHaveLength(2);
+  });
+
+  it("without the lock the two setups collide on one directory — the regression this guards", async () => {
+    // Same fixture, serialization removed. The loser's add is refused
+    // ("already exists"), it force-removes the winner's half-installed
+    // worktree, and both processes end up materialising the same directory at
+    // once — the corruption that surfaced as `setup failed for main`.
+    const shared = sharedBaselineIO({ serialize: false });
+    const a = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", shared.ioFor());
+    const b = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", shared.ioFor());
+
+    await Promise.all([
+      a.pnpm(["pnpm", "-C", BRANCH, "test"]),
+      b.pnpm(["pnpm", "-C", BRANCH, "test"]),
+    ]);
+
+    // Two adds and two installs against ONE path, overlapping in time, plus the
+    // loser ripping out the winner's checkout mid-install.
+    expect(shared.calls.filter((c) => c.op === "add").length).toBeGreaterThan(1);
+    expect(shared.calls.filter((c) => c.op === "remove").length).toBeGreaterThan(0);
+    expect(shared.maxConcurrentSetups()).toBe(2);
+  });
+
+  it("retries a contended setup instead of latching the whole session as blocked", async () => {
+    // First materialise attempt fails (a collision); the next validation call
+    // must try again rather than short-circuit to code 1 for the rest of the
+    // ~25-minute cycle.
+    let attempt = 0;
+    const shas: Record<string, string> = {};
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async (_ctx, dest) => {
+        attempt += 1;
+        if (attempt === 1) return { ok: false, stderr: "fatal: unable to lock ref" };
+        shas[dest] = SHA;
+        return { ok: true, stderr: "" };
+      },
+      worktreeRemove: async () => {},
+      pnpm: async () => ({ code: 0, stdout: "", stderr: "" }),
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      branchHead: async (_ctx, branch) => (branch === BRANCH ? SHA : null),
+      worktreeHead: async (_ctx, dest) => shas[dest] ?? null,
+      rebase: async () => ({ ok: true }),
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
+
+    const first = await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
+    const second = await fb.pnpm(["pnpm", "-C", BRANCH, "build"]);
+
+    expect(first.code).toBe(1);
+    expect(second.code).toBe(0);
+    expect(attempt).toBe(2);
+  });
+
+  it("latches after three consecutive failures so a truly broken baseline stops retrying", async () => {
+    let adds = 0;
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => {
+        adds += 1;
+        return { ok: false, stderr: "fatal: couldn't find remote ref refs/heads/main" };
+      },
+      worktreeRemove: async () => {},
+      pnpm: async () => ({ code: 0, stdout: "", stderr: "" }),
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
+
+    for (let i = 0; i < 5; i++) {
+      expect((await fb.pnpm(["pnpm", "-C", BRANCH, "test"])).code).toBe(1);
+    }
+    // Three attempts, then the branch is latched — no unbounded retry storm.
+    expect(adds).toBe(3);
+  });
+
+  it("shares one materialise across concurrent calls in the same process", async () => {
+    const shared = sharedBaselineIO({ serialize: true });
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", shared.ioFor());
+
+    await Promise.all([
+      fb.pnpm(["pnpm", "-C", BRANCH, "test"]),
+      fb.pnpm(["pnpm", "-C", BRANCH, "build"]),
+      fb.backpressure({ command: "pnpm test", cwd: BRANCH, timeoutMs: 1000 }),
+    ]);
+
+    expect(shared.calls.filter((c) => c.op === "add")).toHaveLength(1);
+    expect(shared.calls.filter((c) => c.op === "install")).toHaveLength(1);
   });
 });

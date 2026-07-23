@@ -66,6 +66,28 @@ commit that adds or edits a config-directory path arrives with the upstream
 brand's dot-directory name — rewrite each such path to `.red-castle/` in the
 same sync change, never adopt the upstream directory name verbatim.
 
+## Pruned provider surface — RedSkills' development shape only
+
+**This fork ships only the providers RedSkills actually runs: the Docker,
+Podman, and `noSandbox` sandbox providers, and the `claudeCode`, `codex`,
+`opencode`, and `pi` agent providers.** This is a deliberate, permanent
+divergence from upstream sandcastle, which also ships Vercel and Daytona
+sandbox providers and Cursor, GitHub Copilot CLI, and Devin agent providers.
+The engine's `RUNNER_SPECS` only ever selects the `claudeCode`/`codex`/
+`opencode` factories (`pi` is retained for the implementer-environment
+projection), and RedSkills sandboxes exclusively on local container runtimes —
+every pruned provider was public surface with zero consumers, paid for on each
+upstream sync and each test run. The public `SandboxProvider`/`AgentProvider`
+seams remain, so any pruned integration can live outside the package.
+
+**Cherry-picks must be adapted to the pruned surface on adoption**: an upstream
+commit that adds or edits the Vercel/Daytona sandboxes or the
+Cursor/Copilot/Devin agent providers (or their tests, init-scaffold menu
+entries, Dockerfiles, or docs) is dropped for those paths in the same sync
+change — never re-adopt a pruned provider verbatim. Re-adding one is a
+deliberate decision that must revisit `.out-of-scope/built-in-agent-providers.md`
+and `.out-of-scope/built-in-sandbox-providers.md`, not a sync side effect.
+
 ## Upstream sync — `.upstream` marks the last reviewed sandcastle commit
 
 This fork tracks `mattpocock/sandcastle` via the `upstream` remote. The

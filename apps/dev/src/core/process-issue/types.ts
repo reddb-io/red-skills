@@ -1,5 +1,6 @@
 import { resolveBase, type ResolveBaseDeps, type ResolveBaseInput } from "../base-resolver.js";
 import type { BranchRef } from "../branch-cleanup.js";
+import type { AttemptPullRequest } from "../branch-resume.js";
 import {
   buildRefFromSlug,
   deleteRemote,
@@ -8,6 +9,7 @@ import {
   type GitExec,
 } from "../remote-branch.js";
 import { buildHandoff, exitProtocolFor, type HandoffComment } from "../handoff.js";
+import type { HandoffEnrichmentInput } from "../handoff-enrichment.js";
 import { assignOutputShaping, type OutputShapingConfig } from "../output-shaping.js";
 import { evaluateGoalPredicate } from "../goal-predicate.js";
 import {
@@ -50,7 +52,11 @@ import {
   type CiAwaitInput,
 } from "../merge.js";
 import type { LandLock } from "../land-lock.js";
-import { doLanding } from "../landing.js";
+import {
+  doLanding,
+  type DeferredLandingTail,
+  type LandingResult,
+} from "../landing.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
@@ -64,6 +70,7 @@ import { dispose } from "../disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
+  HOST_CONFIG_EXIT_CODE,
   type AttemptOutcome,
 } from "../attempt-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
@@ -109,7 +116,6 @@ import {
   LABEL_DEPENDENCY,
   LABEL_READY_FOR_REVIEW,
   LABEL_LANDING_MANUAL,
-  LABEL_SENSITIVE_PATH,
   LABEL_SPEC,
 } from "../triage-labels.js";
 import {
@@ -117,7 +123,6 @@ import {
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
-import { allowlistExternalWidened, ALLOWLIST_PATH } from "../shared-gate.js";
 export type ContainerSandboxMode = Exclude<SandboxMode, "none">;
 export interface ProcessGh {
   viewLabels(issue: number): Promise<string[]>;
@@ -141,6 +146,7 @@ export interface ProcessClaimLock {
 export interface ProcessFs {
   ensureAttemptDir(dir: string): Promise<void>;
   writeHandoff(path: string, content: string): Promise<void>;
+  readText?(path: string): Promise<string | null>;
   writeValidationSidecar?(path: string, lines: string[]): Promise<void>;
   completionSweep(issue: number): Promise<string[]>;
 }
@@ -170,6 +176,8 @@ export interface ProcessLookups {
   comments(issue: number): Promise<HandoffComment[]>;
   issueUrl(issue: number): Promise<string>;
   priorAttemptContext(issue: number): Promise<string | undefined>;
+  /** Best-effort owning-glossary and path-local exemplar supplement (#2402). */
+  handoffEnrichment?(input: HandoffEnrichmentInput & { issue: number }): Promise<string | undefined>;
   changedFiles(branch: string, base: string): Promise<string[]>;
   diffstat(branch: string, base: string): Promise<string>;
   branchPresent?(branch: string): Promise<boolean>;
@@ -177,6 +185,9 @@ export interface ProcessLookups {
   /** Discover all remote afk/* branches (issue #2397). Used to detect a prior
    * pushed attempt so re-claim can resume instead of rebuilding from scratch. */
   discoverBranches?(): Promise<BranchRef[]>;
+  /** List open PRs that may already carry this issue's work. The lifecycle
+   * applies its own body/head match before adopting one. */
+  discoverOpenPullRequests?(issue: number): Promise<AttemptPullRequest[]>;
 }
 export function remoteTrackingBaseRef(remote: string, base: string): string {
   if (/^[0-9a-f]{7,40}$/i.test(base) || base.startsWith("refs/") || base.startsWith(`${remote}/`)) {
@@ -242,6 +253,7 @@ export interface ProcessIssueDeps {
   outputShaping?: OutputShapingConfig;
   postBackpressureReview?: (pr: number, body: string) => Promise<void>;
   goVerifyRetries?: number;
+  stallConvergenceBudget?: number;
   postAttemptFormat?: PostAttemptFormatExec;
   postAttemptFormatCommands?: readonly string[];
   runAgent(input: RunAgentInput): Promise<RunAgentResult>;
@@ -278,6 +290,16 @@ export interface ProcessIssueDeps {
   removeRebaseWorktree?(dir: string): Promise<void>;
   waitForReview?: WaitForReviewInput;
   ciAwait?: CiAwaitInput;
+  /** Slot-release boundary across the PR landing tail (#2427). */
+  landingWait?: "merge" | "ci" | "none";
+  /**
+   * Shared tail observer. The call starts observation and returns the eventual
+   * landing verdict; processIssue deliberately does not await it so the worker
+   * slot is reusable while CI/merge/close finish.
+   */
+  landingTailObserver?: (
+    task: DeferredLandingTail & { issue: number },
+  ) => Promise<LandingResult>;
   reviewGate?: ReviewGateConfig;
   reviewGateLabel?: string;
   adversarialReview?: AdversarialReviewConfig;
@@ -309,6 +331,10 @@ export interface ProcessIssueDeps {
   historyPath?: string;
   historyClock?: HistoryClock;
   recoveryEnv?: RecoveryEnv;
+  /** ADR 0122 heal ledger (#2576): durable per-issue retry accounting so the
+   * merge-retry cap survives worker replacement. Optional; absent in tests
+   * that predate it (worker-local ordinal then applies alone). */
+  healLedger?: import("@reddb-io/red-castle/engine").HealLedgerStore;
   recordAttempt?(payload: AttemptRecordPayload): Promise<void>;
   recordOutcomeEvent?(event: OutcomeEvent): Promise<void>;
   cascadeRebase?: CascadeRebasePort;
@@ -387,6 +413,13 @@ export function stateExitPatch(outcome: ProcessOutcome): Record<string, unknown>
       ...base,
       "current.last_exit_code": CRASH_EXIT_CODE,
       "current.failure_kind": "signal-killed",
+    };
+  }
+  if (outcome === "host-config") {
+    return {
+      ...base,
+      "current.last_exit_code": HOST_CONFIG_EXIT_CODE,
+      "current.failure_kind": "host-config",
     };
   }
   return { ...base, "current.last_exit_code": CRASH_EXIT_CODE };

@@ -39,7 +39,7 @@ import type { GhCallOptions } from "./github.js";
 import { pidStartTime } from "./process-tree.js";
 import { listWaits, newRegistryEntry, registryPathFor, writeRegistryEntry } from "./registry.js";
 import { renderWaitHelp } from "./help.js";
-import { WebhookForwarder } from "./webhook-forwarder.js";
+import { createWebhookWakeSource } from "./webhook-wake-source.js";
 
 export { listWaits } from "./registry.js";
 export { renderWaitHelp } from "./help.js";
@@ -173,42 +173,50 @@ async function dispatchWait(
       const number = parsed.target ?? "";
       if (!/^[1-9][0-9]*$/.test(number)) return { verdict: indeterminate("missing PR number") };
       entry.webhook_mode = "polling";
-      const forwarder = new WebhookForwarder({ cwd, cancelSignal: signal });
-      forwarder.once("mode-changed", () => {
+      const webhook = createWebhookWakeSource({ cwd, cancelSignal: signal });
+      webhook.once("mode-changed", () => {
         entry.webhook_mode = "webhook";
       });
-      forwarder.start();
-      return await pollUntilDone({
-        probe: createPrProbe(number, call, {
-          emptyChecksGraceMs: envDuration("RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS", 30_000),
-        }),
-        timeoutMs: parsed.options.timeoutMs,
-        baseSleepMs: envDuration("RSP_WAIT_PR_POLL_MS", 15_000),
-        makeWakeSignal: forwarder.makeWakeSignalFor("pr", number),
-        registryPath,
-        entry,
-        signal,
-      });
+      await webhook.start();
+      try {
+        return await pollUntilDone({
+          probe: createPrProbe(number, call, {
+            emptyChecksGraceMs: envDuration("RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS", 30_000),
+          }),
+          timeoutMs: parsed.options.timeoutMs,
+          baseSleepMs: envDuration("RSP_WAIT_PR_POLL_MS", 15_000),
+          makeWakeSignal: webhook.makeWakeSignalFor("pr", number),
+          registryPath,
+          entry,
+          signal,
+        });
+      } finally {
+        await webhook.stop();
+      }
     }
 
     case "run": {
       const id = await resolveRunTarget(parsed, call, registryPath, entry);
       if (!id.ok) return { verdict: indeterminate(id.reason) };
       entry.webhook_mode = "polling";
-      const forwarder = new WebhookForwarder({ cwd, cancelSignal: signal });
-      forwarder.once("mode-changed", () => {
+      const webhook = createWebhookWakeSource({ cwd, cancelSignal: signal });
+      webhook.once("mode-changed", () => {
         entry.webhook_mode = "webhook";
       });
-      forwarder.start();
-      return await pollUntilDone({
-        probe: () => probeRun(id.value, call),
-        timeoutMs: parsed.options.timeoutMs,
-        baseSleepMs: envDuration("RSP_WAIT_RUN_POLL_MS", 15_000),
-        makeWakeSignal: forwarder.makeWakeSignalFor("run", id.value),
-        registryPath,
-        entry,
-        signal,
-      });
+      await webhook.start();
+      try {
+        return await pollUntilDone({
+          probe: () => probeRun(id.value, call),
+          timeoutMs: parsed.options.timeoutMs,
+          baseSleepMs: envDuration("RSP_WAIT_RUN_POLL_MS", 15_000),
+          makeWakeSignal: webhook.makeWakeSignalFor("run", id.value),
+          registryPath,
+          entry,
+          signal,
+        });
+      } finally {
+        await webhook.stop();
+      }
     }
 
     case "release":

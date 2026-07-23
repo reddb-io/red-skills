@@ -7,7 +7,7 @@
 // native — no bash anywhere in the loop.
 
 import { spawn } from "node:child_process";
-import { existsSync, openSync, closeSync, readFileSync, writeFileSync, rmSync, renameSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import {
@@ -21,12 +21,13 @@ import {
   terminateAll,
   type SpawnPolicy,
   type SupervisorDeps,
+  type SupervisorState,
 } from "../core/supervisor.js";
 import { appendRecordToonlRow } from "../core/jsonl-log.js";
 import {
   afkPaths,
   resolveRepoSlug,
-  collectPrecheckFacts,
+  collectBootPrecheckFacts,
   collectBootOptions,
   buildBootDeps,
   readFleetState,
@@ -58,10 +59,18 @@ import {
   castleStateSnapshotPath,
   createEnginePaths,
   createCastleLaneWriters,
+  createFileHealLedgerStore,
+  createFileIssueCuratorStore,
+  createGitHubTrackerAdapter,
+  runIssueStateCurator,
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
+import { createFileBootBreakerStore } from "../core/supervisor/boot-breaker.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
-import { resolveFleetFromArgs } from "../core/fleet-name.js";
+import { resolveFleetFromArgs, FLEET_NAME_ENV } from "../core/fleet-name.js";
+import { createSupervisorExitRecorder } from "../core/supervisor-exit.js";
+import { readPidStartTime } from "../core/state.js";
+import { encodeLines, type ToonlRecord } from "@reddb-io/toon";
 
 function isAlive(pid: number): boolean {
   try {
@@ -428,12 +437,16 @@ export function formatBootSweepResult(result: BootResult): string {
   const ds = result.docsSweep?.plan;
   const us = result.unblockSweep;
   const st = result.straggler;
+  const janitorRemovalLog = (tj?.removals ?? [])
+    .map((removal) => ` | tmp-janitor remove=${removal.path} liveness=${removal.livenessVerdict}`)
+    .join("");
   return (
     "boot sweeps complete: " +
     `orphans removed=${oc?.removed.length ?? 0} restored=${oc?.restored.length ?? 0} kept=${oc?.kept.length ?? 0}` +
     ` | attempt-cap reclaimed=${ac?.reclaimed.length ?? 0}` +
     ` | branches remote=${bc?.remoteLiveReaped.length ?? 0} local=${bc?.localLiveReaped.length ?? 0}` +
-    ` | tmp-janitor expired=${tj?.expiredLanes.length ?? 0} workers=${tj?.staleWorkers.length ?? 0} unknown=${tj?.unknownTmpRoots.length ?? 0} protected=${tj?.protectedLiveWorkers.length ?? 0}` +
+    ` | tmp-janitor expired=${tj?.expiredLanes.length ?? 0} workers=${tj?.staleWorkers.length ?? 0} unknown=${tj?.unknownTmpRoots.length ?? 0} protected=${(tj?.protectedLiveWorkers.length ?? 0) + (tj?.protectedLiveFeedback.length ?? 0)}` +
+    janitorRemovalLog +
     ` | docs-sweep ${ds?.action ?? "clean"} files=${ds?.files.length ?? 0}` +
     ` | unblocked=${us?.promoted.length ?? 0}` +
     ` | stragglers unlabeled=${st?.counts.unlabeled ?? 0} triage=${st?.counts.needsTriage ?? 0} info=${st?.counts.needsInfo ?? 0}`
@@ -463,7 +476,7 @@ export function buildSupervisorBootSweeps(
   const paths = afkPaths(root, fleet);
   return async (): Promise<void> => {
     const nowS = Math.floor(Date.now() / 1000);
-    const facts = await collectPrecheckFacts(ctx);
+    const facts = await collectBootPrecheckFacts(ctx, { log });
     const bootstrap: BootstrapInput = {
       tmpDir: paths.tmpDir,
       stateDir: paths.stateDir,
@@ -552,7 +565,10 @@ function buildSupervisorDeps(
   // the environment survive. RED_AFK_RUNNER is re-added explicitly below so the
   // worker's detection cascade pins the supervisor's runner.
   let activeRunner = runner;
-  let workerEnv = buildWorkerEnv(process.env, activeRunner);
+  // Stamp the fleet name into the worker env so spawned workers can write it to
+  // their castle state snapshot (as supervisor_id). fleet_status reads this back
+  // to partition workers without relying solely on the slot-pid map (issue #2345).
+  let workerEnv = { ...buildWorkerEnv(process.env, activeRunner), [FLEET_NAME_ENV]: fleet };
   let hookEnv = { ...hookEnvBase, RED_AFK_RUNNER: activeRunner };
 
   return {
@@ -626,8 +642,14 @@ function buildSupervisorDeps(
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     },
     fs: {
-      workerLivenessVerdict: (slot, laneIdleMs, laneHardIdleMs) =>
-        workerLivenessFor(tmpDir, slotPids.get(slot) ?? null, laneIdleMs, laneHardIdleMs),
+      workerLivenessVerdict: (slot, laneIdleMs, laneHardIdleMs, issueWallClockMaxMs) =>
+        workerLivenessFor(
+          tmpDir,
+          slotPids.get(slot) ?? null,
+          laneIdleMs,
+          laneHardIdleMs,
+          issueWallClockMaxMs,
+        ),
       resolveIterDir: (slot) => resolveIterDirInfo(tmpDir, slotPids.get(slot) ?? null, now()),
       teardownIterDir: async (info) => {
         await teardownIterDirNative(info, root);
@@ -713,6 +735,32 @@ function buildSupervisorDeps(
     wake: buildStateChangeWake(join(tmpDir, "workers")),
     // Env for the bounded stalled re-claim cap (#402): RED_AFK_RETRY_STALLED.
     recoveryEnv: process.env,
+    // ADR 0122 heal ledger (#2526): the death-sweep consults the same castle
+    // store the boot healer writes, so worker-death heals and probe heals
+    // share one per-issue budget.
+    healLedger: createFileHealLedgerStore(createEnginePaths(join(root, ".red"))),
+    // Crashloop circuit breaker (#2527): fingerprint every boot-sweep halt; on
+    // the Nth consecutive identical signature stop feeding the respawn loop and
+    // run the ADR 0122 resident healer (issue-state curator) immediately for the
+    // implicated state, instead of burning respawn budget on a deterministic
+    // failure. A successful boot resets the run.
+    bootBreaker: {
+      store: createFileBootBreakerStore(createEnginePaths(join(root, ".red"))),
+      threshold: Number(process.env["RED_AFK_BOOT_BREAKER_K"]) > 0
+        ? Number(process.env["RED_AFK_BOOT_BREAKER_K"])
+        : undefined,
+      heal: async () => {
+        const paths = createEnginePaths(join(root, ".red"));
+        const tracker = createGitHubTrackerAdapter({
+          claimLockRoot: join(paths.tmpRoot, "claims"),
+        });
+        const result = await runIssueStateCurator({
+          tracker,
+          store: createFileIssueCuratorStore(paths),
+        });
+        return `curator sweep ran: ${JSON.stringify(result).slice(0, 200)}`;
+      },
+    },
     // Derived human-readable messages are stored in the structured supervisor
     // lane, not dual-written to a prose supervisor log.
     log: logLine,
@@ -770,7 +818,7 @@ function buildSupervisorDeps(
     resizeRequest: async () => readResizeRequest(afkPaths(root, fleet).supervisorResizePath),
     configureRunner: (nextRunner) => {
       activeRunner = nextRunner;
-      workerEnv = buildWorkerEnv(process.env, activeRunner);
+      workerEnv = { ...buildWorkerEnv(process.env, activeRunner), [FLEET_NAME_ENV]: fleet };
       hookEnv = { ...hookEnvBase, RED_AFK_RUNNER: activeRunner };
     },
     // Fleet-scoped lifecycle hooks (#833). Commands are resolved from the same
@@ -896,76 +944,138 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
       ? []
       : ((await readFleetState(stateFile).catch(() => null))?.slotPids ?? []);
   const adoptSlotPids = envAdoptSlotPids.length > 0 ? envAdoptSlotPids : stateAdoptSlotPids;
-  await reapStaleSupervisorState(stateAfk, isAlive);
+  const priorSupervisor = await reapStaleSupervisorState(stateAfk, isAlive);
   // One supervisor PER NAMED FLEET. The lock is the fleet's own pid file inside
   // `supervisors/<fleet>/`, so a second `alpha` supervisor is refused while
   // `beta` boots freely alongside it.
-  if (existsSync(pidFile)) {
-    try {
-      const prev = Number(require("node:fs").readFileSync(pidFile, "utf8").trim());
-      if (prev && isAlive(prev)) {
-        process.stderr.write(`supervisor already running for fleet ${fleet} (pid=${prev})\n`);
-        return 1;
-      }
-    } catch {
-      // stale — overwrite
-    }
+  if (priorSupervisor.status === "live") {
+    process.stderr.write(
+      `supervisor already running for fleet ${fleet} (pid=${priorSupervisor.pid})\n`,
+    );
+    return 1;
   }
+  const ownStartTime = readPidStartTime(process.pid);
+  if (ownStartTime === null) throw new Error("cannot pin supervisor process start time");
+  writeFileSync(paths.supervisorPidStartPath, ownStartTime, "utf8");
   writeFileSync(pidFile, String(process.pid), "utf8");
-  // clear any stale stop file
-  if (existsSync(stopFile)) rmSync(stopFile, { force: true });
-  rmSync(paths.supervisorResizePath, { force: true });
-
-  const values = loadConfig(paths.configPath, { warn: () => undefined });
-  const config = resolveSupervisorConfig(process.env, (key) => getConfig(values, key));
-  const state = initSupervisorState(config.target);
-  const repo = await resolveRepoSlug(root).catch(() => "");
-  const trunk = getConfig(values, "dev.trunk") || "main";
-  const ghCtx = { cwd: root, repo };
   const supervisorId = `s${process.pid}`;
-  // The filter/policy flags fleet.ts forwarded (--spec/--issues/--alternate/
-  // --fallback-runner/--request), threaded into every slot's `run --once`.
-  const slotArgs = slotFilterArgs(args);
-  // Base env for fleet hooks: RED_AFK_REPO, RED_AFK_ROOT, RED_AFK_RUNNER.
-  const hookEnvBase: Record<string, string> = {
-    RED_AFK_ROOT: root,
-    RED_AFK_WORKSPACE: root,
-    RED_AFK_RUNNER: config.runner,
-    ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
+  const exitWriter = createCastleLaneWriters(
+    createEnginePaths(join(root, ".red")),
+  ).supervisor(join(fleet, supervisorId));
+  const exitRecorder = createSupervisorExitRecorder({
+    supervisorId,
+    append: async (record) => {
+      await exitWriter.append(record);
+    },
+    appendSync: (record) => {
+      try {
+        mkdirSync(dirname(exitWriter.path), { recursive: true });
+        const row: ToonlRecord = {
+          at: new Date().toISOString(),
+          kind: record.kind,
+          supervisor_id: supervisorId,
+          payload: JSON.stringify(record.payload ?? {}),
+        };
+        appendFileSync(exitWriter.path, encodeLines().push(row), "utf8");
+      } catch {
+        // a process-exit fallback is necessarily best-effort.
+      }
+    },
+  });
+  const onProcessExit = (code: number): void => {
+    exitRecorder.recordSync("process-exit", { code });
   };
-  const deps = buildSupervisorDeps(root, tmp, slotLogsDir, firehoseFile, stateFile, supervisorId, fleet, config.runner, ghCtx, trunk, slotArgs, hookEnvBase, adoptSlotPids);
+  const onUncaughtException = (error: Error, origin: NodeJS.UncaughtExceptionOrigin): void => {
+    exitRecorder.recordSync("exception", {
+      name: error.name,
+      message: error.message,
+      origin,
+    });
+  };
+  process.once("exit", onProcessExit);
+  process.once("uncaughtExceptionMonitor", onUncaughtException);
 
   const stopRequested = (): boolean => existsSync(stopFile);
-
-  // A bare `kill <supervisor-pid>` (SIGTERM/SIGINT) must not orphan the detached
-  // slot workers or leave the pid/stop control files behind (#2056). Without a
-  // handler the signal skips the `finally` below, stranding both. Translate the
-  // signal into the same clean shutdown the stop-file path performs: terminate
-  // every live slot (SIGTERM→grace→SIGKILL→confirm via terminateAll), clean the
-  // control files, then exit with the conventional 128+signal code.
+  let state: SupervisorState | undefined;
+  let deps: SupervisorDeps | undefined;
   let shuttingDown = false;
-  const onSignal = (signal: "SIGTERM" | "SIGINT"): void => {
+  const onSignal = (signal: "SIGTERM" | "SIGINT" | "SIGHUP"): void => {
     if (shuttingDown) return;
     shuttingDown = true;
     void (async () => {
-      try {
-        await terminateAll(state, deps);
-      } catch {
-        // best-effort — still clean control files and exit.
+      await exitRecorder.record("signal", { signal });
+      if (state !== undefined && deps !== undefined) {
+        try {
+          await terminateAll(state, deps);
+        } catch {
+          // best-effort — still clean control files and exit.
+        }
       }
-      rmSync(pidFile, { force: true });
-      rmSync(stopFile, { force: true });
-      process.exit(signal === "SIGINT" ? 130 : 143);
+      process.exit(signal === "SIGINT" ? 130 : signal === "SIGHUP" ? 129 : 143);
     })();
   };
-  process.once("SIGTERM", () => onSignal("SIGTERM"));
-  process.once("SIGINT", () => onSignal("SIGINT"));
+  const onSigterm = (): void => onSignal("SIGTERM");
+  const onSigint = (): void => onSignal("SIGINT");
+  const onSighup = (): void => onSignal("SIGHUP");
+  process.once("SIGTERM", onSigterm);
+  process.once("SIGINT", onSigint);
+  process.once("SIGHUP", onSighup);
 
+  let completed = false;
   try {
+    // Everything after publishing the pinned identity is inside this lifecycle
+    // boundary, including configuration and dependency construction.
+    if (existsSync(stopFile)) rmSync(stopFile, { force: true });
+    rmSync(paths.supervisorResizePath, { force: true });
+
+    const values = loadConfig(paths.configPath, { warn: () => undefined });
+    const config = resolveSupervisorConfig(process.env, (key) => getConfig(values, key));
+    state = initSupervisorState(config.target);
+    const repo = await resolveRepoSlug(root).catch(() => "");
+    const trunk = getConfig(values, "dev.trunk") || "main";
+    const ghCtx = { cwd: root, repo };
+    const slotArgs = slotFilterArgs(args);
+    const hookEnvBase: Record<string, string> = {
+      RED_AFK_ROOT: root,
+      RED_AFK_WORKSPACE: root,
+      RED_AFK_RUNNER: config.runner,
+      ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
+    };
+    deps = buildSupervisorDeps(
+      root,
+      tmp,
+      slotLogsDir,
+      firehoseFile,
+      stateFile,
+      supervisorId,
+      fleet,
+      config.runner,
+      ghCtx,
+      trunk,
+      slotArgs,
+      hookEnvBase,
+      adoptSlotPids,
+    );
     await runSupervisor(state, deps, config, stopRequested);
+    completed = true;
+    await exitRecorder.record(stopRequested() ? "explicit-stop" : "completed");
+  } catch (error) {
+    await exitRecorder.record("exception", {
+      name: error instanceof Error ? error.name : "Error",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   } finally {
-    rmSync(pidFile, { force: true });
-    rmSync(stopFile, { force: true });
+    process.removeListener("exit", onProcessExit);
+    process.removeListener("uncaughtExceptionMonitor", onUncaughtException);
+    process.removeListener("SIGTERM", onSigterm);
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGHUP", onSighup);
+    if (completed) {
+      rmSync(pidFile, { force: true });
+      rmSync(paths.supervisorPidStartPath, { force: true });
+      rmSync(stopFile, { force: true });
+    }
   }
   return 0;
 }

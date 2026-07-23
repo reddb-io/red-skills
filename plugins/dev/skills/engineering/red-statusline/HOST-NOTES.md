@@ -4,6 +4,18 @@ Reference material for the host branches in `SKILL.md`. Read only the section fo
 the branch you are wiring; these notes preserve the recipes, line-shape rules,
 and rationale outside the hot path.
 
+## Two-Client Architecture
+
+The statusline data surface has two distinct client paths with different render-path constraints:
+
+**1. Command-backed host (`statusLine` in `.claude/settings.json`)** — a DIRECT collector client. The `dev bundle statusline` subcommand calls `collectStatuslineAfk`, `collectStatuslineRepo`, `collectStatuslineFleet`, `collectStatuslineDocs`, and `collectStatuslineWorkers` directly, in-process, and emits the rendered line. This path must NEVER be rewired through the MCP server — an MCP handshake per render tick is a synchronous network call in the render path, which is the exact regression ADR 0084 forbids (it blanks the statusline on slow/failed transport and burns unnecessary overhead on every 60s tick).
+
+**2. MCP `statusline_aggregate` tool** — an agent/UI surface. The `dev:afk` MCP server exposes a `statusline_aggregate` tool that calls the SAME collector cores with the SAME 180s cache discipline. Agents and UIs call this tool instead of shelling out to the command. The tool returns structured data (not a rendered line) so callers can choose their own presentation.
+
+The two paths share collector cores and never duplicate them. Adding a new field to the statusline means adding it to the collector → both clients get it in the same change.
+
+**Diagnosing a blank statusline**: the MCP is NOT in the `statusLine` render path. A blank line is always a problem with the command-backed path (node not on PATH, bundle not cached, opt-out in config). Run step 5 of the Claude Code recipe below to probe the command directly; do not look at MCP transport or the `statusline_aggregate` tool.
+
 ## Shared Architecture And Line Shapes
 
 Install or inspect the RedSkills statusline for this repository. The shared producer renders the project name, branch, model/context data when the host provides it, repo counters, and live AFK state. **The two hosts get two shapes (per-runner split, ADR 0003):**
@@ -126,8 +138,8 @@ footer items and persisting them to `config.toml`. The dev bundle also exposes
 an explicit inspector/fixer:
 
 ```bash
-red-skills-dev codex-statusline
-red-skills-dev codex-statusline --fix
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-statusline
+npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-statusline --fix
 ```
 
 The inspector reports the active `tui.status_line`, flags a missing

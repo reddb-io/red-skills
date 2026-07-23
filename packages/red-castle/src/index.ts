@@ -92,24 +92,13 @@ export type {
   ProcSnapshotEntry,
   ProcessDescendantProbeOptions,
 } from "./LivenessEvaluator.js";
-export {
-  claudeCode,
-  devin,
-  codex,
-  copilot,
-  cursor,
-  opencode,
-  pi,
-} from "./AgentProvider.js";
+export { claudeCode, codex, opencode, pi } from "./AgentProvider.js";
 export type {
   AgentProvider,
   AgentCommandOptions,
   PrintCommand,
   ClaudeCodeOptions,
-  DevinOptions,
   CodexOptions,
-  CopilotOptions,
-  CursorOptions,
   OpenCodeOptions,
   PiOptions,
 } from "./AgentProvider.js";

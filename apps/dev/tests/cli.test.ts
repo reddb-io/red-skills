@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { parseCli } from "../src/cli.js";
+import { describe, expect, it, vi } from "vitest";
+import { HelpRequested, main, parseCli } from "../src/cli.js";
+import { UnknownCommandError } from "@reddb-io/shared/args.js";
 
 describe("cli parser", () => {
   it("preserves the legacy default /afk interface", () => {
@@ -33,5 +34,42 @@ describe("cli parser", () => {
       command: "afk-output-shaping",
       args: ["--human"],
     });
+  });
+});
+
+describe("top-level help and unknown flags never boot a worker (#2581)", () => {
+  it("--help / -h / help short-circuit before any routing", () => {
+    for (const argv of [["--help"], ["-h"], ["help"]]) {
+      expect(() => parseCli(argv)).toThrow(HelpRequested);
+    }
+  });
+
+  it("main prints usage and exits 0 on --help", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      await expect(main(["--help"])).resolves.toBe(0);
+      expect(String(write.mock.calls[0]![0])).toContain("Usage: red-skills-dev");
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it("an unknown leading flag errors instead of silently draining the queue", () => {
+    expect(() => parseCli(["--definitely-not-a-flag"])).toThrow(UnknownCommandError);
+  });
+
+  it("the documented run-surface flags still route to the run default", () => {
+    expect(parseCli(["--issues", "42"])).toEqual({ command: "run", args: ["--issues", "42"] });
+    expect(parseCli(["--spec", "7"])).toEqual({ command: "run", args: ["--spec", "7"] });
+  });
+
+  it("<command> --help exits 0 without dispatching the command", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    try {
+      await expect(main(["requeue", "--help"])).resolves.toBe(0);
+      expect(String(write.mock.calls[0]![0])).toContain("red-skills-dev requeue");
+    } finally {
+      write.mockRestore();
+    }
   });
 });

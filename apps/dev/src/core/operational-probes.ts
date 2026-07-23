@@ -5,6 +5,7 @@ export * from "./operational-probes/claim-hygiene.js";
 export * from "./operational-probes/config-coherence.js";
 export * from "./operational-probes/fleet-truth.js";
 export * from "./operational-probes/focal-branch.js";
+export * from "./operational-probes/host-prerequisites.js";
 export * from "./operational-probes/https-remote.js";
 export * from "./operational-probes/label-body-coherence.js";
 export * from "./operational-probes/queue-visibility.js";

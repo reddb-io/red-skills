@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # gradle.sh — afk pre-spawn detector for Gradle projects.
 #
 # Applies when a build.gradle* file exists at PROJECT_ROOT AND the
@@ -18,10 +18,13 @@ set -u
 
 project_root="${PROJECT_ROOT:-$(pwd)}"
 
-shopt -s nullglob
-matches=("$project_root"/build.gradle*)
-shopt -u nullglob
-[ "${#matches[@]}" -gt 0 ] || exit 1
+has_gradle_build=false
+for candidate in "$project_root"/build.gradle*; do
+  [ -f "$candidate" ] || continue
+  has_gradle_build=true
+  break
+done
+[ "$has_gradle_build" = true ] || exit 1
 
 [ -n "${RED_AFK_GRADLE_USER_HOME_BASE:-}" ] || exit 1
 

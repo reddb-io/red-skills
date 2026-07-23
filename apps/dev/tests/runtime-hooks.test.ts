@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hookEnv, makeHookResolveOptions } from "../src/runtime/hooks.js";
+import {
+  hookEnv,
+  makeHookExec,
+  makeHookResolveOptions,
+} from "../src/runtime/hooks.js";
 import { skillDirFromModule } from "../src/platform/skill-paths.js";
 import { resolveHooks } from "../src/core/hook-config.js";
 
@@ -25,7 +30,16 @@ describe("makeHookResolveOptions (gap 6: built-in defaults anchor on the plugin)
       // The bundle ships at <plugin>/bin/afk.mjs; resolve from there.
       const here = new URL(import.meta.url).pathname; // .../apps/dev/tests/runtime-hooks.test.ts
       const repoRoot = here.slice(0, here.indexOf("/apps/dev/"));
-      const binMjs = join(repoRoot, "plugins", "dev", "skills", "engineering", "afk", "bin", "afk.mjs");
+      const binMjs = join(
+        repoRoot,
+        "plugins",
+        "dev",
+        "skills",
+        "engineering",
+        "afk",
+        "bin",
+        "afk.mjs",
+      );
       skillDir = skillDirFromModule(new URL(`file://${binMjs}`).href);
     } catch {
       // The skill/bundle isn't laid out in this checkout — skip the strong assertion.
@@ -42,17 +56,19 @@ describe("makeHookResolveOptions (gap 6: built-in defaults anchor on the plugin)
     // resolveHooks must register the cargo + gradle defaults at pre_worktree.
     const resolved = resolveHooks(
       {},
-      { defaultCommand: (name) => {
-        const scripts: Record<string, string> = {
-          cargo: "red-cargo",
-          gradle: "red-gradle",
-          heartbeat: "red-heartbeat",
-          envelope: "red-envelope",
-          validation: "red-validation",
-        };
-        const p = join(hooksDir, scripts[name]!);
-        return existsSync(p) ? p : undefined;
-      } },
+      {
+        defaultCommand: (name) => {
+          const scripts: Record<string, string> = {
+            cargo: "red-cargo",
+            gradle: "red-gradle",
+            heartbeat: "red-heartbeat",
+            envelope: "red-envelope",
+            validation: "red-validation",
+          };
+          const p = join(hooksDir, scripts[name]!);
+          return existsSync(p) ? p : undefined;
+        },
+      },
     );
     expect(resolved.pre_worktree).toEqual([
       join(hooksDir, "red-cargo"),
@@ -62,19 +78,21 @@ describe("makeHookResolveOptions (gap 6: built-in defaults anchor on the plugin)
     expect(resolved.post_merge).toContain(join(hooksDir, "red-validation"));
   });
 
-  it("never points at the consuming project's .red unless the skill dir is unreachable", () => {
-    // makeHookResolveOptions(root) must NOT default to `<root>/.red/hooks/lib`
-    // when the plugin is reachable — that path never ships the scripts. We assert
-    // the resolver returns undefined for a fictional project root (no library
-    // scripts under it), proving it does not silently read project-local paths.
-    const opts = makeHookResolveOptions("/tmp/no-such-afk-project-xyz");
-    // Whatever the anchor, a fictional project has no scripts, so cargo resolves
-    // to undefined only if the anchor is NOT a populated plugin dir. When the
-    // anchor IS the real plugin (source-tree run throws → project fallback), cargo
-    // is undefined because the fallback dir is empty — either way it is a string
-    // path or undefined, never a crash.
-    const cargo = opts.defaultCommand("cargo");
-    expect(cargo === undefined || typeof cargo === "string").toBe(true);
+  it("omits cargo and gradle defaults for a consuming repo with no matching build files", () => {
+    const root = mkdtempSync(join(tmpdir(), "runtime-hooks-node-project-"));
+    const skillDir = join(root, "installed-afk-skill");
+    const hooksDir = join(skillDir, "hooks");
+    mkdirSync(hooksDir, { recursive: true });
+    for (const script of ["red-cargo", "red-gradle", "red-heartbeat"]) {
+      writeFileSync(join(hooksDir, script), "#!/usr/bin/env bash\n");
+    }
+    const opts = makeHookResolveOptions(root, () => skillDir);
+
+    expect(opts.defaultCommand("cargo")).toBeUndefined();
+    expect(opts.defaultCommand("gradle")).toBeUndefined();
+    expect(opts.defaultCommand("heartbeat")).toBe(
+      join(hooksDir, "red-heartbeat"),
+    );
   });
 });
 
@@ -87,7 +105,9 @@ describe("hookEnv (per-slot RED_AFK_SLOT in hook environment)", () => {
   });
 
   it("includes RED_AFK_RUNNER when the caller supplies the resolved runner", () => {
-    expect(hookEnv("owner/repo", "/repo", undefined, "codex").RED_AFK_RUNNER).toBe("codex");
+    expect(
+      hookEnv("owner/repo", "/repo", undefined, "codex").RED_AFK_RUNNER,
+    ).toBe("codex");
   });
 
   it("omits RED_AFK_SLOT when no slot is given", () => {
@@ -101,7 +121,23 @@ describe("hookEnv (per-slot RED_AFK_SLOT in hook environment)", () => {
   });
 
   it("each slot gets a distinct RED_AFK_SLOT value", () => {
-    const slots = [0, 1, 2].map((s) => hookEnv("owner/repo", "/repo", s).RED_AFK_SLOT);
+    const slots = [0, 1, 2].map(
+      (s) => hookEnv("owner/repo", "/repo", s).RED_AFK_SLOT,
+    );
     expect(slots).toEqual(["0", "1", "2"]);
+  });
+});
+
+describe("makeHookExec", () => {
+  it("runs bash-only lifecycle hooks with bash instead of the host sh interpreter", async () => {
+    const exec = makeHookExec(process.cwd());
+
+    await expect(
+      exec(
+        "read -r _; shopt -s extglob; [[ foobar == +(foo|bar) ]] && printf 'extglob-ok'",
+        {},
+        "{}\n",
+      ),
+    ).resolves.toEqual({ code: 0, stdout: "extglob-ok" });
   });
 });

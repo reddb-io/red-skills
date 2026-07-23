@@ -364,7 +364,8 @@ export function formatValidationLine(record: ValidationRecord): string {
  * `summary` containing one of those markers — or an exit-code-137 (SIGKILL,
  * the Linux OOM killer signature), or a `maxBuffer length exceeded` capture
  * overflow (a green-but-verbose suite Node killed for its OUTPUT size, not a
- * test failure) anywhere in the gate output — flips this classifier to true.
+ * test failure), or a missing file below `node_modules` anywhere in the gate
+ * output — flips this classifier to true.
  * The detection is substring-based on purpose: it has to survive pnpm's
  * error-wrapping, multi-line output, and minor message drift.
  */
@@ -392,6 +393,21 @@ export function isInfraFeedbackFailure(feedback: RunFeedbackResult): boolean {
     // output was too large — so this is an environment/config problem, not a
     // worker-code failure. Route through bounded validation-infra recovery.
     if (summary.includes("maxBuffer length exceeded")) {
+      return true;
+    }
+    // A dependency tree that disappears after setup is an infrastructure
+    // failure even when the runner surfaces it from inside vitest. Limit the
+    // heuristic to node_modules paths so an application-owned missing fixture
+    // remains a semantic failure.
+    if (
+      summary.includes("node_modules") &&
+      (
+        summary.includes("ERR_MODULE_NOT_FOUND") ||
+        summary.includes("Cannot find module") ||
+        summary.includes("Cannot find package") ||
+        /ENOENT:[^\n]*no such file or directory/i.test(summary)
+      )
+    ) {
       return true;
     }
   }
@@ -602,6 +618,17 @@ function isCrashOrOom(code: number, output: string): boolean {
 }
 
 /**
+ * A baseline probe run that failed because the worktree itself could not be
+ * materialised (stale detached worktree, git lock, missing ref) must never
+ * claim that main is red — it is an infra failure of the probe, not a real
+ * test signal. Detect the sentinel stderr the feedback worktree manager writes
+ * when pathFor returns null and treat it as inconclusive (#2379).
+ */
+function isWorktreeSetupFailure(output: string): boolean {
+  return output.includes("feedback worktree setup failed");
+}
+
+/**
  * The sidecar summary for an `inconclusive` check — the comparison evidence a
  * human needs to read the `blocked:validation` park without re-running anything.
  */
@@ -662,6 +689,23 @@ async function runChecksForBaseline(
         evidence: {
           check: name,
           summary: "baseline probe inconclusive (crash/OOM) — not a confirmed baseline failure",
+          outputTail: boundedFailureOutputTail(output),
+        },
+      });
+      continue;
+    }
+    if (isWorktreeSetupFailure(output)) {
+      // The baseline probe's worktree materialisation failed (stale detached
+      // worktree, lock, missing ref — infra, not a test result). Treat as
+      // inconclusive so the failure is NOT counted as a pre-existing baseline
+      // failure. Without this, a setup failure makes every check appear to also
+      // fail on the baseline, falsely attributing the block to a baseline flake
+      // rather than the branch's code (#2379).
+      out.set(name, {
+        status: "inconclusive",
+        evidence: {
+          check: name,
+          summary: "baseline probe inconclusive (worktree setup failed) — not a confirmed baseline failure",
           outputTail: boundedFailureOutputTail(output),
         },
       });

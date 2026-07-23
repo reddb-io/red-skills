@@ -8,13 +8,23 @@ export interface LogsInput {
   kind?: string;
 }
 
+export interface WorkerVitalsInput {
+  live_only?: boolean;
+  fields?: string[];
+}
+
+export interface EventsSinceInput {
+  cursor?: string;
+}
+
 export interface ObservabilityDependencies {
   logs(input: LogsInput): Promise<unknown>;
-  workerVitals(): Promise<unknown>;
+  workerVitals(input: WorkerVitalsInput): Promise<unknown>;
   dashboard(input: { periodDays: number }): Promise<unknown>;
   monitor(): Promise<unknown>;
   history(input: { limit?: number }): Promise<unknown>;
   queueStatus(): Promise<unknown>;
+  eventsSince(input: EventsSinceInput): Promise<unknown>;
 }
 
 export function createObservabilityTools(
@@ -37,9 +47,17 @@ export function createObservabilityTools(
     {
       name: "worker_vitals",
       title: "Read worker vitals",
-      description: "Return the liveness-qualified state of all local workers.",
-      inputSchema: {},
-      invoke: () => deps.workerVitals(),
+      description:
+        "Return the liveness-qualified state of local workers. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers. Pass `fields` to project top-level keys.",
+      inputSchema: {
+        live_only: z.boolean().default(true),
+        fields: z.array(z.string().min(1)).optional(),
+      },
+      invoke: (input) =>
+        deps.workerVitals({
+          live_only: (input.live_only ?? true) as boolean,
+          fields: input.fields as string[] | undefined,
+        }),
     },
     {
       name: "dashboard",
@@ -78,6 +96,17 @@ export function createObservabilityTools(
         "Return ready-for-agent and ready-for-human queue candidates.",
       inputSchema: {},
       invoke: () => deps.queueStatus(),
+    },
+    {
+      name: "events_since",
+      title: "Poll events since cursor",
+      description:
+        "Return castle history events and worker lane records after an opaque cursor, plus the next cursor. Omit cursor to get a fresh baseline cursor with no events. Unknown or expired cursors are refused with a re-baseline prompt.",
+      inputSchema: {
+        cursor: z.string().min(1).optional(),
+      },
+      invoke: (input) =>
+        deps.eventsSince({ cursor: input.cursor as string | undefined }),
     },
   ];
 }

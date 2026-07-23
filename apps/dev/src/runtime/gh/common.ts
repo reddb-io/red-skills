@@ -1,4 +1,7 @@
 import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "../exec.js";
+import { withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./quota.js";
+
+export type { GhQuotaBackoffOpts };
 
 export interface GhContext {
   /** owner/repo slug for `gh ... --repo`. */
@@ -11,6 +14,14 @@ export interface GhContext {
    * closure assembly can be driven without touching the OS. See exec.ts::ExecFn.
    */
   exec?: ExecFn;
+  /**
+   * When present, rate-limit responses (REST 403/429, GraphQL RATE_LIMITED)
+   * trigger a bounded wait-and-retry rather than being returned immediately as
+   * failures. onWait emits 'quota-wait' activity so the wait is visible in
+   * worker vitals/lane records. After the cap, the failing response is returned
+   * so the caller can park with an explicit quota reason.
+   */
+  quotaBackoff?: GhQuotaBackoffOpts;
 }
 
 function opts(ctx: GhContext): ExecOptions {
@@ -19,11 +30,12 @@ function opts(ctx: GhContext): ExecOptions {
 
 /**
  * Dispatch a `gh <args>` invocation through the injected exec when present, else
- * the real `gh` helper. This is the single seam every gh closure in this module
- * routes through; the default path is byte-for-byte the prior static `gh` call.
+ * the real `gh` helper. When `ctx.quotaBackoff` is set, rate-limit responses
+ * are retried with a bounded wait instead of returned immediately as failures.
  */
 export function runGh(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {
-  return (ctx.exec ?? execTool)("gh", args, opts(ctx));
+  const fn = () => (ctx.exec ?? execTool)("gh", args, opts(ctx));
+  return ctx.quotaBackoff ? withGhQuotaBackoff(fn, ctx.quotaBackoff) : fn();
 }
 
 export function runRsp(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {

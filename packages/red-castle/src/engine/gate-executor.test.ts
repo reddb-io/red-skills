@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CASTLE_VALIDATION_SCHEMA } from "./gate-constants.js";
 import { makeHeadlessGateSink, makeInteractiveGateSink } from "./gate-sink.js";
-import { checkSensitivePaths, classifyFinding, runCastleGate, type RunCastleGateInput } from "./gate-executor.js";
+import { classifyFinding, runCastleGate, type RunCastleGateInput } from "./gate-executor.js";
 
 function baseInput(): RunCastleGateInput {
   let tick = 0;
@@ -24,7 +24,6 @@ function baseInput(): RunCastleGateInput {
     },
     sink: makeInteractiveGateSink({
       askIntent: async () => "approved",
-      askSensitivePath: async () => "approved",
     }),
     feedbackExec: vi.fn(async () => ({ code: 0, stdout: "ok", stderr: "" })),
     backpressureExec: vi.fn(async () => ({ code: 0, stdout: "ok", stderr: "" })),
@@ -37,15 +36,6 @@ describe("castle gate executor", () => {
   it("classifies only versioned mechanical kinds as mechanical", () => {
     expect(classifyFinding({ kind: "formatter", description: "format" })).toBe("mechanical");
     expect(classifyFinding({ kind: "refactor", description: "logic changed" })).toBe("intent");
-  });
-
-  it("detects sensitive paths and package lifecycle script changes", () => {
-    expect(checkSensitivePaths([".github/workflows/ci.yml"], "")).toEqual([
-      { path: ".github/workflows/ci.yml", reason: "CI workflow file" },
-    ]);
-    expect(checkSensitivePaths(["packages/core/package.json"], '+    "postinstall": "node build.js",')).toEqual([
-      { path: "packages/core/package.json", reason: "lifecycle script added or altered in package.json" },
-    ]);
   });
 
   it("runs scoped feedback, skips missing scripts, then runs configured backpressure", async () => {
@@ -75,7 +65,6 @@ describe("castle gate executor", () => {
     const parkIntent = vi.fn(async () => {});
     input.sink = makeHeadlessGateSink({
       parkIntent,
-      parkSensitivePath: async () => {},
     });
     input.findings = [{ kind: "behavior", description: "changes semantics" }];
 
@@ -95,5 +84,43 @@ describe("castle gate executor", () => {
 
     expect(result.ok).toBe(false);
     expect(input.backpressureExec).not.toHaveBeenCalled();
+  });
+
+  it("refuses an over-class gate with an explicit verdict before executing commands", async () => {
+    const input = baseInput();
+    input.hostProfile = {
+      machineIdHash: "8cb3eafdcbd2",
+      runners: ["codex"],
+      maxGateWeight: "light-cone",
+      defaultFleetWidth: 1,
+    };
+    input.gateWeight = "heavy-cone";
+    input.backpressureCommands = ["pnpm smoke"];
+
+    const result = await runCastleGate(input);
+
+    expect(result).toMatchObject({
+      ok: false,
+      admission: {
+        admitted: false,
+        verdict: "refused-over-class",
+        required: "heavy-cone",
+        maximum: "light-cone",
+      },
+      checks: [],
+      sidecar: [],
+    });
+    expect(input.feedbackExec).not.toHaveBeenCalled();
+    expect(input.backpressureExec).not.toHaveBeenCalled();
+  });
+
+  it("a diff touching .github/workflows/ passes through the gate without blocking", async () => {
+    const input = baseInput();
+    input.changedFiles = [".github/workflows/ci.yml", "packages/core/src/index.ts"];
+
+    const result = await runCastleGate(input);
+
+    expect(result.ok).toBe(true);
+    expect(result.sinkOutcomes).toEqual([]);
   });
 });

@@ -18,6 +18,7 @@ export {
   type RouterSchema,
 } from "./args.js";
 export * from "./log.js";
+export * from "./github-webhook.js";
 export {
   CANARY_TAG,
   CHANNEL_ENV_VAR,
@@ -85,6 +86,7 @@ export {
   type RedRuntimeIO,
 } from "./red-runtime.js";
 export * from "./red-paths.js";
+export * from "./repo-root.js";
 export * from "./outcome-event.js";
 export * from "./resident-client.js";
 export * from "./resident-protocol.js";

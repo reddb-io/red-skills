@@ -10,6 +10,7 @@ import type { GitExec, GitExecResult } from "../core/remote-branch.js";
 import type { Exec as MergeExec, ExecResult as MergeExecResult } from "../core/merge.js";
 import type { BranchRef } from "../core/branch-cleanup.js";
 import type { RemoteUrlFact } from "../core/operational-probes.js";
+import { withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./gh/quota.js";
 
 export const FLEET_TRUNK = "red-trunk";
 export const FLEET_TRUNK_REF = `refs/heads/${FLEET_TRUNK}`;
@@ -24,6 +25,15 @@ export interface GitContext {
    * through — can be driven without touching the OS. See exec.ts::ExecFn.
    */
   exec?: ExecFn;
+  /**
+   * When present, `gh`-headed commands routed through {@link mergeExec} retry
+   * on rate-limit responses (REST 403/429, GraphQL RATE_LIMITED) with a bounded
+   * wait instead of returning failure immediately. onWait emits 'quota-wait'
+   * activity so the wait is visible in worker vitals/lane records. After the
+   * cap, the failing response is returned so the caller can park with an
+   * explicit quota reason.
+   */
+  quotaBackoff?: GhQuotaBackoffOpts;
 }
 
 function opts(ctx: GitContext): ExecOptions {
@@ -37,6 +47,82 @@ function opts(ctx: GitContext): ExecOptions {
  */
 function runGit(ctx: GitContext, args: readonly string[]): Promise<ExecOutput> {
   return (ctx.exec ?? execTool)("git", args, opts(ctx));
+}
+
+interface PorcelainWorktree {
+  path: string;
+  head?: string;
+  locked?: string;
+}
+
+export interface BrokenWorktreeQuarantine {
+  path: string;
+  reason: string;
+  removed: boolean;
+  error?: string;
+}
+
+function parseWorktreePorcelain(output: string): PorcelainWorktree[] {
+  const worktrees: PorcelainWorktree[] = [];
+  let current: PorcelainWorktree | undefined;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      if (current) worktrees.push(current);
+      current = { path: line.slice("worktree ".length) };
+    } else if (current && line.startsWith("HEAD ")) {
+      current.head = line.slice("HEAD ".length).trim();
+    } else if (current && (line === "locked" || line.startsWith("locked "))) {
+      current.locked = line.slice("locked".length).trim();
+    }
+  }
+  if (current) worktrees.push(current);
+  return worktrees;
+}
+
+/**
+ * Remove linked worktrees that can poison every repository-level git command.
+ * Git leaves an `initializing` lock while `worktree add` is in flight; a killed
+ * creator can strand that lock with a HEAD whose object was later collected.
+ * `git worktree remove --force` refuses locked entries, so quarantine first
+ * unlocks, then force-removes, and finally prunes the shared registry.
+ *
+ * The first porcelain entry is the primary checkout and is never eligible.
+ * Healthy linked worktrees, including deliberately locked ones whose reason is
+ * not `initializing`, are left untouched.
+ */
+export async function quarantineBrokenWorktrees(
+  ctx: GitContext,
+): Promise<BrokenWorktreeQuarantine[]> {
+  const listed = await runGit(ctx, ["worktree", "list", "--porcelain"]);
+  if (listed.code !== 0) return [];
+
+  const quarantined: BrokenWorktreeQuarantine[] = [];
+  const linked = parseWorktreePorcelain(listed.stdout).slice(1);
+  for (const worktree of linked) {
+    const initializing = worktree.locked === "initializing";
+    const head = worktree.head;
+    const headExists = head
+      ? (await runGit(ctx, ["cat-file", "-e", `${head}^{commit}`])).code === 0
+      : false;
+    if (!initializing && headExists) continue;
+
+    const reasons = [initializing ? "initializing-lock" : "", !headExists ? "dangling-head" : ""]
+      .filter(Boolean)
+      .join(",");
+    await runGit(ctx, ["worktree", "unlock", worktree.path]);
+    const removed = await runGit(ctx, ["worktree", "remove", "--force", worktree.path]);
+    quarantined.push({
+      path: worktree.path,
+      reason: reasons,
+      removed: removed.code === 0,
+      ...(removed.code === 0
+        ? {}
+        : { error: removed.stderr.trim() || `git worktree remove exited ${removed.code}` }),
+    });
+  }
+
+  if (quarantined.length > 0) await runGit(ctx, ["worktree", "prune"]);
+  return quarantined;
 }
 
 export async function isGitRepo(ctx: GitContext): Promise<boolean> {
@@ -254,6 +340,7 @@ export async function resolveFreshBase(
     }
     const updated = await runGit(ctx, ["update-ref", FLEET_TRUNK_REF, remoteSha]);
     if (updated.code !== 0) {
+      const detail = updated.stderr.trim() || `git update-ref exited ${updated.code}`;
       return {
         ok: false,
         base,
@@ -262,7 +349,7 @@ export async function resolveFreshBase(
         source: "mirror",
         remoteReachable: true,
         reason: "base-stale",
-        message: `could not update fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}`,
+        message: `could not update fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}: ${detail}`,
       };
     }
     return {
@@ -275,6 +362,10 @@ export async function resolveFreshBase(
     };
   }
 
+  const detail = fetch.code !== 0
+    ? fetch.stderr.trim() || `git fetch exited ${fetch.code}`
+    : `${remoteRef} did not resolve after fetch`;
+
   return {
     ok: false,
     base,
@@ -283,7 +374,7 @@ export async function resolveFreshBase(
     source: "mirror",
     remoteReachable: false,
     reason: "base-stale",
-    message: `could not refresh fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}`,
+    message: `could not refresh fleet trunk mirror ${FLEET_TRUNK} from ${remoteRef}: ${detail}`,
   };
 }
 
@@ -509,6 +600,15 @@ export async function worktreeRemove(ctx: GitContext, path: string): Promise<voi
   await runGit(ctx, ["worktree", "remove", "--force", path]);
 }
 
+/**
+ * Run `git worktree prune` to drop stale entries from git's internal worktree
+ * registry after orphaned worktree dirs have been removed from disk. Best-effort:
+ * never throws so a prune failure does not abort the janitor sweep.
+ */
+export async function worktreePrune(ctx: GitContext): Promise<void> {
+  await runGit(ctx, ["worktree", "prune"]);
+}
+
 /** The GitExec executor for remote-branch.ts live-branch push/delete helpers. */
 export function gitExec(ctx: GitContext): GitExec {
   return async (args: string[]): Promise<GitExecResult> => {
@@ -525,7 +625,12 @@ export function mergeExec(ctx: GitContext): MergeExec {
     // commands (git push / gh pr merge) the close path issues.
     const [head, ...rest] = args;
     const exec = ctx.exec ?? execTool;
-    const r = await exec(head ?? "git", rest, opts(ctx));
+    const fn = (): Promise<ExecOutput> => exec(head ?? "git", rest, opts(ctx));
+    // Apply quota backoff only to `gh`-headed commands: git commands do not
+    // make GitHub API calls and must never be silently delayed.
+    const r = (ctx.quotaBackoff && head === "gh")
+      ? await withGhQuotaBackoff(fn, ctx.quotaBackoff)
+      : await fn();
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 }
@@ -577,23 +682,19 @@ export async function worktreePathForBranch(ctx: GitContext, branch: string): Pr
 }
 
 /**
- * Resolve the worktree path registered under `dirPrefix` (the attempt dir),
- * parsed from `git worktree list --porcelain`. sandcastle creates the agent's
- * worktree at `{attemptDir}/.red-castle/worktrees/{slug}`, but the state file's
- * `current.worktree` is seeded to the legacy `{attemptDir}/worktree` path that
- * never exists — so a `git diff` there fails and the heartbeat / monitor read a
- * permanent `+0 -0` even with a dirty worktree (the sandcastle-blind hazard). An
- * attempt has exactly one worktree, so the first match under `dirPrefix` is it.
- * Returns undefined when none is registered yet (pre-worktree ticks). Routed
- * through the same `runGit` seam so tests drive it without an OS git.
+ * Resolve the conventional worktree registered at `{dirPrefix}/worktree`,
+ * parsed from `git worktree list --porcelain`. Nested castle-branded paths are
+ * intentionally excluded from this normal reader; hygiene owns their rollout
+ * compatibility. Returns undefined when the worktree is not registered yet.
  */
 export async function worktreePathUnder(ctx: GitContext, dirPrefix: string): Promise<string | undefined> {
   const r = await runGit(ctx, ["worktree", "list", "--porcelain"]);
   if (r.code !== 0) return undefined;
   const prefix = dirPrefix.replace(/\/+$/, "");
+  const expected = `${prefix}/worktree`;
   for (const line of r.stdout.split("\n")) {
     const w = /^worktree\s+(.+)$/.exec(line.trim());
-    if (w && w[1] && (w[1] === prefix || w[1].startsWith(`${prefix}/`))) return w[1];
+    if (w?.[1] === expected) return w[1];
   }
   return undefined;
 }

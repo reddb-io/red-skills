@@ -6,6 +6,7 @@ export {
   checkBootGuard,
   parseRunFlags,
   resolveRunDispatchIdentity,
+  shouldSkipBootSweeps,
 } from "./run/flags.js";
 export { deriveActivity } from "./run/activity.js";
 export { buildProcessDeps } from "./run/process-deps.js";
@@ -17,5 +18,6 @@ export {
   encodeBootErrorPayload,
   castleWorktreeUnder,
   readCapturedWorktreePath,
+  initBootWorkerState,
 } from "./run/state.js";
 export { runCommand } from "./run/command.js";

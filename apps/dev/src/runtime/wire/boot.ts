@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
+import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/red-castle/engine";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { auditConfigLoad, loadConfig, getConfig } from "../../core/config.js";
 import { compareSemver, fetchNpmNewestDevBundleVersion, readDevBundleCacheState } from "../../core/bundle-version.js";
@@ -11,12 +12,19 @@ import type { AttemptDir } from "../../core/reclaim.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../../core/triage-labels.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../../core/worker-paths.js";
 import { parseClaimRecords } from "../../core/claim.js";
-import { collectFleetTruthProbeInput } from "../../core/operational-probes.js";
+import {
+  collectFleetTruthProbeInput,
+  HOST_PREREQUISITE_COMMANDS,
+  type ClaimHygieneCommentInput,
+  type ClaimHygieneIssueInput,
+  type HostPrerequisiteProbeInput,
+} from "../../core/operational-probes.js";
 import { resolveSupervisorConfig } from "../../core/supervisor.js";
 import { evaluateFastForwardLocalTarget, fastForwardLocalTarget } from "../../core/merge.js";
 import { liveIssueFromBranch, type IssueMeta } from "../../core/branch-cleanup.js";
 import { readWorkerState } from "../../core/worker-state-reader.js";
 import { isLivePid } from "../kill-tree.js";
+import { execTool, type ExecFn } from "../exec.js";
 import { collectTmpJanitorReport } from "../tmp-janitor.js";
 import { issueMeta, type GhContext, type IssueStateRow } from "../gh.js";
 import * as ghx from "../gh.js";
@@ -103,6 +111,90 @@ export async function collectBootOptions(
 
 export interface CollectPrecheckFactsOptions {
   readonly includeNpmBundleCoherence?: boolean;
+  readonly hostPrerequisiteExec?: ExecFn;
+}
+
+export interface CollectBootPrecheckFactsOptions extends CollectPrecheckFactsOptions {
+  readonly log?: (line: string) => void;
+}
+
+export interface ClaimHygieneIssueScanDeps {
+  readonly listCandidates: (label: string) => Promise<readonly { readonly number: number }[]>;
+  readonly listClaimComments: (issue: number) => Promise<readonly ClaimHygieneCommentInput[]>;
+}
+
+/** Claim hygiene spans both executable and active lifecycle states. A fleet
+ * relaunch must see claims stranded on `running` issues before workers spawn,
+ * even when a later label reconcile would return those issues to the queue. */
+export async function collectClaimHygieneIssues(
+  deps: ClaimHygieneIssueScanDeps,
+): Promise<readonly ClaimHygieneIssueInput[]> {
+  const pools = await Promise.all([
+    deps.listCandidates(LABEL_READY),
+    deps.listCandidates(LABEL_RUNNING),
+  ]);
+  const issueNumbers = [...new Set(pools.flat().map((candidate) => candidate.number))];
+  return Promise.all(
+    issueNumbers.map(async (number) => ({
+      number,
+      comments: await deps.listClaimComments(number),
+    })),
+  );
+}
+
+/**
+ * Boot-only precheck collector. The worktree quarantine must run before any
+ * fetch-backed operational probe: a single initializing worktree with a
+ * dangling HEAD can otherwise make the probe itself fail on every boot.
+ * Read-only callers such as red-doctor continue to use collectPrecheckFacts.
+ */
+export async function collectBootPrecheckFacts(
+  ctx: RepoContext,
+  options: CollectBootPrecheckFactsOptions = {},
+): Promise<PrecheckFacts> {
+  const quarantined = await gitx.quarantineBrokenWorktrees({ cwd: ctx.root });
+  for (const worktree of quarantined) {
+    if (worktree.removed) {
+      options.log?.(`boot janitor quarantined worktree path=${worktree.path} reason=${worktree.reason}`);
+    } else {
+      options.log?.(
+        `boot janitor failed to quarantine worktree path=${worktree.path} reason=${worktree.reason}: ${worktree.error ?? "unknown git error"}`,
+      );
+    }
+  }
+  return collectPrecheckFacts(ctx, options);
+}
+
+export async function collectHostPrerequisiteProbeInput(
+  exec: ExecFn = execTool,
+): Promise<HostPrerequisiteProbeInput> {
+  const availability = await Promise.all(
+    HOST_PREREQUISITE_COMMANDS.map(async (command) => {
+      const result = await exec("sh", ["-c", 'command -v "$1" >/dev/null 2>&1', "host-prereq", command]);
+      return [command, result.code === 0] as const;
+    }),
+  );
+  const commands = Object.fromEntries(availability) as Record<
+    (typeof HOST_PREREQUISITE_COMMANDS)[number],
+    boolean
+  >;
+  if (!commands.bash) return { commands };
+
+  try {
+    const result = await exec("bash", ["--version"]);
+    if (result.code === 0) return { commands, bashVersion: result.stdout };
+    return {
+      commands,
+      bashVersion: result.stdout,
+      bashVersionExitCode: result.code,
+      bashVersionError: result.stderr.trim() || undefined,
+    };
+  } catch (error) {
+    return {
+      commands,
+      bashVersionError: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export async function collectPrecheckFacts(
@@ -121,7 +213,18 @@ export async function collectPrecheckFacts(
   const configLockedBranch = getConfig(config, "dev.lock.branch") || undefined;
   const configTrunk = getConfig(config, "dev.trunk") || undefined;
   const configuredTrunkSource = configLockedBranch?.trim() ? "pin" : "trunk";
-  const [ghInstalled, ghAuthenticated, isRepo, remoteUrls, hasMain, currentBranch, pnpmProbe, lockedBranch, lockRaw] =
+  const [
+    ghInstalled,
+    ghAuthenticated,
+    isRepo,
+    remoteUrls,
+    hasMain,
+    currentBranch,
+    pnpmProbe,
+    lockedBranch,
+    lockRaw,
+    hostPrerequisites,
+  ] =
     await Promise.all([
       ghx.ghInstalled(ghCtx),
       ghx.ghAuthenticated(ghCtx),
@@ -132,6 +235,7 @@ export async function collectPrecheckFacts(
       import("../exec.js").then((m) => m.pnpm(["--version"], { cwd: ctx.root })),
       readLockedBranch(lockPath),
       fsx.readText(lockPath),
+      collectHostPrerequisiteProbeInput(options.hostPrerequisiteExec),
     ]);
   const resolvedFocalBranch = await resolveBaseWithSource(
     { issueBody: "" },
@@ -207,6 +311,7 @@ export async function collectPrecheckFacts(
     configuredTrunk,
     configuredTrunkSource,
     pnpmInstalled,
+    hostPrerequisites,
     // CI lanes (the GHA Actions lane) check out an https remote token-authed by
     // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
     allowHttpsRemote:
@@ -215,16 +320,16 @@ export async function collectPrecheckFacts(
     claimHygiene: ctx.repo
       ? {
           ownWorkerPrefix: hostFingerprintPrefix(),
-          listOpenQueueIssues: async () => {
-            const candidates = await ghx.listCandidates(ghCtx, LABEL_READY);
-            return Promise.all(
-              candidates.map(async (candidate) => ({
-                number: candidate.number,
-                comments: await ghx.listClaimComments(ghCtx, candidate.number),
-              })),
-            );
-          },
+          listOpenQueueIssues: () =>
+            collectClaimHygieneIssues({
+              listCandidates: (label) => ghx.listCandidates(ghCtx, label),
+              listClaimComments: (issue) => ghx.listClaimComments(ghCtx, issue),
+            }),
           workerPidState,
+          // Enables the ADR 0066 TTL classification of unknown-pid markers
+          // (#2525): an own-namespace claim whose owner stopped refreshing past
+          // the stale window is concedable without proving the pid.
+          nowS: Math.floor(Date.now() / 1000),
         }
       : undefined,
     labelBodyCoherence: ctx.repo
@@ -347,6 +452,25 @@ export async function buildBootDeps(
         const pid = Number(raw.trim());
         return Number.isInteger(pid) && pid > 0 && isLivePid(pid);
       },
+      feedbackWorktreeLiveness: async (path) => {
+        // Re-collect immediately before deletion: the boot plan may have been
+        // built before another fleet spawned the feedback worktree's owner.
+        const current = await collectTmpJanitorReport(
+          paths.tmpDir,
+          Math.floor(Date.now() / 1000),
+          () => "UNKNOWN",
+        );
+        const entries = [
+          ...current.orphanFeedback.reclaim,
+          ...current.orphanFeedback.spare,
+        ];
+        const entry = entries.find((candidate) => candidate.path === path);
+        if (!entry || entry.ownerAlive === true) return "owner-live";
+        if (entry.ownerAlive === false) return "owner-dead";
+        return current.orphanFeedback.reclaim.some((candidate) => candidate.path === path)
+          ? "no-live-workers"
+          : "owner-live";
+      },
       reapDeadEmptyWorkerShells: fsx.reapDeadEmptyWorkerShells,
     },
     gh: {
@@ -359,6 +483,12 @@ export async function buildBootDeps(
         );
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
+      editBody: async (issue, body) => {
+        if (!(await ghx.editBody(ghCtx, issue, body))) {
+          throw new Error(`failed to update quarantine diagnosis for issue #${issue}`);
+        }
+      },
+      viewBody: (issue) => ghx.issueBody(ghCtx, issue),
       viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
       attachSubIssue: (parent, child) => ghx.attachSubIssue(ghCtx, parent, child),
       issueReference: (issue) => ghx.issueReference(ghCtx, issue),
@@ -377,6 +507,7 @@ export async function buildBootDeps(
           await ghx.postClaimComment(ghCtx, issue, body);
         }
       : undefined,
+    healLedger: createFileHealLedgerStore(createEnginePaths(join(ctx.root, ".red"))),
     lookups: {
       // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
       // naming an issue whose claims/{N}/pid is a LIVE process is claim-race

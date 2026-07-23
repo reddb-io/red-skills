@@ -17,7 +17,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { IterDirInfo, SweepWork, SweepWorker } from "../core/supervisor.js";
 import { buildRef } from "../core/remote-branch.js";
-import { parseWorkerAttemptPath, workerDir } from "../core/worker-paths.js";
+import {
+  parseReapableWorkerWorktreePath,
+  parseWorkerAttemptPath,
+  workerDir,
+} from "../core/worker-paths.js";
 import { readWorkerState } from "../core/worker-state-reader.js";
 import {
   evaluateLiveness,
@@ -206,6 +210,7 @@ export function workerLivenessFor(
   slotPid: number | null,
   laneIdleMs: number,
   laneHardIdleMs?: number,
+  issueWallClockMaxMs?: number,
 ): LivenessVerdict | null {
   const dir = findSlotIterDir(tmpDir, slotPid);
   if (dir === null) return null;
@@ -226,11 +231,21 @@ export function workerLivenessFor(
   // different execution path and are not managed by the fleet supervisor.
   const { crossCheckArmed } = resolveLivenessCrossCheckArming({ sandboxTag: "none" });
 
-  // Worker pid from the state file for the descendant probe.
+  // Worker pid from the state file for the descendant probe, plus the attempt's
+  // claim epoch for the wall-clock ceiling (#2286). `current.started_at` is the
+  // attempt's own claim stamp; `started_at` is the worker-level fallback. An
+  // unparseable/absent stamp leaves the epoch undefined, which disables the
+  // ceiling rather than guessing an age.
   let agentPid = 0;
+  let issueClaimedAtMs: number | undefined;
   try {
     const rec = readWorkerState(join(dir, "afk.state.toon"));
-    if (rec !== null) agentPid = rec.state.pid;
+    if (rec !== null) {
+      agentPid = rec.state.pid;
+      const raw = rec.state.current.started_at || rec.state.started_at;
+      const parsed = raw ? Date.parse(raw) : Number.NaN;
+      if (!Number.isNaN(parsed)) issueClaimedAtMs = parsed;
+    }
   } catch {
     // best-effort
   }
@@ -246,6 +261,8 @@ export function workerLivenessFor(
       now: Date.now(),
       laneIdleMs,
       laneHardIdleMs,
+      issueClaimedAtMs,
+      issueWallClockMaxMs,
       crossCheckArmed,
       hasLiveDescendants,
     });
@@ -378,6 +395,39 @@ export function parkedSlotWorkFor(
   };
 }
 
+/**
+ * HYGIENE-ONLY worktree resolver for a worker workspace. New workers use the
+ * conventional direct child; the nested castle layout remains discoverable so
+ * a mixed live fleet can still be reaped during the rollout window.
+ */
+export function reapableWorktreeUnder(workerWorkspace: string): string | null {
+  const direct = join(workerWorkspace, "worktree");
+  if (
+    parseReapableWorkerWorktreePath(direct) !== null &&
+    existsSync(join(direct, ".git"))
+  ) {
+    return direct;
+  }
+
+  const legacyRoot = join(workerWorkspace, ".red-castle", "worktrees");
+  let entries: string[];
+  try {
+    entries = readdirSync(legacyRoot);
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    const candidate = join(legacyRoot, entry);
+    if (
+      parseReapableWorkerWorktreePath(candidate) !== null &&
+      existsSync(join(candidate, ".git"))
+    ) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 /** Best-effort worktree teardown + iter-dir removal for a reaped slot. Mirrors
  * reap_stalled_slot step 4 (git worktree remove + rm -rf).
  *
@@ -390,8 +440,8 @@ export function parkedSlotWorkFor(
  * visibly to stderr but never blocks the teardown. */
 export async function teardownIterDirNative(info: IterDirInfo, root: string): Promise<void> {
   const fsp = await import("node:fs/promises");
-  const worktree = join(info.path, "worktree");
-  if (existsSync(worktree)) {
+  const worktree = reapableWorktreeUnder(info.path);
+  if (worktree !== null) {
     try {
       const { git } = await import("./exec.js");
 

@@ -5,7 +5,7 @@ import {
 } from "./mcp-server.js";
 
 /**
- * Frozen snapshot of the aggregated dev:afk MCP tool surface.
+ * Frozen snapshot of the aggregated castle MCP tool surface.
  *
  * Domain modules may be split, merged, or reordered internally; this table is
  * the contract that the composed surface — order, names, titles, descriptions,
@@ -48,8 +48,16 @@ const SURFACE: ReadonlyArray<{
   {
     name: "fleet_stop",
     title: "Stop AFK fleet",
-    description: "MUTATING: stop one named fleet and its detached workers.",
-    schema: ["fleet"],
+    description:
+      "MUTATING: gracefully stop one named fleet; force hard teardown explicitly.",
+    schema: ["fleet", "force"],
+  },
+  {
+    name: "fleet_register",
+    title: "Adopt AFK fleet",
+    description:
+      "MUTATING: persist a profile for an already-running supervisor without restarting it.",
+    schema: ["name", "runner", "selector", "config", "base"],
   },
   {
     name: "logs",
@@ -61,8 +69,9 @@ const SURFACE: ReadonlyArray<{
   {
     name: "worker_vitals",
     title: "Read worker vitals",
-    description: "Return the liveness-qualified state of all local workers.",
-    schema: [],
+    description:
+      "Return the liveness-qualified state of local workers. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers. Pass `fields` to project top-level keys.",
+    schema: ["live_only", "fields"],
   },
   {
     name: "dashboard",
@@ -92,6 +101,13 @@ const SURFACE: ReadonlyArray<{
     schema: [],
   },
   {
+    name: "events_since",
+    title: "Poll events since cursor",
+    description:
+      "Return castle history events and worker lane records after an opaque cursor, plus the next cursor. Omit cursor to get a fresh baseline cursor with no events. Unknown or expired cursors are refused with a re-baseline prompt.",
+    schema: ["cursor"],
+  },
+  {
     name: "worker_dispatch",
     title: "Dispatch AFK worker",
     description:
@@ -102,8 +118,8 @@ const SURFACE: ReadonlyArray<{
     name: "worker_status",
     title: "Read worker status",
     description:
-      "Return normalized, liveness-qualified state for one worker or every local worker.",
-    schema: ["worker"],
+      "Return normalized, liveness-qualified state for one worker or every local worker. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers.",
+    schema: ["worker", "live_only", "fields"],
   },
   {
     name: "worker_stop",
@@ -198,15 +214,51 @@ const SURFACE: ReadonlyArray<{
     name: "claim_status",
     title: "Read AFK claim",
     description:
-      "Return the parsed claim marker records for one issue and the worker currently holding it.",
-    schema: ["issue"],
+      "Return the parsed claim marker records and current holder for one issue (`issue`) " +
+      "or a batch (`issues`), keyed per issue.",
+    schema: ["issue", "issues"],
   },
   {
     name: "claim_release",
     title: "Release AFK claim",
     description:
-      "MUTATING: post a concede marker for every un-conceded claim holder so the issue becomes claimable again.",
-    schema: ["issue"],
+      "MUTATING: post a concede marker for every un-conceded claim holder so the issue (`issue`) " +
+      "or each issue in a batch (`issues`) becomes claimable again.",
+    schema: ["issue", "issues"],
+  },
+  {
+    name: "merge_arm",
+    title: "Arm PR for the merge driver",
+    description:
+      "MUTATING: hand one open PR to the castle merge driver — it owns the PR to a terminal state " +
+      "(update-branch when BEHIND, merge-commit once green at head, bounded retries, " +
+      "needs-medic/needs-human classification) without GitHub native auto-merge.",
+    schema: ["pr"],
+  },
+  {
+    name: "merge_status",
+    title: "Read merge driver state",
+    description:
+      "Return the driver's durable per-PR records: armed set, attempts, last observed state, " +
+      "and terminal classifications.",
+    schema: [],
+  },
+  {
+    name: "merge_release",
+    title: "Release PR from the merge driver",
+    description:
+      "MUTATING: stop driver ownership of one PR. The record is kept as released for observability.",
+    schema: ["pr"],
+  },
+  {
+    name: "hitl_resolve",
+    title: "Resolve parked issue with a human decision",
+    description:
+      "MUTATING: encode one human decision on a parked issue atomically — " +
+      "requeue (concede dangling claims, strip park labels, ready-for-agent), " +
+      "retake (route to the no-agent landing lane), park (keep ready-for-human, record why), " +
+      "or close. The rationale is posted as an issue comment for the audit trail.",
+    schema: ["issue", "decision", "rationale"],
   },
   {
     name: "worktree_list",
@@ -270,9 +322,16 @@ const SURFACE: ReadonlyArray<{
       "MUTATING: parse a /dev comment summon, authorize the commenter, and route the advisory or mutation verb.",
     schema: ["body", "number", "author", "is_pr", "runner", "repo"],
   },
+  {
+    name: "statusline_aggregate",
+    title: "Read statusline aggregate",
+    description:
+      "Return the castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) as structured data, using the same collector cores and cache discipline as the command-backed statusLine. Host-side fields (session model/effort, context %, usage quotas) are out of scope.",
+    schema: [],
+  },
 ];
 
-describe("aggregated dev:afk MCP tool surface", () => {
+describe("aggregated castle MCP tool surface", () => {
   const tools = createCastleMcpTools({} as CastleMcpDependencies);
 
   it("composes the frozen tool surface in order", () => {

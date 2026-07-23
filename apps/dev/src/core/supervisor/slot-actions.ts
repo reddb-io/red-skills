@@ -8,6 +8,7 @@ import type { SupervisorConfig } from "./config.js";
 import type { TickResult } from "./result.js";
 import type { SlotState, SupervisorState } from "./state.js";
 import type { ReconcileCandidate, SpawnPolicy, SupervisorDeps } from "./types.js";
+import { HOST_CONFIG_EXIT_CODE } from "../attempt-outcome.js";
 
 export async function handleDeadSlot(
   slot: number,
@@ -21,6 +22,23 @@ export async function handleDeadSlot(
     if (spawnPolicy === "hard-stop") return null;
     return spawnPolicy ? deps.proc.spawnSlot(slot, spawnPolicy) : deps.proc.spawnSlot(slot);
   };
+  const exitCode = deps.proc.lastExitCode?.(slot) ?? null;
+
+  // EX_CONFIG is a permanent host defect, not a fast runner death. Park the
+  // slot indefinitely without adding to the circuit ring, sweeping work, or
+  // spawning a cooldown probe that can only fail the same way.
+  if (exitCode === HOST_CONFIG_EXIT_CODE) {
+    state.pid = null;
+    state.parked = true;
+    state.fatalReason = "host-config";
+    state.halfOpen = false;
+    state.tripEpoch = 0;
+    deps.log?.(
+      `fatal host configuration: slot ${slot} parked without retry; fix the required shell/workspace and restart the fleet`,
+    );
+    return { parked: true };
+  }
+
   // Half-open probe death: resolve the circuit transition before the normal path.
   if (state.parked && state.halfOpen) {
     const now = deps.now();
@@ -76,55 +94,18 @@ export async function handleDeadSlot(
     return { parked: false };
   }
 
-  const exitCode = deps.proc.lastExitCode?.(slot) ?? null;
   const cleanExit = exitCode === 0;
 
-  if (cleanExit) {
-    if (queueDepth === 0) {
-      // Clean drain with empty queue → idle-park (no sweep, no discard envelope).
-      state.pid = null;
-      state.idleParked = true;
-      return { parked: true };
-    }
-    // Clean drain but queue has work → respawn immediately without feeding the breaker.
-    state.spawning = true;
-    try {
-      const spawned = await spawn();
-      if (spawned === null) {
-        state.pid = null;
-        return { parked: true };
-      }
-      state.pid = spawned.pid;
-      state.spawnEpoch = spawned.spawnEpoch;
-    } finally {
-      state.spawning = false;
-    }
-    state.stalled = false;
-    state.stallSinceEpoch = 0;
-    state.reaped = false;
-    // Clean-exit respawn: on_slot_spawn + on_respawn. Best-effort.
-    if (deps.dispatchFleetHook) {
-      try {
-        await deps.dispatchFleetHook("on_slot_spawn", {
-          event: "on_slot_spawn",
-          runner: config.runner,
-          slot,
-          ...(state.pid !== null ? { pid: state.pid } : {}),
-        });
-        await deps.dispatchFleetHook("on_respawn", {
-          event: "on_respawn",
-          runner: config.runner,
-          slot,
-          ...(state.pid !== null ? { pid: state.pid } : {}),
-        });
-      } catch {
-        // best-effort
-      }
-    }
-    return { parked: false };
+  if (cleanExit && queueDepth === 0) {
+    // Clean drain with empty queue → idle-park (no sweep, no discard envelope).
+    state.pid = null;
+    state.idleParked = true;
+    return { parked: true };
   }
 
-  // Non-clean exit: record against the circuit breaker.
+  // A fast worker death while work remains is a boot-death signal regardless
+  // of its exit code. Session errors can return cleanly, so excluding exit 0
+  // makes deterministic boot crashloops invisible to the slot circuit.
   const now = deps.now();
   const decision = recordDeath(state.deaths, state.spawnEpoch, now, config);
   state.deaths = decision.deaths;
@@ -153,7 +134,7 @@ export async function handleDeadSlot(
   state.stalled = false;
   state.stallSinceEpoch = 0;
   state.reaped = false;
-  // Non-clean respawn: on_slot_spawn + on_respawn. Best-effort.
+  // Respawn after a death: on_slot_spawn + on_respawn. Best-effort.
   if (deps.dispatchFleetHook) {
     try {
       await deps.dispatchFleetHook("on_slot_spawn", {

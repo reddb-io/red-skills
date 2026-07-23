@@ -137,11 +137,19 @@ describe("doLanding — serialized landing (#1337)", () => {
         return async () => {};
       },
     };
-    const h = harness({ locked: false, openPr: true, nativeMergeQueue: true, landLock: countingLock });
+    const h = harness({ locked: false, openPr: true, nativeMergeQueue: true, landLock: countingLock, postMergeGate: true });
 
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: true, locked: false });
+    expect(r).toEqual({
+      ok: true,
+      locked: false,
+      postMergeValidation: {
+        path: "local-rerun",
+        reason: "PR #42 CI evidence was absent or unusable; local post-merge validation fallback ran.",
+        prNumber: 42,
+      },
+    });
     // The forge serializes; double-serializing would only add latency.
     expect(acquires).toBe(0);
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge 42 --merge --auto"))).toBe(true);

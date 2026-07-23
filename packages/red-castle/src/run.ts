@@ -1,15 +1,18 @@
 import { NodeContext, NodeFileSystem } from "@effect/platform-node";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import path, { join } from "node:path";
 import { styleText } from "node:util";
 import { Effect, Layer } from "effect";
 import { resolveCwd } from "./resolveCwd.js";
 import { assertResumeSessionExists } from "./resumePrecheck.js";
+import { encodeLines } from "@reddb-io/toon";
 import type { AgentProvider } from "./AgentProvider.js";
 import {
   ClackDisplay,
   Display,
   FileDisplay,
+  FILE_LOG_TOONL_HEADER,
+  type FileLogFormat,
   type Severity,
 } from "./Display.js";
 import {
@@ -254,6 +257,13 @@ export type LoggingOption =
        * that throws is treated as identity for that event.
        */
       readonly redactLine?: (text: string) => string;
+      /**
+       * On-disk framing for the log file. `"text"` (default) writes the
+       * historical plain-text narrative; `"toonl"` writes one `{at,kind,msg}`
+       * TOONL row per narrative line under a single segment header, for callers
+       * whose log lane must be machine-decodable.
+       */
+      readonly format?: FileLogFormat;
     }
   /** Render progress and agent output as an interactive UI in the terminal (terminal mode). */
   | {
@@ -361,9 +371,25 @@ const buildVerboseRawLineSink = (
     } catch {
       // Swallow — appendFileSync below will surface any real I/O error.
     }
+    const toonl = logging.format === "toonl";
     return (line) => {
       try {
-        appendFileSync(logPath, line + "\n");
+        // In TOONL mode the raw line becomes its own `verbose` row, so a
+        // debugging dump never breaks the lane's decodability. The header is
+        // emitted only when this sink is the very first writer.
+        const payload = toonl
+          ? (existsSync(logPath) ? "" : `${FILE_LOG_TOONL_HEADER}\n`) +
+            encodeLines()
+              .push({
+                at: new Date().toISOString(),
+                kind: "verbose",
+                msg: line,
+              })
+              .split("\n")
+              .slice(1)
+              .join("\n")
+          : line + "\n";
+        appendFileSync(logPath, payload);
       } catch {
         // Swallow — verbose-mode I/O errors must not kill the run.
       }
@@ -401,6 +427,11 @@ export interface RunOptions<A extends AgentProvider = AgentProvider> {
    * - Defaults to `process.cwd()` when omitted.
    */
   readonly cwd?: string;
+  /**
+   * Explicit host path for branch-strategy worktrees. Relative paths resolve
+   * from `cwd`. Omitted callers retain `.red-castle/worktrees/<name>`.
+   */
+  readonly worktreePath?: string;
   /** Inline prompt string (mutually exclusive with promptFile) */
   readonly prompt?: string;
   /**
@@ -745,7 +776,7 @@ export async function run(
             hostRepoDir,
           });
           return Layer.provide(
-            FileDisplay.layer(resolvedLogging.path),
+            FileDisplay.layer(resolvedLogging.path, resolvedLogging.format),
             NodeFileSystem.layer,
           );
         })()
@@ -757,6 +788,9 @@ export async function run(
       Layer.succeed(SandboxConfig, {
         env,
         hostRepoDir,
+        worktreePath: options.worktreePath
+          ? path.resolve(hostRepoDir, options.worktreePath)
+          : undefined,
         copyToWorktree: options.copyToWorktree,
         name: options.name,
         sandboxProvider: options.sandbox,
@@ -838,7 +872,9 @@ export async function run(
       signal: options.signal,
       skipPromptExpansion: isInlinePrompt,
       timeouts: options.timeouts,
-      ...(options.steerProvider ? { steerProvider: options.steerProvider } : {}),
+      ...(options.steerProvider
+        ? { steerProvider: options.steerProvider }
+        : {}),
     });
 
     const completion = buildCompletionMessage(

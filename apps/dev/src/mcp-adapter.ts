@@ -1,15 +1,18 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
+  armPr,
   castleLanePath,
   createCastleLaneWriters,
   createEnginePaths,
+  createFileMergeDriverStore,
+  releasePr,
   fleetRegistryPath,
   readCastleHistoryRecords,
   readCastleLaneRecords,
@@ -19,16 +22,20 @@ import {
   upsertFleetProfile,
   RUNNER_SPECS,
   detectRunner,
+  type CastleLaneRecord,
   type FleetProfile,
 } from "@reddb-io/red-castle/engine";
 import type {
   CascadeStatusInput,
   CastleMcpDependencies,
   ClaimIssueInput,
+  HitlResolveInput,
   DailyReviewInput,
+  EventsSinceInput,
   FleetCreateInput,
   FleetEditInput,
   FleetNameInput,
+  FleetRegisterInput,
   GateRunInput,
   LandBranchInput,
   LogsInput,
@@ -44,7 +51,7 @@ import type {
   WorkerSteerInput,
   WorkerStopInput,
   WorktreeRemoveInput,
-} from "../../../packages/red-castle/src/mcp-server.js";
+} from "@reddb-io/red-castle/mcp-server";
 import { listWaits as listRspWaits } from "../../rsp/src/wait/registry.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { collectDashboardReport } from "./commands/dashboard.js";
@@ -54,6 +61,7 @@ import {
   resolveSupervisorConfig,
 } from "./core/supervisor.js";
 import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
+import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import * as ghx from "./runtime/gh.js";
 import { isLivePid } from "./runtime/kill-tree.js";
 import { spawnSupervisor } from "./runtime/supervisor-spawn.js";
@@ -61,13 +69,19 @@ import { discoverLiveSupervisorPid } from "./runtime/supervisor-state.js";
 import {
   afkPaths,
   collectMonitorInputs,
+  collectStatuslineAfk,
+  collectStatuslineDocs,
+  collectStatuslineFleet,
+  collectStatuslineRepo,
+  inferGitHubRepoSlug,
   readFleetState,
   resolveRepoContext,
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
-import { stopCommand } from "./commands/stop.js";
+import { resolveProject } from "./commands/statusline.js";
+import { executeStopWorker } from "./commands/stop.js";
 import { executeRequeue } from "./commands/requeue.js";
-import { retakeCommand } from "./commands/retake.js";
+import { executeRetake } from "./commands/retake.js";
 import {
   dispatchGo,
   type DisposableIssueSpec,
@@ -99,9 +113,15 @@ import {
 } from "./core/branch-cleanup.js";
 import { executeUnblockSweep } from "./core/boot-sweep.js";
 import { collectReapInputs } from "./runtime/wire/reap.js";
-import { activityReviewCommand } from "./commands/activity-review.js";
-import { triageCommand } from "./commands/triage.js";
-import { respondCommand } from "./commands/respond.js";
+import { collectActivityReview } from "./commands/activity-review.js";
+import { executeTriage } from "./commands/triage.js";
+import { executeRespond } from "./commands/respond.js";
+import {
+  ResidentReadCache,
+  QUEUE_STATUS_KEY,
+  claimStatusKey,
+  cascadeStatusKey,
+} from "./resident-read-cache.js";
 
 interface DispatchOperationInput extends WorkerDispatchInput {
   request?: string;
@@ -130,6 +150,10 @@ export interface DevAfkMcpOperations {
   cascadeStatus(input: CascadeStatusInput): Promise<unknown>;
   claimStatus(input: ClaimIssueInput): Promise<unknown>;
   claimRelease(input: ClaimIssueInput): Promise<unknown>;
+  hitlResolve(input: HitlResolveInput): Promise<unknown>;
+  mergeArm(input: { pr: number }): Promise<unknown>;
+  mergeStatus(): Promise<unknown>;
+  mergeRelease(input: { pr: number }): Promise<unknown>;
   waitStart(input: WaitStartInput): Promise<unknown>;
   dailyReview(input: DailyReviewInput): Promise<unknown>;
   weeklyReview(input: WeeklyReviewInput): Promise<unknown>;
@@ -146,40 +170,6 @@ export interface DevAfkMcpRuntime {
   executeRequeue(root: string, input: RequeueToolInput): Promise<unknown>;
   /** Injected in tests to intercept hook execution without spawning a shell. */
   hookExec?: HookExec;
-}
-
-function captureStream(): {
-  stream: Writable;
-  text(): string;
-} {
-  let output = "";
-  return {
-    stream: new Writable({
-      write(chunk, _encoding, callback) {
-        output += String(chunk);
-        callback();
-      },
-    }),
-    text: () => output,
-  };
-}
-
-function parsedCommandOutput(
-  output: string,
-  exitCode: number,
-  format: "json" | "toon",
-): unknown {
-  const trimmed = output.trim();
-  if (trimmed === "") return { exit_code: exitCode };
-  try {
-    const value = format === "json" ? JSON.parse(trimmed) : decodeToon(trimmed);
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      return { ...(value as Record<string, unknown>), exit_code: exitCode };
-    }
-    return { value, exit_code: exitCode };
-  } catch {
-    return { output: trimmed, exit_code: exitCode };
-  }
 }
 
 function dispatchArgs(input: DispatchOperationInput): string[] {
@@ -239,11 +229,11 @@ async function launchDetachedRun(
 
 export function resolveDevCliBundle(mcpBundle: string): string {
   const file = basename(mcpBundle);
-  if (file === "afk-mcp.bundle.min.mjs") {
+  if (file === "castle-mcp.bundle.min.mjs") {
     return join(dirname(mcpBundle), "dev.bundle.min.mjs");
   }
-  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "dev-"));
+  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "dev-"));
   }
   throw new Error(
     `cannot dispatch worker: unrecognized MCP bundle name ${JSON.stringify(file)}`,
@@ -252,11 +242,11 @@ export function resolveDevCliBundle(mcpBundle: string): string {
 
 export function resolveRspCliBundle(mcpBundle: string): string {
   const file = basename(mcpBundle);
-  if (file === "afk-mcp.bundle.min.mjs") {
+  if (file === "castle-mcp.bundle.min.mjs") {
     return join(dirname(mcpBundle), "rsp.bundle.min.mjs");
   }
-  if (file.startsWith("afk-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^afk-mcp-/, "rsp-"));
+  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "rsp-"));
   }
   throw new Error(
     `cannot spawn rsp wait: unrecognized MCP bundle name ${JSON.stringify(file)}`,
@@ -456,26 +446,15 @@ export function createDefaultDevAfkMcpOperations(
       };
     },
     async stopWorker(cwd, input) {
-      const capture = captureStream();
-      const exitCode = await stopCommand(
-        ["--worker", input.worker],
-        cwd,
-        capture.stream,
-      );
-      return {
-        ...(parsedCommandOutput(capture.text(), exitCode, "toon") as object),
-        recycle: input.recycle,
-      };
+      const result = await executeStopWorker(input.worker, afkPaths(cwd).tmpDir);
+      return { ...result, recycle: input.recycle };
     },
     requeue: (input) => runtime.executeRequeue(root, input),
-    async retake(input) {
-      const args = [String(input.issue), "--json"];
-      if (input.repo) args.push("--repo", input.repo);
-      if (input.prLimit) args.push("--pr-limit", String(input.prLimit));
-      const capture = captureStream();
-      const exitCode = await retakeCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "json");
-    },
+    retake: (input) =>
+      executeRetake(
+        { issue: input.issue, repo: input.repo, prLimit: input.prLimit },
+        { cwd: root },
+      ),
     async reap() {
       const context = await resolveRepoContext(root);
       const inputs = await collectReapInputs(context);
@@ -645,46 +624,122 @@ export function createDefaultDevAfkMcpOperations(
         })),
       };
     },
+    async mergeArm(input: { pr: number }) {
+      const store = createFileMergeDriverStore(createEnginePaths(join(root, ".red")));
+      const record = await armPr(store, input.pr, Math.floor(Date.now() / 1000));
+      return { armed: { pr: record.pr, status: record.status, armed_at_epoch: record.armedAtEpoch } };
+    },
+    async mergeStatus() {
+      const store = createFileMergeDriverStore(createEnginePaths(join(root, ".red")));
+      const state = await store.read();
+      return {
+        prs: Object.values(state.prs).map((record) => ({
+          pr: record.pr,
+          status: record.status,
+          attempts: record.attempts,
+          armed_at_epoch: record.armedAtEpoch,
+          updated_at_epoch: record.updatedAtEpoch,
+          last_state: record.lastState ?? "",
+          note: record.note ?? "",
+        })),
+      };
+    },
+    async mergeRelease(input: { pr: number }) {
+      const store = createFileMergeDriverStore(createEnginePaths(join(root, ".red")));
+      const record = await releasePr(store, input.pr, Math.floor(Date.now() / 1000));
+      return record === null
+        ? { released: null, note: "pr was not owned by the driver" }
+        : { released: { pr: record.pr, status: record.status } };
+    },
     async claimStatus(input) {
       const context = await resolveRepoContext(root);
       const gh = { cwd: context.root, repo: context.repo };
-      const records = parseClaimRecords(await ghx.listClaimComments(gh, input.issue));
-      const latest = latestClaimPerWorker(records);
-      const holders = [...latest.values()].filter((record) => record.kind === "claim");
-      return {
-        issue: input.issue,
-        records: records.map((record) => ({
-          comment_id: record.commentId,
-          worker: record.worker,
-          kind: record.kind,
-          runner: record.runner ?? "",
-          created_at: record.createdAt ?? "",
-        })),
-        holders: holders.map((record) => ({
-          worker: record.worker,
-          comment_id: record.commentId,
-          runner: record.runner ?? "",
-          created_at: record.createdAt ?? "",
-        })),
+      const statusOf = async (issue: number) => {
+        const records = parseClaimRecords(await ghx.listClaimComments(gh, issue));
+        const latest = latestClaimPerWorker(records);
+        const holders = [...latest.values()].filter((record) => record.kind === "claim");
+        return {
+          issue,
+          records: records.map((record) => ({
+            comment_id: record.commentId,
+            worker: record.worker,
+            kind: record.kind,
+            runner: record.runner ?? "",
+            created_at: record.createdAt ?? "",
+          })),
+          holders: holders.map((record) => ({
+            worker: record.worker,
+            comment_id: record.commentId,
+            runner: record.runner ?? "",
+            created_at: record.createdAt ?? "",
+          })),
+        };
       };
+      // Single-issue form keeps its historic shape; the batch form (#2369) is
+      // keyed per issue, with per-issue errors instead of one failed call.
+      if (input.issue !== undefined) return statusOf(input.issue);
+      const issues = input.issues ?? [];
+      if (issues.length === 0) return { error: "provide `issue` or a non-empty `issues`" };
+      const byIssue: Record<string, unknown> = {};
+      for (const issue of issues) {
+        try {
+          byIssue[String(issue)] = await statusOf(issue);
+        } catch (error) {
+          byIssue[String(issue)] = { issue, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+      return { issues: byIssue };
     },
     async claimRelease(input) {
       const context = await resolveRepoContext(root);
       const gh = { cwd: context.root, repo: context.repo };
-      const records = parseClaimRecords(await ghx.listClaimComments(gh, input.issue));
-      const holders = [...latestClaimPerWorker(records).values()].filter(
-        (record) => record.kind === "claim",
-      );
-      const conceded: string[] = [];
-      for (const holder of holders) {
-        await ghx.postClaimComment(
-          gh,
-          input.issue,
-          renderClaimComment({ worker: holder.worker, runner: holder.runner }, "concede", "released"),
+      const releaseOf = async (issue: number) => {
+        const records = parseClaimRecords(await ghx.listClaimComments(gh, issue));
+        const holders = [...latestClaimPerWorker(records).values()].filter(
+          (record) => record.kind === "claim",
         );
-        conceded.push(holder.worker);
+        const conceded: string[] = [];
+        for (const holder of holders) {
+          await ghx.postClaimComment(
+            gh,
+            issue,
+            renderClaimComment({ worker: holder.worker, runner: holder.runner }, "concede", "released"),
+          );
+          conceded.push(holder.worker);
+        }
+        return { issue, conceded };
+      };
+      if (input.issue !== undefined) return releaseOf(input.issue);
+      const issues = input.issues ?? [];
+      if (issues.length === 0) return { error: "provide `issue` or a non-empty `issues`" };
+      const byIssue: Record<string, unknown> = {};
+      for (const issue of issues) {
+        try {
+          byIssue[String(issue)] = await releaseOf(issue);
+        } catch (error) {
+          byIssue[String(issue)] = { issue, error: error instanceof Error ? error.message : String(error) };
+        }
       }
-      return { issue: input.issue, conceded };
+      return { issues: byIssue };
+    },
+    async hitlResolve(input) {
+      const context = await resolveRepoContext(root);
+      const gh = { cwd: context.root, repo: context.repo };
+      return resolveHitlDecision(
+        {
+          comment: (issue, body) => ghx.comment(gh, issue, body),
+          closeIssue: (issue) => ghx.closeIssue(gh, issue),
+          viewLabels: (issue) => ghx.viewLabels(gh, issue),
+          editLabels: async (issue, remove, add) => {
+            await ghx.editLabels(gh, issue, remove, add);
+          },
+          releaseClaims: async (issue) => {
+            const released = (await this.claimRelease({ issue })) as { conceded?: string[] };
+            return released.conceded ?? [];
+          },
+        },
+        input,
+      );
     },
     async waitStart(input) {
       const id = randomUUID();
@@ -696,34 +751,25 @@ export function createDefaultDevAfkMcpOperations(
       const pid = await runtime.launchRspWait(args, root);
       return { id, pid, result_file: resultFile, status: "spawned" };
     },
-    async dailyReview(_input) {
-      const capture = captureStream();
-      const exitCode = await activityReviewCommand("daily", [], root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "toon");
-    },
-    async weeklyReview(_input) {
-      const capture = captureStream();
-      const exitCode = await activityReviewCommand("weekly", [], root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "toon");
-    },
-    async triage(input) {
-      const args: string[] = [String(input.issue), "--decision", input.decision, "--json"];
-      if (input.summon) args.push("--summon");
-      if (input.repo) args.push("--repo", input.repo);
-      const capture = captureStream();
-      const exitCode = await triageCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "json");
-    },
-    async respond(input) {
-      const args: string[] = ["--body", input.body, "--number", String(input.number)];
-      if (input.author) args.push("--author", input.author);
-      if (input.is_pr) args.push("--is-pr");
-      if (input.runner) args.push("--runner", input.runner);
-      if (input.repo) args.push("--repo", input.repo);
-      const capture = captureStream();
-      const exitCode = await respondCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "toon");
-    },
+    dailyReview: (_input) => collectActivityReview("daily", { cwd: root }),
+    weeklyReview: (_input) => collectActivityReview("weekly", { cwd: root }),
+    triage: (input) =>
+      executeTriage(
+        { issue: input.issue, decision: input.decision, summon: input.summon, repo: input.repo },
+        { cwd: root },
+      ),
+    respond: (input) =>
+      executeRespond(
+        {
+          body: input.body,
+          number: input.number,
+          author: input.author,
+          isPr: input.is_pr,
+          runner: input.runner,
+          repo: input.repo,
+        },
+        { cwd: root },
+      ),
   };
 }
 
@@ -780,9 +826,25 @@ async function fleetStatus(root: string, input: FleetNameInput) {
     config.supervisorStaleS,
     config.progressStaleS,
   );
-  const liveWorkers = monitor.workers.filter(
+  // Build a PID set for the slot-pid fallback: workers without a fleet stamp
+  // (legacy or pre-stamp) are attributed to this fleet if their pid appears in
+  // the supervisor's slot map. Workers with a stamp that differs from this fleet
+  // name go to the unattributed bucket even if their pid matches.
+  const fleetPidSet = new Set(
+    (fleet?.slotPids ?? []).map((sp) => sp.pid).filter((pid) => pid > 0),
+  );
+  const allLiveWorkers = monitor.workers.filter(
     (worker) => worker.pidLive === true || worker.live,
   );
+  function attributedToThisFleet(worker: (typeof allLiveWorkers)[number]): boolean {
+    const stampedFleet = worker.state.fleet;
+    // Stamped workers: use the stamp as the definitive source of truth.
+    if (stampedFleet !== undefined) return stampedFleet === paths.fleet;
+    // Legacy/unstamped workers: fall back to the supervisor's slot-pid map.
+    return fleetPidSet.has(worker.state.pid);
+  }
+  const liveWorkers = allLiveWorkers.filter(attributedToThisFleet);
+  const unattributedWorkers = allLiveWorkers.filter((w) => !attributedToThisFleet(w));
   const latestBundleVersion =
     fleet?.latestBundleVersion ?? readBuildInfo("dev").version;
   return {
@@ -822,14 +884,20 @@ async function fleetStatus(root: string, input: FleetNameInput) {
       activity: worker.state.current.activity,
       origin: worker.state.origin ?? "afk",
     })),
+    unattributed_workers: unattributedWorkers.map((worker) => ({
+      id: worker.state.worker_id,
+      pid: worker.state.pid,
+      issue: String(worker.state.current.number),
+      activity: worker.state.current.activity,
+      origin: worker.state.origin ?? "afk",
+      fleet: worker.state.fleet ?? null,
+    })),
   };
 }
 
 async function createFleet(root: string, input: FleetCreateInput) {
   const path = registryPath(root);
-  if (await readFleetProfile(path, input.name)) {
-    throw new Error(`fleet ${JSON.stringify(input.name)} already exists`);
-  }
+  const existing = await readFleetProfile(path, input.name);
   const paths = afkPaths(root, input.name);
   const running = await discoverLiveSupervisorPid(
     paths.supervisorRuntimeDir,
@@ -837,22 +905,79 @@ async function createFleet(root: string, input: FleetCreateInput) {
     { fleet: paths.fleet },
   );
   if (running) {
-    throw new Error(`fleet ${JSON.stringify(paths.fleet)} is already running`);
+    if (existing) {
+      throw new Error(`fleet ${JSON.stringify(input.name)} already exists`);
+    }
+    // A live supervisor with NO registered profile is the create/edit desync
+    // trap (#2545): create says "already running", edit says "does not exist",
+    // and there is no MCP-only way out. Register the orphan profile so
+    // fleet_edit/fleet_status work, then refuse the duplicate launch.
+    await upsertFleetProfile(path, profileForCreate(input));
+    throw new Error(
+      `fleet ${JSON.stringify(paths.fleet)} is already running; its missing registry profile ` +
+        `was registered from this request — use fleet_edit/fleet_status to operate it`,
+    );
   }
 
-  const profile = await upsertFleetProfile(path, profileForCreate(input));
+  const profile =
+    existing ?? (await upsertFleetProfile(path, profileForCreate(input)));
+  const priorFleetState = await readFleetState(paths.fleetStatePath).catch(
+    () => null,
+  );
+  let supervisorLogStart: number | undefined;
+  try {
+    supervisorLogStart = (await stat(paths.supervisorLogPath)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      supervisorLogStart = 0;
+    }
+  }
   const pid = await spawnSupervisor({
     root,
     target: input.target,
     runner: profile.runner,
+    base: profile.base,
     fleet: profile.name,
     passthrough: profile.selector
       ? ["--selector", JSON.stringify(profile.selector)]
       : [],
+    adoptSlotPids: priorFleetState?.slotPids ?? [],
   });
   if (pid === null) {
-    await removeFleetProfile(path, profile.name).catch(() => false);
-    throw new Error(`fleet ${JSON.stringify(profile.name)} failed to start`);
+    let rollbackConfirmed = false;
+    try {
+      const removed = await removeFleetProfile(path, profile.name);
+      rollbackConfirmed =
+        removed || (await readFleetProfile(path, profile.name)) === undefined;
+    } catch {
+      // The failure below must not claim that registry rollback succeeded.
+    }
+    let tail = "";
+    if (supervisorLogStart !== undefined) {
+      try {
+        const bytes = await readFile(paths.supervisorLogPath);
+        const launchBytes =
+          bytes.length < supervisorLogStart
+            ? bytes
+            : bytes.subarray(supervisorLogStart);
+        tail = launchBytes
+          .toString("utf8")
+          .split(/\r?\n/)
+          .slice(-20)
+          .join("\n");
+      } catch {
+        // The explicit no-output marker below still distinguishes an empty boot
+        // from a caller-visible but unexplained registry rollback.
+      }
+    }
+    const evidence = tail || "(no supervisor log output was captured)";
+    const rollback = rollbackConfirmed
+      ? "profile rolled back."
+      : "profile rollback was attempted but could not be confirmed.";
+    throw new Error(
+      `fleet ${JSON.stringify(profile.name)} failed to start: supervisor pid file did not appear; ` +
+        `${rollback} log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${evidence}`,
+    );
   }
   return { status: "launched", profile, pid, target: input.target };
 }
@@ -912,9 +1037,30 @@ async function laneLogs(root: string, input: LogsInput) {
   return filtered.length <= limit ? filtered : filtered.slice(-limit);
 }
 
-async function workerVitals(root: string) {
-  const records = await readAllWorkerStates(afkPaths(root).tmpDir);
-  return records.map(({ state, ...record }) => ({
+async function workerVitals(root: string, opts: { live_only?: boolean } = {}) {
+  const paths = createEnginePaths(join(root, ".red"));
+  const [records, workerDirs] = await Promise.all([
+    readAllWorkerStates(afkPaths(root).tmpDir),
+    readdir(paths.workersRoot, { withFileTypes: true }).catch(() => []),
+  ]);
+  const alerts = new Map<string, { type: string; at: string; message: string }>();
+  await Promise.all(workerDirs.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    const lane = await readCastleLaneRecords(castleLanePath(paths, "worker", entry.name));
+    const latest = [...lane].reverse().find((record) => record.kind === "worker.session-error");
+    const payload = latest?.payload;
+    if (
+      latest && payload &&
+      typeof payload.type === "string" &&
+      typeof payload.message === "string"
+    ) {
+      alerts.set(entry.name, {
+        type: payload.type,
+        at: typeof payload.at === "string" ? payload.at : latest.at,
+        message: payload.message,
+      });
+    }
+  }));
+  const all = records.map(({ state, ...record }) => ({
     worker: {
       id: state.worker_id,
       pid: state.pid,
@@ -929,6 +1075,8 @@ async function workerVitals(root: string) {
         number: state.current.number,
         runner: state.current.runner,
         retries: state.current.retries,
+        model: state.current.model,
+        effort: state.current.effort,
         phase: state.current.phase,
         iteration: state.current.iteration,
         activity: state.current.activity,
@@ -951,7 +1099,74 @@ async function workerVitals(root: string) {
     renderable_live: record.renderableLive,
     liveness: record.liveness,
     liveness_verdict: record.livenessVerdict,
+    alert: alerts.get(state.worker_id),
   }));
+  const represented = new Set(all.map((record) => record.worker.id));
+  for (const [workerId, alert] of alerts) {
+    if (represented.has(workerId)) continue;
+    all.push({
+      worker: {
+        id: workerId,
+        pid: 0,
+        runner: "",
+        origin: "",
+        started_at: alert.at,
+        done: 0,
+        total: 0,
+        blocked: 0,
+        failed: 1,
+        current: {
+          number: "",
+          runner: "",
+          retries: 0,
+          phase: "blocked",
+          iteration: "",
+          model: "",
+          effort: "",
+          activity: "session-error",
+          loc_added: 0,
+          loc_removed: 0,
+          last_commit_at: "",
+          tools_called_count: 0,
+          text_chunk_count: 0,
+          reasoning_events: 0,
+          reasoning_tokens: 0,
+          last_event_at: alert.at,
+          waiting_count: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          cost_usd: 0,
+        },
+      },
+      live: false,
+      active: false,
+      renderable_live: false,
+      liveness: "dead",
+      liveness_verdict: {
+        status: "stalled",
+        reason: "session-error",
+        laneFresh: false,
+        crossCheckArmed: false,
+      },
+      alert,
+    });
+  }
+  return opts.live_only !== false ? all.filter((r) => r.live === true || r.alert !== undefined) : all;
+}
+
+function projectFields(
+  records: Array<Record<string, unknown>>,
+  fields: string[] | undefined,
+): unknown[] {
+  if (!fields || fields.length === 0) return records;
+  const fieldSet = new Set(fields);
+  return records.map((r) => {
+    const out: Record<string, unknown> = {};
+    for (const key of fieldSet) {
+      if (Object.prototype.hasOwnProperty.call(r, key)) out[key] = r[key];
+    }
+    return out;
+  });
 }
 
 /** Every checkout under the disposable `.red/tmp/worktrees/<lane>/` lanes, in
@@ -989,11 +1204,279 @@ async function removeDisposableWorktree(root: string, input: WorktreeRemoveInput
   return { path: relative(root, target), removed: !existsSync(target) };
 }
 
-export function createDevAfkMcpDependencies(
+/**
+ * The castle-side statusline aggregate, assembled from the SAME collector cores
+ * the command-backed `statusline` render path uses — `resolveProject`,
+ * `collectStatuslineRepo`, `collectStatuslineDocs`, `collectStatuslineAfk`,
+ * `collectStatuslineFleet` — plus the `fleet_status` and `worker_vitals`
+ * projections, so the tool never grows a parallel implementation.
+ *
+ * Every collector reads local state or the TTL cache the collectors already
+ * own (ADR 0084: no synchronous network fetch in a render path), so this tool
+ * is as cheap as one statusline tick.
+ *
+ * Host-side render inputs (session model/effort, context %, 5h/7d usage) come
+ * from the Claude Code statusline stdin payload and are deliberately absent —
+ * the tool must not fake them.
+ */
+export async function collectStatuslineAggregate(root: string) {
+  const repoCtx = {
+    root,
+    repo: inferGitHubRepoSlug(root),
+    remote: "origin",
+  };
+
+  const [project, repoStats, docs, afkBlock, fleetChip, fleet, workers] =
+    await Promise.all([
+      resolveProject(root),
+      collectStatuslineRepo(repoCtx),
+      collectStatuslineDocs(repoCtx).catch(() => undefined),
+      collectStatuslineAfk(repoCtx).catch(() => null),
+      collectStatuslineFleet(repoCtx).catch(() => undefined),
+      fleetStatus(root, {}).catch(() => null),
+      workerVitals(root),
+    ]);
+
+  return {
+    project: {
+      basename: project.basename,
+      branch: project.branch || null,
+      detached_sha: project.detachedSha ?? null,
+      version: project.version ?? readBuildInfo("dev").version,
+      latest_cached_version: project.latestCachedVersion ?? null,
+      pointer_version: project.pointerVersion ?? null,
+      docs_unlanded: docs?.count ?? 0,
+    },
+    repo: {
+      open_prs: repoStats.openPrs ?? 0,
+      today_prs: repoStats.todayPrs ?? 0,
+      open_issues: repoStats.openIssues ?? 0,
+      local_added: repoStats.localAdded ?? 0,
+      local_removed: repoStats.localRemoved ?? 0,
+      cache_age_s: repoStats.cacheAgeS ?? null,
+    },
+    docs: { unlanded: docs?.count ?? 0 },
+    fleet,
+    /** The repo-summary fleet CHIP the header line renders: the two facts the
+     * `fleet_status` snapshot does not carry (supervisor-reported queue depth
+     * and the busy-but-no-fresh-worker `degraded` marker), from the statusline
+     * fleet collector. Null when no fresh supervisor snapshot exists. */
+    fleet_chip: fleetChip
+      ? {
+          runner: fleetChip.runner,
+          busy: fleetChip.busy,
+          total: fleetChip.total,
+          queue: fleetChip.queue,
+          parked: fleetChip.parked ?? 0,
+          degraded: fleetChip.degraded ?? false,
+          churn_deaths: fleetChip.churnDeaths ?? 0,
+          churn_respawns: fleetChip.churnRespawns ?? 0,
+          churn_window_s: fleetChip.churnWindowS ?? 0,
+          breaker_count: fleetChip.breaker?.count ?? 0,
+          bundle_version: fleetChip.bundleVersion ?? null,
+        }
+      : null,
+    workers,
+    /** The aggregated AFK block exactly as the plain single-line form renders
+     * it — summed across live workers, including the fleet runner/model/effort
+     * label the per-worker rows carry individually. Null when no live worker. */
+    afk: afkBlock,
+    queue: {
+      ready_for_agent: afkBlock?.queue ?? 0,
+      ready_for_human: afkBlock?.human ?? 0,
+      cache_age_s: afkBlock?.cacheAgeS ?? null,
+    },
+  };
+}
+
+/** The `statusline_aggregate` payload contract, inferred from its single
+ * producer so a field-coverage test can pin the shape without restating it. */
+export type StatuslineAggregate = Awaited<
+  ReturnType<typeof collectStatuslineAggregate>
+>;
+
+async function registerFleet(root: string, input: FleetRegisterInput) {
+  const path = registryPath(root);
+  const paths = afkPaths(root, input.name);
+  const running = await discoverLiveSupervisorPid(
+    paths.supervisorRuntimeDir,
+    isLivePid,
+    { fleet: paths.fleet },
+  );
+  if (!running) {
+    throw new Error(`fleet ${JSON.stringify(paths.fleet)} is not running`);
+  }
+  const profile = await upsertFleetProfile(path, {
+    name: paths.fleet,
+    runner: input.runner,
+    ...(input.selector ? { selector: input.selector } : {}),
+    ...(input.config ? { config: input.config } : {}),
+    ...(input.base ? { base: input.base } : {}),
+  });
+  return { status: "registered", profile, pid: running.pid };
+}
+
+const CURSOR_VERSION = 1;
+const CURSOR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
+
+function encodeCursor(at: string): string {
+  return Buffer.from(JSON.stringify({ v: CURSOR_VERSION, at })).toString(
+    "base64url",
+  );
+}
+
+function decodeCursor(
+  cursor: string,
+): { at: string } | { refused: true; reason: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+  } catch {
+    return {
+      refused: true,
+      reason:
+        "Unknown cursor format; call queue_status or worker_status to re-baseline.",
+    };
+  }
+  if (
+    raw === null ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    (raw as Record<string, unknown>).v !== CURSOR_VERSION ||
+    typeof (raw as Record<string, unknown>).at !== "string"
+  ) {
+    return {
+      refused: true,
+      reason:
+        "Unknown cursor format; call queue_status or worker_status to re-baseline.",
+    };
+  }
+  const at = (raw as Record<string, unknown>).at as string;
+  const atMs = Date.parse(at);
+  if (!Number.isFinite(atMs) || Date.now() - atMs > CURSOR_MAX_AGE_MS) {
+    return {
+      refused: true,
+      reason:
+        "Cursor expired; call queue_status or worker_status to re-baseline.",
+    };
+  }
+  return { at };
+}
+
+async function readAllWorkerLaneRecordsSince(
+  paths: ReturnType<typeof createEnginePaths>,
+  since: string,
+): Promise<CastleLaneRecord[]> {
+  const { readdir } = await import("node:fs/promises");
+  let ids: string[];
+  try {
+    ids = (await readdir(paths.workersRoot, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name);
+  } catch {
+    return [];
+  }
+  const records: CastleLaneRecord[] = [];
+  for (const id of ids) {
+    const lanePath = castleLanePath(paths, "worker", id);
+    const workerRecords = await readCastleLaneRecords(lanePath);
+    records.push(...workerRecords.filter((r) => r.at >= since));
+  }
+  return records;
+}
+
+async function eventsSinceImpl(
+  root: string,
+  input: EventsSinceInput,
+): Promise<unknown> {
+  if (input.cursor === undefined) {
+    return { history: [], lane_records: [], cursor: encodeCursor(new Date().toISOString()) };
+  }
+  const decoded = decodeCursor(input.cursor);
+  if ("refused" in decoded) return decoded;
+
+  const { at: since } = decoded;
+  const paths = createEnginePaths(join(root, ".red"));
+  const [historyRecords, laneRecords] = await Promise.all([
+    readCastleHistoryRecords(paths.castleHistory),
+    readAllWorkerLaneRecordsSince(paths, since),
+  ]);
+
+  return {
+    history: historyRecords.filter((r) => r.ts >= since),
+    lane_records: laneRecords,
+    cursor: encodeCursor(new Date().toISOString()),
+  };
+}
+
+/**
+ * Wrap the GitHub-backed read deps with a short-TTL cache. Repeated calls
+ * within the TTL cost zero GitHub requests. Mutating tools invalidate the
+ * affected keys so the next read reflects the new state immediately.
+ *
+ * Exported for unit-testing the cache wiring with fake deps.
+ */
+export function withCachedDeps(
+  deps: CastleMcpDependencies,
+  cache: ResidentReadCache,
+): CastleMcpDependencies {
+  return {
+    ...deps,
+    queueStatus: async () => {
+      const cached = cache.get(QUEUE_STATUS_KEY);
+      if (cached !== undefined) return cached;
+      const result = await deps.queueStatus();
+      cache.set(QUEUE_STATUS_KEY, result);
+      return result;
+    },
+    claimStatus: async (input) => {
+      // Batch reads (#2369) bypass the single-issue cache key.
+      if (input.issue === undefined) return deps.claimStatus(input);
+      const key = claimStatusKey(input.issue);
+      const cached = cache.get(key);
+      if (cached !== undefined) return cached;
+      const result = await deps.claimStatus(input);
+      cache.set(key, result);
+      return result;
+    },
+    cascadeStatus: async (input) => {
+      const key = cascadeStatusKey(input.issue);
+      const cached = cache.get(key);
+      if (cached !== undefined) return cached;
+      const result = await deps.cascadeStatus(input);
+      cache.set(key, result);
+      return result;
+    },
+    claimRelease: async (input) => {
+      for (const issue of input.issues ?? (input.issue !== undefined ? [input.issue] : [])) {
+        cache.invalidate(claimStatusKey(issue));
+      }
+      return deps.claimRelease(input);
+    },
+    landBranch: async (input) => {
+      cache.invalidate(cascadeStatusKey(input.issue));
+      return deps.landBranch(input);
+    },
+    requeue: async (input) => {
+      cache.invalidate(QUEUE_STATUS_KEY);
+      return deps.requeue(input);
+    },
+    unblockSweep: async () => {
+      cache.invalidate(QUEUE_STATUS_KEY);
+      return deps.unblockSweep();
+    },
+    triage: async (input) => {
+      cache.invalidate(QUEUE_STATUS_KEY);
+      return deps.triage(input);
+    },
+  };
+}
+
+export function createCastleMcpDependencies(
   root = process.cwd(),
   operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
 ): CastleMcpDependencies {
-  return {
+  const baseDeps: CastleMcpDependencies = {
     fleetList: () => readFleetProfiles(registryPath(root)),
     fleetStatus: (input) => fleetStatus(root, input),
     fleetCreate: (input) => createFleet(root, input),
@@ -1004,11 +1487,17 @@ export function createDevAfkMcpDependencies(
           callback();
         },
       });
-      const result = await stopFleet(root, silent, input.name);
+      const result = await stopFleet(root, silent, input.name, {
+        ...(input.force ? { force: true } : {}),
+      });
       return { fleet: input.name ?? "default", ...result };
     },
+    fleetRegister: (input) => registerFleet(root, input),
     logs: (input) => laneLogs(root, input),
-    workerVitals: () => workerVitals(root),
+    workerVitals: async (input) => {
+      const records = await workerVitals(root, { live_only: input.live_only });
+      return projectFields(records as Array<Record<string, unknown>>, input.fields);
+    },
     dashboard: ({ periodDays }) => collectDashboardReport(periodDays, root),
     monitor: () => collectMonitorInputs(root),
     history: async ({ limit }) => {
@@ -1058,11 +1547,12 @@ export function createDevAfkMcpDependencies(
       }
       throw new Error("worker dispatch requires an issue or demand");
     },
-    workerStatus: async ({ worker }) => {
-      const workers = await workerVitals(root);
-      return worker === undefined
-        ? workers
-        : workers.filter((record) => record.worker.id === worker);
+    workerStatus: async ({ worker, live_only, fields }) => {
+      const records = await workerVitals(root, { live_only });
+      const filtered = worker === undefined
+        ? records
+        : records.filter((record) => record.worker.id === worker);
+      return projectFields(filtered as Array<Record<string, unknown>>, fields);
     },
     workerStop: (input) => operations.stopWorker(root, input),
     runnerList: async () =>
@@ -1132,6 +1622,10 @@ export function createDevAfkMcpDependencies(
     cascadeStatus: (input) => operations.cascadeStatus(input),
     claimStatus: (input) => operations.claimStatus(input),
     claimRelease: (input) => operations.claimRelease(input),
+    hitlResolve: (input) => operations.hitlResolve(input),
+    mergeArm: (input) => operations.mergeArm(input),
+    mergeStatus: () => operations.mergeStatus(),
+    mergeRelease: (input) => operations.mergeRelease(input),
     worktreeList: () => listDisposableWorktrees(root),
     worktreeRemove: (input) => removeDisposableWorktree(root, input),
     waitStart: (input) => operations.waitStart(input),
@@ -1141,5 +1635,8 @@ export function createDevAfkMcpDependencies(
     weeklyReview: (input) => operations.weeklyReview(input),
     triage: (input) => operations.triage(input),
     respond: (input) => operations.respond(input),
+    statuslineAggregate: () => collectStatuslineAggregate(root),
+    eventsSince: (input) => eventsSinceImpl(root, input),
   };
+  return withCachedDeps(baseDeps, new ResidentReadCache());
 }

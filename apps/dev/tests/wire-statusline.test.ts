@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createCastleLaneWriters } from "@reddb-io/red-castle/engine";
 import {
   afkPaths,
   appendCastleHistoryRecord,
@@ -294,6 +295,99 @@ describe("collectStatuslineAfk — cache discipline", () => {
   });
 });
 
+describe("collectStatuslineWorkers — live pre-claim workers", () => {
+  it("renders a live Worker before an attempt state exists", async () => {
+    const root = scratch();
+    try {
+      const workerId = "wBOOT";
+      const issue = 2488;
+      const workerDir = join(root, ".red", "tmp", "workers", workerId);
+      mkdirSync(join(workerDir, String(issue)), { recursive: true });
+      writeFileSync(join(workerDir, "worker.pid"), String(process.pid), "utf8");
+      const enginePaths = createEnginePaths(join(root, ".red"));
+      await createCastleLaneWriters(enginePaths).worker(workerId).append({
+        kind: "worker.heartbeat",
+        worker_id: workerId,
+        payload: { phase: "boot", activity: "reconcile-gate", runner: "codex" },
+      });
+      const heartbeatAt = new Date(Date.now() - 30_000).toISOString();
+      await createCastleLaneWriters(enginePaths, { clock: () => heartbeatAt }).liveness(workerId).append({
+        kind: "worker.heartbeat",
+        worker_id: workerId,
+        payload: {},
+      });
+
+      const workers = await collectStatuslineWorkers({
+        root,
+        repo: "reddb-io/red-skills",
+        remote: "origin",
+      });
+
+      expect(workers).toHaveLength(1);
+      expect(workers[0]).toMatchObject({
+        state: {
+          worker_id: workerId,
+          runner: "codex",
+          current: {
+            number: issue,
+            phase: "boot",
+            activity: "reconcile-gate",
+            started_at: heartbeatAt,
+          },
+        },
+        pidLive: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("renders Workers owned by different named fleets with their attribution", async () => {
+    const root = scratch();
+    try {
+      const paths = createEnginePaths(join(root, ".red"));
+      const startedAt = new Date().toISOString();
+      for (const [workerId, issue, fleet] of [
+        ["wALPHA", 2481, "alpha"],
+        ["wBETA", 2482, "beta"],
+      ] as const) {
+        writeRenderableAttempt(root, workerId, issue, startedAt);
+        await writeCastleStateSnapshot(
+          castleStateSnapshotPath(paths, "worker", workerId),
+          {
+            kind: "worker",
+            id: workerId,
+            worker_id: workerId,
+            supervisor_id: fleet,
+            version: 1,
+            updated_at: startedAt,
+            pid: process.pid,
+            current: { number: issue, phase: "coding" },
+          },
+        );
+      }
+
+      const workers = await collectStatuslineWorkers({
+        root,
+        repo: "reddb-io/red-skills",
+        remote: "origin",
+      });
+
+      expect(
+        workers.map((worker) => ({
+          id: worker.state.worker_id,
+          fleet: worker.state.fleet,
+        })),
+      ).toEqual([
+        { id: "wALPHA", fleet: "alpha" },
+        { id: "wBETA", fleet: "beta" },
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("statusline count cache write-through", () => {
   it("applies claim, park, requeue, and close label deltas without count reads", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-write-through-"));
@@ -304,16 +398,16 @@ describe("statusline count cache write-through", () => {
       writeFileSync(cachePath, JSON.stringify({ queue: 4, human: 2, ts: 100 }), "utf8");
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-agent"], ["running"], 200)).toBe(true);
-      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 2, ts: 200 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 2, quarantine: 0, ts: 200 });
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["running"], ["ready-for-human", "blocked:validation"], 300)).toBe(true);
-      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 3, ts: 300 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 3, quarantine: 0, ts: 300 });
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-human", "blocked:validation"], ["ready-for-agent"], 400)).toBe(true);
-      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 2, ts: 400 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 2, quarantine: 0, ts: 400 });
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-human"], [], 500)).toBe(true);
-      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 1, ts: 500 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 1, quarantine: 0, ts: 500 });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

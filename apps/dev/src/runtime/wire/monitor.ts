@@ -21,6 +21,7 @@ import * as ghx from "../gh.js";
 import * as gitx from "../git.js";
 import * as fsx from "../fs.js";
 import { collectLogLineCounts } from "../log-cursor.js";
+import { reapableWorktreeUnder } from "../supervisor-fs.js";
 import { afkPaths } from "./paths.js";
 import { readStatuslineCache } from "./statusline-cache.js";
 
@@ -32,6 +33,7 @@ export interface MonitorInputs {
    * Absent when the cache file has never been written (no statusline run yet). */
   remoteQueue?: number;
   remoteHuman?: number;
+  remoteQuarantine?: number;
   /** Age of the statusline cache in seconds. Undefined when no cache file exists.
    * The monitor render shows a stale marker when this exceeds the resolved
    * statusline cache TTL ({@link resolveStatuslineCacheTtl}). */
@@ -278,7 +280,9 @@ export async function reclaimDeadWorkers(
       Number.isFinite(issue) && issue > 0 ? await isPreserved(issue) : true;
     inputs.push({
       attemptDir,
-      worktreePath: join(attemptDir, "worktree"),
+      // Current workers use the conventional direct child. During rollout,
+      // hygiene may still discover a legacy nested worktree for removal only.
+      worktreePath: reapableWorktreeUnder(attemptDir) ?? join(attemptDir, "worktree"),
       workerPidAlive: alive,
       preserved,
     });
@@ -374,7 +378,12 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
   const cached = readStatuslineCache(paths.statuslineCachePath);
   const nowS = Math.floor(Date.now() / 1000);
   const remoteExtra = cached !== null
-    ? { remoteQueue: cached.queue, remoteHuman: cached.human, remoteCacheAgeS: nowS - cached.ts }
+    ? {
+        remoteQueue: cached.queue,
+        remoteHuman: cached.human,
+        remoteQuarantine: cached.quarantine ?? 0,
+        remoteCacheAgeS: nowS - cached.ts,
+      }
     : {};
 
   return { workers, events, fleet, ...remoteExtra };

@@ -7,6 +7,7 @@ import {
   interpretCompletion,
   enforceStructuredOutput,
   isExhaustionError,
+  isHostConfigRunnerError,
   isTransientRunnerError,
   extractSignalKill,
   runAgent,
@@ -264,8 +265,19 @@ describe("isTransientRunnerError", () => {
         new Error("Error: thread/start: thread/start failed: failed to load configuration: No such file or directory (os error 2)"),
       ),
     ).toBe(true);
-    expect(isTransientRunnerError(new Error("exec failed: exec failed: spawn sh ENOENT"))).toBe(true);
-    expect(isTransientRunnerError(new Error("cwd does not exist: /tmp/.red/tmp/workers/wAAAA/17-a1"))).toBe(true);
+  });
+
+  it("excludes permanent missing-interpreter and missing-cwd host defects", () => {
+    expect(isTransientRunnerError(new Error("exec failed: exec failed: spawn sh ENOENT"))).toBe(false);
+    expect(isTransientRunnerError(new Error("cwd does not exist: /tmp/worker-attempt"))).toBe(false);
+  });
+
+  it("matches a gitconfig lock collision during sandbox setup — infra-transient, never a no-sentinel death (#2494)", () => {
+    expect(
+      isTransientRunnerError(
+        new Error('Command failed (exit 255): git config --global --add safe.directory "x"\nerror: could not lock config file /home/user/.gitconfig: File exists'),
+      ),
+    ).toBe(true);
   });
 
   it("matches provider server-side overload (529 / overloaded_error / 503) — temporary, not a crash", () => {
@@ -284,6 +296,31 @@ describe("isTransientRunnerError", () => {
     // A 529 elsewhere in unrelated prose is overwhelmingly the status code; a
     // bare number like 5290 must NOT match (word-boundary guard).
     expect(isTransientRunnerError(new Error("processed 5290 records"))).toBe(false);
+  });
+});
+
+describe("runAgent — fatal host configuration", () => {
+  it.each([
+    "exec failed: exec failed: spawn sh ENOENT",
+    "cwd does not exist: /tmp/worker-attempt",
+  ])("maps %s to one actionable host-config outcome", async (message) => {
+    let invocations = 0;
+    const error = new Error(message);
+    expect(isHostConfigRunnerError(error)).toBe(true);
+
+    const r = await runAgent(
+      makeDeps(async () => {
+        invocations += 1;
+        throw error;
+      }),
+      baseInput,
+    );
+
+    expect(invocations).toBe(1);
+    expect(r.outcome).toBe("host-config");
+    expect(r.commits).toEqual([]);
+    expect(r.stdout).toContain("fatal host configuration");
+    expect(r.stdout).toContain("not retryable");
   });
 });
 

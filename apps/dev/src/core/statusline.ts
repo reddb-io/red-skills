@@ -75,6 +75,8 @@ export interface AfkInput {
   queue: number;
   /** `rh` — cached ready-for-human count. */
   human: number;
+  /** `qtn` — cached ADR 0122 issue quarantine count. */
+  quarantine?: number;
   /** `bk` — summed blocked count. */
   blocked: number;
   /** `adN` — summed insertions. */
@@ -182,6 +184,10 @@ export interface FleetInput {
   churnDeaths?: number;
   churnRespawns?: number;
   churnWindowS?: number;
+  /** Crashloop circuit breaker (#2527): present only while the breaker is OPEN
+   * — N consecutive identical boot deaths suppressed the respawn loop. Rendered
+   * as a loud token so the halted fleet is unmissable at a glance. */
+  breaker?: { count: number };
   /** Dev bundle version the running supervisor was launched from. */
   bundleVersion?: string;
   /** Stable pointer version the shim would serve from the local cache. */
@@ -412,6 +418,10 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
     const hmSuffix = ageSuffix && afk.queue === 0 ? ageSuffix : "";
     tokens.push({ label: "hmn=", value: String(afk.human), suffix: hmSuffix });
   }
+  if (afk.quarantine !== undefined && afk.quarantine > 0) {
+    const qtnSuffix = ageSuffix && afk.queue === 0 && afk.human === 0 ? ageSuffix : "";
+    tokens.push({ label: "qtn=", value: String(afk.quarantine), suffix: qtnSuffix });
+  }
   if (afk.blocked > 0) kpi("blk=", String(afk.blocked));
   const diff: string[] = [];
   if (afk.added > 0) diff.push(`+${afk.added}`);
@@ -496,6 +506,9 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   const total = Math.max(0, Math.floor(fleet.total));
   const queue = Math.max(0, Math.floor(fleet.queue));
   const parts = [`flt=${runner} ${busy}/${total}${fleet.degraded ? "†" : ""}`];
+  if (fleet.breaker) {
+    parts.push(`⛔brk=${Math.max(1, Math.floor(fleet.breaker.count))}×`);
+  }
   if (fleet.bundleVersion) {
     const versions = [fleet.bundleVersion, fleet.pointerVersion, fleet.latestBundleVersion]
       .filter((v): v is string => Boolean(v));

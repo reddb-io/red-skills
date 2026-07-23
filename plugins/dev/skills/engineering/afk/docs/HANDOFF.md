@@ -28,6 +28,16 @@ attempt: {1..}
 and `## Suggested Skills` markdown sections written by /triage}
 </issue-body>
 
+<handoff-enrichment>                                  <!-- omitted when unavailable/empty -->
+context:
+  name: Dev
+  glossary_path: .red/contexts/dev/CONTEXT.md
+glossary_terms[1]{term,definition}:
+  Handoff,The bounded worker brief assembled before AFK execution.
+exemplars[1]{pr,title,shows}:
+  123,Keep handoffs bounded,Shows the current handoff assembly seam.
+</handoff-enrichment>
+
 <previous-attempts>                                    <!-- omitted when empty -->
 <previous-attempt n="1" status="blocked" worker="wXXXX" duration="0m50s" branch="afk/wXXXX/N-slug">
 <notes>
@@ -66,5 +76,14 @@ lowest authority; orchestrator audits already filtered out by body shape}
 <!-- inner agent appends progress/blockers here across attempts -->
 </agent-notes>
 ```
+
+`<handoff-enrichment>` is repository-derived, advisory orientation in TOON.
+At handoff-build time the runtime resolves the issue title, body paths, labels,
+and Spec reference through `.red/CONTEXT-MAP.md`, selects at most four matching
+entries from the owning glossary, and adds at most two recent merged-PR
+exemplars found from `git log` over the relevant paths. The TOON body is capped
+at 2400 UTF-8 bytes. Missing maps/glossaries, an unresolved context, and read or
+git failures omit this section silently; they never block dispatch or change the
+base handoff.
 
 The handoff file follows the same minimalism as the `/handoff` skill — reference artifacts by path, do not duplicate their content.

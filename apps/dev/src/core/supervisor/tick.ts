@@ -18,7 +18,7 @@ import {
   shrinkFleetToTarget,
 } from "./resize.js";
 import { pollStallDetector, resolveReapContest } from "./reaper.js";
-import { dispatchReconcileIfPossible, handleDeadSlot, terminateAll } from "./slot-actions.js";
+import { dispatchReconcileIfPossible, handleDeadSlot } from "./slot-actions.js";
 import type { SupervisorConfig } from "./config.js";
 import type { TickResult } from "./result.js";
 import type { SupervisorState } from "./state.js";
@@ -61,6 +61,9 @@ async function refreshTrunkMirrorIfDue(
       message: err instanceof Error ? err.message : String(err),
     };
   }
+  if (outcome.status === "failed") {
+    deps.log?.(`trunk mirror refresh failed: ${outcome.message ?? "unknown git error"}`);
+  }
   state.lastTrunkFreshness = outcome;
   return outcome;
 }
@@ -89,7 +92,6 @@ export async function superviseTick(
   };
 
   if (stopRequested()) {
-    await terminateAll(state, deps);
     result.stopped = true;
     return result;
   }
@@ -181,7 +183,7 @@ export async function superviseTick(
     const now = deps.now();
     for (let i = 0; i < state.slots.length; i += 1) {
       const slot = state.slots[i]!;
-      if (!slot.parked || slot.halfOpen || slot.spawning) continue;
+      if (!slot.parked || slot.halfOpen || slot.spawning || slot.fatalReason === "host-config") continue;
       if (spawnPolicy === "hard-stop") continue;
       if (!isHalfOpenDue(slot.tripEpoch, slot.backoffStep, now, config)) continue;
       deps.log?.(

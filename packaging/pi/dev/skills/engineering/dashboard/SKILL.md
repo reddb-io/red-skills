@@ -9,7 +9,15 @@ disable-model-invocation: true
 
 <what-to-do>
 
-**Wrapper over the dev runtime — see [`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md) for the Run shim and output-format rules.**
+**Client of the `castle` MCP — the `dashboard` tool is the primary surface.**
+Call the read tool `dashboard` — `{periodDays?}` (default 30) — and present its
+structured TOON result; the tool surface and host prefix rule live in
+[`../afk/MCP.md`](../afk/MCP.md).
+
+When the MCP is unreachable, name that and fall back to the `red-skills-dev`
+CLI — same engine, same cores (see
+[`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md) for the Run
+shim and output-format rules):
 
 Run: `red-skills-dev dashboard [--period 30d] [--json]`
 

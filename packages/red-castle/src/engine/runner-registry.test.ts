@@ -15,6 +15,7 @@ import {
   isRunnerExhausted,
   openCodeAuthEnv,
   parseRunnerFlag,
+  projectImplementerEnvironment,
   resolveMiniMaxClaudeEnv,
   resolveOpenCodeAuth,
   runnerSupportsModel,
@@ -28,6 +29,120 @@ import {
 import { runners, type Runner } from "./runner-types.js";
 
 describe("engine runner registry", () => {
+  it.each([
+    ["claude", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    [
+      "claude",
+      { "plugins.memory.enabled": "true" },
+      {
+        plugins: ["dev", "memory"],
+        mcp: ["navigator", "red-memory"],
+        rsp: false,
+      },
+    ],
+    [
+      "claude",
+      { "plugins.brain.enabled": "true" },
+      { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false },
+    ],
+    [
+      "claude",
+      { "plugins.red-ui.enabled": "true" },
+      { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false },
+    ],
+    [
+      "claude",
+      { "rsp.enabled": "true" },
+      { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true },
+    ],
+    ["codex", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    [
+      "codex",
+      { "plugins.memory.enabled": "true" },
+      {
+        plugins: ["dev", "memory"],
+        mcp: ["navigator", "red-memory"],
+        rsp: false,
+      },
+    ],
+    [
+      "codex",
+      { "plugins.brain.enabled": "true" },
+      { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false },
+    ],
+    [
+      "codex",
+      { "plugins.red-ui.enabled": "true" },
+      { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false },
+    ],
+    [
+      "codex",
+      { "rsp.enabled": "true" },
+      { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true },
+    ],
+    ["opencode", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    [
+      "opencode",
+      { "plugins.memory.enabled": "true" },
+      {
+        plugins: ["dev", "memory"],
+        mcp: ["navigator", "red-memory"],
+        rsp: false,
+      },
+    ],
+    [
+      "opencode",
+      { "plugins.brain.enabled": "true" },
+      { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false },
+    ],
+    [
+      "opencode",
+      { "plugins.red-ui.enabled": "true" },
+      { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false },
+    ],
+    [
+      "opencode",
+      { "rsp.enabled": "true" },
+      { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true },
+    ],
+    ["pi", {}, { plugins: ["dev"], mcp: ["navigator"], rsp: false }],
+    [
+      "pi",
+      { "plugins.memory.enabled": "true" },
+      {
+        plugins: ["dev", "memory"],
+        mcp: ["navigator", "red-memory"],
+        rsp: false,
+      },
+    ],
+    [
+      "pi",
+      { "plugins.brain.enabled": "true" },
+      { plugins: ["dev", "brain"], mcp: ["navigator", "brain"], rsp: false },
+    ],
+    [
+      "pi",
+      { "plugins.red-ui.enabled": "true" },
+      { plugins: ["dev"], mcp: ["navigator", "red-ui"], rsp: false },
+    ],
+    [
+      "pi",
+      { "rsp.enabled": "true" },
+      { plugins: ["dev"], mcp: ["navigator", "rsp"], rsp: true },
+    ],
+  ] as const)(
+    "projects the exact %s implementer constraint for one activation gate",
+    (runner, values, enabled) => {
+      const projection = projectImplementerEnvironment(runner, values);
+
+      expect(projection.enabled).toEqual(enabled);
+      expect(projection.constraint).toMatchSnapshot();
+      expect(JSON.stringify(projection)).not.toMatch(
+        /statusline|hooks\/|hooks\\\\/,
+      );
+    },
+  );
+
   it("owns the runner rows and provider-less projection", () => {
     const cases: Array<[Runner, AgentRunner]> = [
       ["claude", "claude"],
@@ -37,9 +152,17 @@ describe("engine runner registry", () => {
       ["hermes", "claude"],
     ];
     expect(cases.map(([r]) => r).sort()).toEqual([...runners].sort());
-    for (const [input, expected] of cases) expect(toAgentRunner(input)).toBe(expected);
+    for (const [input, expected] of cases)
+      expect(toAgentRunner(input)).toBe(expected);
     expect(Object.keys(RUNNER_SPECS).sort()).toEqual(
-      (["claude", "codex", "opencode", "claude-minimax"] satisfies AgentRunner[]).sort(),
+      (
+        [
+          "claude",
+          "codex",
+          "opencode",
+          "claude-minimax",
+        ] satisfies AgentRunner[]
+      ).sort(),
     );
   });
 
@@ -53,7 +176,9 @@ describe("engine runner registry", () => {
       ANTHROPIC_BASE_URL: "https://api.minimax.io/anthropic",
       CLAUDE_CODE_SIMPLE: "1",
     });
-    expect(openCodeAuthEnv(resolveOpenCodeAuth({ MINIMAX_API_KEY: "mm" }))).toEqual({ MINIMAX_API_KEY: "mm" });
+    expect(
+      openCodeAuthEnv(resolveOpenCodeAuth({ MINIMAX_API_KEY: "mm" })),
+    ).toEqual({ MINIMAX_API_KEY: "mm" });
     expect(runnerSupportsStructuredOutput("claude")).toBe(true);
     expect(runnerSupportsStructuredOutput("codex")).toBe(false);
   });
@@ -61,47 +186,67 @@ describe("engine runner registry", () => {
   it("answers whether a runner's CLI can dispatch a model slug (#2352)", () => {
     expect(runnerSupportsModel("claude", "claude-opus-4-8")).toBe(true);
     expect(runnerSupportsModel("claude", "sonnet")).toBe(true);
-    expect(runnerSupportsModel("claude", "us.anthropic.claude-opus-4-8-v1:0")).toBe(true);
+    expect(
+      runnerSupportsModel("claude", "us.anthropic.claude-opus-4-8-v1:0"),
+    ).toBe(true);
     expect(runnerSupportsModel("claude", "gpt-5.6-sol")).toBe(false);
     expect(runnerSupportsModel("codex", "gpt-5.6-sol")).toBe(true);
     expect(runnerSupportsModel("codex", "o3")).toBe(true);
     expect(runnerSupportsModel("codex", "claude-opus-4-8")).toBe(false);
-    expect(runnerSupportsModel("opencode", "openrouter/anthropic/claude-opus-4")).toBe(true);
+    expect(
+      runnerSupportsModel("opencode", "openrouter/anthropic/claude-opus-4"),
+    ).toBe(true);
     expect(runnerSupportsModel("opencode", "claude-opus-4-8")).toBe(false);
     // A forcedModel runner accepts exactly its forced slug.
     expect(runnerSupportsModel("claude-minimax", MINIMAX_M3_MODEL)).toBe(true);
-    expect(runnerSupportsModel("claude-minimax", "claude-opus-4-8")).toBe(false);
+    expect(runnerSupportsModel("claude-minimax", "claude-opus-4-8")).toBe(
+      false,
+    );
     // A blank slug is never runnable.
     expect(runnerSupportsModel("claude", "  ")).toBe(false);
   });
 
   it("keeps runner detection and spawn argv parity in the engine unit", () => {
-    expect(detectRunner({ flag: "opencode" })).toMatchObject({ runner: "opencode", method: "flag" });
-    expect(detectRunner({ env: { CODEX_SANDBOX: "danger-full-access" } })).toMatchObject({
+    expect(detectRunner({ flag: "opencode" })).toMatchObject({
+      runner: "opencode",
+      method: "flag",
+    });
+    expect(
+      detectRunner({ env: { CODEX_SANDBOX: "danger-full-access" } }),
+    ).toMatchObject({
       runner: "codex",
       method: "env-var",
     });
-    expect(detectRunner({ env: {}, processTree: "node /opt/opencode/bin/opencode" })).toMatchObject({
+    expect(
+      detectRunner({ env: {}, processTree: "node /opt/opencode/bin/opencode" }),
+    ).toMatchObject({
       runner: "claude",
       method: "env-fallback",
     });
     expect(parseRunnerFlag(["--runner=claude-minimax"])).toBe("claude-minimax");
-    expect(claudeSpawnArgs({ prompt: "PROMPT", worktree: "/wt" }).args).toEqual([
-      "--model",
-      "opus",
-      "--effort",
-      "medium",
-      "--permission-mode",
-      "bypassPermissions",
-      "--output-format",
-      "stream-json",
-      "--verbose",
-      "--print",
-      "PROMPT",
-    ]);
-    expect(codexSpawnArgs({ prompt: "PROMPT", worktree: "/wt", lastMessagePath: "/last", effort: "high" }).args).toContain(
-      "model_reasoning_effort=high",
+    expect(claudeSpawnArgs({ prompt: "PROMPT", worktree: "/wt" }).args).toEqual(
+      [
+        "--model",
+        "opus",
+        "--effort",
+        "medium",
+        "--permission-mode",
+        "bypassPermissions",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--print",
+        "PROMPT",
+      ],
     );
+    expect(
+      codexSpawnArgs({
+        prompt: "PROMPT",
+        worktree: "/wt",
+        lastMessagePath: "/last",
+        effort: "high",
+      }).args,
+    ).toContain("model_reasoning_effort=high");
     expect(isRunnerExhausted("Weekly cap reached")).toBe(true);
   });
 
@@ -110,11 +255,17 @@ describe("engine runner registry", () => {
     expect(BLOCKED_SIGNAL).toBe("<promise>BLOCKED</promise>");
     expect(NO_MORE_TASKS_SIGNAL).toBe("<promise>NO MORE TASKS</promise>");
     expect(COMPLETION_SIGNALS).toEqual([DONE_SIGNAL, BLOCKED_SIGNAL]);
-    expect(detectSentinelLine("x <promise>NO MORE TASKS</promise> y")?.kind).toBe("no_more_tasks");
+    expect(
+      detectSentinelLine("x <promise>NO MORE TASKS</promise> y")?.kind,
+    ).toBe("no_more_tasks");
 
     const _stream: AgentStreamEvent | undefined = undefined;
     const _result: RunResult | undefined = undefined;
     const _liveness: LivenessVerdict | undefined = undefined;
-    expect([_stream, _result, _liveness]).toEqual([undefined, undefined, undefined]);
+    expect([_stream, _result, _liveness]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
   });
 });
