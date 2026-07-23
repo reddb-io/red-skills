@@ -11,11 +11,10 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 ## Git Operations
 
 **Allowed in primary checkout:**
-- `git fetch`, `git pull --ff-only`, `git merge --no-ff <local-branch>`, `git push` (SSH only).
-- `git add`, `git commit` (for the pre-merge snapshot when primary is dirty).
+- `git fetch`.
 - `git worktree add|remove|list`.
-- `git rebase` (integration step only: `git rebase origin/{pinned}` to integrate the fetched base before merging, per the Merge section below).
 - `git push --force-with-lease` (mirroring only: `git push origin -u HEAD:refs/heads/afk/{N}-{slug} --force-with-lease` to push the worktree branch onto the remote-tracked `afk/*` namespace, and per-worktree post-commit hook `git push origin HEAD --force-with-lease`, both per the Per-Issue Loop Worktree section below).
+- A guarded post-Landing `git merge --ff-only` may advance a clean, on-trunk primary whose local tip is a strict ancestor of the fetched remote tip. A dirty or diverged primary is never promoted.
 - Read-only: `git status`, `git log`, `git diff`, `git show`, `git branch`.
 
 **Allowed in worktree:**
@@ -39,22 +38,27 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 
 ## Dirty Primary Checkout
 
-If `git -C primary status --porcelain` is non-empty before a merge:
+AFK never stages or commits the primary checkout. A dirty primary remains
+untouched through boot, claim, the worker attempt, feedback and backpressure
+gates, and Landing. In particular, AFK never creates a pre-merge snapshot
+commit on boot or claim. A worker crash or failed gate therefore leaves the
+operator's index, working tree, and commit history unchanged.
 
-1. `git -C primary add -A`
-2. `git -C primary commit -m "chore(afk): pre-merge snapshot for #{N}"`
-3. Proceed with merge.
-
-Never `git stash`, `git restore`, or discard the dirty state.
+Landing does not need that snapshot: the unlocked path merges remotely through
+a PR, while the direct path fetches, integrates, merges, pushes, and rolls back
+inside an isolated landing worktree. The direct path captures its rollback
+anchor immediately before `merge --no-ff`; a rejected push resets only that
+disposable worktree. Never `git stash`, `git restore`, or discard dirty primary
+state.
 
 ## Merge Conflicts
 
 One self-resolve attempt: re-enter the inner agent with the conflict diff in the handoff file Notes. If the inner can't resolve cleanly:
 
-1. `git -C primary merge --abort`.
+1. Abort the merge in the isolated landing worktree.
 2. Comment the conflict diff on the issue.
 3. Re-label `ready-for-human`, remove `running`.
-4. Move to the next issue. **Do not** `git reset` or `git restore` to "clean up" — the merge abort is sufficient.
+4. Move to the next issue. The primary checkout was never the merge target and needs no cleanup.
 
 ## Worktree Lifecycle
 
