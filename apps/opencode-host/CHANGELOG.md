@@ -1,5 +1,13 @@
 # @reddb-io/red-skills
 
+## 2.86.2
+
+### Patch Changes
+
+- 8fb4e9e: Unified local issue-lease (#2578): the two local-lease twins over `.red/tmp/claims/` — `tryAcquireClaimDir` and `createFsIssueLeaseStore` — converge on the proven mkdir-lock semantics, one engine for every claim path. (The CLI help guard half of this branch was superseded by the #2581 fix already on main.)
+  - @reddb-io/shared@2.86.2
+  - @reddb-io/build-info@2.86.2
+
 ## 2.86.1
 
 ### Patch Changes
