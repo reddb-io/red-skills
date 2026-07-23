@@ -158,3 +158,53 @@ describe("autoHealableClaimHygiene (boot self-heal gate, #2321)", () => {
     expect(autoHealableClaimHygiene(result)).toBeNull();
   });
 });
+
+describe("claim TTL on unknown-pid markers (#2525)", () => {
+  const base = {
+    remoteUrls: [],
+  };
+  const mk = (nowS?: number) => ({
+    ...base,
+    claimHygiene: {
+      ownWorkerPrefix: "8cb3eafdcbd2:",
+      ...(nowS !== undefined ? { nowS } : {}),
+      listOpenQueueIssues: async () => [
+        {
+          number: 2525,
+          comments: [
+            {
+              id: 30,
+              body: "<!-- afk:claim v1 worker=8cb3eafdcbd2:wGhost kind=claim runner=codex ts=2026-07-22T00:00:00Z -->",
+              createdAt: "2026-07-22T00:00:00Z",
+            },
+          ],
+        },
+      ],
+      workerPidState: () => "unknown" as const,
+    },
+  });
+
+  it("treats an unknown-pid marker aged past the TTL window as a concedable expired action", async () => {
+    // 2026-07-22T00:00:00Z + 2h — far past the default 1080s stale window.
+    const nowS = Math.floor(Date.parse("2026-07-22T02:00:00Z") / 1000);
+    const result = await runClaimHygieneProbe(mk(nowS));
+    expect(result.verdict).toBe("red");
+    expect(result.evidence).toContain("pid=expired");
+    expect(autoHealableClaimHygiene(result)).not.toBeNull();
+  });
+
+  it("keeps a fresh unknown-pid marker as human-adjudicated (not auto-healable)", async () => {
+    // 60s after the marker: within grace + window.
+    const nowS = Math.floor(Date.parse("2026-07-22T00:01:00Z") / 1000);
+    const result = await runClaimHygieneProbe(mk(nowS));
+    expect(result.verdict).toBe("red");
+    expect(result.evidence).not.toContain("pid=expired");
+    expect(autoHealableClaimHygiene(result)).toBeNull();
+  });
+
+  it("without an injected clock the TTL check is skipped entirely", async () => {
+    const result = await runClaimHygieneProbe(mk(undefined));
+    expect(result.evidence).not.toContain("pid=expired");
+    expect(autoHealableClaimHygiene(result)).toBeNull();
+  });
+});

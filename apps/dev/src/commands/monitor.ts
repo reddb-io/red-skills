@@ -221,7 +221,7 @@ export async function monitorCommand(
     }
   }
 
-  const { workers, events, fleet, remoteQueue, remoteHuman, remoteCacheAgeS } = await collectMonitorInputs(cwd);
+  const { workers, events, fleet, remoteQueue, remoteHuman, remoteQuarantine, remoteCacheAgeS } = await collectMonitorInputs(cwd);
   const now = Math.floor(Date.now() / 1000);
   // Stale-marker threshold: same resolved TTL the statusline writer uses (env >
   // afk.statusline_cache_ttl config > 180, #1217), so the monitor flags the cache
@@ -230,7 +230,13 @@ export async function monitorCommand(
   const cacheTtlS = resolveStatuslineCacheTtl(process.env, (key) => getConfig(monitorCfg, key));
   const remote: MonitorRemote | undefined =
     remoteQueue !== undefined && remoteHuman !== undefined && remoteCacheAgeS !== undefined
-      ? { queue: remoteQueue, human: remoteHuman, cacheAgeS: remoteCacheAgeS, stale: remoteCacheAgeS >= cacheTtlS }
+      ? {
+          queue: remoteQueue,
+          human: remoteHuman,
+          quarantine: remoteQuarantine ?? 0,
+          cacheAgeS: remoteCacheAgeS,
+          stale: remoteCacheAgeS >= cacheTtlS,
+        }
       : undefined;
   // TOON is the default agent-facing wire format (PRD #928 / ADR 0081); `--plain`
   // restores the legacy compact text dashboard for a human TTY glance.
