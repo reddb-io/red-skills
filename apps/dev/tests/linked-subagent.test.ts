@@ -73,4 +73,47 @@ describe("runLinkedSubagent", () => {
       },
     ]);
   });
+
+  it("folds native Claude tool events into the parent Worker lane (#2480)", async () => {
+    const records: Array<{ kind: string; payload?: Record<string, unknown> }> = [];
+    const bridge: CastleWorkerLaneBridge = {
+      record: async (kind, payload) => {
+        records.push({ kind, payload });
+      },
+      snapshot: async () => {},
+    };
+    const exec: ExecFn = async (_command, _args, options) => {
+      options?.onStdoutLine?.(JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [{
+            type: "tool_use",
+            name: "Bash",
+            input: { command: "git rebase --continue" },
+          }],
+        },
+      }));
+      return { code: 0, stdout: "", stderr: "" };
+    };
+
+    await runLinkedSubagent({
+      runner: "claude",
+      phase: "merge-resolver",
+      invocation: { command: "claude", args: ["--output-format", "stream-json"] },
+      cwd: "/repo",
+      bridge,
+      exec,
+      heartbeatMs: 60_000,
+    });
+
+    expect(records).toContainEqual({
+      kind: "worker.subagent_heartbeat",
+      payload: {
+        runner: "claude",
+        phase: "merge-resolver",
+        signal: "tool",
+        tool: "git rebase --continue",
+      },
+    });
+  });
 });
