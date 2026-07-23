@@ -95,6 +95,35 @@ describe("withSandboxLifecycle (worktree mode)", () => {
     return { hostDir, worktreeDir, sandbox };
   };
 
+
+  it("hostSharedGitConfig skips every git config --global setup write (#2494)", async () => {
+    const { hostDir, worktreeDir } = await setupWorktree();
+    const commands: string[] = [];
+    const real = makeLocalSandbox(worktreeDir);
+    const sandbox: SandboxService = {
+      ...real,
+      exec: (command, options) => {
+        commands.push(command);
+        return real.exec(command, options);
+      },
+    };
+
+    await Effect.runPromise(
+      withSandboxLifecycle(
+        {
+          hostRepoDir: hostDir,
+          sandboxRepoDir: worktreeDir,
+          hostSharedGitConfig: true,
+        },
+        sandbox,
+        () => Effect.void,
+      ).pipe(Effect.provide(testDisplayLayer)),
+    );
+
+    expect(commands.some((c) => c.includes("--global"))).toBe(false);
+    expect(commands.some((c) => c.includes("safe.directory"))).toBe(false);
+  });
+
   it("skips sync-in — worktree files are already accessible", async () => {
     const { hostDir, worktreeDir, sandbox } = await setupWorktree();
 
