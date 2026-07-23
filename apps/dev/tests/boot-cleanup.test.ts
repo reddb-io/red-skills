@@ -78,6 +78,7 @@ describe("runBoot tmp janitor", () => {
       unknownTmpRoots: ["/p/.red/tmp/work-old"],
       protectedLiveWorkers: [],
       protectedLiveFeedback: [],
+      orphanTestRunners: [],
       removals: [
         { path: "/p/.red/tmp/logs/old", livenessVerdict: "not-worker-workspace" },
         { path: "/p/.red/tmp/scratch/old", livenessVerdict: "not-worker-workspace" },
