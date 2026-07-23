@@ -134,6 +134,13 @@ function deps(): CastleMcpDependencies {
       fleet: null,
       workers: [],
       queue: { ready_for_agent: 2, ready_for_human: 1, cache_age_s: null },
+      federation: { hosts: [], total_busy: 0, total_free: 0, total_workers: 0 },
+    })),
+    federatedFleetView: vi.fn(async () => ({
+      hosts: [],
+      total_busy: 0,
+      total_free: 0,
+      total_workers: 0,
     })),
   };
 }
@@ -186,6 +193,7 @@ describe("castle MCP tools", () => {
       "triage",
       "respond",
       "statusline_aggregate",
+      "federated_fleet_view",
     ]);
   });
 

@@ -245,10 +245,51 @@ export const queueStatusOutputSchema = z.object({
 export type QueueStatusOutput = z.infer<typeof queueStatusOutputSchema>;
 
 // ---------------------------------------------------------------------------
+// federated_fleet_view
+// ---------------------------------------------------------------------------
+
+export const federatedFleetViewOutputSchema = z.object({
+  hosts: z.array(
+    z.object({
+      machine_id_hash: z.string(),
+      fleet_name: z.string(),
+      runner: z.string(),
+      target: z.number(),
+      bundle_version: z.string(),
+      slots: z.object({
+        busy: z.number(),
+        free: z.number(),
+        total: z.number(),
+        parked: z.number(),
+      }),
+      workers: z.array(
+        z.object({
+          id: z.string(),
+          issue: z.string(),
+          activity: z.string(),
+        }),
+      ),
+      ready_for_agent: z.number(),
+      last_event_at: z.string(),
+      last_event_age_s: z.number(),
+      silent: z.boolean(),
+    }),
+  ),
+  total_busy: z.number(),
+  total_free: z.number(),
+  total_workers: z.number(),
+});
+
+export type FederatedFleetViewOutput = z.infer<
+  typeof federatedFleetViewOutputSchema
+>;
+
+// ---------------------------------------------------------------------------
 // declaration + enforcement
 // ---------------------------------------------------------------------------
 
 export const fleetStatusContract = contract(fleetStatusOutputSchema);
+export const federatedFleetViewContract = contract(federatedFleetViewOutputSchema);
 export const workerVitalsContract = contract(workerVitalsOutputSchema, {
   input: "fields",
   schema: workerVitalsProjectedOutputSchema,
