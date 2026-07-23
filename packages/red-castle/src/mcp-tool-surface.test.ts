@@ -344,6 +344,13 @@ const SURFACE: ReadonlyArray<{
       "Return the castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) as structured data, using the same collector cores and cache discipline as the command-backed statusLine. Host-side fields (session model/effort, context %, usage quotas) are out of scope.",
     schema: [],
   },
+  {
+    name: "federated_fleet_view",
+    title: "Federated fleet view",
+    description:
+      "Return the aggregated cross-host fleet view: per-host supervisor, slots, workers, queue posture, last-event age, and silent-host markers. Single-host mode returns exactly one host entry and is byte-stable with the local fleet view.",
+    schema: [],
+  },
 ];
 
 describe("aggregated castle MCP tool surface", () => {

@@ -165,6 +165,7 @@ state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 | `monitor` | read | Current workers, history events, and fleet monitor inputs. |
 | `history` | read | Structured castle history records, newest last. |
 | `statusline_aggregate` | read | Castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
+| `federated_fleet_view` | read | Cross-host fleet view aggregated from `fleet.supervisor.heartbeat` singleton events: per-host supervisor, slots, live workers, queue posture, `last_event_at`, `last_event_age_s`, and `silent` marker (age exceeds 300s threshold). Single-host mode returns one entry identical to the local fleet view. |
 
 ### Queue — what is drainable now
 

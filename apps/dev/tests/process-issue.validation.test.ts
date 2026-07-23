@@ -774,6 +774,143 @@ describe("processIssue — visibility-aware default (#1101)", () => {
   });
 });
 
+describe("processIssue — origin:external claim gate (#2603)", () => {
+  it("HOLDS an unapproved origin:external issue as ready-for-human before any work", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["ready-for-agent", "origin:external"],
+      // No /approve-external markers → the issue stays unapproved and is held.
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("blocked");
+    // Parked ready-for-human, ready-for-agent shed, no agent spawn, claim released.
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(
+      trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.remove.includes("ready-for-agent")),
+    ).toBe(true);
+    expect(trace.labelEdits.some((e) => e.add.includes("running"))).toBe(false);
+    expect(trace.released).toEqual([9]);
+    expect(trace.comments.some((c) => /external-origin gate/.test(c.body))).toBe(true);
+    expect(trace.iterLogs.some((l) => /external-origin gate held #9/.test(l))).toBe(true);
+  });
+
+  it("HOLDS when the only /approve-external author lacks write access (public repo)", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["ready-for-agent", "origin:external"],
+      visibility: "public",
+      maintainers: ["maint"],
+      trust: { author: "stranger", readyForAgentActor: "maint" },
+      externalApprovalActors: ["random-drive-by"], // not a maintainer → does not release
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("blocked");
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(
+      trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.remove.includes("ready-for-agent")),
+    ).toBe(true);
+  });
+
+  it("RELEASES an origin:external issue approved by a write-access maintainer", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["ready-for-agent", "origin:external"],
+      visibility: "public",
+      maintainers: ["maint", "maint2"],
+      outcome: "done",
+      feedbackOk: true,
+      // external author, maintainer promoter, and a maintainer /approve-external
+      // vouches for the author on the fail-closed path.
+      trust: { author: "stranger", readyForAgentActor: "maint2" },
+      externalApprovalActors: ["maint"],
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.labelEdits[0]!.add).toEqual(["running"]);
+    expect(trace.runAgentCalls).toHaveLength(1);
+  });
+
+  it("does not fire for a non-external issue (regression guard)", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["ready-for-agent"],
+      outcome: "done",
+      feedbackOk: true,
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.comments.some((c) => /external-origin gate/.test(c.body))).toBe(false);
+    expect(trace.runAgentCalls).toHaveLength(1);
+  });
+});
+
+
+describe("processIssue — lane-aware claim provenance (#2602)", () => {
+  it("resolves the promoter from the lane:go label (a lane:go issue never carries ready-for-agent)", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "maint", readyForAgentActor: "maint" },
+    });
+    await processIssue(deps, input);
+    // The claim reads provenance under the lane label the issue was selected
+    // under, not a hardcoded `ready-for-agent` that a lane:go issue never has.
+    expect(trace.issueTrustCalls).toEqual(["lane:go"]);
+  });
+
+  it("scout lane resolves provenance under lane:scout", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:scout"],
+      laneLabel: "lane:scout",
+      runMode: "scout",
+      outcome: "done",
+      trust: { author: "maint", readyForAgentActor: "maint" },
+    });
+    await processIssue(deps, input);
+    expect(trace.issueTrustCalls).toEqual(["lane:scout"]);
+  });
+
+  it("/afk defaults the promoter label to ready-for-agent (unchanged fleet behaviour)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      trust: { author: "maint", readyForAgentActor: "maint" },
+    });
+    await processIssue(deps, input);
+    expect(trace.issueTrustCalls).toEqual(["ready-for-agent"]);
+  });
+
+  it("PUBLIC repo + fail-closed + lane:go minted by a maintainer → executable", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      visibility: "public",
+      maintainers: ["maint"],
+      outcome: "done",
+      feedbackOk: true,
+      // Provenance the lane-aware resolver returns: the lane:go applier IS the
+      // maintainer minter, so the fail-closed promoter check passes.
+      trust: { author: "maint", readyForAgentActor: "maint" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+  });
+
+  it("PUBLIC repo + fail-closed + lane:go applied by an untrusted actor → still refused", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      visibility: "public",
+      maintainers: ["maint"],
+      trust: { author: "maint", readyForAgentActor: "stranger" },
+    });
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("claim-lost");
+    expect(trace.runAgentCalls).toEqual([]);
+    expect(
+      trace.iterLogs.some((l) => /trust gate refused #9 \[fail-closed\].*promoter/.test(l)),
+    ).toBe(true);
+  });
+});
 
 describe("processIssue — claim sheds stale blocked:* on promote to running (#402)", () => {
   it("removes every blocked:* label the issue carried in the SAME claim edit", async () => {

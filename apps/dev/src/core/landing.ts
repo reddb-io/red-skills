@@ -341,7 +341,11 @@ export type LandingResult =
         // landing aborted BEFORE pushing anything to the remote base. The caller
         // routes this through the existing merge-conflict/validation recovery so
         // an unvalidated or stale-main-broken result is never merged.
-        | "post-merge-gate";
+        | "post-merge-gate"
+        // Land-lock serialization (#2596): another worker held the land-lock past
+        // the wait timeout. This is a BACKOFF signal, not an infra failure — the
+        // caller routes it to self-requeue rather than parking the issue.
+        | "land-lock-timeout";
       locked: boolean;
       /** PR number left open for the CI-aware handoff (`ci-failed` / `ci-pending`). */
       prNumber?: number;
@@ -454,12 +458,7 @@ export async function doLanding(
   if (serialization === "land-lock") {
     release = (await deps.landLock?.acquire()) ?? null;
     if (!release) {
-      return {
-        ok: false,
-        reason: "infra",
-        infraReason: "another worker held the AFK land-lock past the wait timeout",
-        locked,
-      };
+      return { ok: false, reason: "land-lock-timeout", locked };
     }
   }
 
@@ -481,12 +480,7 @@ export async function doLanding(
           if (serialization === "land-lock") {
             tailRelease = (await deps.landLock?.acquire()) ?? null;
             if (!tailRelease) {
-              return {
-                ok: false,
-                reason: "infra",
-                infraReason: "another worker held the AFK land-lock past the wait timeout",
-                locked,
-              };
+              return { ok: false, reason: "land-lock-timeout", locked };
             }
           }
           let completed: LandingResult;

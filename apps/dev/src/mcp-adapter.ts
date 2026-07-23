@@ -7,11 +7,13 @@ import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
+  aggregateFederatedFleetView,
   armPr,
   castleLanePath,
   createCastleLaneWriters,
   createEnginePaths,
   createFileMergeDriverStore,
+  createSingletonEventLane,
   releasePr,
   fleetRegistryPath,
   readCastleHistoryRecords,
@@ -750,6 +752,10 @@ export function createDefaultDevAfkMcpOperations(
             const released = (await this.claimRelease({ issue })) as { conceded?: string[] };
             return released.conceded ?? [];
           },
+          viewBody: async (issue) => (await ghx.issueBody(gh, issue)) ?? "",
+          editBody: async (issue, body) => {
+            await ghx.editBody(gh, issue, body);
+          },
         },
         input,
       );
@@ -1291,6 +1297,12 @@ async function removeDisposableWorktree(root: string, input: WorktreeRemoveInput
  * from the Claude Code statusline stdin payload and are deliberately absent —
  * the tool must not fake them.
  */
+async function readFederatedFleetView(root: string) {
+  const paths = createEnginePaths(join(root, ".red"));
+  const events = await createSingletonEventLane(paths).read().catch(() => []);
+  return aggregateFederatedFleetView(events);
+}
+
 export async function collectStatuslineAggregate(root: string) {
   const repoCtx = {
     root,
@@ -1298,7 +1310,7 @@ export async function collectStatuslineAggregate(root: string) {
     remote: "origin",
   };
 
-  const [project, repoStats, docs, afkBlock, fleetChip, fleet, workers] =
+  const [project, repoStats, docs, afkBlock, fleetChip, fleet, workers, federation] =
     await Promise.all([
       resolveProject(root),
       collectStatuslineRepo(repoCtx),
@@ -1307,6 +1319,7 @@ export async function collectStatuslineAggregate(root: string) {
       collectStatuslineFleet(repoCtx).catch(() => undefined),
       fleetStatus(root, {}).catch(() => null),
       workerVitals(root),
+      readFederatedFleetView(root).catch(() => ({ hosts: [], total_busy: 0, total_free: 0, total_workers: 0 })),
     ]);
 
   return {
@@ -1358,6 +1371,11 @@ export async function collectStatuslineAggregate(root: string) {
       ready_for_human: afkBlock?.human ?? 0,
       cache_age_s: afkBlock?.cacheAgeS ?? null,
     },
+    /** Cross-host federation view: per-host supervisor, slots, workers, queue
+     * posture, last-event age, and silent-host markers. Derived from
+     * fleet.supervisor.heartbeat events in the singleton event lane. Empty
+     * hosts array when no fleet heartbeat events have been written yet. */
+    federation,
   };
 }
 
@@ -1756,6 +1774,7 @@ export function createCastleMcpDependencies(
     respond: (input) => operations.respond(input),
     deadendAudit: () => operations.deadendAudit(),
     statuslineAggregate: () => collectStatuslineAggregate(root),
+    federatedFleetView: () => readFederatedFleetView(root),
     eventsSince: (input) => eventsSinceImpl(root, input),
   };
   return withCachedDeps(baseDeps, new ResidentReadCache());

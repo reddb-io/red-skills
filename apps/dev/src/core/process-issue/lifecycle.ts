@@ -90,6 +90,7 @@ import {
   type TrustProvenance,
   type RepoVisibility,
   type ActorTrustSignals,
+  type ExternalOriginState,
 } from "../trust-gate.js";
 import { getConfig } from "../config.js";
 import type { AfkModelTier, ConfigValues } from "../config.js";
@@ -115,6 +116,7 @@ import {
   LABEL_READY_FOR_REVIEW,
   LABEL_LANDING_MANUAL,
   LABEL_SPEC,
+  LABEL_ORIGIN_EXTERNAL,
 } from "../triage-labels.js";
 import {
   IllegalIssueLifecycleTransitionError,
@@ -138,7 +140,7 @@ import {
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
 import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
-import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 
 function setupFailureExcerpt(log: string | null | undefined): string | undefined {
   const lines = (log ?? "")
@@ -249,14 +251,57 @@ export async function processIssue(
   const trustPolicy = parseTrustPolicy(deps.hooks.config, visibility);
   let provenance: TrustProvenance | undefined;
   if (deps.gh.issueTrust) {
-    provenance = await deps.gh.issueTrust(issue);
+    // Resolve the promoter from the LANE label the issue was claimed under (#2602):
+    // `lane:go` / `lane:scout` issues never carry `ready-for-agent`, so the lane
+    // label's own applier is the promoter analog. For /afk, `laneLabel` is
+    // `ready-for-agent` — unchanged behaviour.
+    provenance = await deps.gh.issueTrust(issue, laneLabel);
+  }
+  const trustLookup = deps.gh.actorTrustSignals
+    ? (login: string) => deps.gh.actorTrustSignals!(login)
+    : async () => ({});
+  // External-origin gate (issue #2603). An `origin:external` issue is HELD until
+  // a maintainer `/approve-external` comment (author resolved through the same
+  // write-access trust resolver) is present — independent of the trust posture.
+  let externalOrigin: ExternalOriginState | undefined;
+  if (labels.includes(LABEL_ORIGIN_EXTERNAL)) {
+    const approvalActors = deps.gh.externalApprovalActors
+      ? await deps.gh.externalApprovalActors(issue)
+      : [];
+    let approver: string | undefined;
+    for (const actor of approvalActors) {
+      const v = await resolveActorTrust(trustPolicy, actor, trustLookup);
+      if (v.executable) {
+        approver = actor;
+        break;
+      }
+    }
+    externalOrigin = { external: true, approved: !!approver, approver };
   }
   const canFailClosed = !!(trustPolicy.failClosed && deps.gh.actorTrustSignals);
-  if ((trustPolicy.enabled || canFailClosed) && provenance) {
-    const signals = deps.gh.actorTrustSignals;
-    const lookup = signals ? (login: string) => signals(login) : async () => ({});
-    const verdict = await evaluateClaimTrust(trustPolicy, provenance, lookup);
+  if ((trustPolicy.enabled || canFailClosed || externalOrigin) && (provenance || externalOrigin)) {
+    const verdict = await evaluateClaimTrust(trustPolicy, provenance ?? {}, trustLookup, externalOrigin);
     if (!verdict.executable) {
+      // An unapproved external-origin HOLD parks the issue as `ready-for-human`
+      // (never claimable), rather than merely un-claiming it.
+      if (verdict.holdForApproval) {
+        await deps.gh.ensureLabel(LABEL_HUMAN);
+        await editIssueLifecycleLabels(deps, issue, labels, [LABEL_READY], [LABEL_HUMAN], "preflight-blocked");
+        await deps.gh.comment(
+          issue,
+          `🤖 /afk external-origin gate: ${verdict.reason}. ` +
+            `A maintainer with write access must comment \`/approve-external\` to release it.`,
+        );
+        deps.appendIterLog(`🤖 /afk external-origin gate held #${issue} for approval: ${verdict.reason}`);
+        await releaseClaim();
+        return {
+          outcome: "blocked",
+          issue,
+          hooksFired,
+          preserved: false,
+          swept: false,
+        };
+      }
       deps.appendIterLog(
         `🤖 /afk trust gate refused #${issue} [${describeTrustPosture(trustPolicy)}]: ${verdict.reason} — not claimed; no worktree/handoff materialised.`,
       );
@@ -1339,6 +1384,9 @@ export async function processIssue(
     }
     if (landing.reason === "ci-failed" || landing.reason === "ci-pending") {
       return await ciBlocked(common, landing.reason, landing.prNumber);
+    }
+    if (landing.reason === "land-lock-timeout") {
+      return await landLockBackoff(common);
     }
     if (landing.reason === "infra") {
       const reason = landing.infraReason ?? "landing infrastructure precondition failed";

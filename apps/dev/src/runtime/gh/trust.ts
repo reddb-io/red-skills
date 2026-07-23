@@ -1,4 +1,4 @@
-import { LABEL_READY } from "../../core/triage-labels.js";
+import { LABEL_READY, EXTERNAL_APPROVAL_MARKER } from "../../core/triage-labels.js";
 import { classifySourceTrust, type SourceTrustLevel } from "../../core/source-trust.js";
 import type { RepoVisibility } from "../../core/trust-gate.js";
 import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
@@ -6,10 +6,18 @@ import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
 export async function issueTrust(
   ctx: GhContext,
   issue: number,
+  promoterLabel: string = LABEL_READY,
 ): Promise<{ author?: string; authorSourceTrust?: SourceTrustLevel; readyForAgentActor?: string }> {
+  // The PROMOTER label is the lane label the issue was selected under (#2602):
+  // `ready-for-agent` for the fleet, `lane:go` / `lane:scout` for the isolated
+  // /go/scout lanes. A lane:go/lane:scout issue never carries `ready-for-agent`
+  // (lane isolation is by design), so resolving the promoter from the lane
+  // label's own `labeled` event is what lets the trust gate see the maintainer
+  // who minted the dispatch — otherwise every /go dies at claim time under any
+  // non-permissive posture.
   const [author, actor] = await Promise.all([
     issueAuthorProfile(ctx, issue),
-    readyForAgentActor(ctx, issue),
+    labelActor(ctx, issue, promoterLabel),
   ]);
   return { author: author.login, authorSourceTrust: author.sourceTrust, readyForAgentActor: actor };
 }
@@ -86,11 +94,13 @@ async function issueAuthorProfileLegacy(
   }
 }
 
-/** Read the login of the actor who applied `ready-for-agent` from the issue
- * timeline (REST `…/issues/{n}/timeline`). Returns the MOST RECENT `labeled`
- * event for the label — a re-applied label reflects the latest promoter.
- * undefined when the read fails or no such event exists. */
-async function readyForAgentActor(ctx: GhContext, issue: number): Promise<string | undefined> {
+/** Read the login of the actor who applied `label` from the issue timeline
+ * (REST `…/issues/{n}/timeline`). Returns the MOST RECENT `labeled` event for
+ * the label — a re-applied label reflects the latest promoter. undefined when
+ * the read fails or no such event exists. `label` is the promoter label the
+ * claim was selected under (`ready-for-agent`, `lane:go`, `lane:scout`), so the
+ * lane label's applier is the promoter analog for the isolated lanes (#2602). */
+async function labelActor(ctx: GhContext, issue: number, label: string): Promise<string | undefined> {
   const r = await runGh(ctx, [
     "api",
     `repos/{owner}/{repo}/issues/${issue}/timeline`,
@@ -108,7 +118,7 @@ async function readyForAgentActor(ctx: GhContext, issue: number): Promise<string
     let actor: string | undefined;
     for (const ev of events) {
       const e = ev as { event?: string; label?: { name?: string }; actor?: { login?: string } };
-      if (e.event === "labeled" && e.label?.name === LABEL_READY && e.actor?.login) {
+      if (e.event === "labeled" && e.label?.name === label && e.actor?.login) {
         actor = String(e.actor.login); // keep the last (most recent) match
       }
     }
@@ -116,6 +126,46 @@ async function readyForAgentActor(ctx: GhContext, issue: number): Promise<string
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Logins of comment authors who posted an `/approve-external` marker on the issue
+ * (issue #2603), de-duped, most-recent-last. A best-effort read: `[]` on any gh
+ * failure so the external-origin gate degrades to "unapproved" (held) rather than
+ * waving an external issue through. The marker must appear as the FIRST token of a
+ * line (a leading command, not merely quoted inside prose the author is discussing).
+ * Trust of each returned login is decided by the caller through `resolveActorTrust`.
+ */
+export async function externalApprovalActors(ctx: GhContext, issue: number): Promise<string[]> {
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"]);
+  if (r.code !== 0) return [];
+  try {
+    const parsed = JSON.parse(r.stdout) as {
+      comments?: Array<{ body?: string; author?: { login?: string } }>;
+    };
+    if (!Array.isArray(parsed.comments)) return [];
+    const seen = new Set<string>();
+    const actors: string[] = [];
+    for (const c of parsed.comments) {
+      const login = c.author?.login ? String(c.author.login) : "";
+      if (!login || !commentBearsApprovalMarker(c.body ?? "")) continue;
+      if (seen.has(login)) continue;
+      seen.add(login);
+      actors.push(login);
+    }
+    return actors;
+  } catch {
+    return [];
+  }
+}
+
+/** True when a comment body carries the `/approve-external` marker as the leading
+ * token of some line — a deliberate command, not the string quoted inside prose. */
+function commentBearsApprovalMarker(body: string): boolean {
+  for (const rawLine of body.split("\n")) {
+    if (rawLine.trim().startsWith(EXTERNAL_APPROVAL_MARKER)) return true;
+  }
+  return false;
 }
 
 /**

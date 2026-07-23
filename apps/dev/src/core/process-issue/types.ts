@@ -134,9 +134,14 @@ export interface ProcessGh {
   listByLabel(label: string): Promise<{ number: number; labels: string[] }[]>;
   issueClosed(n: number): Promise<boolean>;
   issueReference?(issue: number): Promise<{ number: number; title?: string; url?: string } | undefined>;
-  issueTrust?(issue: number): Promise<TrustProvenance>;
+  issueTrust?(issue: number, promoterLabel?: string): Promise<TrustProvenance>;
   repoVisibility?(): Promise<RepoVisibility | undefined>;
   actorTrustSignals?(actor: string): Promise<ActorTrustSignals>;
+  /** Logins of comment authors who posted an `/approve-external` marker on the
+   * issue (issue #2603). Trust of each login is resolved by the caller through
+   * `resolveActorTrust`; this read is unauthenticated of trust — it only finds
+   * the markers. Absent → the external-origin gate treats the issue as unapproved. */
+  externalApprovalActors?(issue: number): Promise<string[]>;
   renderDecisionCard?(issue: number): Promise<void>;
 }
 export interface ProcessClaimLock {

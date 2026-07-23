@@ -31,6 +31,7 @@ const EXPECTED_GH_EXPORTS = [
   "editLabels",
   "ensureLabel",
   "ensureRunnerErrorLabel",
+  "externalApprovalActors",
   "ghAuthenticated",
   "ghInstalled",
   "issueAuthor",

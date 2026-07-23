@@ -15,6 +15,7 @@ import { parseCurrentBlocker, upsertCurrentBlocker } from "../src/core/blocker-s
 import type { AttemptProgressInfo } from "../src/core/execution.js";
 import { installProcessSafety, noopSafetyLogger } from "../src/core/process-safety.js";
 import type { AdversarialReviewFindings } from "../src/core/adversarial-review.js";
+import type { LandLock } from "../src/core/land-lock.js";
 
 export {
   SCOUT_EXIT_PROTOCOL,
@@ -90,6 +91,9 @@ export interface Trace {
   handoffs: Array<{ path: string; content: string }>;
   /** Fresh-branch preparation calls before sandcastle can reuse a worktree. */
   freshWorkerBranchCalls: Array<{ branch: string; baseRef: string; force: boolean }>;
+  /** Promoter labels passed into gh.issueTrust at claim time (#2602): the lane the
+   * claim was selected under, so /go/scout provenance resolves from the lane label. */
+  issueTrustCalls: Array<string | undefined>;
 }
 
 export interface HarnessOptions {
@@ -156,6 +160,10 @@ export interface HarnessOptions {
    * everyone else resolves to determinable-negative signals. When set, the
    * actorTrustSignals port is registered (enabling the fail-closed path). */
   maintainers?: string[];
+  /** Comment authors that gh.externalApprovalActors reports for the issue (#2603).
+   * When set, the port is registered; the claim path trust-resolves each login to
+   * decide whether an `origin:external` issue is released or held. */
+  externalApprovalActors?: string[];
   abortHook?: HookName;
   /** FIX J: when set, a pre_worktree hook command emits this env as the mutated
    * context's `{env:{…}}` slice — proving it threads onto the runAgent input. */
@@ -254,6 +262,10 @@ export interface HarnessOptions {
   liveWorkers?: string[];
   /** When true, cascadeRebase.rebaseAndPush returns ok=false for every branch. */
   cascadeRebaseFail?: boolean;
+  /** Inject a land-lock port into ProcessIssueDeps.landLock (#2596). A
+   * `{ acquire: async () => null }` stub models a permanent hold — the landing
+   * times out and the issue self-requeues. */
+  landLock?: LandLock;
 }
 
 export function harness(opts: HarnessOptions = {}): {
@@ -291,6 +303,7 @@ export function harness(opts: HarnessOptions = {}): {
     pnpmArgs: [],
     handoffs: [],
     freshWorkerBranchCalls: [],
+    issueTrustCalls: [],
   };
 
   const outcome = opts.outcome ?? "done";
@@ -336,7 +349,12 @@ export function harness(opts: HarnessOptions = {}): {
       },
       // Trust-gate provenance port (#621): registered only when the test opts in,
       // so legacy-shaped tests omit it and the gate never fires (permissive).
-      issueTrust: opts.trust ? async () => opts.trust! : undefined,
+      issueTrust: opts.trust
+        ? async (_issue: number, promoterLabel?: string) => {
+            trace.issueTrustCalls.push(promoterLabel);
+            return opts.trust!;
+          }
+        : undefined,
       // Visibility-aware default ports (#1101): registered only when the test opts
       // in, so legacy-shaped tests omit them and the default stays permissive.
       repoVisibility: opts.visibility ? async () => opts.visibility! : undefined,
@@ -345,6 +363,11 @@ export function harness(opts: HarnessOptions = {}): {
             hasWriteAccess: opts.maintainers!.includes(actor),
             inCodeowners: false,
           })
+        : undefined,
+      // External-origin approval markers (#2603): registered only when the test
+      // opts in; absent → an origin:external issue has no approvals and is held.
+      externalApprovalActors: opts.externalApprovalActors
+        ? async () => opts.externalApprovalActors!
         : undefined,
     },
     claimGh: opts.claim
@@ -641,6 +664,7 @@ export function harness(opts: HarnessOptions = {}): {
     removeLandingWorktree: async () => {},
     makeRebaseWorktree: async () => "/rwt",
     removeRebaseWorktree: async () => {},
+    landLock: opts.landLock,
     hooks: {
       config,
       resolveOptions: {
