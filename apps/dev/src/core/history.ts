@@ -167,6 +167,27 @@ function parseHistoryToonl(text: string): HistoryRecord[] {
 }
 
 /**
+ * The re-queue ordinal for one Ticket: `1` on its first run, then `+1` for every
+ * terminal record the ledger already holds for it. A `done` resets the count —
+ * a Ticket that landed and was reopened starts its budget over rather than
+ * inheriting an exhausted one.
+ *
+ * This is what the bounded retry caps in `core/recovery.ts` count (ADR 0103):
+ * caps are automatic-re-queue limits per Ticket, replacing the deleted attempt
+ * ledger's per-attempt-directory ordinal. The ledger is the right source because
+ * it is durable, lane-blind, and already records exactly one row per terminal
+ * exit — the same boundary a re-queue is decided at.
+ */
+export function requeueOrdinal(records: readonly HistoryRecord[], issue: number): number {
+  let terminals = 0;
+  for (const record of records) {
+    if (record.issue !== issue) continue;
+    terminals = record.event === "done" ? 0 : terminals + 1;
+  }
+  return terminals + 1;
+}
+
+/**
  * Buckets `done` events into per-hour counts, oldest → newest. The hour index
  * is `(epoch / 3600 | floor) - fromHour`; indices outside [0, buckets) are
  * dropped. Only `event === "done"` is counted. Mirrors

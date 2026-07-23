@@ -68,25 +68,31 @@ export function buildDiffSection(input: {
   return `${liveLink}local worktree: \`${input.worktreeRel}\`\n\n${input.diffstat}\n`;
 }
 
-/** The attempt-ledger marker file a terminal FAILURE persists into the
- * iteration dir so the NEXT attempt can surface the recorded failure reason. */
+/** The marker files a terminal FAILURE persists into the worker's issue
+ * workspace so an automatic re-queue can carry the failure forward (ADR 0103).
+ * Read back by `core/prev-failure.ts`; there is no attempt level and no ledger. */
 export interface FailureMarkers {
-  /** Legacy marker retained for readers of old attempt dirs; new failures never
-   * write it. */
-  snapshotBranchRef?: string;
-  /** `<iter_dir>/failure.reason` — free-text reason (the envelope summary).
+  /** `<workspace>/failure.reason` — free-text reason (the envelope summary).
    * Omitted when empty. */
   failureReason?: string;
+  /** `<workspace>/envelope.ref` — where the terminal Envelope was posted.
+   * Omitted when the repo is unknown. */
+  envelopeRef?: string;
 }
 
-/** Build the marker-file content map for a terminal failure. Mirrors
- * record_failure_markers: failure.reason carries a single trailing-newline
- * line; snapshot-branch.ref is no longer written. */
-export function buildFailureMarkers(remoteRef: string, reason: string): FailureMarkers {
-  void remoteRef;
+/** Build the marker-file content map for a terminal failure. Each value carries
+ * a single trailing newline; an empty input writes no file. */
+export function buildFailureMarkers(reason: string, envelopeRef?: string): FailureMarkers {
   const markers: FailureMarkers = {};
   if (reason) markers.failureReason = `${reason}\n`;
+  if (envelopeRef) markers.envelopeRef = `${envelopeRef}\n`;
   return markers;
+}
+
+/** The terminal Envelope's location: the issue thread it is posted into.
+ * Empty when the repo is unknown (nothing usable to point the next run at). */
+export function envelopeReference(repo: string | undefined, issue: number): string {
+  return repo ? `https://github.com/${repo}/issues/${issue}` : "";
 }
 
 /** Per-status section bodies the caller resolves before emitting. Each is the
@@ -251,8 +257,8 @@ export interface EmitEnvelopeResult {
  * Orchestrate a single terminal-envelope emission, mirroring emit_envelope:
  *
  *   1. Build the summary line.
- *   2. On a terminal FAILURE: write the failure.reason marker regardless of the
- *      post outcome (it feeds the next attempt, not the issue thread).
+ *   2. On a terminal FAILURE: write the failure.reason + envelope.ref markers
+ *      regardless of the post outcome (they feed the next RUN, not the thread).
  *   3. Compose the per-status sections + body through buildEnvelope.
  *   4. POST via the injected poster.
  *   5. On a successful post: write `envelope.posted:=true` and append the
@@ -281,7 +287,7 @@ export async function emitEnvelope(
   let pushed = false;
   let markers: FailureMarkers = {};
   if (isFailure) {
-    markers = buildFailureMarkers("", summary);
+    markers = buildFailureMarkers(summary, envelopeReference(input.repo, input.issue));
     await deps.writeMarkers(markers);
   }
 

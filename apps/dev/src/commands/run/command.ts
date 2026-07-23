@@ -19,11 +19,6 @@ import {
   type ConflictFinding,
 } from "../../core/merge-conflict-reconcile.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
-import {
-  toMemoryPayload,
-  resolveMemoryCli,
-  type AttemptRecordPayload,
-} from "../../core/attempt-record.js";
 import { isRunner, type Runner } from "../../types/runner.js";
 import { zeroAttemptDispatchFailure } from "../../core/go.js";
 import {
@@ -75,12 +70,6 @@ import {
   type CastleWorkerDrainDeps,
   type HostCapabilityProfile,
 } from "@reddb-io/red-castle/engine";
-import {
-  attemptLedgerContext,
-  formatAttemptContext,
-  highestAttempt,
-  type AttemptDirEntry,
-} from "../../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
@@ -113,7 +102,7 @@ import { HOST_CONFIG_EXIT_CODE } from "../../core/attempt-outcome.js";
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
 import { makeBootReconcileRunner, runReconcileWorker } from "./reconcile.js";
-import { initBootWorkerState, nextAttemptSync, openRunnerCircuit, recordBootError, runnerCircuitOpen } from "./state.js";
+import { initBootWorkerState, openRunnerCircuit, recordBootError, requeueOrdinalSync, runnerCircuitOpen } from "./state.js";
 
 export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
@@ -424,10 +413,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
       if (bootStatePath) {
         rmSync(dirname(bootStatePath), { recursive: true, force: true });
       }
-      const recoveryOrdinal = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);
-      // Long-running workers key workspaces by workerId+issueId. The retry
-      // ordinal remains separate policy data for per-class recovery caps and
-      // prior-failure prompt context; it no longer shapes the directory name.
+      const recoveryOrdinal = requeueOrdinalSync(paths.historyPath, candidate.number);
+      // Long-running workers key workspaces by workerId+issueId. The re-queue
+      // ordinal remains separate policy data for the per-class recovery caps; it
+      // is counted off the history ledger, never off a directory name (ADR 0103).
       const attempt = 1;
       const attemptDir = buildWorkerAttemptPath(c.issueTemplate.tmpDir, c.workerId, candidate.number, attempt);
       // Point the session-scoped envelope/iter-log closures at this attempt.

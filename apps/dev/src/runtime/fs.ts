@@ -19,6 +19,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
 import type { FailureMarkers } from "../core/envelope-emit.js";
+import { ENVELOPE_REF_FILE, FAILURE_REASON_FILE } from "../core/prev-failure.js";
 import type { OrphanDir, StaleClaimDir } from "../core/boot.js";
 import { readState, updateState } from "../core/state.js";
 import { allWorkersRoots } from "../core/worker-paths.js";
@@ -213,13 +214,17 @@ export async function appendLine(path: string, line: string): Promise<void> {
   await appendFile(path, `${line}\n`, "utf8");
 }
 
-/** Persist the terminal failure marker files into an iteration dir
- * (record_failure_markers): failure.reason. Each value already carries its
- * trailing newline; an absent field writes no file. */
+/** Persist the terminal failure marker files into the worker's issue workspace:
+ * failure.reason and envelope.ref, the pair `core/prev-failure.ts` reads back on
+ * an automatic re-queue (ADR 0103). Each value already carries its trailing
+ * newline; an absent field writes no file. */
 export async function writeFailureMarkers(attemptDir: string, markers: FailureMarkers): Promise<void> {
   await mkdir(attemptDir, { recursive: true });
   if (markers.failureReason !== undefined) {
-    await writeFile(join(attemptDir, "failure.reason"), markers.failureReason, "utf8");
+    await writeFile(join(attemptDir, FAILURE_REASON_FILE), markers.failureReason, "utf8");
+  }
+  if (markers.envelopeRef !== undefined) {
+    await writeFile(join(attemptDir, ENVELOPE_REF_FILE), markers.envelopeRef, "utf8");
   }
 }
 

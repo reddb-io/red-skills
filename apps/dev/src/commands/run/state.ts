@@ -18,11 +18,6 @@ import {
   type ConflictFinding,
 } from "../../core/merge-conflict-reconcile.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
-import {
-  toMemoryPayload,
-  resolveMemoryCli,
-  type AttemptRecordPayload,
-} from "../../core/attempt-record.js";
 import { isRunner, type Runner } from "../../types/runner.js";
 import {
   afkPaths,
@@ -72,8 +67,7 @@ import {
   type CastleSessionHookName,
   type CastleWorkerDrainDeps,
 } from "@reddb-io/red-castle/engine";
-import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
-import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
+import { parseHistoryLines, requeueOrdinal } from "../../core/history.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { isLivePid } from "../../runtime/kill-tree.js";
@@ -293,31 +287,17 @@ export function readCapturedWorktreePath(attemptDir: string): string | undefined
   }
 }
 
-/** Synchronous next-attempt resolver over the attempt-ledger's pure core, so it
- * can run inside the synchronous `buildProcessInput`. Namespace-blind: walks
- * every worker-lane namespace (`workers`, `go-workers`, `scout-workers`) with
- * readdirSync and feeds the pure `highestAttempt`, so the same issue retried
- * across lanes never reuses an attempt number. The next attempt is the highest
- * existing attempt for the issue + 1 (1 when none). Junk dirs never bump the
- * counter; a missing namespace tree contributes nothing. */
-export function nextAttemptSync(tmpDir: string, issue: number): number {
-  const entries: AttemptDirEntry[] = [];
-  for (const namespace of WORKER_NAMESPACES) {
-    let workers: string[];
-    try {
-      workers = readdirSync(join(tmpDir, namespace));
-    } catch {
-      continue; // namespace dir absent → no attempts from this lane
-    }
-    for (const worker of workers) {
-      if (!isValidWorkerId(worker)) continue;
-      try {
-        entries.push({ worker, basenames: readdirSync(join(tmpDir, namespace, worker)) });
-      } catch {
-        // not a directory / unreadable
-      }
-    }
+/** Synchronous re-queue-ordinal resolver over the history ledger's pure core, so
+ * it can run inside the synchronous `buildProcessInput`. The ledger holds one
+ * durable, lane-blind row per terminal exit, which is what the bounded retry
+ * caps count now that the attempt ledger is gone (ADR 0103). An unreadable or
+ * absent ledger degrades to `1` — a missing history must never inflate a
+ * Ticket's ordinal into an instant escalation. */
+export function requeueOrdinalSync(historyPath: string | undefined, issue: number): number {
+  if (!historyPath) return 1;
+  try {
+    return requeueOrdinal(parseHistoryLines(readFileSync(historyPath, "utf8")), issue);
+  } catch {
+    return 1;
   }
-  const best = highestAttempt(tmpDir, issue, entries);
-  return best ? best.attempt + 1 : 1;
 }

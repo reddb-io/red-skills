@@ -251,7 +251,7 @@ export interface SessionIssueTemplate {
 }
 
 /** A function the caller injects to build the full ProcessIssueInput for one
- * queued candidate. Keeps the attempt-ledger / attempt-dir / base-input wiring
+ * queued candidate. Keeps the workspace-dir / ordinal / base-input wiring
  * out of session.ts (that lives in the CLI), so the loop stays pure sequencing. */
 export type BuildProcessInput = (
   candidate: IssueCandidate,
