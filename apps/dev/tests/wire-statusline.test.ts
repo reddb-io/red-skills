@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createCastleLaneWriters } from "@reddb-io/red-castle/engine";
+import { spawn } from "node:child_process";
 import {
   afkPaths,
   appendCastleHistoryRecord,
@@ -686,6 +687,45 @@ describe("resolveStatuslineCacheTtl (#1217)", () => {
 // ---------------------------------------------------------------------------
 
 describe("collectMonitorInputs — layout discovery (#1029)", () => {
+  it("keeps a pid-live wedged worker visible with the shared stalled verdict (#2480)", async () => {
+    const root = scratch();
+    const leaf = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      expect(leaf.pid).toBeTypeOf("number");
+      const attemptDir = join(root, ".red", "tmp", "workers", "wWEDGE", "2480");
+      mkdirSync(attemptDir, { recursive: true });
+      writeFileSync(
+        join(attemptDir, "afk.state.toon"),
+        JSON.stringify({
+          worker_id: "wWEDGE",
+          pid: leaf.pid,
+          runner: "codex",
+          current: {
+            number: 2480,
+            phase: "gate",
+            activity: "landing",
+            started_at: new Date().toISOString(),
+          },
+        }),
+      );
+
+      const workers = await collectStatuslineWorkers({ root, repo: "", remote: "origin" });
+      expect(workers).toHaveLength(1);
+      expect(workers[0]).toMatchObject({
+        pidLive: true,
+        liveness: "dead",
+        livenessVerdict: {
+          status: "stalled",
+          laneFresh: false,
+          liveDescendants: false,
+        },
+      });
+    } finally {
+      leaf.kill();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("discovers a sandcastle-layout worker (state at attemptDir/afk.state.toon, worktree absent pre-heartbeat)", async () => {
     const root = scratch();
     try {

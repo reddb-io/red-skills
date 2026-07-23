@@ -208,6 +208,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(t).toContain("iss=17"); // the ISSUE NUMBER (current.number), not a done/total counter
     expect(t).toContain("impl"); // bare stage (no activity: prefix, no #<n>)
     expect(t).toContain("00:05:00"); // elapsed REQUIRED
+    expect(t).toContain("hb=?"); // legacy fixtures without an evaluator verdict stay explicit
     expect(t).toContain("loc=+12 -3"); // diff as loc= k=v
     expect(t).toContain("tks=—"); // claude has no live usage stream yet
     expect(t).toContain("tls=0 rsn=0 txt=0"); // vitals as individual 3-letter k=v pairs
@@ -226,14 +227,55 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(t).not.toContain("stats="); // vitals are not a nested blob
   });
 
-  it("makes EVERY k=v key on the statusline worker line exactly 3 letters (house rule, issue #1176)", () => {
+  it("keeps legacy k=v keys at 3 letters and the canonical proof-of-life key as hb (#1176, #2480)", () => {
     const t = stripAnsi(renderWorkerLine(worker(), NOW));
     // Collect every key that precedes an `=` and assert each is 3 chars.
     const keys = [...t.matchAll(/([A-Za-z]+)=/g)].map((m) => m[1]);
     expect(keys.length).toBeGreaterThan(0);
-    for (const key of keys) expect(key).toHaveLength(3);
+    for (const key of keys) {
+      if (key === "hb") expect(key).toHaveLength(2);
+      else expect(key).toHaveLength(3);
+    }
     // The concrete set present.
-    expect(keys).toEqual(expect.arrayContaining(["run", "iss", "loc", "tks", "tls", "rsn", "txt"]));
+    expect(keys).toEqual(expect.arrayContaining(["run", "iss", "hb", "loc", "tks", "tls", "rsn", "txt"]));
+  });
+
+  it("renders evaluator lane age and makes active, quiet-with-descendant, and wedged workers distinct (#2480)", () => {
+    const active = worker({
+      livenessVerdict: {
+        status: "alive",
+        laneFresh: true,
+        laneAgeMs: 3_000,
+        crossCheckArmed: true,
+        reason: "lane fresh",
+      },
+    });
+    const quiet = worker({
+      livenessVerdict: {
+        status: "alive",
+        laneFresh: false,
+        laneAgeMs: 11 * 60_000,
+        crossCheckArmed: true,
+        liveDescendants: true,
+        reason: "lane idle but live descendants",
+      },
+    });
+    const wedged = worker({
+      live: false,
+      livenessVerdict: {
+        status: "stalled",
+        laneFresh: false,
+        laneAgeMs: 11 * 60_000,
+        crossCheckArmed: true,
+        liveDescendants: false,
+        reason: "lane idle and no live descendants",
+      },
+    });
+
+    expect(stripAnsi(renderWorkerLine(active, NOW))).toContain("hb=3s");
+    expect(stripAnsi(renderWorkerLine(quiet, NOW))).toContain("hb=~11m+");
+    expect(stripAnsi(renderWorkerLine(wedged, NOW))).toContain("hb=!11m");
+    expect(stripAnsi(renderWorkerLine(quiet, NOW, "short"))).toContain("hb=~11m+");
   });
 
   it("renders org=<afk|go> (issue #1219): the stamped origin, defaulting to afk when unstamped", () => {
