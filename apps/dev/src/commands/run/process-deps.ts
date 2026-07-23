@@ -320,9 +320,9 @@ export function buildProcessDeps(
       // Repository visibility (#1101): folds into the trust policy so a PUBLIC
       // repo with no allowlist fails closed while a private one stays permissive.
       repoVisibility: () => ghx.repoVisibility(ghCtx),
-      // Dynamic-base trust signals (write-access / CODEOWNERS) for the fail-closed
-      // default's author + promoter maintainer check (#1101, reusing #747).
+      // Dynamic-base trust signals (write-access / CODEOWNERS) for the fail-closed author + promoter check (#1101, reusing #747).
       actorTrustSignals: (actor) => ghx.actorTrustSignals(ghCtx, actor),
+      externalApprovalActors: (issue) => ghx.externalApprovalActors(ghCtx, issue), // /approve-external authors, trust-resolved on claim (#2603)
       // HITL decision card (#935, S11a): post/update the card on escalation.
       // Best-effort: errors are caught in routeRecovery so they never block
       // the recovery path. Runs in the worktree root so gh resolves the repo.

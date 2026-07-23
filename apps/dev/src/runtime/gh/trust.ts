@@ -1,4 +1,4 @@
-import { LABEL_READY } from "../../core/triage-labels.js";
+import { LABEL_READY, EXTERNAL_APPROVAL_MARKER } from "../../core/triage-labels.js";
 import { classifySourceTrust, type SourceTrustLevel } from "../../core/source-trust.js";
 import type { RepoVisibility } from "../../core/trust-gate.js";
 import { apiPath, repoArgs, runGh, type GhContext } from "./common.js";
@@ -126,6 +126,46 @@ async function labelActor(ctx: GhContext, issue: number, label: string): Promise
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Logins of comment authors who posted an `/approve-external` marker on the issue
+ * (issue #2603), de-duped, most-recent-last. A best-effort read: `[]` on any gh
+ * failure so the external-origin gate degrades to "unapproved" (held) rather than
+ * waving an external issue through. The marker must appear as the FIRST token of a
+ * line (a leading command, not merely quoted inside prose the author is discussing).
+ * Trust of each returned login is decided by the caller through `resolveActorTrust`.
+ */
+export async function externalApprovalActors(ctx: GhContext, issue: number): Promise<string[]> {
+  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "comments"]);
+  if (r.code !== 0) return [];
+  try {
+    const parsed = JSON.parse(r.stdout) as {
+      comments?: Array<{ body?: string; author?: { login?: string } }>;
+    };
+    if (!Array.isArray(parsed.comments)) return [];
+    const seen = new Set<string>();
+    const actors: string[] = [];
+    for (const c of parsed.comments) {
+      const login = c.author?.login ? String(c.author.login) : "";
+      if (!login || !commentBearsApprovalMarker(c.body ?? "")) continue;
+      if (seen.has(login)) continue;
+      seen.add(login);
+      actors.push(login);
+    }
+    return actors;
+  } catch {
+    return [];
+  }
+}
+
+/** True when a comment body carries the `/approve-external` marker as the leading
+ * token of some line — a deliberate command, not the string quoted inside prose. */
+function commentBearsApprovalMarker(body: string): boolean {
+  for (const rawLine of body.split("\n")) {
+    if (rawLine.trim().startsWith(EXTERNAL_APPROVAL_MARKER)) return true;
+  }
+  return false;
 }
 
 /**
