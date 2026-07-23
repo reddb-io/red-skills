@@ -24,6 +24,7 @@ const KEY = "\x1b[38;2;255;214;214m";
 const DIM = "\x1b[38;2;201;150;158m";
 const GREEN = "\x1b[38;2;96;214;128m";
 const RED = "\x1b[38;2;255;95;95m";
+const YELLOW = "\x1b[38;2;240;200;120m";
 const BOLD = "\x1b[1m";
 const RESET = "\x1b[0m";
 
@@ -191,6 +192,67 @@ describe("statusline style — header line", () => {
 });
 
 describe("statusline style — terse per-worker line (issue #1175)", () => {
+  it.each([
+    ["setup", "▶░░░░"],
+    ["coding", "█▶░░░"],
+    ["validating", "██▶░░"],
+    ["merging", "███▶░"],
+    ["done", "█████"],
+  ])("renders the five-cell lifecycle bar for the %s macro phase", (phase, expected) => {
+    const w = worker({
+      state: {
+        ...worker().state,
+        current: { ...worker().state.current, phase },
+      },
+    });
+
+    expect(stripAnsi(renderWorkerLine(w, NOW)).match(/[█▶░]{5}/)?.[0]).toBe(expected);
+  });
+
+  it("falls back to setup for an unknown legacy phase without throwing", () => {
+    const w = worker({
+      state: {
+        ...worker().state,
+        current: { ...worker().state.current, phase: "legacy-phase" },
+      },
+    });
+
+    expect(stripAnsi(renderWorkerLine(w, NOW)).match(/[█▶░]{5}/)?.[0]).toBe("▶░░░░");
+  });
+
+  it("colors completed, current, and future lifecycle cells green, yellow, and dim", () => {
+    const validating = worker({
+      state: {
+        ...worker().state,
+        current: { ...worker().state.current, phase: "validating" },
+      },
+    });
+    const done = worker({
+      state: {
+        ...worker().state,
+        current: { ...worker().state.current, phase: "done" },
+      },
+    });
+
+    expect(renderWorkerLine(validating, NOW)).toContain(`${GREEN}██${YELLOW}▶${DIM}░░${SOFT}`);
+    expect(renderWorkerLine(done, NOW)).toContain(`${GREEN}█████${SOFT}`);
+  });
+
+  it.each([
+    ["parked", { blocked: 1, failed: 0 }],
+    ["failed", { blocked: 0, failed: 1 }],
+  ])("colors the current lifecycle cell red for a %s worker", (_state, counts) => {
+    const w = worker({
+      state: {
+        ...worker().state,
+        ...counts,
+        current: { ...worker().state.current, phase: "validating" },
+      },
+    });
+
+    expect(renderWorkerLine(w, NOW)).toContain(`${GREEN}██${RED}▶${DIM}░░${SOFT}`);
+  });
+
   it("renders the terse colored k=v line: bold-red wID, k=v tokens, iss=number, bare stage, elapsed, loc, tks, individual vitals", () => {
     const line = renderWorkerLine(worker(), NOW);
     expect(line.endsWith(RESET)).toBe(true);
@@ -302,6 +364,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     const t = stripAnsi(renderWorkerLine(worker(), NOW, "short"));
     expect(t).toContain("w1");
     expect(t).toContain("iss=17");
+    expect(t.match(/[█▶░]{5}/)?.[0]).toBe("▶░░░░");
     expect(t).toContain("impl");
     expect(t).toContain("00:05:00");
     expect(t).not.toContain("run=");
@@ -333,6 +396,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
       expect(t).toContain("wLAND");
       expect(t).toContain("org=landing");
       expect(t).toContain("iss=1408");
+      expect(t.match(/[█▶░]{5}/)?.[0]).toBe("███▶░");
       expect(t).toContain(phase);
       expect(t).toContain("00:07:12");
       expect(t).not.toContain("loc=");
@@ -462,6 +526,18 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
 });
 
 describe("statusline style — full themed assembly", () => {
+  it("places the lifecycle bar between iss= and phase·activity in aligned worker rows", () => {
+    const w = worker({
+      state: {
+        ...worker().state,
+        current: { ...worker().state.current, phase: "validating" },
+      },
+    });
+    const row = stripAnsi(styleStatusline(input, { workers: [w], now: NOW }).split("\n")[1]);
+
+    expect(row).toContain("iss=17  ██▶░░  validating·impl");
+  });
+
   it("emits the header row plus one row per live worker, each reset-terminated", () => {
     const out = styleStatusline(input, { workers: [worker(), worker({ state: { ...worker().state, worker_id: "w2", current: { ...worker().state.current, number: 20 } } })], now: NOW });
     const rows = out.split("\n");
