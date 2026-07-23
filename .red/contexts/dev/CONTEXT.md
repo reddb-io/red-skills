@@ -26,6 +26,18 @@ _Avoid_: loose label, tag bucket
 The operator-facing set of non-Spec **Tickets** that need human decision resolution, selected by `ready-for-human`.
 _Avoid_: human backlog, HITL backlog
 
+**Quarantine**:
+An issue-local AFK safety hold (`quarantine` with `ready-for-agent` removed) applied when a boot probe finds state that requires judgment, or when the **Heal ledger** refuses a third repair in 24 hours. The probe appends its diagnosis to the Ticket body; healthy siblings keep draining.
+_Avoid_: global probe halt, needs-triage fallback, test quarantine
+
+**Issue curator**:
+The castle resident's periodic reconciliation owner for **Quarantine**. It re-runs issue coherence, restores `ready-for-agent` when the defect dissolves, and parks `ready-for-human` for **HITL resolution** after three failed re-checks.
+_Avoid_: supervisor sweep, manual quarantine cleanup
+
+**Heal ledger**:
+Durable per-Ticket repair history in the castle **State tier**. It permits at most two mechanically provable heals per rolling 24-hour window; the third repair request becomes **Quarantine** with the history included in the diagnosis.
+_Avoid_: retry counter, attempt ledger
+
 **HITL resolution**:
 A maintainer-led session that resolves the human decision pending on an **Issue** and, when delegation becomes safe, moves it to `ready-for-agent` with an updated `## Agent brief`.
 _Avoid_: manual implementation, human fix session
