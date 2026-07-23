@@ -49,6 +49,9 @@ export interface TrackerPort {
   listOpenIssuesByLabel(label: string): Promise<TrackerIssue[]>;
   isIssueClosed(issue: number): Promise<boolean>;
   editIssueLabels(issue: number, mutation: TrackerLabelMutation): Promise<void>;
+  /** Replace an issue body while preserving the tracker abstraction. Optional
+   * for read-only/legacy adapters; the quarantine curator requires it. */
+  editIssueBody?(issue: number, body: string): Promise<void>;
   commentOnIssue(issue: number, body: string): Promise<void>;
   closeIssue(issue: number): Promise<void>;
   issueReference?(issue: number): Promise<TrackerIssueReference | undefined>;

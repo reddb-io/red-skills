@@ -15,7 +15,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
 import {
   deliveryMatchesPr,
   deliveryMatchesRun,
@@ -120,6 +120,17 @@ async function fakeWebhookGhMissing(root: string): Promise<string> {
       "exit 1",
       "",
     ].join("\n"),
+    "utf8",
+  );
+  await chmod(script, 0o755);
+  return script;
+}
+
+async function fakeWebhookGhMalformed(root: string): Promise<string> {
+  const script = join(root, "gh-malformed");
+  await writeFile(
+    script,
+    "#!/usr/bin/env node\nprocess.stdout.write('not-json\\n');\nsetTimeout(() => {}, 20);\n",
     "utf8",
   );
   await chmod(script, 0o755);
@@ -242,6 +253,29 @@ describe("WebhookForwarder", () => {
     abort.abort();
 
     expect(modeChanges).toEqual(["webhook"]);
+  });
+
+  it("reports and drops malformed delivery lines", async () => {
+    const root = await tempRoot();
+    const ghBin = await fakeWebhookGhMalformed(root);
+    const abort = new AbortController();
+    const forwarder = new WebhookForwarder({
+      cwd: root,
+      cancelSignal: abort.signal,
+      ghBin,
+    });
+    const malformed: string[] = [];
+    const deliveries: WebhookDelivery[] = [];
+    forwarder.on("malformed-delivery", (line: string) => malformed.push(line));
+    forwarder.on("delivery", (delivery: WebhookDelivery) => deliveries.push(delivery));
+
+    forwarder.start();
+
+    await vi.waitFor(() => expect(malformed).toEqual(["not-json"]));
+    expect(deliveries).toEqual([]);
+    expect(forwarder.mode).toBe("polling");
+    await forwarder.stop();
+    abort.abort();
   });
 
   it("stays in polling mode when gh webhook extension is missing", async () => {

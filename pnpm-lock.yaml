@@ -310,6 +310,9 @@ importers:
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
+      '@reddb-io/red-castle':
+        specifier: workspace:*
+        version: link:../../packages/red-castle
       '@reddb-io/sdk':
         specifier: 1.23.1
         version: 1.23.1

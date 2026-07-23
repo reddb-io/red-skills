@@ -38,7 +38,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
 - **A bug you can reproduce or diagnose now** -> `/diagnose`; if the user is
   only reporting a bug for later, use `/report-bug`.
 - **A parked human decision** -> `/hitl`; if the blocker is resolved and the
-  Ticket only needs queue promotion, use `/retake`.
+  Ticket only needs queue promotion, use `/retake`. A `quarantine` Ticket is
+  still owned by the castle curator; route it to `/hitl` only after the bounded
+  curator re-checks have changed it to `ready-for-human`.
 - **A manual implementation slice** -> `/implement`, using `/tdd` for the build
   loop and `/code-review` before handing the branch to `/retake`.
 - **Validation or visible confirmation** -> `/verify`; for browser-visible state,

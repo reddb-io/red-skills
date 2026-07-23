@@ -304,16 +304,16 @@ describe("statusline count cache write-through", () => {
       writeFileSync(cachePath, JSON.stringify({ queue: 4, human: 2, ts: 100 }), "utf8");
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-agent"], ["running"], 200)).toBe(true);
-      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 2, ts: 200 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 2, quarantine: 0, ts: 200 });
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["running"], ["ready-for-human", "blocked:validation"], 300)).toBe(true);
-      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 3, ts: 300 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 3, human: 3, quarantine: 0, ts: 300 });
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-human", "blocked:validation"], ["ready-for-agent"], 400)).toBe(true);
-      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 2, ts: 400 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 2, quarantine: 0, ts: 400 });
 
       expect(applyStatuslineCountCacheLabelDelta(cachePath, ["ready-for-human"], [], 500)).toBe(true);
-      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 1, ts: 500 });
+      expect(readToonCache(cachePath)).toEqual({ queue: 4, human: 1, quarantine: 0, ts: 500 });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

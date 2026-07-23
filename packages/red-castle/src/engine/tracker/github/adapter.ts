@@ -109,6 +109,9 @@ export function createGitHubTrackerAdapter(
       appendLabelArgs(args, "--add-label", mutation.add);
       await gh(withRepo(args));
     },
+    async editIssueBody(issue, body) {
+      await gh(withRepo(["issue", "edit", String(issue), "--body", body]));
+    },
     async commentOnIssue(issue, body) {
       await gh(withRepo(["issue", "comment", String(issue), "--body", body]));
     },
