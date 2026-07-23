@@ -106,6 +106,14 @@ export interface DeadendFinding {
   readonly subject: string;
   /** Human-readable evidence of why it is stuck. */
   readonly detail: string;
+  /**
+   * Numeric target for mechanical healing: the issue or PR number the sanctioned
+   * core should act on. Present for every mechanically-healable class; absent for
+   * non-mechanical ones (`human_queue_age_outlier`, `stale_worktree`).
+   * For `red_pr_dead_owner` this is the Ticket number (not the PR number) since
+   * the heal action requeues the Ticket.
+   */
+  readonly healTarget?: number;
 }
 
 /** The per-class roll-up the report always emits, even at count 0. */
@@ -168,6 +176,7 @@ function danglingClaims(inputs: DeadendAuditInputs, live: ReadonlySet<string>): 
       cure: CURE_BY_CLASS.dangling_claim,
       subject: `#${claim.issue}`,
       detail: `claim held by dead worker ${claim.worker}`,
+      healTarget: claim.issue,
     });
   }
   return findings;
@@ -184,6 +193,9 @@ function redPrsWithDeadOwners(inputs: DeadendAuditInputs, live: ReadonlySet<stri
       cure: CURE_BY_CLASS.red_pr_dead_owner,
       subject: `PR #${pr.number}`,
       detail: `failing checks with dead owner ${pr.owner}`,
+      // healTarget is the Ticket to requeue, not the PR; absent when the PR has
+      // no linked Ticket so the heal module safely skips it.
+      healTarget: pr.issue,
     });
   }
   return findings;
@@ -210,6 +222,7 @@ function supersededPrs(inputs: DeadendAuditInputs): DeadendFinding[] {
         cure: CURE_BY_CLASS.superseded_pr,
         subject: `PR #${pr.number}`,
         detail: `superseded by PR #${current.number} on Ticket #${issue}`,
+        healTarget: pr.number,
       });
     }
   }
@@ -226,6 +239,7 @@ function activeCurrentBlockers(inputs: DeadendAuditInputs): DeadendFinding[] {
       cure: CURE_BY_CLASS.active_current_blocker,
       subject: `#${issue.number}`,
       detail: "ready-for-agent Ticket carries an active Current blocker",
+      healTarget: issue.number,
     });
   }
   return findings;
@@ -244,6 +258,7 @@ function dependencyAllClosed(inputs: DeadendAuditInputs): DeadendFinding[] {
       cure: CURE_BY_CLASS.dependency_all_closed,
       subject: `#${issue.number}`,
       detail: `blocked:dependency with all req targets closed (${reqs.map((n) => `#${n}`).join(", ")})`,
+      healTarget: issue.number,
     });
   }
   return findings;
