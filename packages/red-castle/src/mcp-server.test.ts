@@ -192,6 +192,20 @@ describe("castle MCP tools", () => {
     ]);
   });
 
+  it("forwards explicit force on fleet_stop hard teardown (#2472)", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await tools
+      .find((tool) => tool.name === "fleet_stop")!
+      .invoke({ fleet: "codex", force: true });
+
+    expect(d.fleetStop).toHaveBeenCalledWith({
+      name: "codex",
+      force: true,
+    });
+  });
+
   it("dispatches and stops workers through mutating worker tools", async () => {
     const d = deps();
     const tools = createCastleMcpTools(d);
