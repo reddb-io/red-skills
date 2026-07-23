@@ -157,6 +157,9 @@ export interface SupervisorGh {
     ghOk: boolean;
     stillRunning: boolean;
     envelopePosted: boolean;
+    /** The issue's current labels, when the impl fetched them — enables the
+     * death-sweep's atomic transition planning (#2526). */
+    labels?: string[];
   }>;
 }
 
@@ -330,6 +333,13 @@ export interface SupervisorDeps {
    * built-in cap) when absent, so tests can omit it.
    */
   recoveryEnv?: RecoveryEnv;
+  /**
+   * Optional ADR 0122 heal ledger (castle engine store). When present, the
+   * death-sweep consults it before re-queueing a dead worker's issue: the 3rd
+   * heal of the same issue in the window quarantines instead of retrying, so
+   * an issue that keeps killing workers surfaces as a signal (#2526).
+   */
+  healLedger?: import("@reddb-io/red-castle/engine").HealLedgerStore;
   /**
    * Optional liveness sink: one line per supervise tick (the CLI appends it to
    * supervisor.log.toonl). Makes a healthy fleet's heartbeat — and a wedged one's
