@@ -108,7 +108,9 @@ Capability references registered by owner:
 `castle` MCP (the canonical castle interface) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
-`plugins/dev/skills/engineering/afk/docs/CONFIG.md`.
+`plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+territory scoping (`tag:<value>` labels, `/afk --tags`/`--user`) ->
+`plugins/dev/skills/engineering/red-setup/triage-labels.md`.
 
 Troubleshooting references registered by owner:
 `/afk` -> `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md`;
