@@ -36,7 +36,7 @@ function processGroupAlive(pgid: number): boolean {
   }
 }
 
-async function terminateProcessGroup(pgid: number): Promise<void> {
+async function terminateProcessGroup(pgid: number): Promise<boolean> {
   const signal = (value: NodeJS.Signals): void => {
     try {
       process.kill(-pgid, value);
@@ -46,14 +46,15 @@ async function terminateProcessGroup(pgid: number): Promise<void> {
   };
   signal("SIGTERM");
   for (let i = 0; i < PROCESS_GROUP_GRACE_TRIES; i += 1) {
-    if (!processGroupAlive(pgid)) return;
+    if (!processGroupAlive(pgid)) return true;
     await sleep(PROCESS_GROUP_POLL_MS);
   }
   signal("SIGKILL");
   for (let i = 0; i < PROCESS_GROUP_KILL_TRIES; i += 1) {
-    if (!processGroupAlive(pgid)) return;
+    if (!processGroupAlive(pgid)) return true;
     await sleep(PROCESS_GROUP_POLL_MS);
   }
+  return !processGroupAlive(pgid);
 }
 
 export interface NoSandboxOptions {
@@ -162,13 +163,13 @@ export const noSandbox = (options?: NoSandboxOptions): NoSandboxProvider => ({
             windowsVerbatimArguments: isWindows,
             detached: !isWindows,
           });
-          let termination: Promise<void> | undefined;
-          const terminate = (): Promise<void> => {
+          let termination: Promise<boolean> | undefined;
+          const terminate = (): Promise<boolean> => {
             if (termination) return termination;
-            if (proc.pid === undefined) return Promise.resolve();
+            if (proc.pid === undefined) return Promise.resolve(true);
             if (isWindows) {
               proc.kill("SIGKILL");
-              return Promise.resolve();
+              return Promise.resolve(true);
             }
             termination = terminateProcessGroup(proc.pid);
             return termination;
@@ -180,7 +181,11 @@ export const noSandbox = (options?: NoSandboxOptions): NoSandboxProvider => ({
           if (opts?.signal?.aborted) onAbort();
           const settle = async (code: number | null, result: Omit<ExecResult, "exitCode">): Promise<void> => {
             opts?.signal?.removeEventListener("abort", onAbort);
-            if (termination) await termination;
+            if (code === null && !termination) void terminate();
+            if (termination && !(await termination)) {
+              reject(new Error("exec failed: process-group cleanup could not be confirmed"));
+              return;
+            }
             resolve({ ...result, exitCode: code ?? (opts?.signal?.aborted ? 124 : 0) });
           };
 
