@@ -1,8 +1,8 @@
 // runtime/exec.ts — the single real-process boundary.
 //
 // Every gh/git/pnpm closure assembled in this runtime/ tree ultimately routes
-// through `execTool`, a thin promisified wrapper over node:child_process
-// execFile. It NEVER throws on a non-zero exit (the orchestrators decide what a
+// through `execTool`, a bounded wrapper over node:child_process spawn. It NEVER
+// throws on a non-zero exit (the orchestrators decide what a
 // non-zero code means); it resolves with {code,stdout,stderr} so callers can
 // branch on the code. The thin `git` / `gh` / `pnpm` helpers fix the command
 // head so call sites read as argv arrays.
@@ -96,9 +96,8 @@ export const MAXBUFFER_EXIT_CODE = 126;
 
 /**
  * Exit code reported for a command killed by the exec timeout or an external
- * signal. Node's execFile leaves `error.code` null in that case (the numeric
- * exit slot is empty when the child died from a signal), so without this the
- * old `typeof code === "number" ? code : 0` fallthrough read a killed/timed-out
+ * signal. Node leaves the numeric exit slot empty when a child dies from a
+ * signal, so without this the old fallthrough read a killed/timed-out
  * command as success — a slow model classification, or a future timed-out land,
  * silently passing (PRD #567). 124 mirrors GNU `timeout(1)`'s killed-process
  * code so any caller branching on `code !== 0` reads the kill as a failure.
