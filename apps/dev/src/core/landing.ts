@@ -410,7 +410,14 @@ export async function doLanding(
   await deps.landingPhase?.("gate");
   const pushed = await pushAttempt(deps.remoteGit, input.repoDir, input.branch, input.branch);
   if (!pushed.ok) {
-    return { ok: false, reason: "land-failed", locked };
+    // Carry the REAL failure into the terminal record (#2576): a generic
+    // land-failed with no diagnostic was being misread as a merge conflict.
+    return {
+      ok: false,
+      reason: "land-failed",
+      locked,
+      message: `worker branch push failed${"warn" in pushed && pushed.warn ? `: ${pushed.warn}` : ""} — nothing was merged; the true cause is the push, not a merge conflict`,
+    };
   }
 
   // 2. pre_merge hook.
@@ -597,7 +604,13 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       if (result.reason === "merge-failed" && result.prNumber !== undefined) {
         return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: result.prNumber };
       }
-      return { ok: false, reason: "land-failed", locked: input.locked, prNumber: result.prNumber };
+      return {
+        ok: false,
+        reason: "land-failed",
+        locked: input.locked,
+        prNumber: result.prNumber,
+        message: `landing failed at the merge step (underlying reason: ${String((result as { reason?: string }).reason ?? "unmapped")})`,
+      };
     };
     if (r.deferred) {
       cleanupDeferred = true;

@@ -111,6 +111,7 @@ import {
 } from "../issue-lifecycle.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
+import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import { editLabelsTagged, routeRecovery } from "./recovery.js";
 export async function writeValidationSidecar(
   deps: ProcessIssueDeps,
@@ -473,7 +474,21 @@ export async function emitDone(
 export async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   deps.recordWorkerEvent?.("worker.blocked", { outcome: "merge-conflict", reason: _reason });
-  const decision = await routeRecovery(deps, input.issue, "merge-conflict", recoveryOrdinalFor(input));
+  // Durable retry accounting (#2576): the worker-local attempt ordinal resets
+  // to 1 on every replacement worker (ADR 0103 flat workspaces), so the
+  // RED_AFK_RETRY_MERGE cap alone never trips across reclaims — the 2026-07-23
+  // incidents looped 100+ identical land-failed cycles. The ADR 0122 heal
+  // ledger supplies the per-issue consecutive count that survives replacement.
+  let ordinal = recoveryOrdinalFor(input);
+  if (deps.healLedger) {
+    try {
+      const heal = await recordIssueHeal(deps.healLedger, input.issue, deps.nowEpoch() * 1000);
+      ordinal = Math.max(ordinal, heal.history.length);
+    } catch {
+      // best-effort: a ledger fault falls back to worker-local accounting.
+    }
+  }
+  const decision = await routeRecovery(deps, input.issue, "merge-conflict", ordinal);
   if (decision === "escalate") {
     await writeCurrentBlockerBestEffort(
       deps,
@@ -482,7 +497,7 @@ export async function mergeFailed(c: StageCommon, _reason: string, locked = fals
     );
   }
   const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
-    log: "(no merge log captured)",
+    log: _reason || "(no merge log captured)",
   });
   await recordAttemptBestEffort(c, "merge-conflict", {
     durationS: deps.nowEpoch() - c.startedEpoch,

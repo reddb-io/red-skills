@@ -55,6 +55,39 @@ describe("processIssue — BOUNDED auto-recovery routing (the policy wired in)",
     ).toBe(true);
   });
 
+  it("merge-conflict at worker-local attempt 1 but 2 prior ledgered land-heals → ESCALATE (#2576: cap survives worker replacement)", async () => {
+    // The 2026-07-23 incidents: every replacement worker restarts at attempt 1,
+    // so the worker-local cap never trips and identical land-failed cycles loop
+    // 100+ times. The ADR 0122 heal ledger supplies the durable per-issue count.
+    // The harness clock is nowEpoch()=1000 (seconds) → the ledger window filter
+    // compares against 1000*1000 ms; prior heals must sit just before that.
+    const NOW_MS = 1000 * 1000;
+    const ledger = {
+      value: { version: 1 as const, issues: { "9": [NOW_MS - 120_000, NOW_MS - 60_000] } },
+      async read() {
+        return this.value;
+      },
+      async write(v: typeof this.value) {
+        this.value = v;
+      },
+    };
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: true,
+      mergeNoFfCode: 1,
+      attempt: 1,
+    });
+    (deps as { healLedger?: unknown }).healLedger = ledger;
+    const result = await processIssue(deps, input);
+    expect(result.outcome).toBe("merge-conflict");
+    const edit = trace.labelEdits.at(-1)!;
+    expect(edit.add).toContain("ready-for-human");
+    expect(edit.add).toContain("blocked:merge-conflict");
+    // The heal was recorded — 3 entries now, budget consumed durably.
+    expect(ledger.value.issues["9"]).toHaveLength(3);
+  });
+
   it("quota (exhausted) at attempt < cap → RETRY: CLEAN ready-for-agent, no blocked:* tag (#402)", async () => {
     const { deps, input, trace } = harness({ outcome: "exhausted", fallbackRunner: false, attempt: 2 });
     const result = await processIssue(deps, input);
