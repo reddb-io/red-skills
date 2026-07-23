@@ -831,9 +831,7 @@ async function fleetStatus(root: string, input: FleetNameInput) {
 
 async function createFleet(root: string, input: FleetCreateInput) {
   const path = registryPath(root);
-  if (await readFleetProfile(path, input.name)) {
-    throw new Error(`fleet ${JSON.stringify(input.name)} already exists`);
-  }
+  const existing = await readFleetProfile(path, input.name);
   const paths = afkPaths(root, input.name);
   const running = await discoverLiveSupervisorPid(
     paths.supervisorRuntimeDir,
@@ -841,10 +839,17 @@ async function createFleet(root: string, input: FleetCreateInput) {
     { fleet: paths.fleet },
   );
   if (running) {
+    if (existing) {
+      throw new Error(`fleet ${JSON.stringify(input.name)} already exists`);
+    }
     throw new Error(`fleet ${JSON.stringify(paths.fleet)} is already running`);
   }
 
-  const profile = await upsertFleetProfile(path, profileForCreate(input));
+  const profile =
+    existing ?? (await upsertFleetProfile(path, profileForCreate(input)));
+  const priorFleetState = await readFleetState(paths.fleetStatePath).catch(
+    () => null,
+  );
   let supervisorLogStart: number | undefined;
   try {
     supervisorLogStart = (await stat(paths.supervisorLogPath)).size;
@@ -861,6 +866,7 @@ async function createFleet(root: string, input: FleetCreateInput) {
     passthrough: profile.selector
       ? ["--selector", JSON.stringify(profile.selector)]
       : [],
+    adoptSlotPids: priorFleetState?.slotPids ?? [],
   });
   if (pid === null) {
     let rollbackConfirmed = false;
