@@ -1,5 +1,13 @@
 # @reddb-io/red-skills
 
+## 2.87.1
+
+### Patch Changes
+
+- 0befc44: Statusline lifecycle bar recolored to the wine ramp: completed cells full-bodied red, healthy cursor pale pink, future cells dark wine; the failure cursor keeps the saturated red.
+  - @reddb-io/shared@2.87.1
+  - @reddb-io/build-info@2.87.1
+
 ## 2.87.0
 
 ### Minor Changes
