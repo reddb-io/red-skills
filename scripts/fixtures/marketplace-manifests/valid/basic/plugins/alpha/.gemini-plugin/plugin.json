@@ -1,0 +1,39 @@
+{
+  "name": "alpha",
+  "version": "0.1.0",
+  "description": "Alpha fixture plugin.",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "gemini-cli",
+    "skills",
+    "agents",
+    "alpha"
+  ],
+  "skills": [
+    "./skills/core/"
+  ],
+  "interface": {
+    "displayName": "RedSkills Alpha",
+    "shortDescription": "Alpha fixture plugin.",
+    "longDescription": "Alpha fixture plugin.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Use $do-thing when this workspace needs it."
+    ],
+    "brandColor": "#D92D20"
+  }
+}

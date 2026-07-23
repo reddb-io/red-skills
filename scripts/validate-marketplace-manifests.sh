@@ -51,6 +51,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 CLAUDE_MARKETPLACE=".claude-plugin/marketplace.json"
 CODEX_MARKETPLACE=".agents/plugins/marketplace.json"
+GEMINI_MARKETPLACE=".gemini-plugin/marketplace.json"
 
 validate_json_object() {
   local label="$1"
@@ -74,15 +75,23 @@ marketplace_names() {
 
 validate_json_object "Claude marketplace manifest" "$CLAUDE_MARKETPLACE"
 validate_json_object "Codex marketplace manifest" "$CODEX_MARKETPLACE"
+validate_json_object "Gemini marketplace manifest" "$GEMINI_MARKETPLACE"
 
 marketplace_names "$CLAUDE_MARKETPLACE" | sort -u > "$tmp/claude-names" \
   || fail "malformed Claude marketplace manifest: $CLAUDE_MARKETPLACE"
 marketplace_names "$CODEX_MARKETPLACE" | sort -u > "$tmp/codex-names" \
   || fail "malformed Codex marketplace manifest: $CODEX_MARKETPLACE"
+marketplace_names "$GEMINI_MARKETPLACE" | sort -u > "$tmp/gemini-names" \
+  || fail "malformed Gemini marketplace manifest: $GEMINI_MARKETPLACE"
 
 if ! diff -u "$tmp/claude-names" "$tmp/codex-names" > "$tmp/name-diff"; then
   sed 's/^/  /' "$tmp/name-diff" >&2
   fail "marketplace plugin set mismatch between Claude and Codex manifests"
+fi
+
+if ! diff -u "$tmp/claude-names" "$tmp/gemini-names" > "$tmp/name-diff-gemini"; then
+  sed 's/^/  /' "$tmp/name-diff-gemini" >&2
+  fail "marketplace plugin set mismatch between Claude and Gemini manifests"
 fi
 
 validate_plugin_manifest() {
@@ -151,17 +160,26 @@ validate_marketplace_entry_paths \
   "Codex" \
   "$CODEX_MARKETPLACE" \
   '.plugins[] | [.name, .source.path] | @tsv'
+validate_marketplace_entry_paths \
+  "Gemini" \
+  "$GEMINI_MARKETPLACE" \
+  '.plugins[] | [.name, .source.path] | @tsv'
 
 while IFS= read -r plugin; do
   [ -n "$plugin" ] || continue
   claude_path="$(jq -r --arg plugin "$plugin" '.plugins[] | select(.name == $plugin) | .source' "$CLAUDE_MARKETPLACE")"
   codex_path="$(jq -r --arg plugin "$plugin" '.plugins[] | select(.name == $plugin) | .source.path' "$CODEX_MARKETPLACE")"
+  gemini_path="$(jq -r --arg plugin "$plugin" '.plugins[] | select(.name == $plugin) | .source.path' "$GEMINI_MARKETPLACE")"
 
   [ "$claude_path" = "$codex_path" ] \
     || fail "$plugin: marketplace source path mismatch: Claude=$claude_path Codex=$codex_path"
 
+  [ "$claude_path" = "$gemini_path" ] \
+    || fail "$plugin: marketplace source path mismatch: Claude=$claude_path Gemini=$gemini_path"
+
   validate_plugin_manifest "$plugin" "Claude" "$claude_path/.claude-plugin/plugin.json"
   validate_plugin_manifest "$plugin" "Codex" "$codex_path/.codex-plugin/plugin.json"
+  validate_plugin_manifest "$plugin" "Gemini" "$gemini_path/.gemini-plugin/plugin.json"
   validate_skill_dirs "$plugin" "$claude_path"
 done < "$tmp/claude-names"
 

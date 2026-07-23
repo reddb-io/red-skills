@@ -59,10 +59,12 @@ SKILL_DIR="$PLUGIN_DIR/skills/core/$SKILL_NAME"
 [ ! -e "$PLUGIN_DIR" ] || fail "plugin already exists: plugins/$PLUGIN"
 [ -f "$ROOT/.claude-plugin/marketplace.json" ] || fail "missing .claude-plugin/marketplace.json"
 [ -f "$ROOT/.agents/plugins/marketplace.json" ] || fail "missing .agents/plugins/marketplace.json"
+[ -f "$ROOT/.gemini-plugin/marketplace.json" ] || fail "missing .gemini-plugin/marketplace.json"
 
 mkdir -p \
   "$PLUGIN_DIR/.claude-plugin" \
   "$PLUGIN_DIR/.codex-plugin" \
+  "$PLUGIN_DIR/.gemini-plugin" \
   "$SKILL_DIR" \
   "$PLUGIN_DIR/scripts"
 
@@ -96,6 +98,46 @@ cat > "$PLUGIN_DIR/.codex-plugin/plugin.json" <<EOF
     "agents"
   ],
   "skills": "./skills/",
+  "interface": {
+    "displayName": "$PLUGIN",
+    "shortDescription": "Repository-local RedSkills extension.",
+    "longDescription": "The $PLUGIN plugin is a repository-local RedSkills extension scaffolded with born-compliant marketplace metadata, skill structure, documentation, changelog, and structural smoke checks.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Run \$$SKILL_NAME to verify the $PLUGIN plugin is available."
+    ],
+    "brandColor": "#2563EB"
+  }
+}
+EOF
+
+cat > "$PLUGIN_DIR/.gemini-plugin/plugin.json" <<EOF
+{
+  "name": "$PLUGIN",
+  "version": "0.1.0",
+  "description": "reddb.io $PLUGIN plugin - repository-local RedSkills extension.",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "gemini-cli",
+    "skills",
+    "agents"
+  ],
+  "skills": [
+    "./skills/core/$SKILL_NAME/"
+  ],
   "interface": {
     "displayName": "$PLUGIN",
     "shortDescription": "Repository-local RedSkills extension.",
@@ -237,6 +279,27 @@ jq --arg name "$PLUGIN" --arg path "./plugins/$PLUGIN" --arg description "Reposi
   end
 ' "$ROOT/.agents/plugins/marketplace.json" > "$tmp"
 mv "$tmp" "$ROOT/.agents/plugins/marketplace.json"
+
+jq --arg name "$PLUGIN" --arg path "./plugins/$PLUGIN" --arg description "Repository-local RedSkills extension." '
+  if any(.plugins[]?; .name == $name) then
+    error("Gemini marketplace already contains plugin " + $name)
+  else
+    .plugins += [{
+      "name": $name,
+      "description": $description,
+      "source": {
+        "source": "local",
+        "path": $path
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }]
+  end
+' "$ROOT/.gemini-plugin/marketplace.json" > "$tmp"
+mv "$tmp" "$ROOT/.gemini-plugin/marketplace.json"
 
 if ! grep -Fq "./plugins/$PLUGIN/README.md" "$ROOT/README.md"; then
   cat >> "$ROOT/README.md" <<EOF

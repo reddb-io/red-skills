@@ -83,6 +83,7 @@ missing_plugin_manifest() {
 
 malformed_plugin_manifest() {
   printf '{\n' > "$1/plugins/alpha/.codex-plugin/plugin.json"
+  printf '{\n' > "$1/plugins/alpha/.gemini-plugin/plugin.json"
 }
 
 missing_manifest_field() {
@@ -97,6 +98,8 @@ skill_without_skill_md() {
 plugin_set_mismatch() {
   jq 'del(.plugins[] | select(.name == "beta"))' "$1/.agents/plugins/marketplace.json" > "$1/marketplace.tmp"
   mv "$1/marketplace.tmp" "$1/.agents/plugins/marketplace.json"
+  jq 'del(.plugins[] | select(.name == "beta"))' "$1/.gemini-plugin/marketplace.json" > "$1/marketplace2.tmp"
+  mv "$1/marketplace2.tmp" "$1/.gemini-plugin/marketplace.json"
 }
 
 expect_pass basic

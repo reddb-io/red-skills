@@ -44,13 +44,17 @@ validate_plugin() {
   diff -u "$tmp/published-skills" "$tmp/claude-skills" \
     || fail "$plugin: Claude plugin skill list is out of sync"
 
-  jq -e --slurp '.[0].version == .[1].version' \
+  jq -e --slurp '.[0].version == .[1].version and .[1].version == .[2].version' \
     "$dir/.claude-plugin/plugin.json" \
-    "$dir/.codex-plugin/plugin.json" >/dev/null \
-    || fail "$plugin: Claude and Codex plugin versions must match"
+    "$dir/.codex-plugin/plugin.json" \
+    "$dir/.gemini-plugin/plugin.json" >/dev/null \
+    || fail "$plugin: Claude, Codex and Gemini plugin versions must match"
 
   jq -e --arg n "$plugin" '.name == $n' "$dir/.codex-plugin/plugin.json" >/dev/null \
     || fail "$plugin: Codex plugin name must be $plugin"
+
+  jq -e --arg n "$plugin" '.name == $n' "$dir/.gemini-plugin/plugin.json" >/dev/null \
+    || fail "$plugin: Gemini plugin name must be $plugin"
 
   # Codex `skills` is either the legacy whole-tree string ("./skills/") or, since
   # #610, an array of published bucket paths (excluding in-progress/). Accept both;
@@ -70,22 +74,29 @@ validate_plugin() {
     done < <(jq -r '.skills[]' "$dir/.codex-plugin/plugin.json")
   fi
 
-  local claude_mcp_path codex_mcp_path
+  local claude_mcp_path codex_mcp_path gemini_mcp_path
   claude_mcp_path="$(jq -r '.mcpServers // empty' "$dir/.claude-plugin/plugin.json")"
   codex_mcp_path="$(jq -r '.mcpServers // empty' "$dir/.codex-plugin/plugin.json")"
+  gemini_mcp_path="$(jq -r '.mcpServers // empty' "$dir/.gemini-plugin/plugin.json")"
   if [[ -n "$claude_mcp_path" ]]; then
     [[ -n "$codex_mcp_path" ]] \
       || fail "$plugin: Codex plugin must expose mcpServers when Claude does"
-    [[ "$claude_mcp_path" == ./* && "$codex_mcp_path" == ./* ]] \
+    [[ -n "$gemini_mcp_path" ]] \
+      || fail "$plugin: Gemini plugin must expose mcpServers when Claude does"
+    [[ "$claude_mcp_path" == ./* && "$codex_mcp_path" == ./* && "$gemini_mcp_path" == ./* ]] \
       || fail "$plugin: MCP manifest paths must be relative"
     [[ -f "$dir/${claude_mcp_path#./}" ]] \
       || fail "$plugin: Claude MCP manifest not found: $claude_mcp_path"
     [[ -f "$dir/${codex_mcp_path#./}" ]] \
       || fail "$plugin: Codex MCP manifest not found: $codex_mcp_path"
+    [[ -f "$dir/${gemini_mcp_path#./}" ]] \
+      || fail "$plugin: Gemini MCP manifest not found: $gemini_mcp_path"
     jq -e '.mcpServers | type == "object"' "$dir/${claude_mcp_path#./}" >/dev/null \
       || fail "$plugin: Claude MCP manifest must contain an mcpServers object"
     jq -e '.mcpServers | type == "object"' "$dir/${codex_mcp_path#./}" >/dev/null \
       || fail "$plugin: Codex MCP manifest must contain an mcpServers object"
+    jq -e '.mcpServers | type == "object"' "$dir/${gemini_mcp_path#./}" >/dev/null \
+      || fail "$plugin: Gemini MCP manifest must contain an mcpServers object"
     if [[ "$plugin" == "dev" ]]; then
       [[ -x "$dir/hooks/code-nav-mcp.sh" ]] \
         || fail "$plugin: navigator MCP launcher must exist and be executable"
@@ -112,6 +123,10 @@ validate_plugin() {
   jq -e --arg p "./$dir" '.plugins[] | select(.source.path == $p)' \
     .agents/plugins/marketplace.json >/dev/null \
     || fail "$plugin: Codex marketplace must expose ./$dir"
+
+  jq -e --arg p "./$dir" '.plugins[] | select(.source.path == $p)' \
+    .gemini-plugin/marketplace.json >/dev/null \
+    || fail "$plugin: Gemini marketplace must expose ./$dir"
 
   jq -e --arg p "./$dir" '.plugins[] | select(.source == $p)' \
     .claude-plugin/marketplace.json >/dev/null \
@@ -228,7 +243,8 @@ validate_dev_fetch_hooks
 # memory hard-depends on dev, in both plugin manifests and both marketplaces.
 for f in \
   plugins/memory/.claude-plugin/plugin.json \
-  plugins/memory/.codex-plugin/plugin.json; do
+  plugins/memory/.codex-plugin/plugin.json \
+  plugins/memory/.gemini-plugin/plugin.json; do
   jq -e '.dependencies | index("dev")' "$f" >/dev/null \
     || fail "memory: $f must declare a dependency on dev"
 done

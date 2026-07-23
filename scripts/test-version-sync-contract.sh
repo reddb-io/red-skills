@@ -29,6 +29,7 @@ git ls-files -z \
   'plugins/*/package.json' \
   'plugins/*/.claude-plugin/plugin.json' \
   'plugins/*/.codex-plugin/plugin.json' \
+  'plugins/*/.gemini-plugin/plugin.json' \
   'packaging/pi/*/package.json' \
   | xargs -0 -I{} sh -c 'mkdir -p "$1/$(dirname "{}")" && cp "{}" "$1/{}"' _ "$fixture"
 mkdir -p "$fixture/scripts"
@@ -99,10 +100,13 @@ plugins/memory/package.json
 plugins/brain/package.json
 plugins/dev/.claude-plugin/plugin.json
 plugins/dev/.codex-plugin/plugin.json
+plugins/dev/.gemini-plugin/plugin.json
 plugins/memory/.claude-plugin/plugin.json
 plugins/memory/.codex-plugin/plugin.json
+plugins/memory/.gemini-plugin/plugin.json
 plugins/brain/.claude-plugin/plugin.json
 plugins/brain/.codex-plugin/plugin.json
+plugins/brain/.gemini-plugin/plugin.json
 packaging/pi/dev/package.json
 packaging/pi/memory/package.json
 packaging/pi/brain/package.json

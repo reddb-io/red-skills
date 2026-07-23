@@ -1,0 +1,63 @@
+{
+  "name": "red-skills",
+  "interface": {
+    "displayName": "RedSkills"
+  },
+  "plugins": [
+    {
+      "name": "dev",
+      "source": {
+        "source": "local",
+        "path": "./plugins/dev"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_USE"
+      },
+      "description": "reddb.io dev plugin - engineering skills for code agents (autonomous /afk loop, triage, tdd, diagnose, graph-aware codebase understanding, wiki, ...)",
+      "category": "Developer Tools"
+    },
+    {
+      "name": "memory",
+      "source": {
+        "source": "local",
+        "path": "./plugins/memory"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "dependencies": [
+        "dev"
+      ],
+      "description": "reddb.io memory plugin - governed operational memory for code agents on top of dev: markdown notes, RedDB graph memory, governed recall, context packs, claim checks, readiness, lifecycle hooks, MCP/HTTP surfaces, Workbench diagnostics, and Skill telemetry.",
+      "category": "Developer Tools"
+    },
+    {
+      "name": "brain",
+      "source": {
+        "source": "local",
+        "path": "./plugins/brain"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "description": "reddb.io brain plugin - project-local RedDB knowledge repository for freeform captures, typed artifacts, graph connections, and human-facing recall.",
+      "category": "Developer Tools"
+    },
+    {
+      "name": "internal",
+      "source": {
+        "source": "local",
+        "path": "./plugins/internal"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "description": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
+      "category": "Developer Tools"
+    }
+  ]
+}
