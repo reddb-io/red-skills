@@ -53,6 +53,7 @@ import type {
   WorkerDispatchInput,
   WorkerRequestInput,
   WorkerSteerInput,
+  WorkerSteerStatusInput,
   WorkerStopInput,
   WorkerVitalsOutput,
   WorkerVitalsProjectedOutput,
@@ -1685,6 +1686,27 @@ export function createCastleMcpDependencies(
         payload: { reason: input.text.slice(0, 200) },
       });
       return { worker: input.worker, steer: "written" };
+    },
+    steerStatus: async (input: WorkerSteerStatusInput) => {
+      const paths = createEnginePaths(join(root, ".red"));
+      const steerPath = paths.workerSteerFile(input.worker);
+      const { access } = await import("node:fs/promises");
+      const pending = await access(steerPath).then(() => true).catch(() => false);
+      if (pending) {
+        return { worker: input.worker, status: "pending" };
+      }
+      const lanePath = castleLanePath(paths, "worker", input.worker);
+      const records = await readCastleLaneRecords(lanePath);
+      const consumed = records.filter((r) => r.kind === "worker.steer_consumed");
+      if (consumed.length > 0) {
+        const last = consumed[consumed.length - 1]!;
+        const iteration =
+          typeof last.payload?.iteration === "number"
+            ? last.payload.iteration
+            : undefined;
+        return { worker: input.worker, status: "consumed", iteration };
+      }
+      return { worker: input.worker, status: "none" };
     },
     workerRequest: (input: WorkerRequestInput) => {
       const dispatch = { ...input, request: input.text };
