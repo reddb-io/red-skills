@@ -10,7 +10,7 @@ import type {
 } from "../../core/operational-probes.js";
 import type { ExecOutput } from "../exec.js";
 import { listCandidates } from "./candidates.js";
-import { isRecord, repoArgs, runGh, runRsp, type GhContext } from "./common.js";
+import { apiPath, isRecord, repoArgs, runGh, runRsp, type GhContext } from "./common.js";
 
 async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
   const r = await runGh(ctx, 
@@ -48,22 +48,29 @@ function queueVisibilityError(
   });
 }
 
-async function countOpenIssuesByLabelViaRest(ctx: GhContext, label: string): Promise<number> {
-  if (!ctx.repo) return 0;
+async function listOpenIssuesByLabelViaRest(ctx: GhContext, label: string): Promise<number[]> {
+  if (!ctx.repo) return [];
   const r = await runGh(ctx, [
     "api",
+    "--paginate",
     "--method",
     "GET",
-    "search/issues",
+    apiPath(ctx, "issues"),
     "-f",
-    `q=repo:${ctx.repo} is:issue is:open label:"${label}"`,
+    "state=open",
+    "-f",
+    `labels=${label}`,
+    "-f",
+    "per_page=100",
     "--jq",
-    ".total_count",
+    ".[] | select(.pull_request == null) | .number",
   ]);
-  if (r.code !== 0) throw queueVisibilityError("rest", r, "gh api REST issue search failed");
-  const count = Number(r.stdout.trim());
-  if (!Number.isFinite(count)) throw queueVisibilityError("rest", r, "gh api REST issue search returned a non-numeric count");
-  return count;
+  if (r.code !== 0) throw queueVisibilityError("rest", r, "gh api REST issue listing failed");
+  const issues = r.stdout.trim() === "" ? [] : r.stdout.trim().split(/\s+/).map(Number);
+  if (issues.some((issue) => !Number.isInteger(issue) || issue <= 0)) {
+    throw queueVisibilityError("rest", r, "gh api REST issue listing returned a non-numeric issue number");
+  }
+  return issues;
 }
 
 export function queueVisibilityProbeInput(ctx: GhContext, label: string = LABEL_READY): QueueVisibilityProbeInput {
@@ -83,9 +90,9 @@ export function queueVisibilityProbeInput(ctx: GhContext, label: string = LABEL_
           stderr: failure.stderr,
         });
       }
-      return candidates.length;
+      return candidates.map((candidate) => candidate.number);
     },
-    countRestQueue: () => countOpenIssuesByLabelViaRest(ctx, label),
+    listRestQueue: () => listOpenIssuesByLabelViaRest(ctx, label),
   };
 }
 
