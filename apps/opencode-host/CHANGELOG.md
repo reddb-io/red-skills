@@ -1,5 +1,19 @@
 # @reddb-io/red-skills
 
+## 2.87.0
+
+### Minor Changes
+
+- 4a1fb87: Castle-MCP H8 (#2346): `worker_dispatch` gains `mode: "scout"` — read-only investigations reachable through the MCP. Scout is demand-only (rejected with an issue number at input validation), routes through the scout dispatch operation into the `.red/tmp/scout-workers/` lane, and never mutates the tracker.
+- 34c1f95: Territory scoping for shared issue pools: new `tag:<value>` label family + author filter. `/afk --tags a,b` drains only issues carrying EVERY requested tag label (AND semantics; untagged issues are outside every tag-scoped fleet) and `/afk --user login|@me` filters by issue author (`@me` resolved to a concrete login at launch); both fold into the fleet `selector` (`tags`/`user` facets) across CLI, supervise forwarding, fleets.toonl persistence, and the castle MCP `fleet_*`/`queue_status` surface. `/go --tags` stamps the labels on the minted `lane:go` issue (auto-created when missing); `/to-spec`/`/to-tickets` stamp and inherit them Spec→Ticket.
+
+### Patch Changes
+
+- be1eb85: Worker/gate teardown no longer leaks orphaned vitest forks (#2432): every engine path that terminates a worker, gate, or wait kills the entire process group (setsid at spawn, TERM→grace→KILL on `-PGID`) and verifies descendants are gone, matching the rsp wait cleanup contract. The tmp-janitor sweep additionally detects orphaned test-runner processes (parent dead, cwd inside a `.red/tmp` workspace), reaps them by process group, and logs each kill.
+- 93d63d0: Statusline per-worker proof-of-life (#2480): worker rows render a heartbeat age sourced from the same liveness evaluator `worker_vitals` uses, with quiet-but-live (`~`) visually distinct from wedged (stale lane AND no live descendants) — a live worker is never rendered as silent zeros without the age qualifier. Landing/rebase sub-agent executions (conflict resolvers, landing helpers) now stream their tool events into the parent worker's lane through the linked-subagent adapter, so the longest phases no longer read all-zero.
+  - @reddb-io/shared@2.87.0
+  - @reddb-io/build-info@2.87.0
+
 ## 2.86.2
 
 ### Patch Changes
