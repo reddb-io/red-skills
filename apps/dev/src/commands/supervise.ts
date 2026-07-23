@@ -27,7 +27,7 @@ import { appendRecordToonlRow } from "../core/jsonl-log.js";
 import {
   afkPaths,
   resolveRepoSlug,
-  collectPrecheckFacts,
+  collectBootPrecheckFacts,
   collectBootOptions,
   buildBootDeps,
   readFleetState,
@@ -471,7 +471,7 @@ export function buildSupervisorBootSweeps(
   const paths = afkPaths(root, fleet);
   return async (): Promise<void> => {
     const nowS = Math.floor(Date.now() / 1000);
-    const facts = await collectPrecheckFacts(ctx);
+    const facts = await collectBootPrecheckFacts(ctx, { log });
     const bootstrap: BootstrapInput = {
       tmpDir: paths.tmpDir,
       stateDir: paths.stateDir,

@@ -1,6 +1,8 @@
 import { buildEnvelope } from "../envelope.js";
+import { renderClaimComment } from "../claim.js";
 import { renderLogTailToon } from "../envelope-emit.js";
 import { dispose } from "../disposition.js";
+import { workerIdentity } from "../host-identity.js";
 import { LABEL_READY, LABEL_RUNNING } from "../triage-labels.js";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
 
@@ -120,6 +122,10 @@ export async function reconcileDeadWorkerClaim(
   if (!claim.envelopePosted) {
     await deps.gh.comment(info.issue, buildCrashEnvelope(info));
   }
+  await deps.gh.comment(
+    info.issue,
+    renderClaimComment({ worker: workerIdentity(info.workerId) }, "concede", "released"),
+  );
 
   // 2. Bounded blocked:crashed recovery via the disposition composer (#402,
   // #822), mirroring the stall-reaper path below. The death-without-envelope
@@ -145,4 +151,3 @@ export async function reconcileDeadWorkerClaim(
 }
 
 // ---------- actions (compose deciders, apply via injected IO) ----------
-
