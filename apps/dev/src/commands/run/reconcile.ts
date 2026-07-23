@@ -65,7 +65,7 @@ import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { resolveHooks, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
-import { runCastleWorkerDrain, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
+import { runCastleWorkerDrain, createFsIssueLeaseStore, type CastleSessionHookName, type CastleWorkerDrainDeps } from "@reddb-io/red-castle/engine";
 import { attemptLedgerContext, formatAttemptContext, highestAttempt, type AttemptDirEntry } from "../../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
 import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -218,13 +218,21 @@ export function makeBootReconcileRunner(
   const configLockedBranch = getConfig(reconcileConfig, "dev.lock.branch") || undefined;
   const configTrunk = getConfig(reconcileConfig, "dev.trunk") || undefined;
 
+  // The single local issue-lease implementation, in castle (#2578). Shares the
+  // same `<claims>/<issue>/` leaf dir as the per-issue path, so the boot reconcile
+  // sweep and a live worker stay mutually exclusive. `pidAlive` injects this
+  // host's `kill -0`; the owner is the ADR 0066 worker identity.
+  const claimStore = createFsIssueLeaseStore(join(paths.tmpDir, "claims"), {
+    pid: process.pid,
+    pidAlive: (p) => (fsx.pidAlive(String(p)) ? "alive" : "dead"),
+  });
+  const claimOwner = workerIdentity(workerId);
+
   return async (plan: ReconcileSweepPlan) => {
-    // Acquire the per-issue claim before validating/landing so a concurrent live
+    // Acquire the per-issue lease before validating/landing so a concurrent live
     // worker or a second concurrent boot cannot double-land the same parked
-    // branch (#568). Uses the same claims/{N} dir as the per-issue path, so the
-    // two are mutually exclusive; skip when another live pid already holds it.
-    const claimDir = `${paths.tmpDir}/claims/${plan.number}`;
-    if (!(await fsx.tryAcquireClaimDir(claimDir, process.pid))) {
+    // branch (#568); skip when another live pid already holds it.
+    if (!(await claimStore.acquire(plan.number, claimOwner, () => "unknown")).acquired) {
       return { outcome: "skipped" as const };
     }
     const reconcileDeps: ReconcileDeps = {
@@ -357,7 +365,7 @@ export function makeBootReconcileRunner(
         : "skipped" as const;
       return { outcome };
     } finally {
-      await fsx.removeDir(claimDir);
+      await claimStore.release(plan.number, claimOwner);
     }
   };
 }

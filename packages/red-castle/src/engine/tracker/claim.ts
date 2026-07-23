@@ -40,7 +40,7 @@
 // PROJECTION applied best-effort by the caller and are never consulted to
 // arbitrate a winner.
 
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Runner } from "../runner-types.js";
 
@@ -572,7 +572,12 @@ export type LocalLeaseDecision =
       readonly acquired: false;
       readonly owner: string;
       readonly reason:
-        "local lease owner is alive" | "local lease owner liveness unknown";
+        | "local lease owner is alive"
+        | "local lease owner liveness unknown"
+        // A dead holder was observed but another reclaimer won the atomic-rename
+        // steal (or a fresh claimer re-mkdir'd first) — the #568 recovery race,
+        // resolved in favour of exactly one winner. We are not that winner.
+        | "lost local lease reclaim race";
     };
 
 export interface AcquireIssueLeaseOptions {
@@ -661,82 +666,223 @@ export async function retireIssueLease(
   await options.local.release(options.issue, options.identity.worker);
 }
 
-export function createFsIssueLeaseStore(root: string): LocalIssueLeaseStore {
+/** Optional wiring for the FS lease store. */
+export interface FsIssueLeaseStoreOptions {
+  /** Pid recorded in the lease's `pid` file (default `process.pid`). Matched on
+   * idempotent re-acquire and on the ownership-guarded pid fallback in release. */
+  readonly pid?: number;
+  /** Injected pid-liveness predicate — castle stays liveness-I/O-free (ADR 0114),
+   * so the host injects `kill -0`. Absent → every pid verdict is `"unknown"`,
+   * which is safe: an unknown holder is never stolen from. */
+  readonly pidAlive?: (pid: number) => TrackerClaimLiveness;
+}
+
+/**
+ * The local per-host issue lease, rebuilt on dev's battle-proven mkdir-lock
+ * semantics (#434 atomic claim, #568 atomic-rename recovery) so there is ONE
+ * lease implementation. The leaf dir `<root>/<issue>/` IS the lock: a
+ * non-recursive `mkdir` is the POSIX-atomic primitive (fails `EEXIST` when held),
+ * so exactly one of N racing claimants wins. The dir carries BOTH a `pid` file
+ * (decimal, no trailing newline — byte-identical to every dev sweep reader) and
+ * an `owner` file (`<owner>\n`), the transition-compatible union of the two prior
+ * on-disk formats.
+ *
+ * Liveness composes two independent signals so a legacy dir written in either
+ * format still recovers correctly: the injected `pidAlive(holderPid)` (the dev
+ * format's `pid` file) and the caller's `liveness(ownerToken)` (the castle
+ * format's `owner` file). A dead holder is reclaimed through the atomic-rename
+ * steal — of N reclaimers racing the SAME stale dir, exactly one rename wins and
+ * the losers bail — which is what closed the #568 TOCTOU that a plain rm+mkdir
+ * reopened.
+ */
+export function createFsIssueLeaseStore(
+  root: string,
+  options: FsIssueLeaseStoreOptions = {},
+): LocalIssueLeaseStore {
+  const pid = options.pid ?? process.pid;
+  const pidAlive = options.pidAlive ?? (() => "unknown" as TrackerClaimLiveness);
   return {
     acquire: (issue, owner, liveness) =>
-      acquireFsIssueLease(root, issue, owner, liveness),
-    release: (issue, owner) => releaseFsIssueLease(root, issue, owner),
+      acquireFsIssueLease(root, issue, owner, liveness, pid, pidAlive),
+    release: (issue, owner) => releaseFsIssueLease(root, issue, owner, pid),
   };
 }
+
+/** Monotonic per-process counter so concurrent stale-lease reclaims (even from
+ * the same pid) each rename to a UNIQUE quarantine dir — the atomic rename of the
+ * shared lease dir serialises the winners, so the rename targets must not collide
+ * (ported from the dev `claimReclaimSeq`, fs.ts). */
+let leaseReclaimSeq = 0;
 
 async function acquireFsIssueLease(
   root: string,
   issue: number,
   owner: string,
   liveness: (worker: string) => TrackerClaimLiveness,
+  pid: number,
+  pidAlive: (pid: number) => TrackerClaimLiveness,
 ): Promise<LocalLeaseDecision> {
   const leaseDir = issueLeaseDir(root, issue);
-  try {
-    await mkdir(leaseDir, { recursive: false });
-    await writeFile(join(leaseDir, "owner"), `${owner}\n`, { flag: "wx" });
-    return { acquired: true };
-  } catch (err) {
-    if (
-      (err as NodeJS.ErrnoException).code !== "ENOENT" &&
-      (err as NodeJS.ErrnoException).code !== "EEXIST"
-    ) {
-      throw err;
-    }
-  }
-
   await mkdir(root, { recursive: true });
-  try {
-    await mkdir(leaseDir, { recursive: false });
-    await writeFile(join(leaseDir, "owner"), `${owner}\n`, { flag: "wx" });
+
+  // Fast path: win the exclusive non-recursive mkdir → we hold the lease.
+  if (await tryMkdirLease(leaseDir)) {
+    await writeLeaseFiles(leaseDir, owner, pid);
     return { acquired: true };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
   }
 
-  const currentOwner = await readLeaseOwner(leaseDir);
-  if (currentOwner === owner) return { acquired: true };
-  const verdict = currentOwner ? liveness(currentOwner) : "unknown";
-  if (verdict !== "dead") {
-    return {
-      acquired: false,
-      owner: currentOwner ?? "unknown",
-      reason:
-        verdict === "alive"
-          ? "local lease owner is alive"
-          : "local lease owner liveness unknown",
-    };
+  // Held. Read the holder's identity from BOTH files (either may be absent on a
+  // legacy dir; both absent on a blank/corrupt dir).
+  const holderOwner = await readLeaseOwner(leaseDir);
+  const holderPid = await readLeasePid(leaseDir);
+
+  // Idempotent re-acquire: the dir is already ours by owner token or by pid.
+  if ((holderOwner !== undefined && holderOwner === owner) || holderPid === pid) {
+    await refreshLeaseFiles(leaseDir, owner, pid, holderOwner, holderPid);
+    return { acquired: true };
   }
 
-  await rm(leaseDir, { recursive: true, force: true });
-  await mkdir(leaseDir, { recursive: false });
-  await writeFile(join(leaseDir, "owner"), `${owner}\n`, { flag: "wx" });
-  return { acquired: true, previousOwner: currentOwner };
+  const verdict = holderLivenessVerdict(holderPid, holderOwner, liveness, pidAlive);
+  const heldBy = holderOwner ?? (holderPid !== undefined ? String(holderPid) : "unknown");
+
+  if (verdict === "alive") {
+    return { acquired: false, owner: heldBy, reason: "local lease owner is alive" };
+  }
+  if (verdict === "unknown") {
+    return { acquired: false, owner: heldBy, reason: "local lease owner liveness unknown" };
+  }
+
+  // Dead holder → reclaim ATOMICALLY (#568). rename(2) is atomic, so of N racing
+  // reclaimers of the SAME stale dir exactly one rename succeeds; the losers get
+  // ENOENT and bail with the reclaim-race verdict. The winner deletes the
+  // quarantined dir and re-claims through the exclusive mkdir, which still
+  // serialises against any fresh claimer that slipped in after the rename.
+  const quarantine = `${leaseDir}.stale-${pid}-${leaseReclaimSeq++}`;
+  await rm(quarantine, { recursive: true, force: true }).catch(() => {});
+  try {
+    await rename(leaseDir, quarantine);
+  } catch {
+    return { acquired: false, owner: heldBy, reason: "lost local lease reclaim race" };
+  }
+  await rm(quarantine, { recursive: true, force: true });
+  if (!(await tryMkdirLease(leaseDir))) {
+    // A fresh claimer won the re-mkdir between our rename and now.
+    return { acquired: false, owner: heldBy, reason: "lost local lease reclaim race" };
+  }
+  await writeLeaseFiles(leaseDir, owner, pid);
+  return { acquired: true, previousOwner: heldBy };
 }
 
+/**
+ * Compose the holder's liveness from the pid signal (dev format) and the
+ * owner-token signal (castle format):
+ *   - `"alive"` if either signal says alive;
+ *   - else `"dead"` if either signal says dead, OR neither file is readable (the
+ *     corrupt/blank dir the dev #434 tests treat as reclaimable);
+ *   - else `"unknown"` (safe: an unknown holder is never stolen from).
+ * A missing/blank pid file WITH a readable owner file defers ENTIRELY to
+ * `liveness(ownerToken)` — the pure castle legacy path, where the host injects no
+ * pid liveness for that record.
+ */
+function holderLivenessVerdict(
+  holderPid: number | undefined,
+  holderOwner: string | undefined,
+  liveness: (worker: string) => TrackerClaimLiveness,
+  pidAlive: (pid: number) => TrackerClaimLiveness,
+): TrackerClaimLiveness {
+  const pidReadable = holderPid !== undefined;
+  const ownerReadable = holderOwner !== undefined;
+
+  // Owner-only legacy dir (castle format): defer entirely to injected liveness.
+  if (!pidReadable && ownerReadable) return liveness(holderOwner as string);
+
+  const pidVerdict = pidReadable ? pidAlive(holderPid as number) : undefined;
+  const ownerVerdict = ownerReadable ? liveness(holderOwner as string) : undefined;
+
+  if (pidVerdict === "alive" || ownerVerdict === "alive") return "alive";
+  if (pidVerdict === "dead" || ownerVerdict === "dead" || (!pidReadable && !ownerReadable)) {
+    return "dead";
+  }
+  return "unknown";
+}
+
+/**
+ * Voluntary/lost release, ownership-guarded: remove the lease dir iff it is ours
+ * — the owner file matches, OR the owner file is absent while the `pid` file
+ * matches our recorded pid, OR the dir is already gone. A mismatched live owner's
+ * lease is left untouched, so a release on a lost race never steals a peer's slot.
+ */
 async function releaseFsIssueLease(
   root: string,
   issue: number,
   owner: string,
+  pid: number,
 ): Promise<void> {
   const leaseDir = issueLeaseDir(root, issue);
-  const currentOwner = await readLeaseOwner(leaseDir);
-  if (currentOwner === owner) {
+  try {
+    await stat(leaseDir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // already gone
+    throw err;
+  }
+  const holderOwner = await readLeaseOwner(leaseDir);
+  const holderPid = await readLeasePid(leaseDir);
+  const ownerMatches = holderOwner !== undefined && holderOwner === owner;
+  const pidFallback = holderOwner === undefined && holderPid !== undefined && holderPid === pid;
+  if (ownerMatches || pidFallback) {
     await rm(leaseDir, { recursive: true, force: true });
   }
 }
 
-async function readLeaseOwner(leaseDir: string): Promise<string | undefined> {
+async function tryMkdirLease(leaseDir: string): Promise<boolean> {
   try {
-    return (
-      (await readFile(join(leaseDir, "owner"), "utf8")).trim() || undefined
-    );
+    await mkdir(leaseDir, { recursive: false }); // non-recursive → EEXIST when held
+    return true;
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw err;
+  }
+}
+
+/** Write both lease files. `pid` is decimal with NO trailing newline so every dev
+ * sweep reader (`listStaleClaimDirs`, `claimPathHeldByLivePid`, …) reads it
+ * byte-for-byte; `owner` carries its trailing newline. */
+async function writeLeaseFiles(leaseDir: string, owner: string, pid: number): Promise<void> {
+  await writeFile(join(leaseDir, "pid"), String(pid), "utf8");
+  await writeFile(join(leaseDir, "owner"), `${owner}\n`, "utf8");
+}
+
+/** Idempotent re-acquire: fill in whichever lease file is missing without
+ * clobbering a present one. */
+async function refreshLeaseFiles(
+  leaseDir: string,
+  owner: string,
+  pid: number,
+  holderOwner: string | undefined,
+  holderPid: number | undefined,
+): Promise<void> {
+  if (holderPid === undefined) await writeFile(join(leaseDir, "pid"), String(pid), "utf8");
+  if (holderOwner === undefined) await writeFile(join(leaseDir, "owner"), `${owner}\n`, "utf8");
+}
+
+async function readLeaseOwner(leaseDir: string): Promise<string | undefined> {
+  return readLeaseFileTrimmed(join(leaseDir, "owner"));
+}
+
+async function readLeasePid(leaseDir: string): Promise<number | undefined> {
+  const raw = await readLeaseFileTrimmed(join(leaseDir, "pid"));
+  if (raw === undefined || !/^[1-9][0-9]*$/.test(raw)) return undefined;
+  return Number(raw);
+}
+
+/** Read a lease file, trimmed; `undefined` when absent, blank, or the path is not
+ * a directory (a poisoned non-dir lease path → both files unreadable → stale). */
+async function readLeaseFileTrimmed(path: string): Promise<string | undefined> {
+  try {
+    return (await readFile(path, "utf8")).trim() || undefined;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
     throw err;
   }
 }

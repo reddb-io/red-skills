@@ -16,6 +16,7 @@ import {
   type ClaimRecord,
   type ClaimSelf,
   type RawClaimComment,
+  type TrackerClaimLiveness,
   type TrackerClaimStore,
 } from "./claim.js";
 import { CLAIM_WIRE_FIXTURES } from "./claim-wire-fixture.js";
@@ -653,6 +654,243 @@ describe("tracker dual lease", () => {
       await expect(
         readFile(join(root, "1907", "owner"), "utf8"),
       ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// The FS lease store rebuilt on dev's mkdir-lock semantics (#434 atomic claim,
+// #568 atomic-rename recovery). Assertions ported from apps/dev/tests/fs-sweep.test.ts.
+describe("createFsIssueLeaseStore (dev mkdir-lock semantics)", () => {
+  const DEAD_PID = 999999;
+  // pid predicate: only DEAD_PID is dead; every other pid is treated as alive.
+  const pidAlive = (p: number): TrackerClaimLiveness => (p === DEAD_PID ? "dead" : "alive");
+  const unknownOwner = (): TrackerClaimLiveness => "unknown";
+
+  it("grants the claim once and writes BOTH pid (no newline) and owner files", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      const store = createFsIssueLeaseStore(root, { pid: 4321, pidAlive });
+      const decision = await store.acquire(430, "host:w1", unknownOwner);
+      expect(decision).toEqual({ acquired: true });
+      expect(await readFile(join(root, "430", "pid"), "utf8")).toBe("4321");
+      expect(await readFile(join(root, "430", "owner"), "utf8")).toBe("host:w1\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("denies a second live claimant on the same issue (EEXIST → alive → blocked)", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      const holder = createFsIssueLeaseStore(root, { pid: 1001, pidAlive });
+      const other = createFsIssueLeaseStore(root, { pid: 1002, pidAlive });
+      expect(await holder.acquire(430, "host:w1", unknownOwner)).toEqual({ acquired: true });
+      expect(await other.acquire(430, "host:w2", unknownOwner)).toMatchObject({
+        acquired: false,
+        owner: "host:w1",
+        reason: "local lease owner is alive",
+      });
+      // The loser must not overwrite the holder's pid.
+      expect(await readFile(join(root, "430", "pid"), "utf8")).toBe("1001");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets exactly ONE of N concurrent live claimers win the same issue (dup-PR race)", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      const results = await Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          createFsIssueLeaseStore(root, { pid: 2001 + i, pidAlive }).acquire(
+            936,
+            `host:w${i}`,
+            unknownOwner,
+          ),
+        ),
+      );
+      expect(results.filter((r) => r.acquired)).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("self-heals a stale dead-pid dir before acquiring (atomic-rename steal)", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      await mkdir(join(root, "431"), { recursive: true });
+      await writeFile(join(root, "431", "pid"), String(DEAD_PID));
+      await writeFile(join(root, "431", "owner"), "host:dead\n");
+      const store = createFsIssueLeaseStore(root, { pid: 7, pidAlive });
+      const decision = await store.acquire(431, "host:w1", unknownOwner);
+      expect(decision).toMatchObject({ acquired: true, previousOwner: "host:dead" });
+      expect(await readFile(join(root, "431", "pid"), "utf8")).toBe("7");
+      expect(await readFile(join(root, "431", "owner"), "utf8")).toBe("host:w1\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("lets exactly ONE of N concurrent claimers win when RECLAIMING a stale dir (#568)", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      await mkdir(join(root, "568"), { recursive: true });
+      await writeFile(join(root, "568", "pid"), String(DEAD_PID));
+      await writeFile(join(root, "568", "owner"), "host:dead\n");
+      const results = await Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          createFsIssueLeaseStore(root, { pid: 3001 + i, pidAlive }).acquire(
+            568,
+            `host:w${i}`,
+            unknownOwner,
+          ),
+        ),
+      );
+      expect(results.filter((r) => r.acquired)).toHaveLength(1);
+      // The single winner's pid is the one left on disk.
+      const winnerPid = 3001 + results.findIndex((r) => r.acquired);
+      expect(await readFile(join(root, "568", "pid"), "utf8")).toBe(String(winnerPid));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not remove a live existing claim while another claimant probes", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      await mkdir(join(root, "432"), { recursive: true });
+      await writeFile(join(root, "432", "pid"), "1234");
+      await writeFile(join(root, "432", "owner"), "host:live\n");
+      const store = createFsIssueLeaseStore(root, { pid: 4242, pidAlive });
+      expect(await store.acquire(432, "host:w1", unknownOwner)).toMatchObject({
+        acquired: false,
+        reason: "local lease owner is alive",
+      });
+      expect(await readFile(join(root, "432", "pid"), "utf8")).toBe("1234");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reclaims a poisoned non-directory lease path by replacing it", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      await writeFile(join(root, "433"), "not a lease directory");
+      const store = createFsIssueLeaseStore(root, { pid: 55, pidAlive });
+      expect(await store.acquire(433, "host:w1", unknownOwner)).toMatchObject({ acquired: true });
+      expect(await readFile(join(root, "433", "pid"), "utf8")).toBe("55");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("owner-only legacy dir defers ENTIRELY to injected owner liveness", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      await mkdir(join(root, "700"), { recursive: true });
+      await writeFile(join(root, "700", "owner"), "host:other\n"); // no pid file
+      // alive owner → blocked
+      const blocked = await createFsIssueLeaseStore(root, { pid: 9, pidAlive }).acquire(
+        700,
+        "host:w1",
+        (w) => (w === "host:other" ? "alive" : "unknown"),
+      );
+      expect(blocked).toMatchObject({ acquired: false, reason: "local lease owner is alive" });
+      // dead owner → recovered
+      const won = await createFsIssueLeaseStore(root, { pid: 9, pidAlive }).acquire(
+        700,
+        "host:w1",
+        (w) => (w === "host:other" ? "dead" : "unknown"),
+      );
+      expect(won).toMatchObject({ acquired: true, previousOwner: "host:other" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("pid-only legacy dir (dev format) blocks on live pid and reclaims a dead one", async () => {
+    const liveRoot = await tempLeaseRoot();
+    const deadRoot = await tempLeaseRoot();
+    try {
+      await mkdir(join(liveRoot, "8"), { recursive: true });
+      await writeFile(join(liveRoot, "8", "pid"), "1234"); // no owner file, alive
+      expect(
+        await createFsIssueLeaseStore(liveRoot, { pid: 9, pidAlive }).acquire(8, "host:w1", unknownOwner),
+      ).toMatchObject({ acquired: false, owner: "1234", reason: "local lease owner is alive" });
+
+      await mkdir(join(deadRoot, "8"), { recursive: true });
+      await writeFile(join(deadRoot, "8", "pid"), String(DEAD_PID)); // no owner file, dead
+      expect(
+        await createFsIssueLeaseStore(deadRoot, { pid: 9, pidAlive }).acquire(8, "host:w1", unknownOwner),
+      ).toMatchObject({ acquired: true, previousOwner: String(DEAD_PID) });
+    } finally {
+      await rm(liveRoot, { recursive: true, force: true });
+      await rm(deadRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("treats a blank/corrupt dir (neither file readable) as reclaimable", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      await mkdir(join(root, "12"), { recursive: true });
+      await writeFile(join(root, "12", "pid"), "   "); // blank
+      const store = createFsIssueLeaseStore(root, { pid: 77, pidAlive });
+      expect(await store.acquire(12, "host:w1", unknownOwner)).toMatchObject({ acquired: true });
+      expect(await readFile(join(root, "12", "pid"), "utf8")).toBe("77");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("is idempotent for the same owner and refreshes a missing file", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      const store = createFsIssueLeaseStore(root, { pid: 88, pidAlive });
+      expect(await store.acquire(430, "host:w1", unknownOwner)).toEqual({ acquired: true });
+      // owner-token idempotence even from a different pid.
+      const again = createFsIssueLeaseStore(root, { pid: 999, pidAlive });
+      expect(await again.acquire(430, "host:w1", unknownOwner)).toEqual({ acquired: true });
+      // Missing owner file is refreshed on a same-pid re-acquire.
+      await rm(join(root, "430", "owner"), { force: true });
+      expect(await store.acquire(430, "host:w1", unknownOwner)).toEqual({ acquired: true });
+      expect(await readFile(join(root, "430", "owner"), "utf8")).toBe("host:w1\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("release is ownership-guarded: removes ours, spares a mismatched live owner", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      const store = createFsIssueLeaseStore(root, { pid: 100, pidAlive });
+      await store.acquire(430, "host:w1", unknownOwner);
+      // Wrong owner → left alone.
+      await store.release(430, "host:someone-else");
+      expect(await readFile(join(root, "430", "owner"), "utf8")).toBe("host:w1\n");
+      // Right owner → removed.
+      await store.release(430, "host:w1");
+      await expect(readFile(join(root, "430", "owner"), "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      // Already gone → no throw.
+      await expect(store.release(430, "host:w1")).resolves.toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("release falls back to the recorded pid when the owner file is absent", async () => {
+    const root = await tempLeaseRoot();
+    try {
+      await mkdir(join(root, "9"), { recursive: true });
+      await writeFile(join(root, "9", "pid"), "100"); // dev-format dir, no owner
+      const store = createFsIssueLeaseStore(root, { pid: 100, pidAlive });
+      await store.release(9, "host:w1");
+      await expect(readFile(join(root, "9", "pid"), "utf8")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
