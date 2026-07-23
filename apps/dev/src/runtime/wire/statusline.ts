@@ -21,7 +21,11 @@ import {
 import { createFileBootBreakerStore, isBreakerOpen } from "../../core/supervisor/boot-breaker.js";
 import * as ghx from "../gh.js";
 import * as gitx from "../git.js";
-import { readAllWorkerStates, currentRenderableWorkerRecords } from "../../core/worker-state-reader.js";
+import {
+  readAllWorkerStates,
+  currentObservableWorkerRecords,
+  currentRenderableWorkerRecords,
+} from "../../core/worker-state-reader.js";
 import { allWorkersRoots } from "../../core/worker-paths.js";
 import { afkPaths, type RepoContext } from "./paths.js";
 import { readFleetState } from "./monitor.js";
@@ -283,10 +287,10 @@ export async function collectStatuslineFleet(
 export async function collectStatuslineWorkers(ctx: RepoContext): Promise<CompactWorker[]> {
   const paths = afkPaths(ctx.root);
   const nowMs = Date.now();
-  const records = currentRenderableWorkerRecords(await readAllWorkerStates(paths.tmpDir, { nowMs }));
+  const records = currentObservableWorkerRecords(await readAllWorkerStates(paths.tmpDir, { nowMs }));
   const workers: CompactWorker[] = [];
   const enginePaths = createEnginePaths(join(ctx.root, ".red"));
-  for (const { state, active, live: pidLive, liveness, livenessVerdict } of records) {
+  for (const { state, active, pidIdentityLive: pidLive, liveness, livenessVerdict } of records) {
     // The shared current-worker selector applies the `renderableLive` gate and
     // collapses retained sibling attempt dirs to one row per worker.
     // #1210 Part B: no per-render git subprocess — read the writer-stamped LOC

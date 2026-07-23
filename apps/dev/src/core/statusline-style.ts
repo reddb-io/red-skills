@@ -69,7 +69,7 @@ const RESET = "\x1b[0m";
 const BRANCH_MAX = 28;
 const WORKER_GUTTER = "  ";
 
-type WorkerColumn = "workerId" | "run" | "org" | "iss" | "phase" | "elapsed" | "loc" | "tks" | "tls" | "rsn" | "txt";
+type WorkerColumn = "workerId" | "run" | "org" | "iss" | "phase" | "elapsed" | "heartbeat" | "loc" | "tks" | "tls" | "rsn" | "txt";
 const WORKER_COLUMNS: readonly WorkerColumn[] = [
   "workerId",
   "run",
@@ -77,13 +77,14 @@ const WORKER_COLUMNS: readonly WorkerColumn[] = [
   "iss",
   "phase",
   "elapsed",
+  "heartbeat",
   "loc",
   "tks",
   "tls",
   "rsn",
   "txt",
 ];
-const SHORT_WORKER_COLUMNS: readonly WorkerColumn[] = ["workerId", "iss", "phase", "elapsed"];
+const SHORT_WORKER_COLUMNS: readonly WorkerColumn[] = ["workerId", "iss", "phase", "elapsed", "heartbeat"];
 type WorkerCells = Record<WorkerColumn, string>;
 type WorkerWidths = Record<WorkerColumn, number>;
 const NO_AGENT_ORIGINS = new Set(["requeue"]);
@@ -114,6 +115,26 @@ function signedDiff(added: number | undefined, removed: number | undefined): str
 
 function tokenDisplay(f: ReturnType<typeof workerFields>): string {
   return f.runner === "claude" && f.tokens === 0 ? "—" : humanizeCount(f.tokens);
+}
+
+function heartbeatAge(ms: number | undefined): string {
+  if (ms === undefined) return "?";
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.round(minutes / 60)}h`;
+}
+
+/** Compact proof-of-life sourced from the same evaluator verdict as
+ * `worker_vitals`: fresh `3s`, quiet `~11m`, live descendant `+`, wedged `!`. */
+function heartbeatDisplay(worker: CompactWorker): string {
+  const verdict = worker.livenessVerdict;
+  if (!verdict) return "?";
+  const age = heartbeatAge(verdict.laneAgeMs);
+  if (verdict.status === "stalled") return `!${age}`;
+  if (verdict.laneFresh) return age;
+  return `~${age}${verdict.liveDescendants === true ? "+" : ""}`;
 }
 
 // ---------- identity zone (wine background) ----------
@@ -280,6 +301,7 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
     iss: f.issue === null ? "" : `iss=${String(f.issue)}`,
     phase: f.issue === null ? "" : progressCell(f.phase, f.activity),
     elapsed: f.elapsed,
+    heartbeat: `hb=${heartbeatDisplay(worker)}`,
     loc: noAgent ? "" : `loc=${formatDiff(f.added, f.removed)}`,
     tks: noAgent ? "" : `tks=${tokenDisplay(f)}`,
     tls: noAgent ? "" : `tls=${String(f.tools)}`,
@@ -330,8 +352,9 @@ function renderWorkerLines(
  * A visual sibling of line 1: the `wID` is BOLD + red, and every k=v token
  * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tls=`/`rsn=`/`txt=`) reuses the
  * same {@link kv} colour convention line 1 uses — light-red KEY, default-fg
- * VALUE — so no token is a distinct blob. EVERY key on this line is EXACTLY 3
- * letters (house rule, issue #1176). The vitals use the shared monitor/statusline
+ * VALUE — so no token is a distinct blob. Existing keys stay exactly 3 letters
+ * (house rule, issue #1176); the proof-of-life token keeps the canonical `hb=`
+ * spelling from #2480. The vitals use the shared monitor/statusline
  * vocabulary `tls`/`rsn`/`txt` for tools, reasoning, and text activity.
  * `iss=` carries the bare ISSUE NUMBER read from the worker's `current.number`
  * (populated on claim for BOTH `/afk` and `/go` lanes), NOT the old done/total
@@ -351,6 +374,7 @@ export function renderWorkerLine(worker: CompactWorker, now: number, preset: Sta
       if (progress) parts.push(progress);
     }
     parts.push(f.elapsed);
+    parts.push(kv("hb", heartbeatDisplay(worker)));
     return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
   }
   const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
@@ -377,6 +401,7 @@ export function renderWorkerLine(worker: CompactWorker, now: number, preset: Sta
     if (progress) parts.push(progress);
   }
   parts.push(f.elapsed);
+  parts.push(kv("hb", heartbeatDisplay(worker)));
   if (landing || (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin))) {
     return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
   }

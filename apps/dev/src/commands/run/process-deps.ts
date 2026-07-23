@@ -103,6 +103,7 @@ import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core
 import { deriveActivity } from "./activity.js";
 import { makeImplementerRunAgent } from "./implementer-run-agent.js";
 import { makeAgentConflictResolver, makeMechanicalConflictResolver } from "./reconcile.js";
+import { runLinkedSubagent } from "./linked-subagent.js";
 import { makeRecordAttempt, makeRecordOutcomeEvent } from "./recording.js";
 import {
   castleWorktreeUnder,
@@ -559,11 +560,10 @@ export function buildProcessDeps(
               effort: conflictTier.effort,
             })
           : claudeSpawnArgs({ prompt, worktree: cwd });
-      const { execTool } = await import("../../runtime/exec.js");
-      await execTool(invocation.command, invocation.args, { cwd });
+      await runLinkedSubagent({ runner, phase: "merge-resolver", invocation, cwd, bridge: castleBridge, exec: exec ?? execTool });
     },
     resolveMechanicalConflict: makeMechanicalConflictResolver(gitCtx),
-    resolveAgentConflict: makeAgentConflictResolver({ config, runner, paths }),
+    resolveAgentConflict: makeAgentConflictResolver({ config, runner, paths, bridge: castleBridge, exec: exec ?? execTool }),
     maxAgentConflictResolveAttempts: 2,
     // Isolated landing worktree for the LOCKED path (#572): a detached worktree at
     // <base> so the locked merge/push/rollback never `git -C`'s the primary

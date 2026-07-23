@@ -130,9 +130,27 @@ function compareWorkerAttempts(a: Pick<WorkerStateRecord, "path" | "state">, b: 
  * Worker. The current attempt is the newest started/mtime record for the worker,
  * with the numeric `aN` suffix as a stable tie-breaker. */
 export function currentRenderableWorkerRecords(records: readonly WorkerStateRecord[]): WorkerStateRecord[] {
+  return currentWorkerRecords(records, (rec) => rec.renderableLive);
+}
+
+/**
+ * Collapse to the current OS-running record per Worker for proof-of-life
+ * surfaces. Unlike {@link currentRenderableWorkerRecords}, this keeps an
+ * evaluator-stalled record while its own PID identity is still live, so the
+ * statusline can render the wedged `!age` verdict instead of silently deleting
+ * the row. Finished/retained PID-zero attempts remain excluded.
+ */
+export function currentObservableWorkerRecords(records: readonly WorkerStateRecord[]): WorkerStateRecord[] {
+  return currentWorkerRecords(records, (rec) => rec.pidIdentityLive || rec.hostPidLive);
+}
+
+function currentWorkerRecords(
+  records: readonly WorkerStateRecord[],
+  include: (record: WorkerStateRecord) => boolean,
+): WorkerStateRecord[] {
   const byWorker = new Map<string, WorkerStateRecord>();
   for (const rec of records) {
-    if (!rec.renderableLive) continue;
+    if (!include(rec)) continue;
     const key = workerKey(rec);
     const prev = byWorker.get(key);
     if (prev === undefined || compareWorkerAttempts(rec, prev) > 0) {
