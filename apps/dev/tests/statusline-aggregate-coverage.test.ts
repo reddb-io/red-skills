@@ -178,6 +178,7 @@ const afk = (p: StatuslineAggregate): Required<AfkInput> | undefined => {
     workers: block.workers,
     queue: p.queue.ready_for_agent,
     human: p.queue.ready_for_human,
+    quarantine: 0,
     blocked: block.blocked,
     added: block.added,
     removed: block.removed,
