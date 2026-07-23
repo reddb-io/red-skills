@@ -139,6 +139,27 @@ import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBas
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
 import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordAttemptBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
+
+function setupFailureExcerpt(log: string | null | undefined): string | undefined {
+  const lines = (log ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("[heartbeat]"));
+  let setupFailure = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!;
+    if (
+      /command failed in sandbox/i.test(line) ||
+      /(?:sandbox|bootstrap|setup).*(?:error|fail)/i.test(line)
+    ) {
+      setupFailure = index;
+      break;
+    }
+  }
+  if (setupFailure < 0) return undefined;
+  return lines.slice(setupFailure, setupFailure + 4).join("\n");
+}
+
 export async function processIssue(
   deps: ProcessIssueDeps,
   input: ProcessIssueInput,
@@ -689,9 +710,16 @@ export async function processIssue(
         (!deps.lookups.branchPresent || (await deps.lookups.branchPresent(workerBranch)));
       if (!branchHasWork) {
         await fireHook("on_attempt_error", onErrorContext(current, workerBranch, "no-sentinel", current.attempt));
+        const attemptLog = await deps.fs
+          .readText?.(`${input.attemptDir}/afk.log`)
+          .catch(() => null);
+        const diagnostic =
+          setupFailureExcerpt(attemptLog) ??
+          (run.stdout ? run.stdout.split("\n").slice(-1)[0] || undefined : undefined) ??
+          "(no captured stdout)";
         return await terminalFailure(common, "no-sentinel", "no-sentinel", {
           notes: "_(no Notes appended; inner agent exited without a sentinel and the branch carries no work)_",
-          log: run.stdout ? run.stdout.split("\n").slice(-1)[0] || "(no captured stdout)" : "(no captured stdout)",
+          log: diagnostic,
         });
       }
       salvaged = true;
@@ -1047,7 +1075,7 @@ export async function processIssue(
     }
   };
   markLandingPhase("gate");
-  const landing = await doLanding(
+  let landing = await doLanding(
     {
       mergeExec: deps.mergeExec,
       remoteGit: deps.remoteGit,
@@ -1058,6 +1086,7 @@ export async function processIssue(
       maxAgentConflictResolveAttempts: deps.maxAgentConflictResolveAttempts,
       waitForReview: deps.waitForReview,
       ciAwait: deps.ciAwait,
+      landingWait: deps.landingWait,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
@@ -1129,6 +1158,128 @@ export async function processIssue(
         }),
     },
   );
+  const finishSuccessfulLanding = async (
+    completed: Extract<typeof landing, { ok: true }>,
+    releaseAtEnd: boolean,
+  ): Promise<ProcessIssueResult> => {
+    const mergeSha = completed.mergeSha ?? (await deps.git.headShortSha());
+    const durationS = deps.nowEpoch() - startedEpoch;
+    if (completed.postMergeValidation) {
+      validationSidecar = [...validationSidecar, postMergeValidationSidecarLine(completed.postMergeValidation)];
+      deps.recordWorkerEvent?.("worker.post_merge_validation", {
+        path: completed.postMergeValidation.path,
+        reason: completed.postMergeValidation.reason,
+        pr_number: completed.postMergeValidation.prNumber,
+        check_count: completed.postMergeValidation.path === "satisfied-by-ci"
+          ? completed.postMergeValidation.checkCount
+          : undefined,
+      });
+    }
+    markLandingPhase("cascade");
+    deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
+    await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
+    const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope, noSourceDiffWarning);
+    await recordAttemptBestEffort(common, "done", {
+      durationS,
+      mergeSha,
+      validationSummary: [noSourceDiffWarning, validationSidecar.join("\n")].filter(Boolean).join("\n"),
+    });
+    await deps.gh.close(issue);
+    await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
+    await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
+    let cleanupError: string | undefined;
+    try {
+      const cleanup = await deps.git.deleteLocalBranch(workerBranch);
+      if (cleanup && !cleanup.ok) cleanupError = cleanup.error;
+    } catch (error) {
+      cleanupError = error instanceof Error ? error.message : String(error);
+    }
+    if (cleanupError) {
+      deps.appendIterLog(`🤖 /afk landing cleanup warning: ${cleanupError}`);
+    }
+    await deps.fs.completionSweep(issue);
+    if (releaseAtEnd) await deps.claimLock.release(issue);
+    markTerminalState(deps, "done");
+    await runCloseCascade(deps, issue);
+    if (completed.mergeSha) {
+      await runCascadeRebase(deps, input, issue, completed.mergeSha, labels);
+    }
+    return {
+      outcome: "done",
+      issue,
+      branch: workerBranch,
+      base,
+      locked,
+      mergeSha,
+      ...(cleanupError ? { cleanupError } : {}),
+      hooksFired,
+      envelopePosted: posted,
+      preserved: true,
+      swept: true,
+    };
+  };
+  if (landing.ok && landing.deferred) {
+    const deferred = landing.deferred;
+    if (!deps.landingTailObserver) {
+      landing = await deferred.run();
+    } else {
+      const completion = deps.landingTailObserver({ ...deferred, issue });
+      void completion
+        .then(async (completed) => {
+          if (completed.ok) {
+            await finishSuccessfulLanding(completed, false);
+            return;
+          }
+          if (completed.reason === "ci-failed" || completed.reason === "ci-pending") {
+            await ciBlocked(common, completed.reason, completed.prNumber);
+            return;
+          }
+          if (completed.reason === "pr-conflict") {
+            await prLandingBlocked(
+              common,
+              "merge-conflict",
+              completed.prNumber,
+              completed.message ?? "the observer found merge conflicts while finishing the open PR",
+            );
+            return;
+          }
+          await prLandingBlocked(
+            common,
+            "ci-failed",
+            completed.prNumber,
+            completed.reason === "pr-merge-failed"
+              ? "the observer's merge was rejected by GitHub"
+              : `the observer could not finish the landing tail (${completed.reason})`,
+          );
+        })
+        .catch((error) => {
+          deps.appendIterLog(
+            `🤖 /afk landing-tail observer for #${issue} stopped before close: ${error instanceof Error ? error.message : String(error)}`,
+          );
+          deps.recordWorkerEvent?.("worker.blocked", {
+            outcome: "ci-pending",
+            reason: "landing-tail-observer-stopped",
+            issue,
+          });
+        });
+      await releaseClaim();
+      deps.recordWorkerEvent?.("worker.landing_handed_off", {
+        issue,
+        pr_number: deferred.prNumber,
+        wait: deps.landingWait ?? "merge",
+      });
+      return {
+        outcome: "done",
+        issue,
+        branch: workerBranch,
+        base,
+        locked,
+        hooksFired,
+        preserved: true,
+        swept: false,
+      };
+    }
+  }
   if (!landing.ok) {
     if (landing.reason === "adversarial-correction") {
       const park = pendingAdversarialPark;
@@ -1229,61 +1380,13 @@ export async function processIssue(
         { validationSummary: validation },
       );
     }
-    return await mergeFailed(common, landing.reason, landing.locked);
+    return await mergeFailed(
+      common,
+      [landing.reason, landing.message].filter(Boolean).join(" — "),
+      landing.locked,
+    );
   }
-  const mergeSha = landing.mergeSha ?? (await deps.git.headShortSha());
-  const durationS = deps.nowEpoch() - startedEpoch;
-  if (landing.postMergeValidation) {
-    validationSidecar = [...validationSidecar, postMergeValidationSidecarLine(landing.postMergeValidation)];
-    deps.recordWorkerEvent?.("worker.post_merge_validation", {
-      path: landing.postMergeValidation.path,
-      reason: landing.postMergeValidation.reason,
-      pr_number: landing.postMergeValidation.prNumber,
-      check_count: landing.postMergeValidation.path === "satisfied-by-ci" ? landing.postMergeValidation.checkCount : undefined,
-    });
-  }
-  markLandingPhase("cascade");
-  deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
-  await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
-  const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope, noSourceDiffWarning);
-  await recordAttemptBestEffort(common, "done", {
-    durationS,
-    mergeSha,
-    validationSummary: [noSourceDiffWarning, validationSidecar.join("\n")].filter(Boolean).join("\n"),
-  });
-  await deps.gh.close(issue);
-  await deps.gh.editLabels(issue, [LABEL_RUNNING], []);
-  await deleteRemote(deps.remoteGit, input.repoDir, workerBranch);
-  let cleanupError: string | undefined;
-  try {
-    const cleanup = await deps.git.deleteLocalBranch(workerBranch);
-    if (cleanup && !cleanup.ok) cleanupError = cleanup.error;
-  } catch (error) {
-    cleanupError = error instanceof Error ? error.message : String(error);
-  }
-  if (cleanupError) {
-    deps.appendIterLog(`🤖 /afk landing cleanup warning: ${cleanupError}`);
-  }
-  await deps.fs.completionSweep(issue);
-  await deps.claimLock.release(issue);
-  markTerminalState(deps, "done");
-  await runCloseCascade(deps, issue);
-  if (landing.mergeSha) {
-    await runCascadeRebase(deps, input, issue, landing.mergeSha, labels);
-  }
-  return {
-    outcome: "done",
-    issue,
-    branch: workerBranch,
-    base,
-    locked,
-    mergeSha,
-    ...(cleanupError ? { cleanupError } : {}),
-    hooksFired,
-    envelopePosted: posted,
-    preserved: true,
-    swept: true,
-  };
+  return await finishSuccessfulLanding(landing, true);
   }
 }
 

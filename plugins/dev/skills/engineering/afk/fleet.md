@@ -21,7 +21,11 @@ fleet. Read [`MCP.md`](./MCP.md) for host prefixing and mutation modes.
 | logs | `logs` | One structured lane per call (`supervisor` / `worker` / `monitor` / `liveness`). |
 
 **A named fleet is a full profile, not just a worker count**: runner +
-work-scope `selector` (`{spec, lane, label, issues}`) + `config` knobs + `base`.
+work-scope `selector` (`{spec, lane, label, issues, tags, user}`) + `config`
+knobs + `base`. The `tags` facet ANDs over `tag:<value>` labels — a candidate
+must carry EVERY requested tag, so an untagged issue is outside every
+tag-scoped fleet; `user` keeps only issues authored by that GitHub login
+(`@me` is resolved to a concrete login before the profile is persisted).
 Several named fleets run concurrently on one checkout — one on `claude` scoped
 to a Spec, another on `codex` draining the rest — and the three-layer claim is
 what guarantees they never double-claim an issue. Partition fleets by scope, not

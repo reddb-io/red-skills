@@ -22,6 +22,10 @@ _Avoid_: PRD, except when reading historical ADRs, labels, or envelopes (upstrea
 A coherent class of **Ticket** labels with one job: current state, permanent type, priority, relationship/dependency, or operational diagnostic.
 _Avoid_: loose label, tag bucket
 
+**Tag label (`tag:<value>`)**:
+The territory-scoping **Label family** (`tag:backend`, `tag:infra`) that partitions one shared `ready-for-agent` pool between several humans' fleets. A fleet selector's `tags` facet ANDs over them — a **Ticket** must carry every requested tag label, so an untagged Ticket sits outside every tag-scoped fleet — while an unfiltered `/afk` still drains everything. Stamped at creation time (`/go --tags`, `/to-spec`, `/to-tickets` with Spec→Ticket inheritance; missing labels auto-created); never drives lifecycle transitions. Always the two-word name.
+_Avoid_: territory (as a label name), bare "tag", topic label
+
 **HITL queue**:
 The operator-facing set of non-Spec **Tickets** that need human decision resolution, selected by `ready-for-human`.
 _Avoid_: human backlog, HITL backlog

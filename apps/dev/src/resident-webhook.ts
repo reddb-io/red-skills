@@ -12,10 +12,10 @@ import {
 import {
   GITHUB_WEBHOOK_DELIVERY_KIND,
   GITHUB_WEBHOOK_SINGLETON,
-  WebhookForwarder,
 } from "@reddb-io/shared/github-webhook.js";
 import { resolveRepoRoot } from "@reddb-io/shared/repo-root.js";
 import { readPidStartTime } from "./core/state.js";
+import { createCompositeTransport } from "./runtime/etag-transport.js";
 import { killTreeAndWait } from "./runtime/kill-tree.js";
 
 
@@ -54,16 +54,16 @@ export function createResidentWebhook(
   const lane = options.lane ?? createSingletonEventLane(paths);
   const makeForwarder =
     options.makeForwarder ??
+    // Composite transport (#2514): the `gh webhook forward` child when
+    // available, with the ETag conditional poller as the always-armed fallback
+    // filling the SAME lane — consumers never see which transport delivered.
     ((root: string, cancelSignal: AbortSignal) =>
-      new WebhookForwarder(
-        { cwd: root, cancelSignal },
-        async (child, graceMs) => {
-          if (!child.pid) return;
-          const pollMs = 100;
-          const graceTries = Math.max(1, Math.ceil(graceMs / pollMs));
-          await killTreeAndWait(child.pid, { graceTries, pollMs });
-        },
-      ));
+      createCompositeTransport(root, cancelSignal, async (child, graceMs) => {
+        if (!child.pid) return;
+        const pollMs = 100;
+        const graceTries = Math.max(1, Math.ceil(graceMs / pollMs));
+        await killTreeAndWait(child.pid, { graceTries, pollMs });
+      }));
   const notice =
     options.notice ??
     ((message: string) =>

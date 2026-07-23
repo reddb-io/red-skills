@@ -9,6 +9,7 @@ import {
   readCastleLaneRecords,
   readFleetProfile,
   readHostCapabilityProfile,
+  runnerFromExplicitEnv,
   resolveHostCapabilities,
   upsertFleetProfile,
   type CastleLaneRecord,
@@ -49,6 +50,45 @@ export interface FleetStopOptions {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const FLEET_USAGE = `Usage: red-skills-dev fleet [target] [options]
+       red-skills-dev fleet status [--fleet <name>]
+       red-skills-dev fleet stop [--fleet <name>] [--force]
+       red-skills-dev fleet logs [--fleet <name>]
+
+Options:
+  --runner <runner>
+  --request <text>, -r <text>
+  --fleet <name>
+  --budget-usd <amount>
+  --shrink-mode <hard-kill|drain-then-retire>
+  --help, -h
+`;
+
+const WORKER_PASSTHROUGH_FLAGS = new Set([
+  "--spec",
+  "--issues",
+  "--selector",
+  "--tags",
+  "--user",
+  "-n",
+  "--once",
+  "--model",
+  "--effort",
+  "--alternate",
+  "--fallback-runner",
+  "--boot-only",
+  "--reconcile-issue",
+  "--origin",
+  "--kind",
+  "--lane",
+  "--pre-pr",
+  "--local-merge",
+  "--yolo",
+  "--verify",
+  "--go-verify-retries",
+  "--run-mode",
+]);
 
 function parsePositiveNumber(raw: string | undefined, flag: string): number {
   if (raw === undefined) throw new Error(`${flag} requires a value`);
@@ -149,6 +189,12 @@ function parseFleetArgs(args: readonly string[]): {
       target = Number(arg);
       continue;
     }
+    if (arg.startsWith("-")) {
+      const flag = arg.split("=", 1)[0]!;
+      if (!WORKER_PASSTHROUGH_FLAGS.has(flag)) {
+        throw new Error(`unknown fleet flag: ${flag}`);
+      }
+    }
     passthrough.push(arg);
   }
   return {
@@ -164,6 +210,21 @@ function parseFleetArgs(args: readonly string[]): {
     force,
     passthrough,
   };
+}
+
+/**
+ * Launch runner cascade (#2545): explicit --runner flag > the operator's
+ * RED_AFK_RUNNER env AT THIS LAUNCH > the registered profile. The profile must
+ * never shadow the env the operator just set — that is exactly the "fresh
+ * relaunch keeps the stale runner" trap: kill fleet, relaunch with
+ * RED_AFK_RUNNER=claude, supervisor resumes codex from fleets.toonl.
+ */
+export function resolveLaunchRunnerPin(
+  flag: string | undefined,
+  env: NodeJS.ProcessEnv,
+  profileRunner: string | undefined,
+): string | undefined {
+  return flag ?? runnerFromExplicitEnv(env.RED_AFK_RUNNER) ?? profileRunner;
 }
 
 export async function writeResizeRequest(
@@ -687,7 +748,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   }
 
   const detection = detectRunner({
-    flag: parsed.runnerFlag ?? parseRunnerFlag(args) ?? profile?.runner,
+    flag: resolveLaunchRunnerPin(parsed.runnerFlag ?? parseRunnerFlag(args), process.env, profile?.runner),
     processTree: callerProcessTreeNative(),
     scriptPath: process.argv[1],
   });
@@ -704,6 +765,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     root,
     target,
     runner: detection.runner,
+    base: profile?.base,
     passthrough: [...parsed.passthrough, ...scoped],
     request: parsed.request,
     drainBudgetUsd: parsed.drainBudgetUsd,
@@ -753,6 +815,10 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
 }
 
 export async function fleetCommand(args: string[], cwd = process.cwd()): Promise<number> {
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(FLEET_USAGE);
+    return 0;
+  }
   if (args[0] === "logs") {
     try {
       await logsFleet(args.slice(1), cwd);
@@ -763,8 +829,8 @@ export async function fleetCommand(args: string[], cwd = process.cwd()): Promise
       return 1;
     }
   }
-  const parsed = parseFleetArgs(args);
   try {
+    const parsed = parseFleetArgs(args);
     if (parsed.status) {
       await statusFleet(cwd, process.stdout, parsed.fleet);
     } else if (parsed.stop) {

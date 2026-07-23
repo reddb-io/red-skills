@@ -43,6 +43,8 @@ export interface BindMountSandboxHandle {
       cwd?: string;
       sudo?: boolean;
       stdin?: string;
+      /** Cancels the complete provider-owned process tree. */
+      signal?: AbortSignal;
     },
   ): Promise<ExecResult>;
   /**
@@ -120,6 +122,8 @@ export interface IsolatedSandboxHandle {
       cwd?: string;
       sudo?: boolean;
       stdin?: string;
+      /** Cancels the complete provider-owned process tree. */
+      signal?: AbortSignal;
     },
   ): Promise<ExecResult>;
   /**
@@ -148,7 +152,7 @@ export interface IsolatedCreateOptions {
 
 /** Configuration for createIsolatedSandboxProvider. */
 export interface IsolatedSandboxProviderConfig {
-  /** Human-readable name for this provider (e.g. "daytona", "e2b"). */
+  /** Human-readable name for this provider (e.g. "e2b", "firecracker"). */
   readonly name: string;
   /** Environment variables injected by this provider. Merged at launch time. */
   readonly env?: Record<string, string>;
@@ -212,6 +216,8 @@ export interface NoSandboxHandle {
       cwd?: string;
       sudo?: boolean;
       stdin?: string;
+      /** Cancels the complete provider-owned process tree. */
+      signal?: AbortSignal;
     },
   ): Promise<ExecResult>;
   /**

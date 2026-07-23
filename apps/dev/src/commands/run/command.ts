@@ -82,7 +82,7 @@ import {
   type AttemptDirEntry,
 } from "../../core/attempt-ledger.js";
 import { isValidWorkerId, WORKER_NAMESPACES } from "../../core/worker-paths.js";
-import { readdirSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { isLivePid } from "../../runtime/kill-tree.js";
 import { specialUserRequestBlock, claudeSpawnArgs, codexSpawnArgs } from "../../core/runner-spawn.js";
@@ -97,7 +97,7 @@ import {
   safetyLogPath,
   deathCauseForRecoveredWorker,
 } from "../../core/process-safety.js";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { hostFingerprintPrefix, workerIdentity } from "../../core/host-identity.js";
 import { appendAgentRecord, appendRecordToonlTaggedRow } from "../../core/jsonl-log.js";
 import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../../core/state.js";
@@ -108,14 +108,12 @@ import { createActivityMeter } from "../../core/activity-meter.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
-import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
-import { renderClaimComment } from "../../core/claim.js";
 import { HOST_CONFIG_EXIT_CODE } from "../../core/attempt-outcome.js";
 
-import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, type RunOptions } from "./flags.js";
+import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
 import { makeBootReconcileRunner, runReconcileWorker } from "./reconcile.js";
-import { nextAttemptSync, openRunnerCircuit, recordBootError, runnerCircuitOpen } from "./state.js";
+import { initBootWorkerState, nextAttemptSync, openRunnerCircuit, recordBootError, runnerCircuitOpen } from "./state.js";
 
 export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
@@ -174,6 +172,17 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // to resolve all workers that ran in a parked slot — this stamp must appear
   // even when the worker fast-dies before writing worker.pid.
   process.stdout.write(`[afk] worker: ${workerId}\n`);
+  const bootStatePath = await initBootWorkerState({
+    tmpDir: paths.tmpDir,
+    workerId,
+    pid: process.pid,
+    pidStartTime,
+    runner,
+    origin: dispatchIdentity.origin,
+    kind: dispatchIdentity.kind,
+    model: settings.model,
+    effort: settings.effort,
+  }).catch(() => undefined);
 
   // AFK runner improvement — Pattern 5 diagnostic: every spike worker died
   // post-commit + vitest with no exit code / signal / stack trace. Install
@@ -201,12 +210,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   });
   const nowS = Math.floor(Date.now() / 1000);
 
-  // Fleet supervisor owns the boot (#623): a worker spawned by the supervisor
-  // carries RED_AFK_SWEEPS_DONE, signalling the shared sweeps already ran once
-  // pre-spawn. Such a worker boots bootstrap+claim only — it skips every sweep
-  // (cheap respawns; no race over `.red/tmp`). A solo `run` has no marker and
-  // runs the full sweep suite exactly as before.
-  const sweepsDone = process.env.RED_AFK_SWEEPS_DONE === "1";
+  // Fleet workers inherit completed sweeps (#623). Explicit issue dispatches
+  // defer shared hygiene to fleet/untargeted boots (#2487), so reconcile work
+  // cannot delay the named target before claim. Both paths use minimal boot.
+  const supervisorSweepsDone = process.env.RED_AFK_SWEEPS_DONE === "1";
+  const skipSweeps = shouldSkipBootSweeps(flags.filter, supervisorSweepsDone);
 
   const sessionCtx: SessionContext & { hostProfile?: HostCapabilityProfile } = {
     runner,
@@ -218,7 +226,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     bootOnly: flags.bootOnly,
     // Reported by the --boot-only line so the dry-run states whether this worker
     // ran the sweeps or inherited them from the supervisor.
-    sweepsSkipped: sweepsDone,
+    sweepsSkipped: skipSweeps,
     ...(hostProfile !== undefined ? { hostProfile } : {}),
     issueTemplate: {
       tmpDir: paths.tmpDir,
@@ -230,6 +238,18 @@ export async function runCommand(options: RunOptions): Promise<number> {
   };
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+
+  // Concretize a `--user @me` territory facet before anything consumes the
+  // filter, so the castle drain, the session preview, and every forwarded
+  // `--selector` all carry a real login.
+  if (sessionCtx.filter.kind === "selector" && sessionCtx.filter.selector.user === "@me") {
+    sessionCtx.filter = {
+      kind: "selector",
+      selector: await ghx.resolveSelectorUser(sessionCtx.filter.selector, () =>
+        ghx.resolveViewerLogin(ghCtx),
+      ),
+    };
+  }
 
   // Boot discovery: orphan dirs, attempt-cap groups, branch refs, unblock
   // candidates. Resolved from disk/branches; gh state lookups stay lazy in the
@@ -245,8 +265,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
   let bootOptions: BootOptions;
   let bootDeps: BootDeps;
   try {
-    if (sweepsDone) {
-      // Supervisor-owned boot (#623): skip the expensive discovery (branch
+    if (skipSweeps) {
+      // Minimal boot (#623, #2487): skip the expensive discovery (branch
       // listings, orphan walk, unblock-candidate + parked-mechanical gh probes)
       // AND the sweep work itself. The minimal options carry empty sweep inputs
       // + skipSweeps:true; the minimal deps wire only the bootstrap fs calls.
@@ -281,11 +301,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
     resourceBudget: readValidationResourceBudget(config),
   });
 
-  // Wire the boot reconcile runner into bootDeps (step 7, ADR 0055). A
-  // supervisor-owned boot skips every sweep (including reconcile) and the fleet
-  // dispatches reconcile per-tick instead, so the runner is wired only on the
-  // solo / sweep-running path.
-  if (!sweepsDone) {
+  // Wire the boot reconcile runner only when this boot actually owns sweeps.
+  if (!skipSweeps) {
     bootDeps = { ...bootDeps, reconcileRunner: makeBootReconcileRunner(ctx, paths, workerId, runner, feedback) };
   }
 
@@ -404,6 +421,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
       isOpen: (r) => runnerCircuitOpen(paths.runnerCircuitDir, r, Math.floor(Date.now() / 1000)),
     },
     buildProcessInput: (candidate: IssueCandidate, c: SessionContext): ProcessIssueInput => {
+      if (bootStatePath) {
+        rmSync(dirname(bootStatePath), { recursive: true, force: true });
+      }
       const recoveryOrdinal = nextAttemptSync(c.issueTemplate.tmpDir, candidate.number);
       // Long-running workers key workspaces by workerId+issueId. The retry
       // ordinal remains separate policy data for per-class recovery caps and

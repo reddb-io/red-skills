@@ -1,4 +1,7 @@
 import { decode } from "@reddb-io/toon";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   decodeLocMemoSnapshot,
@@ -10,8 +13,11 @@ import {
   RunFlagError,
   deriveActivity,
   resolveRunDispatchIdentity,
+  shouldSkipBootSweeps,
+  initBootWorkerState,
 } from "../src/commands/run.js";
 import type { AgentStreamEvent } from "../src/core/execution.js";
+import { readWorkerState } from "../src/core/worker-state-reader.js";
 
 describe("deriveActivity (native-path monitor stage detection)", () => {
   const tool = (name: string, formattedArgs: string): AgentStreamEvent => ({
@@ -106,6 +112,34 @@ describe("deriveActivity (native-path monitor stage detection)", () => {
 });
 
 describe("run command TOON state snapshots", () => {
+  it("publishes a renderable boot-phase worker before issue selection or claim (#2487)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-boot-state-"));
+    try {
+      const statePath = await initBootWorkerState({
+        tmpDir: root,
+        workerId: "wBOOT",
+        pid: 4242,
+        runner: "codex",
+        origin: "afk",
+        kind: "afk",
+        nowMs: () => 1_000,
+      });
+
+      const record = readWorkerState(statePath, {
+        nowMs: 1_000,
+        kill: () => true,
+      });
+      expect(record?.state.current).toMatchObject({
+        number: "",
+        phase: "boot",
+        activity: "boot",
+      });
+      expect(record?.renderableLive).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("round-trips the LOC memo through TOON and still reads legacy JSON", () => {
     const memo = { sha: "abc123", added: 12, removed: 3 };
     const toon = encodeLocMemoSnapshot(memo);
@@ -238,9 +272,53 @@ describe("parseRunFlags", () => {
     expect(f.runMode).toBe("scout");
   });
 
+  it("folds --tags/--user into a selector filter (territory scoping)", () => {
+    expect(parseRunFlags(["--tags", "backend,infra"]).filter).toEqual({
+      kind: "selector",
+      selector: { tags: ["backend", "infra"] },
+    });
+    expect(parseRunFlags(["--user", "octocat"]).filter).toEqual({
+      kind: "selector",
+      selector: { user: "octocat" },
+    });
+    // --user keeps the literal @me — resolution happens at dispatch time.
+    expect(parseRunFlags(["--user", "@me"]).filter).toEqual({
+      kind: "selector",
+      selector: { user: "@me" },
+    });
+  });
+
+  it("merges --tags/--user with --spec and with --selector JSON (explicit flag wins)", () => {
+    expect(parseRunFlags(["--spec", "42", "--tags", "backend"]).filter).toEqual({
+      kind: "selector",
+      selector: { spec: 42, tags: ["backend"] },
+    });
+    expect(
+      parseRunFlags(["--selector", '{"tags":["frontend"],"lane":"go"}', "--tags", "backend"]).filter,
+    ).toEqual({
+      kind: "selector",
+      selector: { lane: "go", tags: ["backend"] },
+    });
+  });
+
+  it("throws RunFlagError on contradictory or malformed territory flags", () => {
+    expect(() => parseRunFlags(["--issues", "1,2", "--tags", "backend"])).toThrow(RunFlagError);
+    expect(() => parseRunFlags(["--tags", ","])).toThrow(/at least one tag value/);
+    // Bare values only: the "tag:" prefix is composed at match time.
+    expect(() => parseRunFlags(["--tags", "tag:backend"])).toThrow(RunFlagError);
+    // Empty --user is rejected by the shared value-flag parser before folding.
+    expect(() => parseRunFlags(["--user", ""])).toThrow(/--user/);
+  });
+
   it("parses --issues into an ordered number list", () => {
     expect(parseRunFlags(["--issues", "3,1,2"]).filter).toEqual({ kind: "issues", numbers: [3, 1, 2] });
     expect(parseRunFlags(["--issues=10, 20"]).filter).toEqual({ kind: "issues", numbers: [10, 20] });
+  });
+
+  it("skips shared boot sweeps for an explicit issue dispatch so claim work starts first (#2487)", () => {
+    expect(shouldSkipBootSweeps(parseRunFlags(["--issues", "2481"]).filter, false)).toBe(true);
+    expect(shouldSkipBootSweeps(parseRunFlags([]).filter, false)).toBe(false);
+    expect(shouldSkipBootSweeps(parseRunFlags([]).filter, true)).toBe(true);
   });
 
   it("throws RunFlagError on an all-invalid --issues value instead of selecting zero (#589)", () => {

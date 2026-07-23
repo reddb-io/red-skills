@@ -687,6 +687,7 @@ describe("buildMcpLandingFireHook — lifecycle hook wiring", () => {
 
 function fakeOperations(): DevAfkMcpOperations {
   return {
+    hitlResolve: vi.fn(async (input) => ({ resolved: input })),
     mergeArm: vi.fn(async (input) => ({ armed: input })),
     mergeStatus: vi.fn(async () => ({ prs: [] })),
     mergeRelease: vi.fn(async (input) => ({ released: input })),

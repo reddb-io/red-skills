@@ -1,5 +1,5 @@
-import { readdir, rm, stat, readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { readdir, readlink, rm, stat, readFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   isLegacySlotLogName,
   planTmpJanitor,
@@ -13,6 +13,65 @@ import {
   type WorkerDirJanitorEntry,
 } from "../core/tmp-janitor.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../core/worker-paths.js";
+import { execTool } from "./exec.js";
+import { killTreeAndWait } from "./kill-tree.js";
+
+export const ORPHAN_TEST_RUNNER_MIN_AGE_S = 300;
+
+export interface OrphanTestRunnerProcess {
+  pid: number;
+  ppid: number;
+  pgid: number;
+  sid: number;
+  ageS: number;
+  cwd: string;
+  command: string;
+}
+
+export function selectOrphanTestRunners(
+  processes: readonly OrphanTestRunnerProcess[],
+  tmpDir: string,
+  minAgeS = ORPHAN_TEST_RUNNER_MIN_AGE_S,
+): OrphanTestRunnerProcess[] {
+  const tmpPrefix = `${resolve(tmpDir)}${sep}`;
+  return processes.filter((entry) =>
+    entry.ageS >= minAgeS &&
+    entry.ppid === entry.sid &&
+    entry.pgid !== entry.sid &&
+    resolve(entry.cwd).startsWith(tmpPrefix) &&
+    /(?:^|[\s/(])(?:vitest|jest|mocha)(?:$|[\s/)])/i.test(entry.command)
+  );
+}
+
+async function collectOrphanTestRunners(tmpDir: string): Promise<OrphanTestRunnerProcess[]> {
+  if (process.platform === "win32") return [];
+  const ps = await execTool("ps", ["-eo", "pid=,ppid=,pgid=,sid=,etimes=,args="]);
+  if (ps.code !== 0) return [];
+  const snapshots = await Promise.all(ps.stdout.split("\n").map(async (line) => {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+    if (!match) return null;
+    const pid = Number(match[1]);
+    let cwd: string;
+    try {
+      cwd = await readlink(`/proc/${pid}/cwd`);
+    } catch {
+      return null;
+    }
+    return {
+      pid,
+      ppid: Number(match[2]),
+      pgid: Number(match[3]),
+      sid: Number(match[4]),
+      ageS: Number(match[5]),
+      cwd,
+      command: match[6]!.trim(),
+    } satisfies OrphanTestRunnerProcess;
+  }));
+  return selectOrphanTestRunners(
+    snapshots.filter((entry): entry is OrphanTestRunnerProcess => entry !== null),
+    tmpDir,
+  );
+}
 
 export type IssueStateLookup = (issue: number) => "OPEN" | "CLOSED" | "UNKNOWN";
 
@@ -23,6 +82,8 @@ export interface TmpJanitorReport {
    * baseline worktree when no workers are alive). Swept independently of the
    * mtime TTL sweep so dead-owner entries age out immediately. */
   orphanFeedback: OrphanFeedbackSweepPlan;
+  /** Old, reparented test runners whose cwd is still inside this tmp tier. */
+  orphanTestRunners: OrphanTestRunnerProcess[];
 }
 
 export interface TmpJanitorApplyResult {
@@ -34,6 +95,8 @@ export interface TmpJanitorApplyResult {
   protectedLiveFeedback: string[];
   /** Orphaned feedback worktrees that were removed. */
   orphanFeedback: string[];
+  /** Confirmed orphan runner processes reaped by process-group ID. */
+  orphanTestRunners: Array<{ pid: number; pgid: number }>;
   /** Every destructive action, including the liveness verdict authorising it. */
   removals: Array<{
     path: string;
@@ -227,6 +290,7 @@ export async function collectTmpJanitorReport(
     ]);
   const legacySlotLogEntries = tmpRootEntries.filter((entry) => isLegacySlotLogName(basename(entry.path)));
   const orphanFeedback = planOrphanFeedbackWorktreeSweep(orphanFeedbackData.entries, orphanFeedbackData.anyWorkerAlive);
+  const orphanTestRunners = await collectOrphanTestRunners(tmpDir);
   const feedbackSafeToAge = new Set(orphanFeedback.reclaim.map((entry) => entry.path));
 
   return {
@@ -243,13 +307,18 @@ export async function collectTmpJanitorReport(
     }),
     staleWorkers: planWorkerDirJanitor(workers),
     orphanFeedback,
+    orphanTestRunners,
   };
 }
 
 export async function applyTmpJanitorReport(
   tmpDir: string,
   report: TmpJanitorReport,
-  options: { worktreePrune?: () => Promise<void> } = {},
+  options: {
+    worktreePrune?: () => Promise<void>;
+    reapProcessGroup?: (pgid: number) => Promise<boolean>;
+    log?: (line: string) => void;
+  } = {},
 ): Promise<TmpJanitorApplyResult> {
   const expired = [
     ...report.plan.logs.reclaim,
@@ -265,6 +334,7 @@ export async function applyTmpJanitorReport(
     protectedLiveWorkers: [],
     protectedLiveFeedback: [],
     orphanFeedback: [],
+    orphanTestRunners: [],
     removals: [],
   };
   const feedbackDir = join(tmpDir, "worktrees", "feedback");
@@ -331,6 +401,21 @@ export async function applyTmpJanitorReport(
     await options.worktreePrune().catch(() => {});
   }
 
+  const reapProcessGroup = options.reapProcessGroup ?? killTreeAndWait;
+  const reapedGroups = new Set<number>();
+  for (const orphan of report.orphanTestRunners) {
+    let reaped = reapedGroups.has(orphan.pgid);
+    if (!reaped) {
+      reaped = await reapProcessGroup(orphan.pgid).catch(() => false);
+      if (reaped) reapedGroups.add(orphan.pgid);
+    }
+    if (!reaped) continue;
+    result.orphanTestRunners.push({ pid: orphan.pid, pgid: orphan.pgid });
+    options.log?.(
+      `tmp-janitor reaped orphan test runner pid=${orphan.pid} pgid=${orphan.pgid} cwd=${relative(tmpDir, orphan.cwd)} command=${orphan.command}`,
+    );
+  }
+
   return result;
 }
 
@@ -338,7 +423,12 @@ export async function runTmpJanitor(
   tmpDir: string,
   nowS: number,
   lookup: IssueStateLookup,
-  options: { fix?: boolean; worktreePrune?: () => Promise<void> } = {},
+  options: {
+    fix?: boolean;
+    worktreePrune?: () => Promise<void>;
+    reapProcessGroup?: (pgid: number) => Promise<boolean>;
+    log?: (line: string) => void;
+  } = {},
 ): Promise<TmpJanitorRunResult> {
   const report = await collectTmpJanitorReport(tmpDir, nowS, lookup);
   if (!options.fix) return report;

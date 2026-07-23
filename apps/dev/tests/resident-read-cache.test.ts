@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { CastleMcpDependencies } from "../../../packages/red-castle/src/mcp-server.js";
+import type { CastleMcpDependencies } from "@reddb-io/red-castle/mcp-server";
 import { withCachedDeps } from "../src/mcp-adapter.js";
 import {
   ResidentReadCache,

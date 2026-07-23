@@ -97,8 +97,9 @@ const SURFACE: ReadonlyArray<{
   {
     name: "queue_status",
     title: "Read AFK queues",
-    description: "Return ready-for-agent and ready-for-human queue candidates.",
-    schema: [],
+    description:
+      "Return ready-for-agent and ready-for-human queue candidates. Pass `selector` to preview one fleet's scoped view of the ready queue (same facets as fleet selectors, e.g. tags/user).",
+    schema: ["selector"],
   },
   {
     name: "events_since",
@@ -214,15 +215,17 @@ const SURFACE: ReadonlyArray<{
     name: "claim_status",
     title: "Read AFK claim",
     description:
-      "Return the parsed claim marker records for one issue and the worker currently holding it.",
-    schema: ["issue"],
+      "Return the parsed claim marker records and current holder for one issue (`issue`) " +
+      "or a batch (`issues`), keyed per issue.",
+    schema: ["issue", "issues"],
   },
   {
     name: "claim_release",
     title: "Release AFK claim",
     description:
-      "MUTATING: post a concede marker for every un-conceded claim holder so the issue becomes claimable again.",
-    schema: ["issue"],
+      "MUTATING: post a concede marker for every un-conceded claim holder so the issue (`issue`) " +
+      "or each issue in a batch (`issues`) becomes claimable again.",
+    schema: ["issue", "issues"],
   },
   {
     name: "merge_arm",
@@ -247,6 +250,16 @@ const SURFACE: ReadonlyArray<{
     description:
       "MUTATING: stop driver ownership of one PR. The record is kept as released for observability.",
     schema: ["pr"],
+  },
+  {
+    name: "hitl_resolve",
+    title: "Resolve parked issue with a human decision",
+    description:
+      "MUTATING: encode one human decision on a parked issue atomically — " +
+      "requeue (concede dangling claims, strip park labels, ready-for-agent), " +
+      "retake (route to the no-agent landing lane), park (keep ready-for-human, record why), " +
+      "or close. The rationale is posted as an issue comment for the audit trail.",
+    schema: ["issue", "decision", "rationale"],
   },
   {
     name: "worktree_list",

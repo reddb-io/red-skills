@@ -5,10 +5,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { encode, type JsonValue } from "@reddb-io/toon";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCastleMcpTools } from "../../../packages/red-castle/src/mcp-server.js";
+import { createCastleMcpTools } from "@reddb-io/red-castle/mcp-server";
 import {
   createEnginePaths,
   createFileIssueCuratorStore,
+  armPr,
   createFileMergeDriverStore,
   createGitHubTrackerAdapter,
   createSingletonLeaseStore,
@@ -16,13 +17,22 @@ import {
   runMergeDriverPass,
 } from "@reddb-io/red-castle/engine";
 import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
-import { resolveRepoContext } from "./runtime/wire.js";
-import { superviseCommand } from "./commands/supervise.js";
+import { createMedicIo } from "./runtime/medic-io.js";
+import { createFileMedicStore, runMedicPass } from "./core/pr-medic.js";
+import { resolveRepoContext, resolveRepoSlug } from "./runtime/wire.js";
+import {
+  buildSupervisorBootSweeps,
+  superviseCommand,
+} from "./commands/supervise.js";
 import { createCastleMcpDependencies } from "./mcp-adapter.js";
 import {
   createResidentWebhook,
   type ResidentWebhook,
 } from "./resident-webhook.js";
+import {
+  createResidentJanitor,
+  type ResidentJanitor,
+} from "./resident-cron.js";
 
 const buildInfo = readBuildInfo("castle");
 
@@ -72,12 +82,14 @@ export interface ConnectResidentMcpOptions {
   readonly server: ResidentMcpConnection;
   readonly transport: StdioServerTransport;
   readonly resident: ResidentWebhook;
+  readonly janitor: ResidentJanitor;
 }
 
 export async function connectResidentMcp(
   options: ConnectResidentMcpOptions,
 ): Promise<void> {
   await options.resident.start();
+  await options.janitor.start();
   let notifyClosed!: () => void;
   const closed = new Promise<void>((resolveClosed) => {
     notifyClosed = resolveClosed;
@@ -87,11 +99,12 @@ export async function connectResidentMcp(
     await options.server.connect(options.transport);
     await closed;
   } finally {
-    await options.resident.stop();
+    await Promise.all([options.janitor.stop(), options.resident.stop()]);
   }
 }
 
 async function run(): Promise<void> {
+  const root = process.cwd();
   const server = createCastleMcpServer();
   const close = () => {
     void server.close();
@@ -99,10 +112,24 @@ async function run(): Promise<void> {
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
   try {
+    let sharedBootSweeps: (() => Promise<void>) | undefined;
     await connectResidentMcp({
       server,
       transport: new StdioServerTransport(),
-      resident: createResidentWebhook({ root: process.cwd() }),
+      resident: createResidentWebhook({ root }),
+      janitor: createResidentJanitor({
+        root,
+        sweep: async () => {
+          if (!sharedBootSweeps) {
+            const repo = await resolveRepoSlug(root).catch(() => "");
+            sharedBootSweeps = buildSupervisorBootSweeps(root, repo, (line) =>
+              process.stderr.write(`castle resident: ${line}\n`),
+            );
+          }
+          await sharedBootSweeps();
+        },
+        notice: (line) => process.stderr.write(`castle resident: ${line}\n`),
+      }),
     });
   } finally {
     process.removeListener("SIGINT", close);
@@ -135,11 +162,31 @@ export async function startResidentMergeDriver(root = process.cwd()): Promise<vo
       const armed = Object.values(state.prs).some((record) => record.status === "armed");
       if (armed) {
         const context = await resolveRepoContext(root);
-        await runMergeDriverPass(
+        const entries = await runMergeDriverPass(
           createMergeDriverIo({ cwd: context.root, repo: context.repo }),
           store,
           { nowEpoch: Math.floor(Date.now() / 1000) },
         );
+        // PR medic (#2513): a terminal needs-medic classification gets ONE
+        // bounded mechanical healing round before any human sees it. A healed
+        // push re-arms the PR so the driver resumes ownership; the medic's own
+        // ledger escalates after MEDIC_MAX_ROUNDS failed rounds.
+        for (const entry of entries) {
+          if (entry.action !== "terminal-medic") continue;
+          try {
+            const medic = await runMedicPass(
+              createMedicIo(context.root),
+              createFileMedicStore(paths),
+              entry.pr,
+              { nowEpoch: Math.floor(Date.now() / 1000) },
+            );
+            if (medic.outcome === "healed") {
+              await armPr(store, entry.pr, Math.floor(Date.now() / 1000));
+            }
+          } catch {
+            // A failed heal leaves the terminal classification standing.
+          }
+        }
       }
     } catch {
       // Transport faults retry on the next interval; the resident never dies here.
@@ -156,10 +203,15 @@ export async function startResidentMergeDriver(root = process.cwd()): Promise<vo
  * The singleton lease prevents multiple stdio hosts for the same repo from
  * racing the durable ledger. The first sweep is detached from MCP startup; a
  * slow or unavailable tracker never delays the stdio handshake. */
-export async function startResidentIssueCurator(root = process.cwd()): Promise<void> {
+export async function startResidentIssueCurator(
+  root = process.cwd(),
+): Promise<void> {
   const paths = createEnginePaths(join(root, ".red"));
   const owner = { pid: process.pid, startTime: new Date().toISOString() };
-  const lease = await createSingletonLeaseStore(paths).acquire("issue-curator", owner);
+  const lease = await createSingletonLeaseStore(paths).acquire(
+    "issue-curator",
+    owner,
+  );
   if (!lease.acquired) return;
 
   const tracker = createGitHubTrackerAdapter({
@@ -209,8 +261,8 @@ export async function main(
   if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "version") {
     process.stdout.write(
       argv.includes("--json")
-      ? `${JSON.stringify(buildInfo)}\n`
-      : `${renderVersion(buildInfo)}\n`,
+        ? `${JSON.stringify(buildInfo)}\n`
+        : `${renderVersion(buildInfo)}\n`,
     );
     return 0;
   }
@@ -225,10 +277,12 @@ const isDirectExecution =
   resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 
 if (isDirectExecution) {
-  void main().then((exitCode) => {
-    process.exitCode = exitCode;
-  }).catch((error) => {
-    process.stderr.write(`castle MCP fatal: ${String(error)}\n`);
-    process.exitCode = 1;
-  });
+  void main()
+    .then((exitCode) => {
+      process.exitCode = exitCode;
+    })
+    .catch((error) => {
+      process.stderr.write(`castle MCP fatal: ${String(error)}\n`);
+      process.exitCode = 1;
+    });
 }

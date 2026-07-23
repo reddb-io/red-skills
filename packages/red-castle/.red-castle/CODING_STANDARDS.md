@@ -40,7 +40,7 @@ You may write more than one changeset per commit, if the commit touches multiple
 
 ---
 
-When writing sandbox providers, don't share provider-specific code between them. Each provider — for instance Vercel and Daytona — integrates a different SDK and is a different concern; that integration logic must not be shared, even when two providers look similar today, because they will diverge.
+When writing sandbox providers, don't share provider-specific code between them. Each provider — for instance Docker and Podman — integrates a different runtime and is a different concern; that integration logic must not be shared, even when two providers look similar today, because they will diverge.
 
 The one exception is **pure, provider-agnostic utilities**: logic that references no provider SDK, no provider config, and whose behavior is purely a function of its inputs (e.g. a bounded string-tail buffer). These may live in a shared module. Test: if you can't tell which provider a function is for by reading it, it's a utility, not a shared abstraction.
 

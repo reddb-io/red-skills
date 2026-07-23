@@ -1,5 +1,73 @@
 # @reddb-io/red-skills
 
+## 2.86.2
+
+### Patch Changes
+
+- 8fb4e9e: Unified local issue-lease (#2578): the two local-lease twins over `.red/tmp/claims/` — `tryAcquireClaimDir` and `createFsIssueLeaseStore` — converge on the proven mkdir-lock semantics, one engine for every claim path. (The CLI help guard half of this branch was superseded by the #2581 fix already on main.)
+  - @reddb-io/shared@2.86.2
+  - @reddb-io/build-info@2.86.2
+
+## 2.86.1
+
+### Patch Changes
+
+- db927c5: `red-skills-dev --help` prints usage and exits 0 (#2581) — it no longer falls through to the run default and boots a live worker drain. Help short-circuits before any routing (bare, `-h`, `help`, and `<command> --help`), and a flag-led invocation whose leading flag is not one of the documented run-surface flags errors with usage instead of silently draining the queue.
+  - @reddb-io/shared@2.86.1
+  - @reddb-io/build-info@2.86.1
+
+## 2.86.0
+
+### Minor Changes
+
+- ccc88f4: Boundary consolidation (ADR 0123): red-castle prunes to RedSkills' development shape (vercel/daytona sandboxes and cursor/copilot/devin agent providers removed as a recorded permanent upstream divergence; pi kept whole); the claim engine gains a single owner in `engine/tracker/claim.ts` with the proven #2385-hardened implementation absorbed from apps/dev, dev-side re-export shims, and a two-sided pinned wire fixture; the castle MCP adapter's capture-and-reparse tools (`retake`, `triage`, `respond`, `daily_review`, `weekly_review`, `worker_stop`/`worker_recycle`) now call value-returning cores with a guard test; `mcp-server` is published through the package exports map; `/hitl`, `/triage`, `/retake`, `/dashboard`, and `/daily-review` become MCP-first castle clients bound by the doc-contract test; and apps/dev drops its tested-but-unwired dead modules.
+
+### Patch Changes
+
+- 91f2b9d: Statusline drops the per-worker fleet-attribution tokens (#2568): no more `flt=unattributed` / `flt=<name>` in worker lines — maintainer-confirmed display noise. Fleet ownership stays available in `fleet_status`/`worker_status`; the fleet chip header is unchanged.
+- b5af840: Land-failed retry loop killed (#2576): merge-retry accounting now consults the ADR 0122 heal ledger so the RED_AFK_RETRY_MERGE cap survives worker replacement — a replacement worker restarting at attempt 1 can no longer loop 100+ identical land-failed cycles; the 3rd durable strike escalates. Landing failures also preserve their real diagnostic (push failure vs merge-step reason) into the blocker record and envelope instead of a generic `merge-conflict` with `(no merge log captured)`.
+  - @reddb-io/shared@2.86.0
+  - @reddb-io/build-info@2.86.0
+
+## 2.85.1
+
+### Patch Changes
+
+- f1b595a: Fleet launch runner cascade (#2545): a fresh `fleet N` launch honors the operator's `RED_AFK_RUNNER` env over the stale registered profile (flag > env > profile — the profile no longer shadows the env as a pseudo-flag), an invalid explicit runner errors loudly instead of silently resuming the old one, and `fleet_create` against a live-but-unregistered supervisor registers the orphan profile so `fleet_edit`/`fleet_status` work instead of the create-says-running/edit-says-not-exists trap.
+  - @reddb-io/shared@2.85.1
+  - @reddb-io/build-info@2.85.1
+
+## 2.85.0
+
+### Minor Changes
+
+- 3c65e2e: Castle-MCP E7 (#2369): `claim_status`/`claim_release` accept a batch `issues` array (response keyed per issue, per-issue errors) alongside the single-issue form, and the new `hitl_resolve` verb encodes one human decision on a parked issue atomically — `requeue` (concede claims + one ADR 0122 transition, consuming dangling req:* edges on human override), `retake` (same freeing transition routed to the no-agent landing lane), `park`, or `close` — always posting the rationale as the audit trail. Collapses the 10-round-trip unpark sequences into one call.
+
+### Patch Changes
+
+- @reddb-io/shared@2.85.0
+- @reddb-io/build-info@2.85.0
+
+## 2.84.1
+
+### Patch Changes
+
+- @reddb-io/shared@2.84.1
+- @reddb-io/build-info@2.84.1
+
+## 2.84.0
+
+### Minor Changes
+
+- 9292d02: Event ingestion transport (#2514, Spec #2511 slice 3): the castle resident's webhook lane gains an ETag conditional-polling transport — `If-None-Match` reads where 304s are rate-limit-free, cadence honoring `X-Poll-Interval`, repo events deduped by id, and check-run snapshot diffing that emits exactly one `check.completed` delivery per transition for merge-driver-armed PR heads. The default resident transport is now a composite: the `gh webhook forward` child when its handshake holds, the poller as the always-armed fallback filling the same lane — consumers never see which transport delivered.
+- 8179a82: Merge driver (#2512, Spec #2511 slice 1): a castle-resident loop that lands armed PRs without GitHub native auto-merge — BEHIND → update-branch, green at head → merge-commit (never an admin override), transient faults → bounded retries (25-pass budget), DIRTY/failing checks → terminal needs-medic/needs-human classification. Durable state in `.red/state/castle/merge-driver.toon` survives resident restarts. New castle MCP tools: `merge_arm`, `merge_status`, `merge_release`.
+- 0bb78ad: PR medic (#2513, Spec #2511 slice 2): when the merge driver classifies a PR needs-medic, a bounded mechanical healing round runs in an isolated feedback-lane worktree before any escalation — stale staged Pi mirrors are regenerated, registered identifier renames applied, and additive conflicts union-resolved; anything semantic escalates untouched. Two failed rounds per PR escalate to needs-human, every action ledgered in `.red/state/castle/pr-medic.toon`; a healed push re-arms the PR on the driver.
+
+### Patch Changes
+
+- @reddb-io/shared@2.84.0
+- @reddb-io/build-info@2.84.0
+
 ## 2.83.0
 
 ### Minor Changes

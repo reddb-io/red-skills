@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { createClaimTools, type ClaimDependencies } from "./mcp/claim.js";
 import { createMergeTools, type MergeDependencies } from "./mcp/merge.js";
+import { createHitlTools, type HitlDependencies } from "./mcp/hitl.js";
 import { createFleetTools, type FleetDependencies } from "./mcp/fleet.js";
 import { createGateTools, type GateDependencies } from "./mcp/gate.js";
 import { createHygieneTools, type HygieneDependencies } from "./mcp/hygiene.js";
@@ -37,7 +38,7 @@ export type {
   FleetNameInput,
   FleetRegisterInput,
 } from "./mcp/fleet.js";
-export type { EventsSinceInput, LogsInput, WorkerVitalsInput } from "./mcp/observability.js";
+export type { EventsSinceInput, LogsInput, QueueStatusInput, WorkerVitalsInput } from "./mcp/observability.js";
 export type {
   WorkerDispatchInput,
   WorkerStatusInput,
@@ -53,6 +54,7 @@ export type { GateRunInput } from "./mcp/gate.js";
 export type { LandBranchInput, CascadeStatusInput } from "./mcp/landing.js";
 export type { ClaimIssueInput } from "./mcp/claim.js";
 export type { MergeArmInput } from "./mcp/merge.js";
+export type { HitlResolveInput, HitlDecision } from "./mcp/hitl.js";
 export type { WorktreeRemoveInput } from "./mcp/worktree.js";
 export type { WaitStartInput, WaitStatusInput } from "./mcp/wait.js";
 export type {
@@ -78,6 +80,7 @@ export interface CastleMcpDependencies
     LandingDependencies,
     ClaimDependencies,
     MergeDependencies,
+    HitlDependencies,
     WorktreeDependencies,
     WaitDependencies,
     ReviewDependencies,
@@ -107,6 +110,7 @@ export function createCastleMcpTools(
     ...createLandingTools(deps),
     ...createClaimTools(deps),
     ...createMergeTools(deps),
+    ...createHitlTools(deps),
     ...createWorktreeTools(deps),
     ...createWaitTools(deps),
     ...createReviewTools(deps),

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { createCastleLaneWriters } from "@reddb-io/red-castle/engine";
+import { spawn } from "node:child_process";
 import {
   afkPaths,
   appendCastleHistoryRecord,
@@ -288,6 +290,99 @@ describe("collectStatuslineAfk — cache discipline", () => {
       expect(result!.added).toBe(84);
       expect(result!.removed).toBe(5);
       expect(result!.locIsPeak).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("collectStatuslineWorkers — live pre-claim workers", () => {
+  it("renders a live Worker before an attempt state exists", async () => {
+    const root = scratch();
+    try {
+      const workerId = "wBOOT";
+      const issue = 2488;
+      const workerDir = join(root, ".red", "tmp", "workers", workerId);
+      mkdirSync(join(workerDir, String(issue)), { recursive: true });
+      writeFileSync(join(workerDir, "worker.pid"), String(process.pid), "utf8");
+      const enginePaths = createEnginePaths(join(root, ".red"));
+      await createCastleLaneWriters(enginePaths).worker(workerId).append({
+        kind: "worker.heartbeat",
+        worker_id: workerId,
+        payload: { phase: "boot", activity: "reconcile-gate", runner: "codex" },
+      });
+      const heartbeatAt = new Date(Date.now() - 30_000).toISOString();
+      await createCastleLaneWriters(enginePaths, { clock: () => heartbeatAt }).liveness(workerId).append({
+        kind: "worker.heartbeat",
+        worker_id: workerId,
+        payload: {},
+      });
+
+      const workers = await collectStatuslineWorkers({
+        root,
+        repo: "reddb-io/red-skills",
+        remote: "origin",
+      });
+
+      expect(workers).toHaveLength(1);
+      expect(workers[0]).toMatchObject({
+        state: {
+          worker_id: workerId,
+          runner: "codex",
+          current: {
+            number: issue,
+            phase: "boot",
+            activity: "reconcile-gate",
+            started_at: heartbeatAt,
+          },
+        },
+        pidLive: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("renders Workers owned by different named fleets with their attribution", async () => {
+    const root = scratch();
+    try {
+      const paths = createEnginePaths(join(root, ".red"));
+      const startedAt = new Date().toISOString();
+      for (const [workerId, issue, fleet] of [
+        ["wALPHA", 2481, "alpha"],
+        ["wBETA", 2482, "beta"],
+      ] as const) {
+        writeRenderableAttempt(root, workerId, issue, startedAt);
+        await writeCastleStateSnapshot(
+          castleStateSnapshotPath(paths, "worker", workerId),
+          {
+            kind: "worker",
+            id: workerId,
+            worker_id: workerId,
+            supervisor_id: fleet,
+            version: 1,
+            updated_at: startedAt,
+            pid: process.pid,
+            current: { number: issue, phase: "coding" },
+          },
+        );
+      }
+
+      const workers = await collectStatuslineWorkers({
+        root,
+        repo: "reddb-io/red-skills",
+        remote: "origin",
+      });
+
+      expect(
+        workers.map((worker) => ({
+          id: worker.state.worker_id,
+          fleet: worker.state.fleet,
+        })),
+      ).toEqual([
+        { id: "wALPHA", fleet: "alpha" },
+        { id: "wBETA", fleet: "beta" },
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -592,6 +687,45 @@ describe("resolveStatuslineCacheTtl (#1217)", () => {
 // ---------------------------------------------------------------------------
 
 describe("collectMonitorInputs — layout discovery (#1029)", () => {
+  it("keeps a pid-live wedged worker visible with the shared stalled verdict (#2480)", async () => {
+    const root = scratch();
+    const leaf = spawn("sleep", ["30"], { stdio: "ignore" });
+    try {
+      expect(leaf.pid).toBeTypeOf("number");
+      const attemptDir = join(root, ".red", "tmp", "workers", "wWEDGE", "2480");
+      mkdirSync(attemptDir, { recursive: true });
+      writeFileSync(
+        join(attemptDir, "afk.state.toon"),
+        JSON.stringify({
+          worker_id: "wWEDGE",
+          pid: leaf.pid,
+          runner: "codex",
+          current: {
+            number: 2480,
+            phase: "gate",
+            activity: "landing",
+            started_at: new Date().toISOString(),
+          },
+        }),
+      );
+
+      const workers = await collectStatuslineWorkers({ root, repo: "", remote: "origin" });
+      expect(workers).toHaveLength(1);
+      expect(workers[0]).toMatchObject({
+        pidLive: true,
+        liveness: "dead",
+        livenessVerdict: {
+          status: "stalled",
+          laneFresh: false,
+          liveDescendants: false,
+        },
+      });
+    } finally {
+      leaf.kill();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("discovers a sandcastle-layout worker (state at attemptDir/afk.state.toon, worktree absent pre-heartbeat)", async () => {
     const root = scratch();
     try {

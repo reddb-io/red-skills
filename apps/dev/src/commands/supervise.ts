@@ -376,7 +376,8 @@ function parseAdoptSlotPids(raw: string | undefined): HeartbeatSlotPid[] {
  * runner-swap policy flags each slot's `run --once` must carry, so a supervised
  * fleet honours the same Spec/Ticket filter + alternate/fallback policy a single
  * `/afk run` would. Recognises the value flags `--spec` / `--issues` /
- * `--selector` (a named fleet's work scope) / `--request`
+ * `--selector` (a named fleet's work scope) / `--tags` / `--user` (territory
+ * facets, folded into the selector by each slot's own flag parse) / `--request`
  * (with `-r`) and the boolean flags `--alternate` / `--fallback-runner`, all in
  * both `--flag value` and `--flag=value` forms. Unknown args are dropped (the
  * supervisor only forwards the known filter/policy surface). Returns the argv
@@ -388,6 +389,8 @@ export function slotFilterArgs(args: readonly string[]): string[] {
     ["--spec", "--spec"],
     ["--issues", "--issues"],
     ["--selector", "--selector"],
+    ["--tags", "--tags"],
+    ["--user", "--user"],
     ["--request", "--request"],
     ["-r", "--request"],
   ]);
@@ -445,7 +448,7 @@ export function formatBootSweepResult(result: BootResult): string {
     `orphans removed=${oc?.removed.length ?? 0} restored=${oc?.restored.length ?? 0} kept=${oc?.kept.length ?? 0}` +
     ` | attempt-cap reclaimed=${ac?.reclaimed.length ?? 0}` +
     ` | branches remote=${bc?.remoteLiveReaped.length ?? 0} local=${bc?.localLiveReaped.length ?? 0}` +
-    ` | tmp-janitor expired=${tj?.expiredLanes.length ?? 0} workers=${tj?.staleWorkers.length ?? 0} unknown=${tj?.unknownTmpRoots.length ?? 0} protected=${(tj?.protectedLiveWorkers.length ?? 0) + (tj?.protectedLiveFeedback.length ?? 0)}` +
+    ` | tmp-janitor expired=${tj?.expiredLanes.length ?? 0} workers=${tj?.staleWorkers.length ?? 0} orphan-runners=${tj?.orphanTestRunners?.length ?? 0} unknown=${tj?.unknownTmpRoots.length ?? 0} protected=${(tj?.protectedLiveWorkers.length ?? 0) + (tj?.protectedLiveFeedback.length ?? 0)}` +
     janitorRemovalLog +
     ` | docs-sweep ${ds?.action ?? "clean"} files=${ds?.files.length ?? 0}` +
     ` | unblocked=${us?.promoted.length ?? 0}` +

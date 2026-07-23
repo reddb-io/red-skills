@@ -37,6 +37,14 @@ export interface FleetSelector {
   label?: string;
   /** Keep only these issue numbers. */
   issues?: number[];
+  /** Keep only candidates carrying EVERY `tag:<value>` label listed here
+   * (values are bare, without the `tag:` prefix). Candidates missing any of
+   * them — including fully untagged candidates — are excluded. */
+  tags?: string[];
+  /** Keep only candidates authored by this GitHub login. `@me` is accepted as
+   * a value here; the consumer resolves it to a concrete login before the
+   * selector is persisted or matched. */
+  user?: string;
 }
 
 /**
@@ -131,7 +139,37 @@ function normalizeSelector(value: unknown): FleetSelector | undefined {
     }
     out.issues = [...(raw.issues as number[])];
   }
+  if (raw.tags !== undefined && raw.tags !== null) {
+    out.tags = normalizeSelectorTags(raw.tags);
+  }
+  if (raw.user !== undefined && raw.user !== null) {
+    out.user = assertNonEmptyString(raw.user, "selector.user");
+  }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Bare tag values only: the `tag:` prefix is composed at match time, so a
+ * value containing `:` (e.g. an accidental `tag:backend`) is rejected rather
+ * than silently matched as `tag:tag:backend`. */
+const SELECTOR_TAG_VALUE_RE = /^[a-z0-9][a-z0-9-]*$/;
+
+function normalizeSelectorTags(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new FleetRegistryValidationError(
+      "fleet selector tags must be a non-empty array of bare tag values",
+    );
+  }
+  const out: string[] = [];
+  for (const entry of value) {
+    const tag = typeof entry === "string" ? entry.trim() : "";
+    if (!SELECTOR_TAG_VALUE_RE.test(tag)) {
+      throw new FleetRegistryValidationError(
+        `fleet selector tags must match ${SELECTOR_TAG_VALUE_RE} (bare value, no "tag:" prefix): ${JSON.stringify(entry)}`,
+      );
+    }
+    if (!out.includes(tag)) out.push(tag);
+  }
+  return out;
 }
 
 function normalizeConfig(value: unknown): FleetConfigOverrides | undefined {

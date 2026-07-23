@@ -8,6 +8,7 @@ import {
   FleetRegistryValidationError,
   fleetRegistryPath,
   isValidFleetName,
+  parseFleetSelector,
   readFleetProfile,
   readFleetProfiles,
   removeFleetProfile,
@@ -25,7 +26,14 @@ async function registry(): Promise<string> {
 const FULL: FleetProfile = {
   name: "spec-drain",
   runner: "codex",
-  selector: { spec: 2303, lane: "go", label: "priority:high", issues: [11, 12] },
+  selector: {
+    spec: 2303,
+    lane: "go",
+    label: "priority:high",
+    issues: [11, 12],
+    tags: ["backend", "infra"],
+    user: "octocat",
+  },
   config: { target: 4, shrinkMode: "hard-kill", alternate: true },
   base: "main",
 };
@@ -53,6 +61,34 @@ describe("fleet names", () => {
       expect(isValidFleetName(bad), bad).toBe(false);
       expect(() => resolveFleetName(bad), bad).toThrow(FleetRegistryValidationError);
     }
+  });
+});
+
+describe("fleet selector parsing", () => {
+  it("accepts tags and user facets, deduping tag values", () => {
+    expect(
+      parseFleetSelector({ tags: ["backend", "infra", "backend"], user: "octocat" }),
+    ).toEqual({ tags: ["backend", "infra"], user: "octocat" });
+    // "@me" is a legitimate stored value — the consumer resolves it pre-persist.
+    expect(parseFleetSelector({ user: "@me" })).toEqual({ user: "@me" });
+  });
+
+  it("rejects malformed tags: non-arrays, empties, prefixes, and non-label shapes", () => {
+    for (const bad of [
+      "backend",
+      [],
+      [""],
+      ["tag:backend"],
+      ["Backend Stuff"],
+      [42],
+    ]) {
+      expect(() => parseFleetSelector({ tags: bad }), JSON.stringify(bad)).toThrow(
+        FleetRegistryValidationError,
+      );
+    }
+    expect(() => parseFleetSelector({ user: "" })).toThrow(
+      FleetRegistryValidationError,
+    );
   });
 });
 

@@ -110,8 +110,9 @@ never tracks the base branch as red (#2380).
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `claim_status` | read | Parsed claim markers for one issue and the worker holding it. |
-| `claim_release` | mutating | Concede every un-conceded claim so the issue is claimable again. |
+| `claim_status` | read | Parsed claim markers for one issue (`issue`) or a batch (`issues`), keyed per issue. |
+| `claim_release` | mutating | Concede every un-conceded claim so the issue — or each issue in a batch — is claimable again. |
+| `hitl_resolve` | mutating | One atomic human decision on a parked issue: `requeue`, `retake`, `park`, or `close`, with the rationale posted for the audit trail. |
 
 `claim_release` is the cure for a ghost claim — an issue that instantly reports
 `1/1 100%` with no attempt. Release it through the tool, never by flipping
@@ -164,7 +165,7 @@ state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `queue_status` | read | `ready-for-agent` and `ready-for-human` queue candidates. |
+| `queue_status` | read | `ready-for-agent` and `ready-for-human` queue candidates. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
 | `events_since` | read | Castle history events and worker lane records after an opaque cursor, plus the next cursor. |
 
 `queue_status` is the first call of any drain: an empty `ready-for-agent` queue

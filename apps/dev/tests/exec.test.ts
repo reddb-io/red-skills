@@ -9,6 +9,16 @@ describe("execTool", () => {
     expect(r.stderr).toBe("err");
   });
 
+  it("streams complete stdout lines while preserving the captured stdout (#2480)", async () => {
+    const lines: string[] = [];
+    const r = await execTool("sh", ["-c", "printf 'first\\nsecond\\n'"], {
+      onStdoutLine: (line) => lines.push(line),
+    });
+
+    expect(lines).toEqual(["first", "second"]);
+    expect(r.stdout).toBe("first\nsecond\n");
+  });
+
   it("resolves a missing binary as 127 instead of rejecting", async () => {
     const r = await execTool("definitely-no-such-binary-xyz", []);
     expect(r.code).toBe(127);
@@ -23,6 +33,34 @@ describe("execTool", () => {
     const r = await execTool("sh", ["-c", "sleep 5"], { timeoutMs: 150 });
     expect(r.code).not.toBe(0);
     expect(r.code).toBe(KILLED_EXIT_CODE);
+  });
+
+  it.skipIf(process.platform === "win32")("reaps fork children when a gate parent times out", async () => {
+    const r = await execTool(
+      "sh",
+      ["-c", 'sh -c \'trap "" TERM; while :; do sleep 1; done\' </dev/null >/dev/null 2>&1 & child=$!; printf "%s\\n" "$child"; wait'],
+      { timeoutMs: 150 },
+    );
+    const childPid = Number(r.stdout.trim());
+
+    try {
+      expect(r.code).toBe(KILLED_EXIT_CODE);
+      expect(Number.isInteger(childPid)).toBe(true);
+      await expect.poll(() => {
+        try {
+          process.kill(childPid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }, { timeout: 2_000 }).toBe(false);
+    } finally {
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {
+        // The expected path already reaped it.
+      }
+    }
   });
 
   it("reports a signal-killed command as a non-zero failure (PRD #567)", async () => {

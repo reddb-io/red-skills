@@ -1,7 +1,7 @@
 ---
 name: afk
 description: Autonomous loop that drains the `ready-for-agent` queue on the issue tracker. Each iteration claims an issue, runs it in an isolated worktree, executes with claude or codex, merges back to main, and closes the issue. Use when the user wants to run AFK execution, drain a Spec, hammer specific issues, or otherwise let agents grind through the backlog.
-argument-hint: "[--spec N | --issues N,N,N] [--runner claude|codex|opencode] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] [--boot-only] | fleet [N] | fleet stop [--force] | fleet status | fleet logs --supervisor|--worker ID|--all [--follow] | monitor | dashboard | daily-review | weekly-review | retake N | reap"
+argument-hint: "[--spec N | --issues N,N,N] [--tags a,b] [--user login|@me] [--runner claude|codex|opencode] [--alternate] [--fallback-runner] [--request TEXT] [-n N] [--once] [--boot-only] | fleet [N] | fleet stop [--force] | fleet status | fleet logs --supervisor|--worker ID|--all [--follow] | monitor | dashboard | daily-review | weekly-review | retake N | reap"
 ---
 
 # /afk
@@ -67,6 +67,15 @@ CLI fallback for the same operation.
   itself is excluded. As a fleet this is the `selector.spec` profile field.
 - `/afk --issues 356,359,362` - drain an explicit issue list in that order; as a
   fleet, `selector.issues`.
+- `/afk --tags backend,infra` - drain only issues carrying EVERY requested
+  `tag:<value>` territory label (AND semantics; an untagged issue is outside
+  every tag-scoped fleet). As a fleet this is `selector.tags`. Combines with
+  `--spec`, never with `--issues`. An unfiltered `/afk` still drains
+  everything — tags partition the pool, they never bind issues to users.
+- `/afk --user filipeforattini` or `/afk --user @me` - drain only issues
+  AUTHORED by that GitHub login (`@me` resolves to your own login at launch).
+  As a fleet, `selector.user`. Author, not assignee: creating an issue is
+  enough — no manual assignment step.
 - `/afk --runner codex` - pin a backend. This disables detection cascade and is
   mutually exclusive with `--alternate`. `runner_list` and `runner_detect`
   answer which backends exist and which one this host resolves to.

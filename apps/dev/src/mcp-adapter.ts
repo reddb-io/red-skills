@@ -20,6 +20,7 @@ import {
   readFleetProfiles,
   removeFleetProfile,
   upsertFleetProfile,
+  parseFleetSelector,
   RUNNER_SPECS,
   detectRunner,
   type CastleLaneRecord,
@@ -29,6 +30,7 @@ import type {
   CascadeStatusInput,
   CastleMcpDependencies,
   ClaimIssueInput,
+  HitlResolveInput,
   DailyReviewInput,
   EventsSinceInput,
   FleetCreateInput,
@@ -38,6 +40,7 @@ import type {
   GateRunInput,
   LandBranchInput,
   LogsInput,
+  QueueStatusInput,
   RequeueToolInput,
   RespondToolInput,
   RetakeToolInput,
@@ -50,7 +53,7 @@ import type {
   WorkerSteerInput,
   WorkerStopInput,
   WorktreeRemoveInput,
-} from "../../../packages/red-castle/src/mcp-server.js";
+} from "@reddb-io/red-castle/mcp-server";
 import { listWaits as listRspWaits } from "../../rsp/src/wait/registry.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { collectDashboardReport } from "./commands/dashboard.js";
@@ -60,6 +63,8 @@ import {
   resolveSupervisorConfig,
 } from "./core/supervisor.js";
 import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
+import { matchesSelector } from "./core/session.js";
+import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import * as ghx from "./runtime/gh.js";
 import { isLivePid } from "./runtime/kill-tree.js";
 import { spawnSupervisor } from "./runtime/supervisor-spawn.js";
@@ -77,9 +82,9 @@ import {
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
 import { resolveProject } from "./commands/statusline.js";
-import { stopCommand } from "./commands/stop.js";
+import { executeStopWorker } from "./commands/stop.js";
 import { executeRequeue } from "./commands/requeue.js";
-import { retakeCommand } from "./commands/retake.js";
+import { executeRetake } from "./commands/retake.js";
 import {
   dispatchGo,
   type DisposableIssueSpec,
@@ -110,9 +115,9 @@ import {
 } from "./core/branch-cleanup.js";
 import { executeUnblockSweep } from "./core/boot-sweep.js";
 import { collectReapInputs } from "./runtime/wire/reap.js";
-import { activityReviewCommand } from "./commands/activity-review.js";
-import { triageCommand } from "./commands/triage.js";
-import { respondCommand } from "./commands/respond.js";
+import { collectActivityReview } from "./commands/activity-review.js";
+import { executeTriage } from "./commands/triage.js";
+import { executeRespond } from "./commands/respond.js";
 import {
   ResidentReadCache,
   QUEUE_STATUS_KEY,
@@ -143,6 +148,7 @@ export interface DevAfkMcpOperations {
   cascadeStatus(input: CascadeStatusInput): Promise<unknown>;
   claimStatus(input: ClaimIssueInput): Promise<unknown>;
   claimRelease(input: ClaimIssueInput): Promise<unknown>;
+  hitlResolve(input: HitlResolveInput): Promise<unknown>;
   mergeArm(input: { pr: number }): Promise<unknown>;
   mergeStatus(): Promise<unknown>;
   mergeRelease(input: { pr: number }): Promise<unknown>;
@@ -162,40 +168,6 @@ export interface DevAfkMcpRuntime {
   executeRequeue(root: string, input: RequeueToolInput): Promise<unknown>;
   /** Injected in tests to intercept hook execution without spawning a shell. */
   hookExec?: HookExec;
-}
-
-function captureStream(): {
-  stream: Writable;
-  text(): string;
-} {
-  let output = "";
-  return {
-    stream: new Writable({
-      write(chunk, _encoding, callback) {
-        output += String(chunk);
-        callback();
-      },
-    }),
-    text: () => output,
-  };
-}
-
-function parsedCommandOutput(
-  output: string,
-  exitCode: number,
-  format: "json" | "toon",
-): unknown {
-  const trimmed = output.trim();
-  if (trimmed === "") return { exit_code: exitCode };
-  try {
-    const value = format === "json" ? JSON.parse(trimmed) : decodeToon(trimmed);
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      return { ...(value as Record<string, unknown>), exit_code: exitCode };
-    }
-    return { value, exit_code: exitCode };
-  } catch {
-    return { output: trimmed, exit_code: exitCode };
-  }
 }
 
 function dispatchArgs(input: DispatchOperationInput): string[] {
@@ -442,26 +414,15 @@ export function createDefaultDevAfkMcpOperations(
       };
     },
     async stopWorker(cwd, input) {
-      const capture = captureStream();
-      const exitCode = await stopCommand(
-        ["--worker", input.worker],
-        cwd,
-        capture.stream,
-      );
-      return {
-        ...(parsedCommandOutput(capture.text(), exitCode, "toon") as object),
-        recycle: input.recycle,
-      };
+      const result = await executeStopWorker(input.worker, afkPaths(cwd).tmpDir);
+      return { ...result, recycle: input.recycle };
     },
     requeue: (input) => runtime.executeRequeue(root, input),
-    async retake(input) {
-      const args = [String(input.issue), "--json"];
-      if (input.repo) args.push("--repo", input.repo);
-      if (input.prLimit) args.push("--pr-limit", String(input.prLimit));
-      const capture = captureStream();
-      const exitCode = await retakeCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "json");
-    },
+    retake: (input) =>
+      executeRetake(
+        { issue: input.issue, repo: input.repo, prLimit: input.prLimit },
+        { cwd: root },
+      ),
     async reap() {
       const context = await resolveRepoContext(root);
       const inputs = await collectReapInputs(context);
@@ -661,43 +622,92 @@ export function createDefaultDevAfkMcpOperations(
     async claimStatus(input) {
       const context = await resolveRepoContext(root);
       const gh = { cwd: context.root, repo: context.repo };
-      const records = parseClaimRecords(await ghx.listClaimComments(gh, input.issue));
-      const latest = latestClaimPerWorker(records);
-      const holders = [...latest.values()].filter((record) => record.kind === "claim");
-      return {
-        issue: input.issue,
-        records: records.map((record) => ({
-          comment_id: record.commentId,
-          worker: record.worker,
-          kind: record.kind,
-          runner: record.runner ?? "",
-          created_at: record.createdAt ?? "",
-        })),
-        holders: holders.map((record) => ({
-          worker: record.worker,
-          comment_id: record.commentId,
-          runner: record.runner ?? "",
-          created_at: record.createdAt ?? "",
-        })),
+      const statusOf = async (issue: number) => {
+        const records = parseClaimRecords(await ghx.listClaimComments(gh, issue));
+        const latest = latestClaimPerWorker(records);
+        const holders = [...latest.values()].filter((record) => record.kind === "claim");
+        return {
+          issue,
+          records: records.map((record) => ({
+            comment_id: record.commentId,
+            worker: record.worker,
+            kind: record.kind,
+            runner: record.runner ?? "",
+            created_at: record.createdAt ?? "",
+          })),
+          holders: holders.map((record) => ({
+            worker: record.worker,
+            comment_id: record.commentId,
+            runner: record.runner ?? "",
+            created_at: record.createdAt ?? "",
+          })),
+        };
       };
+      // Single-issue form keeps its historic shape; the batch form (#2369) is
+      // keyed per issue, with per-issue errors instead of one failed call.
+      if (input.issue !== undefined) return statusOf(input.issue);
+      const issues = input.issues ?? [];
+      if (issues.length === 0) return { error: "provide `issue` or a non-empty `issues`" };
+      const byIssue: Record<string, unknown> = {};
+      for (const issue of issues) {
+        try {
+          byIssue[String(issue)] = await statusOf(issue);
+        } catch (error) {
+          byIssue[String(issue)] = { issue, error: error instanceof Error ? error.message : String(error) };
+        }
+      }
+      return { issues: byIssue };
     },
     async claimRelease(input) {
       const context = await resolveRepoContext(root);
       const gh = { cwd: context.root, repo: context.repo };
-      const records = parseClaimRecords(await ghx.listClaimComments(gh, input.issue));
-      const holders = [...latestClaimPerWorker(records).values()].filter(
-        (record) => record.kind === "claim",
-      );
-      const conceded: string[] = [];
-      for (const holder of holders) {
-        await ghx.postClaimComment(
-          gh,
-          input.issue,
-          renderClaimComment({ worker: holder.worker, runner: holder.runner }, "concede", "released"),
+      const releaseOf = async (issue: number) => {
+        const records = parseClaimRecords(await ghx.listClaimComments(gh, issue));
+        const holders = [...latestClaimPerWorker(records).values()].filter(
+          (record) => record.kind === "claim",
         );
-        conceded.push(holder.worker);
+        const conceded: string[] = [];
+        for (const holder of holders) {
+          await ghx.postClaimComment(
+            gh,
+            issue,
+            renderClaimComment({ worker: holder.worker, runner: holder.runner }, "concede", "released"),
+          );
+          conceded.push(holder.worker);
+        }
+        return { issue, conceded };
+      };
+      if (input.issue !== undefined) return releaseOf(input.issue);
+      const issues = input.issues ?? [];
+      if (issues.length === 0) return { error: "provide `issue` or a non-empty `issues`" };
+      const byIssue: Record<string, unknown> = {};
+      for (const issue of issues) {
+        try {
+          byIssue[String(issue)] = await releaseOf(issue);
+        } catch (error) {
+          byIssue[String(issue)] = { issue, error: error instanceof Error ? error.message : String(error) };
+        }
       }
-      return { issue: input.issue, conceded };
+      return { issues: byIssue };
+    },
+    async hitlResolve(input) {
+      const context = await resolveRepoContext(root);
+      const gh = { cwd: context.root, repo: context.repo };
+      return resolveHitlDecision(
+        {
+          comment: (issue, body) => ghx.comment(gh, issue, body),
+          closeIssue: (issue) => ghx.closeIssue(gh, issue),
+          viewLabels: (issue) => ghx.viewLabels(gh, issue),
+          editLabels: async (issue, remove, add) => {
+            await ghx.editLabels(gh, issue, remove, add);
+          },
+          releaseClaims: async (issue) => {
+            const released = (await this.claimRelease({ issue })) as { conceded?: string[] };
+            return released.conceded ?? [];
+          },
+        },
+        input,
+      );
     },
     async waitStart(input) {
       const id = randomUUID();
@@ -709,34 +719,25 @@ export function createDefaultDevAfkMcpOperations(
       const pid = await runtime.launchRspWait(args, root);
       return { id, pid, result_file: resultFile, status: "spawned" };
     },
-    async dailyReview(_input) {
-      const capture = captureStream();
-      const exitCode = await activityReviewCommand("daily", [], root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "toon");
-    },
-    async weeklyReview(_input) {
-      const capture = captureStream();
-      const exitCode = await activityReviewCommand("weekly", [], root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "toon");
-    },
-    async triage(input) {
-      const args: string[] = [String(input.issue), "--decision", input.decision, "--json"];
-      if (input.summon) args.push("--summon");
-      if (input.repo) args.push("--repo", input.repo);
-      const capture = captureStream();
-      const exitCode = await triageCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "json");
-    },
-    async respond(input) {
-      const args: string[] = ["--body", input.body, "--number", String(input.number)];
-      if (input.author) args.push("--author", input.author);
-      if (input.is_pr) args.push("--is-pr");
-      if (input.runner) args.push("--runner", input.runner);
-      if (input.repo) args.push("--repo", input.repo);
-      const capture = captureStream();
-      const exitCode = await respondCommand(args, root, capture.stream);
-      return parsedCommandOutput(capture.text(), exitCode, "toon");
-    },
+    dailyReview: (_input) => collectActivityReview("daily", { cwd: root }),
+    weeklyReview: (_input) => collectActivityReview("weekly", { cwd: root }),
+    triage: (input) =>
+      executeTriage(
+        { issue: input.issue, decision: input.decision, summon: input.summon, repo: input.repo },
+        { cwd: root },
+      ),
+    respond: (input) =>
+      executeRespond(
+        {
+          body: input.body,
+          number: input.number,
+          author: input.author,
+          isPr: input.is_pr,
+          runner: input.runner,
+          repo: input.repo,
+        },
+        { cwd: root },
+      ),
   };
 }
 
@@ -757,6 +758,22 @@ async function waitStatusImpl(root: string, input: WaitStatusInput): Promise<unk
 
 function registryPath(root: string): string {
   return fleetRegistryPath(createEnginePaths(join(root, ".red")));
+}
+
+/**
+ * Concretize a `@me` user facet on an MCP-supplied selector before it is
+ * persisted or matched, so fleets.toonl and scoped queue previews always carry
+ * a real login (D2: `@me` never survives past the dispatch boundary).
+ */
+async function concretizeSelectorUser<T extends { user?: string }>(
+  root: string,
+  selector: T | undefined,
+): Promise<T | undefined> {
+  if (!selector || selector.user !== "@me") return selector;
+  const context = await resolveRepoContext(root);
+  return ghx.resolveSelectorUser(selector, () =>
+    ghx.resolveViewerLogin({ cwd: root, repo: context.repo }),
+  );
 }
 
 function profileForCreate(input: FleetCreateInput): FleetProfile {
@@ -862,7 +879,13 @@ async function fleetStatus(root: string, input: FleetNameInput) {
   };
 }
 
-async function createFleet(root: string, input: FleetCreateInput) {
+async function createFleet(root: string, rawInput: FleetCreateInput) {
+  const input: FleetCreateInput = {
+    ...rawInput,
+    ...(rawInput.selector
+      ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
+      : {}),
+  };
   const path = registryPath(root);
   const existing = await readFleetProfile(path, input.name);
   const paths = afkPaths(root, input.name);
@@ -875,7 +898,15 @@ async function createFleet(root: string, input: FleetCreateInput) {
     if (existing) {
       throw new Error(`fleet ${JSON.stringify(input.name)} already exists`);
     }
-    throw new Error(`fleet ${JSON.stringify(paths.fleet)} is already running`);
+    // A live supervisor with NO registered profile is the create/edit desync
+    // trap (#2545): create says "already running", edit says "does not exist",
+    // and there is no MCP-only way out. Register the orphan profile so
+    // fleet_edit/fleet_status work, then refuse the duplicate launch.
+    await upsertFleetProfile(path, profileForCreate(input));
+    throw new Error(
+      `fleet ${JSON.stringify(paths.fleet)} is already running; its missing registry profile ` +
+        `was registered from this request — use fleet_edit/fleet_status to operate it`,
+    );
   }
 
   const profile =
@@ -895,6 +926,7 @@ async function createFleet(root: string, input: FleetCreateInput) {
     root,
     target: input.target,
     runner: profile.runner,
+    base: profile.base,
     fleet: profile.name,
     passthrough: profile.selector
       ? ["--selector", JSON.stringify(profile.selector)]
@@ -940,7 +972,13 @@ async function createFleet(root: string, input: FleetCreateInput) {
   return { status: "launched", profile, pid, target: input.target };
 }
 
-async function editFleet(root: string, input: FleetEditInput) {
+async function editFleet(root: string, rawInput: FleetEditInput) {
+  const input: FleetEditInput = {
+    ...rawInput,
+    ...(rawInput.selector
+      ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
+      : {}),
+  };
   const path = registryPath(root);
   const existing = await readFleetProfile(path, input.name);
   if (!existing)
@@ -1253,7 +1291,13 @@ export type StatuslineAggregate = Awaited<
   ReturnType<typeof collectStatuslineAggregate>
 >;
 
-async function registerFleet(root: string, input: FleetRegisterInput) {
+async function registerFleet(root: string, rawInput: FleetRegisterInput) {
+  const input: FleetRegisterInput = {
+    ...rawInput,
+    ...(rawInput.selector
+      ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
+      : {}),
+  };
   const path = registryPath(root);
   const paths = afkPaths(root, input.name);
   const running = await discoverLiveSupervisorPid(
@@ -1380,14 +1424,19 @@ export function withCachedDeps(
 ): CastleMcpDependencies {
   return {
     ...deps,
-    queueStatus: async () => {
+    queueStatus: async (input) => {
+      // Scoped previews bypass the cache: the cache key is selector-blind, so a
+      // scoped result must never be stored as (or served from) the full view.
+      if (input?.selector) return deps.queueStatus(input);
       const cached = cache.get(QUEUE_STATUS_KEY);
       if (cached !== undefined) return cached;
-      const result = await deps.queueStatus();
+      const result = await deps.queueStatus(input);
       cache.set(QUEUE_STATUS_KEY, result);
       return result;
     },
     claimStatus: async (input) => {
+      // Batch reads (#2369) bypass the single-issue cache key.
+      if (input.issue === undefined) return deps.claimStatus(input);
       const key = claimStatusKey(input.issue);
       const cached = cache.get(key);
       if (cached !== undefined) return cached;
@@ -1404,7 +1453,9 @@ export function withCachedDeps(
       return result;
     },
     claimRelease: async (input) => {
-      cache.invalidate(claimStatusKey(input.issue));
+      for (const issue of input.issues ?? (input.issue !== undefined ? [input.issue] : [])) {
+        cache.invalidate(claimStatusKey(issue));
+      }
       return deps.claimRelease(input);
     },
     landBranch: async (input) => {
@@ -1460,13 +1511,22 @@ export function createCastleMcpDependencies(
       );
       return limit === undefined ? records : records.slice(-limit);
     },
-    queueStatus: async () => {
+    queueStatus: async (input?: QueueStatusInput) => {
       const context = await resolveRepoContext(root);
       const gh = { cwd: root, repo: context.repo };
-      const [readyForAgent, readyForHuman] = await Promise.all([
+      let [readyForAgent, readyForHuman] = await Promise.all([
         listCandidates(gh),
         listHitlCandidates(gh),
       ]);
+      // Scoped preview: apply a fleet selector (tags/user/spec/lane/…) over the
+      // ready pool, mirroring exactly what a fleet with that selector would see.
+      if (input?.selector) {
+        const selector = await concretizeSelectorUser(
+          root,
+          parseFleetSelector(input.selector),
+        );
+        readyForAgent = readyForAgent.filter((c) => matchesSelector(c, selector ?? {}));
+      }
       return {
         ready_for_agent: readyForAgent.map(
           ({ body: _body, ...candidate }) => candidate,
@@ -1561,6 +1621,7 @@ export function createCastleMcpDependencies(
     cascadeStatus: (input) => operations.cascadeStatus(input),
     claimStatus: (input) => operations.claimStatus(input),
     claimRelease: (input) => operations.claimRelease(input),
+    hitlResolve: (input) => operations.hitlResolve(input),
     mergeArm: (input) => operations.mergeArm(input),
     mergeStatus: () => operations.mergeStatus(),
     mergeRelease: (input) => operations.mergeRelease(input),

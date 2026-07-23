@@ -86,6 +86,7 @@ function deps(): CastleMcpDependencies {
     mergeArm: vi.fn(async (input) => ({ armed: input })),
     mergeStatus: vi.fn(async () => ({ prs: [] })),
     mergeRelease: vi.fn(async (input) => ({ released: input })),
+    hitlResolve: vi.fn(async (input) => ({ resolved: input })),
     claimRelease: vi.fn(async (input) => ({
       issue: input.issue,
       conceded: ["w80UR"],
@@ -151,6 +152,7 @@ describe("castle MCP tools", () => {
       "merge_arm",
       "merge_status",
       "merge_release",
+      "hitl_resolve",
       "worktree_list",
       "worktree_remove",
       "wait_start",

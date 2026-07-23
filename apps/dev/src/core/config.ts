@@ -140,6 +140,11 @@ export const CONFIG_DEFAULTS = {
   // Resolved from the namespaced `plugins.dev.afk.*` block with the legacy bare
   // `afk.*` fallback (ADR 0042), like every other accessor here.
   "afk.worktree_launches_pull_request": "true",
+  // Landing-tail slot release (#2427). `merge` is the byte-compatible default:
+  // the worker owns PR-open, CI, merge, and close. `ci` releases after green CI;
+  // `none` releases after PR-open. The shared wait/webhook observer finishes the
+  // remaining tail, with rsp wait's per-wait fallback when no resident exists.
+  "afk.landing.wait": "merge",
   // PR review gate (ADR 0064 §10, #749). When AFK opens a PR for a
   // completed attempt, the issue-classifier tier decides mechanical vs
   // non-mechanical: non-mechanical changes get `ready-for-review` (firing the

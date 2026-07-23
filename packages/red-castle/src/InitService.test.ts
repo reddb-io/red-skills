@@ -26,9 +26,7 @@ const makeDir = () => mkdtemp(join(tmpdir(), "init-service-"));
 const claudeCodeAgent = getAgent("claude-code")!;
 const piAgent = getAgent("pi")!;
 const codexAgent = getAgent("codex")!;
-const cursorAgent = getAgent("cursor")!;
 const opencodeAgent = getAgent("opencode")!;
-const copilotAgent = getAgent("copilot")!;
 
 const defaultOptions: ScaffoldOptions = {
   agent: claudeCodeAgent,
@@ -85,12 +83,6 @@ describe("InitService scaffold", () => {
     {
       agent: opencodeAgent,
       expectedKey: "OPENCODE_API_KEY=",
-      unexpectedKey: "ANTHROPIC_API_KEY=",
-      expectClaudeSetupTokenHint: false,
-    },
-    {
-      agent: cursorAgent,
-      expectedKey: "CURSOR_API_KEY=",
       unexpectedKey: "ANTHROPIC_API_KEY=",
       expectClaudeSetupTokenHint: false,
     },
@@ -198,14 +190,7 @@ describe("InitService scaffold", () => {
     expect(dockerfile).toContain(SANDBOX_REPO_DIR);
   });
 
-  it.each([
-    claudeCodeAgent,
-    piAgent,
-    codexAgent,
-    cursorAgent,
-    opencodeAgent,
-    copilotAgent,
-  ])(
+  it.each([claudeCodeAgent, piAgent, codexAgent, opencodeAgent])(
     "$name Dockerfile aligns UID/GID with -o so a host GID colliding with a reserved base-image GID (e.g. macOS staff=20) doesn't fail the build",
     async (agent) => {
       const dir = await makeDir();
@@ -858,37 +843,6 @@ describe("InitService scaffold", () => {
     expect(mainTs).not.toContain("claudeCode");
   });
 
-  it("scaffolds cursor agent with cursor Dockerfile", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { agent: cursorAgent, model: "claude-sonnet-4-6" });
-
-    const dockerfile = await readFile(
-      join(dir, ".red-castle", "Dockerfile"),
-      "utf-8",
-    );
-    expect(dockerfile).toContain("FROM node:22-bookworm");
-    expect(dockerfile).toContain("cursor.com/install");
-    expect(dockerfile).toContain('ENV PATH="/home/agent/.local/bin:$PATH"');
-    expect(dockerfile).toContain("ARG AGENT_UID=1000");
-    expect(dockerfile).toContain("ARG AGENT_GID=1000");
-    expect(dockerfile).toMatch(
-      /USER \$\{AGENT_UID\}:\$\{AGENT_GID\}[\s\S]*RUN curl https:\/\/cursor\.com\/install -fsS \| bash/,
-    );
-    expect(dockerfile).not.toContain("{{ISSUE_TRACKER_TOOLS}}");
-  });
-
-  it("scaffolds main.mts with cursor factory import when cursor agent selected", async () => {
-    const dir = await makeDir();
-    await runScaffold(dir, { agent: cursorAgent, model: "claude-sonnet-4-6" });
-
-    const mainTs = await readFile(
-      join(dir, ".red-castle", "main.mts"),
-      "utf-8",
-    );
-    expect(mainTs).toContain('cursor("claude-sonnet-4-6")');
-    expect(mainTs).not.toContain("claudeCode");
-  });
-
   it("scaffolds codex API-key auth mode without subscription auth mounts", async () => {
     const dir = await makeDir();
     await runScaffold(dir, {
@@ -1493,18 +1447,10 @@ describe("InitService scaffold", () => {
         name: "codex",
         command: `codex "$(cat .red-castle/SETUP_ISSUE_TRACKER.md)"`,
       },
-      {
-        name: "cursor",
-        command: `agent "$(cat .red-castle/SETUP_ISSUE_TRACKER.md)"`,
-      },
       { name: "pi", command: `pi "$(cat .red-castle/SETUP_ISSUE_TRACKER.md)"` },
       {
         name: "opencode",
         command: `opencode --prompt "$(cat .red-castle/SETUP_ISSUE_TRACKER.md)"`,
-      },
-      {
-        name: "copilot",
-        command: `copilot -i "$(cat .red-castle/SETUP_ISSUE_TRACKER.md)"`,
       },
     ])(
       "$name has the expected interactive setupCommand",

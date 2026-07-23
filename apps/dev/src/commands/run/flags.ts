@@ -95,8 +95,6 @@ import { createActivityMeter } from "../../core/activity-meter.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import type { AgentStreamEvent } from "../../core/execution.js";
-import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
-import { renderClaimComment } from "../../core/claim.js";
 
 export interface RunOptions {
   args: string[];
@@ -164,6 +162,18 @@ export interface RunDispatchIdentity {
   origin: string;
   kind: string;
   lane?: string;
+}
+
+/**
+ * Shared fleet hygiene must never delay an explicit target. A supervisor has
+ * already run the sweeps for its workers; a targeted solo dispatch defers them
+ * to the next fleet/untargeted boot so its first issue operation is the claim.
+ */
+export function shouldSkipBootSweeps(
+  filter: SelectionFilter,
+  supervisorSweepsDone: boolean,
+): boolean {
+  return supervisorSweepsDone || filter.kind === "issues";
 }
 
 /** Raised when --alternate is combined with --runner (mutually exclusive). */
@@ -292,6 +302,52 @@ function coerceSelectorFilter(raw: string): SelectionFilter {
 }
 
 /**
+ * Coerce a `--tags` value into an ordered bare-value list. Comma-separated,
+ * whitespace-trimmed; an all-empty value errors for the same reason
+ * `coerceIssuesFilter` does — a silent empty list would launch a worker that
+ * quietly drains the wrong scope.
+ */
+function coerceTagList(raw: string): string[] {
+  const tags = raw.split(",").map((t) => t.trim()).filter(Boolean);
+  if (tags.length === 0) {
+    throw new RunFlagError(`--tags requires at least one tag value (got: ${JSON.stringify(raw)})`);
+  }
+  return tags;
+}
+
+/**
+ * Fold `--tags`/`--user` into the base filter as selector facets. The selector
+ * stays the single wire format: explicit flags win over the same field inside
+ * `--selector` JSON, `--spec` merges into a selector filter (identical
+ * semantics — `matchesSpec` is a selector facet), and `--issues` refuses the
+ * combination outright: explicit issue numbers plus a territory filter is
+ * contradictory, and the strict `issues`-kind erroring would be lost.
+ */
+function foldTerritoryFacets(
+  filter: SelectionFilter,
+  tags: string[] | undefined,
+  user: string | undefined,
+): SelectionFilter {
+  if (tags === undefined && user === undefined) return filter;
+  if (filter.kind === "issues") {
+    throw new RunFlagError("--tags/--user cannot be combined with --issues");
+  }
+  const base: Record<string, unknown> =
+    filter.kind === "selector"
+      ? { ...filter.selector }
+      : filter.kind === "spec"
+        ? { spec: filter.spec }
+        : {};
+  if (tags !== undefined) base.tags = tags;
+  if (user !== undefined) base.user = user;
+  try {
+    return { kind: "selector", selector: parseFleetSelector(base) };
+  } catch (err) {
+    throw new RunFlagError(`--tags/--user is invalid: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
  * Flag schema for the `run` command, expressed against the shared CLI layer
  * (`packages/shared/args.ts`, built over `cli-args-parser`). The coercions here
  * reproduce the exact semantics the dev suite asserts: `--spec`/`-n` map through
@@ -302,6 +358,8 @@ const RUN_FLAG_SCHEMA = {
   spec: { kind: "value", coerce: (raw: string): SelectionFilter => ({ kind: "spec", spec: Number(raw) }) },
   issues: { kind: "value", coerce: coerceIssuesFilter },
   selector: { kind: "value", coerce: coerceSelectorFilter },
+  tags: { kind: "value", coerce: coerceTagList },
+  user: { kind: "value", coerce: (raw: string): string => raw.trim() },
   n: { kind: "value", coerce: (raw: string): number => Number(raw) },
   once: { kind: "boolean" },
   runner: { kind: "value", coerce: (raw: string): string => raw },
@@ -345,6 +403,12 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
       lastFilterPos = i;
     }
   }
+
+  filter = foldTerritoryFacets(
+    filter,
+    values.tags as string[] | undefined,
+    values.user as string | undefined,
+  );
 
   const runnerFlag = values.runner as string | undefined;
   const alternate = values.alternate === true;

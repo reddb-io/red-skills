@@ -13,15 +13,14 @@
 // effect is injected. No real IO lives here.
 
 import { slugifyRef } from "./remote-branch.js";
-import { runBoot, type BootDeps, type BootOptions, type BootResult } from "./boot.js";
-import {
-  processIssue,
-  type ProcessIssueDeps,
-  type ProcessIssueInput,
-  type ProcessIssueResult,
+import type { BootDeps, BootOptions, BootResult } from "./boot.js";
+import type {
+  ProcessIssueDeps,
+  ProcessIssueInput,
+  ProcessIssueResult,
 } from "./process-issue.js";
-import { dispatchHooks, type HookExec } from "./hook-dispatcher.js";
-import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "./hook-config.js";
+import type { HookExec } from "./hook-dispatcher.js";
+import type { ResolveHooksOptions, HookName } from "./hook-config.js";
 import type { ConfigValues } from "./config.js";
 import type { Runner } from "../types/runner.js";
 import type { FleetSelector } from "@reddb-io/red-castle/engine";
@@ -65,6 +64,9 @@ export interface IssueCandidate {
   title: string;
   body: string;
   labels: string[];
+  /** GitHub login of the issue author (creator); a `user` selector facet never
+   * matches a candidate without it. */
+  author?: string;
 }
 
 /** The selection filter, mirroring FILTER_KIND/FILTER_VALUE. `issues` keeps the
@@ -97,12 +99,25 @@ function matchesSpec(c: IssueCandidate, spec: number): boolean {
  * (AND), so `{spec, lane}` keeps only that Spec's Tickets inside that lane. An
  * empty selector matches everything — a fleet with no scope drains the whole
  * backlog, exactly like the `all` filter.
+ *
+ * Keep in sync with `matchesFleetSelector` in
+ * `packages/red-castle/src/engine/worker-drain.ts` — the castle copy drives the
+ * live drain; this copy backs the dev-side previews.
  */
 export function matchesSelector(c: IssueCandidate, selector: FleetSelector): boolean {
   if (selector.spec !== undefined && !matchesSpec(c, selector.spec)) return false;
   if (selector.lane !== undefined && !hasLabel(c, `lane:${selector.lane}`)) return false;
   if (selector.label !== undefined && !hasLabel(c, selector.label)) return false;
   if (selector.issues !== undefined && !selector.issues.includes(c.number)) return false;
+  // AND over every requested tag: a candidate missing any of them — including
+  // a fully untagged candidate — falls outside the territory.
+  if (selector.tags !== undefined && !selector.tags.every((tag) => hasLabel(c, `tag:${tag}`)))
+    return false;
+  if (
+    selector.user !== undefined &&
+    (c.author === undefined || c.author.toLowerCase() !== selector.user.toLowerCase())
+  )
+    return false;
   return true;
 }
 
@@ -130,91 +145,6 @@ export class IssueSelectionError extends Error {
   }
 }
 
-/**
- * PURE queue selection, exactly per SKILL.md "Issue Selection". Operates on the
- * already-listed candidate pool (the caller injects the `gh issue list` result),
- * applying — in order:
- *
- *   1. Spec exclusion (hard): drop every `type:spec` candidate before any filter.
- *   1a. Fleet work scope (hard, `selector` filter only): drop every candidate
- *      outside the named fleet's selector — BEFORE the urgent split, so an
- *      urgent issue another fleet owns can never be pulled across the boundary.
- *   2. Urgent prepend (hard, ahead of filters): split out `priority:urgent`;
- *      they jump the head sorted by number ascending (oldest fires first).
- *   3. Filter the queue:
- *        - issues: keep the requested numbers in ARGUMENT order; throw an
- *          IssueSelectionError if any requested number is missing from the pool
- *          or (present but) not labelled ready-for-agent. type:spec numbers were
- *          already dropped in step 1, so an explicit Spec reads as "missing".
- *          Lookup uses the full post-spec pool so urgent issues are explicitly
- *          addressable, then final queue assembly keeps urgents first.
- *        - spec: keep candidates with a spec:#N body ref / spec:N label.
- *        - selector / all: keep the whole remainder (the selector already
- *          narrowed the pool in step 1a).
- *      The spec/all filtered remainder is sorted priority:high→rest, then
- *      number asc.
- *   4. Concat `[urgent…] + [filtered…]`, deduped by number keeping the urgent
- *      slot at the front.
- */
-export function selectIssues(candidates: readonly IssueCandidate[], filter: SelectionFilter): IssueCandidate[] {
-  // 1. Spec exclusion (hard).
-  const excluded = candidates.filter((c) => !hasLabel(c, LABEL_TYPE_SPEC));
-
-  // 1a. Fleet work scope (hard, ahead of the urgent prepend). A named fleet must
-  // never touch an issue outside its selector — not even an urgent one — or two
-  // fleets partitioned across one backlog would race for the same claim.
-  const pool =
-    filter.kind === "selector"
-      ? excluded.filter((c) => matchesSelector(c, filter.selector))
-      : excluded;
-
-  // 2. Urgent prepend — split, sorted by number ascending.
-  const urgent = pool.filter((c) => hasLabel(c, LABEL_URGENT)).sort((a, b) => a.number - b.number);
-  const rest = pool.filter((c) => !hasLabel(c, LABEL_URGENT));
-
-  // 3. Filter the queue.
-  let filtered: IssueCandidate[];
-  switch (filter.kind) {
-    case "issues": {
-      const byNumber = new Map(pool.map((c) => [c.number, c] as const));
-      // A requested number is "unselectable" when it is absent from the
-      // ready-for-agent pool entirely. (The pool is the ready-for-agent list,
-      // so absence covers both missing and not-labelled-ready-for-agent.)
-      const ordered: IssueCandidate[] = [];
-      const missing: number[] = [];
-      for (const n of filter.numbers) {
-        const c = byNumber.get(n);
-        if (c) ordered.push(c);
-        else missing.push(n);
-      }
-      if (missing.length > 0) {
-        throw new IssueSelectionError(
-          `requested issue(s) missing from the ready-for-agent queue: ${missing.map((n) => `#${n}`).join(", ")}`,
-          missing,
-        );
-      }
-      filtered = ordered; // argument order preserved, no priority re-sort.
-      break;
-    }
-    case "spec":
-      filtered = sortByPriority(rest.filter((c) => matchesSpec(c, filter.spec)));
-      break;
-    case "selector":
-      // The scope was already applied to the pool above; what remains is the
-      // ordinary priority ordering of everything the fleet owns.
-      filtered = sortByPriority(rest);
-      break;
-    case "all":
-    default:
-      filtered = sortByPriority(rest);
-      break;
-  }
-
-  // 4. Concat [urgent…] + [filtered…], deduped by number (urgents win the slot).
-  const urgentNumbers = new Set(urgent.map((c) => c.number));
-  const tail = filtered.filter((c) => !urgentNumbers.has(c.number));
-  return [...urgent, ...tail];
-}
 
 /** Derive the execution run-mode for a fleet candidate from its labels.
  * A `type:scout` label activates read-only investigation mode — no commits,
@@ -451,226 +381,3 @@ function emitStop(deps: SessionDeps, reason: SessionStopReason): void {
   deps.emit(`worker stop: ${reason}`);
 }
 
-/**
- * Run the AFK outer session: boot → pre_session → select → drain → summary. The
- * SEQUENCE + the stop conditions + the session-scoped lifecycle hooks are the
- * parity target (afk.sh MAIN LOOP + PRD #207):
- *
- *   1. runBoot — the boot sequence runs once. A precheck FAILURE aborts the
- *      drain (the bash `die`): no listing, no NO MORE TASKS, an empty summary.
- *   2. pre_session — fires before any queue work; an abort (pre_* policy) stops
- *      the session before listing.
- *   3. pre_pick → selectIssues → post_pick around issue selection.
- *   4. Empty queue → on_idle, emit `<promise>NO MORE TASKS</promise>`, drained.
- *   5. For each queued number (1-based index `I`), stop once `I > iterCap`
- *      (the `-n` cap), call processIssue, accumulate done/blocked/failed, and
- *      emit the per-issue progress line. `--once` breaks after the first issue.
- *   6. post_session on normal end; on_session_error on a crash (the error is
- *      re-thrown after the notification so the CLI still sees the failure).
- *
- * Session hooks respect the exit-code policy: pre_ points abort, post_ / on_
- * points log and continue. They fire only when `deps.hooks` is wired.
- */
-export async function runSession(deps: SessionDeps, ctx: SessionContext): Promise<SessionSummary> {
-  const sessionHooksFired: HookName[] = [];
-  const resolved: ResolvedHooks | undefined = deps.hooks
-    ? resolveHooks(deps.hooks.config, deps.hooks.resolveOptions)
-    : undefined;
-
-  /** Fire a session-scoped point. Returns false only when a pre_* point aborts. */
-  const fireSessionHook = async (name: HookName, context: string): Promise<boolean> => {
-    if (!deps.hooks || !resolved) return true;
-    sessionHooksFired.push(name);
-    const result = await dispatchHooks(name, resolved[name], context, deps.hooks.exec, {
-      env: deps.hooks.env ?? {},
-      log: deps.emit,
-    });
-    return !result.aborted;
-  };
-
-  const statsContext = (done: number, blocked: number, total: number): string =>
-    JSON.stringify({
-      runner: ctx.runner,
-      worker_id: ctx.workerId,
-      stats: { done, blocked, total },
-    });
-
-  const empty: SessionSummary = {
-    runner: ctx.runner,
-    workerId: ctx.workerId,
-    done: 0,
-    blocked: 0,
-    failed: 0,
-    total: 0,
-    boot: { precheck: { ok: true, warnings: [] } },
-    processed: [],
-    drained: false,
-    exhausted: false,
-    runnerTransient: false,
-    sessionHooksFired,
-  };
-  const nowMs = ctx.policy?.nowMs ?? (() => Date.now());
-  const startedMs = nowMs();
-
-  // ---- 1. boot (precheck failure aborts the drain) ----
-  const boot = await deps.runBoot(deps.bootDeps, deps.bootOptions);
-  empty.boot = boot;
-  if (!boot.precheck.ok) {
-    return empty;
-  }
-
-  // ---- 1a. --boot-only: dry-run. The boot sweeps ran above; return before
-  // any selection/claim/processing so no agent is ever spawned. ----
-  if (ctx.bootOnly) {
-    deps.emit(
-      ctx.sweepsSkipped
-        ? "boot complete (--boot-only): sweeps skipped (supervisor-owned), no issues processed"
-        : "boot complete (--boot-only): sweeps ran, no issues processed",
-    );
-    return { ...empty, boot };
-  }
-
-  try {
-    // ---- 2. pre_session (before any queue work) — pre_* abort stops here ----
-    if (!(await fireSessionHook("pre_session", statsContext(0, 0, 0)))) {
-      return { ...empty, boot };
-    }
-
-    // ---- 3. pre_pick → select → post_pick ----
-    await fireSessionHook("pre_pick", JSON.stringify({ filter: ctx.filter }));
-    const candidates = await deps.gh.listCandidates();
-    const queue = selectIssues(candidates, ctx.filter);
-    const total = queue.length;
-    await fireSessionHook("post_pick", JSON.stringify({ issues: queue.map((c) => c.number) }));
-
-    // ---- 4. empty queue → on_idle → NO MORE TASKS ----
-    if (total === 0) {
-      await fireSessionHook("on_idle", statsContext(0, 0, 0));
-      deps.emit(NO_MORE_TASKS);
-      await fireSessionHook("post_session", statsContext(0, 0, 0));
-      return { ...empty, boot, total: 0, drained: true, stopReason: "drain-empty" };
-    }
-
-    // ---- 5. drain under the -n cap ----
-    const cap = ctx.iterCap && ctx.iterCap > 0 ? ctx.iterCap : total;
-    const processed: SessionProcessed[] = [];
-    let done = 0;
-    let blocked = 0;
-    let failed = 0;
-    let exhaustedStop = false;
-    let runnerTransientStop = false;
-    let stopReason: SessionStopReason | undefined;
-    // --alternate: the runner rotates per issue. The first issue uses ctx.runner.
-    let activeRunner: Runner = ctx.runner;
-
-    for (let i = 0; i < queue.length; i++) {
-      if (ctx.policy?.supervisorKilled?.()) {
-        stopReason = "supervisor-kill";
-        break;
-      }
-      if (budgetSpent(ctx.policy?.budget?.())) {
-        stopReason = "budget-cap";
-        break;
-      }
-      if (ctx.policy?.maxRuntimeMs !== undefined && nowMs() - startedMs >= ctx.policy.maxRuntimeMs) {
-        stopReason = "lifetime-cap";
-        break;
-      }
-      if (ctx.policy?.maxIssues !== undefined && processed.length >= ctx.policy.maxIssues) {
-        stopReason = "lifetime-cap";
-        break;
-      }
-      if (i >= cap) {
-        stopReason = "iter-cap";
-        break; // -n N reached → stop the drain (Stop Conditions).
-      }
-      const candidate = queue[i]!;
-      const issueRunner = ctx.alternate ? activeRunner : ctx.runner;
-      if (deps.runnerCircuit && (await deps.runnerCircuit.isOpen(issueRunner))) {
-        runnerTransientStop = true;
-        stopReason = "runner-unavailable";
-        deps.emit(`runner ${issueRunner} circuit open — stopping before claiming more issues`);
-        break;
-      }
-      const input = deps.buildProcessInput(candidate, ctx);
-      // Override the per-issue runner when rotating (--alternate); without it
-      // every issue keeps the resolved session runner.
-      const perIssueInput = ctx.alternate ? { ...input, runner: issueRunner } : input;
-      const result = await deps.processIssue(deps.processDeps, perIssueInput);
-
-      const bucket = classify(result.outcome);
-      if (bucket === "done") done++;
-      else if (bucket === "blocked") blocked++;
-      else failed++;
-      processed.push({ issue: candidate.number, outcome: result.outcome });
-
-      // Per-issue progress line: `progress: I/TOTAL (PCT%) — REMAINING remaining`.
-      const idx = i + 1;
-      const pct = Math.floor((idx * 100) / total);
-      const remaining = total - idx;
-      deps.emit(`progress: ${idx}/${total} (${pct}%) — ${remaining} remaining`);
-
-      // Runner availability failures end the whole session: stop draining and
-      // signal exit 75 (EX_TEMPFAIL). A dead backend is global enough that
-      // claiming more issues just spreads blocked:runner-transient labels.
-      if (result.outcome === "exhausted") {
-        exhaustedStop = true;
-        stopReason = "exhausted";
-        break;
-      }
-      if (result.outcome === "runner-transient") {
-        runnerTransientStop = true;
-        stopReason = "runner-unavailable";
-        break;
-      }
-
-      // --once consumes the single supervised iteration only when an attempt
-      // actually ran. A lost claim race (another worker owns the issue) must
-      // skip to the next candidate (SKILL §Per-Issue Loop step 1), not burn the
-      // iteration: under the fleet supervisor every worker IS --once, so
-      // exiting here respawns a fresh worker that re-races the same head issue
-      // forever — the #644 churn that starved 2 of 3 slots.
-      if (ctx.once && result.outcome !== "claim-lost") {
-        stopReason = "once";
-        break;
-      }
-      if (ctx.policy?.shouldRetire?.()) {
-        stopReason = "graceful-retirement";
-        break;
-      }
-      if (ctx.alternate) activeRunner = otherRunner(activeRunner, ctx.runner);
-    }
-
-    // ---- 6. post_session (normal end) ----
-    await fireSessionHook("post_session", statsContext(done, blocked, total));
-    if (stopReason) emitStop(deps, stopReason);
-
-    return {
-      runner: ctx.runner,
-      workerId: ctx.workerId,
-      done,
-      blocked,
-      failed,
-      total,
-      boot,
-      processed,
-      drained: false,
-      exhausted: exhaustedStop,
-      runnerTransient: runnerTransientStop,
-      sessionHooksFired,
-      stopReason,
-    };
-  } catch (error) {
-    // on_session_error death-notification path: fire the crash hook (log-and-
-    // continue policy) then re-throw so the CLI still surfaces the failure.
-    await fireSessionHook(
-      "on_session_error",
-      JSON.stringify({
-        runner: ctx.runner,
-        worker_id: ctx.workerId,
-        error: { message: error instanceof Error ? error.message : String(error) },
-      }),
-    );
-    throw error;
-  }
-}

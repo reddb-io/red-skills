@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { castleLanePath, createEnginePaths, readCastleLaneRecords } from "@reddb-io/red-castle/engine";
 import { buildProcessDeps } from "../src/commands/run.js";
 import { makeFeedbackWorktree } from "../src/runtime/feedback-worktree.js";
 import { deleteLocalBranch } from "../src/runtime/git.js";
@@ -84,6 +85,131 @@ function makeFakeExec(repoRoot: string): { exec: ExecFn; trace: TraceEntry[] } {
 }
 
 describe("wiring integration — real buildProcessDeps over a fake exec", () => {
+  it("feeds a landing conflict resolver's native stream into its parent Worker lane (#2480)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-wiring-linked-resolver-"));
+    const attemptDir = join(root, ".red", "tmp", "workers", "wLINK", "2480");
+    mkdirSync(attemptDir, { recursive: true });
+    writeFileSync(join(attemptDir, "afk.state.toon"), JSON.stringify({
+      worker_id: "wLINK",
+      pid: process.pid,
+      runner: "codex",
+      current: { number: 2480, phase: "merge", activity: "landing" },
+    }));
+    const exec: ExecFn = async (command, _args, options) => {
+      if (command === "codex") {
+        options?.onStdoutLine?.(JSON.stringify({
+          type: "item.started",
+          item: { type: "command_execution", command: "git add resolved.ts" },
+        }));
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
+    const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
+    const deps = buildProcessDeps(
+      ctx,
+      "gpt-5.5",
+      "none",
+      feedback,
+      { attemptDir },
+      false,
+      "codex",
+      exec,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "wLINK",
+    );
+
+    await deps.conflictResolver?.("resolve the conflict", root);
+
+    const records = await readCastleLaneRecords(
+      castleLanePath(createEnginePaths(join(root, ".red")), "worker", "wLINK"),
+    );
+    expect(records).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "worker.subagent_heartbeat",
+        payload: expect.objectContaining({
+          phase: "merge-resolver",
+          signal: "tool",
+          tool: "git add resolved.ts",
+        }),
+      }),
+    ]));
+  });
+
+  it("prefers the fleet Trunk override over the repository default", () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-wiring-fleet-trunk-"));
+    mkdirSync(join(root, ".red"), { recursive: true });
+    writeFileSync(
+      join(root, ".red", "config.yaml"),
+      "plugins:\n  dev:\n    enabled: true\n    trunk: main\n",
+    );
+    const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
+    const { exec } = makeFakeExec(root);
+    const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
+    const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") };
+    const previous = process.env.RED_AFK_TRUNK;
+    process.env.RED_AFK_TRUNK = "develop";
+    try {
+      const deps = buildProcessDeps(
+        ctx,
+        "claude-opus-4-8",
+        "none",
+        feedback,
+        current,
+        false,
+        "claude",
+        exec,
+      );
+      expect(deps.lookups.base.configTrunk).toBe("develop");
+    } finally {
+      if (previous === undefined) delete process.env.RED_AFK_TRUNK;
+      else process.env.RED_AFK_TRUNK = previous;
+    }
+  });
+
+  it("wires landing.wait=none through rsp's shared wait with per-wait fallback", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-wiring-landing-tail-"));
+    mkdirSync(join(root, ".red"), { recursive: true });
+    writeFileSync(
+      join(root, ".red", "config.yaml"),
+      "plugins:\n  dev:\n    enabled: true\n    afk:\n      landing:\n        wait: none\n",
+    );
+    const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
+    const { exec, trace } = makeFakeExec(root);
+    const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
+    const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") };
+    const deps = buildProcessDeps(ctx, "claude-opus-4-8", "none", feedback, current, false, "claude", exec);
+    const run = vi.fn(async (_ciAlreadyGreen?: boolean) => ({ ok: true as const, locked: false }));
+
+    const result = await deps.landingTailObserver!({
+      issue: 42,
+      prNumber: 77,
+      waitForCi: true,
+      run,
+    });
+
+    expect(deps.landingWait).toBe("none");
+    expect(deps.ciAwait).toBeDefined();
+    expect(result).toEqual({ ok: true, locked: false });
+    expect(run).toHaveBeenCalledWith(true);
+    expect(trace).toContainEqual({
+      cmd: "rsp",
+      args: [
+        "wait",
+        "pr",
+        "77",
+        "--timeout",
+        "1800s",
+        "--reason",
+        "finish AFK landing for issue 42",
+      ],
+      cwd: root,
+    });
+  });
+
   it("returns a failed local branch deletion through the runtime git boundary", async () => {
     const exec: ExecFn = async () => ({ code: 1, stdout: "", stderr: "branch is checked out" });
 
