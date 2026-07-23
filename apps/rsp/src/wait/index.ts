@@ -39,7 +39,7 @@ import type { GhCallOptions } from "./github.js";
 import { pidStartTime } from "./process-tree.js";
 import { listWaits, newRegistryEntry, registryPathFor, writeRegistryEntry } from "./registry.js";
 import { renderWaitHelp } from "./help.js";
-import { WebhookForwarder } from "./webhook-forwarder.js";
+import { createWebhookWakeSource } from "./webhook-wake-source.js";
 
 export { listWaits } from "./registry.js";
 export { renderWaitHelp } from "./help.js";
@@ -173,11 +173,11 @@ async function dispatchWait(
       const number = parsed.target ?? "";
       if (!/^[1-9][0-9]*$/.test(number)) return { verdict: indeterminate("missing PR number") };
       entry.webhook_mode = "polling";
-      const forwarder = new WebhookForwarder({ cwd, cancelSignal: signal });
-      forwarder.once("mode-changed", () => {
+      const webhook = createWebhookWakeSource({ cwd, cancelSignal: signal });
+      webhook.once("mode-changed", () => {
         entry.webhook_mode = "webhook";
       });
-      forwarder.start();
+      await webhook.start();
       try {
         return await pollUntilDone({
           probe: createPrProbe(number, call, {
@@ -185,13 +185,13 @@ async function dispatchWait(
           }),
           timeoutMs: parsed.options.timeoutMs,
           baseSleepMs: envDuration("RSP_WAIT_PR_POLL_MS", 15_000),
-          makeWakeSignal: forwarder.makeWakeSignalFor("pr", number),
+          makeWakeSignal: webhook.makeWakeSignalFor("pr", number),
           registryPath,
           entry,
           signal,
         });
       } finally {
-        await forwarder.stop();
+        await webhook.stop();
       }
     }
 
@@ -199,23 +199,23 @@ async function dispatchWait(
       const id = await resolveRunTarget(parsed, call, registryPath, entry);
       if (!id.ok) return { verdict: indeterminate(id.reason) };
       entry.webhook_mode = "polling";
-      const forwarder = new WebhookForwarder({ cwd, cancelSignal: signal });
-      forwarder.once("mode-changed", () => {
+      const webhook = createWebhookWakeSource({ cwd, cancelSignal: signal });
+      webhook.once("mode-changed", () => {
         entry.webhook_mode = "webhook";
       });
-      forwarder.start();
+      await webhook.start();
       try {
         return await pollUntilDone({
           probe: () => probeRun(id.value, call),
           timeoutMs: parsed.options.timeoutMs,
           baseSleepMs: envDuration("RSP_WAIT_RUN_POLL_MS", 15_000),
-          makeWakeSignal: forwarder.makeWakeSignalFor("run", id.value),
+          makeWakeSignal: webhook.makeWakeSignalFor("run", id.value),
           registryPath,
           entry,
           signal,
         });
       } finally {
-        await forwarder.stop();
+        await webhook.stop();
       }
     }
 
