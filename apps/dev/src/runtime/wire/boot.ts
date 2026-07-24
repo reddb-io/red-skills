@@ -508,6 +508,7 @@ export async function buildBootDeps(
           await ghx.postClaimComment(ghCtx, issue, body);
         }
       : undefined,
+    claimEvictor: `${hostFingerprintPrefix()}supervisor`,
     healLedger: createFileHealLedgerStore(createEnginePaths(join(ctx.root, ".red"))),
     lookups: {
       // Live-claim ownership for the orphan sweep (#644): a dead attempt dir
@@ -555,22 +556,28 @@ export async function buildBootDeps(
           try {
             const comments = await ghx.listClaimComments(ghCtx, issue);
             const records = parseClaimRecords(comments);
-            const deadOwners = records
+            // Local holders are split by PROCESS evidence, not heartbeat age: a
+            // live pid pins the claim (liveOwners), a missing/dead pid frees it
+            // immediately (deadOwners). Remote holders appear in neither set and
+            // fall through to the heartbeat TTL inside the planner.
+            const localOwners = records
               .map((r) => r.worker)
               .filter((worker, idx, workers) => workers.indexOf(worker) === idx)
-              .filter((worker) => {
-                if (!worker.startsWith(hostPrefix)) return false;
-                const workerId = worker.slice(hostPrefix.length);
-                if (!workerId) return false;
-                const pidPath = join(paths.workersRoot, workerId, "worker.pid");
-                if (!existsSync(pidPath)) return true;
-                const pid = Number(readFileSync(pidPath, "utf8").trim());
-                return !Number.isInteger(pid) || !isLivePid(pid);
-              });
+              .filter((worker) => worker.startsWith(hostPrefix));
+            const liveOwners: string[] = [];
+            const deadOwners: string[] = [];
+            for (const worker of localOwners) {
+              const workerId = worker.slice(hostPrefix.length);
+              if (!workerId) continue;
+              const pidPath = join(paths.workersRoot, workerId, "worker.pid");
+              const pid = existsSync(pidPath) ? Number(readFileSync(pidPath, "utf8").trim()) : Number.NaN;
+              (Number.isInteger(pid) && isLivePid(pid) ? liveOwners : deadOwners).push(worker);
+            }
             claimed.push({
               issue,
               records,
               deadOwners,
+              liveOwners,
               attemptBranchCommitS: liveBranchCommitByIssue.get(issue),
             });
           } catch {
