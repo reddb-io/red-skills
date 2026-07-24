@@ -50,7 +50,7 @@ export interface PrePrMemoryReview {
 type StoredNode = MemoryNode & { rid: number };
 
 const DECISION_TYPES: readonly NodeType[] = ["decision", "why_note", "workflow"];
-const FAILURE_TYPES: readonly NodeType[] = ["problem", "fix", "attempt"];
+const FAILURE_TYPES: readonly NodeType[] = ["problem", "fix", "worker"];
 const VALIDATION_TYPES: readonly NodeType[] = ["validation"];
 
 export async function buildPrePrMemoryReview(

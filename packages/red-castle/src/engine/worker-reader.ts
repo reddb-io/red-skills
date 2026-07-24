@@ -1,7 +1,7 @@
-export type AttemptOutcomeKind = "done" | "blocked" | "no_more_tasks";
+export type WorkerOutcomeKind = "done" | "blocked" | "no_more_tasks";
 
-export interface AttemptOutcome {
-  kind: AttemptOutcomeKind;
+export interface WorkerOutcome {
+  kind: WorkerOutcomeKind;
   raw: string;
 }
 
@@ -12,7 +12,7 @@ export const COMPLETION_SIGNALS: readonly string[] = [DONE_SIGNAL, BLOCKED_SIGNA
 
 const sentinelPattern = /<promise>\s*(DONE|BLOCKED|NO MORE TASKS)\s*<\/promise>/i;
 
-export function detectSentinelLine(line: string): AttemptOutcome | null {
+export function detectSentinelLine(line: string): WorkerOutcome | null {
   const match = line.match(sentinelPattern);
   if (!match) return null;
   const normalized = match[1]!.toUpperCase();
@@ -21,7 +21,7 @@ export function detectSentinelLine(line: string): AttemptOutcome | null {
   return { kind: "no_more_tasks", raw: match[0] };
 }
 
-export function detectSentinelInText(text: string): AttemptOutcome | null {
+export function detectSentinelInText(text: string): WorkerOutcome | null {
   for (const line of text.split(/\r?\n/)) {
     const outcome = detectSentinelLine(line);
     if (outcome) return outcome;

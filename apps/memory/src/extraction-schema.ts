@@ -60,7 +60,7 @@ export const STRUCTURAL_TYPES = [
   // Reasoning trace (distinct `reasoning` tier)
   "why_note",
   // AFK engineering semantic graph (PRD #95)
-  "attempt",
+  "worker",
   "issue",
   "prd",
   "validation",

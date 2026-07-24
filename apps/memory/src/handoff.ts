@@ -107,7 +107,7 @@ function scoreNode(node: StoredNode, terms: string[], now: number): number {
     goal: 10,
     issue: 9,
     prd: 8,
-    attempt: 8,
+    worker: 8,
     decision: 8,
     validation: 7,
     problem: 7,
@@ -143,7 +143,7 @@ function buildSections(ranked: RankedNode[], now: number): MemoryHandoffSection[
     "goal",
     "issue",
     "prd",
-    "attempt",
+    "worker",
     "session",
   ]);
   const decisions = section("decisions", "Recent Decisions", ranked, now, ["decision"]);

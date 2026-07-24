@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { isInfraFeedbackFailure, runFeedback, type Exec, type PackageLayout, type RunFeedbackResult, buildValidationRecord } from "../src/core/feedback.js";
 import { recoveryDecision, recoveryCap } from "../src/core/recovery.js";
-import { blockedLabelFor, recoveryReasonFor } from "../src/core/attempt-outcome.js";
+import { blockedLabelFor, recoveryReasonFor } from "../src/core/worker-outcome.js";
 
 // AFK resilience test harness — codifies the 7 failure patterns the workers
 // hit during the claude-minimax spike (June 2026) as deterministic, in-process

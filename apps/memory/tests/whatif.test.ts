@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
-import { recordReasoningAttempt } from "../src/reasoning/attempt-writer.js";
+import { recordReasoningWorker } from "../src/reasoning/worker-writer.js";
 import { buildWhatifReport, parseWhatifChange } from "../src/whatif.js";
 
 const TIMEOUT = 30_000;
@@ -49,7 +49,7 @@ describe("memory.whatif.v1", () => {
 
   test("surfaces historical attempts and a non-zero breakage_likelihood when a similar blocked attempt exists", async () => {
     const store = await openStore();
-    await recordReasoningAttempt(store, {
+    await recordReasoningWorker(store, {
       repository: "reddb-io/red-skills",
       issueNumber: 172,
       attemptNumber: 1,
@@ -75,7 +75,7 @@ describe("memory.whatif.v1", () => {
     const store = await openStore();
     // Many blocked attempts on the same descriptor should still cap at 1.
     for (let i = 1; i <= 20; i++) {
-      await recordReasoningAttempt(store, {
+      await recordReasoningWorker(store, {
         repository: "reddb-io/red-skills",
         issueNumber: 500 + i,
         attemptNumber: 1,

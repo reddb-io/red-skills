@@ -39,7 +39,7 @@ Binding for both the orchestrator (the shell loop) and the inner agent (claude/c
 ## Dirty Primary Checkout
 
 AFK never stages or commits the primary checkout. A dirty primary remains
-untouched through boot, claim, the worker attempt, feedback and backpressure
+untouched through boot, claim, the worker, feedback and backpressure
 gates, and Landing. In particular, AFK never creates a pre-merge snapshot
 commit on boot or claim. A worker crash or failed gate therefore leaves the
 operator's index, working tree, and commit history unchanged.
@@ -86,7 +86,7 @@ One self-resolve attempt: re-enter the inner agent with the conflict diff in the
 - `SIGTERM`: same as `SIGINT`.
 - Never trap `SIGKILL` — let the OS do its thing.
 
-There is no heartbeat sub-shell to reap on any of these paths since Slice D — the only cleanup work is releasing the in-flight claim, preserving the active attempt directory, and removing the per-worker `worker.pid` (and the empty worker dir) on the EXIT trap.
+There is no heartbeat sub-shell to reap on any of these paths since Slice D — the only cleanup work is releasing the in-flight claim, preserving the active worker directory, and removing the per-worker `worker.pid` (and the empty worker dir) on the EXIT trap.
 
 ## What "Blocker" Means
 

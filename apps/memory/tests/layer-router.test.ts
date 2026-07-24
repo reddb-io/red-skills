@@ -17,7 +17,7 @@ const NODE_TYPES: readonly NodeType[] = [
   "session",
   "task",
   "goal",
-  "attempt",
+  "worker",
   "issue",
   "prd",
   "validation",
@@ -41,7 +41,7 @@ interface Row {
 
 function tierForPath(node_type: NodeType, path: Path): Tier {
   if (path === "hot") return "ephemeral";
-  return node_type === "why_note" || node_type === "attempt" ? "reasoning" : "durable";
+  return node_type === "why_note" || node_type === "worker" ? "reasoning" : "durable";
 }
 
 function buildMatrix(): Row[] {

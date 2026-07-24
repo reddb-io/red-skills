@@ -38,16 +38,16 @@ exemplars[1]{pr,title,shows}:
   123,Keep handoffs bounded,Shows the current handoff assembly seam.
 </handoff-enrichment>
 
-<previous-attempts>                                    <!-- omitted when empty -->
-<previous-attempt n="1" status="blocked" worker="wXXXX" duration="0m50s" branch="afk/wXXXX/N-slug">
+<previous-workers>                                    <!-- omitted when empty -->
+<previous-worker n="1" status="blocked" worker="wXXXX" duration="0m50s" branch="afk/wXXXX/N-slug">
 <notes>
-{inner agent's appended notes from prior attempt}
+{inner agent's appended notes from prior worker}
 </notes>
 <log>
-{tail of prior attempt's stdout, if captured}
+{tail of prior worker's stdout, if captured}
 </log>
-</previous-attempt>
-</previous-attempts>
+</previous-worker>
+</previous-workers>
 
 <prev-failure-context>                                 <!-- omitted on a first run -->
 prev-envelope: https://github.com/{owner}/{repo}/issues/{N}

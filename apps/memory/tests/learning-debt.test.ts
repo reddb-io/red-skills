@@ -56,7 +56,7 @@ function node(
       confidence: "EXTRACTED",
       source: "manual",
       importance: 0.4,
-      tier: node_type === "attempt" ? "reasoning" : "durable",
+      tier: node_type === "worker" ? "reasoning" : "durable",
       created_at: NOW,
       accessed_at: NOW,
       access_count: 1,
@@ -89,13 +89,13 @@ function rollup(name: string, failed: number, overrides: Partial<SkillRollup> = 
 describe("Memory learning debt reports", () => {
   test("summarizes repeated failures, stale guidance, validation gaps, and skill telemetry gaps", async () => {
     const nodes = [
-      node(1, "attempt", "issue 10 blocked validation", {
+      node(1, "worker", "issue 10 blocked validation", {
         issue_number: 10,
         status: "blocked",
         error_class: "validation",
         touched_files: ["plugins/memory/src/cli.ts"],
       }),
-      node(2, "attempt", "issue 10 blocked validation again", {
+      node(2, "worker", "issue 10 blocked validation again", {
         issue_number: 10,
         status: "blocked",
         error_class: "validation",

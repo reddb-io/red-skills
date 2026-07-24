@@ -1,4 +1,4 @@
-// attempt-outcome — the SINGLE OWNER of the AFK "how an attempt ended, and what
+// worker-outcome — the SINGLE OWNER of the AFK "how a worker run ended, and what
 // it means" vocabulary.
 //
 // Historically this knowledge was smeared across three parallel enums that had
@@ -8,7 +8,7 @@
 // any drift silently produced a wrong label or a wrong routing decision.
 //
 // This module collapses that into ONE owner:
-//   - `AttemptOutcome`     — every terminal ending an iteration can have.
+//   - `WorkerOutcome`     — every terminal ending an iteration can have.
 //   - `RecoveryReason`     — the recoverable subset's policy keys (recovery.ts
 //                            consumes this; its cap table is keyed on it).
 //   - `blockedLabelFor`    — outcome → DESCRIPTIVE `blocked:<reason>` label.
@@ -52,7 +52,7 @@ import {
  * members so every mapping is total, but they carry no typed `blocked:*` label
  * (null).
  */
-export type AttemptOutcome =
+export type WorkerOutcome =
   | "done"
   | "review-requested"
   // Per-issue MANUAL-LANDING mode (issue #1049): a `landing:manual` issue ran the
@@ -68,7 +68,7 @@ export type AttemptOutcome =
   // signal (SIGKILL/SIGTERM from the harness or kernel OOM reaper). Carries
   // the signal name in the envelope notes for actionable crash records.
   // Same bounded recovery policy as `no-sentinel` (`crashed` cap) — an OOM
-  // or watchdog kill may self-heal on a fresh attempt.
+  // or watchdog kill may self-heal on a fresh worker run.
   | "signal-killed"
   | "merge-conflict"
   // AFK runner improvement (#812): an UNLOCKED admin-merge could not land a
@@ -77,7 +77,7 @@ export type AttemptOutcome =
   // once CI is green — so they carry the distinct `blocked:ci` label and (unlike
   // merge-conflict) NEVER auto-recover to ready-for-agent, which would re-run the
   // whole inner agent on already-complete work:
-  //   - ci-failed   — a required check FAILED; the next attempt should fix that check.
+  //   - ci-failed   — a required check FAILED; the next worker run should fix that check.
   //   - ci-pending  — checks still running past the CI-wait timeout; the open PR
   //                   is handed off for a human/CI-aware finisher.
   | "ci-failed"
@@ -92,8 +92,8 @@ export type AttemptOutcome =
   // No cooldown/fallback retry can repair host configuration.
   | "host-config"
   | "stalled"
-  // AFK runner improvement (#908): a per-attempt resource ceiling aborted the
-  // attempt (token / cost / tool-call / waiting-window). Parked for a human —
+  // AFK runner improvement (#908): a per-worker resource ceiling aborted the
+  // run (token / cost / tool-call / waiting-window). Parked for a human —
   // NOT auto-recovered (a runaway is not a transient flake to blind-retry). The
   // guard that produced it died with the attempt model (ADR 0103); the terminal
   // name + `blocked:budget` label survive until the disposition vocabulary is
@@ -102,7 +102,7 @@ export type AttemptOutcome =
   // ADR 0083 landing precondition (#1018): the Landing aborted because the
   // primary checkout's LOCAL trunk ref has DIVERGED from `origin/<trunk>` (it
   // carries commits origin does not). This is NOT a merge conflict and NOT lost
-  // work — the attempt branch is intact; the local repository state a human owns
+  // work — the worker branch is intact; the local repository state a human owns
   // is out of sync. It carries the distinct `blocked:trunk-diverged` label and is
   // human-only (never auto-recovered): the Landing refuses to reset / stash /
   // auto-commit / force-push to repair it, so a bounded retry could only re-hit
@@ -137,7 +137,7 @@ export type RecoveryReason = "quota" | "runner-transient" | "merge-conflict" | "
  * the returned label ALONGSIDE the routing label (ready-for-human /
  * ready-for-agent).
  */
-export function blockedLabelFor(o: AttemptOutcome): string | null {
+export function blockedLabelFor(o: WorkerOutcome): string | null {
   switch (o) {
     case "exhausted":
       return LABEL_QUOTA;
@@ -209,7 +209,7 @@ export function blockedLabelFor(o: AttemptOutcome): string | null {
  * envelope-emit's `defaultHistoryEvent` folds non-done terminals into — to keep
  * the mapping total without inventing a new status.
  */
-export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
+export function envelopeStatusFor(o: WorkerOutcome): AttemptStatus {
   switch (o) {
     case "done":
       return "done";
@@ -238,7 +238,7 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
     case "stalled":
     case "budget-exceeded":
     // trunk-diverged (#1018) folds into the generic `blocked` bucket — the work
-    // is intact on the attempt branch; the local trunk a human owns is out of
+    // is intact on the worker branch; the local trunk a human owns is out of
     // sync, so it emits a `blocked` envelope (never `merge-conflict`).
     case "trunk-diverged":
     // base-stale (#1380) folds into the generic `blocked` bucket — no worker ran;
@@ -262,7 +262,7 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
 /**
  * Pure mapping from a terminal outcome to its BOUNDED auto-recovery policy key,
  * or null when the outcome is NOT auto-recoverable. The recoverable outcomes are
- * exactly the transient classes that often clear on a fresh attempt:
+ * exactly the transient classes that often clear on a fresh worker run:
  *   - exhausted     → `quota`
  *   - runner-transient → `runner-transient`
  *   - no-sentinel   → `crashed`
@@ -280,7 +280,7 @@ export function envelopeStatusFor(o: AttemptOutcome): AttemptStatus {
  * still escalates, but a one-off submodule/OOM flake now self-heals instead
  * of parking a green branch.
  */
-export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
+export function recoveryReasonFor(o: WorkerOutcome): RecoveryReason | null {
   switch (o) {
     case "exhausted":
       return "quota";
@@ -288,7 +288,7 @@ export function recoveryReasonFor(o: AttemptOutcome): RecoveryReason | null {
       return "runner-transient";
     case "no-sentinel":
     // signal-killed shares the `crashed` recovery policy: an OOM or watchdog
-    // kill may be transient, so a bounded fresh attempt is warranted.
+    // kill may be transient, so a bounded fresh worker run is warranted.
     case "signal-killed":
       return "crashed";
     case "hook-aborted":
