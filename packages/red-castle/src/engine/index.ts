@@ -48,7 +48,9 @@ export {
   createFsIssueLeaseStore,
   parseClaimRecords,
   reconcileClaim,
+  refreshClaimHeartbeats,
   renderClaimComment,
+  renderConcedeOnBehalf,
   renderRecoveryAudit,
   retireIssueLease,
 } from "./tracker/claim.js";
@@ -56,6 +58,8 @@ export type {
   AcquireClaimOptions,
   ClaimDecision,
   ClaimGh,
+  ClaimHeartbeat,
+  ClaimHeartbeatBatchResult,
   ClaimKind,
   ClaimReconcileOptions,
   ClaimRecord,

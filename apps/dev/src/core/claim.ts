@@ -7,13 +7,17 @@ export {
   acquireClaim,
   parseClaimRecords,
   reconcileClaim,
+  refreshClaimHeartbeats,
   renderClaimComment,
+  renderConcedeOnBehalf,
   renderRecoveryAudit,
 } from "@reddb-io/red-castle/engine";
 export type {
   AcquireClaimOptions,
   ClaimDecision,
   ClaimGh,
+  ClaimHeartbeat,
+  ClaimHeartbeatBatchResult,
   ClaimKind,
   ClaimReconcileOptions,
   ClaimRecord,

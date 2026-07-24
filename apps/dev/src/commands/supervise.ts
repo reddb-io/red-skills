@@ -68,6 +68,9 @@ import {
 import { createFileBootBreakerStore } from "../core/supervisor/boot-breaker.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import { resolveFleetFromArgs, FLEET_NAME_ENV } from "../core/fleet-name.js";
+import { parseClaimRecords, refreshClaimHeartbeats, type ClaimHeartbeat } from "../core/claim.js";
+import { resolveClaimReaperConfig } from "../core/claim-staleness.js";
+import { hostFingerprintPrefix } from "../core/host-identity.js";
 import { createSupervisorExitRecorder } from "../core/supervisor-exit.js";
 import { readPidStartTime } from "../core/state.js";
 import { encodeLines, type ToonlRecord } from "@reddb-io/toon";
@@ -515,6 +518,7 @@ function buildSupervisorDeps(
   supervisorId: string,
   fleet: string,
   runner: string,
+  claimRefreshCadenceS: number,
   ghCtx: ghx.GhContext,
   trunk: string,
   slotArgs: readonly string[],
@@ -559,6 +563,10 @@ function buildSupervisorDeps(
   const slotPids = new Map<number, number>(
     adoptSlotPids.map((entry) => [entry.slot, entry.pid] as const),
   );
+  // issue → the claim marker this fleet refreshes for its local holder. Cached
+  // across ticks so a not-yet-due claim costs ZERO GitHub calls per heartbeat.
+  const claimHeartbeatByIssue = new Map<number, ClaimHeartbeat>();
+  const claimHostPrefix = hostFingerprintPrefix();
   // slot index → exit code of the most recent worker for that slot.
   const slotExitCodes = new Map<number, number>();
   // Worker env (build_passthrough_env parity): start from the supervisor's full
@@ -889,6 +897,58 @@ function buildSupervisorDeps(
       } catch (err) {
         firehoseError = heartbeatWriteError(err);
       }
+      // One BATCHED claim-heartbeat pass per fleet tick — the single cadence that
+      // keeps every locally-held claim fresh without one polling loop per worker
+      // multiplying the shared GitHub quota.
+      try {
+        const active = new Map<number, ClaimHeartbeat>();
+        for (const slot of stamped.slotPids.map((entry) => entry.slot)) {
+          const info = resolveIterDirInfo(tmpDir, slotPids.get(slot) ?? null, stamped.epoch);
+          if (info?.issue === null || info?.issue === undefined) continue;
+          const worker = `${claimHostPrefix}${info.workerId}`;
+          let heartbeat = claimHeartbeatByIssue.get(info.issue);
+          const refreshDue = !heartbeat || stamped.epoch - heartbeat.lastHeartbeatS >= claimRefreshCadenceS;
+          if (!heartbeat || heartbeat.worker !== worker || refreshDue) {
+            const records = parseClaimRecords(await ghx.listClaimComments(ghCtx, info.issue));
+            const latest = records
+              .filter((record) => record.worker === worker)
+              .sort((a, b) => b.commentId - a.commentId)[0];
+            if (!latest || latest.kind !== "claim") {
+              // The worker already conceded (or never claimed): refreshing would
+              // resurrect a withdrawn marker.
+              claimHeartbeatByIssue.delete(info.issue);
+              continue;
+            }
+            const parsedHeartbeatS = latest.createdAt
+              ? Math.floor(Date.parse(latest.createdAt) / 1000)
+              : Number.NaN;
+            heartbeat = {
+              issue: info.issue,
+              worker,
+              commentId: latest.commentId,
+              lastHeartbeatS: Number.isFinite(parsedHeartbeatS) ? parsedHeartbeatS : stamped.epoch,
+            };
+            claimHeartbeatByIssue.set(info.issue, heartbeat);
+          }
+          active.set(info.issue, heartbeat);
+        }
+        const result = await refreshClaimHeartbeats(
+          { editClaim: (commentId, body) => ghx.editComment(ghCtx, commentId, body) },
+          [...active.values()],
+          stamped.epoch,
+          claimRefreshCadenceS,
+        );
+        for (const issue of result.refreshed) {
+          const heartbeat = claimHeartbeatByIssue.get(issue);
+          if (heartbeat) claimHeartbeatByIssue.set(issue, { ...heartbeat, lastHeartbeatS: stamped.epoch });
+        }
+        for (const issue of [...claimHeartbeatByIssue.keys()]) {
+          if (!active.has(issue)) claimHeartbeatByIssue.delete(issue);
+        }
+      } catch {
+        // Best-effort: a missed batch is retried on the next fleet heartbeat, and
+        // the staleness window tolerates several consecutive misses by design.
+      }
       return {
         stateWritten,
         firehoseWritten,
@@ -1053,6 +1113,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
       supervisorId,
       fleet,
       config.runner,
+      resolveClaimReaperConfig(process.env, (key) => getConfig(values, key)).refreshCadenceS,
       ghCtx,
       trunk,
       slotArgs,
