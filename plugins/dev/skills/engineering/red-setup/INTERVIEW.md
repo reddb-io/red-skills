@@ -128,7 +128,7 @@ The script writes `${XDG_BIN_HOME:-$HOME/.local/bin}/red-skills-dev` and `${XDG_
 - prefers the active CLI plugin-root env var when the host exposes one;
 - otherwise finds the latest installed dev plugin under `~/.codex/plugins/cache/red-skills/dev/*` or `~/.claude/plugins/cache/red-skills/dev/*`;
 - falls back to the latest warmed dev bundle under `~/.cache/red-skills/bundles/`;
-- forwards all arguments to the dev runtime, so skills can say `red-skills-dev go ...`, `red-skills-dev dashboard`, or `RED_AFK_RUNNER=codex red-skills-dev monitor --once`;
+- forwards all arguments to the dev runtime, so skills reach the same cores the castle `monitor`, `dashboard`, and `worker_dispatch` tools drive — as the no-MCP fallback, e.g. `red-skills-dev go ...`, `red-skills-dev dashboard`, or `RED_AFK_RUNNER=codex red-skills-dev monitor --once`;
 - stores no secrets and does not replace the `.red/config.yaml` opt-in gate.
 
 The `rsp` shim uses the same local-first shape: active plugin-root env var, installed host plugin cache, then the warmed rsp bundle under `${RED_SKILLS_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/red-skills/bundles}`. It never runs npm, installs a global package, or performs network resolution during session startup.

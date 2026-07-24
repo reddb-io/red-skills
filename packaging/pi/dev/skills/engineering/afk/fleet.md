@@ -45,8 +45,8 @@ $ /dev:afk fleet 1   # every worker sees both vars
 
 Fleet mode is **runner-portable**: the supervisor is plain process orchestration, not a Claude Code primitive. Claude Code, Codex, and bare terminals may all launch and stop the supervisor when the normal AFK hard preconditions pass. Runner-specific observability degrades independently:
 
-- Claude Code: launch fleet. For manual monitoring, run `/dev:afk monitor` or tail `.red/tmp/supervisors/default/supervisor.log.toonl`.
-- Codex: launch fleet with `RED_AFK_RUNNER=codex` and spawn one read-only Codex monitor agent from the bundle's `codex-monitor-agent --mode fleet` prompt when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/default/supervisor.log.toonl manually.`
+- Claude Code: launch fleet. For manual monitoring, read the castle `monitor` and `fleet_status` tools; without the MCP, run `/dev:afk monitor` or tail `.red/tmp/supervisors/default/supervisor.log.toonl`.
+- Codex: launch fleet with `RED_AFK_RUNNER=codex` and spawn one read-only Codex monitor agent from the bundle's `codex-monitor-agent --mode fleet` prompt when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print the monitor status line below.
 - Bare terminal / unknown runner: launch fleet and print the manual-monitor guidance.
 
 **Self-heal is not a monitor side effect.** Every successful fleet launch also
@@ -95,8 +95,8 @@ not part of the current fleet contract.
    ```
    The command performs the PID-file pre-check from step 2 itself (refusing if a live supervisor already runs), detaches the supervisor, and forwards the resolved runner and the `--request/-r` text to every worker it spawns. It waits up to 3 s for `.red/tmp/supervisors/default/afk-supervisor.pid` to appear and contain a live pinned PID, then arms the repo-scoped self-heal watchdog and prints both PIDs plus the target. Failure to arm either process fails the launch; supervisor failure reports the tail of `.red/tmp/supervisors/default/supervisor.log.toonl`. Capture the reported supervisor PID for the *Report back* step. The launched supervisor is the native `__supervise` entrypoint of the same bundle.
 4. **Attach the best available monitor surface.**
-   - Claude Code: no automatic monitor cron. Tell the user to run `/dev:afk monitor` manually or tail `.red/tmp/supervisors/default/supervisor.log.toonl`.
-   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, emit the canonical prompt with `RED_AFK_RUNNER=codex red-skills-dev codex-monitor-agent --project-root "$PWD" --mode fleet` and spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: from the project root, periodically run `/dev:afk monitor --once` (the bundle's `monitor --once`), report concise progress, and auto-close when `.red/tmp/supervisors/default/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
+   - Claude Code: no automatic monitor cron. Tell the user to read the castle `monitor` tool (with `worker_vitals` for liveness), or — without the MCP — to run `/dev:afk monitor` manually or tail `.red/tmp/supervisors/default/supervisor.log.toonl`.
+   - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query: `spawn agent background monitor`). If available, emit the canonical prompt with `RED_AFK_RUNNER=codex red-skills-dev codex-monitor-agent --project-root "$PWD" --mode fleet` and spawn exactly one read-only Codex monitor agent for this newly-launched supervisor. Its task: periodically read the castle `monitor` tool (falling back to `monitor --once` from the project root when the MCP is unreachable), report concise progress, and auto-close when `.red/tmp/supervisors/default/afk-supervisor.pid` is missing/dead and no `[live]` workers remain. It must never edit files, claim issues, stop workers, or run merges. The user may close it manually; workers continue. If the primitive is unavailable, skip and use the manual-monitor line.
    - Bare/unknown: skip native monitor setup and use the manual-monitor line.
 5. **Report back.** Print:
    ```
@@ -107,10 +107,9 @@ not part of the current fleet contract.
       <monitor-status-line>
    ```
    Monitor status line choices:
-   - Claude Code: `monitor: run /dev:afk monitor or tail .red/tmp/supervisors/default/supervisor.log.toonl`
-   - Codex monitor agent spawned: `Codex monitor agent spawned — auto-closes when fleet exits; manual monitor: /dev:afk monitor.`
-   - Codex monitor unavailable: `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/default/supervisor.log.toonl manually.`
-   - Bare/unknown: `monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/default/supervisor.log.toonl manually.`
+   The line is the same one `fleetMonitorSuggestion()` prints from the bundle — MCP tool first, CLI labelled as the fallback:
+   - Claude Code / Codex monitor unavailable / bare/unknown: `monitor: call the castle monitor tool (and worker_vitals for liveness); no-MCP fallback: run /dev:afk monitor or tail .red/tmp/supervisors/default/supervisor.log.toonl manually.`
+   - Codex monitor agent spawned: `Codex monitor agent spawned — auto-closes when fleet exits; manual monitor: the castle monitor tool, or /dev:afk monitor without the MCP.`
 
 ### `/dev:afk fleet stop [--force]` — graceful shutdown or scoped hard teardown
 
