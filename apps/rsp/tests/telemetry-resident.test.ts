@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { commandFamily } from "../src/command-classifier.js";
 import {
   appendTelemetryEvent,
   calibratedTelemetryTiming,
@@ -576,6 +577,36 @@ describe("rsp telemetry spool", () => {
       });
       const short = await readTelemetryGainsReport(db, 28, new Date("2026-07-10T00:00:00.000Z"));
       expect(short.window).toMatchObject({ requested_days: 28, data_days: 1, label: "window: 28d, data: 1d", empty: false });
+    } finally {
+      await db.close();
+    }
+  });
+
+  // Wired smoke for the telemetry surface of the shared command classifier
+  // (#2659): reports no longer keeps its own gh-blind copy, so a gh json/jq
+  // invocation aggregates under the same key the hook and proxy record.
+  it("aggregates gh json/jq invocations under the shared command_family key", async () => {
+    const root = await tempRoot();
+    const storeUri = `file://${join(root, ".red", "tmp", "red-skills.rdb")}`;
+    const db = await connect(storeUri);
+    try {
+      const command = "gh pr list --json number,title --jq '.[0]'";
+      await db.kv(RSP_TELEMETRY_INVOCATIONS_COLLECTION).put("gh-json-jq", {
+        created_at: "2026-07-09T23:00:00.000Z",
+        command,
+        elided: true,
+        raw_bytes: 4000,
+        emitted_bytes: 400,
+        tokens_raw: 1000,
+        tokens_emitted: 100,
+        wrapper_ms: 12,
+      });
+
+      const report = await readTelemetryGainsReport(db, 28, new Date("2026-07-10T00:00:00.000Z"));
+      expect(report.savings.top_commands_by_tokens_saved[0]).toMatchObject({
+        command_family: commandFamily(command),
+      });
+      expect(report.savings.top_commands_by_tokens_saved[0]?.command_family).toBe("gh pr list json-jq");
     } finally {
       await db.close();
     }
