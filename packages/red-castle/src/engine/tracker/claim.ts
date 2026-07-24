@@ -59,11 +59,12 @@ export type ClaimKind = "claim" | "concede";
  * released") turned a crashed worker's release into a phantom claim race in
  * every post-mortem (#2385). `unspecified` keeps legacy callers rendering the
  * old wording. */
-export type ConcedeReason = "lost" | "released" | "unspecified";
+export type ConcedeReason = "lost" | "released" | "stale" | "unspecified";
 
 const CONCEDE_WORDING: Record<ConcedeReason, string> = {
   lost: "lost the claim race to an earlier claimant",
   released: "released the claim it held",
+  stale: "was released after its heartbeat exceeded the staleness window",
   unspecified: "lost the claim race or released",
 };
 
@@ -185,7 +186,17 @@ export function renderRecoveryAudit(
  * leading HTML-comment marker carries the machine fields; the trailing line is
  * the human-visible projection in the issue thread. */
 export function renderClaimComment(
-  self: { worker: string; runner?: string; createdAt?: string },
+  self: {
+    worker: string;
+    runner?: string;
+    createdAt?: string;
+    /** Evictor identity, when this concede was written ON BEHALF of `worker`. */
+    concededBy?: string;
+    /** The evicted holder's last observed heartbeat timestamp (evidence). */
+    lastHeartbeatAt?: string;
+    /** Age in seconds of that heartbeat at eviction time (evidence). */
+    heartbeatAgeS?: number;
+  },
   kind: ClaimKind = "claim",
   reason?: ConcedeReason,
 ): string {
@@ -195,14 +206,43 @@ export function renderClaimComment(
     `kind=${kind}`,
   ];
   if (kind === "concede" && reason) fields.push(`reason=${escapeField(reason)}`);
+  if (kind === "concede" && self.concededBy) fields.push(`by=${escapeField(self.concededBy)}`);
+  if (kind === "concede" && self.lastHeartbeatAt) {
+    fields.push(`last-heartbeat=${escapeField(self.lastHeartbeatAt)}`);
+  }
+  if (kind === "concede" && self.heartbeatAgeS !== undefined) {
+    fields.push(`heartbeat-age-s=${self.heartbeatAgeS}`);
+  }
   if (self.runner) fields.push(`runner=${escapeField(self.runner)}`);
   if (self.createdAt) fields.push(`ts=${escapeField(self.createdAt)}`);
   const marker = `${MARKER_OPEN} ${fields.join(" ")} -->`;
-  const human =
-    kind === "claim"
-      ? `🤖 AFK claim by worker \`${self.worker}\`${self.runner ? ` (runner \`${self.runner}\`)` : ""}.`
+  const human = kind === "claim"
+    ? `🤖 AFK claim by worker \`${self.worker}\`${self.runner ? ` (runner \`${self.runner}\`)` : ""}.`
+    : reason === "stale" && self.concededBy
+      ? `🤖 AFK worker \`${self.worker}\` was conceded on behalf by \`${self.concededBy}\` ` +
+        `(${CONCEDE_WORDING.stale}${self.lastHeartbeatAt ? `; last heartbeat \`${self.lastHeartbeatAt}\`` : ""}` +
+        `${self.heartbeatAgeS !== undefined ? `; age ${self.heartbeatAgeS}s` : ""}).`
       : `🤖 AFK worker \`${self.worker}\` conceded this issue (${CONCEDE_WORDING[reason ?? "unspecified"]}).`;
   return `${marker}\n${human}`;
+}
+
+/**
+ * Render the sanctioned stale-owner withdrawal an evictor writes on behalf of a
+ * dead remote holder. Same marker grammar as a self-concede — so every reader
+ * folds it identically — plus the staleness evidence (`by`, `last-heartbeat`,
+ * `heartbeat-age-s`) that says WHO evicted and WHY the holder was presumed dead.
+ */
+export function renderConcedeOnBehalf(
+  owner: string,
+  evictor: string,
+  lastHeartbeatAt?: string,
+  heartbeatAgeS?: number,
+): string {
+  return renderClaimComment(
+    { worker: owner, concededBy: evictor, lastHeartbeatAt, heartbeatAgeS },
+    "concede",
+    "stale",
+  );
 }
 
 /** A raw issue comment as read from GitHub (`gh issue view --json comments` /
@@ -439,6 +479,73 @@ export interface ClaimGh {
    * stale cross-host claim (#627). Optional + best-effort: a failed audit does
    * not abandon the won claim. Omitted by legacy callers (no audit posted). */
   audit?(issue: number, body: string): Promise<void>;
+  /** Edit an existing claim marker IN PLACE for a heartbeat refresh. Resolving
+   * `false` reports a refused edit (comment gone, permission denied) so the batch
+   * records a skip instead of a bogus fresh heartbeat. Optional: a caller without
+   * it simply never refreshes. */
+  editClaim?(commentId: number, body: string): Promise<boolean | void>;
+}
+
+/** One locally-held claim considered by the fleet's shared heartbeat cadence. */
+export interface ClaimHeartbeat {
+  issue: number;
+  worker: string;
+  runner?: Runner;
+  /** Server comment id of the holder's existing claim marker. */
+  commentId: number;
+  /** Epoch seconds carried by the holder's latest claim marker. */
+  lastHeartbeatS: number;
+}
+
+export interface ClaimHeartbeatBatchResult {
+  /** Issues whose marker was refreshed in this pass. */
+  refreshed: number[];
+  /** Issues left alone — not yet due, or the edit was refused. */
+  skipped: number[];
+}
+
+/**
+ * Refresh every DUE local claim in ONE fleet maintenance pass. The caller owns
+ * the single cadence; this function owns no timer, which is what keeps the shared
+ * GitHub quota bounded — one batch per fleet tick, not one polling loop per
+ * worker. A claim younger than `cadenceS` is skipped without an API call, so the
+ * call count is exactly the number of due claims.
+ *
+ * A refresh EDITS the holder's existing claim marker, preserving its server-order
+ * id: a refresh can never improve queue position, and a later concede stays the
+ * holder's authoritative last word.
+ */
+export async function refreshClaimHeartbeats(
+  gh: Required<Pick<ClaimGh, "editClaim">>,
+  claims: readonly ClaimHeartbeat[],
+  nowS: number,
+  cadenceS: number,
+): Promise<ClaimHeartbeatBatchResult> {
+  const refreshed: number[] = [];
+  const skipped: number[] = [];
+  for (const claim of claims) {
+    if (nowS - claim.lastHeartbeatS < cadenceS) {
+      skipped.push(claim.issue);
+      continue;
+    }
+    const edited = await gh.editClaim(
+      claim.commentId,
+      renderClaimComment(
+        {
+          worker: claim.worker,
+          runner: claim.runner,
+          createdAt: new Date(nowS * 1000).toISOString(),
+        },
+        "claim",
+      ),
+    );
+    if (edited === false) {
+      skipped.push(claim.issue);
+      continue;
+    }
+    refreshed.push(claim.issue);
+  }
+  return { refreshed, skipped };
 }
 
 export interface AcquireClaimOptions extends ClaimReconcileOptions {
@@ -460,6 +567,8 @@ export interface AcquireClaimOptions extends ClaimReconcileOptions {
   verifyDelayMs?: number;
   /** Injected sleep so the retry loop is testable without a real clock. */
   sleep?: (ms: number) => Promise<void>;
+  /** Injected epoch seconds used in stale-heartbeat concede evidence. */
+  nowS?: number;
 }
 
 const DEFAULT_VERIFY_ATTEMPTS = 3;
@@ -527,6 +636,24 @@ export async function acquireClaim(
       issue,
       renderClaimComment({ worker: self.worker, runner: self.runner }, "concede", "lost"),
     );
+  }
+  // Evicting a stale remote holder goes through the SAME concede path a holder
+  // uses to release itself — one marker grammar, one mutation surface — carrying
+  // the staleness evidence that justified the eviction.
+  if (decision.verdict === "won" && decision.recovered.length > 0) {
+    for (const owner of decision.recovered) {
+      const latest = records
+        .filter((record) => record.worker === owner)
+        .sort((a, b) => b.commentId - a.commentId)[0];
+      const lastHeartbeatS = latest?.createdAt ? Math.floor(Date.parse(latest.createdAt) / 1000) : Number.NaN;
+      const heartbeatAgeS = Number.isFinite(lastHeartbeatS)
+        ? Math.max(0, (opts.nowS ?? Math.floor(Date.now() / 1000)) - lastHeartbeatS)
+        : undefined;
+      await gh.concede(
+        issue,
+        renderConcedeOnBehalf(owner, self.worker, latest?.createdAt, heartbeatAgeS),
+      );
+    }
   }
   // One audit comment when we won by recovering a stale cross-host claim (#627).
   // Best-effort: a failed audit never abandons the won claim.
