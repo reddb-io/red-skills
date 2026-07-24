@@ -99,13 +99,9 @@ describe("rsp interception pure rewrite table", () => {
     expect(rewriteCommand(command, [...RSP_PREFIX])).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
   });
 
-  it.each([
-    ["json-fields", "gh pr view 1747 --json number,title"],
-    ["jq-expression", "gh run view 9001 --json databaseId --jq '.databaseId'"],
-    ["api-jq", "gh api repos/reddb-io/red-skills --jq .name"],
-  ])("passes through lossless gh json/jq selector family %s", (_name, command) => {
-    expect(rewriteCommand(command, [...RSP_PREFIX])).toEqual({ kind: "passthrough", reason: "lossless-gh-json-jq" });
-  });
+  // The gh json/jq selector shapes are classification cases and live in
+  // tests/command-classifier.test.ts (#2659); the hook keeps its wired smoke
+  // in "records gh json/jq selectors as lossless passthrough decisions" below.
 
   it.each([
     ["upstream-subcommand-identity-not-dropped", "git -C repo status"],
