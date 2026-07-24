@@ -219,6 +219,18 @@ function parseFleetArgs(args: readonly string[]): {
  * relaunch keeps the stale runner" trap: kill fleet, relaunch with
  * RED_AFK_RUNNER=claude, supervisor resumes codex from fleets.toonl.
  */
+/**
+ * The launch banner's monitoring line. Names the castle MCP read tools first
+ * (ADR 0120/0123); the slash command and the raw log tail are the no-MCP
+ * fallback for hosts that never loaded the castle server.
+ */
+export function fleetMonitorSuggestion(fleet: string): string {
+  return (
+    "monitor: call the castle `monitor` tool (and `worker_vitals` for liveness); " +
+    `no-MCP fallback: run /dev:afk monitor or tail .red/tmp/supervisors/${fleet}/supervisor.log.toonl manually.`
+  );
+}
+
 export function resolveLaunchRunnerPin(
   flag: string | undefined,
   env: NodeJS.ProcessEnv,
@@ -808,9 +820,7 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
   stdout.write(`   self-heal: armed (watchdog pid=${watchdogPid})\n`);
   stdout.write(`   log:   .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n`);
   stdout.write(`   stop:  /dev:afk fleet stop${named}\n`);
-  stdout.write(
-    `   monitor loop unavailable in this runner; run /dev:afk monitor or tail .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl manually.\n`,
-  );
+  stdout.write(`   ${fleetMonitorSuggestion(paths.fleet)}\n`);
   return { status: "launched", pid: supervisorPid, target, log: logFile };
 }
 
