@@ -37,6 +37,50 @@ and the benchmark guide is at [bench/README.md](bench/README.md).
   `rsp hook codex-pre-exec` are the hook interception surfaces used by
   supported agent hosts.
 
+## Provisioning
+
+`rsp` ships as a bundled Node.js entry point (`dist/rsp.bundle.min.mjs`) inside
+the RedSkills plugin distribution. No global `npm install -g` is required.
+Supported agent hosts wire the hook command as:
+
+```sh
+node "${CLAUDE_PLUGIN_ROOT}/dist/rsp.bundle.min.mjs" hook claude-pre-exec
+```
+
+This resolves the binary from the active plugin root rather than `PATH`. If the
+bundled entry point cannot be resolved, the hook passes the original command
+through unchanged — never `command not found`.
+
+**Optional PATH shim.** For interactive shell use,
+`plugins/dev/skills/engineering/red-setup/scripts/install-runtime-shim.sh`
+installs a thin `rsp` shim at `${XDG_BIN_HOME:-$HOME/.local/bin}/rsp`. The
+shim prefers the active CLI plugin-root env var, then scans known plugin caches
+and the warmed bundle cache under
+`${RED_SKILLS_CACHE_DIR:-$HOME/.cache/red-skills/bundles}`. It never runs `npm`
+or performs network resolution during session startup.
+
+**Opt-ins.** Hook rewrites and proxy routing are off by default. Enable them
+per-repository in `.red/config.yaml`:
+
+- `rsp.enabled: true` — activates hook rewrites for supported command families.
+- `rsp.proxy.enabled: true` — additionally routes every eligible command through
+  `rsp proxy` for universal coverage (see [Permanent Proxy Model](#permanent-proxy-model)).
+
+Absent `rsp.enabled`, the hook is fully inert and all commands pass through
+unchanged.
+
+**Escape hatches.** To skip proxy routing for a single command invocation, set
+`RSP_NO_PROXY=1` or `RED_SKILLS_RSP_NO_PROXY=1` in the environment. To disable
+proxy routing for the whole repository while keeping explicit wrapper rewrites
+active, set `rsp.proxy.enabled: false` in `.red/config.yaml`.
+
+**Failure semantics.** If the bundled entry point cannot be resolved, the hook
+passes the original command through raw. If a wrapper or resident path fails,
+`rsp` degrades to the raw command preserving stdout, stderr, and exit status.
+Token efficiency is opportunistic; loss of `rsp` never causes a broken or
+missing command result. See
+[Fail-Open Invariant](docs/ARCHITECTURE.md#fail-open-invariant).
+
 ## Permanent Proxy Model
 
 The pre-exec hook has two modes after `rsp.enabled: true` is set. Without the
