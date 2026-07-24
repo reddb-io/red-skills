@@ -15,6 +15,8 @@ import {
   rewriteTableFromCapabilities,
   _testOnlyResetBinaryState,
 } from "../src/intercept.js";
+
+const RSP_PREFIX = ["rsp"] as const;
 import {
   RSP_DECISIONS_COLLECTION,
   telemetrySpoolPath,
@@ -38,10 +40,22 @@ afterEach(async () => {
 describe("rsp interception pure rewrite table", () => {
   it("rewrites every wrapper capability form from the table", () => {
     for (const entry of RSP_WRAPPER_CAPABILITIES) {
-      const decision = rewriteCommand(entry.command.join(" "));
+      const decision = rewriteCommand(entry.command.join(" "), [...RSP_PREFIX]);
       expect(decision, entry.id).toEqual({
         kind: "rewrite",
         command: ["rsp", ...entry.wrapper].join(" "),
+        capabilityId: entry.id,
+      });
+    }
+  });
+
+  it("rewrites every capability using the bundled entrypoint when rsp is not on PATH", () => {
+    const prefix = ["/fake/node", "/fake/rsp.bundle.mjs"];
+    for (const entry of RSP_WRAPPER_CAPABILITIES) {
+      const decision = rewriteCommand(entry.command.join(" "), prefix);
+      expect(decision, entry.id).toEqual({
+        kind: "rewrite",
+        command: ["/fake/node", "/fake/rsp.bundle.mjs", ...entry.wrapper].join(" "),
         capabilityId: entry.id,
       });
     }
@@ -66,7 +80,14 @@ describe("rsp interception pure rewrite table", () => {
     ["tail-n-file", "tail -n 25 apps/rsp/src/cli.ts", "rsp cat --tail 25 apps/rsp/src/cli.ts", "cat:tail"],
     ["tail-short-n-file", "tail -25 apps/rsp/src/cli.ts", "rsp cat --tail 25 apps/rsp/src/cli.ts", "cat:tail"],
   ])("rewrites conservative file dump shape %s", (_name, command, rewritten, capabilityId) => {
-    expect(rewriteCommand(command)).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
+    expect(rewriteCommand(command, [...RSP_PREFIX])).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
+  });
+
+  it.each([
+    ["cat-bundled", "cat apps/rsp/src/cli.ts", "/fake/node /fake/rsp.bundle.mjs cat apps/rsp/src/cli.ts", "cat:file"],
+    ["head-bundled", "head -n 5 apps/rsp/src/cli.ts", "/fake/node /fake/rsp.bundle.mjs cat --head 5 apps/rsp/src/cli.ts", "cat:head"],
+  ])("rewrites file dump %s via bundled entrypoint", (_name, command, rewritten, capabilityId) => {
+    expect(rewriteCommand(command, ["/fake/node", "/fake/rsp.bundle.mjs"])).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
   });
 
   it.each([
@@ -75,7 +96,7 @@ describe("rsp interception pure rewrite table", () => {
     ["git-status-stderr-null", "git status --short 2>/dev/null", "rsp git status --short 2>/dev/null", "git:status"],
     ["git-log-stderr-merge", "git log --oneline 2>&1", "rsp git log --oneline 2>&1", "git:log"],
   ])("rewrites flagged or stderr-only family shape %s", (_name, command, rewritten, capabilityId) => {
-    expect(rewriteCommand(command)).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
+    expect(rewriteCommand(command, [...RSP_PREFIX])).toEqual({ kind: "rewrite", command: rewritten, capabilityId });
   });
 
   it.each([
@@ -83,7 +104,7 @@ describe("rsp interception pure rewrite table", () => {
     ["jq-expression", "gh run view 9001 --json databaseId --jq '.databaseId'"],
     ["api-jq", "gh api repos/reddb-io/red-skills --jq .name"],
   ])("passes through lossless gh json/jq selector family %s", (_name, command) => {
-    expect(rewriteCommand(command)).toEqual({ kind: "passthrough", reason: "lossless-gh-json-jq" });
+    expect(rewriteCommand(command, [...RSP_PREFIX])).toEqual({ kind: "passthrough", reason: "lossless-gh-json-jq" });
   });
 
   it.each([
@@ -101,7 +122,7 @@ describe("rsp interception pure rewrite table", () => {
     ["subshell-is-ambiguous", "$(git status)"],
     ["quoted-command-name-is-ambiguous", "\"git\" status"],
   ])("passes through adversarial fixture %s", (_name, command) => {
-    expect(rewriteCommand(command)).toEqual({ kind: "passthrough" });
+    expect(rewriteCommand(command, [...RSP_PREFIX])).toEqual({ kind: "passthrough" });
   });
 
   it.each([
@@ -111,9 +132,17 @@ describe("rsp interception pure rewrite table", () => {
     ["piped-vitest", "vitest run | tail -20"],
     ["chained-cargo-test", "cd crates/core && cargo test"],
   ])("rewrites safe compound noisy command %s through rsp exec", (_name, command) => {
-    expect(rewriteCommand(command)).toEqual({
+    expect(rewriteCommand(command, [...RSP_PREFIX])).toEqual({
       kind: "rewrite",
       command: `rsp exec -- '${command}'`,
+      capabilityId: "exec:compound",
+    });
+  });
+
+  it("rewrites compound noisy command through bundled exec entrypoint", () => {
+    expect(rewriteCommand("cd apps && git log --oneline", ["/fake/node", "/fake/bundle.mjs"])).toEqual({
+      kind: "rewrite",
+      command: "/fake/node /fake/bundle.mjs exec -- 'cd apps && git log --oneline'",
       capabilityId: "exec:compound",
     });
   });
@@ -126,7 +155,7 @@ describe("rsp interception pure rewrite table", () => {
     ["here-doc", "cat <<EOF"],
     ["silent-predicate", "git log | grep -q fix"],
   ])("passes through unsafe compound fixture %s", (_name, command) => {
-    expect(rewriteCommand(command)).toEqual({ kind: "passthrough" });
+    expect(rewriteCommand(command, [...RSP_PREFIX])).toEqual({ kind: "passthrough" });
   });
 });
 
@@ -138,7 +167,7 @@ describe("rsp Claude pre-execution hook integration", () => {
 
     const decision = await hookDecisionFromCodexPreExecJson(
       JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "printf ok | sed s/ok/OK/" } }),
-      { cwd: root, wakeResident: () => undefined },
+      { cwd: root, wakeResident: () => undefined, rspInvocationPrefix: [...RSP_PREFIX] },
     );
 
     expect(decision).toEqual({
@@ -158,6 +187,24 @@ describe("rsp Claude pre-execution hook integration", () => {
     });
   });
 
+  it("routes through bundled entrypoint proxy when rsp is not on PATH", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+
+    const prefix = ["/fake/node", "/fake/rsp.bundle.mjs"];
+    const decision = await hookDecisionFromCodexPreExecJson(
+      JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "printf ok | sed s/ok/OK/" } }),
+      { cwd: root, wakeResident: () => undefined, rspInvocationPrefix: prefix },
+    );
+
+    expect(decision).toEqual({
+      kind: "rewrite",
+      command: "/fake/node /fake/rsp.bundle.mjs proxy -- 'printf ok | sed s/ok/OK/'",
+      capabilityId: "proxy:universal",
+    });
+  });
+
   it.each([
     ["interactive", "vim file.txt", "interactive"],
     ["background", "sleep 1 &", "background"],
@@ -170,8 +217,21 @@ describe("rsp Claude pre-execution hook integration", () => {
 
     await expect(hookDecisionFromCodexPreExecJson(
       JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command } }),
-      { cwd: root },
+      { cwd: root, rspInvocationPrefix: [...RSP_PREFIX] },
     )).resolves.toEqual({ kind: "passthrough", reason });
+  });
+
+  it("opts out of re-proxying a bundled rsp invocation", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+
+    // A command that IS the bundled invocation must not be proxied again
+    const bundledCommand = `${process.execPath} ${process.argv[1]} git status`;
+    await expect(hookDecisionFromCodexPreExecJson(
+      JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: bundledCommand } }),
+      { cwd: root, rspInvocationPrefix: [process.execPath, process.argv[1]!] },
+    )).resolves.toEqual({ kind: "passthrough", reason: "opt-out" });
   });
 
   it("accepts Claude hook JSON on stdin through the CLI and emits updatedInput", async () => {
@@ -189,7 +249,7 @@ describe("rsp Claude pre-execution hook integration", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp git status" },
+        updatedInput: { command: expect.stringContaining("git status") },
       },
     });
     expect(res.stderr).toEqual(Buffer.alloc(0));
@@ -199,7 +259,7 @@ describe("rsp Claude pre-execution hook integration", () => {
   it("reports rewrite and parse decisions under RSP_DEBUG", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
-    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: false\n", "utf8");
 
     const rewrite = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "claude-pre-exec"], {
       cwd: root,
@@ -237,6 +297,7 @@ describe("rsp Claude pre-execution hook integration", () => {
         wakeResident: () => {
           wakeCalls += 1;
         },
+        rspInvocationPrefix: [...RSP_PREFIX],
       },
     );
 
@@ -262,6 +323,7 @@ describe("rsp Claude pre-execution hook integration", () => {
         cwd: root,
         isEnabled: () => true,
         isResidentHealthy: async () => true,
+        rspInvocationPrefix: [...RSP_PREFIX],
       },
     );
 
@@ -293,6 +355,7 @@ describe("rsp Claude pre-execution hook integration", () => {
         wakeResident: () => {
           wakeCalls += 1;
         },
+        rspInvocationPrefix: [...RSP_PREFIX],
       },
     );
 
@@ -327,6 +390,7 @@ describe("rsp Claude pre-execution hook integration", () => {
         wakeResident: () => {
           wakeCalls += 1;
         },
+        rspInvocationPrefix: [...RSP_PREFIX],
       },
     );
     const elapsedMs = performance.now() - started;
@@ -373,6 +437,7 @@ describe("rsp Codex pre-execution hook integration", () => {
         cwd: root,
         isEnabled: () => true,
         isResidentHealthy: async () => true,
+        rspInvocationPrefix: [...RSP_PREFIX],
       },
     );
 
@@ -423,7 +488,7 @@ describe("rsp Codex pre-execution hook integration", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp git status" },
+        updatedInput: { command: expect.stringContaining("git status") },
       },
     });
     expect(res.stderr).toEqual(Buffer.alloc(0));
@@ -433,7 +498,7 @@ describe("rsp Codex pre-execution hook integration", () => {
   it("records exactly one decision event for a Codex hook invocation", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
-    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: false\n", "utf8");
 
     const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-pre-exec"], {
       cwd: root,
@@ -457,7 +522,7 @@ describe("rsp Codex pre-execution hook integration", () => {
   it("records gh json/jq selectors as lossless passthrough decisions", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
-    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: false\n", "utf8");
 
     const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-pre-exec"], {
       cwd: root,

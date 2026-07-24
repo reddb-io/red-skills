@@ -33,27 +33,27 @@ afterEach(async () => {
 
 describe("rsp proxy segment recognition", () => {
   it("rewrites recognized stdout-tail segments and leaves pipeline producers raw", () => {
-    expect(rewriteProxyCommandLine("cd apps && git log", "terse")).toMatchObject({
+    expect(rewriteProxyCommandLine("cd apps && git log", "terse", ["rsp"])).toMatchObject({
       commandLine: "cd apps && rsp --terse git log",
       matches: [expect.objectContaining({ capabilityId: "git:log", command: "git log" })],
     });
-    expect(rewriteProxyCommandLine("git branch -av", "brief")).toMatchObject({
+    expect(rewriteProxyCommandLine("git branch -av", "brief", ["rsp"])).toMatchObject({
       commandLine: "rsp --brief git branch -av",
       matches: [expect.objectContaining({ capabilityId: "git:branch:av", command: "git branch -av" })],
     });
-    expect(rewriteProxyCommandLine("printf 'x\\n' | grep x", "brief")).toMatchObject({
+    expect(rewriteProxyCommandLine("printf 'x\\n' | grep x", "brief", ["rsp"])).toMatchObject({
       commandLine: "printf 'x\\n' | grep x",
       matches: [],
     });
-    expect(rewriteProxyCommandLine("git log | tail -5", "brief")).toMatchObject({
+    expect(rewriteProxyCommandLine("git log | tail -5", "brief", ["rsp"])).toMatchObject({
       commandLine: "git log | tail -5",
       matches: [],
     });
-    expect(rewriteProxyCommandLine("printf before; gh pr list --limit 5", "brief")).toMatchObject({
+    expect(rewriteProxyCommandLine("printf before; gh pr list --limit 5", "brief", ["rsp"])).toMatchObject({
       commandLine: "printf before; rsp --brief gh pr list --limit 5",
       matches: [expect.objectContaining({ capabilityId: "gh:pr:list", command: "gh pr list --limit 5" })],
     });
-    expect(rewriteProxyCommandLine("printf before; gh pr list --json number,title --jq '.[] | .number'", "brief")).toMatchObject({
+    expect(rewriteProxyCommandLine("printf before; gh pr list --json number,title --jq '.[] | .number'", "brief", ["rsp"])).toMatchObject({
       commandLine: "printf before; gh pr list --json number,title --jq '.[] | .number'",
       matches: [
         expect.objectContaining({
@@ -63,6 +63,18 @@ describe("rsp proxy segment recognition", () => {
           reason: "lossless-gh-json-jq",
         }),
       ],
+    });
+  });
+
+  it("rewrites proxy segments via bundled entrypoint when rsp is not on PATH", () => {
+    const prefix = ["/fake/node", "/fake/rsp.bundle.mjs"];
+    expect(rewriteProxyCommandLine("cd apps && git log", "terse", prefix)).toMatchObject({
+      commandLine: "cd apps && /fake/node /fake/rsp.bundle.mjs --terse git log",
+      matches: [expect.objectContaining({ capabilityId: "git:log", command: "git log" })],
+    });
+    expect(rewriteProxyCommandLine("printf before; gh pr list --limit 5", "brief", prefix)).toMatchObject({
+      commandLine: "printf before; /fake/node /fake/rsp.bundle.mjs --brief gh pr list --limit 5",
+      matches: [expect.objectContaining({ capabilityId: "gh:pr:list", command: "gh pr list --limit 5" })],
     });
   });
 

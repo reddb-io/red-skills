@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
+import { resolveRspInvocationPrefix } from "./rsp-cli.js";
 import { appendTelemetryEvent, RSP_DECISIONS_COLLECTION, RSP_TELEMETRY_INVOCATIONS_COLLECTION } from "./telemetry.js";
+
+function shellQuoteIfNeeded(value: string): string {
+  return /[^\w@%+=:,./-]/.test(value) ? `'${value.replace(/'/g, "'\\''")}'` : value;
+}
 
 export interface ProxyRunOptions {
   telemetryRoot: string;
@@ -72,7 +77,7 @@ export async function runProxy(argv: readonly string[], options: ProxyRunOptions
   return status;
 }
 
-export function rewriteProxyCommandLine(commandLine: string, level: ProxyLossLevel = "lossless"): {
+export function rewriteProxyCommandLine(commandLine: string, level: ProxyLossLevel = "lossless", rspPrefix: string[] = resolveRspInvocationPrefix()): {
   commandLine: string;
   matches: ProxySegmentMatch[];
 } {
@@ -81,7 +86,7 @@ export function rewriteProxyCommandLine(commandLine: string, level: ProxyLossLev
   const rewritten = parts.map((part, index) => {
     if (part.kind === "operator") return part.text;
     if (nextOperator(parts, index) === "|") return part.text;
-    const rewrittenSegment = rewriteProxySegment(part.text, level);
+    const rewrittenSegment = rewriteProxySegment(part.text, level, rspPrefix);
     if (!rewrittenSegment) return part.text;
     matches.push(rewrittenSegment.match);
     return rewrittenSegment.text;
@@ -144,7 +149,7 @@ async function runShellVerbatim(commandLine: string): Promise<number> {
   });
 }
 
-function rewriteProxySegment(segment: string, level: ProxyLossLevel): { text: string; match: ProxySegmentMatch } | null {
+function rewriteProxySegment(segment: string, level: ProxyLossLevel, rspPrefix: string[]): { text: string; match: ProxySegmentMatch } | null {
   const leading = segment.match(/^\s*/)?.[0] ?? "";
   const trailing = segment.match(/\s*$/)?.[0] ?? "";
   const core = segment.trim();
@@ -171,7 +176,7 @@ function rewriteProxySegment(segment: string, level: ProxyLossLevel): { text: st
 
   const prefix = words.slice(0, commandStart).map((word) => word.raw);
   const loss = level === "lossless" ? [] : [`--${level}`];
-  const rewrittenCore = [...prefix, "rsp", ...loss, ...match.wrapperWords].join(" ");
+  const rewrittenCore = [...prefix, ...rspPrefix.map(shellQuoteIfNeeded), ...loss, ...match.wrapperWords].join(" ");
   return {
     text: `${leading}${rewrittenCore}${trailing}`,
     match: {
