@@ -164,4 +164,61 @@ describe("tmp janitor runtime", () => {
     await expect(access(feedback)).resolves.toBeUndefined();
     expect(applied.protectedLiveFeedback).toEqual([feedback]);
   });
+
+  it("spares a supervisor fleet dir whose pid is live", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const supervisorDir = join(tmp, "supervisors", "default");
+    await mkdir(supervisorDir, { recursive: true });
+    await writeFile(join(supervisorDir, "afk-supervisor.pid"), String(process.pid), "utf8");
+    await writeFile(join(supervisorDir, "state.toon"), "{}", "utf8");
+
+    const report = await collectTmpJanitorReport(tmp, NOW, () => "UNKNOWN");
+
+    expect(report.staleSupervisors.spare.map((e) => e.path)).toEqual([supervisorDir]);
+    expect(report.staleSupervisors.reclaim).toEqual([]);
+    expect(report.plan.unknownTmpRoots).not.toContain("supervisors");
+
+    const applied = await applyTmpJanitorReport(tmp, report);
+    await expect(access(supervisorDir)).resolves.toBeUndefined();
+    expect(applied.protectedLiveSupervisors).toContain(supervisorDir);
+    expect(applied.staleSupervisors).toEqual([]);
+  });
+
+  it("reaps a supervisor fleet dir whose pid is dead", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const supervisorDir = join(tmp, "supervisors", "default");
+    await mkdir(supervisorDir, { recursive: true });
+    await writeFile(join(supervisorDir, "afk-supervisor.pid"), "999999999", "utf8");
+    await writeFile(join(supervisorDir, "state.toon"), "{}", "utf8");
+
+    const report = await collectTmpJanitorReport(tmp, NOW, () => "UNKNOWN");
+
+    expect(report.staleSupervisors.reclaim.map((e) => e.path)).toEqual([supervisorDir]);
+    expect(report.staleSupervisors.spare).toEqual([]);
+    expect(report.plan.unknownTmpRoots).not.toContain("supervisors");
+
+    const applied = await applyTmpJanitorReport(tmp, report);
+    await expect(access(supervisorDir)).rejects.toThrow();
+    expect(applied.staleSupervisors).toContain(supervisorDir);
+    expect(applied.protectedLiveSupervisors).toEqual([]);
+  });
+
+  it("re-checks supervisor pid at apply time and protects a now-live supervisor", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const supervisorDir = join(tmp, "supervisors", "default");
+    await mkdir(supervisorDir, { recursive: true });
+    await writeFile(join(supervisorDir, "afk-supervisor.pid"), "999999999", "utf8");
+
+    const report = await collectTmpJanitorReport(tmp, NOW, () => "UNKNOWN");
+    // Simulate supervisor coming alive between collect and apply
+    await writeFile(join(supervisorDir, "afk-supervisor.pid"), String(process.pid), "utf8");
+
+    const applied = await applyTmpJanitorReport(tmp, report);
+    await expect(access(supervisorDir)).resolves.toBeUndefined();
+    expect(applied.protectedLiveSupervisors).toContain(supervisorDir);
+    expect(applied.staleSupervisors).toEqual([]);
+  });
 });
