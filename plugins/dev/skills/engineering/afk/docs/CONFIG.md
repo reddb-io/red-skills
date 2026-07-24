@@ -98,8 +98,9 @@ resolved tiers as documented by the model-tier policy.
 
 Every spawn appends a route line to the Worker log and stamps
 `current.model_tier`, `current.model`, and `current.effort` in the Worker state.
-`red-skills-dev monitor` renders the active tier as `tier:<name>` on the Worker
-row, alongside the existing vitals.
+The castle `monitor` and `worker_vitals` tools carry the active tier as a field;
+the no-MCP fallback `red-skills-dev monitor` renders it as `tier:<name>` on the
+Worker row, alongside the existing vitals.
 
 ```yaml
 plugins:
