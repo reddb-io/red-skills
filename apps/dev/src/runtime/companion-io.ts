@@ -38,13 +38,12 @@ import {
   type CompanionPlan,
 } from "../core/companion.js";
 import { getConfig, type ConfigValues } from "../core/config.js";
+import { LABEL_READY, LABEL_HUMAN } from "../core/triage-labels.js";
 import type { AfkState } from "../types/state.js";
 
 /** The issue-body section the correction directive lands in — the next attempt's
  * brief. Kept stable so a re-correction REPLACES the section rather than stacking. */
 export const COMPANION_BRIEF_HEADING = AGENT_BRIEF_HEADING;
-export const LABEL_READY_FOR_AGENT = "ready-for-agent";
-export const LABEL_READY_FOR_HUMAN = "ready-for-human";
 
 /** Fallback drift cap if the reason were ever absent from the recovery table
  * (it is registered there with this same default — belt and suspenders). */
@@ -250,7 +249,7 @@ export async function runCompanionPass(options: CompanionPassOptions): Promise<C
     if (plan.kind === "correct") {
       await ghx.editBody(options.ctx, id.issue, applyCorrectionBody(view.body, plan.note, plan.signal));
       await ghx.comment(options.ctx, id.issue, auditComment(plan, id.issue, id.attempt));
-      await ghx.editLabels(options.ctx, id.issue, [], has(LABEL_READY_FOR_AGENT) ? [] : [LABEL_READY_FOR_AGENT]);
+      await ghx.editLabels(options.ctx, id.issue, [], has(LABEL_READY) ? [] : [LABEL_READY]);
       outcomes.push({ issue: id.issue, attempt: id.attempt, disposition: "corrected", signal: plan.signal });
     } else {
       await ghx.editBody(options.ctx, id.issue, applyEscalationBody(view.body, plan.signal, plan.reason));
@@ -258,8 +257,8 @@ export async function runCompanionPass(options: CompanionPassOptions): Promise<C
       await ghx.editLabels(
         options.ctx,
         id.issue,
-        has(LABEL_READY_FOR_AGENT) ? [LABEL_READY_FOR_AGENT] : [],
-        has(LABEL_READY_FOR_HUMAN) ? [] : [LABEL_READY_FOR_HUMAN],
+        has(LABEL_READY) ? [LABEL_READY] : [],
+        has(LABEL_HUMAN) ? [] : [LABEL_HUMAN],
       );
       outcomes.push({ issue: id.issue, attempt: id.attempt, disposition: "escalated", signal: plan.signal });
     }
