@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { MemoryStore } from "../src/graph-store.js";
 import { initGraph } from "../src/init.js";
-import { recordReasoningAttempt } from "../src/reasoning/attempt-writer.js";
+import { recordReasoningWorker } from "../src/reasoning/worker-writer.js";
 import { ingestSkillEvents, type SkillEvent } from "../src/skill-events.js";
 
 const TIMEOUT = 40_000;
@@ -37,7 +37,7 @@ async function seedRoot(): Promise<string> {
   stores.push(store);
 
   for (const attemptNumber of [1, 2]) {
-    await recordReasoningAttempt(store, {
+    await recordReasoningWorker(store, {
       repository: "reddb-io/red-skills",
       issueNumber: 131,
       attemptNumber,

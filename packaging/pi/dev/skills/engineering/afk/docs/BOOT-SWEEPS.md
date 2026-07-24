@@ -13,7 +13,7 @@ Tmp lane cleanup never deletes `.red/state/`, plugin stores, tracked config, or
 
 ## Orphan Cleanup (boot-time)
 
-Right after bootstrap and before *Straggler Check*, `/afk` runs two passes. First it reconciles leftover **legacy flat** `.red/tmp/work-*` dirs from the pre-nested scheme (the drain-first cutover, issue #252). This sweep is pid-guarded and slug-sparing: slug-named manual worktrees are left alone, and numeric legacy work dirs are removed only when their recorded or inferable process is no longer live. Then it sweeps the nested attempt dirs in every worker namespace (`.red/tmp/workers/*/*/`, `.red/tmp/go-workers/*/*/`, and `.red/tmp/scout-workers/*/*/`) whose parent worker's `worker.pid` is dead, and afterwards removes dead empty worker shells across those namespaces: dead/corrupt/missing `worker.pid` files plus the worker dir when it contains no attempt dirs or only empty attempt dirs. Live `worker.pid` dirs and non-empty preserved attempt dirs are left untouched. For each orphaned attempt dir:
+Right after bootstrap and before *Straggler Check*, `/afk` runs two passes. First it reconciles leftover **legacy flat** `.red/tmp/work-*` dirs from the pre-nested scheme (the drain-first cutover, issue #252). This sweep is pid-guarded and slug-sparing: slug-named manual worktrees are left alone, and numeric legacy work dirs are removed only when their recorded or inferable process is no longer live. Then it sweeps the nested worker dirs in every worker namespace (`.red/tmp/workers/*/*/`, `.red/tmp/go-workers/*/*/`, and `.red/tmp/scout-workers/*/*/`) whose parent worker's `worker.pid` is dead, and afterwards removes dead empty worker shells across those namespaces: dead/corrupt/missing `worker.pid` files plus the worker dir when it contains no worker dirs or only empty worker dirs. Live `worker.pid` dirs and non-empty preserved worker dirs are left untouched. For each orphaned worker dir:
 
 1. **(Slice D — heartbeat sub-shell retired.)** No zombie reap step is needed; older state files may still carry a `heartbeat_pid` but it's vestigial and ignored.
 2. **Decide fate from issue state.** `gh issue view N --json labels,state`:
@@ -29,9 +29,9 @@ This removes the manual "remember to clean `.red/tmp/`" discipline. Blocker dirs
 
 ## Attempt Cap (boot-time, issue #257)
 
-The *Completion sweep* (close step 11) only fires when an issue completes. Issues that **never** complete — blocked-forever work that accumulates retries — would otherwise leak attempt dirs indefinitely. Right after *Orphan Cleanup*, `cap_issue_attempts` walks every attempt dir across all workers, groups them by issue, and per issue prunes (newest attempt kept first) anything over either cap:
+The *Completion sweep* (close step 11) only fires when an issue completes. Issues that **never** complete — blocked-forever work that accumulates retries — would otherwise leak worker dirs indefinitely. Right after *Orphan Cleanup*, `cap_issue_attempts` walks every worker dir across all workers, groups them by issue, and per issue prunes (newest attempt kept first) anything over either cap:
 
-- **Age cap** — fixed at 14 days. An attempt dir whose mtime is older than this is reclaimed.
+- **Age cap** — fixed at 14 days. An worker dir whose mtime is older than this is reclaimed.
 - **Count cap** — fixed at 5. Only the newest five attempts (by attempt number) for one issue are retained; older ones are reclaimed.
 
 Both caps share the completion sweep's invariant: a **live** worker's active attempt (state file carrying a live `pid`) is never counted toward the cap nor removed.

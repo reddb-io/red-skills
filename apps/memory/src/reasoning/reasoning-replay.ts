@@ -1,11 +1,11 @@
 /**
  * Reasoning replay surface (issues #166, #169).
  *
- * Reads `attempt` nodes from the `reasoning` tier and ranks them by token
+ * Reads `worker` nodes from the `reasoning` tier and ranks them by token
  * similarity to a task descriptor. Each result carries an `outcome` derived
- * from the AFK envelope `data-attempt-status` (mirrored on the attempt node
+ * from the AFK envelope `data-attempt-status` (mirrored on the worker node
  * `status` property). `gaps[]` surfaces `learning-debt` repeated-failure
- * patterns scoped to the matched attempts' issues.
+ * patterns scoped to the matched workers' issues.
  */
 
 import {
@@ -18,7 +18,7 @@ import { tokenize } from "../recall.js";
 export type ReasoningReplayOutcome = "done" | "blocked" | "no-sentinel" | "unknown";
 
 export interface ReasoningReplayResult {
-  attempt_id: string;
+  worker_id: string;
   similarity: number;
   when: string;
   summary: string;
@@ -31,7 +31,7 @@ export interface ReasoningReplayReport {
   task: string;
   generated_at: string;
   limit: number;
-  total_attempts: number;
+  total_workers: number;
   results: ReasoningReplayResult[];
   gaps: string[];
 }
@@ -61,10 +61,10 @@ export async function buildReasoningReplay(
   const terms = tokenize(trimmed);
 
   const nodes = await store.listNodes(opts.now);
-  const attempts = nodes.filter((n) => n.node_type === "attempt");
+  const workers = nodes.filter((n) => n.node_type === "worker");
 
-  const scored = attempts
-    .map((node) => ({ node, similarity: jaccardSimilarity(terms, tokenize(attemptText(node))) }))
+  const scored = workers
+    .map((node) => ({ node, similarity: jaccardSimilarity(terms, tokenize(workerText(node))) }))
     .sort((a, b) => {
       if (b.similarity !== a.similarity) return b.similarity - a.similarity;
       return a.node.label.localeCompare(b.node.label);
@@ -72,11 +72,11 @@ export async function buildReasoningReplay(
 
   const top = scored.slice(0, limit);
   const results: ReasoningReplayResult[] = top.map(({ node, similarity }) => ({
-    attempt_id: node.label,
+    worker_id: node.label,
     similarity: roundSimilarity(similarity),
-    when: attemptWhen(node, generatedAt),
-    summary: attemptSummary(node),
-    outcome: outcomeForAttempt(node),
+    when: workerWhen(node, generatedAt),
+    summary: workerSummary(node),
+    outcome: outcomeForWorker(node),
   }));
 
   const gaps = await collectGaps(store, top.map(({ node }) => node), now);
@@ -87,7 +87,7 @@ export async function buildReasoningReplay(
     task: trimmed,
     generated_at: generatedAt,
     limit,
-    total_attempts: attempts.length,
+    total_workers: workers.length,
     results,
     gaps,
   };
@@ -98,7 +98,7 @@ function clampLimit(value: number | undefined): number {
   return Math.min(MAX_LIMIT, Math.max(1, Math.trunc(value)));
 }
 
-function attemptText(node: StoredNode): string {
+function workerText(node: StoredNode): string {
   const props = node.properties;
   return [
     node.label,
@@ -114,7 +114,7 @@ function attemptText(node: StoredNode): string {
     .join(" ");
 }
 
-function attemptSummary(node: StoredNode): string {
+function workerSummary(node: StoredNode): string {
   const props = node.properties;
   const summary = typeof props.summary === "string" ? props.summary.trim() : "";
   if (summary) return summary;
@@ -123,7 +123,7 @@ function attemptSummary(node: StoredNode): string {
   return node.label;
 }
 
-function attemptWhen(node: StoredNode, fallback: string): string {
+function workerWhen(node: StoredNode, fallback: string): string {
   const props = node.properties;
   const candidate =
     pickEpochMs(props.updated_at) ?? pickEpochMs(props.created_at) ?? pickEpochMs(props.accessed_at);
@@ -136,7 +136,7 @@ function pickEpochMs(value: unknown): number | null {
   return null;
 }
 
-function outcomeForAttempt(node: StoredNode): ReasoningReplayOutcome {
+function outcomeForWorker(node: StoredNode): ReasoningReplayOutcome {
   const raw = node.properties.status;
   if (typeof raw !== "string") return "unknown";
   const status = raw.trim().toLowerCase();
@@ -151,16 +151,16 @@ function outcomeForAttempt(node: StoredNode): ReasoningReplayOutcome {
  *
  * Returns the raw status string when found, or null otherwise. Useful for
  * back-filling outcomes from raw GitHub comment bodies; the reasoning-replay
- * surface itself reads the mirrored `status` property on attempt nodes.
+ * surface itself reads the mirrored `status` property on worker nodes.
  */
-export function parseAttemptStatusFromEnvelope(body: string | null | undefined): string | null {
+export function parseWorkerStatusFromEnvelope(body: string | null | undefined): string | null {
   if (!body) return null;
   const match = /<details[^>]*\bdata-attempt-status\s*=\s*"([^"]+)"/i.exec(body);
   return match?.[1]?.trim() || null;
 }
 
 /**
- * Maps a raw envelope/attempt status to the bounded replay outcome vocabulary.
+ * Maps a raw envelope/worker status to the bounded replay outcome vocabulary.
  */
 export function mapStatusToOutcome(
   status: string | null | undefined,
@@ -174,12 +174,12 @@ export function mapStatusToOutcome(
 
 async function collectGaps(
   store: MemoryStore,
-  matchedAttempts: StoredNode[],
+  matchedWorkers: StoredNode[],
   now: number,
 ): Promise<string[]> {
-  if (matchedAttempts.length === 0) return [];
+  if (matchedWorkers.length === 0) return [];
   const matchedIssues = new Set<number>();
-  for (const node of matchedAttempts) {
+  for (const node of matchedWorkers) {
     const issue = Number(node.properties.issue_number);
     if (Number.isFinite(issue)) matchedIssues.add(issue);
   }

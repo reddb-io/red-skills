@@ -5,7 +5,7 @@ import {
   buildHandoff,
   buildHumanGuidance,
   buildMergeGate,
-  buildPreviousAttempts,
+  buildPreviousWorkers,
   buildThreadDiscussion,
   EXIT_PROTOCOL,
   SCOUT_EXIT_PROTOCOL,
@@ -57,22 +57,22 @@ function base(overrides: Partial<Parameters<typeof buildHandoff>[0]>) {
   });
 }
 
-// ---------- envelope field/section parsing (via buildPreviousAttempts) ----------
+// ---------- envelope field/section parsing (via buildPreviousWorkers) ----------
 
-describe("buildPreviousAttempts", () => {
-  it("emits a <previous-attempt> with status/worker/duration and notes", () => {
+describe("buildPreviousWorkers", () => {
+  it("emits a <previous-worker> with status/worker/duration and notes", () => {
     const env = makeEnvelope("blocked", "wTEST", "2m5s", 1, "something halted");
-    const out = buildPreviousAttempts([{ body: env }]);
-    expect(out).toContain('<previous-attempt n="1" status="blocked"');
+    const out = buildPreviousWorkers([{ body: env }]);
+    expect(out).toContain('<previous-worker n="1" status="blocked"');
     expect(out).toContain('worker="wTEST"');
     expect(out).toContain('duration="2m5s"');
     expect(out).toContain("<notes>\nsomething halted\n</notes>");
-    expect(out).toContain("</previous-attempt>");
+    expect(out).toContain("</previous-worker>");
   });
 
   it("strips ``` fences from a log section", () => {
     const env = makeEnvelope("no-sentinel", "wTEST", "3m0s", 2, "no notes", "line A\nline B\nline C");
-    const out = buildPreviousAttempts([{ body: env }]);
+    const out = buildPreviousWorkers([{ body: env }]);
     expect(out).toContain("<log>\nline A\nline B\nline C\n</log>");
   });
 
@@ -88,22 +88,22 @@ describe("buildPreviousAttempts", () => {
         { name: "log", body: "tail: line C", fenced: true, fenceLang: "toon" },
       ],
     });
-    const out = buildPreviousAttempts([{ body: env }]);
+    const out = buildPreviousWorkers([{ body: env }]);
     expect(out).toContain("<log>\ntail: line C\n</log>");
   });
 
   it("numbers attempts in order across multiple envelopes", () => {
     const e1 = makeEnvelope("blocked", "w1", "1m0s", 1, "first");
     const e2 = makeEnvelope("done", "w2", "2m0s", 2, "second");
-    const out = buildPreviousAttempts([{ body: e1 }, { body: e2 }]);
-    expect(out).toContain('<previous-attempt n="1" status="blocked"');
-    expect(out).toContain('<previous-attempt n="2" status="done"');
+    const out = buildPreviousWorkers([{ body: e1 }, { body: e2 }]);
+    expect(out).toContain('<previous-worker n="1" status="blocked"');
+    expect(out).toContain('<previous-worker n="2" status="done"');
   });
 
   it("non-envelope comments contribute nothing", () => {
-    expect(buildPreviousAttempts([{ body: BOOT }, { body: "narrative" }])).toBe("");
+    expect(buildPreviousWorkers([{ body: BOOT }, { body: "narrative" }])).toBe("");
     // malformed envelope (no data-attempt-status) is not a real attempt
-    expect(buildPreviousAttempts([{ body: ENV_NOSTATUS }])).toBe("");
+    expect(buildPreviousWorkers([{ body: ENV_NOSTATUS }])).toBe("");
   });
 });
 
@@ -250,8 +250,8 @@ describe("buildHandoff", () => {
     expect(out).toContain('<issue-body data-untrusted="true">');
     expect(out).toContain("</issue-body>");
     expect(out).toContain("Issue body here");
-    expect(out).toContain("<previous-attempts>");
-    expect(out).toContain('<previous-attempt n="1"');
+    expect(out).toContain("<previous-workers>");
+    expect(out).toContain('<previous-worker n="1"');
     expect(out).toContain('status="blocked"');
     expect(out).toContain("first attempt halted on parser");
     expect(out).toContain("<human-guidance-thread>");
@@ -331,7 +331,7 @@ describe("buildHandoff", () => {
   it("case4: zero comments → only issue-body and agent-notes", () => {
     const out = base({ title: "Empty" });
     expect(out).toContain('<issue-body data-untrusted="true">');
-    expect(out).not.toContain("<previous-attempts>");
+    expect(out).not.toContain("<previous-workers>");
     expect(out).not.toContain("<human-guidance-thread>");
     expect(out).not.toContain("<thread-discussion");
     expect(out).toContain("<agent-notes>");
@@ -430,7 +430,7 @@ describe("buildHandoff", () => {
     expect(rspInstructionRunner("opencode")).toBeUndefined();
   });
 
-  it("case5: malformed envelope → no previous-attempts, no human-guidance, surfaces in discussion", () => {
+  it("case5: malformed envelope → no previous-workers, no human-guidance, surfaces in discussion", () => {
     const out = buildHandoff({
       issue: 1,
       title: "Mal",
@@ -444,7 +444,7 @@ describe("buildHandoff", () => {
         { author: "alice", body: "please retry when you can" },
       ],
     });
-    expect(out).not.toContain("<previous-attempts>");
+    expect(out).not.toContain("<previous-workers>");
     expect(out).not.toContain("<human-guidance-thread>");
     expect(out).toContain('<thread-discussion data-untrusted="true">');
     expect(out).toContain("boring");

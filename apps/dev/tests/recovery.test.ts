@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { recoveryDecision, recoveryCap } from "../src/core/recovery.js";
-import { type RecoveryReason } from "../src/core/attempt-outcome.js";
+import { type RecoveryReason } from "../src/core/worker-outcome.js";
 
 // recoveryDecision is a PURE policy: (reason, attemptN, env) → retry | escalate.
 // Recoverable reasons retry while attemptN < cap, then escalate. Non-recoverable

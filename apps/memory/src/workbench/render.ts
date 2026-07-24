@@ -683,7 +683,7 @@ function reasoningReplaySection(workbench: MemoryWorkbench): string {
         : `<ul>${items
             .map(
               (item) =>
-                `<li class="capability"><div><h3>${escapeHtml(item.attempt_id)}</h3><p class="meta">${escapeHtml(item.when)}</p><p>${escapeHtml(item.summary)}</p></div><span class="pill ${outcomeClass(item.outcome)}" data-outcome="${escapeHtml(item.outcome)}">${escapeHtml(item.outcome)}</span><span class="pill">${item.similarity.toFixed(4)}</span></li>`,
+                `<li class="capability"><div><h3>${escapeHtml(item.worker_id)}</h3><p class="meta">${escapeHtml(item.when)}</p><p>${escapeHtml(item.summary)}</p></div><span class="pill ${outcomeClass(item.outcome)}" data-outcome="${escapeHtml(item.outcome)}">${escapeHtml(item.outcome)}</span><span class="pill">${item.similarity.toFixed(4)}</span></li>`,
             )
             .join("")}</ul>`
     }

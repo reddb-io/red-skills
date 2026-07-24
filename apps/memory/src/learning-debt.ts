@@ -146,7 +146,7 @@ function repeatedFailuresWithoutLessons(
   minRepeatedFailures: number,
 ): RepeatedFailureDebt[] {
   const attempts = nodes.filter((node) => {
-    if (node.node_type !== "attempt") return false;
+    if (node.node_type !== "worker") return false;
     return FAILURE_STATUSES.has(stringProp(node, "status").toLowerCase());
   });
   const groups = new Map<string, StoredNode[]>();

@@ -141,7 +141,7 @@ An issue or PR is parked as `base-stale`, or an old AFK branch exists after
 1. Fast-forward local `main` from origin before comparing branches.
 2. Find the parked branch and compute its merge-base with current `main`.
 3. Inspect commits unique to the parked branch. Also check for uncommitted
-   worker artifacts if the attempt directory still exists.
+   worker artifacts if the worker directory still exists.
 4. Decide whether the branch contains user-facing work, only generated churn, or
    no unique work.
 

@@ -7,9 +7,9 @@ import {
   buildReasoningReplay,
   jaccardSimilarity,
   mapStatusToOutcome,
-  parseAttemptStatusFromEnvelope,
+  parseWorkerStatusFromEnvelope,
 } from "../src/reasoning/reasoning-replay.js";
-import { recordReasoningAttempt } from "../src/reasoning/attempt-writer.js";
+import { recordReasoningWorker } from "../src/reasoning/worker-writer.js";
 
 const TIMEOUT = 30_000;
 const roots: string[] = [];
@@ -41,7 +41,7 @@ describe("reasoning replay", () => {
       schema_version: "memory.reasoning_replay.v1",
       read_only: true,
       task: "rebuild ingest pipeline",
-      total_attempts: 0,
+      total_workers: 0,
       results: [],
       gaps: [],
     });
@@ -50,7 +50,7 @@ describe("reasoning replay", () => {
 
   test("ranks attempts deterministically by similarity and returns top-K with the documented shape", async () => {
     const store = await openStore();
-    await recordReasoningAttempt(store, {
+    await recordReasoningWorker(store, {
       repository: "reddb-io/red-skills",
       issueNumber: 1,
       attemptNumber: 1,
@@ -58,7 +58,7 @@ describe("reasoning replay", () => {
       summary: "rebuild ingest pipeline for markdown notes",
       touchedFiles: ["plugins/memory/src/ingest.ts"],
     });
-    await recordReasoningAttempt(store, {
+    await recordReasoningWorker(store, {
       repository: "reddb-io/red-skills",
       issueNumber: 2,
       attemptNumber: 1,
@@ -66,7 +66,7 @@ describe("reasoning replay", () => {
       summary: "wire vector projection diagnostics",
       touchedFiles: ["plugins/memory/src/vector-search.ts"],
     });
-    await recordReasoningAttempt(store, {
+    await recordReasoningWorker(store, {
       repository: "reddb-io/red-skills",
       issueNumber: 3,
       attemptNumber: 1,
@@ -79,19 +79,19 @@ describe("reasoning replay", () => {
       limit: 2,
     });
     expect(first.results).toHaveLength(2);
-    expect(first.results[0]?.attempt_id).toBe(
-      "attempt:reddb-io/red-skills#1/1",
+    expect(first.results[0]?.worker_id).toBe(
+      "worker:reddb-io/red-skills#1/1",
     );
-    expect(first.results[1]?.attempt_id).toBe(
-      "attempt:reddb-io/red-skills#3/1",
+    expect(first.results[1]?.worker_id).toBe(
+      "worker:reddb-io/red-skills#3/1",
     );
     expect(first.results[0]?.similarity).toBeGreaterThan(first.results[1]?.similarity ?? 0);
     expect(first.results[1]?.similarity).toBeGreaterThan(0);
-    expect(first.total_attempts).toBe(3);
+    expect(first.total_workers).toBe(3);
     for (const result of first.results) {
       expect(result).toEqual(
         expect.objectContaining({
-          attempt_id: expect.any(String),
+          worker_id: expect.any(String),
           similarity: expect.any(Number),
           when: expect.any(String),
           summary: expect.any(String),
@@ -108,14 +108,14 @@ describe("reasoning replay", () => {
     const second = await buildReasoningReplay(store, "rebuild ingest pipeline", {
       limit: 2,
     });
-    expect(second.results.map((r) => [r.attempt_id, r.similarity])).toEqual(
-      first.results.map((r) => [r.attempt_id, r.similarity]),
+    expect(second.results.map((r) => [r.worker_id, r.similarity])).toEqual(
+      first.results.map((r) => [r.worker_id, r.similarity]),
     );
   }, TIMEOUT);
 
   test("attaches outcome derived from the attempt status", async () => {
     const store = await openStore();
-    await recordReasoningAttempt(store, {
+    await recordReasoningWorker(store, {
       repository: "reddb-io/red-skills",
       issueNumber: 10,
       attemptNumber: 1,
@@ -123,7 +123,7 @@ describe("reasoning replay", () => {
       summary: "rebuild ingest pipeline",
       touchedFiles: [],
     });
-    await recordReasoningAttempt(store, {
+    await recordReasoningWorker(store, {
       repository: "reddb-io/red-skills",
       issueNumber: 11,
       attemptNumber: 1,
@@ -134,17 +134,17 @@ describe("reasoning replay", () => {
 
     const report = await buildReasoningReplay(store, "rebuild ingest pipeline", { limit: 5 });
     const byIssue = Object.fromEntries(
-      report.results.map((r) => [r.attempt_id, r.outcome]),
+      report.results.map((r) => [r.worker_id, r.outcome]),
     );
-    expect(byIssue["attempt:reddb-io/red-skills#10/1"]).toBe("done");
-    expect(byIssue["attempt:reddb-io/red-skills#11/1"]).toBe("blocked");
+    expect(byIssue["worker:reddb-io/red-skills#10/1"]).toBe("done");
+    expect(byIssue["worker:reddb-io/red-skills#11/1"]).toBe("blocked");
   }, TIMEOUT);
 
   test("populates gaps from learning-debt repeated-failure patterns scoped to matched attempts", async () => {
     const store = await openStore();
     // Two blocked attempts on the same issue with the same error class → a
     // repeated-failure pattern without a durable lesson.
-    await recordReasoningAttempt(store, {
+    await recordReasoningWorker(store, {
       repository: "reddb-io/red-skills",
       issueNumber: 99,
       attemptNumber: 1,
@@ -153,7 +153,7 @@ describe("reasoning replay", () => {
       errorClass: "ProjectionMissing",
       touchedFiles: ["plugins/memory/src/vector-search.ts"],
     });
-    await recordReasoningAttempt(store, {
+    await recordReasoningWorker(store, {
       repository: "reddb-io/red-skills",
       issueNumber: 99,
       attemptNumber: 2,
@@ -171,17 +171,17 @@ describe("reasoning replay", () => {
     expect(report.gaps.some((gap) => gap.includes("issue:99"))).toBe(true);
   }, TIMEOUT);
 
-  test("parseAttemptStatusFromEnvelope extracts data-attempt-status from AFK envelopes", () => {
-    expect(parseAttemptStatusFromEnvelope(null)).toBeNull();
-    expect(parseAttemptStatusFromEnvelope("")).toBeNull();
-    expect(parseAttemptStatusFromEnvelope("plain comment")).toBeNull();
+  test("parseWorkerStatusFromEnvelope extracts data-attempt-status from AFK envelopes", () => {
+    expect(parseWorkerStatusFromEnvelope(null)).toBeNull();
+    expect(parseWorkerStatusFromEnvelope("")).toBeNull();
+    expect(parseWorkerStatusFromEnvelope("plain comment")).toBeNull();
     expect(
-      parseAttemptStatusFromEnvelope(
+      parseWorkerStatusFromEnvelope(
         '<details data-attempt-status="done"><summary>foo</summary>body</details>',
       ),
     ).toBe("done");
     expect(
-      parseAttemptStatusFromEnvelope(
+      parseWorkerStatusFromEnvelope(
         '<details class="x" data-attempt-status="blocked"><summary>x</summary></details>',
       ),
     ).toBe("blocked");

@@ -50,7 +50,7 @@ import {
   type BackpressureExec,
   type BackpressureCheck,
 } from "../backpressure.js";
-import { runPostAttemptFormat, type PostAttemptFormatExec } from "../post-attempt-format.js";
+import { runPostWorkerFormat, type PostWorkerFormatExec } from "../post-worker-format.js";
 import {
   openReviewPr,
   openManualLandingPr,
@@ -73,8 +73,8 @@ import { dispose } from "../disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
-  type AttemptOutcome,
-} from "../attempt-outcome.js";
+  type WorkerOutcome,
+} from "../worker-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
@@ -854,12 +854,12 @@ export async function processIssue(
       );
       return await mergeFailed(common, "worker branch absent — sandcastle commits did not reach the host");
     }
-    const postAttemptFormatCommands = deps.postAttemptFormatCommands ?? [];
-    if (deps.postAttemptFormat && postAttemptFormatCommands.length > 0) {
+    const postWorkerFormatCommands = deps.postWorkerFormatCommands ?? [];
+    if (deps.postWorkerFormat && postWorkerFormatCommands.length > 0) {
       markProcessSafetyStep("post-agent:post-attempt-format");
-      const pfmt = await runPostAttemptFormat(deps.postAttemptFormat, {
+      const pfmt = await runPostWorkerFormat(deps.postWorkerFormat, {
         worktree: workerBranch,
-        commands: postAttemptFormatCommands,
+        commands: postWorkerFormatCommands,
         now: deps.nowEpoch,
       });
       for (const line of pfmt.log) deps.appendIterLog(`🤖 /afk: ${line}`);
