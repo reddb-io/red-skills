@@ -11,7 +11,9 @@ not empty.
 
 ### Confirm
 
-1. Run the read-only queue view: `red-skills-dev monitor --once`.
+1. Read the queue with the castle `queue_status` tool, and the live workers with
+   `monitor` — both are read tools, free to call. No-MCP fallback:
+   `red-skills-dev monitor --once`.
 2. Compare `ready-for-agent` with open non-Spec issues in the issue tracker.
 3. Census the gates by label family: `blocked:dependency`, `needs-triage`,
    `ready-for-human`, `type:spec`, and any unsupported `blocked:*` label.
