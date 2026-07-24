@@ -30,7 +30,8 @@ Install or inspect the RedSkills statusline for this repository. The shared prod
 
   The **`/afk monitor` dashboard keeps its fuller per-worker row** (title, `[live]`/`[quiet]`, `wait`, `log`) — it is a full dashboard, not a compact statusline — but its vitals tokens are the same `tls`/`rsn`/`txt` vocabulary as the statusline.
 
-  For an on-demand decode table, run `red-skills-dev statusline --legend` or `red-skills-dev monitor --legend`. The legend prints `token / name / gloss` rows and exits without rendering the live statusline or monitor surface.
+  The same per-worker fields arrive as structured data from the castle `statusline_aggregate` and `worker_vitals` tools, so an agent decodes the tokens by reading the fields instead of the legend.
+  For an on-demand human decode table — the no-MCP fallback — run `red-skills-dev statusline --legend` or `red-skills-dev monitor --legend`. The legend prints `token / name / gloss` rows and exits without rendering the live statusline or monitor surface.
 - **Codex — single line.** The `tui.status_line` footer is single-line only, so the plain producer stays ONE aggregate line (project · model · context · usage · repo counts · the AFK block). The multi-line layout is Claude-Code-only.
 
 The AFK rows are quiet when no worker is active. Hosts that cannot run a command-backed statusline still get a useful native footer plus `/afk monitor` for live AFK visibility.
