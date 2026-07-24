@@ -4,6 +4,7 @@ import {
   isLegacySlotLogName,
   planTmpJanitor,
   planWorkerDirJanitor,
+  planSupervisorLaneJanitor,
   parseFeedbackWorktreeWorkerSlug,
   planOrphanFeedbackWorktreeSweep,
   type JanitorEntry,
@@ -11,6 +12,8 @@ import {
   type OrphanFeedbackSweepPlan,
   type TmpJanitorPlan,
   type WorkerDirJanitorEntry,
+  type SupervisorLaneEntry,
+  type SupervisorLanePlan,
 } from "../core/tmp-janitor.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../core/worker-paths.js";
 import { execTool } from "./exec.js";
@@ -78,6 +81,9 @@ export type IssueStateLookup = (issue: number) => "OPEN" | "CLOSED" | "UNKNOWN";
 export interface TmpJanitorReport {
   plan: TmpJanitorPlan;
   staleWorkers: ReturnType<typeof planWorkerDirJanitor>;
+  /** Supervisor fleet dirs partitioned by pid liveness. Live dirs are spared;
+   * dead dirs are eligible for removal. */
+  staleSupervisors: SupervisorLanePlan;
   /** Orphaned feedback worktrees whose owning worker is dead (or the shared
    * baseline worktree when no workers are alive). Swept independently of the
    * mtime TTL sweep so dead-owner entries age out immediately. */
@@ -91,6 +97,10 @@ export interface TmpJanitorApplyResult {
   staleWorkers: string[];
   unknownTmpRoots: string[];
   protectedLiveWorkers: string[];
+  /** Supervisor fleet dirs spared because their pid is live. */
+  protectedLiveSupervisors: string[];
+  /** Supervisor fleet dirs removed because their pid was dead. */
+  staleSupervisors: string[];
   /** Feedback worktrees spared because their owning worker is live. */
   protectedLiveFeedback: string[];
   /** Orphaned feedback worktrees that were removed. */
@@ -100,7 +110,7 @@ export interface TmpJanitorApplyResult {
   /** Every destructive action, including the liveness verdict authorising it. */
   removals: Array<{
     path: string;
-    livenessVerdict: "not-worker-workspace" | "worker-dead" | "owner-dead" | "no-live-workers";
+    livenessVerdict: "not-worker-workspace" | "worker-dead" | "supervisor-dead" | "owner-dead" | "no-live-workers";
   }>;
 }
 
@@ -186,6 +196,25 @@ async function collectWorkerEntries(tmpDir: string, lookup: IssueStateLookup): P
     }
   }
   return out;
+}
+
+/** Collect supervisor fleet dirs under `.red/tmp/supervisors/` with pid liveness. */
+async function collectSupervisorEntries(tmpDir: string): Promise<SupervisorLaneEntry[]> {
+  const supervisorsRoot = join(tmpDir, "supervisors");
+  const fleets = await listNames(supervisorsRoot);
+  const entries: SupervisorLaneEntry[] = [];
+  for (const fleet of fleets) {
+    const fleetDir = join(supervisorsRoot, fleet);
+    try {
+      const st = await stat(fleetDir);
+      if (!st.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    const alive = pidAlive(await readText(join(fleetDir, "afk-supervisor.pid")));
+    entries.push({ path: fleetDir, fleet, pidAlive: alive });
+  }
+  return entries;
 }
 
 /**
@@ -277,7 +306,7 @@ export async function collectTmpJanitorReport(
   nowS: number,
   lookup: IssueStateLookup,
 ): Promise<TmpJanitorReport> {
-  const [tmpRootNames, tmpRootEntries, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers, orphanFeedbackData] =
+  const [tmpRootNames, tmpRootEntries, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers, orphanFeedbackData, supervisorEntries] =
     await Promise.all([
       listNames(tmpDir),
       listEntries(tmpDir),
@@ -287,6 +316,7 @@ export async function collectTmpJanitorReport(
       listEntries(join(tmpDir, "worktrees", "feedback")),
       collectWorkerEntries(tmpDir, lookup),
       collectOrphanFeedbackEntries(tmpDir),
+      collectSupervisorEntries(tmpDir),
     ]);
   const legacySlotLogEntries = tmpRootEntries.filter((entry) => isLegacySlotLogName(basename(entry.path)));
   const orphanFeedback = planOrphanFeedbackWorktreeSweep(orphanFeedbackData.entries, orphanFeedbackData.anyWorkerAlive);
@@ -306,6 +336,7 @@ export async function collectTmpJanitorReport(
       tmpRootNames,
     }),
     staleWorkers: planWorkerDirJanitor(workers),
+    staleSupervisors: planSupervisorLaneJanitor(supervisorEntries),
     orphanFeedback,
     orphanTestRunners,
   };
@@ -332,6 +363,8 @@ export async function applyTmpJanitorReport(
     staleWorkers: [],
     unknownTmpRoots: [],
     protectedLiveWorkers: [],
+    protectedLiveSupervisors: [],
+    staleSupervisors: [],
     protectedLiveFeedback: [],
     orphanFeedback: [],
     orphanTestRunners: [],
@@ -372,6 +405,21 @@ export async function applyTmpJanitorReport(
     await rm(worker.path, { recursive: true, force: true });
     result.removals.push({ path: worker.path, livenessVerdict: "worker-dead" });
     result.staleWorkers.push(worker.path);
+  }
+
+  // Re-check supervisor pid at apply time — a supervisor may have started
+  // between collect and apply (same pattern as the worker liveness re-check).
+  for (const supervisor of report.staleSupervisors.reclaim) {
+    if (pidAlive(await readText(join(supervisor.path, "afk-supervisor.pid")))) {
+      result.protectedLiveSupervisors.push(supervisor.path);
+      continue;
+    }
+    await rm(supervisor.path, { recursive: true, force: true });
+    result.removals.push({ path: supervisor.path, livenessVerdict: "supervisor-dead" });
+    result.staleSupervisors.push(supervisor.path);
+  }
+  for (const supervisor of report.staleSupervisors.spare) {
+    result.protectedLiveSupervisors.push(supervisor.path);
   }
 
   for (const name of report.plan.unknownTmpRoots) {

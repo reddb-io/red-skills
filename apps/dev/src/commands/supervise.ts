@@ -146,6 +146,8 @@ export function fleetHeartbeatState(hb: FleetHeartbeat): string {
 }
 
 function writeFleetStateAtomic(path: string, hb: FleetHeartbeat): void {
+  // mkdir -p ensures a swept lane self-heals on the next heartbeat tick.
+  mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, fleetHeartbeatState(hb), "utf8");
   renameSync(tmp, path);
@@ -848,6 +850,21 @@ function buildSupervisorDeps(
       let firehoseWritten = false;
       let stateError: string | undefined;
       let firehoseError: string | undefined;
+      // Self-heal: if the supervisor's runtime lane was removed mid-run (e.g. by
+      // a janitor bug or manual rm), re-pin the pid identity so the lane is
+      // protected on the next janitor sweep. The writeFleetStateAtomic mkdir
+      // recreates the directory; this re-writes the pid + start files.
+      try {
+        const runtimeDir = dirname(statePath);
+        const pidFilePath = join(runtimeDir, "afk-supervisor.pid");
+        if (!existsSync(pidFilePath)) {
+          const startTime = readPidStartTime(process.pid);
+          writeFileSync(pidFilePath, String(process.pid), "utf8");
+          if (startTime !== null) writeFileSync(`${pidFilePath}.start`, startTime, "utf8");
+        }
+      } catch {
+        // best-effort: a failed re-pin is logged implicitly via stateError below.
+      }
       try {
         writeFleetStateAtomic(statePath, stamped);
         stateWritten = true;
