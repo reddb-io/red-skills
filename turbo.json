@@ -1,6 +1,18 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "tasks": {
+    "generate-manifests": {
+      "inputs": [
+        "plugins/**",
+        "scripts/generate-*-manifests.mjs",
+        "scripts/lib/manifest-core.mjs"
+      ],
+      "outputs": [
+        ".agents/plugins/marketplace.json",
+        "plugins/*/.codex-plugin/plugin.json",
+        "plugins/*/package.json"
+      ]
+    },
     "typecheck": {
       "dependsOn": ["^build"],
       "outputs": []
@@ -10,7 +22,7 @@
       "outputs": []
     },
     "bundle": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "//generate-manifests"],
       "cache": false
     },
     "@reddb-io/dev#bundle": {
@@ -27,7 +39,7 @@
       "cache": false
     },
     "build": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "//generate-manifests"],
       "cache": false
     }
   }

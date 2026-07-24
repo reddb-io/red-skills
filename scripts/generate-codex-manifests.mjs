@@ -1,9 +1,16 @@
 #!/usr/bin/env node
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
-import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  jsonBytes,
+  normalizeSkillEntry,
+  normalizeText,
+  parseArgs,
+  printDiffs,
+  readJson,
+  titleCaseName,
+  writeGenerated,
+} from "./lib/manifest-core.mjs";
 
 const REPO_URL = "https://github.com/reddb-io/red-skills";
 const AUTHOR = {
@@ -12,49 +19,6 @@ const AUTHOR = {
 };
 const CAPABILITIES = ["Interactive", "Read", "Write", "Shell"];
 const PREFERRED_SKILL_ROOT_ORDER = ["engineering", "knowledge", "productivity", "misc", "core"];
-
-function parseArgs(argv) {
-  const args = {
-    root: process.cwd(),
-    check: false,
-  };
-
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--check") {
-      args.check = true;
-      continue;
-    }
-    if (arg === "--root") {
-      const next = argv[index + 1];
-      if (!next) throw new Error("--root requires a path");
-      args.root = next;
-      index += 1;
-      continue;
-    }
-    throw new Error(`unknown argument: ${arg}`);
-  }
-
-  return args;
-}
-
-function codexText(input) {
-  return String(input ?? "")
-    .replace(/[`\u2018\u2019]/g, "")
-    .replace(/[\u201c\u201d]/g, '"')
-    .replace(/[\u2013\u2014]/g, "-")
-    .replace(/\u2026/g, "...")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function titleCaseName(name) {
-  return String(name)
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
-    .join(" ");
-}
 
 function marketplaceDisplayName(name) {
   if (name === "red-skills") return "RedSkills";
@@ -70,10 +34,6 @@ function pluginKeywords(name) {
   const keywords = ["codex", "claude-code", "skills", "agents"];
   if (name === "dev") return [...keywords, "github-issues", "tdd"];
   return [...keywords, name];
-}
-
-function normalizeSkillEntry(entry) {
-  return String(entry).replace(/\/+$/, "");
 }
 
 function deriveCodexSkillRoots(skills) {
@@ -140,7 +100,7 @@ export function buildCodexMarketplace(claudeMarketplace) {
         },
       };
       maybeSet(codexPlugin, "dependencies", plugin.dependencies);
-      maybeSet(codexPlugin, "description", codexText(plugin.description));
+      maybeSet(codexPlugin, "description", normalizeText(plugin.description));
       codexPlugin.category = "Developer Tools";
       return codexPlugin;
     }),
@@ -148,7 +108,7 @@ export function buildCodexMarketplace(claudeMarketplace) {
 }
 
 export function buildCodexPluginManifest(claudePlugin) {
-  const description = codexText(claudePlugin.description);
+  const description = normalizeText(claudePlugin.description);
   const manifest = {
     name: claudePlugin.name,
     version: claudePlugin.version,
@@ -179,52 +139,6 @@ export function buildCodexPluginManifest(claudePlugin) {
   return manifest;
 }
 
-function jsonBytes(value) {
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
-
-async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
-async function writeGenerated(path, bytes, check, mismatches) {
-  if (!check) {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, bytes);
-    return;
-  }
-
-  let current = "";
-  try {
-    current = await readFile(path, "utf8");
-  } catch {
-    current = "";
-  }
-
-  if (current !== bytes) {
-    mismatches.push({ path, bytes });
-  }
-}
-
-async function printDiffs(root, mismatches) {
-  const tempRoot = await mkdtemp(join(tmpdir(), "red-skills-codex-manifest-diff-"));
-  try {
-    for (const mismatch of mismatches) {
-      const rel = relative(root, mismatch.path);
-      const expected = join(tempRoot, rel);
-      await mkdir(dirname(expected), { recursive: true });
-      await writeFile(expected, mismatch.bytes);
-      const diff = spawnSync("git", ["diff", "--no-index", "--", mismatch.path, expected], {
-        encoding: "utf8",
-      });
-      const output = `${diff.stdout}${diff.stderr}`.trim();
-      if (output) console.error(output);
-    }
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
-}
-
 export async function generateCodexManifests({ root, check = false }) {
   const mismatches = [];
   const claudeMarketplacePath = join(root, ".claude-plugin/marketplace.json");
@@ -244,7 +158,7 @@ export async function generateCodexManifests({ root, check = false }) {
   }
 
   if (check && mismatches.length > 0) {
-    await printDiffs(root, mismatches);
+    await printDiffs(root, mismatches, { tempLabel: "red-skills-codex-manifest-diff-" });
     throw new Error(`Codex manifests are stale; run node scripts/generate-codex-manifests.mjs (${mismatches.length} file(s))`);
   }
 }
