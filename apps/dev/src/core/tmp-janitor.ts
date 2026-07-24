@@ -43,6 +43,7 @@ export const KNOWN_TMP_LANES = new Set([
   "workers",
   "go-workers",
   "scout-workers",
+  "supervisors",
   "claims",
   "waits",
   "worktrees",
@@ -292,6 +293,38 @@ export function planWorkerDirJanitor(entries: readonly WorkerDirJanitorEntry[]):
     } else {
       spare.push(entry);
     }
+  }
+  return { reclaim, spare };
+}
+
+// ---------- supervisor lane planner ----------
+
+/** One fleet dir under `.red/tmp/supervisors/`. */
+export interface SupervisorLaneEntry {
+  /** Absolute path of the fleet dir (e.g. `.red/tmp/supervisors/default`). */
+  path: string;
+  /** Fleet name (the basename of the fleet dir). */
+  fleet: string;
+  /** Whether the pid file in this fleet dir names a live process. */
+  pidAlive: boolean;
+}
+
+export interface SupervisorLanePlan {
+  /** Fleet dirs whose supervisor pid is dead — safe to reclaim. */
+  reclaim: SupervisorLaneEntry[];
+  /** Fleet dirs whose supervisor pid is alive — must be spared. */
+  spare: SupervisorLaneEntry[];
+}
+
+/** Plan supervisor lane cleanup. A fleet dir is reclaimable only when its
+ * `afk-supervisor.pid` does not name a live process. Live supervisors are
+ * always spared regardless of mtime. */
+export function planSupervisorLaneJanitor(entries: readonly SupervisorLaneEntry[]): SupervisorLanePlan {
+  const reclaim: SupervisorLaneEntry[] = [];
+  const spare: SupervisorLaneEntry[] = [];
+  for (const entry of entries) {
+    if (entry.pidAlive) spare.push(entry);
+    else reclaim.push(entry);
   }
   return { reclaim, spare };
 }
