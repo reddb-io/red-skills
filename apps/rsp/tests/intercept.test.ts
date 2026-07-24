@@ -13,6 +13,7 @@ import {
   hookDecisionFromCodexPreExecJson,
   rewriteCommand,
   rewriteTableFromCapabilities,
+  _testOnlyResetBinaryState,
 } from "../src/intercept.js";
 import {
   RSP_DECISIONS_COLLECTION,
@@ -30,6 +31,7 @@ async function tempRoot(): Promise<string> {
 }
 
 afterEach(async () => {
+  _testOnlyResetBinaryState();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -503,6 +505,79 @@ describe("rsp Codex pre-execution hook integration", () => {
     const contributed = events.filter((event) => event.decision === "contributed").length;
     expect(events).toHaveLength(corpus.length);
     expect(contributed / events.length).toBeGreaterThanOrEqual(0.25);
+  });
+});
+
+describe("rsp binary resolution guard", () => {
+  it("passes through with binary-unresolved when entrypoint is unresolvable", async () => {
+    const root = await tempRoot();
+    const decision = await hookDecisionFromClaudePreExecJson(
+      JSON.stringify({ cwd: root, tool_input: { command: "git status" } }),
+      { cwd: root, isEnabled: () => true, resolveBinary: () => false },
+    );
+    expect(decision).toEqual({ kind: "passthrough", reason: "binary-unresolved" });
+  });
+
+  it("raw command is untouched on unresolvable entrypoint (empty updatedInput)", async () => {
+    const root = await tempRoot();
+    const decision = await hookDecisionFromClaudePreExecJson(
+      JSON.stringify({ cwd: root, tool_input: { command: "git log --oneline" } }),
+      { cwd: root, isEnabled: () => true, resolveBinary: () => false },
+    );
+    expect(formatHookDecision(decision)).toEqual({ stdout: "", status: 0 });
+  });
+
+  it("caches the resolution result; resolver called once across multiple invocations", async () => {
+    const root = await tempRoot();
+    let callCount = 0;
+    const opts = {
+      cwd: root,
+      isEnabled: () => true as boolean,
+      resolveBinary: () => { callCount += 1; return false; },
+    };
+
+    for (let i = 0; i < 3; i++) {
+      await hookDecisionFromClaudePreExecJson(
+        JSON.stringify({ cwd: root, tool_input: { command: "git status" } }),
+        opts,
+      );
+    }
+
+    expect(callCount).toBe(1);
+  });
+
+  it("passes through with binary-unresolved in the proxy path too", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
+
+    const decision = await hookDecisionFromCodexPreExecJson(
+      JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "printf ok" } }),
+      { cwd: root, resolveBinary: () => false },
+    );
+    expect(decision).toEqual({ kind: "passthrough", reason: "binary-unresolved" });
+  });
+
+  it("records binary-unresolved in telemetry so rsp stats can render it", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
+
+    const res = spawnSync(process.execPath, ["--import", tsxLoader, cli, "hook", "codex-pre-exec"], {
+      cwd: root,
+      input: Buffer.from(JSON.stringify({ cwd: root, tool_name: "bash", tool_input: { command: "git status" } })),
+      env: { ...process.env, PATH: "/no-rsp-here" },
+    });
+
+    expect(res.status).toBe(0);
+    expect(res.stdout).toEqual(Buffer.alloc(0));
+    const events = await readSpoolEvents(root);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      collection: RSP_DECISIONS_COLLECTION,
+      decision: "passed",
+      reason: "binary-unresolved",
+    });
   });
 });
 
