@@ -19,45 +19,23 @@
 //
 // Exit codes: 0 success; 1 drift detected; 2 usage error.
 
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
-import { spawnSync } from "node:child_process";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildPiPackage } from "./generate-pi-manifests.mjs";
+import {
+  jsonBytes,
+  parseArgs,
+  printDiffs,
+  readJson,
+  writeGenerated,
+} from "./lib/manifest-core.mjs";
 
 const PUBLISHED_BUCKETS = ["engineering", "knowledge", "productivity", "misc", "core", "maintainer"];
 const SKIP_BUCKETS = new Set(["in-progress", "deprecated"]);
 const NPM_SCOPE = "@reddb-io";
 const PACKAGING_ROOT = "packaging/pi";
-
-function parseArgs(argv) {
-  const args = { root: process.cwd(), check: false };
-  for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index];
-    if (arg === "--check") {
-      args.check = true;
-      continue;
-    }
-    if (arg === "--root") {
-      const next = argv[index + 1];
-      if (!next) throw new Error("--root requires a path");
-      args.root = next;
-      index += 1;
-      continue;
-    }
-    throw new Error(`unknown argument: ${arg}`);
-  }
-  return args;
-}
-
-async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
-function jsonBytes(value) {
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
 
 function isPublishedBucket(name) {
   return PUBLISHED_BUCKETS.includes(name);
@@ -115,7 +93,7 @@ async function stagePackage({ root, plugin, claudePlugin, packagingDir, mismatch
   }
 
   // 1. Stage package.json
-  await writeOrCheck(
+  await writeGenerated(
     join(targetDir, "package.json"),
     jsonBytes(packageJson),
     check,
@@ -157,7 +135,7 @@ async function stagePackage({ root, plugin, claudePlugin, packagingDir, mismatch
 
   // 3. Stage a small README so `npm view` shows project context, not just an
   // auto-generated "no description" stub.
-  await writeOrCheck(
+  await writeGenerated(
     join(targetDir, "README.md"),
     renderPackageReadme({ pluginName, packageJson, buckets }),
     check,
@@ -195,23 +173,6 @@ pnpm pi:packages:build
 
 Apache-2.0.
 `;
-}
-
-async function writeOrCheck(path, bytes, check, mismatches) {
-  if (!check) {
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, bytes);
-    return;
-  }
-  let current = "";
-  try {
-    current = await readFile(path, "utf8");
-  } catch {
-    current = "";
-  }
-  if (current !== bytes) {
-    mismatches.push({ path, bytes });
-  }
 }
 
 async function diffDirs(leftDir, rightDir) {
@@ -252,29 +213,6 @@ async function diffDirs(leftDir, rightDir) {
   return drift;
 }
 
-async function printDiffs(root, mismatches) {
-  const tempRoot = await mkdtemp(join(tmpdir(), "red-skills-pi-pkg-diff-"));
-  try {
-    for (const mismatch of mismatches) {
-      if (mismatch.note) {
-        console.error(`# ${relative(root, mismatch.path)}\n${mismatch.note.join("\n")}`);
-        continue;
-      }
-      const rel = relative(root, mismatch.path);
-      const expected = join(tempRoot, rel);
-      await mkdir(dirname(expected), { recursive: true });
-      await writeFile(expected, mismatch.bytes);
-      const diff = spawnSync("git", ["diff", "--no-index", "--", mismatch.path, expected], {
-        encoding: "utf8",
-      });
-      const output = `${diff.stdout}${diff.stderr}`.trim();
-      if (output) console.error(output);
-    }
-  } finally {
-    await rm(tempRoot, { recursive: true, force: true });
-  }
-}
-
 export async function buildPiPackages({ root, check = false }) {
   const mismatches = [];
   const claudeMarketplacePath = join(root, ".claude-plugin/marketplace.json");
@@ -288,7 +226,7 @@ export async function buildPiPackages({ root, check = false }) {
   }
 
   if (check && mismatches.length > 0) {
-    await printDiffs(root, mismatches);
+    await printDiffs(root, mismatches, { tempLabel: "red-skills-pi-pkg-diff-" });
     throw new Error(
       `Pi packages are stale; run pnpm pi:packages:build (${mismatches.length} mismatched file(s) or dir(s))`,
     );

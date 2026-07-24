@@ -4,6 +4,14 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { buildPiPackages } from "../../../scripts/build-pi-packages.mjs";
+import {
+  jsonBytes,
+  normalizeSkillEntry,
+  normalizeText,
+  parseArgs,
+  titleCaseName,
+} from "../../../scripts/lib/manifest-core.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = join(import.meta.dirname, "..", "..", "..");
@@ -13,8 +21,63 @@ async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+describe("manifest-core helpers", () => {
+  it("parseArgs returns defaults with no argv", () => {
+    const args = parseArgs([]);
+    expect(args).toEqual({ root: process.cwd(), check: false });
+  });
+
+  it("parseArgs parses --root and --check", () => {
+    expect(parseArgs(["--root", "/tmp/x", "--check"])).toEqual({ root: "/tmp/x", check: true });
+    expect(parseArgs(["--check", "--root", "/tmp/y"])).toEqual({ root: "/tmp/y", check: true });
+  });
+
+  it("parseArgs throws on unknown argument", () => {
+    expect(() => parseArgs(["--unknown"])).toThrow("unknown argument: --unknown");
+  });
+
+  it("parseArgs throws when --root has no value", () => {
+    expect(() => parseArgs(["--root"])).toThrow("--root requires a path");
+  });
+
+  it("titleCaseName capitalizes hyphen-separated words", () => {
+    expect(titleCaseName("dev")).toBe("Dev");
+    expect(titleCaseName("red-skills")).toBe("Red Skills");
+    expect(titleCaseName("build-info")).toBe("Build Info");
+  });
+
+  it("normalizeSkillEntry strips trailing slashes", () => {
+    expect(normalizeSkillEntry("./skills/engineering/")).toBe("./skills/engineering");
+    expect(normalizeSkillEntry("./skills/engineering//")).toBe("./skills/engineering");
+    expect(normalizeSkillEntry("./skills/engineering")).toBe("./skills/engineering");
+  });
+
+  it("normalizeText sanitizes unicode punctuation", () => {
+    // backtick and smart single quotes → removed
+    expect(normalizeText("don’t")).toBe("dont");
+    expect(normalizeText("`backtick`")).toBe("backtick");
+    // smart double quotes → regular double quotes
+    expect(normalizeText("“smart”")).toBe('"smart"');
+    // en/em dashes → hyphen
+    expect(normalizeText("a–b")).toBe("a-b");
+    expect(normalizeText("a—b")).toBe("a-b");
+    // ellipsis → ...
+    expect(normalizeText("wait…")).toBe("wait...");
+    // collapses whitespace
+    expect(normalizeText("  too   many   spaces  ")).toBe("too many spaces");
+    // null/undefined → empty string
+    expect(normalizeText(null)).toBe("");
+    expect(normalizeText(undefined)).toBe("");
+  });
+
+  it("jsonBytes serializes with two-space indent and trailing newline", () => {
+    expect(jsonBytes({ a: 1 })).toBe('{\n  "a": 1\n}\n');
+    expect(jsonBytes([1, 2])).toBe('[\n  1,\n  2\n]\n');
+  });
+});
+
 describe("Pi package builder", () => {
-  it("stages per-plugin npm-ready packages with skills copied under packaging/pi/", async () => {
+  it("stages per-plugin npm-ready packages with skills copied under packaging/pi/ (module API)", async () => {
     const root = await mkdtemp(join(tmpdir(), "red-skills-pi-build-"));
 
     await mkdir(join(root, ".claude-plugin"), { recursive: true });
@@ -86,7 +149,7 @@ description: Test init skill.
       "utf8",
     );
 
-    await execFileAsync("node", [builder, "--root", root]);
+    await buildPiPackages({ root });
 
     // npm-ready package.json shape
     const devPkg = JSON.parse(
@@ -126,7 +189,7 @@ description: Test init skill.
     expect(memoryPkg.pi.skills).toEqual(["./skills/core/"]);
   });
 
-  it("fails --check when a staged Pi package drifts from the source", async () => {
+  it("fails --check when a staged Pi package drifts from the source (module API)", async () => {
     const root = await mkdtemp(join(tmpdir(), "red-skills-pi-build-check-"));
 
     await mkdir(join(root, ".claude-plugin"), { recursive: true });
@@ -155,24 +218,23 @@ description: afk
       "utf8",
     );
 
-    await execFileAsync("node", [builder, "--root", root]);
+    await buildPiPackages({ root });
     const staged = join(root, "packaging/pi/dev/package.json");
     const pkg = JSON.parse(await readFile(staged, "utf8"));
     pkg.description = "hand-edited drift";
     await writeJson(staged, pkg);
 
-    await expect(
-      execFileAsync("node", [builder, "--root", root, "--check"]),
-    ).rejects.toMatchObject({
-      stderr: expect.stringContaining("Pi packages are stale"),
-    });
+    await expect(buildPiPackages({ root, check: true })).rejects.toThrow("Pi packages are stale");
   });
 
-  it("matches the builder output for the repo's committed plugin manifests", async () => {
+  it("matches the builder output for the repo's committed plugin manifests (subprocess smoke)", async () => {
+    // One subprocess call pins the main()-guard CLI contract: the script must
+    // be directly executable as `node build-pi-packages.mjs` in addition to
+    // being importable as a module.
     await execFileAsync("node", [builder, "--root", ROOT, "--check"]);
   });
 
-  it("stamps RED_BUILD_VERSION over the plugin manifest version (release build)", async () => {
+  it("stamps RED_BUILD_VERSION over the plugin manifest version (module API)", async () => {
     const root = await mkdtemp(join(tmpdir(), "red-skills-pi-ver-"));
     await mkdir(join(root, ".claude-plugin"), { recursive: true });
     await mkdir(join(root, "plugins/dev/.claude-plugin"), { recursive: true });
@@ -203,9 +265,17 @@ description: Test afk skill.
       "utf8",
     );
 
-    await execFileAsync("node", [builder, "--root", root], {
-      env: { ...process.env, RED_BUILD_VERSION: "v1.2.3" },
-    });
+    const prev = process.env.RED_BUILD_VERSION;
+    process.env.RED_BUILD_VERSION = "v1.2.3";
+    try {
+      await buildPiPackages({ root });
+    } finally {
+      if (prev === undefined) {
+        delete process.env.RED_BUILD_VERSION;
+      } else {
+        process.env.RED_BUILD_VERSION = prev;
+      }
+    }
 
     const pkg = JSON.parse(
       await readFile(join(root, "packaging/pi/dev/package.json"), "utf8"),
