@@ -95,6 +95,13 @@ export interface RspTelemetryStats {
     quota_free_saved_units: number;
     contribution_rate: number;
     top_pass_reasons: Array<{ reason: string; count: number }>;
+    by_command_family: Array<{
+      command_family: string;
+      contributed: number;
+      passed: number;
+      failed_open: number;
+      contribution_rate: number;
+    }>;
   };
 }
 

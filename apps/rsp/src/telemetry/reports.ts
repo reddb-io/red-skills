@@ -159,6 +159,7 @@ function countDecisions(records: Array<Record<string, unknown>>): RspTelemetrySt
   let failedOpen = 0;
   let quotaFreeSavedUnits = 0;
   const passReasons = new Map<string, number>();
+  const byFamily = new Map<string, { contributed: number; passed: number; failed_open: number }>();
   for (const record of records) {
     const decision = stringField(record.decision);
     if (decision === "contributed") contributed++;
@@ -169,6 +170,12 @@ function countDecisions(records: Array<Record<string, unknown>>): RspTelemetrySt
       const reason = stringField(record.reason) || "unknown";
       passReasons.set(reason, (passReasons.get(reason) ?? 0) + 1);
     }
+    const family = stringField(record.command_family) || "unknown";
+    const row = byFamily.get(family) ?? { contributed: 0, passed: 0, failed_open: 0 };
+    if (decision === "contributed") row.contributed++;
+    else if (decision === "failed-open") row.failed_open++;
+    else row.passed++;
+    byFamily.set(family, row);
   }
   return {
     seen: records.length,
@@ -180,6 +187,22 @@ function countDecisions(records: Array<Record<string, unknown>>): RspTelemetrySt
     top_pass_reasons: [...passReasons.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([reason, count]) => ({ reason, count })),
+    by_command_family: [...byFamily.entries()]
+      .sort((a, b) => {
+        const totalA = a[1].contributed + a[1].passed + a[1].failed_open;
+        const totalB = b[1].contributed + b[1].passed + b[1].failed_open;
+        return totalB - totalA || a[0].localeCompare(b[0]);
+      })
+      .map(([family, counts]) => {
+        const total = counts.contributed + counts.passed + counts.failed_open;
+        return {
+          command_family: family,
+          contributed: counts.contributed,
+          passed: counts.passed,
+          failed_open: counts.failed_open,
+          contribution_rate: total === 0 ? 0 : round(counts.contributed / total),
+        };
+      }),
   };
 }
 
