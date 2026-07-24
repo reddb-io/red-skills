@@ -1,4 +1,4 @@
-# 0121 — Castle ownership is a CI ratchet over dev entry points
+# 0125 — Castle ownership is a CI ratchet over dev entry points
 
 - **Status**: accepted
 - **Date**: 2026-07-21

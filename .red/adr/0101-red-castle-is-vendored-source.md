@@ -1,4 +1,4 @@
-# Red-castle is vendored source, not a git submodule
+# 0101 — Red-castle is vendored source, not a git submodule
 
 ## Status
 

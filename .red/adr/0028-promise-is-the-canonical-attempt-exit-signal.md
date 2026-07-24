@@ -1,4 +1,4 @@
-# The `<promise>` sentinel is the canonical attempt-exit signal; pipe EOF and process exit are only crash detectors
+# 0028 — The `<promise>` sentinel is the canonical attempt-exit signal; pipe EOF and process exit are only crash detectors
 
 ## Status
 

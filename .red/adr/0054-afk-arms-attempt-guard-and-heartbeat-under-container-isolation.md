@@ -1,4 +1,4 @@
-# AFK arms the attempt progress guard + heartbeat under docker/podman isolation
+# 0054 — AFK arms the attempt progress guard + heartbeat under docker/podman isolation
 
 ## Context
 

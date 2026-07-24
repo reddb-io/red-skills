@@ -1,4 +1,4 @@
-# `claude-minimax` is a first-class AFK runner pointing at MiniMax's Anthropic-compatible endpoint
+# 0070 — `claude-minimax` is a first-class AFK runner pointing at MiniMax's Anthropic-compatible endpoint
 
 ## Status
 

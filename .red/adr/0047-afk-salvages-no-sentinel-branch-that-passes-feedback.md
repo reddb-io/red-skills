@@ -1,4 +1,4 @@
-# ADR 0047 — AFK salvages a no-sentinel branch that already passes feedback
+# 0047 — AFK salvages a no-sentinel branch that already passes feedback
 
 ## Status
 

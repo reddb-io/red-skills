@@ -1,4 +1,4 @@
-# Workspaces move to root `apps/` + `packages/` with a pnpm `catalog:`
+# 0060 — Workspaces move to root `apps/` + `packages/` with a pnpm `catalog:`
 
 ## Context
 

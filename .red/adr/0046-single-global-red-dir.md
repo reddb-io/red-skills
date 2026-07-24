@@ -1,4 +1,4 @@
-# A single global `.red/` shared by all plugins
+# 0046 — A single global `.red/` shared by all plugins
 
 ## Status
 

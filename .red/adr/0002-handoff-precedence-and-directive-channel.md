@@ -1,4 +1,4 @@
-# Handoff precedence ladder and the two-channel directive protocol
+# 0002 — Handoff precedence ladder and the two-channel directive protocol
 
 ## Status
 

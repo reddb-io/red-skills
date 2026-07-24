@@ -1,4 +1,4 @@
-# External attacker threat model for agent execution hosts
+# 0086 — External attacker threat model for agent execution hosts
 
 ## Status
 

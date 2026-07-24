@@ -1,4 +1,4 @@
-# red-skills consumes `red-memory` and `red-ui` MCPs; it stops building the memory plugin
+# 0041 — red-skills consumes `red-memory` and `red-ui` MCPs; it stops building the memory plugin
 
 > **⚠️ REVERSED by Amendment 1 (2026-06-20).** The core decision below — migrate
 > `apps/memory` out to a separate `red-memory` repo and consume it as a fetched

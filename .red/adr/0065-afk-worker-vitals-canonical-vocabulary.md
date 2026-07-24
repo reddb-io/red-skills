@@ -1,4 +1,4 @@
-# AFK worker vitals are one canonical vocabulary across the whole chain
+# 0065 — AFK worker vitals are one canonical vocabulary across the whole chain
 
 ## Status
 

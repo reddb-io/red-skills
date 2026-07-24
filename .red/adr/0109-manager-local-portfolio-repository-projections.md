@@ -1,4 +1,4 @@
-# Manager is a local portfolio liaison with repository-owned projections
+# 0109 — Manager is a local portfolio liaison with repository-owned projections
 
 ## Status
 

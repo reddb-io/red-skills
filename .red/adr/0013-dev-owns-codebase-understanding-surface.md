@@ -1,4 +1,4 @@
-# Dev owns the codebase understanding surface; memory owns the graph
+# 0013 — Dev owns the codebase understanding surface; memory owns the graph
 
 ## Status
 

@@ -1,4 +1,4 @@
-# Fleet supervisor is runner-portable; session observability degrades per runner
+# 0015 — Fleet supervisor is runner-portable; session observability degrades per runner
 
 ## Status
 

@@ -1,4 +1,4 @@
-# Ephemeral-tier expiry is enforced client-side, not by engine TTL
+# 0011 — Ephemeral-tier expiry is enforced client-side, not by engine TTL
 
 ## Status
 

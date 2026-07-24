@@ -1,4 +1,4 @@
-# AFK execution runs on the vendored `@reddb-io/red-castle` submodule, consumed as source
+# 0061 — AFK execution runs on the vendored `@reddb-io/red-castle` submodule, consumed as source
 
 > Amended by ADR 0101: `packages/red-castle` is now a vendored source tree in
 > this monorepo, not a git submodule. The source-consumed workspace package

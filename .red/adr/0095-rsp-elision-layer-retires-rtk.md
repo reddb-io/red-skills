@@ -1,4 +1,4 @@
-# rsp: the RedSkills elision layer — wrappers by contract, fail-closed interception, reversible elision over the Repo store
+# 0095 — rsp: the RedSkills elision layer — wrappers by contract, fail-closed interception, reversible elision over the Repo store
 
 ## Status
 

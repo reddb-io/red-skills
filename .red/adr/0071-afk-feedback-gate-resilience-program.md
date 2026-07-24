@@ -1,4 +1,4 @@
-# AFK feedback-gate resilience program — infra/semantic failure split, baseline probe, worktree cache, death diagnostics
+# 0071 — AFK feedback-gate resilience program — infra/semantic failure split, baseline probe, worktree cache, death diagnostics
 
 ## Status
 

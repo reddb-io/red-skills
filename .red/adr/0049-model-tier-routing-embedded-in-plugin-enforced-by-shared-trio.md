@@ -1,4 +1,4 @@
-# Model-tier routing is embedded in the plugin and enforced by the shared skill + hooks + sandcastle trio, per runner
+# 0049 — Model-tier routing is embedded in the plugin and enforced by the shared skill + hooks + sandcastle trio, per runner
 
 ## Status
 

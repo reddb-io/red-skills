@@ -1,4 +1,4 @@
-# Workflow naming: three role-based prefixes — `reusable-*` / `rs-*` / `red-*`
+# 0087 — Workflow naming: three role-based prefixes — `reusable-*` / `rs-*` / `red-*`
 
 ## Context
 

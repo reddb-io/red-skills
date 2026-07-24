@@ -1,4 +1,4 @@
-# AFK landability reconciler: parked-but-green branches self-land via a no-agent reconcile worker
+# 0056 — AFK landability reconciler: parked-but-green branches self-land via a no-agent reconcile worker
 
 > **Numbering note.** PRD #614 / issue #622 use "ADR 0056" to mean the *atomic
 > GitHub-native claim substrate*. That is a **different** decision, recorded as

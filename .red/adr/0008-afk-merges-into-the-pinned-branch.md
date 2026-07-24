@@ -1,4 +1,4 @@
-# /afk merges into the pinned branch, not always main
+# 0008 — /afk merges into the pinned branch, not always main
 
 ## Status
 

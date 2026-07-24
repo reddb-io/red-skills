@@ -1,4 +1,4 @@
-# Injection-safe framing for untrusted payloads in AFK prompts
+# 0073 — Injection-safe framing for untrusted payloads in AFK prompts
 
 ## Status
 

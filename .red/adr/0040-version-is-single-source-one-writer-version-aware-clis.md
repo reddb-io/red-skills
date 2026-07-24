@@ -1,4 +1,4 @@
-# Version is a single source, written by one script; CLIs and MCP launchers are version-aware
+# 0040 — Version is a single source, written by one script; CLIs and MCP launchers are version-aware
 
 ## Context
 
