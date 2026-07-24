@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { commandFamily, isEnvAssignment, isGhJsonJqSelection } from "./command-classifier.js";
 import { resolveRspInvocationPrefix } from "./rsp-cli.js";
 import { appendTelemetryEvent, RSP_DECISIONS_COLLECTION, RSP_TELEMETRY_INVOCATIONS_COLLECTION } from "./telemetry.js";
 
@@ -346,30 +347,4 @@ function parseShellWords(segment: string): ShellWord[] | null {
   if (quote || escaped) return null;
   push();
   return words;
-}
-
-function commandFamily(command: string): string {
-  const parts = command.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "unknown";
-  if (parts[0] === "git" && parts[1]) return `git ${parts[1]}`;
-  if (isGhJsonJqSelection(parts) && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]} json-jq`;
-  if (isGhJsonJqSelection(parts) && parts[1]) return `gh ${parts[1]} json-jq`;
-  if (isGhJsonJqSelection(parts)) return "gh json-jq";
-  if (parts[0] === "gh" && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]}`;
-  if (parts[0] === "gh" && parts[1]) return `gh ${parts[1]}`;
-  if (parts[0] === "cargo" && parts[1]) return `cargo ${parts[1]}`;
-  if (parts[0] === "vitest") return "vitest";
-  return parts[0]!;
-}
-
-function isGhJsonJqSelection(tokens: readonly string[]): boolean {
-  return tokens[0] === "gh" && tokens.some(isJsonJqSelectionFlag);
-}
-
-function isJsonJqSelectionFlag(token: string): boolean {
-  return token === "--json" || token === "--jq" || token.startsWith("--json=") || token.startsWith("--jq=");
-}
-
-function isEnvAssignment(token: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token);
 }

@@ -1,4 +1,5 @@
 import type { RedDB } from "@reddb-io/sdk";
+import { commandFamily } from "../command-classifier.js";
 import { storageClassForCommand, type RspStorageClass, type RspStorageClassStats } from "../elision-store.js";
 import { tokenSavingsEstimate } from "../pricing.js";
 import {
@@ -610,17 +611,6 @@ function latencyPercentiles(values: number[]): LatencyPercentiles {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
-}
-
-function commandFamily(command: string): string {
-  const parts = command.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "unknown";
-  if (parts[0] === "git" && parts[1]) return `git ${parts[1]}`;
-  if (parts[0] === "gh" && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]}`;
-  if (parts[0] === "gh" && parts[1]) return `gh ${parts[1]}`;
-  if (parts[0] === "cargo" && parts[1]) return `cargo ${parts[1]}`;
-  if (parts[0] === "vitest") return "vitest";
-  return parts[0]!;
 }
 
 function heatmapKeyFor(timestamp: string): string | null {
