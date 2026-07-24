@@ -1,5 +1,12 @@
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import {
+  commandFamily,
+  commandSegments,
+  isEnvAssignment,
+  isGhJsonJqSelection,
+  shellishWords,
+} from "./command-classifier.js";
 import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
 import {
   kickResidentServer,
@@ -551,14 +558,6 @@ function losslessGhJsonJqPassthrough(command: string): RewriteDecision | null {
   return { kind: "passthrough", reason: LOSSLESS_GH_JSON_JQ_REASON };
 }
 
-function isGhJsonJqSelection(tokens: readonly string[]): boolean {
-  return tokens[0] === "gh" && tokens.some(isJsonJqSelectionFlag);
-}
-
-function isJsonJqSelectionFlag(token: string): boolean {
-  return token === "--json" || token === "--jq" || token.startsWith("--json=") || token.startsWith("--jq=");
-}
-
 function formatRedirectSuffix(tokens: readonly ShellToken[]): string[] {
   return tokens.map((token) => token.text);
 }
@@ -681,34 +680,8 @@ function containsQuietGrep(command: string): boolean {
   });
 }
 
-function commandSegments(command: string): string[] {
-  return command.split(/&&|[;|]/).map((segment) => segment.trim()).filter(Boolean);
-}
-
-function shellishWords(segment: string): string[] {
-  return segment.split(/[ \t]+/).filter(Boolean).map((token) => token.replace(/^env$/, ""));
-}
-
 function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
-}
-
-function commandFamily(command: string): string {
-  const parts = command.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "unknown";
-  if (parts[0] === "git" && parts[1]) return `git ${parts[1]}`;
-  if (isGhJsonJqSelection(parts) && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]} json-jq`;
-  if (isGhJsonJqSelection(parts) && parts[1]) return `gh ${parts[1]} json-jq`;
-  if (isGhJsonJqSelection(parts)) return "gh json-jq";
-  if (parts[0] === "gh" && parts[1] && parts[2]) return `gh ${parts[1]} ${parts[2]}`;
-  if (parts[0] === "gh" && parts[1]) return `gh ${parts[1]}`;
-  if (parts[0] === "cargo" && parts[1]) return `cargo ${parts[1]}`;
-  if (parts[0] === "vitest") return "vitest";
-  return parts[0]!;
-}
-
-function isEnvAssignment(token: string): boolean {
-  return /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token);
 }
 
 function commandKey(tokens: readonly string[]): string {

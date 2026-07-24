@@ -7,6 +7,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { commandWords } from "../command-classifier.js";
 import { RSP_ELISION_COLLECTION, type RspExpiredHandle, type RspLossMeta, type RspMintMeta, type RspRecoveryHandle, type RspStorageClass, type RspStorageClassStats } from "./public.js";
 import type { IndexDocument, IndexEntry, ResidentRecallHit, RspDerivationRecipe, RspReexecutionRecipe, StoreDocument, StoredBlob, StoredRecord } from "./model.js";
 
@@ -43,7 +44,7 @@ export function redDbIdentifier(value: string): string {
 }
 
 export function storageClassForCommand(command: string): RspStorageClass {
-  const argv = command.trim().split(/\s+/).filter(Boolean);
+  const argv = commandWords(command);
   const executable = argv[0] ?? "";
   if (executable === "cat") return "derivable";
   if (executable === "git") {
@@ -171,7 +172,7 @@ export function gitOutput(cwd: string, args: string[]): string | null {
 }
 
 export function deriveReexecutionRecipe(bytes: Buffer, command: string): RspReexecutionRecipe | null {
-  const argv = command.trim().split(/\s+/).filter(Boolean);
+  const argv = commandWords(command);
   if (!isReExecutableArgv(argv)) return null;
   const current = runReexecutionCommand(process.cwd(), argv, bytes.length);
   if (!current || contentHash(current) !== contentHash(bytes)) return null;

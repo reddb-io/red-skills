@@ -636,6 +636,15 @@ describe("rsp telemetry spool", () => {
           { reason: "lossless-gh-json-jq", count: 1 },
           { reason: "unsupported-command", count: 1 },
         ],
+        // Decision families are read back from the stored `command_family`
+        // field, never re-derived — the contribution lane reports whatever key
+        // the minting surface recorded.
+        by_command_family: [
+          { command_family: "git status", contributed: 0, passed: 2, failed_open: 0, contribution_rate: 0 },
+          { command_family: "gh api", contributed: 1, passed: 0, failed_open: 0, contribution_rate: 1 },
+          { command_family: "gh pr view json-jq", contributed: 0, passed: 1, failed_open: 0, contribution_rate: 0 },
+          { command_family: "unknown", contributed: 0, passed: 0, failed_open: 1, contribution_rate: 0 },
+        ],
       });
     } finally {
       await db.close();
