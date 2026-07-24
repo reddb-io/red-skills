@@ -102,6 +102,12 @@ export function statsPayload(
       contribution_rate_display: formatRate(telemetry.decisions.contribution_rate),
       top_pass_reasons: topPassReasons,
       top_pass_reasons_elided: full ? 0 : Math.max(0, telemetry.decisions.top_pass_reasons.length - topPassReasons.length),
+      by_command_family: full
+        ? telemetry.decisions.by_command_family
+        : telemetry.decisions.by_command_family.slice(0, 5),
+      by_command_family_elided: full
+        ? 0
+        : Math.max(0, telemetry.decisions.by_command_family.length - 5),
     } as unknown as JsonObject,
     latency: {
       ...telemetry.latency,
@@ -167,6 +173,7 @@ export function emptyTelemetryStats(windowDays: number): RspTelemetryStats {
       quota_free_saved_units: 0,
       contribution_rate: 0,
       top_pass_reasons: [],
+      by_command_family: [],
     },
   };
 }
