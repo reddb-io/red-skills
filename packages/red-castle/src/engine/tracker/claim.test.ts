@@ -343,7 +343,11 @@ describe("acquireClaim orchestration", () => {
     expect(gh.audited).toHaveLength(1);
     expect(gh.audited[0]).toContain("cross-host recovery");
     expect(gh.audited[0]).toContain("dead:host");
-    expect(gh.conceded).toHaveLength(0);
+    // The recovery ALSO withdraws the dead owner through the sanctioned concede
+    // path, so the marker layer records who evicted whom (#2423).
+    expect(gh.conceded).toHaveLength(1);
+    expect(gh.conceded[0]).toContain("worker=dead:host kind=concede reason=stale");
+    expect(gh.conceded[0]).toContain("by=h:me");
   });
 
   it("posts no audit comment on an ordinary solo win", async () => {
