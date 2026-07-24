@@ -117,6 +117,7 @@ import {
   renderClaimComment,
   type ClaimRecord,
 } from "./core/claim.js";
+import { reapOrphanedFleetWorkers } from "./core/fleet-create-reap.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./core/boot-sweep.js";
 import {
   branchesToReap,
@@ -934,7 +935,11 @@ async function fleetStatus(
   };
 }
 
-async function createFleet(root: string, rawInput: FleetCreateInput) {
+async function createFleet(
+  root: string,
+  rawInput: FleetCreateInput,
+  concedeClaim: (issue: number, worker: { id: string; runner: string }) => Promise<void>,
+) {
   const input: FleetCreateInput = {
     ...rawInput,
     ...(rawInput.selector
@@ -1005,6 +1010,14 @@ async function createFleet(root: string, rawInput: FleetCreateInput) {
     } catch {
       // The failure below must not claim that registry rollback succeeded.
     }
+    // Reap any workers the fast-dying supervisor dispatched before it could write
+    // its pid file. Best-effort: swallow all errors so the reap never shadows the
+    // real spawn error.
+    await reapOrphanedFleetWorkers(
+      paths.fleetStatePath,
+      afkPaths(root).tmpDir,
+      concedeClaim,
+    ).catch(() => undefined);
     let tail = "";
     if (supervisorLogStart !== undefined && !spawnErr) {
       try {
@@ -1626,7 +1639,21 @@ export function createCastleMcpDependencies(
   const baseDeps: CastleMcpDependencies = {
     fleetList: () => readFleetProfiles(registryPath(root)),
     fleetStatus: (input) => fleetStatus(root, input),
-    fleetCreate: (input) => createFleet(root, input),
+    fleetCreate: async (input) => {
+      const concedeClaim = async (issue: number, worker: { id: string; runner: string }) => {
+        try {
+          const context = await resolveRepoContext(root);
+          await ghx.postClaimComment(
+            { cwd: root, repo: context.repo },
+            issue,
+            renderClaimComment({ worker: worker.id, runner: worker.runner }, "concede", "released"),
+          );
+        } catch {
+          // best-effort — never shadow the real spawn error
+        }
+      };
+      return createFleet(root, input, concedeClaim);
+    },
     fleetEdit: (input) => editFleet(root, input),
     fleetStop: async (input) => {
       const silent = new Writable({
