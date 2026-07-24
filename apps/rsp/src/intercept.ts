@@ -5,6 +5,7 @@ import {
   kickResidentServer,
   resolveResidentPaths,
 } from "./resident-client.js";
+import { resolveRspInvocationPrefix } from "./rsp-cli.js";
 import {
   appendTelemetryEvent,
   RSP_DECISIONS_COLLECTION,
@@ -48,6 +49,7 @@ export interface HookDecisionOptions {
   wakeResident?: (cwd: string) => void | Promise<void>;
   rewrite?: (command: string) => RewriteDecision;
   resolveBinary?: () => boolean;
+  rspInvocationPrefix?: string[];
 }
 
 let _cachedBinaryResolved: boolean | undefined;
@@ -120,25 +122,25 @@ export function rewriteTableFromCapabilities(capabilities: readonly RspWrapperCa
   return table;
 }
 
-export function rewriteCommand(command: string): RewriteDecision {
+export function rewriteCommand(command: string, rspPrefix: string[] = resolveRspInvocationPrefix()): RewriteDecision {
   const losslessGh = losslessGhJsonJqPassthrough(command);
   if (losslessGh) return losslessGh;
 
   const parsed = parseCertainSimpleCommand(command);
-  if (!parsed) return rewriteCompoundCommand(command);
+  if (!parsed) return rewriteCompoundCommand(command, rspPrefix);
   const tokens = parsed.tokens.map((token) => token.text);
-  if (tokens.length > 0 && isEnvAssignment(tokens[0]!)) return rewriteCompoundCommand(command);
+  if (tokens.length > 0 && isEnvAssignment(tokens[0]!)) return rewriteCompoundCommand(command, rspPrefix);
 
-  const fileRead = rewriteFileReadCommand(parsed);
+  const fileRead = rewriteFileReadCommand(parsed, rspPrefix);
   if (fileRead) return fileRead;
 
-  if (parsed.tokens.some((token) => token.quoted)) return rewriteCompoundCommand(command);
+  if (parsed.tokens.some((token) => token.quoted)) return rewriteCompoundCommand(command, rspPrefix);
 
   const capability = [...RSP_WRAPPER_CAPABILITIES]
     .sort((left, right) => right.command.length - left.command.length)
     .find((entry) => tokensStartWith(tokens, entry.command));
-  if (!capability) return rewriteCompoundCommand(command);
-  const rewritten = ["rsp", ...capability.wrapper, ...tokens.slice(capability.command.length)];
+  if (!capability) return rewriteCompoundCommand(command, rspPrefix);
+  const rewritten = [...rspPrefix, ...capability.wrapper, ...tokens.slice(capability.command.length)];
   const redirectSuffix = formatRedirectSuffix(parsed.redirectSuffix);
   return {
     kind: "rewrite",
@@ -147,15 +149,16 @@ export function rewriteCommand(command: string): RewriteDecision {
   };
 }
 
-function rewriteFileReadCommand(parsed: ParsedSimpleCommand): RewriteDecision | null {
+function rewriteFileReadCommand(parsed: ParsedSimpleCommand, rspPrefix: string[]): RewriteDecision | null {
   const tokens = parsed.tokens.map((token) => token.text);
   const command = tokens[0];
   const redirectSuffix = formatRedirectSuffix(parsed.redirectSuffix);
+  const prefix = rspPrefix.map(shellQuoteIfNeeded);
   if (command === "cat" && tokens.length === 2 && isPlainFileToken(tokens[1]!)) {
-    return { kind: "rewrite", command: ["rsp", "cat", shellQuoteIfNeeded(tokens[1]!), ...redirectSuffix].join(" "), capabilityId: "cat:file" };
+    return { kind: "rewrite", command: [...prefix, "cat", shellQuoteIfNeeded(tokens[1]!), ...redirectSuffix].join(" "), capabilityId: "cat:file" };
   }
   if ((command === "head" || command === "tail") && tokens.length === 2 && isPlainFileToken(tokens[1]!)) {
-    return { kind: "rewrite", command: ["rsp", "cat", `--${command}`, "10", shellQuoteIfNeeded(tokens[1]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
+    return { kind: "rewrite", command: [...prefix, "cat", `--${command}`, "10", shellQuoteIfNeeded(tokens[1]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
   }
   if (
     (command === "head" || command === "tail") &&
@@ -164,7 +167,7 @@ function rewriteFileReadCommand(parsed: ParsedSimpleCommand): RewriteDecision | 
     /^[1-9][0-9]*$/.test(tokens[2]!) &&
     isPlainFileToken(tokens[3]!)
   ) {
-    return { kind: "rewrite", command: ["rsp", "cat", `--${command}`, tokens[2]!, shellQuoteIfNeeded(tokens[3]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
+    return { kind: "rewrite", command: [...prefix, "cat", `--${command}`, tokens[2]!, shellQuoteIfNeeded(tokens[3]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
   }
   if (
     (command === "head" || command === "tail") &&
@@ -172,7 +175,7 @@ function rewriteFileReadCommand(parsed: ParsedSimpleCommand): RewriteDecision | 
     /^-[1-9][0-9]*$/.test(tokens[1]!) &&
     isPlainFileToken(tokens[2]!)
   ) {
-    return { kind: "rewrite", command: ["rsp", "cat", `--${command}`, tokens[1]!.slice(1), shellQuoteIfNeeded(tokens[2]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
+    return { kind: "rewrite", command: [...prefix, "cat", `--${command}`, tokens[1]!.slice(1), shellQuoteIfNeeded(tokens[2]!), ...redirectSuffix].join(" "), capabilityId: `cat:${command}` };
   }
   return null;
 }
@@ -250,7 +253,10 @@ async function hookDecisionResultFromPreExecJson(
 
   const started = process.hrtime.bigint();
   const config = resolveRspConfig(cwd, process.env);
-  const decision = config.proxyEnabled ? proxyCommand(command) : (options.rewrite ?? rewriteCommand)(command);
+  const rspPrefix = options.rspInvocationPrefix ?? resolveRspInvocationPrefix();
+  const decision = config.proxyEnabled
+    ? proxyCommand(command, rspPrefix)
+    : (options.rewrite ?? ((cmd: string) => rewriteCommand(cmd, rspPrefix)))(command);
   const decisionMs = Number(process.hrtime.bigint() - started) / 1_000_000;
   if (decision.kind !== "rewrite") {
     const passed = decision.reason ? decision : { ...decision, reason: "unsupported-command" };
@@ -561,14 +567,21 @@ function shellQuoteIfNeeded(value: string): string {
   return /[^\w@%+=:,./-]/.test(value) ? shellSingleQuote(value) : value;
 }
 
-function proxyCommand(command: string): RewriteDecision {
+function proxyCommand(command: string, rspPrefix: string[]): RewriteDecision {
   const reason = universalProxyPassthroughReason(command);
   if (reason) return { kind: "passthrough", reason };
+  const prefixStr = rspPrefix.map(shellQuoteIfNeeded).join(" ");
   return {
     kind: "rewrite",
-    command: `rsp proxy -- ${shellSingleQuote(command.trim())}`,
+    command: `${prefixStr} proxy -- ${shellSingleQuote(command.trim())}`,
     capabilityId: "proxy:universal",
   };
+}
+
+function isRspBundledCommand(command: string): boolean {
+  if (!process.argv[1]) return false;
+  const tokens = shellTokens(command);
+  return tokens[0]?.text === process.execPath && tokens[1]?.text === process.argv[1];
 }
 
 function universalProxyPassthroughReason(command: string): string | undefined {
@@ -578,16 +591,18 @@ function universalProxyPassthroughReason(command: string): string | undefined {
   if (/\b(?:RSP_NO_PROXY|RED_SKILLS_RSP_NO_PROXY)=1\b/.test(trimmed)) return "opt-out";
   const first = shellishWords(commandSegments(trimmed)[0] ?? "")[0];
   if (first === "rsp") return "opt-out";
+  if (isRspBundledCommand(trimmed)) return "opt-out";
   if (first && INTERACTIVE_COMMANDS.has(first)) return "interactive";
   return undefined;
 }
 
-function rewriteCompoundCommand(command: string): RewriteDecision {
+function rewriteCompoundCommand(command: string, rspPrefix: string[]): RewriteDecision {
   const trimmed = command.trim();
   if (!isSafeNoisyCompoundCommand(trimmed)) return { kind: "passthrough" };
+  const prefixStr = rspPrefix.map(shellQuoteIfNeeded).join(" ");
   return {
     kind: "rewrite",
-    command: `rsp exec -- ${shellSingleQuote(trimmed)}`,
+    command: `${prefixStr} exec -- ${shellSingleQuote(trimmed)}`,
     capabilityId: "exec:compound",
   };
 }
