@@ -1,4 +1,4 @@
-# graphify is banned; the knowledge-graph pipeline is absorbed into the memory plugin, staged by evidence
+# 0096 — graphify is banned; the knowledge-graph pipeline is absorbed into the memory plugin, staged by evidence
 
 ## Status
 

@@ -1,4 +1,4 @@
-# OpenCode plugin events replace Claude/Codex `claude.hooks.json` and `codex.hooks.json` with one TS module per event
+# 0077 — OpenCode plugin events replace Claude/Codex `claude.hooks.json` and `codex.hooks.json` with one TS module per event
 
 ## Status
 

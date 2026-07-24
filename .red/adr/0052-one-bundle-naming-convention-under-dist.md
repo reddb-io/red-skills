@@ -1,4 +1,4 @@
-# ADR 0052 — One bundle-naming convention, all release assets under `./dist/`
+# 0052 — One bundle-naming convention, all release assets under `./dist/`
 
 ## Status
 

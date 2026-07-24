@@ -1,4 +1,4 @@
-# rsp deliberate non-goals: provider-API stream compression and trained-model compression
+# 0100 — rsp deliberate non-goals: provider-API stream compression and trained-model compression
 
 ## Status
 

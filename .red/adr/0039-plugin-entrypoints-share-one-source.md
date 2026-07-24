@@ -1,4 +1,4 @@
-# Plugin entrypoints share one source, selected by a build role
+# 0039 — Plugin entrypoints share one source, selected by a build role
 
 ## Context
 

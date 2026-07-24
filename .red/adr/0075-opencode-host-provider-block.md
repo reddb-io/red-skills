@@ -1,4 +1,4 @@
-# OpenCode provider block is the canonical shape that hosts the AFK opencode runner on a developer machine
+# 0075 — OpenCode provider block is the canonical shape that hosts the AFK opencode runner on a developer machine
 
 ## Status
 

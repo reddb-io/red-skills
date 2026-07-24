@@ -1,4 +1,4 @@
-# Memory moat foundation before surface expansion
+# 0023 — Memory moat foundation before surface expansion
 
 ## Status
 

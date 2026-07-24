@@ -1,4 +1,4 @@
-# ADR 0050 — AFK salvages an uncommitted worktree when the inner agent emits DONE without committing
+# 0050 — AFK salvages an uncommitted worktree when the inner agent emits DONE without committing
 
 ## Status
 

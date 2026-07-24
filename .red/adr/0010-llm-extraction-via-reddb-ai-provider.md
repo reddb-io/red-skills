@@ -1,4 +1,4 @@
-# LLM conversation extraction routes through RedDB's AI provider, INFERRED-only
+# 0010 — LLM conversation extraction routes through RedDB's AI provider, INFERRED-only
 
 ## Status
 

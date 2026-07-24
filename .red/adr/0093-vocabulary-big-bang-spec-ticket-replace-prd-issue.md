@@ -1,4 +1,4 @@
-# Vocabulary big bang: Spec and Ticket replace PRD and Issue
+# 0093 — Vocabulary big bang: Spec and Ticket replace PRD and Issue
 
 Upstream mattpocock/skills v1.1.0 renamed `to-prd → to-spec` and `to-issues → to-tickets`, arguing the artifact we produce is a specification (it carries implementation and testing decisions, which a PRD does not) and that "issues" is tracker-jargon while "tickets" names the unit of work. Both arguments apply to RedSkills — our "PRD" template has always been a spec — so we adopt the rename at **total vocabulary scope**: skill names (`/to-spec`, `/to-tickets`), label vocabulary (`type:prd → type:spec`, `prd:N → spec:N`), the `/afk --prd` flag (`--spec`), and the glossary terms themselves (**Ticket** is canonical for the tracked unit, **Spec** for the parent document; "issue" survives only to name the GitHub object, "PRD" only in historical records).
 

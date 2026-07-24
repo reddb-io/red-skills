@@ -1,4 +1,4 @@
-# AFK trust gate: executable issues require trusted provenance before host execution
+# 0085 — AFK trust gate: executable issues require trusted provenance before host execution
 
 ## Status
 

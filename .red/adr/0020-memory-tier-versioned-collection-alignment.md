@@ -1,4 +1,4 @@
-# Memory tier maps directly to VERSIONED collection policy
+# 0020 — Memory tier maps directly to VERSIONED collection policy
 
 ## Status
 

@@ -1,4 +1,4 @@
-# AFK externalized proof-of-life: a periodic heartbeat record, state field, and `on_heartbeat` hook
+# 0045 — AFK externalized proof-of-life: a periodic heartbeat record, state field, and `on_heartbeat` hook
 
 ## Context
 

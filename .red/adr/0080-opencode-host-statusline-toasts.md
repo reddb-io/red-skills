@@ -1,4 +1,4 @@
-# OpenCode statusline + toasts — capitalize on the AFK statusline via session events + experimental.session.compacting
+# 0080 — OpenCode statusline + toasts — capitalize on the AFK statusline via session events + experimental.session.compacting
 
 ## Status
 

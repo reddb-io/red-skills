@@ -1,4 +1,4 @@
-# TOON/TOONL is the on-disk format doctrine — big-bang cutover, sole-publisher dependency, wave-2 gate on TOONL v0.2
+# 0097 — TOON/TOONL is the on-disk format doctrine — big-bang cutover, sole-publisher dependency, wave-2 gate on TOONL v0.2
 
 > **Amended by [Amendment 1 (2026-07-15)](#amendment-1-2026-07-15--toon-toolchain-version-sync-doctrine).** The pnpm catalog is the single version truth for the toon toolchain; derived pin sites are generated or guard-checked; routine upstream releases arrive through the Release watcher; red-castle keeps semver ranges and is re-pinned only by the consuming workspace lockfile.
 

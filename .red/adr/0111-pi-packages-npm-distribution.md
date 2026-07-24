@@ -1,4 +1,4 @@
-# Pi packages ship on npm as `@reddb-io/red-skills-<plugin>` for one-command install
+# 0111 — Pi packages ship on npm as `@reddb-io/red-skills-<plugin>` for one-command install
 
 ## Status
 

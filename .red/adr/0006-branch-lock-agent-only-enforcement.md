@@ -1,4 +1,4 @@
-# Branch lock enforces on the agent only, not the human terminal
+# 0006 — Branch lock enforces on the agent only, not the human terminal
 
 ## Status
 

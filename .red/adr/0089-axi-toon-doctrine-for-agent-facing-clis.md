@@ -1,4 +1,4 @@
-# AXI + TOON is the doctrine for every agent-facing CLI
+# 0089 — AXI + TOON is the doctrine for every agent-facing CLI
 
 > **⚠️ Partially amended by [Amendment 1 (2026-07-09)](#amendment-1-2026-07-09--rtk-retired-toon-scope-widened-to-all-structured-data).** Two points below no longer hold: the "RTK stays the safety net" consequence (RTK is retired by ADR 0095) and Decision 2's tabular-only TOON boundary (TOON now covers all structured data at every depth). The rest of the doctrine stands unchanged.
 >

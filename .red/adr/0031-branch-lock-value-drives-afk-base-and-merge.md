@@ -1,4 +1,4 @@
-# Branch lock value drives AFK base and merge; enforcement stays agent-only
+# 0031 — Branch lock value drives AFK base and merge; enforcement stays agent-only
 
 ## Status
 

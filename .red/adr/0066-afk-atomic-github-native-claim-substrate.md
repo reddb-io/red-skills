@@ -1,4 +1,4 @@
-# AFK atomic GitHub-native claim: a pure reconciler over server-ordered claim comments; labels become an observability projection
+# 0066 — AFK atomic GitHub-native claim: a pure reconciler over server-ordered claim comments; labels become an observability projection
 
 > **Numbering note.** PRD #614 and issue #622 refer to this decision as
 > "ADR 0056". That number was already taken by the landability reconciler

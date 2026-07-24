@@ -1,4 +1,4 @@
-# WorkItem abstraction decouples the worker engine from the GitHub issue tracker
+# 0088 — WorkItem abstraction decouples the worker engine from the GitHub issue tracker
 
 ## Status
 

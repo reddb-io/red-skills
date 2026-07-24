@@ -1,4 +1,4 @@
-# Relicense red-skills to Apache-2.0 with a NOTICE for upstream MIT
+# 0004 — Relicense red-skills to Apache-2.0 with a NOTICE for upstream MIT
 
 ## Status
 

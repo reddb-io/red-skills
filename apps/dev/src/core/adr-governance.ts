@@ -22,12 +22,14 @@ export interface AdrRecord {
 
 const ADR_FILENAME = /^\d{4}-.+\.md$/;
 
+/** Sorted ADR filenames in `files` — the one ADR-listing filter. */
+export function adrFiles(files: string[]): string[] {
+  return files.filter((file) => ADR_FILENAME.test(file)).sort();
+}
+
 /** Sorted four-digit numbers of every ADR filename in `files`. */
 export function adrNumbers(files: string[]): string[] {
-  return files
-    .filter((file) => ADR_FILENAME.test(file))
-    .map((file) => file.slice(0, 4))
-    .sort();
+  return adrFiles(files).map((file) => file.slice(0, 4));
 }
 
 /** Values appearing more than once, sorted. */
@@ -87,6 +89,29 @@ export function archivedRecordViolations(record: AdrRecord): string[] {
     violations.push(
       `${record.file}: \`superseded-by:\` must name a successor ADR number for status \`${status ?? "unknown"}\``,
     );
+  }
+
+  return violations;
+}
+
+/**
+ * Records whose H1 fails to identify the record by its own number. Line 1 must
+ * read `# NNNN — Title`, with `NNNN` equal to the filename prefix — a renumber
+ * that moves the file without moving the heading is the failure this catches.
+ */
+export function headingViolations(records: AdrRecord[]): string[] {
+  const violations: string[] = [];
+
+  for (const record of records) {
+    const heading = record.text.split("\n", 1)[0] ?? "";
+    const declared = heading.match(/^# (\d{4}) — /)?.[1];
+    const expected = record.file.slice(0, 4);
+
+    if (declared === undefined) {
+      violations.push(`${record.file}: line 1 must read \`# ${expected} — Title\`, got \`${heading}\``);
+    } else if (declared !== expected) {
+      violations.push(`${record.file}: H1 says \`${declared}\`, filename says \`${expected}\``);
+    }
   }
 
   return violations;

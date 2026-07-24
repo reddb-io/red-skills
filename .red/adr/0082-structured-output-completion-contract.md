@@ -1,4 +1,4 @@
-# Structured-output completion contract — a validated `AgentOutput` schema coexists with the `<promise>` sentinel
+# 0082 — Structured-output completion contract — a validated `AgentOutput` schema coexists with the `<promise>` sentinel
 
 ## Status
 

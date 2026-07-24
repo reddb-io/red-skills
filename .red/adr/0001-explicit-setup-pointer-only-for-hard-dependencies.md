@@ -1,4 +1,4 @@
-# Explicit `/setup-red-skills` pointer only for hard dependencies
+# 0001 — Explicit `/setup-red-skills` pointer only for hard dependencies
 
 ## Status
 

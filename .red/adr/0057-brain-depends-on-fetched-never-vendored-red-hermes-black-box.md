@@ -1,4 +1,4 @@
-# `red-hermes` is a fetched, never-vendored black-box dependency of the `brain` plugin
+# 0057 — `red-hermes` is a fetched, never-vendored black-box dependency of the `brain` plugin
 
 ## Context
 

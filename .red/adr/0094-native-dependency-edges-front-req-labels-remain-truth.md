@@ -1,4 +1,4 @@
-# Native dependency edges are the human surface; req:N labels remain the runtime's source of truth
+# 0094 — Native dependency edges are the human surface; req:N labels remain the runtime's source of truth
 
 Upstream v1.1.0 (`to-tickets`, `wayfinder`) prefers GitHub's native sub-issues and blocked-by relationships over body-text conventions, because the tracker renders the dependency frontier visually. Our AFK runtime, however, resolves dependencies from `req:N` edge labels + `blocked:dependency` (close cascade, boot unblock sweep, gate census) — proven code with a history of subtle race fixes.
 

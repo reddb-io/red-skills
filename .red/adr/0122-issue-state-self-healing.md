@@ -1,4 +1,4 @@
-# Issue-state self-healing: heal the provable, quarantine the judgable, never halt the fleet
+# 0122 — Issue-state self-healing: heal the provable, quarantine the judgable, never halt the fleet
 
 ## Context
 

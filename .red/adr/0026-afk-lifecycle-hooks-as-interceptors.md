@@ -1,4 +1,4 @@
-# AFK exposes lifecycle hooks as shell interceptors
+# 0026 — AFK exposes lifecycle hooks as shell interceptors
 
 ## Status
 

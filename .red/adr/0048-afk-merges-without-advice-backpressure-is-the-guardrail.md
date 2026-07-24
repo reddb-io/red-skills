@@ -1,4 +1,4 @@
-# ADR 0048 — AFK merges without advice; in-process backpressure is the guardrail
+# 0048 — AFK merges without advice; in-process backpressure is the guardrail
 
 ## Status
 
