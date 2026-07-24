@@ -3,25 +3,25 @@ import {
   blockedLabelFor,
   envelopeStatusFor,
   recoveryReasonFor,
-  type AttemptOutcome,
+  type WorkerOutcome,
   type RecoveryReason,
-} from "../src/core/attempt-outcome.js";
+} from "../src/core/worker-outcome.js";
 import type { AttemptStatus } from "../src/core/envelope.js";
 
-// attempt-outcome is the SINGLE OWNER of the AFK outcome vocabulary. This is an
-// EXHAUSTIVE table: every `AttemptOutcome` value → its expected `blockedLabelFor`
+// worker-outcome is the SINGLE OWNER of the AFK outcome vocabulary. This is an
+// EXHAUSTIVE table: every `WorkerOutcome` value → its expected `blockedLabelFor`
 // label and its expected `recoveryReasonFor` policy key. Pinning the full union
 // here makes the 3-enum-desync bug class impossible — any new outcome or any
 // drifted mapping breaks this table.
 
 interface Row {
-  outcome: AttemptOutcome;
+  outcome: WorkerOutcome;
   label: string | null;
   recovery: RecoveryReason | null;
 }
 
-// One row PER AttemptOutcome member. If a member is added without a row, the
-// `covers every AttemptOutcome member` assertion below fails.
+// One row PER WorkerOutcome member. If a member is added without a row, the
+// `covers every WorkerOutcome member` assertion below fails.
 const TABLE: Row[] = [
   // recoverable: carry both a typed label and a recovery policy key
   { outcome: "exhausted", label: "blocked:quota", recovery: "quota" },
@@ -59,7 +59,7 @@ const TABLE: Row[] = [
   { outcome: "claim-lost", label: null, recovery: null },
 ];
 
-describe("attempt-outcome — exhaustive outcome → (label, recovery) table", () => {
+describe("worker-outcome — exhaustive outcome → (label, recovery) table", () => {
   for (const row of TABLE) {
     it(`${row.outcome} → label ${row.label} · recovery ${row.recovery}`, () => {
       expect(blockedLabelFor(row.outcome)).toBe(row.label);
@@ -67,10 +67,10 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
     });
   }
 
-  it("covers every AttemptOutcome member exactly once", () => {
+  it("covers every WorkerOutcome member exactly once", () => {
     // The full union, spelled out independently of the table so a missing or
     // duplicated row is caught.
-    const ALL: AttemptOutcome[] = [
+    const ALL: WorkerOutcome[] = [
       "done",
       "blocked",
       "no-sentinel",
@@ -120,8 +120,8 @@ describe("attempt-outcome — exhaustive outcome → (label, recovery) table", (
 // ones the lifecycle deliberately re-buckets: feedback-failed emits a `blocked`
 // envelope (not a `feedback-failed` one), and the non-emitting outcomes fold into
 // the generic `blocked` failure bucket.
-describe("attempt-outcome — exhaustive outcome → envelope status table", () => {
-  const STATUS_TABLE: Array<{ outcome: AttemptOutcome; status: AttemptStatus }> = [
+describe("worker-outcome — exhaustive outcome → envelope status table", () => {
+  const STATUS_TABLE: Array<{ outcome: WorkerOutcome; status: AttemptStatus }> = [
     { outcome: "done", status: "done" },
     { outcome: "no-sentinel", status: "no-sentinel" },
     // #1308: signal-killed is still a death without a completion signal — it
@@ -159,8 +159,8 @@ describe("attempt-outcome — exhaustive outcome → envelope status table", () 
     });
   }
 
-  it("covers every AttemptOutcome member exactly once", () => {
-    const ALL: AttemptOutcome[] = [
+  it("covers every WorkerOutcome member exactly once", () => {
+    const ALL: WorkerOutcome[] = [
       "done",
       "blocked",
       "no-sentinel",

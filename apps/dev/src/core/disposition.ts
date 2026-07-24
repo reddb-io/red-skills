@@ -18,8 +18,8 @@
 // PURE — no IO. Decision/mapping only (PRD Human Decision): execution (editLabels,
 // comment, the envelope emit) stays at the call sites.
 
-import type { AttemptOutcome } from "./attempt-outcome.js";
-import { blockedLabelFor, envelopeStatusFor, recoveryReasonFor } from "./attempt-outcome.js";
+import type { WorkerOutcome } from "./worker-outcome.js";
+import { blockedLabelFor, envelopeStatusFor, recoveryReasonFor } from "./worker-outcome.js";
 import { recoveryCap, recoveryDecision, type RecoveryEnv } from "./recovery.js";
 import type { AttemptStatus } from "./envelope.js";
 import { LABEL_READY, LABEL_RUNNING, LABEL_HUMAN } from "./triage-labels.js";
@@ -55,7 +55,7 @@ export interface Disposition {
  * supervisor reaper's bounded re-claim cap, #402). Returns null when the outcome
  * carries no retry budget.
  */
-export function policyKeyFor(o: AttemptOutcome): string | null {
+export function policyKeyFor(o: WorkerOutcome): string | null {
   if (o === "stalled") return "stalled";
   return recoveryReasonFor(o);
 }
@@ -76,7 +76,7 @@ export function policyKeyFor(o: AttemptOutcome): string | null {
  * For EVERY other outcome the two views are identical, so the option is a no-op.
  */
 export function dispose(
-  o: AttemptOutcome,
+  o: WorkerOutcome,
   attemptN: number,
   env: RecoveryEnv,
   opts: { stalledRecoverable?: boolean } = {},

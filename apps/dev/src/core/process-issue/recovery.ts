@@ -38,7 +38,7 @@ import {
   type BackpressureExec,
   type BackpressureCheck,
 } from "../backpressure.js";
-import { runPostAttemptFormat, type PostAttemptFormatExec } from "../post-attempt-format.js";
+import { runPostWorkerFormat, type PostWorkerFormatExec } from "../post-worker-format.js";
 import {
   openReviewPr,
   openManualLandingPr,
@@ -62,8 +62,8 @@ import { dispose } from "../disposition.js";
 import {
   blockedLabelFor,
   envelopeStatusFor,
-  type AttemptOutcome,
-} from "../attempt-outcome.js";
+  type WorkerOutcome,
+} from "../worker-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
@@ -139,7 +139,7 @@ export async function editLabelsTagged(
   issue: number,
   remove: string[],
   add: string[],
-  reason: AttemptOutcome,
+  reason: WorkerOutcome,
 ): Promise<boolean> {
   const typed = blockedLabelFor(reason);
   if (typed === null) return deps.gh.editLabels(issue, remove, add);
@@ -175,7 +175,7 @@ export async function editIssueLifecycleLabels(
 export async function routeRecovery(
   deps: ProcessIssueDeps,
   issue: number,
-  reason: AttemptOutcome,
+  reason: WorkerOutcome,
   attemptN: number,
   opts: { forceDecision?: "retry" | "escalate" } = {},
 ): Promise<"retry" | "escalate"> {

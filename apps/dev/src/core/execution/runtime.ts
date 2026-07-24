@@ -96,7 +96,7 @@ export type AgentOutcome =
   | "no-sentinel"
   // External-signal kill (#1308): the inner process was terminated by an OS
   // signal (SIGKILL/SIGTERM). Carries the signal name in stdout. Routed to
-  // `signal-killed` in AttemptOutcome so the kill cause is recorded distinctly
+  // `signal-killed` in WorkerOutcome so the kill cause is recorded distinctly
   // from a generic crash — same recovery policy as `no-sentinel`.
   | "signal-killed"
   | "exhausted"

@@ -90,7 +90,7 @@ export const NODE_TYPES = [
   "goal",
   "answer",
   // Engineering semantic graph (PRD #95): AFK execution history.
-  "attempt",
+  "worker",
   "issue",
   "prd",
   "validation",
@@ -306,7 +306,7 @@ export function defaultTier(node_type: NodeType): Tier {
     case "session":
       return "ephemeral";
     case "why_note":
-    case "attempt":
+    case "worker":
       return "reasoning";
     default:
       return "durable";

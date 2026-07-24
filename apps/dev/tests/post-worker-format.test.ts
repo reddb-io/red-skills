@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_POST_ATTEMPT_FORMAT_TIMEOUT_MS,
-  runPostAttemptFormat,
-  type PostAttemptFormatExec,
-} from "../src/core/post-attempt-format.js";
+  DEFAULT_POST_WORKER_FORMAT_TIMEOUT_MS,
+  runPostWorkerFormat,
+  type PostWorkerFormatExec,
+} from "../src/core/post-worker-format.js";
 import { KILLED_EXIT_CODE } from "../src/runtime/exec.js";
 
 type ExecCall = { command: string; cwd: string; timeoutMs: number };
@@ -11,9 +11,9 @@ type ExecResult = { code: number; stdout: string; stderr: string; committed: boo
 
 function fakeExec(
   rules: Array<{ match: (command: string) => boolean; result: Partial<ExecResult> }> = [],
-): { exec: PostAttemptFormatExec; calls: ExecCall[] } {
+): { exec: PostWorkerFormatExec; calls: ExecCall[] } {
   const calls: ExecCall[] = [];
-  const exec: PostAttemptFormatExec = async ({ command, cwd, timeoutMs }) => {
+  const exec: PostWorkerFormatExec = async ({ command, cwd, timeoutMs }) => {
     calls.push({ command, cwd, timeoutMs });
     for (const rule of rules) {
       if (rule.match(command)) {
@@ -34,10 +34,10 @@ function fakeClock(step = 5): () => number {
   };
 }
 
-describe("runPostAttemptFormat", () => {
+describe("runPostWorkerFormat", () => {
   it("is a no-op for an empty command list", async () => {
     const { exec, calls } = fakeExec();
-    const result = await runPostAttemptFormat(exec, { worktree: "/wt", commands: [], now: fakeClock() });
+    const result = await runPostWorkerFormat(exec, { worktree: "/wt", commands: [], now: fakeClock() });
 
     expect(result.ok).toBe(true);
     expect(result.committed).toBe(false);
@@ -47,7 +47,7 @@ describe("runPostAttemptFormat", () => {
 
   it("skips blank/whitespace entries without running them", async () => {
     const { exec, calls } = fakeExec();
-    await runPostAttemptFormat(exec, {
+    await runPostWorkerFormat(exec, {
       worktree: "/wt",
       commands: ["  ", "cargo fmt --all", ""],
       now: fakeClock(),
@@ -59,21 +59,21 @@ describe("runPostAttemptFormat", () => {
 
   it("runs each command at the worktree root under the default timeout", async () => {
     const { exec, calls } = fakeExec();
-    await runPostAttemptFormat(exec, {
+    await runPostWorkerFormat(exec, {
       worktree: "/wt",
       commands: ["cargo fmt --all", "gofmt -w ."],
       now: fakeClock(),
     });
 
     expect(calls).toEqual([
-      { command: "cargo fmt --all", cwd: "/wt", timeoutMs: DEFAULT_POST_ATTEMPT_FORMAT_TIMEOUT_MS },
-      { command: "gofmt -w .", cwd: "/wt", timeoutMs: DEFAULT_POST_ATTEMPT_FORMAT_TIMEOUT_MS },
+      { command: "cargo fmt --all", cwd: "/wt", timeoutMs: DEFAULT_POST_WORKER_FORMAT_TIMEOUT_MS },
+      { command: "gofmt -w .", cwd: "/wt", timeoutMs: DEFAULT_POST_WORKER_FORMAT_TIMEOUT_MS },
     ]);
   });
 
   it("passes the caller-supplied timeoutMs to the exec", async () => {
     const { exec, calls } = fakeExec();
-    await runPostAttemptFormat(exec, {
+    await runPostWorkerFormat(exec, {
       worktree: "/wt",
       commands: ["cargo fmt --all"],
       now: fakeClock(),
@@ -87,7 +87,7 @@ describe("runPostAttemptFormat", () => {
     const { exec } = fakeExec([
       { match: (c) => c === "cargo fmt --all", result: { committed: true } },
     ]);
-    const result = await runPostAttemptFormat(exec, {
+    const result = await runPostWorkerFormat(exec, {
       worktree: "/wt",
       commands: ["cargo fmt --all"],
       now: fakeClock(),
@@ -101,7 +101,7 @@ describe("runPostAttemptFormat", () => {
     const { exec } = fakeExec([
       { match: (c) => c === "cargo fmt --all", result: { committed: true } },
     ]);
-    const result = await runPostAttemptFormat(exec, {
+    const result = await runPostWorkerFormat(exec, {
       worktree: "/wt",
       commands: ["cargo fmt --all", "gofmt -w ."],
       now: fakeClock(),
@@ -116,7 +116,7 @@ describe("runPostAttemptFormat", () => {
     const { exec, calls } = fakeExec([
       { match: (c) => c === "cargo fmt --all", result: { code: 1, stdout: "syntax error" } },
     ]);
-    const result = await runPostAttemptFormat(exec, {
+    const result = await runPostWorkerFormat(exec, {
       worktree: "/wt",
       commands: ["cargo fmt --all", "gofmt -w ."],
       now: fakeClock(),
@@ -132,7 +132,7 @@ describe("runPostAttemptFormat", () => {
     const { exec } = fakeExec([
       { match: (c) => c === "cargo fmt --all", result: { code: KILLED_EXIT_CODE } },
     ]);
-    const result = await runPostAttemptFormat(exec, {
+    const result = await runPostWorkerFormat(exec, {
       worktree: "/wt",
       commands: ["cargo fmt --all"],
       now: fakeClock(),
@@ -147,7 +147,7 @@ describe("runPostAttemptFormat", () => {
     const clockSeq = [1000, 2234];
     let idx = 0;
     const { exec } = fakeExec();
-    const result = await runPostAttemptFormat(exec, {
+    const result = await runPostWorkerFormat(exec, {
       worktree: "/wt",
       commands: ["cargo fmt --all"],
       now: () => clockSeq[idx++] ?? 0,
@@ -158,7 +158,7 @@ describe("runPostAttemptFormat", () => {
 
   it("trims whitespace from the command string before running and logging", async () => {
     const { exec, calls } = fakeExec();
-    const result = await runPostAttemptFormat(exec, {
+    const result = await runPostWorkerFormat(exec, {
       worktree: "/wt",
       commands: ["  cargo fmt --all  "],
       now: fakeClock(),

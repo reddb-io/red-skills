@@ -43,7 +43,7 @@ import type { GhContext } from "../../runtime/gh.js";
 import { buildReviewGh } from "../../runtime/review-gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, readPostAttemptFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readPostWorkerFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../../core/config.js";
 import {
   makeExtractAdversarialReview,
   resolveAdversarialReviewConfig,
@@ -429,8 +429,8 @@ export function buildProcessDeps(
     })(),
     // Post-attempt-format step (#1015): operator-declared `afk.post_attempt_format`
     // commands run BEFORE the feedback gate and auto-commit any formatting delta.
-    postAttemptFormat: feedback.postAttemptFormat,
-    postAttemptFormatCommands: readPostAttemptFormat(config),
+    postWorkerFormat: feedback.postWorkerFormat,
+    postWorkerFormatCommands: readPostWorkerFormat(config),
     runAgent: makeImplementerRunAgent({
       root: ctx.root, workerId, current, config, configText,
       pluginRoots: implementerPluginRoots, castleBridge, sandbox,

@@ -138,7 +138,7 @@ Read the focused reference before touching that concern:
 - Durable AFK process state lives under `.red/state/castle/`; disposable worker
   attempts, claim locks, worktrees, logs, and diagnostics stay in registered
   `.red/tmp/` lanes and are the only targets of the lane janitor.
-- State files, terminal-event envelope, attempt-outcome mapping, JSONL lanes,
+- State files, terminal-event envelope, worker-outcome mapping, JSONL lanes,
   and failure snapshots: [`docs/ENVELOPE.md`](./docs/ENVELOPE.md).
 - Handoff wrappers and inner-agent prompt materialisation:
   [`docs/HANDOFF.md`](./docs/HANDOFF.md) and

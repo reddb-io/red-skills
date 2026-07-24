@@ -950,7 +950,7 @@ export function readBackpressure(values: ConfigValues): string[] {
  * bare keys in {@link loadConfig} (ADR 0042). A single-line scalar is accepted
  * as a one-command list. Absent/empty → `[]` (the step is a no-op).
  */
-export function readPostAttemptFormat(values: ConfigValues): string[] {
+export function readPostWorkerFormat(values: ConfigValues): string[] {
   const indexed: string[] = [];
   for (let i = 0; ; i++) {
     const v = values[`afk.post_attempt_format.${i}`];

@@ -18,7 +18,7 @@
 //
 // Top-level XML wrappers appear in template order, and any section that would
 // be empty is omitted entirely — byte-for-byte matching the bash:
-//   <issue-body> · <handoff-enrichment> · <previous-attempts> · <human-guidance-thread> ·
+//   <issue-body> · <handoff-enrichment> · <previous-workers> · <human-guidance-thread> ·
 //   <prev-failure-context> · <thread-discussion> · <agent-notes>
 
 import { AGENT_OUTPUT_TAG } from "@reddb-io/red-castle";
@@ -185,12 +185,12 @@ function stripFencesAndBlanks(lines: string[]): string {
 }
 
 /**
- * `<previous-attempts>` inner body: one `<previous-attempt>` element per
+ * `<previous-workers>` inner body: one `<previous-worker>` element per
  * envelope comment, in chronological order, with status/worker/duration/branch
  * attributes (when present) and `<notes>`/`<drop>`/`<log>` children. Returns ""
  * when no comment is an envelope — caller suppresses the wrapper.
  */
-export function buildPreviousAttempts(comments: HandoffComment[]): string {
+export function buildPreviousWorkers(comments: HandoffComment[]): string {
   const envelopes = comments.filter((c) => classifyComment({ body: c.body }) === "envelope");
   if (envelopes.length === 0) return "";
 
@@ -203,7 +203,7 @@ export function buildPreviousAttempts(comments: HandoffComment[]): string {
     const branchRaw = envelopeSection(body, "branch");
     const branch = branchRaw === null ? "" : branchRaw.split("\n", 1)[0]!;
 
-    let attr = `<previous-attempt n="${index + 1}" status="${status}"`;
+    let attr = `<previous-worker n="${index + 1}" status="${status}"`;
     if (isPresent(worker)) attr += ` worker="${worker}"`;
     if (isPresent(duration)) attr += ` duration="${duration}"`;
     if (isPresent(branch)) attr += ` branch="${branch}"`;
@@ -216,7 +216,7 @@ export function buildPreviousAttempts(comments: HandoffComment[]): string {
     if (isPresent(drop ?? undefined)) parts.push(`<drop>\n${drop}\n</drop>`);
     const log = envelopeSection(body, "log");
     if (isPresent(log ?? undefined)) parts.push(`<log>\n${log}\n</log>`);
-    parts.push("</previous-attempt>");
+    parts.push("</previous-worker>");
     blocks.push(parts.join("\n"));
   });
 
@@ -372,7 +372,7 @@ export function buildHandoff(input: HandoffInput): string {
     lines.push("</output-shaping>");
   }
 
-  const attempts = buildPreviousAttempts(input.comments);
+  const attempts = buildPreviousWorkers(input.comments);
   const guidance = buildHumanGuidance(input.comments);
   const discussion = buildThreadDiscussion(input.comments);
   const prevFailure = input.prevFailureContext ?? "";
@@ -387,9 +387,9 @@ export function buildHandoff(input: HandoffInput): string {
 
   if (isPresent(attempts)) {
     lines.push("");
-    lines.push("<previous-attempts>");
+    lines.push("<previous-workers>");
     lines.push(attempts);
-    lines.push("</previous-attempts>");
+    lines.push("</previous-workers>");
   }
 
   if (isPresent(guidance)) {

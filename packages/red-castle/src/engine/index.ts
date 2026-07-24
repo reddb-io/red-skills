@@ -11,7 +11,7 @@ export type {
   Timeouts,
 } from "../run.js";
 
-export * from "./attempt-reader.js";
+export * from "./worker-reader.js";
 export * from "./gate-constants.js";
 export * from "./gate-executor.js";
 export * from "./gate-sink.js";
