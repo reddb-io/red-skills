@@ -111,6 +111,8 @@ Three things to verify after setup:
 
 The per-host ambient instruction surface that replaces legacy host-local terminal guidance is tracked in #1415 and generated from `apps/rsp/generated/AMBIENT-SKILL.md`; do not block setup on it.
 
+The full provisioning story — how the binary reaches a host without a global install, the opt-in knobs, the escape hatches (`RSP_NO_PROXY=1` / `RED_SKILLS_RSP_NO_PROXY=1`), and the failure semantics — is documented in `apps/rsp/README.md` under **Provisioning**.
+
 **Section E1 — Runtime launcher (strongly recommended).**
 
 > Explainer: `CLAUDE_PLUGIN_ROOT`, `CODEX_PLUGIN_ROOT`, and similar variables are plugin/hook environment variables. They are not guaranteed in the interactive shell where an agent runs `/afk`, `/go`, `/dashboard`, or `/retake`. Setting those names globally is brittle because they point at versioned plugin-cache directories and can become stale after an update. The cross-CLI surface should be a stable command, not a global fake plugin-root variable.
