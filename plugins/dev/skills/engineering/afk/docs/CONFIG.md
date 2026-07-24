@@ -76,6 +76,31 @@ MCP, and non-essential host hooks are absent from every projection.
 | `afk.companion.*` (cap) | `RED_AFK_RETRY_DRIFT` | `2` | Companion bounded re-enqueue budget. Each detected drift on an attempt injects **one** correction (write-only, idempotent via a fingerprint, rewriting `## Agent brief`); once the attempt count reaches this cap the companion **escalates** to `ready-for-human` (a `## Current blocker` of kind `drift`) instead of correcting again. Shares the bounded-recovery policy (`core/recovery.ts`); never kills a process — termination/respawn is the reaper + fleet's job. |
 | `afk.drain.max_cost_usd` | `RED_AFK_DRAIN_MAX_COST_USD` / `fleet --budget-usd` | _(unset)_ | Per-drain USD budget for the fleet supervisor. Spend is read from WorkerVitals (`current.cost_usd`) in worker state files, not a parallel ledger. Tiers are OK below 75%, WARNING at 75%, CRITICAL at 90%, and HARD_STOP at 100%. CRITICAL spawns new workers with one model-tier-policy downgrade; HARD_STOP stops all new spawns, lets in-flight workers finish, and records a TOON budget event in `.red/tmp/supervisors/default/supervisor.log.toonl`. |
 
+### Tier routing
+
+AFK classifies each claimed Ticket before spawning its runner and resolves the
+selected tier through `afk.models.<runner>.<tier>.{model,effort}`. The default
+router uses cheap Ticket metadata: type and mechanical labels, referenced paths
+and scope count in the body, risk/design keywords, and `spec:<number>` family
+membership. Docs/validation-only work routes to `validate`, ordinary
+single-scope implementation routes to the standard `simple` tier, cross-scope or
+risk-sensitive work routes to `complex`, and explicit design/routing work routes
+to `think`. If classification is unavailable or unknown, AFK continues on
+`simple`; classification never blocks a Worker.
+
+An explicit `tier:validate`, `tier:simple`, `tier:complex`, or `tier:think`
+Ticket label always wins over inferred signals. Repository overrides remain the
+normal model table above: for example, setting
+`plugins.dev.afk.models.codex.simple.model` changes what the standard route
+spawns without changing the classifier. Runtime `--model`/`RED_AFK_MODEL` and
+`--effort`/`RED_AFK_EFFORT` overrides still take precedence and flatten the
+resolved tiers as documented by the model-tier policy.
+
+Every spawn appends a route line to the Worker log and stamps
+`current.model_tier`, `current.model`, and `current.effort` in the Worker state.
+`red-skills-dev monitor` renders the active tier as `tier:<name>` on the Worker
+row, alongside the existing vitals.
+
 ```yaml
 plugins:
   dev:
@@ -170,6 +195,28 @@ exit-code policy table above:
 - Parse tool input as structured stdin JSON. Do not interpolate raw tool input
   into a shell command string; if a hook must deny a command, emit JSON that asks
   the host to deny it.
+
+### Hook Interpreter Contract
+
+**A shipped hook is a bash script, and every invocation site names bash
+explicitly.** Concretely: each shipped hook carries a `#!/usr/bin/env bash`
+shebang, the lifecycle dispatcher runs commands through `bash -c`
+(`runtime/hooks.ts`), and a manifest that hands a script path to an interpreter
+writes `bash "$hook"` — never `sh "$hook"`. Bash ≥ 3.2 is a hard host
+prerequisite checked at boot (`afk.host-prerequisites`), so the interpreter is
+proven present before any hook runs.
+
+**The host's `/bin/sh` is never assumed to be bash.** Claude, Codex, and the MCP
+launcher configs invoke us as `sh -c '<wrapper>'`, and on Debian/Ubuntu that
+`sh` is dash. So the wrapper bodies inside `claude.hooks.json`,
+`codex.hooks.json`, and `.mcp.json` stay strictly POSIX — no `[[ ]]`, no
+`(( ))`, no arrays, no `local`, no `source`, no process substitution — and reach
+the real logic by invoking bash. Bash-only constructs live behind the shebang,
+never in a wrapper.
+
+`apps/dev/tests/shipped-hooks-posix.test.ts` pins both halves: it executes every
+shipped hook in a sandbox whose `sh` is dash, and lints/parses every wrapper
+body with dash. A `#!/bin/sh` hook or an `sh "$hook"` invocation site fails it.
 
 Run `scripts/audit-hook-hardening-contract.sh` before shipping changes to
 `plugins/*/hooks/`, AFK library hooks, or hook launcher wrappers. The audit is

@@ -82,6 +82,15 @@ describe("resolveHostEnvAllowlist", () => {
     expect(out).toContain("PATH");
   });
 
+  it("pins BASH_ENV and ENV out of the codex defaults — shell-init pointer strip (#2627)", () => {
+    // Regression net: these are always stripped for codex regardless of future
+    // additions to AFK_HOST_ENV_ALLOWLIST. Operator passthrough still allowed.
+    const codexList = resolveHostEnvAllowlist({}, "codex");
+    expect(codexList).not.toContain("BASH_ENV");
+    expect(codexList).not.toContain("ENV");
+    expect(codexList).not.toContain("CLAUDE*");
+  });
+
   it("the literal * escape hatch disables minimization entirely", () => {
     expect(resolveHostEnvAllowlist({ RED_AFK_HOST_ENV_ALLOW: "*" })).toBeUndefined();
     expect(resolveHostEnvAllowlist({ RED_AFK_HOST_ENV_ALLOW: "FOO,*" })).toBeUndefined();

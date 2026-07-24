@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # gradle-pre-worktree.sh — built-in pre_worktree default for Gradle projects.
 #
 # Contract (PRD #207, issue #211):

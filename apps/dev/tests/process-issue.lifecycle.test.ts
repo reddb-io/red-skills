@@ -286,6 +286,58 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.runAgentCalls[0]?.model).toBe("claude-complex-model");
     expect(trace.runAgentCalls[0]?.effort).toBe("medium");
   });
+
+  it("falls back to the standard simple tier when classification is unavailable", async () => {
+    const tiers: string[] = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      classifyIssue: async () => {
+        throw new Error("classifier unavailable");
+      },
+      resolveTier: (_runner, taskClass) => {
+        tiers.push(taskClass ?? "missing");
+        return { model: `claude-${taskClass}-model`, effort: "high" };
+      },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(tiers).toEqual(["simple"]);
+    expect(trace.runAgentCalls[0]?.model).toBe("claude-simple-model");
+  });
+
+  it("records the resolved routing decision in the worker lane before spawn", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      classifyIssue: async () => "complex",
+      resolveTier: () => ({ model: "claude-complex-model", effort: "medium" }),
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.iterLogs).toContain(
+      "🤖 /afk route #9: tier=complex runner=claude model=claude-complex-model effort=medium.",
+    );
+    expect(trace.statePatches).toContainEqual({
+      "current.runner": "claude",
+      "current.model_tier": "complex",
+      "current.model": "claude-complex-model",
+      "current.effort": "medium",
+    });
+    expect(trace.workerEvents).toContainEqual({
+      kind: "worker.routed",
+      payload: {
+        runner: "claude",
+        model_tier: "complex",
+        model: "claude-complex-model",
+        effort: "medium",
+      },
+    });
+  });
 });
 
 
@@ -1507,6 +1559,27 @@ describe("processIssue — trunk-mirror boot failure (#2436)", () => {
     // Park comment must not contain a live-branch link (branch was never pushed).
     const envelope = trace.envelopeBodies[0] ?? "";
     expect(envelope).not.toMatch(/live branch:/);
+  });
+});
+
+describe("processIssue — pre_merge hook abort (primary checkout untouched, #2628)", () => {
+  it("pre_merge abort: push happened but no integration ran, routes to merge-conflict", async () => {
+    // Pins AC1/AC2 from #2628: pre_merge fires after the attempt push but before
+    // any integration command. An abort must leave the primary checkout untouched —
+    // Landing runs entirely inside its isolated worktree; no primary snapshot commit
+    // is created. The lifecycle routes the abort to merge-conflict, not a hard error.
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, abortHook: "pre_merge" });
+    const result = await processIssue(deps, input);
+
+    // pre_merge-abort feeds mergeFailed → merge-conflict outcome.
+    expect(result.outcome).toBe("merge-conflict");
+    // The attempt was pushed (push precedes the hook) — the remote ref exists.
+    expect(trace.pushedAttempt).toHaveLength(1);
+    // No merge or integration command ran after the abort.
+    expect(trace.mergeCalls).toEqual([]);
+    // pre_merge fired; post_merge did not — no integration ran.
+    expect(result.hooksFired).toContain("pre_merge");
+    expect(result.hooksFired).not.toContain("post_merge");
   });
 });
 

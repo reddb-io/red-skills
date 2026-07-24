@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -21,11 +21,17 @@ vi.mock("@reddb-io/red-castle/engine", async (importOriginal) => {
   return {
     ...actual,
     removeFleetProfile: vi.fn(actual.removeFleetProfile),
+    upsertFleetProfile: vi.fn(actual.upsertFleetProfile),
   };
 });
 
+vi.mock("../src/core/fleet-create-reap.js", () => ({
+  reapOrphanedFleetWorkers: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
 import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
+import { reapOrphanedFleetWorkers } from "../src/core/fleet-create-reap.js";
 import { afkPaths } from "../src/runtime/wire.js";
 
 const roots: string[] = [];
@@ -39,6 +45,8 @@ afterEach(async () => {
 beforeEach(() => {
   vi.mocked(spawnSupervisor).mockReset();
   vi.mocked(removeFleetProfile).mockClear();
+  vi.mocked(upsertFleetProfile).mockClear();
+  vi.mocked(reapOrphanedFleetWorkers).mockClear();
 });
 
 async function root(): Promise<string> {
@@ -195,6 +203,35 @@ describe("fleet_create startup probe", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("surfaces the spawn error and writes spawn-failure.toon when the process cannot be started", async () => {
+    const cwd = await root();
+    const paths = afkPaths(cwd, "spawn-error");
+    vi.mocked(spawnSupervisor).mockRejectedValueOnce(
+      Object.assign(new Error("spawn /bad/node ENOENT"), {
+        code: "ENOENT",
+        syscall: "spawn",
+      }),
+    );
+
+    const failure = await createCastleMcpDependencies(cwd)
+      .fleetCreate({ name: "spawn-error", runner: "codex", target: 1 })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/spawn \/bad\/node ENOENT/);
+
+    const spawnFailurePath = join(paths.supervisorRuntimeDir, "spawn-failure.toon");
+    const artifact = await readFile(spawnFailurePath, "utf8");
+    expect(artifact).toMatch(/spawn \/bad\/node ENOENT/);
+
+    await expect(
+      readFleetProfile(
+        fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
+        "spawn-error",
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it("reports an unconfirmed rollback when removing the profile fails", async () => {
     const cwd = await root();
     vi.mocked(spawnSupervisor).mockResolvedValue(null);
@@ -216,5 +253,81 @@ describe("fleet_create startup probe", () => {
         "rollback-failure",
       ),
     ).resolves.toMatchObject({ name: "rollback-failure", runner: "codex" });
+  });
+});
+
+describe("fleet_create register-before-dispatch ordering", () => {
+  it("registers the profile on disk before spawning the supervisor", async () => {
+    const cwd = await root();
+    let profileExistedAtSpawn = false;
+
+    vi.mocked(spawnSupervisor).mockImplementation(async (opts) => {
+      const profile = await readFleetProfile(
+        fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
+        "ordering-fleet",
+      );
+      profileExistedAtSpawn = profile !== undefined;
+      return 43130;
+    });
+
+    await createCastleMcpDependencies(cwd).fleetCreate({
+      name: "ordering-fleet",
+      runner: "codex",
+      target: 1,
+    });
+
+    expect(profileExistedAtSpawn).toBe(true);
+  });
+});
+
+describe("fleet_create reap-on-failure", () => {
+  it("reaps orphaned workers and leaves no profile when the supervisor fast-dies", async () => {
+    const cwd = await root();
+    const paths = afkPaths(cwd, "zero-residue");
+    vi.mocked(spawnSupervisor).mockResolvedValue(null);
+
+    const failure = await createCastleMcpDependencies(cwd)
+      .fleetCreate({ name: "zero-residue", runner: "codex", target: 1 })
+      .catch((e: unknown) => e);
+
+    // profile was rolled back (no profile)
+    await expect(
+      readFleetProfile(
+        fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
+        "zero-residue",
+      ),
+    ).resolves.toBeUndefined();
+
+    // reap was triggered with the fleet state path and tmp dir (kills workers +
+    // concedes claims via reapOrphanedFleetWorkers)
+    expect(reapOrphanedFleetWorkers).toHaveBeenCalledWith(
+      paths.fleetStatePath,
+      afkPaths(cwd).tmpDir,
+      expect.any(Function),
+    );
+
+    // the original error is still surfaced
+    expect(failure).toBeInstanceOf(Error);
+  });
+
+  it("reaps orphaned workers when the spawn syscall itself fails", async () => {
+    const cwd = await root();
+    const paths = afkPaths(cwd, "spawn-reap");
+    vi.mocked(spawnSupervisor).mockRejectedValueOnce(
+      Object.assign(new Error("spawn /bad/node ENOENT"), {
+        code: "ENOENT",
+        syscall: "spawn",
+      }),
+    );
+
+    await createCastleMcpDependencies(cwd)
+      .fleetCreate({ name: "spawn-reap", runner: "codex", target: 1 })
+      .catch(() => undefined);
+
+    expect(reapOrphanedFleetWorkers).toHaveBeenCalledWith(
+      paths.fleetStatePath,
+      afkPaths(cwd).tmpDir,
+      expect.any(Function),
+    );
   });
 });

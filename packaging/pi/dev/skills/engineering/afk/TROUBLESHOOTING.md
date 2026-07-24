@@ -262,3 +262,28 @@ supervisor.
 Supervisor snapshots persist slot pids so takeover is automatic. This playbook
 is the manual verification path for #2067 and should stay aligned with the
 state snapshot contract.
+
+## Fast-death taxonomy
+
+A "fast death" is any worker exit the circuit breaker counts within its window
+(`CIRCUIT_K` deaths inside `CIRCUIT_WINDOW_S`). These are the named classes:
+
+- **stale-claims boot crash (dominant)**: Worker boots, reads a poisoned
+  stale-claim file, and dies before the sandcastle spawn directory is created
+  (`{issue}-{worker}/` absent from the worker dir). Signature: worker dir
+  contains only `worker.pid`, no spawn subdirectory, +0/-0 diff. Not OOM, not
+  quota. Cured by purging the stale claim and rebooting the fleet.
+
+- **gh rate-limit misread as auth failure**: A transient GitHub API rate-limit
+  burst makes `gh auth status` exit non-zero, tricking the boot pre-check into
+  reporting "gh not authenticated". Fixed — `ghAuthenticated` now discriminates
+  report text so a transient rate-limit never bricks the fleet.
+
+- **host-config: missing interpreter or cwd (terminal, non-retryable)**: Worker
+  spawn fails with `spawn sh ENOENT` (no POSIX shell on PATH) or `cwd does not
+  exist`. Previously mis-classified as `runner-transient`, which caused the
+  cooldown circuit to retry a permanent host defect indefinitely. Now classified
+  as `host-config` — no retry is scheduled, the terminal envelope names the
+  defect, and the issue is released back to the queue. Fix the host environment
+  (install or restore `sh`; confirm the configured workspace path exists) and
+  rerun.

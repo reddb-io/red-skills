@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # gradle.sh — afk pre-spawn detector for Gradle projects.
 #
 # Applies when a build.gradle* file exists at PROJECT_ROOT AND the

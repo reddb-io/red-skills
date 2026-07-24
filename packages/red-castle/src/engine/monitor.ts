@@ -150,6 +150,8 @@ export interface CompactCurrent {
    * Absent on pre-schema state files. Surfaced (shortened) on the themed
    * per-worker `run=` label (issue #1175). */
   model?: string;
+  /** Classifier-selected AFK model tier (`validate|simple|complex|think`). */
+  model_tier?: string;
   /** Reasoning-effort level this worker's attempt ran with (e.g. `high`, `max`).
    * Absent when the state/config did not carry it — the `run=` label then omits
    * just the effort word (issue #1175). */
@@ -499,7 +501,8 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
   if (!isNoIssue(state.current.number)) {
     const title = state.current.title.slice(0, TITLE_MAX);
     const elapsed = formatElapsed(elapsedSeconds(state, now));
-    cur = `  #${state.current.number} ${title}  activity:${state.current.activity}  ${elapsed}${diff}${costFrag}${vitalsFrag}${logFrag}`;
+    const tierFrag = state.current.model_tier ? ` tier:${state.current.model_tier}` : "";
+    cur = `  #${state.current.number} ${title}  activity:${state.current.activity}${tierFrag}  ${elapsed}${diff}${costFrag}${vitalsFrag}${logFrag}`;
   } else {
     cur = `  idle${diff}${logFrag}`;
   }
