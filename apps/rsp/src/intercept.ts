@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { existsSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
 import {
@@ -48,6 +47,44 @@ export interface HookDecisionOptions {
   isResidentHealthy?: (cwd: string) => boolean | Promise<boolean>;
   wakeResident?: (cwd: string) => void | Promise<void>;
   rewrite?: (command: string) => RewriteDecision;
+  resolveBinary?: () => boolean;
+}
+
+let _cachedBinaryResolved: boolean | undefined;
+let _binaryHintEmitted = false;
+
+export function _testOnlyResetBinaryState(): void {
+  _cachedBinaryResolved = undefined;
+  _binaryHintEmitted = false;
+}
+
+function resolveRspBinaryFromPath(): boolean {
+  const dirs = (process.env.PATH ?? "").split(":");
+  for (const dir of dirs) {
+    if (!dir) continue;
+    try {
+      accessSync(`${dir}/rsp`, constants.X_OK);
+      return true;
+    } catch {
+      // not in this dir
+    }
+  }
+  return false;
+}
+
+function resolveBinaryOnce(resolver: () => boolean): boolean {
+  if (_cachedBinaryResolved === undefined) {
+    _cachedBinaryResolved = resolver();
+  }
+  return _cachedBinaryResolved;
+}
+
+function emitBinaryHint(): void {
+  if (_binaryHintEmitted) return;
+  _binaryHintEmitted = true;
+  process.stderr.write(
+    "rsp: entrypoint not found on PATH; run `rsp setup` to provision. See apps/rsp/docs/TROUBLESHOOTING.md\n",
+  );
 }
 
 export const RSP_WRAPPER_CAPABILITIES: readonly RspWrapperCapability[] = [
@@ -200,6 +237,17 @@ async function hookDecisionResultFromPreExecJson(
       event: hookDecisionEvent({ hook, command, decision, reason: "missing-command" }),
     };
   }
+  const binaryResolved = resolveBinaryOnce(options.resolveBinary ?? resolveRspBinaryFromPath);
+  if (!binaryResolved) {
+    emitBinaryHint();
+    const decision: RewriteDecision = { kind: "passthrough", reason: "binary-unresolved" };
+    return {
+      decision,
+      telemetryRoot: cwd,
+      event: hookDecisionEvent({ hook, command, decision, reason: "binary-unresolved" }),
+    };
+  }
+
   const started = process.hrtime.bigint();
   const config = resolveRspConfig(cwd, process.env);
   const decision = config.proxyEnabled ? proxyCommand(command) : (options.rewrite ?? rewriteCommand)(command);
