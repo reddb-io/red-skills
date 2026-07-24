@@ -1,4 +1,4 @@
-# Memory benchmark measures substrate superiority on a curated engineering corpus, not LOCOMO
+# 0037 — Memory benchmark measures substrate superiority on a curated engineering corpus, not LOCOMO
 
 ## Status
 

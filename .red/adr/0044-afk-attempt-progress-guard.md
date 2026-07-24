@@ -1,4 +1,4 @@
-# AFK attempt progress guard: a commit-anchored wall-clock that parks a stalled agent
+# 0044 — AFK attempt progress guard: a commit-anchored wall-clock that parks a stalled agent
 
 ## Context
 

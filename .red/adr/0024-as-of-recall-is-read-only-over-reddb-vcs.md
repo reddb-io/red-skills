@@ -1,4 +1,4 @@
-# AS OF recall is read-only over RedDB VCS
+# 0024 — AS OF recall is read-only over RedDB VCS
 
 ## Status
 

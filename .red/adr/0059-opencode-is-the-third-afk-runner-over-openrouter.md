@@ -1,4 +1,4 @@
-# OpenCode is the third AFK runner, addressing OpenRouter through its own model slug
+# 0059 — OpenCode is the third AFK runner, addressing OpenRouter through its own model slug
 
 ## Status
 

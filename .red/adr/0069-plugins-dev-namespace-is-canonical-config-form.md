@@ -1,4 +1,4 @@
-# `plugins.dev.*` is the canonical written config form; the doctor enforces it and migrates legacy top-level keys
+# 0069 — `plugins.dev.*` is the canonical written config form; the doctor enforces it and migrates legacy top-level keys
 
 ## Status
 

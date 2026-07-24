@@ -1,4 +1,4 @@
-# Brain semantic search uses local-first embeddings on a separate lane from cloud generation
+# 0068 — Brain semantic search uses local-first embeddings on a separate lane from cloud generation
 
 ## Status
 

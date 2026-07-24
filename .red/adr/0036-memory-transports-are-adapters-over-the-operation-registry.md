@@ -1,4 +1,4 @@
-# Memory transports are adapters over the operation registry, not hand-wired dispatch
+# 0036 — Memory transports are adapters over the operation registry, not hand-wired dispatch
 
 ## Context
 

@@ -1,4 +1,4 @@
-# OpenCode skills are the same `SKILL.md` files Claude/Codex already publish — flat-symlinked, name-validated, never rewritten
+# 0076 — OpenCode skills are the same `SKILL.md` files Claude/Codex already publish — flat-symlinked, name-validated, never rewritten
 
 ## Status
 

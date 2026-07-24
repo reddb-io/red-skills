@@ -1,4 +1,4 @@
-# Red-castle runs long-lived workers under a castle supervisor
+# 0104 — Red-castle runs long-lived workers under a castle supervisor
 
 ## Status
 

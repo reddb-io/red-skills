@@ -1,4 +1,4 @@
-# Community-coloured graph needs a per-node assignment from the engine
+# 0012 — Community-coloured graph needs a per-node assignment from the engine
 
 ## Status
 

@@ -4,11 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  type AdrRecord,
+  adrFiles,
   adrNumbers,
   appendOnlyViolations,
   archivedRecordViolations,
   deletedArchivePaths,
   duplicates,
+  headingViolations,
   indexNumbers,
   undocumentedGaps,
 } from "../src/core/adr-governance.js";
@@ -57,6 +60,19 @@ describe("ADR governance docs", () => {
     const deleted = deletedArchivePaths(ROOT, ARCHIVE_REL);
 
     expect(appendOnlyViolations(present, deleted)).toEqual([]);
+  });
+
+  it("keeps every ADR H1 numbered to match its filename", async () => {
+    const records: AdrRecord[] = [];
+
+    for (const dir of [ADR_DIR, ARCHIVE_DIR]) {
+      for (const file of adrFiles(await readdir(dir))) {
+        records.push({ file, text: await readFile(join(dir, file), "utf8") });
+      }
+    }
+
+    expect(records.length).toBeGreaterThan(0);
+    expect(headingViolations(records)).toEqual([]);
   });
 
   it("keeps context map local markdown links resolvable", async () => {
@@ -127,6 +143,25 @@ describe("archivedRecordViolations", () => {
     const text = archived("Accepted.", "superseded-by: 0113");
     expect(archivedRecordViolations({ file: "0002-retired.md", text })).toEqual([
       "0002-retired.md: `## Status` must declare one of superseded, deprecated, inert",
+    ]);
+  });
+});
+
+describe("headingViolations", () => {
+  it("accepts an H1 whose number matches the filename", () => {
+    const record = { file: "0124-castle-crossing.md", text: "# 0124 — Castle crossing\n" };
+    expect(headingViolations([record])).toEqual([]);
+  });
+
+  it("reports a renumbered file whose H1 kept the old number", () => {
+    const record = { file: "0124-castle-crossing.md", text: "# 0120 — Castle crossing\n" };
+    expect(headingViolations([record])).toEqual(["0124-castle-crossing.md: H1 says `0120`, filename says `0124`"]);
+  });
+
+  it("reports an H1 that omits the number entirely", () => {
+    const record = { file: "0121-releases.md", text: "# Releases flow through a PR\n" };
+    expect(headingViolations([record])).toEqual([
+      "0121-releases.md: line 1 must read `# 0121 — Title`, got `# Releases flow through a PR`",
     ]);
   });
 });

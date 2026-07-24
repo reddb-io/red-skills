@@ -1,4 +1,4 @@
-# ADR lifecycle: immutable records, physical archive, and gated curation
+# 0112 — ADR lifecycle: immutable records, physical archive, and gated curation
 
 ## Status
 

@@ -1,4 +1,4 @@
-# `dev` soft-uses `memory`, one-directional
+# 0009 — `dev` soft-uses `memory`, one-directional
 
 > **Status:** accepted; detection-gate mechanism **partially superseded by ADR 0042**.
 > Split: the soft-use *direction* below still stands (`dev` may optionally consume

@@ -1,4 +1,4 @@
-# AFK reconcile — a no-agent worker mode that lands a parked green branch
+# 0055 — AFK reconcile — a no-agent worker mode that lands a parked green branch
 
 ## Context
 

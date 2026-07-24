@@ -1,4 +1,4 @@
-# RedDB graph writes go through multi-model DML, not table inserts
+# 0007 — RedDB graph writes go through multi-model DML, not table inserts
 
 ## Status
 

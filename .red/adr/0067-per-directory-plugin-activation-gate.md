@@ -1,4 +1,4 @@
-# Per-directory plugin activation gate: globally-installed RedSkills hooks stay inert until a `.red/config.yaml` opts each plugin in
+# 0067 — Per-directory plugin activation gate: globally-installed RedSkills hooks stay inert until a `.red/config.yaml` opts each plugin in
 
 ## Status
 

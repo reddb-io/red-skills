@@ -1,4 +1,4 @@
-# Memory plugin operates as a closed loop via Claude Code hooks, PR-merge automation, and CI drift guards
+# 0027 — Memory plugin operates as a closed loop via Claude Code hooks, PR-merge automation, and CI drift guards
 
 ## Status
 

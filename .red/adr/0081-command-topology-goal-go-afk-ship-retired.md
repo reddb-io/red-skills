@@ -1,4 +1,4 @@
-# Command topology — `/goal` (directive) → `/go` (demand) → `/afk` (backlog); `/ship` retired as gate-as-stage
+# 0081 — Command topology — `/goal` (directive) → `/go` (demand) → `/afk` (backlog); `/ship` retired as gate-as-stage
 
 ## Status
 

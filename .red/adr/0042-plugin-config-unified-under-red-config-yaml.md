@@ -1,4 +1,4 @@
-# Plugin configuration is unified under `.red/config.yaml`, namespaced by `plugins.<name>`
+# 0042 — Plugin configuration is unified under `.red/config.yaml`, namespaced by `plugins.<name>`
 
 ## Context
 

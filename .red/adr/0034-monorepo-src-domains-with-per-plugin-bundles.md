@@ -1,4 +1,4 @@
-# Repo splits plugin DEFINITIONS from IMPLEMENTATION: `src/apps/{dev,memory}` + shared `src/`, one built bundle per plugin
+# 0034 — Repo splits plugin DEFINITIONS from IMPLEMENTATION: `src/apps/{dev,memory}` + shared `src/`, one built bundle per plugin
 
 ## Context
 

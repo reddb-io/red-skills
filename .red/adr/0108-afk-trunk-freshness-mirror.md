@@ -1,4 +1,4 @@
-# AFK trunk freshness uses a fleet-owned red-trunk mirror
+# 0108 — AFK trunk freshness uses a fleet-owned red-trunk mirror
 
 ## Status
 

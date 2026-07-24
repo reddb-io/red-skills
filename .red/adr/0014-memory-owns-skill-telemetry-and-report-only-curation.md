@@ -1,4 +1,4 @@
-# Memory owns skill telemetry and report-only curation
+# 0014 — Memory owns skill telemetry and report-only curation
 
 ## Status
 

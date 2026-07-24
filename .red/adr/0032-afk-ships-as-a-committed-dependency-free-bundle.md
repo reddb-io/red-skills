@@ -1,4 +1,4 @@
-# AFK ships as a committed, dependency-free bundle built outside the plugin tree
+# 0032 — AFK ships as a committed, dependency-free bundle built outside the plugin tree
 
 ## Context
 

@@ -1,4 +1,4 @@
-# Memory event log is append-only and non-versioned
+# 0025 — Memory event log is append-only and non-versioned
 
 ## Status
 

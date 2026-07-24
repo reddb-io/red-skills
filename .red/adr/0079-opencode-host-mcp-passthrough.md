@@ -1,4 +1,4 @@
-# OpenCode MCP passthrough — rewrite `mcpServers:` → `mcp:` and resolve plugin roots at build time
+# 0079 — OpenCode MCP passthrough — rewrite `mcpServers:` → `mcp:` and resolve plugin roots at build time
 
 ## Status
 

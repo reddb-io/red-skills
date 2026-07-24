@@ -1,4 +1,4 @@
-# AFK bundle release channels — stable (default) and canary (opt-in)
+# 0058 — AFK bundle release channels — stable (default) and canary (opt-in)
 
 ## Status
 

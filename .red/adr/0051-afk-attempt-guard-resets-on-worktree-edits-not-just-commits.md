@@ -1,4 +1,4 @@
-# ADR 0051 — AFK attempt-progress guard resets on worktree edits, not just commits
+# 0051 — AFK attempt-progress guard resets on worktree edits, not just commits
 
 ## Status
 

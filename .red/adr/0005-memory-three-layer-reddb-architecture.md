@@ -1,4 +1,4 @@
-# Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI without REST
+# 0005 — Memory plugin: three-layer RedDB architecture, local-first per-repo, MCP+CLI without REST
 
 ## Status
 

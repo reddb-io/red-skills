@@ -1,4 +1,4 @@
-# OpenCode install path is `scripts/install-opencode.sh` — local + global modes flatten the dist tree to match opencode's loader
+# 0078 — OpenCode install path is `scripts/install-opencode.sh` — local + global modes flatten the dist tree to match opencode's loader
 
 ## Status
 

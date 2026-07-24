@@ -1,4 +1,4 @@
-# Native task surface mirrors AFK worker state
+# 0003 — Native task surface mirrors AFK worker state
 
 ## Status
 

@@ -1,4 +1,4 @@
-# Memory runtime ships as an esbuild bundle + `red` binary, fetched post-install by a dependency-free bootstrap
+# 0029 — Memory runtime ships as an esbuild bundle + `red` binary, fetched post-install by a dependency-free bootstrap
 
 ## Status
 
