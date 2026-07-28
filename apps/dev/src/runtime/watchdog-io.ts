@@ -36,7 +36,11 @@ import {
 // files on exit, so the relaunch must not write a fresh pid file until the dying
 // process has finished cleaning up — otherwise it would clobber the new one.
 import { isLivePid, killTreeAndWait } from "./kill-tree.js";
-import { isSupervisorIdentityLive, readSupervisorIdentity } from "./supervisor-state.js";
+import {
+  discoverLiveSupervisorPid,
+  isSupervisorIdentityLive,
+  readSupervisorIdentity,
+} from "./supervisor-state.js";
 import { readPidStartTime } from "../core/state.js";
 
 async function readPid(path: string): Promise<number | null> {
@@ -121,11 +125,19 @@ export function buildWatchdogIO(
         if (fleet.runner) lastRunner = fleet.runner;
         lastSlotPids = fleet.slotPids ?? [];
       }
+      // Same two anchors as every other management read (#2698): the watchdog
+      // must not read a ticking supervisor as dead and relaunch a second one
+      // over the same backlog just because the pid lock went missing.
+      const pinned =
+        pid !== null && isSupervisorIdentityLive({ pid, startTime }, isLivePid, readPidStartTime);
+      const discovered = pinned
+        ? null
+        : await discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid, {
+            fleet: paths.fleet,
+          });
       return {
-        pid,
-        pidAlive:
-          pid !== null &&
-          isSupervisorIdentityLive({ pid, startTime }, isLivePid, readPidStartTime),
+        pid: pinned ? pid : (discovered?.pid ?? pid),
+        pidAlive: pinned || discovered !== null,
         lastHeartbeatEpoch: fleet ? fleet.epoch : null,
         lastProgressEpoch: fleet?.lastProgressEpoch ?? null,
         slotsBusy: fleet?.slotsBusy ?? 0,

@@ -19,6 +19,7 @@ function deps(): CastleMcpDependencies {
         bundle_latest: "2.76.1",
         version_skew: 0,
         heartbeat_age_s: 3,
+        identity_anchor: "pid-file" as const,
       },
       slots: { busy: 1, free: 1, parked: 0, total: 2 },
       churn: { deaths: 0, respawns: 0, window_s: 300 },

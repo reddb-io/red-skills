@@ -107,6 +107,7 @@ export function fleetHeartbeatState(hb: FleetHeartbeat): string {
     ...(hb.shrinkMode !== undefined ? { shrink_mode: hb.shrinkMode } : {}),
     ...(hb.bundleVersion ? { bundle_version: hb.bundleVersion } : {}),
     ...(hb.pid !== undefined ? { pid: hb.pid } : {}),
+    ...(hb.pidStartTime ? { pid_start_time: hb.pidStartTime } : {}),
     ready_for_agent: hb.readyForAgent,
     slots: {
       busy: hb.slotsBusy,
@@ -853,9 +854,16 @@ export function buildSupervisorDeps(
       });
     },
     emitFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
-      // `pid` makes the snapshot itself a janitor liveness anchor, so a swept
-      // pid file can no longer make a running supervisor look dead (#2679).
-      const stamped = { ...hb, bundleVersion, pid: process.pid };
+      // `pid` + `pidStartTime` make the snapshot a full liveness anchor — the
+      // same identity the pid file pins — so a swept or unpinned pid file can no
+      // longer make a running supervisor read as absent (#2679, #2698).
+      const ownStartTime = readPidStartTime(process.pid);
+      const stamped = {
+        ...hb,
+        bundleVersion,
+        pid: process.pid,
+        ...(ownStartTime !== null ? { pidStartTime: ownStartTime } : {}),
+      };
       let stateWritten = false;
       let firehoseWritten = false;
       let stateError: string | undefined;
@@ -867,10 +875,14 @@ export function buildSupervisorDeps(
       try {
         const runtimeDir = dirname(statePath);
         const pidFilePath = join(runtimeDir, "afk-supervisor.pid");
+        // Both files, independently: a pid file whose `.start` sidecar is gone
+        // fails the identity check exactly like a missing pid file, so re-pinning
+        // only the pid would leave the lane unreadable (#2698).
         if (!existsSync(pidFilePath)) {
-          const startTime = readPidStartTime(process.pid);
           writeFileSync(pidFilePath, String(process.pid), "utf8");
-          if (startTime !== null) writeFileSync(`${pidFilePath}.start`, startTime, "utf8");
+        }
+        if (ownStartTime !== null && !existsSync(`${pidFilePath}.start`)) {
+          writeFileSync(`${pidFilePath}.start`, ownStartTime, "utf8");
         }
       } catch {
         // best-effort: a failed re-pin is logged implicitly via stateError below.
