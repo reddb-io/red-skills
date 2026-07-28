@@ -3,6 +3,7 @@ import type {
   RspElisionRecord,
   RspExpiredHandle,
   RspMintMeta,
+  RspRecoveryHandle,
   RspStoreStats,
 } from "./elision-store.js";
 import type { RspAccountingLaneStats } from "./telemetry.js";
@@ -85,6 +86,10 @@ export class ResidentRspElisionStore {
 
   async stats(): Promise<RspStoreStats> {
     return await this.request({ op: "stats" }) as RspStoreStats;
+  }
+
+  async recoveryHandles(limit = 5): Promise<RspRecoveryHandle[]> {
+    return await this.request({ op: "recovery-handles", limit }) as RspRecoveryHandle[];
   }
 
   async accountingStats(byteBudget: number): Promise<RspAccountingLaneStats> {

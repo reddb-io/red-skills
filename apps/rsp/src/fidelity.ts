@@ -7,7 +7,8 @@ import { renderGhContract } from "./gh-wrapper.js";
 import { renderTestContract } from "./test-wrapper.js";
 import { renderCatContract } from "./cat-wrapper.js";
 import { renderExecContract } from "./exec-wrapper.js";
-import { RspElisionStore, type RspLossLevel } from "./elision-store.js";
+import type { RspMintStore } from "./git-wrapper.js";
+import type { RspLossLevel } from "./elision-store.js";
 
 export interface FidelityAssertion {
   question: string;
@@ -33,7 +34,8 @@ export interface AssertionFailure {
 
 export interface FidelityRunOptions {
   level: RspLossLevel;
-  store: RspElisionStore;
+  /** Fidelity replays renderers offline, so it needs the mint port and nothing else. */
+  store: RspMintStore;
 }
 
 export interface FidelityRunResult extends GitRenderResult {

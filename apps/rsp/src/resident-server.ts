@@ -817,6 +817,7 @@ async function handleRequest(
   const store = state.store;
   if (request.op === "ping") return { pong: true, version: residentVersion };
   if (request.op === "stats") return await store.stats();
+  if (request.op === "recovery-handles") return await store.recoveryHandles(request.limit);
   if (request.op === "accounting-stats") {
     const db = store.redDb();
     if (!db) throw new Error("rsp accounting stats require the shared RedDB store");

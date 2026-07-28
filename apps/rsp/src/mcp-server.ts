@@ -5,7 +5,8 @@ import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
 import type { RspLossLevel } from "./elision-store.js";
 import { normalizeOutput, renderGenericJsonLane } from "./normalize.js";
-import { ResidentRspElisionStore, resolveResidentPaths } from "./resident-client.js";
+import type { ResidentRspElisionStore } from "./resident-client.js";
+import { residentElisionStore } from "./resident-store.js";
 
 interface JsonRpcRequest {
   jsonrpc?: string;
@@ -272,17 +273,7 @@ function countLines(bytes: Buffer): number {
 }
 
 function residentStore(config: RspRuntimeConfig): ResidentRspElisionStore {
-  return new ResidentRspElisionStore(resolveResidentPaths(process.cwd()), {
-    storeUri: config.storeUri,
-    ttlDays: config.ttlDays,
-    ephemeralTtlHours: config.ephemeralTtlHours,
-    byteBudget: config.byteBudget,
-    telemetryTtlDays: config.telemetryTtlDays,
-    telemetryByteBudget: config.telemetryByteBudget,
-    telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
-    telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
-    idleMs: config.idleMs,
-  });
+  return residentElisionStore(process.cwd(), config);
 }
 
 function renderStatus(config: RspRuntimeConfig): string {

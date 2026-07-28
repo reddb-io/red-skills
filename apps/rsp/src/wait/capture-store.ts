@@ -4,10 +4,10 @@
  * Capture must not know how the store is opened, configured, or closed; it only
  * needs "give these bytes a recoverable handle". Expressing that as a port keeps
  * the store-unavailable path testable without a real store, and keeps the
- * concrete `RspElisionStore` construction in exactly one place.
+ * resident — the one owner of the store (ADR 0126) — behind a single seam.
  */
 import { resolveRspConfig } from "../config.js";
-import { RspElisionStore, type RspLossLevel } from "../elision-store.js";
+import type { RspLossLevel } from "../elision-store.js";
 
 /** What capture needs from a store — nothing more. */
 export interface WaitCaptureStore {
@@ -20,20 +20,15 @@ export interface WaitCaptureStore {
 }
 
 /**
- * The real adapter: opens the configured store for one mint and closes it again.
- * A wait is a long-lived, mostly idle process, so holding the store open for the
- * whole wait would pin the handle for an hour to write once at the end.
+ * The real adapter: one mint through the resident, then done.
+ * A wait is a long-lived, mostly idle process, so it stays a client that speaks
+ * once at the end rather than a second holder of the store for the whole hour.
  */
 export function defaultWaitCaptureStore(cwd: string, env: NodeJS.ProcessEnv = process.env): WaitCaptureStore {
   return {
     async mint(bytes, meta) {
-      const config = resolveRspConfig(cwd, env);
-      const store = await RspElisionStore.open({
-        uri: config.storeUri,
-        ttlDays: config.ttlDays,
-        ephemeralTtlHours: config.ephemeralTtlHours,
-        byteBudget: config.byteBudget,
-      });
+      const { residentElisionStore } = await import("../resident-store.js");
+      const store = residentElisionStore(cwd, resolveRspConfig(cwd, env));
       try {
         return await store.mint(bytes, meta);
       } finally {
