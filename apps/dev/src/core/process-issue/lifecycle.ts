@@ -139,7 +139,18 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import {
+  EMPTY_CORRECTION_LEDGER,
+  attributeGateFailure,
+  chargeCorrection,
+  correctionBudgetExhausted,
+  describeCorrectionLedger,
+  type BaseMovement,
+  type CorrectionLedger,
+  type GateFailureAttribution,
+  type StaleBaseDriftNote,
+} from "../stale-base-drift.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 
 function setupFailureExcerpt(log: string | null | undefined): string | undefined {
@@ -529,7 +540,7 @@ export async function processIssue(
   let landingFeedbackScopes: string[] = ["."];
   let noSourceDiffWarning: string | undefined;
   let currentHandoff = handoff;
-  let goVerifyRetriesUsed = 0;
+  let correctionLedger: CorrectionLedger = EMPTY_CORRECTION_LEDGER;
   let adversarialReviewCorrectionsUsed = 0;
   let pendingAdversarialCorrection:
     | { diff: string; findings: AdversarialReviewFindings; retry: number; cap: number }
@@ -546,46 +557,102 @@ export async function processIssue(
         }
       : deps.recordAgentEvent;
   const goVerifyRetryCap = resolveGoVerifyRetries(deps);
-  const retryGoMachineGate = async (gate: "feedback" | "backpressure", validation: string): Promise<boolean> => {
-    if (input.laneLabel !== LABEL_GO_LANE) return false;
-    if (goVerifyRetriesUsed >= goVerifyRetryCap) return false;
-    goVerifyRetriesUsed += 1;
+  const staleBaseDriftCap = resolveStaleBaseDriftCap(deps);
+  // Issue #2711 — the gate runs on the branch MERGED WITH the live base, so a
+  // base that moved under the attempt can redden a branch that is itself green.
+  // Ask git what the base did before charging the failure to anyone. A missing
+  // probe, an unresolved base sha, or a throwing lookup all yield `undefined`,
+  // which attributes the failure to the branch exactly as before.
+  const observeBaseMovement = async (): Promise<BaseMovement | undefined> => {
+    const probe = deps.lookups.baseMovement;
+    if (!probe || !baseResolution.sha) return undefined;
+    try {
+      const seen = await probe(baseRef, baseResolution.sha);
+      return { startSha: baseResolution.sha, gateSha: seen.head, subjects: seen.subjects };
+    } catch {
+      return undefined;
+    }
+  };
+  /** Attribute one post-DONE gate failure and, when it is stale-base drift,
+   * build the handoff note that tells the agent to merge the base. */
+  const attributeGateFailureNow = async (driftEligible: boolean): Promise<{
+    attribution: GateFailureAttribution;
+    drift?: StaleBaseDriftNote;
+  }> => {
+    const movement = driftEligible ? await observeBaseMovement() : undefined;
+    const attribution = attributeGateFailure({
+      movement,
+      refundsUsed: correctionLedger.refunded,
+      maxRefunds: staleBaseDriftCap,
+    });
+    if (attribution.cause !== "stale-base-drift" || !movement) return { attribution };
+    return { attribution, drift: { base, movement, attribution } };
+  };
+  /** One correction cycle, cause-aware. A drift-attributed cycle is FREE: it is
+   * recorded on the ledger but never charged against the lane's cap, so an
+   * already-spent counter can no longer park a branch whose gate only failed
+   * because the base moved beneath it. */
+  const retryMachineGate = async (
+    lane: "/go" | "/afk",
+    cap: number,
+    gate: "feedback" | "backpressure",
+    validation: string,
+    append: (handoff: string, opts: Parameters<typeof appendGoVerifyRetryHandoff>[1]) => string,
+    driftEligible: boolean,
+  ): Promise<boolean> => {
+    const { attribution, drift } = await attributeGateFailureNow(driftEligible);
+    if (attribution.cause === "branch-fault" && correctionBudgetExhausted(correctionLedger, cap)) return false;
+    correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
     attemptN += 1;
-    currentHandoff = appendGoVerifyRetryHandoff(handoff, {
+    currentHandoff = append(handoff, {
       gate,
       validation,
-      retry: goVerifyRetriesUsed,
-      cap: goVerifyRetryCap,
+      retry: correctionLedger.charged,
+      cap,
+      drift,
     });
     deps.appendIterLog(
-      `🤖 /go: ${gate} machine gate failed after DONE; correction retry ${goVerifyRetriesUsed}/${goVerifyRetryCap}.`,
+      drift
+        ? `🤖 ${lane}: ${gate} machine gate failed after DONE, but ${attribution.reason}; ` +
+          `granting a free stale-base correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
+          `budget untouched at ${correctionLedger.charged}/${cap}.`
+        : `🤖 ${lane}: ${gate} machine gate failed after DONE; correction retry ${correctionLedger.charged}/${cap}.`,
     );
     return await fireHook(
       "pre_attempt",
       hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
     );
   };
-  let stallConvergenceUsed = 0;
+  // `driftEligible` is false for the empty-diff rejection: a branch that carries
+  // no diff at all is unambiguously the branch's problem, and no amount of base
+  // movement can explain it away.
+  const retryGoMachineGate = async (
+    gate: "feedback" | "backpressure",
+    validation: string,
+    driftEligible = true,
+  ): Promise<boolean> => {
+    if (input.laneLabel !== LABEL_GO_LANE) return false;
+    return await retryMachineGate("/go", goVerifyRetryCap, gate, validation, appendGoVerifyRetryHandoff, driftEligible);
+  };
   const stallConvergenceCap = resolveStallConvergenceBudget(deps);
-  const retryAfkMachineGate = async (gate: "feedback" | "backpressure", validation: string): Promise<boolean> => {
+  const retryAfkMachineGate = async (
+    gate: "feedback" | "backpressure",
+    validation: string,
+    driftEligible = true,
+  ): Promise<boolean> => {
     if (input.laneLabel === LABEL_GO_LANE) return false;
     if (escalatedSimpleFeedback) return false;
-    if (stallConvergenceUsed >= stallConvergenceCap) return false;
-    stallConvergenceUsed += 1;
-    attemptN += 1;
-    currentHandoff = appendAfkGateCorrectionHandoff(handoff, {
-      gate,
-      validation,
-      retry: stallConvergenceUsed,
-      cap: stallConvergenceCap,
-    });
-    deps.appendIterLog(
-      `🤖 /afk: ${gate} machine gate failed after DONE; correction retry ${stallConvergenceUsed}/${stallConvergenceCap}.`,
-    );
-    return await fireHook(
-      "pre_attempt",
-      hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
-    );
+    return await retryMachineGate("/afk", stallConvergenceCap, gate, validation, appendAfkGateCorrectionHandoff, driftEligible);
+  };
+  /** The park-note suffix naming the exhausted correction budget. It reports the
+   * CHARGED cycles against the lane's cap and, separately, the stale-base cycles
+   * that were absorbed for free — so a reader can tell a branch that really kept
+   * failing from a run that spent itself absorbing base drift (#2711). */
+  const correctionBudgetNote = (): string => {
+    const cap = input.laneLabel === LABEL_GO_LANE ? goVerifyRetryCap : stallConvergenceCap;
+    if (correctionLedger.cycles.length === 0) return "";
+    if (!correctionBudgetExhausted(correctionLedger, cap)) return "";
+    return ` Post-DONE gate-correction budget exhausted (${describeCorrectionLedger(correctionLedger, cap)}).`;
   };
   // Gate-green fast path (issue #2397): when a prior branch already cleared the
   // feedback gate, skip the agent entirely on re-claim and re-validate directly.
@@ -875,13 +942,13 @@ export async function processIssue(
       const validationText =
         "DONE rejected: attempt branch has no diff against the merge-base; no work changed, so the completion claim was not accepted.";
       deps.appendIterLog(`🤖 /afk: ${validationText}`);
-      if (await retryGoMachineGate("feedback", validationText) || await retryAfkMachineGate("feedback", validationText)) {
+      if (
+        await retryGoMachineGate("feedback", validationText, false) ||
+        await retryAfkMachineGate("feedback", validationText, false)
+      ) {
         continue;
       }
-      const convergenceNote =
-        stallConvergenceUsed > 0 && stallConvergenceUsed >= stallConvergenceCap
-          ? ` Post-DONE gate-correction budget exhausted (${stallConvergenceCap} consecutive failed cycles).`
-          : "";
+      const convergenceNote = correctionBudgetNote();
       return await terminalFailure(common, "feedback-failed", "feedback", {
         notes: `Inner agent emitted DONE, but the attempt branch has no diff against the merge-base. The worker branch was not merged.${convergenceNote}`,
         validation: validationText,
@@ -989,9 +1056,7 @@ export async function processIssue(
       if (!isInfra && (await retryGoMachineGate("feedback", validationText) || await retryAfkMachineGate("feedback", validationText))) {
         continue;
       }
-      if (!isInfra && stallConvergenceUsed > 0 && stallConvergenceUsed >= stallConvergenceCap) {
-        notes += ` Post-DONE gate-correction budget exhausted (${stallConvergenceCap} consecutive failed cycles).`;
-      }
+      if (!isInfra) notes += correctionBudgetNote();
       return await terminalFailure(common, outcome, "feedback", {
         notes,
         validation: validationText,
@@ -1017,9 +1082,7 @@ export async function processIssue(
         if (await retryGoMachineGate("backpressure", validationText) || await retryAfkMachineGate("backpressure", validationText)) {
           continue;
         }
-        if (stallConvergenceUsed > 0 && stallConvergenceUsed >= stallConvergenceCap) {
-          bpNotes += ` Post-DONE gate-correction budget exhausted (${stallConvergenceCap} consecutive failed cycles).`;
-        }
+        bpNotes += correctionBudgetNote();
         return await terminalFailure(common, "feedback-failed", "feedback", {
           notes: bpNotes,
           validation: validationText,

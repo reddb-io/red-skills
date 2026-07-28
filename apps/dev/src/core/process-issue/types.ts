@@ -185,6 +185,16 @@ export interface ProcessLookups {
   handoffEnrichment?(input: HandoffEnrichmentInput & { issue: number }): Promise<string | undefined>;
   changedFiles(branch: string, base: string): Promise<string[]>;
   diffstat(branch: string, base: string): Promise<string>;
+  /**
+   * What the base ref did while this attempt ran (issue #2711): its head sha
+   * NOW plus the subjects of the commits it gained since `sinceSha`. The gate
+   * runs on the branch merged with the live base, so a base that moved under
+   * the run can redden a branch that is itself green — this probe is the
+   * evidence that lets the engine attribute such a failure to stale-base drift
+   * instead of charging it to the correction budget. Optional: absent, every
+   * gate failure stays `branch-fault`, exactly as before.
+   */
+  baseMovement?(baseRef: string, sinceSha: string): Promise<{ head: string; subjects: string[] }>;
   branchPresent?(branch: string): Promise<boolean>;
   branchMerged?(branch: string, base: string): Promise<boolean>;
   /** Discover all remote afk/* branches (issue #2397). Used to detect a prior

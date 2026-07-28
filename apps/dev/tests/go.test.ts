@@ -8,7 +8,9 @@ import {
   GO_MODES,
   GO_ORIGIN,
   LABEL_GO_LANE,
+  VERIFY_CLEAN_TREE_TAIL,
   buildDisposableIssue,
+  normalizeGoVerifyCommand,
   zeroAttemptDispatchFailure,
   buildGoEngineArgs,
   dispatchGo,
@@ -295,5 +297,52 @@ describe("zeroAttemptDispatchFailure", () => {
   it("leaves an open-ended /afk drain alone — picking up nothing is normal there", () => {
     expect(zeroAttemptDispatchFailure(false, [])).toBeNull();
     expect(zeroAttemptDispatchFailure(false, [{ issue: 1, outcome: "claim-lost" }])).toBeNull();
+  });
+});
+
+describe("normalizeGoVerifyCommand — the generator-then-diff tail (#2711)", () => {
+  const GENERATORS = "pnpm codex:manifests && pnpm pi:manifests";
+
+  it("makes a trailing git diff --exit-code see files a generator NEWLY created", () => {
+    expect(normalizeGoVerifyCommand(`${GENERATORS} && git diff --exit-code`)).toBe(
+      `${GENERATORS} && ${VERIFY_CLEAN_TREE_TAIL}`,
+    );
+    expect(VERIFY_CLEAN_TREE_TAIL).toContain("--intent-to-add");
+    expect(VERIFY_CLEAN_TREE_TAIL).toContain("git diff --exit-code");
+  });
+
+  it("keeps the check RED when a generator legitimately produces uncommitted output", () => {
+    // The chosen behaviour, pinned: regenerating and finding a diff is a
+    // FAILURE — the generated artifact belongs in the branch's commits. The
+    // normalization only widens what counts as a diff; it never softens it.
+    const normalized = normalizeGoVerifyCommand(`${GENERATORS} && git diff --exit-code`);
+    expect(normalized).toContain("git diff --exit-code");
+    expect(normalized).not.toContain("|| true");
+    expect(normalized).not.toContain("git add -A .");
+    expect(normalized).not.toContain("git commit");
+  });
+
+  it("is idempotent and leaves every other command untouched", () => {
+    const once = normalizeGoVerifyCommand(`${GENERATORS} && git diff --exit-code`);
+    expect(normalizeGoVerifyCommand(once)).toBe(once);
+    expect(normalizeGoVerifyCommand("npm run test -- login")).toBe("npm run test -- login");
+    // Only a TRAILING bare tail is rewritten — a mid-chain or path-scoped diff
+    // is the author's deliberate check and is left alone.
+    expect(normalizeGoVerifyCommand("git diff --exit-code -- docs && npm test")).toBe(
+      "git diff --exit-code -- docs && npm test",
+    );
+    expect(normalizeGoVerifyCommand("")).toBe("");
+  });
+
+  it("normalizes the tail everywhere the dispatch shows or runs it", () => {
+    const raw = `${GENERATORS} && git diff --exit-code`;
+    const args = buildGoEngineArgs({ issue: 7, verifyCommand: raw });
+    expect(args[args.indexOf("--verify") + 1]).toBe(normalizeGoVerifyCommand(raw));
+    const spec = buildDisposableIssue("regenerate the mirrors", {
+      task: "t",
+      dod: "d",
+      verifyCommand: raw,
+    });
+    expect(spec.body).toContain(normalizeGoVerifyCommand(raw));
   });
 });

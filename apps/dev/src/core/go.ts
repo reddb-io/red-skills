@@ -73,6 +73,46 @@ export const GO_VERIFY_FLAG = "--verify";
 /** Bounded post-DONE machine-gate retry cap for `/go` dispatches. */
 export const DEFAULT_GO_VERIFY_RETRIES = 2;
 
+// ---------- the generator-then-diff verify tail (#2711) ----------
+//
+// A `/go` `--verify` chain routinely ends `… && pnpm pi:manifests && git diff
+// --exit-code`, meaning "regenerating the repo's generated mirrors must leave
+// the tree clean". The INTENT is right and worth keeping — a mirror that only
+// exists in the generator's head is exactly the drift that reddens the next
+// branch to touch it. The TAIL, however, is half-blind: `git diff` reads tracked
+// files only, so a generator that writes a NEW mirror file leaves an untracked
+// path the check never sees, and the dispatch goes green over uncommitted
+// generated output.
+//
+// So the tail is REPLACED rather than merely justified: staging intents first
+// (`git add -A --intent-to-add .`) makes untracked paths visible to `git diff`
+// without staging any content, and the `--exit-code` verdict is unchanged. A
+// generator that legitimately produces output the run has not committed still
+// FAILS — that is the point, and a test pins it — but now it fails for new files
+// too, instead of passing for them.
+
+/** The replacement tail: same verdict, now including files the run never
+ * tracked. `--intent-to-add` records paths, never content, so nothing is
+ * staged for commit and the working tree is untouched. */
+export const VERIFY_CLEAN_TREE_TAIL = "git add -A --intent-to-add . && git diff --exit-code";
+
+/** A TRAILING bare `git diff --exit-code` — no pathspec, no extra flags. A
+ * path-scoped or mid-chain diff is the author's deliberate narrower check and
+ * is left exactly as written. */
+const BARE_DIFF_TAIL = /(^|&&\s*)git\s+diff\s+--exit-code\s*$/;
+
+/**
+ * Rewrite a trailing bare `git diff --exit-code` into {@link VERIFY_CLEAN_TREE_TAIL}.
+ * Idempotent (the replacement's own tail is preceded by the intent-to-add, so a
+ * second pass is a no-op) and total: any other command is returned verbatim.
+ */
+export function normalizeGoVerifyCommand(command: string): string {
+  const text = command.trim();
+  if (text === "" || text.includes("--intent-to-add")) return command;
+  if (!BARE_DIFF_TAIL.test(text)) return command;
+  return text.replace(BARE_DIFF_TAIL, (_m, lead: string) => `${lead}${VERIFY_CLEAN_TREE_TAIL}`);
+}
+
 /** Tight cap for check-less `/go` dispatches when the maintainer declined an
  * ephemeral inline check in a repo with no configured harness/backpressure. */
 export const GO_NO_HARNESS_ITER_CAP = 3;
@@ -131,7 +171,7 @@ export function buildDisposableIssue(demand: string, dodSpec: GoDodSpec = {}): D
   const title = `/go: ${firstLine(text).slice(0, 72) || "dispatch"}`;
   const task = (dodSpec.task ?? text).trim();
   const dod = dodSpec.dod?.trim();
-  const verifyCommand = dodSpec.verifyCommand?.trim();
+  const verifyCommand = normalizeGoVerifyCommand(dodSpec.verifyCommand ?? "").trim();
   const machineGate =
     verifyCommand && verifyCommand.length > 0
       ? `Ephemeral inline check for this dispatch: \`${verifyCommand}\`.`
@@ -203,7 +243,7 @@ export function buildGoEngineArgs(opts: {
   const modeFlag = GO_MODE_ENGINE_FLAG[opts.mode ?? DEFAULT_GO_MODE];
   if (modeFlag) args.push(modeFlag);
   if (opts.yolo) args.push(GO_YOLO_FLAG);
-  const verifyCommand = opts.verifyCommand?.trim();
+  const verifyCommand = normalizeGoVerifyCommand(opts.verifyCommand ?? "").trim();
   if (verifyCommand) args.push(GO_VERIFY_FLAG, verifyCommand);
   const request = opts.request?.trim();
   if (request) args.push("--request", request);
