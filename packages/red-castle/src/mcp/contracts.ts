@@ -127,7 +127,10 @@ const workerVitalsCurrentSchema = z.object({
 
 /** The red-castle evaluator verdict (ADR 0083 §3) as published to clients. */
 const livenessVerdictSchema = z.object({
-  status: z.enum(["alive", "stalled", "unknown"]),
+  // `capped` (#2701): the per-issue wall-clock ceiling fired on an attempt that
+  // was still working. Published distinctly so a client never renders a long
+  // productive worker as stalled.
+  status: z.enum(["alive", "stalled", "capped", "unknown"]),
   laneFresh: z.boolean(),
   laneAgeMs: z.number().optional(),
   crossCheckArmed: z.boolean(),
