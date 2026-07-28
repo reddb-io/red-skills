@@ -20,7 +20,7 @@
     "./skills/engineering/ground-truth",
     "./skills/engineering/red-doctor",
     "./skills/engineering/red-gains",
-    "./skills/engineering/review-adrs",
+    "./skills/engineering/adr-editor",
     "./skills/engineering/start",
     "./skills/engineering/triage",
     "./skills/engineering/hitl",
