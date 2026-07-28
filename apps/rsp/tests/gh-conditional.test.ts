@@ -1,9 +1,10 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { decode } from "@reddb-io/toon";
 import { readGhConditionalJson } from "../src/gh-conditional.js";
+import { ghEtagCacheDir } from "../src/gh-etag-cache.js";
 import { telemetrySpoolPath } from "../src/telemetry.js";
 
 const roots: string[] = [];
@@ -50,9 +51,12 @@ describe("gh conditional requests", () => {
     expect(second).toMatchObject({ status: 0, quotaFree: true });
     expect(second.stdout).toBe("{\"number\":1975,\"state\":\"OPEN\"}\n");
     expect(await readFile(countFile, "utf8")).toBe("2");
-    const cacheRaw = await readFile(join(root, ".red", "state", "rsp", "gh-etag-cache.toon"), "utf8");
+    const entries = await readdir(ghEtagCacheDir(root), { recursive: true, withFileTypes: true });
+    const files = entries.filter((entry) => entry.isFile());
+    expect(files).toHaveLength(1);
+    const cacheRaw = await readFile(join(files[0]!.parentPath, files[0]!.name), "utf8");
     expect(() => JSON.parse(cacheRaw)).toThrow();
-    expect(decode(cacheRaw)).toMatchObject({ version: 1 });
+    expect(decode(cacheRaw)).toMatchObject({ etag: "rsp-test-etag" });
     await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain("quota_free");
   });
 });

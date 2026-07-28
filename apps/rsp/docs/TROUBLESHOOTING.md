@@ -120,3 +120,28 @@ If logical retained bytes are below budget but the file keeps growing, capture t
 ### Root fix
 
 This manual bound check is a stopgap for #1704. The root fix is the physical-cap contract: store compaction or rotation must enforce the on-disk ceiling, not only logical expiry.
+
+## gh ETag cache growth
+
+### Symptom
+
+`gh` calls routed through rsp get slower as the repo ages, with no change at the call site.
+
+### Confirm
+
+The ETag lane is `.red/state/rsp/gh-etag/`, one file per request key:
+
+```bash
+du -sb .red/state/rsp/gh-etag
+find .red/state/rsp -name '*.tmp'
+```
+
+A lookup reads exactly one entry file, so lane size must not affect per-call cost. A pre-partition monolith (`gh-etag-cache.toon` or `gh-etag-cache.json`) is folded into partitions on the next lookup and then removed; seeing one linger means no `gh` call has run since.
+
+### Recover
+
+Lower the ceiling with `rsp.ghEtagCacheByteBudget` in `.red/config.yaml` (or `RSP_GH_ETAG_CACHE_BYTE_BUDGET`); the next cache write evicts oldest-first down to it. Deleting the lane outright is safe — it costs one non-conditional fetch per dropped entry.
+
+### Root fix
+
+Shipped with #2745: the lane is partitioned by request key, bounded by a configured byte ceiling, and sweeps its own orphan `.tmp` files on every write.

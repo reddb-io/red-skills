@@ -17,6 +17,8 @@ export const DEFAULT_RSP_TELEMETRY_DRAIN_TIMEOUT_MS = 2_000;
 export const DEFAULT_RSP_IDLE_MS = 5 * 60_000;
 export const MIN_RSP_IDLE_MS = 5_000;
 export const DEFAULT_RSP_MEASUREMENT_HOLDOUT_SHARE = 0;
+/** Ceiling for the partitioned `gh` ETag lane; entries above it are evicted oldest-first. */
+export const DEFAULT_RSP_GH_ETAG_CACHE_BYTE_BUDGET = 4 * 1024 * 1024;
 
 export interface RspRuntimeConfig {
   enabled: boolean;
@@ -96,6 +98,18 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     heavyGitByteThreshold,
     measurementHoldoutShare,
   };
+}
+
+/**
+ * Byte ceiling for the `gh` ETag cache lane, resolved on its own so the cache
+ * never has to build the full runtime config on a hot lookup path.
+ */
+export function resolveGhEtagCacheByteBudget(cwd: string, env: NodeJS.ProcessEnv): number {
+  const fromEnv = numericEnv(env.RSP_GH_ETAG_CACHE_BYTE_BUDGET);
+  if (fromEnv !== undefined) return positiveNumber(fromEnv, DEFAULT_RSP_GH_ETAG_CACHE_BYTE_BUDGET);
+  const configPath = findUp(resolve(cwd), join(".red", "config.yaml"));
+  const yaml = configPath ? readFileSync(configPath, "utf8") : "";
+  return positiveNumber(readNumericYamlPath(yaml, "rsp.ghEtagCacheByteBudget"), DEFAULT_RSP_GH_ETAG_CACHE_BYTE_BUDGET);
 }
 
 function readNumericYamlPath(yaml: string, dottedPath: string): number | undefined {
