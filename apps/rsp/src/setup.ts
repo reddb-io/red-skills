@@ -71,19 +71,17 @@ export async function provisionRspRepoStore(rootDir: string, opts: RspProvisionO
       await copyFile(legacyMemoryStore, storePath);
       memoryStoreMigrated = true;
     } else {
-      const { RspElisionStore } = await import("./elision-store.js");
+      const { provisionElisionStore } = await import("./elision-store.js");
       // Provisioning must not leak env into the caller: the store open may
       // resolve REDDB_BIN from the warm cache, so restore whatever was there.
       const priorReddbBin = process.env.REDDB_BIN;
       try {
-        const store = await RspElisionStore.open({
+        await provisionElisionStore({
           uri: `file://${storePath}`,
           ttlDays: opts.ttlDays ?? DEFAULT_RSP_TTL_DAYS,
           ephemeralTtlHours: opts.ephemeralTtlHours ?? DEFAULT_RSP_EPHEMERAL_TTL_HOURS,
           byteBudget: opts.byteBudget ?? DEFAULT_RSP_BYTE_BUDGET,
-          allowResidentOpen: true,
         });
-        await store.close();
       } finally {
         if (priorReddbBin === undefined) delete process.env.REDDB_BIN;
         else process.env.REDDB_BIN = priorReddbBin;
