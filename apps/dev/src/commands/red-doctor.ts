@@ -140,6 +140,7 @@ function renderHuman(
   const expired = flattenExpired(report).map((path) => rel(root, path));
   const workers = report.staleWorkers.reclaim.map((entry) => rel(root, entry.path));
   const unknown = report.plan.unknownTmpRoots.map((name) => `.red/tmp/${name}`);
+  const reclaimPlan = report.attemptReclaim;
   const lines = [
     "red-doctor host toolchain",
     ...hostReport.rows.map((row) => `  ${row.verdict === "ok" ? "✅" : "❌"} ${row.tool} ${row.version} (required ${row.required}; manager ${row.manager})`),
@@ -181,6 +182,15 @@ function renderHuman(
     ...workers.map((path) => `  ${path}`),
     `unknown tmp roots: ${unknown.length}`,
     ...unknown.map((path) => `  ${path}`),
+    // The record-keyed view (ADR 0128). `dropped` is printed in full: a plan
+    // that quietly held artifacts back would read here as a clean sweep.
+    `attempt artifacts considered: ${reclaimPlan.totals.considered}`,
+    `attempt artifacts reclaimable: ${reclaimPlan.totals.reclaim}`,
+    `attempt artifacts retained: ${reclaimPlan.totals.retain}`,
+    `attempt artifacts dropped: ${reclaimPlan.dropped.length}${reclaimPlan.truncated ? " (truncated)" : ""}`,
+    ...reclaimPlan.dropped.map(
+      (drop) => `  ${drop.reason} ${drop.path ? rel(root, drop.path) : (drop.attempt_id ?? "")}: ${drop.detail}`,
+    ),
     "",
     "red-doctor deadend audit",
     `deadends: ${deadendReport.total}`,
@@ -195,6 +205,9 @@ function renderHuman(
       `applied unknown tmp roots: ${applied.unknownTmpRoots.length}`,
       `protected live workers: ${applied.protectedLiveWorkers.length}`,
       `protected live feedback worktrees: ${applied.protectedLiveFeedback.length}`,
+      `applied attempt workspaces: ${applied.attemptWorkspaces.length}`,
+      `protected live attempts: ${applied.protectedLiveAttempts.length}`,
+      `refused outside tmp: ${applied.refusedOutsideTmp.length}`,
       ...applied.removals.map(
         (removal) => `  remove=${rel(root, removal.path)} liveness=${removal.livenessVerdict}`,
       ),
@@ -250,6 +263,15 @@ function renderToon(
       expiredLanes: flattenExpired(report).map((path) => rel(root, path)),
       staleWorkers: report.staleWorkers.reclaim.map((entry) => rel(root, entry.path)),
       unknownTmpRoots: report.plan.unknownTmpRoots.map((name) => `.red/tmp/${name}`),
+      attemptReclaim: {
+        ...report.attemptReclaim.totals,
+        truncated: report.attemptReclaim.truncated,
+        dropped: report.attemptReclaim.dropped.map((drop) => ({
+          reason: drop.reason,
+          path: drop.path ? rel(root, drop.path) : "",
+          detail: drop.detail,
+        })),
+      },
     },
     appliedFixes: probeFixes.map((fix) => ({
       probeId: fix.probeId,
@@ -302,6 +324,9 @@ function renderToon(
           unknownTmpRoots: applied.unknownTmpRoots.map((path) => rel(root, path)),
           protectedLiveWorkers: applied.protectedLiveWorkers.map((path) => rel(root, path)),
           protectedLiveFeedback: applied.protectedLiveFeedback.map((path) => rel(root, path)),
+          attemptWorkspaces: applied.attemptWorkspaces.map((path) => rel(root, path)),
+          protectedLiveAttempts: applied.protectedLiveAttempts.map((path) => rel(root, path)),
+          refusedOutsideTmp: applied.refusedOutsideTmp.map((path) => rel(root, path)),
           removals: applied.removals.map((removal) => ({
             path: rel(root, removal.path),
             livenessVerdict: removal.livenessVerdict,

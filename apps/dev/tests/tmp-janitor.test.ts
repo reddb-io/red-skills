@@ -320,6 +320,18 @@ describe("planWorkerDirJanitor", () => {
     const entry = worker({ issues: [] });
     expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
   });
+
+  it("spares a worker the attempt record calls live, pid file or not (#2679)", () => {
+    // Dead pid file, every issue closed: the pid/issue rule would reclaim this
+    // outright. The record's own liveness verdict vetoes it.
+    const entry = worker({ attemptLive: true, issues: [{ issue: 1, state: "CLOSED" }] });
+    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
+  });
+
+  it("leaves the pid/issue rule in charge when the record says nothing", () => {
+    const entry = worker({ attemptLive: false, issues: [{ issue: 1, state: "CLOSED" }] });
+    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [entry], spare: [] });
+  });
 });
 
 // ---------- parseFeedbackWorktreeWorkerSlug ----------

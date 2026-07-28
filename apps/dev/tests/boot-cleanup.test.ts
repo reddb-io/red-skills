@@ -80,6 +80,9 @@ describe("runBoot tmp janitor", () => {
       protectedLiveWorkers: [],
       protectedLiveFeedback: [],
       orphanTestRunners: [],
+      attemptWorkspaces: [],
+      protectedLiveAttempts: [],
+      refusedOutsideTmp: [],
       removals: [
         { path: "/p/.red/tmp/logs/old", livenessVerdict: "not-worker-workspace" },
         { path: "/p/.red/tmp/scratch/old", livenessVerdict: "not-worker-workspace" },
@@ -87,6 +90,114 @@ describe("runBoot tmp janitor", () => {
         { path: "/p/.red/tmp/work-old", livenessVerdict: "not-worker-workspace" },
       ],
     });
+  });
+
+  // ---- the record-keyed reclaim on the boot path (ADR 0128, #2705) ----
+
+  /** An empty janitor plan, so only the record-keyed pass can move anything. */
+  function idlePlan() {
+    return {
+      logs: { reclaim: [], spare: [] },
+      scratch: { reclaim: [], spare: [] },
+      diagnostics: { reclaim: [], spare: [] },
+      feedbackWorktrees: { reclaim: [], spare: [] },
+      legacySlotLogs: { reclaim: [], spare: [] },
+      unknownTmpRoots: [],
+    };
+  }
+
+  function reclaimPlan(path: string) {
+    return {
+      attempts: [],
+      reclaim: [
+        {
+          attempt_id: "wA:9:1",
+          worker_id: "wA",
+          issue: 9,
+          artifact: { kind: "worktree", path, reclaimable: true },
+          class: "workspace" as const,
+          tier: "landed" as const,
+          reclaim: true,
+          verdict: "workspace-reclaimable" as const,
+          reason: "the attempt is landed, and its workspace is expensive and regenerable",
+        },
+      ],
+      retain: [],
+      dropped: [],
+      truncated: false,
+      totals: { considered: 1, reclaim: 1, retain: 0, dropped: 0 },
+    };
+  }
+
+  it("reclaims a closed attempt's workspace on the record's verdict", async () => {
+    const path = "/p/.red/tmp/workers/wA/9/worktree";
+    const { deps, fsCalls } = makeDeps({ attemptWorkspaceLive: async () => false });
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: { plan: idlePlan(), staleWorkers: { reclaim: [], spare: [] }, attemptReclaim: reclaimPlan(path) },
+      }),
+    );
+
+    expect(fsCalls.removeDir).toEqual([path]);
+    expect(result.tmpJanitor?.attemptWorkspaces).toEqual([path]);
+    expect(result.tmpJanitor?.removals).toEqual([{ path, livenessVerdict: "attempt-closed" }]);
+  });
+
+  it("spares a workspace a fresh attempt reclaimed between plan and apply", async () => {
+    const path = "/p/.red/tmp/workers/wA/9/worktree";
+    const { deps, fsCalls } = makeDeps({ attemptWorkspaceLive: async () => true });
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: { plan: idlePlan(), staleWorkers: { reclaim: [], spare: [] }, attemptReclaim: reclaimPlan(path) },
+      }),
+    );
+
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(result.tmpJanitor?.protectedLiveAttempts).toEqual([path]);
+  });
+
+  it("fails closed when the liveness probe is unwired or throws", async () => {
+    const path = "/p/.red/tmp/workers/wA/9/worktree";
+    const unwired = makeDeps();
+    const unwiredResult = await runBoot(
+      unwired.deps,
+      options({
+        tmpJanitor: { plan: idlePlan(), staleWorkers: { reclaim: [], spare: [] }, attemptReclaim: reclaimPlan(path) },
+      }),
+    );
+    expect(unwired.fsCalls.removeDir).toEqual([]);
+    expect(unwiredResult.tmpJanitor?.protectedLiveAttempts).toEqual([path]);
+
+    const throwing = makeDeps({
+      attemptWorkspaceLive: async () => {
+        throw new Error("lane unreadable");
+      },
+    });
+    const throwingResult = await runBoot(
+      throwing.deps,
+      options({
+        tmpJanitor: { plan: idlePlan(), staleWorkers: { reclaim: [], spare: [] }, attemptReclaim: reclaimPlan(path) },
+      }),
+    );
+    expect(throwing.fsCalls.removeDir).toEqual([]);
+    expect(throwingResult.tmpJanitor?.protectedLiveAttempts).toEqual([path]);
+  });
+
+  it("refuses a record-named path outside the tmp tier and reports it", async () => {
+    const outside = "/p/precious";
+    const { deps, fsCalls } = makeDeps({ attemptWorkspaceLive: async () => false });
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: { plan: idlePlan(), staleWorkers: { reclaim: [], spare: [] }, attemptReclaim: reclaimPlan(outside) },
+      }),
+    );
+
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(result.tmpJanitor?.refusedOutsideTmp).toEqual([outside]);
+    expect(result.tmpJanitor?.attemptWorkspaces).toEqual([]);
   });
 
   it("refuses to remove a registered lane named as an unknown tmp root (#2679)", async () => {

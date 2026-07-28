@@ -61,6 +61,50 @@ learned it:
 - `note` — a one-line human-readable gloss
 - `payload` — event-specific detail that has no dedicated field yet
 
+## Retention and reclaim
+
+**An artifact is reclaimable when its attempt record says so, never when a pid
+file happens to be missing.** Keying on pid-file absence produced the exact
+inversion it was meant to prevent: the live supervisor's lane was deleted while
+the dead ones survived (#2679). The planner (`planCastleReclaim`) reads nothing
+but the record — no pid, no pid file, no mtime.
+
+An attempt's **retention tier** comes from its terminal outcome:
+
+| Tier | Record state | What survives | What is reclaimable |
+| --- | --- | --- | --- |
+| `live` | no terminal outcome | everything | nothing |
+| `landed` | `outcome.kind: done` | the record and its pointers | the workspace and the evidence |
+| `failed` | any other terminal outcome | the record, its pointers, and the cheap evidence | the expensive workspace only |
+| `discarded` | `outcome.kind: discarded` | the record and its pointers | the workspace and the evidence |
+
+An artifact's **class** decides what keeping it costs:
+
+- **workspace** (`worktree`, `workspace`, `node_modules`, `checkout`,
+  `build-cache`, `sandbox`) — expensive and regenerable: the bytes that fill a
+  disk.
+- **evidence** (`log`, `diagnostic`, `envelope`, `transcript`, `patch`,
+  `handoff`, `report`) — cheap and irreplaceable: what a human reads to rescue
+  orphaned work after the worker is gone.
+- **pointer** (`branch`, `pr`, `commit`, `tag`, `issue`) — named by the record,
+  not stored by it, so there are no bytes here to reclaim.
+- **unknown** — anything else. Retained AND reported; the janitor never deletes
+  what it cannot classify.
+
+Two record-level overrides win inside any closed tier: `reclaimable: false` pins
+an artifact the tier would otherwise reclaim, and `reclaim_after` holds one until
+that instant has passed.
+
+**Liveness wins at path granularity, not just per record.** A retry is a fresh
+attempt on the same workspace path (ADR 0103), so a path any live attempt owns is
+retained even when an older, closed attempt's own outcome would release it.
+
+**A silent truncation is a failure.** Every artifact considered lands in exactly
+one of `reclaim`, `retain`, or `dropped`, and `totals` states that identity so a
+caller can assert it. A reclaim cap reports each artifact it held back
+(`reason: limit`), and an observed path no record accounts for is reported
+(`reason: no-record`) and left alone rather than swept.
+
 ## Pinned fixture
 
 `.red/contracts/fixtures/attempt-record/` pins the lane bytes and the folded
