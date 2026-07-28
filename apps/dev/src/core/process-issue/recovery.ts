@@ -96,8 +96,6 @@ import { DEFAULT_GO_VERIFY_RETRIES, LABEL_GO_LANE } from "../go.js";
 import {
   STALE_BASE_DRIFT_CORRECTIONS_ENV,
   resolveStaleBaseDriftCorrections,
-  staleBaseDriftBlock,
-  type StaleBaseDriftNote,
 } from "../stale-base-drift.js";
 import { setActiveClaimFinalizer } from "../process-safety.js";
 import {
@@ -319,103 +317,11 @@ export function resolveStallConvergenceBudget(deps: ProcessIssueDeps): number {
   }
   return DEFAULT_STALL_CONVERGENCE_BUDGET;
 }
-/** One post-DONE gate correction as the handoff builders see it. `drift` is
- * present only when the cycle was attributed to stale-base drift (#2711), in
- * which case it was FREE and the agent must merge the base rather than hunt for
- * a defect in work that already validated. */
-export interface GateCorrectionHandoffOpts {
-  gate: "feedback" | "backpressure";
-  validation: string;
-  retry: number;
-  cap: number;
-  drift?: StaleBaseDriftNote;
-}
-
-/** The correction preamble — either the historical bounded-retry line, or the
- * drift line that says plainly the budget was not touched. */
-function correctionPreamble(opts: GateCorrectionHandoffOpts): string[] {
-  if (opts.drift) {
-    return [
-      `The ${opts.gate} machine gate failed after DONE, but the BASE moved under this run — this correction is FREE.`,
-      "Merge the base, regenerate anything the base's move invalidated, commit, then emit the required terminal sentinel.",
-    ];
-  }
-  return [
-    `The ${opts.gate} machine gate failed after DONE. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
-    "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
-  ];
-}
-
-export function appendAfkGateCorrectionHandoff(
-  handoff: string,
-  opts: GateCorrectionHandoffOpts,
-): string {
-  return [
-    handoff.replace(/\n+$/, ""),
-    "",
-    "<afk-gate-correction>",
-    ...correctionPreamble(opts),
-    ...(opts.drift ? ["", ...staleBaseDriftBlock(opts.drift)] : []),
-    "",
-    "<validation-tail>",
-    tailLines(opts.validation, 80),
-    "</validation-tail>",
-    "</afk-gate-correction>",
-    "",
-  ].join("\n");
-}
-export function tailLines(text: string, maxLines: number): string {
-  const lines = text.split("\n");
-  return lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
-}
-export function appendGoVerifyRetryHandoff(
-  handoff: string,
-  opts: GateCorrectionHandoffOpts,
-): string {
-  return [
-    handoff.replace(/\n+$/, ""),
-    "",
-    "<go-machine-gate-retry>",
-    ...correctionPreamble(opts),
-    ...(opts.drift ? ["", ...staleBaseDriftBlock(opts.drift)] : []),
-    "",
-    "<validation-tail>",
-    tailLines(opts.validation, 80),
-    "</validation-tail>",
-    "</go-machine-gate-retry>",
-    "",
-  ].join("\n");
-}
-/** One tier-escalation Re-seed as the handoff builder sees it (ADR 0129). The
- * round buys a HIGHER model tier rather than another attempt at the tier that
- * just failed, so the block says which tier is now running and why. */
-export interface TierEscalationHandoffOpts {
-  from: string;
-  to: string;
-  validation: string;
-  retry: number;
-  cap: number;
-}
-
-export function appendTierEscalationHandoff(
-  handoff: string,
-  opts: TierEscalationHandoffOpts,
-): string {
-  return [
-    handoff.replace(/\n+$/, ""),
-    "",
-    "<tier-escalation>",
-    `The feedback machine gate failed on the \`${opts.from}\` tier. This Re-seed re-instructs you on the ` +
-      `\`${opts.to}\` tier (${opts.retry}/${opts.cap}) rather than spending another round at the tier that just failed.`,
-    "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
-    "",
-    "<validation-tail>",
-    tailLines(opts.validation, 80),
-    "</validation-tail>",
-    "</tier-escalation>",
-    "",
-  ].join("\n");
-}
+// The gate and tier-escalation correction handoffs are no longer built here.
+// Each of the three appenders that lived at this spot rebuilt from the ORIGINAL
+// handoff and therefore discarded every previous correction block, leaving round
+// N blind to rounds 1..N-1. `reseed-handoff.ts` composes ONE outstanding-state
+// section instead (ADR 0129 decision 7, #2728).
 export const NON_SOURCE_EXTENSIONS = new Set([
   ".adoc",
   ".avif",
