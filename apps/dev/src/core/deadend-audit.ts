@@ -12,6 +12,12 @@
 // (the `deadend_audit` MCP tool, /red-doctor) can name the fix without
 // re-deriving it. The audit takes already-gathered, plain-data inputs so it is
 // trivially testable against fakes and holds zero IO.
+//
+// The lifecycle vocabulary comes from triage-labels.ts, never a local literal:
+// a re-declared `const LABEL_READY = "ready-for-agent"` is how a module drifts
+// out of the canonical state vocabulary (#2664).
+
+import { LABEL_DEPENDENCY, LABEL_HUMAN, LABEL_READY } from "./triage-labels.js";
 
 /** The stuck-pattern taxonomy. One entry per detected deadend class. */
 export type DeadendClass =
@@ -130,9 +136,6 @@ export interface DeadendAuditReport {
   readonly classes: readonly DeadendClassReport[];
 }
 
-const LABEL_READY = "ready-for-agent";
-const LABEL_HUMAN = "ready-for-human";
-const LABEL_DEPENDENCY = "blocked:dependency";
 const REQ_LABEL_RE = /^req:(\d+)$/;
 
 /** The `req:N` Ticket numbers a label set declares. */
