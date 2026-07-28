@@ -705,3 +705,16 @@ export class RspElisionStore {
     }
   }
 }
+
+/**
+ * Create the store file, then let go of it (ADR 0126).
+ *
+ * Provisioning is the one moment no resident can own the store: the file has to
+ * exist before anything can be a client of it. That construction belongs to the
+ * store module, not to the surface that asks for it — `rsp setup` calls this and
+ * never names `RspElisionStore`, so the resident stays the only *running* opener.
+ */
+export async function provisionElisionStore(opts: RspElisionStoreOptions): Promise<void> {
+  const store = await RspElisionStore.open({ ...opts, allowResidentOpen: true });
+  await store.close();
+}
