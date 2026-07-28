@@ -187,6 +187,76 @@ describe("rsp cli", () => {
     expect(decoded.verdict.details).toMatchObject({ checks: 0, mergeable: "MERGEABLE" });
   });
 
+  it("wait pr treats a CLEAN pr with zero checks as a genuine no-check repository", async () => {
+    const root = await tempRoot();
+    const fakeGh = await fakeGhPath(root, [{ number: 123, state: "OPEN", mergeable: "CLEAN", statusCheckRollup: [] }]);
+
+    const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "4s"], {
+      PATH: fakeGh.path,
+      GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_PR_POLL_MS: "10ms",
+      RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "100ms",
+    });
+
+    expect(actual.status, actual.stderr.toString("utf8")).toBe(0);
+    const decoded = decode(actual.stdout.toString("utf8")) as {
+      wait: { status: string };
+      verdict: { summary: string; details: { checks: number; mergeable: string } };
+    };
+    expect(decoded.wait.status).toBe("success");
+    expect(decoded.verdict.summary).toBe("PR #123 has no checks configured");
+    expect(decoded.verdict.details).toMatchObject({ checks: 0, mergeable: "CLEAN" });
+  });
+
+  it("wait pr keeps polling a BLOCKED pr with zero checks until its required checks register", async () => {
+    const root = await tempRoot();
+    const fakeGh = await fakeGhPath(root, [
+      { number: 123, state: "OPEN", mergeable: "BLOCKED", statusCheckRollup: [] },
+      { number: 123, state: "OPEN", mergeable: "BLOCKED", statusCheckRollup: [] },
+      { number: 123, state: "OPEN", mergeable: "BLOCKED", statusCheckRollup: [] },
+      { number: 123, state: "OPEN", mergeable: "MERGEABLE", statusCheckRollup: [{ conclusion: "SUCCESS" }] },
+    ]);
+
+    const actual = runRsp(root, ["wait", "pr", "123", "--timeout", "4s"], {
+      PATH: fakeGh.path,
+      GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_PR_POLL_MS: "10ms",
+      // The grace window is already spent by the first poll, so only the
+      // BLOCKED reading itself can keep this wait running.
+      RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1ms",
+    });
+
+    expect(actual.status, actual.stderr.toString("utf8")).toBe(0);
+    expect(Number(await readFile(fakeGh.countFile, "utf8"))).toBeGreaterThan(3);
+    const decoded = decode(actual.stdout.toString("utf8")) as {
+      wait: { status: string };
+      verdict: { summary: string; details: { checks: number; mergeable: string } };
+    };
+    expect(decoded.wait.status).toBe("success");
+    // Never "has no checks configured": BLOCKED with zero checks proves checks
+    // are required, so the only success it may reach is a real green rollup.
+    expect(decoded.verdict.summary).toBe("PR #123 checks passed");
+    expect(decoded.verdict.details).toMatchObject({ checks: 1, mergeable: "MERGEABLE" });
+  });
+
+  it("wait pr times out indeterminate when a BLOCKED pr never registers its checks", async () => {
+    const root = await tempRoot();
+    const fakeGh = await fakeGhPath(root, [{ number: 123, state: "OPEN", mergeable: "BLOCKED", statusCheckRollup: [] }]);
+
+    const actual = runRsp(root, ["wait", "pr", "123", "--json", "--timeout", "1s"], {
+      PATH: fakeGh.path,
+      GH_FAKE_RESPONSES: fakeGh.responsesDir,
+      RSP_WAIT_PR_POLL_MS: "10ms",
+      RSP_WAIT_PR_EMPTY_CHECKS_GRACE_MS: "1ms",
+    });
+
+    expect(actual.status, actual.stderr.toString("utf8")).toBe(2);
+    expect(JSON.parse(actual.stdout.toString("utf8"))).toMatchObject({
+      wait: { status: "timeout" },
+      verdict: { exit_code: 2, target_exit_code: 2 },
+    });
+  });
+
   it("wait pr fails when checks pass but the PR conflicts", async () => {
     const root = await tempRoot();
     const fakeGh = await fakeGhPath(root, [

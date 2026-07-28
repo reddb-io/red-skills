@@ -55,7 +55,12 @@ export async function probePr(
   if (pending > 0) return running(`PR #${number} has ${pending} pending checks`);
   if (checks.length === 0) {
     const elapsedMs = Date.now() - startedAt;
-    if (mergeable === "UNKNOWN" || elapsedMs < options.emptyChecksGraceMs) {
+    // `BLOCKED` with zero reported checks is the state GitHub uses when required
+    // checks are configured but have not been created yet, so it is proof that
+    // checks ARE required — the opposite of "no checks configured". It outranks
+    // the grace window: no amount of elapsed time turns it into a success.
+    // Only `CLEAN`/`MERGEABLE` with zero checks is the genuine no-checks repo.
+    if (mergeable === "UNKNOWN" || mergeable === "BLOCKED" || elapsedMs < options.emptyChecksGraceMs) {
       return running(`PR #${number} has no registered checks yet`, {
         checks: 0,
         mergeable,
