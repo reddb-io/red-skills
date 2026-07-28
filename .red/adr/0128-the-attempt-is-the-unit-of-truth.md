@@ -1,4 +1,4 @@
-# 0127 — The attempt is the unit of truth, and the resident owns it
+# 0128 — The attempt is the unit of truth, and the resident owns it
 
 - **Status**: accepted
 - **Date**: 2026-07-28

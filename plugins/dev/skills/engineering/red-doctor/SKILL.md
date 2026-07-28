@@ -169,6 +169,6 @@ Check 21 is the shared operational probe registry (`apps/dev/src/core/operationa
 
 - **Single repo** by default; multi-repo sweep is opt-in. With `--fix`, a sweep applies per-repo with the same gating.
 - **Public-repo safe**: reads only conventions already public in the repo; **emits no secret values** (it may list secret *names* via `gh secret list` to detect the AFK-lane auth gap — names are not sensitive — and never reads or prints a value). It does **not** impose RedSkills' own `red-*` CI (release/bench/drift-guard/upstream-watch) onto an adopter repo — that stays out of scope. What it *does* audit is the **adoption coherence of `rs-*` workflows already installed** (correct installed-name + the AFK lane's auth secret), never installing a lane the repo didn't opt into.
-- Pairs with `/review-adrs` (decision-record coherence) and `memory:doctor` (graph health) — three doctors over different axes; this one owns **process/adoption** and is the one that can both diagnose and, with `--fix`, heal.
+- Pairs with `/adr-editor` (decision-record coherence) and `memory:doctor` (graph health) — three doctors over different axes; this one owns **process/adoption** and is the one that can both diagnose and, with `--fix`, heal.
 
 </supporting-info>
