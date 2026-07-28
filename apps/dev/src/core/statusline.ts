@@ -507,16 +507,19 @@ export function renderShortRepoBlock(repo: RepoInput | undefined): string | null
 /** Supervisor fleet cell: rendered only after IO proves pid-live and fresh. */
 export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   if (!fleet) return null;
+  // A stale chip is NEVER drawn as current occupancy (ADR 0128 §6). The compact
+  // line has no room for a qualifier that would still read as a live fleet, so
+  // it renders nothing; the staleness itself travels on in the chip payload,
+  // where a consumer sees "fleet, but stale" instead of "no fleet".
+  if (fleet.stale && !fleet.breaker) return null;
   const runner = fleet.runner || "?";
   const busy = Math.max(0, Math.floor(fleet.busy));
   const total = Math.max(0, Math.floor(fleet.total));
   const queue = Math.max(0, Math.floor(fleet.queue));
   const parts = [`flt=${runner} ${busy}/${total}${fleet.degraded ? "†" : ""}`];
-  // A stale snapshot is NEVER drawn as current (ADR 0128 §6): the marker names
-  // the age, so a dead fleet's last numbers read as history, not as now.
+  // A breaker-open fleet still renders (#2527) — mark its numbers as history.
   if (fleet.stale) {
-    const age = Math.max(0, Math.floor(fleet.staleAgeS ?? 0));
-    parts.push(`⏳stale=${age}s`);
+    parts.push(`⏳stale=${Math.max(0, Math.floor(fleet.staleAgeS ?? 0))}s`);
   }
   if (fleet.breaker) {
     parts.push(`⛔brk=${Math.max(1, Math.floor(fleet.breaker.count))}×`);
