@@ -11,6 +11,15 @@ name: red-workspace-ci
 # the vitest worker (#446); that loop is fixed, so the suite is now a reliable
 # gate. Scoped to apps/dev — the AFK-critical suite that is verified green here;
 # broadening to the other apps' suites is a follow-up.
+#
+# scope: the heavy jobs are narrowed to the change's affected cone by
+# scripts/ci-affected-scope.mjs, on the same principle the AFK feedback gate
+# already uses (apps/dev/src/core/validation-scope.ts). The narrowing is
+# step-level ON PURPOSE: a trigger-level `paths`/`paths-ignore` filter or a
+# job-level `if:` makes a required check vanish or report "skipped", which leaves
+# branch protection waiting forever on a docs PR. Every job here still runs on
+# every PR and still reports a conclusion; only the work inside it shrinks.
+# An unclassifiable change escalates to the whole workspace (#2750).
 
 on:
   pull_request:
@@ -24,6 +33,43 @@ permissions:
   contents: read
 
 jobs:
+  # Resolve the affected cone once; the heavy jobs read it through `needs`.
+  # A push (main / automation branch) always gets the whole workspace: there is
+  # no pull-request base to diff against and post-merge state must never be
+  # under-validated.
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.compute.outputs.mode }}
+      test_packages: ${{ steps.compute.outputs.test_packages }}
+      run_typecheck: ${{ steps.compute.outputs.run_typecheck }}
+      run_manifest_checks: ${{ steps.compute.outputs.run_manifest_checks }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          # Full history so the merge-base diff against the PR base resolves.
+          fetch-depth: 0
+
+      - name: Compute affected cone
+        id: compute
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" != "pull_request" ]; then
+            node scripts/ci-affected-scope.mjs --whole-workspace --github-output
+            exit 0
+          fi
+          # Fetching the base branch is what makes the three-dot merge-base diff
+          # possible; if it fails, the scoper sees an empty diff and falls back
+          # to the whole workspace rather than narrowing on an unknown set.
+          git fetch --no-tags --depth=0 origin "$BASE_REF" || true
+          base="$BASE_SHA"
+          if [ -z "$base" ]; then base="origin/$BASE_REF"; fi
+          node scripts/ci-affected-scope.mjs --base "$base" --head HEAD --github-output
+
   workflow-security:
     runs-on: ubuntu-latest
     steps:
@@ -61,19 +107,30 @@ jobs:
       - name: Test marketplace manifest validator
         run: scripts/test-validate-marketplace-manifests.sh
 
+      - name: Test CI affected-scope contract
+        run: scripts/test-ci-affected-scope.sh
+
   typecheck:
     runs-on: ubuntu-latest
+    needs: scope
+    env:
+      # Both step families need install; compute the union once.
+      RUN_ANY: ${{ needs.scope.outputs.run_typecheck == 'true' || needs.scope.outputs.run_manifest_checks == 'true' }}
     steps:
       - name: Checkout
+        if: env.RUN_ANY == 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+      - if: env.RUN_ANY == 'true'
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - if: env.RUN_ANY == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
 
       - name: Install workspace dependencies
+        if: env.RUN_ANY == 'true'
         env:
           # This PR gate typechecks/tests apps/dev; it does not execute the
           # @reddb-io/sdk-backed memory/brain runtimes. Skip the SDK postinstall
@@ -82,26 +139,43 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Check generated Codex manifests
+        if: needs.scope.outputs.run_manifest_checks == 'true'
         run: pnpm codex:manifests:check
 
       - name: Check generated Pi manifests
+        if: needs.scope.outputs.run_manifest_checks == 'true'
         run: pnpm pi:manifests:check
 
       - name: Check generated Pi npm packages
+        if: needs.scope.outputs.run_manifest_checks == 'true'
         run: pnpm pi:packages:check
 
       - name: Typecheck workspace (apps + packages, excludes red-castle)
+        if: needs.scope.outputs.run_typecheck == 'true'
         run: pnpm typecheck
+
+      - name: Report narrowed scope
+        if: env.RUN_ANY != 'true'
+        run: echo "No typed or manifest input changed (scope ${{ needs.scope.outputs.mode }}) — nothing to check."
 
   test:
     runs-on: ubuntu-latest
+    needs: scope
+    env:
+      # JSON array of every package in the affected cone; each step below asks
+      # whether its own package is in it.
+      PACKAGES: ${{ needs.scope.outputs.test_packages }}
+      RUN_ANY: ${{ needs.scope.outputs.test_packages != '[]' }}
     steps:
       - name: Checkout
+        if: env.RUN_ANY == 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+      - if: env.RUN_ANY == 'true'
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - if: env.RUN_ANY == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
 
@@ -110,6 +184,7 @@ jobs:
       # binary must exist here exactly as it does on dev machines (/red-setup)
       # and in red-rsp-benchmark-ci.yml. Same pinned installer, no fallback.
       - name: Install pinned tq
+        if: contains(fromJSON(env.PACKAGES), 'apps/dev')
         env:
           TQ_VERSION: v0.3.0
           GH_TOKEN: ${{ github.token }}
@@ -123,6 +198,7 @@ jobs:
             sh
 
       - name: Install workspace dependencies
+        if: env.RUN_ANY == 'true'
         env:
           # This PR gate typechecks/tests apps/dev; it does not execute the
           # @reddb-io/sdk-backed memory/brain runtimes. Skip the SDK postinstall
@@ -131,6 +207,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Test apps/dev (includes packages/shared)
+        if: contains(fromJSON(env.PACKAGES), 'apps/dev')
         run: pnpm -C apps/dev test
 
       # The engine's own suite carries the castle-tree transition-API contract
@@ -138,10 +215,17 @@ jobs:
       # this step that lint would never run and a raw state-role writer could
       # reach main unseen.
       - name: Test packages/red-castle
+        if: contains(fromJSON(env.PACKAGES), 'packages/red-castle')
         run: pnpm -C packages/red-castle test
 
       - name: Test apps/opencode-host
+        if: contains(fromJSON(env.PACKAGES), 'apps/opencode-host')
         run: pnpm -C apps/opencode-host test
 
       - name: Test apps/afk-container
+        if: contains(fromJSON(env.PACKAGES), 'apps/afk-container')
         run: pnpm -C apps/afk-container test
+
+      - name: Report narrowed scope
+        if: env.RUN_ANY != 'true'
+        run: echo "No package is in the affected cone (scope ${{ needs.scope.outputs.mode }}) — no suite to run."
