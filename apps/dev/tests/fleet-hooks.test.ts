@@ -57,6 +57,7 @@ function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     supervisorRestartWindowS: 300,
     reapContestWindowS: 30,
     shrinkMode: "drain-then-retire",
+    attemptBudgets: {},
     ...over,
   };
 }

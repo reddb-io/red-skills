@@ -145,3 +145,97 @@ export function inspectProcessTreeNative(pid: number): readonly ProcessSnapshotE
     }),
   );
 }
+
+// ---------- per-attempt memory accounting (ADR 0128 §8) ----------
+
+/**
+ * Parse `ps -e -o pid=,ppid=,rss=` into the child edges plus each pid's RSS in
+ * KB. A malformed line is skipped. Separate from {@link parsePsTree} on purpose:
+ * the reaper's snapshot is a SAFETY input (a failed read must read as busy),
+ * while this one is an ACCOUNTING input (a failed read must measure nothing).
+ */
+export function parsePsRssTree(stdout: string): {
+  children: Map<number, number[]>;
+  rssKb: Map<number, number>;
+} {
+  const children = new Map<number, number[]>();
+  const rssKb = new Map<number, number>();
+  for (const rawLine of stdout.split("\n")) {
+    const line = rawLine.trim();
+    if (line.length === 0) continue;
+    const parts = line.split(/\s+/);
+    if (parts.length < 3) continue;
+    const pid = Number(parts[0]);
+    const ppid = Number(parts[1]);
+    const rss = Number(parts[2]);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid) || !Number.isFinite(rss)) continue;
+    rssKb.set(pid, rss);
+    const siblings = children.get(ppid);
+    if (siblings) siblings.push(pid);
+    else children.set(ppid, [pid]);
+  }
+  return { children, rssKb };
+}
+
+/**
+ * Resident-set size in MB for each requested pid's whole process tree, from ONE
+ * process-table read — so per-attempt memory accounting costs the same whether
+ * the fleet runs one worker or eight.
+ *
+ * FAILS CLOSED ON MEASUREMENT, OPEN ON POLICY: a failed or unreadable sample
+ * returns an EMPTY map. An absent pid means "not measured", never 0 and never a
+ * fabricated number, so a flaky `ps` can only ever fail to charge an attempt —
+ * it can never terminate one that was inside its budget.
+ */
+export function sampleTreeRssMb(
+  pids: readonly number[],
+  run: PsTreeRunner,
+): Map<number, number> {
+  const out = new Map<number, number>();
+  const wanted = pids.filter((pid) => isInspectablePid(pid));
+  if (wanted.length === 0) return out;
+  let stdout: string;
+  try {
+    stdout = run();
+  } catch {
+    return out;
+  }
+  let parsed: ReturnType<typeof parsePsRssTree>;
+  try {
+    parsed = parsePsRssTree(stdout);
+  } catch {
+    return out;
+  }
+  for (const root of wanted) {
+    let totalKb = 0;
+    let seenAny = false;
+    const seen = new Set<number>();
+    const stack = [root];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      const kb = parsed.rssKb.get(current);
+      if (kb !== undefined) {
+        totalKb += kb;
+        seenAny = true;
+      }
+      const kids = parsed.children.get(current);
+      if (kids) for (const k of kids) stack.push(k);
+    }
+    // A pid the table never listed has already exited — nothing to charge.
+    if (seenAny) out.set(root, Math.round(totalKb / 1024));
+  }
+  return out;
+}
+
+/** {@link sampleTreeRssMb} against the real process table. */
+export function sampleTreeRssMbNative(pids: readonly number[]): Map<number, number> {
+  return sampleTreeRssMb(pids, () =>
+    execFileSync("ps", ["-e", "-o", "pid=,ppid=,rss="], {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 5000,
+    }),
+  );
+}

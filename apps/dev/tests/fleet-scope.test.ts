@@ -4,6 +4,7 @@ import {
   fleetScopeUnitName,
   planFleetScope,
   readFleetScopeSettings,
+  readSelfCgroupScope,
   type FleetScopeProbes,
 } from "../src/runtime/fleet-scope.js";
 import { loadConfig } from "../src/core/config.js";
@@ -152,5 +153,24 @@ describe("detectFleetScopeProbes", () => {
 
   it("reports no user session when XDG_RUNTIME_DIR is unset", () => {
     expect(detectFleetScopeProbes({ PATH: "" }, "linux").userSession).toBe(false);
+  });
+});
+
+describe("readSelfCgroupScope (#2707)", () => {
+  it("names the transient scope that actually holds this process", () => {
+    const cgroup =
+      "0::/user.slice/user-1000.slice/user@1000.service/app.slice/red-fleet-main-4242.scope\n";
+    expect(readSelfCgroupScope(() => cgroup)).toBe("red-fleet-main-4242.scope");
+  });
+
+  it("omits the attribution rather than naming a cgroup that does not hold us", () => {
+    // A fleet whose scope was declined by the host runs in the caller's slice —
+    // the record must say nothing instead of repeating the launcher's intent.
+    expect(readSelfCgroupScope(() => "0::/user.slice/user-1000.slice\n")).toBeUndefined();
+    expect(
+      readSelfCgroupScope(() => {
+        throw new Error("ENOENT /proc/self/cgroup");
+      }),
+    ).toBeUndefined();
   });
 });

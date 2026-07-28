@@ -23,6 +23,7 @@ export {
   type SupervisorLiveness,
 } from "./supervisor/lifecycle.js";
 export {
+  type AttemptCloseRecord,
   type FleetHeartbeat,
   type FleetHeartbeatEmitResult,
   type HeartbeatSlotDetail,
@@ -50,6 +51,7 @@ export {
   type SupervisorState,
 } from "./supervisor/state.js";
 export {
+  buildAttemptBudgetEnvelope,
   buildCrashEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
@@ -79,3 +81,10 @@ export {
   type SupervisorAdoptionResult,
 } from "./supervisor/runtime.js";
 export { guardedTick } from "./supervisor/guarded-tick.js";
+export {
+  attemptUsage,
+  hasResourceBudget,
+  recordAttemptClose,
+  resourceBudgetBreach,
+  sampleFleetPeakRss,
+} from "./supervisor/attempt-accounting.js";

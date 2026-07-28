@@ -34,7 +34,8 @@ import {
   type RepoContext,
 } from "../runtime/wire.js";
 import { formatPreconditionFailure, runBoot, type BootResult, type BootstrapInput } from "../core/boot.js";
-import { inspectProcessTreeNative } from "../runtime/proc-tree.js";
+import { inspectProcessTreeNative, sampleTreeRssMbNative } from "../runtime/proc-tree.js";
+import { readSelfCgroupScope } from "../runtime/fleet-scope.js";
 import { resolveDevScriptPath } from "../runtime/supervisor-spawn.js";
 import {
   workerLivenessFor,
@@ -61,6 +62,7 @@ import { reapDeadSupervisorSnapshotDirs, reapStaleSupervisorState } from "../run
 import {
   castleStateSnapshotPath,
   createEnginePaths,
+  createCastleAttemptRecorder,
   createCastleLaneWriters,
   createFileHealLedgerStore,
   createFileIssueCuratorStore,
@@ -580,6 +582,11 @@ export function buildSupervisorDeps(
   const claimHostPrefix = hostFingerprintPrefix();
   // slot index → exit code of the most recent worker for that slot.
   const slotExitCodes = new Map<number, number>();
+  // The resident's attempt-record writer (ADR 0128) and the cgroup its fleet is
+  // charged to (#2697). The scope is resolved ONCE — a process cannot change the
+  // cgroup it is charged to without being relaunched.
+  const attemptRecorder = createCastleAttemptRecorder(createEnginePaths(join(root, ".red")));
+  const fleetScopeUnit = readSelfCgroupScope();
   // Worker env (build_passthrough_env parity): start from the supervisor's full
   // env, then STRIP every internal supervisor knob in PASSTHROUGH_DENYLIST plus
   // every per-slot `_BASE` build-isolation var, so they never leak to the worker
@@ -661,6 +668,10 @@ export function buildSupervisorDeps(
       // Real ps-backed tree sample. A ps failure returns a CONSERVATIVE BUSY
       // snapshot (never []), so a transient ps error can never authorise a reap.
       inspectTree: (pid) => inspectProcessTreeNative(pid),
+      // Per-attempt memory accounting (ADR 0128 §8): ONE process-table read
+      // charges every live attempt. A failed read measures nothing rather than
+      // reporting a fabricated 0, so it can never terminate an in-budget attempt.
+      sampleTreeRssMb: (pids) => sampleTreeRssMbNative(pids),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     },
     fs: {
@@ -783,6 +794,29 @@ export function buildSupervisorDeps(
     wake: buildStateChangeWake(join(tmpDir, "workers")),
     // Env for the bounded stalled re-claim cap (#402): RED_AFK_RETRY_STALLED.
     recoveryEnv: process.env,
+    // The RESIDENT writes the attempt record (ADR 0128): the supervisor outlives
+    // the worker, which is exactly the moment the record has to exist. Every
+    // write degrades to a diagnostic instead of throwing, so a broken lane costs
+    // observability and never an attempt.
+    recordAttemptClose: async (close) => {
+      const log = attemptRecorder.attempt({
+        worker_id: close.workerId.length > 0 ? close.workerId : "unknown",
+        issue: close.issue,
+        try: close.try,
+      });
+      await log.record("attempt.resourced", { resources: close.resources });
+      await log.record("attempt.closed", {
+        outcome: close.outcome,
+        resources: close.resources,
+        ...(close.branch !== undefined ? { branch: close.branch } : {}),
+        ...(close.pr !== undefined ? { pr: close.pr } : {}),
+        ...(close.note !== undefined ? { note: close.note } : {}),
+      });
+    },
+    // Which fleet the consumption is charged to (#2697). The scope is read from
+    // this process's own cgroup, so the record names the cgroup that actually
+    // holds the fleet rather than the one the launcher intended.
+    fleetAttribution: { fleet, ...(fleetScopeUnit !== undefined ? { scope: fleetScopeUnit } : {}) },
     // ADR 0122 heal ledger (#2526): the death-sweep consults the same castle
     // store the boot healer writes, so worker-death heals and probe heals
     // share one per-issue budget.

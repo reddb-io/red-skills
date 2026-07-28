@@ -6,7 +6,16 @@ import { workerIdentity } from "../host-identity.js";
 import { LABEL_READY, LABEL_RUNNING } from "../triage-labels.js";
 import { isRefused, parkOrHuman, planTransition, type StateTransition } from "../state-transition.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
+import type { AttemptBudgetBreach, AttemptUsage } from "../attempt-budget.js";
+import { recordAttemptClose } from "./attempt-accounting.js";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
+
+/** Unit each budget is measured in, for the envelope's duration line. */
+const ATTEMPT_BUDGET_UNITS: Record<AttemptBudgetBreach["budget"], string> = {
+  wall_clock_s: "s",
+  peak_rss_mb: "MB",
+  cost_usd: "USD",
+};
 
 export function buildDiscardEnvelope(
   runner: string,
@@ -72,6 +81,39 @@ export function buildWallClockCapEnvelope(info: IterDirInfo, capSeconds: number)
   });
 }
 
+/**
+ * Build the per-attempt BUDGET envelope body (ADR 0128 §8) — the reaper's third
+ * terminal record. Like the wall-clock cap it is never a stall: the attempt was
+ * cut off by a resource ceiling it reached, and the envelope NAMES that budget
+ * so the issue's history reads "we stopped it at 4096MB" rather than "the agent
+ * never finished". Its status is `blocked` (the mapping `budget-exceeded`
+ * already carries in worker-outcome), because a resource runaway pages a human
+ * instead of blind-retrying.
+ */
+export function buildAttemptBudgetEnvelope(
+  info: IterDirInfo,
+  breach: AttemptBudgetBreach,
+): string {
+  const unit = ATTEMPT_BUDGET_UNITS[breach.budget];
+  return buildEnvelope({
+    status: "blocked",
+    worker: info.workerId.length > 0 ? info.workerId : "unknown",
+    duration: `${info.durationS}s · ${breach.budget} budget ${breach.limit}${unit} reached (used ${breach.observed}${unit})`,
+    diff: "budget-exceeded",
+    attempt: info.attempt,
+    sections: [
+      {
+        name: "notes",
+        body:
+          info.notes.length > 0
+            ? info.notes
+            : "(no agent notes recorded before the budget termination)",
+      },
+      { name: "log", body: renderLogTailToon(info.logTail), fenced: true, fenceLang: "toon" },
+    ],
+  });
+}
+
 /** Build the crash-reconcile no-sentinel envelope body (#815), composing
  * envelope.ts buildEnvelope. The running-supervisor analogue of
  * buildReaperEnvelope: status "no-sentinel", a notes section and a fenced
@@ -125,10 +167,16 @@ export function decideCrashReconcile(input: {
  *      `running` → `ready-for-agent` CLEAN; at the cap → escalate to
  *      ready-for-human carrying `blocked:crashed` + a self-explanatory comment.
  * Returns the reconciled issue number, or null when nothing was reconciled.
+ *
+ * `usage` is what the resident measured while the attempt ran (ADR 0128 §8). It
+ * closes the attempt record here — this is the boundary where a COMPLETED
+ * attempt is observed, so wall clock and peak RSS land on a clean finish exactly
+ * as they do on a termination.
  */
 export async function reconcileDeadWorkerClaim(
   info: IterDirInfo | null,
   deps: SupervisorDeps,
+  usage: AttemptUsage = {},
 ): Promise<number | null> {
   if (info === null || info.issue === null) return null;
   if (!deps.gh.crashedClaimState) return null;
@@ -137,12 +185,32 @@ export async function reconcileDeadWorkerClaim(
   try {
     claim = await deps.gh.crashedClaimState(info.issue);
   } catch {
-    // gh failed → leave the issue for the next boot sweep (conservative).
+    // gh failed → leave the issue for the next boot sweep (conservative), and
+    // record nothing: an unreadable claim is not evidence of an outcome.
     return null;
   }
   if (!decideCrashReconcile({ issue: info.issue, ghOk: claim.ghOk, stillRunning: claim.stillRunning })) {
+    // The claim is no longer `running`, so the attempt closed ITSELF before the
+    // worker exited — a clean finish, the other half of ADR 0128's record.
+    if (claim.ghOk) {
+      await recordAttemptClose(deps, {
+        info,
+        usage: usage.wallClockS === undefined ? { ...usage, wallClockS: info.durationS } : usage,
+        outcome: {
+          kind: "done",
+          detail: "worker exited with its claim already conceded — the attempt closed itself",
+        },
+      });
+    }
     return null;
   }
+
+  // The worker died holding a live claim: a crash, not a budget and not a stall.
+  await recordAttemptClose(deps, {
+    info,
+    usage: usage.wallClockS === undefined ? { ...usage, wallClockS: info.durationS } : usage,
+    outcome: { kind: "killed", detail: "orchestrator died mid-attempt (crash-reconciled)" },
+  });
 
   // 1. No-sentinel envelope (skip when one already rode the issue).
   if (!claim.envelopePosted) {

@@ -1,5 +1,9 @@
 import type { LivenessVerdict } from "@reddb-io/red-castle";
-import type { CastleLaneRecord } from "@reddb-io/red-castle/engine";
+import type {
+  CastleAttemptOutcome,
+  CastleAttemptResources,
+  CastleLaneRecord,
+} from "@reddb-io/red-castle/engine";
 import type { ProcessSnapshotEntry } from "../reaper-signal.js";
 import type { RecoveryEnv } from "../recovery.js";
 import type { WakeSource } from "../event-wake.js";
@@ -53,6 +57,15 @@ export interface SupervisorProc {
    * reduction consumes (deriveSnapshot). Mirrors sup_descendant_pids feeding
    * sup_active_descendant + sup_tree_cpu. */
   inspectTree(pid: number): readonly ProcessSnapshotEntry[];
+  /**
+   * Resident-side memory sample: resident-set size in MB for each pid's whole
+   * process tree, keyed by the pid asked about (ADR 0128 §8). ONE call covers
+   * the whole fleet, so per-attempt memory accounting costs one process-table
+   * read per tick regardless of fleet width. A pid the sampler cannot see is
+   * simply absent from the map — never reported as 0, which would read as a
+   * measured zero. Optional: absent → the attempt record omits `peak_rss_mb`.
+   */
+  sampleTreeRssMb?(pids: readonly number[]): ReadonlyMap<number, number>;
   /** Sleep for `ms` between health-check ticks — the poll cadence (RED_AFK_POLL_S).
    * Injected so tests advance the loop without real time. Mirrors the bash
    * `sleep "$POLL_S"` at the bottom of the supervisor `while :` loop. */
@@ -308,6 +321,9 @@ export interface IterDirInfo {
    * dir, or 1 when it cannot be derived. Drives the bounded stalled re-claim cap
    * (#402) so a worker that keeps stalling escalates instead of looping forever. */
   attempt: number;
+  /** Reported spend for this attempt (WorkerVitals `current.cost_usd`), when the
+   * runner reports cost. Undefined means unmeasured, not zero. */
+  costUsd?: number;
 }
 
 /** One worker's claimed iter dirs for the trip sweep. */
@@ -322,6 +338,26 @@ export interface SweepWork {
   workers: SweepWorker[];
   /** Supervisor log path quoted in the discard envelope body. */
   supervisorLogPath: string;
+}
+
+/**
+ * One closed attempt, as the resident observed it: who ran it, what it left
+ * behind, what it consumed, and the terminal outcome — including, for a budgeted
+ * termination, the budget that NAMED it (ADR 0128 §8).
+ */
+export interface AttemptCloseRecord {
+  workerId: string;
+  issue: number;
+  /** The try number — one worker × one ticket × one try. */
+  try: number;
+  outcome: CastleAttemptOutcome;
+  resources: CastleAttemptResources;
+  /** The attempt's branch, when one was recovered. */
+  branch?: string;
+  /** The PR the attempt left open, when one exists. */
+  pr?: number;
+  /** One-line human-readable gloss for the record. */
+  note?: string;
 }
 
 /** All injected IO + the clock for one supervisor run. */
@@ -348,6 +384,23 @@ export interface SupervisorDeps {
    * built-in cap) when absent, so tests can omit it.
    */
   recoveryEnv?: RecoveryEnv;
+  /**
+   * Resident-owned attempt record writer (ADR 0128). The RESIDENT writes the
+   * record, never the worker — the moment it matters most is exactly when the
+   * worker is already gone. Called once per attempt the supervisor observes
+   * ending, whether it finished on its own or the supervisor terminated it.
+   * Best-effort by contract: the record is diagnostic and must never break
+   * execution, so the caller swallows every failure. Absent → nothing is
+   * recorded (tests, and any runtime with no `.red/state/castle` lane).
+   */
+  recordAttemptClose?(close: AttemptCloseRecord): Promise<void> | void;
+  /**
+   * Which fleet — and which cgroup scope (#2697) — this supervisor's resource
+   * consumption is charged to. Stamped onto every attempt record it writes, so
+   * "which fleet caused this pressure" is a record read rather than a `ps`
+   * reconstruction after the workers are gone.
+   */
+  fleetAttribution?: { fleet?: string; scope?: string };
   /**
    * Optional ADR 0122 heal ledger (castle engine store). When present, the
    * death-sweep consults it before re-queueing a dead worker's issue: the 3rd

@@ -1,4 +1,5 @@
 import { SLOT_CIRCUIT_DEFAULTS } from "../slot-circuit.js";
+import { resolveAttemptBudgets, type AttemptBudgets } from "../attempt-budget.js";
 
 import type { CastleLaneRecord } from "@reddb-io/red-castle/engine";
 
@@ -151,6 +152,13 @@ export interface SupervisorConfig {
   reapContestWindowS: number;
   /** RED_AFK_SHRINK_MODE — runtime fleet shrink behavior. */
   shrinkMode: ElasticShrinkMode;
+  /**
+   * Per-attempt resource ceilings (ADR 0128 §8). An ABSENT budget is unlimited,
+   * never zero — the default table sets only `wall_clock_s` (from the per-issue
+   * ceiling), so a repo that configures nothing enforces exactly today's
+   * behaviour and pays no extra sampling.
+   */
+  attemptBudgets: AttemptBudgets;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -175,6 +183,9 @@ export const SUPERVISOR_DEFAULTS = {
   supervisorRestartWindowS: 300,
   reapContestWindowS: 30,
   shrinkMode: "drain-then-retire",
+  // Empty = every per-attempt budget unlimited. The real table is resolved in
+  // resolveSupervisorConfig, which folds the per-issue wall-clock ceiling in.
+  attemptBudgets: {},
 } as const satisfies SupervisorConfig;
 
 export type ElasticShrinkMode = "hard-kill" | "drain-then-retire";
@@ -269,6 +280,10 @@ export function resolveSupervisorConfig(
     if (raw !== undefined && /^[0-9]+$/.test(raw)) return Number(raw);
     return fallback;
   };
+  const issueWallClockMaxS =
+    num("RED_AFK_ISSUE_WALL_CLOCK_MAX_S", 0) ||
+    parsePositiveNumber(getCfg("afk.issue_wall_clock_max_s")) ||
+    SUPERVISOR_DEFAULTS.issueWallClockMaxS;
   return {
     target: num("RED_AFK_TARGET", SUPERVISOR_DEFAULTS.target),
     fastDeathThresholdS: num("RED_AFK_FAST_DEATH_S", SUPERVISOR_DEFAULTS.fastDeathThresholdS),
@@ -281,10 +296,7 @@ export function resolveSupervisorConfig(
     ),
     // 0 would reap every attempt the moment it claims — floor it back to the
     // default so a typo can never turn the backstop into an instant killer.
-    issueWallClockMaxS:
-      num("RED_AFK_ISSUE_WALL_CLOCK_MAX_S", 0) ||
-      parsePositiveNumber(getCfg("afk.issue_wall_clock_max_s")) ||
-      SUPERVISOR_DEFAULTS.issueWallClockMaxS,
+    issueWallClockMaxS,
     runner: env.RED_AFK_RUNNER && env.RED_AFK_RUNNER.length > 0 ? env.RED_AFK_RUNNER : SUPERVISOR_DEFAULTS.runner,
     pollIntervalS: num("RED_AFK_POLL_S", SUPERVISOR_DEFAULTS.pollIntervalS),
     // 0 would make the safety-net fire instantly (busy-spin) — floor it back to
@@ -333,6 +345,11 @@ export function resolveSupervisorConfig(
       parseShrinkMode(env.RED_AFK_SHRINK_MODE) ??
       parseShrinkMode(getCfg("afk.shrink_mode")) ??
       SUPERVISOR_DEFAULTS.shrinkMode,
+    // The wall-clock budget IS the per-issue ceiling above — the budget table
+    // reports the ceiling that is actually enforced instead of minting a second
+    // one. Memory and cost default to `unlimited` (ADR 0128 §8), so an
+    // unconfigured repo pays no per-tick sampling.
+    attemptBudgets: resolveAttemptBudgets({ env, getCfg, wallClockS: issueWallClockMaxS }),
   };
 }
 

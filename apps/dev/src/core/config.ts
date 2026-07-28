@@ -178,6 +178,17 @@ export const CONFIG_DEFAULTS = {
   // dist-tag. The launcher reads this (or `RED_SKILLS_CHANNEL`); moving canary is
   // gated on the proof-by-drain telemetry.
   "afk.release.channel": "stable",
+  // Per-attempt resource budgets (ADR 0128 §8). An attempt that reaches one of
+  // these is terminated with an outcome NAMING the budget — never recorded as a
+  // stall — and its branch/PR is handed forward, so the retry adopts the work
+  // instead of restarting from main. `unlimited` (the default) means exactly
+  // that: no ceiling. It is deliberately a word rather than `0`, which would
+  // read as "terminate immediately". The wall-clock budget is NOT listed here:
+  // it is the existing per-issue ceiling `afk.issue_wall_clock_max_s` (default
+  // 2700), because two disagreeing wall-clock ceilings is the bug class ADR 0128
+  // forbids.
+  "afk.attempt.budget.peak_rss_mb": "unlimited",
+  "afk.attempt.budget.cost_usd": "unlimited",
   // Cross-host stale-claim reaper (#1187). A running issue whose claim marker
   // stopped refreshing is released only after the stale window AND this minimum
   // grace have both elapsed; a recent commit on an `afk/*/<issue>-*` live branch

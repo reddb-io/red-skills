@@ -54,8 +54,12 @@ learned it:
 - `gate` — one gate verdict; the fold accumulates them
 - `landing` — one landing step; the fold accumulates them
 - `outcome` — the terminal outcome; a `budget-exceeded` outcome NAMES its
-  budget and is never recorded as a stall
-- `resources` — wall clock, peak RSS, cost
+  budget (`wall_clock_s` | `peak_rss_mb` | `cost_usd` — each one a field of
+  `resources`, so the name always points at a number the same record carries)
+  and is never recorded as a stall
+- `resources` — wall clock, peak RSS, cost, and the fleet (plus its cgroup
+  scope) the consumption is CHARGED to, so "which fleet caused this pressure" is
+  a record read rather than a `ps` reconstruction after the workers are gone
 - `artifact` — one artifact left behind, with its reclaim eligibility, so the
   janitor reclaims on the record's verdict rather than on a missing pid file
 - `note` — a one-line human-readable gloss
