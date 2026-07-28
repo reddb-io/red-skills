@@ -1,0 +1,5 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+The resident auto-spawn now resolves the rsp entrypoint explicitly instead of re-executing the caller's `process.argv[1]` (#2736). A host that is not the rsp CLI — the dev bundle, castle-mcp, memory, brain — used to re-exec *itself* with `warm-resident`, an argument only the rsp CLI routes, and because rsp fails open by contract that spawn died in silence: the command still ran, but compression, `el:<id>` handles and telemetry quietly disappeared. Entry resolution walks named candidates in order — an explicit `serverCommand`, `RSP_BIN`, the caller's own entry when it *is* an rsp entry, the rsp bundle beside the host bundle, the plugin-root bundle, the repo `dist/`, the workspace entry, and the bundle cache — and a host with no resolvable entry now emits the named `rsp-resident-entry-unresolved` diagnostic once instead of failing silently. Fail-open is unchanged: after the diagnostic the wrapped command keeps its own stdout, stderr and exit status.

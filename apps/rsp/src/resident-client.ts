@@ -13,6 +13,9 @@ import { sendResidentRequest } from "./resident-protocol.js";
 import {
   ensureResidentServer,
   kickResidentServer,
+  resolveRspEntry,
+  RspResidentEntryError,
+  RSP_ENTRY_UNRESOLVED,
   pingResident,
   readResidentRegistry,
   removeResidentRegistry,
@@ -35,6 +38,9 @@ export interface ResidentResponseMetrics {
 export {
   ensureResidentServer,
   kickResidentServer,
+  resolveRspEntry,
+  RspResidentEntryError,
+  RSP_ENTRY_UNRESOLVED,
   pingResident,
   readResidentRegistry,
   removeResidentRegistry,

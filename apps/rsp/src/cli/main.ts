@@ -215,10 +215,14 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }));
     return 1;
   }
-  const { residentConfigFor, residentElisionStore } = await import("../resident-store.js");
+  const { residentConfigFor, residentElisionStore, reportResidentEntryDiagnostic } = await import("../resident-store.js");
   const openResidentStore = (ensureResident = true) =>
     Promise.resolve(residentElisionStore(process.cwd(), config, { ensureResident, paths: residentPaths }));
-  const warmResidentStore = () => ensureResidentServer(residentPaths, residentConfigFor(config, buildInfo.version));
+  // A warm that cannot find an rsp entry is the silent-elision-loss failure
+  // (#2736): it names itself once, then the command runs on regardless.
+  const warmResidentStore = () =>
+    ensureResidentServer(residentPaths, residentConfigFor(config, buildInfo.version))
+      .catch((err: unknown) => void reportResidentEntryDiagnostic(err));
   // Reads go through the resident too: one core owns the store, so `show` and
   // `gains` ask it rather than opening a second handle on the same file.
   const openReadStore = () => openResidentStore();

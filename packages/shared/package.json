@@ -22,7 +22,8 @@
     "./repo-root.js": "./repo-root.ts",
     "./outcome-event.js": "./outcome-event.ts",
     "./resident-client.js": "./resident-client.ts",
-    "./resident-protocol.js": "./resident-protocol.ts"
+    "./resident-protocol.js": "./resident-protocol.ts",
+    "./rsp-entry.js": "./rsp-entry.ts"
   },
   "dependencies": {
     "@reddb-io/toon": "catalog:",
