@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { startChildProcessTimer } from "./overhead-budget.js";
 import { encode, type JsonObject } from "@reddb-io/toon";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
 import { recoveryInstruction, type GitRenderResult, type RecordedGitContract } from "./git-wrapper.js";
@@ -223,6 +224,10 @@ function machineArgs(command: readonly string[]): { executable: string; args: st
 async function collectTestContract(command: readonly string[]): Promise<RecordedGitContract> {
   const machine = machineArgs(command);
   const child = spawn(machine.executable, machine.args, { stdio: ["ignore", "pipe", "pipe"] });
+  // The wrapped command's own runtime is never rsp's overhead (#2746).
+  const stopChildTimer = startChildProcessTimer();
+  child.once("close", stopChildTimer);
+  child.once("error", stopChildTimer);
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
