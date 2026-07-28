@@ -1410,3 +1410,210 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
     expect(trace.closed).toEqual([]);
   });
 });
+
+describe("processIssue — stale-base drift never spends the correction budget (#2711)", () => {
+  const RELEASE_BUMP = "chore(release): version packages";
+  /** The base head the harness's `resolveFreshBase` reports at attempt start —
+   * a probe that echoes it back means the base stood still. */
+  const BASE_START_SHA = "origin/main-tip";
+
+  it("charges nothing to /go's budget for a gate failure the base caused, and lands on the re-validation", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false, false, true],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
+      baseMovements: [
+        { head: "moved-1", subjects: [RELEASE_BUMP] },
+        { head: "moved-2", subjects: ["fix: another main-side change"] },
+      ],
+    });
+
+    const result = await processIssue(deps, input);
+
+    // Two gate failures under a cap of ONE, and the branch still landed: both
+    // were attributed to the base moving, so neither consumed the budget.
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(3);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.baseMovementCalls).toEqual([
+      { baseRef: "red-trunk", sinceSha: BASE_START_SHA },
+      { baseRef: "red-trunk", sinceSha: BASE_START_SHA },
+    ]);
+    expect(trace.iterLogs.some((l) => l.includes("granting a free stale-base correction (1/2)"))).toBe(true);
+    expect(trace.iterLogs.some((l) => l.includes("budget untouched at 0/1"))).toBe(true);
+  });
+
+  it("control: the SAME two failures park at the cap when the base never moved", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false, false, true],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
+      baseMovements: [{ head: BASE_START_SHA, subjects: [] }],
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.closed).toEqual([]);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
+  });
+
+  it("opens the PR after a drift correction even though the budget was already spent", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false, false, true],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
+      baseMovements: [
+        // Failure 1: the base stood still — a genuine failure that spends 1/1.
+        { head: BASE_START_SHA, subjects: [] },
+        // Failure 2: the base moved. The counter is already spent, but a branch
+        // whose gate only failed on base drift must never be parked on it.
+        { head: "moved-1", subjects: [RELEASE_BUMP] },
+      ],
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(3);
+    expect(trace.closed).toEqual([9]);
+    // Criterion: a complete, mergeable branch is never left reading blocked:validation.
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human"))).toBe(false);
+  });
+
+  it("reproduces the release-bump trigger: the drift handoff names the bump and the merge to run", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      // The branch carries a Pi mirror generated at the PRE-bump version, so the
+      // gate's base-merged tree fails the generator check the branch alone passes.
+      changedFiles: ["packaging/pi/dev/package.json", "apps/dev/src/core/go.ts"],
+      feedbackResults: [false, true],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0" },
+      baseMovements: [{ head: "bumped", subjects: ["fix: earlier", RELEASE_BUMP] }],
+    });
+
+    const result = await processIssue(deps, input);
+
+    // The /go correction cap is ZERO here: only the free stale-base cycle can
+    // explain a second attempt at all.
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    const retryHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
+    expect(retryHandoff).toContain("<go-machine-gate-retry>");
+    expect(retryHandoff).toContain("<stale-base-drift>");
+    expect(retryHandoff).toContain(RELEASE_BUMP);
+    expect(retryHandoff).toContain("git merge origin/main");
+    expect(retryHandoff).toContain("this correction is FREE");
+    expect(retryHandoff).not.toContain("bounded correction retry");
+    expect(trace.closed).toEqual([9]);
+  });
+
+  it("still parks a genuinely red branch, and the note separates charged cycles from stale-base ones", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
+      baseMovements: [
+        { head: "moved-1", subjects: [RELEASE_BUMP] },
+        { head: "moved-2", subjects: ["fix: more main-side churn"] },
+        // The base finally stands still: the branch is simply red.
+        { head: BASE_START_SHA, subjects: [] },
+      ],
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    // 2 free stale-base cycles + 1 charged cycle + the park.
+    expect(trace.runAgentCalls).toHaveLength(4);
+    const envelope = trace.envelopeBodies.at(-1) ?? "";
+    expect(envelope).toContain("Post-DONE gate-correction budget exhausted");
+    expect(envelope).toContain("1/1 charged");
+    expect(envelope).toContain("2 stale-base corrections that did not consume it");
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
+    expect(trace.closed).toEqual([]);
+  });
+
+  it("bounds the free cycles: a base that keeps moving cannot buy an unbounded run", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0", RED_GATE_STALE_BASE_CORRECTIONS: "1" },
+      baseMovements: [{ head: "moving-forever", subjects: ["fix: churn"] }],
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
+  });
+
+  it("applies the same class fix to /afk, whose correction budget defaults to zero", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false, true],
+      baseMovements: [{ head: "bumped", subjects: [RELEASE_BUMP] }],
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    const retryHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
+    expect(retryHandoff).toContain("<afk-gate-correction>");
+    expect(retryHandoff).toContain("<stale-base-drift>");
+    expect(trace.closed).toEqual([9]);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
+  });
+
+  it("stays branch-fault when no base-movement probe is wired at all", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false],
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.baseMovementCalls).toEqual([]);
+  });
+});
+
+describe("processIssue — an empty-diff DONE is never stale-base drift (#2711)", () => {
+  it("charges the empty-diff rejection to the branch even while the base is moving", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      changedFilesSequence: [[], []],
+      feedbackOk: true,
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
+      baseMovements: [{ head: "moved-1", subjects: ["chore(release): version packages"] }],
+    });
+
+    const result = await processIssue(deps, input);
+
+    // No diff at all is unambiguously the branch's problem — the base cannot
+    // explain it, so the probe is never even consulted and the cap still binds.
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.baseMovementCalls).toEqual([]);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
+  });
+});

@@ -85,6 +85,7 @@ export interface Trace {
   cascadeRebaseAttempts: string[];
   /** Arguments passed into feedback scope changed-file resolution. */
   changedFileCalls: Array<{ branch: string; base: string }>;
+  baseMovementCalls: Array<{ baseRef: string; sinceSha: string }>;
   /** Raw pnpm argv vectors emitted by the feedback/backpressure fakes. */
   pnpmArgs: string[][];
   /** Handoff bodies written before the sandcastle run. */
@@ -172,6 +173,14 @@ export interface HarnessOptions {
   /** Per-call changed-file results. Useful when a bounded retry changes whether
    * the worker branch actually differs from base. */
   changedFilesSequence?: string[][];
+  /**
+   * Scripted `lookups.baseMovement` results (#2711) — one per post-DONE gate
+   * failure probe, last entry repeating. When set, the probe is REGISTERED, so a
+   * gate failure observed while the base moved is attributed to stale-base drift.
+   * Absent → no probe at all, and every gate failure stays branch-fault exactly
+   * as it did before the drift accounting existed.
+   */
+  baseMovements?: Array<{ head: string; subjects: string[] }>;
   changedFilesByBase?: Record<string, string[]>;
   packageScopes?: string[];
   /** FIX E: result of the worker-branch presence check. Defaults to true
@@ -300,6 +309,7 @@ export function harness(opts: HarnessOptions = {}): {
     statePatches: [],
     cascadeRebaseAttempts: [],
     changedFileCalls: [],
+    baseMovementCalls: [],
     pnpmArgs: [],
     handoffs: [],
     freshWorkerBranchCalls: [],
@@ -707,6 +717,16 @@ export function harness(opts: HarnessOptions = {}): {
       async prevFailureContext() {
         return opts.prevFailureContext;
       },
+      ...(opts.baseMovements
+        ? {
+            async baseMovement(baseRef: string, sinceSha: string) {
+              trace.baseMovementCalls.push({ baseRef, sinceSha });
+              const seq = opts.baseMovements!;
+              const idx = trace.baseMovementCalls.length - 1;
+              return seq[idx] ?? seq.at(-1) ?? { head: sinceSha, subjects: [] };
+            },
+          }
+        : {}),
       async changedFiles(branch, base) {
         trace.changedFileCalls.push({ branch, base });
         const seq = opts.changedFilesSequence;

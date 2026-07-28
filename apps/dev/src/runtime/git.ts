@@ -478,6 +478,36 @@ export async function changedFiles(ctx: GitContext, branch: string, base: string
   return r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
+/** How many base commits to name when reporting stale-base drift. Enough to
+ * recognise a release bump plus its neighbours; more would just bloat the
+ * handoff a correction cycle carries. */
+const BASE_MOVEMENT_SUBJECT_LIMIT = 20;
+
+/**
+ * What `<baseRef>` did since `<sinceSha>` (issue #2711): its head sha now, plus
+ * the subjects of the commits it gained, oldest → newest. Best-effort — an
+ * unresolvable ref or a failing log yields the sha it could read and an empty
+ * subject list, so the caller falls back to charging the failure to the branch
+ * rather than inventing base movement it cannot see.
+ */
+export async function baseMovementSince(
+  ctx: GitContext,
+  baseRef: string,
+  sinceSha: string,
+): Promise<{ head: string; subjects: string[] }> {
+  const head = (baseRef ? await revParse(ctx, baseRef) : undefined) ?? "";
+  if (!head || !sinceSha || head === sinceSha) return { head, subjects: [] };
+  const r = await runGit(ctx, [
+    "log",
+    "--reverse",
+    "--format=%s",
+    `--max-count=${BASE_MOVEMENT_SUBJECT_LIMIT}`,
+    `${sinceSha}..${head}`,
+  ]);
+  if (r.code !== 0) return { head, subjects: [] };
+  return { head, subjects: r.stdout.split("\n").map((l) => l.trim()).filter(Boolean) };
+}
+
 /** Diffstat summary line of <branch> vs <base>. */
 export async function diffstat(ctx: GitContext, branch: string, base: string): Promise<string> {
   const r = await runGit(ctx, ["diff", "--shortstat", `${base}...${branch}`]);

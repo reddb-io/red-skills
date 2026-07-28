@@ -78,6 +78,16 @@ export function buildLookups({
       }),
     changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
     diffstat: (branch, base) => gitx.diffstat(gitCtx, branch, base),
+    // Stale-base drift evidence (#2711). The remote-tracking ref only advances
+    // on a fetch, and the last one ran when the attempt started — so refresh it
+    // first, otherwise a base that moved mid-run reads as standing still and the
+    // failure is charged to a branch that never broke. Best-effort throughout:
+    // the fetch is unchecked and the probe degrades to "no movement observed".
+    baseMovement: async (baseRef, sinceSha) => {
+      const branch = baseRef.startsWith("origin/") ? baseRef.slice("origin/".length) : baseRef;
+      await gitx.fetchBranch(gitCtx, branch).catch(() => {});
+      return gitx.baseMovementSince(gitCtx, baseRef, sinceSha);
+    },
     // FIX E: confirm the sandcastle worker branch actually landed on the host
     // before the merge gate. Try once, fetch on a miss, then re-check — a still
     // -absent branch escalates instead of silently bypassing feedback.

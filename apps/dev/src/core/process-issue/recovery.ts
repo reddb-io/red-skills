@@ -93,6 +93,12 @@ import type { Runner } from "../../types/runner.js";
 import { runnerSupportsStructuredOutput, toAgentRunner } from "../runner-spec.js";
 import type { HistoryClock } from "../history.js";
 import { DEFAULT_GO_VERIFY_RETRIES, LABEL_GO_LANE } from "../go.js";
+import {
+  STALE_BASE_DRIFT_CORRECTIONS_ENV,
+  resolveStaleBaseDriftCorrections,
+  staleBaseDriftBlock,
+  type StaleBaseDriftNote,
+} from "../stale-base-drift.js";
 import { setActiveClaimFinalizer } from "../process-safety.js";
 import {
   LABEL_READY,
@@ -293,6 +299,12 @@ export function resolveGoVerifyRetries(deps: ProcessIssueDeps): number {
   }
   return DEFAULT_GO_VERIFY_RETRIES;
 }
+/** How many FREE (budget-exempt) stale-base correction cycles this attempt
+ * chain may spend (#2711). Lane-agnostic: a base that moved under the run is
+ * not the branch's fault in `/go` or in `/afk`. */
+export function resolveStaleBaseDriftCap(deps: ProcessIssueDeps): number {
+  return resolveStaleBaseDriftCorrections(deps.recoveryEnv?.[STALE_BASE_DRIFT_CORRECTIONS_ENV]);
+}
 export const DEFAULT_STALL_CONVERGENCE_BUDGET = 0;
 export function resolveStallConvergenceBudget(deps: ProcessIssueDeps): number {
   const raw = deps.recoveryEnv?.RED_AFK_STALL_CONVERGENCE_BUDGET;
@@ -307,16 +319,43 @@ export function resolveStallConvergenceBudget(deps: ProcessIssueDeps): number {
   }
   return DEFAULT_STALL_CONVERGENCE_BUDGET;
 }
+/** One post-DONE gate correction as the handoff builders see it. `drift` is
+ * present only when the cycle was attributed to stale-base drift (#2711), in
+ * which case it was FREE and the agent must merge the base rather than hunt for
+ * a defect in work that already validated. */
+export interface GateCorrectionHandoffOpts {
+  gate: "feedback" | "backpressure";
+  validation: string;
+  retry: number;
+  cap: number;
+  drift?: StaleBaseDriftNote;
+}
+
+/** The correction preamble — either the historical bounded-retry line, or the
+ * drift line that says plainly the budget was not touched. */
+function correctionPreamble(opts: GateCorrectionHandoffOpts): string[] {
+  if (opts.drift) {
+    return [
+      `The ${opts.gate} machine gate failed after DONE, but the BASE moved under this run — this correction is FREE.`,
+      "Merge the base, regenerate anything the base's move invalidated, commit, then emit the required terminal sentinel.",
+    ];
+  }
+  return [
+    `The ${opts.gate} machine gate failed after DONE. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
+    "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
+  ];
+}
+
 export function appendAfkGateCorrectionHandoff(
   handoff: string,
-  opts: { gate: "feedback" | "backpressure"; validation: string; retry: number; cap: number },
+  opts: GateCorrectionHandoffOpts,
 ): string {
   return [
     handoff.replace(/\n+$/, ""),
     "",
     "<afk-gate-correction>",
-    `The ${opts.gate} machine gate failed after DONE. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
-    "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
+    ...correctionPreamble(opts),
+    ...(opts.drift ? ["", ...staleBaseDriftBlock(opts.drift)] : []),
     "",
     "<validation-tail>",
     tailLines(opts.validation, 80),
@@ -331,14 +370,14 @@ export function tailLines(text: string, maxLines: number): string {
 }
 export function appendGoVerifyRetryHandoff(
   handoff: string,
-  opts: { gate: "feedback" | "backpressure"; validation: string; retry: number; cap: number },
+  opts: GateCorrectionHandoffOpts,
 ): string {
   return [
     handoff.replace(/\n+$/, ""),
     "",
     "<go-machine-gate-retry>",
-    `The ${opts.gate} machine gate failed after DONE. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
-    "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
+    ...correctionPreamble(opts),
+    ...(opts.drift ? ["", ...staleBaseDriftBlock(opts.drift)] : []),
     "",
     "<validation-tail>",
     tailLines(opts.validation, 80),
