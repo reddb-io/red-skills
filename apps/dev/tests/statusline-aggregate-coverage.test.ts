@@ -78,6 +78,7 @@ const PAYLOAD: StatuslineAggregate = {
       target: 4,
       bundle_version: "2.78.0",
       bundle_latest: "2.79.0",
+      version_unknown: 0,
       version_skew: 1,
       heartbeat_age_s: 8,
       identity_anchor: "pid-file",
