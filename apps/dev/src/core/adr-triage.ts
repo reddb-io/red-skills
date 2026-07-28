@@ -1,13 +1,15 @@
 /**
- * Pure ADR triage classifier (ADR 0112, Spec #2219 / S2).
+ * Pure ADR triage classifier (ADR 0127, superseding ADR 0112).
  *
- * The read-only detection pass of `/review-adrs` needs to look at every ADR
- * cheaply and say which ones carry debt. This module is that cheap pass: it
- * takes already-parsed ADR records and buckets each one from status, age,
- * inbound links, stale path references, supersession, and subject overlap.
+ * The detection pass of `/adr-editor` needs to look at every ADR cheaply and
+ * say which ones carry debt. This module is that cheap pass: it takes
+ * already-parsed ADR records and answers three read-only questions — which
+ * bucket each record falls in (`triageAdrs`), how the collection clusters by
+ * subject (`groupAdrs`), and where the collection contradicts itself
+ * (`detectAdrInconsistencies`).
  *
  * It moves nothing and writes nothing — the IO shell (archive `git mv`,
- * frontmatter edits, INDEX resync) lives elsewhere and consumes this report.
+ * frontmatter edits, INDEX resync) lives elsewhere and consumes these reports.
  */
 
 export type AdrBucket =
@@ -55,6 +57,12 @@ export interface AdrTriageContext {
    */
   existingPaths?: readonly string[];
   indexSections?: readonly AdrIndexSection[];
+  /**
+   * ADR numbers documented as bullets in `.red/adr/INDEX.md`. Index-drift
+   * detection is skipped entirely when absent — an empty list would report
+   * every record as undocumented.
+   */
+  indexNumbers?: readonly string[];
   /** An unlinked ADR older than this is inert. Default 365. */
   inertAfterDays?: number;
   /** Decision points at/above which an ADR is overloaded. Default 5. */
@@ -357,5 +365,324 @@ export function triageAdrs(context: AdrTriageContext, options: AdrTriageOptions 
         : { kind: subject.kind, matched };
   }
 
+  return report;
+}
+
+// ---------------------------------------------------------------------------
+// grouping
+// ---------------------------------------------------------------------------
+
+export type AdrGroupKind = "index-section" | "subject-cluster";
+
+export interface AdrGroup {
+  kind: AdrGroupKind;
+  /** The INDEX section heading, or the shared terms that formed the cluster. */
+  title: string;
+  numbers: string[];
+}
+
+export interface AdrGroupReport {
+  groups: AdrGroup[];
+  /** Records in no INDEX section and in no multi-record subject cluster. */
+  ungrouped: string[];
+  subject?: AdrTriageSubjectReport;
+}
+
+/** Merge indices into disjoint sets — the cluster spine for subject grouping. */
+function unionFind(size: number): { union(a: number, b: number): void; find(a: number): number } {
+  const parent = Array.from({ length: size }, (_unused, index) => index);
+  const find = (a: number): number => {
+    let root = a;
+    while (parent[root] !== root) root = parent[root]!;
+    let cursor = a;
+    while (parent[cursor] !== root) {
+      const next = parent[cursor]!;
+      parent[cursor] = root;
+      cursor = next;
+    }
+    return root;
+  };
+  return {
+    find,
+    union(a, b) {
+      const rootA = find(a);
+      const rootB = find(b);
+      if (rootA !== rootB) parent[Math.max(rootA, rootB)] = Math.min(rootA, rootB);
+    },
+  };
+}
+
+/** Name a cluster by the terms most of its members share, most common first. */
+function clusterTitle(records: readonly AdrRecord[]): string {
+  const counts = new Map<string, number>();
+  for (const record of records) {
+    for (const term of titleTerms(record)) counts.set(term, (counts.get(term) ?? 0) + 1);
+  }
+  const shared = [...counts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 3)
+    .map(([term]) => term);
+  return shared.length > 0 ? shared.join(" + ") : "unnamed cluster";
+}
+
+/**
+ * Cluster the whole tree by subject: INDEX theme sections first, then the
+ * records no section claims, clustered by shared title terms.
+ *
+ * Grouping always runs over the whole tree — a cluster is a cross-record fact,
+ * so a subject filter narrows only which numbers are reported back, exactly as
+ * it does in `triageAdrs`.
+ */
+export function groupAdrs(context: AdrTriageContext, options: AdrTriageOptions = {}): AdrGroupReport {
+  const subject = options.subject;
+  const inScope = (number: string): boolean => {
+    if (!subject) return true;
+    const record = context.adrs.find((candidate) => candidate.number === number);
+    return record ? matchesSubject(record, subject, context) : false;
+  };
+
+  const mergeThreshold = context.mergeOverlapThreshold ?? DEFAULT_MERGE_OVERLAP;
+  const present = new Set(context.adrs.map((record) => record.number));
+  const sectioned = new Set<string>();
+  const groups: AdrGroup[] = [];
+
+  for (const section of context.indexSections ?? []) {
+    const numbers = section.numbers.filter((number) => present.has(number));
+    for (const number of numbers) sectioned.add(number);
+    const scoped = numbers.filter(inScope);
+    if (scoped.length > 0) groups.push({ kind: "index-section", title: section.title, numbers: scoped });
+  }
+
+  const loose = context.adrs.filter((record) => !sectioned.has(record.number));
+  const sets = unionFind(loose.length);
+  for (let a = 0; a < loose.length; a += 1) {
+    const terms = titleTerms(loose[a]!);
+    for (let b = a + 1; b < loose.length; b += 1) {
+      const shared = Array.from(titleTerms(loose[b]!)).filter((term) => terms.has(term));
+      if (shared.length >= mergeThreshold) sets.union(a, b);
+    }
+  }
+
+  const clusters = new Map<number, AdrRecord[]>();
+  for (let index = 0; index < loose.length; index += 1) {
+    const root = sets.find(index);
+    const members = clusters.get(root) ?? [];
+    members.push(loose[index]!);
+    clusters.set(root, members);
+  }
+
+  const ungrouped: string[] = [];
+  for (const members of clusters.values()) {
+    const numbers = members.map((record) => record.number).filter(inScope);
+    if (numbers.length === 0) continue;
+    if (members.length < 2) {
+      ungrouped.push(...numbers);
+      continue;
+    }
+    groups.push({ kind: "subject-cluster", title: clusterTitle(members), numbers });
+  }
+  ungrouped.sort();
+
+  const report: AdrGroupReport = { groups, ungrouped };
+  if (subject) {
+    const matched = [...groups.flatMap((group) => group.numbers), ...ungrouped].sort();
+    report.subject =
+      subject.kind === "numbers"
+        ? {
+            kind: subject.kind,
+            matched,
+            unmatched: subject.numbers.filter((number) => !present.has(number)),
+          }
+        : { kind: subject.kind, matched };
+  }
+  return report;
+}
+
+// ---------------------------------------------------------------------------
+// inconsistency detection
+// ---------------------------------------------------------------------------
+
+export type AdrInconsistencyKind =
+  | "numbering-collision"
+  | "dangling-supersede"
+  | "supersession-cycle"
+  | "index-drift"
+  | "missing-supersession"
+  | "stale-path"
+  | "subject-overlap";
+
+const INCONSISTENCY_KINDS: readonly AdrInconsistencyKind[] = [
+  "numbering-collision",
+  "dangling-supersede",
+  "supersession-cycle",
+  "index-drift",
+  "missing-supersession",
+  "stale-path",
+  "subject-overlap",
+];
+
+export interface AdrInconsistency {
+  kind: AdrInconsistencyKind;
+  /** Every ADR number the finding implicates, ascending. */
+  numbers: string[];
+  /** One line a human can act on. */
+  detail: string;
+}
+
+export interface AdrInconsistencyReport {
+  inconsistencies: AdrInconsistency[];
+  countsByKind: Record<AdrInconsistencyKind, number>;
+  subject?: AdrTriageSubjectReport;
+}
+
+function isTerminal(record: AdrRecord): boolean {
+  return Boolean(supersededBy(record)) || isDeprecated(record);
+}
+
+/**
+ * Report every way the collection contradicts itself: duplicate numbers,
+ * supersede pointers with no target, mutual supersession, INDEX drift,
+ * unrecorded supersession, stale paths, and overlapping subjects.
+ *
+ * Detection is cross-record by nature and therefore always runs over the whole
+ * tree; a subject filter keeps only findings that implicate a matched record.
+ */
+export function detectAdrInconsistencies(
+  context: AdrTriageContext,
+  options: AdrTriageOptions = {},
+): AdrInconsistencyReport {
+  const mergeThreshold = context.mergeOverlapThreshold ?? DEFAULT_MERGE_OVERLAP;
+  const present = new Set(context.adrs.map((record) => record.number));
+  const found: AdrInconsistency[] = [];
+
+  const seen = new Set<string>();
+  const collided = new Set<string>();
+  for (const record of context.adrs) {
+    if (seen.has(record.number)) collided.add(record.number);
+    seen.add(record.number);
+  }
+  for (const number of [...collided].sort()) {
+    const paths = context.adrs.filter((record) => record.number === number).map((record) => record.path);
+    found.push({
+      kind: "numbering-collision",
+      numbers: [number],
+      detail: `ADR number ${number} is claimed by ${paths.length} records: ${paths.join(", ")}.`,
+    });
+  }
+
+  for (const record of context.adrs) {
+    const pointers = new Set<string>([...(supersededBy(record) ? [supersededBy(record)!] : []), ...supersedes(record)]);
+    for (const pointer of [...pointers].sort()) {
+      if (present.has(pointer)) continue;
+      found.push({
+        kind: "dangling-supersede",
+        numbers: [record.number],
+        detail: `ADR ${record.number} points at ADR ${pointer}, which is not in the tree.`,
+      });
+    }
+  }
+
+  for (const record of context.adrs) {
+    const successor = supersededBy(record);
+    if (!successor || successor <= record.number) continue;
+    const other = context.adrs.find((candidate) => candidate.number === successor);
+    if (other && supersededBy(other) === record.number) {
+      found.push({
+        kind: "supersession-cycle",
+        numbers: [record.number, successor],
+        detail: `ADR ${record.number} and ADR ${successor} each declare the other their successor.`,
+      });
+    }
+  }
+
+  if (context.indexNumbers) {
+    const documented = new Set(context.indexNumbers);
+    for (const number of [...present].sort()) {
+      if (!documented.has(number)) {
+        found.push({
+          kind: "index-drift",
+          numbers: [number],
+          detail: `ADR ${number} exists in the tree but has no INDEX bullet.`,
+        });
+      }
+    }
+    for (const number of [...documented].sort()) {
+      if (!present.has(number)) {
+        found.push({
+          kind: "index-drift",
+          numbers: [number],
+          detail: `INDEX documents ADR ${number}, which is not in the tree.`,
+        });
+      }
+    }
+  }
+
+  for (const record of context.adrs) {
+    const classification = classify(record, context);
+    if (classification.bucket === "missing-supersession") {
+      found.push({ kind: "missing-supersession", numbers: [record.number], detail: classification.reason });
+    }
+    if (!context.existingPaths) continue;
+    const stale = referencedPaths(record).filter((path) => !context.existingPaths!.includes(path));
+    for (const path of stale) {
+      found.push({
+        kind: "stale-path",
+        numbers: [record.number],
+        detail: `ADR ${record.number} cites \`${path}\`, which no longer exists.`,
+      });
+    }
+  }
+
+  const live = context.adrs.filter((record) => !isTerminal(record));
+  for (let a = 0; a < live.length; a += 1) {
+    const terms = titleTerms(live[a]!);
+    for (let b = a + 1; b < live.length; b += 1) {
+      const shared = Array.from(titleTerms(live[b]!)).filter((term) => terms.has(term));
+      if (shared.length < mergeThreshold) continue;
+      const numbers = [live[a]!.number, live[b]!.number].sort();
+      found.push({
+        kind: "subject-overlap",
+        numbers,
+        detail: `ADR ${numbers[0]} and ADR ${numbers[1]} share the subject terms ${shared.sort().join(", ")}.`,
+      });
+    }
+  }
+
+  const subject = options.subject;
+  const scoped = subject
+    ? found.filter((finding) =>
+        finding.numbers.some((number) => {
+          const record = context.adrs.find((candidate) => candidate.number === number);
+          return record ? matchesSubject(record, subject, context) : false;
+        }),
+      )
+    : found;
+
+  const inconsistencies = scoped
+    .slice()
+    .sort(
+      (a, b) =>
+        INCONSISTENCY_KINDS.indexOf(a.kind) - INCONSISTENCY_KINDS.indexOf(b.kind) ||
+        a.numbers.join().localeCompare(b.numbers.join()) ||
+        a.detail.localeCompare(b.detail),
+    );
+
+  const countsByKind = Object.fromEntries(
+    INCONSISTENCY_KINDS.map((kind) => [kind, inconsistencies.filter((finding) => finding.kind === kind).length]),
+  ) as Record<AdrInconsistencyKind, number>;
+
+  const report: AdrInconsistencyReport = { inconsistencies, countsByKind };
+  if (subject) {
+    const matched = [...new Set(inconsistencies.flatMap((finding) => finding.numbers))].sort();
+    report.subject =
+      subject.kind === "numbers"
+        ? {
+            kind: subject.kind,
+            matched,
+            unmatched: subject.numbers.filter((number) => !present.has(number)),
+          }
+        : { kind: subject.kind, matched };
+  }
   return report;
 }
