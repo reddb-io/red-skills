@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   applyArchiveMove,
+  applyComposite,
   applyIndexArchive,
+  applyRenumber,
   applyStalePathFix,
   applyStatusAndSuccessor,
   planArchiveMove,
   planIndexArchive,
+  planIndexEntry,
+  planMerge,
+  planRenumber,
+  planSplit,
   planStalePathFix,
   planStatusAndSuccessor,
 } from "../src/core/adr-operations.js";
@@ -410,5 +416,289 @@ describe("planStalePathFix", () => {
     });
 
     expect(writes).toEqual([[plan.path, plan.text]]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renumber
+// ---------------------------------------------------------------------------
+
+const NUMBERED = ["# 0002 — Retired decision", "", "## Status", "", "Accepted.", ""].join("\n");
+
+describe("planRenumber", () => {
+  it("moves the file, the H1, and the INDEX bullet together", () => {
+    const plan = planRenumber({
+      path: ".red/adr/0002-retired.md",
+      text: NUMBERED,
+      toNumber: "0087",
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+    });
+
+    expect(plan.from).toBe(".red/adr/0002-retired.md");
+    expect(plan.to).toBe(".red/adr/0087-retired.md");
+    expect(plan.adrText).toContain("# 0087 — Retired decision");
+    expect(plan.indexText).toContain("- **0087** Retired decision");
+    expect(plan.indexText).not.toContain("- **0002**");
+  });
+
+  it("renumbers a record that already lives in the archive lane", () => {
+    const plan = planRenumber({
+      path: ".red/adr/archive/0002-retired.md",
+      text: NUMBERED,
+      toNumber: "0087",
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+    });
+
+    expect(plan.to).toBe(".red/adr/archive/0087-retired.md");
+  });
+
+  it.each([
+    { toNumber: "87", reason: "Invalid ADR number: 87" },
+    { toNumber: "0002", reason: "ADR 0002 already has that number" },
+    { toNumber: "0001", reason: "ADR number 0001 already has an INDEX bullet" },
+  ])("refuses $toNumber", ({ toNumber, reason }) => {
+    expect(() =>
+      planRenumber({
+        path: ".red/adr/0002-retired.md",
+        text: NUMBERED,
+        toNumber,
+        indexPath: ".red/adr/INDEX.md",
+        indexText: INDEX,
+      }),
+    ).toThrow(reason);
+  });
+
+  it("refuses an H1 whose number contradicts the filename", () => {
+    expect(() =>
+      planRenumber({
+        path: ".red/adr/0002-retired.md",
+        text: NUMBERED.replace("# 0002", "# 0003"),
+        toNumber: "0087",
+        indexPath: ".red/adr/INDEX.md",
+        indexText: INDEX,
+      }),
+    ).toThrow("ADR H1 says 0003, filename says 0002");
+  });
+
+  it("applies the renumber with a real git move", async () => {
+    const writes: Array<[string, string]> = [];
+    const moves: Array<[string, string]> = [];
+    const plan = planRenumber({
+      path: ".red/adr/0002-retired.md",
+      text: NUMBERED,
+      toNumber: "0087",
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+    });
+
+    await applyRenumber(plan, {
+      fs: {
+        writeFile: async (path, text) => {
+          writes.push([path, text]);
+        },
+      },
+      git: {
+        mv: async (from, to) => {
+          moves.push([from, to]);
+        },
+      },
+    });
+
+    expect(moves).toEqual([[".red/adr/0002-retired.md", ".red/adr/0087-retired.md"]]);
+    expect(writes).toEqual([
+      [".red/adr/0002-retired.md", plan.adrText],
+      [".red/adr/INDEX.md", plan.indexText],
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// re-index
+// ---------------------------------------------------------------------------
+
+describe("planIndexEntry", () => {
+  it("adds a bullet at the end of the named section", () => {
+    const plan = planIndexEntry({
+      path: ".red/adr/INDEX.md",
+      text: INDEX,
+      number: "0003",
+      entry: "Brand new decision",
+      section: "Active",
+    });
+
+    expect(plan.text).toContain("- **0002** Retired decision\n- **0003** Brand new decision");
+  });
+
+  it("moves an existing bullet instead of duplicating it", () => {
+    const plan = planIndexEntry({
+      path: ".red/adr/INDEX.md",
+      text: INDEX,
+      number: "0001",
+      entry: "Relocated decision",
+      section: "## Archived",
+    });
+
+    expect(plan.text).not.toContain("- **0001** Live decision");
+    expect(plan.text.match(/- \*\*0001\*\*/g)).toHaveLength(1);
+    expect(plan.text.indexOf("- **0001** Relocated decision")).toBeGreaterThan(plan.text.indexOf("## Archived"));
+  });
+
+  it("refuses an unknown section", () => {
+    expect(() =>
+      planIndexEntry({ path: ".red/adr/INDEX.md", text: INDEX, number: "0003", entry: "x", section: "Nope" }),
+    ).toThrow("ADR INDEX has no section: ## Nope");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// split and merge
+// ---------------------------------------------------------------------------
+
+function draft(number: string, slug: string) {
+  return {
+    number,
+    path: `.red/adr/${number}-${slug}.md`,
+    text: `# ${number} — ${slug}\n`,
+    indexEntry: `Focused ${slug}`,
+    indexSection: "Active",
+  };
+}
+
+describe("planSplit", () => {
+  it("mints the focused records and archives the original pointing at all of them", () => {
+    const plan = planSplit({
+      original: { path: ".red/adr/0002-retired.md", text: ADR },
+      drafts: [draft("0003", "first"), draft("0004", "second")],
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+    });
+
+    expect(plan.creates.map((create) => create.path)).toEqual([
+      ".red/adr/0003-first.md",
+      ".red/adr/0004-second.md",
+    ]);
+    expect(plan.archives).toHaveLength(1);
+    expect(plan.archives[0]!.to).toBe(".red/adr/archive/0002-retired.md");
+    expect(plan.archives[0]!.adrText).toContain("superseded-by: 0003, 0004");
+    expect(plan.indexText).toContain("- **0003** Focused first");
+    expect(plan.indexText).toContain("- **0004** Focused second");
+    // The original's bullet moved into the Archived section, exactly once.
+    expect(plan.indexText.match(/- \*\*0002\*\*/g)).toHaveLength(1);
+    expect(plan.indexText.indexOf("- **0002**")).toBeGreaterThan(plan.indexText.indexOf("## Archived"));
+  });
+
+  it("refuses a split that mints fewer than two records", () => {
+    expect(() =>
+      planSplit({
+        original: { path: ".red/adr/0002-retired.md", text: ADR },
+        drafts: [draft("0003", "first")],
+        indexPath: ".red/adr/INDEX.md",
+        indexText: INDEX,
+      }),
+    ).toThrow("A split must mint at least two records");
+  });
+});
+
+describe("planMerge", () => {
+  const SECOND = ADR.replace("# Retired decision", "# Second decision");
+
+  it("archives every original with the successor pointer and mints one record", () => {
+    const plan = planMerge({
+      originals: [
+        { path: ".red/adr/0001-live.md", text: ADR },
+        { path: ".red/adr/0002-retired.md", text: SECOND },
+      ],
+      successor: draft("0003", "consolidated"),
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+    });
+
+    expect(plan.archives.map((step) => step.to)).toEqual([
+      ".red/adr/archive/0001-live.md",
+      ".red/adr/archive/0002-retired.md",
+    ]);
+    for (const step of plan.archives) expect(step.adrText).toContain("superseded-by: 0003");
+    expect(plan.creates).toEqual([{ path: ".red/adr/0003-consolidated.md", text: "# 0003 — consolidated\n" }]);
+    expect(plan.indexText).toContain("- **0003** Focused consolidated");
+  });
+
+  it("refuses a merge of fewer than two records", () => {
+    expect(() =>
+      planMerge({
+        originals: [{ path: ".red/adr/0001-live.md", text: ADR }],
+        successor: draft("0003", "consolidated"),
+        indexPath: ".red/adr/INDEX.md",
+        indexText: INDEX,
+      }),
+    ).toThrow("A merge must consolidate at least two records");
+  });
+});
+
+describe("applyComposite", () => {
+  const plan = () =>
+    planSplit({
+      original: { path: ".red/adr/0002-retired.md", text: ADR },
+      drafts: [draft("0003", "first"), draft("0004", "second")],
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+    });
+
+  it("mints, archives, then writes the INDEX once", async () => {
+    const writes: string[] = [];
+    const moves: Array<[string, string]> = [];
+
+    await applyComposite(plan(), {
+      fs: {
+        writeFile: async (path) => {
+          writes.push(path);
+        },
+      },
+      git: {
+        mv: async (from, to) => {
+          moves.push([from, to]);
+        },
+      },
+    });
+
+    expect(writes).toEqual([
+      ".red/adr/0003-first.md",
+      ".red/adr/0004-second.md",
+      ".red/adr/0002-retired.md",
+      ".red/adr/INDEX.md",
+    ]);
+    expect(moves).toEqual([[".red/adr/0002-retired.md", ".red/adr/archive/0002-retired.md"]]);
+  });
+
+  it("rolls the minted records and the archive move back when the INDEX write fails", async () => {
+    const removed: string[] = [];
+    const moves: Array<[string, string]> = [];
+    let indexAttempts = 0;
+
+    await expect(
+      applyComposite(plan(), {
+        fs: {
+          writeFile: async (path) => {
+            if (path !== ".red/adr/INDEX.md") return;
+            indexAttempts += 1;
+            if (indexAttempts === 1) throw new Error("index is locked");
+          },
+          rm: async (path) => {
+            removed.push(path);
+          },
+        },
+        git: {
+          mv: async (from, to) => {
+            moves.push([from, to]);
+          },
+        },
+      }),
+    ).rejects.toThrow("index is locked");
+
+    expect(moves.at(-1)).toEqual([".red/adr/archive/0002-retired.md", ".red/adr/0002-retired.md"]);
+    expect(removed).toEqual([".red/adr/0004-second.md", ".red/adr/0003-first.md"]);
+    // The INDEX is restored to its pre-run text after the rollback.
+    expect(indexAttempts).toBe(2);
   });
 });
