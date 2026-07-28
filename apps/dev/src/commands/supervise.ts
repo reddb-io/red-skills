@@ -35,6 +35,7 @@ import {
 } from "../runtime/wire.js";
 import { formatPreconditionFailure, runBoot, type BootResult, type BootstrapInput } from "../core/boot.js";
 import { inspectProcessTreeNative } from "../runtime/proc-tree.js";
+import { resolveDevScriptPath } from "../runtime/supervisor-spawn.js";
 import {
   workerLivenessFor,
   slotLogDir,
@@ -511,7 +512,7 @@ export function buildSupervisorBootSweeps(
  * (mirroring SLOT_PIDS[$slot] in bash, which is how find_slot_iter_dir /
  * agentLaneMtime / inspectTree all reach the running worker tree).
  */
-function buildSupervisorDeps(
+export function buildSupervisorDeps(
   root: string,
   tmpDir: string,
   slotLogsDir: string,
@@ -527,7 +528,11 @@ function buildSupervisorDeps(
   hookEnvBase: Record<string, string>,
   adoptSlotPids: readonly HeartbeatSlotPid[] = [],
 ): SupervisorDeps {
-  const bundle = process.argv[1];
+  // Slots run `run --once`, which ONLY the dev entry routes. Never infer the
+  // worker entry from argv[1]: under the MCP lane this supervisor is itself the
+  // castle-mcp bundle, whose entry does not route `run`, so every slot booted a
+  // second resident, lost the singleton lease and died on the spot (#2677).
+  const bundle = resolveDevScriptPath(process.argv[1] ?? "");
   const bundleVersion = readBuildInfo("dev").version;
   const now = () => Math.floor(Date.now() / 1000);
   // The lane lives INSIDE the fleet's runtime dir (`supervisors/<fleet>/s<pid>/`)
