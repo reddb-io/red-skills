@@ -125,6 +125,14 @@ host_binaries:
 #         model: minimax/MiniMax-M3
 #   fleet:
 #     target: 2                   # default supervisor worker target
+#     scope:                      # cgroup isolation for the fleet (#2697)
+#       enabled: true             # Linux + systemd `--user`: run the supervisor in a
+#                                 # transient `red-fleet-<name>.scope` so a memory-pressure
+#                                 # kill hits the fleet, not the terminal that launched it.
+#                                 # `false` (or `RED_AFK_FLEET_SCOPE=off`) launches unscoped
+#                                 # — the launcher warns, it never skips silently.
+#       memory_high: 70%          # the scope's `MemoryHigh` throttle; any systemd memory
+#                                 # value ("70%", "6G"). Empty sets no property.
 #   release:                      # bundle release channel (ADR 0058)
 #     channel: canary             # `stable` (default = today's version-pinned
 #                                 # release) or `canary` (npm dist-tag pointer to

@@ -24,9 +24,19 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
 }));
 
 import { spawnSupervisor, resolveDevScriptPath } from "../src/runtime/supervisor-spawn.js";
+import type { FleetScopeProbes } from "../src/runtime/fleet-scope.js";
 import { afkPaths } from "../src/runtime/wire.js";
 
 const roots: string[] = [];
+
+// The legacy assertions below describe the unscoped argv, so pin the
+// cgroup-isolation decision (#2697) off instead of inheriting the host's.
+const unscoped = { settings: { enabled: false, memoryHigh: "" } };
+const linuxProbes: FleetScopeProbes = {
+  platform: "linux",
+  systemdRun: "/usr/bin/systemd-run",
+  userSession: true,
+};
 
 afterEach(async () => {
   vi.useRealTimers();
@@ -50,6 +60,8 @@ describe("spawnSupervisor", () => {
       target: 1,
       runner: "codex",
       probeDeadlineMs: 1,
+      scope: unscoped,
+      onNotice: () => undefined,
     })).resolves.toBeNull();
 
     expect(performance.now() - startedAt).toBeLessThan(1_000);
@@ -72,6 +84,8 @@ describe("spawnSupervisor", () => {
       runner: "codex",
       fleet: "nightly",
       probeDeadlineMs: 0,
+      scope: unscoped,
+      onNotice: () => undefined,
     });
 
     expect(readFileSync(paths.supervisorLogPath, "utf8"))
@@ -90,6 +104,8 @@ describe("spawnSupervisor", () => {
       runner: "codex",
       fleet: "nightly",
       probeDeadlineMs: 0,
+      scope: unscoped,
+      onNotice: () => undefined,
     });
 
     expect(existsSync(paths.supervisorStopPath)).toBe(false);
@@ -104,6 +120,8 @@ describe("spawnSupervisor", () => {
       runner: "codex",
       base: " develop ",
       probeDeadlineMs: 0,
+      scope: unscoped,
+      onNotice: () => undefined,
     });
 
     const options = spawn.mock.calls.at(-1)?.[2] as SpawnOptions | undefined;
@@ -120,6 +138,8 @@ describe("spawnSupervisor", () => {
         target: 1,
         runner: "claude",
         probeDeadlineMs: 0,
+        scope: unscoped,
+        onNotice: () => undefined,
       });
       const args = spawn.mock.calls.at(-1)?.[1] as string[] | undefined;
       expect(args?.[0]).toBe(join("dist", "dev.bundle.min.mjs"));
@@ -138,6 +158,8 @@ describe("spawnSupervisor", () => {
         target: 1,
         runner: "claude",
         probeDeadlineMs: 0,
+        scope: unscoped,
+        onNotice: () => undefined,
       });
       const args = spawn.mock.calls.at(-1)?.[1] as string[] | undefined;
       expect(args?.[0]).toBe(join("/npx-cache", "dev-2.76.1.bundle.min.mjs"));
@@ -156,12 +178,79 @@ describe("spawnSupervisor", () => {
         target: 1,
         runner: "claude",
         probeDeadlineMs: 0,
+        scope: unscoped,
+        onNotice: () => undefined,
       });
       const args = spawn.mock.calls.at(-1)?.[1] as string[] | undefined;
       expect(args?.[0]).toBe(join("/npx-cache", "dev-2.76.1.bundle.min.mjs"));
     } finally {
       process.argv[1] = saved;
     }
+  });
+});
+
+describe("spawnSupervisor cgroup isolation (#2697)", () => {
+  it("spawns the supervisor inside a transient scope named for the fleet on Linux", async () => {
+    const cwd = await root();
+
+    await spawnSupervisor({
+      root: cwd,
+      target: 1,
+      runner: "claude",
+      fleet: "nightly",
+      probeDeadlineMs: 0,
+      scope: { probes: linuxProbes, settings: { enabled: true, memoryHigh: "70%" } },
+      onNotice: () => undefined,
+    });
+
+    const [command, args] = spawn.mock.calls[0] as unknown as [string, string[], SpawnOptions];
+    expect(command).toBe("/usr/bin/systemd-run");
+    expect(args).toContain("--scope");
+    expect(args).toContain("--property=Delegate=yes");
+    expect(args).toContain("--property=MemoryHigh=70%");
+    expect(args.find((a) => a.startsWith("--unit="))).toContain("red-fleet-nightly");
+    expect(args.slice(args.indexOf("--") + 1)).toContain("__supervise");
+  });
+
+  it("launches directly and notices the caller when no systemd user session exists", async () => {
+    const cwd = await root();
+    const notices: string[] = [];
+
+    await spawnSupervisor({
+      root: cwd,
+      target: 1,
+      runner: "claude",
+      probeDeadlineMs: 0,
+      scope: {
+        probes: { ...linuxProbes, userSession: false },
+        settings: { enabled: true, memoryHigh: "70%" },
+      },
+      onNotice: (message) => notices.push(message),
+    });
+
+    const [command, args] = spawn.mock.calls.at(-1) as [string, string[], SpawnOptions];
+    expect(command).toBe(process.execPath);
+    expect(args).toContain("__supervise");
+    expect(notices.join("\n")).toContain("no systemd --user session");
+  });
+
+  it("relaunches unscoped, loudly, when the scope yields no supervisor", async () => {
+    const cwd = await root();
+    const notices: string[] = [];
+
+    await spawnSupervisor({
+      root: cwd,
+      target: 1,
+      runner: "claude",
+      probeDeadlineMs: 0,
+      scope: { probes: linuxProbes, settings: { enabled: true, memoryHigh: "70%" } },
+      onNotice: (message) => notices.push(message),
+    });
+
+    expect(spawn.mock.calls).toHaveLength(2);
+    expect(spawn.mock.calls[0]?.[0]).toBe("/usr/bin/systemd-run");
+    expect(spawn.mock.calls[1]?.[0]).toBe(process.execPath);
+    expect(notices.join("\n")).toContain("relaunching unscoped");
   });
 });
 

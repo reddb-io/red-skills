@@ -14,6 +14,14 @@ import { FLEET_NAME_ENV } from "../core/fleet-name.js";
 import { readPidStartTime } from "../core/state.js";
 import { migrateLegacyDevPaths } from "./red-path-migration.js";
 import { isSupervisorIdentityLive, readSupervisorIdentity, reapStaleSupervisorState } from "./supervisor-state.js";
+import {
+  detectFleetScopeProbes,
+  planFleetScope,
+  readFleetScopeSettings,
+  type FleetScopeProbes,
+  type FleetScopeSettings,
+} from "./fleet-scope.js";
+import { loadConfig } from "../core/config.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -80,6 +88,10 @@ export interface SpawnSupervisorOptions {
   fleet?: string;
   /** Maximum time to wait for the child to publish its pid file. */
   probeDeadlineMs?: number;
+  /** Where isolation notices go. Defaults to stderr — never silent. */
+  onNotice?: (message: string) => void;
+  /** Test/caller injection for the cgroup-isolation decision (#2697). */
+  scope?: { probes?: FleetScopeProbes; settings?: FleetScopeSettings };
 }
 
 /**
@@ -115,28 +127,68 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
     env.RED_AFK_ADOPT_SLOT_PIDS = JSON.stringify(opts.adoptSlotPids);
   }
 
-  let stderrFd: number | undefined;
-  try {
-    mkdirSync(dirname(paths.supervisorLogPath), { recursive: true });
-    stderrFd = openSync(paths.supervisorLogPath, "a");
-  } catch {
-    stderrFd = undefined;
-  }
-  try {
-    const child = spawn(process.execPath, [resolveDevScriptPath(process.argv[1] ?? ""), "__supervise", ...childArgs], {
-      cwd: opts.root,
-      env,
-      detached: true,
-      stdio: ["ignore", "ignore", stderrFd ?? "ignore"],
-    });
-    child.unref();
-  } finally {
-    if (stderrFd !== undefined) closeSync(stderrFd);
-  }
+  const notify = opts.onNotice ?? ((message: string) => {
+    try {
+      process.stderr.write(`⚠ ${message}\n`);
+    } catch {
+      // a closed stderr never blocks a launch
+    }
+  });
+
+  // Cgroup isolation (#2697): the scope must exist BEFORE the supervisor starts,
+  // because moving a running process between cgroups leaves its memory charge
+  // behind. Every worker, gate install, and test fork inherits this scope.
+  const direct = {
+    command: process.execPath,
+    args: [resolveDevScriptPath(process.argv[1] ?? ""), "__supervise", ...childArgs],
+  };
+  const plan = planFleetScope({
+    fleet: paths.fleet,
+    command: direct.command,
+    args: direct.args,
+    settings: opts.scope?.settings ?? readFleetScopeSettings(
+      loadConfig(paths.configPath, { warn: () => undefined }),
+    ),
+    probes: opts.scope?.probes ?? detectFleetScopeProbes(),
+    salt: process.pid,
+  });
+  if (plan.warning) notify(plan.warning);
+
+  const launch = (command: string, args: readonly string[]): void => {
+    let stderrFd: number | undefined;
+    try {
+      mkdirSync(dirname(paths.supervisorLogPath), { recursive: true });
+      stderrFd = openSync(paths.supervisorLogPath, "a");
+    } catch {
+      stderrFd = undefined;
+    }
+    try {
+      const child = spawn(command, [...args], {
+        cwd: opts.root,
+        env,
+        detached: true,
+        stdio: ["ignore", "ignore", stderrFd ?? "ignore"],
+      });
+      child.unref();
+    } finally {
+      if (stderrFd !== undefined) closeSync(stderrFd);
+    }
+  };
+
+  launch(plan.command, plan.args);
 
   // Pinned-pid probe (#2442) over the boot window main extended for
   // migrations/reaps (#2470): identity must be live AND start-time-pinned.
-  return waitForPinnedPid(pidFile, paths.supervisorPidStartPath, opts.probeDeadlineMs ?? 15_000);
+  const deadlineMs = opts.probeDeadlineMs ?? 15_000;
+  const pid = await waitForPinnedPid(pidFile, paths.supervisorPidStartPath, deadlineMs);
+  if (pid !== null || !plan.isolated) return pid;
+
+  // A host that has systemd-run but refuses the transient scope (unit collision,
+  // a broken user manager) must not cost us the fleet: retry unscoped, loudly.
+  notify(`fleet cgroup isolation failed: scope ${plan.unit} produced no supervisor; relaunching unscoped in the caller's cgroup`);
+  await reapStaleSupervisorState(dirname(paths.supervisorPidPath), isLivePid);
+  launch(direct.command, direct.args);
+  return waitForPinnedPid(pidFile, paths.supervisorPidStartPath, deadlineMs);
 }
 
 /**

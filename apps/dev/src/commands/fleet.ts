@@ -785,6 +785,8 @@ export async function launchFleet(args: readonly string[], root = process.cwd(),
     shrinkMode: parsed.shrinkMode,
     adoptSlotPids: priorFleetState?.slotPids ?? [],
     fleet: paths.fleet,
+    // Isolation notices belong in the launch output, never swallowed (#2697).
+    onNotice: (message) => stdout.write(`⚠ ${message}\n`),
   });
   if (!supervisorPid) {
     let tail = "";
