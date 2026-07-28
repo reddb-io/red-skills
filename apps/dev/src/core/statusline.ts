@@ -179,6 +179,12 @@ export interface FleetInput {
   /** True when supervisor busy slots are not corroborated by fresh local worker
    * liveness. Rendered as a visible marker on the occupancy token. */
   degraded?: boolean;
+  /** The anchor says this snapshot has no live writer (ADR 0128 §6). Staleness
+   * arrives INSIDE the payload, so the render marks the segment stale rather
+   * than presenting a dead fleet's last numbers as current. */
+  stale?: boolean;
+  /** Age of the stale snapshot in seconds, shown beside the stale marker. */
+  staleAgeS?: number;
   /** Recent death/respawn churn from the supervisor snapshot. Zero/absent stays
    * silent so healthy fleets render exactly as before. */
   churnDeaths?: number;
@@ -506,6 +512,12 @@ export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   const total = Math.max(0, Math.floor(fleet.total));
   const queue = Math.max(0, Math.floor(fleet.queue));
   const parts = [`flt=${runner} ${busy}/${total}${fleet.degraded ? "†" : ""}`];
+  // A stale snapshot is NEVER drawn as current (ADR 0128 §6): the marker names
+  // the age, so a dead fleet's last numbers read as history, not as now.
+  if (fleet.stale) {
+    const age = Math.max(0, Math.floor(fleet.staleAgeS ?? 0));
+    parts.push(`⏳stale=${age}s`);
+  }
   if (fleet.breaker) {
     parts.push(`⛔brk=${Math.max(1, Math.floor(fleet.breaker.count))}×`);
   }
