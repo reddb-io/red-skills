@@ -226,6 +226,10 @@ _Avoid_: tmp research reports
 The OS-process manager behind `/afk fleet`, maintaining a target number of independent AFK workers.
 _Avoid_: Claude fleet, task mirror, auto-monitor loop
 
+**Liveness anchor**:
+The single resolution every management surface asks "is this **Fleet supervisor** there, and how current is what I am reading?" (ADR 0128 §5). One call answers both, from one read, so a payload cannot carry `alive: false` beside a fresh heartbeat — the contradiction behind #2698 and #2679. Two rules make it hold: an unattributable heartbeat is **orphaned** and therefore stale at any age, and the verdict travels *inside* the payload so a consumer renders staleness rather than re-deriving it. `fleet_status`, `fleet_stop`, `monitor`, `worker_vitals` and the statusline are migrated consumers; a migrated reader that reintroduces a private source fails the ratchet test.
+_Avoid_: pid file, heartbeat snapshot, `state.toon` (each is an *anchor of the same identity*, never a source a reader picks between); liveness probe (the raw pid check the anchor uses)
+
 **AFK polling cadence rule**:
 The prompt-cache-aware rule for recurring AFK lane cadences: default recurring polls should be cache-warm at 270 seconds or less, or intentionally amortized at 20 minutes or more. Do not add defaults in the dead zone around 300 seconds. The current recurring-cadence inventory is: **Fleet supervisor** health tick `RED_AFK_POLL_S` 15s before/after; event-driven supervisor fallback `RED_AFK_WAKE_FALLBACK_S` 60s before/after; worker proof-of-life heartbeat `RED_AFK_HEARTBEAT_S` 60s before/after; periodic dependency Unblock Sweep `RED_AFK_UNBLOCK_SWEEP_INTERVAL_S` 60s before/after; statusline/monitor expensive-fact cache `RED_AFK_STATUSLINE_CACHE_TTL_S` 180s before/after; stale-claim refresh `RED_AFK_CLAIM_REFRESH_S` 300s before, 270s after. Supervisor watchdog values such as `RED_AFK_SUPERVISOR_STALE_S` and `RED_AFK_SUPERVISOR_RESTART_WINDOW_S` are recovery windows rather than polling cadences; keep them above their safety thresholds instead of treating them as recurring polls.
 _Avoid_: 300s default poll, prompt-cache dead-zone cadence

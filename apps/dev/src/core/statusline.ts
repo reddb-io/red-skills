@@ -179,6 +179,12 @@ export interface FleetInput {
   /** True when supervisor busy slots are not corroborated by fresh local worker
    * liveness. Rendered as a visible marker on the occupancy token. */
   degraded?: boolean;
+  /** The anchor says this snapshot has no live writer (ADR 0128 §6). Staleness
+   * arrives INSIDE the payload, so the render marks the segment stale rather
+   * than presenting a dead fleet's last numbers as current. */
+  stale?: boolean;
+  /** Age of the stale snapshot in seconds, shown beside the stale marker. */
+  staleAgeS?: number;
   /** Recent death/respawn churn from the supervisor snapshot. Zero/absent stays
    * silent so healthy fleets render exactly as before. */
   churnDeaths?: number;
@@ -501,11 +507,20 @@ export function renderShortRepoBlock(repo: RepoInput | undefined): string | null
 /** Supervisor fleet cell: rendered only after IO proves pid-live and fresh. */
 export function renderFleetBlock(fleet: FleetInput | undefined): string | null {
   if (!fleet) return null;
+  // A stale chip is NEVER drawn as current occupancy (ADR 0128 §6). The compact
+  // line has no room for a qualifier that would still read as a live fleet, so
+  // it renders nothing; the staleness itself travels on in the chip payload,
+  // where a consumer sees "fleet, but stale" instead of "no fleet".
+  if (fleet.stale && !fleet.breaker) return null;
   const runner = fleet.runner || "?";
   const busy = Math.max(0, Math.floor(fleet.busy));
   const total = Math.max(0, Math.floor(fleet.total));
   const queue = Math.max(0, Math.floor(fleet.queue));
   const parts = [`flt=${runner} ${busy}/${total}${fleet.degraded ? "†" : ""}`];
+  // A breaker-open fleet still renders (#2527) — mark its numbers as history.
+  if (fleet.stale) {
+    parts.push(`⏳stale=${Math.max(0, Math.floor(fleet.staleAgeS ?? 0))}s`);
+  }
   if (fleet.breaker) {
     parts.push(`⛔brk=${Math.max(1, Math.floor(fleet.breaker.count))}×`);
   }

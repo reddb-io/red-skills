@@ -221,7 +221,7 @@ describe("fleet command stale supervisor state", () => {
 
       const result = await stopFleet(root, stream());
 
-      expect(result).toEqual({ status: "none" });
+      expect(result).toEqual({ status: "none", anchor: "none" });
       expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(24680);
       expect(existsSync(paths.supervisorWatchdogPidPath)).toBe(false);
       expect(existsSync(paths.supervisorWatchdogPidStartPath)).toBe(false);
@@ -242,7 +242,7 @@ describe("fleet command stale supervisor state", () => {
 
       const result = await stopFleet(root, stream(), "missing");
 
-      expect(result).toEqual({ status: "none" });
+      expect(result).toEqual({ status: "none", anchor: "none" });
       expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalled();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -456,7 +456,7 @@ describe("fleet command stale supervisor state", () => {
 
       const result = await stopFleet(root, stream(), "alpha", { force: true });
 
-      expect(result).toEqual({ status: "stopped", pid: 12345 });
+      expect(result).toEqual({ status: "stopped", pid: 12345, anchor: "pid-file" });
       expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(12345);
       expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(555001);
       expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalledWith(555002);
@@ -498,7 +498,7 @@ describe("fleet command stale supervisor state", () => {
 
       const result = await stopFleet(root, stream(), "alpha", { force: true });
 
-      expect(result).toEqual({ status: "timeout", pid: workerPid });
+      expect(result).toEqual({ status: "timeout", pid: workerPid, anchor: "pid-file" });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -516,7 +516,7 @@ describe("fleet command stale supervisor state", () => {
 
       const result = await stopFleet(root, stream());
 
-      expect(result).toEqual({ status: "none" });
+      expect(result).toEqual({ status: "none", anchor: "none" });
       expect(existsSync(paths.supervisorStopPath)).toBe(false);
       expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalled();
     } finally {

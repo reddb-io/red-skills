@@ -28,6 +28,7 @@ const FLEET_STATUS: FleetStatusOutput = {
     version_skew: 0,
     heartbeat_age_s: 3,
     identity_anchor: "pid-file" as const,
+    heartbeat: { age_s: 4, stale: false, stale_after_s: 300, reason: "fresh" as const },
   },
   slots: { busy: 1, free: 1, parked: 0, total: 2 },
   churn: { deaths: 0, respawns: 0, window_s: 300 },

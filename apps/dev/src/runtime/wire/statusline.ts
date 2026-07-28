@@ -6,7 +6,7 @@ import type { CompactWorker } from "../../core/monitor.js";
 import type { AfkInput, FleetInput, RepoInput } from "../../core/statusline.js";
 import type { WorkerVitals } from "../../types/state.js";
 import type { GhContext } from "../gh.js";
-import { discoverLiveSupervisorPid } from "../supervisor-state.js";
+import { readSupervisorLiveness } from "../liveness-anchor.js";
 import { isLivePid } from "../kill-tree.js";
 import {
   castleLanePath,
@@ -246,9 +246,33 @@ export async function collectStatuslineFleet(
           breaker,
         }
       : undefined;
-  if (nowS - state.epoch > maxAgeS) return breakerFallback();
-  const supervisor = await discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid);
-  if (!supervisor) return breakerFallback();
+  // ONE anchor decides identity, liveness AND freshness (ADR 0128 §5), and the
+  // verdict travels into the render so a stale read is drawn as stale, never as
+  // current (ADR 0128 §6).
+  const supervisor = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
+    fleet: paths.fleet,
+    heartbeatEpoch: state.epoch,
+    staleAfterS: maxAgeS,
+    nowS,
+  });
+  if (!supervisor.alive || supervisor.heartbeat.stale) {
+    const fallback = breakerFallback();
+    if (fallback) return fallback;
+    // The lane still HAS a snapshot; what it lacks is a live writer. The chip
+    // carries that verdict so a consumer reads "fleet, but stale" instead of
+    // "no fleet" — and the compact line, which cannot qualify a number without
+    // it still reading as live occupancy, renders nothing (renderFleetBlock).
+    return {
+      runner: state.runner,
+      busy: state.slotsBusy,
+      total: state.slotsTotal,
+      queue: state.readyForAgent,
+      parked: state.slotsParked,
+      stale: true,
+      staleAgeS: supervisor.heartbeat.age_s,
+      bundleVersion: state.bundleVersion,
+    };
+  }
   const workers = currentRenderableWorkerRecords(
     await readAllWorkerStates(paths.tmpDir, { nowMs: nowS * 1000 }),
   );

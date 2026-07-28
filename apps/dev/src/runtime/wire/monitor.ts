@@ -22,6 +22,7 @@ import * as gitx from "../git.js";
 import * as fsx from "../fs.js";
 import { collectLogLineCounts } from "../log-cursor.js";
 import { reapableWorktreeUnder } from "../supervisor-fs.js";
+import { publishSupervisorLiveness, readSupervisorLiveness } from "../liveness-anchor.js";
 import { afkPaths } from "./paths.js";
 import { readStatuslineCache } from "./statusline-cache.js";
 
@@ -29,6 +30,10 @@ export interface MonitorInputs {
   workers: CompactWorker[];
   events: Array<Pick<HistoryRecord, "event" | "epoch">>;
   fleet: FleetState | null;
+  /** The supervisor as THE single anchor resolved it (ADR 0128 §5). The monitor
+   * publishes this verdict; it never infers liveness from the snapshot it
+   * renders, which is the two-anchor bug behind #2679 and #2698. */
+  supervisor: ReturnType<typeof publishSupervisorLiveness>;
   /** GitHub queue/human counts read passively from the statusline TTL cache.
    * Absent when the cache file has never been written (no statusline run yet). */
   remoteQueue?: number;
@@ -386,5 +391,15 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
       }
     : {};
 
-  return { workers, events, fleet, ...remoteExtra };
+  // The anchor decides liveness and freshness together; `fleet` above supplies
+  // only the counts this render draws.
+  const supervisor = publishSupervisorLiveness(
+    await readSupervisorLiveness(paths.supervisorRuntimeDir, {
+      fleet: paths.fleet,
+      heartbeatEpoch: fleet?.epoch ?? null,
+      nowS,
+    }),
+  );
+
+  return { workers, events, fleet, supervisor, ...remoteExtra };
 }
