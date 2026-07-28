@@ -33,6 +33,7 @@ import {
 import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../core/claim.js";
 import { LABEL_READY } from "../core/triage-labels.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
+import { HOST_RECONCILE_PORTS } from "../core/reconcile-ports.js";
 import {
   REQUEUE_ORIGIN,
   withAdoptPresence,
@@ -401,6 +402,7 @@ async function runAdoptLanding(
     } catch { /* best-effort */ }
 
     const reconcileDeps: ReconcileDeps = {
+      ...HOST_RECONCILE_PORTS,
       gh: {
         editLabels: async (n, remove, add) => {
           return editLabelsWithStatuslineCache(

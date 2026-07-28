@@ -1,5 +1,6 @@
 import type { ReconcileBootRunner } from "../../core/boot.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../../core/reconcile.js";
+import { HOST_RECONCILE_PORTS } from "../../core/reconcile-ports.js";
 import { resolveBase } from "../../core/base-resolver.js";
 import { findOwnedBranch, type ReconcileSweepPlan } from "../../core/boot-sweep.js";
 import {
@@ -181,6 +182,7 @@ export function makeBootReconcileRunner(
       return { outcome: "skipped" as const };
     }
     const reconcileDeps: ReconcileDeps = {
+      ...HOST_RECONCILE_PORTS,
       gh: {
         editLabels: async (issue, remove, add) => {
           await ghx.editLabels(ghCtx, issue, remove, add);

@@ -19,10 +19,8 @@ const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
   "src/commands/requeue.ts": 1,
   "src/commands/retake.ts": 1,
   "src/commands/route-model-tier.ts": 1,
-  "src/commands/run/command.ts": 1,
   "src/commands/run/process-deps.ts": 1,
   "src/commands/statusline.ts": 1,
-  "src/commands/stop.ts": 5,
   "src/core/dashboard.ts": 1,
   "src/core/process-issue/lifecycle.ts": 61,
   "src/core/process-issue/recovery.ts": 92,
@@ -126,6 +124,13 @@ async function unusedImportDebt(): Promise<Record<string, number>> {
 
     const visit = (node: ts.Node): void => {
       if (ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node)) return;
+      // A shorthand property (`{ doLanding }`) resolves to the PROPERTY symbol,
+      // not to the imported binding it reads — counting only `getSymbolAtLocation`
+      // would report a port-wiring module's every import as unused debt (#2665).
+      if (ts.isShorthandPropertyAssignment(node)) {
+        const shorthand = checker.getShorthandAssignmentValueSymbol(node);
+        if (shorthand) referenced.add(shorthand);
+      }
       if (ts.isIdentifier(node)) {
         const symbol = checker.getSymbolAtLocation(node);
         if (symbol) referenced.add(symbol);

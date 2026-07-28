@@ -21,30 +21,38 @@
 //   4b. red       → ready-for-human with the REAL failing checks (blocked:validation).
 //
 // PURE SEQUENCING over injected IO: every git/gh/pnpm/fs touch is a port, so the
-// whole decision tree is unit-testable with zero subprocesses. `ReconcileDeps`
-// is a structural SUBSET of `ProcessIssueDeps`, so process-issue's terminal path
-// passes its own `deps` (plus the landing `fireHook`) straight through.
+// whole decision tree is unit-testable with zero subprocesses. Since #2665 the
+// EFFECTFUL COLLABORATORS are ports too (landing, the feedback gate, the
+// envelope emitter, the remote-branch pair, and the label vocabulary), so the
+// module's only runtime imports are pure companions. The nested member shapes
+// still mirror `ProcessIssueDeps`, and the two real construction sites
+// (`commands/run/reconcile.ts`, `commands/requeue.ts`) spread ONE host wiring
+// constant, `HOST_RECONCILE_PORTS` (core/reconcile-ports.ts).
 
-import {
+// PORTIFIED IMPORTS: every EFFECTFUL collaborator below is imported `type`-only
+// and injected through {@link ReconcileDeps}. The value-imports that used to sit
+// here (`doLanding`, `runFeedback` + its four helpers, `emitEnvelope`,
+// `pushAttempt`/`deleteRemote`, and the `LABEL_*` constants) are gone, so this
+// module carries no runtime edge into the host — the precondition for crossing
+// it into the castle engine. The remaining value-imports are PURE companions
+// that cross WITH reconcile (`blocker-state`, `boot-sweep` planners,
+// `disposition`).
+import type {
   buildValidationRecord,
   formatValidationLine,
   relevantScopes,
   runFeedback,
   isInfraFeedbackFailure,
-  type Exec as PnpmExec,
-  type FeedbackCheck,
-  type PackageLayout,
-  type RunFeedbackResult,
+  Exec as PnpmExec,
+  FeedbackCheck,
+  PackageLayout,
+  RunFeedbackResult,
 } from "./feedback.js";
-import { doLanding, type LandingPostMergeValidation } from "./landing.js";
+import type { doLanding, LandingPostMergeValidation } from "./landing.js";
 import { type CiAwaitInput, type ConflictResolver, type Exec as MergeExec, type WaitForReviewInput } from "./merge.js";
-import {
-  deleteRemote,
-  pushAttempt,
-  type GitExec,
-} from "./remote-branch.js";
+import type { deleteRemote, pushAttempt, GitExec } from "./remote-branch.js";
 import { type LandLock } from "./land-lock.js";
-import { emitEnvelope, type EmitEnvelopeDeps } from "./envelope-emit.js";
+import type { emitEnvelope, EmitEnvelopeDeps } from "./envelope-emit.js";
 import { parseCurrentBlocker } from "./blocker-state.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { type RecoveryEnv } from "./recovery.js";
@@ -52,18 +60,7 @@ import { dispose } from "./disposition.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { HistoryClock } from "./history.js";
 import type { Runner } from "../types/runner.js";
-
-import {
-  LABEL_READY,
-  LABEL_RUNNING,
-  LABEL_HUMAN,
-  LABEL_VALIDATION,
-  LABEL_DEPENDENCY,
-  LABEL_POLICY,
-  LABEL_INFRA,
-  LABEL_MERGE_CONFLICT,
-  LABEL_SPEC,
-} from "./triage-labels.js";
+import type { TriageLabelConfig } from "./triage-labels.js";
 
 /**
  * The blocked-failure classes reconcile is allowed to act on: MECHANICAL ones
@@ -81,7 +78,9 @@ const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"
  * must resolve, `blocked:dependency` is a dependency wait, and policy/infra
  * blocks need operator action outside the worker branch.
  */
-const NON_MECHANICAL_LABELS = [LABEL_SPEC, LABEL_VALIDATION, LABEL_DEPENDENCY, LABEL_POLICY, LABEL_INFRA];
+function nonMechanicalLabels(labels: TriageLabelConfig): string[] {
+  return [labels.spec, labels.validation, labels.dependency, labels.policy, labels.infra];
+}
 
 // ---------- injected IO ----------
 
@@ -130,6 +129,43 @@ export interface ReconcileLookups {
   isLocked(): Promise<boolean>;
 }
 
+/** The landing port: the host's `doLanding`, injected instead of imported. */
+export interface ReconcileLandingPort {
+  doLanding: typeof doLanding;
+}
+
+/** The feedback-gate port: `runFeedback` plus the four helpers reconcile reads
+ * around it (scope resolution, the infra-root classifier, and the two
+ * validation-record formatters used by the post-merge sidecar line). */
+export interface ReconcileFeedbackPort {
+  runFeedback: typeof runFeedback;
+  relevantScopes: typeof relevantScopes;
+  isInfraFeedbackFailure: typeof isInfraFeedbackFailure;
+  buildValidationRecord: typeof buildValidationRecord;
+  formatValidationLine: typeof formatValidationLine;
+}
+
+/**
+ * The envelope-emitter port. Named `envelopeEmit`, NOT `envelope`, because
+ * {@link ReconcileDeps.envelope} already names the emitter's injected IO
+ * (poster / marker writer / posted writer / git) — the function and the IO it
+ * consumes are two different ports and both are needed.
+ */
+export interface ReconcileEnvelopeEmitPort {
+  emitEnvelope: typeof emitEnvelope;
+}
+
+/**
+ * The remote-branch port. Named `remoteBranch`, NOT `remoteGit`, because
+ * {@link ReconcileDeps.remoteGit} already names the `GitExec` these two
+ * functions (and `doLanding`) execute through — portifying the functions does
+ * not remove the executor reconcile must still thread into the landing deps.
+ */
+export interface ReconcileRemoteBranchPort {
+  pushAttempt: typeof pushAttempt;
+  deleteRemote: typeof deleteRemote;
+}
+
 function remoteTrackingBaseRef(remote: string, base: string): string {
   if (/^[0-9a-f]{7,40}$/i.test(base) || base.startsWith("refs/") || base.startsWith(`${remote}/`)) {
     return base;
@@ -148,6 +184,16 @@ export interface ReconcileDeps {
   git: ReconcileGit;
   fs: ReconcileFs;
   lookups: ReconcileLookups;
+  /** The landing implementation (`core/landing.ts` on this host). */
+  landing: ReconcileLandingPort;
+  /** The feedback gate + its four helpers (`core/feedback.ts` on this host). */
+  feedback: ReconcileFeedbackPort;
+  /** The envelope emitter (`core/envelope-emit.ts` on this host). */
+  envelopeEmit: ReconcileEnvelopeEmitPort;
+  /** The remote-branch push/delete pair (`core/remote-branch.ts` on this host). */
+  remoteBranch: ReconcileRemoteBranchPort;
+  /** The triage-label vocabulary, injected as config (castle convention). */
+  labels: TriageLabelConfig;
   /** git executor for merge.ts (integrateOrigin / landMerge / landPr). */
   mergeExec: MergeExec;
   /** git executor for remote-branch.ts (pushAttempt / deleteRemote). */
@@ -305,7 +351,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   const baseRef = remoteTrackingBaseRef(input.remote, base);
 
   // ---- 1. guard: mechanical class only ----
-  const disqualifier = mechanicalDisqualifier(labels, body);
+  const disqualifier = mechanicalDisqualifier(labels, body, deps.labels);
   if (disqualifier) {
     deps.appendIterLog(
       `🤖 /afk reconcile #${issue}: skipped (${disqualifier}) — not a mechanical reconcile candidate; leaving routing to the caller.`,
@@ -322,7 +368,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   // committed work is preserved — a dirty worktree is never salvage-committed
   // here. Best-effort: a failed push is logged and reconcile falls through to the
   // normal fetch gate (which then skips with "branch-absent" / "no-commits").
-  const safetyPush = await pushAttempt(deps.remoteGit, input.repoDir, branch, branch);
+  const safetyPush = await deps.remoteBranch.pushAttempt(deps.remoteGit, input.repoDir, branch, branch);
   if (!safetyPush.ok) {
     deps.appendIterLog(
       `🤖 /afk reconcile #${issue}: pre-fetch push failed (${safetyPush.warn ?? "unknown"}) — continuing to fetch gate`,
@@ -395,9 +441,9 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     // comparison probe can classify a branch failure that also reproduces on
     // the base as `inconclusive` rather than the branch's fault (#2380).
     // Mirrors the DONE path.
-    feedback = await runFeedback(deps.pnpm, {
+    feedback = await deps.feedback.runFeedback(deps.pnpm, {
       worktree: branch,
-      scopes: relevantScopes(deps.layout, changedFiles),
+      scopes: deps.feedback.relevantScopes(deps.layout, changedFiles),
       layout: deps.layout,
       now: deps.nowEpoch,
       baselineWorktree: input.base,
@@ -410,7 +456,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     // and the recovery policy should retry it (bounded, default cap 2). Skip
     // the park-to-human path; let `routeRecovery` re-queue or escalate the
     // same way the DONE path does, so the green branch isn't stranded.
-    if (!feedback.ok && isInfraFeedbackFailure(feedback)) {
+    if (!feedback.ok && deps.feedback.isInfraFeedbackFailure(feedback)) {
       return await parkInfraRetry(deps, input, feedback, startedEpoch);
     }
     if (!feedback.ok) {
@@ -437,7 +483,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   const openPr = deps.worktreeLaunchesPr !== false;
   // Presence stage (#1306): the adopt-landing lane's row now shows `landing`.
   await deps.markStage?.("landing").catch(() => {});
-  const landing = await doLanding(
+  const landing = await deps.landing.doLanding(
     {
       mergeExec: deps.mergeExec,
       remoteGit: deps.remoteGit,
@@ -454,9 +500,9 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       makeRebaseWorktree: deps.makeRebaseWorktree,
       removeRebaseWorktree: deps.removeRebaseWorktree,
       postMergeGate: async (mergedTreeDir) => {
-        const mergedFeedback = await runFeedback(deps.pnpm, {
+        const mergedFeedback = await deps.feedback.runFeedback(deps.pnpm, {
           worktree: mergedTreeDir,
-          scopes: relevantScopes(deps.layout, changedFiles),
+          scopes: deps.feedback.relevantScopes(deps.layout, changedFiles),
           layout: deps.layout,
           now: deps.nowEpoch,
           baselineWorktree: input.base,
@@ -507,7 +553,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   if (landing.postMergeValidation) {
     feedback = {
       ...feedback,
-      sidecar: [...feedback.sidecar, postMergeValidationSidecarLine(landing.postMergeValidation)],
+      sidecar: [...feedback.sidecar, postMergeValidationSidecarLine(deps, landing.postMergeValidation)],
     };
     await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
   }
@@ -520,8 +566,8 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
   const durationS = deps.nowEpoch() - startedEpoch;
   const posted = await emitDone(deps, input, mergeSha, durationS, feedback.sidecar);
   await deps.gh.close(issue);
-  await deps.gh.editLabels(issue, landDropLabels(labels), []);
-  await deleteRemote(deps.remoteGit, input.repoDir, branch);
+  await deps.gh.editLabels(issue, landDropLabels(labels, deps.labels), []);
+  await deps.remoteBranch.deleteRemote(deps.remoteGit, input.repoDir, branch);
   await deps.git.deleteLocalBranch(branch);
   await deps.fs.completionSweep(issue);
   await runCloseCascade(deps, issue);
@@ -556,8 +602,13 @@ async function resolveFreshRemoteBranchTip(
  * crashed blocker is mechanical and therefore allowed — it is exactly the parked
  * state reconcile exists to clear.
  */
-export function mechanicalDisqualifier(labels: string[], body: string): "not-mechanical" | "active-blocker" | null {
-  if (labels.some((l) => NON_MECHANICAL_LABELS.includes(l))) return "not-mechanical";
+export function mechanicalDisqualifier(
+  labels: string[],
+  body: string,
+  config: TriageLabelConfig,
+): "not-mechanical" | "active-blocker" | null {
+  const nonMechanical = nonMechanicalLabels(config);
+  if (labels.some((l) => nonMechanical.includes(l))) return "not-mechanical";
   const blocker = parseCurrentBlocker(body);
   if (blocker && !MECHANICAL_BLOCKER_KINDS.has(blocker.kind)) return "active-blocker";
   return null;
@@ -565,9 +616,13 @@ export function mechanicalDisqualifier(labels: string[], body: string): "not-mec
 
 /** Routing/blocked labels to shed on a successful land — domain labels (type:,
  * priority:, slice:, req:) are left untouched. */
-function landDropLabels(labels: string[]): string[] {
+function landDropLabels(labels: string[], config: TriageLabelConfig): string[] {
   return labels.filter(
-    (l) => l === LABEL_RUNNING || l === LABEL_HUMAN || l === LABEL_READY || l.startsWith("blocked:"),
+    (l) =>
+      l === config.running ||
+      l === config.human ||
+      l === config.ready ||
+      l.startsWith(config.blockedPrefix),
   );
 }
 
@@ -593,7 +648,7 @@ async function park(
   const disp = dispose("feedback-failed", input.attempt, deps.recoveryEnv ?? {});
   const typed = disp.typedLabel!;
   await deps.gh.ensureLabel(typed);
-  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, typed]);
+  await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), [deps.labels.human, typed]);
   await deps.gh.comment(
     issue,
     `🤖 /afk reconcile validated parked branch \`${input.branch}\` WITHOUT re-running the agent — validation FAILED, so it was not landed:\n${formatFailingChecks(failed)}`,
@@ -639,7 +694,7 @@ async function parkInfraRetry(
     // misleading) `blocked:validation-infra` from a prior attempt, add
     // `ready-for-agent` so the issue resurfaces. The branch is left on the
     // remote (no deleteRemote) — the next attempt can re-validate it.
-    const infraLabels = labels.filter((l) => l !== typed && l !== LABEL_READY);
+    const infraLabels = labels.filter((l) => l !== typed && l !== deps.labels.ready);
     await deps.gh.editLabels(issue, infraLabels, disp.addLabels);
     await deps.gh.comment(
       issue,
@@ -657,7 +712,7 @@ async function parkInfraRetry(
   // Cap exhausted → escalate to ready-for-human (page a maintainer). The
   // infra flake is sticky; the issue needs a human to look at the gate setup.
   await deps.gh.ensureLabel(typed);
-  await deps.gh.editLabels(issue, parkDropLabels(labels), disp.addLabels);
+  await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), disp.addLabels);
   await deps.gh.comment(
     issue,
     `🤖 /afk reconcile #${issue}: feedback gate INFRA failure retry budget exhausted (attempt ${input.attempt}/${cap}) on \`${input.branch}\` — escalating to ready-for-human:\n${failedSummary}`,
@@ -681,9 +736,9 @@ async function parkInfraLanding(
 ): Promise<ReconcileResult> {
   const { issue, labels } = input;
   const disp = dispose("infra", input.attempt, deps.recoveryEnv ?? {});
-  const typed = disp.typedLabel ?? LABEL_INFRA;
+  const typed = disp.typedLabel ?? deps.labels.infra;
   await deps.gh.ensureLabel(typed);
-  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, typed]);
+  await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), [deps.labels.human, typed]);
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     log: `reconcile land infra failure: ${reason}`,
   });
@@ -709,7 +764,7 @@ async function parkMergeConflict(
   const disp = dispose("merge-conflict", input.attempt, deps.recoveryEnv ?? {});
   const typed = disp.typedLabel!;
   await deps.gh.ensureLabel(typed);
-  await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, typed]);
+  await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), [deps.labels.human, typed]);
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     log: `reconcile land failed: ${reason}`,
   });
@@ -722,12 +777,12 @@ async function parkMergeConflict(
 /** Routing/blocked labels to shed when parking — keeps `blocked:validation`
  * (re-added below) and domain labels; drops `running`/`ready-for-agent` + the
  * mechanical blocked reasons that no longer describe the state. */
-function parkDropLabels(labels: string[]): string[] {
+function parkDropLabels(labels: string[], config: TriageLabelConfig): string[] {
   return labels.filter(
     (l) =>
-      l === LABEL_RUNNING ||
-      l === LABEL_READY ||
-      (l.startsWith("blocked:") && l !== LABEL_VALIDATION && l !== LABEL_MERGE_CONFLICT),
+      l === config.running ||
+      l === config.ready ||
+      (l.startsWith(config.blockedPrefix) && l !== config.validation && l !== config.mergeConflict),
   );
 }
 
@@ -745,7 +800,7 @@ async function emitDone(
   durationS: number,
   validationSidecar: string[],
 ): Promise<boolean> {
-  const result = await emitEnvelope(deps.envelope, {
+  const result = await deps.envelopeEmit.emitEnvelope(deps.envelope, {
     status: "done",
     issue: input.issue,
     worker: input.workerId,
@@ -769,7 +824,7 @@ async function emitFailure(
   startedEpoch: number,
   sections: { validation?: string; log?: string },
 ): Promise<boolean> {
-  const result = await emitEnvelope(deps.envelope, {
+  const result = await deps.envelopeEmit.emitEnvelope(deps.envelope, {
     status,
     issue: input.issue,
     worker: input.workerId,
@@ -801,8 +856,8 @@ async function writeValidationSidecar(deps: ReconcileDeps, attemptDir: string, l
   }
 }
 
-function postMergeValidationSidecarLine(validation: LandingPostMergeValidation): string {
-  return formatValidationLine(buildValidationRecord({
+function postMergeValidationSidecarLine(deps: ReconcileDeps, validation: LandingPostMergeValidation): string {
+  return deps.feedback.formatValidationLine(deps.feedback.buildValidationRecord({
     name: `post-merge:${validation.path}`,
     status: "passed",
     summary: validation.reason,
@@ -841,7 +896,7 @@ async function runCloseCascade(deps: ReconcileDeps, closedIssue: number): Promis
     }
 
     for (const p of planCloseCascade(closedIssue, dependents)) {
-      await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
+      await deps.gh.editLabels(p.number, [deps.labels.dependency, ...p.reqLabels], [deps.labels.ready]);
       const reqs = p.refs.map((ref) => Number(ref.slice(1))).filter((n) => Number.isFinite(n));
       await deps.gh.comment(p.number, await cascadeAuditCommentFor(reqs, deps.gh.issueReference));
     }

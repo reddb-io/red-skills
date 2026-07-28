@@ -20,11 +20,16 @@ import { describe, expect, it } from "vitest";
 
 const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "src");
 
-/** State-role vocabulary (constants and literals) that marks an edit as a
- * STATE mutation. `running`/`contested`/typed `blocked:*` reasons alone are
- * projections or modifiers, not state roles. */
+/** State-role vocabulary (constants, literals, and injected-config accessors)
+ * that marks an edit as a STATE mutation. `running`/`contested`/typed
+ * `blocked:*` reasons alone are projections or modifiers, not state roles.
+ *
+ * The `<config>.ready` / `.human` / `.dependency` accessors keep PORTIFIED
+ * engine code covered (#2665): a module that reads its label vocabulary from an
+ * injected `TriageLabelConfig` instead of value-importing `LABEL_*` would
+ * otherwise fall out of this scan entirely and take its call sites with it. */
 const STATE_ROLE_PATTERN =
-  /LABEL_READY\b|LABEL_HUMAN\b|LABEL_QUARANTINE\b|LABEL_TRIAGE\b|LABEL_NEEDS_INFO\b|LABEL_DEPENDENCY\b|"ready-for-agent"|"ready-for-human"|"needs-triage"|"needs-info"|"quarantine"|"blocked:dependency"/;
+  /LABEL_READY\b|LABEL_HUMAN\b|LABEL_QUARANTINE\b|LABEL_TRIAGE\b|LABEL_NEEDS_INFO\b|LABEL_DEPENDENCY\b|\blabels\.(ready|human|quarantine|needsTriage|needsInfo|dependency)\b|"ready-for-agent"|"ready-for-human"|"needs-triage"|"needs-info"|"quarantine"|"blocked:dependency"/;
 
 /**
  * Surviving raw call sites, keyed `relative-path :: normalized-statement`.
@@ -60,11 +65,11 @@ const ALLOWLIST = new Map<string, string>([
   ],
   // --- ADR 0055 reconcile lane: deliberate typed parks over pre-read labels ---
   [
-    "core/reconcile.ts :: await deps.gh.editLabels(issue, parkDropLabels(labels), [LABEL_HUMAN, typed]);",
+    "core/reconcile.ts :: await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), [deps.labels.human, typed]);",
     "reconcile typed park; parkDropLabels collapses stale state first",
   ],
   [
-    "core/reconcile.ts :: await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);",
+    "core/reconcile.ts :: await deps.gh.editLabels(p.number, [deps.labels.dependency, ...p.reqLabels], [deps.labels.ready]);",
     "reconcile-lane cascade mirror; migration tracked by ADR 0122 rule 7",
   ],
   // --- non-issue surfaces: PR review-lane labels, not issue state ---
