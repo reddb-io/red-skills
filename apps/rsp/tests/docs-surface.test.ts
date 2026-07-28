@@ -140,6 +140,35 @@ describe("rsp docs surface", () => {
     }
   });
 
+  it("documents the resident-first diagnosis path and the fail-open behaviour per surface", async () => {
+    const troubleshooting = await doc("docs/TROUBLESHOOTING.md");
+
+    expect(troubleshooting).toContain("## Resident unreachable");
+    expect(troubleshooting).toContain("Diagnose the resident first");
+    // A resident that never started and a resident whose socket is unreachable
+    // are different faults with different recoveries; the doc must separate them.
+    expect(troubleshooting).toContain("never started");
+    expect(troubleshooting).toContain("stale socket");
+    // The exact observable behaviour of fail-open, surface by surface.
+    expect(troubleshooting).toContain("costs the elision, never the command");
+    expect(troubleshooting).toContain("empty snapshot");
+    expect(troubleshooting).toContain("spooled bytes instead of minting");
+    expect(troubleshooting).toContain("returns the payload it was handed");
+  });
+
+  it("never calls the rsp MCP server the canonical contact point", async () => {
+    for (const path of [
+      "README.md",
+      "docs/ARCHITECTURE.md",
+      "docs/TROUBLESHOOTING.md",
+      "generated/AMBIENT-SKILL.md",
+    ]) {
+      const text = await doc(path);
+      expect(text).not.toMatch(/MCP[^.\n]{0,80}\b(canonical|sole)\b/i);
+      expect(text).not.toMatch(/MCP[^.\n]{0,80}contact point/i);
+    }
+  });
+
   it("explains how to run and interpret the two-axis benchmark", async () => {
     const bench = await doc("bench/README.md");
 

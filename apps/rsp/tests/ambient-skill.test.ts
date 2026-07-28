@@ -48,6 +48,20 @@ describe("rsp ambient skill generator", () => {
     expect(markdown).toContain("`rsp show el:<id>` writes the original bytes verbatim to stdout");
   });
 
+  it("describes the resident as the core and every surface as a peer client", () => {
+    const markdown = renderAmbientSkill(RSP_WRAPPER_CAPABILITIES);
+
+    expect(markdown).toContain("## Core model");
+    expect(markdown).toContain("The resident is the core");
+    expect(markdown).toContain(
+      "no surface is a privileged or canonical contact point",
+    );
+    expect(markdown).toContain("no MCP server connected is fully supported");
+    expect(markdown).toContain(
+      "An unreachable resident costs the elision, never the command",
+    );
+  });
+
   it("renders runner-specific guidance for Claude and Codex interception", () => {
     const codex = renderAmbientSkill(RSP_WRAPPER_CAPABILITIES, { runner: "codex" });
     const claude = renderAmbientSkill(RSP_WRAPPER_CAPABILITIES, { runner: "claude" });
