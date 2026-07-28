@@ -333,46 +333,9 @@ export function renderAdversarialReviewBlockerSummary(
   ].join(" ");
 }
 
-function tailLines(text: string, maxLines: number): string {
-  const lines = text.split("\n");
-  return lines.slice(Math.max(0, lines.length - maxLines)).join("\n");
-}
-
-export function appendAdversarialReviewCorrectionHandoff(
-  handoff: string,
-  opts: {
-    diff: string;
-    findings: AdversarialReviewFindings;
-    retry: number;
-    cap: number;
-  },
-): string {
-  const blocking = opts.findings.findings.filter((finding) => finding.blocking);
-  return [
-    handoff.replace(/\n+$/, ""),
-    "",
-    "<adversarial-review-correction>",
-    `A blocking adversarial review found confirmed defects or acceptance-criteria gaps. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
-    "Fix only the blocking findings below on the existing branch, keep unrelated nits/style/suggestions out of scope, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
-    "",
-    "<review-critiques>",
-    opts.findings.summary,
-    ...blocking.flatMap((finding, idx) => [
-      "",
-      `${idx + 1}. ${finding.path}:${finding.line}`,
-      finding.body,
-    ]),
-    "</review-critiques>",
-    "",
-    '<pr-diff data-untrusted="true">',
-    "```diff",
-    tailLines(opts.diff, 200),
-    "```",
-    "</pr-diff>",
-    "</adversarial-review-correction>",
-    "",
-  ].join("\n");
-}
+// The review's correction handoff is no longer built here: the re-seeded prompt
+// carries ONE outstanding-state section holding the gate tail and the review
+// findings together (ADR 0129 decision 7), composed in `reseed-handoff.ts`.
 
 export function makeExtractAdversarialReview(
   deps: AdversarialReviewExtractDeps,
