@@ -25,7 +25,7 @@ import { liveIssueFromBranch, type IssueMeta } from "../../core/branch-cleanup.j
 import { readWorkerState } from "../../core/worker-state-reader.js";
 import { isLivePid, killTreeAndWait } from "../kill-tree.js";
 import { execTool, type ExecFn } from "../exec.js";
-import { collectTmpJanitorReport } from "../tmp-janitor.js";
+import { attemptWorkspaceIsLive, collectTmpJanitorReport } from "../tmp-janitor.js";
 import { issueMeta, type GhContext, type IssueStateRow } from "../gh.js";
 import * as ghx from "../gh.js";
 import * as gitx from "../git.js";
@@ -452,6 +452,7 @@ export async function buildBootDeps(
         const pid = Number(raw.trim());
         return Number.isInteger(pid) && pid > 0 && isLivePid(pid);
       },
+      attemptWorkspaceLive: (path) => attemptWorkspaceIsLive(paths.tmpDir, path),
       feedbackWorktreeLiveness: async (path) => {
         // Re-collect immediately before deletion: the boot plan may have been
         // built before another fleet spawned the feedback worktree's owner.

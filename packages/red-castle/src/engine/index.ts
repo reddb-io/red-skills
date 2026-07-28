@@ -13,6 +13,7 @@ export type {
 
 export * from "./worker-reader.js";
 export * from "./attempt-record.js";
+export * from "./attempt-retention.js";
 export * from "./gate-constants.js";
 export * from "./gate-executor.js";
 export * from "./gate-sink.js";
