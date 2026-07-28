@@ -76,9 +76,8 @@ import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
 import { matchesSelector } from "./core/session.js";
 import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import * as ghx from "./runtime/gh.js";
-import { isLivePid } from "./runtime/kill-tree.js";
 import { spawnSupervisor } from "./runtime/supervisor-spawn.js";
-import { discoverLiveSupervisorPid } from "./runtime/supervisor-state.js";
+import { readSupervisorLiveness, readAttemptHistory, summarizeAttempt } from "./runtime/liveness-anchor.js";
 import {
   afkPaths,
   collectMonitorInputs,
@@ -845,20 +844,26 @@ async function fleetStatus(
   input: FleetNameInput,
 ): Promise<FleetStatusOutput> {
   const paths = afkPaths(root, input.name);
-  const [fleet, monitor, discovered] = await Promise.all([
-    readFleetState(paths.fleetStatePath),
-    collectMonitorInputs(root),
-    discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid, {
-      fleet: paths.fleet,
-    }),
-  ]);
-  const pid = discovered?.pid ?? null;
   const now = Math.floor(Date.now() / 1_000);
   const config = resolveSupervisorConfig();
+  const [fleet, monitor] = await Promise.all([
+    readFleetState(paths.fleetStatePath),
+    collectMonitorInputs(root),
+  ]);
+  // ONE anchor decides identity, liveness AND freshness together (ADR 0128 §5).
+  // The snapshot below is read for slots, churn and runner only — never for a
+  // second opinion on whether the supervisor is there.
+  const supervisor = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
+    fleet: paths.fleet,
+    heartbeatEpoch: fleet?.epoch ?? null,
+    staleAfterS: config.supervisorStaleS,
+    nowS: now,
+  });
+  const pid = supervisor.alive ? supervisor.pid : null;
   const health = classifySupervisor(
     {
       pid,
-      pidAlive: pid !== null,
+      pidAlive: supervisor.alive,
       lastHeartbeatEpoch: fleet?.epoch ?? null,
       lastProgressEpoch: fleet?.lastProgressEpoch ?? null,
       slotsBusy: fleet?.slotsBusy ?? 0,
@@ -891,8 +896,8 @@ async function fleetStatus(
   return {
     fleet: paths.fleet,
     supervisor: {
-      pid: pid ?? 0,
-      alive: pid !== null,
+      pid: supervisor.pid,
+      alive: supervisor.alive,
       health,
       runner: fleet?.runner ?? "",
       target: fleet?.target ?? fleet?.slotsTotal ?? 0,
@@ -905,8 +910,9 @@ async function fleetStatus(
           fleet.bundleVersion !== latestBundleVersion,
         ),
       ),
-      heartbeat_age_s: fleet ? now - fleet.epoch : -1,
-      identity_anchor: discovered?.source ?? "none",
+      heartbeat_age_s: supervisor.heartbeat.age_s,
+      identity_anchor: supervisor.anchor,
+      heartbeat: supervisor.heartbeat,
     },
     slots: {
       busy: fleet?.slotsBusy ?? 0,
@@ -951,12 +957,10 @@ async function createFleet(
   const path = registryPath(root);
   const existing = await readFleetProfile(path, input.name);
   const paths = afkPaths(root, input.name);
-  const running = await discoverLiveSupervisorPid(
-    paths.supervisorRuntimeDir,
-    isLivePid,
-    { fleet: paths.fleet },
-  );
-  if (running) {
+  const running = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
+    fleet: paths.fleet,
+  });
+  if (running.alive) {
     if (existing) {
       throw new Error(`fleet ${JSON.stringify(input.name)} already exists`);
     }
@@ -1145,9 +1149,12 @@ async function workerVitals(
   opts: { live_only?: boolean } = {},
 ): Promise<WorkerVitalsOutput> {
   const paths = createEnginePaths(join(root, ".red"));
-  const [records, workerDirs] = await Promise.all([
+  // Identity and history come from the attempt record, the unit of truth
+  // (ADR 0128 §1) — never reconstructed from worker dirs or tracker comments.
+  const [records, workerDirs, attempts] = await Promise.all([
     readAllWorkerStates(afkPaths(root).tmpDir),
     readdir(paths.workersRoot, { withFileTypes: true }).catch(() => []),
+    readAttemptHistory(root),
   ]);
   const alerts = new Map<string, { type: string; at: string; message: string }>();
   await Promise.all(workerDirs.filter((entry) => entry.isDirectory()).map(async (entry) => {
@@ -1166,7 +1173,9 @@ async function workerVitals(
       });
     }
   }));
-  const all = records.map(({ state, ...record }) => ({
+  const all = records.map(({ state, ...record }) => {
+    const attempt = attempts.latestForWorker(state.worker_id);
+    return {
     worker: {
       id: state.worker_id,
       pid: state.pid,
@@ -1206,7 +1215,9 @@ async function workerVitals(
     liveness: record.liveness,
     liveness_verdict: record.livenessVerdict,
     alert: alerts.get(state.worker_id),
-  }));
+    ...(attempt !== undefined ? { attempt: summarizeAttempt(attempt) } : {}),
+    };
+  });
   const represented = new Set(all.map((record) => record.worker.id));
   for (const [workerId, alert] of alerts) {
     if (represented.has(workerId)) continue;
@@ -1413,6 +1424,10 @@ export async function collectStatuslineAggregate(root: string) {
           churn_window_s: fleetChip.churnWindowS ?? 0,
           breaker_count: fleetChip.breaker?.count ?? 0,
           bundle_version: fleetChip.bundleVersion ?? null,
+          /** Staleness inside the payload (ADR 0128 §6): the chip travels with
+           * the anchor's verdict, so a renderer cannot draw it as current. */
+          stale: fleetChip.stale ?? false,
+          stale_age_s: fleetChip.staleAgeS ?? 0,
         }
       : null,
     workers,
@@ -1448,12 +1463,10 @@ async function registerFleet(root: string, rawInput: FleetRegisterInput) {
   };
   const path = registryPath(root);
   const paths = afkPaths(root, input.name);
-  const running = await discoverLiveSupervisorPid(
-    paths.supervisorRuntimeDir,
-    isLivePid,
-    { fleet: paths.fleet },
-  );
-  if (!running) {
+  const running = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
+    fleet: paths.fleet,
+  });
+  if (!running.alive) {
     throw new Error(`fleet ${JSON.stringify(paths.fleet)} is not running`);
   }
   const profile = await upsertFleetProfile(path, {
