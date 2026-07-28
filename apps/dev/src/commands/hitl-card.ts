@@ -22,6 +22,7 @@ import { resolveConfigPath } from "./route-model-tier.js";
 import { parseCurrentBlocker } from "../core/blocker-state.js";
 import { planRequeue } from "../core/requeue.js";
 import { LABEL_HUMAN } from "../core/triage-labels.js";
+import { isRefused, planTransition } from "../core/state-transition.js";
 import {
   renderCard,
   updateCardStatus,
@@ -381,6 +382,10 @@ async function executeApprove(exec: Exec, repo: string, issue: IssueData, prNumb
 
   await exec(["gh", "issue", "close", String(issue.number), ...repoArgs(repo)]);
 
+  // NOT a state transition: the issue was just CLOSED, so it EXITS the state
+  // machine and the planner (which always lands on exactly one state role)
+  // cannot express this shed. Same class as the reconcile land path's
+  // `landDropLabels` — deliberately left raw (#2663).
   const blockedLabels = issue.labels.filter((l) => l.startsWith("blocked:"));
   const removeLabels = [LABEL_HUMAN, ...blockedLabels];
   const editArgs = ["gh", "issue", "edit", String(issue.number), ...repoArgs(repo)];
@@ -400,7 +405,10 @@ async function executeReject(exec: Exec, repo: string, issue: IssueData, prNumbe
     return `PR close failed: ${closeResult.stderr.trim()}`;
   }
 
-  // Drop ready-for-human; keep issue open for manual triage.
+  // Drop ready-for-human; keep issue open for manual triage. Like the approve
+  // shed above this is NOT a planner transition — a rejected card hands the
+  // issue back to a maintainer with no automated next state, which is the one
+  // shape the one-state-role planner cannot express (#2663).
   await exec(["gh", "issue", "edit", String(issue.number), ...repoArgs(repo), "--remove-label", LABEL_HUMAN]);
   return `PR #${prNumber} closed. Issue #${issue.number} is open for manual follow-up.`;
 }
@@ -415,14 +423,25 @@ async function executeRequeue(exec: Exec, repo: string, issue: IssueData, guidan
     return `Cannot requeue: ${plan.reason}`;
   }
 
-  // Apply the requeue transition.
+  // Apply the requeue transition. `planRequeue` owns the REFUSAL gates (is the
+  // issue parked? are its blocked:* labels unambiguous?); since #2663 the LABEL
+  // DELTA comes from the ADR 0122 planner instead of planRequeue's hand-rolled
+  // sets, so the card's re-queue sheds every state role, the `running`
+  // projection, and every `blocked:*` reason in ONE proven edit. A refused plan
+  // (a `queue` while `req:*` edges survive) falls back to planRequeue's sets —
+  // the maintainer's directive still lands.
   if (plan.bodyChanged) {
     await exec(["gh", "issue", "edit", String(issue.number), ...repoArgs(repo), "--body", scrubOutbound(plan.body)]);
   }
-  const editArgs = ["gh", "issue", "edit", String(issue.number), ...repoArgs(repo)];
-  for (const l of plan.removeLabels) editArgs.push("--remove-label", l);
-  for (const l of plan.addLabels) editArgs.push("--add-label", l);
-  await exec(editArgs);
+  const queued = planTransition(issue.labels, { kind: "queue" });
+  const removeLabels = isRefused(queued) ? plan.removeLabels : [...queued.remove];
+  const addLabels = isRefused(queued) ? plan.addLabels : [...queued.add];
+  if (removeLabels.length > 0 || addLabels.length > 0) {
+    const editArgs = ["gh", "issue", "edit", String(issue.number), ...repoArgs(repo)];
+    for (const l of removeLabels) editArgs.push("--remove-label", l);
+    for (const l of addLabels) editArgs.push("--add-label", l);
+    await exec(editArgs);
+  }
 
   return `Issue #${issue.number} requeued to ready-for-agent with guidance.`;
 }
