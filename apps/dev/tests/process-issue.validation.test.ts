@@ -1617,3 +1617,92 @@ describe("processIssue — an empty-diff DONE is never stale-base drift (#2711)"
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
   });
 });
+
+describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
+  /** Every `worker.reseeded` event this run emitted, in order. */
+  const reseeds = (trace: { workerEvents: Array<{ kind: string; payload?: Record<string, unknown> }> }) =>
+    trace.workerEvents.filter((e) => e.kind === "worker.reseeded");
+
+  it("still Re-seeds a failing gate after a tier escalation — the escalation no longer mutes it", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      // simple fails → tier escalation; complex fails → gate Re-seed; fails again → park.
+      feedbackResults: [false, false, false],
+      classifyIssue: async () => "simple",
+      stallConvergenceBudget: 1,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    // Before the unified request path the tier escalation set a flag that
+    // refused EVERY subsequent gate correction, so this run stopped at 2.
+    expect(trace.runAgentCalls).toHaveLength(3);
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("<tier-escalation>");
+    expect(trace.runAgentCalls[2]?.handoffContent).toContain("<afk-gate-correction>");
+    expect(reseeds(trace).map((e) => e.payload?.trigger)).toEqual(["tier-escalation", "gate-stage"]);
+    expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
+  });
+
+  it("bounds the total round count by the lane ceiling across mixed causes", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false, false, false, false, false, false],
+      classifyIssue: async () => "simple",
+      // A gate sub-cap far above the lane ceiling: the ceiling is what binds,
+      // and the review's reserved round stays unreachable to gate and tier.
+      stallConvergenceBudget: 9,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    // /afk ceiling 4 minus the review's reserved round = 3 spendable rounds.
+    expect(reseeds(trace)).toHaveLength(3);
+    expect(reseeds(trace).map((e) => e.payload?.round)).toEqual([1, 2, 3]);
+    expect(trace.runAgentCalls).toHaveLength(4);
+  });
+
+  it("names the cause on every emitted Re-seed event", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      // An empty-diff DONE first, then a red gate on the round that produced one.
+      changedFilesSequence: [[], ["packages/x/src/a.ts"], ["packages/x/src/a.ts"]],
+      feedbackResults: [false, false],
+      stallConvergenceBudget: 2,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(reseeds(trace).map((e) => e.payload?.trigger)).toEqual(["no-diff-done", "gate-stage"]);
+    for (const event of reseeds(trace)) {
+      expect(event.payload?.cause).toBe("gate");
+      expect(event.payload?.lane).toBe("/afk");
+      expect(event.payload?.ceiling).toBe(4);
+    }
+  });
+
+  it("names the `/go` lane and its ceiling on a go-lane Re-seed", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false, true],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "2" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(reseeds(trace)).toHaveLength(1);
+    expect(reseeds(trace)[0]?.payload).toMatchObject({
+      trigger: "gate-stage",
+      cause: "gate",
+      lane: "/go",
+      free: false,
+      round: 1,
+      ceiling: 2,
+    });
+  });
+});
