@@ -71,6 +71,27 @@ lacked, learned from a fleet-wide landing outage:
   crashed reviewer degrades to "pass with a logged warning" plus an attempt-ledger
   record, and the landing proceeds.
 
+**Amendment (ADR 0129, 2026-07-28).** Three properties move, from a grilling
+session that found the review loop and the gate-correction loop to be the same
+operation implemented twice:
+
+- **The review runs before the PR, as the third gate stage.** `GATE_STAGE_ORDER`
+  becomes `["feedback", "backpressure", "review"]`, so "only once the machine gate
+  is green" stops being a hand-checked precondition and becomes the fold's own
+  short-circuit rule (ADR 0119), and the advisory-degradation rule above becomes
+  `GateStageOutcome.skipped` rather than a private error path. The reviewer reads
+  `git diff base...branch` in the worktree; `gh pr diff` no longer applies.
+- **Exhaustion always parks.** The iteration budget is absorbed into the lane's
+  Re-seed budget, where the review's round is *reserved* against gate churn, and
+  exhaustion with blocking findings still open parks `ready-for-human` +
+  `blocked:validation` at every budget value. This revokes `decideAdversarialReview`'s
+  `cap >= 2 ? park : pass` cliff, under which the documented default of 1 landed
+  code with a known blocking finding — the advisory behaviour this ADR rejected
+  by name in its own Considered options.
+- **The PR is a lazily-minted draft.** The first Re-seed of any cause opens it;
+  landing reuses it and marks it ready. Findings still post in full to both the PR
+  and the Issue, with the Issue's copy a single comment edited in place.
+
 ## Considered options
 
 - **Advisory-only** (keep `review.ts`'s shape): rejected — advisory findings do
