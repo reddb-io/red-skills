@@ -12,6 +12,7 @@ import {
   kickResidentServer,
   resolveResidentPaths,
 } from "./resident-client.js";
+import { reportResidentEntryDiagnostic } from "./resident-store.js";
 import { resolveRspInvocationPrefix } from "./rsp-cli.js";
 import {
   appendTelemetryEvent,
@@ -427,7 +428,13 @@ function debugHookException(hook: string, err: unknown): void {
   process.stderr.write(`rsp hook ${hook}: exception ${errorLabel(err)}\n`);
 }
 
+/**
+ * A wake that failed is debug-only noise — except when the host cannot resolve
+ * an rsp entry at all. That one always says its name (#2736), and the command
+ * still runs raw.
+ */
 function debugHookWakeFailure(err: unknown): void {
+  if (reportResidentEntryDiagnostic(err)) return;
   if (process.env.RSP_DEBUG !== "1") return;
   process.stderr.write(`rsp hook pre-exec: resident-wake-failed ${errorLabel(err)}\n`);
 }

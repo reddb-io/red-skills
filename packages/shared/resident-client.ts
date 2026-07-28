@@ -10,6 +10,7 @@ import { decode, encode, type JsonObject } from "@reddb-io/toon";
 import { rspStateDir } from "./red-paths.js";
 import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
 import { sendResidentRequest } from "./resident-protocol.js";
+import { requireRspEntry } from "./rsp-entry.js";
 
 export interface RspResidentPaths {
   rootDir: string;
@@ -65,10 +66,14 @@ export function resolveResidentPaths(cwd: string): RspResidentPaths {
   };
 }
 
+export { RspResidentEntryError, RSP_ENTRY_UNRESOLVED, resolveRspEntry } from "./rsp-entry.js";
+
 /**
  * Generic client for the resident rsp server. Consumers outside the rsp app
- * (memory today, brain next) set `config.serverCommand` so an auto-start
- * spawns the rsp binary rather than re-executing the caller's own entrypoint.
+ * (memory, brain, the dev bundle, castle-mcp) need no extra wiring: an
+ * auto-start resolves the rsp entry explicitly (`rsp-entry.ts`) rather than
+ * re-executing the caller's own entrypoint. `config.serverCommand` stays the
+ * override for a host that knows better.
  */
 export class ResidentRspClient {
   constructor(
@@ -139,7 +144,7 @@ export async function kickResidentServer(paths: RspResidentPaths, config: RspRes
   if (!lock) return false;
   await lock.close();
 
-  const [command, prefix] = spawnTarget(config);
+  const [command, prefix] = spawnTarget(paths, config);
   const child = spawn(command, [
     ...prefix,
     "warm-resident",
@@ -311,7 +316,7 @@ async function tryAcquireLock(lockPath: string) {
 }
 
 function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): ResidentSpawn {
-  const [command, prefix] = spawnTarget(config);
+  const [command, prefix] = spawnTarget(paths, config);
   const captureDiagnostics = process.env.RSP_DEBUG === "1";
   let spawnError: Error | undefined;
   let stderrTail = "";
@@ -462,10 +467,16 @@ async function isStorePathMissing(storeUri: string): Promise<boolean> {
   }
 }
 
-function spawnTarget(config: RspResidentConfig): [string, string[]] {
-  if (config.serverCommand) return [config.serverCommand, config.serverArgs ?? []];
-  const entry = process.argv[1] ? resolve(process.argv[1]) : fileURLToPath(import.meta.url);
-  return [process.execPath, [...process.execArgv, entry]];
+/**
+ * The rsp entry, resolved explicitly — never inferred from the caller's argv.
+ *
+ * Throws {@link RspResidentEntryError} when no rsp entry exists on this host, so
+ * a foreign bundle gets a named diagnostic instead of re-executing itself with
+ * an argument it does not route (#2736).
+ */
+function spawnTarget(paths: RspResidentPaths, config: RspResidentConfig): [string, string[]] {
+  const entry = requireRspEntry(config, { rootDir: paths.rootDir });
+  return [entry.command, entry.args];
 }
 
 function resolveRuntimeSocketDir(rootDir: string): string {
