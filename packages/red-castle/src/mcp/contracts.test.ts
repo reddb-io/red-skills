@@ -25,6 +25,7 @@ const FLEET_STATUS: FleetStatusOutput = {
     target: 2,
     bundle_version: "2.76.1",
     bundle_latest: "2.76.1",
+    version_unknown: 0,
     version_skew: 0,
     heartbeat_age_s: 3,
     identity_anchor: "pid-file" as const,
