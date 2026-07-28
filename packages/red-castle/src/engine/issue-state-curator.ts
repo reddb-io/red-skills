@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
 import type { EnginePaths } from "./paths.js";
+import { isRefused, planTransition, type StateTransitionLabels } from "./state-transition.js";
 import type { TrackerIssue, TrackerPort } from "./tracker/port.js";
 
 export const ISSUE_CURATOR_RECHECK_LIMIT = 3;
@@ -24,6 +25,8 @@ export interface IssueCuratorStore {
 export interface IssueStateCuratorInput {
   readonly tracker: TrackerPort;
   readonly store: IssueCuratorStore;
+  /** The host's label vocabulary — the curator owns no spellings (#2666). */
+  readonly labels: StateTransitionLabels;
   readonly nowMs?: number;
   readonly recheckLimit?: number;
 }
@@ -34,10 +37,11 @@ export interface IssueStateCuratorResult {
   readonly parked: number[];
 }
 
-const QUARANTINE = "quarantine";
-const READY = "ready-for-agent";
-const HUMAN = "ready-for-human";
-const INCOHERENT_STATE_LABELS = new Set([READY, HUMAN, "running", "needs-triage"]);
+/** The lifecycle labels that must not coexist with `quarantine`. Sourced from
+ * the injected vocabulary — the curator holds no label spellings of its own. */
+function incoherentStateLabels(labels: StateTransitionLabels): Set<string> {
+  return new Set([labels.ready, labels.human, labels.running, labels.needsTriage]);
+}
 
 function activeCurrentBlocker(body: string): boolean {
   const match = /<!-- red:blocker-state v1 -->([\s\S]*?)<!-- \/red:blocker-state -->/.exec(body);
@@ -47,11 +51,15 @@ function activeCurrentBlocker(body: string): boolean {
 /** The curator re-runs the same issue-level coherence rule that caused
  * quarantine: no active Current blocker and no competing lifecycle/blocked
  * state may remain before the issue re-enters the executable queue. */
-export function quarantineIncoherence(issue: TrackerIssue): string[] {
+export function quarantineIncoherence(
+  issue: TrackerIssue,
+  labels: StateTransitionLabels,
+): string[] {
+  const incoherent = incoherentStateLabels(labels);
   const reasons: string[] = [];
   if (activeCurrentBlocker(issue.body)) reasons.push("active-current-blocker");
   for (const label of issue.labels) {
-    if (INCOHERENT_STATE_LABELS.has(label) || label.startsWith("blocked:")) {
+    if (incoherent.has(label) || label.startsWith(labels.blockedPrefix)) {
       reasons.push(`state-label:${label}`);
     }
   }
@@ -125,20 +133,29 @@ export async function runIssueStateCurator(
   const recheckLimit = input.recheckLimit ?? ISSUE_CURATOR_RECHECK_LIMIT;
   const prior = await input.store.read();
   const failedChecks = { ...prior.failedChecks };
-  const issues = await input.tracker.listOpenIssuesByLabel(QUARANTINE);
+  const labels = input.labels;
+  const issues = await input.tracker.listOpenIssuesByLabel(labels.quarantine);
   const released: number[] = [];
   const parked: number[] = [];
 
+  // The DECISION below is the curator's; the WRITE is the transition API's —
+  // `planTransition` proves the one-state-role invariant before either mutation
+  // reaches the tracker (#2666, ADR 0122 rule 5).
   for (const issue of issues) {
     const key = String(issue.number);
-    const reasons = quarantineIncoherence(issue);
+    const reasons = quarantineIncoherence(issue, labels);
     if (reasons.length === 0) {
+      // A quarantined issue carrying live `req:*` edges without its wait state
+      // is itself incoherent: the planner refuses the queue and the issue stays
+      // held for the next sweep rather than re-entering the queue mid-blocked.
+      const release = planTransition(issue.labels, { kind: "queue" }, labels);
+      if (isRefused(release)) continue;
       try {
         if (!input.tracker.editIssueBody) throw new Error("tracker body mutation is not configured");
         await input.tracker.editIssueBody(issue.number, appendReleaseNote(issue, at));
         await input.tracker.editIssueLabels(issue.number, {
-          remove: [QUARANTINE],
-          add: [READY],
+          remove: [...release.remove],
+          add: [...release.add],
         });
         delete failedChecks[key];
         released.push(issue.number);
@@ -151,10 +168,12 @@ export async function runIssueStateCurator(
     const count = (failedChecks[key]?.count ?? 0) + 1;
     failedChecks[key] = { count, lastCheckedAt: at };
     if (count < recheckLimit) continue;
+    const park = planTransition(issue.labels, { kind: "human" }, labels);
+    if (isRefused(park)) continue;
     try {
       await input.tracker.editIssueLabels(issue.number, {
-        remove: [QUARANTINE, READY],
-        add: [HUMAN],
+        remove: [...park.remove],
+        add: [...park.add],
       });
       delete failedChecks[key];
       parked.push(issue.number);
