@@ -73,13 +73,20 @@ export function readDevBundleCacheState(
   const pointerVersion = readPointerVersion(join(cacheDir, pointerFileName("dev")));
   const laneNewestVersion = newestCachedDevBundleVersion(installedVersion, env);
   const state = readSelfUpdateState(join(cacheDir, statusFileName("dev")));
+  // A failure only counts once it is newer than the last success — the same rule
+  // `resolveActiveVersionDetailed` applies. Without it a single old failure keeps
+  // the coherence probe red forever, however many checks have succeeded since.
+  const live =
+    state.lastFailureAtMs !== undefined && state.lastFailureAtMs > (state.lastSuccessAtMs ?? 0)
+      ? state
+      : {};
   return {
     ...(installedVersion ? { installedVersion } : {}),
     ...(pointerVersion ? { pointerVersion } : {}),
     ...(laneNewestVersion ? { laneNewestVersion } : {}),
-    ...(state.lastFailureAtMs !== undefined ? { lastFailureAtMs: state.lastFailureAtMs } : {}),
-    ...(state.lastFailureAtMs !== undefined ? { lastFailureAgeMs: Math.max(0, nowMs - state.lastFailureAtMs) } : {}),
-    ...(state.lastError ? { lastError: state.lastError } : {}),
+    ...(live.lastFailureAtMs !== undefined ? { lastFailureAtMs: live.lastFailureAtMs } : {}),
+    ...(live.lastFailureAtMs !== undefined ? { lastFailureAgeMs: Math.max(0, nowMs - live.lastFailureAtMs) } : {}),
+    ...(live.lastError ? { lastError: live.lastError } : {}),
   };
 }
 
@@ -109,6 +116,7 @@ function readSelfUpdateState(path: string): SelfUpdateStateRecord {
   try {
     const parsed = decodeDevSnapshotSniff(readFileSync(path, "utf8")) as Record<string, unknown>;
     return {
+      ...(Number.isFinite(parsed.lastSuccessAtMs) ? { lastSuccessAtMs: Number(parsed.lastSuccessAtMs) } : {}),
       ...(Number.isFinite(parsed.lastFailureAtMs) ? { lastFailureAtMs: Number(parsed.lastFailureAtMs) } : {}),
       ...(typeof parsed.lastError === "string" ? { lastError: parsed.lastError } : {}),
     };
