@@ -153,6 +153,13 @@ export interface SupervisorGh {
    * supervisor never reconciles a dead worker's claim (back-compat; the
    * boot-time orphan sweep is the only recovery path).
    */
+  /**
+   * Number of the open PR an attempt already produced for `issue`, or null when
+   * none exists (#2701). Consulted on the wall-clock-cap path so the re-queued
+   * issue NAMES the PR it is pending on instead of leaving it unowned.
+   * Best-effort: absent or throwing omits the pending artifact.
+   */
+  findAttemptPullRequest?(issue: number): Promise<number | null>;
   crashedClaimState?(issue: number): Promise<{
     ghOk: boolean;
     stillRunning: boolean;
@@ -433,6 +440,14 @@ export interface SupervisorDeps {
   /** Resolve the current local HEAD of an attempt branch. Best-effort: undefined
    * means the contest window cannot observe advancement yet. */
   attemptBranchHead?(branch: string): Promise<string | undefined>;
+  /**
+   * Publish a capped attempt's branch to the remote (#2701) so branch discovery
+   * on the next claim can see it. Called only on the wall-clock-cap path, before
+   * the labels rotate — a re-queued issue must never be claimable before the ref
+   * it is supposed to adopt is visible. Returns true when the ref reached the
+   * remote. Best-effort: absent or false degrades to a plain re-queue.
+   */
+  publishAttemptBranch?(branch: string): Promise<boolean>;
   /** Runtime elastic fleet request, typically read from the state/afk control
    * file written by `fleet N`. Null means keep the launched config target. */
   resizeRequest?(): Promise<ElasticResizeRequest | null>;
