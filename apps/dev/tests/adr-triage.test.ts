@@ -140,6 +140,75 @@ describe("triageAdrs", () => {
     expect(report.entries[0]!.signals).toContain("successor-unnamed");
   });
 
+  it("still flags a bare terminal `superseded` when no record supersedes it either", () => {
+    const context: AdrTriageContext = {
+      adrs: [adr("0020", { status: "Superseded." }), adr("0021", { title: "Unrelated live record" })],
+    };
+    const entry = triageAdrs(context).entries.find((item) => item.number === "0020")!;
+
+    expect(entry.bucket, "a terminal status naming nobody is real debt, not noise").toBe(
+      "missing-supersession",
+    );
+    expect(entry.signals).toContain("successor-unnamed");
+  });
+
+  it("keeps the forward end of a supersession — superseding another record is not debt", () => {
+    const context: AdrTriageContext = {
+      adrs: [
+        adr("0112", { title: "Gated curation model" }),
+        adr("0127", {
+          title: "Totipotent editor",
+          status: "Accepted. Supersedes ADR 0112, whose gated model this record replaces.",
+        }),
+      ],
+    };
+
+    expect(bucketsByNumber(context)["0127"]).toBe("keep");
+  });
+
+  it("never reads a mention of superseding something else as this record's own fate", () => {
+    const forward = [
+      "Accepted. Supersedes ADR 0032.",
+      "accepted.\n\nSupersedes: [ADR 0046](0046-single-global-red-dir.md)",
+      "Accepted. Supersedes the transitional dual-output state of the port.",
+      "Accepted. Refines ADR 0038 (which superseded ADR 0032).",
+    ];
+
+    for (const status of forward) {
+      const report = triageAdrs({ adrs: [adr("0200", { status })] });
+
+      expect(report.entries[0]!.bucket, `forward supersession must not be debt: ${status}`).toBe("keep");
+    }
+  });
+
+  it("buckets a record by whichever successor-pointer spelling its status uses", () => {
+    for (const status of ["Superseded by ADR 0003.", "Superseded by ADR-0003.", "Superseded-by: 0003"]) {
+      const report = triageAdrs({ adrs: [adr("0002", { status }), adr("0003", { title: "Successor" })] });
+      const entry = report.entries.find((item) => item.number === "0002")!;
+
+      expect(entry.bucket, `terminal successor pointer: ${status}`).toBe("archive-candidate");
+      expect(entry.signals).toContain("superseded-by:0003");
+    }
+  });
+
+  it("flags a successor pointer that names an issue instead of an ADR", () => {
+    const context: AdrTriageContext = {
+      adrs: [
+        // The real ADR 0119 header shape: emphasis and a colon between phrase and target.
+        adr("0119", {
+          status: "- **Status**: superseded — the trust stage was removed in #2417\n- **Superseded by**: #2417",
+        }),
+      ],
+    };
+    const entry = triageAdrs(context).entries[0]!;
+
+    expect(
+      entry.bucket,
+      "chosen behaviour: an issue is not a decision record, so a non-ADR successor leaves the chain unresolved and stays flagged",
+    ).toBe("missing-supersession");
+    expect(entry.signals).toContain("successor-not-adr:#2417");
+  });
+
   it("archives a deprecated ADR", () => {
     const context: AdrTriageContext = { adrs: [adr("0021", { status: "Deprecated." })] };
 
@@ -339,6 +408,18 @@ describe("detectAdrInconsistencies", () => {
       "0008",
       "0009",
     ]);
+  });
+
+  it("reports only the superseded end of a supersession, never the successor", () => {
+    const report = detectAdrInconsistencies({
+      adrs: [
+        adr("0112", { title: "Gated curation model" }),
+        adr("0127", { title: "Totipotent editor", status: "Accepted. Supersedes ADR 0112." }),
+      ],
+    });
+    const missing = report.inconsistencies.filter((finding) => finding.kind === "missing-supersession");
+
+    expect(missing.map((finding) => finding.numbers[0])).toEqual(["0112"]);
   });
 
   it("never reports an overlap between terminal records", () => {
