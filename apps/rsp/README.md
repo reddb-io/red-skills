@@ -201,6 +201,19 @@ Useful optional keys:
 - `rsp.telemetryDrainTimeoutMs`: per-drain timeout.
 - `rsp.idleMs`: resident idle timeout, with a five-second minimum.
 - `rsp.heavyGitByteThreshold`: threshold for large git/file/exec output.
+- `rsp.overhead.maxOverheadMs`: wall clock rsp may add per invocation.
+- `rsp.overhead.maxSelfStateBytes`: bytes rsp may read from its own state per
+  invocation.
+- `rsp.overhead.netLossFloorBytes`: below this, self-state reads are too small to
+  count as a net loss.
+- `rsp.overhead.consecutiveBreaches`: breaches before a wrapper family
+  self-disables.
+- `rsp.overhead.cooldownMs`: how long a self-disabled family stays off.
+
+A wrapper family that breaks its overhead ceiling for
+`rsp.overhead.consecutiveBreaches` consecutive invocations self-disables and runs
+raw commands until its cooldown lapses. `rsp status` renders the verdict — green
+or red — and `rsp doctor` fails while a ceiling is breached.
 
 If `rsp.enabled` is absent or false, wrapper commands pass through or report
 that rsp is disabled. If a wrapper or resident path fails, `rsp` degrades to the
