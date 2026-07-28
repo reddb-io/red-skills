@@ -258,21 +258,20 @@ export async function collectStatuslineFleet(
   if (!supervisor.alive || supervisor.heartbeat.stale) {
     const fallback = breakerFallback();
     if (fallback) return fallback;
-    // No breaker to shout about, but the lane still has a heartbeat nobody is
-    // writing: render it explicitly stale rather than dropping the segment, so
-    // an operator sees the fleet is gone instead of seeing nothing.
-    return supervisor.heartbeat.reason === "orphaned"
-      ? {
-          runner: state.runner,
-          busy: state.slotsBusy,
-          total: state.slotsTotal,
-          queue: state.readyForAgent,
-          parked: state.slotsParked,
-          stale: true,
-          staleAgeS: supervisor.heartbeat.age_s,
-          bundleVersion: state.bundleVersion,
-        }
-      : undefined;
+    // The lane still HAS a snapshot; what it lacks is a live writer. The chip
+    // carries that verdict so a consumer reads "fleet, but stale" instead of
+    // "no fleet" — and the compact line, which cannot qualify a number without
+    // it still reading as live occupancy, renders nothing (renderFleetBlock).
+    return {
+      runner: state.runner,
+      busy: state.slotsBusy,
+      total: state.slotsTotal,
+      queue: state.readyForAgent,
+      parked: state.slotsParked,
+      stale: true,
+      staleAgeS: supervisor.heartbeat.age_s,
+      bundleVersion: state.bundleVersion,
+    };
   }
   const workers = currentRenderableWorkerRecords(
     await readAllWorkerStates(paths.tmpDir, { nowMs: nowS * 1000 }),
