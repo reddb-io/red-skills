@@ -38,6 +38,13 @@ const STATE_ROLE_PATTERN =
  */
 const ALLOWLIST = new Map<string, string>([
   // --- documented legacy fallbacks (labels unavailable at the call site) ---
+  //
+  // #2663 emptied three former groups from this list: the reconcile lane's
+  // typed parks + cascade mirror, the supervisor reaper / death-sweep dispose
+  // sets, and the companion drift correction all plan their delta now. What
+  // survives below is either a cascade fallback whose candidate labels were
+  // never listed, or claim / PR / maintainer-command vocabulary that is not an
+  // issue STATE transition at all.
   [
     "core/boot-sweep.ts :: await gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);",
     "unblock-sweep fallback when the candidate's labels were not listed (#2528)",
@@ -45,14 +52,6 @@ const ALLOWLIST = new Map<string, string>([
   [
     "core/process-issue/terminal.ts :: await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);",
     "close-cascade fallback when the dependent's labels were not listed (#2528)",
-  ],
-  [
-    "core/supervisor/envelopes.ts :: if (!applied) await deps.gh.editLabels(info.issue, disp.addLabels, [...disp.removeLabels, LABEL_READY]);",
-    "death-sweep legacy retry fallback when labels unknown (#2526)",
-  ],
-  [
-    "core/supervisor/reaper.ts :: await deps.gh.editLabels(info.issue, disp.addLabels, [...disp.removeLabels, LABEL_READY]);",
-    "stall-reaper retry envelope; same dispose vocabulary as the death-sweep, migration tracked by ADR 0122 rule 7",
   ],
   // --- claim machinery: ready<->running swaps are claims, not state transitions ---
   [
@@ -63,15 +62,6 @@ const ALLOWLIST = new Map<string, string>([
     "core/supervisor/reaper.ts :: await deps.gh.editLabels( pair.issue, [LABEL_READY, LABEL_RUNNER_ERROR], [LABEL_HUMAN, LABEL_RUNNING], );",
     "half-open probe re-claim of a runner-error park; claim machinery",
   ],
-  // --- ADR 0055 reconcile lane: deliberate typed parks over pre-read labels ---
-  [
-    "core/reconcile.ts :: await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), [deps.labels.human, typed]);",
-    "reconcile typed park; parkDropLabels collapses stale state first",
-  ],
-  [
-    "core/reconcile.ts :: await deps.gh.editLabels(p.number, [deps.labels.dependency, ...p.reqLabels], [deps.labels.ready]);",
-    "reconcile-lane cascade mirror; migration tracked by ADR 0122 rule 7",
-  ],
   // --- non-issue surfaces: PR review-lane labels, not issue state ---
   [
     "core/review.ts :: await gh.editLabels(pr, [LABEL_RUNNING], [LABEL_HUMAN]);",
@@ -80,15 +70,6 @@ const ALLOWLIST = new Map<string, string>([
   [
     "core/review.ts :: await gh.editLabels(pr, [LABEL_RUNNING], [LABEL_VALIDATION, LABEL_HUMAN]);",
     "PR review-lane labels, not issue state",
-  ],
-  // --- companion drift correction: exposed once the local label copies died (#2661) ---
-  [
-    "runtime/companion-io.ts :: await ghx.editLabels(options.ctx, id.issue, [], has(LABEL_READY) ? [] : [LABEL_READY]);",
-    "migrated to planTransition in #2663",
-  ],
-  [
-    "runtime/companion-io.ts :: await ghx.editLabels( options.ctx, id.issue, has(LABEL_READY) ? [LABEL_READY] : [], has(LABEL_HUMAN) ? [] : [LABEL_HUMAN], );",
-    "migrated to planTransition in #2663",
   ],
   // --- human/manual command surfaces (outside the engine contract by design) ---
   [

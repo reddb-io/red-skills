@@ -4,7 +4,7 @@ import { renderLogTailToon } from "../envelope-emit.js";
 import { dispose } from "../disposition.js";
 import { workerIdentity } from "../host-identity.js";
 import { LABEL_READY, LABEL_RUNNING } from "../triage-labels.js";
-import { isRefused, planTransition, type StateTransition } from "../state-transition.js";
+import { isRefused, parkOrHuman, planTransition, type StateTransition } from "../state-transition.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
 
@@ -164,25 +164,23 @@ export async function reconcileDeadWorkerClaim(
   // was converted, breaking the apps/dev typecheck.)
   const disp = dispose("no-sentinel", info.attempt, deps.recoveryEnv ?? {});
   if (disp.decision === "retry") {
-    // CLEAN re-queue through the transition API when labels are known — the
-    // atomic plan strips every park remnant in one edit and proves the
-    // one-state-role invariant (#2526). Legacy dispose sets remain the
-    // fallback for impls that do not report labels.
-    const applied = await applyDeathTransition(deps, info.issue, claim.labels, { kind: "queue" });
-    if (!applied) await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
+    // CLEAN re-queue through the transition API. When the claim reported the
+    // issue's labels the plan strips every park remnant in one edit; when it
+    // did not, the planner is fed dispose's shed set instead of applying it raw
+    // (#2663), so the legacy fallback is now a PLANNED delta too.
+    await applyDeathTransition(deps, info.issue, claim.labels, { kind: "queue" }, disp.removeLabels);
   } else {
     if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
-    const applied = await applyDeathTransition(
+    // Escalation also sheds any stale ready-for-agent — the crashed slot was
+    // `running`, never re-queue it (matches the reaper path). That extra shed
+    // is exactly what the labels-unknown fallback set encodes.
+    await applyDeathTransition(
       deps,
       info.issue,
       claim.labels,
-      disp.typedLabel !== null
-        ? { kind: "park", reason: disp.typedLabel }
-        : { kind: "human" },
+      parkOrHuman(disp.typedLabel),
+      [...disp.removeLabels, LABEL_READY],
     );
-    // Escalation also sheds any stale ready-for-agent — the crashed slot was
-    // `running`, never re-queue it (matches the reaper path).
-    if (!applied) await deps.gh.editLabels(info.issue, disp.addLabels, [...disp.removeLabels, LABEL_READY]);
     if (disp.escalationComment !== null) {
       await deps.gh.comment(info.issue, disp.escalationComment);
     }
@@ -196,15 +194,28 @@ export async function reconcileDeadWorkerClaim(
  * caller then falls back to the legacy dispose label sets), so the sweep is
  * never weaker than the pre-#2526 behavior.
  */
+/**
+ * Apply one death-sweep state transition. `labels` is the claim's reported
+ * label set; `fallbackCurrent` is what the call site KNOWS the dead slot
+ * carried, used when the claim reported nothing. Since #2663 that fallback goes
+ * through the planner too — there is no raw disp-set write left on this path.
+ * Returns false (performing no edit) when neither set is available or the plan
+ * is refused, so a caller that gates a follow-up comment on success still can.
+ */
 async function applyDeathTransition(
   deps: SupervisorDeps,
   issue: number,
   labels: string[] | undefined,
   transition: StateTransition,
+  fallbackCurrent?: readonly string[],
 ): Promise<boolean> {
-  if (!labels) return false;
-  const plan = planTransition(labels, transition);
-  if (isRefused(plan)) return false;
+  const current = labels ?? fallbackCurrent;
+  if (!current) return false;
+  const plan = planTransition(current, transition);
+  if (isRefused(plan)) {
+    deps.log?.(`death-sweep: transition "${transition.kind}" for #${issue} refused by the state planner (${plan.reason})`);
+    return false;
+  }
   await deps.gh.editLabels(issue, [...plan.add], [...plan.remove]);
   return true;
 }
