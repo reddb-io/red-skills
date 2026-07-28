@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   type AdrRecord,
   type AdrTriageContext,
+  detectAdrInconsistencies,
+  groupAdrs,
   triageAdrs,
 } from "../src/core/adr-triage.js";
 
@@ -213,5 +215,148 @@ describe("triageAdrs subject filter", () => {
 
     expect(report.countsByBucket["archive-candidate"]).toBe(1);
     expect(report.countsByBucket.keep).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// grouping
+// ---------------------------------------------------------------------------
+
+describe("groupAdrs", () => {
+  it("groups by INDEX theme first, then clusters what no theme claims", () => {
+    const report = groupAdrs(fixtureTree());
+    const byTitle = Object.fromEntries(report.groups.map((group) => [group.title, group]));
+
+    expect(byTitle.AFK!.kind).toBe("index-section");
+    expect(byTitle.AFK!.numbers).toEqual(["0008", "0009"]);
+    // Every remaining fixture ADR is a lone subject, so nothing else clusters.
+    expect(report.groups.filter((group) => group.kind === "subject-cluster")).toEqual([]);
+    expect(report.ungrouped).toEqual(["0001", "0002", "0003", "0004", "0005", "0006", "0007", "0010"]);
+  });
+
+  it("clusters records that share a subject but no INDEX section", () => {
+    const context: AdrTriageContext = {
+      adrs: [
+        adr("0001", { title: "Castle owns execution truth" }),
+        adr("0002", { title: "Castle owns execution policy" }),
+        adr("0003", { title: "Unrelated licensing choice" }),
+      ],
+    };
+    const report = groupAdrs(context);
+
+    expect(report.groups).toEqual([
+      { kind: "subject-cluster", title: "castle + execution + owns", numbers: ["0001", "0002"] },
+    ]);
+    expect(report.ungrouped).toEqual(["0003"]);
+  });
+
+  it("clusters against the whole tree even when the report is scoped", () => {
+    const context: AdrTriageContext = {
+      adrs: [
+        adr("0001", { title: "Castle owns execution truth" }),
+        adr("0002", { title: "Castle owns execution policy" }),
+      ],
+    };
+    const report = groupAdrs(context, { subject: { kind: "numbers", numbers: ["0001", "0099"] } });
+
+    expect(report.groups).toEqual([
+      { kind: "subject-cluster", title: "castle + execution + owns", numbers: ["0001"] },
+    ]);
+    expect(report.subject).toEqual({ kind: "numbers", matched: ["0001"], unmatched: ["0099"] });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// inconsistency detection
+// ---------------------------------------------------------------------------
+
+describe("detectAdrInconsistencies", () => {
+  it("reports a pointer whose target is not in the tree", () => {
+    const report = detectAdrInconsistencies({
+      adrs: [adr("0001", { status: "Superseded by ADR-0999." })],
+    });
+
+    expect(report.inconsistencies).toContainEqual({
+      kind: "dangling-supersede",
+      numbers: ["0001"],
+      detail: "ADR 0001 points at ADR 0999, which is not in the tree.",
+    });
+  });
+
+  it("reports two records that each claim the other as successor", () => {
+    const report = detectAdrInconsistencies({
+      adrs: [
+        adr("0001", { status: "Superseded by ADR-0002." }),
+        adr("0002", { status: "Superseded by ADR-0001." }),
+      ],
+    });
+
+    expect(report.countsByKind["supersession-cycle"]).toBe(1);
+    expect(report.inconsistencies.find((finding) => finding.kind === "supersession-cycle")!.numbers).toEqual([
+      "0001",
+      "0002",
+    ]);
+  });
+
+  it("reports a number claimed by two files", () => {
+    const report = detectAdrInconsistencies({
+      adrs: [adr("0001", { path: ".red/adr/0001-a.md" }), adr("0001", { path: ".red/adr/0001-b.md" })],
+    });
+
+    expect(report.inconsistencies[0]).toEqual({
+      kind: "numbering-collision",
+      numbers: ["0001"],
+      detail: "ADR number 0001 is claimed by 2 records: .red/adr/0001-a.md, .red/adr/0001-b.md.",
+    });
+  });
+
+  it("reports INDEX drift in both directions", () => {
+    const report = detectAdrInconsistencies({
+      adrs: [adr("0001"), adr("0002")],
+      indexNumbers: ["0001", "0003"],
+    });
+    const drift = report.inconsistencies.filter((finding) => finding.kind === "index-drift");
+
+    expect(drift.map((finding) => finding.detail)).toEqual([
+      "ADR 0002 exists in the tree but has no INDEX bullet.",
+      "INDEX documents ADR 0003, which is not in the tree.",
+    ]);
+  });
+
+  it("skips INDEX drift entirely when no INDEX numbers are supplied", () => {
+    const report = detectAdrInconsistencies({ adrs: [adr("0001")] });
+
+    expect(report.countsByKind["index-drift"]).toBe(0);
+  });
+
+  it("reports stale paths, unrecorded supersession, and subject overlap in the fixture tree", () => {
+    const report = detectAdrInconsistencies(fixtureTree());
+
+    expect(report.countsByKind["stale-path"]).toBe(1);
+    expect(report.countsByKind["missing-supersession"]).toBe(1);
+    expect(report.countsByKind["subject-overlap"]).toBe(1);
+    expect(report.inconsistencies.find((finding) => finding.kind === "subject-overlap")!.numbers).toEqual([
+      "0008",
+      "0009",
+    ]);
+  });
+
+  it("never reports an overlap between terminal records", () => {
+    const report = detectAdrInconsistencies({
+      adrs: [
+        adr("0001", { title: "AFK worker heartbeat protocol", status: "Superseded by ADR-0002." }),
+        adr("0002", { title: "AFK worker heartbeat sampling" }),
+      ],
+    });
+
+    expect(report.countsByKind["subject-overlap"]).toBe(0);
+  });
+
+  it("keeps only findings that implicate a scoped record", () => {
+    const report = detectAdrInconsistencies(fixtureTree(), {
+      subject: { kind: "numbers", numbers: ["0006"] },
+    });
+
+    expect(report.inconsistencies.map((finding) => finding.kind)).toEqual(["stale-path"]);
   });
 });
