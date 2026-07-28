@@ -12,11 +12,13 @@
 // Reserving the review's round makes it unreachable to gate and tier draws even
 // while the ceiling still has room.
 //
-// EXPAND STEP: this module is introduced alongside the existing counters
-// (`resolveStallConvergenceBudget`, `resolveGoVerifyRetries`) and is consumed by
-// nothing yet. The retired stall-convergence key therefore stays live and
-// authoritative here; tombstoning it while the lifecycle still reads it would
-// break config loading, so that lands with the contract slice.
+// EXPAND STEP: the lifecycle's single `requestReseed` request path now draws
+// from this budget, but the operator-facing counters
+// (`resolveStallConvergenceBudget`, `resolveGoVerifyRetries`) still supply the
+// gate sub-cap through {@link withGateSubCap}. The retired stall-convergence key
+// therefore stays live and authoritative here; tombstoning it while the
+// lifecycle still reads it would break config loading, so that lands with the
+// contract slice.
 
 import { LABEL_GO_LANE } from "../go.js";
 
@@ -98,6 +100,31 @@ export interface ResolveReseedBudgetInput {
 export function resolveReseedBudget(input: ResolveReseedBudgetInput): ReseedBudget {
   if (input.laneLabel !== LABEL_GO_LANE) return AFK_RESEED_BUDGET;
   return input.runMode === "no-mistakes" ? GO_NO_MISTAKES_RESEED_BUDGET : GO_RESEED_BUDGET;
+}
+
+/** What asked for a Re-seed round. A closed vocabulary of three: a gate stage
+ * blocked the work, a DONE arrived with no diff to accept, or a repeated failure
+ * bought a higher model tier. The LANE is not a trigger — it is a budget
+ * profile, which is why it appears in {@link ReseedBudget} and not here. */
+export type ReseedTrigger = "gate-stage" | "no-diff-done" | "tier-escalation";
+
+export const RESEED_TRIGGERS: readonly ReseedTrigger[] = ["gate-stage", "no-diff-done", "tier-escalation"];
+
+/** Which sub-cap a trigger draws from. A no-diff DONE is a gate rejection — the
+ * gate refused to accept the completion claim — so it shares the gate's share.
+ * A tier escalation draws its OWN round: charging it to the gate is what muted
+ * every subsequent gate correction (ADR 0129, defect 1). */
+export function reseedTriggerCause(trigger: ReseedTrigger): ReseedCause {
+  return trigger === "tier-escalation" ? "tier" : "gate";
+}
+
+/** Fold the operator's configured gate cap into a lane profile. The lane owns
+ * the ceiling and the reservations; the config owns only how much of it gate
+ * corrections may claim, so a raised gate cap can never eat the review's
+ * reserved round. */
+export function withGateSubCap(budget: ReseedBudget, gateCap: number): ReseedBudget {
+  const cap = Number.isInteger(gateCap) && gateCap > 0 ? gateCap : 0;
+  return { ...budget, subCaps: { ...budget.subCaps, gate: cap } };
 }
 
 function spentFor(spend: ReseedSpend, cause: ReseedCause): number {

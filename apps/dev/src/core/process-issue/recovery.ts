@@ -386,6 +386,36 @@ export function appendGoVerifyRetryHandoff(
     "",
   ].join("\n");
 }
+/** One tier-escalation Re-seed as the handoff builder sees it (ADR 0129). The
+ * round buys a HIGHER model tier rather than another attempt at the tier that
+ * just failed, so the block says which tier is now running and why. */
+export interface TierEscalationHandoffOpts {
+  from: string;
+  to: string;
+  validation: string;
+  retry: number;
+  cap: number;
+}
+
+export function appendTierEscalationHandoff(
+  handoff: string,
+  opts: TierEscalationHandoffOpts,
+): string {
+  return [
+    handoff.replace(/\n+$/, ""),
+    "",
+    "<tier-escalation>",
+    `The feedback machine gate failed on the \`${opts.from}\` tier. This Re-seed re-instructs you on the ` +
+      `\`${opts.to}\` tier (${opts.retry}/${opts.cap}) rather than spending another round at the tier that just failed.`,
+    "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",
+    "",
+    "<validation-tail>",
+    tailLines(opts.validation, 80),
+    "</validation-tail>",
+    "</tier-escalation>",
+    "",
+  ].join("\n");
+}
 export const NON_SOURCE_EXTENSIONS = new Set([
   ".adoc",
   ".avif",
