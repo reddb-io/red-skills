@@ -6,6 +6,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import type { RspRuntimeConfig } from "../config.js";
+import {
+  DEFAULT_RSP_OVERHEAD_CEILING,
+  noteSelfStateBytesRead,
+  overheadCounters,
+  overheadTelemetryFields,
+  recordOverheadSample,
+  type RspOverheadCeiling,
+  type RspOverheadSample,
+} from "../overhead-budget.js";
 import type { ResidentResponseMetrics } from "../resident-client.js";
 import { appendTelemetryEventSync, telemetrySpoolPath } from "../telemetry.js";
 import { telemetryCommand } from "./passthrough.js";
@@ -18,21 +27,50 @@ export async function emitWrappedResult(
   store?: InvocationTelemetryStore,
   telemetryRoot = process.cwd(),
   coldNudgeConfig?: RspRuntimeConfig,
+  ceiling: RspOverheadCeiling = coldNudgeConfig?.overhead ?? DEFAULT_RSP_OVERHEAD_CEILING,
 ): Promise<number> {
   process.stdout.write(result.stdout);
   process.stderr.write(result.stderr);
   const wrapperMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+  // Both sides of the ledger, on every invocation: what rsp saved, and what it
+  // cost to save it (#2746). The cold-drain nudge runs first because its spool
+  // probe is self-state rsp reads on this invocation's clock.
+  if (store && coldNudgeConfig) nudgeColdTelemetryDrain(telemetryRoot, coldNudgeConfig);
+  const overhead = invocationOverheadSample(args, result, wrapperMs);
+  recordOverheadSample(telemetryRoot, overhead, ceiling);
   if (store) {
-    fireAndForget(appendInvocationTelemetry(telemetryRoot, args, result, wrapperMs, store.lastResponseMetrics()));
-    if (coldNudgeConfig) nudgeColdTelemetryDrain(telemetryRoot, coldNudgeConfig);
+    fireAndForget(
+      appendInvocationTelemetry(telemetryRoot, args, result, overhead, ceiling, store.lastResponseMetrics()),
+    );
   } else {
-    appendFastInvocationTelemetry(telemetryRoot, args, result, wrapperMs);
+    appendFastInvocationTelemetry(telemetryRoot, args, result, overhead, ceiling);
   }
   if (result.signal) {
     process.kill(process.pid, result.signal);
     return 128;
   }
   return result.status ?? 0;
+}
+
+/**
+ * The overhead this invocation imposed, drawn from the ambient counters every
+ * self-state read and every spawned child reports into.
+ */
+export function invocationOverheadSample(
+  args: ParsedArgs,
+  result: WrappedCommandResult,
+  wrapperMs: number,
+): RspOverheadSample {
+  const counters = overheadCounters();
+  const emitted = result.stdout.length + result.stderr.length;
+  const raw = (result.rawOutput?.length ?? result.stdout.length) + result.stderr.length;
+  return {
+    family: args.command ?? "unknown",
+    wrapperMs,
+    childMs: counters.childMs,
+    selfStateBytesRead: counters.selfStateBytesRead,
+    bytesSaved: Math.max(0, raw - emitted),
+  };
 }
 
 export function fireAndForget(promise: Promise<unknown>): void {
@@ -136,6 +174,7 @@ function fastResidentSocketDir(rootDir: string): string {
 function spoolHasEventOlderThan(path: string, cutoffMs: number): boolean {
   try {
     const text = readFileSync(path, "utf8");
+    noteSelfStateBytesRead(Buffer.byteLength(text));
     for (const line of text.split(/\r?\n/)) {
       if (!line.trim()) continue;
       try {
@@ -155,11 +194,13 @@ async function appendInvocationTelemetry(
   telemetryRoot: string,
   args: ParsedArgs,
   result: WrappedCommandResult,
-  wrapperMs: number,
+  overhead: RspOverheadSample,
+  ceiling: RspOverheadCeiling,
   metrics?: ResidentResponseMetrics,
 ): Promise<void> {
   const emitted = Buffer.concat([result.stdout, result.stderr]);
   const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
+  const overheadFields = overheadTelemetryFields(overhead, ceiling);
   const {
     appendTelemetryEvent,
     RSP_ACCOUNTING_EVENTS_COLLECTION,
@@ -176,7 +217,7 @@ async function appendInvocationTelemetry(
     elided: Boolean(result.mintedHandle || result.bytesElided),
     raw_bytes: raw.length,
     emitted_bytes: emitted.length,
-    wrapper_ms: wrapperMs,
+    ...overheadFields,
     store_open_count: metrics?.storeOpenCount,
     store_elapsed_ms: metrics?.storeElapsedMs,
   });
@@ -191,7 +232,7 @@ async function appendInvocationTelemetry(
     emitted_bytes: emitted.length,
     raw_text: raw.toString("utf8"),
     emitted_text: emitted.toString("utf8"),
-    wrapper_ms: wrapperMs,
+    ...overheadFields,
     store_open_count: metrics?.storeOpenCount,
     store_elapsed_ms: metrics?.storeElapsedMs,
     accounting_recorded: true,
@@ -228,11 +269,13 @@ function appendFastInvocationTelemetry(
   telemetryRoot: string,
   args: ParsedArgs,
   result: WrappedCommandResult,
-  wrapperMs: number,
+  overhead: RspOverheadSample,
+  ceiling: RspOverheadCeiling,
 ): void {
   try {
     const emitted = Buffer.concat([result.stdout, result.stderr]);
     const raw = Buffer.concat([result.rawOutput ?? result.stdout, result.stderr]);
+    const overheadFields = overheadTelemetryFields(overhead, ceiling);
     appendTelemetryEventSync(telemetryRoot, {
       collection: "rsp_accounting_events_v1",
       event_type: "invocation",
@@ -244,7 +287,7 @@ function appendFastInvocationTelemetry(
       elided: Boolean(result.mintedHandle || result.bytesElided),
       raw_bytes: raw.length,
       emitted_bytes: emitted.length,
-      wrapper_ms: wrapperMs,
+      ...overheadFields,
     });
     appendTelemetryEventSync(telemetryRoot, {
       collection: "rsp_telemetry_invocations_v1",
@@ -255,7 +298,7 @@ function appendFastInvocationTelemetry(
       elided: Boolean(result.mintedHandle || result.bytesElided),
       raw_bytes: raw.length,
       emitted_bytes: emitted.length,
-      wrapper_ms: wrapperMs,
+      ...overheadFields,
       accounting_recorded: true,
     });
   } catch {}

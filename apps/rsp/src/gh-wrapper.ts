@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { startChildProcessTimer } from "./overhead-budget.js";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
 import { readGhConditionalJson } from "./gh-conditional.js";
@@ -406,6 +407,10 @@ function numberOption(args: readonly string[], name: string): number | undefined
 
 async function collectRawGh(args: readonly string[]): Promise<RecordedGitContract> {
   const child = spawn("gh", args, { stdio: ["ignore", "pipe", "pipe"] });
+  // The wrapped command's own runtime is never rsp's overhead (#2746).
+  const stopChildTimer = startChildProcessTimer();
+  child.once("close", stopChildTimer);
+  child.once("error", stopChildTimer);
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));

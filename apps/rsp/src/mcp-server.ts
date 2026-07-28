@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { type JsonObject } from "@reddb-io/toon";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { resolveRspConfig, type RspRuntimeConfig } from "./config.js";
+import { overheadHealth } from "./overhead-budget.js";
 import type { RspLossLevel } from "./elision-store.js";
 import { normalizeOutput, renderGenericJsonLane } from "./normalize.js";
 import type { ResidentRspElisionStore } from "./resident-client.js";
@@ -277,13 +278,19 @@ function residentStore(config: RspRuntimeConfig): ResidentRspElisionStore {
 }
 
 function renderStatus(config: RspRuntimeConfig): string {
+  // The cost verdict travels with the status on every surface (#2746), so an
+  // operator asking "is rsp healthy?" over MCP learns it is taxing them.
+  const overhead = config.enabled ? overheadHealth(process.cwd(), config.overhead) : null;
   return renderToolPayload({
     tool: "rsp_status",
     enabled: config.enabled,
     status: config.enabled ? "enabled" : "disabled",
     message: config.enabled ? "rsp is enabled in this directory" : "rsp is not enabled in this directory",
+    overhead_verdict: overhead?.verdict ?? "unknown",
+    overhead_summary: overhead?.summary ?? "rsp is not enabled in this directory",
+    overhead_disabled_families: overhead?.disabled_families.map((state) => state.family) ?? [],
     help: config.enabled ? [] : ["/red-setup"],
-  } as JsonObject);
+  } as unknown as JsonObject);
 }
 
 function write(value: unknown): void {

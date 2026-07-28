@@ -102,6 +102,54 @@ export async function degradeToPassthrough(
   return status;
 }
 
+/**
+ * Run a self-disabled wrapper family as the raw command (#2746).
+ *
+ * Self-disabling is a fail-open, not a failure: stdout and stderr are forwarded
+ * byte for byte and the exit status is the command's own. The reason lives in
+ * the ledger `rsp status` reads, never in the command's own streams.
+ */
+export async function passthroughSelfDisabled(
+  argv: readonly string[],
+  telemetryRoot: string,
+  state: { family: string; disabled_reason: string | null; reasons: string[] },
+): Promise<number> {
+  const result = await passthroughCaptured(argv);
+  const {
+    appendTelemetryEvent,
+    RSP_ACCOUNTING_EVENTS_COLLECTION,
+    RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+  } = await import("../telemetry.js");
+  const degradation = {
+    ts: new Date().toISOString(),
+    command: passthroughTelemetryCommand(argv),
+    reason: "overhead-ceiling-self-disabled",
+    wrapper_family: state.family,
+    wrapper_exit_code: result.status ?? 0,
+    stderr_head: state.disabled_reason ?? state.reasons.join(","),
+  };
+  fireAndForget(appendTelemetryEvent(telemetryRoot, {
+    collection: RSP_ACCOUNTING_EVENTS_COLLECTION,
+    event_type: "invocation",
+    command_class: argv[0] ?? "unknown",
+    loss: "lossless",
+    raw_bytes: result.stdoutBytes + result.stderrBytes,
+    emitted_bytes: result.stdoutBytes + result.stderrBytes,
+    degradation_reason: degradation.reason,
+    ...degradation,
+  }));
+  fireAndForget(appendTelemetryEvent(telemetryRoot, {
+    collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+    accounting_recorded: true,
+    ...degradation,
+  }));
+  if (result.signal) {
+    process.kill(process.pid, result.signal);
+    return 128;
+  }
+  return result.status ?? 0;
+}
+
 export async function passthroughDisabledDirectory(argv: readonly string[]): Promise<number> {
   if (process.env.RSP_DEBUG === "1") {
     process.stderr.write(`rsp: ${rspDisabledReason()}, passing through\n`);

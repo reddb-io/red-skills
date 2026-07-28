@@ -23,12 +23,13 @@ import {
   degradeToPassthrough,
   isWrapperCommand,
   passthroughDisabledDirectory,
+  passthroughSelfDisabled,
   rspDisabledReason,
   runControlHoldout,
   shouldUseControlHoldout,
   telemetryCommand,
 } from "./passthrough.js";
-import { readStatsSnapshot, renderGainsReportToon, renderSetupResult, renderStats } from "./stats.js";
+import { readStatsSnapshot, renderGainsReportToon, renderRspStatus, renderSetupResult, renderStats } from "./stats.js";
 import { LazyRspElisionStore, runColdWrappedCommand } from "./store-lifecycle.js";
 
 async function main(argv = process.argv.slice(2)): Promise<number> {
@@ -101,10 +102,17 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   if (args.command === "git" && isFastGitStatus(args.positional)) {
     const started = process.hrtime.bigint();
-    return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, await fastTelemetryRoot(process.cwd()));
+    return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, await fastTelemetryRoot(process.cwd()), config);
   }
   const { resolveResidentPaths, ensureResidentServer } = await import("../resident-client.js");
   const residentPaths = resolveResidentPaths(process.cwd());
+  // A wrapper family that broke its overhead ceiling stops taxing commands and
+  // runs them raw until its cooldown lapses (#2746).
+  if (wrapperCommand && args.command) {
+    const { overheadFamilyDisabled } = await import("../overhead-budget.js");
+    const selfDisabled = overheadFamilyDisabled(residentPaths.rootDir, args.command);
+    if (selfDisabled) return await passthroughSelfDisabled(args.positional, residentPaths.rootDir, selfDisabled);
+  }
   if (wrapperCommand && shouldUseControlHoldout(config.measurementHoldoutShare)) {
     return await runControlHoldout(args, residentPaths.rootDir, config.measurementHoldoutShare);
   }
@@ -170,10 +178,15 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   if (args.command === "status" || args.command === "sweep") {
     const { residentRegistryStatus, sweepResidentRegistry } = await import("../resident-client.js");
-    const status = args.command === "sweep"
+    const resident = args.command === "sweep"
       ? await sweepResidentRegistry(residentPaths)
       : await residentRegistryStatus(residentPaths);
-    process.stdout.write(`${encodeSnapshotToon(status as unknown as JsonObject)}\n`);
+    // The cost verdict is the surface, not a log line an operator has to
+    // interpret (#2746): a breached ceiling renders red right here.
+    const { overheadHealth } = await import("../overhead-budget.js");
+    const overhead = overheadHealth(residentPaths.rootDir, config.overhead);
+    process.stdout.write(renderRspStatus(resident as unknown as JsonObject, overhead));
+    // Reading status never fails a command; `rsp doctor` owns the exit code.
     return 0;
   }
   if (args.command === "gh-api-json") {
@@ -195,6 +208,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       cwd: process.cwd(),
       telemetryRoot: residentPaths.rootDir,
       command: `rsp ${args.positional.join(" ")}`,
+      overheadCeiling: config.overhead,
     });
     process.stdout.write(response.stdout);
     if (response.stderr) process.stderr.write(`${response.stderr}\n`);
@@ -230,7 +244,13 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
     if (args.command === "stats") {
       const { stats, telemetry } = await readStatsSnapshot(config, sinceDays(args.positional, 30));
-      process.stdout.write(renderStats(stats, telemetry, statsFull(args.positional)));
+      const { overheadHealth } = await import("../overhead-budget.js");
+      process.stdout.write(renderStats(
+        stats,
+        telemetry,
+        statsFull(args.positional),
+        overheadHealth(residentPaths.rootDir, config.overhead),
+      ));
       return 0;
     }
 
@@ -259,7 +279,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       fireAndForget(warmResidentStore());
       if (isFastGitStatus(args.positional)) {
         const started = process.hrtime.bigint();
-        return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, residentPaths.rootDir);
+        return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, residentPaths.rootDir, config);
       }
       const { runGitWrapper } = await import("../git-wrapper.js");
       const store = new LazyRspElisionStore(() => openResidentStore(false));
@@ -270,7 +290,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
         store,
         heavyGitByteThreshold: config.heavyGitByteThreshold,
       });
-      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir, config);
     }
 
     if (args.command === "gh") {
@@ -280,7 +300,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
       const result = await runGhWrapper(args.positional, { level: args.level, store });
-      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir, config);
     }
 
     if (args.command === "vitest" || args.command === "cargo") {
@@ -290,7 +310,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
       closeStore = () => store.close();
       const started = process.hrtime.bigint();
       const result = await runTestWrapper(args.positional, { level: args.level, store });
-      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir, config);
     }
 
     if (args.command === "cat") {
@@ -304,7 +324,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
         store,
         heavyByteThreshold: config.heavyGitByteThreshold,
       });
-      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir, config);
     }
 
     if (args.command === "exec") {
@@ -318,7 +338,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
         store,
         heavyByteThreshold: config.heavyGitByteThreshold,
       });
-      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir);
+      return await emitWrappedResult(args, result, started, store, residentPaths.rootDir, config);
     }
 
     if (args.command === "show" && args.handle) {

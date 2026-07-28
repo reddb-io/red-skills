@@ -1,6 +1,7 @@
 import type { JsonObject } from "@reddb-io/toon";
 import type { RspElisionStore, RspMintMeta, RspRecoveryHandle } from "../elision-store.js";
 import type { ResidentResponseMetrics } from "../resident-client.js";
+import type { RspOverheadHealth } from "../overhead-budget.js";
 import type { RspAccountingLaneStats, RspTelemetryStats } from "../telemetry.js";
 
 export interface ParsedArgs {
@@ -41,4 +42,5 @@ export interface DashboardSnapshot {
   telemetry: RspTelemetryStats;
   recoveryHandles: RspRecoveryHandle[];
   waits: JsonObject[];
+  overhead: RspOverheadHealth;
 }

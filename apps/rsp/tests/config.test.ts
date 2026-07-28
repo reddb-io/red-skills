@@ -13,6 +13,7 @@ import {
   MIN_RSP_IDLE_MS,
   resolveRspConfig,
 } from "../src/config.js";
+import { DEFAULT_RSP_OVERHEAD_CEILING } from "../src/overhead-budget.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/elision-store.js";
 
 const roots: string[] = [];
@@ -51,6 +52,7 @@ describe("resolveRspConfig", () => {
       idleMs: 10_000,
       heavyGitByteThreshold: 99,
       measurementHoldoutShare: 0,
+      overhead: DEFAULT_RSP_OVERHEAD_CEILING,
     });
   });
 
@@ -74,7 +76,27 @@ describe("resolveRspConfig", () => {
       idleMs: DEFAULT_RSP_IDLE_MS,
       heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
       measurementHoldoutShare: 0,
+      overhead: DEFAULT_RSP_OVERHEAD_CEILING,
     });
+  });
+
+  it("reads the overhead ceiling from the rsp block and the environment (#2746)", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(
+      join(root, ".red", "config.yaml"),
+      "rsp:\n  enabled: true\n  overhead:\n    maxOverheadMs: 40\n    maxSelfStateBytes: 2048\n    netLossFloorBytes: 512\n    consecutiveBreaches: 2\n    cooldownMs: 60000\n",
+      "utf8",
+    );
+
+    expect(resolveRspConfig(root, {}, undefined).overhead).toEqual({
+      maxOverheadMs: 40,
+      maxSelfStateBytes: 2048,
+      netLossFloorBytes: 512,
+      consecutiveBreaches: 2,
+      cooldownMs: 60_000,
+    });
+    expect(resolveRspConfig(root, { RSP_MAX_SELF_STATE_BYTES: "99" }, undefined).overhead.maxSelfStateBytes).toBe(99);
   });
 
   it("keeps measurement holdout off by default and reads it additively", async () => {

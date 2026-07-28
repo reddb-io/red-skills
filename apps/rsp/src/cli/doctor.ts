@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import type { JsonObject } from "@reddb-io/toon";
 import type { RspRuntimeConfig } from "../config.js";
+import { overheadHealth, type RspOverheadHealth } from "../overhead-budget.js";
 import type { RspResidentPaths } from "../resident-client.js";
 import { structuredErrorPayload } from "../structured-error.js";
 import type { RspTelemetryStats } from "../telemetry.js";
@@ -15,7 +16,8 @@ type DoctorProbeName =
   | "proxy_mode"
   | "resident_liveness"
   | "store_provisioning"
-  | "recent_degradation_rate";
+  | "recent_degradation_rate"
+  | "overhead_budget";
 
 type DoctorError = JsonObject;
 
@@ -58,6 +60,7 @@ export async function runDoctor(
       passProbe("resident_liveness", "skipped because rsp is disabled"),
       passProbe("store_provisioning", "skipped because rsp is disabled"),
       passProbe("recent_degradation_rate", "skipped because rsp is disabled"),
+      passProbe("overhead_budget", "skipped because rsp is disabled"),
     );
     return doctorStatus("disabled", probes, windowDays);
   }
@@ -81,6 +84,8 @@ export async function runDoctor(
   } else {
     probes.push(passProbe("recent_degradation_rate", "no telemetry store available yet; no recent degradation spike detected"));
   }
+
+  probes.push(overheadProbe(overheadHealth(process.cwd(), config.overhead)));
 
   return doctorStatus(probes.some((probe) => !probe.pass) ? "fail" : "pass", probes, windowDays);
 }
@@ -135,6 +140,15 @@ function degradationProbe(telemetry: RspTelemetryStats, windowDays: number): Doc
     `${count} degradation(s) in the recent ${windowDays}d window; dominant reason ${reason} (${reasonCount})`,
     degradationFixCommand(reason, windowDays),
   );
+}
+
+/**
+ * The cost half of the ledger (#2746): rsp taxing every command is a defect,
+ * and the doctor fails on it exactly as it fails on a degradation spike.
+ */
+function overheadProbe(health: RspOverheadHealth): DoctorProbe {
+  if (health.verdict === "green") return passProbe("overhead_budget", health.summary);
+  return failProbe("overhead_budget", health.summary, "rsp status");
 }
 
 function degradationFixCommand(reason: string, windowDays: number): string {

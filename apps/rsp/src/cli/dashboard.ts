@@ -5,6 +5,8 @@ import type { JsonObject } from "@reddb-io/toon";
 import type { RspRuntimeConfig } from "../config.js";
 import type { RspRecoveryHandle } from "../elision-store.js";
 import { withNextSteps } from "../output-levers.js";
+import { overheadHealth } from "../overhead-budget.js";
+import { resolveResidentPaths } from "../resident-client.js";
 import type { DashboardSnapshot } from "./types.js";
 import { emptyStorageClassStats, readStatsSnapshot, statsPayload } from "./stats.js";
 
@@ -14,11 +16,17 @@ export async function readDashboardSnapshot(config: RspRuntimeConfig): Promise<D
     readRecoveryHandles(config),
     import("../wait/index.js").then((module) => module.listWaits(process.cwd()), () => [] as JsonObject[]),
   ]);
-  return { stats, telemetry, recoveryHandles, waits };
+  return {
+    stats,
+    telemetry,
+    recoveryHandles,
+    waits,
+    overhead: overheadHealth(resolveResidentPaths(process.cwd()).rootDir, config.overhead),
+  };
 }
 
 export function renderDashboard(snapshot: DashboardSnapshot): string {
-  const statsView = statsPayload(snapshot.stats, snapshot.telemetry, false);
+  const statsView = statsPayload(snapshot.stats, snapshot.telemetry, false, snapshot.overhead);
   const payload = withNextSteps({
     executable: {
       name: "rsp",
@@ -40,6 +48,7 @@ export function renderDashboard(snapshot: DashboardSnapshot): string {
       storage_classes: (snapshot.stats.storage_classes ?? emptyStorageClassStats()) as unknown as JsonObject,
     },
     savings: statsView.savings,
+    overhead: statsView.overhead,
     health: statsView.health,
     decisions: statsView.decisions,
     latency: statsView.latency,

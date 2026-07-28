@@ -346,6 +346,30 @@ that command. The next command can use the wrapper after the resident is ready.
 `rsp hook claude-post-exec` is the normalization hook for host-provided command
 output.
 
+## Overhead Budget
+
+`rsp` measures both sides of its own ledger (#2746). Savings alone cannot tell
+an operator whether rsp is paying for itself, so every invocation also records
+the wall clock rsp added on top of the wrapped command (`overhead_ms`, total
+minus the child process's own runtime) and the bytes it read from its own state
+(`self_state_bytes_read` — ETag caches, telemetry spools, ledgers).
+
+A sample breaches the ceiling when it adds more than `rsp.overhead.maxOverheadMs`
+of wall clock, reads more than `rsp.overhead.maxSelfStateBytes` of self-state, or
+reads more of its own state than it removed from the agent's context. After
+`rsp.overhead.consecutiveBreaches` consecutive breaches the wrapper family
+self-disables for `rsp.overhead.cooldownMs`: its commands run raw, the reason is
+written to `.red/state/rsp/overhead-budget.toon`, and the family re-arms once the
+cooldown lapses.
+
+The verdict is the surface, not a log line. `rsp status` renders `verdict: green`
+or `verdict: red` with the breaching families and the reason, `rsp stats` and the
+bare dashboard carry the same block, and `rsp doctor` fails its `overhead_budget`
+probe while a ceiling is breached.
+
+Self-disabling is a fail-open, never a failure: stdout and stderr are forwarded
+byte for byte and the exit status is the raw command's own.
+
 ## Fail-Open Invariant
 
 The invariant is simple: `rsp` may save tokens, but it must not make the user
@@ -372,6 +396,8 @@ Important fail-open paths:
   return the payload they were handed.
 - Telemetry append, telemetry drain, status summary, and cold drain nudges are
   best-effort.
+- A wrapper family self-disabled by the overhead budget runs the raw command and
+  preserves its stdout, stderr, and exit status exactly.
 - `rsp exec` preserves stderr and exit status even when stdout is summarized.
 - `rsp wait` returns explicit success/failure/timeout status instead of hiding
   indeterminate waits.
