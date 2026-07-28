@@ -154,3 +154,51 @@ export const EXTERNAL_APPROVAL_MARKER = "/approve-external";
 
 // Auxiliary labels
 export const LABEL_RUNNER_ERROR = "runner-error";
+
+/**
+ * The label vocabulary an engine module reads as INJECTED CONFIG rather than as
+ * a value-import of this host module — the castle port convention
+ * (`CastleSelectionLabels` in red-castle's `engine/worker-drain.ts`). A module
+ * that crosses into the engine cannot import host constants, so it declares the
+ * slice of the vocabulary it needs and the host wires
+ * {@link DEFAULT_TRIAGE_LABELS} at its construction site.
+ */
+export interface TriageLabelConfig {
+  /** `ready-for-agent` — the executable-queue routing label. */
+  ready: string;
+  /** `running` — the observability projection of an active claim. */
+  running: string;
+  /** `ready-for-human` — the HITL park routing label. */
+  human: string;
+  /** `blocked:validation` — a gate failure a human must resolve. */
+  validation: string;
+  /** `blocked:dependency` — a `req:*` dependency wait. */
+  dependency: string;
+  /** `blocked:policy` — an operator-action policy block. */
+  policy: string;
+  /** `blocked:infra` — an operator-action infrastructure block. */
+  infra: string;
+  /** `blocked:merge-conflict` — a land-time conflict park. */
+  mergeConflict: string;
+  /** `blocked:spec` — the human-decision boundary the ADR calls out. */
+  spec: string;
+  /** `blocked:` — the prefix every blocked-reason label shares. */
+  blockedPrefix: string;
+  /** `req:` — the prefix of a dependency edge label (`req:{issue}`). */
+  reqPrefix: string;
+}
+
+/** This host's real vocabulary, wired into every engine construction site. */
+export const DEFAULT_TRIAGE_LABELS: TriageLabelConfig = {
+  ready: LABEL_READY,
+  running: LABEL_RUNNING,
+  human: LABEL_HUMAN,
+  validation: LABEL_VALIDATION,
+  dependency: LABEL_DEPENDENCY,
+  policy: LABEL_POLICY,
+  infra: LABEL_INFRA,
+  mergeConflict: LABEL_MERGE_CONFLICT,
+  spec: LABEL_SPEC,
+  blockedPrefix: "blocked:",
+  reqPrefix: "req:",
+};

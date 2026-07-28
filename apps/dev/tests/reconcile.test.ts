@@ -5,6 +5,11 @@ import {
   type ReconcileDeps,
   type ReconcileInput,
 } from "../src/core/reconcile.js";
+// The effectful collaborators are now injected (#2665). The harness wires the
+// REAL host implementations, so every assertion below still exercises the same
+// doLanding / runFeedback / emitEnvelope / push-delete code over the fake execs.
+import { HOST_RECONCILE_PORTS } from "../src/core/reconcile-ports.js";
+import { DEFAULT_TRIAGE_LABELS } from "../src/core/triage-labels.js";
 import { upsertCurrentBlocker } from "../src/core/blocker-state.js";
 
 // Everything injected is a fake — no real gh / git / pnpm / fs ever runs. The
@@ -83,6 +88,7 @@ function harness(opts: HarnessOptions = {}): {
   };
 
   const deps: ReconcileDeps = {
+    ...HOST_RECONCILE_PORTS,
     gh: {
       async editLabels(issue, remove, add) {
         trace.labelEdits.push({ issue, remove, add });
@@ -564,17 +570,17 @@ describe("reconcile — guards (mechanical class only)", () => {
 
 describe("mechanicalDisqualifier", () => {
   it("returns null for a clean mechanical state", () => {
-    expect(mechanicalDisqualifier(["running"], "## body")).toBeNull();
-    expect(mechanicalDisqualifier(["ready-for-human", "blocked:stalled"], "## body")).toBeNull();
-    expect(mechanicalDisqualifier(["ready-for-human", "blocked:crashed"], "## body")).toBeNull();
+    expect(mechanicalDisqualifier(["running"], "## body", DEFAULT_TRIAGE_LABELS)).toBeNull();
+    expect(mechanicalDisqualifier(["ready-for-human", "blocked:stalled"], "## body", DEFAULT_TRIAGE_LABELS)).toBeNull();
+    expect(mechanicalDisqualifier(["ready-for-human", "blocked:crashed"], "## body", DEFAULT_TRIAGE_LABELS)).toBeNull();
   });
 
   it("flags human-decision blocked labels", () => {
-    expect(mechanicalDisqualifier(["blocked:spec"], "x")).toBe("not-mechanical");
-    expect(mechanicalDisqualifier(["blocked:validation"], "x")).toBe("not-mechanical");
-    expect(mechanicalDisqualifier(["blocked:dependency"], "x")).toBe("not-mechanical");
-    expect(mechanicalDisqualifier(["blocked:policy"], "x")).toBe("not-mechanical");
-    expect(mechanicalDisqualifier(["blocked:infra"], "x")).toBe("not-mechanical");
+    expect(mechanicalDisqualifier(["blocked:spec"], "x", DEFAULT_TRIAGE_LABELS)).toBe("not-mechanical");
+    expect(mechanicalDisqualifier(["blocked:validation"], "x", DEFAULT_TRIAGE_LABELS)).toBe("not-mechanical");
+    expect(mechanicalDisqualifier(["blocked:dependency"], "x", DEFAULT_TRIAGE_LABELS)).toBe("not-mechanical");
+    expect(mechanicalDisqualifier(["blocked:policy"], "x", DEFAULT_TRIAGE_LABELS)).toBe("not-mechanical");
+    expect(mechanicalDisqualifier(["blocked:infra"], "x", DEFAULT_TRIAGE_LABELS)).toBe("not-mechanical");
   });
 
   it("flags an active non-mechanical Current blocker", () => {
@@ -584,7 +590,7 @@ describe("mechanicalDisqualifier", () => {
       summary: "Tests fail and need a call.",
       next: "Human decides scope.",
     });
-    expect(mechanicalDisqualifier(["blocked:stalled"], body)).toBe("active-blocker");
+    expect(mechanicalDisqualifier(["blocked:stalled"], body, DEFAULT_TRIAGE_LABELS)).toBe("active-blocker");
   });
 });
 
