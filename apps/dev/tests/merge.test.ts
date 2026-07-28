@@ -616,6 +616,61 @@ describe("CI-aware merge classification (#812)", () => {
     expect(classifyMergeState(v)).toBe("merge");
   });
 
+  // #2747: *no verdict yet* is not *a blocking verdict*. A BLOCKED PR whose
+  // required checks have not reported must keep waiting; classifying it `merge`
+  // gets the merge rejected by branch protection, and the landing path parks
+  // that rejection as `blocked:ci` on a PR that was never red.
+  describe("BLOCKED with an unreported rollup (#2747)", () => {
+    const required = ["test", "typecheck"];
+
+    it("empty rollup right after the PR opened → pending, NOT merge", () => {
+      expect(classifyMergeState(view("BLOCKED", [], "MERGEABLE"), { requiredChecks: required })).toBe("pending");
+    });
+
+    it("only SOME required checks reported → pending (the rest have no verdict yet)", () => {
+      const v = view("BLOCKED", [{ name: "test", status: "COMPLETED", conclusion: "SUCCESS" }], "MERGEABLE");
+      expect(classifyMergeState(v, { requiredChecks: required })).toBe("pending");
+    });
+
+    it("an unreadable / unavailable rollup → pending, never ci-failed", () => {
+      for (const stdout of ["", "not json", JSON.stringify({ mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE" })]) {
+        expect(classifyMergeState(parseMergeStateView(stdout), { requiredChecks: required })).toBe("pending");
+      }
+    });
+
+    it("empty rollup with the required contexts unknown → still pending", () => {
+      // The protection probe can fail or read [] (ruleset-configured checks); an
+      // explicitly empty rollup is the same "not reported yet" hole either way.
+      expect(classifyMergeState(view("BLOCKED", [], "MERGEABLE"))).toBe("pending");
+    });
+
+    it("every required check reported green → merge (the required-REVIEW case is unchanged)", () => {
+      const v = view("BLOCKED", [
+        { name: "test", status: "COMPLETED", conclusion: "SUCCESS" },
+        { name: "typecheck", status: "COMPLETED", conclusion: "SUCCESS" },
+      ], "MERGEABLE");
+      expect(classifyMergeState(v, { requiredChecks: required })).toBe("merge");
+    });
+
+    it("only a CONCLUDED, unsuccessful required check → ci-failed", () => {
+      const failed = view("BLOCKED", [
+        { name: "test", status: "COMPLETED", conclusion: "SUCCESS" },
+        { name: "typecheck", status: "COMPLETED", conclusion: "FAILURE" },
+      ], "MERGEABLE");
+      expect(classifyMergeState(failed, { requiredChecks: required })).toBe("ci-failed");
+      const running = view("BLOCKED", [
+        { name: "test", status: "COMPLETED", conclusion: "SUCCESS" },
+        { name: "typecheck", status: "IN_PROGRESS" },
+      ], "MERGEABLE");
+      expect(classifyMergeState(running, { requiredChecks: required })).toBe("pending");
+      const queued = view("BLOCKED", [
+        { name: "test", status: "QUEUED" },
+        { name: "typecheck", status: "QUEUED" },
+      ], "MERGEABLE");
+      expect(classifyMergeState(queued, { requiredChecks: required })).toBe("pending");
+    });
+  });
+
   it("UNSTABLE (only non-required checks unsettled) → merge", () => {
     expect(classifyMergeState(view("UNSTABLE"))).toBe("merge");
   });
@@ -864,6 +919,75 @@ describe("landPr CI-aware wiring (#812)", () => {
       ciAwait: { sleep: async () => {}, maxPolls: 2 },
     });
     expect(r).toEqual({ ok: false, prNumber: 5, reason: "ci-pending" });
+  });
+
+  // #2747 reproduction — the observed trace of #2724/PR #2740 and #2725/PR #2742:
+  // the PR opens, the rollup has not reported yet, and the landing tail merges
+  // into that hole. GitHub rejects the merge (branch protection), which the
+  // landing path parks as `blocked:ci` on a PR that never carried a failing check.
+  describe("an unreported rollup right after PR-open (#2747)", () => {
+    const protectionContexts = JSON.stringify(["test", "typecheck"]);
+
+    it("does NOT attempt the merge while the required checks have not reported", async () => {
+      const calls: string[][] = [];
+      const exec: Exec = async (argv) => {
+        calls.push(argv);
+        const cmd = argv.join(" ");
+        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (cmd.includes("required_status_checks/contexts")) return { code: 0, stdout: protectionContexts, stderr: "" };
+        if (cmd.includes("pr view")) {
+          // checks not created yet: BLOCKED + MERGEABLE + an empty rollup
+          return {
+            code: 0,
+            stdout: JSON.stringify({ mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", statusCheckRollup: [] }),
+            stderr: "",
+          };
+        }
+        // branch protection rejects a merge attempted before the checks report
+        if (cmd.includes("pr merge")) return { code: 1, stdout: "", stderr: "Protected branch update failed" };
+        return { code: 0, stdout: "", stderr: "" };
+      };
+      const r = await landPr(exec, {
+        repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+        ciAwait: { sleep: async () => {}, maxPolls: 2 },
+      });
+      // never `merge-failed` — that is the reason the landing parks as blocked:ci
+      expect(r).toEqual({ ok: false, prNumber: 5, reason: "ci-pending" });
+      expect(calls.some((c) => c.join(" ").includes("pr merge"))).toBe(false);
+    });
+
+    it("keeps waiting inside the tail and lands once the checks report green", async () => {
+      const calls: string[][] = [];
+      let polls = 0;
+      const exec: Exec = async (argv) => {
+        calls.push(argv);
+        const cmd = argv.join(" ");
+        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (cmd.includes("required_status_checks/contexts")) return { code: 0, stdout: protectionContexts, stderr: "" };
+        if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
+          polls += 1;
+          const stdout = polls === 1
+            ? JSON.stringify({ mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", statusCheckRollup: [] })
+            : JSON.stringify({
+                mergeStateStatus: "CLEAN",
+                mergeable: "MERGEABLE",
+                statusCheckRollup: [
+                  { name: "test", status: "COMPLETED", conclusion: "SUCCESS" },
+                  { name: "typecheck", status: "COMPLETED", conclusion: "SUCCESS" },
+                ],
+              });
+          return { code: 0, stdout, stderr: "" };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      };
+      const r = await landPr(exec, {
+        repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+        ciAwait: { sleep: async () => {}, maxPolls: 4 },
+      });
+      expect(r.ok).toBe(true);
+      expect(polls).toBe(2);
+      expect(calls.some((c) => c.join(" ").includes("pr merge 5 --merge"))).toBe(true);
+    });
   });
 
   it("returns conflict on DIRTY (real merge conflict, distinct from ci)", async () => {

@@ -762,12 +762,17 @@ async function requiredCheckContexts(
  *      a benign race → `pending` (re-poll).
  *   6. CLEAN → `merge`.
  *   7. any check still running → `pending`.
- *   8. BLOCKED (no failures/pending) → likely a required REVIEW; attempts merge,
- *      surfacing as `merge-failed` if branch protection requires it → `merge`.
- *   9. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
- *  10. UNKNOWN / DRAFT / empty mergeStateStatus → `pending`.
+ *   8. BLOCKED with a required check that has NOT reported a verdict yet (#2747)
+ *      → `pending`. *No verdict yet* is not *a blocking verdict*: right after a
+ *      PR opens the rollup is still empty, and merging into that hole gets the
+ *      merge REJECTED by branch protection, which the landing path parks as
+ *      `blocked:ci` on a PR that was never red. Re-poll until the checks report.
+ *   9. BLOCKED with every required check reported → likely a required REVIEW;
+ *      attempts merge, surfacing as `merge-failed` if protection requires it → `merge`.
+ *  10. UNSTABLE / HAS_HOOKS (mergeable; only non-required checks unsettled) → `merge`.
+ *  11. UNKNOWN / DRAFT / empty mergeStateStatus → `pending`.
  */
-export function classifyMergeState(view: MergeStateView): MergeReadiness {
+export function classifyMergeState(view: MergeStateView, context: MergeClassifyContext = {}): MergeReadiness {
   const s = up(view.mergeStateStatus);
   const m = up(view.mergeable);
   if (m === "CONFLICTING") return "conflict";
@@ -777,9 +782,40 @@ export function classifyMergeState(view: MergeStateView): MergeReadiness {
   if (s === "BEHIND") return "pending";
   if (s === "CLEAN") return "merge";
   if (view.anyPending) return "pending";
-  if (s === "BLOCKED") return "merge";
+  if (s === "BLOCKED") return blockedWithoutVerdict(view, context) ? "pending" : "merge";
   if (s === "UNSTABLE" || s === "HAS_HOOKS") return "merge";
   return "pending";
+}
+
+/** Extra evidence {@link classifyMergeState} uses to tell *no verdict yet* apart
+ * from *a blocking verdict* on a BLOCKED PR (#2747). */
+export interface MergeClassifyContext {
+  /** Required status-check contexts on the base branch, when they could be read
+   * (empty / absent = unknown, never "there are none"). */
+  requiredChecks?: readonly string[];
+}
+
+/**
+ * True when a BLOCKED rollup has not yet produced a verdict for the checks that
+ * gate the merge — the state that must keep waiting rather than merge-and-park.
+ *
+ * With the required contexts known, a required check missing from EVERY rollup
+ * bucket has simply not been created yet. With them unknown, an explicitly empty
+ * rollup (`checkCount === 0`) is the same "not reported yet" hole; a rollup we
+ * could not count at all (`checkCount` absent) keeps the historical behaviour.
+ */
+function blockedWithoutVerdict(view: MergeStateView, context: MergeClassifyContext): boolean {
+  const required = context.requiredChecks ?? [];
+  if (required.length > 0) {
+    const reported = new Set<string>([
+      ...(view.successfulCheckNames ?? []),
+      ...(view.skippedOrNeutralCheckNames ?? []),
+      ...(view.failedCheckNames ?? []),
+      ...(view.pendingCheckNames ?? []),
+    ]);
+    return required.some((name) => !reported.has(name));
+  }
+  return view.checkCount === 0;
 }
 
 function ciEvidenceFor(
@@ -849,7 +885,7 @@ export async function waitForMergeReadyWithEvidence(
       input.probeTimeoutMs,
     );
     const view = parseMergeStateView(res.stdout);
-    const verdict = classifyMergeState(view);
+    const verdict = classifyMergeState(view, { requiredChecks });
     if (verdict !== "pending") {
       const ciEvidence = ciEvidenceFor(view, verdict, requiredChecks, input.expectedBaseOid);
       return { readiness: verdict, ...(ciEvidence ? { ciEvidence } : {}) };
