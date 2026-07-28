@@ -68,6 +68,10 @@ export type StateTransition =
   | { kind: "dependency-block"; reqs: readonly number[] }
   /** ADR 0122 quarantine: judgment-requiring incoherence, one issue at a time. */
   | { kind: "quarantine"; diagnosis: string }
+  /** Awaiting an answer from the reporter (the `/triage` `needs-info` outcome). */
+  | { kind: "needs-info" }
+  /** Back to the triage queue — the state a fresh or bounced issue sits in. */
+  | { kind: "triage" }
   /** Close-cascade promotion: consume the `req:*` edges and re-queue. */
   | { kind: "promote" };
 
@@ -110,6 +114,10 @@ function targetRole(t: StateTransition, labels: StateTransitionLabels): string {
       return labels.dependencyBlocked;
     case "quarantine":
       return labels.quarantine;
+    case "needs-info":
+      return labels.needsInfo;
+    case "triage":
+      return labels.needsTriage;
   }
 }
 
