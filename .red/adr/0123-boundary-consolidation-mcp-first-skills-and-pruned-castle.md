@@ -81,6 +81,6 @@ Four rules complete the ADR 0113/0120 boundary:
   not by keeping green-forever test files alive. Two classes survived the
   sweep deliberately: repo-invariant guard tests whose module's only importer
   IS the guard (`adr-governance`, `toon-json-guard`), and the doctor
-  classifiers the `/red-doctor` and `/review-adrs` skill flows consume as
+  classifiers the `/red-doctor` and `/adr-editor` skill flows consume as
   their documented check surface — skill prose is a production consumer the
   import graph cannot see.
