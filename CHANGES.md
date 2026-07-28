@@ -6,6 +6,22 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## adr-editor (engineering) — the ADR skill becomes a totipotent editor (issue #2695)
+
+- **status**: renamed-from-review-adrs
+- **upstream**: —
+- **why**: The one skill that owns the `.red/adr/` collection was the least able to change it. ADR 0112 made it a read-only detector whose merge, split, renumber, and supersede operations could only become a Spec routed through `/to-spec` → `/to-tickets` → `/afk`, and forbade rewriting a `## Decision` outright. The maintainer owns the record and is present in the session; the routing was friction, not safety.
+- **what changed**:
+  - `plugins/dev/skills/engineering/review-adrs/` → `plugins/dev/skills/engineering/adr-editor/`, body rewritten from scratch under the new charter: the maintainer decides, the skill executes.
+  - Eleven first-class in-session operations: list, group by subject, surface inconsistencies, add, remove, rewrite (including `## Decision`), merge, split, archive, renumber, re-index.
+  - Removed: the read-only default, the mechanical/judgment split, the "judgment operations are never applied in-session" rule, the mandatory Spec routing, and the supersede-and-replace-only rule. `/to-spec` survives as an offered escape hatch for genuinely large batches.
+  - Kept: one confirmation before a destructive or wide batch, a coherent `.red/adr/INDEX.md`, `start/ADR-FORMAT.md`, and the normal branch/worktree/PR flow.
+  - `apps/dev/src/core/adr-triage.ts` gained `groupAdrs` (INDEX themes, then title-term clusters) and `detectAdrInconsistencies` (numbering collisions, dangling supersede pointers, supersession cycles, INDEX drift, unrecorded supersession, stale paths, subject overlap).
+  - `apps/dev/src/core/adr-operations.ts` gained `planRenumber`/`applyRenumber`, `planIndexEntry`, and `planSplit`/`planMerge`/`applyComposite` with reverse-order rollback.
+  - ADR 0127 records the decision; ADR 0112 is archived as `superseded-by: 0127`; `.red/adr/INDEX.md` reflects both.
+  - `apps/dev/tests/review-adrs-docs.test.ts` → `apps/dev/tests/adr-editor-docs.test.ts`, assertions repointed to the new prose.
+  - Registrations updated in `README.md`, `plugins/dev/skills/engineering/README.md`, and `plugins/dev/.claude-plugin/plugin.json`; cross-references repointed in `ask-red`, `red-doctor`, `to-spec`, `to-tickets`, and ADRs 0040/0060/0112/0123. Codex and Pi manifests regenerated. No alias, stub, or deprecation shim was left behind.
+
 ## triage / red-setup (engineering) — external-origin untrusted-data + `/approve-external` gate (issue #2603)
 
 - **status**: modified
@@ -384,7 +400,7 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
-## setup-red-skills, triage, hitl, requeue, retake, afk, doctor, implement, go, dashboard, review-adrs, urgent, code-review, start, write-a-skill (engineering/productivity) — Spec/Ticket label vocabulary (issue #1293)
+## setup-red-skills, triage, hitl, requeue, retake, afk, doctor, implement, go, dashboard, adr-editor, urgent, code-review, start, write-a-skill (engineering/productivity) — Spec/Ticket label vocabulary (issue #1293)
 
 - **status**: modified
 - **upstream**: `272f99b` (where applicable; RedSkills-original skills: —)

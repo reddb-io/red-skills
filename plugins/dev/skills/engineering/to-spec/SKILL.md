@@ -22,7 +22,7 @@ Check with the user that these seams match their expectations.
 
 3. **Cascade gate — run before publishing.** AFK workers branch from `origin/{base}` and cannot see the primary checkout's working-tree edits, so never publish while docs are unlanded.
 
-   a. `git fetch origin`, then compare the `.red/` docs (`.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, `.red/contexts/**`, `.red/adr/**`) between the primary working tree and `origin/{base}` (base resolved lock > pin > main). "Landed" means reachable from `origin/{base}`, not merely present on disk — origin-first comparison, mirroring the `/review-adrs` convention.
+   a. `git fetch origin`, then compare the `.red/` docs (`.red/CONTEXT.md`, `.red/CONTEXT-MAP.md`, `.red/contexts/**`, `.red/adr/**`) between the primary working tree and `origin/{base}` (base resolved lock > pin > main). "Landed" means reachable from `origin/{base}`, not merely present on disk — origin-first comparison, mirroring the `/adr-editor` convention.
    b. **On mismatch:** run the doc-landing procedure from the `/start` end-of-session finalizer (canonized by ADR 0092) first, then continue to step 4.
    c. **If landing is impossible** (no network, no push access): abort — never publish while docs are unlanded. State clearly which files must be landed and stop.
 
