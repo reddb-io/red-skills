@@ -66,7 +66,7 @@ import {
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
-import { isRefused, planTransition } from "../state-transition.js";
+import { isRefused, parkOrHuman, planTransition, transitionLabels } from "../state-transition.js";
 import { deriveOutcomeRecord } from "../outcome-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
@@ -112,7 +112,7 @@ import {
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
-import { editIssueLifecycleLabels, editLabelsTagged, routeRecovery } from "./recovery.js";
+import { editIssueLifecycleLabels, routeRecovery } from "./recovery.js";
 export async function writeValidationSidecar(
   deps: ProcessIssueDeps,
   attemptDir: string,
@@ -596,6 +596,32 @@ export async function trunkDivergedBlocked(
     swept: false,
   };
 }
+/**
+ * Park a terminal handoff through the ADR 0122 transition API (#2663). The
+ * `editLabelsTagged` wrapper this replaces wrote the (remove, add) pair by
+ * hand; the planner derives it from the labels this site KNOWS are present —
+ * `running`, the projection every terminal sheds — and proves the
+ * one-state-role invariant BEFORE the tracker call. The delta is unchanged:
+ * remove [running], add [ready-for-human] plus the typed `blocked:*` reason
+ * when the outcome has one (a handoff like `review-requested` /
+ * `manual-landing` has none, so it parks on the plain human gate).
+ */
+async function parkTerminalHandoff(
+  deps: ProcessIssueDeps,
+  issue: number,
+  outcome: WorkerOutcome,
+): Promise<void> {
+  const typed = blockedLabelFor(outcome);
+  if (typed !== null) await deps.gh.ensureLabel(typed);
+  const result = await transitionLabels(
+    (remove, add) => deps.gh.editLabels(issue, remove, add),
+    [LABEL_RUNNING],
+    parkOrHuman(typed),
+  );
+  if (!result.applied) {
+    deps.appendIterLog(`🤖 terminal park for #${issue} refused by the state planner: ${result.reason}`);
+  }
+}
 export async function handoffForReview(
   c: StageCommon,
   taskClass: AfkModelTier,
@@ -616,7 +642,7 @@ export async function handoffForReview(
     return await mergeFailed(c, "review-pr-open-failed");
   }
   await emitBackpressureReview(c, opened.prNumber);
-  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_HUMAN], "review-requested");
+  await parkTerminalHandoff(deps, input.issue, "review-requested");
   await deps.gh.comment(
     input.issue,
     `🤖 /afk: non-mechanical change (\`${taskClass}\`) — opened PR #${opened.prNumber} and applied \`${reviewLabel}\` for a fresh-agent review before merge. Holding the fast-merge per the review gate (ADR 0064 §10).`,
@@ -659,7 +685,7 @@ export async function handoffForManualLanding(
   const reason =
     `manual landing (\`landing:manual\`): the full pipeline ran and ${prRef}` +
     ` is open, but the merge is HELD for a human's final merge click`;
-  await editLabelsTagged(deps, input.issue, [LABEL_RUNNING], [LABEL_HUMAN], "manual-landing");
+  await parkTerminalHandoff(deps, input.issue, "manual-landing");
   const envelopeLines = [
     `Inner agent completed (DONE, committed) and ${prRef} is open (${prUrl ?? "PR URL unavailable"}).`,
     `Held for MANUAL LANDING (\`landing:manual\`, #1049): a human drives the final merge click; the inner agent was NOT re-run.`,
