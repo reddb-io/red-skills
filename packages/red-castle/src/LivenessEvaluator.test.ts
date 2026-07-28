@@ -179,7 +179,27 @@ describe("evaluateLiveness — hard-silence backstop (#2203)", () => {
 });
 
 describe("evaluateLiveness — issue wall-clock ceiling (#2286)", () => {
-  it("fresh lane + live descendants but age past the ceiling → stalled", () => {
+  it("never reports STALLED for an attempt whose lane is fresh, whatever its duration (#2701)", () => {
+    // AC1: a heartbeat inside the liveness window proves the attempt was
+    // working. Total duration may exceed the ceiling — that is a `capped`
+    // verdict (a policy deadline), never a stall.
+    for (const issueAgeMs of [1_800_001, 2_775_000, 86_400_000]) {
+      const verdict = evaluateLiveness({
+        laneRecencyMs: issueAgeMs - 1_000, // last activity 1s ago
+        now: issueAgeMs,
+        laneIdleMs: 300_000,
+        issueClaimedAtMs: 0,
+        issueWallClockMaxMs: 1_800_000,
+        crossCheckArmed: true,
+        hasLiveDescendants: () => true,
+      });
+      expect(verdict.status).not.toBe("stalled");
+      expect(verdict.status).toBe("capped");
+      expect(verdict.laneFresh).toBe(true);
+    }
+  });
+
+  it("fresh lane + live descendants but age past the ceiling → capped", () => {
     // Activity-independence: neither a fresh lane nor a live agent tree may
     // veto the per-issue wall-clock ceiling. The descendant probe is not even
     // consulted, because activity is irrelevant to an age-based cap.
@@ -196,7 +216,7 @@ describe("evaluateLiveness — issue wall-clock ceiling (#2286)", () => {
         return true;
       },
     });
-    expect(verdict.status).toBe("stalled");
+    expect(verdict.status).toBe("capped");
     expect(verdict.laneFresh).toBe(true);
     expect(verdict.wallClockExceeded).toBe(true);
     expect(verdict.issueAgeMs).toBe(2_000_000);
@@ -233,7 +253,7 @@ describe("evaluateLiveness — issue wall-clock ceiling (#2286)", () => {
       issueWallClockMaxMs: 1_800_000,
       crossCheckArmed: false,
     });
-    expect(verdict.status).toBe("stalled");
+    expect(verdict.status).toBe("capped");
     expect(verdict.wallClockExceeded).toBe(true);
   });
 

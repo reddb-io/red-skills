@@ -40,7 +40,14 @@ export function resolveLivenessCrossCheckArming(opts: {
   return { crossCheckArmed: opts.sandboxTag === "none" };
 }
 
-export type LivenessStatus = "alive" | "stalled" | "unknown";
+/**
+ * `capped` is NOT a stall (#2701): the attempt held its issue past the
+ * wall-clock ceiling while still doing work — tool calls, reasoning, commits.
+ * Folding it into `stalled` made every long-but-productive attempt read as "the
+ * agent never finished", so the two verdicts are kept apart at the source: a
+ * stall means silence, a cap means a policy deadline expired on live work.
+ */
+export type LivenessStatus = "alive" | "stalled" | "capped" | "unknown";
 
 export interface LivenessVerdict {
   readonly status: LivenessStatus;
@@ -141,7 +148,10 @@ export function evaluateLiveness(
     const issueAgeMs = Math.max(0, now - input.issueClaimedAtMs);
     if (issueAgeMs >= input.issueWallClockMaxMs) {
       return {
-        status: "stalled",
+        // `capped`, never `stalled` (#2701): the ceiling measures ELAPSED TIME,
+        // not silence. A fresh lane here proves the attempt was working when the
+        // deadline fired, and calling that a stall orphaned its committed work.
+        status: "capped",
         laneFresh,
         laneAgeMs,
         crossCheckArmed,

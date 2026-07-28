@@ -57,6 +57,10 @@ export interface Disposition {
  */
 export function policyKeyFor(o: WorkerOutcome): string | null {
   if (o === "stalled") return "stalled";
+  // A wall-clock cap re-queues under the SAME bounded budget as a stall (#2701):
+  // the hand-forward is cheap (the next worker adopts the branch) but it must
+  // still be bounded, or an issue that never converges cycles forever.
+  if (o === "wall-clock-capped") return "stalled";
   return recoveryReasonFor(o);
 }
 

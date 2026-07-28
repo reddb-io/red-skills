@@ -48,6 +48,7 @@ import {
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import { planReconcileSweep, executeUnblockSweep } from "../core/boot-sweep.js";
+import { selectAttemptPullRequest } from "../core/branch-resume.js";
 import { HOST_STATE_TRANSITION_LABELS } from "../core/state-transition.js";
 import { removeDir as removeDirNative } from "../runtime/fs.js";
 import { killTreeAndWait } from "../runtime/kill-tree.js";
@@ -737,6 +738,32 @@ export function buildSupervisorDeps(
           return null;
         }
       },
+      // #2701: the open PR a capped attempt already produced, so the re-queued
+      // issue names it as the pending artifact instead of leaving it unowned.
+      findAttemptPullRequest: async (issue) => {
+        try {
+          const { execTool } = await import("../runtime/exec.js");
+          const result = await execTool(
+            "gh",
+            ["pr", "list", "--repo", ghCtx.repo, "--state", "open", "--limit", "100", "--json", "number,headRefName,body"],
+            { cwd: root },
+          );
+          if (result.code !== 0) return null;
+          const rows = JSON.parse(result.stdout || "[]") as unknown;
+          if (!Array.isArray(rows)) return null;
+          const prs = rows.map((row) => {
+            const r = row as { number?: unknown; headRefName?: unknown; body?: unknown };
+            return {
+              number: Number(r.number ?? 0),
+              headRefName: String(r.headRefName ?? ""),
+              ...(typeof r.body === "string" ? { body: r.body } : {}),
+            };
+          });
+          return selectAttemptPullRequest(prs, issue)?.number ?? null;
+        } catch {
+          return null;
+        }
+      },
       // #815: running-supervisor crash reconcile. Resolve whether a dead worker's
       // claimed issue is still stranded in `running` with no terminal envelope.
       crashedClaimState: async (issue) => {
@@ -837,6 +864,15 @@ export function buildSupervisorDeps(
       };
     },
     attemptBranchHead: (branch) => gitx.branchHead({ cwd: root }, branch),
+    // Wall-clock-cap hand-forward (#2701): publish the capped attempt's ref from
+    // the shared repo BEFORE the issue re-queues, so the next worker's branch
+    // discovery can adopt it instead of branching fresh from main. Never a
+    // force: a remote ref that already carries the work is the work.
+    publishAttemptBranch: async (branch) => {
+      const { git } = await import("../runtime/exec.js");
+      const pushed = await git(["-C", root, "push", "origin", `refs/heads/${branch}:refs/heads/${branch}`]);
+      return pushed.code === 0;
+    },
     resizeRequest: async () => readResizeRequest(afkPaths(root, fleet).supervisorResizePath),
     configureRunner: (nextRunner) => {
       activeRunner = nextRunner;

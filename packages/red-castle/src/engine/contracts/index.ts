@@ -226,8 +226,13 @@ export interface CastleValidationRecord {
   summary?: string;
 }
 
+/**
+ * `wall-clock-capped` (#2701) is deliberately NOT folded into `no-sentinel`:
+ * the worker was cut off by a wall-clock policy while working, so the envelope
+ * must say "we stopped it", not "it never finished".
+ */
 export type CastleAttemptStatus =
-  "blocked" | "no-sentinel" | "merge-conflict" | "done" | "discarded";
+  "blocked" | "no-sentinel" | "merge-conflict" | "done" | "discarded" | "wall-clock-capped";
 
 export interface CastleEnvelopeSection {
   name: string;

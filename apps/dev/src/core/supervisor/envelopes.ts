@@ -48,6 +48,30 @@ export function buildReaperEnvelope(info: IterDirInfo): string {
   });
 }
 
+/**
+ * Build the wall-clock-cap envelope body (#2701) — the reaper's OTHER terminal
+ * record. It shares the reap envelope's sections but never its status: a capped
+ * attempt is reported as `wall-clock-capped`, naming the ceiling it hit, so the
+ * issue's history reads "we stopped it at 2700s" instead of "the agent never
+ * finished".
+ */
+export function buildWallClockCapEnvelope(info: IterDirInfo, capSeconds: number): string {
+  return buildEnvelope({
+    status: "wall-clock-capped",
+    worker: info.workerId.length > 0 ? info.workerId : "unknown",
+    duration: `${info.durationS}s · wall-clock cap ${capSeconds}s reached`,
+    diff: "wall-clock-capped",
+    attempt: info.attempt,
+    sections: [
+      {
+        name: "notes",
+        body: info.notes.length > 0 ? info.notes : "(no agent notes recorded before the wall-clock cap)",
+      },
+      { name: "log", body: renderLogTailToon(info.logTail), fenced: true, fenceLang: "toon" },
+    ],
+  });
+}
+
 /** Build the crash-reconcile no-sentinel envelope body (#815), composing
  * envelope.ts buildEnvelope. The running-supervisor analogue of
  * buildReaperEnvelope: status "no-sentinel", a notes section and a fenced

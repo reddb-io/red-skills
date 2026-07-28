@@ -84,6 +84,11 @@ export const LABEL_VALIDATION = "blocked:validation";
 // `routeRecovery` via the recovery cap, not by the label.
 export const LABEL_VALIDATION_INFRA = "blocked:validation-infra";
 export const LABEL_STALLED = "blocked:stalled";
+// Wall-clock cap (#2701): the worker was cut off by the per-issue wall-clock
+// ceiling while it was still working. Distinct from `blocked:stalled` — nothing
+// was stuck, a policy deadline expired — so the branch/PR it produced is handed
+// forward to the next worker instead of being written off as a dead attempt.
+export const LABEL_WALL_CLOCK_CAPPED = "blocked:wall-clock-capped";
 export const LABEL_CRASHED = "blocked:crashed";
 // External-signal kill (#1308): the inner process was terminated by an OS
 // signal (SIGKILL/SIGTERM from the harness or kernel). Distinct from a plain

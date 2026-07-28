@@ -35,6 +35,7 @@ import {
   LABEL_SIGNAL_KILLED,
   LABEL_POLICY,
   LABEL_STALLED,
+  LABEL_WALL_CLOCK_CAPPED,
   LABEL_INFRA,
   LABEL_BUDGET,
   LABEL_TRUNK_DIVERGED,
@@ -92,6 +93,13 @@ export type WorkerOutcome =
   // No cooldown/fallback retry can repair host configuration.
   | "host-config"
   | "stalled"
+  // Wall-clock cap (#2701): the supervisor cut the worker off at the per-issue
+  // wall-clock ceiling while it was still making progress. NOT a stall and NOT
+  // a no-sentinel death — the run was terminated by policy, so its branch/PR is
+  // live work handed forward to the next worker rather than an abandoned
+  // attempt. Shares the `stalled` retry budget so the hand-forward stays
+  // bounded.
+  | "wall-clock-capped"
   // AFK runner improvement (#908): a per-worker resource ceiling aborted the
   // run (token / cost / tool-call / waiting-window). Parked for a human —
   // NOT auto-recovered (a runaway is not a transient flake to blind-retry). The
@@ -168,6 +176,8 @@ export function blockedLabelFor(o: WorkerOutcome): string | null {
       return LABEL_POLICY;
     case "stalled":
       return LABEL_STALLED;
+    case "wall-clock-capped":
+      return LABEL_WALL_CLOCK_CAPPED;
     case "budget-exceeded":
       return LABEL_BUDGET;
     case "trunk-diverged":
@@ -221,6 +231,11 @@ export function envelopeStatusFor(o: WorkerOutcome): AttemptStatus {
       return "no-sentinel";
     case "merge-conflict":
       return "merge-conflict";
+    // #2701: a wall-clock cap NAMES ITSELF in the envelope. Reporting it as
+    // `no-sentinel` was the bug — the run did produce work and was stopped
+    // mid-flight, so the terminal status must say which of the two happened.
+    case "wall-clock-capped":
+      return "wall-clock-capped";
     case "blocked":
     case "feedback-failed":
     case "feedback-failed-infra":
@@ -307,6 +322,10 @@ export function recoveryReasonFor(o: WorkerOutcome): RecoveryReason | null {
     case "host-config":
     case "feedback-failed":
     case "stalled":
+    // wall-clock-capped carries no PER-ISSUE recovery budget, exactly like
+    // `stalled`: the supervisor owns the bounded hand-forward (disposition's
+    // `policyKeyFor`, #2701), so the per-issue lifecycle never auto-retries it.
+    case "wall-clock-capped":
     // #908: a budget abort is NOT auto-recoverable — re-running the inner agent
     // on a runaway just re-spends the budget. Escalate to a human with the
     // salvaged partial work intact.

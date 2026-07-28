@@ -6,6 +6,7 @@ import {
   buildCrashEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
+  buildWallClockCapEnvelope,
   adoptPersistedSlotPids,
   decideCrashReconcile,
   dispatchReconcileIfPossible,
@@ -49,6 +50,7 @@ export {
   buildCrashEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
+  buildWallClockCapEnvelope,
   adoptPersistedSlotPids,
   decideCrashReconcile,
   dispatchReconcileIfPossible,
@@ -101,11 +103,12 @@ export function stalledVerdict(laneAgeS: number): LivenessVerdict {
   };
 }
 
-/** Build a wall-clock-ceiling LivenessVerdict (#2286): stalled despite a fresh
- * lane, because the attempt has held its issue past the per-issue ceiling. */
+/** Build a wall-clock-ceiling LivenessVerdict (#2286): `capped` — NOT stalled
+ * (#2701) — because the lane is fresh and the attempt has simply held its issue
+ * past the per-issue ceiling. */
 export function wallClockVerdict(issueAgeS: number): LivenessVerdict {
   return {
-    status: "stalled",
+    status: "capped",
     laneFresh: true,
     laneAgeMs: 1_000,
     crossCheckArmed: true,
@@ -192,6 +195,8 @@ export interface FakeIo {
   fleetCostUsd: ReturnType<typeof vi.fn>;
   resizeRequest: ReturnType<typeof vi.fn>;
   attemptBranchHead: ReturnType<typeof vi.fn>;
+  publishAttemptBranch: ReturnType<typeof vi.fn>;
+  findAttemptPullRequest: ReturnType<typeof vi.fn>;
   configureRunner: ReturnType<typeof vi.fn>;
   emitSupervisorEvent: ReturnType<typeof vi.fn>;
   bootSweeps: ReturnType<typeof vi.fn>;
@@ -248,6 +253,8 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     fleetCostUsd: vi.fn(() => 0),
     resizeRequest: vi.fn(async () => null),
     attemptBranchHead: vi.fn(async () => undefined as string | undefined),
+    publishAttemptBranch: vi.fn(async (_branch: string) => true),
+    findAttemptPullRequest: vi.fn(async (_issue: number) => null as number | null),
     configureRunner: vi.fn(async () => {}),
     emitSupervisorEvent: vi.fn(async () => {}),
     bootSweeps: vi.fn(async () => {}),
@@ -282,6 +289,7 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       readyQueueDepth: io.readyQueueDepth,
       findReconcileCandidate: io.findReconcileCandidate,
       crashedClaimState: io.crashedClaimState,
+      findAttemptPullRequest: io.findAttemptPullRequest,
     },
     now: io.now,
     log: (line) => {
@@ -292,6 +300,7 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     unblockSweep: io.unblockSweep,
     refreshTrunkMirror: io.refreshTrunkMirror,
     attemptBranchHead: io.attemptBranchHead,
+    publishAttemptBranch: io.publishAttemptBranch,
     configureRunner: io.configureRunner,
     resizeRequest: io.resizeRequest,
     emitSupervisorEvent: io.emitSupervisorEvent,

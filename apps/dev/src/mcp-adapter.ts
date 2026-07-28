@@ -28,6 +28,7 @@ import {
   type CastleLaneRecord,
   type FleetProfile,
 } from "@reddb-io/red-castle/engine";
+import type { LivenessStatus } from "@reddb-io/red-castle";
 import type {
   CascadeStatusInput,
   CastleMcpDependencies,
@@ -1248,7 +1249,9 @@ async function workerVitals(
       renderable_live: false,
       liveness: "dead",
       liveness_verdict: {
-        status: "stalled",
+        // Widened to the shared union so the synthetic session-error record
+        // stays assignable as `LivenessStatus` grows (#2701 added `capped`).
+        status: "stalled" as LivenessStatus,
         reason: "session-error",
         laneFresh: false,
         crossCheckArmed: false,
