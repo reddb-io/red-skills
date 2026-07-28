@@ -12,8 +12,9 @@ import {
   LABEL_RUNNER_ERROR,
   LABEL_RUNNING,
 } from "../triage-labels.js";
+import { planCapHandoff, type CapHandoff } from "../wall-clock-cap.js";
 import { SUPERVISOR_DEFAULTS, type SupervisorConfig } from "./config.js";
-import { buildDiscardEnvelope, buildReaperEnvelope } from "./envelopes.js";
+import { buildDiscardEnvelope, buildReaperEnvelope, buildWallClockCapEnvelope } from "./envelopes.js";
 import type { SlotState, SupervisorState } from "./state.js";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
 
@@ -99,11 +100,25 @@ export async function sweepParkedSlot(
  * A worker that died pre-claim (issue null) still kills, frees the slot, and
  * tears down the dir, but posts no envelope and rotates no labels.
  */
+export interface ReapOptions {
+  /**
+   * True when the kill was ordered by the per-issue WALL-CLOCK CEILING rather
+   * than by silence (#2701). The reap then records `wall-clock-capped` instead
+   * of `no-sentinel`, hands the attempt's branch/PR forward to the next worker,
+   * and skips the retry contest (the cut-off was deliberate — there is nothing
+   * to contest).
+   */
+  wallClockCapped?: boolean;
+  /** The ceiling that fired, in seconds — named in the envelope and comment. */
+  capSeconds?: number;
+}
+
 export async function reapStalledSlot(
   slot: number,
   state: SlotState,
   deps: SupervisorDeps,
   config: Pick<SupervisorConfig, "reapContestWindowS"> = SUPERVISOR_DEFAULTS,
+  opts: ReapOptions = {},
 ): Promise<void> {
   if (state.reaped) return;
   state.reaped = true;
@@ -135,20 +150,34 @@ export async function reapStalledSlot(
   // `blocked:stalled` (created on the fly) plus a self-explanatory page comment,
   // exactly like the per-issue routeRecovery escalation.
   if (info && info.issue !== null) {
-    await deps.gh.comment(info.issue, buildReaperEnvelope(info));
+    const capped = opts.wallClockCapped === true;
+    const capSeconds = opts.capSeconds ?? 0;
+    await deps.gh.comment(
+      info.issue,
+      capped ? buildWallClockCapEnvelope(info, capSeconds) : buildReaperEnvelope(info),
+    );
     await deps.gh.comment(
       info.issue,
       renderClaimComment({ worker: workerIdentity(info.workerId) }, "concede", "released"),
     );
+    // A capped attempt's work is LIVE, not lost: publish its branch and name its
+    // PR before the labels rotate, so the retry adopts the ref instead of
+    // branching fresh from main (#2701).
+    if (capped) await handOffCappedWork(info, deps, capSeconds);
     // The composer owns the bounded re-claim DECISION + the budget-exhausted
     // page comment (core/disposition, total map → `stalled` is recoverable,
     // #402); since #2663 the LABEL DELTA belongs to the transition planner, so
     // the reaper no longer applies dispose's raw sets. gh.editLabels here is the
     // (issue, add, remove) shape, so the plan's (remove, add) pair is swapped
     // at the port.
-    const disp = dispose("stalled", info.attempt, deps.recoveryEnv ?? {});
+    const disp = dispose(capped ? "wall-clock-capped" : "stalled", info.attempt, deps.recoveryEnv ?? {});
     if (disp.decision === "retry") {
-      const opened = await openReapContest(slot, state, info, deps, config.reapContestWindowS);
+      // No contest on a cap: the kill was a deliberate policy cut-off and the
+      // branch is already handed forward, so a `contested` hold would only delay
+      // the adoption it exists to protect.
+      const opened = capped
+        ? false
+        : await openReapContest(slot, state, info, deps, config.reapContestWindowS);
       if (!opened) {
         // CLEAN re-queue: no blocked:* tag rides a re-queued issue.
         await applyReaperTransition(deps, info.issue, disp.removeLabels, { kind: "queue" });
@@ -175,6 +204,54 @@ export async function reapStalledSlot(
   // worker that survived SIGKILL leaks its worktree (cleaned up on the next boot
   // sweep), which is strictly safer than corrupting a live checkout.
   if (info && confirmedDead) await deps.fs.teardownIterDir(info);
+}
+
+/**
+ * Hand a wall-clock-capped attempt's work forward (#2701). The capped worker was
+ * cut off mid-flight, so whatever it committed is the NEXT worker's starting
+ * point, not garbage: resolve the branch head, publish the ref so branch
+ * discovery can see it, look up any PR it already opened, and post the plan as a
+ * comment naming the pending artifact. Every step is best-effort — a failure
+ * degrades the hand-forward to a plain re-queue, exactly the pre-#2701
+ * behaviour, and never blocks the reap.
+ */
+async function handOffCappedWork(
+  info: IterDirInfo,
+  deps: SupervisorDeps,
+  capSeconds: number,
+): Promise<CapHandoff | null> {
+  if (info.issue === null) return null;
+
+  const branchHead = info.branch ? await branchHeadForContest(deps, info.branch) : undefined;
+  let branchPublished: boolean | undefined;
+  if (info.branch && branchHead !== undefined && deps.publishAttemptBranch) {
+    try {
+      branchPublished = await deps.publishAttemptBranch(info.branch);
+    } catch {
+      branchPublished = false;
+    }
+  }
+
+  let pullRequest: number | undefined;
+  if (deps.gh.findAttemptPullRequest) {
+    try {
+      pullRequest = (await deps.gh.findAttemptPullRequest(info.issue)) ?? undefined;
+    } catch {
+      // best-effort: an unresolvable PR lookup just omits the pending artifact.
+    }
+  }
+
+  const handoff = planCapHandoff({
+    issue: info.issue,
+    capSeconds,
+    durationS: info.durationS,
+    ...(info.branch !== undefined ? { branch: info.branch } : {}),
+    ...(branchHead !== undefined ? { branchHead } : {}),
+    ...(branchPublished !== undefined ? { branchPublished } : {}),
+    ...(pullRequest !== undefined ? { pullRequest } : {}),
+  });
+  await deps.gh.comment(info.issue, handoff.comment);
+  return handoff;
 }
 
 /**
@@ -351,7 +428,12 @@ export async function pollStallDetector(
       config.stallKillThresholdS * 1000,
       config.issueWallClockMaxS * 1000,
     );
-    const flagged = verdict !== null && verdict.status === "stalled";
+    // Two verdicts, one escalation path, DIFFERENT terminal records (#2701):
+    // `stalled` means silence, `capped` means the per-issue wall-clock ceiling
+    // fired on an attempt that was still working. Both free the slot; only the
+    // stall is reported as a stall.
+    const flagged = verdict !== null && (verdict.status === "stalled" || verdict.status === "capped");
+    const capped = verdict !== null && verdict.status === "capped";
 
     if (flagged) {
       if (!slot.stalled) {
@@ -421,7 +503,13 @@ export async function pollStallDetector(
             }
           }
           if (!vetoed) {
-            await reapStalledSlot(i, slot, deps, config);
+            await reapStalledSlot(
+              i,
+              slot,
+              deps,
+              config,
+              capped ? { wallClockCapped: true, capSeconds: config.issueWallClockMaxS } : {},
+            );
             reaped.push(i);
           }
         }
