@@ -130,6 +130,14 @@ _Avoid_: main repo, root checkout
 A single AFK orchestrator instance, identified by `w` + 4 characters (e.g. `wZ2R4`). It owns `.red/tmp/workers/{wid}/` and a single `worker.pid` liveness anchor, written once at bootstrap and removed on exit.
 _Avoid_: agent, slot, runner
 
+**Attempt**:
+One **Worker** × one **Ticket** × one try — the unit of truth of the execution plane (ADR 0128). A Ticket's history is the ordered list of its Attempts and a Worker's history is the ordered list of the Attempts it ran; both are derived views, never separately maintained state.
+_Avoid_: try, run, execution (these name a phase of an Attempt, not the unit); attempt ordinal (retired by ADR 0103 — a retry is a fresh Worker)
+
+**Attempt record**:
+The **Attempt**'s whole narrative and every pointer it produced — claim and concede, the routing decision, iteration events, commits, branch, PR, gate verdicts, landing steps, terminal outcome, resource consumption, and the artifacts it left with their reclaim eligibility. It lives on the append-only TOONL lane `.red/state/castle/attempts.toonl` (**State tier**, contract `red.castle.attempt.v1`), and the record for an Attempt is the fold of every entry sharing its `attempt_id`. Two rules are load-bearing: the **Fleet supervisor** resident writes it and the **Worker** never does, because the record matters most once the Worker is already gone; and the write path degrades to append-and-continue, because the record is diagnostic and must never fail an Attempt.
+_Avoid_: worker log, attempt log (the `worker.log.toonl` **Tmp tier** lane is disposable and worker-written, not this); attempt state (nothing is rewritten in place)
+
 **Worker kind**:
 The castle engine provenance stamp that distinguishes why a **Worker** exists while all new workers share `.red/tmp/workers/`: `current.kind=afk` for queue-draining fleet work, `current.kind=go` for approved one-off `/go` dispatch, and `current.kind=scout` for read-only `/go --scout` investigations. The legacy `.red/tmp/go-workers/` and `.red/tmp/scout-workers/` roots are read only as transitional observability inputs until they age out; they are not the live isolation contract.
 _Avoid_: worker namespace, go-workers root, scout-workers root
@@ -160,11 +168,11 @@ _Avoid_: implementer payload list, full-environment inheritance
 
 **Worker outcome**:
 How a **Worker**'s execution of an **Issue** ended, and what that ending *means* for the **Issue**: the single concept that maps a terminal result to its `blocked:<reason>` label, its envelope status, and its bounded-recovery policy key. The historical three-enum smear (`ProcessOutcome` / `BlockedReason` / `RecoveryReason`) is resolved — adding an outcome now touches one set of exhaustive switches.
-_Avoid_: attempt outcome (retired vocabulary — "attempt" is purged repo-wide), process outcome, blocked reason, recovery reason (these were the three views now unified, not separate concepts)
+_Avoid_: attempt outcome (an **Attempt**'s terminal outcome is a field of its **Attempt record**, not this concept), process outcome, blocked reason, recovery reason (these were the three views now unified, not separate concepts)
 
 **Worker disposition**:
 What AFK *does* about a **Worker outcome** — the single owner that composes the outcome's recovery decision (retry vs escalate, from the cap policy), its typed `blocked:*` label, its envelope status, and the standard escalation announcement into one pure descriptor. The worker per-issue path, the no-agent **reconcile** path, and the **Fleet supervisor** stall-reaper all consume the same disposition instead of each re-deriving labels, statuses, and comments.
-_Avoid_: attempt disposition (retired vocabulary), recovery routing, park logic (per-site applications of one disposition)
+_Avoid_: attempt disposition (not a term — an **Attempt** carries an outcome, and disposition is what AFK does about it), recovery routing, park logic (per-site applications of one disposition)
 
 **Worktree**:
 An isolated `git worktree` created by AFK per **Worker** execution, inside the worker's workspace under `.red/tmp/workers/{wid}/{issue}/`. One worker = one issue execution = one worktree; a retry is a fresh worker, not a numbered sub-directory (ADR 0103).

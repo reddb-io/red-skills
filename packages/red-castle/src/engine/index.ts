@@ -12,6 +12,7 @@ export type {
 } from "../run.js";
 
 export * from "./worker-reader.js";
+export * from "./attempt-record.js";
 export * from "./gate-constants.js";
 export * from "./gate-executor.js";
 export * from "./gate-sink.js";
