@@ -1,9 +1,18 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import {
+  DEFAULT_RSP_OVERHEAD_CEILING,
+  overheadCounters,
+  overheadFamilyDisabled,
+  recordOverheadSample,
+  readSelfStateFile,
+  startChildProcessTimer,
+  type RspOverheadCeiling,
+} from "./overhead-budget.js";
 import { appendTelemetryEvent, RSP_DECISIONS_COLLECTION } from "./telemetry.js";
 
 export interface GhConditionalRequest {
@@ -19,6 +28,8 @@ export interface GhConditionalRequest {
    * be able to reclaim the process rather than wait on it forever.
    */
   signal?: AbortSignal;
+  /** The overhead ceiling this call holds itself to (#2746). */
+  overheadCeiling?: RspOverheadCeiling;
 }
 
 export interface GhConditionalResult {
@@ -48,9 +59,14 @@ const LEGACY_CACHE_FILE = "gh-etag-cache.json";
 export async function readGhConditionalJson(request: GhConditionalRequest): Promise<GhConditionalResult> {
   const cwd = request.cwd ?? process.cwd();
   const telemetryRoot = request.telemetryRoot ?? cwd;
+  const started = process.hrtime.bigint();
+  const ceiling = request.overheadCeiling ?? DEFAULT_RSP_OVERHEAD_CEILING;
   const identity = requestIdentity(request.path, request.params);
   const key = cacheKey(identity);
-  const cache = await readCache(telemetryRoot);
+  // A self-disabled family still runs the command; it just stops paying the
+  // cache tax that disabled it.
+  const disabled = overheadFamilyDisabled(telemetryRoot, "gh-api-json");
+  const cache = disabled ? { version: 1 as const, entries: {} } : await readGhEtagCache(telemetryRoot);
   const cached = cache.entries[key];
   const args = ["api", "--include", "--method", "GET", request.path];
   for (const [name, value] of sortedParams(request.params)) {
@@ -59,9 +75,20 @@ export async function readGhConditionalJson(request: GhConditionalRequest): Prom
   if (cached?.etag) args.push("-H", `If-None-Match: ${cached.etag}`);
 
   const result = await runGh(args, cwd, request.env, request.signal);
+  const recordOverhead = (bytesSaved: number) => {
+    const counters = overheadCounters();
+    recordOverheadSample(telemetryRoot, {
+      family: "gh-api-json",
+      wrapperMs: Number(process.hrtime.bigint() - started) / 1_000_000,
+      childMs: counters.childMs,
+      selfStateBytesRead: counters.selfStateBytesRead,
+      bytesSaved,
+    }, ceiling);
+  };
   const parsed = parseIncludedResponse(result.stdout);
   const quotaFree = parsed.statusCode === 304 && !!cached;
   if (quotaFree) {
+    recordOverhead(Buffer.byteLength(cached.body));
     await recordConditionalTelemetry(telemetryRoot, request.command ?? `gh api ${request.path}`, true);
     return {
       status: 0,
@@ -84,6 +111,7 @@ export async function readGhConditionalJson(request: GhConditionalRequest): Prom
       };
       await writeCache(telemetryRoot, cache);
     }
+    recordOverhead(0);
     await recordConditionalTelemetry(telemetryRoot, request.command ?? `gh api ${request.path}`, false);
     return {
       status: result.status,
@@ -94,6 +122,7 @@ export async function readGhConditionalJson(request: GhConditionalRequest): Prom
     };
   }
 
+  recordOverhead(0);
   await recordConditionalTelemetry(telemetryRoot, request.command ?? `gh api ${request.path}`, false);
   return {
     status: result.status,
@@ -147,6 +176,10 @@ async function runGh(
       finish({ status: 1, stdout: "", stderr: "gh call cancelled" });
     }
     signal?.addEventListener("abort", onAbort, { once: true });
+    // The wrapped command's own runtime is never rsp's overhead (#2746).
+    const stopChildTimer = startChildProcessTimer();
+    child.once("close", stopChildTimer);
+    child.once("error", stopChildTimer);
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on("data", (chunk) => stdout.push(Buffer.from(chunk)));
@@ -184,10 +217,17 @@ function parseIncludedResponse(raw: string): { statusCode: number; headers: Map<
   };
 }
 
-async function readCache(root: string): Promise<GhEtagCacheDocument> {
+/**
+ * Read the ETag cache, charging its bytes to this invocation's overhead.
+ *
+ * The cache is rsp's own state, and reading all of it on every `gh` call is
+ * exactly the tax #2745 imposed unseen: without the byte accounting, a cache
+ * that has grown to megabytes looks identical to one that costs nothing.
+ */
+export async function readGhEtagCache(root: string): Promise<GhEtagCacheDocument> {
   for (const path of [cachePath(root), legacyCachePath(root)]) {
     try {
-      const parsed = decodeCacheDocument(await readFile(path, "utf8"));
+      const parsed = decodeCacheDocument(await readSelfStateFile(path));
       if (isCacheDocument(parsed)) return parsed;
     } catch {}
   }
