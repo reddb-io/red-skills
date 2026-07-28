@@ -21,10 +21,6 @@ export type InvocationTelemetryStore = {
   lastResponseMetrics: () => ResidentResponseMetrics | undefined;
 };
 
-export type TelemetryGainsStore = {
-  telemetryGains: (sinceDays: number) => Promise<import("../telemetry.js").RspTelemetryGainsReport>;
-};
-
 export interface WrappedCommandResult {
   stdout: Buffer;
   stderr: Buffer;
