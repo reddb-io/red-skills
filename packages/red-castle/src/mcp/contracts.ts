@@ -38,6 +38,22 @@ function contract(
 /** Mirrors the watchdog's `SupervisorHealth` verdict. */
 const supervisorHealthSchema = z.enum(["absent", "healthy", "quiescent"]);
 
+/**
+ * Staleness travels INSIDE the payload (ADR 0128 §6), so a stale read can never
+ * be presented as current. `stale` is the anchor's verdict, not a threshold the
+ * renderer re-derives: `orphaned` means a heartbeat with no live writer to vouch
+ * for it, which is stale at any age.
+ */
+export const heartbeatObservationSchema = z.object({
+  /** Seconds since the last heartbeat tick; -1 when never observed. */
+  age_s: z.number(),
+  stale: z.boolean(),
+  stale_after_s: z.number(),
+  reason: z.enum(["fresh", "aged-out", "never-observed", "orphaned"]),
+});
+
+export type HeartbeatObservationOutput = z.infer<typeof heartbeatObservationSchema>;
+
 export const fleetStatusOutputSchema = z.object({
   fleet: z.string(),
   supervisor: z.object({
@@ -59,6 +75,13 @@ export const fleetStatusOutputSchema = z.object({
      * anchors is diagnosable from the report itself (#2698).
      */
     identity_anchor: z.enum(["pid-file", "fleet-state", "none"]),
+    /**
+     * The same anchor read that decided `alive`, published so the consumer sees
+     * the staleness rather than re-deriving it. `alive: false` always carries
+     * `stale: true`, which is what makes "absent beside a fresh heartbeat"
+     * unrepresentable rather than merely unlikely (#2704).
+     */
+    heartbeat: heartbeatObservationSchema,
   }),
   slots: z.object({
     busy: z.number(),
@@ -138,6 +161,25 @@ const livenessVerdictSchema = z.object({
   reason: z.string(),
 });
 
+/**
+ * The attempt this worker is running, folded from the attempt record — the unit
+ * of truth (ADR 0128 §1). Absent while the record carries no entry for the
+ * worker; a reader never reconstructs it from worker dirs or tracker comments.
+ */
+const attemptSummarySchema = z.object({
+  id: z.string(),
+  try: z.number(),
+  issue: z.number(),
+  branch: z.string().nullable(),
+  pr: z.number().nullable(),
+  commits: z.number(),
+  outcome: z.string().nullable(),
+  closed: z.boolean(),
+  updated_at: z.string(),
+});
+
+export type AttemptSummaryOutput = z.infer<typeof attemptSummarySchema>;
+
 const workerVitalsRecordSchema = z.object({
   worker: z.object({
     id: z.string(),
@@ -156,6 +198,7 @@ const workerVitalsRecordSchema = z.object({
   renderable_live: z.boolean(),
   liveness: z.enum(["active", "quiet-but-live", "dead"]),
   liveness_verdict: livenessVerdictSchema,
+  attempt: attemptSummarySchema.optional(),
 });
 
 export const workerVitalsOutputSchema = z.array(workerVitalsRecordSchema);
@@ -216,6 +259,19 @@ export const monitorOutputSchema = z.object({
       spawnsThisTick: z.number(),
     })
     .nullable(),
+  /**
+   * The supervisor as the single anchor resolved it (#2704). The monitor no
+   * longer infers a supervisor from the snapshot it renders; it publishes the
+   * anchor's verdict and its staleness verbatim.
+   */
+  supervisor: z
+    .object({
+      pid: z.number(),
+      alive: z.boolean(),
+      identity_anchor: z.enum(["pid-file", "fleet-state", "none"]),
+      heartbeat: heartbeatObservationSchema,
+    })
+    .optional(),
   /** GitHub queue counts read passively from the statusline TTL cache; absent
    * when no statusline run has ever written it. */
   remoteQueue: z.number().optional(),
