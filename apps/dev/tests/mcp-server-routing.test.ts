@@ -22,6 +22,29 @@ describe("dev:afk MCP entrypoint routing", () => {
     expect(startCurator).not.toHaveBeenCalled();
   });
 
+  // #2677: a slot spawned against this bundle used to fall through to the
+  // resident path, contend on the singleton leases and die with an opaque
+  // "singleton lease pid" error — deaths == respawns, zero drainage.
+  it.each([["run"], ["run", "--once"], ["--once"], ["monitor"]])(
+    "refuses the worker subcommand %s by name instead of opening a second resident",
+    async (...argv: string[]) => {
+      const connect = vi.fn(async () => undefined);
+      const startCurator = vi.fn(async () => undefined);
+      const startMergeDriver = vi.fn(async () => undefined);
+      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+
+      await expect(
+        main(argv, { supervise: async () => 0, connect, startCurator, startMergeDriver }),
+      ).resolves.toBe(2);
+
+      expect(connect).not.toHaveBeenCalled();
+      expect(startCurator).not.toHaveBeenCalled();
+      expect(startMergeDriver).not.toHaveBeenCalled();
+      expect(stderr.mock.calls[0]![0]).toContain(`unroutable subcommand ${JSON.stringify(argv[0])}`);
+      stderr.mockRestore();
+    },
+  );
+
   it("starts the issue curator in the castle resident before opening stdio", async () => {
     const calls: string[] = [];
 

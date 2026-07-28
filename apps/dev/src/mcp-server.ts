@@ -279,6 +279,21 @@ export async function main(
     );
     return 0;
   }
+  // Any OTHER leading token is a role this bundle does not own — `run`,
+  // `--once`, `monitor`, … all belong to the dev entry. Falling through would
+  // open a SECOND resident/stdio host that contends on the singleton leases and
+  // dies with an opaque lease error, which is exactly how MCP-launched slots
+  // burned as `deaths == respawns` forever (#2677). Fail with a named error
+  // instead, so the misrouted spawn is legible in the slot log.
+  const leading = argv[0];
+  if (leading !== undefined) {
+    process.stderr.write(
+      `castle MCP: unroutable subcommand ${JSON.stringify(leading)} — ` +
+        "the castle-mcp bundle routes only `__supervise` and `--version`; " +
+        "worker subcommands belong to the dev entry (red-skills-dev)\n",
+    );
+    return 2;
+  }
   await dependencies.startCurator();
   await dependencies.startMergeDriver();
   await dependencies.connect();
