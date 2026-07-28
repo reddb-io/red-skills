@@ -45,6 +45,26 @@ describe("dev:afk MCP entrypoint routing", () => {
     },
   );
 
+  // #2706: the lane's canary ships in THIS bundle, so the unroutable-subcommand
+  // guard must let it through instead of refusing it like a worker subcommand.
+  it("delegates __mcp-canary to the lane canary rather than refusing it", async () => {
+    const canary = vi.fn(async () => 0);
+    const connect = vi.fn(async () => undefined);
+
+    await expect(
+      main(["__mcp-canary", "--fleet", "canary"], {
+        supervise: async () => 0,
+        startCurator: async () => undefined,
+        startMergeDriver: async () => undefined,
+        connect,
+        canary,
+      }),
+    ).resolves.toBe(0);
+
+    expect(canary).toHaveBeenCalledWith(["--fleet", "canary"]);
+    expect(connect).not.toHaveBeenCalled();
+  });
+
   it("starts the issue curator in the castle resident before opening stdio", async () => {
     const calls: string[] = [];
 

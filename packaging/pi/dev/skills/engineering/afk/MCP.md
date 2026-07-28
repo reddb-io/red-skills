@@ -63,6 +63,17 @@ stamped for another fleet or unstamped standalone workers. Use
 not in `fleet_list` — it persists the profile in-place so `fleet_edit` works
 immediately after.
 
+**The lane carries its own canary.** `fleet_create` once spawned every slot
+against a bundle that cannot route `run`, so a fleet created through this
+interface drained zero issues while the CLI lane kept working and no surface
+reported the difference (#2677). Run
+`castle-mcp __mcp-canary --root <scratch-repo>` to walk the shipped lane end to
+end — `fleet_create` → a slot that spawns a real worker → `fleet_status` →
+`fleet_stop`. It exits non-zero naming the step that went inert, and it treats a
+returned supervisor pid as proof of nothing: only a worker directory holding a
+live `worker.pid` counts as drainage. CI runs the same walk on every PR against
+two bundles that differ solely in whether the slot entry routes `run`.
+
 ### Worker — one worker's lifecycle
 
 | Tool | Mode | What it does |
@@ -225,6 +236,8 @@ the comment is on a pull request.
 ## Refs
 
 - ADR 0120 — red-castle is the AFK MCP; CLI and skills are clients.
+- ADR 0128 §7 — the CLI is a thin client of the same core, so the MCP lane
+  carries a canary that exercises the shipped path end to end and fails loudly.
 - ADR 0113 — castle owns the truth, dev owns the host boundary.
 - [`SKILL.md`](./SKILL.md), [`fleet.md`](./fleet.md), [`monitor.md`](./monitor.md) — the `/afk` clients.
 - [`../go/SKILL.md`](../go/SKILL.md) — the `/go` client.

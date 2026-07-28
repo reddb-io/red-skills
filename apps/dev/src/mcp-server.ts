@@ -255,6 +255,9 @@ export interface McpEntrypointDependencies {
   startCurator(): Promise<void>;
   startMergeDriver(): Promise<void>;
   connect(): Promise<void>;
+  /** The lane's own canary (#2706). Optional so every existing caller keeps
+   * working; omitted means the real probe. */
+  canary?(args: string[]): Promise<number>;
 }
 
 /** Route every executable role shipped in the afk-mcp bundle. The supervisor
@@ -271,6 +274,16 @@ export async function main(
 ): Promise<number> {
   if (argv[0] === "__supervise") {
     return dependencies.supervise(argv.slice(1));
+  }
+  // The lane's canary lives in THIS bundle on purpose (#2706): it must launch
+  // the shipped MCP entry over the real transport, and the dev bundle contract
+  // forbids the client SDK's bundled `require()` calls landing there.
+  if (argv[0] === "__mcp-canary") {
+    const canary =
+      dependencies.canary ??
+      (async (args: string[]) =>
+        (await import("./commands/mcp-lane-canary.js")).mcpLaneCanaryCommand(args));
+    return canary(argv.slice(1));
   }
   if (argv[0] === "--version" || argv[0] === "-v" || argv[0] === "version") {
     process.stdout.write(
