@@ -47,19 +47,21 @@ export function renderDashboard(snapshot: DashboardSnapshot): string {
   return `${encodeSnapshotToon(payload)}\n`;
 }
 
+/**
+ * The pending handles come from the resident, the only process that owns the
+ * store (ADR 0126). No store, no resident, no answer — the dashboard renders an
+ * empty recovery lane rather than failing the whole snapshot.
+ */
 async function readRecoveryHandles(config: RspRuntimeConfig): Promise<RspRecoveryHandle[]> {
   if (!config.storeUri.startsWith("file://")) return [];
   const path = fileURLToPath(config.storeUri);
   if (!existsSync(path)) return [];
-  const { RspElisionStore } = await import("../elision-store.js");
-  const store = await RspElisionStore.open({
-    uri: config.storeUri,
-    ttlDays: config.ttlDays,
-    ephemeralTtlHours: config.ephemeralTtlHours,
-    byteBudget: config.byteBudget,
-  });
+  const { residentElisionStore } = await import("../resident-store.js");
+  const store = residentElisionStore(process.cwd(), config);
   try {
     return await store.recoveryHandles(5);
+  } catch {
+    return [];
   } finally {
     await store.close();
   }
