@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import type { StateTransitionLabels } from "./state-transition.js";
 
 export type EngineConfigValues = Record<string, string>;
 export type EngineConfigReader = (path: string) => string | undefined;
@@ -29,6 +30,10 @@ export const ENGINE_CONFIG_DEFAULTS = {
   "afk.labels.running": "running",
   "afk.labels.human": "ready-for-human",
   "afk.labels.dependency_blocked": "blocked:dependency",
+  "afk.labels.needs_triage": "needs-triage",
+  "afk.labels.needs_info": "needs-info",
+  "afk.labels.quarantine": "quarantine",
+  "afk.labels.blocked_prefix": "blocked:",
   "afk.labels.req_prefix": "req:",
 } as const;
 
@@ -62,11 +67,18 @@ export interface EngineConfig {
   readonly get: (key: string) => string;
 }
 
-export interface EngineLabelVocabulary {
+/** The engine's label vocabulary. It satisfies {@link StateTransitionLabels},
+ * so every castle writer hands the SAME injected config to `planTransition`
+ * that it uses for its own reads (#2666). */
+export interface EngineLabelVocabulary extends StateTransitionLabels {
   readonly ready: string;
   readonly running: string;
   readonly human: string;
+  readonly needsTriage: string;
+  readonly needsInfo: string;
+  readonly quarantine: string;
   readonly dependencyBlocked: string;
+  readonly blockedPrefix: string;
   readonly reqPrefix: string;
 }
 
@@ -254,7 +266,11 @@ export function readEngineLabelVocabulary(config: EngineConfig): EngineLabelVoca
     ready: config.get("afk.labels.ready"),
     running: config.get("afk.labels.running"),
     human: config.get("afk.labels.human"),
+    needsTriage: config.get("afk.labels.needs_triage"),
+    needsInfo: config.get("afk.labels.needs_info"),
+    quarantine: config.get("afk.labels.quarantine"),
     dependencyBlocked: config.get("afk.labels.dependency_blocked"),
+    blockedPrefix: config.get("afk.labels.blocked_prefix"),
     reqPrefix: config.get("afk.labels.req_prefix"),
   };
 }

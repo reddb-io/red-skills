@@ -12,6 +12,11 @@
 // through the transition API, or (for a genuinely justified survivor: a
 // documented legacy fallback, a non-issue surface like PR review labels, or a
 // human/manual command surface) add it to the allowlist WITH a reason.
+//
+// This lint owns the HOST tree only. The planner itself lives in red-castle's
+// `engine/state-transition.ts` since #2666, and castle's tree is scanned by
+// castle's own suite (`src/engine/state-transition-contract.test.ts`) with an
+// EMPTY allowlist — never re-add castle paths here.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";

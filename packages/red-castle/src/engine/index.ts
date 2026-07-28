@@ -38,6 +38,7 @@ export * from "./runner-detection.js";
 export * from "./runner-spawn.js";
 export * from "./runner-spec.js";
 export * from "./runner-types.js";
+export * from "./state-transition.js";
 export * from "./singleton-event-lane.js";
 export * from "./singleton-lease.js";
 export {
