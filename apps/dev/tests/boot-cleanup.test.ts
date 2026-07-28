@@ -13,6 +13,7 @@ import {
   type OrphanDir,
   type UnblockCandidate,
 } from "./boot.helpers.js";
+import { KNOWN_TMP_LANES } from "../src/core/tmp-janitor.js";
 
 describe("runBoot tmp janitor", () => {
   it("reaps orphan test-runner groups and records an audit row", async () => {
@@ -86,6 +87,32 @@ describe("runBoot tmp janitor", () => {
         { path: "/p/.red/tmp/work-old", livenessVerdict: "not-worker-workspace" },
       ],
     });
+  });
+
+  it("refuses to remove a registered lane named as an unknown tmp root (#2679)", async () => {
+    const { deps, fsCalls } = makeDeps();
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: {
+            logs: { reclaim: [], spare: [] },
+            scratch: { reclaim: [], spare: [] },
+            diagnostics: { reclaim: [], spare: [] },
+            feedbackWorktrees: { reclaim: [], spare: [] },
+            legacySlotLogs: { reclaim: [], spare: [] },
+            // A plan from an older bundle (pre-lane-registry) misclassified the
+            // live supervisors lane; the apply path must still spare it.
+            unknownTmpRoots: [...KNOWN_TMP_LANES, "work-old"],
+          },
+          staleWorkers: { reclaim: [], spare: [] },
+        },
+      }),
+    );
+
+    expect(fsCalls.removeDir).toEqual(["/p/.red/tmp/work-old"]);
+    expect(result.tmpJanitor?.unknownTmpRoots).toEqual(["/p/.red/tmp/work-old"]);
+    expect(result.tmpJanitor?.removals.map((r) => r.path)).not.toContain("/p/.red/tmp/supervisors");
   });
 
   it("rechecks worker.pid before removing a stale worker dir and protects live anchors", async () => {

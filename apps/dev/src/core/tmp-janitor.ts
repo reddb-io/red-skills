@@ -149,6 +149,21 @@ export function auditTmpRoot(names: readonly string[]): TmpRootAudit {
   return { unknown };
 }
 
+/**
+ * The apply-time gate for the unknown-entry removal path: a REGISTERED lane can
+ * never be deleted as an unknown tmp-root entry, whatever the plan claims.
+ *
+ * `auditTmpRoot` already excludes known lanes when the plan is built, so this is
+ * the second, non-negotiable barrier — a plan produced by an older bundle, a
+ * hand-built plan, or a future lane-registry drift must not be able to take out
+ * a live lane root (issue #2679: `supervisors` was removed this way, blinding
+ * `fleet_status` for a healthy fleet). Lane roots are only ever reclaimed by
+ * their own owner-aware sweeps.
+ */
+export function removableUnknownTmpRoots(names: readonly string[]): string[] {
+  return names.filter((name) => !KNOWN_TMP_LANES.has(name));
+}
+
 // ---------- combined planner ----------
 
 export interface TmpJanitorInput {
@@ -299,14 +314,31 @@ export function planWorkerDirJanitor(entries: readonly WorkerDirJanitorEntry[]):
 
 // ---------- supervisor lane planner ----------
 
-/** One fleet dir under `.red/tmp/supervisors/`. */
+/** One fleet dir under `.red/tmp/supervisors/`.
+ *
+ * Liveness carries THREE independent anchors, not one. The pid file is the
+ * authoritative lock when present, but a supervisor whose lane was swept (or
+ * that booted from a bundle predating the pid re-pin) keeps ticking while the
+ * pid file is absent — its state snapshot and its `s<pid>/` log dir still name
+ * the live process. Keying the sweep off the pid file alone deleted the runtime
+ * dir of a running supervisor and blinded `fleet_status` (issue #2679). */
 export interface SupervisorLaneEntry {
   /** Absolute path of the fleet dir (e.g. `.red/tmp/supervisors/default`). */
   path: string;
   /** Fleet name (the basename of the fleet dir). */
   fleet: string;
-  /** Whether the pid file in this fleet dir names a live process. */
+  /** Whether `afk-supervisor.pid` in this fleet dir names a live process. */
   pidAlive: boolean;
+  /** Whether the fleet state snapshot (`state.toon`) names a live process. */
+  statePidAlive?: boolean;
+  /** Whether an `s<pid>/` supervisor log dir in this fleet names a live process. */
+  snapshotPidAlive?: boolean;
+}
+
+/** Whether ANY liveness anchor in a fleet dir names a live process. A lane with
+ * a live anchor is never reclaimable. */
+export function supervisorLaneIsLive(entry: SupervisorLaneEntry): boolean {
+  return entry.pidAlive || entry.statePidAlive === true || entry.snapshotPidAlive === true;
 }
 
 export interface SupervisorLanePlan {
@@ -316,14 +348,14 @@ export interface SupervisorLanePlan {
   spare: SupervisorLaneEntry[];
 }
 
-/** Plan supervisor lane cleanup. A fleet dir is reclaimable only when its
- * `afk-supervisor.pid` does not name a live process. Live supervisors are
- * always spared regardless of mtime. */
+/** Plan supervisor lane cleanup. A fleet dir is reclaimable only when NO
+ * liveness anchor — pid file, state snapshot, or `s<pid>/` log dir — names a
+ * live process. Live supervisors are always spared regardless of mtime. */
 export function planSupervisorLaneJanitor(entries: readonly SupervisorLaneEntry[]): SupervisorLanePlan {
   const reclaim: SupervisorLaneEntry[] = [];
   const spare: SupervisorLaneEntry[] = [];
   for (const entry of entries) {
-    if (entry.pidAlive) spare.push(entry);
+    if (supervisorLaneIsLive(entry)) spare.push(entry);
     else reclaim.push(entry);
   }
   return { reclaim, spare };

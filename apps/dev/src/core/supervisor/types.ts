@@ -227,6 +227,9 @@ export interface FleetHeartbeat {
   shrinkMode: ElasticShrinkMode;
   /** Dev bundle version the running supervisor was launched from. */
   bundleVersion?: string;
+  /** PID of the supervisor process that wrote this snapshot. A janitor liveness
+   * anchor that survives when the pid file does not (issue #2679). */
+  pid?: number;
   readyForAgent: number;
   slotsBusy: number;
   slotsFree: number;
