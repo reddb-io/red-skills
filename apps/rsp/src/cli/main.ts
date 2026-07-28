@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { type JsonObject } from "@reddb-io/toon";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { readBuildInfo } from "@reddb-io/build-info";
-import type { RspElisionStore } from "../elision-store.js";
 import { renderStructuredError } from "../structured-error.js";
 import {
   isHelpRequest,
@@ -31,7 +30,6 @@ import {
 } from "./passthrough.js";
 import { readStatsSnapshot, renderGainsReportToon, renderSetupResult, renderStats } from "./stats.js";
 import { LazyRspElisionStore, runColdWrappedCommand } from "./store-lifecycle.js";
-import type { ElisionStoreLike, ParsedArgs, TelemetryGainsStore } from "./types.js";
 
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const buildInfo = readBuildInfo("rsp");
@@ -105,7 +103,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     const started = process.hrtime.bigint();
     return await emitWrappedResult(args, await runFastGitStatus(), started, undefined, await fastTelemetryRoot(process.cwd()));
   }
-  const { resolveResidentPaths, ResidentRspElisionStore, ensureResidentServer } = await import("../resident-client.js");
+  const { resolveResidentPaths, ensureResidentServer } = await import("../resident-client.js");
   const residentPaths = resolveResidentPaths(process.cwd());
   if (wrapperCommand && shouldUseControlHoldout(config.measurementHoldoutShare)) {
     return await runControlHoldout(args, residentPaths.rootDir, config.measurementHoldoutShare);
@@ -217,42 +215,13 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }));
     return 1;
   }
-  const openResidentStore = (ensureResident = true) => Promise.resolve(new ResidentRspElisionStore(residentPaths, {
-    storeUri: config.storeUri,
-    ttlDays: config.ttlDays,
-    ephemeralTtlHours: config.ephemeralTtlHours,
-    byteBudget: config.byteBudget,
-    telemetryTtlDays: config.telemetryTtlDays,
-    telemetryByteBudget: config.telemetryByteBudget,
-    telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
-    telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
-    idleMs: config.idleMs,
-    clientVersion: buildInfo.version,
-  }, { ensureResident }));
-  const warmResidentStore = () => ensureResidentServer(residentPaths, {
-    storeUri: config.storeUri,
-    ttlDays: config.ttlDays,
-    ephemeralTtlHours: config.ephemeralTtlHours,
-    byteBudget: config.byteBudget,
-    telemetryTtlDays: config.telemetryTtlDays,
-    telemetryByteBudget: config.telemetryByteBudget,
-    telemetryDrainIntervalMs: config.telemetryDrainIntervalMs,
-    telemetryDrainTimeoutMs: config.telemetryDrainTimeoutMs,
-    idleMs: config.idleMs,
-    clientVersion: buildInfo.version,
-  });
-  const openDirectStore = async (): Promise<ElisionStoreLike & Pick<RspElisionStore, "get" | "stats">> => {
-    const { RspElisionStore } = await import("../elision-store.js");
-    return await RspElisionStore.open({
-      uri: config.storeUri,
-      ttlDays: config.ttlDays,
-      ephemeralTtlHours: config.ephemeralTtlHours,
-      byteBudget: config.byteBudget,
-    });
-  };
-  const openReadStore = () => !config.storeUri.endsWith("/red-skills.rdb")
-    ? openDirectStore()
-    : openResidentStore();
+  const { residentConfigFor, residentElisionStore } = await import("../resident-store.js");
+  const openResidentStore = (ensureResident = true) =>
+    Promise.resolve(residentElisionStore(process.cwd(), config, { ensureResident, paths: residentPaths }));
+  const warmResidentStore = () => ensureResidentServer(residentPaths, residentConfigFor(config, buildInfo.version));
+  // Reads go through the resident too: one core owns the store, so `show` and
+  // `gains` ask it rather than opening a second handle on the same file.
+  const openReadStore = () => openResidentStore();
   let closeStore: (() => Promise<void>) | undefined;
   try {
     if (args.command === "stats") {
@@ -264,11 +233,20 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     if (args.command === "gains") {
       const store = await openReadStore();
       closeStore = () => store.close();
-      if (!hasTelemetryGains(store)) {
-        process.stdout.write("error: rsp gains requires the shared RedDB store\n");
+      // A store without the telemetry lanes has no gains to report — the
+      // resident says so, and that stays a clean exit 1, not a stack trace.
+      let report;
+      try {
+        report = await store.telemetryGains(sinceDays(args.positional, 28));
+      } catch (err) {
+        process.stdout.write(renderStructuredError({
+          command: `rsp ${args.positional.join(" ")}`.trim(),
+          category: "real-error",
+          error: err instanceof Error ? err.message : "rsp gains unavailable",
+          help: "rsp gains requires the shared RedDB store",
+        }));
         return 1;
       }
-      const report = await store.telemetryGains(sinceDays(args.positional, 28));
       process.stdout.write(renderGainsReportToon(report));
       return 0;
     }
@@ -387,13 +365,6 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   } finally {
     await closeStore?.();
   }
-}
-
-function hasTelemetryGains(store: unknown): store is TelemetryGainsStore {
-  return typeof store === "object" &&
-    store !== null &&
-    "telemetryGains" in store &&
-    typeof (store as { telemetryGains?: unknown }).telemetryGains === "function";
 }
 
 export { main };
