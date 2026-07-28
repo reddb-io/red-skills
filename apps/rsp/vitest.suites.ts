@@ -12,6 +12,7 @@ export const INTEGRATION_TESTS: readonly string[] = [
   "elision-store.test.ts",
   "intercept.test.ts",
   "proxy.test.ts",
+  "resident-cutover.test.ts",
   "resident-memory.test.ts",
   "setup.test.ts",
   "shell-init.test.ts",
