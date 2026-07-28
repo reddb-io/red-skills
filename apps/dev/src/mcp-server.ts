@@ -22,6 +22,7 @@ import {
   registerLaneEventSubscription,
   type LaneSubscriptionServer,
 } from "./lane-subscription.js";
+import { HOST_STATE_TRANSITION_LABELS } from "./core/state-transition.js";
 import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
 import { createMedicIo } from "./runtime/medic-io.js";
 import { createFileMedicStore, runMedicPass } from "./core/pr-medic.js";
@@ -236,7 +237,7 @@ export async function startResidentIssueCurator(
     if (running) return;
     running = true;
     try {
-      await runIssueStateCurator({ tracker, store });
+      await runIssueStateCurator({ tracker, store, labels: HOST_STATE_TRANSITION_LABELS });
     } catch {
       // Repo-level transport/state faults retry on the permanent periodic belt;
       // they must not terminate the resident or block its MCP surface.

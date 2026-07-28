@@ -48,6 +48,7 @@ import {
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import { planReconcileSweep, executeUnblockSweep } from "../core/boot-sweep.js";
+import { HOST_STATE_TRANSITION_LABELS } from "../core/state-transition.js";
 import { removeDir as removeDirNative } from "../runtime/fs.js";
 import { killTreeAndWait } from "../runtime/kill-tree.js";
 import { buildStateChangeWake } from "../runtime/state-watch.js";
@@ -776,6 +777,7 @@ export function buildSupervisorDeps(
         const result = await runIssueStateCurator({
           tracker,
           store: createFileIssueCuratorStore(paths),
+          labels: HOST_STATE_TRANSITION_LABELS,
         });
         return `curator sweep ran: ${JSON.stringify(result).slice(0, 200)}`;
       },

@@ -133,6 +133,13 @@ jobs:
       - name: Test apps/dev (includes packages/shared)
         run: pnpm -C apps/dev test
 
+      # The engine's own suite carries the castle-tree transition-API contract
+      # lint (#2666). The root `test` script filters red-castle out, so without
+      # this step that lint would never run and a raw state-role writer could
+      # reach main unseen.
+      - name: Test packages/red-castle
+        run: pnpm -C packages/red-castle test
+
       - name: Test apps/opencode-host
         run: pnpm -C apps/opencode-host test
 

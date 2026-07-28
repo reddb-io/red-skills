@@ -12,7 +12,11 @@ const labels: EngineLabelVocabulary = {
   ready: "queue:agent",
   running: "state:running",
   human: "queue:human",
+  needsTriage: "needs-triage",
+  needsInfo: "needs-info",
+  quarantine: "quarantine",
   dependencyBlocked: "wait:dependency",
+  blockedPrefix: "blocked:",
   reqPrefix: "depends-on:",
 };
 
@@ -182,4 +186,63 @@ describe("tracker unblock sweep", () => {
       },
     ]);
   });
+});
+
+// The promotion WRITE moved to planTransition in #2666. These rows pin the
+// exact mutation the raw writer emitted before the migration, so a delta that
+// drifts by a single label fails here.
+describe("promotion label deltas are byte-identical to the pre-transition writer", () => {
+  const rows: Array<{
+    name: string;
+    body: string;
+    candidateLabels: string[];
+    remove: string[];
+    add: string[];
+  }> = [
+    {
+      name: "single edge label",
+      body: "",
+      candidateLabels: ["wait:dependency", "depends-on:7"],
+      remove: ["wait:dependency", "depends-on:7"],
+      add: ["queue:agent"],
+    },
+    {
+      name: "several edge labels are consumed in numeric order",
+      body: "",
+      candidateLabels: ["wait:dependency", "depends-on:12", "depends-on:7", "depends-on:3"],
+      remove: ["wait:dependency", "depends-on:3", "depends-on:7", "depends-on:12"],
+      add: ["queue:agent"],
+    },
+    {
+      name: "body-derived dependencies leave no edge label to consume",
+      body: "## Blocked by\n\n- #7\n",
+      candidateLabels: ["wait:dependency"],
+      remove: ["wait:dependency"],
+      add: ["queue:agent"],
+    },
+    {
+      name: "non-state labels are untouched",
+      body: "",
+      candidateLabels: ["wait:dependency", "depends-on:7", "type:ticket", "priority:high"],
+      remove: ["wait:dependency", "depends-on:7"],
+      add: ["queue:agent"],
+    },
+  ];
+
+  for (const row of rows) {
+    it(row.name, async () => {
+      const tracker = fakeTracker({
+        issues: new Map([
+          [7, { body: "", labels: [], closed: true }],
+          [3, { body: "", labels: [], closed: true }],
+          [12, { body: "", labels: [], closed: true }],
+          [20, { body: row.body, labels: row.candidateLabels, closed: false }],
+        ]),
+        labelIndex: new Map([["wait:dependency", [20]]]),
+      });
+
+      await expect(executeUnblockSweep({ tracker, labels })).resolves.toEqual([20]);
+      expect(tracker.edits).toEqual([{ issue: 20, remove: row.remove, add: row.add }]);
+    });
+  }
 });
