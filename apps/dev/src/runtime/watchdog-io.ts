@@ -219,6 +219,11 @@ export function buildWatchdogIO(
       }
     },
 
+    // The very sentinel `fleet stop` publishes before it inspects any process
+    // (#2714) — one file, written by the stop path and read by the healer, so
+    // the two surfaces can never disagree about whether a stop is in force.
+    isStopRequested: async () => fileExists(stopFile),
+
     isRecoveryPending: async () => fileExists(paths.supervisorRecoveryPath),
 
     setRecoveryPending: async (pending) => {

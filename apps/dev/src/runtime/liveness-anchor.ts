@@ -40,6 +40,10 @@ import {
 // reader never has to reach into `supervisor-state.js` for it and re-open the
 // private-source door the ratchet closes.
 export { reapStaleSupervisorState } from "./supervisor-state.js";
+// The forced-teardown identity (#2714) is the one reader allowed to accept a pid
+// without its process-start proof. It travels through the anchor too, so
+// `fleet_stop` keeps ONE liveness import and the ratchet stays closed.
+export { readRecordedLiveSupervisorPid } from "./supervisor-state.js";
 export type { SupervisorStateReapResult, SupervisorPidDiscovery } from "./supervisor-state.js";
 
 /** Which anchor named the supervisor. `none` when no anchor named a live one. */

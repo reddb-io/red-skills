@@ -26,6 +26,7 @@ import { spawnSupervisorWatchdog } from "../runtime/supervisor-watchdog-spawn.js
 import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
 import {
   publishSupervisorLiveness,
+  readRecordedLiveSupervisorPid,
   readSupervisorLiveness,
   readWatchdogLiveness,
   reapStaleSupervisorState,
@@ -318,8 +319,23 @@ export async function stopFleet(
   };
   // The single anchor names the supervisor to stop. `status: none` is now only
   // reachable when NO anchor names one — never while a lane is visibly ticking.
-  const liveSupervisor = await readSupervisorLiveness(stateAfk, { fleet: paths.fleet });
-  if (!liveSupervisor.alive) {
+  //
+  // `--force` alone may then fall back to a recorded pid that is merely alive
+  // (#2714). A hard teardown must never be blocked by a missing start pin — that
+  // is the state in which stop reported "no fleet running" about a supervisor the
+  // operator could see and had to kill by hand.
+  const liveness = await readSupervisorLiveness(stateAfk, { fleet: paths.fleet });
+  const recorded =
+    !liveness.alive && options.force
+      ? await readRecordedLiveSupervisorPid(stateAfk, isLivePid)
+      : null;
+  const liveSupervisor: { pid: number; anchor: "pid-file" | "fleet-state" } | null =
+    liveness.alive
+      ? { pid: liveness.pid, anchor: liveness.anchor }
+      : recorded !== null
+        ? { pid: recorded.pid, anchor: recorded.source }
+        : null;
+  if (liveSupervisor === null) {
     const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
     if (supervisor.status === "stale" && supervisor.pid !== undefined) {
       stdout.write(`no fleet running (reason=dead supervisor pid; stale files cleaned).\n`);

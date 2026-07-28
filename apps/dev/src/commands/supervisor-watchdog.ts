@@ -134,6 +134,10 @@ export async function supervisorWatchdogCommand(
           !(await io.isRecoveryPending?.())
         ) stopping = true;
         if (result.crashLoopSuppressed) stopping = true;
+        // A stop that landed mid-pass is observed by runWatchdog itself (#2714);
+        // retire on it here too, so the loop does not keep an armed healer alive
+        // behind a fleet the operator already stopped.
+        if (result.stopRequested) stopping = true;
       },
     });
   } finally {
