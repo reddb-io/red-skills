@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { startChildProcessTimer } from "./overhead-budget.js";
 import { commandFamily, isEnvAssignment, isGhJsonJqSelection } from "./command-classifier.js";
 import { resolveRspInvocationPrefix } from "./rsp-cli.js";
 import { appendTelemetryEvent, RSP_DECISIONS_COLLECTION, RSP_TELEMETRY_INVOCATIONS_COLLECTION } from "./telemetry.js";
@@ -134,6 +135,10 @@ async function appendProxySegmentDecision(rootDir: string, match: ProxySegmentMa
 
 async function runShellVerbatim(commandLine: string): Promise<number> {
   const child = spawn(commandLine, { shell: true, stdio: "inherit" });
+  // The wrapped command's own runtime is never rsp's overhead (#2746).
+  const stopChildTimer = startChildProcessTimer();
+  child.once("close", stopChildTimer);
+  child.once("error", stopChildTimer);
   return await new Promise((resolve) => {
     child.on("error", (err) => {
       process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
