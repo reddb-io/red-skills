@@ -330,21 +330,20 @@ export async function runCommand(options: RunOptions): Promise<number> {
       }
       return result;
     },
-    processDeps: buildProcessDeps(
+    processDeps: buildProcessDeps({
       ctx,
-      settings.model,
-      settings.sandbox,
+      model: settings.model,
+      sandbox: settings.sandbox,
       feedback,
       current,
-      flags.fallbackRunner,
+      fallbackRunner: flags.fallbackRunner,
       runner,
-      undefined,
-      settings.maxIterations,
-      settings.laneIdle,
-      flags.verifyCommand,
-      flags.goVerifyRetries,
+      maxIterations: settings.maxIterations,
+      laneIdle: settings.laneIdle,
+      inlineVerifyCommand: flags.verifyCommand,
+      goVerifyRetries: flags.goVerifyRetries,
       workerId,
-    ),
+    }),
     // Session-scoped lifecycle hooks (PRD #207): the castle drain owns the
     // session state machine, while dev supplies the existing hook dispatcher so
     // the configured hook surface and output stay unchanged.

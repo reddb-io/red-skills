@@ -106,21 +106,17 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     };
     const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
     const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
-    const deps = buildProcessDeps(
+    const deps = buildProcessDeps({
       ctx,
-      "gpt-5.5",
-      "none",
+      model: "gpt-5.5",
+      sandbox: "none",
       feedback,
-      { attemptDir },
-      false,
-      "codex",
+      current: { attemptDir },
+      fallbackRunner: false,
+      runner: "codex",
       exec,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      "wLINK",
-    );
+      workerId: "wLINK",
+    });
 
     await deps.conflictResolver?.("resolve the conflict", root);
 
@@ -153,16 +149,16 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     const previous = process.env.RED_AFK_TRUNK;
     process.env.RED_AFK_TRUNK = "develop";
     try {
-      const deps = buildProcessDeps(
+      const deps = buildProcessDeps({
         ctx,
-        "claude-opus-4-8",
-        "none",
+        model: "claude-opus-4-8",
+        sandbox: "none",
         feedback,
         current,
-        false,
-        "claude",
+        fallbackRunner: false,
+        runner: "claude",
         exec,
-      );
+      });
       expect(deps.lookups.base.configTrunk).toBe("develop");
     } finally {
       if (previous === undefined) delete process.env.RED_AFK_TRUNK;
@@ -181,7 +177,16 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     const { exec, trace } = makeFakeExec(root);
     const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
     const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") };
-    const deps = buildProcessDeps(ctx, "claude-opus-4-8", "none", feedback, current, false, "claude", exec);
+    const deps = buildProcessDeps({
+      ctx,
+      model: "claude-opus-4-8",
+      sandbox: "none",
+      feedback,
+      current,
+      fallbackRunner: false,
+      runner: "claude",
+      exec,
+    });
     const run = vi.fn(async (_ciAlreadyGreen?: boolean) => ({ ok: true as const, locked: false }));
 
     const result = await deps.landingTailObserver!({
@@ -225,7 +230,16 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     const { exec, trace } = makeFakeExec(root);
     const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
     const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") };
-    const deps = buildProcessDeps(ctx, "claude-opus-4-8", "none", feedback, current, false, "claude", exec);
+    const deps = buildProcessDeps({
+      ctx,
+      model: "claude-opus-4-8",
+      sandbox: "none",
+      feedback,
+      current,
+      fallbackRunner: false,
+      runner: "claude",
+      exec,
+    });
 
     const result = await deps.cascadeRebase!.rebaseAndPush(
       root,
@@ -258,16 +272,16 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
 
     // THE REAL ASSEMBLY. exec is the only injected seam; everything else is the
     // production binding (config loads to defaults from the empty tmp root).
-    const deps = buildProcessDeps(
+    const deps = buildProcessDeps({
       ctx,
-      "claude-opus-4-8",
-      "none",
+      model: "claude-opus-4-8",
+      sandbox: "none",
       feedback,
       current,
-      false,
-      "claude",
+      fallbackRunner: false,
+      runner: "claude",
       exec,
-    );
+    });
 
     const issue = 42;
     const base = "main";
@@ -356,7 +370,15 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
     const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "1-a1") };
     // No exec arg → production binding. Assembling must not throw.
-    const deps = buildProcessDeps(ctx, "claude-opus-4-8", "none", feedback, current, false, "claude");
+    const deps = buildProcessDeps({
+      ctx,
+      model: "claude-opus-4-8",
+      sandbox: "none",
+      feedback,
+      current,
+      fallbackRunner: false,
+      runner: "claude",
+    });
     expect(typeof deps.gh.viewLabels).toBe("function");
     expect(typeof deps.remoteGit).toBe("function");
     expect(typeof deps.mergeExec).toBe("function");
@@ -369,7 +391,16 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
     const current = { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") };
 
-    const deps = buildProcessDeps(ctx, "gpt-5.5", "none", feedback, current, false, "codex", exec);
+    const deps = buildProcessDeps({
+      ctx,
+      model: "gpt-5.5",
+      sandbox: "none",
+      feedback,
+      current,
+      fallbackRunner: false,
+      runner: "codex",
+      exec,
+    });
 
     await expect(
       deps.classifyIssue?.({
