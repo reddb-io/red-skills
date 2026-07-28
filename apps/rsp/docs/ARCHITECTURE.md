@@ -87,6 +87,12 @@ The resident process:
 - Opens the configured RedDB store once with `allowResidentOpen: true`.
 - Acts as the single embedded writer for elision, telemetry stats, telemetry
   gains, memory, and brain requests.
+- Is the only *running* opener of the store (ADR 0126). Every other surface —
+  the pre-exec hook and proxy, the CLI wrappers, `show`/`gains`/`stats`, the
+  bare dashboard, `wait` capture, and the MCP tool handlers — reaches it through
+  `residentElisionStore()` in `resident-store.ts`. The store module keeps one
+  further opener, `provisionElisionStore()`, for the `rsp setup` moment when no
+  resident can exist yet because the file itself does not.
 - Writes a PID file and a PID registry entry containing the socket path,
   store URI, and resident version.
 - Resets an idle timer on each accepted socket and request.
@@ -115,6 +121,8 @@ Supported resident operations include:
 - `ping`
 - `handover`
 - `stats`
+- `recovery-handles`
+- `accounting-stats`
 - `telemetry-stats`
 - `telemetry-gains`
 - `mint`
@@ -357,6 +365,11 @@ Important fail-open paths:
 - `gh --json`/`--jq` selector commands are recorded as `lossless-gh-json-jq`
   passes and execute byte-identically.
 - Binary file reads pass through unchanged.
+- An unreachable resident socket costs the elision, never the command: wrappers
+  and the proxy hand back the raw stdout, stderr, and exit status, `stats` and
+  the bare dashboard degrade to the empty snapshot, `wait` keeps its spooled
+  bytes rather than claiming a handle nothing can recover, and the MCP tools
+  return the payload they were handed.
 - Telemetry append, telemetry drain, status summary, and cold drain nudges are
   best-effort.
 - `rsp exec` preserves stderr and exit status even when stdout is summarized.
