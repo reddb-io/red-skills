@@ -2,15 +2,22 @@
 
 ## Status
 
-Accepted. Records the design settled in a `/start` grilling session for evolving
-`/review-adrs` from a read-only detector into a full ADR-lifecycle skill. The
-finer parameter choices are carried in the originating Spec's Human Decisions.
+Superseded by ADR 0127.
+
+superseded-by: 0127
+
+Originally accepted as the design settled in a `/start` grilling session for
+evolving `/adr-editor` from a read-only detector into a full ADR-lifecycle
+skill; the finer parameter choices are carried in the originating Spec's Human
+Decisions. ADR 0127 lifts the read-only default, the Spec-routing gate, and the
+in-place-rewrite ban, while keeping this record's physical archive layout and
+machine-enforced history preservation in force.
 
 ## Context
 
 ADRs accumulate (110+) and drift: decisions get superseded but never marked,
 prose cites paths that have since moved, some decisions shipped long ago and are
-now inert, others overlap or should be split. The existing `/review-adrs` is a
+now inert, others overlap or should be split. The existing `/adr-editor` is a
 read-only detector that emits one Spec and never applies — it has no per-ADR
 triage, no archive, no merge/split, and no history-preservation guard. Left
 unmaintained, the active `.red/adr/` set becomes a cluttered mix of live
@@ -34,7 +41,7 @@ the decision history.
   `superseded-by` the new one). Split mints N focused ADRs and archives the
   original (`superseded-by` the list). The number set grows — the honest cost of
   an immutable record.
-- **One skill, gated-split apply.** `/review-adrs` evolves in place (one entry
+- **One skill, gated-split apply.** `/adr-editor` evolves in place (one entry
   point). It runs a cheap **hybrid triage** over every ADR — or over an optional
   **subject filter** — bucketing by status / age / inbound links / stale refs /
   supersession, then deep-reviews only the flagged buckets. Mechanical,
@@ -61,7 +68,7 @@ the decision history.
   in-session apply cures that while judgment ops stay behind the interview.
 - **Convention-only history preservation**: rejected — by-construction safety is
   only as strong as the next careless edit; a CI guard is the real armor.
-- **A separate curation skill**: rejected in favor of evolving `/review-adrs` in
+- **A separate curation skill**: rejected in favor of evolving `/adr-editor` in
   place — one door for the ADR surface.
 
 ## Consequences
@@ -71,5 +78,5 @@ the decision history.
 - Lifecycle operations mint new ADR numbers (merge / split / update-as-supersede).
 - The governance test must be updated in lockstep with the archive introduction,
   or CI reddens.
-- `/review-adrs`'s current "never applies" hard rule is replaced by the
+- `/adr-editor`'s current "never applies" hard rule is replaced by the
   gated-split; read-only detection stays the default.
