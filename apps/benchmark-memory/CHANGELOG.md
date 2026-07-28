@@ -1,5 +1,12 @@
 # @reddb-io/benchmark-memory
 
+## 2.87.6
+
+### Patch Changes
+
+- @reddb-io/shared@2.87.6
+- @reddb-io/build-info@2.87.6
+
 ## 2.87.5
 
 ### Patch Changes

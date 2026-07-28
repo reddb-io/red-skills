@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-ADR triage now reads supersession by direction, so a record that supersedes another is no longer reported as broken (#2720). `claimsSupersession` matched a bare `supersed` anywhere in the status, which made every healthy successor — `Accepted. Supersedes ADR 0032.` — fail the direction-aware `superseded by` lookup and land in `missing-supersession` with `successor-unnamed`. Acting on that bucket as reported would have written a fabricated `superseded-by:` pointer into nine live records, and the noise buried the two genuine findings. A claim now means only "this record IS superseded": a `superseded by` / `Superseded-by:` pointer, or a terminal `Superseded` standing alone. Pointer parsing reads through the markdown emphasis real headers use (`- **Superseded by**: …`), and a successor that names an issue or PR rather than an ADR stays flagged under its own `successor-not-adr:#N` signal — a decision is superseded only by another decision. Over the repo's own `.red/adr/`, `missing-supersession` drops from 12 findings to the 3 real ones.

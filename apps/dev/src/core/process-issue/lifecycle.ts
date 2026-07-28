@@ -139,7 +139,16 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, appendTierEscalationHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import type { ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
+import {
+  recordReseedDraw,
+  reseedDraw,
+  reseedTriggerCause,
+  resolveReseedBudget,
+  totalReseedSpend,
+  withGateSubCap,
+} from "./reseed-budget.js";
 import {
   EMPTY_CORRECTION_LEDGER,
   attributeGateFailure,
@@ -515,12 +524,15 @@ export async function processIssue(
     });
   }
   let activeRunner: Runner = toAgentRunner(input.runner);
-  let attemptN = input.attempt;
+  // The ROUND ordinal, not the attempt ordinal ADR 0103 retired: every bump
+  // below happens inside ONE Attempt — same Worker, same Worktree, same branch.
+  // It is still carried on the legacy `attempt`/`attempt_n` fields because those
+  // are the hook and record contracts; the name here says what it counts.
+  let roundOrdinal = input.attempt;
   let activeTaskClass: AfkModelTier = taskClass;
   const issueType = deriveIssueType(labels);
-  let escalatedSimpleFeedback = false;
   let workerBranch = branch;
-  let current: ProcessIssueInput = { ...input, runner: activeRunner, attempt: attemptN };
+  let current: ProcessIssueInput = { ...input, runner: activeRunner, attempt: roundOrdinal };
   let common: StageCommon = {
     deps,
     input: current,
@@ -588,71 +600,114 @@ export async function processIssue(
     if (attribution.cause !== "stale-base-drift" || !movement) return { attribution };
     return { attribution, drift: { base, movement, attribution } };
   };
-  /** One correction cycle, cause-aware. A drift-attributed cycle is FREE: it is
-   * recorded on the ledger but never charged against the lane's cap, so an
-   * already-spent counter can no longer park a branch whose gate only failed
-   * because the base moved beneath it. */
-  const retryMachineGate = async (
-    lane: "/go" | "/afk",
-    cap: number,
-    gate: "feedback" | "backpressure",
-    validation: string,
-    append: (handoff: string, opts: Parameters<typeof appendGoVerifyRetryHandoff>[1]) => string,
-    driftEligible: boolean,
-  ): Promise<boolean> => {
-    const { attribution, drift } = await attributeGateFailureNow(driftEligible);
-    if (attribution.cause === "branch-fault" && correctionBudgetExhausted(correctionLedger, cap)) return false;
-    correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
-    attemptN += 1;
-    currentHandoff = append(handoff, {
-      gate,
-      validation,
-      retry: correctionLedger.charged,
-      cap,
-      drift,
-    });
-    deps.appendIterLog(
-      drift
-        ? `🤖 ${lane}: ${gate} machine gate failed after DONE, but ${attribution.reason}; ` +
-          `granting a free stale-base correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
-          `budget untouched at ${correctionLedger.charged}/${cap}.`
-        : `🤖 ${lane}: ${gate} machine gate failed after DONE; correction retry ${correctionLedger.charged}/${cap}.`,
-    );
-    return await fireHook(
-      "pre_attempt",
-      hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
-    );
-  };
-  // `driftEligible` is false for the empty-diff rejection: a branch that carries
-  // no diff at all is unambiguously the branch's problem, and no amount of base
-  // movement can explain it away.
-  const retryGoMachineGate = async (
-    gate: "feedback" | "backpressure",
-    validation: string,
-    driftEligible = true,
-  ): Promise<boolean> => {
-    if (input.laneLabel !== LABEL_GO_LANE) return false;
-    return await retryMachineGate("/go", goVerifyRetryCap, gate, validation, appendGoVerifyRetryHandoff, driftEligible);
-  };
   const stallConvergenceCap = resolveStallConvergenceBudget(deps);
-  const retryAfkMachineGate = async (
+  const isGoLane = input.laneLabel === LABEL_GO_LANE;
+  const reseedLane: "/go" | "/afk" = isGoLane ? "/go" : "/afk";
+  // ONE budget for every Re-seed this Attempt may spend (ADR 0129): the lane
+  // supplies the ceiling and the review's reservation, the operator's configured
+  // counter supplies only the gate's share. A tier escalation therefore draws
+  // its own round instead of muting gate correction outright.
+  const reseedBudget = withGateSubCap(
+    resolveReseedBudget({ laneLabel: input.laneLabel, runMode: input.runMode }),
+    isGoLane ? goVerifyRetryCap : stallConvergenceCap,
+  );
+  let reseedSpend: ReseedSpend = {};
+  const gateSubCap = reseedBudget.subCaps.gate;
+  /** Whether a Re-seed round was granted. `hook-aborted` is not exhaustion — the
+   * budget was drawn and the round IS running; the `pre_attempt` hook refused
+   * it, which each caller handles the way it always has. */
+  type ReseedOutcome = "granted" | "refused" | "hook-aborted";
+  interface ReseedRequest {
+    trigger: ReseedTrigger;
+    /** The gate stage that blocked, for the two gate-shaped triggers. */
+    gate?: "feedback" | "backpressure";
+    validation: string;
+    /** False for the empty-diff rejection: a branch that carries no diff at all
+     * is unambiguously the branch's problem, and no amount of base movement can
+     * explain it away. */
+    driftEligible?: boolean;
+    /** Tier escalation only — which tier failed and which one now runs. */
+    tiers?: { from: string; to: string };
+  }
+  /** The single Re-seed request path. Every caller that re-instructs the
+   * implementer IN PLACE — same Worker, same Worktree, same branch — comes
+   * through here: it checks the ceiling and the cause's sub-cap or reservation,
+   * bumps the round ordinal, appends to the handoff, fires `pre_attempt`, and
+   * emits one worker event naming the trigger.
+   *
+   * A drift-attributed gate round is FREE: it is recorded on the ledger but
+   * never drawn from the budget, so an already-spent counter can no longer park
+   * a branch whose gate only failed because the base moved beneath it (#2711). */
+  const requestReseed = async (req: ReseedRequest): Promise<ReseedOutcome> => {
+    const cause = reseedTriggerCause(req.trigger);
+    const { attribution, drift } =
+      cause === "gate"
+        ? await attributeGateFailureNow(req.driftEligible ?? false)
+        : { attribution: undefined, drift: undefined };
+    const free = drift !== undefined;
+    const draw = reseedDraw(reseedBudget, cause, reseedSpend);
+    if (!free && !draw.allowed) return "refused";
+    if (attribution) correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
+    if (!free) reseedSpend = recordReseedDraw(reseedSpend, cause);
+    roundOrdinal += 1;
+    const gateSpend = reseedSpend.gate ?? 0;
+    if (req.trigger === "tier-escalation") {
+      currentHandoff = appendTierEscalationHandoff(handoff, {
+        from: req.tiers?.from ?? "",
+        to: req.tiers?.to ?? "",
+        validation: req.validation,
+        retry: reseedSpend.tier ?? 0,
+        cap: reseedBudget.subCaps.tier,
+      });
+      deps.appendIterLog(
+        `🤖 ${reseedLane}: ${req.tiers?.from ?? ""}-tier feedback failed for #${issue}; ` +
+          `re-seeding on the ${req.tiers?.to ?? ""} tier before terminal validation routing.`,
+      );
+    } else {
+      const gate = req.gate ?? "feedback";
+      const append = isGoLane ? appendGoVerifyRetryHandoff : appendAfkGateCorrectionHandoff;
+      currentHandoff = append(handoff, { gate, validation: req.validation, retry: gateSpend, cap: gateSubCap, drift });
+      deps.appendIterLog(
+        drift
+          ? `🤖 ${reseedLane}: ${gate} machine gate failed after DONE, but ${attribution?.reason}; ` +
+            `granting a free stale-base correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
+            `budget untouched at ${gateSpend}/${gateSubCap}.`
+          : `🤖 ${reseedLane}: ${gate} machine gate failed after DONE; correction retry ${gateSpend}/${gateSubCap}.`,
+      );
+    }
+    deps.recordWorkerEvent?.("worker.reseeded", {
+      trigger: req.trigger,
+      cause,
+      lane: reseedBudget.lane,
+      free,
+      round: totalReseedSpend(reseedSpend),
+      ceiling: reseedBudget.ceiling,
+      cause_spent: reseedSpend[cause] ?? 0,
+      cause_cap: reseedBudget.subCaps[cause],
+    });
+    const hookOk = await fireHook(
+      "pre_attempt",
+      hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: roundOrdinal }),
+    );
+    return hookOk ? "granted" : "hook-aborted";
+  };
+  /** A gate-shaped Re-seed, for the callers that only need "may I continue?".
+   * A refused hook parks exactly as an exhausted budget does — the gate path has
+   * always folded the two together. */
+  const reseedAfterGate = async (
+    trigger: "gate-stage" | "no-diff-done",
     gate: "feedback" | "backpressure",
     validation: string,
-    driftEligible = true,
-  ): Promise<boolean> => {
-    if (input.laneLabel === LABEL_GO_LANE) return false;
-    if (escalatedSimpleFeedback) return false;
-    return await retryMachineGate("/afk", stallConvergenceCap, gate, validation, appendAfkGateCorrectionHandoff, driftEligible);
-  };
+  ): Promise<boolean> =>
+    (await requestReseed({ trigger, gate, validation, driftEligible: trigger === "gate-stage" })) === "granted";
   /** The park-note suffix naming the exhausted correction budget. It reports the
    * CHARGED cycles against the lane's cap and, separately, the stale-base cycles
    * that were absorbed for free — so a reader can tell a branch that really kept
    * failing from a run that spent itself absorbing base drift (#2711). */
   const correctionBudgetNote = (): string => {
-    const cap = input.laneLabel === LABEL_GO_LANE ? goVerifyRetryCap : stallConvergenceCap;
     if (correctionLedger.cycles.length === 0) return "";
-    if (!correctionBudgetExhausted(correctionLedger, cap)) return "";
-    return ` Post-DONE gate-correction budget exhausted (${describeCorrectionLedger(correctionLedger, cap)}).`;
+    if (!correctionBudgetExhausted(correctionLedger, gateSubCap)) return "";
+    return ` Post-DONE gate-correction budget exhausted (${describeCorrectionLedger(correctionLedger, gateSubCap)}).`;
   };
   // Gate-green fast path (issue #2397): when a prior branch already cleared the
   // feedback gate, skip the agent entirely on re-claim and re-validate directly.
@@ -711,7 +766,7 @@ export async function processIssue(
               title: input.title,
               workspace: branch,
               runner: activeRunner,
-              attempt_n: attemptN,
+              attempt_n: roundOrdinal,
               ...(vitals ? { vitals } : {}),
             }),
           );
@@ -766,14 +821,14 @@ export async function processIssue(
         if (!deps.fallbackRunner) {
           return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, false);
         }
-        await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
+        await fireHook("post_attempt", postAttemptContext({ ...input, attempt: roundOrdinal }, branch, "fail", run.outcome));
         const other: Runner = activeRunner === "claude" ? "codex" : "claude";
         activeRunner = other;
-        attemptN += 1;
+        roundOrdinal += 1;
         if (
           !(await fireHook(
             "pre_attempt",
-            hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+            hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: roundOrdinal }),
           ))
         ) {
           return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
@@ -802,13 +857,13 @@ export async function processIssue(
           sandboxMode: sandboxDecision.sandboxMode,
         });
         if (isRunnerRecoverableOutcome(run.outcome)) {
-          await fireHook("post_attempt", postAttemptContext({ ...input, attempt: attemptN }, branch, "fail", run.outcome));
+          await fireHook("post_attempt", postAttemptContext({ ...input, attempt: roundOrdinal }, branch, "fail", run.outcome));
           return await runnerRecoverable(deps, input, branch, base, hooksFired, activeRunner, run.outcome, true);
         }
       }
     }
     workerBranch = run.branch || branch;
-    current = { ...input, runner: activeRunner, attempt: attemptN };
+    current = { ...input, runner: activeRunner, attempt: roundOrdinal };
     common = {
       deps,
       input: current,
@@ -942,12 +997,7 @@ export async function processIssue(
       const validationText =
         "DONE rejected: attempt branch has no diff against the merge-base; no work changed, so the completion claim was not accepted.";
       deps.appendIterLog(`🤖 /afk: ${validationText}`);
-      if (
-        await retryGoMachineGate("feedback", validationText, false) ||
-        await retryAfkMachineGate("feedback", validationText, false)
-      ) {
-        continue;
-      }
+      if (await reseedAfterGate("no-diff-done", "feedback", validationText)) continue;
       const convergenceNote = correctionBudgetNote();
       return await terminalFailure(common, "feedback-failed", "feedback", {
         notes: `Inner agent emitted DONE, but the attempt branch has no diff against the merge-base. The worker branch was not merged.${convergenceNote}`,
@@ -1023,22 +1073,27 @@ export async function processIssue(
       );
       const classOverride = parseFeedbackClass(classResult.context);
       if (classOverride !== null) isInfra = classOverride === "infra";
-      if (!isInfra && activeTaskClass === "simple" && !escalatedSimpleFeedback) {
-        escalatedSimpleFeedback = true;
-        activeTaskClass = "complex";
-        attemptN += 1;
-        deps.appendIterLog(
-          `🤖 /afk: simple-tier feedback failed for #${issue}; retrying once on the complex tier before terminal validation routing.`,
-        );
-        if (
-          !(await fireHook(
-            "pre_attempt",
-            hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
-          ))
-        ) {
+      const scopeHeader = feedback.validationScope
+        ? `${formatValidationScope(feedback.validationScope)}\n`
+        : "";
+      const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}`;
+      // A repeated failure buys a HIGHER tier rather than another round at the
+      // tier that just failed (ADR 0129). It draws the `tier` sub-cap, so gate
+      // correction keeps its own share — the mute this replaced cost a Ticket
+      // its whole gate budget for one tier bump.
+      if (!isInfra && activeTaskClass === "simple") {
+        const escalation = await requestReseed({
+          trigger: "tier-escalation",
+          validation: validationText,
+          tiers: { from: "simple", to: "complex" },
+        });
+        if (escalation === "hook-aborted") {
           return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
         }
-        continue;
+        if (escalation === "granted") {
+          activeTaskClass = "complex";
+          continue;
+        }
       }
       const outcome: ProcessOutcome = isInfra ? "feedback-failed-infra" : "feedback-failed";
       let notes: string;
@@ -1049,11 +1104,7 @@ export async function processIssue(
       } else {
         notes = "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
       }
-      const scopeHeader = feedback.validationScope
-        ? `${formatValidationScope(feedback.validationScope)}\n`
-        : "";
-      const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}`;
-      if (!isInfra && (await retryGoMachineGate("feedback", validationText) || await retryAfkMachineGate("feedback", validationText))) {
+      if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText))) {
         continue;
       }
       if (!isInfra) notes += correctionBudgetNote();
@@ -1079,7 +1130,7 @@ export async function processIssue(
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
         let bpNotes = "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
         const validationText = backpressure.sidecar.join("\n");
-        if (await retryGoMachineGate("backpressure", validationText) || await retryAfkMachineGate("backpressure", validationText)) {
+        if (await reseedAfterGate("gate-stage", "backpressure", validationText)) {
           continue;
         }
         bpNotes += correctionBudgetNote();
@@ -1438,7 +1489,7 @@ export async function processIssue(
         return await mergeFailed(common, "adversarial correction requested without captured findings", landing.locked);
       }
       adversarialReviewCorrectionsUsed = correction.retry;
-      attemptN += 1;
+      roundOrdinal += 1;
       currentHandoff = appendAdversarialReviewCorrectionHandoff(handoff, correction);
       deps.appendIterLog(
         `🤖 /afk: adversarial review found blocking issue(s); correction retry ${correction.retry}/${correction.cap}.`,
@@ -1446,7 +1497,7 @@ export async function processIssue(
       if (
         !(await fireHook(
           "pre_attempt",
-          hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: attemptN }),
+          hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: roundOrdinal }),
         ))
       ) {
         return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");

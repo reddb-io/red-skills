@@ -65,7 +65,7 @@ plugins:
 
 # rsp token-efficiency surface (per-repo opt-in; hook stays inert without enabled: true)
 rsp:
-  enabled: true
+  enabled: false               # maintainer decision 2026-07-28: off in this repo
   ttlDays: 7
   byteBudget: 67108864
   heavyGitByteThreshold: 8192
