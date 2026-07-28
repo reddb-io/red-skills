@@ -1,5 +1,6 @@
 import { isUtf8 } from "node:buffer";
 import { spawn } from "node:child_process";
+import { startChildProcessTimer } from "./overhead-budget.js";
 import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { scoreStructuralOutliers, type PreservedOutlierLine } from "./anomaly-scorer.js";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
@@ -118,6 +119,10 @@ export function parseExecCommandLine(argv: readonly string[]): string {
 
 async function collectShellContract(commandLine: string): Promise<RecordedGitContract> {
   const child = spawn(commandLine, { shell: true, stdio: ["inherit", "pipe", "pipe"] });
+  // The wrapped command's own runtime is never rsp's overhead (#2746).
+  const stopChildTimer = startChildProcessTimer();
+  child.once("close", stopChildTimer);
+  child.once("error", stopChildTimer);
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
   child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
