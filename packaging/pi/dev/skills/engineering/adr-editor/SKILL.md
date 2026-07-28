@@ -36,6 +36,12 @@ destructive or wide → apply in-session → verify → land**.
   when the session ends, and every archived record must carry a terminal status.
   A `superseded-by:` pointer is required only when a successor exists — a record
   archived for going inert has none, so do not invent one to satisfy the rule.
+- ✅ **Read supersession by direction.** `missing-supersession` means *this*
+  record is superseded and says so badly; a status that names a record this one
+  supersedes is the healthy forward end and is never debt. A successor pointer
+  that names an issue or PR (`Superseded by: #2417`) stays flagged — a decision
+  is superseded only by another decision — so cure it by naming the successor
+  ADR, never by writing a fabricated pointer into a live record.
 - ✅ **Honour `start/ADR-FORMAT.md`.** Sequential four-digit numbering, an H1 that
   reads `# NNNN — Title` and matches its filename, and sections only where they
   earn their place.

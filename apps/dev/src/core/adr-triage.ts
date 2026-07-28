@@ -136,13 +136,44 @@ const TITLE_STOPWORDS = new Set([
 // signal extraction
 // ---------------------------------------------------------------------------
 
+/**
+ * The phrase that names THIS record's successor — `Superseded by ADR-0112`,
+ * `Superseded-by: 0112`. Direction is the whole point: a status that says the
+ * record *supersedes* something else is the forward end of a chain and reveals
+ * nothing about the record's own fate.
+ */
+const SUPERSEDED_BY = "supersed(?:ed|es)[-\\s]+by\\b";
+
+/** Emphasis and punctuation a real header puts between the phrase and its target — `**Superseded by**: #2417`. */
+const POINTER_GAP = "[\\s*_:\\-]*";
+
+/** A bare terminal `Superseded` — the word standing alone, naming nobody. */
+const TERMINAL_SUPERSEDED = /\bsuperseded\b[*_`)\s]*[.;,]?\s*$/im;
+
 /** `Superseded by ADR-0112` in an ADR's own status — the terminal marker. */
 function supersededBy(record: AdrRecord): string | undefined {
-  return /supersed(?:ed|es)\s+by\s+(?:ADR[-\s]?)?(\d{4})/i.exec(record.status)?.[1];
+  return new RegExp(`${SUPERSEDED_BY}${POINTER_GAP}\\[?\\s*(?:ADR[-\\s]?)?(\\d{4})`, "i").exec(record.status)?.[1];
 }
 
+/**
+ * The successor a pointer names when that successor is not an ADR — an issue,
+ * a PR, or a URL. A decision is only superseded by another decision, so this
+ * counts as debt, never as a resolved supersession.
+ */
+function nonAdrSuccessor(record: AdrRecord): string | undefined {
+  if (supersededBy(record)) return undefined;
+  const token = new RegExp(`${SUPERSEDED_BY}${POINTER_GAP}(#\\d+|https?://\\S+)`, "i").exec(record.status)?.[1];
+  return token?.replace(/[.,;:)\]]+$/, "");
+}
+
+/**
+ * True only when the status says THIS record IS superseded: a `superseded by`
+ * pointer, or a terminal `Superseded` standing alone. Merely naming a record
+ * this one supersedes is what a healthy successor reads like, so it is never a
+ * claim — reading it as one flags every live successor as broken.
+ */
 function claimsSupersession(record: AdrRecord): boolean {
-  return /supersed/i.test(record.status);
+  return new RegExp(SUPERSEDED_BY, "i").test(record.status) || TERMINAL_SUPERSEDED.test(record.status);
 }
 
 function isDeprecated(record: AdrRecord): boolean {
@@ -244,11 +275,14 @@ function classify(record: AdrRecord, context: AdrTriageContext): Classification 
   }
 
   if (!successor && claimsSupersession(record)) {
-    signals.push("successor-unnamed");
+    const nonAdr = nonAdrSuccessor(record);
+    signals.push(nonAdr ? `successor-not-adr:${nonAdr}` : "successor-unnamed");
     return {
       bucket: "missing-supersession",
       signals,
-      reason: "Status claims supersession without naming the successor ADR.",
+      reason: nonAdr
+        ? `Status names ${nonAdr} as successor, which is not an ADR; a decision is superseded only by another decision.`
+        : "Status says this record is superseded without naming the successor ADR.",
     };
   }
 
