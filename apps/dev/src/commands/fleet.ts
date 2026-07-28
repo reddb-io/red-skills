@@ -25,12 +25,11 @@ import { spawnSupervisor } from "../runtime/supervisor-spawn.js";
 import { spawnSupervisorWatchdog } from "../runtime/supervisor-watchdog-spawn.js";
 import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
 import {
-  discoverLiveSupervisorPid,
-  isSupervisorIdentityLive,
-  readSupervisorIdentity,
+  publishSupervisorLiveness,
+  readSupervisorLiveness,
+  readWatchdogLiveness,
   reapStaleSupervisorState,
-} from "../runtime/supervisor-state.js";
-import { readPidStartTime } from "../core/state.js";
+} from "../runtime/liveness-anchor.js";
 import { parseFleetFlag, DEFAULT_FLEET_NAME } from "../core/fleet-name.js";
 
 export interface FleetLaunchResult {
@@ -43,6 +42,10 @@ export interface FleetLaunchResult {
 export interface FleetStopResult {
   status: "stopped" | "none" | "stale" | "timeout";
   pid?: number;
+  /** Which anchor named the supervisor this stop acted on. Reporting the anchor
+   * is what turns "status: none on a fleet it could see working" into a
+   * diagnosable answer (#2698, #2704). */
+  anchor?: "pid-file" | "fleet-state" | "none";
 }
 
 export interface FleetStopOptions {
@@ -286,18 +289,15 @@ export async function stopFleet(
   // relaunch, and the watchdog itself must be gone before any terminal report.
   await mkdir(dirname(stopFile), { recursive: true });
   await writeFile(stopFile, "", "utf8");
-  const watchdogIdentity = await readSupervisorIdentity(
+  const watchdog = await readWatchdogLiveness(
     paths.supervisorWatchdogPidPath,
     paths.supervisorWatchdogPidStartPath,
   );
-  if (
-    watchdogIdentity !== null &&
-    isSupervisorIdentityLive(watchdogIdentity, isLivePid, readPidStartTime)
-  ) {
-    const watchdogDead = await killTreeAndWait(watchdogIdentity.pid);
+  if (watchdog?.alive) {
+    const watchdogDead = await killTreeAndWait(watchdog.pid);
     if (!watchdogDead) {
-      stdout.write(`✗ fleet watchdog pid=${watchdogIdentity.pid} survived termination; stop remains armed.\n`);
-      return { status: "timeout", pid: watchdogIdentity.pid };
+      stdout.write(`✗ fleet watchdog pid=${watchdog.pid} survived termination; stop remains armed.\n`);
+      return { status: "timeout", pid: watchdog.pid };
     }
   }
   await rm(paths.supervisorWatchdogPidPath, { force: true });
@@ -316,22 +316,25 @@ export async function stopFleet(
     }
     return result;
   };
-  const liveSupervisor = await discoverLiveSupervisorPid(stateAfk, isLivePid, { fleet: paths.fleet });
-  if (!liveSupervisor) {
+  // The single anchor names the supervisor to stop. `status: none` is now only
+  // reachable when NO anchor names one — never while a lane is visibly ticking.
+  const liveSupervisor = await readSupervisorLiveness(stateAfk, { fleet: paths.fleet });
+  if (!liveSupervisor.alive) {
     const supervisor = await reapStaleSupervisorState(stateAfk, isLivePid);
     if (supervisor.status === "stale" && supervisor.pid !== undefined) {
       stdout.write(`no fleet running (reason=dead supervisor pid; stale files cleaned).\n`);
-      return { status: "stale", ...(supervisor.pid !== undefined ? { pid: supervisor.pid } : {}) };
+      return { status: "stale", pid: supervisor.pid, anchor: "none" };
     }
     stdout.write("no fleet running (reason=no supervisor pid).\n");
-    return { status: "none" };
+    return { status: "none", anchor: "none" };
   }
   const pid = liveSupervisor.pid;
+  const anchor = liveSupervisor.anchor;
   if (options.force) {
     const dead = await killTreeAndWait(pid);
     if (!dead) {
       stdout.write(`✗ supervisor pid=${pid} survived forced termination; stop remains armed.\n`);
-      return { status: "timeout", pid };
+      return { status: "timeout", pid, anchor };
     }
     await rm(pidFile, { force: true });
     await rm(paths.supervisorPidStartPath, { force: true });
@@ -343,17 +346,21 @@ export async function stopFleet(
       stdout.write(
         `✗ fleet-attributed worker pid=${survivor} survived forced termination.\n`,
       );
-      return { status: "timeout", pid: survivor };
+      return { status: "timeout", pid: survivor, anchor };
     }
-    stdout.write(`🛑 fleet stopped (reason=forced teardown; supervisor pid=${pid} killed).\n`);
-    return { status: "stopped", pid };
+    stdout.write(
+      `🛑 fleet stopped (reason=forced teardown; supervisor pid=${pid} killed; anchor=${anchor}).\n`,
+    );
+    return { status: "stopped", pid, anchor };
   }
 
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     if (!isLivePid(pid)) {
-      stdout.write(`🛑 fleet stopped (reason=operator stop requested; supervisor pid=${pid} exited).\n`);
-      return { status: "stopped", pid };
+      stdout.write(
+        `🛑 fleet stopped (reason=operator stop requested; supervisor pid=${pid} exited; anchor=${anchor}).\n`,
+      );
+      return { status: "stopped", pid, anchor };
     }
     await sleep(1_000);
   }
@@ -361,7 +368,7 @@ export async function stopFleet(
   stdout.write(
     `warn: supervisor pid=${pid} did not exit within 30s of the stop file; stop remains armed (use --force for hard teardown).\n`,
   );
-  return { status: "timeout", pid };
+  return { status: "timeout", pid, anchor };
 }
 
 export interface FleetStatusResult {
@@ -621,20 +628,23 @@ export async function statusFleet(
   const paths = afkPaths(root, fleetName);
   const io = buildWatchdogIO(root, stdout, paths.fleet);
   const liveness = await io.liveness();
-  const liveSupervisor = await discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid, { fleet: paths.fleet });
-  if (liveSupervisor) {
-    liveness.pid = liveSupervisor.pid;
-    liveness.pidAlive = true;
-  }
   const cfg = resolveSupervisorConfig();
   const now = Math.floor(Date.now() / 1000);
+  const supervisor = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
+    fleet: paths.fleet,
+    heartbeatEpoch: liveness.lastHeartbeatEpoch,
+    staleAfterS: cfg.supervisorStaleS,
+    nowS: now,
+  });
+  liveness.pid = supervisor.alive ? supervisor.pid : liveness.pid;
+  liveness.pidAlive = supervisor.alive;
   const health = classifySupervisor(liveness, now, cfg.supervisorStaleS, cfg.progressStaleS);
   const repo = await resolveRepoSlug(root).catch(() => "");
   const inputs = await collectMonitorInputs(root, repo);
   const fleet = inputs.fleet;
   const latestBundleVersion = fleet?.latestBundleVersion || readBuildInfo("dev").version;
   const liveWorkers = inputs.workers.filter((w) => w.pidLive === true || w.live);
-  const heartbeatAgeS = liveness.lastHeartbeatEpoch !== null ? now - liveness.lastHeartbeatEpoch : -1;
+  const heartbeatAgeS = supervisor.heartbeat.age_s;
 
   // A dead supervisor with ready-for-agent work and fewer live workers than the
   // target is what the watchdog would respawn — surface it so an operator who
@@ -646,8 +656,8 @@ export async function statusFleet(
 
   const report = {
     supervisor: {
-      pid: liveness.pid ?? 0,
-      alive: liveness.pidAlive,
+      pid: supervisor.pid,
+      alive: supervisor.alive,
       health,
       runner: fleet?.runner ?? "",
       target: fleet?.target ?? fleet?.slotsTotal ?? 0,
@@ -659,7 +669,8 @@ export async function statusFleet(
         fleet.bundleVersion !== latestBundleVersion
       )),
       heartbeat_age_s: heartbeatAgeS,
-      identity_anchor: liveSupervisor?.source ?? "none",
+      identity_anchor: supervisor.anchor,
+      heartbeat: { ...publishSupervisorLiveness(supervisor).heartbeat },
       would_respawn: wouldRespawn,
     },
     slots: {
