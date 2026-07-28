@@ -180,7 +180,10 @@ export function startLaneIdleReaper(opts: LaneIdleReaperOptions): {
     // cross-check into a single verdict. A null probe result means the worker is
     // between iterations — not a candidate.
     const lv = opts.livenessVerdict();
-    const stalled = lv !== null && lv.status === "stalled";
+    // `capped` (#2701) is the wall-clock ceiling firing on an attempt that is
+    // still working — a different verdict, but the same solo escalation: the run
+    // must still be aborted, or the ceiling would only bind in fleet mode.
+    const stalled = lv !== null && (lv.status === "stalled" || lv.status === "capped");
 
     // Lane idle duration from the evaluator's laneAgeMs (ms → s). When
     // laneAgeMs is absent (lane never written), fall back to worker age so a
