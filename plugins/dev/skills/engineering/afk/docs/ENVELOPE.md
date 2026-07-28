@@ -31,6 +31,7 @@ Attempt Outcome is the runtime's terminal vocabulary. It owns the typed `blocked
 | `exhausted` | `blocked` | `blocked:quota` | `quota` |
 | `runner-transient` | `blocked` | `blocked:runner-transient` | `runner-transient` |
 | `stalled` | `blocked` | `blocked:stalled` | none |
+| `wall-clock-capped` | `wall-clock-capped` | `blocked:wall-clock-capped` | none (the supervisor owns the bounded re-queue) |
 | `infra` | `blocked` | `blocked:infra` | none |
 | `claim-lost` | `blocked` | none | none |
 
