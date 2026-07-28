@@ -53,6 +53,7 @@ export {
   buildCrashEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
+  buildWallClockCapEnvelope,
   decideCrashReconcile,
   reconcileDeadWorkerClaim,
 } from "./supervisor/envelopes.js";
@@ -64,6 +65,7 @@ export {
   resolveReapContest,
   sweepParkedSlot,
   type ReapContestResolution,
+  type ReapOptions,
 } from "./supervisor/reaper.js";
 export {
   dispatchReconcileIfPossible,
