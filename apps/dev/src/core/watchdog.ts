@@ -67,6 +67,14 @@ export interface WatchdogIO {
    * being removed between teardown and a successful replacement boot. */
   isRecoveryPending?(): Promise<boolean>;
   setRecoveryPending?(pending: boolean): Promise<void>;
+  /**
+   * True once an explicit `fleet stop` has been requested for this fleet (#2714).
+   * Read at the single decision point every recovery path passes through, so a
+   * stop landing mid-pass still cannot be undone by a relaunch already in flight.
+   * Best-effort: an unreadable sentinel reads as "no stop requested", which only
+   * restores the pre-#2714 behaviour. Absent → the guard is inert (back-compat).
+   */
+  isStopRequested?(): Promise<boolean>;
   /** Loud, structured progress line (best-effort). */
   log(line: string): void;
 }
@@ -165,6 +173,10 @@ export interface WatchdogResult {
   /** True when the crashloop circuit breaker (#2527) is open, so the net refused
    * to respawn into a configuration proven to kill every boot identically. */
   bootBreakerSuppressed?: boolean;
+  /** True when this pass refused to recover because an explicit `fleet stop` was
+   * requested (#2714). A stop is terminal: the surface that owns teardown also
+   * owns the decision to run again. */
+  stopRequested?: boolean;
 }
 
 export interface SupervisorWatchdogLoopOptions {
@@ -274,6 +286,25 @@ export async function runWatchdog(
   if (health === "healthy") {
     if (await io.isRecoveryPending?.()) await io.setRecoveryPending?.(false);
     return base;
+  }
+
+  // An explicit stop is TERMINAL (#2714). One guard for every recovery path
+  // below, read here rather than per-path, so no route — quiescent teardown,
+  // pending-recovery retry, or the dead-supervisor net — can resurrect a fleet
+  // the operator just stopped. Without it a stop and a self-heal fight: the
+  // healer respawns what the stop cannot then see, and the fleet is unkillable.
+  let stopRequested = false;
+  try {
+    stopRequested = (await io.isStopRequested?.()) === true;
+  } catch {
+    // best-effort: an unreadable sentinel must not disarm recovery entirely.
+  }
+  if (stopRequested) {
+    io.log(
+      `watchdog: fleet stop requested — NOT recovering supervisor pid=${liveness.pid ?? "?"} ` +
+        `(health=${health}). Relaunch the fleet explicitly to resume.`,
+    );
+    return { ...base, stopRequested: true };
   }
 
   if (health === "absent") {

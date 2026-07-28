@@ -186,6 +186,36 @@ export async function discoverLiveSupervisorPid(
   return null;
 }
 
+/**
+ * The last-resort identity for a FORCED teardown (#2714): any supervisor pid
+ * this lane recorded that is still alive, accepted WITHOUT the process-start
+ * proof {@link discoverLiveSupervisorPid} demands. A lock that lost its start
+ * sidecar, or a snapshot too old to vouch for itself, is exactly the state in
+ * which strict discovery answers "no fleet running" about a process the operator
+ * can see — and then has to kill by pid. `--force` is the operator's explicit
+ * "I accept the weaker proof"; every other caller must keep the strict reader,
+ * because an unpinned pid cannot rule out reuse by an unrelated process.
+ */
+export async function readRecordedLiveSupervisorPid(
+  supervisorRuntimeDir: string,
+  isLivePid: (pid: number) => boolean = defaultIsLivePid,
+): Promise<SupervisorPidDiscovery | null> {
+  const pidFile = join(supervisorRuntimeDir, "afk-supervisor.pid");
+  const pid = await readSupervisorPid(pidFile);
+  if (pid !== null && isLivePid(pid)) {
+    return { pid, source: "pid-file", path: pidFile };
+  }
+  const anchor = await readFleetStateAnchor(supervisorRuntimeDir);
+  if (anchor !== null && isLivePid(anchor.pid)) {
+    return {
+      pid: anchor.pid,
+      source: "fleet-state",
+      path: join(supervisorRuntimeDir, "state.toon"),
+    };
+  }
+  return null;
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await access(path, constants.F_OK);
