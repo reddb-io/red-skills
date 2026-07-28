@@ -273,6 +273,51 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
+  // An unmeasured version and a measured match are different answers; reporting
+  // both as `version_skew: 0` is what hid the boot-killing gap (#2752).
+  it("statusFleet reports an unknown bundle version instead of hiding it as no-skew (#2752)", async () => {
+    const root = scratch();
+    try {
+      const paths = afkPaths(root);
+      const epoch = Math.floor(Date.now() / 1000);
+      mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
+      writeFileSync(paths.supervisorPidPath, "12345", "utf8");
+      writeFileSync(paths.supervisorPidStartPath, "start-12345", "utf8");
+      writeFileSync(
+        paths.fleetStatePath,
+        JSON.stringify({
+          epoch,
+          last_progress_epoch: epoch,
+          runner: "claude",
+          ready_for_agent: 0,
+          slots: { busy: 0, free: 3, total: 3, parked: 0 },
+        }),
+        "utf8",
+      );
+      vi.mocked(isLivePid).mockImplementation((pid) => pid === 12345);
+      const writes: string[] = [];
+      const out = {
+        write: vi.fn((s: string) => {
+          writes.push(s);
+          return true;
+        }),
+      } as unknown as NodeJS.WritableStream;
+
+      await statusFleet(root, out);
+
+      const report = decode(writes.join("")) as {
+        supervisor: { bundle_version: string; version_unknown: number; version_skew: number };
+      };
+      expect(report.supervisor).toMatchObject({
+        bundle_version: "",
+        version_unknown: 1,
+        version_skew: 0,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("statusFleet discovers a live supervisor from the structured lane and calls out bundle skew (#2204)", async () => {
     const root = scratch();
     const priorCacheDir = process.env.RED_SKILLS_CACHE_DIR;
