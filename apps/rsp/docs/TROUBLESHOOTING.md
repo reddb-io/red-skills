@@ -2,6 +2,45 @@
 
 Use this reference when rsp hook routing, resident service behavior, or elision storage looks silent, stale, or unbounded. Follow the `write-a-skill` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
+**Diagnose the resident first.** The resident is the core and the CLI, the wrappers, the pre-exec hook, the proxy, and the MCP server are peer clients of it (ADR 0126) — one unreachable resident makes every surface look independently broken. Start at `## Resident unreachable`; only once the resident answers is a surface-specific symptom (hook silence, store growth) worth chasing.
+
+## Resident unreachable
+
+### Symptom
+
+Every rsp surface degrades at once: wrappers print raw command output with no summary, `rsp stats` and the bare dashboard show nothing, the hook records `failed-open` or stays silent, and the MCP tools return uncompressed payloads. Nothing errors — that is the fail-open guarantee working, not a second bug.
+
+### Confirm
+
+Separate a resident that **never started** from one whose socket is registered but dead:
+
+```bash
+rsp status
+rsp server
+```
+
+`rsp status` reads the PID registry and reports the resident as registered-and-reachable, registered-but-stale, or absent. **Absent** means the resident never started: auto-spawn was blocked (repo not opted into `rsp.enabled`, no writable `.red/state/rsp`, or the binary could not fork), and there is no socket to connect to. **Stale** means a registry entry and socket path exist but the process behind them is gone or wedged — a stale socket, where clients connect and get nothing. A foreground `rsp server` run makes the difference explicit: it either accepts requests, or prints the spawn failure that auto-spawn was swallowing.
+
+### Recover
+
+For an absent resident, fix the reason auto-spawn could not run — confirm `.red/config.yaml` sets `rsp.enabled: true` and that `.red/state/rsp` is writable — then re-run any rsp command; the first client call spawns the resident. For a stale socket, stop the registered resident and let the next rsp command start a fresh process; do not delete `.red/state/red-skills.rdb`, which also carries unrelated repo state.
+
+While the resident is down, every surface stays usable because it fails open. The exact observable behaviour, surface by surface:
+
+| Surface | Behaviour with no reachable resident |
+| --- | --- |
+| Wrappers and `rsp proxy` | Run the raw command and hand back its stdout, stderr, and exit status verbatim; the proxy records the decision as `failed-open`. |
+| Pre-exec hook | Wakes the resident and passes the command through unrewritten for that invocation; the next command can use the wrapper. |
+| `rsp stats`, bare `rsp` dashboard | Degrade to the empty snapshot rather than erroring. |
+| `rsp wait` | Keeps its spooled bytes instead of minting an `el:<id>` handle nothing can recover; the verdict and exit code are unaffected. |
+| MCP tools (`rsp_compress`, `rsp_show`, …) | Each returns the payload it was handed, uncompressed. |
+
+An unreachable resident **costs the elision, never the command** — if a command result is lost or an exit status changes, that is a defect to report, not fail-open.
+
+### Root fix
+
+`rsp status` should classify absent, stale, and unreachable-but-live in one actionable line so this manual split is unnecessary; the resident-health reporting work is tracked by #1731.
+
 ## Hook silence
 
 ### Symptom
