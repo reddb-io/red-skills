@@ -175,9 +175,12 @@ export function allowlistExternalWidened(oldContent: string, newContent: string)
  * The gate's stages, in CHEAP → EXPENSIVE order.
  *
  * `feedback` is the package test/typecheck/lint suite; `backpressure` is the
- * operator's extra commands. Later stages do not run once an earlier one blocks.
+ * operator's extra commands; `review` is the diff review, last because it is
+ * the most expensive. Later stages do not run once an earlier one blocks, and a
+ * stage with nothing to run is skipped rather than failed — so a review that
+ * cannot run degrades the gate instead of blocking the attempt.
  */
-export const GATE_STAGE_ORDER = ["feedback", "backpressure"] as const;
+export const GATE_STAGE_ORDER = ["feedback", "backpressure", "review"] as const;
 
 export type GateStage = (typeof GATE_STAGE_ORDER)[number];
 

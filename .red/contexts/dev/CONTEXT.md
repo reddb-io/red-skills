@@ -203,7 +203,7 @@ An entry in `DELETED_CONFIG_KEYS` naming a config key that USED to mean somethin
 _Avoid_: deprecated key (a tombstoned key does not still work), unknown key
 
 **Gate stage order**:
-The gate's stages in cheap → expensive order — trust, feedback, backpressure (ADR 0119). `gateVerdict` folds stage outcomes into one `ok` naming the earliest blocker, so a diff that can never auto-land is refused before the package suite runs.
+The gate's stages in cheap → expensive order — feedback, backpressure, review (ADR 0119; the `trust` stage went with the sensitive-path removal in #2417). `gateVerdict` folds stage outcomes into one `ok` naming the earliest blocker, so a later stage never runs once an earlier one blocked, and a stage with nothing to run is skipped rather than failed.
 _Avoid_: validation order (the gate stages are not the suite's internal order), pipeline stage
 
 **State tier**:

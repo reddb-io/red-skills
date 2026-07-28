@@ -138,7 +138,7 @@ describe("default = intent boundary", () => {
 
 describe("gateVerdict — one verdict, cheap stage first", () => {
   it("orders the stages cheap → expensive", () => {
-    expect(GATE_STAGE_ORDER).toEqual(["feedback", "backpressure"]);
+    expect(GATE_STAGE_ORDER).toEqual(["feedback", "backpressure", "review"]);
   });
 
   it("is green when every stage passed", () => {
@@ -171,5 +171,34 @@ describe("gateVerdict — one verdict, cheap stage first", () => {
   it("folds the stages run so far — a partial gate is still one verdict", () => {
     expect(gateVerdict([{ stage: "feedback", ok: true }])).toEqual({ ok: true });
     expect(gateVerdict([]).ok).toBe(true);
+  });
+
+  it("names review as the failed stage when the review blocks", () => {
+    const verdict = gateVerdict([
+      { stage: "feedback", ok: true },
+      { stage: "backpressure", ok: true },
+      { stage: "review", ok: false },
+    ]);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.failedStage).toBe("review");
+  });
+
+  it("a review marked skipped never blocks — it degrades, it does not fail", () => {
+    expect(
+      gateVerdict([
+        { stage: "feedback", ok: true },
+        { stage: "backpressure", ok: true },
+        { stage: "review", ok: false, skipped: true },
+      ]),
+    ).toEqual({ ok: true });
+  });
+
+  it("does not consult review once an earlier stage blocked", () => {
+    const verdict = gateVerdict([
+      { stage: "review", ok: false },
+      { stage: "backpressure", ok: false },
+      { stage: "feedback", ok: false },
+    ]);
+    expect(verdict.failedStage).toBe("feedback");
   });
 });
