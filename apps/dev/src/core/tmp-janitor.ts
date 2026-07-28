@@ -19,6 +19,18 @@
 // Unknown dirs or files at the tmp root are REPORTED and LEFT UNTOUCHED. The
 // janitor never deletes outside its known lanes.
 
+import { isAbsolute, relative, resolve, sep } from "node:path";
+
+/**
+ * Whether a path lies strictly inside a tmp tier. An ATTEMPT RECORD may name any
+ * path at all, so every record-keyed removal is gated on this: a record naming a
+ * path outside `.red/tmp/` is reported and refused, never obeyed.
+ */
+export function pathIsInsideTmp(tmpDir: string, path: string): boolean {
+  const rel = relative(resolve(tmpDir), resolve(path));
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
 // ---------- TTL constants (ADR 0098 §3) ----------
 
 /** Short TTL for session log date-dirs under tmp/logs/<yyyy-mm-dd>/. */
@@ -287,6 +299,15 @@ export interface WorkerDirIssueState {
 export interface WorkerDirJanitorEntry {
   path: string;
   workerPidLive: boolean;
+  /**
+   * Whether an ATTEMPT RECORD for this worker is still open (ADR 0128). This is
+   * the record's own liveness verdict, and it is a veto: a worker the record
+   * calls live is spared whether or not a `worker.pid` file exists. Keying on
+   * the pid file alone is what deleted a live lane and kept the dead ones
+   * (#2679). `undefined` means the record lane says nothing about this worker,
+   * so the pid/issue rule below decides on its own.
+   */
+  attemptLive?: boolean;
   issues: readonly WorkerDirIssueState[];
 }
 
@@ -295,15 +316,18 @@ export interface WorkerDirJanitorPlan {
   spare: WorkerDirJanitorEntry[];
 }
 
-/** Plan dead-worker-dir cleanup. A worker dir is reclaimable only when its
- * worker.pid is not live, it has at least one issue-bearing attempt, and every
- * issue represented by the worker dir is known closed. */
+/** Plan dead-worker-dir cleanup. A worker dir whose attempt record is still
+ * open is ALWAYS spared. Otherwise it is reclaimable only when its worker.pid
+ * is not live, it has at least one issue-bearing attempt, and every issue
+ * represented by the worker dir is known closed. */
 export function planWorkerDirJanitor(entries: readonly WorkerDirJanitorEntry[]): WorkerDirJanitorPlan {
   const reclaim: WorkerDirJanitorEntry[] = [];
   const spare: WorkerDirJanitorEntry[] = [];
   for (const entry of entries) {
     const issues = entry.issues;
-    if (!entry.workerPidLive && issues.length > 0 && issues.every((issue) => issue.state === "CLOSED")) {
+    if (entry.attemptLive === true) {
+      spare.push(entry);
+    } else if (!entry.workerPidLive && issues.length > 0 && issues.every((issue) => issue.state === "CLOSED")) {
       reclaim.push(entry);
     } else {
       spare.push(entry);

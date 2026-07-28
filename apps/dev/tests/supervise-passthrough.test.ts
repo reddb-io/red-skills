@@ -198,6 +198,9 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
         orphanTestRunners: [],
         protectedLiveWorkers: [],
         protectedLiveFeedback: [],
+        attemptWorkspaces: [],
+        protectedLiveAttempts: [],
+        refusedOutsideTmp: [],
         removals: [
           {
             path: ".red/tmp/worktrees/feedback/afk-wDEAD-2450-gate",
