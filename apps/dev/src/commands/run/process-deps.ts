@@ -9,11 +9,9 @@ import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
 import { workerPidFile } from "../../core/worker-paths.js";
 import { makeClaimLock } from "./claim-lease.js";
 import { Output } from "@reddb-io/red-castle";
-import * as ghx from "../../runtime/gh.js";
 import * as gitx from "../../runtime/git.js";
 import * as fsx from "../../runtime/fs.js";
 import type { GhContext } from "../../runtime/gh.js";
-import { buildReviewGh } from "../../runtime/review-gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
 import { getConfig, loadConfig, readBackpressure, readPostWorkerFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../../core/config.js";
@@ -24,10 +22,8 @@ import {
 } from "../../core/adversarial-review.js";
 import { defaultSandcastleDeps, DEFAULT_MAX_ITERATIONS } from "../../core/execution.js";
 import { resolveSandboxImageName } from "../../core/execution/sandbox-image.js";
-import { parseTrustPolicy, resolveActorTrust } from "../../core/trust-gate.js";
 import { resolveNotesLoopConfig } from "../../core/notes-loop.js";
 import { resolveOutputShapingConfig } from "../../core/output-shaping.js";
-import { buildHandoffEnrichment } from "../../core/handoff-enrichment.js";
 import {
   classifyIssue,
   resolveReviewGate,
@@ -35,20 +31,16 @@ import {
 } from "../../core/issue-classifier.js";
 import { toAgentRunner } from "../../core/runner-spec.js";
 import { LABEL_READY_FOR_REVIEW } from "../../core/triage-labels.js";
-import { resolveHooks } from "../../core/hook-config.js";
 import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/red-castle/engine";
-import { lookupPrevFailureContext } from "../../core/prev-failure.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { configFile } from "@reddb-io/shared/red-paths.js";
 import { spawn } from "node:child_process";
 import { claudeSpawnArgs, codexSpawnArgs } from "../../core/runner-spawn.js";
 import { createLandLock } from "../../runtime/land-lock.js";
-import { branchLockPath, readLockedBranch, isLocked } from "../../runtime/lock.js";
-import { makeHookExec, makeHookResolveOptions, hookEnv } from "../../runtime/hooks.js";
-import { makeFeedbackWorktree, type FeedbackWorktree } from "../../runtime/feedback-worktree.js";
+import type { FeedbackWorktree } from "../../runtime/feedback-worktree.js";
 import { deathCauseForRecoveredWorker } from "../../core/process-safety.js";
 import { join } from "node:path";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
@@ -61,10 +53,17 @@ import { resolveImplementerPluginRoots } from "../../runtime/implementer-environ
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
 
+import type { CurrentAttempt } from "./attempt.js";
 import { deriveActivity } from "./activity.js";
 import { makeImplementerRunAgent } from "./implementer-run-agent.js";
 import { makeAgentConflictResolver, makeMechanicalConflictResolver } from "./reconcile.js";
 import { runLinkedSubagent } from "./linked-subagent.js";
+import { buildClaimGhPort, buildGhPort, buildReviewPorts } from "./ports/gh.js";
+import { buildGitPorts } from "./ports/git.js";
+import { buildFsPort } from "./ports/fs.js";
+import { buildHooks } from "./ports/hooks.js";
+import { buildEnvelopePort } from "./ports/envelope.js";
+import { buildLookups } from "./ports/lookups.js";
 import {
   castleWorktreeUnder,
   decodeLocMemoSnapshot,
@@ -80,21 +79,40 @@ export function parseSlot(val: string | undefined): number | undefined {
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
-export function buildProcessDeps(
-  ctx: RepoContext,
-  model: string,
-  sandbox: ReturnType<typeof resolveRunSettings>["sandbox"],
-  feedback: FeedbackWorktree,
-  current: CurrentAttempt,
-  fallbackRunner: boolean,
-  runner: Runner,
-  exec?: ExecFn,
-  maxIterations?: number,
-  laneIdle?: LaneIdleStallConfig,
-  inlineVerifyCommand?: string,
-  goVerifyRetries?: number,
+/** Everything `buildProcessDeps` needs, named. Replaces the 13 positional
+ * params the assembly used to take — a call site could silently swap two
+ * same-typed neighbours (model/workerId, inlineVerifyCommand/…) and typecheck. */
+export interface BuildProcessDepsOptions {
+  ctx: RepoContext;
+  model: string;
+  sandbox: ReturnType<typeof resolveRunSettings>["sandbox"];
+  feedback: FeedbackWorktree;
+  current: CurrentAttempt;
+  fallbackRunner: boolean;
+  runner: Runner;
+  exec?: ExecFn;
+  maxIterations?: number;
+  laneIdle?: LaneIdleStallConfig;
+  inlineVerifyCommand?: string;
+  goVerifyRetries?: number;
+  workerId?: string;
+}
+
+export function buildProcessDeps({
+  ctx,
+  model,
+  sandbox,
+  feedback,
+  current,
+  fallbackRunner,
+  runner,
+  exec,
+  maxIterations,
+  laneIdle,
+  inlineVerifyCommand,
+  goVerifyRetries,
   workerId = "unknown",
-): ProcessIssueDeps {
+}: BuildProcessDepsOptions): ProcessIssueDeps {
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec, ghProbeTimeoutMs: LANDING_GH_PROBE_TIMEOUT_MS };
   const paths = afkPaths(ctx.root);
@@ -103,7 +121,6 @@ export function buildProcessDeps(
     workerId,
     attemptDir: () => current.attemptDir,
   });
-  const lockPath = branchLockPath(ctx.root);
   // Per-agentic-iteration boundary tracking (observability): when sandcastle's
   // re-invocation count (event.iteration) ticks, emit "iteration N ended/started"
   // markers. Reset per attempt — a new attempt's run restarts at iteration 1
@@ -140,8 +157,6 @@ export function buildProcessDeps(
     repoRoot: ctx.root,
     env: process.env,
   });
-  // Trust policy for the guidance-channel source-trust projection (issue #1100).
-  const trustPolicy = parseTrustPolicy(config);
   // Repo-level container image for the isolation path (#2340) — resolved off the
   // repo root, never off the per-attempt worktree, so the tag is prebuildable.
   const sandboxImage = resolveSandboxImageName({
@@ -149,10 +164,6 @@ export function buildProcessDeps(
     configured: getConfig(config, "afk.sandbox_image"),
     envOverride: process.env.RED_AFK_SANDBOX_IMAGE,
   });
-  const resolveOptions = makeHookResolveOptions(ctx.root);
-  // resolveHooks runs once here to surface a malformed-hook-name error early;
-  // process-issue re-resolves per run from the same config + options.
-  resolveHooks(config, resolveOptions);
 
   // Merge-gate policy (ADR 0048). Default off → the unlocked admin-merge ignores
   // advisory review checks (drift-guard + in-process backpressure stay the
@@ -254,63 +265,8 @@ export function buildProcessDeps(
       : backpressureCommands;
 
   return {
-    gh: {
-      viewLabels: (issue) => ghx.viewLabels(ghCtx, issue),
-      editLabels: (issue, remove, add) => ghx.editLabels(ghCtx, issue, remove, add),
-      ensureLabel: async (name) => {
-        try {
-          await ghx.ensureLabel(ghCtx, name);
-        } catch {
-          // best-effort: a missing typed label must never fail the close.
-        }
-      },
-      comment: (issue, body) => ghx.comment(ghCtx, issue, body),
-      editBody: (issue, body) => ghx.editBody(ghCtx, issue, body),
-      close: (issue) => ghx.closeIssue(ghCtx, issue),
-      listByLabel: (label) => ghx.listByLabel(ghCtx, label),
-      issueClosed: (n) => ghx.issueClosed(ghCtx, n),
-      issueReference: (n) => ghx.issueReference(ghCtx, n),
-      // Trust-gate provenance (#621): author + promoter label actor, read from the
-      // issue timeline. The promoter label is the LANE the claim was selected under
-      // (`ready-for-agent`, `lane:go`, `lane:scout`) so a /go/scout issue resolves its
-      // maintainer minter, not an absent `ready-for-agent` actor (#2602, #1101).
-      issueTrust: (issue, promoterLabel) => ghx.issueTrust(ghCtx, issue, promoterLabel),
-      // Repository visibility (#1101): folds into the trust policy so a PUBLIC
-      // repo with no allowlist fails closed while a private one stays permissive.
-      repoVisibility: () => ghx.repoVisibility(ghCtx),
-      // Dynamic-base trust signals (write-access / CODEOWNERS) for the fail-closed author + promoter check (#1101, reusing #747).
-      actorTrustSignals: (actor) => ghx.actorTrustSignals(ghCtx, actor),
-      externalApprovalActors: (issue) => ghx.externalApprovalActors(ghCtx, issue), // /approve-external authors, trust-resolved on claim (#2603)
-      // HITL decision card (#935, S11a): post/update the card on escalation.
-      // Best-effort: errors are caught in routeRecovery so they never block
-      // the recovery path. Runs in the worktree root so gh resolves the repo.
-      renderDecisionCard: async (issue) => {
-        const { hitlCardCommand } = await import("../hitl-card.js");
-        await hitlCardCommand(["render", `--issue=${issue}`, `--root=${ctx.root}`]);
-      },
-    },
-    claimGh: {
-      // ADR 0066: the atomic GitHub-native claim arbiter. Numeric comment ids
-      // (via `gh api`) are the cross-host total order.
-      postClaim: (issue, body) => ghx.postClaimComment(ghCtx, issue, body),
-      listClaims: (issue) => ghx.listClaimComments(ghCtx, issue),
-      concede: async (issue, body) => {
-        try {
-          await ghx.postClaimComment(ghCtx, issue, body);
-        } catch {
-          // best-effort: a failed concede ages out via the staleness predicate.
-        }
-      },
-      // One human-visible audit comment when we recover a stale cross-host claim
-      // (#627). Best-effort: a failed audit never abandons the won claim.
-      audit: async (issue, body) => {
-        try {
-          await ghx.comment(ghCtx, issue, body);
-        } catch {
-          // best-effort observability; the claim is already won.
-        }
-      },
-    },
+    gh: buildGhPort(ghCtx),
+    claimGh: buildClaimGhPort(ghCtx),
     // Cross-host stale-claim recovery (#627, ADR 0066): a claim whose owner
     // stopped refreshing past `cadence × (tolerance + 1)` is presumed dead and
     // released by this sweep. The clock is sampled once per issue at deps build;
@@ -327,31 +283,8 @@ export function buildProcessDeps(
     recoveredWorkerDeathCause: (recoveredWorker) =>
       deathCauseForRecoveredWorker(paths.tmpDir, recoveredWorker, hostFingerprintPrefix()),
     claimLock: makeClaimLock(paths.tmpDir, workerId),
-    fs: {
-      ensureAttemptDir: (dir) => fsx.ensureDir(dir),
-      writeHandoff: (path, content) => fsx.writeHandoff(path, content),
-      readText: (path) => fsx.readText(path),
-      // $ITER_DIR/validation.jsonl — the machine-readable feedback sidecar the
-      // Memory bridge consumes (SKILL.md §Validation Sidecar).
-      writeValidationSidecar: (path, lines) => fsx.writeValidationSidecar(path, lines),
-      completionSweep: (issue) => fsx.completionSweep(paths.workersRoot, issue),
-    },
-    git: {
-      headShortSha: () => gitx.headShortSha(gitCtx),
-      deleteLocalBranch: (branch) => gitx.deleteLocalBranch(gitCtx, branch),
-      // Make the resolved base ref current before sandcastle forks off it
-      // (ADR 0031/#1380). Online workers fork from freshly-fetched
-      // origin/<base>; offline workers may use the local base only when it is not
-      // behind the last-known origin tip.
-      resolveFreshBase: (input) => gitx.resolveFreshBase(gitCtx, input),
-      fetchBase: async (base) => {
-        await gitx.gitExec(gitCtx)(["fetch", ctx.remote, base]);
-      },
-      prepareFreshWorkerBranch: (input) =>
-        gitx.prepareFreshWorkerBranch(gitCtx, { ...input, remote: ctx.remote }),
-    },
-    mergeExec: gitx.mergeExec(gitCtx),
-    remoteGit: gitx.gitExec(gitCtx),
+    fs: buildFsPort(paths),
+    ...buildGitPorts(gitCtx, ctx.remote),
     // ADR 0103: no exit-time salvage and no exit receipt. Work reaches origin as
     // the agent commits (the continuous-push hook, issue #191); a worktree still
     // dirty when the worker exits is disposable, and the terminal Envelope plus
@@ -366,19 +299,9 @@ export function buildProcessDeps(
     backpressure: feedback.backpressure,
     backpressureCommands: mergedBackpressureCommands,
     outputShaping,
-    // Non-blocking backpressure evidence review (#1279): render the executed
-    // backpressure checks as ONE aggregated `event: COMMENT` review on the PR.
-    // Reuses ReviewGh.postReview (COMMENT-only, no APPROVE/REQUEST_CHANGES) with
-    // no inline comments — purely a top-level evidence ledger. Observability only;
-    // it never touches the merge/park decision.
-    postBackpressureReview: (pr, body) =>
-      buildReviewGh(ghCtx).postReview(pr, { summary: body, comments: [] }),
+    ...buildReviewPorts(ghCtx),
     adversarialReview,
     extractAdversarialReview,
-    postAdversarialReview: async ({ pr, issue, body }) => {
-      await buildReviewGh(ghCtx).comment(pr, body);
-      await ghx.comment(ghCtx, issue, body);
-    },
     goVerifyRetries,
     stallConvergenceBudget: (() => {
       const raw = getConfig(config, "afk.stallConvergenceBudget");
@@ -539,114 +462,15 @@ export function buildProcessDeps(
       return added.ok ? dest : null;
     },
     removeRebaseWorktree: (dir: string) => gitx.worktreeRemove(gitCtx, dir),
-    hooks: {
+    hooks: buildHooks({
       config,
-      resolveOptions,
-      exec: makeHookExec(ctx.root),
-      env: hookEnv(ctx.repo, ctx.root, parseSlot(process.env.RED_AFK_SLOT), runner),
-    },
-    lookups: {
-      base: {
-        readLockedBranch: () => readLockedBranch(lockPath),
-        configLockedBranch: getConfig(config, "dev.lock.branch") || undefined,
-        configTrunk:
-          (process.env.RED_AFK_TRUNK ?? "").trim() ||
-          getConfig(config, "dev.trunk") ||
-          undefined,
-        fetchIssueBody: (n) => ghx.issueBody(ghCtx, n),
-      },
-      isLocked: () => isLocked(lockPath),
-      // Source-trust classification for the guidance channel (issue #1100): each
-      // comment's author is resolved through the `resolveActorTrust` primitive so
-      // only a trusted-source directive can become authoritative `<human-guidance>`.
-      comments: (issue) =>
-        ghx.issueComments(ghCtx, issue, (actor) =>
-          resolveActorTrust(trustPolicy, actor, (login) => ghx.actorTrustSignals(ghCtx, login)),
-        ),
-      issueUrl: (issue) => ghx.issueUrl(ghCtx, issue),
-      // The ONE ADR 0103 carry-forward: on an automatic re-queue, surface the
-      // previous failure reason + its Envelope reference in the next prompt.
-      prevFailureContext: (issue) => lookupPrevFailureContext(paths.tmpDir, issue),
-      handoffEnrichment: ({ issue: _issue, ...metadata }) =>
-        buildHandoffEnrichment(metadata, {
-          readText: (path) => readFile(join(ctx.root, path), "utf8"),
-          gitLog: async (paths) => {
-            if (paths.length === 0) return "";
-            const run = exec ?? execTool;
-            const result = await run(
-              "git",
-              ["log", "-n", "24", "--format=%H%x1f%s%x1f%b%x1e", "--", ...paths],
-              { cwd: ctx.root, timeoutMs: 5_000, maxBuffer: 512 * 1024 },
-            );
-            return result.code === 0 ? result.stdout : "";
-          },
-        }),
-      changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
-      diffstat: (branch, base) => gitx.diffstat(gitCtx, branch, base),
-      // FIX E: confirm the sandcastle worker branch actually landed on the host
-      // before the merge gate. Try once, fetch on a miss, then re-check — a still
-      // -absent branch escalates instead of silently bypassing feedback.
-      branchPresent: async (branch) => {
-        if (await gitx.branchExists(gitCtx, branch)) return true;
-        await gitx.fetchBranch(gitCtx, branch);
-        return gitx.branchExists(gitCtx, branch);
-      },
-      // Goal predicate own-merge signal (ADR 0057): true iff the worker branch
-      // already landed in <base>, distinguishing own-merge close (done) from a
-      // foreign close (claim-lost) when the guard observes the issue CLOSED.
-      branchMerged: (branch, base) => gitx.branchMergedInto(gitCtx, branch, base),
-      // Branch-resume discovery (issue #2397): list all remote afk/* refs so the
-      // lifecycle can detect a prior pushed branch and resume instead of rebuilding.
-      discoverBranches: () => gitx.listRemoteBranches(gitCtx, "afk/"),
-      // Attempt-adoption sanity check (#2416): one cheap open-PR census before
-      // any agent run. The lifecycle owns exact body/head matching and adoption.
-      discoverOpenPullRequests: async () => {
-        const run = exec ?? execTool;
-        const result = await run(
-          "gh",
-          [
-            "pr",
-            "list",
-            "--repo",
-            ctx.repo,
-            "--state",
-            "open",
-            "--limit",
-            "100",
-            "--json",
-            "number,headRefName,body",
-          ],
-          { cwd: ctx.root },
-        );
-        if (result.code !== 0) return [];
-        try {
-          const rows = JSON.parse(result.stdout || "[]") as unknown;
-          if (!Array.isArray(rows)) return [];
-          return rows
-            .map((row) => row as { number?: unknown; headRefName?: unknown; body?: unknown })
-            .map((row) => ({
-              number: Number(row.number ?? 0),
-              headRefName: String(row.headRefName ?? ""),
-              body: typeof row.body === "string" ? row.body : undefined,
-            }))
-            .filter((row) => row.number > 0 && row.headRefName.length > 0);
-        } catch {
-          return [];
-        }
-      },
-    },
-    envelope: {
-      git: gitx.gitExec(gitCtx),
-      poster: async (issue, body) => {
-        await ghx.comment(ghCtx, issue, body);
-        return true;
-      },
-      // Markers/posted land in the CURRENT attempt dir, set per issue by
-      // buildProcessInput before each processIssue call.
-      writeMarkers: (markers) => fsx.writeFailureMarkers(current.attemptDir, markers),
-      writePosted: (posted) => fsx.writeEnvelopePosted(current.attemptDir, posted),
-      issueReference: (issue) => ghx.issueReference(ghCtx, issue),
-    },
+      root: ctx.root,
+      repo: ctx.repo,
+      runner,
+      slot: parseSlot(process.env.RED_AFK_SLOT),
+    }),
+    lookups: buildLookups({ ghCtx, gitCtx, paths, config, exec }),
+    envelope: buildEnvelopePort(ghCtx, gitCtx, current),
     nowEpoch: () => Math.floor(Date.now() / 1000),
     nowIso: () => new Date().toISOString(),
     // The per-iteration afk.log heartbeat boundary lives in the attempt dir.
@@ -1149,9 +973,4 @@ function findOnPath(bin: string, pathValue: string | undefined): string | undefi
   return undefined;
 }
 
-/** Per-issue mutable context the session-scoped process deps close over — the
- * attempt dir the envelope markers / iter-log write into. buildProcessInput
- * resets it before each processIssue call. */
-export interface CurrentAttempt {
-  attemptDir: string;
-}
+export type { CurrentAttempt } from "./attempt.js";

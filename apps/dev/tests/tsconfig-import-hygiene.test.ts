@@ -19,7 +19,6 @@ const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
   "src/commands/requeue.ts": 1,
   "src/commands/retake.ts": 1,
   "src/commands/route-model-tier.ts": 1,
-  "src/commands/run/process-deps.ts": 1,
   "src/commands/statusline.ts": 1,
   "src/core/dashboard.ts": 1,
   "src/core/process-issue/lifecycle.ts": 61,
