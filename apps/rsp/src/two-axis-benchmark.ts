@@ -1,11 +1,11 @@
-import { access, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decode, encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { encodingForModel } from "js-tiktoken";
 import { discoverFidelityFixtures, runFidelityFixture, type FidelityFixture } from "./fidelity.js";
-import { RspElisionStore } from "./elision-store.js";
+import { contentHandle } from "./elision-store.js";
+import type { RspMintStore } from "./git-wrapper.js";
 import { evaluateAdmission, type AdmissionFilterReport } from "./admission.js";
 
 export interface TwoAxisBenchmarkOptions {
@@ -238,48 +238,45 @@ export async function buildTwoAxisBenchmarkReport(options: TwoAxisBenchmarkOptio
   const headroomByName = new Map(headroom.fixtures.map((fixture) => [fixture.name, fixture]));
   const measurements: FixtureMeasurement[] = [];
   const endTaskCandidates: EndTaskCandidate[] = [];
-  const tempRoot = await mkdtemp(join(tmpdir(), "rsp-two-axis-store-"));
-  const store = await RspElisionStore.open({ uri: `file://${join(tempRoot, "red.rdb")}` });
-  try {
-    for (const fixture of fixtures) {
-      const rtkFixture = rtkByName.get(fixture.name);
-      const headroomFixture = headroomByName.get(fixture.name);
-      const brief = await runFidelityFixture(fixture, { level: "lossless", store });
-      const terse = await runFidelityFixture(fixture, { level: "terse", store });
-      endTaskCandidates.push(...buildEndTaskCandidates(fixture, brief.stdout.toString("utf8"), brief.oneLine === true));
-      const active = admissionByFilter.get(filterName(fixture))?.mode === "active";
-      const rawTokens = tokenCount(fixture.recorded.stdout);
-      const briefTokens = tokenCount(brief.stdout.toString("utf8"));
-      const terseTokens = tokenCount(terse.stdout.toString("utf8"));
-      measurements.push({
-        fixture,
-        filter: filterName(fixture),
-        rawDelta: 0,
-        rawFidelity: true,
-        briefDelta: brief.tokenDelta,
-        briefFidelity: sameExitClass(brief.status, fixture.recorded.status) && brief.assertionFailures.length === 0,
-        terseDelta: terse.tokenDelta,
-        terseFidelity: sameExitClass(terse.status, fixture.recorded.status) && terse.assertionFailures.length === 0,
-        rtkDelta: rtkFixture ? tokenDelta(fixture.recorded.stdout, rtkFixture.stdout) : undefined,
-        rtkFidelity: rtkFixture?.fidelity_assertions_passed,
-        headroomDelta: headroomFixture?.coverage === "covered" && typeof headroomFixture.stdout === "string"
-          ? tokenDelta(fixture.recorded.stdout, headroomFixture.stdout)
-          : undefined,
-        headroomFidelity: headroomFixture?.coverage === "covered" ? headroomFixture.fidelity_assertions_passed : undefined,
-        headroomNotCoveredReason: headroomFixture?.coverage === "not-covered" ? headroomFixture.not_covered_reason : undefined,
-        rawTokens,
-        rspTokens: active ? briefTokens : rawTokens,
-        terseTokens: active ? terseTokens : rawTokens,
-        rtkTokens: rtkFixture ? tokenCount(rtkFixture.stdout) : undefined,
-        headroomTokens: headroomFixture?.coverage === "covered" && typeof headroomFixture.stdout === "string"
-          ? tokenCount(headroomFixture.stdout)
-          : undefined,
-        oracleTokens: await oracleTokenCount(fixture),
-      });
-    }
-  } finally {
-    await store.close();
-    await rm(tempRoot, { recursive: true, force: true });
+  // The benchmark measures rendered tokens, not persistence: it replays recorded
+  // fixtures offline. Minting content-addressed handles in-process keeps it a
+  // pure measurement — no store to own, and no second opener of one (ADR 0126).
+  const store: RspMintStore = { mint: async (original, meta) => contentHandle(Buffer.from(original), meta) };
+  for (const fixture of fixtures) {
+    const rtkFixture = rtkByName.get(fixture.name);
+    const headroomFixture = headroomByName.get(fixture.name);
+    const brief = await runFidelityFixture(fixture, { level: "lossless", store });
+    const terse = await runFidelityFixture(fixture, { level: "terse", store });
+    endTaskCandidates.push(...buildEndTaskCandidates(fixture, brief.stdout.toString("utf8"), brief.oneLine === true));
+    const active = admissionByFilter.get(filterName(fixture))?.mode === "active";
+    const rawTokens = tokenCount(fixture.recorded.stdout);
+    const briefTokens = tokenCount(brief.stdout.toString("utf8"));
+    const terseTokens = tokenCount(terse.stdout.toString("utf8"));
+    measurements.push({
+      fixture,
+      filter: filterName(fixture),
+      rawDelta: 0,
+      rawFidelity: true,
+      briefDelta: brief.tokenDelta,
+      briefFidelity: sameExitClass(brief.status, fixture.recorded.status) && brief.assertionFailures.length === 0,
+      terseDelta: terse.tokenDelta,
+      terseFidelity: sameExitClass(terse.status, fixture.recorded.status) && terse.assertionFailures.length === 0,
+      rtkDelta: rtkFixture ? tokenDelta(fixture.recorded.stdout, rtkFixture.stdout) : undefined,
+      rtkFidelity: rtkFixture?.fidelity_assertions_passed,
+      headroomDelta: headroomFixture?.coverage === "covered" && typeof headroomFixture.stdout === "string"
+        ? tokenDelta(fixture.recorded.stdout, headroomFixture.stdout)
+        : undefined,
+      headroomFidelity: headroomFixture?.coverage === "covered" ? headroomFixture.fidelity_assertions_passed : undefined,
+      headroomNotCoveredReason: headroomFixture?.coverage === "not-covered" ? headroomFixture.not_covered_reason : undefined,
+      rawTokens,
+      rspTokens: active ? briefTokens : rawTokens,
+      terseTokens: active ? terseTokens : rawTokens,
+      rtkTokens: rtkFixture ? tokenCount(rtkFixture.stdout) : undefined,
+      headroomTokens: headroomFixture?.coverage === "covered" && typeof headroomFixture.stdout === "string"
+        ? tokenCount(headroomFixture.stdout)
+        : undefined,
+      oracleTokens: await oracleTokenCount(fixture),
+    });
   }
 
   const rows = [...groupByFilter(measurements).entries()].sort(([a], [b]) => a.localeCompare(b)).map(([filter, rows]) =>
