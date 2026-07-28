@@ -659,6 +659,7 @@ export async function statusFleet(
         fleet.bundleVersion !== latestBundleVersion
       )),
       heartbeat_age_s: heartbeatAgeS,
+      identity_anchor: liveSupervisor?.source ?? "none",
       would_respawn: wouldRespawn,
     },
     slots: {

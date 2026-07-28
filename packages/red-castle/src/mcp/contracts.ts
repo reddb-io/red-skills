@@ -52,6 +52,13 @@ export const fleetStatusOutputSchema = z.object({
     version_skew: z.number(),
     /** Seconds since the supervisor's last heartbeat; -1 when never observed. */
     heartbeat_age_s: z.number(),
+    /**
+     * Which anchor resolved the supervisor's identity: the `afk-supervisor.pid`
+     * lock, the `state.toon` heartbeat snapshot, or `none` when no live
+     * supervisor was found. Names the source so a disagreement between the two
+     * anchors is diagnosable from the report itself (#2698).
+     */
+    identity_anchor: z.enum(["pid-file", "fleet-state", "none"]),
   }),
   slots: z.object({
     busy: z.number(),

@@ -3,6 +3,7 @@ import { access, readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { isLivePid as defaultIsLivePid } from "./kill-tree.js";
 import { readPidStartTime } from "../core/state.js";
+import { decodeDevSnapshotSniff } from "../core/toon-snapshot.js";
 
 export interface SupervisorIdentity {
   pid: number;
@@ -56,9 +57,85 @@ export async function readSupervisorIdentity(
   }
 }
 
+/**
+ * The heartbeat snapshot read as a liveness anchor: the pid that wrote
+ * `state.toon`, the process-start pin it stamped (absent on snapshots written by
+ * a bundle older than #2698), and the tick epoch that dates the claim.
+ */
+export interface FleetStateAnchor {
+  pid: number;
+  startTime: string | null;
+  epoch: number | null;
+}
+
+/**
+ * How long a heartbeat snapshot with NO process-start pin may vouch for its pid.
+ * A stamped identity is verified exactly and needs no window; a legacy snapshot
+ * can only argue "this pid was mine seconds ago", so it expires.
+ */
+export const FLEET_STATE_ANCHOR_MAX_AGE_S = 300;
+
+/**
+ * Read the supervisor identity recorded in a fleet's `state.toon`. Returns null
+ * when the snapshot is absent, undecodable, or carries no pid — an unreadable
+ * snapshot simply contributes no anchor.
+ */
+export async function readFleetStateAnchor(
+  supervisorRuntimeDir: string,
+): Promise<FleetStateAnchor | null> {
+  let text: string;
+  try {
+    text = await readFile(join(supervisorRuntimeDir, "state.toon"), "utf8");
+  } catch {
+    return null;
+  }
+  let decoded: unknown;
+  try {
+    decoded = decodeDevSnapshotSniff(text);
+  } catch {
+    return null;
+  }
+  if (decoded === null || typeof decoded !== "object") return null;
+  const rec = decoded as { pid?: unknown; pid_start_time?: unknown; epoch?: unknown };
+  const pid = Number(rec.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+  const epoch = Number(rec.epoch);
+  return {
+    pid,
+    startTime: typeof rec.pid_start_time === "string" && rec.pid_start_time !== ""
+      ? rec.pid_start_time
+      : null,
+    epoch: Number.isSafeInteger(epoch) && epoch > 0 ? epoch : null,
+  };
+}
+
+/**
+ * Decide whether a heartbeat snapshot still names a live supervisor. With a
+ * stamped process-start pin the check is the same exact identity comparison the
+ * pid file gets. Without one, the pid must be live AND the snapshot recent, so a
+ * long-dead fleet's leftover snapshot can never resurrect a recycled pid.
+ */
+export function isFleetStateAnchorLive(
+  anchor: FleetStateAnchor,
+  isLivePid: (pid: number) => boolean = defaultIsLivePid,
+  pidStartTime: (pid: number) => string | null = readPidStartTime,
+  nowS: number = Math.floor(Date.now() / 1_000),
+): boolean {
+  if (!isLivePid(anchor.pid)) return false;
+  if (anchor.startTime !== null) {
+    return isSupervisorIdentityLive(
+      { pid: anchor.pid, startTime: anchor.startTime },
+      isLivePid,
+      pidStartTime,
+    );
+  }
+  if (anchor.epoch === null) return false;
+  return Math.abs(nowS - anchor.epoch) <= FLEET_STATE_ANCHOR_MAX_AGE_S;
+}
+
 export interface SupervisorPidDiscovery {
   pid: number;
-  source: "pid-file";
+  source: "pid-file" | "fleet-state";
   path: string;
 }
 
@@ -68,26 +145,42 @@ export interface DiscoverSupervisorPidOptions {
   fleet?: string;
   /** Injectable stable process-start lookup for deterministic identity tests. */
   pidStartTime?: (pid: number) => string | null;
+  /** Injectable clock (epoch seconds) for deterministic snapshot-age tests. */
+  nowS?: number;
 }
 
 /**
- * Find the supervisor pid that owns ONE fleet's runtime lane. The pid file is
- * the authoritative lock and its process-start sidecar is mandatory. Snapshot
- * lane names contain only a PID, so they cannot distinguish a recycled process
- * and are never an authoritative liveness source.
+ * Find the supervisor pid that owns ONE fleet's runtime lane. ONE identity —
+ * pid plus process-start pin — published to TWO anchors the supervisor writes:
+ * the `afk-supervisor.pid` lock at boot, and the `state.toon` heartbeat every
+ * tick. The pid file is consulted first; the heartbeat snapshot answers when the
+ * lock was swept, never written, or lost its start sidecar, which is exactly how
+ * a ticking fleet used to read back as absent (#2698). Snapshot lane names
+ * contain only a PID, so they cannot distinguish a recycled process and are
+ * never an authoritative liveness source.
  */
 export async function discoverLiveSupervisorPid(
   supervisorRuntimeDir: string,
   isLivePid: (pid: number) => boolean = defaultIsLivePid,
   options: DiscoverSupervisorPidOptions = {},
 ): Promise<SupervisorPidDiscovery | null> {
+  const pidStartTime = options.pidStartTime ?? readPidStartTime;
   const pidFile = join(supervisorRuntimeDir, "afk-supervisor.pid");
   const identity = await readSupervisorIdentity(pidFile);
-  if (
-    identity !== null &&
-    isSupervisorIdentityLive(identity, isLivePid, options.pidStartTime ?? readPidStartTime)
-  ) {
+  if (identity !== null && isSupervisorIdentityLive(identity, isLivePid, pidStartTime)) {
     return { pid: identity.pid, source: "pid-file", path: pidFile };
+  }
+
+  const anchor = await readFleetStateAnchor(supervisorRuntimeDir);
+  if (
+    anchor !== null &&
+    isFleetStateAnchorLive(anchor, isLivePid, pidStartTime, options.nowS)
+  ) {
+    return {
+      pid: anchor.pid,
+      source: "fleet-state",
+      path: join(supervisorRuntimeDir, "state.toon"),
+    };
   }
 
   return null;
@@ -135,17 +228,26 @@ export async function reapStaleSupervisorState(
   dirs: string | readonly string[],
   isLivePid: (pid: number) => boolean = defaultIsLivePid,
   pidStartTime: (pid: number) => string | null = readPidStartTime,
+  nowS?: number,
 ): Promise<SupervisorStateReapResult> {
   const dirList = typeof dirs === "string" ? [dirs] : [...dirs];
   let pid: number | null = null;
   for (const dir of dirList) {
     const identity = await readSupervisorIdentity(join(dir, "afk-supervisor.pid"));
-    if (identity === null) continue;
-    pid = identity.pid;
-    if (isSupervisorIdentityLive(identity, isLivePid, pidStartTime)) {
-      return { status: "live", pid, removed: [] };
+    if (identity !== null) {
+      pid = identity.pid;
+      if (isSupervisorIdentityLive(identity, isLivePid, pidStartTime)) {
+        return { status: "live", pid, removed: [] };
+      }
     }
-    break;
+    // The heartbeat snapshot is the second anchor of the SAME identity. Reaping
+    // must consult it too: a sweep that trusted only the pid file deleted the
+    // live supervisor's own state.toon and then let a second one launch (#2698).
+    const anchor = await readFleetStateAnchor(dir);
+    if (anchor !== null && isFleetStateAnchorLive(anchor, isLivePid, pidStartTime, nowS)) {
+      return { status: "live", pid: anchor.pid, removed: [] };
+    }
+    if (identity !== null) break;
   }
 
   const artifacts = (await Promise.all(dirList.map((d) => supervisorArtifactPaths(d)))).flat();

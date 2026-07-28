@@ -80,6 +80,7 @@ const PAYLOAD: StatuslineAggregate = {
       bundle_latest: "2.79.0",
       version_skew: 1,
       heartbeat_age_s: 8,
+      identity_anchor: "pid-file",
     },
     slots: { busy: 2, free: 1, parked: 1, total: 4 },
     churn: { deaths: 1, respawns: 1, window_s: 900 },
