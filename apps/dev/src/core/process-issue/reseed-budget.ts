@@ -1,0 +1,162 @@
+// reseed-budget — the lane-scoped Re-seed budget (ADR 0129, Spec #2723).
+//
+// A **Re-seed** re-instructs the implementer in place — same Worker, same
+// Worktree, same branch — after a gate stage blocked the work. The **Re-seed
+// budget** bounds how many such rounds one Attempt may spend: ONE ceiling per
+// lane holding per-cause sub-caps, with the review's round modelled as a
+// RESERVATION the other causes cannot draw from.
+//
+// The reservation is the whole point. Under independent counters, gate churn
+// burns every available round first and a Ticket parks on precisely the round a
+// blocking review finding just asked for — the starvation defect ADR 0129 names.
+// Reserving the review's round makes it unreachable to gate and tier draws even
+// while the ceiling still has room.
+//
+// EXPAND STEP: this module is introduced alongside the existing counters
+// (`resolveStallConvergenceBudget`, `resolveGoVerifyRetries`) and is consumed by
+// nothing yet. The retired stall-convergence key therefore stays live and
+// authoritative here; tombstoning it while the lifecycle still reads it would
+// break config loading, so that lands with the contract slice.
+
+import { LABEL_GO_LANE } from "../go.js";
+
+/** The closed vocabulary of causes that may spend a Re-seed round. The `/go`
+ * lane is NOT a cause — it is a budget profile. */
+export type ReseedCause = "gate" | "tier" | "review";
+
+export const RESEED_CAUSES: readonly ReseedCause[] = ["gate", "tier", "review"];
+
+/** The two rulers. The mechanism is identical across lanes; only the numbers
+ * differ, because the difference between them is economic (a human waits on
+ * `/go`) and not structural. */
+export type ReseedLane = "/afk" | "/go";
+
+export interface ReseedBudget {
+  readonly lane: ReseedLane;
+  /** Total Re-seed rounds this Attempt may spend across ALL causes. */
+  readonly ceiling: number;
+  /** Per-cause ceilings. These may sum ABOVE {@link ceiling} on purpose: they
+   * bound each cause's share, while the ceiling bounds the whole. */
+  readonly subCaps: Readonly<Record<ReseedCause, number>>;
+  /** Rounds held for a cause and unreachable to every other cause. */
+  readonly reserved: Readonly<Record<ReseedCause, number>>;
+}
+
+/** Rounds already spent, per cause. An absent cause has spent none. */
+export type ReseedSpend = Partial<Record<ReseedCause, number>>;
+
+/** Why a draw was refused. `sub-cap` — the cause exhausted its own share;
+ * `reservation` — the ceiling still has room, but every remaining round is held
+ * for another cause; `ceiling` — nothing is left at all. */
+export type ReseedRefusal = "sub-cap" | "reservation" | "ceiling";
+
+export interface ReseedDraw {
+  readonly allowed: boolean;
+  readonly refusal?: ReseedRefusal;
+  /** Rounds this cause could still draw, reservations of others removed. */
+  readonly remaining: number;
+}
+
+/** `/afk` totals 4 — gate ≤ 3, tier ≤ 1, review 1 reserved. */
+export const AFK_RESEED_BUDGET: ReseedBudget = {
+  lane: "/afk",
+  ceiling: 4,
+  subCaps: { gate: 3, tier: 1, review: 1 },
+  reserved: { gate: 0, tier: 0, review: 1 },
+};
+
+/** `/go` totals 2 with no review round: review is not activated on the lane
+ * outside `--mode no-mistakes` (ADR 0110), so reserving one would idle a round a
+ * waiting human is paying for. */
+export const GO_RESEED_BUDGET: ReseedBudget = {
+  lane: "/go",
+  ceiling: 2,
+  subCaps: { gate: 2, tier: 1, review: 0 },
+  reserved: { gate: 0, tier: 0, review: 0 },
+};
+
+/** `/go --mode no-mistakes` widens to 3 SO THE RESERVATION FITS — the lane keeps
+ * its two working rounds and the review's reserved round is added on top rather
+ * than carved out of them. */
+export const GO_NO_MISTAKES_RESEED_BUDGET: ReseedBudget = {
+  lane: "/go",
+  ceiling: 3,
+  subCaps: { gate: 2, tier: 1, review: 1 },
+  reserved: { gate: 0, tier: 0, review: 1 },
+};
+
+export interface ResolveReseedBudgetInput {
+  /** The lane label carried by the Ticket (`lane:go` selects the `/go` ruler). */
+  readonly laneLabel?: string;
+  /** The `/go` dispatch mode; `no-mistakes` widens the ceiling. */
+  readonly runMode?: string;
+}
+
+/** Resolve the lane's Re-seed budget. Anything that is not the `/go` lane is
+ * `/afk`'s ruler, including the scout and manual dispatches, because they run
+ * the same unattended pipeline. */
+export function resolveReseedBudget(input: ResolveReseedBudgetInput): ReseedBudget {
+  if (input.laneLabel !== LABEL_GO_LANE) return AFK_RESEED_BUDGET;
+  return input.runMode === "no-mistakes" ? GO_NO_MISTAKES_RESEED_BUDGET : GO_RESEED_BUDGET;
+}
+
+function spentFor(spend: ReseedSpend, cause: ReseedCause): number {
+  const raw = spend[cause];
+  return typeof raw === "number" && Number.isInteger(raw) && raw > 0 ? raw : 0;
+}
+
+/** Rounds spent across every cause. */
+export function totalReseedSpend(spend: ReseedSpend): number {
+  return RESEED_CAUSES.reduce((sum, cause) => sum + spentFor(spend, cause), 0);
+}
+
+/** Reserved rounds still unclaimed by causes OTHER than `cause`. These sit
+ * inside the ceiling but are invisible to this cause. */
+function reservedElsewhere(budget: ReseedBudget, spend: ReseedSpend, cause: ReseedCause): number {
+  return RESEED_CAUSES.filter((other) => other !== cause).reduce((held, other) => {
+    const unclaimed = (budget.reserved[other] ?? 0) - spentFor(spend, other);
+    return held + Math.max(0, unclaimed);
+  }, 0);
+}
+
+/** Decide whether `cause` may spend one more Re-seed round given what has been
+ * spent already. Three refusals, checked in the order a reader would ask them:
+ * did this cause use up its own share, is anything left at all, and is what is
+ * left held for someone else. */
+export function reseedDraw(budget: ReseedBudget, cause: ReseedCause, spend: ReseedSpend = {}): ReseedDraw {
+  const capLeft = (budget.subCaps[cause] ?? 0) - spentFor(spend, cause);
+  const ceilingLeft = budget.ceiling - totalReseedSpend(spend);
+  const drawable = Math.max(0, Math.min(capLeft, ceilingLeft - reservedElsewhere(budget, spend, cause)));
+  if (capLeft <= 0) return { allowed: false, refusal: "sub-cap", remaining: 0 };
+  if (ceilingLeft <= 0) return { allowed: false, refusal: "ceiling", remaining: 0 };
+  if (drawable <= 0) return { allowed: false, refusal: "reservation", remaining: 0 };
+  return { allowed: true, remaining: drawable };
+}
+
+/** Convenience predicate over {@link reseedDraw}. */
+export function canDrawReseed(budget: ReseedBudget, cause: ReseedCause, spend: ReseedSpend = {}): boolean {
+  return reseedDraw(budget, cause, spend).allowed;
+}
+
+/** Record one drawn round. Pure: the caller owns where the tally lives. */
+export function recordReseedDraw(spend: ReseedSpend, cause: ReseedCause): ReseedSpend {
+  return { ...spend, [cause]: spentFor(spend, cause) + 1 };
+}
+
+/** Static incoherences in a profile — a ceiling that cannot honour its own
+ * reservations, or a reservation larger than the cause's own share. A sub-cap
+ * ABOVE the ceiling is not a defect: the ceiling is what actually binds. */
+export function reseedBudgetDefects(budget: ReseedBudget): readonly string[] {
+  const defects: string[] = [];
+  const reservedTotal = RESEED_CAUSES.reduce((sum, cause) => sum + (budget.reserved[cause] ?? 0), 0);
+  if (reservedTotal > budget.ceiling) {
+    defects.push(`reservations (${reservedTotal}) exceed the ceiling (${budget.ceiling})`);
+  }
+  for (const cause of RESEED_CAUSES) {
+    const reserved = budget.reserved[cause] ?? 0;
+    if (reserved > (budget.subCaps[cause] ?? 0)) {
+      defects.push(`\`${cause}\` reserves ${reserved} beyond its sub-cap of ${budget.subCaps[cause] ?? 0}`);
+    }
+  }
+  return defects;
+}
