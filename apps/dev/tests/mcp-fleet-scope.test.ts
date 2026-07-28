@@ -1,0 +1,137 @@
+// The MCP lane is the interface (ADR 0120), so cgroup isolation (#2697) cannot
+// live in a CLI wrapper: a fleet created through `fleet_create` has its
+// supervisor spawned by the MCP SERVER process and would inherit *its* cgroup —
+// on a desktop host, the terminal emulator's scope, exactly like the CLI case.
+// These tests drive the real `fleetCreate` dependency (spawnSupervisor NOT
+// mocked) and assert the launch argv, so both lanes are proven to share one
+// implementation.
+
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import type { SpawnOptions } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const spawn = vi.hoisted(() => vi.fn((
+  _command: string,
+  _args: readonly string[],
+  _options: SpawnOptions,
+) => ({ unref: vi.fn() })));
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...await importOriginal<typeof import("node:child_process")>(),
+  spawn,
+}));
+
+import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
+import { afkPaths } from "../src/runtime/wire.js";
+import { readPidStartTime } from "../src/core/state.js";
+
+const roots: string[] = [];
+const platform = process.platform;
+
+afterEach(async () => {
+  Object.defineProperty(process, "platform", { value: platform, configurable: true });
+  vi.unstubAllEnvs();
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+beforeEach(() => {
+  spawn.mockReset();
+});
+
+/**
+ * A temp repo whose `.red/config.yaml` carries the fleet-scope knobs, plus a
+ * fake host that looks like Linux with a live systemd `--user` session.
+ */
+async function scopedHost(config: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "mcp-fleet-scope-"));
+  roots.push(root);
+  await mkdir(join(root, ".red"), { recursive: true });
+  await writeFile(join(root, ".red", "config.yaml"), config, "utf8");
+
+  const bin = join(root, "bin");
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, "systemd-run"), "#!/bin/sh\n", { mode: 0o755 });
+  const runtimeDir = join(root, "run");
+  await mkdir(join(runtimeDir, "systemd"), { recursive: true });
+  await writeFile(join(runtimeDir, "systemd", "private"), "", "utf8");
+
+  Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+  vi.stubEnv("PATH", bin);
+  vi.stubEnv("XDG_RUNTIME_DIR", runtimeDir);
+  return root;
+}
+
+/**
+ * Stand in for a supervisor that booted: publish this process's own pid and
+ * start-time token so the pinned-pid probe resolves on its first poll instead
+ * of burning the boot window.
+ */
+function publishPidOnSpawn(root: string, fleet: string): void {
+  const paths = afkPaths(root, fleet);
+  spawn.mockImplementation(() => {
+    writeFileSync(paths.supervisorPidPath, String(process.pid), "utf8");
+    writeFileSync(paths.supervisorPidStartPath, readPidStartTime(process.pid) ?? "", "utf8");
+    return { unref: vi.fn() };
+  });
+}
+
+describe("fleet_create cgroup isolation", () => {
+  it("spawns the MCP-created supervisor inside its own transient scope", async () => {
+    const root = await scopedHost(
+      "plugins:\n  dev:\n    enabled: true\n    afk:\n      fleet:\n        scope:\n          enabled: true\n          memory_high: 55%\n",
+    );
+    publishPidOnSpawn(root, "mcplane");
+
+    await expect(
+      createCastleMcpDependencies(root).fleetCreate({
+        name: "mcplane",
+        runner: "claude",
+        target: 1,
+      }),
+    ).resolves.toMatchObject({ status: "launched", pid: process.pid });
+
+    const [command, args] = spawn.mock.calls[0] ?? [];
+    expect(command).toBe(join(root, "bin", "systemd-run"));
+    expect(args).toContain("--user");
+    expect(args).toContain("--scope");
+    expect(args).toContain("--property=Delegate=yes");
+    expect(args).toContain("--property=MemoryHigh=55%");
+    // The scope is named for the fleet, so two named fleets get two scopes.
+    expect(args?.some((arg) => arg.startsWith("--unit=red-fleet-mcplane-"))).toBe(true);
+    // The supervisor argv survives intact behind the `--` separator.
+    expect(args?.slice((args?.indexOf("--") ?? -1) + 1)).toContain("__supervise");
+  });
+
+  it("launches directly and warns when the host has no systemd user session", async () => {
+    const root = await scopedHost(
+      "plugins:\n  dev:\n    enabled: true\n    afk:\n      fleet:\n        scope:\n          enabled: true\n",
+    );
+    // No systemd `--user` socket: isolation is impossible, never silent.
+    vi.stubEnv("XDG_RUNTIME_DIR", join(root, "absent"));
+    publishPidOnSpawn(root, "bare");
+
+    const warnings: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      warnings.push(String(chunk));
+      return true;
+    });
+    try {
+      await expect(
+        createCastleMcpDependencies(root).fleetCreate({
+          name: "bare",
+          runner: "claude",
+          target: 1,
+        }),
+      ).resolves.toMatchObject({ status: "launched", pid: process.pid });
+    } finally {
+      stderr.mockRestore();
+    }
+
+    expect(spawn.mock.calls[0]?.[0]).toBe(process.execPath);
+    expect(spawn.mock.calls[0]?.[1]).toContain("__supervise");
+    expect(warnings.join("\n")).toContain("fleet cgroup isolation unavailable");
+  });
+});

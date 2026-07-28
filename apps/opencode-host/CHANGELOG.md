@@ -1,5 +1,22 @@
 # @reddb-io/red-skills
 
+## 2.87.5
+
+### Patch Changes
+
+- 7fec517: `fleet_status` and `fleet_stop` can no longer go blind to a live supervisor (#2698). Every management read resolved the supervisor's identity from `afk-supervisor.pid` alone, so a ticking fleet whose lock was missing — or whose `.pid.start` sidecar was gone — reported `pid 0, alive false, health absent` in the same response that carried a 13-second-old heartbeat and two busy slots, while `fleet_stop` answered `status: none` and the operator had to SIGTERM by hand. The supervisor now stamps its process-start pin next to its pid in the `state.toon` heartbeat, so ONE identity is published to two anchors; `discoverLiveSupervisorPid` falls back to the snapshot when the lock cannot answer, the stale-state reaper and the watchdog honour the same anchor (so a live lane is never wiped and never respawned over), and `fleet_status` names the anchor that answered in a new `supervisor.identity_anchor` field.
+  - @reddb-io/shared@2.87.5
+  - @reddb-io/build-info@2.87.5
+
+## 2.87.4
+
+### Patch Changes
+
+- 08bfe90: The boot tmp-janitor no longer deletes the live supervisor lane (#2679). Its supervisor sweep keyed liveness off `afk-supervisor.pid` alone, so a supervisor still ticking without that file — its lane swept, or booted from a bundle predating the pid re-pin — was judged dead and had its runtime dir removed, after which `fleet_status` and `monitor` reported `pid 0, alive false` for a healthy fleet. A lane is now spared on ANY live anchor (pid file, the pid stamped into the fleet `state.toon` snapshot, or a live `s<pid>/` log dir), the supervisor stamps its pid into that snapshot on every heartbeat, and both the boot sweep and the runtime janitor refuse to delete a registered `.red/tmp` lane through the unknown-entry path.
+- 583e059: MCP-launched fleets drain again (#2677): the supervisor no longer infers the slot's worker entry from `process.argv[1]`. Under the ADR 0120 MCP lane the supervisor is itself the castle-mcp bundle, whose entry does not route `run`, so every slot booted a second resident/stdio host, lost the singleton lease and died — `deaths == respawns`, `slots_busy=0`, zero drainage. `spawnSlot`/`spawnReconcileWorker` now resolve the sibling dev bundle (the entry that routes `run`), and the castle-mcp entry refuses an unroutable subcommand by name instead of silently falling through to the resident path.
+  - @reddb-io/shared@2.87.4
+  - @reddb-io/build-info@2.87.4
+
 ## 2.87.3
 
 ### Patch Changes

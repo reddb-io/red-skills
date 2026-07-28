@@ -59,8 +59,8 @@ import {
 import { dispatchHooks, type HookExec } from "../hook-dispatcher.js";
 import { type RecoveryEnv } from "../recovery.js";
 import { dispose } from "../disposition.js";
+import { parkOrHuman, transitionLabels, type StateTransition } from "../state-transition.js";
 import {
-  blockedLabelFor,
   envelopeStatusFor,
   type WorkerOutcome,
 } from "../worker-outcome.js";
@@ -134,18 +134,49 @@ export function scoutCapturedDone(run: RunAgentResult, chunks: readonly string[]
   return captured.length > 0 && stripScoutDoneSignal(captured) !== captured;
 }
 export const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"]);
-export async function editLabelsTagged(
+/**
+ * The STATE TRANSITION a lifecycle edge's `add` set expresses, or null when the
+ * edge is not a state-role move at all (#2663). `claim` adds only `running` —
+ * a PROJECTION of an active claim, not a state role — so it keeps the raw edit;
+ * everything else lands on exactly one role and goes through the planner.
+ */
+export function lifecycleTransitionFor(add: readonly string[]): StateTransition | null {
+  if (add.includes(LABEL_READY)) return { kind: "queue" };
+  if (add.includes(LABEL_HUMAN)) return parkOrHuman(add.find((l) => l.startsWith("blocked:")) ?? null);
+  return null;
+}
+
+/**
+ * Apply a lifecycle label edit through the ADR 0122 transition API (#2663).
+ * The planner is fed the labels the CALL SITE declares present — its own
+ * remove set — so the emitted delta is exactly the historical one, with the
+ * one-state-role invariant now proven before the tracker call instead of
+ * trusted. A refusal performs NO edit: the request itself is malformed.
+ */
+async function applyLifecycleLabelEdit(
   deps: ProcessIssueDeps,
   issue: number,
   remove: string[],
   add: string[],
-  reason: WorkerOutcome,
 ): Promise<boolean> {
-  const typed = blockedLabelFor(reason);
-  if (typed === null) return deps.gh.editLabels(issue, remove, add);
-  await deps.gh.ensureLabel(typed);
-  return deps.gh.editLabels(issue, remove, [...add, typed]);
+  const transition = lifecycleTransitionFor(add);
+  // Claim machinery (ready → running) is not a state transition — the planner
+  // would (correctly) refuse a target that leaves zero state roles.
+  if (transition === null) return deps.gh.editLabels(issue, remove, add);
+  const typed = add.find((l) => l.startsWith("blocked:"));
+  if (typed !== undefined) await deps.gh.ensureLabel(typed);
+  const result = await transitionLabels(
+    (r, a) => deps.gh.editLabels(issue, r, a),
+    remove,
+    transition,
+  );
+  if (result.applied) return result.ok;
+  deps.appendIterLog(
+    `warn: lifecycle transition for #${issue} refused by the state planner (${result.reason}); labels left untouched.`,
+  );
+  return false;
 }
+
 export async function editIssueLifecycleLabels(
   deps: ProcessIssueDeps,
   issue: number,
@@ -156,7 +187,7 @@ export async function editIssueLifecycleLabels(
 ): Promise<boolean> {
   try {
     validateIssueLifecycleTransition({ edge, fromLabels, removeLabels: remove, addLabels: add });
-    return await deps.gh.editLabels(issue, remove, add);
+    return await applyLifecycleLabelEdit(deps, issue, remove, add);
   } catch (err) {
     if (!(err instanceof IllegalIssueLifecycleTransitionError)) throw err;
     const shed = blockedLabelsIn([...fromLabels]).filter((l) => !add.includes(l));
@@ -169,7 +200,7 @@ export async function editIssueLifecycleLabels(
         `warn: lifecycle transition "${edge}" for #${issue} still malformed after reconcile (${reason}); applying best-effort park.`,
       );
     }
-    return await deps.gh.editLabels(issue, reconciledRemove, add);
+    return await applyLifecycleLabelEdit(deps, issue, reconciledRemove, add);
   }
 }
 export async function routeRecovery(

@@ -22,6 +22,7 @@ function contract<T>(
 export const CASTLE_LANE_SCHEMA_ID = "red.castle.lane.v1" as const;
 export const CASTLE_STATE_SCHEMA_ID = "red.castle.state.v1" as const;
 export const CASTLE_HISTORY_SCHEMA_ID = "red.castle.history.v1" as const;
+export const CASTLE_ATTEMPT_SCHEMA_ID = "red.castle.attempt.v1" as const;
 export const CASTLE_VALIDATION_SCHEMA_ID = "red.castle.validation.v2" as const;
 export const CASTLE_ENVELOPE_SCHEMA_ID = "red.castle.envelope.v1" as const;
 export const CASTLE_HITL_CARD_SCHEMA_ID = "red.castle.hitl-card.v1" as const;
@@ -78,6 +79,139 @@ export interface CastleHistoryRecord {
   runner: string;
   merge_sha?: string;
   reason?: string;
+}
+
+/**
+ * The attempt — one worker × one ticket × one try — is the unit of truth, and
+ * the RESIDENT writes it (ADR 0128). `writer` is a single-member union on
+ * purpose: an entry stamped by anything but the resident is rejected, because
+ * the record exists for exactly the moment the worker is already gone.
+ */
+export type CastleAttemptWriter = "resident";
+
+export type CastleAttemptEvent =
+  | "attempt.claimed"
+  | "attempt.routed"
+  | "attempt.progressed"
+  | "attempt.committed"
+  | "attempt.pr-opened"
+  | "attempt.gated"
+  | "attempt.landing"
+  | "attempt.resourced"
+  | "attempt.artifact"
+  | "attempt.closed"
+  | (string & {});
+
+/** Terminal outcome. `budget-exceeded` NAMES its budget and is never a stall. */
+export type CastleAttemptOutcomeKind =
+  | "done"
+  | "blocked"
+  | "killed"
+  | "budget-exceeded"
+  | "discarded"
+  | (string & {});
+
+export interface CastleAttemptClaim {
+  state: "claimed" | "conceded";
+  by?: string;
+  reason?: string;
+}
+
+/** The routing decision, as taken (ADR 0128 §4). */
+export interface CastleAttemptRouting {
+  runner: string;
+  tier?: string;
+  model?: string;
+  effort?: string;
+}
+
+export interface CastleAttemptResources {
+  wall_clock_s?: number;
+  peak_rss_mb?: number;
+  cost_usd?: number;
+}
+
+/**
+ * An artifact the attempt left behind, with the reclaim verdict the janitor
+ * reads. Reclaim eligibility is stated by the record, never inferred from a
+ * missing pid file (ADR 0128, Consequences).
+ */
+export interface CastleAttemptArtifact {
+  kind: string;
+  ref?: string;
+  path?: string;
+  reclaimable: boolean;
+  reclaim_after?: string;
+  reason?: string;
+}
+
+export interface CastleAttemptGateVerdict {
+  name: string;
+  status: CastleValidationStatus;
+  summary?: string;
+}
+
+export interface CastleAttemptLandingStep {
+  step: string;
+  status: string;
+  detail?: string;
+}
+
+export interface CastleAttemptOutcome {
+  kind: CastleAttemptOutcomeKind;
+  detail?: string;
+  /** Set when `kind` is `budget-exceeded`: the budget that terminated it. */
+  budget?: string;
+}
+
+/**
+ * One append-only line of an attempt's narrative. The attempt RECORD
+ * (`CastleAttemptRecord`) is the fold of every entry sharing an `attempt_id` —
+ * never separately maintained state, so nothing is ever rewritten in place.
+ */
+export interface CastleAttemptEntry {
+  schema: typeof CASTLE_ATTEMPT_SCHEMA_ID;
+  attempt_id: string;
+  worker_id: string;
+  issue: number;
+  try: number;
+  at: string;
+  event: CastleAttemptEvent;
+  writer: CastleAttemptWriter;
+  claim?: CastleAttemptClaim;
+  routing?: CastleAttemptRouting;
+  branch?: string;
+  commit?: string;
+  pr?: number;
+  gate?: CastleAttemptGateVerdict;
+  landing?: CastleAttemptLandingStep;
+  outcome?: CastleAttemptOutcome;
+  resources?: CastleAttemptResources;
+  artifact?: CastleAttemptArtifact;
+  note?: string;
+  payload?: Record<string, unknown>;
+}
+
+/** The folded narrative of one attempt — a derived view, never a stored one. */
+export interface CastleAttemptRecord {
+  attempt_id: string;
+  worker_id: string;
+  issue: number;
+  try: number;
+  opened_at: string;
+  updated_at: string;
+  closed: boolean;
+  claim?: CastleAttemptClaim;
+  routing?: CastleAttemptRouting;
+  branch?: string;
+  commits: string[];
+  pr?: number;
+  gate: CastleAttemptGateVerdict[];
+  landing: CastleAttemptLandingStep[];
+  outcome?: CastleAttemptOutcome;
+  resources?: CastleAttemptResources;
+  artifacts: CastleAttemptArtifact[];
+  events: CastleAttemptEntry[];
 }
 
 export type CastleValidationStatus = "passed" | "failed" | "skipped";
@@ -183,6 +317,46 @@ export const CASTLE_PUBLISHED_CONTRACTS = [
       runner: true,
       merge_sha: true,
       reason: true,
+    },
+  }),
+  contract<CastleAttemptEntry>({
+    schemaId: CASTLE_ATTEMPT_SCHEMA_ID,
+    docPath: ".red/contracts/red.castle.attempt.v1.md",
+    typeNames: [
+      "CastleAttemptEntry",
+      "CastleAttemptRecord",
+      "CastleAttemptEvent",
+      "CastleAttemptWriter",
+      "CastleAttemptClaim",
+      "CastleAttemptRouting",
+      "CastleAttemptGateVerdict",
+      "CastleAttemptLandingStep",
+      "CastleAttemptOutcome",
+      "CastleAttemptOutcomeKind",
+      "CastleAttemptResources",
+      "CastleAttemptArtifact",
+    ],
+    fields: {
+      schema: true,
+      attempt_id: true,
+      worker_id: true,
+      issue: true,
+      try: true,
+      at: true,
+      event: true,
+      writer: true,
+      claim: true,
+      routing: true,
+      branch: true,
+      commit: true,
+      pr: true,
+      gate: true,
+      landing: true,
+      outcome: true,
+      resources: true,
+      artifact: true,
+      note: true,
+      payload: true,
     },
   }),
   contract<CastleValidationRecord>({

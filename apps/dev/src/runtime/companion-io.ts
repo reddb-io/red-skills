@@ -38,13 +38,12 @@ import {
   type CompanionPlan,
 } from "../core/companion.js";
 import { getConfig, type ConfigValues } from "../core/config.js";
+import { transitionLabels, type StateTransition } from "../core/state-transition.js";
 import type { AfkState } from "../types/state.js";
 
 /** The issue-body section the correction directive lands in — the next attempt's
  * brief. Kept stable so a re-correction REPLACES the section rather than stacking. */
 export const COMPANION_BRIEF_HEADING = AGENT_BRIEF_HEADING;
-export const LABEL_READY_FOR_AGENT = "ready-for-agent";
-export const LABEL_READY_FOR_HUMAN = "ready-for-human";
 
 /** Fallback drift cap if the reason were ever absent from the recovery table
  * (it is registered there with this same default — belt and suspenders). */
@@ -242,30 +241,44 @@ export async function runCompanionPass(options: CompanionPassOptions): Promise<C
     // comment (the idempotency key), then the label transition. Ordering is
     // deliberate: if a later step fails, the next poll re-reads — and the absent
     // fingerprint means it retries the whole transition rather than half-applying.
-    // Label deltas are computed against the issue's CURRENT labels (like requeue):
-    // only remove a label that is actually present and only add one that is
-    // absent, so a one-sided `gh issue edit --remove-label X` for an X the issue
-    // never had can't fail the whole (remove + add) command.
-    const has = (label: string): boolean => view.labels.includes(label);
+    // The label delta comes from the ADR 0122 planner (#2663), fed the issue's
+    // CURRENT labels: it only removes what is actually present and only adds
+    // what is absent — so a one-sided `gh issue edit --remove-label X` for an X
+    // the issue never had can't fail the whole (remove + add) command — and it
+    // additionally sheds the state roles and `blocked:*` reasons the two
+    // hand-rolled deltas used to leave stacked on the corrected issue.
     if (plan.kind === "correct") {
       await ghx.editBody(options.ctx, id.issue, applyCorrectionBody(view.body, plan.note, plan.signal));
       await ghx.comment(options.ctx, id.issue, auditComment(plan, id.issue, id.attempt));
-      await ghx.editLabels(options.ctx, id.issue, [], has(LABEL_READY_FOR_AGENT) ? [] : [LABEL_READY_FOR_AGENT]);
+      await applyCompanionTransition(options.ctx, id.issue, view.labels, { kind: "queue" });
       outcomes.push({ issue: id.issue, attempt: id.attempt, disposition: "corrected", signal: plan.signal });
     } else {
       await ghx.editBody(options.ctx, id.issue, applyEscalationBody(view.body, plan.signal, plan.reason));
       await ghx.comment(options.ctx, id.issue, auditComment(plan, id.issue, id.attempt));
-      await ghx.editLabels(
-        options.ctx,
-        id.issue,
-        has(LABEL_READY_FOR_AGENT) ? [LABEL_READY_FOR_AGENT] : [],
-        has(LABEL_READY_FOR_HUMAN) ? [] : [LABEL_READY_FOR_HUMAN],
-      );
+      await applyCompanionTransition(options.ctx, id.issue, view.labels, { kind: "human" });
       outcomes.push({ issue: id.issue, attempt: id.attempt, disposition: "escalated", signal: plan.signal });
     }
   }
 
   return outcomes;
+}
+
+/**
+ * Apply one companion drift correction through the ADR 0122 transition API
+ * (#2663). The planner owns the delta: `queue` re-arms a drifting attempt on
+ * `ready-for-agent`, `human` escalates it — both computed against the issue's
+ * CURRENT labels, so the mutation is idempotent AND provably leaves exactly one
+ * state role. A refusal (a `queue` while `req:*` edges survive) performs no
+ * edit; the body rewrite and the fingerprinted audit comment already landed, so
+ * the next poll re-reads and the operator sees the unchanged labels.
+ */
+async function applyCompanionTransition(
+  ctx: GhContext,
+  issue: number,
+  current: readonly string[],
+  transition: StateTransition,
+): Promise<void> {
+  await transitionLabels((remove, add) => ghx.editLabels(ctx, issue, remove, add), current, transition);
 }
 
 /** One-line dashboard summary of a companion pass (printed under the dashboard

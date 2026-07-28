@@ -68,7 +68,7 @@ from the rest of the workspace.
   handful of runtime path-resolution + test-fixture sites.
 - **Historical records are not rewritten.** Prior ADR bodies and `.red/wiki/`
   pages that mention `src/apps`/`src/packages` describe the tree as it was when
-  written; per the `/dev:review-adrs` convention they keep their text and gain
+  written; per the `/dev:adr-editor` convention they keep their text and gain
   supersession/relocation notes rather than edits. ADR 0034 carries the relocation
   note; this ADR is its pointer.
 

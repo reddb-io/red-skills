@@ -31,4 +31,49 @@ describe("dev bundle cache state", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("suppresses the failure age when a later success supersedes the failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dev-bundle-cache-"));
+    try {
+      mkdirSync(root, { recursive: true });
+      writeFileSync(
+        join(root, statusFileName("dev")),
+        encodeDevSnapshotToon({
+          lastFailureAtMs: 100,
+          lastSuccessAtMs: 200,
+          lastStatus: "up-to-date",
+        }),
+        "utf8",
+      );
+
+      const state = readDevBundleCacheState("2.71.0", { RED_SKILLS_CACHE_DIR: root }, 100_000_000);
+      expect(state.lastFailureAgeMs).toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the failure age when the failure is newer than the last success", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dev-bundle-cache-"));
+    try {
+      mkdirSync(root, { recursive: true });
+      writeFileSync(
+        join(root, statusFileName("dev")),
+        encodeDevSnapshotToon({
+          lastFailureAtMs: 300,
+          lastSuccessAtMs: 200,
+          lastStatus: "error",
+          lastError: "fetch failed",
+        }),
+        "utf8",
+      );
+
+      expect(readDevBundleCacheState("2.71.0", { RED_SKILLS_CACHE_DIR: root }, 100_000_000)).toMatchObject({
+        lastFailureAtMs: 300,
+        lastFailureAgeMs: 100_000_000 - 300,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

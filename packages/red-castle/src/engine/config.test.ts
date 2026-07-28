@@ -145,7 +145,11 @@ describe("engine config reader", () => {
       ready: "queue:agent",
       running: "state:running",
       human: "queue:human",
+      needsTriage: "needs-triage",
+      needsInfo: "needs-info",
+      quarantine: "quarantine",
       dependencyBlocked: "wait:dependency",
+      blockedPrefix: "blocked:",
       reqPrefix: "depends-on:",
     });
   });

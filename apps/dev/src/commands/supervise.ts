@@ -35,6 +35,7 @@ import {
 } from "../runtime/wire.js";
 import { formatPreconditionFailure, runBoot, type BootResult, type BootstrapInput } from "../core/boot.js";
 import { inspectProcessTreeNative } from "../runtime/proc-tree.js";
+import { resolveDevScriptPath } from "../runtime/supervisor-spawn.js";
 import {
   workerLivenessFor,
   slotLogDir,
@@ -47,6 +48,7 @@ import {
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import { planReconcileSweep, executeUnblockSweep } from "../core/boot-sweep.js";
+import { HOST_STATE_TRANSITION_LABELS } from "../core/state-transition.js";
 import { removeDir as removeDirNative } from "../runtime/fs.js";
 import { killTreeAndWait } from "../runtime/kill-tree.js";
 import { buildStateChangeWake } from "../runtime/state-watch.js";
@@ -104,6 +106,8 @@ export function fleetHeartbeatState(hb: FleetHeartbeat): string {
     runner: hb.runner,
     ...(hb.shrinkMode !== undefined ? { shrink_mode: hb.shrinkMode } : {}),
     ...(hb.bundleVersion ? { bundle_version: hb.bundleVersion } : {}),
+    ...(hb.pid !== undefined ? { pid: hb.pid } : {}),
+    ...(hb.pidStartTime ? { pid_start_time: hb.pidStartTime } : {}),
     ready_for_agent: hb.readyForAgent,
     slots: {
       busy: hb.slotsBusy,
@@ -511,7 +515,7 @@ export function buildSupervisorBootSweeps(
  * (mirroring SLOT_PIDS[$slot] in bash, which is how find_slot_iter_dir /
  * agentLaneMtime / inspectTree all reach the running worker tree).
  */
-function buildSupervisorDeps(
+export function buildSupervisorDeps(
   root: string,
   tmpDir: string,
   slotLogsDir: string,
@@ -527,7 +531,11 @@ function buildSupervisorDeps(
   hookEnvBase: Record<string, string>,
   adoptSlotPids: readonly HeartbeatSlotPid[] = [],
 ): SupervisorDeps {
-  const bundle = process.argv[1];
+  // Slots run `run --once`, which ONLY the dev entry routes. Never infer the
+  // worker entry from argv[1]: under the MCP lane this supervisor is itself the
+  // castle-mcp bundle, whose entry does not route `run`, so every slot booted a
+  // second resident, lost the singleton lease and died on the spot (#2677).
+  const bundle = resolveDevScriptPath(process.argv[1] ?? "");
   const bundleVersion = readBuildInfo("dev").version;
   const now = () => Math.floor(Date.now() / 1000);
   // The lane lives INSIDE the fleet's runtime dir (`supervisors/<fleet>/s<pid>/`)
@@ -770,6 +778,7 @@ function buildSupervisorDeps(
         const result = await runIssueStateCurator({
           tracker,
           store: createFileIssueCuratorStore(paths),
+          labels: HOST_STATE_TRANSITION_LABELS,
         });
         return `curator sweep ran: ${JSON.stringify(result).slice(0, 200)}`;
       },
@@ -845,7 +854,16 @@ function buildSupervisorDeps(
       });
     },
     emitFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
-      const stamped = { ...hb, bundleVersion };
+      // `pid` + `pidStartTime` make the snapshot a full liveness anchor — the
+      // same identity the pid file pins — so a swept or unpinned pid file can no
+      // longer make a running supervisor read as absent (#2679, #2698).
+      const ownStartTime = readPidStartTime(process.pid);
+      const stamped = {
+        ...hb,
+        bundleVersion,
+        pid: process.pid,
+        ...(ownStartTime !== null ? { pidStartTime: ownStartTime } : {}),
+      };
       let stateWritten = false;
       let firehoseWritten = false;
       let stateError: string | undefined;
@@ -857,10 +875,14 @@ function buildSupervisorDeps(
       try {
         const runtimeDir = dirname(statePath);
         const pidFilePath = join(runtimeDir, "afk-supervisor.pid");
+        // Both files, independently: a pid file whose `.start` sidecar is gone
+        // fails the identity check exactly like a missing pid file, so re-pinning
+        // only the pid would leave the lane unreadable (#2698).
         if (!existsSync(pidFilePath)) {
-          const startTime = readPidStartTime(process.pid);
           writeFileSync(pidFilePath, String(process.pid), "utf8");
-          if (startTime !== null) writeFileSync(`${pidFilePath}.start`, startTime, "utf8");
+        }
+        if (ownStartTime !== null && !existsSync(`${pidFilePath}.start`)) {
+          writeFileSync(`${pidFilePath}.start`, ownStartTime, "utf8");
         }
       } catch {
         // best-effort: a failed re-pin is logged implicitly via stateError below.
@@ -974,7 +996,7 @@ function buildSupervisorDeps(
       };
     },
     repairFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
-      const stamped = { ...hb, bundleVersion };
+      const stamped = { ...hb, bundleVersion, pid: process.pid };
       try {
         writeFleetStateAtomic(statePath, stamped);
         return { stateWritten: true };

@@ -275,8 +275,7 @@ describe("resolveActiveVersion (render/hook path — local reads only)", () => {
     expect(result.status).toBe("up-to-date");
     const written = new TextDecoder().decode(files[status]);
     expect(() => JSON.parse(written)).toThrow();
-    expect(decode(written)).toMatchObject({
-      lastFailureAtMs: legacyStatus.lastFailureAtMs,
+    expect(decode(written)).toEqual({
       lastCheckAtMs: nowMs,
       lastSuccessAtMs: nowMs,
       lastStatus: "up-to-date",
@@ -406,6 +405,37 @@ describe("backgroundSelfUpdate (registry discovery + npm materialize)", () => {
     expect(materializes).toEqual([]);
     expect(writes).toEqual([statusPath(CACHE, PLUGIN)]);
     expect(renames).toEqual([]);
+  });
+
+  it("a successful check clears a recorded failure so the record cannot rot", async () => {
+    const { io, files } = makeIO({
+      registryVersions: [INSTALLED],
+      packageBundles: { [INSTALLED]: bundleBytesFor(INSTALLED) },
+      files: {
+        [statusPath(CACHE, PLUGIN)]: enc(
+          JSON.stringify({
+            lastCheckAtMs: 1,
+            lastFailureAtMs: 1,
+            lastError: "ECONNREFUSED registry.npmjs.org",
+            lastStatus: "error",
+          }),
+        ),
+      },
+    });
+
+    const res = await backgroundSelfUpdate(io, {
+      plugin: PLUGIN,
+      installedVersion: INSTALLED,
+      repo: REPO,
+      cacheDir: CACHE,
+      channel: "stable",
+    });
+
+    expect(res).toEqual({ status: "up-to-date", version: INSTALLED });
+    const record = decode(new TextDecoder().decode(files[statusPath(CACHE, PLUGIN)])) as Record<string, unknown>;
+    expect(record.lastStatus).toBe("up-to-date");
+    expect(record).not.toHaveProperty("lastFailureAtMs");
+    expect(record).not.toHaveProperty("lastError");
   });
 
   it("registry offline: typed error, cache keeps serving, retried later", async () => {

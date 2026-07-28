@@ -2,11 +2,33 @@ import { access, mkdtemp, mkdir, readdir, rm, utimes, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { applyTmpJanitorReport, collectTmpJanitorReport, selectOrphanTestRunners } from "../src/runtime/tmp-janitor.js";
-import { LOGS_TTL_S, SCRATCH_TTL_S } from "../src/core/tmp-janitor.js";
+import {
+  applyTmpJanitorReport,
+  collectTmpJanitorReport,
+  runTmpJanitor,
+  selectOrphanTestRunners,
+} from "../src/runtime/tmp-janitor.js";
+import { KNOWN_TMP_LANES, LOGS_TTL_S, SCRATCH_TTL_S } from "../src/core/tmp-janitor.js";
+import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
+import { discoverLiveSupervisorPid } from "../src/runtime/supervisor-state.js";
+import { readPidStartTime } from "../src/core/state.js";
 
 const NOW = 1_800_000_000;
 const roots: string[] = [];
+
+/** A fleet `state.toon` whose supervisor liveness anchor is `pid`. */
+function fleetSnapshot(pid: number): string {
+  return encodeDevSnapshotToon({
+    ts: new Date(NOW * 1000).toISOString(),
+    epoch: NOW,
+    runner: "claude",
+    pid,
+    ready_for_agent: 0,
+    slots: { busy: 0, free: 1, total: 1, parked: 0 },
+    slot_pids: [],
+    spawns_this_tick: 0,
+  });
+}
 
 async function tempRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "red-skills-janitor-"));
@@ -220,5 +242,102 @@ describe("tmp janitor runtime", () => {
     await expect(access(supervisorDir)).resolves.toBeUndefined();
     expect(applied.protectedLiveSupervisors).toContain(supervisorDir);
     expect(applied.staleSupervisors).toEqual([]);
+  });
+
+  // ---------- #2679: the live lane must survive without a pid file ----------
+
+  it("spares a supervisor fleet dir whose state snapshot names a live pid and has no pid file", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const supervisorDir = join(tmp, "supervisors", "default");
+    await mkdir(supervisorDir, { recursive: true });
+    await writeFile(join(supervisorDir, "state.toon"), fleetSnapshot(process.pid), "utf8");
+
+    const report = await collectTmpJanitorReport(tmp, NOW, () => "UNKNOWN");
+
+    expect(report.staleSupervisors.spare.map((e) => e.path)).toEqual([supervisorDir]);
+    expect(report.staleSupervisors.reclaim).toEqual([]);
+
+    const applied = await applyTmpJanitorReport(tmp, report);
+    await expect(access(supervisorDir)).resolves.toBeUndefined();
+    expect(applied.protectedLiveSupervisors).toContain(supervisorDir);
+    expect(applied.removals.map((r) => r.path)).not.toContain(supervisorDir);
+  });
+
+  it("reaps a supervisor fleet dir whose state snapshot names a dead pid", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const supervisorDir = join(tmp, "supervisors", "default");
+    await mkdir(supervisorDir, { recursive: true });
+    await writeFile(join(supervisorDir, "state.toon"), fleetSnapshot(999_999_999), "utf8");
+
+    const report = await collectTmpJanitorReport(tmp, NOW, () => "UNKNOWN");
+
+    expect(report.staleSupervisors.reclaim.map((e) => e.path)).toEqual([supervisorDir]);
+
+    const applied = await applyTmpJanitorReport(tmp, report);
+    await expect(access(supervisorDir)).rejects.toThrow();
+    expect(applied.staleSupervisors).toContain(supervisorDir);
+  });
+
+  it("spares a supervisor fleet dir whose s<pid> log dir names a live pid", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const supervisorDir = join(tmp, "supervisors", "default");
+    await mkdir(join(supervisorDir, `s${process.pid}`), { recursive: true });
+    await writeFile(join(supervisorDir, `s${process.pid}`, "supervisor.log.toonl"), "", "utf8");
+
+    const report = await collectTmpJanitorReport(tmp, NOW, () => "UNKNOWN");
+
+    expect(report.staleSupervisors.spare.map((e) => e.path)).toEqual([supervisorDir]);
+
+    const applied = await applyTmpJanitorReport(tmp, report);
+    await expect(access(supervisorDir)).resolves.toBeUndefined();
+    expect(applied.protectedLiveSupervisors).toContain(supervisorDir);
+  });
+
+  it("never removes a registered lane through the unknown-entry path", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const supervisorDir = join(tmp, "supervisors", "default");
+    await mkdir(supervisorDir, { recursive: true });
+    await writeFile(join(supervisorDir, "state.toon"), fleetSnapshot(process.pid), "utf8");
+    await mkdir(join(tmp, "work-old"), { recursive: true });
+
+    const report = await collectTmpJanitorReport(tmp, NOW, () => "UNKNOWN");
+    expect(report.plan.unknownTmpRoots).toEqual(["work-old"]);
+    // Simulate a plan built by an older bundle (or a drifted lane registry) that
+    // named a registered lane as unknown — apply must still refuse to delete it.
+    report.plan.unknownTmpRoots = [...KNOWN_TMP_LANES, "work-old"];
+
+    const applied = await applyTmpJanitorReport(tmp, report);
+    for (const lane of KNOWN_TMP_LANES) {
+      expect(applied.removals.map((r) => r.path)).not.toContain(join(tmp, lane));
+      expect(applied.unknownTmpRoots).not.toContain(join(tmp, lane));
+    }
+    await expect(access(supervisorDir)).resolves.toBeUndefined();
+    expect(applied.unknownTmpRoots).toEqual([join(tmp, "work-old")]);
+  });
+
+  it("keeps fleet-truth pid discovery working after a boot sweep on a live fleet", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const supervisorDir = join(tmp, "supervisors", "default");
+    await mkdir(supervisorDir, { recursive: true });
+    await writeFile(join(supervisorDir, "afk-supervisor.pid"), String(process.pid), "utf8");
+    await writeFile(
+      join(supervisorDir, "afk-supervisor.pid.start"),
+      readPidStartTime(process.pid) ?? "",
+      "utf8",
+    );
+    await writeFile(join(supervisorDir, "state.toon"), fleetSnapshot(process.pid), "utf8");
+
+    await runTmpJanitor(tmp, NOW, () => "UNKNOWN", { fix: true });
+
+    // This is what `fleet_status` resolves: an absent runtime dir reports
+    // `pid 0, alive false` for a provably live supervisor (#2679).
+    const discovered = await discoverLiveSupervisorPid(supervisorDir);
+    expect(discovered).not.toBeNull();
+    expect(discovered?.pid).toBe(process.pid);
   });
 });

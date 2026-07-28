@@ -1,0 +1,18 @@
+[]{schema,attempt_id,worker_id,issue,try,at,event,writer,claim}:
+red.castle.attempt.v1,"wP1FZ:2703:1",wP1FZ,2703,1,"2026-07-28T15:00:00.000Z",attempt.claimed,resident,"{\"state\":\"claimed\",\"by\":\"resident\"}"
+[]{schema,attempt_id,worker_id,issue,try,at,event,writer,routing}:
+red.castle.attempt.v1,"wP1FZ:2703:1",wP1FZ,2703,1,"2026-07-28T15:00:01.000Z",attempt.routed,resident,"{\"runner\":\"claude\",\"tier\":\"complex\",\"model\":\"claude-opus-5\",\"effort\":\"medium\"}"
+[]{schema,attempt_id,worker_id,issue,try,at,event,writer,note,payload}:
+red.castle.attempt.v1,"wP1FZ:2703:1",wP1FZ,2703,1,"2026-07-28T15:04:00.000Z",attempt.progressed,resident,iteration 1,"{\"tools\":12}"
+[]{schema,attempt_id,worker_id,issue,try,at,event,writer,branch,commit}:
+red.castle.attempt.v1,"wP1FZ:2703:1",wP1FZ,2703,1,"2026-07-28T15:12:00.000Z",attempt.committed,resident,afk/2703-attempt-record,1f2e3d4
+[]{schema,attempt_id,worker_id,issue,try,at,event,writer,pr}:
+red.castle.attempt.v1,"wP1FZ:2703:1",wP1FZ,2703,1,"2026-07-28T15:14:00.000Z",attempt.pr-opened,resident,2710
+[]{schema,attempt_id,worker_id,issue,try,at,event,writer,gate}:
+red.castle.attempt.v1,"wP1FZ:2703:1",wP1FZ,2703,1,"2026-07-28T15:19:00.000Z",attempt.gated,resident,"{\"name\":\"test\",\"status\":\"passed\",\"summary\":\"412 passed\"}"
+[]{schema,attempt_id,worker_id,issue,try,at,event,writer,landing}:
+red.castle.attempt.v1,"wP1FZ:2703:1",wP1FZ,2703,1,"2026-07-28T15:21:00.000Z",attempt.landing,resident,"{\"step\":\"merge\",\"status\":\"done\",\"detail\":\"squash\"}"
+[]{schema,attempt_id,worker_id,issue,try,at,event,writer,artifact}:
+red.castle.attempt.v1,"wP1FZ:2703:1",wP1FZ,2703,1,"2026-07-28T15:21:30.000Z",attempt.artifact,resident,"{\"kind\":\"worktree\",\"path\":\".red/tmp/workers/wP1FZ/2703/worktree\",\"reclaimable\":true,\"reclaim_after\":\"2026-07-29T15:21:30.000Z\",\"reason\":\"landed\"}"
+[]{schema,attempt_id,worker_id,issue,try,at,event,writer,claim,outcome,resources}:
+red.castle.attempt.v1,"wP1FZ:2703:1",wP1FZ,2703,1,"2026-07-28T15:21:40.000Z",attempt.closed,resident,"{\"state\":\"conceded\",\"by\":\"resident\",\"reason\":\"landed\"}","{\"kind\":\"done\",\"detail\":\"merged as 9a8b7c6\"}","{\"wall_clock_s\":1300,\"peak_rss_mb\":812,\"cost_usd\":1.42}"

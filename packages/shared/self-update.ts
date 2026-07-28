@@ -416,6 +416,10 @@ export async function backgroundSelfUpdate(
         lastCheckAtMs: nowMs(),
         lastSuccessAtMs: nowMs(),
         lastStatus: "up-to-date",
+        // Clearing the failure is what makes the canonical fix reachable: the
+        // merge-write keeps every prior key, so a failure left behind here can
+        // never be healed by running a shim, only by editing the file by hand.
+        lastFailureAtMs: undefined,
         lastError: undefined,
       });
       return { status: "up-to-date", version: current };
@@ -431,6 +435,7 @@ export async function backgroundSelfUpdate(
       lastCheckAtMs: nowMs(),
       lastSuccessAtMs: nowMs(),
       lastStatus: "updated",
+      lastFailureAtMs: undefined,
       lastError: undefined,
     });
     return { status: "updated", version: target };

@@ -11,11 +11,15 @@ import {
   planLogsJanitor,
   planOrphanFeedbackWorktreeSweep,
   planScratchJanitor,
+  planSupervisorLaneJanitor,
   planTmpJanitor,
   planWorkerDirJanitor,
+  removableUnknownTmpRoots,
   SCRATCH_TTL_S,
+  supervisorLaneIsLive,
   type JanitorEntry,
   type OrphanFeedbackEntry,
+  type SupervisorLaneEntry,
   type WorkerDirJanitorEntry,
 } from "../src/core/tmp-janitor.js";
 
@@ -404,5 +408,53 @@ describe("planOrphanFeedbackWorktreeSweep", () => {
     // Should not happen in practice, but the rule is clear: ownerAlive: true → spare.
     const live = fbEntry("afk-wABC-10-fix", true);
     expect(planOrphanFeedbackWorktreeSweep([live], false)).toEqual({ reclaim: [], spare: [live] });
+  });
+});
+
+// ---------- planSupervisorLaneJanitor (#2679) ----------
+
+describe("planSupervisorLaneJanitor", () => {
+  function lane(over: Partial<SupervisorLaneEntry> = {}): SupervisorLaneEntry {
+    return { path: "/red/tmp/supervisors/default", fleet: "default", pidAlive: false, ...over };
+  }
+
+  it("spares a fleet dir whose pid file names a live process", () => {
+    const live = lane({ pidAlive: true });
+    expect(planSupervisorLaneJanitor([live])).toEqual({ reclaim: [], spare: [live] });
+  });
+
+  it("spares a fleet dir whose state snapshot names a live pid and has no pid file", () => {
+    const live = lane({ pidAlive: false, statePidAlive: true });
+    expect(planSupervisorLaneJanitor([live])).toEqual({ reclaim: [], spare: [live] });
+  });
+
+  it("spares a fleet dir whose s<pid> log dir names a live pid and has no pid file", () => {
+    const live = lane({ pidAlive: false, snapshotPidAlive: true });
+    expect(planSupervisorLaneJanitor([live])).toEqual({ reclaim: [], spare: [live] });
+  });
+
+  it("reclaims a fleet dir whose every anchor is dead", () => {
+    const dead = lane({ pidAlive: false, statePidAlive: false, snapshotPidAlive: false });
+    expect(planSupervisorLaneJanitor([dead])).toEqual({ reclaim: [dead], spare: [] });
+  });
+
+  it("supervisorLaneIsLive is true when any single anchor is live", () => {
+    expect(supervisorLaneIsLive(lane({ pidAlive: true }))).toBe(true);
+    expect(supervisorLaneIsLive(lane({ statePidAlive: true }))).toBe(true);
+    expect(supervisorLaneIsLive(lane({ snapshotPidAlive: true }))).toBe(true);
+    expect(supervisorLaneIsLive(lane())).toBe(false);
+  });
+});
+
+// ---------- removableUnknownTmpRoots (#2679) ----------
+
+describe("removableUnknownTmpRoots", () => {
+  it("never returns an entry named in KNOWN_TMP_LANES", () => {
+    const lanes = [...KNOWN_TMP_LANES];
+    expect(removableUnknownTmpRoots(lanes)).toEqual([]);
+  });
+
+  it("still returns genuinely unknown names", () => {
+    expect(removableUnknownTmpRoots(["supervisors", "work-old", "workers"])).toEqual(["work-old"]);
   });
 });

@@ -72,7 +72,9 @@ function renderPlain(path: string, inspection: CodexStatuslineInspection, change
     lines.push("note: Codex will use its built-in default footer, which does not include task-progress.");
     lines.push("fix: afk codex-statusline --fix");
   }
-  lines.push("boundary: Codex supports built-in footer IDs only; use /afk monitor for rich AFK worker state.");
+  lines.push(
+    "boundary: Codex supports built-in footer IDs only; read rich AFK worker state from the castle `monitor` and `worker_vitals` tools (no-MCP fallback: /afk monitor).",
+  );
   lines.push("opencode: AFK API-auth runner only; no interactive host footer/plugin UI.");
   return `${lines.join("\n")}\n`;
 }

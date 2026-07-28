@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { decode } from "@reddb-io/toon";
+import { statusFileName } from "@reddb-io/shared/self-update.js";
 import { parseCurrentBlocker } from "../src/core/blocker-state.js";
+import { readDevBundleCacheState } from "../src/core/bundle-version.js";
+import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 import {
   applyOperationalProbeFixes,
   classifyQueueVisibilityTransportFailure,
@@ -137,6 +140,38 @@ describe("operational probe registry", () => {
         evidence: expect.stringContaining("stale-failed-check"),
       }),
     ]);
+  });
+
+  it("stays ok when the last self-update success supersedes an old failure", async () => {
+    const root = await mkdtemp(join(tmpdir(), "probe-bundle-cache-"));
+    try {
+      await writeFile(
+        join(root, statusFileName("dev")),
+        encodeDevSnapshotToon({
+          lastCheckAtMs: 100_000_000,
+          lastSuccessAtMs: 100_000_000,
+          lastFailureAtMs: 100_000_000 - 91 * 60 * 60 * 1000,
+          lastStatus: "up-to-date",
+        }),
+        "utf8",
+      );
+
+      const report = await runOperationalProbes({
+        remoteUrls: [],
+        bundleCoherence: {
+          ...readDevBundleCacheState("2.87.3", { RED_SKILLS_CACHE_DIR: root }, 100_000_000),
+          pointerVersion: "2.87.3",
+        },
+      });
+
+      expect(report.findings).toEqual([]);
+      expect(report.probes.find((probe) => probe.id === "afk.bundle-coherence")).toMatchObject({
+        verdict: "ok",
+        data: { findings: [] },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("surfaces malformed config fallback with the offending line and construct", async () => {

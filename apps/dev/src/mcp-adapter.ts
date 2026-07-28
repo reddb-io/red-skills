@@ -905,6 +905,7 @@ async function fleetStatus(
         ),
       ),
       heartbeat_age_s: fleet ? now - fleet.epoch : -1,
+      identity_anchor: discovered?.source ?? "none",
     },
     slots: {
       busy: fleet?.slotsBusy ?? 0,

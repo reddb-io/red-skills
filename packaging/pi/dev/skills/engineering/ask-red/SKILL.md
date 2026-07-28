@@ -93,7 +93,7 @@ Next handoff: <what must be true before the next command>
 The router must mention every published dev skill so `/red-doctor` can flag drift:
 `/afk`, `/ask-red`, `/go`, `/manager`, `/wayfinder`, `/model-tier-policy`, `/curate`,
 `/context`, `/daily-review`, `/dashboard`, `/audit-skills`, `/diagnose`,
-`/ground-truth`, `/red-doctor`, `/review-adrs`, `/start`, `/triage`, `/hitl`,
+`/ground-truth`, `/red-doctor`, `/adr-editor`, `/start`, `/triage`, `/hitl`,
 `/report-bug`, `/retake`, `/improve-codebase-architecture`,
 `/red-setup`, `/red-gains`, `/red-statusline`, `/implement`, `/tdd`, `/to-tickets`,
 `/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
@@ -147,10 +147,11 @@ through `/memory:view`, `memory docs reference-graph`, and
   adopt a hand-done branch through the no-agent gate, or hand off to `/hitl`.
 - An on-fire Ticket carries the `priority:urgent` label; the `/afk` queue
   promotes it ahead of every `--spec` / `--issues` filter.
-- `/review-adrs` triages the decision record read-only, may apply only explicitly
-  confirmed mechanical ADR maintenance, and feeds judgment findings to `/to-spec`.
-  Merge, split, and supersede-a-live-decision never apply in-session — they become
-  supersede-and-replace Spec work items for `/to-tickets` + `/afk`.
+- `/adr-editor` is the totipotent editor over the `.red/adr/` collection: list,
+  group by subject, surface inconsistencies, add, remove, rewrite, merge, split,
+  archive, renumber, and re-index all apply in-session. One confirmation gates a
+  destructive or wide batch; `/to-spec` is an offered escape hatch for genuinely
+  large batches, never a required route.
 - `/model-tier-policy` answers runner/model tier choices; `runner_list` and
   `runner_detect` on the `castle` MCP answer which backend a host resolves to.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding

@@ -75,6 +75,8 @@ MCP, and non-essential host hooks are absent from every projection.
 | `afk.companion.min_progress_loc` | — | `5` | Companion progress floor: a worker that has added at least this many lines has produced real work and is never flagged for churn/stuck. |
 | `afk.companion.*` (cap) | `RED_AFK_RETRY_DRIFT` | `2` | Companion bounded re-enqueue budget. Each detected drift on an attempt injects **one** correction (write-only, idempotent via a fingerprint, rewriting `## Agent brief`); once the attempt count reaches this cap the companion **escalates** to `ready-for-human` (a `## Current blocker` of kind `drift`) instead of correcting again. Shares the bounded-recovery policy (`core/recovery.ts`); never kills a process — termination/respawn is the reaper + fleet's job. |
 | `afk.drain.max_cost_usd` | `RED_AFK_DRAIN_MAX_COST_USD` / `fleet --budget-usd` | _(unset)_ | Per-drain USD budget for the fleet supervisor. Spend is read from WorkerVitals (`current.cost_usd`) in worker state files, not a parallel ledger. Tiers are OK below 75%, WARNING at 75%, CRITICAL at 90%, and HARD_STOP at 100%. CRITICAL spawns new workers with one model-tier-policy downgrade; HARD_STOP stops all new spawns, lets in-flight workers finish, and records a TOON budget event in `.red/tmp/supervisors/default/supervisor.log.toonl`. |
+| `afk.fleet.scope.enabled` | `RED_AFK_FLEET_SCOPE` (`off`) | `true` | Cgroup isolation for the fleet (#2697). On Linux with a systemd `--user` session the launcher spawns the supervisor under `systemd-run --user --scope` in a transient `red-fleet-<name>-<pid>.scope` with `Delegate=yes`, so every worker, gate install, and test fork is charged to the fleet's own cgroup. Without it the fleet inherits the caller's cgroup — the terminal emulator's scope — and `systemd-oomd`, which kills the largest cgroup under pressure, takes every terminal window and agent session instead of the fleet. The scope is created **at launch**, because moving a running process between cgroups does not move its existing memory charge. Where no systemd user session exists (or the value is `false`), the launcher runs unscoped **and warns**; it never drops isolation silently, and a scope that fails to produce a supervisor is retried unscoped with a second warning. |
+| `afk.fleet.scope.memory_high` | `RED_AFK_FLEET_SCOPE_MEMORY_HIGH` | `70%` | The fleet scope's `MemoryHigh` throttle — any systemd memory value (`70%`, `6G`). An empty value sets no property, leaving the scope in place with no throttle. |
 
 ### Tier routing
 
@@ -98,8 +100,9 @@ resolved tiers as documented by the model-tier policy.
 
 Every spawn appends a route line to the Worker log and stamps
 `current.model_tier`, `current.model`, and `current.effort` in the Worker state.
-`red-skills-dev monitor` renders the active tier as `tier:<name>` on the Worker
-row, alongside the existing vitals.
+The castle `monitor` and `worker_vitals` tools carry the active tier as a field;
+the no-MCP fallback `red-skills-dev monitor` renders it as `tier:<name>` on the
+Worker row, alongside the existing vitals.
 
 ```yaml
 plugins:

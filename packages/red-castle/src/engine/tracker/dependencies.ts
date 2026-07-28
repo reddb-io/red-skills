@@ -1,4 +1,5 @@
 import type { EngineLabelVocabulary } from "../config.js";
+import { isRefused, planTransition } from "../state-transition.js";
 import type { TrackerIssue, TrackerPort, TrackerIssueReference } from "./port.js";
 
 export type { TrackerIssue, TrackerPort, TrackerIssueReference } from "./port.js";
@@ -104,14 +105,17 @@ async function planPromotions(
     }
     if (!allClosed) continue;
 
+    // The DECISION above is this module's; the WRITE is the transition API's —
+    // `promote` consumes the `req:*` edges and re-queues in one proven-coherent
+    // mutation (#2666, ADR 0122 rule 5).
+    const transition = planTransition(candidate.labels, { kind: "promote" }, labels);
+    if (isRefused(transition)) continue;
+
     plans.push({
       issue: candidate.number,
       dependencies,
-      removeLabels: [
-        labels.dependencyBlocked,
-        ...labelDeps.map((dependency) => labelForDependency(dependency, labels)),
-      ],
-      addLabels: [labels.ready],
+      removeLabels: transition.remove,
+      addLabels: transition.add,
     });
   }
   return plans;

@@ -22,6 +22,7 @@ import {
   registerLaneEventSubscription,
   type LaneSubscriptionServer,
 } from "./lane-subscription.js";
+import { HOST_STATE_TRANSITION_LABELS } from "./core/state-transition.js";
 import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
 import { createMedicIo } from "./runtime/medic-io.js";
 import { createFileMedicStore, runMedicPass } from "./core/pr-medic.js";
@@ -236,7 +237,7 @@ export async function startResidentIssueCurator(
     if (running) return;
     running = true;
     try {
-      await runIssueStateCurator({ tracker, store });
+      await runIssueStateCurator({ tracker, store, labels: HOST_STATE_TRANSITION_LABELS });
     } catch {
       // Repo-level transport/state faults retry on the permanent periodic belt;
       // they must not terminate the resident or block its MCP surface.
@@ -278,6 +279,21 @@ export async function main(
         : `${renderVersion(buildInfo)}\n`,
     );
     return 0;
+  }
+  // Any OTHER leading token is a role this bundle does not own — `run`,
+  // `--once`, `monitor`, … all belong to the dev entry. Falling through would
+  // open a SECOND resident/stdio host that contends on the singleton leases and
+  // dies with an opaque lease error, which is exactly how MCP-launched slots
+  // burned as `deaths == respawns` forever (#2677). Fail with a named error
+  // instead, so the misrouted spawn is legible in the slot log.
+  const leading = argv[0];
+  if (leading !== undefined) {
+    process.stderr.write(
+      `castle MCP: unroutable subcommand ${JSON.stringify(leading)} — ` +
+        "the castle-mcp bundle routes only `__supervise` and `--version`; " +
+        "worker subcommands belong to the dev entry (red-skills-dev)\n",
+    );
+    return 2;
   }
   await dependencies.startCurator();
   await dependencies.startMergeDriver();

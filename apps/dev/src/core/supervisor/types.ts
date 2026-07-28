@@ -227,6 +227,13 @@ export interface FleetHeartbeat {
   shrinkMode: ElasticShrinkMode;
   /** Dev bundle version the running supervisor was launched from. */
   bundleVersion?: string;
+  /** PID of the supervisor process that wrote this snapshot. A janitor liveness
+   * anchor that survives when the pid file does not (issue #2679). */
+  pid?: number;
+  /** Stable process-start pin for {@link FleetHeartbeat.pid}. Makes the snapshot
+   * a fully identity-verified liveness anchor — the same check the pid file gets
+   * — so a recycled pid can never pass as the supervisor (issue #2698). */
+  pidStartTime?: string;
   readyForAgent: number;
   slotsBusy: number;
   slotsFree: number;

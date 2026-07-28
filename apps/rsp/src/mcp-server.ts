@@ -174,11 +174,30 @@ function showErrorPayload(handle: string, error: string): JsonObject {
   };
 }
 
+/**
+ * ADR 0126: the MCP server is one more client of the resident, with no
+ * privileged standing. When the resident cannot be reached it fails open to the
+ * caller's own payload — the same guarantee the wrappers give the raw command —
+ * rather than turning an unreachable socket into lost input.
+ */
 async function compressPayloadForMcp(
   args: Record<string, unknown> | undefined,
   store: Pick<ResidentRspElisionStore, "mint">,
 ): Promise<string> {
   const input = payloadToText(args?.payload);
+  try {
+    return await compressThroughResident(input, args, store);
+  } catch (err) {
+    if (process.env.RSP_DEBUG === "1") throw err;
+    return ensureTrailingNewline(input);
+  }
+}
+
+async function compressThroughResident(
+  input: string,
+  args: Record<string, unknown> | undefined,
+  store: Pick<ResidentRspElisionStore, "mint">,
+): Promise<string> {
   const level = mcpCompressLevel(args?.level);
   const jsonLane = await renderGenericJsonLane(input, {
     level,

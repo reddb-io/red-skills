@@ -9,6 +9,16 @@ plugins:
       primary-branch: true       # primary-checkout branch-switch guard
     afk:
       models:
+        # Maintainer decision 2026-07-28: the claude runner is pinned to Opus 5
+        # on EVERY tier — validate included — so the local fleet never falls back
+        # to the 4.x defaults (`claude-haiku-4-5` / `claude-sonnet-4-6` /
+        # `claude-opus-4-8`). `base` is the per-runner one-liner (ADR 0049): it
+        # auto-populates all four tiers, and each tier keeps its own default
+        # effort (validate low, simple high, complex medium, think high). Pin a
+        # single tier back by giving it its own `<tier>.model`.
+        claude:
+          base:
+            model: claude-opus-5
         # GPT-5.6 (released 2026-07-09) for coding tiers; `validate` — the
         # fuzzy-validation / contract-review tier — deliberately stays on 5.5.
         # `gpt-5.6-sol` is the flagship of the sol/terra/luna family and is
