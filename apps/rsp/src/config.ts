@@ -3,6 +3,14 @@ import { join, resolve } from "node:path";
 import { findUp, flatConfigValue } from "@reddb-io/shared/plugin-gate.js";
 import { SHARED_STORE_REL, resolveSharedStorePath } from "@reddb-io/shared/red-paths.js";
 import { resolveResidentPaths } from "@reddb-io/shared/resident-client.js";
+import {
+  DEFAULT_RSP_MAX_OVERHEAD_MS,
+  DEFAULT_RSP_MAX_SELF_STATE_BYTES,
+  DEFAULT_RSP_OVERHEAD_CONSECUTIVE_BREACHES,
+  DEFAULT_RSP_OVERHEAD_COOLDOWN_MS,
+  DEFAULT_RSP_OVERHEAD_NET_LOSS_FLOOR_BYTES,
+  type RspOverheadCeiling,
+} from "./overhead-budget.js";
 
 export const DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD = 8 * 1024;
 /** Canonical shared RedDB store location (state tier); see {@link SHARED_STORE_REL}. */
@@ -32,6 +40,8 @@ export interface RspRuntimeConfig {
   idleMs: number;
   heavyGitByteThreshold: number;
   measurementHoldoutShare: number;
+  /** The cost side of the ledger: what rsp may spend before it is a defect (#2746). */
+  overhead: RspOverheadCeiling;
 }
 
 export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitStoreUri?: string): RspRuntimeConfig {
@@ -77,6 +87,29 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     numericEnv(env.RSP_MEASUREMENT_HOLDOUT_SHARE) ?? readNumericYamlPath(yaml, "rsp.measurement.holdoutShare"),
     DEFAULT_RSP_MEASUREMENT_HOLDOUT_SHARE,
   );
+  const overhead: RspOverheadCeiling = {
+    maxOverheadMs: positiveNumber(
+      numericEnv(env.RSP_MAX_OVERHEAD_MS) ?? readNumericYamlPath(yaml, "rsp.overhead.maxOverheadMs"),
+      DEFAULT_RSP_MAX_OVERHEAD_MS,
+    ),
+    maxSelfStateBytes: positiveNumber(
+      numericEnv(env.RSP_MAX_SELF_STATE_BYTES) ?? readNumericYamlPath(yaml, "rsp.overhead.maxSelfStateBytes"),
+      DEFAULT_RSP_MAX_SELF_STATE_BYTES,
+    ),
+    netLossFloorBytes: positiveNumber(
+      readNumericYamlPath(yaml, "rsp.overhead.netLossFloorBytes"),
+      DEFAULT_RSP_OVERHEAD_NET_LOSS_FLOOR_BYTES,
+    ),
+    consecutiveBreaches: positiveNumber(
+      numericEnv(env.RSP_OVERHEAD_CONSECUTIVE_BREACHES) ??
+        readNumericYamlPath(yaml, "rsp.overhead.consecutiveBreaches"),
+      DEFAULT_RSP_OVERHEAD_CONSECUTIVE_BREACHES,
+    ),
+    cooldownMs: positiveNumber(
+      readNumericYamlPath(yaml, "rsp.overhead.cooldownMs"),
+      DEFAULT_RSP_OVERHEAD_COOLDOWN_MS,
+    ),
+  };
   const storeRoot = resolveResidentPaths(cwd).rootDir;
   const storeUri =
     explicitStoreUri ?? env.RSP_STORE_URI ?? `file://${resolveSharedStorePath(resolve(storeRoot), existsSync)}`;
@@ -95,6 +128,7 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     idleMs,
     heavyGitByteThreshold,
     measurementHoldoutShare,
+    overhead,
   };
 }
 
