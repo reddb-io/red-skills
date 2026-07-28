@@ -1,0 +1,144 @@
+attempt_id: "wP1FZ:2703:1"
+worker_id: wP1FZ
+issue: 2703
+try: 1
+opened_at: "2026-07-28T15:00:00.000Z"
+updated_at: "2026-07-28T15:21:40.000Z"
+closed: true
+commits[1]: 1f2e3d4
+gate[1]{name,status,summary}:
+  test,passed,412 passed
+landing[1]{step,status,detail}:
+  merge,done,squash
+artifacts[1]{kind,path,reclaimable,reclaim_after,reason}:
+  worktree,.red/tmp/workers/wP1FZ/2703/worktree,true,"2026-07-29T15:21:30.000Z",landed
+events[9]:
+  - schema: red.castle.attempt.v1
+    attempt_id: "wP1FZ:2703:1"
+    worker_id: wP1FZ
+    issue: 2703
+    try: 1
+    at: "2026-07-28T15:00:00.000Z"
+    event: attempt.claimed
+    writer: resident
+    claim:
+      state: claimed
+      by: resident
+  - schema: red.castle.attempt.v1
+    attempt_id: "wP1FZ:2703:1"
+    worker_id: wP1FZ
+    issue: 2703
+    try: 1
+    at: "2026-07-28T15:00:01.000Z"
+    event: attempt.routed
+    writer: resident
+    routing:
+      runner: claude
+      tier: complex
+      model: claude-opus-5
+      effort: medium
+  - schema: red.castle.attempt.v1
+    attempt_id: "wP1FZ:2703:1"
+    worker_id: wP1FZ
+    issue: 2703
+    try: 1
+    at: "2026-07-28T15:04:00.000Z"
+    event: attempt.progressed
+    writer: resident
+    note: iteration 1
+    payload:
+      tools: 12
+  - schema: red.castle.attempt.v1
+    attempt_id: "wP1FZ:2703:1"
+    worker_id: wP1FZ
+    issue: 2703
+    try: 1
+    at: "2026-07-28T15:12:00.000Z"
+    event: attempt.committed
+    writer: resident
+    branch: afk/2703-attempt-record
+    commit: 1f2e3d4
+  - schema: red.castle.attempt.v1
+    attempt_id: "wP1FZ:2703:1"
+    worker_id: wP1FZ
+    issue: 2703
+    try: 1
+    at: "2026-07-28T15:14:00.000Z"
+    event: attempt.pr-opened
+    writer: resident
+    pr: 2710
+  - schema: red.castle.attempt.v1
+    attempt_id: "wP1FZ:2703:1"
+    worker_id: wP1FZ
+    issue: 2703
+    try: 1
+    at: "2026-07-28T15:19:00.000Z"
+    event: attempt.gated
+    writer: resident
+    gate:
+      name: test
+      status: passed
+      summary: 412 passed
+  - schema: red.castle.attempt.v1
+    attempt_id: "wP1FZ:2703:1"
+    worker_id: wP1FZ
+    issue: 2703
+    try: 1
+    at: "2026-07-28T15:21:00.000Z"
+    event: attempt.landing
+    writer: resident
+    landing:
+      step: merge
+      status: done
+      detail: squash
+  - schema: red.castle.attempt.v1
+    attempt_id: "wP1FZ:2703:1"
+    worker_id: wP1FZ
+    issue: 2703
+    try: 1
+    at: "2026-07-28T15:21:30.000Z"
+    event: attempt.artifact
+    writer: resident
+    artifact:
+      kind: worktree
+      path: .red/tmp/workers/wP1FZ/2703/worktree
+      reclaimable: true
+      reclaim_after: "2026-07-29T15:21:30.000Z"
+      reason: landed
+  - schema: red.castle.attempt.v1
+    attempt_id: "wP1FZ:2703:1"
+    worker_id: wP1FZ
+    issue: 2703
+    try: 1
+    at: "2026-07-28T15:21:40.000Z"
+    event: attempt.closed
+    writer: resident
+    claim:
+      state: conceded
+      by: resident
+      reason: landed
+    outcome:
+      kind: done
+      detail: merged as 9a8b7c6
+    resources:
+      wall_clock_s: 1300
+      peak_rss_mb: 812
+      cost_usd: 1.42
+claim:
+  state: conceded
+  by: resident
+  reason: landed
+routing:
+  runner: claude
+  tier: complex
+  model: claude-opus-5
+  effort: medium
+branch: afk/2703-attempt-record
+pr: 2710
+resources:
+  wall_clock_s: 1300
+  peak_rss_mb: 812
+  cost_usd: 1.42
+outcome:
+  kind: done
+  detail: merged as 9a8b7c6

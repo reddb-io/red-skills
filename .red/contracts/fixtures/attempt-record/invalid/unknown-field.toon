@@ -1,0 +1,9 @@
+schema: red.castle.attempt.v1
+attempt_id: "wP1FZ:2703:1"
+worker_id: wP1FZ
+issue: 2703
+try: 1
+at: "2026-07-28T15:00:00.000Z"
+event: attempt.claimed
+writer: resident
+msg: prose does not belong on the lane
