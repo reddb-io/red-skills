@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { connect } from "@reddb-io/sdk";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import type { JsonObject } from "@reddb-io/toon";
 import type { RspRuntimeConfig } from "../config.js";
@@ -8,6 +7,14 @@ import type { RspStorageClassStats } from "../elision-store.js";
 import { formatUsd } from "../pricing.js";
 import type { RspAccountingLaneStats, RspTelemetryGainsReport, RspTelemetryStats } from "../telemetry.js";
 
+/**
+ * Read the accounting and telemetry lanes through the resident (ADR 0126).
+ *
+ * `rsp stats` and the bare dashboard are readers, not owners: they ask the one
+ * process that holds the store instead of opening a second connection to the
+ * same file. An unprovisioned store or an unreachable resident degrades to the
+ * empty snapshot — a dashboard that renders zeroes beats one that throws.
+ */
 export async function readStatsSnapshot(
   config: RspRuntimeConfig,
   sinceDaysValue: number,
@@ -19,35 +26,22 @@ export async function readStatsSnapshot(
   if (!config.storeUri.startsWith("file://")) return empty;
   const path = fileURLToPath(config.storeUri);
   if (!existsSync(path)) return empty;
-  if (!path.endsWith("red-skills.rdb")) {
-    const { RspElisionStore } = await import("../elision-store.js");
-    const store = await RspElisionStore.open({
-      uri: config.storeUri,
-      ttlDays: config.ttlDays,
-      ephemeralTtlHours: config.ephemeralTtlHours,
-      byteBudget: config.byteBudget,
-    });
-    try {
-      return {
-        stats: await store.stats(),
-        telemetry: emptyTelemetryStats(sinceDaysValue),
-      };
-    } finally {
-      await store.close();
-    }
-  }
-
-  const { ensureReddbBinaryFromWarmCache } = await import("../elision-store.js");
-  await ensureReddbBinaryFromWarmCache();
-  const { readAccountingLaneStats, readTelemetryStats } = await import("../telemetry.js");
-  const db = await connect(config.storeUri);
+  const { residentElisionStore } = await import("../resident-store.js");
+  const store = residentElisionStore(process.cwd(), config);
   try {
+    // Only the shared RedDB store carries the telemetry lanes; a plain store
+    // still reports its own record accounting.
+    if (!path.endsWith("red-skills.rdb")) {
+      return { stats: await store.stats(), telemetry: emptyTelemetryStats(sinceDaysValue) };
+    }
     return {
-      stats: await readAccountingLaneStats(db, config.telemetryByteBudget),
-      telemetry: await readTelemetryStats(db, sinceDaysValue),
+      stats: await store.accountingStats(config.telemetryByteBudget),
+      telemetry: await store.telemetryStats(sinceDaysValue),
     };
+  } catch {
+    return empty;
   } finally {
-    await db.close();
+    await store.close();
   }
 }
 
