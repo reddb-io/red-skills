@@ -57,6 +57,7 @@ import { parseCurrentBlocker } from "./blocker-state.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
 import { type RecoveryEnv } from "./recovery.js";
 import { dispose } from "./disposition.js";
+import { parkOrHuman, transitionLabels, type StateTransition } from "./state-transition.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { HistoryClock } from "./history.js";
 import type { Runner } from "../types/runner.js";
@@ -643,12 +644,12 @@ async function park(
   const { issue, labels } = input;
   const failed = feedback.checks.filter((c) => c.status === "failed");
   // The composer owns the typed blocked label + envelope status for this terminal
-  // (core/disposition); reconcile keeps its context-specific removeLabels
-  // (parkDropLabels) and failing-checks comment.
+  // (core/disposition); the transition planner owns the label delta (#2663) and
+  // reconcile keeps only its context-specific failing-checks comment.
   const disp = dispose("feedback-failed", input.attempt, deps.recoveryEnv ?? {});
   const typed = disp.typedLabel!;
   await deps.gh.ensureLabel(typed);
-  await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), [deps.labels.human, typed]);
+  await applyReconcileTransition(deps, issue, labels, parkOrHuman(typed));
   await deps.gh.comment(
     issue,
     `🤖 /afk reconcile validated parked branch \`${input.branch}\` WITHOUT re-running the agent — validation FAILED, so it was not landed:\n${formatFailingChecks(failed)}`,
@@ -690,12 +691,12 @@ async function parkInfraRetry(
   const failedSummary = formatFailingChecks(failed);
 
   if (disp.decision === "retry") {
-    // Re-queue: drop `running` (already shed by the claim step) + the (now
-    // misleading) `blocked:validation-infra` from a prior attempt, add
+    // Re-queue: the planner drops `running` (already shed by the claim step)
+    // + every stale `blocked:*` reason (including the now-misleading
+    // `blocked:validation-infra` from a prior attempt) and adds
     // `ready-for-agent` so the issue resurfaces. The branch is left on the
     // remote (no deleteRemote) — the next attempt can re-validate it.
-    const infraLabels = labels.filter((l) => l !== typed && l !== deps.labels.ready);
-    await deps.gh.editLabels(issue, infraLabels, disp.addLabels);
+    await applyReconcileTransition(deps, issue, labels, { kind: "queue" });
     await deps.gh.comment(
       issue,
       `🤖 /afk reconcile #${issue}: feedback gate failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on \`${input.branch}\` — auto-retrying (attempt ${input.attempt}/${cap}):\n${failedSummary}`,
@@ -712,7 +713,7 @@ async function parkInfraRetry(
   // Cap exhausted → escalate to ready-for-human (page a maintainer). The
   // infra flake is sticky; the issue needs a human to look at the gate setup.
   await deps.gh.ensureLabel(typed);
-  await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), disp.addLabels);
+  await applyReconcileTransition(deps, issue, labels, parkOrHuman(disp.typedLabel));
   await deps.gh.comment(
     issue,
     `🤖 /afk reconcile #${issue}: feedback gate INFRA failure retry budget exhausted (attempt ${input.attempt}/${cap}) on \`${input.branch}\` — escalating to ready-for-human:\n${failedSummary}`,
@@ -738,7 +739,7 @@ async function parkInfraLanding(
   const disp = dispose("infra", input.attempt, deps.recoveryEnv ?? {});
   const typed = disp.typedLabel ?? deps.labels.infra;
   await deps.gh.ensureLabel(typed);
-  await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), [deps.labels.human, typed]);
+  await applyReconcileTransition(deps, issue, labels, parkOrHuman(typed));
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     log: `reconcile land infra failure: ${reason}`,
   });
@@ -764,7 +765,7 @@ async function parkMergeConflict(
   const disp = dispose("merge-conflict", input.attempt, deps.recoveryEnv ?? {});
   const typed = disp.typedLabel!;
   await deps.gh.ensureLabel(typed);
-  await deps.gh.editLabels(issue, parkDropLabels(labels, deps.labels), [deps.labels.human, typed]);
+  await applyReconcileTransition(deps, issue, labels, parkOrHuman(typed));
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     log: `reconcile land failed: ${reason}`,
   });
@@ -774,16 +775,37 @@ async function parkMergeConflict(
   return { outcome: "parked", reason: "merge-conflict", posted };
 }
 
-/** Routing/blocked labels to shed when parking — keeps `blocked:validation`
- * (re-added below) and domain labels; drops `running`/`ready-for-agent` + the
- * mechanical blocked reasons that no longer describe the state. */
-function parkDropLabels(labels: string[], config: TriageLabelConfig): string[] {
-  return labels.filter(
-    (l) =>
-      l === config.running ||
-      l === config.ready ||
-      (l.startsWith(config.blockedPrefix) && l !== config.validation && l !== config.mergeConflict),
+/**
+ * Apply one reconcile-lane state transition through the transition planner
+ * (ADR 0122 rule 5, #2663). It replaces the hand-rolled `parkDropLabels` /
+ * disp-set edits: the plan is computed over the issue's REAL label set, so it
+ * sheds every stale state role, the `running` projection, and every stale
+ * `blocked:*` reason in ONE edit — and proves the one-state-role invariant
+ * BEFORE the tracker call rather than trusting a filter to have covered it.
+ *
+ * A refusal is logged and left unapplied: a refused plan means the REQUEST is
+ * malformed, and half-applying it is exactly the failure mode the planner
+ * exists to prevent. Refusal is unreachable for the park transitions (a park
+ * always lands on exactly `ready-for-human`); the re-queue can refuse when
+ * `req:*` edges survive, which the mechanical-disqualifier gate already
+ * excludes from this lane.
+ */
+async function applyReconcileTransition(
+  deps: ReconcileDeps,
+  issue: number,
+  labels: string[],
+  transition: StateTransition,
+): Promise<boolean> {
+  const result = await transitionLabels(
+    (remove, add) => deps.gh.editLabels(issue, remove, add),
+    labels,
+    transition,
   );
+  if (result.applied) return result.ok;
+  deps.appendIterLog(
+    `🤖 /afk reconcile #${issue}: transition "${transition.kind}" refused by the state planner (${result.reason}) — labels left untouched.`,
+  );
+  return false;
 }
 
 function formatFailingChecks(failed: FeedbackCheck[]): string {
@@ -895,8 +917,18 @@ async function runCloseCascade(deps: ReconcileDeps, closedIssue: number): Promis
       dependents.push({ number: dep.number, reqs });
     }
 
+    // The promotion runs through the transition planner: `promote` consumes the
+    // `req:*` edges, sheds `blocked:dependency` (and any other stale reason),
+    // and lands on `ready-for-agent` in ONE proven edit (#2663). The planner
+    // needs the dependent's CURRENT labels, which the listing already carried.
+    const labelsOf = new Map(dependentsRaw.map((d) => [d.number, d.labels]));
     for (const p of planCloseCascade(closedIssue, dependents)) {
-      await deps.gh.editLabels(p.number, [deps.labels.dependency, ...p.reqLabels], [deps.labels.ready]);
+      await applyReconcileTransition(
+        deps,
+        p.number,
+        labelsOf.get(p.number) ?? [deps.labels.dependency, ...p.reqLabels],
+        { kind: "promote" },
+      );
       const reqs = p.refs.map((ref) => Number(ref.slice(1))).filter((n) => Number.isFinite(n));
       await deps.gh.comment(p.number, await cascadeAuditCommentFor(reqs, deps.gh.issueReference));
     }

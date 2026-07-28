@@ -29,6 +29,7 @@ import {
   LABEL_NEEDS_INFO,
   LABEL_WONTFIX,
 } from "./triage-labels.js";
+import { isRefused, planTransition, type StateTransition } from "./state-transition.js";
 import type { TrustPolicy } from "./trust-gate.js";
 
 /** The four triage outcomes `/triage` produces, mapped 1:1 to canonical states. */
@@ -55,12 +56,46 @@ export interface TriageTransition {
   close: boolean;
 }
 
+/** The state-machine move each triage decision expresses. `wontfix` is absent
+ * on purpose: closing an issue EXITS the state machine, so it is the one
+ * decision the one-state-role planner cannot (and must not) express. */
+const TRIAGE_STATE_TRANSITIONS: Record<Exclude<TriageDecision, "wontfix">, StateTransition> = {
+  "ready-for-agent": { kind: "queue" },
+  "needs-info": { kind: "needs-info" },
+  "ready-for-human": { kind: "human" },
+};
+
 /**
- * Plan the canonical label transition for a triage decision. Every decision
- * removes `needs-triage` and adds exactly one definitive state label; `wontfix`
+ * Plan the canonical label transition for a triage decision — a DELEGATING
+ * WRAPPER over the shared state planner since #2663. Every decision removes
+ * `needs-triage` and adds exactly one definitive state label; `wontfix`
  * additionally closes the issue (mirroring `/triage`'s "apply then close").
+ *
+ * `current` is the issue's label set. Callers that read it (the `dev triage`
+ * command does) get the full ADR 0122 delta — every stale state role and
+ * `blocked:*` reason sheds in the SAME edit. Callers that do not pass it fall
+ * back to the historical minimum, `needs-triage` alone, which reproduces this
+ * function's original static table byte for byte.
+ *
+ * A REFUSED plan (a `ready-for-agent` decision while `req:*` edges survive)
+ * falls back to that same static delta: `/triage` is a decision applicator, and
+ * refusing to record the maintainer's decision at all is worse than recording
+ * it without the dependency-edge cleanup the promote path owns.
  */
-export function planTriageTransition(decision: TriageDecision): TriageTransition {
+export function planTriageTransition(
+  decision: TriageDecision,
+  current: readonly string[] = [LABEL_NEEDS_TRIAGE],
+): TriageTransition {
+  if (decision === "wontfix") {
+    return { remove: [LABEL_NEEDS_TRIAGE], add: [LABEL_WONTFIX], close: true };
+  }
+  const plan = planTransition(current, TRIAGE_STATE_TRANSITIONS[decision]);
+  if (isRefused(plan)) return staticTriageTransition(decision);
+  return { remove: [...plan.remove], add: [...plan.add], close: false };
+}
+
+/** The pre-#2663 static table, kept as the refusal fallback. */
+function staticTriageTransition(decision: Exclude<TriageDecision, "wontfix">): TriageTransition {
   switch (decision) {
     case "ready-for-agent":
       return { remove: [LABEL_NEEDS_TRIAGE], add: [LABEL_READY], close: false };
@@ -68,8 +103,6 @@ export function planTriageTransition(decision: TriageDecision): TriageTransition
       return { remove: [LABEL_NEEDS_TRIAGE], add: [LABEL_NEEDS_INFO], close: false };
     case "ready-for-human":
       return { remove: [LABEL_NEEDS_TRIAGE], add: [LABEL_HUMAN], close: false };
-    case "wontfix":
-      return { remove: [LABEL_NEEDS_TRIAGE], add: [LABEL_WONTFIX], close: true };
   }
 }
 

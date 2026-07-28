@@ -2,6 +2,7 @@ import { encode as encodeToon } from "@reddb-io/toon";
 import { renderClaimComment } from "../claim.js";
 import { decideReaperSignal, deriveSnapshot } from "../reaper-signal.js";
 import { dispose } from "../disposition.js";
+import { parkOrHuman, transitionLabels, type StateTransition } from "../state-transition.js";
 import { workerIdentity } from "../host-identity.js";
 import { validateIssueLifecycleTransition } from "../issue-lifecycle.js";
 import {
@@ -139,23 +140,30 @@ export async function reapStalledSlot(
       info.issue,
       renderClaimComment({ worker: workerIdentity(info.workerId) }, "concede", "released"),
     );
-    // The composer owns the bounded re-claim decision + label sets + the
-    // budget-exhausted page comment (core/disposition, total map → `stalled` is
-    // recoverable, #402). gh.editLabels here is the (issue, add, remove) shape,
-    // so the descriptor's (remove, add) sets are applied swapped.
+    // The composer owns the bounded re-claim DECISION + the budget-exhausted
+    // page comment (core/disposition, total map → `stalled` is recoverable,
+    // #402); since #2663 the LABEL DELTA belongs to the transition planner, so
+    // the reaper no longer applies dispose's raw sets. gh.editLabels here is the
+    // (issue, add, remove) shape, so the plan's (remove, add) pair is swapped
+    // at the port.
     const disp = dispose("stalled", info.attempt, deps.recoveryEnv ?? {});
     if (disp.decision === "retry") {
       const opened = await openReapContest(slot, state, info, deps, config.reapContestWindowS);
       if (!opened) {
         // CLEAN re-queue: no blocked:* tag rides a re-queued issue.
-        await deps.gh.editLabels(info.issue, disp.addLabels, disp.removeLabels);
+        await applyReaperTransition(deps, info.issue, disp.removeLabels, { kind: "queue" });
       }
     } else {
       if (disp.typedLabel !== null) await deps.gh.ensureLabel(disp.typedLabel);
       // Escalation also sheds any stale ready-for-agent — the reaped slot was
       // `running`, never re-queue it. (Context-specific to the reaper; the
       // per-issue routeRecovery only removes `running`.)
-      await deps.gh.editLabels(info.issue, disp.addLabels, [...disp.removeLabels, LABEL_READY]);
+      await applyReaperTransition(
+        deps,
+        info.issue,
+        [...disp.removeLabels, LABEL_READY],
+        parkOrHuman(disp.typedLabel),
+      );
       if (disp.escalationComment !== null) {
         await deps.gh.comment(info.issue, disp.escalationComment);
       }
@@ -167,6 +175,30 @@ export async function reapStalledSlot(
   // worker that survived SIGKILL leaks its worktree (cleaned up on the next boot
   // sweep), which is strictly safer than corrupting a live checkout.
   if (info && confirmedDead) await deps.fs.teardownIterDir(info);
+}
+
+/**
+ * Apply one reaper state transition through the ADR 0122 transition API
+ * (#2663). The planner is fed the labels the reaper KNOWS the reaped slot
+ * carried — dispose's shed set, plus the stale `ready-for-agent` the escalation
+ * path also drops — so the emitted delta is exactly the historical one, with
+ * the one-state-role invariant proven before the tracker call. The supervisor
+ * gh port takes (issue, ADD, REMOVE), so the plan's pair is swapped here.
+ */
+async function applyReaperTransition(
+  deps: SupervisorDeps,
+  issue: number,
+  current: readonly string[],
+  transition: StateTransition,
+): Promise<void> {
+  const result = await transitionLabels(
+    (remove, add) => deps.gh.editLabels(issue, add, remove),
+    current,
+    transition,
+  );
+  if (!result.applied) {
+    deps.log?.(`reaper: transition "${transition.kind}" for #${issue} refused by the state planner (${result.reason})`);
+  }
 }
 
 async function branchHeadForContest(deps: SupervisorDeps, branch: string): Promise<string | undefined> {

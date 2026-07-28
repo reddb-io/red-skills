@@ -347,10 +347,13 @@ describe("reconcileDeadWorkerClaim", () => {
 
     expect(issue).toBe(807);
     expect(io.ensureLabel).toHaveBeenCalledWith("blocked:crashed");
+    // The shed set is the PLANNER's, so it is emitted in state-role order
+    // (`ready-for-agent` before the `running` projection) rather than in the
+    // order the death-sweep's fallback array happened to list them (#2663).
     expect(io.editLabels).toHaveBeenCalledWith(
       807,
       ["ready-for-human", "blocked:crashed"],
-      ["running", "ready-for-agent"],
+      ["ready-for-agent", "running"],
     );
   });
 
