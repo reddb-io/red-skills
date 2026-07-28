@@ -105,6 +105,7 @@ export function fleetHeartbeatState(hb: FleetHeartbeat): string {
     runner: hb.runner,
     ...(hb.shrinkMode !== undefined ? { shrink_mode: hb.shrinkMode } : {}),
     ...(hb.bundleVersion ? { bundle_version: hb.bundleVersion } : {}),
+    ...(hb.pid !== undefined ? { pid: hb.pid } : {}),
     ready_for_agent: hb.readyForAgent,
     slots: {
       busy: hb.slotsBusy,
@@ -850,7 +851,9 @@ export function buildSupervisorDeps(
       });
     },
     emitFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
-      const stamped = { ...hb, bundleVersion };
+      // `pid` makes the snapshot itself a janitor liveness anchor, so a swept
+      // pid file can no longer make a running supervisor look dead (#2679).
+      const stamped = { ...hb, bundleVersion, pid: process.pid };
       let stateWritten = false;
       let firehoseWritten = false;
       let stateError: string | undefined;
@@ -979,7 +982,7 @@ export function buildSupervisorDeps(
       };
     },
     repairFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
-      const stamped = { ...hb, bundleVersion };
+      const stamped = { ...hb, bundleVersion, pid: process.pid };
       try {
         writeFleetStateAtomic(statePath, stamped);
         return { stateWritten: true };
