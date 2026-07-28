@@ -229,21 +229,36 @@ describe("the monitor publishes the anchor's verdict, not its own (#2704)", () =
 });
 
 describe("a stale read renders as stale, never as current (#2704)", () => {
-  it("marks the statusline fleet segment stale when the heartbeat is orphaned", async () => {
+  it("carries the staleness in the statusline chip when the heartbeat is orphaned", async () => {
     const root = scratch();
     try {
       lane(root, fleetSnapshot({ pid: DEAD_PID, ageS: 11 }));
 
       const chip = await collectStatuslineFleet({ root, repo: "", remote: "origin" });
 
-      expect(chip).toBeDefined();
+      // The chip exists and SAYS stale, so a consumer reads "fleet, but stale"
+      // rather than "no fleet" — staleness travels inside the payload.
       expect(chip).toMatchObject({ stale: true, staleAgeS: 11 });
-      // The rendered line SAYS stale — the dead fleet's last numbers are never
-      // drawn as the current occupancy.
-      expect(renderFleetBlock(chip)).toContain("stale=11s");
+      // And the compact line never draws a dead fleet's last numbers as the
+      // current occupancy.
+      expect(renderFleetBlock(chip)).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("still renders a breaker-open fleet, with its numbers marked as history", () => {
+    expect(
+      renderFleetBlock({
+        runner: "claude",
+        busy: 0,
+        total: 3,
+        queue: 4,
+        stale: true,
+        staleAgeS: 42,
+        breaker: { count: 3 },
+      }),
+    ).toContain("stale=42s");
   });
 
   it("renders a live fleet with no stale marker at all", async () => {
