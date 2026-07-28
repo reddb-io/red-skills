@@ -54,7 +54,8 @@ function residentConfig(rootDir: string): RspResidentConfig {
     storeUri: sharedStoreUri(rootDir),
     ttlDays: DEFAULT_RSP_TTL_DAYS,
     byteBudget: DEFAULT_RSP_BYTE_BUDGET,
-    serverCommand: process.env.RSP_BIN ?? "rsp",
+    // No `serverCommand`: the client resolves the rsp entry explicitly (#2736).
+    // A bare `rsp` on PATH was a guess that failed silently off the shim.
   };
 }
 

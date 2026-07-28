@@ -37,6 +37,8 @@ While the resident is down, every surface stays usable because it fails open. Th
 
 An unreachable resident **costs the elision, never the command** — if a command result is lost or an exit status changes, that is a defect to report, not fail-open.
 
+**`rsp-resident-entry-unresolved` means the host cannot find an rsp to spawn.** The auto-spawn resolves the rsp entrypoint explicitly — an explicit `serverCommand`, `RSP_BIN`, the caller's own entry when it *is* an rsp entry, the rsp bundle beside the host bundle, the plugin-root bundle, the repo `dist/`, the workspace entry, then the bundle cache — and says this name once per process when none of them exists (#2736). It is emitted by hosts that are not the rsp CLI (the dev bundle, castle-mcp, memory, brain), and it never blocks the command. Recover by installing the rsp bundle where the host can see it (`/red-setup`) or by setting `RSP_BIN` to the rsp binary.
+
 ### Root fix
 
 `rsp status` should classify absent, stale, and unreachable-but-live in one actionable line so this manual split is unnecessary; the resident-health reporting work is tracked by #1731.

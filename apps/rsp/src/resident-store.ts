@@ -12,7 +12,12 @@
  */
 import { readBuildInfo } from "@reddb-io/build-info";
 import type { RspRuntimeConfig } from "./config.js";
-import { ResidentRspElisionStore, resolveResidentPaths, type RspResidentPaths } from "./resident-client.js";
+import {
+  ResidentRspElisionStore,
+  resolveResidentPaths,
+  RSP_ENTRY_UNRESOLVED,
+  type RspResidentPaths,
+} from "./resident-client.js";
 import type { RspResidentConfig } from "./resident-protocol.js";
 
 export interface ResidentElisionStoreOptions {
@@ -50,4 +55,29 @@ export function residentElisionStore(
     residentConfigFor(config, readBuildInfo("rsp").version),
     { ensureResident: opts.ensureResident },
   );
+}
+
+let entryDiagnosticReported = false;
+
+/**
+ * Say the one failure that used to be silent.
+ *
+ * An ordinary failed wake stays debug-only noise, but a host with no resolvable
+ * rsp entry loses elision, handles and telemetry for every command it will ever
+ * run (#2736). That one names itself on stderr, once per process, and the
+ * command still runs — fail-open is the contract, silence never was.
+ *
+ * Returns whether the error was that diagnostic, so a caller can stop there.
+ */
+export function reportResidentEntryDiagnostic(err: unknown): boolean {
+  if (!isResidentEntryUnresolved(err)) return false;
+  if (entryDiagnosticReported) return true;
+  entryDiagnosticReported = true;
+  process.stderr.write(`rsp: ${RSP_ENTRY_UNRESOLVED} — elision is off until an rsp entry is installed\n`);
+  if (process.env.RSP_DEBUG === "1" && err instanceof Error) process.stderr.write(`${err.message}\n`);
+  return true;
+}
+
+export function isResidentEntryUnresolved(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === RSP_ENTRY_UNRESOLVED;
 }
