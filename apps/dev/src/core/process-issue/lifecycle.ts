@@ -130,7 +130,6 @@ import {
 import { isPrePrPipelineActive } from "../pre-pr-pipeline.js";
 import {
   aggregateAdversarialReviewFindings,
-  appendAdversarialReviewCorrectionHandoff,
   decideAdversarialReview,
   renderAdversarialReviewBlockerSummary,
   renderAdversarialReviewComment,
@@ -139,7 +138,7 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, appendAfkGateCorrectionHandoff, appendGoVerifyRetryHandoff, appendTierEscalationHandoff, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { MECHANICAL_BLOCKER_KINDS, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import type { ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
 import {
   recordReseedDraw,
@@ -149,6 +148,20 @@ import {
   totalReseedSpend,
   withGateSubCap,
 } from "./reseed-budget.js";
+import type { ReseedOutstanding, ReseedSectionTag } from "./reseed-handoff.js";
+import {
+  EMPTY_RESEED_OUTSTANDING,
+  composeReseedHandoff,
+  gateReseedDirectives,
+  noteReseedSignature,
+  reviewReseedDirectives,
+  tierEscalationDirectives,
+  withGateOutstanding,
+  withReviewOutstanding,
+  withoutGateOutstanding,
+  withoutReviewOutstanding,
+} from "./reseed-handoff.js";
+import { failureSignature } from "../failure-signature.js";
 import {
   EMPTY_CORRECTION_LEDGER,
   attributeGateFailure,
@@ -613,6 +626,29 @@ export async function processIssue(
   );
   let reseedSpend: ReseedSpend = {};
   const gateSubCap = reseedBudget.subCaps.gate;
+  // What is outstanding RIGHT NOW (ADR 0129 decision 7, #2728). It survives
+  // across rounds so a gate round that follows a blocking review carries BOTH;
+  // the composition itself always starts from the ORIGINAL handoff, which is
+  // what keeps the prompt flat while the state inside it accumulates.
+  let reseedOutstanding: ReseedOutstanding = EMPTY_RESEED_OUTSTANDING;
+  /** Rounds re-seeded so far. Distinct from `roundOrdinal`, which also counts
+   * the recovery re-runs a crashed agent buys — those are not Re-seed rounds and
+   * must not read as budget spent. */
+  let reseedRound = 0;
+  /** Compose the re-seeded prompt from the original handoff plus the current
+   * outstanding state, and report the round in one history line. */
+  const composeReseed = (tag: ReseedSectionTag, directives: readonly string[], tier?: string): string =>
+    composeReseedHandoff(handoff, {
+      tag,
+      directives,
+      history: {
+        round: reseedRound,
+        ceiling: reseedBudget.ceiling,
+        tier: tier || activeTaskClass,
+        repeats: reseedOutstanding.repeats,
+      },
+      outstanding: reseedOutstanding,
+    });
   /** Whether a Re-seed round was granted. `hook-aborted` is not exhaustion — the
    * budget was drawn and the round IS running; the `pre_attempt` hook refused
    * it, which each caller handles the way it always has. */
@@ -622,6 +658,9 @@ export async function processIssue(
     /** The gate stage that blocked, for the two gate-shaped triggers. */
     gate?: "feedback" | "backpressure";
     validation: string;
+    /** The raw `red.afk.validation.v1` sidecar lines behind `validation`, for
+     * the failure signature that yields the history line's repeat count. */
+    sidecar?: readonly string[];
     /** False for the empty-diff rejection: a branch that carries no diff at all
      * is unambiguously the branch's problem, and no amount of base movement can
      * explain it away. */
@@ -650,23 +689,39 @@ export async function processIssue(
     if (attribution) correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
     if (!free) reseedSpend = recordReseedDraw(reseedSpend, cause);
     roundOrdinal += 1;
+    reseedRound += 1;
+    const gate = req.gate ?? "feedback";
+    // The gate tail is outstanding state, not a round in a narrative: the newest
+    // reading REPLACES the previous one, while anything the review left
+    // outstanding rides along untouched.
+    reseedOutstanding = noteReseedSignature(
+      withGateOutstanding(reseedOutstanding, { gate, validation: req.validation, drift }),
+      failureSignature({
+        sidecar: req.sidecar,
+        findings: reseedOutstanding.review?.findings ?? [],
+      }),
+    );
     const gateSpend = reseedSpend.gate ?? 0;
     if (req.trigger === "tier-escalation") {
-      currentHandoff = appendTierEscalationHandoff(handoff, {
-        from: req.tiers?.from ?? "",
-        to: req.tiers?.to ?? "",
-        validation: req.validation,
-        retry: reseedSpend.tier ?? 0,
-        cap: reseedBudget.subCaps.tier,
-      });
+      currentHandoff = composeReseed(
+        "tier-escalation",
+        tierEscalationDirectives({
+          from: req.tiers?.from ?? "",
+          to: req.tiers?.to ?? "",
+          retry: reseedSpend.tier ?? 0,
+          cap: reseedBudget.subCaps.tier,
+        }),
+        req.tiers?.to,
+      );
       deps.appendIterLog(
         `🤖 ${reseedLane}: ${req.tiers?.from ?? ""}-tier feedback failed for #${issue}; ` +
           `re-seeding on the ${req.tiers?.to ?? ""} tier before terminal validation routing.`,
       );
     } else {
-      const gate = req.gate ?? "feedback";
-      const append = isGoLane ? appendGoVerifyRetryHandoff : appendAfkGateCorrectionHandoff;
-      currentHandoff = append(handoff, { gate, validation: req.validation, retry: gateSpend, cap: gateSubCap, drift });
+      currentHandoff = composeReseed(
+        isGoLane ? "go-machine-gate-retry" : "afk-gate-correction",
+        gateReseedDirectives({ gate, retry: gateSpend, cap: gateSubCap, drift }),
+      );
       deps.appendIterLog(
         drift
           ? `🤖 ${reseedLane}: ${gate} machine gate failed after DONE, but ${attribution?.reason}; ` +
@@ -698,8 +753,10 @@ export async function processIssue(
     trigger: "gate-stage" | "no-diff-done",
     gate: "feedback" | "backpressure",
     validation: string,
+    sidecar?: readonly string[],
   ): Promise<boolean> =>
-    (await requestReseed({ trigger, gate, validation, driftEligible: trigger === "gate-stage" })) === "granted";
+    (await requestReseed({ trigger, gate, validation, sidecar, driftEligible: trigger === "gate-stage" })) ===
+    "granted";
   /** The park-note suffix naming the exhausted correction budget. It reports the
    * CHARGED cycles against the lane's cap and, separately, the stale-base cycles
    * that were absorbed for free — so a reader can tell a branch that really kept
@@ -1085,6 +1142,7 @@ export async function processIssue(
         const escalation = await requestReseed({
           trigger: "tier-escalation",
           validation: validationText,
+          sidecar: feedback.sidecar,
           tiers: { from: "simple", to: "complex" },
         });
         if (escalation === "hook-aborted") {
@@ -1104,7 +1162,7 @@ export async function processIssue(
       } else {
         notes = "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
       }
-      if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText))) {
+      if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar))) {
         continue;
       }
       if (!isInfra) notes += correctionBudgetNote();
@@ -1130,7 +1188,7 @@ export async function processIssue(
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
         let bpNotes = "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
         const validationText = backpressure.sidecar.join("\n");
-        if (await reseedAfterGate("gate-stage", "backpressure", validationText)) {
+        if (await reseedAfterGate("gate-stage", "backpressure", validationText, backpressure.sidecar)) {
           continue;
         }
         bpNotes += correctionBudgetNote();
@@ -1147,6 +1205,10 @@ export async function processIssue(
     // to reassemble. A backpressure stage that never ran is simply absent from
     // the fold, and an absent stage cannot block.
     const gateOk = gateVerdict(gateStages).ok;
+    // A stage that passed is no longer OUTSTANDING (#2728). Dropping its tail
+    // here is what keeps the re-seeded prompt a statement of current state
+    // rather than an archive: only what is still red rides into the next round.
+    if (gateOk) reseedOutstanding = withoutGateOutstanding(reseedOutstanding);
     deps.recordWorkerEvent?.("worker.validated", {
       feedback_records: feedback.sidecar.length,
       backpressure_records: backpressureSidecar.length,
@@ -1222,6 +1284,12 @@ export async function processIssue(
         );
       }
       const findings = aggregateAdversarialReviewFindings(reviews, config.quorum);
+      // A clean review clears the review half of the outstanding state: the
+      // findings a previous round carried are fixed, and re-instructing on them
+      // would send the implementer after work that is already done (#2728).
+      if (!findings.findings.some((finding) => finding.blocking)) {
+        reseedOutstanding = withoutReviewOutstanding(reseedOutstanding);
+      }
       const retry = adversarialReviewCorrectionsUsed + 1;
       const decision = decideAdversarialReview(findings, retry, config.maxIterations);
       await deps.postAdversarialReview({
@@ -1490,7 +1558,20 @@ export async function processIssue(
       }
       adversarialReviewCorrectionsUsed = correction.retry;
       roundOrdinal += 1;
-      currentHandoff = appendAdversarialReviewCorrectionHandoff(handoff, correction);
+      reseedRound += 1;
+      const blocking = correction.findings.findings.filter((finding) => finding.blocking);
+      reseedOutstanding = noteReseedSignature(
+        withReviewOutstanding(reseedOutstanding, {
+          summary: correction.findings.summary,
+          findings: blocking,
+          diff: correction.diff,
+        }),
+        failureSignature({ findings: blocking }),
+      );
+      currentHandoff = composeReseed(
+        "adversarial-review-correction",
+        reviewReseedDirectives({ retry: correction.retry, cap: correction.cap }),
+      );
       deps.appendIterLog(
         `🤖 /afk: adversarial review found blocking issue(s); correction retry ${correction.retry}/${correction.cap}.`,
       );
