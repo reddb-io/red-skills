@@ -79,6 +79,10 @@ const GATE_STAGE_REASONS = new Set([
   "feedback-failed",
   "no-sentinel",
   "stalled",
+  // A wall-clock cap (#2701) stops the worker MID-GATE: the branch carries real
+  // commits but nothing proves the gate passed, so the retry continues the work
+  // rather than taking the validate-and-land fast path.
+  "wall-clock-capped",
   "blocked",
   "base-stale",
   "merge-conflict",
