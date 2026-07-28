@@ -33,8 +33,9 @@ destructive or wide → apply in-session → verify → land**.
   whole agreed batch — never re-ask per record.
 - ✅ **Leave `.red/adr/INDEX.md` coherent after every mutation.** The governance
   bijection `Set(active ∪ archived numbers) === Set(INDEX numbers)` must hold
-  when the session ends, and every archived record must carry a terminal status
-  plus a `superseded-by:` pointer.
+  when the session ends, and every archived record must carry a terminal status.
+  A `superseded-by:` pointer is required only when a successor exists — a record
+  archived for going inert has none, so do not invent one to satisfy the rule.
 - ✅ **Honour `start/ADR-FORMAT.md`.** Sequential four-digit numbering, an H1 that
   reads `# NNNN — Title` and matches its filename, and sections only where they
   earn their place.

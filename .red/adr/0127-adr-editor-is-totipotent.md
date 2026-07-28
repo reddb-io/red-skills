@@ -51,7 +51,8 @@ without widening the skill's charter.
   (4) Work lands through the repo's normal branch/worktree/PR flow.
 - **The archive stays physical and append-only.** ADR 0112's archive mechanics
   survive their parent decision: a terminal record is `git mv`'d to
-  `.red/adr/archive/` with a terminal status and a `superseded-by:` pointer, the
+  `.red/adr/archive/` with a terminal status — plus a `superseded-by:` pointer
+  when a successor exists, and none when the record simply went inert — the
   lane is append-only, and the governance bijection
   `Set(active ∪ archived numbers) === Set(INDEX numbers)` still holds. What is
   lifted is the *policy* on who may change a record, not the *machine-enforced
