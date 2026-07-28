@@ -41,6 +41,15 @@ import type { Runner } from "../types/runner.js";
 export const CONFIG_DEFAULTS = {
   "afk.default_runner": "claude",
   "afk.fleet.target": "2",
+  // Fleet cgroup isolation (#2697). On Linux with a systemd `--user` session the
+  // launcher runs the supervisor inside a transient `red-fleet-<name>.scope`, so
+  // `systemd-oomd` charges the fleet's memory to the fleet instead of to the
+  // terminal that launched it. `memory_high` is the scope's `MemoryHigh`
+  // throttle — any systemd memory value ("70%", "6G"); an empty value sets no
+  // property. Set `enabled: false` (or `RED_AFK_FLEET_SCOPE=off`) to launch
+  // unscoped, which the launcher then warns about rather than doing silently.
+  "afk.fleet.scope.enabled": "true",
+  "afk.fleet.scope.memory_high": "70%",
   // AFK model-tier table (ADR 0049). The default task class is `think`, so a
   // repo with no config still runs Claude Code on opus/high, matching today's
   // behaviour while making the model+effort pair overrideable per runner/tier.
