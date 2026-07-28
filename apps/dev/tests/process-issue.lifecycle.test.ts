@@ -1212,6 +1212,52 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     expect(trace.iterLogs.some((line) => line.includes("correction retry 1/1"))).toBe(true);
   });
 
+  it("a gate round after a blocking review carries BOTH in one outstanding section (#2728)", async () => {
+    // Round 1 lands on a blocking review; round 2's gate reddens while those
+    // findings are still unfixed. The round-2 prompt must carry the review
+    // findings AND the gate tail: the appenders this replaced each rebuilt from
+    // the ORIGINAL handoff, so the gate round silently dropped the review block
+    // and left the implementer blind to what round 1 had already confirmed.
+    const { deps, input, trace } = harness({
+      outcomes: ["done", "done", "done"],
+      feedbackResults: [true, false, false],
+      stallConvergenceBudget: 2,
+      locked: false,
+      adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
+      adversarialFindingsSequence: [
+        {
+          summary: "One blocking acceptance gap.",
+          findings: [
+            {
+              path: "packages/x/src/a.ts",
+              line: 1,
+              body: "The implementation does not satisfy the acceptance criterion.",
+              blocking: true,
+            },
+          ],
+        },
+      ],
+    });
+
+    await processIssue(deps, input);
+
+    const reviewHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
+    expect(reviewHandoff).toContain("<adversarial-review-correction>");
+    expect(reviewHandoff).toContain("The implementation does not satisfy the acceptance criterion.");
+
+    const gateHandoff = trace.runAgentCalls[2]?.handoffContent ?? "";
+    expect(gateHandoff).toContain("<afk-gate-correction>");
+    const section = gateHandoff.slice(
+      gateHandoff.indexOf("<outstanding-state>"),
+      gateHandoff.indexOf("</outstanding-state>"),
+    );
+    expect(section).toContain("The implementation does not satisfy the acceptance criterion.");
+    expect(section).toContain("<validation-tail>");
+    expect(gateHandoff.match(/<outstanding-state>/g)).toHaveLength(1);
+    expect(gateHandoff).toContain("<reseed-history>");
+    expect(gateHandoff).toContain("Re-seed round 2/4");
+  });
+
   it("non-blocking findings stay advisory and do not re-seed the implementer (#2208)", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
