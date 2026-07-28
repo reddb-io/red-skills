@@ -48,20 +48,14 @@ const CONTRACT_SOURCES = new Set([
 ]);
 
 /**
- * Files exempt WHOLESALE, with an expiry condition. Wave C moves the planner
- * into castle; until then these two castle modules keep their pre-contract
- * writers rather than importing a dev-side planner across the package edge.
+ * Files exempt WHOLESALE, with an expiry condition. Empty since Wave C
+ * (#2666): the planner now lives in castle, and both castle modules that held
+ * a temporary exemption — `engine/issue-state-curator.ts` and
+ * `engine/tracker/dependencies.ts` — route their writes through
+ * `planTransition`. An entry here must always name the condition that ends it;
+ * the expiry test below fails an entry whose file no longer has a raw writer.
  */
-const FILE_ALLOWLIST = new Map<string, string>([
-  [
-    "red-castle/engine/issue-state-curator.ts",
-    "TEMPORARY (#2664): migrates to planTransition when the planner crosses to castle (Wave C)",
-  ],
-  [
-    "red-castle/engine/tracker/dependencies.ts",
-    "TEMPORARY (#2664): migrates to planTransition when the planner crosses to castle (Wave C)",
-  ],
-]);
+const FILE_ALLOWLIST = new Map<string, string>([]);
 
 /** Wrappers that are the transition API rather than a way around it. Their
  * call sites are not raw edits — `planner-backed wrappers still route through
