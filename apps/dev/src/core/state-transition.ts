@@ -1,5 +1,5 @@
 // state-transition.ts — the single owner of issue state-label mutations
-// (ADR 0122 rule 5, Spec #2523, slice #2524 — the EXPAND half).
+// (ADR 0122 rule 5, Spec #2523, slices #2524 + #2661).
 //
 // An issue carries exactly ONE state role at any time. On 2026-07-22 three
 // issues accumulated contradictory role sets (park labels stacked on
@@ -10,9 +10,8 @@
 // set, refuses any request that would leave zero or two state roles, and the
 // apply step performs the whole mutation as ONE tracker call.
 //
-// This slice lands the API alongside the existing writers, fully tested and
-// deliberately uncalled. Call-site migration + the raw-edit lint is the
-// CONTRACT half (#2528).
+// All state-role label constants live in triage-labels.ts — import from there,
+// never redefine inline. The raw-edit lint (#2528) enforces this at CI time.
 
 import {
   LABEL_READY,
@@ -21,11 +20,8 @@ import {
   LABEL_NEEDS_INFO,
   LABEL_RUNNING,
   LABEL_DEPENDENCY,
+  LABEL_QUARANTINE,
 } from "./triage-labels.js";
-
-/** The quarantine state role (ADR 0122 rule 2). Kept local until the curator
- * slice's vocabulary lands; #2528 unifies the constant into triage-labels. */
-export const LABEL_QUARANTINE = "quarantine";
 
 /** Every label that counts as a STATE ROLE. The invariant this module
  * enforces: a post-transition label set contains exactly one of these. */

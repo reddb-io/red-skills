@@ -76,6 +76,15 @@ const ALLOWLIST = new Map<string, string>([
     "core/review.ts :: await gh.editLabels(pr, [LABEL_RUNNING], [LABEL_VALIDATION, LABEL_HUMAN]);",
     "PR review-lane labels, not issue state",
   ],
+  // --- companion drift correction: exposed once the local label copies died (#2661) ---
+  [
+    "runtime/companion-io.ts :: await ghx.editLabels(options.ctx, id.issue, [], has(LABEL_READY) ? [] : [LABEL_READY]);",
+    "migrated to planTransition in #2663",
+  ],
+  [
+    "runtime/companion-io.ts :: await ghx.editLabels( options.ctx, id.issue, has(LABEL_READY) ? [LABEL_READY] : [], has(LABEL_HUMAN) ? [] : [LABEL_HUMAN], );",
+    "migrated to planTransition in #2663",
+  ],
   // --- human/manual command surfaces (outside the engine contract by design) ---
   [
     "commands/requeue.ts :: await gh.editLabels(input.issue, [LABEL_READY], []);",

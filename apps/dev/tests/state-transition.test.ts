@@ -4,9 +4,9 @@ import {
   isRefused,
   planTransition,
   stateRolesOf,
-  LABEL_QUARANTINE,
   type TransitionPlan,
 } from "../src/core/state-transition.js";
+import { LABEL_QUARANTINE } from "../src/core/triage-labels.js";
 
 function plan(current: readonly string[], t: Parameters<typeof planTransition>[1]): TransitionPlan {
   const p = planTransition(current, t);
