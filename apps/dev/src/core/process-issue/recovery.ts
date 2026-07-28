@@ -61,7 +61,6 @@ import { type RecoveryEnv } from "../recovery.js";
 import { dispose } from "../disposition.js";
 import { parkOrHuman, transitionLabels, type StateTransition } from "../state-transition.js";
 import {
-  blockedLabelFor,
   envelopeStatusFor,
   type WorkerOutcome,
 } from "../worker-outcome.js";
