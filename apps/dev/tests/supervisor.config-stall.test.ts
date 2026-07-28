@@ -1081,9 +1081,11 @@ describe("pollStallDetector reaper gating", () => {
     expect(pageBody).toContain("ready-for-human");
     expect(pageBody).toContain("attempt 3/3");
     // Escalation carries blocked:stalled (allowed alongside ready-for-human) and
-    // removes both running and any ready-for-agent — never re-queued.
+    // removes both running and any ready-for-agent — never re-queued. The shed
+    // set is the PLANNER's since #2663, so it is emitted in state-role order
+    // (`ready-for-agent` before the `running` projection).
     expect(io.ensureLabel).toHaveBeenCalledWith("blocked:stalled");
-    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-human", "blocked:stalled"], ["running", "ready-for-agent"]);
+    expect(io.editLabels).toHaveBeenCalledWith(190, ["ready-for-human", "blocked:stalled"], ["ready-for-agent", "running"]);
     expect(io.teardownIterDir).toHaveBeenCalledOnce();
   });
 
