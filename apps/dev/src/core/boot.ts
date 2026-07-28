@@ -83,6 +83,7 @@ import {
   type QueueVisibilityProbeData,
 } from "./operational-probes.js";
 import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
+import { removableUnknownTmpRoots } from "./tmp-janitor.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 import { isRefused, planTransition, type StateTransition } from "./state-transition.js";
@@ -1037,7 +1038,10 @@ async function runTmpJanitorSweep(
     result.staleWorkers.push(worker.path);
   }
 
-  for (const name of sweep.plan.unknownTmpRoots) {
+  // A registered lane is never removable through the unknown-entry path, even
+  // if the plan named one (issue #2679: a worker boot deleted the live
+  // `supervisors` lane this way and blinded fleet_status).
+  for (const name of removableUnknownTmpRoots(sweep.plan.unknownTmpRoots)) {
     const path = join(options.bootstrap.tmpDir, name);
     await deps.fs.removeDir(path);
     result.removals.push({ path, livenessVerdict: "not-worker-workspace" });

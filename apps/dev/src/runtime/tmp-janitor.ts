@@ -7,6 +7,8 @@ import {
   planSupervisorLaneJanitor,
   parseFeedbackWorktreeWorkerSlug,
   planOrphanFeedbackWorktreeSweep,
+  removableUnknownTmpRoots,
+  supervisorLaneIsLive,
   type JanitorEntry,
   type OrphanFeedbackEntry,
   type OrphanFeedbackSweepPlan,
@@ -15,6 +17,7 @@ import {
   type SupervisorLaneEntry,
   type SupervisorLanePlan,
 } from "../core/tmp-janitor.js";
+import { decodeDevSnapshotSniff } from "../core/toon-snapshot.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../core/worker-paths.js";
 import { execTool } from "./exec.js";
 import { killTreeAndWait } from "./kill-tree.js";
@@ -141,16 +144,20 @@ async function listEntries(path: string): Promise<JanitorEntry[]> {
   return entries;
 }
 
-function pidAlive(raw: string | null): boolean {
-  if (raw === null) return false;
-  const trimmed = raw.trim();
-  if (!/^[1-9][0-9]*$/.test(trimmed)) return false;
+function livePid(pid: number): boolean {
   try {
-    process.kill(Number(trimmed), 0);
+    process.kill(pid, 0);
     return true;
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === "EPERM";
   }
+}
+
+function pidAlive(raw: string | null): boolean {
+  if (raw === null) return false;
+  const trimmed = raw.trim();
+  if (!/^[1-9][0-9]*$/.test(trimmed)) return false;
+  return livePid(Number(trimmed));
 }
 
 async function readText(path: string): Promise<string | null> {
@@ -198,7 +205,55 @@ async function collectWorkerEntries(tmpDir: string, lookup: IssueStateLookup): P
   return out;
 }
 
-/** Collect supervisor fleet dirs under `.red/tmp/supervisors/` with pid liveness. */
+/** Read the supervisor pid recorded in a fleet's `state.toon` snapshot.
+ * Returns null when the file is absent, undecodable, or carries no pid — an
+ * older bundle's snapshot simply contributes no anchor. */
+async function readFleetStatePid(fleetDir: string): Promise<number | null> {
+  const text = await readText(join(fleetDir, "state.toon"));
+  if (text === null) return null;
+  let decoded: unknown;
+  try {
+    decoded = decodeDevSnapshotSniff(text);
+  } catch {
+    return null;
+  }
+  if (decoded === null || typeof decoded !== "object") return null;
+  const pid = Number((decoded as { pid?: unknown }).pid);
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+}
+
+/** Find a live supervisor pid from the `s<pid>/` log dirs inside a fleet dir.
+ * The supervisor names its own log lane after its pid, so the dir survives as a
+ * liveness anchor even when the pid file was swept away. */
+async function snapshotDirPidAlive(fleetDir: string): Promise<boolean> {
+  for (const name of await listNames(fleetDir)) {
+    const match = /^s([1-9][0-9]*)$/.exec(name);
+    if (!match) continue;
+    if (livePid(Number(match[1]))) return true;
+  }
+  return false;
+}
+
+/** Resolve every liveness anchor for one fleet dir. */
+async function readSupervisorLaneLiveness(
+  fleetDir: string,
+  fleet: string,
+): Promise<SupervisorLaneEntry> {
+  const [pidFile, statePid, snapshotAlive] = await Promise.all([
+    readText(join(fleetDir, "afk-supervisor.pid")),
+    readFleetStatePid(fleetDir),
+    snapshotDirPidAlive(fleetDir),
+  ]);
+  return {
+    path: fleetDir,
+    fleet,
+    pidAlive: pidAlive(pidFile),
+    statePidAlive: statePid !== null && livePid(statePid),
+    snapshotPidAlive: snapshotAlive,
+  };
+}
+
+/** Collect supervisor fleet dirs under `.red/tmp/supervisors/` with liveness. */
 async function collectSupervisorEntries(tmpDir: string): Promise<SupervisorLaneEntry[]> {
   const supervisorsRoot = join(tmpDir, "supervisors");
   const fleets = await listNames(supervisorsRoot);
@@ -211,8 +266,7 @@ async function collectSupervisorEntries(tmpDir: string): Promise<SupervisorLaneE
     } catch {
       continue;
     }
-    const alive = pidAlive(await readText(join(fleetDir, "afk-supervisor.pid")));
-    entries.push({ path: fleetDir, fleet, pidAlive: alive });
+    entries.push(await readSupervisorLaneLiveness(fleetDir, fleet));
   }
   return entries;
 }
@@ -407,10 +461,11 @@ export async function applyTmpJanitorReport(
     result.staleWorkers.push(worker.path);
   }
 
-  // Re-check supervisor pid at apply time — a supervisor may have started
-  // between collect and apply (same pattern as the worker liveness re-check).
+  // Re-check every supervisor anchor at apply time — a supervisor may have
+  // started between collect and apply (same pattern as the worker liveness
+  // re-check), and a live lane must survive whichever anchor it still carries.
   for (const supervisor of report.staleSupervisors.reclaim) {
-    if (pidAlive(await readText(join(supervisor.path, "afk-supervisor.pid")))) {
+    if (supervisorLaneIsLive(await readSupervisorLaneLiveness(supervisor.path, supervisor.fleet))) {
       result.protectedLiveSupervisors.push(supervisor.path);
       continue;
     }
@@ -422,7 +477,9 @@ export async function applyTmpJanitorReport(
     result.protectedLiveSupervisors.push(supervisor.path);
   }
 
-  for (const name of report.plan.unknownTmpRoots) {
+  // A registered lane is never removable through the unknown-entry path, even
+  // if the plan named one (issue #2679).
+  for (const name of removableUnknownTmpRoots(report.plan.unknownTmpRoots)) {
     const path = join(tmpDir, name);
     await rm(path, { recursive: true, force: true });
     result.removals.push({ path, livenessVerdict: "not-worker-workspace" });
