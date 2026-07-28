@@ -4,6 +4,7 @@ import {
 } from "../slot-circuit.js";
 import { emitSupervisorEvent } from "./events.js";
 import { reconcileDeadWorkerClaim } from "./envelopes.js";
+import { attemptUsage } from "./attempt-accounting.js";
 import {
   logDrainBudgetTransition,
   readDrainBudget,
@@ -254,6 +255,10 @@ export async function superviseTick(
       // slot — a respawn rebinds resolveIterDir(i) to the NEW worker's dir, so
       // the stranded claim must be snapshotted here, while it still resolves.
       const deadInfo = deps.fs.resolveIterDir(i);
+      // Snapshot the resource usage the resident measured for the dying attempt
+      // BEFORE the slot is recycled (ADR 0128 §8) — the peak resets the moment
+      // the slot is respawned onto a new attempt.
+      const deadUsage = attemptUsage(slot, deadInfo);
       result.deaths.push(i);
       if (spawnPolicy === "hard-stop") {
         slot.pid = null;
@@ -261,7 +266,7 @@ export async function superviseTick(
         slot.stallSinceEpoch = 0;
         slot.reaped = false;
         try {
-          const reconciled = await reconcileDeadWorkerClaim(deadInfo, deps);
+          const reconciled = await reconcileDeadWorkerClaim(deadInfo, deps, deadUsage);
           if (reconciled !== null) result.crashReconciled.push(reconciled);
         } catch {
           // best-effort, same as the respawn path.
@@ -283,7 +288,7 @@ export async function superviseTick(
         // until a fleet reboot runs the boot sweep. Reconcile it here on the
         // live loop instead. Best-effort: a failure leaves it for the boot sweep.
         try {
-          const reconciled = await reconcileDeadWorkerClaim(deadInfo, deps);
+          const reconciled = await reconcileDeadWorkerClaim(deadInfo, deps, deadUsage);
           if (reconciled !== null) result.crashReconciled.push(reconciled);
         } catch {
           // never let a reconcile failure abort the tick.

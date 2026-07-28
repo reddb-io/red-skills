@@ -28,6 +28,7 @@ import {
   evaluateDrainBudget,
   evaluateValidationAdmission,
   guardedTick,
+  type AttemptCloseRecord,
   type IterDirInfo,
   type ReconcileCandidate,
   type SupervisorConfig,
@@ -78,6 +79,7 @@ export {
 };
 
 export type {
+  AttemptCloseRecord,
   IterDirInfo,
   ReconcileCandidate,
   SupervisorConfig,
@@ -152,6 +154,9 @@ export function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     supervisorRestartWindowS: 300,
     reapContestWindowS: 30,
     shrinkMode: "drain-then-retire",
+    // Unlimited by default, exactly like an unconfigured repo: a test that
+    // exercises a budget sets it explicitly.
+    attemptBudgets: {},
     ...over,
   };
 }
@@ -174,6 +179,8 @@ export interface FakeIo {
   killTree: ReturnType<typeof vi.fn>;
   requestSlotRetire: ReturnType<typeof vi.fn>;
   inspectTree: ReturnType<typeof vi.fn>;
+  sampleTreeRssMb: ReturnType<typeof vi.fn>;
+  recordAttemptClose: ReturnType<typeof vi.fn>;
   sleep: ReturnType<typeof vi.fn>;
   lastExitCode: ReturnType<typeof vi.fn>;
   workerLivenessVerdict: ReturnType<typeof vi.fn>;
@@ -216,6 +223,10 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     killTree: vi.fn(async () => {}),
     requestSlotRetire: vi.fn(async () => {}),
     inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []),
+    // Default: the resident measures no memory (an unsampled fleet), so the
+    // attempt record simply omits peak RSS.
+    sampleTreeRssMb: vi.fn((_pids: readonly number[]) => new Map<number, number>()),
+    recordAttemptClose: vi.fn(async (_close: AttemptCloseRecord) => {}),
     // Resolve on a macrotask (not immediately): runSupervisor wraps each tick in
     // guardedTick, which RACES the tick against `sleep(ceiling)`. An
     // immediately-resolving sleep makes the ceiling win every race, so the real
@@ -271,6 +282,7 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       killTree: io.killTree,
       requestSlotRetire: io.requestSlotRetire,
       inspectTree: io.inspectTree,
+      sampleTreeRssMb: io.sampleTreeRssMb,
       sleep: io.sleep,
     },
     fs: {
@@ -292,6 +304,7 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
       findAttemptPullRequest: io.findAttemptPullRequest,
     },
     now: io.now,
+    recordAttemptClose: io.recordAttemptClose,
     log: (line) => {
       io.logLines.push(line);
     },

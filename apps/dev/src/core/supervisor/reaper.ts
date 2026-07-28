@@ -12,9 +12,27 @@ import {
   LABEL_RUNNER_ERROR,
   LABEL_RUNNING,
 } from "../triage-labels.js";
-import { planCapHandoff, type CapHandoff } from "../wall-clock-cap.js";
+import type { CapHandoff } from "../wall-clock-cap.js";
+import {
+  attemptBudgetOutcome,
+  planBudgetHandoff,
+  type AttemptBudgetBreach,
+  type AttemptUsage,
+} from "../attempt-budget.js";
+import {
+  attemptUsage,
+  hasResourceBudget,
+  recordAttemptClose,
+  resourceBudgetBreach,
+  sampleFleetPeakRss,
+} from "./attempt-accounting.js";
 import { SUPERVISOR_DEFAULTS, type SupervisorConfig } from "./config.js";
-import { buildDiscardEnvelope, buildReaperEnvelope, buildWallClockCapEnvelope } from "./envelopes.js";
+import {
+  buildAttemptBudgetEnvelope,
+  buildDiscardEnvelope,
+  buildReaperEnvelope,
+  buildWallClockCapEnvelope,
+} from "./envelopes.js";
 import type { SlotState, SupervisorState } from "./state.js";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
 
@@ -111,6 +129,16 @@ export interface ReapOptions {
   wallClockCapped?: boolean;
   /** The ceiling that fired, in seconds — named in the envelope and comment. */
   capSeconds?: number;
+  /**
+   * Set when a per-attempt RESOURCE budget terminated the attempt (ADR 0128 §8).
+   * The reap then NAMES that budget in its envelope, its comment and its attempt
+   * record, hands the branch/PR forward exactly like a wall-clock cap, and pages
+   * a human — a resource runaway is not a transient flake to blind-retry.
+   */
+  budget?: AttemptBudgetBreach;
+  /** What the attempt consumed, as sampled by the resident. Recorded on the
+   * attempt record for a terminated attempt exactly as for a completed one. */
+  usage?: AttemptUsage;
 }
 
 export async function reapStalledSlot(
@@ -152,30 +180,62 @@ export async function reapStalledSlot(
   if (info && info.issue !== null) {
     const capped = opts.wallClockCapped === true;
     const capSeconds = opts.capSeconds ?? 0;
+    // The three terminal records this reap can write, and they are NOT
+    // interchangeable: a stall is silence, a cap is the wall-clock policy
+    // deadline, a budget termination is a resource ceiling that NAMES itself
+    // (ADR 0128 §8). Only the first is ever reported as a stall.
+    const budgetBreach: AttemptBudgetBreach | undefined =
+      opts.budget ??
+      (capped
+        ? { budget: "wall_clock_s", limit: capSeconds, observed: info.durationS }
+        : undefined);
+    const resourceBudget = opts.budget !== undefined;
     await deps.gh.comment(
       info.issue,
-      capped ? buildWallClockCapEnvelope(info, capSeconds) : buildReaperEnvelope(info),
+      resourceBudget
+        ? buildAttemptBudgetEnvelope(info, opts.budget!)
+        : capped
+          ? buildWallClockCapEnvelope(info, capSeconds)
+          : buildReaperEnvelope(info),
     );
     await deps.gh.comment(
       info.issue,
       renderClaimComment({ worker: workerIdentity(info.workerId) }, "concede", "released"),
     );
-    // A capped attempt's work is LIVE, not lost: publish its branch and name its
-    // PR before the labels rotate, so the retry adopts the ref instead of
-    // branching fresh from main (#2701).
-    if (capped) await handOffCappedWork(info, deps, capSeconds);
+    // A budgeted attempt's work is LIVE, not lost: publish its branch and name
+    // its PR before the labels rotate, so the retry adopts the ref instead of
+    // branching fresh from main (#2701 for the cap, ADR 0128 §8 for the rest).
+    const handoff =
+      budgetBreach !== undefined
+        ? await handOffBudgetedWork(info, deps, budgetBreach)
+        : null;
+    // The record is written for EVERY reaped attempt — terminated is exactly the
+    // case a self-reported record cannot cover, because the worker is gone.
+    await recordAttemptClose(deps, {
+      info,
+      usage: opts.usage ?? { wallClockS: info.durationS },
+      outcome:
+        budgetBreach !== undefined
+          ? attemptBudgetOutcome(budgetBreach)
+          : { kind: "killed", detail: "stall-reaped: agent lane silent past the kill threshold" },
+      ...(handoff?.pendingPullRequest !== undefined ? { pr: handoff.pendingPullRequest } : {}),
+    });
     // The composer owns the bounded re-claim DECISION + the budget-exhausted
     // page comment (core/disposition, total map → `stalled` is recoverable,
     // #402); since #2663 the LABEL DELTA belongs to the transition planner, so
     // the reaper no longer applies dispose's raw sets. gh.editLabels here is the
     // (issue, add, remove) shape, so the plan's (remove, add) pair is swapped
     // at the port.
-    const disp = dispose(capped ? "wall-clock-capped" : "stalled", info.attempt, deps.recoveryEnv ?? {});
+    const disp = dispose(
+      resourceBudget ? "budget-exceeded" : capped ? "wall-clock-capped" : "stalled",
+      info.attempt,
+      deps.recoveryEnv ?? {},
+    );
     if (disp.decision === "retry") {
       // No contest on a cap: the kill was a deliberate policy cut-off and the
       // branch is already handed forward, so a `contested` hold would only delay
       // the adoption it exists to protect.
-      const opened = capped
+      const opened = budgetBreach !== undefined
         ? false
         : await openReapContest(slot, state, info, deps, config.reapContestWindowS);
       if (!opened) {
@@ -207,18 +267,19 @@ export async function reapStalledSlot(
 }
 
 /**
- * Hand a wall-clock-capped attempt's work forward (#2701). The capped worker was
- * cut off mid-flight, so whatever it committed is the NEXT worker's starting
- * point, not garbage: resolve the branch head, publish the ref so branch
- * discovery can see it, look up any PR it already opened, and post the plan as a
- * comment naming the pending artifact. Every step is best-effort — a failure
+ * Hand a budget-terminated attempt's work forward (#2701 for the wall-clock cap,
+ * ADR 0128 §8 for every other budget). The worker was cut off mid-flight, so
+ * whatever it committed is the NEXT worker's starting point, not garbage:
+ * resolve the branch head, publish the ref so branch discovery can see it, look
+ * up any PR it already opened, and post the plan as a comment naming both the
+ * budget and the pending artifact. Every step is best-effort — a failure
  * degrades the hand-forward to a plain re-queue, exactly the pre-#2701
  * behaviour, and never blocks the reap.
  */
-async function handOffCappedWork(
+async function handOffBudgetedWork(
   info: IterDirInfo,
   deps: SupervisorDeps,
-  capSeconds: number,
+  breach: AttemptBudgetBreach,
 ): Promise<CapHandoff | null> {
   if (info.issue === null) return null;
 
@@ -241,10 +302,9 @@ async function handOffCappedWork(
     }
   }
 
-  const handoff = planCapHandoff({
+  const handoff = planBudgetHandoff({
     issue: info.issue,
-    capSeconds,
-    durationS: info.durationS,
+    breach,
     ...(info.branch !== undefined ? { branch: info.branch } : {}),
     ...(branchHead !== undefined ? { branchHead } : {}),
     ...(branchPublished !== undefined ? { branchPublished } : {}),
@@ -407,15 +467,41 @@ export async function pollStallDetector(
   deps: SupervisorDeps,
   config: Pick<
     SupervisorConfig,
-    "stallThresholdS" | "stallKillThresholdS" | "runner" | "reapContestWindowS" | "issueWallClockMaxS"
+    | "stallThresholdS"
+    | "stallKillThresholdS"
+    | "runner"
+    | "reapContestWindowS"
+    | "issueWallClockMaxS"
+    | "attemptBudgets"
   >,
 ): Promise<number[]> {
   const now = deps.now();
   const reaped: number[] = [];
+  // ONE process-table read per tick charges memory to every live attempt (ADR
+  // 0128 §8), independent of fleet width.
+  sampleFleetPeakRss(state, deps);
+  const budgets = config.attemptBudgets ?? {};
+  const watchResources = hasResourceBudget(budgets);
 
   for (let i = 0; i < state.slots.length; i += 1) {
     const slot = state.slots[i]!;
     if (slot.parked || slot.idleParked) continue;
+
+    // Per-attempt RESOURCE budgets, checked before the silence ladder: an
+    // attempt over its memory or cost ceiling is terminated by POLICY, so it
+    // never waits out a stall countdown it would never accumulate, and it is
+    // never recorded as a stall. All-unlimited budgets (the default) skip the
+    // state read entirely.
+    if (watchResources && !slot.reaped && slot.pid !== null) {
+      const info = deps.fs.resolveIterDir(i);
+      const usage = attemptUsage(slot, info);
+      const breach = resourceBudgetBreach(usage, budgets);
+      if (breach !== null) {
+        await reapStalledSlot(i, slot, deps, config, { budget: breach, usage });
+        reaped.push(i);
+        continue;
+      }
+    }
 
     // Skip freshly-spawned slots (startup window: same guard as old computeStalled).
     if (!(slot.spawnEpoch > 0) || !(now - slot.spawnEpoch >= config.stallThresholdS)) continue;
@@ -503,12 +589,16 @@ export async function pollStallDetector(
             }
           }
           if (!vetoed) {
+            const info = deps.fs.resolveIterDir(i);
+            const usage = attemptUsage(slot, info);
             await reapStalledSlot(
               i,
               slot,
               deps,
               config,
-              capped ? { wallClockCapped: true, capSeconds: config.issueWallClockMaxS } : {},
+              capped
+                ? { wallClockCapped: true, capSeconds: config.issueWallClockMaxS, usage }
+                : { usage },
             );
             reaped.push(i);
           }

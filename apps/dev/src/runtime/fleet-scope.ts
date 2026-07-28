@@ -15,7 +15,7 @@
 // This module is pure planning: it decides the argv prefix from injected probes
 // and settings. The impure probe lives in `detectFleetScopeProbes`.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { getConfig, type ConfigValues } from "../core/config.js";
 
@@ -153,4 +153,34 @@ export function planFleetScope(opts: PlanFleetScopeOptions): FleetScopePlan {
     command: opts.probes.systemdRun,
     args: [...scopeArgs, "--", opts.command, ...opts.args],
   };
+}
+
+/**
+ * The cgroup scope unit this process is actually charged to, parsed from
+ * `/proc/self/cgroup` (`0::/…/red-fleet-<name>-<salt>.scope`). Read rather than
+ * remembered on purpose: the launcher's PLAN can be declined by the host (unit
+ * collision, broken user manager) and fall back to an unscoped relaunch, so the
+ * only trustworthy answer to "which cgroup holds this fleet" comes from the
+ * kernel. Returns undefined off Linux, on an unreadable file, or when nothing in
+ * the path is a scope — the record then simply omits the attribution rather than
+ * naming a scope that does not hold us.
+ */
+export function readSelfCgroupScope(
+  read: () => string = () => readFileSync("/proc/self/cgroup", "utf8"),
+): string | undefined {
+  let raw: string;
+  try {
+    raw = read();
+  } catch {
+    return undefined;
+  }
+  for (const line of raw.split("\n")) {
+    const path = line.trim().split(":").pop() ?? "";
+    const segments = path.split("/").filter((segment) => segment.length > 0);
+    for (let i = segments.length - 1; i >= 0; i -= 1) {
+      const segment = segments[i]!;
+      if (segment.endsWith(".scope")) return segment;
+    }
+  }
+  return undefined;
 }

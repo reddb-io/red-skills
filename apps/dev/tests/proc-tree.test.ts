@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CONSERVATIVE_BUSY_SNAPSHOT,
   collectTree,
   inspectProcessTree,
   inspectProcessTreeNative,
+  parsePsRssTree,
   parsePsTree,
+  sampleTreeRssMb,
 } from "../src/runtime/proc-tree.js";
 import { deriveSnapshot } from "../src/core/reaper-signal.js";
 
@@ -106,5 +108,55 @@ describe("inspectProcessTreeNative", () => {
     // Either a real tree (length >= 1) or — on an exotic host where ps failed —
     // the conservative busy fallback. Both are non-empty and SAFE.
     expect(tree.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ---------- per-attempt memory accounting (ADR 0128 §8, #2707) ----------
+
+describe("sampleTreeRssMb", () => {
+  //  1 ─ 100 (worker) ─ 200 (runner) ─ 300 (vitest fork)
+  //    └ 101 (an unrelated process, never charged to the worker)
+  const TABLE = [
+    "  100     1  102400",
+    "  200   100  512000",
+    "  300   200  409600",
+    "  101     1  999999",
+  ].join("\n");
+
+  it("charges a pid its whole tree, in MB, from ONE read", () => {
+    const run = vi.fn(() => TABLE);
+    expect(sampleTreeRssMb([100], run)).toEqual(new Map([[100, 1000]]));
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("one read serves the whole fleet — cost does not scale with width", () => {
+    const run = vi.fn(() => TABLE);
+    const sample = sampleTreeRssMb([100, 101], run);
+    expect(sample.get(100)).toBe(1000);
+    expect(sample.get(101)).toBe(977);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("a pid the table never listed is ABSENT, never a measured 0", () => {
+    const sample = sampleTreeRssMb([100, 4242], () => TABLE);
+    expect(sample.has(4242)).toBe(false);
+  });
+
+  it("a failed read measures nothing, so it can never terminate an in-budget attempt", () => {
+    const boom = (): string => {
+      throw Object.assign(new Error("spawnSync ps ENOENT"), { code: "ENOENT" });
+    };
+    expect(sampleTreeRssMb([100], boom).size).toBe(0);
+  });
+
+  it("un-inspectable pids are refused without running ps", () => {
+    const run = vi.fn(() => TABLE);
+    expect(sampleTreeRssMb([0, 1, Number.NaN], run).size).toBe(0);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("parsePsRssTree skips malformed lines", () => {
+    const { rssKb } = parsePsRssTree("garbage\n  7  1  2048\n\n");
+    expect(rssKb).toEqual(new Map([[7, 2048]]));
   });
 });

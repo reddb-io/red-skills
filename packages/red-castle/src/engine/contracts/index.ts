@@ -125,10 +125,20 @@ export interface CastleAttemptRouting {
   effort?: string;
 }
 
+/**
+ * What one attempt consumed, and which fleet it is CHARGED to. The fleet fields
+ * are the accounting half of ADR 0128 §8: the fleet owns a cgroup of its own
+ * (#2697), so "which fleet caused this pressure" is answered from the record
+ * rather than reconstructed from `ps` after the workers are gone.
+ */
 export interface CastleAttemptResources {
   wall_clock_s?: number;
   peak_rss_mb?: number;
   cost_usd?: number;
+  /** The fleet the attempt ran under. */
+  fleet?: string;
+  /** That fleet's transient cgroup scope unit, e.g. `red-fleet-main-ab12.scope`. */
+  fleet_scope?: string;
 }
 
 /**

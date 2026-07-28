@@ -50,6 +50,18 @@ export interface SlotState {
   contest: ReapContestState | null;
   /** Slot is above the current target and should not claim another issue. */
   retiring: boolean;
+  /**
+   * Highest resident-set size, in MB, the RESIDENT has observed across this
+   * slot's worker tree during the current attempt (ADR 0128 §8). Sampled by the
+   * supervise tick and reset on respawn, so it always describes the attempt the
+   * slot is running now. 0 means "never sampled" — the record omits the field
+   * rather than claiming a measured zero.
+   */
+  peakRssMb: number;
+  /** The pid {@link SlotState.peakRssMb} was sampled against. A different live
+   * pid means the slot was respawned onto a NEW attempt, so the peak resets
+   * rather than carrying a dead attempt's memory into a live one. */
+  peakRssPid: number | null;
 }
 
 export function freshSlot(): SlotState {
@@ -70,6 +82,8 @@ export function freshSlot(): SlotState {
     halfOpen: false,
     contest: null,
     retiring: false,
+    peakRssMb: 0,
+    peakRssPid: null,
   };
 }
 

@@ -303,6 +303,7 @@ export function resolveIterDirInfo(
   let workerId = "";
   let startedAt = "";
   let branch: string | undefined;
+  let costUsd: number | undefined;
   // Single owner (core/worker-state-reader): null when the dir has no/malformed
   // state, in which case issue/worker stay empty and teardown still proceeds.
   const rec = readWorkerState(join(dir, "afk.state.toon"));
@@ -311,6 +312,11 @@ export function resolveIterDirInfo(
     if (typeof n === "number" && Number.isInteger(n)) issue = n;
     workerId = rec.state.worker_id;
     startedAt = rec.state.started_at;
+    // Reported spend for THIS attempt, read from the same WorkerVitals lane the
+    // drain budget sums (`current.cost_usd`) — never a parallel accounting
+    // channel. 0 stays undefined: unreported cost is not measured zero.
+    const cost = rec.state.current.cost_usd;
+    if (Number.isFinite(cost) && cost > 0) costUsd = cost;
     if (issue !== null && workerId.length > 0) {
       branch = buildRef("afk", workerId, issue, rec.state.current.title) ?? undefined;
     }
@@ -331,7 +337,17 @@ export function resolveIterDirInfo(
   // re-claim cap (#402). Degrades to attempt 1 when the path is non-canonical.
   const attempt = parseWorkerAttemptPath(dir)?.attempt ?? 1;
 
-  return { path: dir, issue, workerId, branch, logTail, notes, durationS, attempt };
+  return {
+    path: dir,
+    issue,
+    workerId,
+    branch,
+    logTail,
+    notes,
+    durationS,
+    attempt,
+    ...(costUsd !== undefined ? { costUsd } : {}),
+  };
 }
 
 /**
