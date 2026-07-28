@@ -26,6 +26,7 @@ import {
   type TriageTransition,
 } from "../core/auto-triage.js";
 import { LABEL_NEEDS_TRIAGE, LABEL_READY, LABEL_TRIAGE_SUMMON } from "../core/triage-labels.js";
+import { isRefused, planTransition } from "../core/state-transition.js";
 import { parseTrustPolicy, type TrustPolicy } from "../core/trust-gate.js";
 import { loadConfig } from "../core/config.js";
 import {
@@ -106,8 +107,16 @@ export async function runTriage(
     const lint = lintExecutableAcceptanceCriteria(bodyRead.body);
     if (!lint.ok) {
       await ensureLabel(ctx, LABEL_NEEDS_TRIAGE);
-      const remove = [LABEL_READY, LABEL_TRIAGE_SUMMON].filter((label) => labels.includes(label));
-      const add = labels.includes(LABEL_NEEDS_TRIAGE) ? [] : [LABEL_NEEDS_TRIAGE];
+      // Bounce back to the triage queue through the shared planner (#2663): it
+      // sheds `ready-for-agent` (and any other stale state role) and adds
+      // `needs-triage` only when absent, so the edit stays idempotent. The
+      // summon label is not a state role, so it rides alongside the plan.
+      const bounce = planTransition(labels, { kind: "triage" });
+      const remove = isRefused(bounce)
+        ? [LABEL_READY].filter((label) => labels.includes(label))
+        : [...bounce.remove];
+      const add = isRefused(bounce) ? [LABEL_NEEDS_TRIAGE] : [...bounce.add];
+      if (labels.includes(LABEL_TRIAGE_SUMMON)) remove.push(LABEL_TRIAGE_SUMMON);
       if (remove.length > 0 || add.length > 0) await editLabels(ctx, opts.issue, remove, add);
       const comments = await readIssueComments(ctx, opts.issue);
       if (!comments.ok) {
@@ -133,7 +142,7 @@ export async function runTriage(
     }
   }
 
-  const transition = planTriageTransition(opts.decision);
+  const transition = planTriageTransition(opts.decision, labels);
   // Shed the summon label too, if it was the release channel.
   const remove = labels.includes(LABEL_TRIAGE_SUMMON)
     ? [...transition.remove, LABEL_TRIAGE_SUMMON]
