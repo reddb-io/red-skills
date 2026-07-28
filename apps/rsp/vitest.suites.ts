@@ -15,6 +15,7 @@ export const INTEGRATION_TESTS: readonly string[] = [
   "resident-memory.test.ts",
   "setup.test.ts",
   "shell-init.test.ts",
+  "surface-parity.test.ts",
   "telemetry.test.ts",
   "two-axis-benchmark.test.ts",
 ];

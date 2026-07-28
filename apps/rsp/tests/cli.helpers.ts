@@ -252,6 +252,25 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+/**
+ * Put the bundle under test on PATH as `rsp`.
+ *
+ * The proxy rewrites segments to whatever `resolveRspInvocationPrefix()` finds,
+ * so without this shim a proxy spec would silently exercise whichever `rsp` the
+ * host happens to have installed instead of the build it is asserting about.
+ */
+async function installRspShim(root: string): Promise<string> {
+  const binDir = join(root, "bin");
+  await mkdir(binDir, { recursive: true });
+  await writeFile(
+    join(binDir, "rsp"),
+    `#!/usr/bin/env bash\nexec ${shellQuote(process.execPath)} ${shellQuote(bundle)} "$@"\n`,
+    "utf8",
+  );
+  await chmod(join(binDir, "rsp"), 0o755);
+  return `${binDir}:${process.env.PATH ?? ""}`;
+}
+
 async function fakeGhPath(root: string, responses: Array<Record<string, unknown>>): Promise<{ path: string; responsesDir: string; countFile: string }> {
   const bin = join(root, "bin");
   const responsesDir = join(root, "gh-responses");
@@ -328,6 +347,7 @@ async function runMcpRequests(
   cwd: string,
   requests: Array<Record<string, unknown>>,
   entry: "source" | "bundle" = "source",
+  env: Record<string, string> = {},
 ): Promise<Array<Record<string, unknown>>> {
   return await new Promise((resolve, reject) => {
     const timeoutMs = normalizedTimeoutMs(timedStatus(runNodeNoop).elapsedMs, 250, 10_000);
@@ -336,7 +356,7 @@ async function runMcpRequests(
     const childArgs = entry === "bundle" ? [bundle, "mcp"] : ["--import", tsxLoader, cli, "mcp"];
     const child = spawn(process.execPath, childArgs, {
       cwd,
-      env: { ...process.env },
+      env: testChildEnv(env),
       stdio: ["pipe", "pipe", "pipe"],
     });
     const responses: Array<Record<string, unknown>> = [];
@@ -775,6 +795,7 @@ export {
   enableRsp,
   commitMany,
   shellQuote,
+  installRspShim,
   fakeGhPath,
   hangingGhPath,
   runMcpRequests,
