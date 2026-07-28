@@ -5,6 +5,11 @@ import type { JsonObject } from "@reddb-io/toon";
 import type { RspRuntimeConfig } from "../config.js";
 import type { RspStorageClassStats } from "../elision-store.js";
 import { formatUsd } from "../pricing.js";
+import {
+  DEFAULT_RSP_OVERHEAD_CEILING,
+  overheadHealth,
+  type RspOverheadHealth,
+} from "../overhead-budget.js";
 import type { RspAccountingLaneStats, RspTelemetryGainsReport, RspTelemetryStats } from "../telemetry.js";
 
 /**
@@ -49,14 +54,59 @@ export function renderStats(
   stats: { records: number; bytes: number; oldest: string | null; budget: number; storage_classes?: RspStorageClassStats },
   telemetry = emptyTelemetryStats(30),
   full = false,
+  overhead: RspOverheadHealth = emptyOverheadHealth(),
 ): string {
-  return `${encodeSnapshotToon(statsPayload(stats, telemetry, full))}\n`;
+  return `${encodeSnapshotToon(statsPayload(stats, telemetry, full, overhead))}\n`;
+}
+
+/**
+ * `rsp status` renders the resident state and the cost verdict together (#2746).
+ *
+ * An operator reads one word — green or red — instead of reconstructing whether
+ * rsp is paying for itself out of raw telemetry.
+ */
+export function renderRspStatus(resident: JsonObject, overhead: RspOverheadHealth): string {
+  // The resident state stays at the top level — status readers predate the
+  // budget — and the cost verdict rides alongside it.
+  return `${encodeSnapshotToon({
+    ...resident,
+    overhead: overheadPayload(overhead),
+  })}\n`;
+}
+
+export function readOverheadHealth(config: RspRuntimeConfig, root = process.cwd()): RspOverheadHealth {
+  return overheadHealth(root, config.overhead);
+}
+
+export function emptyOverheadHealth(): RspOverheadHealth {
+  return {
+    schema_version: "red.rsp.overhead.v1",
+    verdict: "green",
+    summary: "every wrapper family is inside its overhead ceiling",
+    ceiling: DEFAULT_RSP_OVERHEAD_CEILING,
+    breaching_families: [],
+    disabled_families: [],
+    families: [],
+  };
+}
+
+export function overheadPayload(overhead: RspOverheadHealth): JsonObject {
+  return {
+    schema_version: overhead.schema_version,
+    verdict: overhead.verdict,
+    summary: overhead.summary,
+    ceiling: overhead.ceiling as unknown as JsonObject,
+    breaching_families: overhead.breaching_families as unknown as JsonObject[],
+    disabled_families: overhead.disabled_families as unknown as JsonObject[],
+    families: overhead.families as unknown as JsonObject[],
+  } as unknown as JsonObject;
 }
 
 export function statsPayload(
   stats: { records: number; bytes: number; oldest: string | null; budget: number; storage_classes?: RspStorageClassStats },
   telemetry: RspTelemetryStats,
   full: boolean,
+  overhead: RspOverheadHealth = emptyOverheadHealth(),
 ): JsonObject {
   const topCommands = telemetry.savings.top_commands.slice(0, full ? 10 : 3);
   const daily = full ? telemetry.savings.daily_tokens_saved : telemetry.savings.daily_tokens_saved.slice(-7);
@@ -80,7 +130,10 @@ export function statsPayload(
       top_commands: topCommands,
       top_commands_elided: full ? 0 : Math.max(0, telemetry.savings.top_commands.length - topCommands.length),
     } as unknown as JsonObject,
+    overhead: overheadPayload(overhead),
     health: {
+      overhead_verdict: overhead.verdict,
+      overhead_summary: overhead.summary,
       ...telemetry.health,
       degradation_rate_display: formatRate(telemetry.health.degradation_rate),
       show_hit_rate_display: formatRate(telemetry.health.show_hit_rate),
