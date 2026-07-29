@@ -2,9 +2,14 @@
 //
 // A **Re-seed** re-instructs the implementer in place — same Worker, same
 // Worktree, same branch — after a gate stage blocked the work. The **Re-seed
-// budget** bounds how many such rounds one Attempt may spend: ONE ceiling per
+// budget** bounds how many such rounds one Worker may spend: ONE ceiling per
 // lane holding per-cause sub-caps, with the review's round modelled as a
 // RESERVATION the other causes cannot draw from.
+//
+// The Worker is the unit because it is the only one there is. A Re-seed keeps
+// the same Worker by construction, so its rounds are events inside one running
+// Worker rather than a new unit of work — which is exactly why the budget is
+// held in that Worker's own memory and needs no identity of its own.
 //
 // The reservation is the whole point. Under independent counters, gate churn
 // burns every available round first and a Ticket parks on precisely the round a
@@ -33,7 +38,7 @@ export type ReseedLane = "/afk" | "/go";
 
 export interface ReseedBudget {
   readonly lane: ReseedLane;
-  /** Total Re-seed rounds this Attempt may spend across ALL causes. */
+  /** Total Re-seed rounds this Worker may spend across ALL causes. */
   readonly ceiling: number;
   /** Per-cause ceilings. These may sum ABOVE {@link ceiling} on purpose: they
    * bound each cause's share, while the ceiling bounds the whole. */
