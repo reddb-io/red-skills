@@ -255,13 +255,14 @@ export const CONFIG_DEFAULTS = {
   "afk.validation.node_max_old_space_mb": "2048",
   "afk.validation.vitest_max_workers": "1",
   "afk.validation.heavy_available_memory_mb": "4096",
-  // Post-DONE gate-correction convergence budget (#2285). After an inner agent
-  // emits DONE, if the feedback/backpressure gate still fails the worker re-seeds
-  // the agent with a bounded correction handoff instead of immediately parking.
-  // This cap limits consecutive failed gate cycles on one issue before the engine
-  // stops re-seeding and deterministically parks ready-for-human + blocked:validation
-  // with the last failing validation tail. Override with RED_AFK_STALL_CONVERGENCE_BUDGET.
-  "afk.stallConvergenceBudget": "3",
+  // The `/afk` lane's GATE share of the Re-seed budget (ADR 0129, #2733), the
+  // lane-scoped replacement for the retired `afk.stallConvergenceBudget`. It caps
+  // only how many Re-seed rounds a red post-DONE gate may claim; the lane owns
+  // the ceiling and the review's reserved round, so raising this can never eat
+  // the round a blocking review finding is entitled to. Exhaustion parks
+  // ready-for-human + blocked:validation with the last failing validation tail.
+  // Override with RED_RESEED_GATE_BUDGET.
+  "dev.reseed.afk.gate_budget": "3",
   // Spec cascade rebase (issue #1007). After a successful DONE landing, rebase
   // every open sibling branch (same spec:N, not held by a live worker) onto the
   // new base HEAD so the next worker to pick up a sibling starts from a
@@ -309,12 +310,19 @@ export type ConfigKey = keyof typeof CONFIG_DEFAULTS;
  * `afk.attempt_timeout` was the wall-clock attempt cap, retired when the
  * commit-anchored progress guard replaced it (ADR 0044/0045).
  *
+ * `afk.stallConvergenceBudget` was the standalone post-DONE gate-correction
+ * counter, retired when the four correction loops unified into one Re-seed with
+ * a lane-scoped budget (ADR 0129). Its replacement is
+ * `dev.reseed.afk.gate_budget`, which caps only the gate's SHARE of that budget.
+ *
  * To retire a key: delete its reader, add BOTH spellings here, and record the
  * removal in the ADR that retires it.
  */
 export const DELETED_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "afk.attempt_timeout",
   "plugins.dev.afk.attempt_timeout",
+  "afk.stallConvergenceBudget",
+  "plugins.dev.afk.stallConvergenceBudget",
 ]);
 
 /**
