@@ -52,7 +52,6 @@ export function makeDeps(over: Partial<{
   claimHolderAlive: BootDeps["lookups"]["claimHolderAlive"];
   claimedIssues: BootDeps["lookups"]["claimedIssues"];
   workerPidLive: BootDeps["fs"]["workerPidLive"];
-  attemptWorkspaceLive: BootDeps["fs"]["attemptWorkspaceLive"];
   viewLabels: (issue: number) => Promise<string[]>;
   env: Record<string, string | undefined>;
   config: Record<string, string | undefined>;
@@ -102,14 +101,6 @@ export function makeDeps(over: Partial<{
             async workerPidLive(workerDir: string) {
               calls.push(`fs.workerPidLive:${workerDir}`);
               return over.workerPidLive!(workerDir);
-            },
-          }
-        : {}),
-      ...(over.attemptWorkspaceLive
-        ? {
-            async attemptWorkspaceLive(path: string) {
-              calls.push(`fs.attemptWorkspaceLive:${path}`);
-              return over.attemptWorkspaceLive!(path);
             },
           }
         : {}),

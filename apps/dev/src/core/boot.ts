@@ -85,8 +85,7 @@ import {
   type QueueVisibilityProbeData,
 } from "./operational-probes.js";
 import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
-import { pathIsInsideTmp, removableUnknownTmpRoots } from "./tmp-janitor.js";
-import type { CastleReclaimPlan } from "@reddb-io/red-castle/engine";
+import { removableUnknownTmpRoots } from "./tmp-janitor.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 import { isRefused, planTransition, type StateTransition } from "./state-transition.js";
@@ -231,13 +230,6 @@ export interface BootFs {
   removeDir(path: string): Promise<void>;
   /** Final worker.pid liveness guard before removing a whole worker dir. */
   workerPidLive?(workerDir: string): Promise<boolean>;
-  /**
-   * Fresh ATTEMPT-RECORD liveness for one workspace path, re-read from the lane
-   * immediately before removal: a retry may have claimed the same path since
-   * the plan was built. Unwired or throwing means "assume live" — the sweep
-   * fails closed (ADR 0128).
-   */
-  attemptWorkspaceLive?(path: string): Promise<boolean>;
   /** Fresh owner-liveness verdict before removing a feedback worktree. */
   feedbackWorktreeLiveness?(
     path: string,
@@ -725,9 +717,6 @@ export interface BootOptions {
     plan: TmpJanitorPlan;
     staleWorkers: WorkerDirJanitorPlan;
     orphanTestRunners?: readonly OrphanTestRunnerSweepEntry[];
-    /** The record-keyed reclaim plan (ADR 0128). Absent means the caller had no
-     * attempt lane to read, and the sweep simply reclaims nothing on its behalf. */
-    attemptReclaim?: CastleReclaimPlan;
   };
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
@@ -810,11 +799,7 @@ export interface TmpJanitorSweepResult {
   protectedLiveWorkers: string[];
   protectedLiveFeedback: string[];
   orphanTestRunners: Array<{ pid: number; pgid: number }>;
-  /** Attempt workspaces removed because their own record said they could be. */
-  attemptWorkspaces: string[];
-  /** Workspaces spared because the record still had a live attempt on them. */
-  protectedLiveAttempts: string[];
-  /** Record-named paths outside this tmp tier: reported, never removed. */
+  /** Paths a plan named outside this tmp tier: reported, never removed. */
   refusedOutsideTmp: string[];
   removals: Array<{
     path: string;
@@ -822,8 +807,7 @@ export interface TmpJanitorSweepResult {
       | "not-worker-workspace"
       | "worker-dead"
       | "owner-dead"
-      | "no-live-workers"
-      | "attempt-closed";
+      | "no-live-workers";
   }>;
 }
 
@@ -1028,35 +1012,10 @@ async function runTmpJanitorSweep(
     protectedLiveWorkers: [],
     protectedLiveFeedback: [],
     orphanTestRunners: [],
-    attemptWorkspaces: [],
-    protectedLiveAttempts: [],
     refusedOutsideTmp: [],
     removals: [],
   };
   if (!sweep) return result;
-
-  // The record-keyed pass runs FIRST and is the authority (ADR 0128): an
-  // artifact goes because its own attempt record says so. The pid-keyed passes
-  // below only ever narrow what it already decided.
-  for (const verdict of sweep.attemptReclaim?.reclaim ?? []) {
-    // A reclaimable artifact with no path has no bytes here to remove.
-    if (verdict.artifact.path === undefined) continue;
-    const path = verdict.artifact.path;
-    if (!pathIsInsideTmp(options.bootstrap.tmpDir, path)) {
-      result.refusedOutsideTmp.push(path);
-      continue;
-    }
-    // Fail CLOSED: an unanswerable — or unwired — liveness probe spares the
-    // workspace. The opposite default deleted a live lane once already (#2679).
-    const live = await deps.fs.attemptWorkspaceLive?.(path).catch(() => true);
-    if (live !== false) {
-      result.protectedLiveAttempts.push(path);
-      continue;
-    }
-    await deps.fs.removeDir(path);
-    result.removals.push({ path, livenessVerdict: "attempt-closed" });
-    result.attemptWorkspaces.push(path);
-  }
 
   const expired = [
     ...sweep.plan.logs.reclaim,

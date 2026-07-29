@@ -46,30 +46,27 @@ The ceiling is a **deadline, not a countdown**: the reaper anchors the stall win
 
 **A cap is not a stall, and its work is not lost (#2701).** Three capped workers were once reported `no-sentinel · stall-reaped` seconds after their own heartbeats logged tool calls and reasoning, and the clean re-queue then sent the next worker to a fresh branch off main — 16 commits, an 852-line push, and an open green PR all redone from scratch. The cap therefore has its own terminal record: envelope status `wall-clock-capped` naming the ceiling it hit, typed label `blocked:wall-clock-capped`, no retry contest, and a hand-forward comment that publishes the attempt's branch **before** the labels rotate and names any open PR as the pending artifact. The next worker adopts that ref instead of starting over; the bounded re-queue budget (`RED_AFK_RETRY_STALLED`) is unchanged, so an issue that never converges still escalates.
 
-## Per-attempt resource budgets (ADR 0128 §8, #2707)
+## Per-worker resource budgets (#2707)
 
-**The wall-clock ceiling above is one budget of three.** The resident measures
-what every attempt consumes — wall clock, peak RSS across its process tree, and
-reported cost — and writes those numbers into the attempt record for a completed
-attempt exactly as for a terminated one. `afk.attempt.budget.peak_rss_mb` and
-`afk.attempt.budget.cost_usd` add the two ceilings nothing else watches; both
-default to `unlimited`, so an unconfigured repo enforces today's behaviour and
-pays no sampling cost. Memory is sampled from **one** process-table read per
-tick, so the accounting does not scale with fleet width.
+**The wall-clock ceiling above is one budget of three.** The supervisor measures
+what every worker consumes — wall clock, peak RSS across its process tree, and
+reported cost. `afk.attempt.budget.peak_rss_mb` and `afk.attempt.budget.cost_usd`
+add the two ceilings nothing else watches; both default to `unlimited`, so an
+unconfigured repo enforces today's behaviour and pays no sampling cost. Memory is
+sampled from **one** process-table read per tick, so the accounting does not
+scale with the number of workers.
 
-A budgeted termination is a THIRD terminal record, distinct from a stall and
-from a clean finish: the outcome is `budget-exceeded` and it **names the budget**
-(`wall_clock_s` | `peak_rss_mb` | `cost_usd` — each one a field of the record's
-`resources`). It publishes its branch and names any open PR before the labels
+A budgeted termination is a THIRD outcome, distinct from a stall and from a clean
+finish, and it **names the budget** (`wall_clock_s` | `peak_rss_mb` |
+`cost_usd`). It publishes its branch and names any open PR before the labels
 rotate, exactly like the cap, so the retry adopts the work instead of restarting
 from main. Memory and cost breaches page a human (`blocked:budget`) rather than
 blind-retrying, because re-running a runaway just re-spends the budget.
 
-Consumption is charged to the fleet that spent it: the record carries the fleet
-name and the cgroup scope this supervisor actually runs in (read from
-`/proc/self/cgroup`, never the launcher's intent), so "which fleet caused this
-pressure" is a record read rather than a `ps` reconstruction after the workers
-are gone (#2697).
+The durable per-attempt record these numbers were also written into is gone
+(Spec #2772): a Worker already is one Worker × one Ticket × one try, so the
+record was a second copy of what the issue thread and git already say. The
+budget's own comment on the issue is where a budgeted termination is read.
 
 ## Host-level OOM signature (#1758)
 

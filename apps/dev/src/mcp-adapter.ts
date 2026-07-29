@@ -68,7 +68,13 @@ import { matchesSelector } from "./core/session.js";
 import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import * as ghx from "./runtime/gh.js";
 import { spawnSupervisor } from "./runtime/supervisor-spawn.js";
-import { readSupervisorLiveness, readAttemptHistory, summarizeAttempt } from "./runtime/liveness-anchor.js";
+import {
+  publishWorkerLiveness,
+  readDaemonWorkerSet,
+  readSupervisorLiveness,
+  resolveWorkerLiveness,
+  type DaemonWorkerSet,
+} from "./runtime/liveness-anchor.js";
 import {
   afkPaths,
   collectMonitorInputs,
@@ -1116,12 +1122,14 @@ async function workerVitals(
   opts: { live_only?: boolean } = {},
 ): Promise<WorkerVitalsOutput> {
   const paths = createEnginePaths(join(root, ".red"));
-  // Identity and history come from the attempt record, the unit of truth
-  // (ADR 0128 §1) — never reconstructed from worker dirs or tracker comments.
-  const [records, workerDirs, attempts] = await Promise.all([
+  // Process liveness comes from the DAEMON, the single anchor: it owns birth and
+  // death, so it is the only authority on whether a Worker is still running. One
+  // read serves every Worker in the answer, and an unreachable daemon yields
+  // `unknown` rather than a Worker reported dead beside evidence of life.
+  const [records, workerDirs, hostAnswer] = await Promise.all([
     readAllWorkerStates(afkPaths(root).tmpDir),
     readdir(paths.workersRoot, { withFileTypes: true }).catch(() => []),
-    readAttemptHistory(root),
+    readDaemonWorkerSet().catch((): DaemonWorkerSet | null => null),
   ]);
   const alerts = new Map<string, { type: string; at: string; message: string }>();
   await Promise.all(workerDirs.filter((entry) => entry.isDirectory()).map(async (entry) => {
@@ -1141,7 +1149,6 @@ async function workerVitals(
     }
   }));
   const all = records.map(({ state, ...record }) => {
-    const attempt = attempts.latestForWorker(state.worker_id);
     return {
     worker: {
       id: state.worker_id,
@@ -1182,7 +1189,12 @@ async function workerVitals(
     liveness: record.liveness,
     liveness_verdict: record.livenessVerdict,
     alert: alerts.get(state.worker_id),
-    ...(attempt !== undefined ? { attempt: summarizeAttempt(attempt) } : {}),
+    // The record's own live flag can only WITHHOLD a death claim (see the
+    // anchor): it never becomes an `alive` verdict of its own, so this payload
+    // stays one anchor deep while refusing to call a visibly running Worker gone.
+    daemon_liveness: publishWorkerLiveness(
+      resolveWorkerLiveness(hostAnswer, state.worker_id, { evidenceOfLife: record.live }),
+    ),
     };
   });
   const represented = new Set(all.map((record) => record.worker.id));
@@ -1235,6 +1247,9 @@ async function workerVitals(
         crossCheckArmed: false,
       },
       alert,
+      // Asked of the same read as every other record, so a worker known only by
+      // its session error still carries the daemon's verdict rather than a gap.
+      daemon_liveness: publishWorkerLiveness(resolveWorkerLiveness(hostAnswer, workerId)),
     });
   }
   return opts.live_only !== false ? all.filter((r) => r.live === true || r.alert !== undefined) : all;

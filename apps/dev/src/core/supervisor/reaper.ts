@@ -14,7 +14,6 @@ import {
 } from "../triage-labels.js";
 import type { CapHandoff } from "../wall-clock-cap.js";
 import {
-  attemptBudgetOutcome,
   planBudgetHandoff,
   type AttemptBudgetBreach,
   type AttemptUsage,
@@ -22,7 +21,6 @@ import {
 import {
   attemptUsage,
   hasResourceBudget,
-  recordAttemptClose,
   resourceBudgetBreach,
   sampleFleetPeakRss,
 } from "./attempt-accounting.js";
@@ -185,24 +183,11 @@ export async function reapStalledSlot(
       info.issue,
       renderClaimComment({ worker: workerIdentity(info.workerId) }, "concede", "released"),
     );
-    // A budgeted attempt's work is LIVE, not lost: publish its branch and name
+    // A budgeted worker's work is LIVE, not lost: publish its branch and name
     // its PR before the labels rotate, so the retry adopts the ref instead of
-    // branching fresh from main (#2701 for the cap, ADR 0128 §8 for the rest).
-    const handoff =
-      budgetBreach !== undefined
-        ? await handOffBudgetedWork(info, deps, budgetBreach)
-        : null;
-    // The record is written for EVERY reaped attempt — terminated is exactly the
-    // case a self-reported record cannot cover, because the worker is gone.
-    await recordAttemptClose(deps, {
-      info,
-      usage: opts.usage ?? { wallClockS: info.durationS },
-      outcome:
-        budgetBreach !== undefined
-          ? attemptBudgetOutcome(budgetBreach)
-          : { kind: "killed", detail: "stall-reaped: agent lane silent past the kill threshold" },
-      ...(handoff?.pendingPullRequest !== undefined ? { pr: handoff.pendingPullRequest } : {}),
-    });
+    // branching fresh from main (#2701 for the cap, the same contract for every
+    // other budget).
+    if (budgetBreach !== undefined) await handOffBudgetedWork(info, deps, budgetBreach);
     // The composer owns the bounded re-claim DECISION + the budget-exhausted
     // page comment (core/disposition, total map → `stalled` is recoverable,
     // #402); since #2663 the LABEL DELTA belongs to the transition planner, so

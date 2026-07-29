@@ -1,11 +1,14 @@
-// The attempt record carries what the attempt CONSUMED, and a budgeted
-// termination is a third terminal record — not a stall, not a clean finish
-// (ADR 0128 §8, #2707).
+// A budgeted termination NAMES its budget, and hands its work forward (#2707).
 //
-// The resident writes all three, which is the load-bearing half: the moment a
-// record matters most is exactly when the worker is already gone. These tests
-// drive the real supervisor paths (the poll/reap loop and the dead-slot
-// reconcile) and assert on what reaches the record writer.
+// The attempt record these facts used to be written into is gone (Spec #2772):
+// a Worker already is one Worker × one Ticket × one try, so the record published
+// a second copy of what the issue thread and git already say. What must survive
+// its removal is everything an operator can act on — the kill itself, the
+// envelope that names the budget rather than a stall, the branch and PR handed
+// forward, and the label that pages a human instead of blind-retrying.
+//
+// These tests drive the real supervisor paths (the poll/reap loop and the
+// dead-slot reconcile) and assert on what reaches the issue.
 
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -18,7 +21,6 @@ import {
   reconcileDeadWorkerClaim,
   stalledVerdict,
   wallClockVerdict,
-  type AttemptCloseRecord,
   type IterDirInfo,
   type LivenessVerdict,
   type ProcessSnapshotEntry,
@@ -63,16 +65,12 @@ function deps(over: Record<string, unknown> = {}) {
   });
 }
 
-function closesOf(io: { recordAttemptClose: { mock: { calls: unknown[][] } } }): AttemptCloseRecord[] {
-  return io.recordAttemptClose.mock.calls.map((call) => call[0] as AttemptCloseRecord);
-}
-
 function commentsOf(io: { comment: { mock: { calls: unknown[][] } } }): string[] {
   return io.comment.mock.calls.map((call) => String(call[1]));
 }
 
 describe("a budgeted termination names its budget (#2707)", () => {
-  it("a memory-budget kill records `budget-exceeded` naming peak_rss_mb", async () => {
+  it("a memory-budget kill says so on the issue, in budget words and not stall words", async () => {
     const { deps: d, io } = deps({
       sampleTreeRssMb: vi.fn(() => new Map([[PID, 5120]])),
     });
@@ -85,45 +83,10 @@ describe("a budgeted termination names its budget (#2707)", () => {
 
     expect(reaped).toEqual([0]);
     expect(io.killTree).toHaveBeenCalledWith(PID);
-    const [close] = closesOf(io).slice(-1);
-    expect(close!.outcome.kind).toBe("budget-exceeded");
-    expect(close!.outcome.budget).toBe("peak_rss_mb");
-    // Distinct from a stall AND from a clean finish.
-    expect(close!.outcome.kind).not.toBe("killed");
-    expect(close!.outcome.kind).not.toBe("done");
-    // The envelope on the issue says the same thing — no stall-reap wording.
+    // A budgeted cut-off is policy. Calling it a stall would send the reader
+    // hunting for a hang that never happened.
     expect(commentsOf(io).some((body) => body.includes("stall-reaped"))).toBe(false);
     expect(commentsOf(io).some((body) => body.includes("peak_rss_mb budget 4096MB reached"))).toBe(true);
-  });
-
-  it("the record carries peak RSS and wall clock for the terminated attempt", async () => {
-    const { deps: d, io } = deps({
-      sampleTreeRssMb: vi.fn(() => new Map([[PID, 5120]])),
-    });
-
-    await pollStallDetector(
-      busyState(),
-      d,
-      config({ attemptBudgets: { peak_rss_mb: 4096 } }),
-    );
-
-    const [close] = closesOf(io).slice(-1);
-    expect(close!.resources.peak_rss_mb).toBe(5120);
-    expect(close!.resources.wall_clock_s).toBe(900);
-    expect(close!.issue).toBe(2707);
-    expect(close!.workerId).toBe("wTEST");
-    expect(close!.try).toBe(1);
-  });
-
-  it("attributes the consumption to the fleet's own cgroup (#2697)", async () => {
-    const { deps: d, io } = deps({ sampleTreeRssMb: vi.fn(() => new Map([[PID, 5120]])) });
-    d.fleetAttribution = { fleet: "main", scope: "red-fleet-main-42.scope" };
-
-    await pollStallDetector(busyState(), d, config({ attemptBudgets: { peak_rss_mb: 4096 } }));
-
-    const [close] = closesOf(io).slice(-1);
-    expect(close!.resources.fleet).toBe("main");
-    expect(close!.resources.fleet_scope).toBe("red-fleet-main-42.scope");
   });
 
   it("hands the branch/PR forward so the retry adopts the work instead of restarting from main", async () => {
@@ -146,10 +109,6 @@ describe("a budgeted termination names its budget (#2707)", () => {
     expect(publishAttemptBranch.mock.invocationCallOrder[0]!).toBeLessThan(
       io.editLabels.mock.invocationCallOrder[0]!,
     );
-    // The record points at the same artifacts the comment names.
-    const [close] = closesOf(io).slice(-1);
-    expect(close!.branch).toBe("afk/wTEST/2707-budgets");
-    expect(close!.pr).toBe(4242);
   });
 
   it("pages a human with blocked:budget — a resource runaway is not blind-retried", async () => {
@@ -163,19 +122,18 @@ describe("a budgeted termination names its budget (#2707)", () => {
     expect(add).not.toContain(LABEL_READY);
   });
 
-  it("an unset budget is unlimited: a huge attempt is never terminated", async () => {
+  it("an unset budget is unlimited: a huge worker is never terminated", async () => {
     const { deps: d, io } = deps({ sampleTreeRssMb: vi.fn(() => new Map([[PID, 65_536]])) });
 
     const reaped = await pollStallDetector(busyState(), d, config({ attemptBudgets: {} }));
 
     expect(reaped).toEqual([]);
     expect(io.killTree).not.toHaveBeenCalled();
-    expect(io.recordAttemptClose).not.toHaveBeenCalled();
   });
 });
 
-describe("the three terminal records stay distinct (#2707)", () => {
-  it("a stall reap records `killed`, naming no budget", async () => {
+describe("the three terminations stay distinct (#2707)", () => {
+  it("a stall reap says stall-reaped, naming no budget", async () => {
     const state = busyState();
     state.slots[0]!.spawnEpoch = NOW - 4000;
     const { deps: d, io } = deps({
@@ -185,16 +143,12 @@ describe("the three terminal records stay distinct (#2707)", () => {
 
     await pollStallDetector(state, d, config({ attemptBudgets: { peak_rss_mb: 4096 } }));
 
-    const [close] = closesOf(io).slice(-1);
-    expect(close!.outcome.kind).toBe("killed");
-    expect(close!.outcome.budget).toBeUndefined();
-    expect(close!.outcome.detail).toContain("stall-reaped");
-    // The stall record still carries what it consumed.
-    expect(close!.resources.peak_rss_mb).toBe(512);
-    expect(close!.resources.wall_clock_s).toBe(900);
+    const bodies = commentsOf(io);
+    expect(bodies.some((body) => body.includes("stall-reaped"))).toBe(true);
+    expect(bodies.some((body) => body.includes(ATTEMPT_BUDGET_HANDOFF_MARKER))).toBe(false);
   });
 
-  it("a wall-clock cap records `budget-exceeded` naming wall_clock_s", async () => {
+  it("a wall-clock cap hands its work forward under the cap's own comment", async () => {
     const state = busyState();
     state.slots[0]!.spawnEpoch = NOW - 2775;
     const { deps: d, io } = deps({
@@ -202,16 +156,16 @@ describe("the three terminal records stay distinct (#2707)", () => {
       resolveIterDir: vi.fn((): IterDirInfo => info({ durationS: 2775 })),
     });
 
-    await pollStallDetector(state, d, config({ issueWallClockMaxS: CAP_S }));
+    const reaped = await pollStallDetector(state, d, config({ issueWallClockMaxS: CAP_S }));
 
-    const [close] = closesOf(io).slice(-1);
-    expect(close!.outcome.kind).toBe("budget-exceeded");
-    expect(close!.outcome.budget).toBe("wall_clock_s");
-    expect(close!.resources.wall_clock_s).toBe(2775);
+    expect(reaped).toEqual([0]);
+    const bodies = commentsOf(io);
+    expect(bodies.some((body) => body.includes("stall-reaped"))).toBe(false);
+    expect(bodies.some((body) => body.includes("wall-clock"))).toBe(true);
   });
 
-  it("a completed attempt records `done` with its wall clock and peak RSS", async () => {
-    const { deps: d, io } = deps({
+  it("a worker that conceded its own claim before exiting needs no reconcile", async () => {
+    const { deps: d } = deps({
       // The claim is no longer `running`: the worker conceded it and exited.
       crashedClaimState: vi.fn(async () => ({
         ghOk: true,
@@ -220,19 +174,12 @@ describe("the three terminal records stay distinct (#2707)", () => {
       })),
     });
 
-    const reconciled = await reconcileDeadWorkerClaim(info(), d, {
-      wallClockS: 900,
-      peakRssMb: 2048,
-    });
-
-    expect(reconciled).toBeNull();
-    const [close] = closesOf(io).slice(-1);
-    expect(close!.outcome.kind).toBe("done");
-    expect(close!.resources.wall_clock_s).toBe(900);
-    expect(close!.resources.peak_rss_mb).toBe(2048);
+    expect(
+      await reconcileDeadWorkerClaim(info(), d, { wallClockS: 900, peakRssMb: 2048 }),
+    ).toBeNull();
   });
 
-  it("an unreadable claim records nothing — absence of evidence is not an outcome", async () => {
+  it("an unreadable claim posts nothing — absence of evidence is not an outcome", async () => {
     const { deps: d, io } = deps({
       crashedClaimState: vi.fn(async () => {
         throw new Error("gh exploded");
@@ -241,24 +188,6 @@ describe("the three terminal records stay distinct (#2707)", () => {
 
     await reconcileDeadWorkerClaim(info(), d, { wallClockS: 900 });
 
-    expect(io.recordAttemptClose).not.toHaveBeenCalled();
-  });
-
-  it("a broken record lane never breaks the reap", async () => {
-    const { deps: d, io } = deps({
-      sampleTreeRssMb: vi.fn(() => new Map([[PID, 5120]])),
-      recordAttemptClose: vi.fn(async () => {
-        throw new Error("lane unwritable");
-      }),
-    });
-
-    const reaped = await pollStallDetector(
-      busyState(),
-      d,
-      config({ attemptBudgets: { peak_rss_mb: 4096 } }),
-    );
-
-    expect(reaped).toEqual([0]);
-    expect(io.editLabels).toHaveBeenCalled();
+    expect(io.comment).not.toHaveBeenCalled();
   });
 });

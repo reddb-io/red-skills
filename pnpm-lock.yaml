@@ -183,6 +183,9 @@ importers:
       '@reddb-io/red-castle':
         specifier: workspace:*
         version: link:../../packages/red-castle
+      '@reddb-io/redskilled':
+        specifier: workspace:*
+        version: link:../redskilled
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared

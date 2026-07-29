@@ -13,8 +13,6 @@ import {
   ATTEMPT_BUDGET_CONFIG_KEYS,
   ATTEMPT_BUDGET_HANDOFF_MARKER,
   ATTEMPT_BUDGET_UNLIMITED,
-  attemptBudgetOutcome,
-  attemptResources,
   evaluateAttemptBudgets,
   planBudgetHandoff,
   resolveAttemptBudgets,
@@ -101,36 +99,6 @@ describe("budget evaluation names the budget that fired (#2707)", () => {
     expect(evaluateAttemptBudgets({}, { peak_rss_mb: 1, cost_usd: 1 })).toBeNull();
   });
 
-  it("the outcome is budget-exceeded, names its budget, and is neither a stall nor a finish", () => {
-    const outcome = attemptBudgetOutcome({ budget: "peak_rss_mb", limit: 4096, observed: 5120 });
-    expect(outcome.kind).toBe("budget-exceeded");
-    expect(outcome.budget).toBe("peak_rss_mb");
-    expect(outcome.kind).not.toBe("killed");
-    expect(outcome.kind).not.toBe("done");
-    expect(outcome.detail).toContain("4096");
-    expect(outcome.detail).toContain("5120");
-    expect(outcome.detail).toContain("not stalled");
-  });
-});
-
-describe("resources are attributed to the fleet that spent them (#2697)", () => {
-  it("carries wall clock, peak RSS, cost and the fleet's cgroup scope", () => {
-    const resources = attemptResources(
-      { wallClockS: 1234.6, peakRssMb: 3072.4, costUsd: 1.23456 },
-      { fleet: "main", scope: "red-fleet-main-42.scope" },
-    );
-    expect(resources).toEqual({
-      wall_clock_s: 1235,
-      peak_rss_mb: 3072,
-      cost_usd: 1.2346,
-      fleet: "main",
-      fleet_scope: "red-fleet-main-42.scope",
-    });
-  });
-
-  it("omits what was never measured rather than claiming a measured zero", () => {
-    expect(attemptResources({ wallClockS: 90 })).toEqual({ wall_clock_s: 90 });
-  });
 });
 
 describe("a budgeted termination hands its work forward (#2707)", () => {

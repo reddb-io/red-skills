@@ -37,4 +37,17 @@ describe("castle published contract docs", () => {
       ).sort(),
     );
   });
+
+  /**
+   * The Attempt is extinct (Spec #2772): since a retry became a fresh Worker, a
+   * Worker already IS one Worker × one Ticket × one try, so an attempt contract
+   * published a synonym. This asserts the extinction on the SCHEMA ID, not on a
+   * type name — a contract could come back under a new spelling and still be the
+   * same second copy of facts the tracker and git already own.
+   */
+  it("publishes no attempt contract", () => {
+    expect(
+      CASTLE_PUBLISHED_CONTRACTS.map((contract) => contract.schemaId),
+    ).not.toContain("red.castle.attempt.v1");
+  });
 });

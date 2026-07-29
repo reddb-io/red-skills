@@ -20,6 +20,7 @@
     "@modelcontextprotocol/sdk": "catalog:",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/red-castle": "workspace:*",
+    "@reddb-io/redskilled": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:",
     "zod": "catalog:"

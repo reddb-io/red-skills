@@ -1,32 +1,37 @@
-// liveness-anchor.ts — THE single liveness anchor (ADR 0128 §5, issue #2704).
+// liveness-anchor.ts — THE single liveness anchor (issue #2704, Spec #2772).
 //
 // One anchor, one read, one verdict. `project_status`, `project_stop`, `monitor`,
-// `worker_vitals` and the statusline all resolve supervisor identity, liveness
-// and attempt history through this module and hold NO private source of their
-// own. Two anchors is the bug class behind #2679 and #2698 — a writer that
-// maintains one and a reader that trusts another produced `alive: false` in the
-// same payload as a 13-second-old heartbeat and two busy slots.
+// `worker_vitals` and the statusline resolve liveness through this module and
+// hold NO private source of their own. Two anchors is the bug class behind #2679
+// and #2698 — a writer that maintains one and a reader that trusts another
+// produced `alive: false` in the same payload as a 13-second-old heartbeat and
+// two busy slots.
 //
-// Two invariants make that payload unrepresentable rather than merely unlikely:
+// **A WORKER'S PROCESS LIVENESS RESOLVES THROUGH THE DAEMON, NEVER A PID FILE.**
+// The host daemon owns birth and death, so it is the only authority that can
+// answer "is this Worker still running" — a stronger one than the attempt record
+// this replaced, which could only say what it had last been told. Keying that
+// question on a pid file is what deleted the live lane and kept the dead ones.
 //
-//  1. LIVENESS AND FRESHNESS COME FROM ONE RESOLUTION. The heartbeat observation
-//     is computed by the same function that decides `alive`, from the same read,
+// Three invariants make the contradictory payload unrepresentable rather than
+// merely unlikely:
+//
+//  1. LIVENESS AND FRESHNESS COME FROM ONE RESOLUTION. The observation is
+//     computed by the same function that decides the verdict, from the same read,
 //     so the two can never disagree.
-//  2. AN UNATTRIBUTABLE HEARTBEAT IS STALE, WHATEVER ITS AGE. When no anchor
-//     names a live supervisor, the heartbeat has no live writer to vouch for it,
-//     so it is `orphaned` — stale by construction. `alive: false` therefore
-//     implies `stale: true` at the TYPE level, and a fresh heartbeat can only
-//     ever appear beside `alive: true`.
+//  2. AN UNATTRIBUTABLE OBSERVATION IS STALE, WHATEVER ITS AGE. When no anchor
+//     names a live writer, the heartbeat has nobody to vouch for it, so it is
+//     `orphaned` — stale by construction. `alive: false` therefore implies
+//     `stale: true` at the TYPE level for the supervisor lane.
+//  3. `dead` IS ONLY REPRESENTABLE BESIDE A FRESH READ. A Worker the daemon did
+//     not name is dead only when the daemon answered and its answer is current;
+//     an unreachable or stale daemon answers `unknown`. So no payload can report
+//     a Worker dead beside fresh evidence that it is alive.
 //
-// Staleness travels INSIDE the payload (ADR 0128 §6): every consumer receives
-// the observation, so a stale read can never be presented as current.
+// Staleness travels INSIDE the payload: every consumer receives the observation
+// and renders it, so a stale read can never be presented as current and no
+// consumer re-derives the verdict from an age and a threshold of its own.
 
-import { join } from "node:path";
-import {
-  createEnginePaths,
-  readCastleAttemptRecords,
-  type CastleAttemptRecord,
-} from "@reddb-io/red-castle/engine";
 import { isLivePid as defaultIsLivePid } from "./kill-tree.js";
 import { readPidStartTime } from "../core/state.js";
 import {
@@ -201,81 +206,6 @@ export async function readWatchdogLiveness(
   };
 }
 
-// ---------------------------------------------------------------------------
-// attempt history — the record's derived views (ADR 0128 §1)
-// ---------------------------------------------------------------------------
-
-/**
- * A ticket's history and a worker's history are FILTERS over the folded attempt
- * record, never separately maintained state. Readers ask this view; none of them
- * reconstructs history from worker directories, tracker comments or git refs.
- */
-export interface AttemptHistoryView {
-  /** Every attempt on the lane, in first-seen order. */
-  records: readonly CastleAttemptRecord[];
-  forWorker(workerId: string): CastleAttemptRecord[];
-  forIssue(issue: number): CastleAttemptRecord[];
-  /** The worker's most recent attempt — the one a live reader is looking at. */
-  latestForWorker(workerId: string): CastleAttemptRecord | undefined;
-}
-
-function historyView(records: readonly CastleAttemptRecord[]): AttemptHistoryView {
-  return {
-    records,
-    forWorker: (workerId) => records.filter((record) => record.worker_id === workerId),
-    forIssue: (issue) => records.filter((record) => record.issue === issue),
-    latestForWorker(workerId) {
-      let latest: CastleAttemptRecord | undefined;
-      for (const record of records) {
-        if (record.worker_id !== workerId) continue;
-        if (latest === undefined || record.try >= latest.try) latest = record;
-      }
-      return latest;
-    },
-  };
-}
-
-/**
- * Read the attempt record for a repo root. An unreadable or absent lane yields
- * an EMPTY history rather than an error: the record is diagnostic, and a reader
- * must never fail because the narrative is missing (ADR 0128, consequences).
- */
-export async function readAttemptHistory(root: string): Promise<AttemptHistoryView> {
-  const paths = createEnginePaths(join(root, ".red"));
-  try {
-    return historyView(await readCastleAttemptRecords(paths.castleAttempts));
-  } catch {
-    return historyView([]);
-  }
-}
-
-/** The attempt facts a reader publishes alongside a live worker. */
-export interface AttemptSummary {
-  id: string;
-  try: number;
-  issue: number;
-  branch: string | null;
-  pr: number | null;
-  commits: number;
-  outcome: string | null;
-  closed: boolean;
-  updated_at: string;
-}
-
-export function summarizeAttempt(record: CastleAttemptRecord): AttemptSummary {
-  return {
-    id: record.attempt_id,
-    try: record.try,
-    issue: record.issue,
-    branch: record.branch ?? null,
-    pr: record.pr ?? null,
-    commits: record.commits.length,
-    outcome: record.outcome?.kind ?? null,
-    closed: record.closed,
-    updated_at: record.updated_at,
-  };
-}
-
 /**
  * The anchor's verdict in the shape every payload publishes it. One projection
  * for every consumer, so `fleet_status`, `monitor` and the CLI report cannot
@@ -292,5 +222,244 @@ export function publishSupervisorLiveness(liveness: SupervisorLiveness): {
     alive: liveness.alive,
     identity_anchor: liveness.anchor,
     heartbeat: liveness.heartbeat,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// a Worker's process liveness — resolved through the daemon, never a pid file
+// ---------------------------------------------------------------------------
+
+/**
+ * The verdict on one Worker's PROCESS.
+ *
+ * Three values, not two, and the third is the load-bearing one: `unknown` is
+ * what an unreachable or stale daemon yields, and it is NOT `dead`. Collapsing
+ * the two would let a reader that could not reach the authority report a running
+ * Worker as gone — which is how a janitor came to delete a live lane (#2679).
+ */
+export type WorkerLivenessKind = "alive" | "dead" | "unknown";
+
+/**
+ * How current the daemon's answer is, as the daemon itself measured it.
+ *
+ * Every field is carried, none is derived here: the daemon samples on its own
+ * tick, so a consumer that dated the answer itself would need the sample
+ * interval, the daemon's clock and its own read latency — and would get it
+ * subtly wrong in a different way per surface.
+ */
+export interface DaemonStaleness {
+  stale: boolean;
+  /** Age of the daemon's last sample in ms, or null when it never sampled. */
+  age_ms: number | null;
+  /** The window the daemon judges its own answer against, in ms. */
+  threshold_ms: number | null;
+  /** The daemon's own sentence about this answer's currency. */
+  reason: string;
+}
+
+/**
+ * One Worker's process liveness, as a discriminated union.
+ *
+ * `dead` pins `stale: false`, so "this Worker is gone" cannot be typed beside a
+ * stale read — the compiler rejects the payload the criterion forbids rather
+ * than a test catching it after the fact.
+ */
+export type WorkerLiveness =
+  | {
+      verdict: "alive";
+      anchor: "daemon";
+      worker_id: string;
+      pid: number;
+      project_label: string;
+      staleness: DaemonStaleness & { stale: false };
+    }
+  | {
+      verdict: "dead";
+      anchor: "daemon";
+      worker_id: string;
+      pid: null;
+      project_label: null;
+      staleness: DaemonStaleness & { stale: false };
+    }
+  | {
+      verdict: "unknown";
+      anchor: "none";
+      worker_id: string;
+      pid: null;
+      project_label: null;
+      staleness: DaemonStaleness & { stale: true };
+    };
+
+/**
+ * The daemon's host-wide answer, narrowed to what liveness needs.
+ *
+ * Structural on purpose: the anchor consumes the daemon's published payload
+ * without owning its shape, so widening the daemon's contract never drags a
+ * change through this module.
+ */
+export interface DaemonWorkerSet {
+  readonly staleness: {
+    readonly stale: boolean;
+    readonly age_ms: number | null;
+    readonly threshold_ms: number;
+    readonly reason: string;
+  };
+  readonly workers: readonly {
+    readonly worker_id: string;
+    readonly project_label: string;
+    readonly pid: number;
+  }[];
+}
+
+/** What an absent daemon read reports: unknown, and honest about why. */
+const NO_DAEMON_REASON =
+  "the daemon did not answer, so nothing here can vouch for this Worker's process";
+
+/** Why a fresh answer that does not name the Worker still is not a death. */
+const UNCOVERED_REASON =
+  "the daemon holds no record of this Worker while the caller still sees it running, " +
+  "so its silence is ignorance about a Worker it never birthed, not evidence of death";
+
+function unknownLiveness(workerId: string, reason: string): WorkerLiveness {
+  return {
+    verdict: "unknown",
+    anchor: "none",
+    worker_id: workerId,
+    pid: null,
+    project_label: null,
+    staleness: { stale: true, age_ms: null, threshold_ms: null, reason },
+  };
+}
+
+/**
+ * What the caller can already see about this Worker, and the ONLY thing it is
+ * allowed to contribute.
+ *
+ * The asymmetry is the whole point: evidence of life may WITHHOLD a death claim,
+ * and may never manufacture an `alive` one. So the daemon stays the single source
+ * of every positive verdict — a caller cannot promote its own observation into
+ * one — while a payload can still never say "gone" about a Worker something else
+ * can see running. That contradiction, published in one document, is the bug
+ * class behind #2698.
+ */
+export interface WorkerLivenessEvidence {
+  /**
+   * True when the caller holds FRESH evidence this Worker's process is alive.
+   *
+   * It is load-bearing until every birth goes through the daemon: a Worker the
+   * project launched itself was never in the daemon's set, so the daemon's
+   * silence about it says nothing at all.
+   */
+  readonly evidenceOfLife?: boolean;
+}
+
+/**
+ * Resolve one Worker's process liveness from ONE daemon read. PURE.
+ *
+ * A stale answer is `unknown`, never `dead`: the Worker set the daemon last
+ * measured is history, and a Worker missing from history has not been shown to
+ * have died. The staleness the daemon stated is carried through untouched.
+ */
+export function resolveWorkerLiveness(
+  hostAnswer: DaemonWorkerSet | null,
+  workerId: string,
+  evidence: WorkerLivenessEvidence = {},
+): WorkerLiveness {
+  if (hostAnswer === null) return unknownLiveness(workerId, NO_DAEMON_REASON);
+  if (hostAnswer.staleness.stale) return unknownLiveness(workerId, hostAnswer.staleness.reason);
+
+  const fresh = {
+    stale: false as const,
+    age_ms: hostAnswer.staleness.age_ms,
+    threshold_ms: hostAnswer.staleness.threshold_ms,
+    reason: hostAnswer.staleness.reason,
+  };
+  const worker = hostAnswer.workers.find((candidate) => candidate.worker_id === workerId);
+  if (worker === undefined) {
+    if (evidence.evidenceOfLife === true) return unknownLiveness(workerId, UNCOVERED_REASON);
+    return {
+      verdict: "dead",
+      anchor: "daemon",
+      worker_id: workerId,
+      pid: null,
+      project_label: null,
+      staleness: fresh,
+    };
+  }
+  return {
+    verdict: "alive",
+    anchor: "daemon",
+    worker_id: workerId,
+    pid: worker.pid,
+    project_label: worker.project_label,
+    staleness: fresh,
+  };
+}
+
+/** How the anchor reaches the daemon. Injected, so every consumer is testable
+ * and so the READ never starts a daemon: a liveness question must not change
+ * the machine it is asking about. */
+export type DaemonWorkerSetReader = () => Promise<DaemonWorkerSet | null>;
+
+/**
+ * Read the daemon's Worker set for this session, or null when it does not answer.
+ *
+ * Deliberately NOT the auto-spawning client call: spawning a daemon to ask
+ * whether a Worker is alive would make a read a mutation, and a host with no
+ * daemon would answer "alive" about the very process it just started.
+ */
+export const readDaemonWorkerSet: DaemonWorkerSetReader = async () => {
+  try {
+    const [{ resolveRedskilledPaths }, { sendRedskilledRequest, isRedskilledStatuslinePayload }] =
+      await Promise.all([
+        import("@reddb-io/redskilled/paths"),
+        import("@reddb-io/redskilled/protocol"),
+      ]);
+    const paths = resolveRedskilledPaths();
+    const response = await sendRedskilledRequest(
+      { socketPath: paths.socketPath, timeoutMs: 2_000 },
+      { id: `liveness-${process.pid}-${process.hrtime.bigint()}`, op: "statusline-payload" },
+    );
+    if (!response.ok) return null;
+    return isRedskilledStatuslinePayload(response.value) ? response.value : null;
+  } catch {
+    // No daemon, no socket, or a malformed answer: `unknown`, never a guess.
+    return null;
+  }
+};
+
+/** The one call a reader makes to ask whether a Worker's process is alive. */
+export async function readWorkerLiveness(
+  workerId: string,
+  read: DaemonWorkerSetReader = readDaemonWorkerSet,
+  evidence: WorkerLivenessEvidence = {},
+): Promise<WorkerLiveness> {
+  let hostAnswer: DaemonWorkerSet | null;
+  try {
+    hostAnswer = await read();
+  } catch {
+    hostAnswer = null;
+  }
+  return resolveWorkerLiveness(hostAnswer, workerId, evidence);
+}
+
+/**
+ * The Worker verdict in the shape every payload publishes it (the castle
+ * `daemon_liveness` block). One projection for every consumer, so two surfaces
+ * cannot drift into two spellings of the same fact.
+ */
+export function publishWorkerLiveness(liveness: WorkerLiveness): {
+  verdict: WorkerLivenessKind;
+  anchor: "daemon" | "none";
+  project_label: string | null;
+  pid: number | null;
+  staleness: DaemonStaleness;
+} {
+  return {
+    verdict: liveness.verdict,
+    anchor: liveness.anchor,
+    project_label: liveness.project_label,
+    pid: liveness.pid,
+    staleness: liveness.staleness,
   };
 }
