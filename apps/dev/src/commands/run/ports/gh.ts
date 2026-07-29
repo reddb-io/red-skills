@@ -74,6 +74,26 @@ export function buildClaimGhPort(ghCtx: GhContext): NonNullable<ProcessIssueDeps
 }
 
 /**
+ * Re-seed trail port (#2731): ONE Issue comment upserted in place. The post goes
+ * through the numeric-id REST surface because the edit needs that id — `gh issue
+ * comment` does not expose it — and the edit reuses the existing edit-comment
+ * primitive. Both are best-effort: the trail is a projection of the Attempt
+ * record, so a refused post or patch costs fidelity, never a Re-seed round.
+ */
+export function buildReseedTrailPort(ghCtx: GhContext): NonNullable<ProcessIssueDeps["reseedTrailGh"]> {
+  return {
+    postComment: async (issue, body) => {
+      try {
+        return await ghx.postClaimComment(ghCtx, issue, body);
+      } catch {
+        return undefined;
+      }
+    },
+    editComment: (commentId, body) => ghx.editComment(ghCtx, commentId, body),
+  };
+}
+
+/**
  * PR-review ports: the two evidence surfaces that post through `ReviewGh` rather
  * than the plain issue API. Same single context as the issue port.
  */
