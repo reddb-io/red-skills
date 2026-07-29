@@ -41,9 +41,8 @@ function harness(over: Partial<DeadWorkerSweepDeps> = {}): {
   const removedWorktrees: string[] = [];
   const removedDirs: string[] = [];
   const deps: DeadWorkerSweepDeps = {
-    // worker.pid text: default all dead unless overridden.
-    readWorkerPid: () => "9999",
-    killAlive: () => false,
+    // The daemon's verdict: dead unless a test overrides it.
+    workerLiveness: async () => "dead",
     isPreserved: async () => false,
     exists: () => true,
     removeWorktree: async (p) => {
@@ -68,8 +67,8 @@ describe("reclaimDeadWorkers (issue #1219)", () => {
     expect(reclaimed).toEqual(["/r/.red/tmp/workers/wDEAD/5-a1"]);
   });
 
-  it("NEVER touches a live worker's dir (worker.pid alive)", async () => {
-    const { deps, removedWorktrees, removedDirs } = harness({ killAlive: () => true });
+  it("NEVER touches a dir whose Worker the daemon names", async () => {
+    const { deps, removedWorktrees, removedDirs } = harness({ workerLiveness: async () => "alive" });
     const reclaimed = await reclaimDeadWorkers(ROOT, [record(ROOT, "wLIVE", 5, true)], "", deps);
     expect(removedWorktrees).toEqual([]);
     expect(removedDirs).toEqual([]);
@@ -85,11 +84,10 @@ describe("reclaimDeadWorkers (issue #1219)", () => {
   });
 
   it("reclaims a dead worker while preserving a live sibling in the same sweep", async () => {
-    // wLIVE alive, wDEAD dead — keyed on the per-worker worker.pid.
+    // wLIVE alive, wDEAD dead — the verdict is per-Worker, from the daemon.
     const alive = new Set(["/r/.red/tmp/workers/wLIVE"]);
     const { deps, removedDirs } = harness({
-      readWorkerPid: (workerDir) => (alive.has(workerDir) ? "111" : "222"),
-      killAlive: (pid) => pid === 111,
+      workerLiveness: async (workerDir) => (alive.has(workerDir) ? "alive" : "dead"),
     });
     const reclaimed = await reclaimDeadWorkers(
       ROOT,
@@ -99,6 +97,16 @@ describe("reclaimDeadWorkers (issue #1219)", () => {
     );
     expect(removedDirs).toEqual(["/r/.red/tmp/workers/wDEAD/6-a1"]);
     expect(reclaimed).toEqual(["/r/.red/tmp/workers/wDEAD/6-a1"]);
+  });
+
+  it("spares every dir when the daemon does not answer", async () => {
+    const { deps, removedWorktrees, removedDirs } = harness({
+      workerLiveness: async () => "unknown",
+    });
+    const reclaimed = await reclaimDeadWorkers(ROOT, [record(ROOT, "wGHOST", 5, false)], "", deps);
+    expect(removedWorktrees).toEqual([]);
+    expect(removedDirs).toEqual([]);
+    expect(reclaimed).toEqual([]);
   });
 
   it("skips the worktree removal when it does not exist, still reclaims the dir", async () => {
