@@ -1,15 +1,14 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { rspStateDir } from "@reddb-io/shared/red-paths.js";
-import { decode, encode, type JsonValue } from "@reddb-io/toon";
+import { readGhEtagEntry, writeGhEtagEntry } from "./gh-etag-cache.js";
+// The whole-document reader survives only as the legacy migration path; every
+// live lookup goes through one partition.
+export { readGhEtagCache, sweepGhEtagCache } from "./gh-etag-cache.js";
 import {
   DEFAULT_RSP_OVERHEAD_CEILING,
   overheadCounters,
   overheadFamilyDisabled,
   recordOverheadSample,
-  readSelfStateFile,
   startChildProcessTimer,
   type RspOverheadCeiling,
 } from "./overhead-budget.js";
@@ -30,6 +29,8 @@ export interface GhConditionalRequest {
   signal?: AbortSignal;
   /** The overhead ceiling this call holds itself to (#2746). */
   overheadCeiling?: RspOverheadCeiling;
+  /** The byte ceiling the ETag cache lane holds itself to (#2745). */
+  cacheMaxBytes?: number;
 }
 
 export interface GhConditionalResult {
@@ -39,22 +40,6 @@ export interface GhConditionalResult {
   etag?: string;
   quotaFree: boolean;
 }
-
-interface GhEtagCacheDocument {
-  version: 1;
-  entries: Record<string, GhEtagCacheEntry>;
-}
-
-interface GhEtagCacheEntry {
-  key: string;
-  request: string;
-  etag: string;
-  body: string;
-  updated_at: string;
-}
-
-const CACHE_FILE = "gh-etag-cache.toon";
-const LEGACY_CACHE_FILE = "gh-etag-cache.json";
 
 export async function readGhConditionalJson(request: GhConditionalRequest): Promise<GhConditionalResult> {
   const cwd = request.cwd ?? process.cwd();
@@ -66,8 +51,9 @@ export async function readGhConditionalJson(request: GhConditionalRequest): Prom
   // A self-disabled family still runs the command; it just stops paying the
   // cache tax that disabled it.
   const disabled = overheadFamilyDisabled(telemetryRoot, "gh-api-json");
-  const cache = disabled ? { version: 1 as const, entries: {} } : await readGhEtagCache(telemetryRoot);
-  const cached = cache.entries[key];
+  // One partition, not the whole cache: the lookup cost no longer scales with
+  // everything cached before it (#2745).
+  const cached = disabled ? undefined : await readGhEtagEntry(telemetryRoot, key);
   const args = ["api", "--include", "--method", "GET", request.path];
   for (const [name, value] of sortedParams(request.params)) {
     args.push("-f", `${name}=${String(value)}`);
@@ -102,14 +88,13 @@ export async function readGhConditionalJson(request: GhConditionalRequest): Prom
   if (parsed.statusCode >= 200 && parsed.statusCode < 300) {
     const etag = parsed.headers.get("etag");
     if (etag) {
-      cache.entries[key] = {
+      await writeGhEtagEntry(telemetryRoot, {
         key,
         request: identity,
         etag,
         body: parsed.body,
         updated_at: new Date().toISOString(),
-      };
-      await writeCache(telemetryRoot, cache);
+      }, { maxBytes: request.cacheMaxBytes });
     }
     recordOverhead(0);
     await recordConditionalTelemetry(telemetryRoot, request.command ?? `gh api ${request.path}`, false);
@@ -217,47 +202,6 @@ function parseIncludedResponse(raw: string): { statusCode: number; headers: Map<
   };
 }
 
-/**
- * Read the ETag cache, charging its bytes to this invocation's overhead.
- *
- * The cache is rsp's own state, and reading all of it on every `gh` call is
- * exactly the tax #2745 imposed unseen: without the byte accounting, a cache
- * that has grown to megabytes looks identical to one that costs nothing.
- */
-export async function readGhEtagCache(root: string): Promise<GhEtagCacheDocument> {
-  for (const path of [cachePath(root), legacyCachePath(root)]) {
-    try {
-      const parsed = decodeCacheDocument(await readSelfStateFile(path));
-      if (isCacheDocument(parsed)) return parsed;
-    } catch {}
-  }
-  return { version: 1, entries: {} };
-}
-
-async function writeCache(root: string, cache: GhEtagCacheDocument): Promise<void> {
-  const path = cachePath(root);
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${encode(cache as unknown as JsonValue)}\n`, { encoding: "utf8", mode: 0o600 });
-  await rename(tmp, path);
-}
-
-function cachePath(root: string): string {
-  return join(rspStateDir(root), CACHE_FILE);
-}
-
-function legacyCachePath(root: string): string {
-  return join(rspStateDir(root), LEGACY_CACHE_FILE);
-}
-
-function decodeCacheDocument(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return decode(raw);
-  }
-}
-
 async function recordConditionalTelemetry(root: string, command: string, quotaFree: boolean): Promise<void> {
   await appendTelemetryEvent(root, {
     collection: RSP_DECISIONS_COLLECTION,
@@ -270,24 +214,4 @@ async function recordConditionalTelemetry(root: string, command: string, quotaFr
     quota_free: quotaFree,
     saved_units: quotaFree ? 1 : 0,
   });
-}
-
-function isCacheDocument(value: unknown): value is GhEtagCacheDocument {
-  return isRecord(value) &&
-    value.version === 1 &&
-    isRecord(value.entries) &&
-    Object.values(value.entries).every(isCacheEntry);
-}
-
-function isCacheEntry(value: unknown): value is GhEtagCacheEntry {
-  return isRecord(value) &&
-    typeof value.key === "string" &&
-    typeof value.request === "string" &&
-    typeof value.etag === "string" &&
-    typeof value.body === "string" &&
-    typeof value.updated_at === "string";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
