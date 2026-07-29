@@ -331,13 +331,6 @@ const SURFACE: ReadonlyArray<{
       "Return the castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) as structured data, using the same collector cores and cache discipline as the command-backed statusLine. Host-side fields (session model/effort, context %, usage quotas) are out of scope.",
     schema: [],
   },
-  {
-    name: "federated_fleet_view",
-    title: "Federated fleet view",
-    description:
-      "Return the aggregated cross-host fleet view: per-host supervisor, slots, workers, queue posture, last-event age, and silent-host markers. Single-host mode returns exactly one host entry and is byte-stable with the local fleet view.",
-    schema: [],
-  },
 ];
 
 describe("aggregated castle MCP tool surface", () => {
@@ -356,5 +349,15 @@ describe("aggregated castle MCP tool surface", () => {
 
   it("publishes every tool name exactly once", () => {
     expect(new Set(tools.map((tool) => tool.name)).size).toBe(tools.length);
+  });
+
+  // ADR 0130: the cross-host aggregate is retired, not rebuilt — it grouped by
+  // host identity over heartbeats and slots that no longer exist. Federation
+  // across machines, if ever demanded, builds on the daemon socket instead.
+  it("publishes no host-grouped fleet view", () => {
+    for (const tool of tools) {
+      expect(tool.name).not.toMatch(/federat/i);
+      expect(tool.description).not.toMatch(/cross-host|per-host/i);
+    }
   });
 });
