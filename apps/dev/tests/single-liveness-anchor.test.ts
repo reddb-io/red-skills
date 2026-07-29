@@ -347,6 +347,28 @@ describe("the daemon is the anchor for a Worker's process (Spec #2772)", () => {
     expect(liveness.staleness.stale).toBe(false);
   });
 
+  it("never calls a Worker dead while something still sees it running", () => {
+    // Until every birth goes through the daemon, a Worker the project launched
+    // itself was never in the daemon's set — so a fresh answer that omits it is
+    // ignorance, not death. This is the contradiction of #2698 in Worker form:
+    // "gone" published beside fresh evidence of life.
+    const liveness = resolveWorkerLiveness(hostAnswer({ workers: [] }), WORKER, {
+      evidenceOfLife: true,
+    });
+
+    expect(liveness.verdict).toBe("unknown");
+    expect(liveness.staleness.reason).toContain("never birthed");
+  });
+
+  it("lets evidence of life withhold a death, never assert an alive", () => {
+    // The asymmetry: the caller's own observation can only veto. Every positive
+    // verdict still comes from the daemon, so no second authority is created.
+    expect(resolveWorkerLiveness(null, WORKER, { evidenceOfLife: true }).verdict).toBe("unknown");
+    expect(
+      resolveWorkerLiveness(hostAnswer({ stale: true }), WORKER, { evidenceOfLife: true }).verdict,
+    ).toBe("unknown");
+  });
+
   it("answers unknown — never dead — when the daemon does not answer at all", async () => {
     const unreachable = resolveWorkerLiveness(null, WORKER);
     expect(unreachable).toMatchObject({ verdict: "unknown", anchor: "none", pid: null });
