@@ -333,6 +333,25 @@ export const DELETED_CONFIG_KEYS: ReadonlySet<string> = new Set([
  */
 export const PLUGIN_ENABLED_KEY = "plugins.dev.enabled";
 
+/**
+ * Root keys the contract SANCTIONS. Every other root-level accessor spelling is
+ * off-contract and warns (see {@link rootAccessorConfigCollisions}).
+ *
+ * `project.name` is the first entry and one of the few cases where the config
+ * root is right rather than a leak: project identity is shared by the dev,
+ * memory and brain plugins in one repository, so it belongs to none of them and
+ * cannot live under `plugins.<name>.*`. The canonical reader is
+ * `declaredProjectNameInConfig` in `packages/shared/project-identity.ts`, which
+ * is deliberately gate-independent — a memory-only repository declares its
+ * identity the same way a dev one does.
+ *
+ * To sanction a root key: add it here and record the sanction in the ADR that
+ * grants it.
+ */
+export const SANCTIONED_ROOT_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "project.name",
+]);
+
 export const AFK_MODEL_TIERS = ["validate", "simple", "complex", "think"] as const;
 export type AfkModelTier = (typeof AFK_MODEL_TIERS)[number];
 
@@ -688,6 +707,7 @@ function configParseFailure(err: unknown): ConfigParseFailure {
 
 export function rootAccessorConfigCollisions(values: ConfigValues): RootAccessorConfigCollision[] {
   return Object.keys(values)
+    .filter((key) => !SANCTIONED_ROOT_CONFIG_KEYS.has(key))
     .filter((key) => key.startsWith("dev.") || key.startsWith("afk."))
     .sort()
     .map((key) => ({
