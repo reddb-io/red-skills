@@ -1190,7 +1190,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: false,
-      stallConvergenceBudget: 0,
+      reseedGateBudget: 0,
       locked: false,
       adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
       adversarialFindings: { summary: "Never asked.", findings: [] },
@@ -1276,7 +1276,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
     const { deps, input, trace } = harness({
       outcomes: ["done", "done", "done"],
       feedbackResults: [true, false, false],
-      stallConvergenceBudget: 2,
+      reseedGateBudget: 2,
       locked: false,
       adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
       adversarialFindingsSequence: [
@@ -1449,7 +1449,7 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
       outcomes: ["done", "done", "done", "done", "done"],
       // Three red gate rounds, then a green one the review gets to see.
       feedbackResults: [false, false, false, true, true],
-      stallConvergenceBudget: 3,
+      reseedGateBudget: 3,
       locked: false,
       adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
       adversarialFindingsSequence: [
@@ -1786,7 +1786,7 @@ describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", ()
       outcome: "done",
       // One red gate, then green: one Re-seed, then landing.
       feedbackResults: [false, true],
-      stallConvergenceBudget: 2,
+      reseedGateBudget: 2,
     });
     const result = await processIssue(deps, input);
 
@@ -1805,7 +1805,7 @@ describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", ()
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackResults: [false, true],
-      stallConvergenceBudget: 2,
+      reseedGateBudget: 2,
     });
     const result = await processIssue(deps, input);
 
@@ -1821,7 +1821,7 @@ describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", ()
       outcome: "done",
       // Two red gates, then green: two Re-seed rounds on one comment.
       feedbackResults: [false, false, true],
-      stallConvergenceBudget: 3,
+      reseedGateBudget: 3,
     });
     const result = await processIssue(deps, input);
 
@@ -1866,7 +1866,7 @@ describe("processIssue — an exhausted Re-seed budget parks with the draft open
     harness({
       outcome: "done",
       feedbackResults: [false, false],
-      stallConvergenceBudget: 1,
+      reseedGateBudget: 1,
     });
 
   /** A budget exhausted by the RESERVED review round: a blocking finding draws
@@ -1960,7 +1960,7 @@ describe("processIssue — an exhausted Re-seed budget parks with the draft open
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackResults: [false],
-      stallConvergenceBudget: 0,
+      reseedGateBudget: 0,
     });
     const result = await processIssue(deps, input);
 
