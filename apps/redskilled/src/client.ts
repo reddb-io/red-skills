@@ -24,9 +24,14 @@ import { socketAnswers } from "./daemon.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
+  isRedskilledStatuslinePayload,
+  isRedskilledWorkerCommandResult,
   isRedskilledWorkerStarted,
   sendRedskilledRequest,
   type RedskilledRequest,
+  type RedskilledStatuslinePayload,
+  type RedskilledWorkerCommandRequest,
+  type RedskilledWorkerCommandResult,
   type RedskilledWorkerStarted,
 } from "./protocol.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
@@ -64,6 +69,14 @@ export interface RedskilledClientConfig {
   readonly readyTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * The project this session belongs to, stated on every request.
+   *
+   * It costs a reader nothing — a session reads the whole host either way — and
+   * it is what a write is refused against (ADR 0130 rule 9), so stating it once
+   * in the config is how a client stays inside its own repository by default.
+   */
+  readonly sessionProject?: string;
 }
 
 /**
@@ -137,6 +150,52 @@ export async function readRedskilledHostState(
 }
 
 /**
+ * The statusline payload: what this machine is doing, in one read.
+ *
+ * Host-wide from any project, and dated by the daemon rather than by the caller.
+ * **A malformed answer throws** — there is no partial payload to patch up from a
+ * local source, because a consumer holding a private source is exactly the second
+ * authority this document exists to remove.
+ */
+export async function readRedskilledStatuslinePayload(
+  paths: RedskilledPaths,
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledStatuslinePayload> {
+  const value = await requestRedskilled(
+    paths,
+    { op: "statusline-payload", ...(config.sessionProject != null ? { session_project: config.sessionProject } : {}) },
+    config,
+  );
+  if (!isRedskilledStatuslinePayload(value)) throw new Error("redskilled daemon returned a malformed statusline payload");
+  return value;
+}
+
+/**
+ * Command one Worker — stop, recycle or steer.
+ *
+ * The command names the session's own project, and the daemon refuses it into
+ * any other one. **A refusal throws**: a caller that read a refusal as a quiet
+ * no-op would retry it forever, and one that could tell a refusal from an unknown
+ * Worker would learn another project's Worker set by asking.
+ */
+export async function commandRedskilledWorker(
+  paths: RedskilledPaths,
+  command: RedskilledWorkerCommandRequest,
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledWorkerCommandResult> {
+  const value = await requestRedskilled(
+    paths,
+    {
+      op: "worker-command",
+      command: { ...command, session_project: command.session_project ?? config.sessionProject },
+    },
+    config,
+  );
+  if (!isRedskilledWorkerCommandResult(value)) throw new Error("redskilled daemon returned a malformed command result");
+  return value;
+}
+
+/**
  * Ask the daemon for a Worker.
  *
  * The caller states the argv, the placement target, the budget and its own two
@@ -158,7 +217,14 @@ export async function startRedskilledWorker(
   } catch (err) {
     throw new RedskilledUnreachableError(paths.socketPath, err);
   }
-  const value = await requestRedskilled(paths, { op: "worker-start", spec }, config);
+  // A client that stated no session project is dispatching into itself: the
+  // spec's own label IS the session's project, and the reach rule only ever had
+  // something to refuse when a session named a DIFFERENT one.
+  const value = await requestRedskilled(
+    paths,
+    { op: "worker-start", spec, session_project: config.sessionProject ?? spec.project_label },
+    config,
+  );
   if (!isRedskilledWorkerStarted(value)) throw new Error("redskilled daemon returned a malformed worker record");
   return value;
 }

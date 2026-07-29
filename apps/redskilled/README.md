@@ -26,7 +26,9 @@ of it.
 | Which session a daemon serves | `src/paths.ts` — session key, socket, lock, lease |
 | Who owns the session across restarts | `src/session-lease.ts` — pid + start time, TOON on disk |
 | Who owns the socket right now | `src/daemon.ts` — exclusive bind |
-| The frozen wire contract | `src/protocol.ts` — `ping`, `host-state`, `worker-start`, `shutdown` |
+| The frozen wire contract | `src/protocol.ts` — `ping`, `host-state`, `statusline-payload`, `worker-start`, `worker-command`, `shutdown` |
+| Who may read and who may write | `src/session-reach.ts` — read the host, write the project |
+| What this machine is doing, in one document | `src/statusline-payload.ts` — Workers, projects, vitals, budgets, staleness |
 | Where a Worker's resources are charged | `src/worker-placement.ts` — pure planner over injected probes |
 | Birth itself | `src/worker-launch.ts` — plan, spawn once, report the downgrade |
 | The host-wide read | `src/host-state.ts` — total shape, Workers plus the budget total |
@@ -70,6 +72,19 @@ of it.
 - **A crash costs the event in flight, never the lane.** An unterminated final
   line is read as absent (TOONL's own rule for a truncated open tail) and dropped
   before the next append, so a half-written record can never fuse onto the next.
+- **Reach is asymmetric: read the host, write the project.** A session reads
+  every project's Workers, because diagnosing contention from wherever you happen
+  to be is the problem the daemon exists to solve. Dispatch, stop, recycle and
+  steer are refused into any project but the session's own — these sessions are
+  largely driven by autonomous agents that do not understand a repository they
+  were not started in. A refusal never distinguishes "no such Worker" from "not
+  your Worker", so a session cannot map another project by guessing.
+- **Staleness travels inside the payload.** The daemon measures on its own tick
+  and dates the answer itself, so a consumer renders the age rather than
+  re-deriving it — which is what stops two surfaces from reporting different
+  answers about the same instant. A tick that failed to read the host ages the
+  payload instead of refreshing it, and an unmeasured Worker is `null` and named,
+  never a zero that reads as idle.
 - **An unisolated launch is never silent.** When the host affords no transient
   unit the Worker still starts, and the reply — and the host-state record it
   keeps for its whole life — carries a warning naming what was lost. A declared
