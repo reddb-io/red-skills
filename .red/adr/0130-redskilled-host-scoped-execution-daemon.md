@@ -154,3 +154,47 @@ discovered:
 - **Sequencing.** Archiving ADR 0128 and removing the attempt implementation are
   curation of a live decision and route through a Spec per **ADR 0127**; this
   record fixes the decision, not the migration order.
+
+## Amendment 1 — the daemon polls repository activity (2026-07-29)
+
+Rule 3 above says the daemon carries no castle semantics and receives only an
+argv, a placement target, a budget, and an opaque project label. Rendering the
+statusline needs one class of fact that rule excludes: repository activity —
+open pull requests, open issues, recently closed work — which comes from the
+issue tracker rather than from any process the daemon owns.
+
+**Decision: the daemon holds one token and the repository identity of each
+registered project, and fetches every project's activity counts in a single
+aliased query per interval.**
+
+The frontier moves by exactly two items and no more. The daemon now knows a
+repository identity per project — which it already carried as the opaque
+project label — and a token. It still does not know what an Issue, a pull
+request, a label, a selector, a gate, or a Landing *is*: a count is an integer
+it stores and returns without interpreting, exactly as it carries a Worker's
+last activity line without parsing it.
+
+Three facts drove this over polling from each project:
+
+1. **GitHub quota is per token, not per process or per host.** Several projects
+   polling with the same token already share one budget, so splitting the poller
+   across processes saves nothing by itself. What saves is issuing *one* request
+   instead of N.
+2. **One aliased GraphQL query can span every repository at once.** The
+   machinery already exists in the shared batch layer, currently bound to one
+   repository per call; widening the parameter is not new capability. Cost then
+   becomes flat in the number of projects rather than linear.
+3. **Quota exhaustion is not theoretical here.** A single project drove the
+   GraphQL quota to zero during one drain session, and the resulting failures
+   surfaced as an empty result rather than an error.
+
+**The condition this decision depends on, stated so it is not discovered by
+accident: every repository on the host shares one token.** A project needing its
+own credential invalidates the decision rather than bending it — the poller then
+returns to the projects, which is the only arrangement where each uses its own
+credentials. A host-scoped daemon holding one credential that reaches every
+registered repository is a security posture, not only an architectural one.
+
+Staleness travels inside the payload, as everywhere else: counts age between
+intervals, and a consumer renders the age rather than presenting a stale count
+as current.
