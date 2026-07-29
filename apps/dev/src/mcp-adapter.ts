@@ -1189,7 +1189,12 @@ async function workerVitals(
     liveness: record.liveness,
     liveness_verdict: record.livenessVerdict,
     alert: alerts.get(state.worker_id),
-    daemon_liveness: publishWorkerLiveness(resolveWorkerLiveness(hostAnswer, state.worker_id)),
+    // The record's own live flag can only WITHHOLD a death claim (see the
+    // anchor): it never becomes an `alive` verdict of its own, so this payload
+    // stays one anchor deep while refusing to call a visibly running Worker gone.
+    daemon_liveness: publishWorkerLiveness(
+      resolveWorkerLiveness(hostAnswer, state.worker_id, { evidenceOfLife: record.live }),
+    ),
     };
   });
   const represented = new Set(all.map((record) => record.worker.id));

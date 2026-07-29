@@ -315,6 +315,11 @@ export interface DaemonWorkerSet {
 const NO_DAEMON_REASON =
   "the daemon did not answer, so nothing here can vouch for this Worker's process";
 
+/** Why a fresh answer that does not name the Worker still is not a death. */
+const UNCOVERED_REASON =
+  "the daemon holds no record of this Worker while the caller still sees it running, " +
+  "so its silence is ignorance about a Worker it never birthed, not evidence of death";
+
 function unknownLiveness(workerId: string, reason: string): WorkerLiveness {
   return {
     verdict: "unknown",
@@ -327,6 +332,28 @@ function unknownLiveness(workerId: string, reason: string): WorkerLiveness {
 }
 
 /**
+ * What the caller can already see about this Worker, and the ONLY thing it is
+ * allowed to contribute.
+ *
+ * The asymmetry is the whole point: evidence of life may WITHHOLD a death claim,
+ * and may never manufacture an `alive` one. So the daemon stays the single source
+ * of every positive verdict — a caller cannot promote its own observation into
+ * one — while a payload can still never say "gone" about a Worker something else
+ * can see running. That contradiction, published in one document, is the bug
+ * class behind #2698.
+ */
+export interface WorkerLivenessEvidence {
+  /**
+   * True when the caller holds FRESH evidence this Worker's process is alive.
+   *
+   * It is load-bearing until every birth goes through the daemon: a Worker the
+   * project launched itself was never in the daemon's set, so the daemon's
+   * silence about it says nothing at all.
+   */
+  readonly evidenceOfLife?: boolean;
+}
+
+/**
  * Resolve one Worker's process liveness from ONE daemon read. PURE.
  *
  * A stale answer is `unknown`, never `dead`: the Worker set the daemon last
@@ -336,6 +363,7 @@ function unknownLiveness(workerId: string, reason: string): WorkerLiveness {
 export function resolveWorkerLiveness(
   hostAnswer: DaemonWorkerSet | null,
   workerId: string,
+  evidence: WorkerLivenessEvidence = {},
 ): WorkerLiveness {
   if (hostAnswer === null) return unknownLiveness(workerId, NO_DAEMON_REASON);
   if (hostAnswer.staleness.stale) return unknownLiveness(workerId, hostAnswer.staleness.reason);
@@ -348,6 +376,7 @@ export function resolveWorkerLiveness(
   };
   const worker = hostAnswer.workers.find((candidate) => candidate.worker_id === workerId);
   if (worker === undefined) {
+    if (evidence.evidenceOfLife === true) return unknownLiveness(workerId, UNCOVERED_REASON);
     return {
       verdict: "dead",
       anchor: "daemon",
@@ -403,6 +432,7 @@ export const readDaemonWorkerSet: DaemonWorkerSetReader = async () => {
 export async function readWorkerLiveness(
   workerId: string,
   read: DaemonWorkerSetReader = readDaemonWorkerSet,
+  evidence: WorkerLivenessEvidence = {},
 ): Promise<WorkerLiveness> {
   let hostAnswer: DaemonWorkerSet | null;
   try {
@@ -410,7 +440,7 @@ export async function readWorkerLiveness(
   } catch {
     hostAnswer = null;
   }
-  return resolveWorkerLiveness(hostAnswer, workerId);
+  return resolveWorkerLiveness(hostAnswer, workerId, evidence);
 }
 
 /**
