@@ -161,19 +161,6 @@ export async function superviseTick(
       slot.spawning = false;
     }
     result.respawned.push(i);
-    // Idle-unpark spawn: notify on_slot_spawn. Best-effort.
-    if (deps.dispatchFleetHook) {
-      try {
-        await deps.dispatchFleetHook("on_slot_spawn", {
-          event: "on_slot_spawn",
-          runner: config.runner,
-          slot: i,
-          ...(slot.pid !== null ? { pid: slot.pid } : {}),
-        });
-      } catch {
-        // best-effort
-      }
-    }
   }
 
   // Schedule half-open probes for circuit-tripped slots whose cooldown has expired.
@@ -205,19 +192,6 @@ export async function superviseTick(
         slot.spawning = false;
       }
       result.halfOpened.push(i);
-      // Half-open probe spawn: notify on_slot_spawn. Best-effort.
-      if (deps.dispatchFleetHook) {
-        try {
-          await deps.dispatchFleetHook("on_slot_spawn", {
-            event: "on_slot_spawn",
-            runner: config.runner,
-            slot: i,
-            ...(slot.pid !== null ? { pid: slot.pid } : {}),
-          });
-        } catch {
-          // best-effort
-        }
-      }
     }
   }
 
@@ -237,19 +211,6 @@ export async function superviseTick(
           kind: "supervisor.dead-slot-reconcile",
           payload: { slot: i, pid },
         });
-      }
-      // Dispatch on_slot_death before the slot is recycled. Best-effort.
-      if (deps.dispatchFleetHook) {
-        try {
-          await deps.dispatchFleetHook("on_slot_death", {
-            event: "on_slot_death",
-            runner: config.runner,
-            slot: i,
-            ...(pid !== null ? { pid } : {}),
-          });
-        } catch {
-          // best-effort
-        }
       }
       // Capture the dead worker's iter dir BEFORE handleDeadSlot respawns the
       // slot — a respawn rebinds resolveIterDir(i) to the NEW worker's dir, so

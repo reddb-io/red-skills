@@ -6,9 +6,7 @@ import {
 
 function deps(): CastleMcpDependencies {
   return {
-    fleetList: vi.fn(async () => []),
-    fleetStatus: vi.fn(async () => ({
-      fleet: "default",
+    projectStatus: vi.fn(async () => ({
       supervisor: {
         pid: 42,
         alive: true,
@@ -36,17 +34,16 @@ function deps(): CastleMcpDependencies {
       ],
       unattributed_workers: [],
     })),
-    fleetCreate: vi.fn(async (input) => ({
+    projectStart: vi.fn(async (input) => ({
       status: "launched",
-      name: input.name,
+      runner: input.runner,
       pid: 42,
     })),
-    fleetEdit: vi.fn(async (input) => ({ status: "edited", name: input.name })),
-    fleetStop: vi.fn(async (input) => ({
+    projectResize: vi.fn(async (input) => ({ status: "resized", target: input.target })),
+    projectStop: vi.fn(async (input) => ({
       status: "stopped",
-      name: input.name,
+      force: input.force ?? false,
     })),
-    fleetRegister: vi.fn(async () => ({ status: "registered" })),
     logs: vi.fn(async () => [
       { at: "2026-07-21T00:00:00.000Z", kind: "worker.started" },
     ]),
@@ -155,12 +152,10 @@ function deps(): CastleMcpDependencies {
 describe("castle MCP tools", () => {
   it("publishes the Fleet and Observability domains", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
-      "fleet_list",
-      "fleet_status",
-      "fleet_create",
-      "fleet_edit",
-      "fleet_stop",
-      "fleet_register",
+      "project_status",
+      "project_start",
+      "project_resize",
+      "project_stop",
       "logs",
       "worker_vitals",
       "dashboard",
@@ -205,10 +200,10 @@ describe("castle MCP tools", () => {
     ]);
   });
 
-  it("returns structured fleet status without rendering command output", async () => {
+  it("returns structured project status without rendering command output", async () => {
     const tools = createCastleMcpTools(deps());
-    const status = tools.find((tool) => tool.name === "fleet_status")!;
-    await expect(status.invoke({ fleet: "codex" })).resolves.toMatchObject({
+    const status = tools.find((tool) => tool.name === "project_status")!;
+    await expect(status.invoke({})).resolves.toMatchObject({
       supervisor: { health: "healthy" },
       slots: { total: 2 },
       churn: { deaths: 0 },
@@ -216,18 +211,17 @@ describe("castle MCP tools", () => {
     });
   });
 
-  it("creates a named fleet and returns raw Castle lane records", async () => {
+  it("starts the project's workers and returns raw Castle lane records", async () => {
     const d = deps();
     const tools = createCastleMcpTools(d);
     await tools
-      .find((tool) => tool.name === "fleet_create")!
+      .find((tool) => tool.name === "project_start")!
       .invoke({
-        name: "codex",
         runner: "codex",
         target: 2,
       });
-    expect(d.fleetCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "codex" }),
+    expect(d.projectStart).toHaveBeenCalledWith(
+      expect.objectContaining({ runner: "codex", target: 2 }),
     );
 
     await expect(
@@ -239,18 +233,25 @@ describe("castle MCP tools", () => {
     ]);
   });
 
-  it("forwards explicit force on fleet_stop hard teardown (#2472)", async () => {
+  it("forwards explicit force on project_stop hard teardown (#2472)", async () => {
     const d = deps();
     const tools = createCastleMcpTools(d);
 
     await tools
-      .find((tool) => tool.name === "fleet_stop")!
-      .invoke({ fleet: "codex", force: true });
+      .find((tool) => tool.name === "project_stop")!
+      .invoke({ force: true });
 
-    expect(d.fleetStop).toHaveBeenCalledWith({
-      name: "codex",
-      force: true,
-    });
+    expect(d.projectStop).toHaveBeenCalledWith({ force: true });
+  });
+
+  it("refuses an invocation that still names a fleet, naming the replacement", async () => {
+    const tools = createCastleMcpTools(deps());
+
+    for (const name of ["project_status", "project_stop"]) {
+      await expect(
+        tools.find((tool) => tool.name === name)!.invoke({ fleet: "codex" }),
+      ).rejects.toThrow(/named fleets were removed[\s\S]*project_start/);
+    }
   });
 
   it("dispatches and stops workers through mutating worker tools", async () => {

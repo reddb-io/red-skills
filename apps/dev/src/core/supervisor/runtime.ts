@@ -176,26 +176,6 @@ export async function runSupervisor(
     }
   }
 
-  // pre_fleet: abort policy — a non-zero exit stops the fleet before spawning.
-  // Best-effort throw handling: a hook executor crash is logged, not fatal.
-  if (deps.dispatchFleetHook) {
-    let preFleetAborted = false;
-    try {
-      const preFleetResult = await deps.dispatchFleetHook("pre_fleet", {
-        event: "pre_fleet",
-        runner: config.runner,
-      });
-      preFleetAborted = preFleetResult.aborted;
-    } catch (err) {
-      deps.log?.(
-        `pre_fleet hook threw: ${err instanceof Error ? err.message : String(err)} — spawning workers anyway`,
-      );
-    }
-    if (preFleetAborted) {
-      deps.log?.("pre_fleet hook aborted boot — fleet will not spawn");
-      return;
-    }
-  }
 
   // Adopt live detached workers from the previous supervisor's persisted
   // slot->pid snapshot before spawning the initial fleet. Dead pids are left as
@@ -212,19 +192,6 @@ export async function runSupervisor(
     if (spawned === null) continue;
     slot.pid = spawned.pid;
     slot.spawnEpoch = spawned.spawnEpoch;
-    // Notify on_slot_spawn for each initial slot. Best-effort.
-    if (deps.dispatchFleetHook) {
-      try {
-        await deps.dispatchFleetHook("on_slot_spawn", {
-          event: "on_slot_spawn",
-          runner: config.runner,
-          slot: i,
-          ...(slot.pid !== null ? { pid: slot.pid } : {}),
-        });
-      } catch {
-        // best-effort
-      }
-    }
   }
 
   // Health-check loop until the stop-file, sleeping the poll cadence each pass.
@@ -274,21 +241,6 @@ export async function runSupervisor(
       },
     });
     if (result.stopped) {
-      // post_fleet: informational — fires after this supervisor stops claiming;
-      // detached one-shot workers may still be draining in-flight Tickets.
-      // Best-effort: hook failure is logged but never prevents clean exit.
-      if (deps.dispatchFleetHook) {
-        try {
-          await deps.dispatchFleetHook("post_fleet", {
-            event: "post_fleet",
-            runner: config.runner,
-          });
-        } catch (err) {
-          deps.log?.(
-            `post_fleet hook threw: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
       return;
     }
     // Event-driven wake (#934): race the safety-net poll timer against the next

@@ -72,7 +72,7 @@ describe("MCP-first suggestion compliance", () => {
   });
 
   it("points the fleet launch banner at the castle monitor tool first", () => {
-    const suggestion = fleetMonitorSuggestion("default");
+    const suggestion = fleetMonitorSuggestion();
 
     expect(suggestion).toContain("`monitor`");
     expect(suggestion).toContain("`worker_vitals`");

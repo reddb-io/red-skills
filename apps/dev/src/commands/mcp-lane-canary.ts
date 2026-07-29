@@ -1,7 +1,7 @@
 // `castle-mcp __mcp-canary` — run the MCP lane canary against a bundle.
 //
 // Internal by design (the `__` prefix): this is a probe CI and operators fire
-// deliberately, not a queue surface. It CREATES a real one-slot fleet through
+// deliberately, not a queue surface. It STARTS a real one-slot producer through
 // the canonical MCP interface and stops it again, because that round trip is
 // the only thing that proves the lane is not inert (#2677, ADR 0128 §7).
 //
@@ -29,7 +29,6 @@ export interface ParsedMcpLaneCanaryArgs {
   /** MCP server bundle entry the canary launches. */
   entry: string;
   root: string;
-  fleet: string;
   runner: string;
   target: number;
   workerDeadlineMs: number;
@@ -38,18 +37,17 @@ export interface ParsedMcpLaneCanaryArgs {
 
 const USAGE = `Usage: castle-mcp __mcp-canary [options]
 
-Drives the shipped MCP lane end to end — fleet_create -> a slot that spawns a
-real worker -> fleet_status -> fleet_stop — and fails loudly naming the step
+Drives the shipped MCP lane end to end — project_start -> a slot that spawns a
+real worker -> project_status -> project_stop — and fails loudly naming the step
 that went inert.
 
   --entry <path>              MCP bundle entry (default: the castle-mcp bundle
                               beside this process's own entry)
-  --root <dir>                repo the canary fleet is created in (default: cwd)
-  --fleet <name>              fleet name to create and stop (default: canary)
-  --runner <runner>           runner for the canary fleet (default: claude)
+  --root <dir>                repo the canary starts its worker in (default: cwd)
+  --runner <runner>           runner for the canary worker (default: claude)
   --worker-deadline-ms <n>    how long a healthy lane may take to produce a
                               live worker (default: 45000)
-  --teardown-deadline-ms <n>  how long fleet_stop may take (default: 20000)
+  --teardown-deadline-ms <n>  how long project_stop may take (default: 20000)
 `;
 
 export function parseMcpLaneCanaryArgs(
@@ -59,7 +57,6 @@ export function parseMcpLaneCanaryArgs(
   const parsed: ParsedMcpLaneCanaryArgs = {
     entry: resolveShippedMcpEntry(process.argv[1] ?? ""),
     root: cwd,
-    fleet: "canary",
     runner: "claude",
     target: 1,
     workerDeadlineMs: 45_000,
@@ -79,9 +76,6 @@ export function parseMcpLaneCanaryArgs(
         break;
       case "--root":
         parsed.root = resolve(cwd, require());
-        break;
-      case "--fleet":
-        parsed.fleet = require();
         break;
       case "--runner":
         parsed.runner = require();
@@ -118,7 +112,6 @@ export async function runMcpLaneCanaryAgainstEntry(
   });
   try {
     const result = await runMcpLaneCanary(transport, {
-      fleet: parsed.fleet,
       runner: parsed.runner,
       target: parsed.target,
       workerDeadlineMs: parsed.workerDeadlineMs,

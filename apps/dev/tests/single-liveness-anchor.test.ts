@@ -1,7 +1,7 @@
 /**
  * Every surface derives from ONE liveness anchor (ADR 0128 §5–§6, issue #2704).
  *
- * `fleet_status` reporting `alive: false` beside a fresh heartbeat (#2698) and
+ * `project_status` reporting `alive: false` beside a fresh heartbeat (#2698) and
  * the janitor reclaiming the live supervisor's lane (#2679) are the same bug:
  * a writer maintaining one anchor and a reader trusting another. This slice
  * makes the contradiction UNREPRESENTABLE rather than unlikely — liveness and
@@ -134,7 +134,7 @@ describe("the anchor resolves liveness and freshness together (#2704)", () => {
   });
 });
 
-describe("fleet_status derives its whole supervisor block from the anchor (#2704)", () => {
+describe("project_status derives its whole supervisor block from the anchor (#2704)", () => {
   it("never reports alive:false alongside a fresh heartbeat and busy slots", async () => {
     const root = scratch();
     try {
@@ -142,7 +142,7 @@ describe("fleet_status derives its whole supervisor block from the anchor (#2704
       // pid file — the shape that used to read back as absent.
       lane(root, fleetSnapshot({ ageS: 13, slotsBusy: 2 }));
 
-      const status = await createCastleMcpDependencies(root).fleetStatus({ name: "default" });
+      const status = await createCastleMcpDependencies(root).projectStatus();
 
       expect(status.slots.busy).toBe(2);
       expect(status.supervisor.alive).toBe(true);
@@ -160,7 +160,7 @@ describe("fleet_status derives its whole supervisor block from the anchor (#2704
     try {
       lane(root, fleetSnapshot({ pid: DEAD_PID, ageS: 9 }));
 
-      const status = await createCastleMcpDependencies(root).fleetStatus({ name: "default" });
+      const status = await createCastleMcpDependencies(root).projectStatus();
 
       expect(status.supervisor.alive).toBe(false);
       expect(status.supervisor.identity_anchor).toBe("none");
@@ -172,13 +172,13 @@ describe("fleet_status derives its whole supervisor block from the anchor (#2704
   });
 });
 
-describe("fleet_stop acts on the supervisor the anchor names (#2704)", () => {
+describe("project_stop acts on the supervisor the anchor names (#2704)", () => {
   it("signals the snapshot-anchored supervisor and reports what it stopped", async () => {
     const root = scratch();
     try {
       lane(root, fleetSnapshot());
 
-      const result = await stopFleet(root, sink(), "default", { force: true });
+      const result = await stopFleet(root, sink(), { force: true });
 
       // Not `status: none` on a fleet it could see working — it names the pid
       // it stopped AND the anchor that named it.
@@ -199,7 +199,7 @@ describe("fleet_stop acts on the supervisor the anchor names (#2704)", () => {
     try {
       lane(root);
 
-      const result = await stopFleet(root, sink(), "default", { force: true });
+      const result = await stopFleet(root, sink(), { force: true });
 
       expect(result).toMatchObject({ status: "none", anchor: "none" });
     } finally {
@@ -286,8 +286,8 @@ describe("a stale read renders as stale, never as current (#2704)", () => {
  * anchor is what this test refuses.
  */
 const MIGRATED_READERS = [
-  { surface: "fleet_status / fleet_create / fleet_register / worker_vitals", file: "src/mcp-adapter.ts" },
-  { surface: "fleet_stop / fleet status CLI", file: "src/commands/fleet.ts" },
+  { surface: "project_status / project_start / fleet_register / worker_vitals", file: "src/mcp-adapter.ts" },
+  { surface: "project_stop / fleet status CLI", file: "src/commands/fleet.ts" },
   { surface: "monitor", file: "src/runtime/wire/monitor.ts" },
   { surface: "statusline", file: "src/runtime/wire/statusline.ts" },
 ] as const;

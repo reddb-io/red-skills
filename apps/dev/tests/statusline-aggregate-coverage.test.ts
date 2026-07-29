@@ -69,7 +69,6 @@ const PAYLOAD: StatuslineAggregate = {
   },
   docs: { unlanded: 2 },
   fleet: {
-    fleet: "default",
     supervisor: {
       pid: 4242,
       alive: true,

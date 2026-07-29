@@ -46,9 +46,8 @@ function scratch(): string {
 function writeSupervisorArtifacts(
   root: string,
   pid: number | string,
-  fleet?: string,
 ): Record<string, string> {
-  const paths0 = afkPaths(root, fleet);
+  const paths0 = afkPaths(root);
   const stateAfk = dirname(paths0.supervisorPidPath);
   mkdirSync(stateAfk, { recursive: true });
   const paths = {
@@ -128,7 +127,7 @@ describe("fleet command stale supervisor state", () => {
       await launchFleet(["1"], root, stream());
 
       expect(spawnSupervisor).toHaveBeenCalledTimes(1);
-      expect(spawnSupervisorWatchdog).toHaveBeenCalledWith({ root, fleet: "default" });
+      expect(spawnSupervisorWatchdog).toHaveBeenCalledWith({ root });
       expect(existsSync(paths.pid)).toBe(false);
       expect(existsSync(paths.state)).toBe(false);
       expect(existsSync(paths.log)).toBe(false);
@@ -240,7 +239,7 @@ describe("fleet command stale supervisor state", () => {
       vi.mocked(isLivePid).mockImplementation((pid: number) => pid === 333333);
       killTreeMocks.killTreeAndWait.mockResolvedValue(true);
 
-      const result = await stopFleet(root, stream(), "missing");
+      const result = await stopFleet(root, stream());
 
       expect(result).toEqual({ status: "none", anchor: "none" });
       expect(killTreeMocks.killTreeAndWait).not.toHaveBeenCalled();
@@ -466,15 +465,15 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
-  it("force stop kills only workers attributed to the named fleet (#2472)", async () => {
+  it("force stop kills only workers attributed to this project's supervisor (#2472)", async () => {
     const root = scratch();
     try {
-      writeSupervisorArtifacts(root, 12345, "alpha");
+      writeSupervisorArtifacts(root, 12345);
       const workersRoot = join(root, ".red", "tmp", "workers");
       const workers = [
-        { id: "wALPHA", pid: 555001, fleet: "alpha" },
-        { id: "wBETA", pid: 555002, fleet: "beta" },
-        { id: "wSOLO", pid: 555003, fleet: undefined },
+        { id: "wSUPERVISED", pid: 555001, lane: "default" },
+        { id: "wOTHERLANE", pid: 555002, lane: "other" },
+        { id: "wSOLO", pid: 555003, lane: undefined },
       ];
       const enginePaths = createEnginePaths(join(root, ".red"));
       for (const worker of workers) {
@@ -490,7 +489,7 @@ describe("fleet command stale supervisor state", () => {
             updated_at: new Date().toISOString(),
             pid: worker.pid,
             current: { origin: "afk" },
-            ...(worker.fleet ? { supervisor_id: worker.fleet } : {}),
+            ...(worker.lane ? { supervisor_id: worker.lane } : {}),
           },
         );
       }
@@ -499,7 +498,7 @@ describe("fleet command stale supervisor state", () => {
       );
       killTreeMocks.killTreeAndWait.mockResolvedValue(true);
 
-      const result = await stopFleet(root, stream(), "alpha", { force: true });
+      const result = await stopFleet(root, stream(), { force: true });
 
       expect(result).toEqual({ status: "stopped", pid: 12345, anchor: "pid-file" });
       expect(killTreeMocks.killTreeAndWait).toHaveBeenCalledWith(12345);
@@ -514,7 +513,7 @@ describe("fleet command stale supervisor state", () => {
   it("force stop reports timeout when an attributed worker survives hard teardown (#2472)", async () => {
     const root = scratch();
     try {
-      writeSupervisorArtifacts(root, 12345, "alpha");
+      writeSupervisorArtifacts(root, 12345);
       const workerId = "wSTUCK";
       const workerPid = 666001;
       const workersRoot = join(root, ".red", "tmp", "workers");
@@ -530,7 +529,7 @@ describe("fleet command stale supervisor state", () => {
           version: 1,
           updated_at: new Date().toISOString(),
           pid: workerPid,
-          supervisor_id: "alpha",
+          supervisor_id: "default",
           current: { origin: "afk" },
         },
       );
@@ -541,7 +540,7 @@ describe("fleet command stale supervisor state", () => {
         .mockResolvedValueOnce(true)
         .mockResolvedValueOnce(false);
 
-      const result = await stopFleet(root, stream(), "alpha", { force: true });
+      const result = await stopFleet(root, stream(), { force: true });
 
       expect(result).toEqual({ status: "timeout", pid: workerPid, anchor: "pid-file" });
     } finally {
@@ -600,8 +599,8 @@ describe("fleet command stale supervisor state", () => {
 
       expect(result).toMatchObject({ status: "resized", pid: 12345, target: 4 });
       expect(spawnSupervisor).not.toHaveBeenCalled();
-      expect(spawnSupervisorWatchdog).toHaveBeenCalledWith({ root, fleet: "default" });
-      expect(writes.join("")).toContain("fleet directive pending");
+      expect(spawnSupervisorWatchdog).toHaveBeenCalledWith({ root });
+      expect(writes.join("")).toContain("directive pending");
       expect(decode(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
         target: 4,
         shrink_mode: "hard-kill",
@@ -663,7 +662,7 @@ describe("fleet command stale supervisor state", () => {
 
       expect(result).toMatchObject({ status: "resized", pid: 12345, target: 4 });
       expect(spawnSupervisor).not.toHaveBeenCalled();
-      expect(writes.join("")).toContain("fleet directive applied");
+      expect(writes.join("")).toContain("directive applied");
       expect(decode(readFileSync(afkPaths(root).supervisorResizePath, "utf8"))).toEqual({
         target: 4,
         runner: "codex",
@@ -780,6 +779,46 @@ describe("fleet logs", () => {
 
       expect(writes.join("")).toContain("2026-07-18T00:04:00.000Z worker.heartbeat still working");
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the work policy the fleet registry used to hold (#2786)", () => {
+  it("carries the base branch and the work scope from the argv to the supervisor", async () => {
+    const root = scratch();
+    try {
+      await launchFleet(
+        ["1", "--base", "release/2.x", "--selector", '{"spec":2772}'],
+        root,
+        stream(),
+      );
+
+      expect(spawnSupervisor).toHaveBeenCalledWith(
+        expect.objectContaining({
+          base: "release/2.x",
+          passthrough: expect.arrayContaining(["--selector", '{"spec":2772}']),
+        }),
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a --fleet invocation with the replacement, not an internal error", async () => {
+    const root = scratch();
+    vi.mocked(spawnSupervisor).mockClear();
+    const errors: string[] = [];
+    const console_ = vi.spyOn(console, "error").mockImplementation((message) => {
+      errors.push(String(message));
+    });
+    try {
+      await expect(fleetCommand(["status", "--fleet", "nightly"], root)).resolves.toBe(1);
+      expect(errors.join("\n")).toContain("named fleets were removed");
+      expect(errors.join("\n")).toContain("project_start");
+      expect(spawnSupervisor).not.toHaveBeenCalled();
+    } finally {
+      console_.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
   });

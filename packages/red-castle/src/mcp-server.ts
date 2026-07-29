@@ -3,7 +3,7 @@ import { createClaimTools, type ClaimDependencies } from "./mcp/claim.js";
 import { createMergeTools, type MergeDependencies } from "./mcp/merge.js";
 import { createHitlTools, type HitlDependencies } from "./mcp/hitl.js";
 import { applyOutputContracts } from "./mcp/contracts.js";
-import { createFleetTools, type FleetDependencies } from "./mcp/fleet.js";
+import { createProjectTools, type ProjectDependencies } from "./mcp/project.js";
 import { createGateTools, type GateDependencies } from "./mcp/gate.js";
 import { createDeadendTools, type DeadendDependencies } from "./mcp/deadend.js";
 import { createHygieneTools, type HygieneDependencies } from "./mcp/hygiene.js";
@@ -40,7 +40,7 @@ export type { DangerPosture } from "./mcp/posture.js";
 export {
   CASTLE_MCP_CONTRACT_VERSION,
   federatedFleetViewOutputSchema,
-  fleetStatusOutputSchema,
+  projectStatusOutputSchema,
   monitorOutputSchema,
   queueStatusOutputSchema,
   workerVitalsOutputSchema,
@@ -49,19 +49,18 @@ export {
 export type {
   CastleMcpOutputContract,
   FederatedFleetViewOutput,
-  FleetStatusOutput,
+  ProjectStatusOutput,
   MonitorOutput,
   QueueStatusOutput,
   WorkerVitalsOutput,
   WorkerVitalsProjectedOutput,
 } from "./mcp/contracts.js";
 export type {
-  FleetSelectorInput,
-  FleetCreateInput,
-  FleetEditInput,
-  FleetNameInput,
-  FleetRegisterInput,
-} from "./mcp/fleet.js";
+  WorkSelectorInput,
+  ProjectStartInput,
+  ProjectResizeInput,
+  ProjectStopInput,
+} from "./mcp/project.js";
 export type { EventsSinceInput, LogsInput, QueueStatusInput, WorkerVitalsInput } from "./mcp/observability.js";
 export type { DeadendDependencies } from "./mcp/deadend.js";
 export type {
@@ -97,7 +96,7 @@ export type {
  */
 export interface CastleMcpDependencies
   extends
-    FleetDependencies,
+    ProjectDependencies,
     ObservabilityDependencies,
     DeadendDependencies,
     WorkerDependencies,
@@ -132,7 +131,7 @@ export function createCastleMcpTools(
   posture: DangerPosture = "allow",
 ): CastleMcpTool[] {
   const tools = [
-    ...createFleetTools(deps),
+    ...createProjectTools(deps),
     ...createObservabilityTools(deps),
     ...createDeadendTools(deps),
     ...createWorkerTools(deps),

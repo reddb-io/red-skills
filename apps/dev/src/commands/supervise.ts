@@ -1,4 +1,4 @@
-// commands/supervise.ts — the NATIVE fleet supervisor (the hidden `__supervise`
+// commands/supervise.ts — the NATIVE worker supervisor (the hidden `__supervise`
 // command fleet.ts spawns instead of supervisor.sh).
 //
 // It writes the supervisor pid file, polls the stop file, and drives
@@ -36,6 +36,8 @@ import {
 import { formatPreconditionFailure, runBoot, type BootResult, type BootstrapInput } from "../core/boot.js";
 import { inspectProcessTreeNative, sampleTreeRssMbNative } from "../runtime/proc-tree.js";
 import { readSelfCgroupScope } from "../runtime/fleet-scope.js";
+import { refuseRemovedFleetFlag } from "../core/removed-fleet-flag.js";
+import { SUPERVISOR_LANE_ENV } from "../core/supervisor-lane.js";
 import { resolveDevScriptPath } from "../runtime/supervisor-spawn.js";
 import {
   workerLivenessFor,
@@ -54,9 +56,6 @@ import { HOST_STATE_TRANSITION_LABELS } from "../core/state-transition.js";
 import { removeDir as removeDirNative } from "../runtime/fs.js";
 import { killTreeAndWait } from "../runtime/kill-tree.js";
 import { buildStateChangeWake } from "../runtime/state-watch.js";
-import { resolveFleetHooks } from "../core/fleet-hook-config.js";
-import { dispatchFleetHook } from "../core/fleet-hook-dispatcher.js";
-import { makeHookExec, makeHookResolveOptions } from "../runtime/hooks.js";
 import { getConfig, loadConfig } from "../core/config.js";
 import { reapDeadSupervisorSnapshotDirs, reapStaleSupervisorState } from "../runtime/supervisor-state.js";
 import {
@@ -67,12 +66,12 @@ import {
   createFileHealLedgerStore,
   createFileIssueCuratorStore,
   createGitHubTrackerAdapter,
+  PROJECT_SUPERVISOR_LANE,
   runIssueStateCurator,
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { createFileBootBreakerStore } from "../core/supervisor/boot-breaker.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../core/toon-snapshot.js";
-import { resolveFleetFromArgs, FLEET_NAME_ENV } from "../core/fleet-name.js";
 import { parseClaimRecords, refreshClaimHeartbeats, type ClaimHeartbeat } from "../core/claim.js";
 import { resolveClaimReaperConfig } from "../core/claim-staleness.js";
 import { hostFingerprintPrefix } from "../core/host-identity.js";
@@ -485,10 +484,9 @@ export function buildSupervisorBootSweeps(
   root: string,
   repo: string,
   log: (line: string) => void,
-  fleet?: string,
 ): () => Promise<void> {
   const ctx: RepoContext = { root, repo, remote: "origin" };
-  const paths = afkPaths(root, fleet);
+  const paths = afkPaths(root);
   return async (): Promise<void> => {
     const nowS = Math.floor(Date.now() / 1000);
     const facts = await collectBootPrecheckFacts(ctx, { log });
@@ -525,13 +523,11 @@ export function buildSupervisorDeps(
   firehosePath: string,
   statePath: string,
   supervisorId: string,
-  fleet: string,
   runner: string,
   claimRefreshCadenceS: number,
   ghCtx: ghx.GhContext,
   trunk: string,
   slotArgs: readonly string[],
-  hookEnvBase: Record<string, string>,
   adoptSlotPids: readonly HeartbeatSlotPid[] = [],
 ): SupervisorDeps {
   // Slots run `run --once`, which ONLY the dev entry routes. Never infer the
@@ -541,12 +537,12 @@ export function buildSupervisorDeps(
   const bundle = resolveDevScriptPath(process.argv[1] ?? "");
   const bundleVersion = readBuildInfo("dev").version;
   const now = () => Math.floor(Date.now() / 1000);
-  // The lane lives INSIDE the fleet's runtime dir (`supervisors/<fleet>/s<pid>/`)
-  // so two named fleets never share a lane namespace and each fleet's pid
-  // discovery only ever sees its own supervisors.
+  // The lane lives INSIDE the project's supervisor runtime dir
+  // (`supervisors/<lane>/s<pid>/`), so pid discovery only ever sees the
+  // supervisors of the project it is reading.
   const supervisorWriter = createCastleLaneWriters(
     createEnginePaths(join(root, ".red")),
-  ).supervisor(join(fleet, supervisorId));
+  ).supervisor(join(PROJECT_SUPERVISOR_LANE, supervisorId));
   const emitSupervisorEvent: NonNullable<SupervisorDeps["emitSupervisorEvent"]> = async (record) => {
     await supervisorWriter.append({
       supervisor_id: supervisorId,
@@ -564,26 +560,18 @@ export function buildSupervisorDeps(
       }),
     ).catch(() => undefined);
   };
-  // Fleet hook resolution: library defaults-dir + project .red/hooks/ layering,
-  // same convention as worker hooks (ADR 0026, #830, #833).
-  const resolveOptions = makeHookResolveOptions(root);
-  const fleetHooks = resolveFleetHooks({
-    libraryHooksDir: resolveOptions.libraryHooksDir,
-    projectHooksDir: resolveOptions.projectHooksDir,
-  });
-  const fleetHookExec = makeHookExec(root, resolveOptions.libraryHooksDir);
   // slot index → live orchestrator pid (SLOT_PIDS parity).
   const slotPids = new Map<number, number>(
     adoptSlotPids.map((entry) => [entry.slot, entry.pid] as const),
   );
-  // issue → the claim marker this fleet refreshes for its local holder. Cached
+  // issue → the claim marker this supervisor refreshes for its local holder. Cached
   // across ticks so a not-yet-due claim costs ZERO GitHub calls per heartbeat.
   const claimHeartbeatByIssue = new Map<number, ClaimHeartbeat>();
   const claimHostPrefix = hostFingerprintPrefix();
   // slot index → exit code of the most recent worker for that slot.
   const slotExitCodes = new Map<number, number>();
-  // The resident's attempt-record writer (ADR 0128) and the cgroup its fleet is
-  // charged to (#2697). The scope is resolved ONCE — a process cannot change the
+  // The resident's attempt-record writer (ADR 0128) and the cgroup its workers
+  // are charged to (#2697). The scope is resolved ONCE — a process cannot change the
   // cgroup it is charged to without being relaunched.
   const attemptRecorder = createCastleAttemptRecorder(createEnginePaths(join(root, ".red")));
   const fleetScopeUnit = readSelfCgroupScope();
@@ -594,11 +582,11 @@ export function buildSupervisorDeps(
   // the environment survive. RED_AFK_RUNNER is re-added explicitly below so the
   // worker's detection cascade pins the supervisor's runner.
   let activeRunner = runner;
-  // Stamp the fleet name into the worker env so spawned workers can write it to
-  // their castle state snapshot (as supervisor_id). fleet_status reads this back
-  // to partition workers without relying solely on the slot-pid map (issue #2345).
-  let workerEnv = { ...buildWorkerEnv(process.env, activeRunner), [FLEET_NAME_ENV]: fleet };
-  let hookEnv = { ...hookEnvBase, RED_AFK_RUNNER: activeRunner };
+  // Stamp the supervisor lane into the worker env so spawned workers write it to
+  // their castle state snapshot (as supervisor_id). A hard teardown and the
+  // statusline read it back to tell this supervisor's workers from a standalone
+  // one's, without relying solely on the slot-pid map (issue #2345).
+  let workerEnv = { ...buildWorkerEnv(process.env, activeRunner), [SUPERVISOR_LANE_ENV]: PROJECT_SUPERVISOR_LANE };
 
   return {
     proc: {
@@ -813,10 +801,10 @@ export function buildSupervisorDeps(
         ...(close.note !== undefined ? { note: close.note } : {}),
       });
     },
-    // Which fleet the consumption is charged to (#2697). The scope is read from
+    // Which cgroup scope the consumption is charged to (#2697). It is read from
     // this process's own cgroup, so the record names the cgroup that actually
     // holds the fleet rather than the one the launcher intended.
-    fleetAttribution: { fleet, ...(fleetScopeUnit !== undefined ? { scope: fleetScopeUnit } : {}) },
+    fleetAttribution: fleetScopeUnit !== undefined ? { scope: fleetScopeUnit } : {},
     // ADR 0122 heal ledger (#2526): the death-sweep consults the same castle
     // store the boot healer writes, so worker-death heals and probe heals
     // share one per-issue budget.
@@ -850,7 +838,7 @@ export function buildSupervisorDeps(
     // Fleet supervisor owns the boot (#623): runSupervisor calls this ONCE before
     // the initial spawn. Runs the full shared sweep suite over real IO and logs
     // the result; each worker then boots bootstrap+claim only.
-    bootSweeps: buildSupervisorBootSweeps(root, ghCtx.repo, logLine, fleet),
+    bootSweeps: buildSupervisorBootSweeps(root, ghCtx.repo, logLine),
     // Periodic dependency Unblock Sweep on the supervisor tick (#844). Re-uses the
     // boot sweep's executeUnblockSweep core over fresh gh reads: list open
     // blocked:dependency issues, resolve each req:* blocker, promote only the
@@ -907,21 +895,10 @@ export function buildSupervisorDeps(
       const pushed = await git(["-C", root, "push", "origin", `refs/heads/${branch}:refs/heads/${branch}`]);
       return pushed.code === 0;
     },
-    resizeRequest: async () => readResizeRequest(afkPaths(root, fleet).supervisorResizePath),
+    resizeRequest: async () => readResizeRequest(afkPaths(root).supervisorResizePath),
     configureRunner: (nextRunner) => {
       activeRunner = nextRunner;
-      workerEnv = { ...buildWorkerEnv(process.env, activeRunner), [FLEET_NAME_ENV]: fleet };
-      hookEnv = { ...hookEnvBase, RED_AFK_RUNNER: activeRunner };
-    },
-    // Fleet-scoped lifecycle hooks (#833). Commands are resolved from the same
-    // .red/hooks/<point>/ + library layering as worker hooks. Best-effort:
-    // a dispatch failure is returned to the caller; the caller catches and logs.
-    dispatchFleetHook: async (name, context) => {
-      const commands = fleetHooks[name];
-      return dispatchFleetHook(name, commands, context, fleetHookExec, {
-        env: hookEnv,
-        log: logLine,
-      });
+      workerEnv = { ...buildWorkerEnv(process.env, activeRunner), [SUPERVISOR_LANE_ENV]: PROJECT_SUPERVISOR_LANE };
     },
     emitFleetHeartbeat: async (hb): Promise<FleetHeartbeatEmitResult> => {
       // `pid` + `pidStartTime` make the snapshot a full liveness anchor — the
@@ -1079,15 +1056,13 @@ export function buildSupervisorDeps(
 }
 
 /**
- * Drive the native fleet supervisor. Honours the same pid/stop-file protocol
+ * Drive the native worker supervisor. Honours the same pid/stop-file protocol
  * fleet.ts's launch/stop already speak.
  */
 export async function superviseCommand(args: string[], cwd = process.cwd()): Promise<number> {
   const root = cwd;
-  // Which named fleet this supervisor owns: the `--fleet` flag the launcher
-  // forwarded, else the inherited RED_AFK_FLEET, else the default lane.
-  const fleet = resolveFleetFromArgs(args);
-  const paths = afkPaths(root, fleet);
+  refuseRemovedFleetFlag(args);
+  const paths = afkPaths(root);
   const tmp = paths.tmpDir;
   const stateAfk = dirname(paths.supervisorPidPath);
   const pidFile = paths.supervisorPidPath;
@@ -1117,12 +1092,11 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
       : ((await readFleetState(stateFile).catch(() => null))?.slotPids ?? []);
   const adoptSlotPids = envAdoptSlotPids.length > 0 ? envAdoptSlotPids : stateAdoptSlotPids;
   const priorSupervisor = await reapStaleSupervisorState(stateAfk, isAlive);
-  // One supervisor PER NAMED FLEET. The lock is the fleet's own pid file inside
-  // `supervisors/<fleet>/`, so a second `alpha` supervisor is refused while
-  // `beta` boots freely alongside it.
+  // ONE supervisor per project. The lock is the project's own pid file inside
+  // its single supervisor lane, so a second supervisor is always refused.
   if (priorSupervisor.status === "live") {
     process.stderr.write(
-      `supervisor already running for fleet ${fleet} (pid=${priorSupervisor.pid})\n`,
+      `supervisor already running for this project (pid=${priorSupervisor.pid})\n`,
     );
     return 1;
   }
@@ -1133,7 +1107,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   const supervisorId = `s${process.pid}`;
   const exitWriter = createCastleLaneWriters(
     createEnginePaths(join(root, ".red")),
-  ).supervisor(join(fleet, supervisorId));
+  ).supervisor(join(PROJECT_SUPERVISOR_LANE, supervisorId));
   const exitRecorder = createSupervisorExitRecorder({
     supervisorId,
     append: async (record) => {
@@ -1207,12 +1181,6 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
     const trunk = getConfig(values, "dev.trunk") || "main";
     const ghCtx = { cwd: root, repo };
     const slotArgs = slotFilterArgs(args);
-    const hookEnvBase: Record<string, string> = {
-      RED_AFK_ROOT: root,
-      RED_AFK_WORKSPACE: root,
-      RED_AFK_RUNNER: config.runner,
-      ...(repo.length > 0 ? { RED_AFK_REPO: repo } : {}),
-    };
     deps = buildSupervisorDeps(
       root,
       tmp,
@@ -1220,13 +1188,11 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
       firehoseFile,
       stateFile,
       supervisorId,
-      fleet,
       config.runner,
       resolveClaimReaperConfig(process.env, (key) => getConfig(values, key)).refreshCadenceS,
       ghCtx,
       trunk,
       slotArgs,
-      hookEnvBase,
       adoptSlotPids,
     );
     await runSupervisor(state, deps, config, stopRequested);

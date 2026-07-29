@@ -35,7 +35,7 @@ interface HarnessOptions {
   observations?: readonly (readonly CanaryWorker[])[];
   /** Pids that are alive; a pid absent here reads dead. */
   livePids?: readonly number[];
-  /** Pids that stop being alive once fleet_stop has been called. */
+  /** Pids that stop being alive once project_stop has been called. */
   diesOnStop?: readonly number[];
 }
 
@@ -50,22 +50,21 @@ function harness(options: HarnessOptions = {}) {
 
   const deps: McpLaneCanaryDeps = {
     listTools: async () =>
-      options.tools ?? ["fleet_create", "fleet_status", "fleet_stop", "worker_status"],
+      options.tools ?? ["project_start", "project_status", "project_stop", "worker_status"],
     callTool: async (tool, args) => {
       calls.push({ tool, args });
-      if (tool === "fleet_create") {
+      if (tool === "project_start") {
         return options.create ?? { status: "launched", pid: SUPERVISOR_PID, target: 1 };
       }
-      if (tool === "fleet_status") {
+      if (tool === "project_status") {
         return (
           options.status ?? {
-            fleet: "canary",
             supervisor: { pid: SUPERVISOR_PID, alive: true },
             slots: { busy: 1, free: 0, total: 1, parked: 0 },
           }
         );
       }
-      if (tool === "fleet_stop") {
+      if (tool === "project_stop") {
         stopped = true;
         return options.stop ?? { status: "stopped", pid: SUPERVISOR_PID };
       }
@@ -105,15 +104,15 @@ describe("MCP lane canary — green lane", () => {
     expect(result.summary).toContain("green");
     // The real tool surface was driven, in lane order.
     expect(calls.map((call) => call.tool)).toEqual([
-      "fleet_create",
-      "fleet_status",
-      "fleet_stop",
+      "project_start",
+      "project_status",
+      "project_stop",
     ]);
   });
 });
 
 describe("MCP lane canary — the #2677 shape", () => {
-  // The motivating bug: fleet_create answers with a supervisor pid, the
+  // The motivating bug: project_start answers with a supervisor pid, the
   // supervisor lives, and every slot dies before writing a worker directory.
   it("fails at worker_spawn when a returned pid produces no worker directory", async () => {
     const { deps } = harness({ observations: [[]] });
@@ -128,9 +127,9 @@ describe("MCP lane canary — the #2677 shape", () => {
     // The steps BEFORE the inert one still read green — the failure is located,
     // not smeared across the lane.
     const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
-    expect(byStep.get("fleet_create")).toBe("ok");
+    expect(byStep.get("project_start")).toBe("ok");
     expect(byStep.get("supervisor_live")).toBe("ok");
-    expect(byStep.get("fleet_status")).toBe("skipped");
+    expect(byStep.get("project_status")).toBe("skipped");
   });
 
   it("refuses to accept a dead worker directory as drainage", async () => {
@@ -163,7 +162,7 @@ describe("MCP lane canary — the #2677 shape", () => {
 
     await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(calls.map((call) => call.tool)).toContain("fleet_stop");
+    expect(calls.map((call) => call.tool)).toContain("project_stop");
   });
 });
 
@@ -174,11 +173,11 @@ describe("MCP lane canary — the other inert steps", () => {
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
     expect(result.inertStep).toBe("connect");
-    expect(result.summary).toContain("fleet_create, fleet_status, fleet_stop");
+    expect(result.summary).toContain("project_start, project_status, project_stop");
     expect(result.steps.every((step) => step.verdict !== "ok")).toBe(true);
   });
 
-  it("fails at fleet_create when the tool throws over the transport", async () => {
+  it("fails at project_start when the tool throws over the transport", async () => {
     const { deps } = harness();
     deps.callTool = vi.fn(async () => {
       throw new Error("MCP error -32603: registry write failed");
@@ -186,16 +185,16 @@ describe("MCP lane canary — the other inert steps", () => {
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("fleet_create");
+    expect(result.inertStep).toBe("project_start");
     expect(result.summary).toContain("registry write failed");
   });
 
-  it("fails at fleet_create when no supervisor pid comes back", async () => {
+  it("fails at project_start when no supervisor pid comes back", async () => {
     const { deps } = harness({ create: { status: "launched" } });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("fleet_create");
+    expect(result.inertStep).toBe("project_start");
     expect(result.summary).toContain("no supervisor pid");
   });
 
@@ -208,7 +207,7 @@ describe("MCP lane canary — the other inert steps", () => {
     expect(result.summary).toContain("no such process is alive");
   });
 
-  it("fails at fleet_status when the reader cannot see its own live worker", async () => {
+  it("fails at project_status when the reader cannot see its own live worker", async () => {
     const { deps } = harness({
       status: {
         supervisor: { pid: SUPERVISOR_PID, alive: true },
@@ -218,22 +217,22 @@ describe("MCP lane canary — the other inert steps", () => {
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("fleet_status");
+    expect(result.inertStep).toBe("project_status");
     expect(result.summary).toContain("slots.busy=0");
   });
 
-  it("fails at fleet_status when reader and writer disagree about liveness", async () => {
+  it("fails at project_status when reader and writer disagree about liveness", async () => {
     const { deps } = harness({
       status: { supervisor: { pid: SUPERVISOR_PID, alive: false }, slots: { busy: 1 } },
     });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("fleet_status");
+    expect(result.inertStep).toBe("project_status");
     expect(result.summary).toContain("reader and writer disagree");
   });
 
-  it("fails at fleet_stop when the canonical stop leaves the supervisor alive", async () => {
+  it("fails at project_stop when the canonical stop leaves the supervisor alive", async () => {
     const { deps } = harness({ diesOnStop: [WORKER_PID] });
 
     const result = await runMcpLaneCanary(deps, {
@@ -242,17 +241,17 @@ describe("MCP lane canary — the other inert steps", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.inertStep).toBe("fleet_stop");
+    expect(result.inertStep).toBe("project_stop");
     expect(result.summary).toContain(`supervisor ${SUPERVISOR_PID}`);
     expect(result.summary).toContain("survived");
   });
 
-  it("fails at fleet_stop when the stop no-ops", async () => {
+  it("fails at project_stop when the stop no-ops", async () => {
     const { deps } = harness({ stop: { status: "timeout", pid: SUPERVISOR_PID } });
 
     const result = await runMcpLaneCanary(deps, { ...OPTIONS, teardownDeadlineMs: 100 });
 
-    expect(result.inertStep).toBe("fleet_stop");
+    expect(result.inertStep).toBe("project_stop");
     expect(result.summary).toContain("no-opped");
   });
 });
@@ -280,14 +279,15 @@ describe("MCP lane canary target resolution", () => {
 
   it("parses the probe's tuning flags and refuses unknown ones", () => {
     const parsed = parseMcpLaneCanaryArgs(
-      ["--fleet", "probe", "--runner", "codex", "--worker-deadline-ms", "9000"],
+      ["--runner", "codex", "--worker-deadline-ms", "9000"],
       "/scratch",
     );
 
-    expect(parsed).toMatchObject({ fleet: "probe", runner: "codex", workerDeadlineMs: 9_000 });
+    expect(parsed).toMatchObject({ runner: "codex", workerDeadlineMs: 9_000 });
     expect(parsed.root).toBe("/scratch");
     expect(() => parseMcpLaneCanaryArgs(["--nope"], "/scratch")).toThrow(/unknown flag/);
-    expect(() => parseMcpLaneCanaryArgs(["--fleet"], "/scratch")).toThrow(/requires a value/);
+    expect(() => parseMcpLaneCanaryArgs(["--fleet", "probe"], "/scratch")).toThrow(/unknown flag/);
+    expect(() => parseMcpLaneCanaryArgs(["--runner"], "/scratch")).toThrow(/requires a value/);
   });
 });
 

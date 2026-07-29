@@ -1,10 +1,11 @@
 /**
- * Pins the multi-fleet worker partition introduced by #2345.
+ * Pins the worker partition introduced by #2345, after the Fleet's removal.
  *
- * Two named fleets ("alpha" and "beta") each own one live worker, stamped with
- * their fleet via `supervisor_id` in the castle state snapshot.  Each
- * `fleet_status` call must report only its own worker in `live_workers` and
- * place the other fleet's worker in `unattributed_workers`.
+ * There is one supervisor lane per project now, so the question the partition
+ * answers changed from "which fleet owns this worker" to "did THIS project's
+ * supervisor spawn it": a worker stamped with the project's lane is reported in
+ * `live_workers`, and a worker carrying any other stamp is reported in
+ * `unattributed_workers` rather than silently counted as ours.
  */
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,6 +14,7 @@ import {
   castleStateSnapshotPath,
   createCastleLaneWriters,
   createEnginePaths,
+  PROJECT_SUPERVISOR_LANE,
   writeCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { afterEach, describe, expect, it } from "vitest";
@@ -27,7 +29,7 @@ function workerSnapshot(
   id: string,
   issue: number,
   pid: number,
-  fleetName: string,
+  lane: string,
 ) {
   return {
     kind: "worker" as const,
@@ -38,7 +40,7 @@ function workerSnapshot(
     started_at: SNAPSHOT_ISO,
     runner: "claude",
     pid,
-    supervisor_id: fleetName,
+    supervisor_id: lane,
     current: {
       origin: "afk",
       number: issue,
@@ -52,7 +54,7 @@ function workerSnapshot(
   };
 }
 
-describe("fleet_status worker partition (#2345)", () => {
+describe("project_status worker partition (#2345)", () => {
   const roots: string[] = [];
 
   afterEach(async () => {
@@ -60,8 +62,8 @@ describe("fleet_status worker partition (#2345)", () => {
     roots.length = 0;
   });
 
-  it("partitions stamped workers to their owning fleet", async () => {
-    const root = await mkdtemp(join(tmpdir(), "fleet-partition-"));
+  it("counts the project's own workers and sets a foreign stamp aside", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-partition-"));
     roots.push(root);
 
     const enginePaths = createEnginePaths(join(root, ".red"));
@@ -69,76 +71,51 @@ describe("fleet_status worker partition (#2345)", () => {
     // readCastleMonitorWorkers sees them as fresh (no fixed clock injected).
     const lanes = createCastleLaneWriters(enginePaths);
 
-    // Write castle state snapshots — each stamped with their owning fleet.
     await writeCastleStateSnapshot(
-      castleStateSnapshotPath(enginePaths, "worker", "w_alpha"),
-      workerSnapshot("w_alpha", 100, 1001, "alpha"),
+      castleStateSnapshotPath(enginePaths, "worker", "w_mine"),
+      workerSnapshot("w_mine", 100, 1001, PROJECT_SUPERVISOR_LANE),
     );
     await writeCastleStateSnapshot(
-      castleStateSnapshotPath(enginePaths, "worker", "w_beta"),
-      workerSnapshot("w_beta", 200, 2001, "beta"),
+      castleStateSnapshotPath(enginePaths, "worker", "w_foreign"),
+      workerSnapshot("w_foreign", 200, 2001, "some-other-lane"),
     );
 
-    // Write recent liveness lane records so both workers appear live to the monitor.
-    await lanes.liveness("w_alpha").append({
-      kind: "worker.heartbeat",
-      worker_id: "w_alpha",
-      issue: 100,
-      payload: {},
-    });
-    await lanes.liveness("w_beta").append({
-      kind: "worker.heartbeat",
-      worker_id: "w_beta",
-      issue: 200,
-      payload: {},
-    });
+    for (const [workerId, issue] of [["w_mine", 100], ["w_foreign", 200]] as const) {
+      await lanes.liveness(workerId).append({
+        kind: "worker.heartbeat",
+        worker_id: workerId,
+        issue,
+        payload: {},
+      });
+    }
 
-    // Write minimal fleet-state files so readFleetState doesn't return null.
-    // The slot_pids fallback isn't exercised here (all workers have stamps),
-    // but the epoch field prevents parseFleetState from returning null.
-    const nowEpoch = Math.floor(Date.now() / 1000);
-    const nowIso = new Date().toISOString();
-    const fleetState = encodeDevSnapshotToon({
-      ts: nowIso,
-      epoch: nowEpoch,
-      runner: "claude",
-      ready_for_agent: 0,
-      slots: { busy: 1, free: 0, total: 1, parked: 0 },
-      spawns_this_tick: 1,
-      churn: { deaths: 0, respawns: 0, window_s: 300 },
-    });
+    // A minimal supervisor snapshot so readFleetState does not return null; the
+    // slot-pid fallback is not exercised here because both workers are stamped.
+    const supervisorDir = join(root, ".red", "tmp", "supervisors", PROJECT_SUPERVISOR_LANE);
+    await mkdir(supervisorDir, { recursive: true });
+    await writeFile(
+      join(supervisorDir, "state.toon"),
+      encodeDevSnapshotToon({
+        ts: new Date().toISOString(),
+        epoch: Math.floor(Date.now() / 1000),
+        runner: "claude",
+        ready_for_agent: 0,
+        slots: { busy: 1, free: 0, total: 1, parked: 0 },
+        spawns_this_tick: 1,
+        churn: { deaths: 0, respawns: 0, window_s: 300 },
+      }),
+    );
 
-    const alphaSupervisorDir = join(root, ".red", "tmp", "supervisors", "alpha");
-    const betaSupervisorDir = join(root, ".red", "tmp", "supervisors", "beta");
-    await mkdir(alphaSupervisorDir, { recursive: true });
-    await mkdir(betaSupervisorDir, { recursive: true });
-    await writeFile(join(alphaSupervisorDir, "state.toon"), fleetState);
-    await writeFile(join(betaSupervisorDir, "state.toon"), fleetState);
-
-    const mcp = createCastleMcpDependencies(root);
-
-    // fleetStatus returns Promise<unknown> — cast through any to access fields.
-    const alphaStatus = (await mcp.fleetStatus({ name: "alpha" })) as {
-      live_workers: Array<{ id: string }>;
-      unattributed_workers: Array<{ id: string }>;
-    };
-    const betaStatus = (await mcp.fleetStatus({ name: "beta" })) as {
+    const status = (await createCastleMcpDependencies(root).projectStatus()) as {
       live_workers: Array<{ id: string }>;
       unattributed_workers: Array<{ id: string }>;
     };
 
-    // Alpha fleet: sees its own worker, not beta's.
-    const alphaLive = alphaStatus.live_workers.map((w) => w.id);
-    const alphaUnattributed = alphaStatus.unattributed_workers.map((w) => w.id);
-    expect(alphaLive).toContain("w_alpha");
-    expect(alphaLive).not.toContain("w_beta");
-    expect(alphaUnattributed).not.toContain("w_alpha");
-
-    // Beta fleet: sees its own worker, not alpha's.
-    const betaLive = betaStatus.live_workers.map((w) => w.id);
-    const betaUnattributed = betaStatus.unattributed_workers.map((w) => w.id);
-    expect(betaLive).toContain("w_beta");
-    expect(betaLive).not.toContain("w_alpha");
-    expect(betaUnattributed).not.toContain("w_beta");
+    const live = status.live_workers.map((w) => w.id);
+    const unattributed = status.unattributed_workers.map((w) => w.id);
+    expect(live).toContain("w_mine");
+    expect(live).not.toContain("w_foreign");
+    expect(unattributed).toContain("w_foreign");
+    expect(unattributed).not.toContain("w_mine");
   });
 });

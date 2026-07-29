@@ -79,7 +79,7 @@ describe("the watchdog relaunch leaves a version behind", () => {
         return SPAWNED_PID;
       });
 
-      const io = buildWatchdogIO(root, sink(), "default");
+      const io = buildWatchdogIO(root, sink());
       await io.liveness();
       expect(await io.relaunch()).toBe(true);
 

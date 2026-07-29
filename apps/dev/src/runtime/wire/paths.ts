@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import * as rp from "@reddb-io/shared/red-paths.js";
-import { resolveFleetName } from "@reddb-io/red-castle/engine";
+import { PROJECT_SUPERVISOR_LANE } from "@reddb-io/red-castle/engine";
 
 export interface RepoContext {
   /** Primary checkout dir. */
@@ -26,13 +26,11 @@ export async function resolveRepoContext(root = process.cwd()): Promise<RepoCont
 // ---------- standard paths ----------
 
 export interface AfkPaths {
-  /** The named fleet these paths belong to ("default" when unnamed). */
-  fleet: string;
   tmpDir: string;
   stateDir: string;
   workersRoot: string;
   historyPath: string;
-  /** This fleet's native supervisor runtime lane (tmp tier, ADR 0105). */
+  /** The project's native supervisor runtime lane (tmp tier, ADR 0105). */
   supervisorRuntimeDir: string;
   /** Supervisor heartbeat snapshot (tmp supervisor lane, ADR 0105). */
   fleetStatePath: string;
@@ -44,7 +42,7 @@ export interface AfkPaths {
   supervisorPidPath: string;
   /** Stable process-start token paired with the supervisor pid lock. */
   supervisorPidStartPath: string;
-  /** External self-heal watchdog pid file (same repo-scoped fleet lane). */
+  /** External self-heal watchdog pid file (same repo-scoped supervisor lane). */
   supervisorWatchdogPidPath: string;
   /** Stable process-start token paired with the watchdog pid lock. */
   supervisorWatchdogPidStartPath: string;
@@ -88,22 +86,19 @@ export interface AfkPaths {
 }
 
 /**
- * Resolve every AFK path for ONE named fleet. Only the supervisor runtime lane
- * is fleet-scoped — `.red/tmp/supervisors/<fleet>/` — so two named fleets get
- * disjoint pid locks, stop sentinels, resize directives, and heartbeats while
- * still sharing the repo-wide worker/claim/worktree lanes the 3-layer claim
- * already coordinates across. An omitted name resolves to `"default"`, the lane
- * the single supervisor has always used.
+ * Resolve every AFK path for this project. There is ONE supervisor runtime lane
+ * — `.red/tmp/supervisors/<PROJECT_SUPERVISOR_LANE>/` — because a project has
+ * one demand producer and no fleet left to partition it by (ADR 0130). The
+ * worker/claim/worktree lanes stay repo-wide, as the 3-layer claim already
+ * coordinates across them.
  */
-export function afkPaths(root: string, fleetName?: string): AfkPaths {
-  const fleet = resolveFleetName(fleetName);
+export function afkPaths(root: string): AfkPaths {
   const tmp = rp.tmpDir(root);
   const state = rp.stateDir(root);
   const afkState = rp.afkStateDir(root);
   const statusline = rp.statuslineStateDir(root);
-  const supervisorRuntime = join(tmp, "supervisors", fleet);
+  const supervisorRuntime = join(tmp, "supervisors", PROJECT_SUPERVISOR_LANE);
   return {
-    fleet,
     tmpDir: tmp,
     stateDir: state,
     workersRoot: rp.workersDir(root),

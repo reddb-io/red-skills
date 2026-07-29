@@ -1,7 +1,7 @@
 // mcp-lane-canary — the MCP lane's own liveness proof (ADR 0128 §7).
 //
-// `fleet_create` once spawned every slot against a bundle that cannot route
-// `run`; each slot died before writing a worker directory, so a fleet created
+// `project_start` once spawned every slot against a bundle that cannot route
+// `run`; each slot died before writing a worker directory, so workers created
 // through the CANONICAL interface drained zero issues while the CLI lane kept
 // working and no surface reported the difference (#2677). A merged fix proves
 // nothing there: the defect only exists in the shipped bundle, exercised
@@ -10,36 +10,36 @@
 // This module is the step machine, kept IO-free so both the real transport
 // (runtime/mcp-lane-canary-io.ts) and the regression tests drive the same
 // ordered contract. Every step names itself on failure, so a red canary reports
-// WHICH step went inert instead of "the fleet did nothing".
+// WHICH step went inert instead of "the lane did nothing".
 
 import { encode as encodeToon } from "@reddb-io/toon";
 
 /** The ordered lane the canary walks. A step name IS the failure vocabulary. */
 export type McpLaneCanaryStep =
   | "connect"
-  | "fleet_create"
+  | "project_start"
   | "supervisor_live"
   | "worker_spawn"
-  | "fleet_status"
-  | "fleet_stop";
+  | "project_status"
+  | "project_stop";
 
 export const MCP_LANE_CANARY_STEPS: readonly McpLaneCanaryStep[] = [
   "connect",
-  "fleet_create",
+  "project_start",
   "supervisor_live",
   "worker_spawn",
-  "fleet_status",
-  "fleet_stop",
+  "project_status",
+  "project_stop",
 ];
 
 /** The MCP tools the lane must expose before the canary can walk it at all. */
 export const MCP_LANE_CANARY_REQUIRED_TOOLS: readonly string[] = [
-  "fleet_create",
-  "fleet_status",
-  "fleet_stop",
+  "project_start",
+  "project_status",
+  "project_stop",
 ];
 
-/** One worker directory as observed on disk — the anchor `fleet_create`'s
+/** One worker directory as observed on disk — the anchor `project_start`'s
  * returned pid can never substitute for. */
 export interface CanaryWorker {
   /** Worker id (the `.red/tmp/workers/<id>` directory name). */
@@ -66,14 +66,12 @@ export interface McpLaneCanaryDeps {
 }
 
 export interface McpLaneCanaryOptions {
-  /** Fleet name to create. Use a canary-only name — this fleet is torn down. */
-  readonly fleet: string;
   readonly runner: string;
   /** Slots to ask for. One is enough to prove the lane is not inert. */
   readonly target?: number;
   /** How long a healthy lane may take to produce a live worker. */
   readonly workerDeadlineMs?: number;
-  /** How long `fleet_stop` may take to retire the supervisor and its workers. */
+  /** How long `project_stop` may take to retire the supervisor and its workers. */
   readonly teardownDeadlineMs?: number;
   readonly pollMs?: number;
 }
@@ -88,7 +86,6 @@ export interface McpLaneCanaryStepResult {
 
 export interface McpLaneCanaryResult {
   readonly ok: boolean;
-  readonly fleet: string;
   readonly steps: readonly McpLaneCanaryStepResult[];
   /** The FIRST step that went inert. Absent on a green run. */
   readonly inertStep?: McpLaneCanaryStep;
@@ -158,7 +155,7 @@ function errorText(error: unknown): string {
  * with a live pid exists on disk, which is exactly what #2677's dead slots
  * never produced.
  *
- * Teardown is unconditional after a successful `fleet_create` — a canary that
+ * Teardown is unconditional after a successful `project_start` — a canary that
  * leaves a live supervisor behind is worse than no canary.
  */
 export async function runMcpLaneCanary(
@@ -208,27 +205,26 @@ export async function runMcpLaneCanary(
     }
     record("connect", "ok", `tools/list served ${tools.length} tools including ${MCP_LANE_CANARY_REQUIRED_TOOLS.join(", ")}`);
 
-    // ---- 2. fleet_create: the canonical interface accepts the launch ----
-    const created = await call("fleet_create", "fleet_create", {
-      name: options.fleet,
+    // ---- 2. project_start: the canonical interface accepts the launch ----
+    const created = await call("project_start", "project_start", {
       runner: options.runner,
       target,
     });
     const status = created.status;
     if (status !== "launched" && status !== "resized") {
-      inert("fleet_create", `fleet_create returned status=${JSON.stringify(status)} instead of launched`);
+      inert("project_start", `project_start returned status=${JSON.stringify(status)} instead of launched`);
     }
     const pid = readPid(created.pid);
     if (pid === null) {
-      inert("fleet_create", `fleet_create returned no supervisor pid (payload: ${JSON.stringify(created)})`);
+      inert("project_start", `project_start returned no supervisor pid (payload: ${JSON.stringify(created)})`);
     }
     supervisorPid = pid;
-    record("fleet_create", "ok", `fleet_create launched fleet ${options.fleet} with supervisor pid ${pid}`);
+    record("project_start", "ok", `project_start launched this project's workers with supervisor pid ${pid}`);
 
     try {
       // ---- 3. supervisor_live: the returned pid is a real process ----
       if (!deps.isLive(pid)) {
-        inert("supervisor_live", `fleet_create returned supervisor pid ${pid} but no such process is alive — the supervisor died inside its own launch probe`);
+        inert("supervisor_live", `project_start returned supervisor pid ${pid} but no such process is alive — the supervisor died inside its own launch probe`);
       }
       record("supervisor_live", "ok", `supervisor pid ${pid} is alive`);
 
@@ -244,7 +240,7 @@ export async function runMcpLaneCanary(
         if (live.length > 0) break;
         if (deps.now() >= deadline) break;
         if (!deps.isLive(pid)) {
-          inert("worker_spawn", `supervisor pid ${pid} died before any worker appeared — the fleet went inert during its first ticks`);
+          inert("worker_spawn", `supervisor pid ${pid} died before any worker appeared — the lane went inert during its first ticks`);
         }
         await deps.sleep(pollMs);
       }
@@ -254,36 +250,36 @@ export async function runMcpLaneCanary(
           : `only dead worker directories exist: ${seen.map(describe).join("; ")}`;
         inert(
           "worker_spawn",
-          `fleet_create returned supervisor pid ${pid} but ${observed} within ${workerDeadlineMs}ms — the slot entry spawned nothing that boots (the #2677 shape: a bundle whose slot entry cannot route \`run\`)`,
+          `project_start returned supervisor pid ${pid} but ${observed} within ${workerDeadlineMs}ms — the slot entry spawned nothing that boots (the #2677 shape: a bundle whose slot entry cannot route \`run\`)`,
         );
       }
       workers = live;
       record("worker_spawn", "ok", `${live.length} live worker(s): ${live.map(describe).join("; ")}`);
 
-      // ---- 5. fleet_status: the canonical reader observes that worker ----
-      const observedStatus = await call("fleet_status", "fleet_status", { fleet: options.fleet });
+      // ---- 5. project_status: the canonical reader observes that worker ----
+      const observedStatus = await call("project_status", "project_status", {});
       const supervisor = asRecord(observedStatus.supervisor);
       if (!supervisor || !readBool(supervisor.alive)) {
-        inert("fleet_status", `fleet_status reports the supervisor as not alive while pid ${pid} is running — the lane's reader and writer disagree`);
+        inert("project_status", `project_status reports the supervisor as not alive while pid ${pid} is running — the lane's reader and writer disagree`);
       }
       const reportedPid = readPid(supervisor.pid);
       if (reportedPid !== pid) {
-        inert("fleet_status", `fleet_status reports supervisor pid ${reportedPid ?? "none"}, not the ${pid} fleet_create returned`);
+        inert("project_status", `project_status reports supervisor pid ${reportedPid ?? "none"}, not the ${pid} project_start returned`);
       }
       const busy = readCount(asRecord(observedStatus.slots)?.busy);
       if (busy < 1) {
-        inert("fleet_status", `fleet_status reports slots.busy=${busy} while ${live.length} live worker(s) exist on disk — the fleet cannot see its own workers`);
+        inert("project_status", `project_status reports slots.busy=${busy} while ${live.length} live worker(s) exist on disk — the lane cannot see its own workers`);
       }
-      record("fleet_status", "ok", `fleet_status observes supervisor ${pid} with slots.busy=${busy}`);
+      record("project_status", "ok", `project_status observes supervisor ${pid} with slots.busy=${busy}`);
     } finally {
-      // ---- 6. fleet_stop: teardown, always attempted once a fleet exists ----
+      // ---- 6. project_stop: teardown, always attempted once workers exist ----
       // Nothing thrown here may mask the walk's own verdict, so the teardown
       // reports its failure as a step rather than as an exception.
       try {
         steps.push(await stopFleet());
       } catch (error) {
         steps.push({
-          step: "fleet_stop",
+          step: "project_stop",
           verdict: "inert",
           detail: `teardown itself threw: ${errorText(error)}`,
         });
@@ -293,7 +289,7 @@ export async function runMcpLaneCanary(
     if (!(error instanceof InertStepError)) throw error;
     inertStep = error.step;
     // The failing step is recorded in walk order, ahead of any teardown row.
-    const teardownAt = steps.findIndex((entry) => entry.step === "fleet_stop");
+    const teardownAt = steps.findIndex((entry) => entry.step === "project_stop");
     const failure: McpLaneCanaryStepResult = {
       step: error.step,
       verdict: "inert",
@@ -320,11 +316,10 @@ export async function runMcpLaneCanary(
   const resolvedInert = inertStep ?? failed?.step;
   return {
     ok,
-    fleet: options.fleet,
     steps,
     ...(resolvedInert ? { inertStep: resolvedInert } : {}),
     summary: ok
-      ? `MCP lane canary green: fleet_create → live worker → fleet_status → fleet_stop all answered on fleet ${options.fleet}`
+      ? "MCP lane canary green: project_start → live worker → project_status → project_stop all answered"
       : `MCP lane canary FAILED — the ${resolvedInert} step went inert: ${
         steps.find((entry) => entry.step === resolvedInert)?.detail ?? "no detail"
       }`,
@@ -332,31 +327,31 @@ export async function runMcpLaneCanary(
     workers,
   };
 
-  /** Stop the fleet and CONFIRM the supervisor and its workers are gone. */
+  /** Stop the workers and CONFIRM the supervisor and its workers are gone. */
   async function stopFleet(): Promise<McpLaneCanaryStepResult> {
     if (supervisorPid === undefined) {
       return {
-        step: "fleet_stop",
+        step: "project_stop",
         verdict: "skipped",
-        detail: "no fleet was created, so there is nothing to stop",
+        detail: "nothing was started, so there is nothing to stop",
       };
     }
     const pid = supervisorPid;
     let stopped: Record<string, unknown>;
     try {
-      stopped = await call("fleet_stop", "fleet_stop", { fleet: options.fleet, force: true });
+      stopped = await call("project_stop", "project_stop", { force: true });
     } catch (error) {
       return {
-        step: "fleet_stop",
+        step: "project_stop",
         verdict: "inert",
         detail: error instanceof InertStepError ? error.message : errorText(error),
       };
     }
     if (stopped.status !== "stopped" && stopped.status !== "none") {
       return {
-        step: "fleet_stop",
+        step: "project_stop",
         verdict: "inert",
-        detail: `fleet_stop returned status=${JSON.stringify(stopped.status)} for supervisor pid ${pid} — the canonical stop no-opped`,
+        detail: `project_stop returned status=${JSON.stringify(stopped.status)} for supervisor pid ${pid} — the canonical stop no-opped`,
       };
     }
     const deadline = deps.now() + teardownDeadlineMs;
@@ -364,18 +359,18 @@ export async function runMcpLaneCanary(
       const remaining = (await deps.observeWorkers()).filter((worker) => worker.alive);
       if (!deps.isLive(pid) && remaining.length === 0) {
         return {
-          step: "fleet_stop",
+          step: "project_stop",
           verdict: "ok",
-          detail: `fleet_stop retired supervisor ${pid} and every worker it spawned`,
+          detail: `project_stop retired supervisor ${pid} and every worker it spawned`,
         };
       }
       if (deps.now() >= deadline) {
         const survivors = deps.isLive(pid) ? [`supervisor ${pid}`] : [];
         survivors.push(...remaining.map(describe));
         return {
-          step: "fleet_stop",
+          step: "project_stop",
           verdict: "inert",
-          detail: `fleet_stop returned ${String(stopped.status)} but ${survivors.join(", ")} survived ${teardownDeadlineMs}ms`,
+          detail: `project_stop returned ${String(stopped.status)} but ${survivors.join(", ")} survived ${teardownDeadlineMs}ms`,
         };
       }
       await deps.sleep(pollMs);
@@ -388,7 +383,6 @@ export async function runMcpLaneCanary(
 export function renderMcpLaneCanaryToon(result: McpLaneCanaryResult): string {
   return encodeToon({
     canary: "mcp-lane",
-    fleet: result.fleet,
     ok: result.ok,
     ...(result.inertStep ? { inert_step: result.inertStep } : {}),
     ...(result.supervisorPid !== undefined ? { supervisor_pid: result.supervisorPid } : {}),

@@ -20,7 +20,7 @@ function workerId(pid: number): string {
 
 export async function canaryWorker(): Promise<number> {
   const root = process.cwd();
-  const paths = afkPaths(root, process.env.RED_AFK_FLEET);
+  const paths = afkPaths(root);
   const worker = workerId(process.pid);
   mkdirSync(workerDir(paths.tmpDir, worker), { recursive: true });
   const pidFile = workerPidFile(paths.tmpDir, worker);
@@ -35,7 +35,7 @@ export async function canaryWorker(): Promise<number> {
     };
     const timer = setInterval(() => {
       // A real worker exits when its fleet retires it. Both signals are honoured
-      // so a forced `fleet_stop` (supervisor pid file removed) and a graceful
+      // so a forced `project_stop` (supervisor pid file removed) and a graceful
       // slot retire leave no live worker behind.
       if (!existsSync(paths.supervisorPidPath)) finish(0);
       else if (retireFile !== undefined && retireFile !== "" && existsSync(retireFile)) finish(0);

@@ -69,7 +69,7 @@ describe("spawnSupervisor", () => {
 
   it("captures child stderr in the named fleet supervisor log", async () => {
     const cwd = await root();
-    const paths = afkPaths(cwd, "nightly");
+    const paths = afkPaths(cwd);
     spawn.mockImplementationOnce((_command, _args, options) => {
       const stdio = (options as { stdio: [string, string, number] }).stdio;
       writeSync(stdio[2], "supervisor boot failed\n");
@@ -82,7 +82,6 @@ describe("spawnSupervisor", () => {
       root: cwd,
       target: 1,
       runner: "codex",
-      fleet: "nightly",
       probeDeadlineMs: 0,
       scope: unscoped,
       onNotice: () => undefined,
@@ -94,7 +93,7 @@ describe("spawnSupervisor", () => {
 
   it("reaps stale supervisor state in the parent before spawning", async () => {
     const cwd = await root();
-    const paths = afkPaths(cwd, "nightly");
+    const paths = afkPaths(cwd);
     await mkdir(paths.supervisorRuntimeDir, { recursive: true });
     await writeFile(paths.supervisorStopPath, "stale", "utf8");
 
@@ -102,7 +101,6 @@ describe("spawnSupervisor", () => {
       root: cwd,
       target: 1,
       runner: "codex",
-      fleet: "nightly",
       probeDeadlineMs: 0,
       scope: unscoped,
       onNotice: () => undefined,
@@ -190,14 +188,13 @@ describe("spawnSupervisor", () => {
 });
 
 describe("spawnSupervisor cgroup isolation (#2697)", () => {
-  it("spawns the supervisor inside a transient scope named for the fleet on Linux", async () => {
+  it("spawns the supervisor inside a transient scope named for its lane on Linux", async () => {
     const cwd = await root();
 
     await spawnSupervisor({
       root: cwd,
       target: 1,
       runner: "claude",
-      fleet: "nightly",
       probeDeadlineMs: 0,
       scope: { probes: linuxProbes, settings: { enabled: true, memoryHigh: "70%" } },
       onNotice: () => undefined,
@@ -208,7 +205,7 @@ describe("spawnSupervisor cgroup isolation (#2697)", () => {
     expect(args).toContain("--scope");
     expect(args).toContain("--property=Delegate=yes");
     expect(args).toContain("--property=MemoryHigh=70%");
-    expect(args.find((a) => a.startsWith("--unit="))).toContain("red-fleet-nightly");
+    expect(args.find((a) => a.startsWith("--unit="))).toContain("red-fleet-default-");
     expect(args.slice(args.indexOf("--") + 1)).toContain("__supervise");
   });
 

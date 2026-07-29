@@ -18,21 +18,15 @@ import { afkPaths } from "../../../src/runtime/wire.js";
 
 const HEARTBEAT_MS = 300;
 
-function fleetFromArgs(args: readonly string[]): string {
-  const at = args.indexOf("--fleet");
-  return at >= 0 ? (args[at + 1] ?? "default") : (process.env.RED_AFK_FLEET ?? "default");
-}
-
-export async function canarySupervise(args: readonly string[]): Promise<number> {
+export async function canarySupervise(_args: readonly string[]): Promise<number> {
   const root = process.cwd();
-  const fleet = fleetFromArgs(args);
-  const paths = afkPaths(root, fleet);
+  const paths = afkPaths(root);
   const slotLogsDir = slotLogDir(paths.tmpDir);
   mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
   mkdirSync(slotLogsDir, { recursive: true });
   mkdirSync(join(paths.tmpDir, "workers"), { recursive: true });
 
-  // The pinned identity anchor `fleet_create`'s launch probe and `fleet_status`
+  // The pinned identity anchor `project_start`'s launch probe and `project_status`
   // both read. Without it the launch reads as a fast death.
   const startTime = readPidStartTime(process.pid);
   if (startTime === null) {
@@ -52,13 +46,11 @@ export async function canarySupervise(args: readonly string[]): Promise<number> 
     paths.fleetFirehosePath,
     paths.fleetStatePath,
     `s${process.pid}`,
-    fleet,
     runner,
     300,
     { cwd: root, repo: "" },
     "main",
     [],
-    {},
   );
 
   // THE assertion this harness exists for: the production slot spawn, with the
@@ -100,7 +92,7 @@ export async function canarySupervise(args: readonly string[]): Promise<number> 
     };
     const timer = setInterval(() => {
       publish();
-      // `fleet_stop` without --force publishes intent through the stop file.
+      // `project_stop` without --force publishes intent through the stop file.
       if (existsSync(paths.supervisorStopPath)) finish(0);
     }, HEARTBEAT_MS);
     process.once("SIGTERM", () => finish(143));

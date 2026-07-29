@@ -43,8 +43,9 @@ Whole-document snapshot state files are TOON too (issue #2008): the castle
 `apps/dev` workspace — the worker identity stamp (`identity.json`), the
 per-attempt worker state (`afk.state.json`), the supervisor state snapshot
 (`state.toon`), its restart ledger (`restarts.toon`), and the monitor log-cursor
-snapshot (`monitor-log-cursors.toon`). The fleet supervisor files live under
-`.red/tmp/supervisors/default/`; readers sniff JSON-then-TOON so a file written
+snapshot (`monitor-log-cursors.toon`). The supervisor files live under the
+project's single lane, `.red/tmp/supervisors/default/` — there is exactly one, not
+one per fleet (ADR 0130); readers sniff JSON-then-TOON so a file written
 by an older bundle still reads.
 Converting a NEW snapshot is a deliberate change with its own reader plan, not a
 drive-by. The `apps/dev` uniformity test (`castle-engine-toon-uniformity.test.ts`)

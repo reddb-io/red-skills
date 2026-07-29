@@ -59,7 +59,7 @@ describe("castle MCP client docs contract", () => {
 
     expect(skill).toContain("`castle` MCP");
     expect(skill).toContain("[`MCP.md`](./MCP.md)");
-    for (const tool of ["queue_status", "worker_dispatch", "fleet_status", "monitor"]) {
+    for (const tool of ["queue_status", "worker_dispatch", "project_status", "monitor"]) {
       expect(skill, `/afk should route through ${tool}`).toContain(`\`${tool}\``);
     }
   });
@@ -72,13 +72,13 @@ describe("castle MCP client docs contract", () => {
     expect(skill).toContain("`worker_dispatch`");
   });
 
-  it("routes the fleet and observability verbs through named-fleet tools", async () => {
+  it("routes the fleet and observability verbs through the project tools", async () => {
     const [fleet, monitor] = await Promise.all([
       readRepoFile(`${AFK}/fleet.md`),
       readRepoFile(`${AFK}/monitor.md`),
     ]);
 
-    for (const tool of ["fleet_create", "fleet_status", "fleet_edit", "fleet_stop", "logs"]) {
+    for (const tool of ["project_start", "project_status", "project_resize", "project_stop", "logs"]) {
       expect(fleet, `fleet.md should route through ${tool}`).toContain(`\`${tool}\``);
     }
     for (const tool of ["monitor", "worker_vitals", "queue_status"]) {

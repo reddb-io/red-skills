@@ -23,7 +23,7 @@ import type { HookExec } from "./hook-dispatcher.js";
 import type { ResolveHooksOptions, HookName } from "./hook-config.js";
 import type { ConfigValues } from "./config.js";
 import type { Runner } from "../types/runner.js";
-import type { FleetSelector } from "@reddb-io/red-castle/engine";
+import type { WorkSelector } from "@reddb-io/red-castle/engine";
 
 // ---------- pure helpers (slugify / gen_worker_id) ----------
 
@@ -72,12 +72,12 @@ export interface IssueCandidate {
 /** The selection filter, mirroring FILTER_KIND/FILTER_VALUE. `issues` keeps the
  * argument order; `spec` keeps spec-linked Tickets; `all` keeps every remainder;
  * `selector` is a NAMED FLEET's work scope — every facet present narrows the
- * pool, so two fleets can partition one backlog between them. */
+ * pool, so a producer drains only the slice its work policy declares. */
 export type SelectionFilter =
   | { kind: "all" }
   | { kind: "issues"; numbers: number[] }
   | { kind: "spec"; spec: number }
-  | { kind: "selector"; selector: FleetSelector };
+  | { kind: "selector"; selector: WorkSelector };
 
 import { LABEL_TYPE_SPEC, LABEL_URGENT, LABEL_HIGH, LABEL_READY, LABEL_TYPE_SCOUT } from "./triage-labels.js";
 
@@ -95,16 +95,16 @@ function matchesSpec(c: IssueCandidate, spec: number): boolean {
 }
 
 /**
- * A named fleet's work-scope test: every facet the selector declares must hold
+ * The producer's work-scope test: every facet the selector declares must hold
  * (AND), so `{spec, lane}` keeps only that Spec's Tickets inside that lane. An
- * empty selector matches everything — a fleet with no scope drains the whole
+ * empty selector matches everything — a producer with no scope drains the whole
  * backlog, exactly like the `all` filter.
  *
- * Keep in sync with `matchesFleetSelector` in
+ * Keep in sync with `matchesWorkSelector` in
  * `packages/red-castle/src/engine/worker-drain.ts` — the castle copy drives the
  * live drain; this copy backs the dev-side previews.
  */
-export function matchesSelector(c: IssueCandidate, selector: FleetSelector): boolean {
+export function matchesSelector(c: IssueCandidate, selector: WorkSelector): boolean {
   if (selector.spec !== undefined && !matchesSpec(c, selector.spec)) return false;
   if (selector.lane !== undefined && !hasLabel(c, `lane:${selector.lane}`)) return false;
   if (selector.label !== undefined && !hasLabel(c, selector.label)) return false;

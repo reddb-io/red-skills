@@ -1,5 +1,4 @@
 import { parseRunnerFlag, detectRunner } from "../../core/runner-detection.js";
-import { FLEET_NAME_ENV } from "../../core/fleet-name.js";
 import { callerProcessTreeNative } from "../../runtime/caller-process.js";
 import {
   runModeForCandidate,
@@ -8,6 +7,7 @@ import {
   type IssueCandidate,
 } from "../../core/session.js";
 import { genWorkerId } from "../../core/session.js";
+import { SUPERVISOR_LANE_ENV } from "../../core/supervisor-lane.js";
 import { runBoot, type BootDeps, type BootOptions, type BootResult, type BootstrapInput } from "../../core/boot.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
 import { isRunner, type Runner } from "../../types/runner.js";
@@ -257,7 +257,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     redRoot: join(ctx.root, ".red"),
     workerId,
     attemptDir: () => current.attemptDir,
-    fleetName: process.env[FLEET_NAME_ENV] || undefined,
+    supervisorLane: process.env[SUPERVISOR_LANE_ENV] || undefined,
   });
 
   // --request/-r special block, threaded into the handoff the agent reads.

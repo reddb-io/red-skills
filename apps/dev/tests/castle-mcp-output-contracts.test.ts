@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import {
   createCastleMcpTools,
-  fleetStatusOutputSchema,
+  projectStatusOutputSchema,
   monitorOutputSchema,
   queueStatusOutputSchema,
   workerVitalsOutputSchema,
@@ -99,12 +99,11 @@ async function writeFleetState(root: string): Promise<void> {
 }
 
 describe("dev:afk observability output contracts", () => {
-  it("builds a fleet_status payload that satisfies the declared contract", async () => {
+  it("builds a project_status payload that satisfies the declared contract", async () => {
     const root = await fixtureRoot();
-    const status = await createCastleMcpDependencies(root).fleetStatus({});
+    const status = await createCastleMcpDependencies(root).projectStatus();
 
-    expect(fleetStatusOutputSchema.parse(status)).toMatchObject({
-      fleet: "default",
+    expect(projectStatusOutputSchema.parse(status)).toMatchObject({
       supervisor: { runner: "claude", target: 2 },
       slots: { busy: 1, total: 2 },
     });

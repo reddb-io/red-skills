@@ -7,8 +7,6 @@ import type {
 import type { ProcessSnapshotEntry } from "../reaper-signal.js";
 import type { RecoveryEnv } from "../recovery.js";
 import type { WakeSource } from "../event-wake.js";
-import type { FleetHookContext, FleetHookDispatchResult } from "../fleet-hook-dispatcher.js";
-import type { FleetHookName } from "../fleet-hook-config.js";
 import type { DrainBudgetStatus, ElasticResizeRequest, ElasticShrinkMode } from "./config.js";
 
 
@@ -481,15 +479,6 @@ export interface SupervisorDeps {
    * concrete git exec.
    */
   refreshTrunkMirror?(): Promise<TrunkMirrorRefreshResult>;
-  /**
-   * Dispatch a fleet-scoped lifecycle hook at a supervisor checkpoint. Receives
-   * the fleet-scoped context (slot, pid, death ring, runner — no issue/worktree
-   * fields). Best-effort: throws from the hook executor are caught by the
-   * caller and logged, never aborting the fleet. The `on_stall_reap` point has
-   * an additional veto semantic: a `vetoed=true` result cancels the hard-reap
-   * kill for that pass. Absent → no-op (backward-compatible). (#833)
-   */
-  dispatchFleetHook?(name: FleetHookName, context: FleetHookContext): Promise<FleetHookDispatchResult>;
   /** Resolve the current local HEAD of an attempt branch. Best-effort: undefined
    * means the contest window cannot observe advancement yet. */
   attemptBranchHead?(branch: string): Promise<string | undefined>;

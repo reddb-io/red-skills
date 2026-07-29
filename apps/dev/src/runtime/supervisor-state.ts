@@ -140,9 +140,6 @@ export interface SupervisorPidDiscovery {
 }
 
 export interface DiscoverSupervisorPidOptions {
-  /** Named fleet retained for call-site compatibility; liveness is resolved
-   * exclusively from that fleet's pinned pid identity. */
-  fleet?: string;
   /** Injectable stable process-start lookup for deterministic identity tests. */
   pidStartTime?: (pid: number) => string | null;
   /** Injectable clock (epoch seconds) for deterministic snapshot-age tests. */
@@ -150,12 +147,12 @@ export interface DiscoverSupervisorPidOptions {
 }
 
 /**
- * Find the supervisor pid that owns ONE fleet's runtime lane. ONE identity —
+ * Find the supervisor pid that owns the project's supervisor lane. ONE identity —
  * pid plus process-start pin — published to TWO anchors the supervisor writes:
  * the `afk-supervisor.pid` lock at boot, and the `state.toon` heartbeat every
  * tick. The pid file is consulted first; the heartbeat snapshot answers when the
  * lock was swept, never written, or lost its start sidecar, which is exactly how
- * a ticking fleet used to read back as absent (#2698). Snapshot lane names
+ * a ticking supervisor used to read back as absent (#2698). Snapshot lane names
  * contain only a PID, so they cannot distinguish a recycled process and are
  * never an authoritative liveness source.
  */

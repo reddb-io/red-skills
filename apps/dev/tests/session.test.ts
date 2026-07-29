@@ -32,7 +32,7 @@ describe("runModeForCandidate (type:scout fleet routing)", () => {
 
 });
 
-// ---------- matchesSelector (parity with castle matchesFleetSelector) ----------
+// ---------- matchesSelector (parity with castle matchesWorkSelector) ----------
 
 describe("matchesSelector territory facets (kept in sync with the castle copy)", () => {
   it("ANDs every requested tag and excludes untagged candidates outright", () => {

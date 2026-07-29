@@ -395,7 +395,6 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
   // only the counts this render draws.
   const supervisor = publishSupervisorLiveness(
     await readSupervisorLiveness(paths.supervisorRuntimeDir, {
-      fleet: paths.fleet,
       heartbeatEpoch: fleet?.epoch ?? null,
       nowS,
     }),

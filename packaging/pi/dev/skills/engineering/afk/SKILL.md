@@ -25,8 +25,8 @@ The usual shape of a drain:
 
 1. `queue_status` — what is drainable now, before anything is claimed.
 2. `runner_detect` — confirm the runner this host resolves to.
-3. `worker_dispatch` (one issue) or `fleet_create` (a named fleet) to start work.
-4. `monitor`, `worker_vitals`, `fleet_status` — read progress; never poll a
+3. `worker_dispatch` (one issue) or `project_start` (this project's workers) to start work.
+4. `monitor`, `worker_vitals`, `project_status` — read progress; never poll a
    mutating tool for status.
 5. `gate_run` → `land_branch` when a worker branch needs validation and landing
    outside the normal in-worker path.
@@ -62,11 +62,11 @@ Each verb below names the `castle` tool that serves it; the flag form is the
 CLI fallback for the same operation.
 
 - `/afk` - drain every open issue labelled `ready-for-agent`. Read the queue
-  with `queue_status`, then dispatch with `worker_dispatch` or `fleet_create`.
+  with `queue_status`, then dispatch with `worker_dispatch` or `project_start`.
 - `/afk --spec 42` - drain only tickets linked to Spec #42; the Spec issue
-  itself is excluded. As a fleet this is the `selector.spec` profile field.
-- `/afk --issues 356,359,362` - drain an explicit issue list in that order; as a
-  fleet, `selector.issues`.
+  itself is excluded. On the producer this is the `selector.spec` facet.
+- `/afk --issues 356,359,362` - drain an explicit issue list in that order; on
+  the producer, `selector.issues`.
 - `/afk --tags backend,infra` - drain only issues carrying EVERY requested
   `tag:<value>` territory label (AND semantics; an untagged issue is outside
   every tag-scoped fleet). As a fleet this is `selector.tags`. Combines with
@@ -100,14 +100,13 @@ CLI fallback for the same operation.
   review for the local daily or six-day window, over `history` + `dashboard`.
 - `/afk retake 123 [--apply] [--json]` - issue resumption report (`retake`, a
   read tool that only recommends); safe local setup only with `--apply`.
-- `/afk fleet [N]` - supervise `N` concurrent workers via `fleet_create`, or
-  resize a running one via `fleet_edit`; read [`fleet.md`](./fleet.md) before
+- `/afk fleet [N]` - supervise `N` concurrent workers via `project_start`, or
+  resize a running one via `project_resize`; read [`fleet.md`](./fleet.md) before
   launch or stop operations.
-- `/afk fleet stop [--force]` - `fleet_stop`: gracefully stop the named fleet
+- `/afk fleet stop [--force]` - `project_stop`: gracefully stop this project's
   supervisor while in-flight workers drain; `--force` hard-stops only workers
-  attributed to that fleet.
-- `/afk fleet status` - `fleet_status`, plus `fleet_list` for the registered
-  profiles: read-only fleet ground truth — supervisor pid, health verdict,
+  attributed to its lane.
+- `/afk fleet status` - `project_status`: read-only ground truth — supervisor pid, health verdict,
   runner, slot occupancy, bundle version/skew, churn, live workers, and whether
   a watchdog respawn would fire. Answers "what is actually running?" without
   cross-referencing pid files and snapshots by hand.
@@ -188,11 +187,11 @@ Read the focused reference before touching that concern:
 
 `/afk` is trivially parallel: run another `/afk` in another terminal. Each run
 gets a worker ID (`w` + 4 random `[A-Z0-9]` chars), separate worker files, and
-the same claim safety. **Named fleets are the structured form of the same
-parallelism** — `fleet_create` registers a profile (runner + selector + config +
-base), so several fleets partitioned by runner or work scope drain one checkout
-concurrently. Choose fleet width by disjointness; read [`fleet.md`](./fleet.md)
-for the full rule.
+the same claim safety. **The project's producer is the structured form of the same
+parallelism** — `project_start` takes the runner, the selector and the base
+branch, and applies several selectors as an ordered priority inside ONE producer
+rather than as competing loops. Choose the width by disjointness; read
+[`fleet.md`](./fleet.md) for the full rule.
 
 ## Stop Conditions
 

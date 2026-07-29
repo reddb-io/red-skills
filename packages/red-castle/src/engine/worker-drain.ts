@@ -1,4 +1,4 @@
-import type { FleetSelector } from "./fleet-registry.js";
+import type { WorkSelector } from "./work-selector.js";
 import type { Runner } from "./runner-types.js";
 import {
   resolveHostCapabilities,
@@ -20,17 +20,17 @@ export type CastleSelectionFilter =
   | { kind: "all" }
   | { kind: "issues"; numbers: number[] }
   | { kind: "spec"; spec: number }
-  /** A named fleet's work scope — every declared facet narrows the pool. */
-  | { kind: "selector"; selector: FleetSelector };
+  /** A producer's work scope — every declared facet narrows the pool. */
+  | { kind: "selector"; selector: WorkSelector };
 
-/** True when a candidate falls inside a named fleet's work scope. Every facet
+/** True when a candidate falls inside a producer's work scope. Every facet
  * the selector declares must hold; an empty selector matches everything.
  * Keep in sync with `matchesSelector` in the consuming `apps/dev`
  * `core/session.ts` — this copy drives the live drain; the dev copy backs the
  * dev-side previews. */
-export function matchesFleetSelector(
+export function matchesWorkSelector(
   candidate: CastleIssueCandidate,
-  selector: FleetSelector,
+  selector: WorkSelector,
 ): boolean {
   if (selector.spec !== undefined && !matchesSpec(candidate, selector.spec)) return false;
   if (selector.lane !== undefined && !hasLabel(candidate, `lane:${selector.lane}`)) return false;
@@ -100,11 +100,11 @@ export function selectCastleIssues(
   labels: CastleSelectionLabels = DEFAULT_CASTLE_SELECTION_LABELS,
 ): CastleIssueCandidate[] {
   const excluded = candidates.filter((candidate) => !hasLabel(candidate, labels.typeSpec));
-  // A named fleet's scope applies BEFORE the urgent prepend, so an urgent issue
-  // another fleet owns is never pulled across the boundary into a double-claim.
+  // The work scope applies BEFORE the urgent prepend, so an urgent issue outside
+  // the producer's scope is never pulled across the boundary into a double-claim.
   const pool =
     filter.kind === "selector"
-      ? excluded.filter((candidate) => matchesFleetSelector(candidate, filter.selector))
+      ? excluded.filter((candidate) => matchesWorkSelector(candidate, filter.selector))
       : excluded;
   const urgent = pool
     .filter((candidate) => hasLabel(candidate, labels.urgent))

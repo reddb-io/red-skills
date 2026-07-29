@@ -120,6 +120,28 @@ discovered:
   `fleet_*` MCP tools are re-shaped or removed. **This amends ADR 0120**, whose
   tool surface names fleet lifecycle as a domain.
 
+  As executed (#2786), the reshape reads:
+
+  | Removed | Replacement |
+  | --- | --- |
+  | `fleet_status` | `project_status` |
+  | `fleet_create` | `project_start` |
+  | `fleet_edit` | `project_resize` |
+  | `fleet_stop` | `project_stop` |
+  | `fleet_list`, `fleet_register` | *nothing* — both existed only to operate the registry |
+
+  `fleet_list` and `fleet_register` are the only capabilities that do not
+  survive, and they are named rather than quietly dropped: with one producer per
+  project there is no second fleet to enumerate, and with no registry there is no
+  profile to adopt a running supervisor into. Every project tool still declares a
+  `fleet` input for exactly one purpose — refusing it with the replacement named,
+  so a stale caller reads a migration answer rather than an internal error. The
+  same refusal answers `--fleet` on the CLI. The supervisor's runtime lane keeps
+  its on-disk name (`.red/tmp/supervisors/default/`) so an existing checkout
+  still reads its own state; what changed is that the name is a constant rather
+  than a parameter, and the fleet-hook class is gone outright, which removes the
+  `on_stall_reap` veto over the hard reap along with it.
+
 - **Attempt is extinct, and this record supersedes ADR 0128 entirely.** Since
   ADR 0103 made a retry a fresh Worker, a Worker already *is* one worker × one
   ticket × one try; the Attempt was a synonym carrying its own lane, contract

@@ -1,6 +1,6 @@
 // liveness-anchor.ts — THE single liveness anchor (ADR 0128 §5, issue #2704).
 //
-// One anchor, one read, one verdict. `fleet_status`, `fleet_stop`, `monitor`,
+// One anchor, one read, one verdict. `project_status`, `project_stop`, `monitor`,
 // `worker_vitals` and the statusline all resolve supervisor identity, liveness
 // and attempt history through this module and hold NO private source of their
 // own. Two anchors is the bug class behind #2679 and #2698 — a writer that
@@ -42,7 +42,7 @@ import {
 export { reapStaleSupervisorState } from "./supervisor-state.js";
 // The forced-teardown identity (#2714) is the one reader allowed to accept a pid
 // without its process-start proof. It travels through the anchor too, so
-// `fleet_stop` keeps ONE liveness import and the ratchet stays closed.
+// `project_stop` keeps ONE liveness import and the ratchet stays closed.
 export { readRecordedLiveSupervisorPid } from "./supervisor-state.js";
 export type { SupervisorStateReapResult, SupervisorPidDiscovery } from "./supervisor-state.js";
 
@@ -145,8 +145,6 @@ export function resolveSupervisorLiveness(
 }
 
 export interface ReadSupervisorLivenessOptions {
-  /** Named fleet, carried through to discovery for call-site compatibility. */
-  fleet?: string;
   /** The heartbeat tick the caller already read, when it has one. */
   heartbeatEpoch?: number | null;
   /** Seconds past which a heartbeat stops being presentable as current. */
@@ -173,7 +171,6 @@ export async function readSupervisorLiveness(
     supervisorRuntimeDir,
     options.isLivePid ?? defaultIsLivePid,
     {
-      ...(options.fleet !== undefined ? { fleet: options.fleet } : {}),
       ...(options.pidStartTime !== undefined ? { pidStartTime: options.pidStartTime } : {}),
       nowS,
     },
@@ -187,8 +184,8 @@ export async function readSupervisorLiveness(
 }
 
 /**
- * The fleet watchdog's own process identity, resolved through the same seam so
- * `fleet_stop` keeps one import for every liveness question it asks.
+ * The supervisor watchdog's own process identity, resolved through the same seam
+ * so `project_stop` keeps one import for every liveness question it asks.
  */
 export async function readWatchdogLiveness(
   pidPath: string,

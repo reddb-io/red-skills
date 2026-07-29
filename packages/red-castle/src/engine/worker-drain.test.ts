@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CASTLE_NO_MORE_TASKS,
-  matchesFleetSelector,
+  matchesWorkSelector,
   runCastleWorkerDrain,
   selectCastleIssues,
   type CastleIssueCandidate,
@@ -133,20 +133,20 @@ describe("castle worker drain", () => {
     const untagged = candidate(3);
 
     const selector = { tags: ["backend", "infra"] };
-    expect(matchesFleetSelector(both, selector)).toBe(true);
+    expect(matchesWorkSelector(both, selector)).toBe(true);
     // AND semantics: carrying one of the two requested tags is not enough.
-    expect(matchesFleetSelector(oneOfTwo, selector)).toBe(false);
+    expect(matchesWorkSelector(oneOfTwo, selector)).toBe(false);
     // Strict untagged exclusion: no tag labels at all → outside every tag scope.
-    expect(matchesFleetSelector(untagged, selector)).toBe(false);
+    expect(matchesWorkSelector(untagged, selector)).toBe(false);
   });
 
   it("matches the user facet against the author case-insensitively and never without one", () => {
     const authored = { ...candidate(1), author: "FilipeForattini" };
     const anonymous = candidate(2);
 
-    expect(matchesFleetSelector(authored, { user: "filipeforattini" })).toBe(true);
-    expect(matchesFleetSelector(authored, { user: "gustavo" })).toBe(false);
-    expect(matchesFleetSelector(anonymous, { user: "filipeforattini" })).toBe(false);
+    expect(matchesWorkSelector(authored, { user: "filipeforattini" })).toBe(true);
+    expect(matchesWorkSelector(authored, { user: "gustavo" })).toBe(false);
+    expect(matchesWorkSelector(anonymous, { user: "filipeforattini" })).toBe(false);
   });
 
   it("never prepends an urgent issue that sits outside the tag scope", () => {

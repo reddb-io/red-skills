@@ -53,23 +53,6 @@ export async function sweepParkedSlot(
   // not in the FS layer (which has no visibility into the breaker state).
   const fastDeaths = state.deaths.length;
 
-  // Dispatch on_circuit_trip with the sweep context (slot, worker-ids, death
-  // count, supervisor log). Best-effort: hook failure never blocks the sweep.
-  if (deps.dispatchFleetHook) {
-    try {
-      await deps.dispatchFleetHook("on_circuit_trip", {
-        event: "on_circuit_trip",
-        runner: config.runner,
-        slot,
-        ...(state.pid !== null ? { pid: state.pid } : {}),
-        ...(workerIdsCsv.length > 0 ? { worker_ids: workerIdsCsv } : {}),
-        death_count: fastDeaths,
-        supervisor_log: work.supervisorLogPath,
-      });
-    } catch {
-      // best-effort
-    }
-  }
 
   if (work.workers.length === 0) return;
 
@@ -536,22 +519,6 @@ export async function pollStallDetector(
             ? now - Math.round(verdict.laneAgeMs / 1000)
             : now;
         slot.stallSinceEpoch = stallSince;
-        // Dispatch on_stall_detected on first detection. Best-effort.
-        if (deps.dispatchFleetHook) {
-          try {
-            await deps.dispatchFleetHook("on_stall_detected", {
-              event: "on_stall_detected",
-              runner: config.runner,
-              slot: i,
-              ...(slot.pid !== null ? { pid: slot.pid } : {}),
-              stall_since: stallSince,
-              idle_seconds:
-                verdict.laneAgeMs !== undefined ? Math.round(verdict.laneAgeMs / 1000) : 0,
-            });
-          } catch {
-            // best-effort
-          }
-        }
       }
       // Hard-reap escalation: candidacy alone is not death — gate the kill.
       const since = slot.stallSinceEpoch;
@@ -568,40 +535,18 @@ export async function pollStallDetector(
           cpuPct: snapshot.cpuPct,
         });
         if (decision === "kill") {
-          // Dispatch on_stall_reap as a veto gate: a non-zero exit from any
-          // command cancels the kill for this pass so a worker mid a long
-          // build/test is not reaped unfairly. Best-effort: a hook throw is
-          // treated as no-veto so the gate can never be silently disabled.
-          let vetoed = false;
-          if (deps.dispatchFleetHook) {
-            try {
-              const fleetResult = await deps.dispatchFleetHook("on_stall_reap", {
-                event: "on_stall_reap",
-                runner: config.runner,
-                slot: i,
-                ...(orchPid !== null ? { pid: orchPid } : {}),
-                idle_seconds: now - since,
-                stall_since: since,
-              });
-              vetoed = fleetResult.vetoed;
-            } catch {
-              // best-effort: hook throw → treat as no-veto
-            }
-          }
-          if (!vetoed) {
-            const info = deps.fs.resolveIterDir(i);
-            const usage = attemptUsage(slot, info);
-            await reapStalledSlot(
-              i,
-              slot,
-              deps,
-              config,
-              capped
-                ? { wallClockCapped: true, capSeconds: config.issueWallClockMaxS, usage }
-                : { usage },
-            );
-            reaped.push(i);
-          }
+          const info = deps.fs.resolveIterDir(i);
+          const usage = attemptUsage(slot, info);
+          await reapStalledSlot(
+            i,
+            slot,
+            deps,
+            config,
+            capped
+              ? { wallClockCapped: true, capSeconds: config.issueWallClockMaxS, usage }
+              : { usage },
+          );
+          reaped.push(i);
         }
       }
     } else if (slot.stalled) {

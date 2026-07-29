@@ -48,13 +48,11 @@ async function deps(cwd: string) {
     join(cwd, ".red", "tmp", "firehose.toonl"),
     join(cwd, ".red", "tmp", "state.toon"),
     "s1234",
-    "default",
     "claude",
     300,
     { cwd, repo: "reddb-io/red-skills" },
     "main",
     [],
-    {},
   );
 }
 

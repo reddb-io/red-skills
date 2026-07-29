@@ -15,18 +15,13 @@ import {
   createFileMergeDriverStore,
   createSingletonEventLane,
   releasePr,
-  fleetRegistryPath,
   readCastleHistoryRecords,
   readCastleLaneRecords,
-  readFleetProfile,
-  readFleetProfiles,
-  removeFleetProfile,
-  upsertFleetProfile,
-  parseFleetSelector,
+  parseWorkSelector,
+  PROJECT_SUPERVISOR_LANE,
   RUNNER_SPECS,
   detectRunner,
   type CastleLaneRecord,
-  type FleetProfile,
 } from "@reddb-io/red-castle/engine";
 import type { LivenessStatus } from "@reddb-io/red-castle";
 import type {
@@ -36,11 +31,9 @@ import type {
   HitlResolveInput,
   DailyReviewInput,
   EventsSinceInput,
-  FleetCreateInput,
-  FleetEditInput,
-  FleetNameInput,
-  FleetRegisterInput,
-  FleetStatusOutput,
+  ProjectStartInput,
+  ProjectResizeInput,
+  ProjectStatusOutput,
   GateRunInput,
   LandBranchInput,
   LogsInput,
@@ -809,14 +802,10 @@ async function waitStatusImpl(root: string, input: WaitStatusInput): Promise<unk
   return { id: input.id, status: "running", waits: active };
 }
 
-function registryPath(root: string): string {
-  return fleetRegistryPath(createEnginePaths(join(root, ".red")));
-}
-
 /**
- * Concretize a `@me` user facet on an MCP-supplied selector before it is
- * persisted or matched, so fleets.toonl and scoped queue previews always carry
- * a real login (D2: `@me` never survives past the dispatch boundary).
+ * Concretize a `@me` user facet on an MCP-supplied selector before it reaches a
+ * producer or a scoped queue preview, so every selector carries a real login
+ * (D2: `@me` never survives past the dispatch boundary).
  */
 async function concretizeSelectorUser<T extends { user?: string }>(
   root: string,
@@ -829,21 +818,8 @@ async function concretizeSelectorUser<T extends { user?: string }>(
   );
 }
 
-function profileForCreate(input: FleetCreateInput): FleetProfile {
-  return {
-    name: input.name,
-    runner: input.runner,
-    ...(input.selector ? { selector: input.selector } : {}),
-    ...(input.config ? { config: input.config } : {}),
-    ...(input.base ? { base: input.base } : {}),
-  };
-}
-
-async function fleetStatus(
-  root: string,
-  input: FleetNameInput,
-): Promise<FleetStatusOutput> {
-  const paths = afkPaths(root, input.name);
+async function projectStatus(root: string): Promise<ProjectStatusOutput> {
+  const paths = afkPaths(root);
   const now = Math.floor(Date.now() / 1_000);
   const config = resolveSupervisorConfig();
   const [fleet, monitor] = await Promise.all([
@@ -854,7 +830,6 @@ async function fleetStatus(
   // The snapshot below is read for slots, churn and runner only — never for a
   // second opinion on whether the supervisor is there.
   const supervisor = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
-    fleet: paths.fleet,
     heartbeatEpoch: fleet?.epoch ?? null,
     staleAfterS: config.supervisorStaleS,
     nowS: now,
@@ -872,29 +847,28 @@ async function fleetStatus(
     config.supervisorStaleS,
     config.progressStaleS,
   );
-  // Build a PID set for the slot-pid fallback: workers without a fleet stamp
-  // (legacy or pre-stamp) are attributed to this fleet if their pid appears in
-  // the supervisor's slot map. Workers with a stamp that differs from this fleet
-  // name go to the unattributed bucket even if their pid matches.
+  // Build a PID set for the slot-pid fallback: workers without a lane stamp
+  // (legacy or pre-stamp) are attributed to this project if their pid appears in
+  // the supervisor's slot map. Workers with a stamp for another lane go to the
+  // unattributed bucket even if their pid matches.
   const fleetPidSet = new Set(
     (fleet?.slotPids ?? []).map((sp) => sp.pid).filter((pid) => pid > 0),
   );
   const allLiveWorkers = monitor.workers.filter(
     (worker) => worker.pidLive === true || worker.live,
   );
-  function attributedToThisFleet(worker: (typeof allLiveWorkers)[number]): boolean {
-    const stampedFleet = worker.state.fleet;
+  function attributedToThisProject(worker: (typeof allLiveWorkers)[number]): boolean {
+    const stampedLane = worker.state.fleet;
     // Stamped workers: use the stamp as the definitive source of truth.
-    if (stampedFleet !== undefined) return stampedFleet === paths.fleet;
+    if (stampedLane !== undefined) return stampedLane === PROJECT_SUPERVISOR_LANE;
     // Legacy/unstamped workers: fall back to the supervisor's slot-pid map.
     return fleetPidSet.has(worker.state.pid);
   }
-  const liveWorkers = allLiveWorkers.filter(attributedToThisFleet);
-  const unattributedWorkers = allLiveWorkers.filter((w) => !attributedToThisFleet(w));
+  const liveWorkers = allLiveWorkers.filter(attributedToThisProject);
+  const unattributedWorkers = allLiveWorkers.filter((w) => !attributedToThisProject(w));
   const latestBundleVersion =
     fleet?.latestBundleVersion ?? readBuildInfo("dev").version;
   return {
-    fleet: paths.fleet,
     supervisor: {
       pid: supervisor.pid,
       alive: supervisor.alive,
@@ -942,45 +916,34 @@ async function fleetStatus(
       issue: String(worker.state.current.number),
       activity: worker.state.current.activity,
       origin: worker.state.origin ?? "afk",
-      fleet: worker.state.fleet ?? null,
     })),
   };
 }
 
-async function createFleet(
+/**
+ * Start this project's workers. There is no registry to write and no name to
+ * take: the runner, the work scope and the base branch ARE the request, handed
+ * straight to the supervisor that will apply them (ADR 0130).
+ */
+async function projectStart(
   root: string,
-  rawInput: FleetCreateInput,
+  rawInput: ProjectStartInput,
   concedeClaim: (issue: number, worker: { id: string; runner: string }) => Promise<void>,
 ) {
-  const input: FleetCreateInput = {
+  const input: ProjectStartInput = {
     ...rawInput,
     ...(rawInput.selector
       ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
       : {}),
   };
-  const path = registryPath(root);
-  const existing = await readFleetProfile(path, input.name);
-  const paths = afkPaths(root, input.name);
-  const running = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
-    fleet: paths.fleet,
-  });
+  const paths = afkPaths(root);
+  const running = await readSupervisorLiveness(paths.supervisorRuntimeDir);
   if (running.alive) {
-    if (existing) {
-      throw new Error(`fleet ${JSON.stringify(input.name)} already exists`);
-    }
-    // A live supervisor with NO registered profile is the create/edit desync
-    // trap (#2545): create says "already running", edit says "does not exist",
-    // and there is no MCP-only way out. Register the orphan profile so
-    // fleet_edit/fleet_status work, then refuse the duplicate launch.
-    await upsertFleetProfile(path, profileForCreate(input));
     throw new Error(
-      `fleet ${JSON.stringify(paths.fleet)} is already running; its missing registry profile ` +
-        `was registered from this request — use fleet_edit/fleet_status to operate it`,
+      "this project's workers are already running; use project_resize to re-aim them or project_status to read them",
     );
   }
 
-  const profile =
-    existing ?? (await upsertFleetProfile(path, profileForCreate(input)));
   const priorFleetState = await readFleetState(paths.fleetStatePath).catch(
     () => null,
   );
@@ -999,11 +962,10 @@ async function createFleet(
     pid = await spawnSupervisor({
       root,
       target: input.target,
-      runner: profile.runner,
-      base: profile.base,
-      fleet: profile.name,
-      passthrough: profile.selector
-        ? ["--selector", JSON.stringify(profile.selector)]
+      runner: input.runner,
+      ...(input.base !== undefined ? { base: input.base } : {}),
+      passthrough: input.selector
+        ? ["--selector", JSON.stringify(input.selector)]
         : [],
       adoptSlotPids: priorFleetState?.slotPids ?? [],
     });
@@ -1012,20 +974,12 @@ async function createFleet(
     pid = null;
   }
   if (pid === null) {
-    let rollbackConfirmed = false;
-    try {
-      const removed = await removeFleetProfile(path, profile.name);
-      rollbackConfirmed =
-        removed || (await readFleetProfile(path, profile.name)) === undefined;
-    } catch {
-      // The failure below must not claim that registry rollback succeeded.
-    }
     // Reap any workers the fast-dying supervisor dispatched before it could write
     // its pid file. Best-effort: swallow all errors so the reap never shadows the
     // real spawn error.
     await reapOrphanedFleetWorkers(
       paths.fleetStatePath,
-      afkPaths(root).tmpDir,
+      paths.tmpDir,
       concedeClaim,
     ).catch(() => undefined);
     let tail = "";
@@ -1043,7 +997,7 @@ async function createFleet(
           .join("\n");
       } catch {
         // The explicit no-output marker below still distinguishes an empty boot
-        // from a caller-visible but unexplained registry rollback.
+        // from a caller-visible but unexplained failure.
       }
     }
     // Best-effort diagnostic artifact: always leave a spawn-failure.toon when
@@ -1054,8 +1008,7 @@ async function createFleet(
         await mkdir(paths.supervisorRuntimeDir, { recursive: true });
         const doc: ToonValue = {
           kind: "spawn-failed",
-          fleet: profile.name,
-          runner: profile.runner,
+          runner: input.runner,
           error: spawnErr.message,
           ...(spawnErr.code ? { code: spawnErr.code } : {}),
           ...(spawnErr.syscall ? { syscall: spawnErr.syscall } : {}),
@@ -1069,46 +1022,51 @@ async function createFleet(
         // Diagnostic write must not shadow the real spawn error.
       }
     }
-    const rollback = rollbackConfirmed
-      ? "profile rolled back."
-      : "profile rollback was attempted but could not be confirmed.";
     if (spawnErr) {
       throw new Error(
-        `fleet ${JSON.stringify(profile.name)} failed to start: spawn failed: ${spawnErr.message}; ` +
-          `${rollback} diagnostic: .red/tmp/supervisors/${paths.fleet}/spawn-failure.toon`,
+        `this project's workers failed to start: spawn failed: ${spawnErr.message}; ` +
+          `diagnostic: .red/tmp/supervisors/${PROJECT_SUPERVISOR_LANE}/spawn-failure.toon`,
       );
     }
     const evidence = tail || "(no supervisor log output was captured)";
     throw new Error(
-      `fleet ${JSON.stringify(profile.name)} failed to start: supervisor pid file did not appear; ` +
-        `${rollback} log: .red/tmp/supervisors/${paths.fleet}/supervisor.log.toonl\n${evidence}`,
+      `this project's workers failed to start: supervisor pid file did not appear; ` +
+        `log: .red/tmp/supervisors/${PROJECT_SUPERVISOR_LANE}/supervisor.log.toonl\n${evidence}`,
     );
   }
-  return { status: "launched", profile, pid, target: input.target };
+  return {
+    status: "launched",
+    pid,
+    target: input.target,
+    runner: input.runner,
+    ...(input.selector ? { selector: input.selector } : {}),
+    ...(input.base !== undefined ? { base: input.base } : {}),
+  };
 }
 
-async function editFleet(root: string, rawInput: FleetEditInput) {
-  const input: FleetEditInput = {
+/**
+ * Re-aim this project's running workers. The directive carries the new width
+ * and runner to the live supervisor; with no registry there is nothing to
+ * persist, so a change that the supervisor cannot yet apply reads as pending
+ * rather than as saved.
+ */
+async function projectResize(root: string, rawInput: ProjectResizeInput) {
+  const input: ProjectResizeInput = {
     ...rawInput,
     ...(rawInput.selector
       ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
       : {}),
   };
-  const path = registryPath(root);
-  const existing = await readFleetProfile(path, input.name);
-  if (!existing)
-    throw new Error(`fleet ${JSON.stringify(input.name)} does not exist`);
-  const profile = await upsertFleetProfile(path, {
-    ...existing,
-    ...(input.runner !== undefined ? { runner: input.runner } : {}),
-    ...(input.selector !== undefined ? { selector: input.selector } : {}),
-    ...(input.config !== undefined ? { config: input.config } : {}),
-    ...(input.base !== undefined ? { base: input.base } : {}),
-  });
+  const paths = afkPaths(root);
+  const running = await readSupervisorLiveness(paths.supervisorRuntimeDir);
+  if (!running.alive) {
+    throw new Error(
+      "this project has no running workers to re-aim; use project_start to start them",
+    );
+  }
 
   let directive: "not-requested" | "written" = "not-requested";
   if (input.target !== undefined || input.runner !== undefined) {
-    const paths = afkPaths(root, profile.name);
     const state = await readFleetState(paths.fleetStatePath);
     const target = input.target ?? state?.target ?? state?.slotsTotal;
     if (target !== undefined) {
@@ -1121,7 +1079,14 @@ async function editFleet(root: string, rawInput: FleetEditInput) {
       directive = "written";
     }
   }
-  return { status: "edited", profile, directive };
+  return {
+    status: "resized",
+    directive,
+    ...(input.target !== undefined ? { target: input.target } : {}),
+    ...(input.runner !== undefined ? { runner: input.runner } : {}),
+    ...(input.selector ? { selector: input.selector } : {}),
+    ...(input.base !== undefined ? { base: input.base } : {}),
+  };
 }
 
 const LOGS_DEFAULT_LIMIT = 200;
@@ -1386,7 +1351,7 @@ export async function collectStatuslineAggregate(root: string) {
       collectStatuslineDocs(repoCtx).catch(() => undefined),
       collectStatuslineAfk(repoCtx).catch(() => null),
       collectStatuslineFleet(repoCtx).catch(() => undefined),
-      fleetStatus(root, {}).catch(() => null),
+      projectStatus(root).catch(() => null),
       workerVitals(root),
       readFederatedFleetView(root).catch(() => ({ hosts: [], total_busy: 0, total_free: 0, total_workers: 0 })),
     ]);
@@ -1457,31 +1422,6 @@ export async function collectStatuslineAggregate(root: string) {
 export type StatuslineAggregate = Awaited<
   ReturnType<typeof collectStatuslineAggregate>
 >;
-
-async function registerFleet(root: string, rawInput: FleetRegisterInput) {
-  const input: FleetRegisterInput = {
-    ...rawInput,
-    ...(rawInput.selector
-      ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
-      : {}),
-  };
-  const path = registryPath(root);
-  const paths = afkPaths(root, input.name);
-  const running = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
-    fleet: paths.fleet,
-  });
-  if (!running.alive) {
-    throw new Error(`fleet ${JSON.stringify(paths.fleet)} is not running`);
-  }
-  const profile = await upsertFleetProfile(path, {
-    name: paths.fleet,
-    runner: input.runner,
-    ...(input.selector ? { selector: input.selector } : {}),
-    ...(input.config ? { config: input.config } : {}),
-    ...(input.base ? { base: input.base } : {}),
-  });
-  return { status: "registered", profile, pid: running.pid };
-}
 
 const CURSOR_VERSION = 1;
 const CURSOR_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -1658,9 +1598,8 @@ export function createCastleMcpDependencies(
   operations: DevAfkMcpOperations = createDefaultDevAfkMcpOperations(root),
 ): CastleMcpDependencies {
   const baseDeps: CastleMcpDependencies = {
-    fleetList: () => readFleetProfiles(registryPath(root)),
-    fleetStatus: (input) => fleetStatus(root, input),
-    fleetCreate: async (input) => {
+    projectStatus: () => projectStatus(root),
+    projectStart: async (input) => {
       const concedeClaim = async (issue: number, worker: { id: string; runner: string }) => {
         try {
           const context = await resolveRepoContext(root);
@@ -1673,21 +1612,19 @@ export function createCastleMcpDependencies(
           // best-effort — never shadow the real spawn error
         }
       };
-      return createFleet(root, input, concedeClaim);
+      return projectStart(root, input, concedeClaim);
     },
-    fleetEdit: (input) => editFleet(root, input),
-    fleetStop: async (input) => {
+    projectResize: (input) => projectResize(root, input),
+    projectStop: async (input) => {
       const silent = new Writable({
         write(_chunk, _encoding, callback) {
           callback();
         },
       });
-      const result = await stopFleet(root, silent, input.name, {
+      return stopFleet(root, silent, {
         ...(input.force ? { force: true } : {}),
       });
-      return { fleet: input.name ?? "default", ...result };
     },
-    fleetRegister: (input) => registerFleet(root, input),
     logs: (input) => laneLogs(root, input),
     workerVitals: async (input) => {
       const records = await workerVitals(root, { live_only: input.live_only });
@@ -1719,7 +1656,7 @@ export function createCastleMcpDependencies(
       if (input?.selector) {
         const selector = await concretizeSelectorUser(
           root,
-          parseFleetSelector(input.selector),
+          parseWorkSelector(input.selector),
         );
         readyForAgent = readyForAgent.filter((c) => matchesSelector(c, selector ?? {}));
       }
