@@ -198,6 +198,8 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
         orphanTestRunners: [],
         protectedLiveWorkers: [],
         protectedLiveFeedback: [],
+        workerWorkspaces: [],
+        protectedLiveWorkspaces: [],
         refusedOutsideTmp: [],
         removals: [
           {
