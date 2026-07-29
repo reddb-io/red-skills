@@ -1,0 +1,292 @@
+/**
+ * statusline-render — the finished line, and nothing behind it.
+ *
+ * **The string is a pure function of the payload.** That purity is the whole
+ * mitigation for having two surfaces at all (ADR 0130 rule 10): a renderer that
+ * could reach for one extra fact — a directory listing, a clock, an environment
+ * variable — would be a second authority on a question the payload already
+ * answers, and the two surfaces would eventually describe different machines.
+ * Everything this function needs is an argument, so a test can prove the string
+ * the daemon serves is the string this function computes from the payload the
+ * daemon serves alongside it.
+ *
+ * **The default mode is quiet: only the local project's Workers.** The common
+ * case is one operator in one repository, and a line that listed every project
+ * by default would make the common case pay for the rare one. `global` lists
+ * every project's Workers and names the owner of each, because an anonymous
+ * Worker on a busy machine is the exact thing the mode exists to fix.
+ *
+ * **A crowded machine degrades to an aggregate rather than overflowing.** The
+ * statusline answers "who is using this machine and how much"; it is not the
+ * dashboard. When the Workers do not fit, the line drops to one entry per
+ * project, and when the projects do not fit it drops to the host total — losing
+ * detail on purpose, never losing the line.
+ */
+import type {
+  RedskilledStatuslinePayload,
+  RedskilledStatuslineProject,
+  RedskilledStatuslineWorker,
+} from "./statusline-payload.js";
+
+/** Which Workers the line is about. */
+export type RedskilledStatuslineMode = "local" | "global";
+
+/** How much detail survived the width and count budgets. */
+export type RedskilledStatuslineDetail = "workers" | "projects" | "host";
+
+export interface RedskilledStatuslineOptions {
+  readonly mode: RedskilledStatuslineMode;
+  /** The project this session belongs to; `null` when it declared none. */
+  readonly project: string | null;
+  /** How many Worker entries may be listed before the line drops to projects. */
+  readonly maxWorkers: number;
+  /** How many project entries may be listed before the line drops to the host. */
+  readonly maxProjects: number;
+  /** The hard ceiling in characters. The line never exceeds it. */
+  readonly maxWidth: number;
+  readonly separator: string;
+}
+
+/**
+ * What was rendered, and at what detail.
+ *
+ * `detail` is stated rather than inferred from the text: a consumer that had to
+ * detect degradation by counting separators would be parsing the rendered line,
+ * which is the failure this whole tool exists to remove.
+ */
+export interface RedskilledStatuslineRender {
+  readonly version: 1;
+  readonly line: string;
+  readonly mode: RedskilledStatuslineMode;
+  readonly project: string | null;
+  readonly detail: RedskilledStatuslineDetail;
+  /** True when the line lost detail to the width or the count budgets. */
+  readonly degraded: boolean;
+  readonly stale: boolean;
+  /** The instant of the payload this line was rendered from. */
+  readonly generated_at: string;
+}
+
+/** The defaults a project overrides in config, and a flag overrides again. */
+export const REDSKILLED_STATUSLINE_DEFAULTS: RedskilledStatuslineOptions = {
+  mode: "local",
+  project: null,
+  maxWorkers: 4,
+  maxProjects: 4,
+  maxWidth: 120,
+  separator: " · ",
+};
+
+/**
+ * The finished statusline. PURE — payload and options in, one line out.
+ *
+ * The line is built at the richest detail the budgets allow and then re-built
+ * one step poorer for as long as it does not fit. Rebuilding rather than
+ * trimming is deliberate: a trimmed line ends mid-fact, and a half-printed
+ * memory figure is worse than an honest aggregate.
+ */
+export function renderRedskilledStatusline(
+  payload: RedskilledStatuslinePayload,
+  options: RedskilledStatuslineOptions = REDSKILLED_STATUSLINE_DEFAULTS,
+): RedskilledStatuslineRender {
+  const workers = selectWorkers(payload, options);
+  const projects = selectProjects(payload, options);
+  const head = renderHead(payload, options, workers);
+
+  const ladder = detailLadder(options, workers, projects);
+  let chosen: { detail: RedskilledStatuslineDetail; line: string } = {
+    detail: "host",
+    line: head,
+  };
+  for (const detail of ladder) {
+    const line = compose(head, body(detail, options, workers, projects), options.separator);
+    chosen = { detail, line };
+    if (width(line) <= options.maxWidth) break;
+  }
+  // Even the host aggregate can outgrow a very narrow line; a clamp is the last
+  // resort and never the normal path, so it keeps the ellipsis visible.
+  const line = clamp(chosen.line, options.maxWidth);
+  // Degradation is measured against the richest detail this payload COULD have
+  // shown, not against the richest one the budgets allowed: a line that dropped
+  // the Workers because `max_workers` said so is degraded in the only sense a
+  // reader cares about — there is more to see than is on the line.
+  const richest: RedskilledStatuslineDetail = workers.length > 0 ? "workers" : "host";
+
+  return {
+    version: 1,
+    line,
+    mode: options.mode,
+    project: options.project,
+    detail: chosen.detail,
+    degraded: chosen.detail !== richest || line !== chosen.line,
+    stale: payload.staleness.stale,
+    generated_at: payload.generated_at,
+  };
+}
+
+/**
+ * The detail levels this render may use, richest first.
+ *
+ * A level whose count budget is already blown is never attempted: the budgets
+ * are the operator's declared taste, and honouring them only when the line
+ * happens to be long would make the setting mean nothing on a wide terminal.
+ */
+function detailLadder(
+  options: RedskilledStatuslineOptions,
+  workers: readonly RedskilledStatuslineWorker[],
+  projects: readonly RedskilledStatuslineProject[],
+): readonly RedskilledStatuslineDetail[] {
+  const ladder: RedskilledStatuslineDetail[] = [];
+  if (workers.length > 0 && workers.length <= options.maxWorkers) ladder.push("workers");
+  // The local mode holds one project by construction, so a per-project line
+  // would repeat the head verbatim. Only `global` has an aggregate worth a step.
+  if (options.mode === "global" && projects.length > 0 && projects.length <= options.maxProjects) {
+    ladder.push("projects");
+  }
+  ladder.push("host");
+  return ladder;
+}
+
+function body(
+  detail: RedskilledStatuslineDetail,
+  options: RedskilledStatuslineOptions,
+  workers: readonly RedskilledStatuslineWorker[],
+  projects: readonly RedskilledStatuslineProject[],
+): readonly string[] {
+  if (detail === "workers") return workers.map((worker) => renderWorker(worker, options));
+  if (detail === "projects") return projects.map(renderProject);
+  return [];
+}
+
+/**
+ * The Workers this line is about.
+ *
+ * The default mode keeps the session inside its own repository; a session that
+ * declared no project has nothing to filter on, and rather than guess it shows
+ * none — the head still carries the host total, so the line stays truthful.
+ */
+function selectWorkers(
+  payload: RedskilledStatuslinePayload,
+  options: RedskilledStatuslineOptions,
+): readonly RedskilledStatuslineWorker[] {
+  if (options.mode === "global") return payload.workers;
+  if (options.project == null) return [];
+  return payload.workers.filter((worker) => worker.project_label === options.project);
+}
+
+function selectProjects(
+  payload: RedskilledStatuslinePayload,
+  options: RedskilledStatuslineOptions,
+): readonly RedskilledStatuslineProject[] {
+  if (options.mode === "global") return payload.projects;
+  return payload.projects.filter((project) => project.project_label === options.project);
+}
+
+/**
+ * The head — the one part of the line that never degrades.
+ *
+ * Whatever else is dropped, "how much of this machine is in use" survives,
+ * because that is the question the statusline exists to answer.
+ */
+function renderHead(
+  payload: RedskilledStatuslinePayload,
+  options: RedskilledStatuslineOptions,
+  workers: readonly RedskilledStatuslineWorker[],
+): string {
+  const parts: string[] = [];
+  if (options.mode === "global") {
+    parts.push(`host ${payload.host.worker_count}w/${payload.host.project_count}p`);
+  } else {
+    parts.push(`${options.project ?? "project unknown"} ${workers.length}w`);
+  }
+  parts.push(memoryFigure(payload, options));
+  if (options.mode === "local" && workers.length === 0) parts.push("idle");
+  if (payload.staleness.stale) parts.push(stalenessMark(payload));
+  return parts.join(" ");
+}
+
+/**
+ * Observed memory over the host ceiling, or observed alone when it is lifted.
+ *
+ * The local mode reports its own project's share, because an operator reading a
+ * quiet line wants to know what *their* repository is spending; the host figure
+ * is one mode away.
+ */
+function memoryFigure(payload: RedskilledStatuslinePayload, options: RedskilledStatuslineOptions): string {
+  const observed = options.mode === "global"
+    ? payload.host.observed_rss_bytes
+    : payload.projects
+      .filter((project) => project.project_label === options.project)
+      .reduce((total, project) => total + project.observed_rss_bytes, 0);
+  const ceiling = payload.host.ceiling.memory_bytes;
+  if (options.mode === "global" && ceiling != null && ceiling > 0) {
+    return `${formatBytes(observed)}/${formatBytes(ceiling)}`;
+  }
+  return formatBytes(observed);
+}
+
+/** How old the answer is, in the shortest sentence that stays honest. */
+function stalenessMark(payload: RedskilledStatuslinePayload): string {
+  const age = payload.staleness.age_ms;
+  return age == null ? "!unmeasured" : `!stale ${Math.round(age / 1000)}s`;
+}
+
+/**
+ * One Worker. In `global`, the owning project rides on the entry itself.
+ *
+ * A separate "these belong to acme/widgets" grouping was rejected: the line has
+ * no vertical dimension to group in, so the owner has to travel with the Worker
+ * or it is not shown at all.
+ */
+function renderWorker(worker: RedskilledStatuslineWorker, options: RedskilledStatuslineOptions): string {
+  const name = options.mode === "global" ? `${worker.project_label}:${worker.worker_id}` : worker.worker_id;
+  const used = worker.vitals.rss_bytes;
+  // An unmeasured Worker says so. A zero here would read as an idle Worker, and
+  // "nothing measured it" and "it is using nothing" are opposite facts.
+  const usage = used == null
+    ? "?"
+    : worker.budget.bytes == null
+      ? formatBytes(used)
+      : `${formatBytes(used)}/${formatBytes(worker.budget.bytes)}`;
+  return `${name} ${usage}`;
+}
+
+function renderProject(project: RedskilledStatuslineProject): string {
+  return `${project.project_label} ${project.worker_count}w ${formatBytes(project.observed_rss_bytes)}`;
+}
+
+function compose(head: string, body: readonly string[], separator: string): string {
+  return [head, ...body].join(separator);
+}
+
+/** The visible width. One character is one column here — the line carries no ANSI. */
+function width(line: string): number {
+  return [...line].length;
+}
+
+function clamp(line: string, maxWidth: number): string {
+  if (maxWidth <= 0) return "";
+  const chars = [...line];
+  if (chars.length <= maxWidth) return line;
+  if (maxWidth === 1) return "…";
+  return `${chars.slice(0, maxWidth - 1).join("")}…`;
+}
+
+/**
+ * Bytes at statusline resolution: three significant characters, never more.
+ *
+ * Exactness is the payload's job. A line that read `1.234567G` would spend the
+ * width it does not have on precision nobody acts on.
+ */
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
+  const units = ["B", "K", "M", "G", "T"] as const;
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const rendered = value >= 100 || unit === 0 ? Math.round(value).toString() : value.toFixed(1).replace(/\.0$/, "");
+  return `${rendered}${units[unit]}`;
+}
