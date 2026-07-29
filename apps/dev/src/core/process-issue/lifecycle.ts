@@ -712,6 +712,19 @@ export async function processIssue(
       // observability only.
     }
   };
+  /** The ONE exit an exhausted Re-seed budget takes (#2732), whatever cause
+   * exhausted it: seal both projections on the same `blocked:validation` state
+   * and the same evidence, and leave the draft OPEN — a validation park is
+   * precisely when a human needs the diff. An attempt that never re-seeded has
+   * no trail and therefore nothing to seal: it parks as it always did. */
+  const parkReseedTrail = async (evidence: string): Promise<void> => {
+    if (!trail) return;
+    try {
+      await trail.park({ evidence });
+    } catch {
+      // observability only.
+    }
+  };
   /** The single Re-seed request path. Every caller that re-instructs the
    * implementer IN PLACE — same Worker, same Worktree, same branch — comes
    * through here: it checks the ceiling and the cause's sub-cap or reservation,
@@ -1344,7 +1357,10 @@ export async function processIssue(
       if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar))) {
         continue;
       }
-      if (!isInfra) notes += correctionBudgetNote();
+      if (!isInfra) {
+        notes += correctionBudgetNote();
+        await parkReseedTrail(validationText);
+      }
       return await terminalFailure(common, outcome, "feedback", {
         notes,
         validation: validationText,
@@ -1371,6 +1387,7 @@ export async function processIssue(
           continue;
         }
         bpNotes += correctionBudgetNote();
+        await parkReseedTrail(validationText);
         return await terminalFailure(common, "feedback-failed", "feedback", {
           notes: bpNotes,
           validation: validationText,
@@ -1391,6 +1408,7 @@ export async function processIssue(
     if (review.next === "park") {
       const validation = review.validation ?? "Blocking review findings remain.";
       await writeValidationSidecar(deps, input.attemptDir, [...validationSidecar, validation]);
+      await parkReseedTrail(validation);
       return await terminalFailure(
         common,
         "feedback-failed",
