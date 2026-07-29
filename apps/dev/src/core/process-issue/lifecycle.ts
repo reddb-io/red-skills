@@ -134,6 +134,8 @@ import {
   renderAdversarialReviewBlockerSummary,
   renderAdversarialReviewComment,
   resolveAdversarialReviewer,
+  type AdversarialReviewDecision,
+  type AdversarialReviewFinding,
   type AdversarialReviewFindings,
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
@@ -567,13 +569,6 @@ export async function processIssue(
   let noSourceDiffWarning: string | undefined;
   let currentHandoff = handoff;
   let correctionLedger: CorrectionLedger = EMPTY_CORRECTION_LEDGER;
-  let adversarialReviewCorrectionsUsed = 0;
-  let pendingAdversarialCorrection:
-    | { diff: string; findings: AdversarialReviewFindings; retry: number; cap: number }
-    | undefined;
-  let pendingAdversarialPark:
-    | { findings: AdversarialReviewFindings; cap: number }
-    | undefined;
   const scoutTextChunks: string[] = [];
   const agentEventSink: typeof deps.recordAgentEvent =
     input.runMode === "scout"
@@ -658,7 +653,8 @@ export async function processIssue(
     trigger: ReseedTrigger;
     /** The gate stage that blocked, for the two gate-shaped triggers. */
     gate?: "feedback" | "backpressure";
-    validation: string;
+    /** The gate tail. Absent on a review round, which carries findings instead. */
+    validation?: string;
     /** The raw `red.afk.validation.v1` sidecar lines behind `validation`, for
      * the failure signature that yields the history line's repeat count. */
     sidecar?: readonly string[];
@@ -668,6 +664,9 @@ export async function processIssue(
     driftEligible?: boolean;
     /** Tier escalation only — which tier failed and which one now runs. */
     tiers?: { from: string; to: string };
+    /** Review only — the blocking findings and the diff they were raised
+     * against, which become the review half of the outstanding state. */
+    review?: { summary: string; findings: readonly AdversarialReviewFinding[]; diff: string };
     /** The round's failure signature, when the caller already derived it to
      * decide something (the tier escalation does). Absent, it is derived here
      * from `sidecar` — one key either way. */
@@ -703,13 +702,26 @@ export async function processIssue(
     const gate = req.gate ?? "feedback";
     // The gate tail is outstanding state, not a round in a narrative: the newest
     // reading REPLACES the previous one, while anything the review left
-    // outstanding rides along untouched.
+    // outstanding rides along untouched. A review round updates the OTHER half
+    // by the same rule, so a still-red gate keeps its tail beside the findings.
     reseedOutstanding = noteReseedSignature(
-      withGateOutstanding(reseedOutstanding, { gate, validation: req.validation, drift }),
+      req.review
+        ? withReviewOutstanding(reseedOutstanding, req.review)
+        : withGateOutstanding(reseedOutstanding, { gate, validation: req.validation ?? "", drift }),
       req.signature ?? roundSignature(req.sidecar),
     );
     const gateSpend = reseedSpend.gate ?? 0;
-    if (req.trigger === "tier-escalation") {
+    if (req.trigger === "review-finding") {
+      const reviewSpend = reseedSpend.review ?? 0;
+      currentHandoff = composeReseed(
+        "adversarial-review-correction",
+        reviewReseedDirectives({ retry: reviewSpend, cap: reseedBudget.subCaps.review }),
+      );
+      deps.appendIterLog(
+        `🤖 ${reseedLane}: adversarial review found blocking issue(s); ` +
+          `correction retry ${reviewSpend}/${reseedBudget.subCaps.review}.`,
+      );
+    } else if (req.trigger === "tier-escalation") {
       currentHandoff = composeReseed(
         "tier-escalation",
         tierEscalationDirectives({
@@ -772,6 +784,116 @@ export async function processIssue(
     if (correctionLedger.cycles.length === 0) return "";
     if (!correctionBudgetExhausted(correctionLedger, gateSubCap)) return "";
     return ` Post-DONE gate-correction budget exhausted (${describeCorrectionLedger(correctionLedger, gateSubCap)}).`;
+  };
+  /** What the review stage decided, in the fold's own vocabulary plus what the
+   * lifecycle must do next. */
+  interface ReviewStageResult {
+    outcome: GateStageOutcome;
+    next: "proceed" | "reseeded" | "park" | "hook-aborted";
+    /** The park's blocker summary, present only on `park`. */
+    validation?: string;
+  }
+  /** A stage that could not run. It is SKIPPED, never failed: `gateVerdict`
+   * ignores a skipped stage, so infrastructure trouble in the reviewer degrades
+   * the gate instead of destroying machine-validated work (#2352). */
+  const skippedReviewStage: ReviewStageResult = {
+    outcome: { stage: "review", ok: true, skipped: true },
+    next: "proceed",
+  };
+  /**
+   * The gate fold's THIRD stage (ADR 0129, #2730). It reads the WORKTREE diff
+   * against the merge base — the branch as it actually stands, before any pull
+   * request exists — and reduces to one question: does anything here block?
+   *
+   * A blocking finding asks for a Re-seed through the single request path, which
+   * draws the RESERVED review round. Reserving it is the whole point: under the
+   * landing-path review this replaced, three gate corrections could burn the
+   * budget and the review's own round would never fire.
+   */
+  const runReviewStage = async (): Promise<ReviewStageResult> => {
+    const config = deps.adversarialReview;
+    if (!config?.enabled || !deps.extractAdversarialReview || !deps.postAdversarialReview) {
+      return skippedReviewStage;
+    }
+    // /go direct-PR skips review; /go no-mistakes and /afk run it.
+    if (isGoLane && !isPrePrPipelineActive(input.runMode, input.laneLabel)) return skippedReviewStage;
+    const readWorktreeDiff = deps.lookups.worktreeDiff;
+    if (!readWorktreeDiff) return skippedReviewStage;
+    let findings: AdversarialReviewFindings;
+    let decision: AdversarialReviewDecision;
+    let diff: string;
+    try {
+      diff = await readWorktreeDiff(workerBranch, baseRef);
+      const context = {
+        issueNumber: input.issue,
+        issueTitle: input.title,
+        issueBody: input.body,
+        diff,
+        base: baseRef,
+      };
+      const implementerTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
+      const reviewer = resolveAdversarialReviewer({
+        config,
+        implementer: {
+          runner: toAgentRunner(activeRunner),
+          model: implementerTier.model,
+          effort: implementerTier.effort,
+        },
+        taskClass: activeTaskClass,
+        resolveTier: deps.resolveTier,
+      });
+      // An incoherent (runner, model, effort) pin is corrected, never spawned:
+      // log every substitution so the operator sees which knob was overridden.
+      for (const notice of reviewer.notices ?? []) deps.appendIterLog(notice);
+      const reviews: AdversarialReviewFindings[] = [];
+      for (let i = 0; i < config.reviewerCount; i++) {
+        reviews.push(
+          await deps.extractAdversarialReview({
+            context,
+            runner: reviewer.runner,
+            model: reviewer.model,
+            effort: reviewer.effort,
+            maxIterations: config.maxIterations,
+          }),
+        );
+      }
+      findings = aggregateAdversarialReviewFindings(reviews, config.quorum);
+      decision = decideAdversarialReview(findings);
+      await deps.postAdversarialReview({
+        issue: input.issue,
+        findings,
+        body: renderAdversarialReviewComment(findings, decision),
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      deps.appendIterLog(`[adversarial-review] review stage skipped: ${reason}`);
+      deps.recordWorkerEvent?.("worker.review_degraded", {
+        issue: input.issue,
+        decision: "skipped",
+        reason,
+      });
+      return skippedReviewStage;
+    }
+    if (decision === "not-blocking") {
+      // A clean review clears the review half of the outstanding state: the
+      // findings a previous round carried are fixed, and re-instructing on them
+      // would send the implementer after work that is already done (#2728).
+      reseedOutstanding = withoutReviewOutstanding(reseedOutstanding);
+      return { outcome: { stage: "review", ok: true }, next: "proceed" };
+    }
+    const blocking = findings.findings.filter((finding) => finding.blocking);
+    const reseed = await requestReseed({
+      trigger: "review-finding",
+      review: { summary: findings.summary, findings: blocking, diff },
+      signature: failureSignature({ findings: blocking }),
+    });
+    if (reseed === "granted") return { outcome: { stage: "review", ok: false }, next: "reseeded" };
+    if (reseed === "hook-aborted") return { outcome: { stage: "review", ok: false }, next: "hook-aborted" };
+    // Exhausted parks — uniformly, with no cap-dependent branch that could land
+    // code carrying a known blocking finding.
+    const validation = renderAdversarialReviewBlockerSummary(findings, reseedBudget.subCaps.review);
+    deps.appendIterLog(`🤖 ${reseedLane}: ${validation} Parked to ready-for-human.`);
+    return { outcome: { stage: "review", ok: false }, next: "park", validation };
   };
   // Gate-green fast path (issue #2397): when a prior branch already cleared the
   // feedback gate, skip the agent entirely on re-claim and re-validate directly.
@@ -1220,6 +1342,29 @@ export async function processIssue(
     }
     validationSidecar = [...feedback.sidecar, ...backpressureSidecar];
     lastValidationScope = feedback.validationScope;
+    // The fold's third stage runs only once the earlier ones are green: the loop
+    // reaches here exactly when nothing before it blocked, which is what keeps
+    // the most expensive stage off a branch the cheap stages already rejected.
+    const review = await runReviewStage();
+    gateStages.push(review.outcome);
+    if (review.next === "reseeded") continue;
+    if (review.next === "hook-aborted") {
+      return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
+    }
+    if (review.next === "park") {
+      const validation = review.validation ?? "Blocking review findings remain.";
+      await writeValidationSidecar(deps, input.attemptDir, [...validationSidecar, validation]);
+      return await terminalFailure(
+        common,
+        "feedback-failed",
+        "feedback",
+        {
+          notes: "Blocking review findings remained after the Re-seed budget's reserved review round. The worker branch was not merged.",
+          validation,
+        },
+        { validationSummary: validation },
+      );
+    }
     // ONE verdict for the whole gate (ADR 0119): the stages accumulated above
     // fold into a single `ok` instead of three independent booleans a reader has
     // to reassemble. A backpressure stage that never ran is simply absent from
@@ -1263,91 +1408,6 @@ export async function processIssue(
       ...detail,
     });
   };
-  const runAdversarialReview = async (pr: number): Promise<"abort" | void> => {
-    const config = deps.adversarialReview;
-    if (!config?.enabled || !deps.extractAdversarialReview || !deps.postAdversarialReview) return;
-    // /go direct-PR skips adversarial review; /go no-mistakes and /afk run it.
-    if (input.laneLabel === LABEL_GO_LANE && !isPrePrPipelineActive(input.runMode, input.laneLabel)) return;
-    try {
-      const diff = await deps.mergeExec(["gh", "-R", input.repo, "pr", "diff", String(pr)]);
-      const context = {
-        issueNumber: input.issue,
-        issueTitle: input.title,
-        issueBody: input.body,
-        prNumber: pr,
-        diff: diff.code === 0 ? diff.stdout : "",
-      };
-      const implementerTier = resolveSpawnTier(deps, activeRunner, activeTaskClass);
-      const reviewer = resolveAdversarialReviewer({
-        config,
-        implementer: {
-          runner: toAgentRunner(activeRunner),
-          model: implementerTier.model,
-          effort: implementerTier.effort,
-        },
-        taskClass: activeTaskClass,
-        resolveTier: deps.resolveTier,
-      });
-      // An incoherent (runner, model, effort) pin is corrected, never spawned:
-      // log every substitution so the operator sees which knob was overridden.
-      for (const notice of reviewer.notices ?? []) deps.appendIterLog(notice);
-      const reviews: AdversarialReviewFindings[] = [];
-      for (let i = 0; i < config.reviewerCount; i++) {
-        reviews.push(
-          await deps.extractAdversarialReview({
-            context,
-            runner: reviewer.runner,
-            model: reviewer.model,
-            effort: reviewer.effort,
-            maxIterations: config.maxIterations,
-          }),
-        );
-      }
-      const findings = aggregateAdversarialReviewFindings(reviews, config.quorum);
-      // A clean review clears the review half of the outstanding state: the
-      // findings a previous round carried are fixed, and re-instructing on them
-      // would send the implementer after work that is already done (#2728).
-      if (!findings.findings.some((finding) => finding.blocking)) {
-        reseedOutstanding = withoutReviewOutstanding(reseedOutstanding);
-      }
-      const retry = adversarialReviewCorrectionsUsed + 1;
-      const decision = decideAdversarialReview(findings, retry, config.maxIterations);
-      await deps.postAdversarialReview({
-        pr,
-        issue: input.issue,
-        findings,
-        body: renderAdversarialReviewComment(findings, decision),
-      });
-      if (decision === "correct") {
-        pendingAdversarialCorrection = {
-          diff: diff.code === 0 ? diff.stdout : "",
-          findings,
-          retry,
-          cap: config.maxIterations,
-        };
-        return "abort";
-      }
-      if (decision === "park") {
-        pendingAdversarialPark = { findings, cap: config.maxIterations };
-        return "abort";
-      }
-    } catch (error) {
-      // An advisory pass has exactly three legal verdicts — pass, correct, park.
-      // Infrastructure failure of the reviewer itself is NONE of them: the
-      // attempt is already machine-validated here, so a crashed/non-zero
-      // reviewer CLI degrades to "pass with a logged warning" and the landing
-      // proceeds. Killing the run instead stranded three pushed branches and
-      // took every claude fleet worker down at landing (#2352).
-      const reason = error instanceof Error ? error.message : String(error);
-      deps.appendIterLog(`[adversarial-review] advisory pass failed, degraded to pass: ${reason}`);
-      deps.recordWorkerEvent?.("worker.review_degraded", {
-        issue: input.issue,
-        pr,
-        decision: "pass",
-        reason,
-      });
-    }
-  };
   markLandingPhase("gate");
   let landing = await doLanding(
     {
@@ -1366,9 +1426,10 @@ export async function processIssue(
       makeRebaseWorktree: deps.makeRebaseWorktree,
       removeRebaseWorktree: deps.removeRebaseWorktree,
       landLock: deps.landLock,
+      // Backpressure evidence only. Review left this callback for the gate fold
+      // (#2730): it now runs before the PR exists, on the worktree diff.
       onPrResolved: async (pr) => {
         await emitBackpressureReview(common, pr);
-        return await runAdversarialReview(pr);
       },
       postMergeGate: async (mergedTreeDir) => {
         const mergedFeedback = await runFeedback(deps.pnpm, {
@@ -1554,56 +1615,10 @@ export async function processIssue(
     }
   }
   if (!landing.ok) {
-    if (landing.reason === "adversarial-correction") {
-      const park = pendingAdversarialPark;
-      pendingAdversarialPark = undefined;
-      if (park) {
-        const validation = renderAdversarialReviewBlockerSummary(park.findings, park.cap);
-        deps.appendIterLog(`🤖 /afk: ${validation} Parked to ready-for-human.`);
-        return await terminalFailure(
-          common,
-          "feedback-failed",
-          "feedback",
-          {
-            notes: "Blocking adversarial review findings remained after the configured correction budget. The worker branch was not merged.",
-            validation,
-          },
-          { validationSummary: validation },
-        );
-      }
-      const correction = pendingAdversarialCorrection;
-      pendingAdversarialCorrection = undefined;
-      if (!correction) {
-        return await mergeFailed(common, "adversarial correction requested without captured findings", landing.locked);
-      }
-      adversarialReviewCorrectionsUsed = correction.retry;
-      roundOrdinal += 1;
-      reseedRound += 1;
-      const blocking = correction.findings.findings.filter((finding) => finding.blocking);
-      reseedOutstanding = noteReseedSignature(
-        withReviewOutstanding(reseedOutstanding, {
-          summary: correction.findings.summary,
-          findings: blocking,
-          diff: correction.diff,
-        }),
-        failureSignature({ findings: blocking }),
-      );
-      currentHandoff = composeReseed(
-        "adversarial-review-correction",
-        reviewReseedDirectives({ retry: correction.retry, cap: correction.cap }),
-      );
-      deps.appendIterLog(
-        `🤖 /afk: adversarial review found blocking issue(s); correction retry ${correction.retry}/${correction.cap}.`,
-      );
-      if (
-        !(await fireHook(
-          "pre_attempt",
-          hookContext({ issue, title: input.title, workspace: branch, runner: activeRunner, attempt_n: roundOrdinal }),
-        ))
-      ) {
-        return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
-      }
-      continue;
+    if (landing.reason === "pr-resolved-abort") {
+      // No pre-merge observer aborts any more — review left this path for the
+      // gate fold (#2730). A surviving abort is an unexplained landing refusal.
+      return await mergeFailed(common, "a pre-merge observer aborted the landing", landing.locked);
     }
     if (landing.reason === "trunk-diverged") {
       return await trunkDivergedBlocked(

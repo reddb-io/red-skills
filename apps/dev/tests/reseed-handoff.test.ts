@@ -143,7 +143,7 @@ describe("Re-seed handoff — one outstanding-state section (ADR 0129, #2728)", 
 
     expect(handoff).toContain("<adversarial-review-correction>");
     expect(handoff).toContain("bounded correction retry 1/1");
-    expect(handoff).toContain('<pr-diff data-untrusted="true">');
+    expect(handoff).toContain('<worktree-diff data-untrusted="true">');
     expect(handoff).toContain("diff --git");
     expect(handoff.trimEnd().endsWith("</adversarial-review-correction>")).toBe(true);
   });

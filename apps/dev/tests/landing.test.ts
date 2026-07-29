@@ -32,7 +32,7 @@ describe("doLanding — happy paths", () => {
   it("unlocked + explicit PR-resolved abort → stops before admin-merge", async () => {
     const h = harness({ locked: false, onPrResolvedAbort: true });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "adversarial-correction", locked: false, prNumber: 42 });
+    expect(r).toEqual({ ok: false, reason: "pr-resolved-abort", locked: false, prNumber: 42 });
     expect(joined(h.mergeCalls).some((c) => c.includes("pr merge"))).toBe(false);
   });
 

@@ -102,20 +102,30 @@ export function resolveReseedBudget(input: ResolveReseedBudgetInput): ReseedBudg
   return input.runMode === "no-mistakes" ? GO_NO_MISTAKES_RESEED_BUDGET : GO_RESEED_BUDGET;
 }
 
-/** What asked for a Re-seed round. A closed vocabulary of three: a gate stage
- * blocked the work, a DONE arrived with no diff to accept, or a repeated failure
- * bought a higher model tier. The LANE is not a trigger — it is a budget
- * profile, which is why it appears in {@link ReseedBudget} and not here. */
-export type ReseedTrigger = "gate-stage" | "no-diff-done" | "tier-escalation";
+/** What asked for a Re-seed round. A closed vocabulary of four: a gate stage
+ * blocked the work, a DONE arrived with no diff to accept, a repeated failure
+ * bought a higher model tier, or the fold's review stage raised a blocking
+ * finding. The LANE is not a trigger — it is a budget profile, which is why it
+ * appears in {@link ReseedBudget} and not here. */
+export type ReseedTrigger = "gate-stage" | "no-diff-done" | "tier-escalation" | "review-finding";
 
-export const RESEED_TRIGGERS: readonly ReseedTrigger[] = ["gate-stage", "no-diff-done", "tier-escalation"];
+export const RESEED_TRIGGERS: readonly ReseedTrigger[] = [
+  "gate-stage",
+  "no-diff-done",
+  "tier-escalation",
+  "review-finding",
+];
 
 /** Which sub-cap a trigger draws from. A no-diff DONE is a gate rejection — the
  * gate refused to accept the completion claim — so it shares the gate's share.
  * A tier escalation draws its OWN round: charging it to the gate is what muted
- * every subsequent gate correction (ADR 0129, defect 1). */
+ * every subsequent gate correction (ADR 0129, defect 1). A blocking review
+ * finding draws the RESERVED review round, which gate churn cannot consume — the
+ * starvation defect (#2730). */
 export function reseedTriggerCause(trigger: ReseedTrigger): ReseedCause {
-  return trigger === "tier-escalation" ? "tier" : "gate";
+  if (trigger === "tier-escalation") return "tier";
+  if (trigger === "review-finding") return "review";
+  return "gate";
 }
 
 /** Fold the operator's configured gate cap into a lane profile. The lane owns

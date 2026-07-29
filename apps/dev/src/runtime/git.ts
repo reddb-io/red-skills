@@ -478,6 +478,19 @@ export async function changedFiles(ctx: GitContext, branch: string, base: string
   return r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
+/**
+ * The worktree diff of <branch> against the merge base (git diff base...branch).
+ *
+ * This is what the gate fold's review stage reads (#2730): the stage runs BEFORE
+ * a pull request exists, so `gh pr diff` has nothing to answer with. A failing
+ * git call yields the empty string, which the caller reads as "no diff to
+ * review" and skips the stage rather than reviewing nothing.
+ */
+export async function worktreeDiff(ctx: GitContext, branch: string, base: string): Promise<string> {
+  const r = await runGit(ctx, ["diff", `${base}...${branch}`]);
+  return r.code === 0 ? r.stdout : "";
+}
+
 /** How many base commits to name when reporting stale-base drift. Enough to
  * recognise a release bump plus its neighbours; more would just bloat the
  * handoff a correction cycle carries. */

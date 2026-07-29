@@ -412,47 +412,24 @@ describe("config", () => {
     expect(aggregated.findings.find((finding) => finding.body === "nit")?.blocking).toBe(false);
   });
 
-  it("retries only blocking adversarial review findings within the configured cap (#2208)", () => {
+  it("reduces the review verdict to blocking / not-blocking, with no cap branch (#2730)", () => {
+    // The retired third value encoded "blocking, but the cap says land anyway" —
+    // the branch that let the documented default budget merge code carrying a
+    // known blocking finding. There is nowhere left for a cap to enter: the
+    // budget lives in the Re-seed budget, which parks uniformly.
     expect(
-      decideAdversarialReview(
-        {
-          summary: "blocking issue found",
-          findings: [{ path: "src/a.ts", line: 1, body: "bug", blocking: true }],
-        },
-        1,
-        1,
-      ),
-    ).toBe("correct");
+      decideAdversarialReview({
+        summary: "blocking issue found",
+        findings: [{ path: "src/a.ts", line: 1, body: "bug", blocking: true }],
+      }),
+    ).toBe("blocking");
     expect(
-      decideAdversarialReview(
-        {
-          summary: "nit only",
-          findings: [{ path: "src/a.ts", line: 1, body: "style", blocking: false }],
-        },
-        1,
-        1,
-      ),
-    ).toBe("pass");
-    expect(
-      decideAdversarialReview(
-        {
-          summary: "cap exhausted",
-          findings: [{ path: "src/a.ts", line: 1, body: "bug", blocking: true }],
-        },
-        2,
-        1,
-      ),
-    ).toBe("pass");
-    expect(
-      decideAdversarialReview(
-        {
-          summary: "raised cap exhausted",
-          findings: [{ path: "src/a.ts", line: 1, body: "bug", blocking: true }],
-        },
-        3,
-        2,
-      ),
-    ).toBe("park");
+      decideAdversarialReview({
+        summary: "nit only",
+        findings: [{ path: "src/a.ts", line: 1, body: "style", blocking: false }],
+      }),
+    ).toBe("not-blocking");
+    expect(decideAdversarialReview({ summary: "clean", findings: [] })).toBe("not-blocking");
   });
 
   it("folds the namespaced `plugins.dev.lock.primary-branch` onto `dev.lock.primary-branch`", () => {
