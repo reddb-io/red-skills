@@ -57,6 +57,10 @@ export interface Trace {
   sidecarWrites: Array<{ path: string; lines: string[] }>;
   /** Non-blocking backpressure evidence reviews posted via the #1279 seam. */
   backpressureReviews: Array<{ pr: number; body: string }>;
+  /** Re-seed trail comments POSTED on the issue, with their assigned ids (#2731). */
+  trailComments: Array<{ issue: number; body: string; id: number }>;
+  /** Re-seed trail comments EDITED in place — one entry per round after the first. */
+  trailCommentEdits: Array<{ commentId: number; body: string }>;
   /** Review verdicts posted by the gate fold's third stage, pre-PR (#2730). */
   adversarialReviews: Array<{ issue: number; body: string; findings: AdversarialReviewFindings }>;
   adversarialReviewContexts: Array<{
@@ -309,6 +313,8 @@ export function harness(opts: HarnessOptions = {}): {
     ensuredLabels: [],
     sidecarWrites: [],
     backpressureReviews: [],
+    trailComments: [],
+    trailCommentEdits: [],
     adversarialReviews: [],
     adversarialReviewContexts: [],
     worktreeDiffCalls: [],
@@ -331,6 +337,9 @@ export function harness(opts: HarnessOptions = {}): {
   // Flipped true once the conflict resolver dispatch runs; the mergeExec
   // verification reads above key off it to model "the agent resolved the merge".
   let mergeResolved = false;
+  // Whether a pull request exists for the attempt branch. Landing opens one when
+  // no Re-seed minted a draft first; both go through `gh pr create`.
+  let prOpen = false;
   let pnpmCalls = 0;
   let changedFilesCalls = 0;
 
@@ -472,6 +481,18 @@ export function harness(opts: HarnessOptions = {}): {
         return true;
       },
     },
+    // The Re-seed trail's Issue half (#2731): one comment, then edits in place.
+    reseedTrailGh: {
+      async postComment(issue, body) {
+        const id = 7000 + trace.trailComments.length;
+        trace.trailComments.push({ issue, body, id });
+        return id;
+      },
+      async editComment(commentId, body) {
+        trace.trailCommentEdits.push({ commentId, body });
+        return true;
+      },
+    },
     mergeExec: async (argv) => {
       trace.mergeCalls.push([...argv]);
       const j = argv.join(" ");
@@ -487,10 +508,15 @@ export function harness(opts: HarnessOptions = {}): {
       if (j.includes("merge-base --is-ancestor origin/")) {
         return { code: 1, stdout: "", stderr: "" };
       }
-      // landPr reuses an open PR via `gh pr list`; reply with a number so it
-      // resolves without a create round-trip.
+      // `gh pr list` is the ONE reuse probe every PR path shares (#2731): it
+      // answers empty until a PR has actually been created, so a test can tell
+      // a lazily-minted draft from a landing that opened its own.
+      if (argv.includes("pr") && argv.includes("create")) {
+        prOpen = true;
+        return { code: 0, stdout: "", stderr: "" };
+      }
       if (argv.includes("pr") && argv.includes("list")) {
-        return { code: 0, stdout: "42\n", stderr: "" };
+        return { code: 0, stdout: prOpen ? "42\n" : "", stderr: "" };
       }
       if (argv.includes("pr") && argv.includes("diff")) {
         return {
