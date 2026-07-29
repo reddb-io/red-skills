@@ -38,12 +38,11 @@ plugins:
             model: gpt-5.6-sol   # design/routing — grouped with coding
             effort: high
     # Adversarial review (ADR 0110, Spec #2205 — all slices landed 2026-07-19).
-    # Folds to `review.*`. Bounded by design at this setting:
-    #   decideAdversarialReview -> no blocking findings = "pass";
-    #   blocking + iteration <= cap = "correct" (one re-seed);
-    #   exhausted + cap < 2 = "pass". With max_iterations 1 it can NEVER park,
-    #   so the worst case is one extra correction round and the PR still lands.
-    #   Raising max_iterations to 2+ enables parking to ready-for-human.
+    # Folds to `review.*`. Review is the gate fold's third stage (ADR 0129): a
+    # blocking finding draws the RESERVED review round of the Re-seed budget, and
+    # exhaustion parks `ready-for-human` + `blocked:validation` uniformly — the
+    # old `cap < 2` cliff that landed known blocking findings is gone.
+    # `max_iterations` now bounds only the reviewer agent's own loop.
     review:
       # Maintainer decision 2026-07-22: review OFF in this repo — the extra
       # bounded round was still costing wall-clock on every landing during the
