@@ -19,6 +19,13 @@
  */
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import {
+  jobObjectsUnavailable,
+  loadJobObjectBinding,
+  planJobLimits,
+  type RedskilledJobLimits,
+  type RedskilledJobObjectReach,
+} from "./job-object.js";
 
 /** Env kill-switch: `REDSKILLED_PLACEMENT=off` launches unisolated — loudly. */
 export const REDSKILLED_PLACEMENT_ENV = "REDSKILLED_PLACEMENT";
@@ -33,6 +40,14 @@ export interface WorkerPlacementProbes {
   readonly systemdRun: string | null;
   /** True when a systemd `--user` session is reachable. */
   readonly userSession: boolean;
+  /**
+   * Whether Job Objects are reachable here, and when they are not, why.
+   *
+   * A reason rather than a flag: the Windows backend degrades to the sampling
+   * floor *explicitly*, and a warning that could only say "unavailable" would be
+   * the silent downgrade this field exists to prevent.
+   */
+  readonly jobObjects: RedskilledJobObjectReach;
 }
 
 /**
@@ -43,7 +58,14 @@ export interface WorkerPlacementProbes {
  * an unisolated launch is never silent, however it came to be one.
  */
 export interface RedskilledPlacementTarget {
-  readonly isolation: "transient-unit" | "inherit";
+  /**
+   * `transient-unit` and `job-object` both mean "isolate this Worker"; they name
+   * the backend a client EXPECTS, never one the daemon can be argued into. The
+   * host decides which backend exists, so a client asking for a transient unit
+   * on Windows gets a Job Object rather than a refusal — the answer to "isolate
+   * me" must not depend on the client guessing the platform right.
+   */
+  readonly isolation: "transient-unit" | "job-object" | "inherit";
   readonly unit_prefix?: string;
 }
 
@@ -54,15 +76,33 @@ export interface RedskilledWorkerBudget {
   readonly cpu_weight?: number;
 }
 
+/**
+ * Which backend a plan resolved to.
+ *
+ * `none` is a first-class answer, not an absent one: an unisolated launch is a
+ * decision the host made, and it is read alongside its warning.
+ */
+export type WorkerPlacementBackend = "transient-unit" | "job-object" | "none";
+
+/** The Job Object a Windows plan asks for. The handle itself is minted at launch. */
+export interface WorkerJobObjectPlan {
+  readonly name: string;
+  readonly limits: RedskilledJobLimits;
+}
+
 export interface WorkerPlacementPlan {
-  /** True when the Worker runs inside a transient unit of its own. */
+  /** True when the Worker runs inside a resource group of its own. */
   readonly isolated: boolean;
+  /** The backend that isolated it, or `none`. Always set. */
+  readonly backend: WorkerPlacementBackend;
   readonly command: string;
   readonly args: readonly string[];
   /** The working directory for the spawn itself; unset when the unit carries it. */
   readonly cwd?: string;
-  /** The transient unit name, only when isolated. */
+  /** The transient unit name, only under the `transient-unit` backend. */
   readonly unit?: string;
+  /** The Job Object to mint and assign this Worker to, only under `job-object`. */
+  readonly job?: WorkerJobObjectPlan;
   /**
    * Why isolation was skipped, and what the caller now carries instead. ALWAYS
    * set when `isolated` is false.
@@ -73,19 +113,29 @@ export interface WorkerPlacementPlan {
 }
 
 /**
- * Probe the host for transient-unit support.
+ * Probe the host for the backend it can actually offer.
  *
  * The systemd `--user` session is proven by its private socket under
- * `XDG_RUNTIME_DIR`, so nothing is spawned on the launch path to find out.
+ * `XDG_RUNTIME_DIR`, so nothing is spawned on the launch path to find out; the
+ * Windows arm loads the N-API addon, which is the only way to know whether the
+ * native reach this host was shipped with is really there.
  */
 export function detectWorkerPlacementProbes(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): WorkerPlacementProbes {
-  if (platform !== "linux") return { platform, systemdRun: null, userSession: false };
+  if (platform === "win32") {
+    return { platform, systemdRun: null, userSession: false, jobObjects: loadJobObjectBinding({ platform }) };
+  }
+  const noJobObjects = jobObjectsUnavailable(
+    `Job Object placement is the Windows backend (platform=${platform}), so there is no native reach to load here`,
+  );
+  if (platform !== "linux") {
+    return { platform, systemdRun: null, userSession: false, jobObjects: noJobObjects };
+  }
   const runtimeDir = (env.XDG_RUNTIME_DIR ?? "").trim();
   const userSession = runtimeDir !== "" && existsSync(join(runtimeDir, "systemd", "private"));
-  return { platform, systemdRun: which("systemd-run", env), userSession };
+  return { platform, systemdRun: which("systemd-run", env), userSession, jobObjects: noJobObjects };
 }
 
 /** True unless the env kill-switch declines isolation for this host. */
@@ -101,6 +151,21 @@ export function placementEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
  * Both identifiers are opaque labels the client chose, so they are slugified
  * rather than parsed — the daemon never learns what a project label means.
  */
+/**
+ * The Job Object name: `<prefix>-<project>-<worker>`.
+ *
+ * The same slugified pair as the unit name, without the `.service` suffix — a
+ * Job Object is not a unit and naming it like one would invite a reader to look
+ * for it in `systemctl`.
+ */
+export function workerJobObjectName(
+  projectLabel: string,
+  workerId: string,
+  prefix: string = DEFAULT_WORKER_UNIT_PREFIX,
+): string {
+  return workerUnitName(projectLabel, workerId, prefix).replace(/\.service$/, "");
+}
+
 export function workerUnitName(
   projectLabel: string,
   workerId: string,
@@ -142,6 +207,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
 
   const unisolated = (warning: string): WorkerPlacementPlan => ({
     isolated: false,
+    backend: "none",
     command: opts.command,
     args,
     cwd: opts.workspacePath,
@@ -157,6 +223,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
   if (opts.enabled === false) {
     return unisolated(`worker isolation disabled by ${REDSKILLED_PLACEMENT_ENV}: the Worker is charged to the daemon's own resource group`);
   }
+  if (opts.probes.platform === "win32") return planJobObjectPlacement(opts, args, declaredBudget, unisolated);
   if (opts.probes.platform !== "linux") {
     return unisolated(`transient-unit placement is the Linux backend (platform=${opts.probes.platform}): the Worker is charged to the daemon's own resource group`);
   }
@@ -186,9 +253,54 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
 
   return {
     isolated: true,
+    backend: "transient-unit",
     unit,
     command: opts.probes.systemdRun,
     args: [...unitArgs, "--", opts.command, ...args],
+  };
+}
+
+/**
+ * The Windows arm: a Job Object carrying the budget, with kill-on-close.
+ *
+ * Unlike the Linux backend, the argv is UNCHANGED — Windows has no launcher to
+ * wrap the command in, so the Worker is spawned normally and assigned to its job
+ * at birth. That is why the plan carries the job as data rather than as
+ * arguments, and why `cwd` stays the daemon's job here: there is no unit to hand
+ * the workspace to.
+ *
+ * With native reach missing the Worker still launches, and the plan says the
+ * sampling floor is now the only ceiling. That degradation is the whole reason
+ * the floor is uniform across backends (ADR 0130 rule 4).
+ */
+function planJobObjectPlacement(
+  opts: PlanWorkerPlacementOptions,
+  args: readonly string[],
+  declaredBudget: boolean,
+  unisolated: (warning: string) => WorkerPlacementPlan,
+): WorkerPlacementPlan {
+  const reach = opts.probes.jobObjects;
+  if (!reach.available) {
+    return unisolated(
+      `Job Object placement unavailable: ${reach.reason}. The Worker is charged to the daemon's own resource group ` +
+        "and the daemon's RSS sampling floor is the only remaining ceiling",
+    );
+  }
+  const limits = planJobLimits(opts.budget);
+  const name = workerJobObjectName(opts.projectLabel, opts.workerId, opts.target?.unit_prefix);
+  return {
+    isolated: true,
+    backend: "job-object",
+    command: opts.command,
+    args: [...args],
+    cwd: opts.workspacePath,
+    job: { name, limits },
+    // A budget the job could not carry is named here for the same reason an
+    // unisolated launch is: the floor still holds it, and nobody should have to
+    // discover that from the absence of a limit.
+    ...(declaredBudget && limits.note != null
+      ? { budgetWarning: `${limits.note}; the daemon's RSS sampling floor is the ceiling for that budget` }
+      : {}),
   };
 }
 

@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "NODE_OPTIONS=--max-old-space-size=4096 vitest run",
     "build": "pnpm run typecheck",
+    "build:native": "node-gyp rebuild --directory=native",
     "serve": "tsx src/cli.ts serve"
   },
   "dependencies": {

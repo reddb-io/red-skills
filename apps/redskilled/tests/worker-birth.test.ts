@@ -146,6 +146,7 @@ describe("the daemon accepts the workspace path as given", () => {
     platform: "linux",
     systemdRun: "/usr/bin/systemd-run",
     userSession: true,
+    jobObjects: { available: false, reason: "not Windows" },
   };
 
   it("never reads a repository marker to decide where the Worker runs", () => {
@@ -179,7 +180,12 @@ describe("the daemon accepts the workspace path as given", () => {
     // directory a client named.
     const probes = detectWorkerPlacementProbes({ PATH: "", XDG_RUNTIME_DIR: "" }, "linux");
 
-    expect(probes).toEqual({ platform: "linux", systemdRun: null, userSession: false });
+    expect(probes).toEqual({
+      platform: "linux",
+      systemdRun: null,
+      userSession: false,
+      jobObjects: { available: false, reason: expect.stringContaining("Windows backend") },
+    });
   });
 
   it("rejects a spec with no workspace at all rather than inventing one", () => {
