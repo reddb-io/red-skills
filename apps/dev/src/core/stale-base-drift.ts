@@ -1,8 +1,9 @@
 // stale-base-drift — CAUSE-AWARE accounting for post-DONE machine-gate failures
 // (issue #2711).
 //
-// The post-DONE correction budget (`RED_GO_VERIFY_RETRIES` for `/go`,
-// `RED_AFK_STALL_CONVERGENCE_BUDGET` for `/afk`) used to count ATTEMPTS, not
+// The post-DONE correction budget — the gate share of the Re-seed budget
+// (`RED_GO_VERIFY_RETRIES` for `/go`, `RED_RESEED_GATE_BUDGET` for `/afk`) — used
+// to count ATTEMPTS, not
 // CAUSES. That is the whole defect: the gate runs in a feedback worktree rebased
 // onto the live base, so when the base moves under a run — most sharply on a
 // `chore(release): version packages` bump, which rewrites every generated
