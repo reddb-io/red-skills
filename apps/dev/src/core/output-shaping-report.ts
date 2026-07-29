@@ -1,7 +1,8 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
-import { parseStateDocument } from "./state.js";
+import { WORKER_STATE_FILENAME } from "./state.js";
+import { readWorkerStateDocument } from "./worker-state-reader.js";
 import type { OutputShapingVariant } from "./output-shaping.js";
 
 export interface OutputShapingSample {
@@ -31,18 +32,16 @@ export function collectOutputShapingSamples(tmpDir: string): OutputShapingSample
   const states = listStateFiles(join(tmpDir, "workers"));
   const samples: OutputShapingSample[] = [];
   for (const path of states) {
-    try {
-      const state = parseStateDocument(readFileSync(path, "utf8"));
-      const variant = state.current.output_shaping_variant;
-      if (variant !== "steered" && variant !== "holdout") continue;
-      samples.push({
-        issue: state.current.number,
-        variant,
-        output_tokens: state.current.output_tokens ?? 0,
-      });
-    } catch {
-      // Ignore unreadable or malformed historical state files.
-    }
+    // Unreadable or malformed historical state files read as null and are skipped.
+    const state = readWorkerStateDocument(path);
+    if (state === null) continue;
+    const variant = state.current.output_shaping_variant;
+    if (variant !== "steered" && variant !== "holdout") continue;
+    samples.push({
+      issue: state.current.number,
+      variant,
+      output_tokens: state.current.output_tokens ?? 0,
+    });
   }
   return samples;
 }
@@ -58,7 +57,7 @@ function listStateFiles(dir: string): string[] {
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) files.push(...listStateFiles(path));
-    else if (entry.isFile() && entry.name === "afk.state.toon") files.push(path);
+    else if (entry.isFile() && entry.name === WORKER_STATE_FILENAME) files.push(path);
   }
   return files;
 }

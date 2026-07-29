@@ -261,6 +261,27 @@ function verdictToLiveness(v: LivenessVerdict): WorkerLivenessVerdict {
 }
 
 /**
+ * Read ONE Worker state document into its parsed {@link AfkState}, or `null`
+ * when the file is missing, unreadable, or fails the schema. This is the seam
+ * every consumer that only wants the document — not the liveness-tagged record
+ * {@link readWorkerState} builds — routes through, so the read/decode pair is
+ * spelled exactly once: no consumer reads the bytes and parses them privately.
+ */
+export function readWorkerStateDocument(path: string): AfkState | null {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    return parseStateDocument(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read and normalize ONE `afk.state.toon`. Synchronous so the supervisor reaper
  * can call it inside its sync closures. Returns `null` when the file is missing,
  * unreadable, not valid JSON, or fails the schema — the safe value every caller
@@ -270,18 +291,9 @@ function verdictToLiveness(v: LivenessVerdict): WorkerLivenessVerdict {
  * path.
  */
 export function readWorkerState(path: string, opts: WorkerStateReadOpts = {}): WorkerStateRecord | null {
-  let text: string;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-  let state: AfkState;
-  try {
-    state = parseStateDocument(text);
-  } catch {
-    return null;
-  }
+  const parsed = readWorkerStateDocument(path);
+  if (parsed === null) return null;
+  const state: AfkState = parsed;
   const nowMs = opts.nowMs ?? Date.now();
 
   // Liveness lane recency — injected directly in tests, read from disk otherwise.

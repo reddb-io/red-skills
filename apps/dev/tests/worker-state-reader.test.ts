@@ -1,10 +1,17 @@
 import { mkdtemp, mkdir, utimes, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import { decode, encode } from "@reddb-io/toon";
-import { readWorkerState, readWorkerStates, readAllWorkerStates, isRenderableLive } from "../src/core/worker-state-reader.js";
-import { initStateSync } from "../src/core/state.js";
+import {
+  readWorkerState,
+  readWorkerStateDocument,
+  readWorkerStates,
+  readAllWorkerStates,
+  isRenderableLive,
+} from "../src/core/worker-state-reader.js";
+import { initStateSync, WORKER_STATE_FILENAME, workerStatePath } from "../src/core/state.js";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 
 const NOW = Date.UTC(2026, 5, 22, 12, 0, 0);
@@ -436,5 +443,45 @@ describe("worker-state-reader", () => {
       const dead = readWorkerState(deadPath, { nowMs: NOW, laneRecencyMs: LANE_STALE_MS, kill: () => false });
       expect(dead!.renderableLive).toBe(false);
     });
+  });
+});
+
+describe("readWorkerStateDocument", () => {
+  it("names the Worker state file once, for every consumer", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wsd-name-"));
+    expect(WORKER_STATE_FILENAME).toBe("afk.state.toon");
+    expect(workerStatePath(dir)).toBe(join(dir, WORKER_STATE_FILENAME));
+  });
+
+  it("reads a TOON document through the single owning parse path", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wsd-toon-"));
+    const path = workerStatePath(dir);
+    initStateSync(path, { worker_id: "wZZZZ", pid: 77, "current.number": 2783 });
+
+    const state = readWorkerStateDocument(path);
+    expect(state?.worker_id).toBe("wZZZZ");
+    expect(state?.current.number).toBe(2783);
+    // The on-disk document is TOON, never a JSON serialization.
+    const text = readFileSync(path, "utf8");
+    expect(() => JSON.parse(text)).toThrow();
+    expect(decode(text)).toMatchObject({ worker_id: "wZZZZ" });
+  });
+
+  it("still reads a pre-migration JSON document", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wsd-json-"));
+    const path = workerStatePath(dir);
+    await writeFile(path, JSON.stringify({ worker_id: "wLEGACY", current: { number: 7 } }), "utf8");
+
+    const state = readWorkerStateDocument(path);
+    expect(state?.worker_id).toBe("wLEGACY");
+    expect(state?.current.number).toBe(7);
+  });
+
+  it("returns null for a missing or malformed document", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "wsd-bad-"));
+    expect(readWorkerStateDocument(workerStatePath(dir))).toBeNull();
+    const path = join(dir, "broken.toon");
+    await writeFile(path, "{ not: valid", "utf8");
+    expect(readWorkerStateDocument(path)).toBeNull();
   });
 });

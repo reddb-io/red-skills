@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   createCastleLaneWriters,
@@ -9,7 +8,8 @@ import {
   type CastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
-import { parseStateDocument } from "./state.js";
+import { workerStatePath } from "./state.js";
+import { readWorkerStateDocument } from "./worker-state-reader.js";
 import type { AfkState } from "../types/state.js";
 
 export type WorkerLifecycleKind =
@@ -75,11 +75,7 @@ function snapshotFromState(
 
 function readAttemptState(attemptDir: string): AfkState | null {
   if (!attemptDir) return null;
-  try {
-    return parseStateDocument(readFileSync(join(attemptDir, "afk.state.toon"), "utf8"));
-  } catch {
-    return null;
-  }
+  return readWorkerStateDocument(workerStatePath(attemptDir));
 }
 
 export function createCastleWorkerLaneBridge(

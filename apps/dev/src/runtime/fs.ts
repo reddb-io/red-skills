@@ -21,7 +21,7 @@ import { dirname, join, normalize, sep } from "node:path";
 import type { FailureMarkers } from "../core/envelope-emit.js";
 import { ENVELOPE_REF_FILE, FAILURE_REASON_FILE } from "../core/prev-failure.js";
 import type { OrphanDir, StaleClaimDir } from "../core/boot.js";
-import { readState, updateState } from "../core/state.js";
+import { readState, updateState, workerStatePath } from "../core/state.js";
 import { allWorkersRoots } from "../core/worker-paths.js";
 
 export async function ensureDir(path: string): Promise<void> {
@@ -200,7 +200,7 @@ export async function globWorkerStates(workersRoot: string): Promise<string[]> {
       continue;
     }
     for (const attempt of attempts) {
-      const stateFile = join(workerPath, attempt, "afk.state.toon");
+      const stateFile = workerStatePath(join(workerPath, attempt));
       if (await pathExists(stateFile)) out.push(stateFile);
     }
   }
@@ -231,14 +231,14 @@ export async function writeFailureMarkers(attemptDir: string, markers: FailureMa
 /** Persist the `envelope.posted` signal into the iteration state file. Best
  * effort: a malformed/absent state file degrades to writing a minimal object. */
 export async function writeEnvelopePosted(attemptDir: string, posted: boolean): Promise<void> {
-  await updateState(join(attemptDir, "afk.state.toon"), { "envelope.posted": posted });
+  await updateState(workerStatePath(attemptDir), { "envelope.posted": posted });
 }
 
 /** Read the `envelope.posted` flag from an attempt state file (false when
  * absent/malformed). */
 export async function readEnvelopePosted(attemptDir: string): Promise<boolean> {
   try {
-    return (await readState(join(attemptDir, "afk.state.toon"))).envelope.posted === true;
+    return (await readState(workerStatePath(attemptDir))).envelope.posted === true;
   } catch {
     return false;
   }
