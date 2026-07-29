@@ -35,6 +35,8 @@ vi.mock("../src/runtime/tmp-janitor.js", () => ({
     unknownTmpRoots: [],
     protectedLiveWorkers: [],
     protectedLiveFeedback: [],
+    workerWorkspaces: [],
+    protectedLiveWorkspaces: [],
     refusedOutsideTmp: [],
     removals: [],
   })),
@@ -48,6 +50,14 @@ vi.mock("../src/runtime/tmp-janitor.js", () => ({
       unknownTmpRoots: [],
     },
     staleWorkers: { reclaim: [] },
+    workerReclaim: {
+      workers: [],
+      reclaim: [],
+      retain: [],
+      dropped: [],
+      truncated: false,
+      totals: { considered: 0, reclaim: 0, retain: 0, dropped: 0 },
+    },
   })),
 }));
 
