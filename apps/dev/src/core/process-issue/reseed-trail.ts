@@ -2,15 +2,16 @@
 // issue #2731): a lazily-minted draft pull request and ONE Issue comment
 // upserted in place.
 //
-// The trail becomes visible without paying a pull request per attempt. The first
-// Re-seed of any cause opens the draft; an attempt that never re-seeds opens
-// none and lands exactly as it always did. Landing reuses that draft and marks
-// it ready — opening a second pull request is a defect, not a fallback.
+// The trail becomes visible without paying a pull request per Worker. The first
+// Re-seed of any cause opens the draft; a Worker that never re-seeds opens none
+// and lands exactly as it always did. Landing reuses that draft and marks it
+// ready — opening a second pull request is a defect, not a fallback.
 //
-// Both surfaces are PROJECTIONS. The Attempt record is the source of truth, so a
-// failed post, a failed edit, or a forge that refuses the draft costs fidelity
-// on a projection and never the round: every call here is best-effort and the
-// publisher retries the missing half on the next round.
+// Both surfaces are PROJECTIONS of what the Worker did — its committed branch
+// and its iteration log — so a failed post, a failed edit, or a forge that
+// refuses the draft costs fidelity on a projection and never the round: every
+// call here is best-effort and the publisher retries the missing half on the
+// next round.
 
 import { openDraftPr, editPrBody, labelPr, type Exec as MergeExec } from "../merge.js";
 import { pushAttempt, type GitExec } from "../remote-branch.js";
@@ -39,7 +40,7 @@ export interface ReseedTrailRound {
   readonly note: string;
 }
 
-/** The exhaustion that ended the Attempt (#2732). One shape for every cause: a
+/** The exhaustion that ended the Worker's run (#2732). One shape for every cause: a
  * budget spent on gate churn and a budget spent on a blocking review finding
  * park through the same rendering, because a human reading the park needs the
  * evidence and the open diff either way. */
@@ -77,7 +78,7 @@ export function renderReseedTrail(view: ReseedTrailView): string {
   }
   lines.push(
     "",
-    "The Attempt record is the source of truth; this is a derived projection.",
+    "The Worker's branch and iteration log are the source of truth; this is a derived projection.",
   );
   if (view.park) {
     lines.push(
@@ -147,7 +148,7 @@ export function createReseedTrail(deps: ReseedTrailDeps, ctx: ReseedTrailContext
   let pushed = false;
 
   /** The branch must be on the remote before a pull request can name it as head.
-   * Pushed ONCE per attempt: later rounds ride the post-commit hook and the
+   * Pushed ONCE per Worker: later rounds ride the post-commit hook and the
    * landing's own force-push. */
   const ensurePushed = async (): Promise<boolean> => {
     if (pushed) return true;
