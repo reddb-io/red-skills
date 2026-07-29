@@ -11,6 +11,7 @@
 // shared worker-paths.ts parser so the nested layout stays single-sourced.
 
 import { parseReapableWorkerPath } from "./worker-paths.js";
+import type { WorkerProcessVerdict } from "./worker-reclaim.js";
 import { LABEL_HUMAN, LABEL_RUNNING } from "./triage-labels.js";
 
 /** Orphan TTLs (afk.sh TTL_LONG / TTL_SHORT). */
@@ -166,18 +167,19 @@ export function planAttemptCap(
 // ---------- liveness-gated reclaim (issue #1219) ----------
 
 /** One dead-worker candidate for the read-time liveness reclaim. The caller has
- * already resolved the OWNING worker's `worker.pid` liveness and the issue's
+ * already asked the DAEMON about the OWNING Worker and resolved the issue's
  * preservation state. */
 export interface LivenessReclaimInput {
   /** Absolute attempt dir path (`.../workers/{wid}/{N}-a{n}`). */
   attemptDir: string;
   /** Absolute path of the attempt's heavy `worktree/`. */
   worktreePath: string;
-  /** Whether the OWNING worker's `worker.pid` still resolves to a live process.
-   * Keyed on the per-WORKER pid (shared across a worker's attempts), NOT the
-   * per-attempt `state.pid`: a worker live on a later attempt keeps ALL its
-   * attempt dirs. */
-  workerPidAlive: boolean;
+  /** The DAEMON's verdict on the OWNING Worker (Spec #2772 US 46). Keyed on the
+   * per-WORKER identity, shared across its attempt dirs, so a Worker still
+   * running keeps ALL of them. Only `dead` releases bytes: `unknown` — an
+   * unreachable or stale daemon — spares the dir, because a reader that could
+   * not reach the authority must never report a running Worker as gone (#2679). */
+  liveness: WorkerProcessVerdict;
   /** Whether the issue is in a post-mortem preservation state (`blocked:*` /
    * `ready-for-human`, existing #256/#257 policy) — its JSONL/handoff is kept. */
   preserved: boolean;
@@ -197,8 +199,8 @@ export interface LivenessReclaimAction {
 
 /**
  * Plan the read-time liveness-gated reclaim (issue #1219). PURE — no I/O; the
- * caller resolves `workerPidAlive` and `preserved`.
- *   - A live worker's dir (workerPidAlive) is NEVER touched.
+ * caller resolves `liveness` and `preserved`.
+ *   - A dir whose Worker the daemon has not called dead is NEVER touched.
  *   - A dead worker's `worktree/` is ALWAYS removed (disposable heavy dir).
  *   - A dead worker's whole attempt dir is reclaimed UNLESS the issue is
  *     preserved (blocked:* / ready-for-human), in which case the JSONL/handoff
@@ -211,7 +213,7 @@ export function planLivenessReclaim(
 ): LivenessReclaimAction[] {
   const out: LivenessReclaimAction[] = [];
   for (const i of inputs) {
-    if (i.workerPidAlive) continue;
+    if (i.liveness !== "dead") continue;
     out.push({
       attemptDir: i.attemptDir,
       worktreePath: i.worktreePath,
