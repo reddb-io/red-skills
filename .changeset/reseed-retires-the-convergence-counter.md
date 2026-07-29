@@ -1,0 +1,5 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+The superseded correction vocabulary is deleted now that every call site draws from the one Re-seed budget (#2733, ADR 0129). `afk.stallConvergenceBudget` — the standalone post-DONE gate counter that stood beside the lane budget instead of inside it — carries an ADR 0117 tombstone in both spellings, so a repo that still sets it is warned `RETIRED` rather than left believing it tunes anything; its reader (`resolveStallConvergenceBudget`, `RED_AFK_STALL_CONVERGENCE_BUDGET`) is gone with it. The replacement is `dev.reseed.afk.gate_budget` (default 3, env `RED_RESEED_GATE_BUDGET`), which caps only the GATE's share of the budget: the ceiling and the review's reserved round belong to the lane profile, so a raised setting can neither buy an unbounded run nor consume the round a blocking review finding is entitled to. The `adversarial-correction` landing reason stays gone with a guard that fails if any shipped source reintroduces it — every non-ok landing outcome is now an actual landing failure.
