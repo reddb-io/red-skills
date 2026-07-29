@@ -31,8 +31,13 @@ describe("renderReseedTrail (#2731)", () => {
     expect(body).toContain("2/4");
   });
 
-  it("names the Attempt record as the source of truth, not itself", () => {
-    expect(renderReseedTrail(view)).toContain("derived projection");
+  it("names the Worker's branch and log as the source of truth, not itself", () => {
+    const body = renderReseedTrail(view);
+    expect(body).toContain("derived projection");
+    // The record this line used to name no longer exists (#2788): a trail that
+    // still points a human at it points them at nothing.
+    expect(body).not.toMatch(/attempt/i);
+    expect(body).toContain("Worker");
   });
 
   it("says nothing about a park while the budget still has rounds (#2732)", () => {

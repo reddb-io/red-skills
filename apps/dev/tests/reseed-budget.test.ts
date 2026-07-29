@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   AFK_RESEED_BUDGET,
@@ -10,10 +12,12 @@ import {
   reseedDraw,
   resolveReseedBudget,
   totalReseedSpend,
+  withGateSubCap,
   type ReseedBudget,
   type ReseedCause,
   type ReseedSpend,
 } from "../src/core/process-issue/reseed-budget.js";
+import { decideAdversarialReview } from "../src/core/adversarial-review.js";
 import { auditConfigLoad, CONFIG_DEFAULTS, DELETED_CONFIG_KEYS, getConfig } from "../src/core/config.js";
 import { LABEL_GO_LANE } from "../src/core/triage-labels.js";
 
@@ -153,6 +157,85 @@ describe("Re-seed budget — the ceiling binds the sub-caps", () => {
       reserved: { gate: 0, tier: 0, review: 1 },
     };
     expect(reseedBudgetDefects(incoherent)).toEqual(["`review` reserves 1 beyond its sub-cap of 0"]);
+  });
+});
+
+describe("Re-seed budget — the Worker is what the rounds are counted against (#2789)", () => {
+  const source = readFileSync(
+    fileURLToPath(new URL("../src/core/process-issue/reseed-budget.ts", import.meta.url)),
+    "utf8",
+  );
+
+  it("carries no attempt-shaped identity anywhere in the budget", () => {
+    expect(source).not.toMatch(/attempt/i);
+  });
+
+  it("names the Worker as the unit one budget belongs to", () => {
+    expect(source).toContain("Worker");
+  });
+});
+
+describe("Re-seed budget — exhaustion is uniform (ADR 0129 decision 5)", () => {
+  /** Every mix of causes that reaches the `/afk` ceiling of 4. Which cause spent
+   * the last round must make no difference to what happens next. */
+  const drainedByEveryMix = [
+    spend("gate", "gate", "gate", "review"),
+    spend("gate", "gate", "tier", "review"),
+    spend("gate", "tier", "review", "gate"),
+    spend("review", "tier", "gate", "gate"),
+  ];
+
+  it("refuses every cause once the ceiling is gone, whichever cause drained it", () => {
+    for (const drained of drainedByEveryMix) {
+      expect(totalReseedSpend(drained)).toBe(AFK_RESEED_BUDGET.ceiling);
+      for (const cause of RESEED_CAUSES) {
+        const draw = reseedDraw(AFK_RESEED_BUDGET, cause, drained);
+        expect(draw.allowed).toBe(false);
+        expect(draw.remaining).toBe(0);
+      }
+    }
+  });
+
+  it("exhausts on the same ceiling on every lane, so no lane parks by a different rule", () => {
+    for (const budget of [AFK_RESEED_BUDGET, GO_RESEED_BUDGET, GO_NO_MISTAKES_RESEED_BUDGET]) {
+      let tally: ReseedSpend = {};
+      while (RESEED_CAUSES.some((cause) => canDrawReseed(budget, cause, tally))) {
+        tally = recordReseedDraw(tally, RESEED_CAUSES.find((c) => canDrawReseed(budget, c, tally))!);
+      }
+      expect(totalReseedSpend(tally)).toBe(budget.ceiling);
+      for (const cause of RESEED_CAUSES) expect(canDrawReseed(budget, cause, tally)).toBe(false);
+    }
+  });
+});
+
+describe("Re-seed budget — no config value reaches a landing with a blocking finding", () => {
+  /** Every shape an operator can put in `dev.reseed.afk.gate_budget`, including
+   * the ones the loader would not normally produce. */
+  const configuredCaps = [-1, 0, 1, 2, 3, 5, 99, 2.5, Number.NaN];
+
+  it("keeps the review's reserved round unreachable to gate churn at any configured cap", () => {
+    for (const cap of configuredCaps) {
+      const budget = withGateSubCap(AFK_RESEED_BUDGET, cap);
+      expect(reseedBudgetDefects(budget)).toEqual([]);
+      expect(budget.ceiling).toBe(AFK_RESEED_BUDGET.ceiling);
+      expect(budget.reserved.review).toBe(1);
+
+      let tally: ReseedSpend = {};
+      while (canDrawReseed(budget, "gate", tally)) tally = recordReseedDraw(tally, "gate");
+      // Gate churn ran until it could draw nothing more, and the review's round
+      // is still there — the starvation defect (#2730) stays closed at every cap.
+      expect(canDrawReseed(budget, "review", tally)).toBe(true);
+    }
+  });
+
+  it("leaves the reviewer's verdict binary and cap-free, so blocking never renders as pass", () => {
+    const blocking = {
+      summary: "one blocker",
+      findings: [{ path: "a.ts", line: 1, body: "must fix", blocking: true }],
+    };
+    expect(decideAdversarialReview(blocking)).toBe("blocking");
+    // No cap parameter exists to turn that verdict into a landing.
+    expect(decideAdversarialReview.length).toBe(1);
   });
 });
 
