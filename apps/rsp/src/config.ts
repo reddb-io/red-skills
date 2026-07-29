@@ -11,6 +11,7 @@ import {
   DEFAULT_RSP_OVERHEAD_NET_LOSS_FLOOR_BYTES,
   type RspOverheadCeiling,
 } from "./overhead-budget.js";
+import { DEFAULT_GH_ETAG_CACHE_MAX_BYTES } from "./gh-etag-cache.js";
 
 export const DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD = 8 * 1024;
 /** Canonical shared RedDB store location (state tier); see {@link SHARED_STORE_REL}. */
@@ -40,6 +41,8 @@ export interface RspRuntimeConfig {
   idleMs: number;
   heavyGitByteThreshold: number;
   measurementHoldoutShare: number;
+  /** How large the partitioned `gh` ETag cache may grow before eviction (#2745). */
+  ghEtagCacheMaxBytes: number;
   /** The cost side of the ledger: what rsp may spend before it is a defect (#2746). */
   overhead: RspOverheadCeiling;
 }
@@ -87,6 +90,10 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     numericEnv(env.RSP_MEASUREMENT_HOLDOUT_SHARE) ?? readNumericYamlPath(yaml, "rsp.measurement.holdoutShare"),
     DEFAULT_RSP_MEASUREMENT_HOLDOUT_SHARE,
   );
+  const ghEtagCacheMaxBytes = positiveNumber(
+    numericEnv(env.RSP_GH_ETAG_CACHE_MAX_BYTES) ?? readNumericYamlPath(yaml, "rsp.ghEtagCacheMaxBytes"),
+    DEFAULT_GH_ETAG_CACHE_MAX_BYTES,
+  );
   const overhead: RspOverheadCeiling = {
     maxOverheadMs: positiveNumber(
       numericEnv(env.RSP_MAX_OVERHEAD_MS) ?? readNumericYamlPath(yaml, "rsp.overhead.maxOverheadMs"),
@@ -128,6 +135,7 @@ export function resolveRspConfig(cwd: string, env: NodeJS.ProcessEnv, explicitSt
     idleMs,
     heavyGitByteThreshold,
     measurementHoldoutShare,
+    ghEtagCacheMaxBytes,
     overhead,
   };
 }
