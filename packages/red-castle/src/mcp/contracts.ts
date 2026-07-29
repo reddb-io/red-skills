@@ -167,23 +167,32 @@ const livenessVerdictSchema = z.object({
 });
 
 /**
- * The attempt this worker is running, folded from the attempt record — the unit
- * of truth (ADR 0128 §1). Absent while the record carries no entry for the
- * worker; a reader never reconstructs it from worker dirs or tracker comments.
+ * The daemon's verdict on this worker's PROCESS, and how current that verdict is.
+ *
+ * The host daemon owns birth and death, so it is the single liveness anchor —
+ * never a pid file, which is what deleted the live lane and kept the dead ones
+ * (#2679). Two properties are published rather than left to a consumer:
+ *
+ *  1. `dead` IS ONLY REPRESENTABLE BESIDE A FRESH READ. An unreachable or stale
+ *     daemon answers `unknown`, so no payload reports a worker dead beside fresh
+ *     evidence that it is alive.
+ *  2. STALENESS TRAVELS INSIDE THE PAYLOAD. A renderer honours `stale`; it never
+ *     re-derives it from `age_ms` and a threshold of its own.
  */
-const attemptSummarySchema = z.object({
-  id: z.string(),
-  try: z.number(),
-  issue: z.number(),
-  branch: z.string().nullable(),
-  pr: z.number().nullable(),
-  commits: z.number(),
-  outcome: z.string().nullable(),
-  closed: z.boolean(),
-  updated_at: z.string(),
+const daemonLivenessSchema = z.object({
+  verdict: z.enum(["alive", "dead", "unknown"]),
+  anchor: z.enum(["daemon", "none"]),
+  project_label: z.string().nullable(),
+  pid: z.number().nullable(),
+  staleness: z.object({
+    stale: z.boolean(),
+    age_ms: z.number().nullable(),
+    threshold_ms: z.number().nullable(),
+    reason: z.string(),
+  }),
 });
 
-export type AttemptSummaryOutput = z.infer<typeof attemptSummarySchema>;
+export type DaemonLivenessOutput = z.infer<typeof daemonLivenessSchema>;
 
 const workerVitalsRecordSchema = z.object({
   worker: z.object({
@@ -203,7 +212,7 @@ const workerVitalsRecordSchema = z.object({
   renderable_live: z.boolean(),
   liveness: z.enum(["active", "quiet-but-live", "dead"]),
   liveness_verdict: livenessVerdictSchema,
-  attempt: attemptSummarySchema.optional(),
+  daemon_liveness: daemonLivenessSchema.optional(),
 });
 
 export const workerVitalsOutputSchema = z.array(workerVitalsRecordSchema);
