@@ -140,7 +140,7 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveStallConvergenceBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { MECHANICAL_BLOCKER_KINDS, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveReseedGateBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import type { ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
 import {
   recordReseedDraw,
@@ -611,7 +611,7 @@ export async function processIssue(
     if (attribution.cause !== "stale-base-drift" || !movement) return { attribution };
     return { attribution, drift: { base, movement, attribution } };
   };
-  const stallConvergenceCap = resolveStallConvergenceBudget(deps);
+  const afkGateCap = resolveReseedGateBudget(deps);
   const isGoLane = input.laneLabel === LABEL_GO_LANE;
   const reseedLane: "/go" | "/afk" = isGoLane ? "/go" : "/afk";
   // ONE budget for every Re-seed this Attempt may spend (ADR 0129): the lane
@@ -620,7 +620,7 @@ export async function processIssue(
   // its own round instead of muting gate correction outright.
   const reseedBudget = withGateSubCap(
     resolveReseedBudget({ laneLabel: input.laneLabel, runMode: input.runMode }),
-    isGoLane ? goVerifyRetryCap : stallConvergenceCap,
+    isGoLane ? goVerifyRetryCap : afkGateCap,
   );
   let reseedSpend: ReseedSpend = {};
   const gateSubCap = reseedBudget.subCaps.gate;

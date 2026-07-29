@@ -157,7 +157,7 @@ describe("processIssue — feedback fail", () => {
       // Round 1 fails; round 2 fails IDENTICALLY → the repeat buys the tier;
       // round 3 is green.
       feedbackResults: [false, false, true],
-      stallConvergenceBudget: 1,
+      reseedGateBudget: 1,
       classifyIssue: async () => "simple",
       resolveTier: (runner, taskClass) => {
         tiers.push({ runner, taskClass });
@@ -190,7 +190,7 @@ describe("processIssue — feedback fail", () => {
       // Four failing checks, then ONE — a different failure set, so a different
       // signature — then the same one again, which is the repeat.
       feedbackFailures: [["test", "typecheck", "lint", "build"], ["test"], ["test"], []],
-      stallConvergenceBudget: 2,
+      reseedGateBudget: 2,
       classifyIssue: async () => "simple",
       resolveTier: (runner, taskClass) => {
         tiers.push({ runner, taskClass });
@@ -231,7 +231,7 @@ describe("processIssue — feedback fail", () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackResults: [false, false, false, true],
-      stallConvergenceBudget: 1,
+      reseedGateBudget: 1,
       classifyIssue: async () => "simple",
       resolveTier: (runner, taskClass) => {
         tiers.push({ runner, taskClass });
@@ -1326,12 +1326,12 @@ describe("processIssue — merge-conflict one-shot self-resolve (gap 3)", () => 
 });
 
 describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", () => {
-  it("retries an empty-diff DONE up to stallConvergenceBudget, then parks with convergence note", async () => {
+  it("retries an empty-diff DONE up to the gate share of the Re-seed budget, then parks with convergence note", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       changedFilesSequence: [[], []],
       feedbackOk: true,
-      stallConvergenceBudget: 1,
+      reseedGateBudget: 1,
     });
     const result = await processIssue(deps, input);
 
@@ -1349,7 +1349,7 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
       outcome: "done",
       changedFilesSequence: [[], ["packages/x/src/a.ts"]],
       feedbackOk: true,
-      stallConvergenceBudget: 1,
+      reseedGateBudget: 1,
     });
     const result = await processIssue(deps, input);
 
@@ -1360,11 +1360,11 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
   });
 
-  it("retries a red feedback gate up to stallConvergenceBudget, then parks; handoff carries <afk-gate-correction>", async () => {
+  it("retries a red feedback gate up to the gate share of the Re-seed budget, then parks; handoff carries <afk-gate-correction>", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackResults: [false, false],
-      stallConvergenceBudget: 1,
+      reseedGateBudget: 1,
     });
     const result = await processIssue(deps, input);
 
@@ -1382,7 +1382,7 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackResults: [false, true],
-      stallConvergenceBudget: 2,
+      reseedGateBudget: 2,
     });
     const result = await processIssue(deps, input);
 
@@ -1392,13 +1392,13 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
   });
 
-  it("retries a red backpressure gate up to stallConvergenceBudget, then parks", async () => {
+  it("retries a red backpressure gate up to the gate share of the Re-seed budget, then parks", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
       backpressureCommands: ["npm run e2e"],
       backpressureOk: false,
-      stallConvergenceBudget: 1,
+      reseedGateBudget: 1,
     });
     const result = await processIssue(deps, input);
 
@@ -1411,18 +1411,18 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
     expect(trace.closed).toEqual([]);
   });
 
-  it("go lane ignores stallConvergenceBudget — retryAfkMachineGate is a no-op for lane:go", async () => {
+  it("go lane ignores the `/afk` gate share — retryAfkMachineGate is a no-op for lane:go", async () => {
     const { deps, input, trace } = harness({
       labels: ["lane:go"],
       laneLabel: "lane:go",
       outcome: "done",
       feedbackResults: [false],
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "0" },
-      stallConvergenceBudget: 99,
+      reseedGateBudget: 99,
     });
     const result = await processIssue(deps, input);
 
-    // go lane with cap=0 parks on first failure; stallConvergenceBudget has no effect
+    // go lane with cap=0 parks on first failure; the /afk gate share has no effect
     expect(result.outcome).toBe("feedback-failed");
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
@@ -1649,7 +1649,7 @@ describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
       // complex tier with a CHANGED signature → one more gate Re-seed; park.
       feedbackFailures: [["test"], ["test"], ["lint"], ["lint"]],
       classifyIssue: async () => "simple",
-      stallConvergenceBudget: 2,
+      reseedGateBudget: 2,
     });
 
     const result = await processIssue(deps, input);
@@ -1676,7 +1676,7 @@ describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
       classifyIssue: async () => "simple",
       // A gate sub-cap far above the lane ceiling: the ceiling is what binds,
       // and the review's reserved round stays unreachable to gate and tier.
-      stallConvergenceBudget: 9,
+      reseedGateBudget: 9,
     });
 
     const result = await processIssue(deps, input);
@@ -1694,7 +1694,7 @@ describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
       // An empty-diff DONE first, then a red gate on the round that produced one.
       changedFilesSequence: [[], ["packages/x/src/a.ts"], ["packages/x/src/a.ts"]],
       feedbackResults: [false, false],
-      stallConvergenceBudget: 2,
+      reseedGateBudget: 2,
     });
 
     const result = await processIssue(deps, input);

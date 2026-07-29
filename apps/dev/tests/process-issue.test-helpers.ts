@@ -235,7 +235,7 @@ export interface HarnessOptions {
   /** /go post-DONE machine-gate retry cap injected by run.ts. */
   goVerifyRetries?: number;
   /** /afk post-DONE gate-correction convergence budget (#2285). */
-  stallConvergenceBudget?: number;
+  reseedGateBudget?: number;
   /** When set, register the Brain outcome-event sink. "throw"/"hang" model Brain down/slow. */
   recordOutcomeEvent?: "ok" | "throw" | "hang";
   /** When false, omit the optional fs.writeValidationSidecar port (older-caller
@@ -653,7 +653,7 @@ export function harness(opts: HarnessOptions = {}): {
         }
       : undefined,
     goVerifyRetries: opts.goVerifyRetries,
-    stallConvergenceBudget: opts.stallConvergenceBudget,
+    reseedGateBudget: opts.reseedGateBudget,
     sandboxMode: opts.sandboxMode ?? "none",
     sandboxAvailable: async (mode) => (opts.availableSandboxes ?? ["docker", "podman"]).includes(mode),
     sandboxImage: opts.sandboxImage,

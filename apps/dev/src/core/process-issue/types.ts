@@ -277,7 +277,9 @@ export interface ProcessIssueDeps {
   outputShaping?: OutputShapingConfig;
   postBackpressureReview?: (pr: number, body: string) => Promise<void>;
   goVerifyRetries?: number;
-  stallConvergenceBudget?: number;
+  /** The `/afk` lane's gate share of the Re-seed budget (ADR 0129), from
+   * `dev.reseed.afk.gate_budget`. */
+  reseedGateBudget?: number;
   postWorkerFormat?: PostWorkerFormatExec;
   postWorkerFormatCommands?: readonly string[];
   runAgent(input: RunAgentInput): Promise<RunAgentResult>;

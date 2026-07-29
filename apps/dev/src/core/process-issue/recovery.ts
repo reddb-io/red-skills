@@ -303,19 +303,27 @@ export function resolveGoVerifyRetries(deps: ProcessIssueDeps): number {
 export function resolveStaleBaseDriftCap(deps: ProcessIssueDeps): number {
   return resolveStaleBaseDriftCorrections(deps.recoveryEnv?.[STALE_BASE_DRIFT_CORRECTIONS_ENV]);
 }
-export const DEFAULT_STALL_CONVERGENCE_BUDGET = 0;
-export function resolveStallConvergenceBudget(deps: ProcessIssueDeps): number {
-  const raw = deps.recoveryEnv?.RED_AFK_STALL_CONVERGENCE_BUDGET;
+/** No caller-supplied share means NO gate Re-seed. The shipped default lives in
+ * `dev.reseed.afk.gate_budget` and reaches here through the run deps, so an
+ * embedder that wires nothing gets the conservative behaviour rather than a
+ * budget it never asked for. */
+export const DEFAULT_RESEED_GATE_BUDGET = 0;
+/** The `/afk` lane's GATE share of the Re-seed budget (ADR 0129). It bounds one
+ * cause, not the lane: the ceiling and the review's reserved round belong to the
+ * lane profile, which is why this folds in through `withGateSubCap` instead of
+ * standing on its own the way the retired stall-convergence counter did. */
+export function resolveReseedGateBudget(deps: ProcessIssueDeps): number {
+  const raw = deps.recoveryEnv?.RED_RESEED_GATE_BUDGET;
   const parsed = raw === undefined ? NaN : Number(raw);
   if (Number.isInteger(parsed) && parsed >= 0) return parsed;
   if (
-    deps.stallConvergenceBudget !== undefined &&
-    Number.isInteger(deps.stallConvergenceBudget) &&
-    deps.stallConvergenceBudget >= 0
+    deps.reseedGateBudget !== undefined &&
+    Number.isInteger(deps.reseedGateBudget) &&
+    deps.reseedGateBudget >= 0
   ) {
-    return deps.stallConvergenceBudget;
+    return deps.reseedGateBudget;
   }
-  return DEFAULT_STALL_CONVERGENCE_BUDGET;
+  return DEFAULT_RESEED_GATE_BUDGET;
 }
 // The gate and tier-escalation correction handoffs are no longer built here.
 // Each of the three appenders that lived at this spot rebuilt from the ORIGINAL
