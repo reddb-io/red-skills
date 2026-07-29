@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   collectToonJsonGuardReport,
   collectToonJsonIoFindingsFromFiles,
+  formatToonJsonGuardFailureMessage,
   formatToonJsonGuardViolations,
   type ToonJsonAllowlistEntry,
 } from "../src/core/toon-json-guard.js";
+import { ALLOWLIST_PATH } from "../src/core/shared-gate.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const DEV_SRC = join(import.meta.dirname, "..", "src");
@@ -14,8 +16,38 @@ const DEV_SRC = join(import.meta.dirname, "..", "src");
 describe("toon JSON file I/O guard", () => {
   it("ratchets the live apps/packages JSON file I/O allowlist", async () => {
     const report = await collectToonJsonGuardReport(ROOT);
+    const violations = formatToonJsonGuardViolations(report);
 
-    expect(formatToonJsonGuardViolations(report)).toEqual([]);
+    // The message is the point: a bare array diff tells a worker nothing it can
+    // act on, so carry the offending paths + the allowlist file into the failure.
+    expect(violations, formatToonJsonGuardFailureMessage(violations)).toEqual([]);
+  });
+
+  it("names the offending path and the allowlist file in the failure message", () => {
+    // The exact recurring shape (#2762): a `.toon` file written with
+    // JSON.stringify. The runtime decoder sniffs JSON-or-TOON and accepts it,
+    // so it looks correct locally and is wrong by policy.
+    const source = `
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      export function persistLedger(root: string, ledger: unknown) {
+        writeFileSync(join(root, "ledger.toon"), JSON.stringify(ledger), "utf8");
+      }
+    `;
+    const findings = collectToonJsonIoFindingsFromFiles([
+      { relativePath: "apps/rsp/src/ledger.ts", sourceText: source },
+    ]);
+    expect(findings).toHaveLength(1);
+
+    const message = formatToonJsonGuardFailureMessage(
+      formatToonJsonGuardViolations({ findings, allowlist: [] }),
+    );
+
+    expect(message).toContain("apps/rsp/src/ledger.ts");
+    expect(message).toContain(ALLOWLIST_PATH);
+    expect(message).toContain("JSON.stringify");
+    expect(formatToonJsonGuardFailureMessage([])).toBe("");
   });
 
   it("rejects a new stack-owned JSON.stringify file write until allowlisted", () => {
