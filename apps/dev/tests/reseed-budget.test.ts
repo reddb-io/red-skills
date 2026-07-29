@@ -156,22 +156,51 @@ describe("Re-seed budget — the ceiling binds the sub-caps", () => {
   });
 });
 
-describe("Re-seed budget — the retired key is still live in this slice", () => {
+describe("Re-seed budget — the retired stall-convergence key (ADR 0117 tombstone)", () => {
   const OPTED_IN_WITH_STALL =
     "plugins:\n  dev:\n    enabled: true\n    afk:\n      stallConvergenceBudget: 5\n";
 
-  it("still resolves the stall-convergence key and does not report it as retired", () => {
+  it("reports the stall-convergence key as retired and never reads it back", () => {
     const warnings: string[] = [];
     const audit = auditConfigLoad("/x/.red/config.yaml", {
       read: () => OPTED_IN_WITH_STALL,
       warn: (m) => warnings.push(m),
     });
 
+    expect(audit.retiredKeys).toEqual(["plugins.dev.afk.stallConvergenceBudget"]);
+    expect(warnings.join("\n")).toContain("RETIRED");
+    expect(getConfig(audit.values, "afk.stallConvergenceBudget")).toBe("");
+  });
+
+  it("tombstones the legacy top-level spelling too", () => {
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () => "plugins:\n  dev:\n    enabled: true\nafk:\n  stallConvergenceBudget: 5\n",
+      warn: () => {},
+    });
+
+    expect(audit.retiredKeys).toEqual(["afk.stallConvergenceBudget"]);
+    expect(getConfig(audit.values, "afk.stallConvergenceBudget")).toBe("");
+  });
+
+  it("both spellings are tombstoned and neither keeps a live default", () => {
+    for (const key of ["afk.stallConvergenceBudget", "plugins.dev.afk.stallConvergenceBudget"]) {
+      expect(DELETED_CONFIG_KEYS.has(key)).toBe(true);
+      expect(Object.prototype.hasOwnProperty.call(CONFIG_DEFAULTS, key)).toBe(false);
+    }
+  });
+
+  it("the lane-scoped replacement carries the `/afk` gate sub-cap as its default", () => {
+    expect(CONFIG_DEFAULTS["dev.reseed.afk.gate_budget"]).toBe(String(AFK_RESEED_BUDGET.subCaps.gate));
+  });
+
+  it("resolves the replacement key from an opted-in file", () => {
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () =>
+        "plugins:\n  dev:\n    enabled: true\n    reseed:\n      afk:\n        gate_budget: 5\n",
+      warn: () => {},
+    });
+
     expect(audit.retiredKeys).toEqual([]);
-    expect(warnings.join("\n")).not.toContain("RETIRED");
-    expect(getConfig(audit.values, "afk.stallConvergenceBudget")).toBe("5");
-    expect(DELETED_CONFIG_KEYS.has("afk.stallConvergenceBudget")).toBe(false);
-    expect(DELETED_CONFIG_KEYS.has("plugins.dev.afk.stallConvergenceBudget")).toBe(false);
-    expect(CONFIG_DEFAULTS["afk.stallConvergenceBudget"]).toBe("3");
+    expect(getConfig(audit.values, "dev.reseed.afk.gate_budget")).toBe("5");
   });
 });
