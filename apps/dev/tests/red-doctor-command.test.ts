@@ -35,20 +35,10 @@ vi.mock("../src/runtime/tmp-janitor.js", () => ({
     unknownTmpRoots: [],
     protectedLiveWorkers: [],
     protectedLiveFeedback: [],
-    attemptWorkspaces: [],
-    protectedLiveAttempts: [],
     refusedOutsideTmp: [],
     removals: [],
   })),
   collectTmpJanitorReport: vi.fn(async () => ({
-    attemptReclaim: {
-      attempts: [],
-      reclaim: [],
-      retain: [],
-      dropped: [],
-      truncated: false,
-      totals: { considered: 0, reclaim: 0, retain: 0, dropped: 0 },
-    },
     plan: {
       logs: { reclaim: [] },
       scratch: { reclaim: [] },
