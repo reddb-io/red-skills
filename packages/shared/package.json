@@ -21,6 +21,7 @@
     "./project-identity.js": "./project-identity.ts",
     "./red-paths.js": "./red-paths.ts",
     "./repo-root.js": "./repo-root.ts",
+    "./worker-workspace.js": "./worker-workspace.ts",
     "./outcome-event.js": "./outcome-event.ts",
     "./resident-client.js": "./resident-client.ts",
     "./resident-core.js": "./resident-core.ts",
