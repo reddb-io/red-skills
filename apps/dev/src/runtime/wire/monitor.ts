@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readDevBundleCacheState } from "../../core/bundle-version.js";
 import { decodeDevSnapshotSniff } from "../../core/toon-snapshot.js";
@@ -9,6 +9,8 @@ import {
   type WorkerStateRecord,
 } from "../../core/worker-state-reader.js";
 import { planLivenessReclaim, type LivenessReclaimInput } from "../../core/reclaim.js";
+import type { WorkerProcessVerdict } from "../../core/worker-reclaim.js";
+import { readWorkerLivenessForTmpPath } from "../tmp-janitor.js";
 import { readHistoryRecords, type HistoryRecord } from "../../core/history.js";
 import { LABEL_HUMAN } from "../../core/triage-labels.js";
 import {
@@ -177,10 +179,11 @@ export async function readFleetState(path: string): Promise<FleetState | null> {
 
 /** Injected seams for {@link reclaimDeadWorkers} (real defaults wire gh/git/fs). */
 export interface DeadWorkerSweepDeps {
-  /** Raw `worker.pid` text for a worker dir. Default reads `{workerDir}/worker.pid`. */
-  readWorkerPid?: (workerDir: string) => string | null;
-  /** `kill -0` liveness probe. Default `process.kill(pid, 0)`. */
-  killAlive?: (pid: number) => boolean;
+  /** The DAEMON's verdict on the Worker owning a dir (Spec #2772 US 46). Default
+   * asks the daemon through the single liveness anchor; there is deliberately no
+   * pid-file seam here, because keying reclaim on a pid file is what deleted a
+   * live lane and kept the dead ones (#2679). */
+  workerLiveness?: (workerDir: string) => Promise<WorkerProcessVerdict>;
   /** Whether an issue is in a post-mortem preservation state (blocked:* /
    * ready-for-human). Default `gh issue view --json labels`. Returns `true`
    * (conservative — keep the JSONL) whenever it cannot resolve. */
@@ -201,9 +204,9 @@ export interface DeadWorkerSweepDeps {
  * scout-workers) since it consumes {@link readAllWorkerStates} records.
  *
  * Safety rules (see {@link planLivenessReclaim}):
- *   - NEVER touch a live worker's dir — keyed on the OWNING worker's `worker.pid`
- *     (shared across a worker's attempts), so a worker live on a later attempt
- *     keeps ALL its dirs.
+ *   - NEVER touch a dir whose OWNING Worker the daemon has not called dead — the
+ *     verdict is per-Worker (shared across its attempts), so a Worker live on a
+ *     later attempt keeps ALL its dirs.
  *   - A dead worker's disposable `worktree/` is ALWAYS removed.
  *   - The whole attempt dir is reclaimed UNLESS the issue is preserved
  *     (blocked:* / ready-for-human), where the JSONL/handoff stay for post-mortem.
@@ -218,25 +221,10 @@ export async function reclaimDeadWorkers(
   deps: DeadWorkerSweepDeps = {},
 ): Promise<string[]> {
   const exists = deps.exists ?? ((p: string) => existsSync(p));
-  const readWorkerPid =
-    deps.readWorkerPid ??
-    ((workerDir: string): string | null => {
-      try {
-        return readFileSync(join(workerDir, "worker.pid"), "utf8");
-      } catch {
-        return null;
-      }
-    });
-  const killAlive =
-    deps.killAlive ??
-    ((pid: number): boolean => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    });
+  const workerLiveness =
+    deps.workerLiveness ??
+    ((workerDir: string): Promise<WorkerProcessVerdict> =>
+      readWorkerLivenessForTmpPath(afkPaths(root).tmpDir, workerDir));
   const isPreserved =
     deps.isPreserved ??
     (async (issue: number): Promise<boolean> => {
@@ -256,19 +244,15 @@ export async function reclaimDeadWorkers(
     });
   const removeDir = deps.removeDir ?? ((dir: string) => fsx.removeDir(dir));
 
-  // Per-worker `worker.pid` liveness, memoized so a worker's several attempt dirs
-  // resolve it once.
-  const workerAliveCache = new Map<string, boolean>();
-  const workerPidAlive = (workerDir: string): boolean => {
-    const cached = workerAliveCache.get(workerDir);
+  // The daemon's verdict per Worker, memoized so a Worker's several attempt dirs
+  // ask once. An unreachable daemon answers `unknown`, which spares the dir.
+  const verdictCache = new Map<string, WorkerProcessVerdict>();
+  const workerVerdict = async (workerDir: string): Promise<WorkerProcessVerdict> => {
+    const cached = verdictCache.get(workerDir);
     if (cached !== undefined) return cached;
-    const raw = readWorkerPid(workerDir);
-    const pid = raw ? parseInt(raw.trim(), 10) : NaN;
-    // Absent/unparseable worker.pid → treat as ALIVE (never reclaim a dir we
-    // cannot prove belongs to a dead worker).
-    const alive = Number.isFinite(pid) && pid > 0 ? killAlive(pid) : true;
-    workerAliveCache.set(workerDir, alive);
-    return alive;
+    const verdict = await workerLiveness(workerDir).catch((): WorkerProcessVerdict => "unknown");
+    verdictCache.set(workerDir, verdict);
+    return verdict;
   };
 
   // Build the pure planner inputs, resolving preservation only for dead workers.
@@ -276,9 +260,9 @@ export async function reclaimDeadWorkers(
   for (const rec of records) {
     const attemptDir = dirname(rec.path);
     const workerDir = dirname(attemptDir);
-    // A renderable-live record (or a worker still live on any attempt) is never
-    // a reclaim candidate.
-    const alive = rec.renderableLive || workerPidAlive(workerDir);
+    // A renderable-live record is EVIDENCE the Worker still runs: it withholds
+    // the death claim, and never asserts a life the daemon did not.
+    const liveness = rec.renderableLive ? "unknown" : await workerVerdict(workerDir);
     const num = rec.state.current.number;
     const issue = typeof num === "number" ? num : Number.parseInt(String(num), 10);
     const preserved =
@@ -288,7 +272,7 @@ export async function reclaimDeadWorkers(
       // Current workers use the conventional direct child. During rollout,
       // hygiene may still discover a legacy nested worktree for removal only.
       worktreePath: reapableWorktreeUnder(attemptDir) ?? join(attemptDir, "worktree"),
-      workerPidAlive: alive,
+      liveness,
       preserved,
     });
   }
