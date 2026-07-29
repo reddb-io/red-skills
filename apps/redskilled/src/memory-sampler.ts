@@ -26,6 +26,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseMemoryBudget } from "./budget-accounting.js";
 import type { RedskilledWorkerView } from "./host-state.js";
+import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
 /** How the daemon classifies a termination it decided itself. */
 export type RedskilledTerminationClassification = "budget-exceeded";
@@ -102,7 +103,7 @@ export type RedskilledMemorySampler = (
  * willing to keep running. PURE.
  */
 export function resolveEnforcedBudget(
-  worker: RedskilledWorkerView,
+  worker: { readonly budget?: RedskilledWorkerBudget },
 ): { readonly name: RedskilledBudgetName; readonly declared: string; readonly bytes: number } | null {
   const budget = worker.budget ?? {};
   const candidates: ReadonlyArray<readonly [RedskilledBudgetName, string | undefined]> = [

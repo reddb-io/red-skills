@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
+import type { RedskilledJobObjectHandle } from "./job-object.js";
 import {
   detectWorkerPlacementProbes,
   placementEnabled,
@@ -79,6 +80,14 @@ export interface LaunchedWorker {
   readonly warnings: readonly string[];
   readonly plan: WorkerPlacementPlan;
   readonly child: ChildProcess;
+  /**
+   * The Job Object holding this Worker, on Windows and only when it was minted.
+   *
+   * It is HELD, not closed: kill-on-close means letting go of this handle ends
+   * the Worker, so the daemon keeps it for the Worker's life and closes it when
+   * the Worker is gone.
+   */
+  readonly job?: RedskilledJobObjectHandle;
 }
 
 export interface LaunchWorkerOptions {
@@ -141,6 +150,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   const env = options.env ?? process.env;
   const clock = options.clock ?? (() => new Date().toISOString());
   const workerId = (spec.worker_id ?? options.workerId ?? randomUUID()).trim() || randomUUID();
+  const probes = options.probes ?? detectWorkerPlacementProbes(env);
   const plan = planWorkerPlacement({
     workerId,
     projectLabel: spec.project_label,
@@ -151,7 +161,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     target: spec.placement,
     env: spec.env,
     enabled: options.enabled ?? placementEnabled(env),
-    probes: options.probes ?? detectWorkerPlacementProbes(env),
+    probes,
   });
 
   const spawnFn = options.spawnFn ?? spawn;
@@ -172,23 +182,86 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     throw new RedskilledWorkerSpecError(`redskilled could not spawn ${JSON.stringify(plan.command)} for worker ${workerId}`);
   }
 
+  // The Windows backend isolates AFTER the spawn, because Node offers no way to
+  // start a process already inside a job. The window between the two is bounded
+  // by the sampling floor rather than left unenforced — the same floor that
+  // covers a host with no native reach at all.
+  const placed = plan.job != null ? placeInJobObject(plan, probes, child.pid) : null;
+
   // Observed, not polled — but never a reason to keep the daemon alive on its
   // own, so the handle is unref'd and the exit is still delivered while we live.
   child.once("error", () => undefined);
-  if (options.onExit) child.once("exit", (code, signal) => options.onExit?.(workerId, code, signal));
+  child.once("exit", (code, signal) => {
+    // Closing the job is what releases the kernel object; with kill-on-close set
+    // it also guarantees nothing of this Worker is left behind.
+    try {
+      placed?.job?.close();
+    } catch {
+      // A job the host already tore down is the outcome we wanted anyway.
+    }
+    options.onExit?.(workerId, code, signal);
+  });
   child.unref();
 
-  const warnings = [plan.warning, plan.budgetWarning].filter((warning): warning is string => warning != null);
+  const isolated = plan.job != null ? placed?.job != null : plan.isolated;
+  const warnings = [plan.warning, placed?.warning, plan.budgetWarning].filter(
+    (warning): warning is string => warning != null,
+  );
   const worker: RedskilledWorkerView = {
     worker_id: workerId,
     project_label: spec.project_label,
     pid: child.pid,
     started_at: clock(),
     workspace_path: spec.workspace_path,
-    isolated: plan.isolated,
+    isolated,
     ...(plan.unit != null ? { unit: plan.unit } : {}),
     ...(spec.budget != null ? { budget: spec.budget } : {}),
     warnings,
   };
-  return { worker, admission, warnings, plan, child };
+  return { worker, admission, warnings, plan, child, ...(placed?.job != null ? { job: placed.job } : {}) };
+}
+
+/**
+ * Mint this Worker's Job Object and put the live process inside it.
+ *
+ * Every failure here degrades to the sampling floor EXPLICITLY and none of them
+ * ends the launch: a Worker running under the floor is worse than one running
+ * under the kernel, and far better than one that never started because an
+ * optional native artifact misbehaved. A job that was minted but could not take
+ * the process is closed immediately — an empty job with kill-on-close set is a
+ * handle waiting to kill the wrong thing later.
+ */
+function placeInJobObject(
+  plan: WorkerPlacementPlan,
+  probes: WorkerPlacementProbes,
+  pid: number,
+): { readonly job?: RedskilledJobObjectHandle; readonly warning?: string } {
+  const job = plan.job;
+  if (job == null) return {};
+  const floor = "the Worker is charged to the daemon's own resource group and the daemon's RSS sampling floor is the only remaining ceiling";
+  if (!probes.jobObjects.available) {
+    return { warning: `Job Object placement unavailable: ${probes.jobObjects.reason}. ${floor}` };
+  }
+
+  let handle: RedskilledJobObjectHandle;
+  try {
+    handle = probes.jobObjects.binding.createJobObject({ name: job.name, limits: job.limits });
+  } catch (err) {
+    return { warning: `Job Object ${JSON.stringify(job.name)} could not be created: ${reason(err)}. ${floor}` };
+  }
+  try {
+    handle.assign(pid);
+  } catch (err) {
+    try {
+      handle.close();
+    } catch {
+      // Nothing was ever inside it; a close the host refused changes nothing.
+    }
+    return { warning: `Worker pid ${pid} could not be assigned to Job Object ${JSON.stringify(job.name)}: ${reason(err)}. ${floor}` };
+  }
+  return { job: handle };
+}
+
+function reason(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

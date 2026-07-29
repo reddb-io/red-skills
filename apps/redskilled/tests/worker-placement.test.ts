@@ -12,22 +12,32 @@ import {
   type WorkerPlacementProbes,
 } from "../src/worker-placement.js";
 
+const NO_JOB_OBJECTS = { available: false, reason: "Job Object placement is the Windows backend (platform=linux)" } as const;
+
 const LINUX_WITH_SESSION: WorkerPlacementProbes = {
   platform: "linux",
   systemdRun: "/usr/bin/systemd-run",
   userSession: true,
+  jobObjects: NO_JOB_OBJECTS,
 };
 const LINUX_WITHOUT_SESSION: WorkerPlacementProbes = {
   platform: "linux",
   systemdRun: "/usr/bin/systemd-run",
   userSession: false,
+  jobObjects: NO_JOB_OBJECTS,
 };
 const LINUX_WITHOUT_SYSTEMD: WorkerPlacementProbes = {
   platform: "linux",
   systemdRun: null,
   userSession: false,
+  jobObjects: NO_JOB_OBJECTS,
 };
-const DARWIN: WorkerPlacementProbes = { platform: "darwin", systemdRun: null, userSession: false };
+const DARWIN: WorkerPlacementProbes = {
+  platform: "darwin",
+  systemdRun: null,
+  userSession: false,
+  jobObjects: { available: false, reason: "Job Object placement is the Windows backend (platform=darwin)" },
+};
 
 function plan(probes: WorkerPlacementProbes, overrides: Record<string, unknown> = {}) {
   return planWorkerPlacement({
