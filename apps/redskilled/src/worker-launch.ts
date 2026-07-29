@@ -143,6 +143,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     workspace_path: spec.workspace_path,
     isolated: plan.isolated,
     ...(plan.unit != null ? { unit: plan.unit } : {}),
+    ...(spec.budget != null ? { budget: spec.budget } : {}),
     warnings,
   };
   return { worker, warnings, plan, child };

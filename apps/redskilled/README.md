@@ -7,6 +7,8 @@ machine while each project's bundle keeps owning the work.
 The core exists, is reachable, honest about its own life — and **births Workers**:
 a project hands over an argv, a placement target, a budget and two opaque
 strings, and the daemon launches the Worker into a resource unit of its own.
+**A restart costs none of it**: the daemon re-attaches to its live Workers by
+unit name and rehydrates identity and budget from its own append-only event lane.
 
 ## Why its own app
 
@@ -27,7 +29,10 @@ of it.
 | The frozen wire contract | `src/protocol.ts` — `ping`, `host-state`, `worker-start`, `shutdown` |
 | Where a Worker's resources are charged | `src/worker-placement.ts` — pure planner over injected probes |
 | Birth itself | `src/worker-launch.ts` — plan, spawn once, report the downgrade |
-| The host-wide read | `src/host-state.ts` — total shape, empty at this slice |
+| The host-wide read | `src/host-state.ts` — total shape, Workers plus the budget total |
+| What the daemon remembers across a restart | `src/event-lane.ts` — append-only TOONL: birth, death, budget-kill |
+| Finding the Workers a restart left running | `src/reattach.ts` — the unit name first, the pid only as fallback |
+| What the host has been promised | `src/budget-accounting.ts` — pure totals over the Worker set |
 | Reaching (and starting) the daemon | `src/client.ts` — auto-spawn, loser joins the winner |
 
 ## Behaviours worth knowing
@@ -55,6 +60,16 @@ of it.
 - **Placement is decided at launch.** Moving a running process between resource
   groups does not move its existing memory charge, so a Worker born in the
   caller's group stays charged there for life no matter what is done afterwards.
+- **A restart re-attaches, it does not restart the work.** The daemon replays its
+  event lane, asks the host about each Worker by unit name, adopts the ones still
+  running and records the deaths of the ones that ended while nobody was
+  watching. A pid is only consulted for a Worker that never got a unit.
+- **Three facts on the lane, and no per-Worker durable record.** Birth, death and
+  budget-kill are the daemon's own — issue-to-PR belongs to the tracker and
+  branch-to-commits to git, and a third copy of those would only drift.
+- **A crash costs the event in flight, never the lane.** An unterminated final
+  line is read as absent (TOONL's own rule for a truncated open tail) and dropped
+  before the next append, so a half-written record can never fuse onto the next.
 - **An unisolated launch is never silent.** When the host affords no transient
   unit the Worker still starts, and the reply — and the host-state record it
   keeps for its whole life — carries a warning naming what was lost. A declared

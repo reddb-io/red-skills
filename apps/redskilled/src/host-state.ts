@@ -8,7 +8,13 @@
  * Read the host, write the project (ADR 0130 rule 9): this document is the read
  * half, and it is host-wide on purpose.
  */
+import {
+  buildBudgetAccounting,
+  isRedskilledBudgetAccounting,
+  type RedskilledBudgetAccounting,
+} from "./budget-accounting.js";
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
+import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
 /**
  * One Worker process, as the daemon sees it.
@@ -30,6 +36,14 @@ export interface RedskilledWorkerView {
   readonly isolated: boolean;
   /** The transient unit's name, present only when `isolated`. */
   readonly unit?: string;
+  /**
+   * The budget this Worker was born under, carried for its whole life.
+   *
+   * It travels WITH the Worker because the host-wide accounting is derived from
+   * the Worker set: a budget known only at launch would be a number the daemon
+   * could state once and never again after a restart.
+   */
+  readonly budget?: RedskilledWorkerBudget;
   /** Non-empty whenever the launch was a downgrade; never silently absent. */
   readonly warnings: readonly string[];
 }
@@ -50,6 +64,8 @@ export interface RedskilledHostState {
   readonly started_at: string;
   readonly workers: readonly RedskilledWorkerView[];
   readonly projects: readonly RedskilledProjectView[];
+  /** What the daemon has promised the machine, derived from `workers`. */
+  readonly budget_accounting: RedskilledBudgetAccounting;
 }
 
 export interface BuildHostStateInput {
@@ -78,6 +94,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     projects: [...counts.entries()]
       .map(([project_label, worker_count]) => ({ project_label, worker_count }))
       .sort((a, b) => a.project_label.localeCompare(b.project_label)),
+    budget_accounting: buildBudgetAccounting(workers),
   };
 }
 
@@ -106,5 +123,6 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     Number.isInteger(state.pid) &&
     typeof state.started_at === "string" &&
     Array.isArray(state.workers) &&
-    Array.isArray(state.projects);
+    Array.isArray(state.projects) &&
+    isRedskilledBudgetAccounting(state.budget_accounting);
 }

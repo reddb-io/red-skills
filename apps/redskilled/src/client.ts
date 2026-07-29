@@ -151,6 +151,8 @@ function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): vo
     paths.socketPath,
     "--lease",
     paths.leasePath,
+    "--events",
+    paths.eventLanePath,
     "--session-key-hash",
     paths.sessionKeyHash,
     "--machine-id-hash",
