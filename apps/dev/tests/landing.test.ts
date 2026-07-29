@@ -1,5 +1,9 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BRANCH_TIP, RWT, WT, doLanding, harness, joined, type Harness } from "./landing.test-support.js";
+
+const DEV_SRC = join(import.meta.dirname, "..", "src");
 
 describe("doLanding — happy paths", () => {
   it("unlocked → pushes, fires both hooks, lands via admin PR", async () => {
@@ -887,5 +891,35 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
     expect(h.postMergeGateDirs).toEqual([]);
+  });
+});
+
+describe("landing outcomes — every non-ok reason is a landing failure (ADR 0129)", () => {
+  // The `adversarial-correction` reason was the ONE non-ok landing outcome that
+  // was not a landing failure: review ran after the merge decision and aborted
+  // it to send the work back to the implementer. Review is the gate fold's third
+  // stage now (#2730), so the reason has no producer left — and a string scan is
+  // the only check that also catches a re-introduction in a comment, a log line,
+  // or a test fixture that would quietly resurrect the vocabulary.
+  it("no shipped dev source mentions the adversarial-correction landing reason", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!entry.name.endsWith(".ts")) continue;
+        if (readFileSync(full, "utf8").includes("adversarial-correction")) {
+          offenders.push(relative(DEV_SRC, full));
+        }
+      }
+    };
+    walk(DEV_SRC);
+
+    expect(offenders, `retired landing reason \`adversarial-correction\` found in: ${offenders.join(", ")}`).toEqual(
+      [],
+    );
   });
 });
