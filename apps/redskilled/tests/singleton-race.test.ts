@@ -1,0 +1,104 @@
+// Two projects auto-spawning at once must produce ONE daemon, and the loser
+// must connect to the winner rather than fail. This is the start race ADR 0130
+// resolves with an exclusive bind plus a session lease — the failure mode being
+// guarded is two daemons that both believe they own the socket.
+import type { ChildProcess } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { ensureRedskilledDaemon, readRedskilledHostState } from "../src/client.js";
+import { RedskilledAlreadyRunningError, socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
+import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
+import { sendRedskilledRequest } from "../src/protocol.js";
+
+const require_ = createRequire(import.meta.url);
+const tsxLoader = require_.resolve("tsx");
+const cliEntry = resolve(__dirname, "..", "src", "cli.ts");
+
+const running: RedskilledDaemon[] = [];
+const children: ChildProcess[] = [];
+const roots: string[] = [];
+
+afterEach(async () => {
+  for (const daemon of running.splice(0)) await daemon.stop().catch(() => undefined);
+  for (const child of children.splice(0)) child.kill("SIGKILL");
+  for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+});
+
+async function sessionPaths(): Promise<RedskilledPaths> {
+  const root = await mkdtemp(join(tmpdir(), "redskilled-race-"));
+  roots.push(root);
+  return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root });
+}
+
+function clientConfig(paths: RedskilledPaths) {
+  return {
+    serverCommand: process.execPath,
+    serverArgs: ["--import", tsxLoader, cliEntry],
+    readyTimeoutMs: 20_000,
+    idleMs: 60_000,
+    env: { ...process.env, REDSKILLED_SESSION: `test:${paths.runtimeDir}` },
+  };
+}
+
+describe("redskilled singleton", () => {
+  it("refuses a second in-process daemon on the same session socket", async () => {
+    const paths = await sessionPaths();
+    const first = await startRedskilledDaemon({ paths });
+    running.push(first);
+
+    await expect(startRedskilledDaemon({ paths })).rejects.toBeInstanceOf(RedskilledAlreadyRunningError);
+    expect(await socketAnswers(paths.socketPath)).toBe(true);
+  });
+
+  it("resolves two concurrent auto-spawns into one daemon the loser joins", async () => {
+    const paths = await sessionPaths();
+    const config = clientConfig(paths);
+
+    const [a, b] = await Promise.all([
+      ensureRedskilledDaemon(paths, config),
+      ensureRedskilledDaemon(paths, config),
+    ]);
+
+    // Both clients end up served; at most one of them did the spawning.
+    expect([a, b].filter((outcome) => outcome === "spawned").length).toBeLessThanOrEqual(1);
+    expect(a === "spawned" || b === "spawned" || a === "already-running" || b === "already-running").toBe(true);
+
+    const state = await readRedskilledHostState(paths, config);
+    expect(state.workers).toEqual([]);
+
+    // One owner: the pid answering the socket is the same for every client, and
+    // a third daemon attempting to start is refused outright.
+    const second = await readRedskilledHostState(paths, config);
+    expect(second.pid).toBe(state.pid);
+    await expect(startRedskilledDaemon({ paths })).rejects.toBeInstanceOf(RedskilledAlreadyRunningError);
+
+    await sendRedskilledRequest({ socketPath: paths.socketPath }, { id: "shutdown-1", op: "shutdown" });
+  });
+
+  it("takes over socket debris a crash left behind with nothing listening", async () => {
+    const paths = await sessionPaths();
+    // A path that is occupied but answers nothing is exactly what a crash
+    // leaves: the bind must fail once, be diagnosed as debris, and then succeed.
+    await writeFile(paths.socketPath, "");
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+
+    const daemon = await startRedskilledDaemon({ paths });
+    running.push(daemon);
+    expect(await socketAnswers(paths.socketPath)).toBe(true);
+  });
+
+  it("starts the daemon out of process through the shipped cli entry", async () => {
+    const paths = await sessionPaths();
+    const outcome = await ensureRedskilledDaemon(paths, clientConfig(paths));
+    expect(outcome).toBe("spawned");
+
+    const state = await readRedskilledHostState(paths, clientConfig(paths));
+    expect(state.pid).not.toBe(process.pid);
+    expect(state.workers).toEqual([]);
+
+    await sendRedskilledRequest({ socketPath: paths.socketPath }, { id: "shutdown-2", op: "shutdown" });
+  });
+});

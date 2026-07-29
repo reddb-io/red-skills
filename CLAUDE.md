@@ -29,6 +29,7 @@ red-skills/                         ← repo root + marketplace
 │   ├── memory/                     ← `memory` runtime implementation
 │   ├── brain/                      ← `brain` runtime implementation
 │   ├── code-nav/                   ← code navigation runtime implementation
+│   ├── redskilled/                 ← host-scoped execution daemon: one singleton per user session behind a unix socket (ADR 0130)
 │   └── opencode-host/              ← opencode-host adapter: emits opencode.json from .red/config.yaml (ADR 0075; Slice 1 = provider block)
 ├── packages/                       ← code shared by multiple runtimes
 │   ├── shared/                     ← CLI args, bundle-fetch, entrypoint (ADR 0034)
