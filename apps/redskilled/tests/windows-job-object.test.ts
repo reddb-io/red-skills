@@ -66,6 +66,7 @@ function windowsProbes(reach?: RedskilledJobObjectBinding): WorkerPlacementProbe
     jobObjects: reach
       ? { available: true, binding: reach }
       : { available: false, reason: "no Job Object addon was found for win32-x64" },
+    posix: { available: false, reason: "POSIX rlimit and priority placement is the macOS backend (platform=win32)" },
   };
 }
 

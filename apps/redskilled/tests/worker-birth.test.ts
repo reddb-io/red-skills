@@ -147,6 +147,7 @@ describe("the daemon accepts the workspace path as given", () => {
     systemdRun: "/usr/bin/systemd-run",
     userSession: true,
     jobObjects: { available: false, reason: "not Windows" },
+    posix: { available: false, reason: "not macOS" },
   };
 
   it("never reads a repository marker to decide where the Worker runs", () => {
@@ -185,6 +186,7 @@ describe("the daemon accepts the workspace path as given", () => {
       systemdRun: null,
       userSession: false,
       jobObjects: { available: false, reason: expect.stringContaining("Windows backend") },
+      posix: { available: false, reason: expect.stringContaining("macOS backend") },
     });
   });
 
