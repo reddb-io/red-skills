@@ -1381,27 +1381,91 @@ async function ensurePr(
 ): Promise<number | undefined> {
   const { repo, branch, target, n, title } = input;
   const prTitle = input.mergeTitle ?? `merge: #${n} ${title}`;
-  let prNumber = await listOpenPr(exec, repo, branch, target);
-  if (prNumber === undefined) {
-    const create = await exec([
-      "gh",
-      "-R",
-      repo,
-      "pr",
-      "create",
-      "--base",
-      target,
-      "--head",
-      branch,
-      "--title",
-      scrubOutbound(prTitle),
-      "--body",
-      scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #${n}`),
-    ]);
-    if (create.code !== 0) return undefined;
-    prNumber = await listOpenPr(exec, repo, branch, target);
+  const existing = await listOpenPr(exec, repo, branch, target);
+  if (existing !== undefined) {
+    // A REUSED pull request may be the draft the first Re-seed minted (#2731),
+    // and landing is precisely the moment it stops being a draft. `gh pr ready`
+    // is a no-op on a PR that is already ready, so mark unconditionally rather
+    // than paying a state read to decide. Best-effort: a forge that refuses the
+    // flip must not abort a landing that is otherwise green.
+    await exec(["gh", "-R", repo, "pr", "ready", String(existing)]);
+    return existing;
   }
-  return prNumber;
+  const create = await exec([
+    "gh",
+    "-R",
+    repo,
+    "pr",
+    "create",
+    "--base",
+    target,
+    "--head",
+    branch,
+    "--title",
+    scrubOutbound(prTitle),
+    "--body",
+    scrubOutbound(`${PR_BODY_PREFIX}${n}. Per-attempt history lives in the issue Envelopes, the local ledgers, and pushed worker-branch commits.\n\nCloses #${n}`),
+  ]);
+  if (create.code !== 0) return undefined;
+  return await listOpenPr(exec, repo, branch, target);
+}
+
+/** Inputs for the lazily-minted draft pull request, {@link openDraftPr}. */
+export interface OpenDraftPrInput {
+  /** `owner/repo` slug passed to `gh -R`. */
+  repo: string;
+  /** Attempt branch (PR head, already pushed to the remote). */
+  branch: string;
+  /** Pinned target branch (PR base). */
+  target: string;
+  /** Issue number, for the PR title and the `Closes #N` auto-close link. */
+  n: number;
+  /** Issue title, for the PR title. */
+  title: string;
+  /** The trail body the draft mirrors. */
+  body: string;
+}
+
+/**
+ * Mint the DRAFT pull request that carries the correction trail (ADR 0129,
+ * #2731). Opened lazily at the first Re-seed of any cause: an attempt that never
+ * re-seeds pays no pull request and no CI run, which is the whole reason the
+ * mint is lazy rather than fired at the first commit.
+ *
+ * Idempotent by the same rule {@link ensurePr} uses — an open PR for this
+ * head/base IS the draft, whether this worker minted it or a predecessor did.
+ * Landing then reuses it and marks it ready; opening a second is a defect.
+ */
+export async function openDraftPr(exec: Exec, input: OpenDraftPrInput): Promise<number | undefined> {
+  const { repo, branch, target, n, title, body } = input;
+  const existing = await listOpenPr(exec, repo, branch, target);
+  if (existing !== undefined) return existing;
+  const create = await exec([
+    "gh",
+    "-R",
+    repo,
+    "pr",
+    "create",
+    "--draft",
+    "--base",
+    target,
+    "--head",
+    branch,
+    "--title",
+    scrubOutbound(`merge: #${n} ${title}`),
+    "--body",
+    scrubOutbound(body),
+  ]);
+  if (create.code !== 0) return undefined;
+  return await listOpenPr(exec, repo, branch, target);
+}
+
+/** Mirror the trail body onto the draft (#2731). Best-effort: the Issue comment
+ * and the Attempt record already carry the trail, so a failed mirror costs
+ * fidelity on a projection, never the round. */
+export async function editPrBody(exec: Exec, repo: string, prNumber: number, body: string): Promise<boolean> {
+  const r = await exec(["gh", "-R", repo, "pr", "edit", String(prNumber), "--body", scrubOutbound(body)]);
+  return r.code === 0;
 }
 
 /** Inputs for the review-gate PR handoff, {@link openReviewPr}. */
