@@ -58,7 +58,7 @@ export const EMPTY_FAILURE_SIGNATURE = "v1:none";
 /** Key version prefix — bump when the term vocabulary changes meaning. */
 const SIGNATURE_VERSION = "v1";
 
-/** Hex digits of the digest kept. 16 is collision-safe for a per-attempt ledger
+/** Hex digits of the digest kept. 16 is collision-safe for a per-Worker ledger
  * and short enough to read in a log line. */
 const DIGEST_LENGTH = 16;
 
