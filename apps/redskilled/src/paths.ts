@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { runtimeSocketDir } from "@reddb-io/shared/resident-core.js";
+import { REDSKILLED_EVENT_LANE_FILE } from "./event-lane.js";
 
 /** The socket file name; also the length the runtime dir must accommodate. */
 export const REDSKILLED_SOCKET_FILE = "redskilled.sock";
@@ -34,6 +35,8 @@ export interface RedskilledPaths {
   readonly socketPath: string;
   readonly lockPath: string;
   readonly leasePath: string;
+  /** The append-only host event lane the daemon rehydrates itself from. */
+  readonly eventLanePath: string;
 }
 
 export interface ResolveRedskilledPathsOptions {
@@ -88,6 +91,7 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     socketPath: join(runtimeDir, REDSKILLED_SOCKET_FILE),
     lockPath: join(runtimeDir, "redskilled.spawn.lock"),
     leasePath: join(runtimeDir, "redskilled.lease.toon"),
+    eventLanePath: join(runtimeDir, REDSKILLED_EVENT_LANE_FILE),
   };
 }
 

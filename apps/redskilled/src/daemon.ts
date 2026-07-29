@@ -16,14 +16,36 @@
  * every fire the daemon re-reads its own Worker set and rearms instead of
  * exiting if it is non-empty. Leaving by boredom would abandon a budget nobody
  * else is tracking.
+ *
+ * **A restart costs no work, and no accounting.** Workers are init-system units,
+ * so a starting daemon does not find an empty world — it replays its own
+ * append-only event lane, re-attaches to every Worker the host still confirms by
+ * unit name, and records the deaths of the ones that ended while nobody was
+ * watching. Identity and budget come back from the lane rather than from a
+ * per-Worker durable record, because the two authorities that already hold the
+ * rest of a Worker's story — the tracker and git — would only be contradicted by
+ * a third copy.
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
+import {
+  createRedskilledEventLane,
+  rehydrateWorkers,
+  type RedskilledEventLane,
+  type RedskilledHostEvent,
+} from "./event-lane.js";
 import { buildHostState, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
+import {
+  detectWorkerLiveness,
+  reattachWorkers,
+  stopWorker,
+  type RedskilledLivenessProbe,
+  type RedskilledStopProbe,
+} from "./reattach.js";
 import { REDSKILLED_PROTOCOL_VERSION, type RedskilledRequest, type RedskilledResponse } from "./protocol.js";
 import {
   launchWorker,
@@ -63,6 +85,12 @@ export interface RedskilledDaemonOptions {
   readonly clock?: () => string;
   /** How a Worker is born; injected so a test can birth one without a spawn. */
   readonly launch?: (options: LaunchWorkerOptions) => LaunchedWorker;
+  /** The append-only host event lane; defaults to this session's own. */
+  readonly eventLane?: RedskilledEventLane;
+  /** How the daemon asks whether a re-attached Worker is still running. */
+  readonly liveness?: RedskilledLivenessProbe;
+  /** How the daemon stops a Worker it is reclaiming a budget from. */
+  readonly stopWorker?: RedskilledStopProbe;
 }
 
 export interface RedskilledDaemon {
@@ -79,6 +107,20 @@ export interface RedskilledDaemon {
   releaseWorker(workerId: string): boolean;
   workerCount(): number;
   hostState(): RedskilledHostState;
+  /**
+   * Reclaim a Worker's budget: stop it, record the kill, forget it.
+   *
+   * A budget kill is its own event rather than a death with a note, because the
+   * two answer different questions — a reader counting how often the host ran
+   * out of room must not have to distinguish it from a Worker that finished.
+   */
+  killWorkerOverBudget(workerId: string, detail: string): Promise<boolean>;
+  /** Re-probe every re-attached Worker, retiring the ones the host no longer confirms. */
+  sweepReattached(): Promise<readonly RedskilledWorkerView[]>;
+  /** The Workers this daemon adopted at start rather than birthing itself. */
+  reattached(): readonly RedskilledWorkerView[];
+  /** Resolves once every event handed to the lane has reached disk. */
+  flushEvents(): Promise<void>;
   /** Force the idle check to run now — the timer's body, exposed for tests. */
   evaluateIdle(): "exited" | "held-by-workers";
   stop(): Promise<void>;
@@ -118,7 +160,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   const startedAt = clock();
+  const eventLane = options.eventLane ?? createRedskilledEventLane(paths.eventLanePath);
+  const liveness = options.liveness ?? detectWorkerLiveness;
+  const stopProbe = options.stopWorker ?? stopWorker;
   const workers = new Map<string, RedskilledWorkerView>();
+  // Re-attached Workers have no child handle to deliver an exit, so their death
+  // is discovered by asking the host rather than by being told.
+  const reattached = new Set<string>();
   const activeSockets = new Set<Socket>();
   let idleTimer: NodeJS.Timeout | undefined;
   let stopping = false;
@@ -149,21 +197,82 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const launched = launch({
       spec,
       clock,
-      onExit: (workerId) => {
+      onExit: (workerId, code, signal) => {
+        const worker = workers.get(workerId);
         workers.delete(workerId);
+        reattached.delete(workerId);
+        if (worker) record("worker-death", worker, `exit code=${code ?? "null"} signal=${signal ?? "null"}`);
         armIdleTimer();
       },
     });
     workers.set(launched.worker.worker_id, launched.worker);
+    record("worker-birth", launched.worker, null);
     armIdleTimer();
     return launched;
+  }
+
+  /**
+   * Append one event, without making the caller wait for the disk.
+   *
+   * The lane serialises its own appends, so ordering survives the fire-and-
+   * forget; what a failed write must not do is take down the daemon that still
+   * holds the live Worker the event was about.
+   */
+  function record(
+    event: RedskilledHostEvent["event"],
+    worker: RedskilledWorkerView,
+    detail: string | null,
+  ): void {
+    // A stopped daemon writes nothing. Its beliefs about who is alive stopped
+    // being authoritative when it let go of the session, and the next daemon
+    // re-derives every one of them by asking the host directly.
+    if (stopping) return;
+    void eventLane.record({ event, worker, ts: clock(), detail }).catch(() => undefined);
+  }
+
+  /**
+   * Ask the host about every re-attached Worker, and retire the ones it no
+   * longer confirms. Returns the Workers that were retired.
+   */
+  async function sweepReattached(): Promise<readonly RedskilledWorkerView[]> {
+    const adopted = [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null);
+    if (adopted.length === 0) return [];
+    const { dead } = await reattachWorkers(adopted, liveness);
+    for (const worker of dead) {
+      workers.delete(worker.worker_id);
+      reattached.delete(worker.worker_id);
+      record("worker-death", worker, "the host no longer confirms this Worker");
+    }
+    if (dead.length > 0) armIdleTimer();
+    return dead;
+  }
+
+  async function killWorkerOverBudget(workerId: string, detail: string): Promise<boolean> {
+    const worker = workers.get(workerId);
+    if (!worker) return false;
+    try {
+      await stopProbe(worker);
+    } catch {
+      // The kill is recorded either way: a stop the host refused still ends the
+      // daemon's claim on the budget, and a silent failure would leave the
+      // accounting holding room for a Worker nobody is tracking any more.
+    }
+    workers.delete(workerId);
+    reattached.delete(workerId);
+    record("worker-budget-kill", worker, detail);
+    armIdleTimer();
+    return true;
   }
 
   function armIdleTimer(): void {
     if (stopping) return;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      evaluateIdle();
+      // Sweep before deciding: a daemon that exited on a stale belief in a
+      // re-attached Worker would hold this session's socket for nothing.
+      void sweepReattached()
+        .catch(() => undefined)
+        .then(() => evaluateIdle());
     }, idleMs);
     idleTimer.unref();
   }
@@ -183,6 +292,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (stopping) return await closed;
     stopping = true;
     if (idleTimer) clearTimeout(idleTimer);
+    // Every event already handed over reaches the lane before the daemon lets go
+    // of the session: a birth still in flight would leave the next daemon with a
+    // Worker it holds a budget for and no record of.
+    await eventLane.flush().catch(() => undefined);
     server.close();
     for (const socket of activeSockets) socket.destroy();
     await new Promise<void>((resolve) => server.once("close", () => resolve()));
@@ -190,6 +303,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     await leaseStore.release(owner).catch(() => undefined);
     resolveClosed();
     return await closed;
+  }
+
+  // Rehydrate BEFORE the socket starts answering: a client that read host state
+  // in the window between binding and replay would be told this session holds
+  // nothing, and would then birth a second Worker for work already running.
+  const replayed = rehydrateWorkers(await eventLane.read().catch(() => []));
+  const reattachment = await reattachWorkers(replayed, liveness);
+  for (const worker of reattachment.alive) {
+    workers.set(worker.worker_id, worker);
+    reattached.add(worker.worker_id);
+  }
+  for (const worker of reattachment.dead) {
+    record("worker-death", worker, "the Worker ended while no daemon was watching");
   }
 
   server.on("connection", (socket) => {
@@ -239,12 +365,20 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     startedAt,
     closed,
     startWorker,
+    killWorkerOverBudget,
+    sweepReattached,
+    reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
+    flushEvents: () => eventLane.flush(),
     trackWorker(worker) {
       workers.set(worker.worker_id, worker);
+      record("worker-birth", worker, null);
       armIdleTimer();
     },
     releaseWorker(workerId) {
+      const worker = workers.get(workerId);
       const removed = workers.delete(workerId);
+      reattached.delete(workerId);
+      if (worker) record("worker-death", worker, "released by the daemon");
       armIdleTimer();
       return removed;
     },
