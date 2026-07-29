@@ -1,4 +1,4 @@
-import { createConnection } from "node:net";
+import { sendLineRequest } from "./resident-core.js";
 
 export interface RspResidentConfig {
   storeUri: string;
@@ -58,43 +58,5 @@ export async function sendResidentRequest(
   opts: RspResidentClientOptions,
   request: RspResidentRequest,
 ): Promise<RspResidentResponse> {
-  const timeoutMs = opts.timeoutMs ?? 1_000;
-  return await new Promise((resolve, reject) => {
-    const socket = createConnection(opts.socketPath);
-    let settled = false;
-    let buffer = "";
-    const timeout = setTimeout(() => {
-      finish(() => reject(new Error("resident rsp server timed out")));
-      socket.destroy();
-    }, timeoutMs);
-
-    function finish(fn: () => void): void {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      fn();
-    }
-
-    socket.on("connect", () => {
-      socket.write(`${JSON.stringify(request)}\n`);
-    });
-    socket.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
-      const newline = buffer.indexOf("\n");
-      if (newline < 0) return;
-      const line = buffer.slice(0, newline);
-      finish(() => {
-        try {
-          resolve(JSON.parse(line) as RspResidentResponse);
-        } catch (err) {
-          reject(err);
-        }
-      });
-      socket.end();
-    });
-    socket.on("error", (err) => finish(() => reject(err)));
-    socket.on("close", () => {
-      if (!settled) finish(() => reject(new Error("resident rsp server closed without response")));
-    });
-  });
+  return await sendLineRequest<RspResidentRequest, RspResidentResponse>(opts, request, "resident rsp server");
 }

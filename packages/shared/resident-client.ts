@@ -1,13 +1,12 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
-import { constants } from "node:fs";
 import { readFileSync } from "node:fs";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decode, encode, type JsonObject } from "@reddb-io/toon";
 import { rspStateDir } from "./red-paths.js";
+import { isPidAlive, runtimeSocketDir, terminatePid, tryAcquireExclusiveLock } from "./resident-core.js";
 import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
 import { sendResidentRequest } from "./resident-protocol.js";
 import { requireRspEntry } from "./rsp-entry.js";
@@ -22,7 +21,6 @@ export interface RspResidentPaths {
   registryPath: string;
 }
 
-const UNIX_SOCKET_PATH_LIMIT = 108;
 const RESIDENT_REGISTRY_VERSION = 1;
 const DEFAULT_RESIDENT_READY_TIMEOUT_MS = 5_000;
 
@@ -305,15 +303,7 @@ async function removeUnresponsiveSocket(socketPath: string): Promise<void> {
   await rm(socketPath, { force: true });
 }
 
-async function tryAcquireLock(lockPath: string) {
-  await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
-  try {
-    return await open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-    return null;
-  }
-}
+const tryAcquireLock = tryAcquireExclusiveLock;
 
 function spawnResident(paths: RspResidentPaths, config: RspResidentConfig): ResidentSpawn {
   const [command, prefix] = spawnTarget(paths, config);
@@ -422,33 +412,6 @@ async function reconcileResidentRegistry(paths: RspResidentPaths, config: RspRes
   } catch {}
 }
 
-function isPidAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function terminatePid(pid: number): Promise<void> {
-  if (!isPidAlive(pid)) return;
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  const deadline = Date.now() + 1_000;
-  while (Date.now() < deadline) {
-    if (!isPidAlive(pid)) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {}
-}
-
 async function waitForPidExit(pid: number, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -480,14 +443,7 @@ function spawnTarget(paths: RspResidentPaths, config: RspResidentConfig): [strin
 }
 
 function resolveRuntimeSocketDir(rootDir: string): string {
-  const hash = createHash("sha256").update(rootDir).digest("hex").slice(0, 20);
-  const xdg = process.env.XDG_RUNTIME_DIR;
-  if (xdg) {
-    const candidate = join(xdg, "red-skills", hash);
-    if (join(candidate, "rsp.sock").length < UNIX_SOCKET_PATH_LIMIT) return candidate;
-  }
-  const uid = typeof process.getuid === "function" ? process.getuid() : "nouid";
-  return join(tmpdir(), `red-skills-${uid}`, hash);
+  return runtimeSocketDir({ key: rootDir, socketFileName: "rsp.sock" });
 }
 
 function findRepoRoot(start: string): string | null {

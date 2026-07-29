@@ -1,0 +1,24 @@
+{
+  "name": "@reddb-io/redskilled",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "redskilled — the host-scoped execution daemon (ADR 0130): one singleton per user session behind a unix socket, owning Worker processes across every project on the machine while each project's bundle keeps owning the work.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "NODE_OPTIONS=--max-old-space-size=4096 vitest run",
+    "build": "pnpm run typecheck",
+    "serve": "tsx src/cli.ts serve"
+  },
+  "dependencies": {
+    "@reddb-io/shared": "workspace:*",
+    "@reddb-io/toon": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
