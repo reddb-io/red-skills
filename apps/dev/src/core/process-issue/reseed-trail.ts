@@ -12,14 +12,22 @@
 // on a projection and never the round: every call here is best-effort and the
 // publisher retries the missing half on the next round.
 
-import { openDraftPr, editPrBody, type Exec as MergeExec } from "../merge.js";
+import { openDraftPr, editPrBody, labelPr, type Exec as MergeExec } from "../merge.js";
 import { pushAttempt, type GitExec } from "../remote-branch.js";
+import { LABEL_VALIDATION } from "../triage-labels.js";
 import type { ReseedCause, ReseedTrigger } from "./reseed-budget.js";
 
 /** The marker that makes the comment findable for the in-place edit. Carries the
  * issue so a comment posted on the wrong Ticket can never be mistaken for it. */
 export function reseedTrailMarker(issue: number): string {
   return `<!-- afk:reseed-trail v1 issue=${issue} -->`;
+}
+
+/** The park marker both surfaces carry (#2732). It names `blocked:validation` —
+ * the SAME state the Ticket's label carries — so one query over the marker
+ * separates parked work from live work without joining two vocabularies. */
+export function reseedParkMarker(issue: number): string {
+  return `<!-- afk:reseed-park v1 issue=${issue} blocked=${LABEL_VALIDATION} -->`;
 }
 
 /** One round on the trail. `note` is the same line the iteration log carries, so
@@ -31,12 +39,24 @@ export interface ReseedTrailRound {
   readonly note: string;
 }
 
+/** The exhaustion that ended the Attempt (#2732). One shape for every cause: a
+ * budget spent on gate churn and a budget spent on a blocking review finding
+ * park through the same rendering, because a human reading the park needs the
+ * evidence and the open diff either way. */
+export interface ReseedTrailPark {
+  /** Whatever the exhausted round left red — the gate tail or the blocker
+   * summary — verbatim, so the park needs no re-run to be diagnosed. */
+  readonly evidence: string;
+}
+
 export interface ReseedTrailView {
   readonly issue: number;
   readonly branch: string;
   readonly lane: string;
   readonly ceiling: number;
   readonly rounds: readonly ReseedTrailRound[];
+  /** Present once the budget is exhausted with work still outstanding. */
+  readonly park?: ReseedTrailPark;
 }
 
 /** Render the trail. Pure, and the SAME body reaches both surfaces — the draft
@@ -59,6 +79,21 @@ export function renderReseedTrail(view: ReseedTrailView): string {
     "",
     "The Attempt record is the source of truth; this is a derived projection.",
   );
+  if (view.park) {
+    lines.push(
+      "",
+      reseedParkMarker(view.issue),
+      `🛑 **Parked — \`${LABEL_VALIDATION}\`.** The Re-seed budget is exhausted with work still`,
+      "outstanding, so a human owns it from here. This pull request stays OPEN: a validation park is",
+      "precisely the moment the diff must be readable.",
+      "",
+      "**Evidence at park time**",
+      "",
+      "```",
+      view.park.evidence.trim(),
+      "```",
+    );
+  }
   return lines.join("\n");
 }
 
@@ -91,6 +126,9 @@ export interface ReseedTrailContext {
 export interface ReseedTrail {
   /** Record one round and upsert both projections. */
   publish(round: ReseedTrailRound): Promise<void>;
+  /** Seal both projections on the exhausted budget: the draft stays OPEN and
+   * both surfaces carry the same `blocked:validation` state and evidence. */
+  park(park: ReseedTrailPark): Promise<void>;
   /** The draft's number once minted, for the landing that reuses it. */
   prNumber(): number | undefined;
 }
@@ -117,44 +155,71 @@ export function createReseedTrail(deps: ReseedTrailDeps, ctx: ReseedTrailContext
     return pushed;
   };
 
-  const publish = async (round: ReseedTrailRound): Promise<void> => {
-    rounds.push(round);
-    const body = renderReseedTrail({
+  const render = (park?: ReseedTrailPark): string =>
+    renderReseedTrail({
       issue: ctx.issue,
       branch: ctx.branch,
       lane: ctx.lane,
       ceiling: ctx.ceiling,
       rounds,
+      park,
     });
 
-    // 1. ONE Issue comment: posted on the first round, edited in place on every
-    // round after it, so five rounds are one notification rather than five.
-    if (deps.gh) {
-      if (commentId === undefined) commentId = await deps.gh.postComment(ctx.issue, body);
-      else await deps.gh.editComment(commentId, body);
-    }
-
-    // 2. The draft, minted lazily on the first round and mirrored thereafter.
-    if (prNumber === undefined) {
-      if (!(await ensurePushed())) return;
-      prNumber = await openDraftPr(deps.mergeExec, {
-        repo: ctx.repo,
-        branch: ctx.branch,
-        target: ctx.base,
-        n: ctx.issue,
-        title: ctx.title,
-        body: draftBody(ctx.issue, body),
-      });
-      if (prNumber !== undefined) {
-        deps.appendIterLog(
-          `🤖 ${ctx.lane}: first Re-seed — opened draft PR #${prNumber} carrying the correction trail.`,
-        );
-        deps.recordWorkerEvent?.("worker.reseed_draft_opened", { pr: prNumber, round: round.round });
-      }
-      return;
-    }
-    await editPrBody(deps.mergeExec, ctx.repo, prNumber, draftBody(ctx.issue, body));
+  /** ONE Issue comment: posted the first time the trail says anything, edited in
+   * place every time after, so five rounds and a park are one notification
+   * rather than six. */
+  const upsertComment = async (body: string): Promise<void> => {
+    if (!deps.gh) return;
+    if (commentId === undefined) commentId = await deps.gh.postComment(ctx.issue, body);
+    else await deps.gh.editComment(commentId, body);
   };
 
-  return { publish, prNumber: () => prNumber };
+  /** The draft, minted lazily on the first round and mirrored thereafter.
+   * Returns whether a pull request carries the body — the park needs to know,
+   * because a draft the forge refused cannot be labelled. */
+  const upsertDraft = async (body: string, round?: number): Promise<boolean> => {
+    if (prNumber !== undefined) {
+      await editPrBody(deps.mergeExec, ctx.repo, prNumber, draftBody(ctx.issue, body));
+      return true;
+    }
+    if (!(await ensurePushed())) return false;
+    prNumber = await openDraftPr(deps.mergeExec, {
+      repo: ctx.repo,
+      branch: ctx.branch,
+      target: ctx.base,
+      n: ctx.issue,
+      title: ctx.title,
+      body: draftBody(ctx.issue, body),
+    });
+    if (prNumber === undefined) return false;
+    deps.appendIterLog(
+      `🤖 ${ctx.lane}: first Re-seed — opened draft PR #${prNumber} carrying the correction trail.`,
+    );
+    deps.recordWorkerEvent?.("worker.reseed_draft_opened", { pr: prNumber, round });
+    return true;
+  };
+
+  const publish = async (round: ReseedTrailRound): Promise<void> => {
+    rounds.push(round);
+    const body = render();
+    await upsertComment(body);
+    await upsertDraft(body, round.round);
+  };
+
+  /** The exhausted budget's last act, and deliberately NOT a close: a validation
+   * park is exactly when a human needs the diff open, so the draft is left
+   * standing and marked `blocked:validation` — the same state the Ticket
+   * carries, which is what makes one query answer for both surfaces. */
+  const park = async (parked: ReseedTrailPark): Promise<void> => {
+    const body = render(parked);
+    await upsertComment(body);
+    if (!(await upsertDraft(body))) return;
+    await labelPr(deps.mergeExec, ctx.repo, prNumber!, LABEL_VALIDATION);
+    deps.appendIterLog(
+      `🤖 ${ctx.lane}: Re-seed budget exhausted — draft PR #${prNumber} left open and marked \`${LABEL_VALIDATION}\`.`,
+    );
+    deps.recordWorkerEvent?.("worker.reseed_parked", { pr: prNumber, rounds: rounds.length });
+  };
+
+  return { publish, park, prNumber: () => prNumber };
 }
