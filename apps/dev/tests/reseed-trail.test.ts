@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   renderReseedTrail,
+  reseedParkMarker,
   reseedTrailMarker,
 } from "../src/core/process-issue/reseed-trail.js";
 
@@ -32,6 +33,26 @@ describe("renderReseedTrail (#2731)", () => {
 
   it("names the Attempt record as the source of truth, not itself", () => {
     expect(renderReseedTrail(view)).toContain("derived projection");
+  });
+
+  it("says nothing about a park while the budget still has rounds (#2732)", () => {
+    const body = renderReseedTrail(view);
+    expect(body).not.toContain(reseedParkMarker(9));
+    expect(body).not.toContain("blocked:validation");
+  });
+
+  it("carries the blocked-validation marker and the evidence once parked (#2732)", () => {
+    const body = renderReseedTrail({
+      ...view,
+      park: { evidence: '{"check":"test","status":"failed"}' },
+    });
+    expect(body).toContain(reseedParkMarker(9));
+    expect(reseedParkMarker(9)).toContain("blocked:validation");
+    expect(body).toContain('{"check":"test","status":"failed"}');
+    // The rounds already spent stay on the park: the human reads the whole
+    // correction history and the evidence that ended it in one place.
+    expect(body).toContain("feedback machine gate failed");
+    expect(body).toContain("blocking finding");
   });
 
   it("escapes a pipe in a note so one round cannot break the table", () => {
