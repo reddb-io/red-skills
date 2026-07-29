@@ -167,6 +167,11 @@
    "classification": "external",
    "reason": "TOON migration accepts legacy JSON inputs.",
    "moveKey": "e57f5cae7679"
+  },
+  {
+   "id": "apps/rsp/src/overhead-budget.ts#json-parse-file-read#e1e4e966b7a7",
+   "classification": "migrate",
+   "reason": "Overhead ledger decoder accepts legacy JSON while TOON ledgers roll out; every write already emits TOON."
   }
  ]
 }
