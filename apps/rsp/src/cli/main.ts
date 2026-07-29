@@ -181,6 +181,12 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     const resident = args.command === "sweep"
       ? await sweepResidentRegistry(residentPaths)
       : await residentRegistryStatus(residentPaths);
+    if (args.command === "sweep") {
+      // The janitor already owns this lane, so the ETag cache is reclaimed and
+      // re-bounded here rather than by a second surface nobody runs (#2745).
+      const { sweepGhEtagCache } = await import("../gh-etag-cache.js");
+      await sweepGhEtagCache(residentPaths.rootDir, { maxBytes: config.ghEtagCacheMaxBytes });
+    }
     // The cost verdict is the surface, not a log line an operator has to
     // interpret (#2746): a breached ceiling renders red right here.
     const { overheadHealth } = await import("../overhead-budget.js");

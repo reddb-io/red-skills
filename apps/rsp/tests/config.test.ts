@@ -14,6 +14,7 @@ import {
   resolveRspConfig,
 } from "../src/config.js";
 import { DEFAULT_RSP_OVERHEAD_CEILING } from "../src/overhead-budget.js";
+import { DEFAULT_GH_ETAG_CACHE_MAX_BYTES } from "../src/gh-etag-cache.js";
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/elision-store.js";
 
 const roots: string[] = [];
@@ -52,6 +53,7 @@ describe("resolveRspConfig", () => {
       idleMs: 10_000,
       heavyGitByteThreshold: 99,
       measurementHoldoutShare: 0,
+      ghEtagCacheMaxBytes: DEFAULT_GH_ETAG_CACHE_MAX_BYTES,
       overhead: DEFAULT_RSP_OVERHEAD_CEILING,
     });
   });
@@ -76,6 +78,7 @@ describe("resolveRspConfig", () => {
       idleMs: DEFAULT_RSP_IDLE_MS,
       heavyGitByteThreshold: DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD,
       measurementHoldoutShare: 0,
+      ghEtagCacheMaxBytes: DEFAULT_GH_ETAG_CACHE_MAX_BYTES,
       overhead: DEFAULT_RSP_OVERHEAD_CEILING,
     });
   });
@@ -97,6 +100,15 @@ describe("resolveRspConfig", () => {
       cooldownMs: 60_000,
     });
     expect(resolveRspConfig(root, { RSP_MAX_SELF_STATE_BYTES: "99" }, undefined).overhead.maxSelfStateBytes).toBe(99);
+  });
+
+  it("reads the gh ETag cache byte ceiling from the rsp block and the environment (#2745)", async () => {
+    const root = await tempRoot();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  ghEtagCacheMaxBytes: 65536\n", "utf8");
+
+    expect(resolveRspConfig(root, {}, undefined).ghEtagCacheMaxBytes).toBe(65_536);
+    expect(resolveRspConfig(root, { RSP_GH_ETAG_CACHE_MAX_BYTES: "1024" }, undefined).ghEtagCacheMaxBytes).toBe(1024);
   });
 
   it("keeps measurement holdout off by default and reads it additively", async () => {
