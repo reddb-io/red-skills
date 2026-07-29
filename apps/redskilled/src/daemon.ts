@@ -32,6 +32,12 @@ import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
 import {
+  evaluateWorkerAdmission,
+  resolveHostCeiling,
+  type RedskilledAdmissionVerdict,
+  type RedskilledHostCeiling,
+} from "./admission.js";
+import {
   createRedskilledEventLane,
   rehydrateWorkers,
   type RedskilledEventLane,
@@ -80,6 +86,8 @@ export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
   readonly daemonVersion?: string;
   readonly idleMs?: number;
+  /** The host-wide ceiling admission is decided against; the host's own by default. */
+  readonly ceiling?: RedskilledHostCeiling;
   readonly owner?: RedskilledLeaseOwner;
   readonly leaseStore?: RedskilledLeaseStore;
   readonly clock?: () => string;
@@ -99,8 +107,12 @@ export interface RedskilledDaemon {
   readonly startedAt: string;
   /** Resolves when the daemon has stopped listening and released its lease. */
   readonly closed: Promise<void>;
-  /** Birth a Worker from a spec: plan placement, launch, track, report. */
+  /** Birth a Worker from a spec: admit, plan placement, launch, track, report. */
   startWorker(spec: RedskilledWorkerSpec): LaunchedWorker;
+  /** Judge a spec against the live host without birthing anything. */
+  admit(spec: RedskilledWorkerSpec): RedskilledAdmissionVerdict;
+  /** The ceiling this daemon admits against. */
+  ceiling(): RedskilledHostCeiling;
   /** Record a Worker the daemon believes is alive — the idle gate reads this set. */
   trackWorker(worker: RedskilledWorkerView): void;
   /** Forget a Worker the daemon has observed dying. */
@@ -139,6 +151,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const idleMs = options.idleMs ?? DEFAULT_REDSKILLED_IDLE_MS;
   const clock = options.clock ?? (() => new Date().toISOString());
   const launch = options.launch ?? launchWorker;
+  const ceiling = options.ceiling ?? resolveHostCeiling();
   const owner = options.owner ?? currentProcessOwner();
   const leaseStore = options.leaseStore ?? createRedskilledLeaseStore(paths.leasePath, {
     sessionKeyHash: paths.sessionKeyHash,
@@ -187,7 +200,26 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /**
+   * Judge one request against the Workers this daemon is holding right now.
+   *
+   * The denominator is live process state across every project, which is the
+   * whole point: a per-repository profile would let each checkout conclude the
+   * machine affords N Workers and spend that budget alone.
+   */
+  function admit(spec: RedskilledWorkerSpec): RedskilledAdmissionVerdict {
+    return evaluateWorkerAdmission({
+      ceiling,
+      workers: [...workers.values()],
+      budget: spec.budget,
+      projectLabel: spec.project_label,
+    });
+  }
+
+  /**
    * Birth one Worker.
+   *
+   * Admission comes first and the verdict travels into the launch, so a refusal
+   * is a Worker that never existed rather than one killed after the fact.
    *
    * Tracking happens here rather than in the caller, so the idle gate and the
    * host state learn about a Worker at the same instant the process exists —
@@ -196,6 +228,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   function startWorker(spec: RedskilledWorkerSpec): LaunchedWorker {
     const launched = launch({
       spec,
+      admission: admit(spec),
       clock,
       onExit: (workerId, code, signal) => {
         const worker = workers.get(workerId);
@@ -347,7 +380,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       if (request.op === "host-state") return { id: request.id, ok: true, value: hostState() };
       if (request.op === "worker-start") {
         const launched = startWorker(request.spec);
-        return { id: request.id, ok: true, value: { worker: launched.worker, warnings: launched.warnings } };
+        return {
+          id: request.id,
+          ok: true,
+          value: { worker: launched.worker, admission: launched.admission, warnings: launched.warnings },
+        };
       }
       if (request.op === "shutdown") return { id: request.id, ok: true, value: { stopping: true } };
       const unknown = request as { id?: string; op?: string };
@@ -365,6 +402,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     startedAt,
     closed,
     startWorker,
+    admit,
+    ceiling: () => ceiling,
     killWorkerOverBudget,
     sweepReattached,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),

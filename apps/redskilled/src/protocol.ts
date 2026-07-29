@@ -16,6 +16,7 @@
  * for a version-skewed client to disagree with the daemon about.
  */
 import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
+import { isRedskilledAdmissionVerdict, type RedskilledAdmissionVerdict } from "./admission.js";
 import { isRedskilledWorkerView, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
 
@@ -48,13 +49,23 @@ export interface RedskilledPong {
  */
 export interface RedskilledWorkerStarted {
   readonly worker: RedskilledWorkerView;
+  /**
+   * The host-wide verdict that allowed this birth.
+   *
+   * It rides on the success reply, not only on a refusal: a caller that can read
+   * the ceiling and the machine's current consumption off its own admitted
+   * request never has to ask a second question to know how much room is left.
+   */
+  readonly admission: RedskilledAdmissionVerdict;
   readonly warnings: readonly string[];
 }
 
 export function isRedskilledWorkerStarted(value: unknown): value is RedskilledWorkerStarted {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const started = value as Record<string, unknown>;
-  return Array.isArray(started.warnings) && isRedskilledWorkerView(started.worker);
+  return Array.isArray(started.warnings) &&
+    isRedskilledWorkerView(started.worker) &&
+    isRedskilledAdmissionVerdict(started.admission);
 }
 
 export interface RedskilledClientOptions {
@@ -79,4 +90,4 @@ export function isRedskilledPong(value: unknown): value is RedskilledPong {
     Number.isInteger(pong.pid);
 }
 
-export type { RedskilledHostState, RedskilledWorkerView, RedskilledWorkerSpec };
+export type { RedskilledAdmissionVerdict, RedskilledHostState, RedskilledWorkerView, RedskilledWorkerSpec };

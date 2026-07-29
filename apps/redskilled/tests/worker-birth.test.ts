@@ -8,6 +8,7 @@ import { readRedskilledHostState, startRedskilledWorker } from "../src/client.js
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { isRedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
+import { evaluateWorkerAdmission, UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import { launchWorker, RedskilledWorkerSpecError, type RedskilledWorkerSpec } from "../src/worker-launch.js";
 import { detectWorkerPlacementProbes, type WorkerPlacementProbes } from "../src/worker-placement.js";
 
@@ -138,6 +139,9 @@ describe("worker birth through the socket", () => {
 });
 
 describe("the daemon accepts the workspace path as given", () => {
+  // Placement is what these cases are about, so admission is held constant: an
+  // unbounded ceiling is the operator's own opt-out, not a test-only bypass.
+  const ADMITTED = evaluateWorkerAdmission({ ceiling: UNBOUNDED_HOST_CEILING, workers: [] });
   const LINUX_WITH_SESSION: WorkerPlacementProbes = {
     platform: "linux",
     systemdRun: "/usr/bin/systemd-run",
@@ -150,6 +154,7 @@ describe("the daemon accepts the workspace path as given", () => {
     // identical in shape to one aimed at a real checkout.
     const spawns: Array<{ command: string; args: readonly string[]; cwd?: string }> = [];
     const launched = launchWorker({
+      admission: ADMITTED,
       spec: {
         project_label: "opaque-label",
         workspace_path: "/definitely/not/a/checkout",
@@ -180,6 +185,7 @@ describe("the daemon accepts the workspace path as given", () => {
   it("rejects a spec with no workspace at all rather than inventing one", () => {
     expect(() =>
       launchWorker({
+        admission: ADMITTED,
         spec: { project_label: "opaque", workspace_path: "  ", command: "/bin/true" },
         probes: LINUX_WITH_SESSION,
         spawnFn: () => ({ pid: 1, once: () => undefined, unref: () => undefined }) as never,

@@ -11,9 +11,16 @@
  * directory is walked, no layout is assumed. A path it needs is a path it was
  * given (ADR 0130 rule 3), which is what lets one daemon serve checkouts pinned
  * to different bundle versions.
+ *
+ * **A birth carries the verdict that allowed it.** The host-wide admission
+ * verdict is a required launch input rather than a check the caller is trusted
+ * to have run first, so "no code path spawns a Worker without an admission
+ * verdict" is a property of this function instead of a convention every future
+ * call site has to remember.
  */
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import {
   detectWorkerPlacementProbes,
@@ -47,8 +54,27 @@ export class RedskilledWorkerSpecError extends Error {
   }
 }
 
+/**
+ * Raised when a launch was attempted without a verdict admitting it.
+ *
+ * Its own type, not a spec error: a spec the daemon cannot act on is the
+ * client's mistake, while a birth attempted past the host's answer is the
+ * daemon's, and an operator reading a refusal needs to know which happened.
+ */
+export class RedskilledAdmissionError extends Error {
+  constructor(
+    message: string,
+    readonly admission?: RedskilledAdmissionVerdict,
+  ) {
+    super(message);
+    this.name = "RedskilledAdmissionError";
+  }
+}
+
 export interface LaunchedWorker {
   readonly worker: RedskilledWorkerView;
+  /** The verdict that allowed this birth, carried into the caller's reply. */
+  readonly admission: RedskilledAdmissionVerdict;
   /** The same warnings the view carries, for a caller that reports them once. */
   readonly warnings: readonly string[];
   readonly plan: WorkerPlacementPlan;
@@ -57,6 +83,8 @@ export interface LaunchedWorker {
 
 export interface LaunchWorkerOptions {
   readonly spec: RedskilledWorkerSpec;
+  /** The host-wide verdict admitting this birth. Required: no verdict, no Worker. */
+  readonly admission: RedskilledAdmissionVerdict;
   readonly probes?: WorkerPlacementProbes;
   readonly enabled?: boolean;
   readonly env?: NodeJS.ProcessEnv;
@@ -85,13 +113,29 @@ export function assertLaunchableSpec(spec: RedskilledWorkerSpec): void {
 }
 
 /**
+ * Refuse a birth no verdict admitted — including the birth nobody judged at all.
+ *
+ * An absent verdict is treated exactly like a refusal, because the two mean the
+ * same thing to the host: nothing proved this Worker fits.
+ */
+export function assertAdmitted(admission: RedskilledAdmissionVerdict | undefined): void {
+  if (admission == null) {
+    throw new RedskilledAdmissionError(
+      "redskilled refused this Worker: no host admission verdict was handed over, and an unjudged birth is an unbudgeted one",
+    );
+  }
+  if (!admission.admitted) throw new RedskilledAdmissionError(admission.reason, admission);
+}
+
+/**
  * Launch one Worker.
  *
  * Failure to spawn throws rather than returning a half-Worker: a caller that
  * could not tell "running" from "never started" would leak the budget.
  */
 export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
-  const { spec } = options;
+  const { spec, admission } = options;
+  assertAdmitted(admission);
   assertLaunchableSpec(spec);
 
   const env = options.env ?? process.env;
@@ -146,5 +190,5 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     ...(spec.budget != null ? { budget: spec.budget } : {}),
     warnings,
   };
-  return { worker, warnings, plan, child };
+  return { worker, admission, warnings, plan, child };
 }
