@@ -150,11 +150,14 @@ describe("processIssue — feedback fail", () => {
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
   });
 
-  it("retries a simple-classified feedback failure once on the complex tier, then lands when green", async () => {
+  it("escalates the tier on a REPEATED failure signature, then lands when green (#2729)", async () => {
     const tiers: Array<{ runner: string; taskClass: string | undefined }> = [];
     const { deps, input, trace } = harness({
       outcome: "done",
-      feedbackResults: [false, true],
+      // Round 1 fails; round 2 fails IDENTICALLY → the repeat buys the tier;
+      // round 3 is green.
+      feedbackResults: [false, false, true],
+      stallConvergenceBudget: 1,
       classifyIssue: async () => "simple",
       resolveTier: (runner, taskClass) => {
         tiers.push({ runner, taskClass });
@@ -164,32 +167,44 @@ describe("processIssue — feedback fail", () => {
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
-    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.runAgentCalls).toHaveLength(3);
     expect(tiers).toEqual([
+      { runner: "claude", taskClass: "simple" },
       { runner: "claude", taskClass: "simple" },
       { runner: "claude", taskClass: "complex" },
     ]);
-    expect(trace.runAgentCalls[0]?.model).toBe("claude-simple-model");
-    expect(trace.runAgentCalls[1]?.model).toBe("claude-complex-model");
-    expect(trace.runAgentCalls[1]?.effort).toBe("medium");
+    // Round 2 repeats the tier because nothing repeated yet; round 3 does not.
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("<afk-gate-correction>");
+    expect(trace.runAgentCalls[2]?.handoffContent).toContain("<tier-escalation>");
+    expect(trace.runAgentCalls[2]?.model).toBe("claude-complex-model");
+    expect(trace.runAgentCalls[2]?.effort).toBe("medium");
     expect(labelTrace(trace)).toEqual(["-ready-for-agent|+running", "-running|+"]);
     expect(trace.closed).toEqual([9]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
-    expect(result.hooksFired).toEqual([
-      "pre_worktree",
-      "pre_attempt",
-      "post_attempt",
-      "pre_feedback",
-      "on_baseline_probe", // gate 1 FAILED → the baseline probe ran
-      "post_feedback",
-      "on_feedback_classify", // SEMANTIC → simple→complex retry
-      "pre_attempt", // the complex-tier retry
-      "post_attempt",
-      "pre_feedback",
-      "post_feedback", // gate 2 passed → no baseline probe
-      "pre_merge",
-      "post_merge",
-    ]);
+  });
+
+  it("leaves the tier alone while the failure signature keeps changing (#2729)", async () => {
+    const tiers: Array<{ runner: string; taskClass: string | undefined }> = [];
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      // Four failing checks, then ONE — a different failure set, so a different
+      // signature — then the same one again, which is the repeat.
+      feedbackFailures: [["test", "typecheck", "lint", "build"], ["test"], ["test"], []],
+      stallConvergenceBudget: 2,
+      classifyIssue: async () => "simple",
+      resolveTier: (runner, taskClass) => {
+        tiers.push({ runner, taskClass });
+        return { model: `${runner}-${taskClass}-model`, effort: "high" };
+      },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(tiers.map((t) => t.taskClass)).toEqual(["simple", "simple", "simple", "complex"]);
+    // The two rounds that follow a CHANGED signature are gate corrections.
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("<afk-gate-correction>");
+    expect(trace.runAgentCalls[2]?.handoffContent).toContain("<afk-gate-correction>");
+    expect(trace.runAgentCalls[3]?.handoffContent).toContain("<tier-escalation>");
   });
 
   it("does not escalate a simple-classified attempt when feedback passes", async () => {
@@ -211,11 +226,12 @@ describe("processIssue — feedback fail", () => {
     expect(trace.runAgentCalls[0]?.model).toBe("claude-simple-model");
   });
 
-  it("bounds simple feedback escalation to one complex retry", async () => {
+  it("bounds the escalation to one tier step, then parks on the repeat it cannot buy past", async () => {
     const tiers: Array<{ runner: string; taskClass: string | undefined }> = [];
     const { deps, input, trace } = harness({
       outcome: "done",
-      feedbackResults: [false, false, true],
+      feedbackResults: [false, false, false, true],
+      stallConvergenceBudget: 1,
       classifyIssue: async () => "simple",
       resolveTier: (runner, taskClass) => {
         tiers.push({ runner, taskClass });
@@ -225,8 +241,11 @@ describe("processIssue — feedback fail", () => {
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("feedback-failed");
-    expect(trace.runAgentCalls).toHaveLength(2);
+    // Gate round, then the escalation the repeat bought — and no third round:
+    // the `tier` sub-cap is one deep and the gate's share is spent.
+    expect(trace.runAgentCalls).toHaveLength(3);
     expect(tiers).toEqual([
+      { runner: "claude", taskClass: "simple" },
       { runner: "claude", taskClass: "simple" },
       { runner: "claude", taskClass: "complex" },
     ]);
@@ -1626,10 +1645,11 @@ describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
   it("still Re-seeds a failing gate after a tier escalation — the escalation no longer mutes it", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
-      // simple fails → tier escalation; complex fails → gate Re-seed; fails again → park.
-      feedbackResults: [false, false, false],
+      // fails → gate Re-seed; fails identically → tier escalation; fails on the
+      // complex tier with a CHANGED signature → one more gate Re-seed; park.
+      feedbackFailures: [["test"], ["test"], ["lint"], ["lint"]],
       classifyIssue: async () => "simple",
-      stallConvergenceBudget: 1,
+      stallConvergenceBudget: 2,
     });
 
     const result = await processIssue(deps, input);
@@ -1637,10 +1657,15 @@ describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
     expect(result.outcome).toBe("feedback-failed");
     // Before the unified request path the tier escalation set a flag that
     // refused EVERY subsequent gate correction, so this run stopped at 2.
-    expect(trace.runAgentCalls).toHaveLength(3);
-    expect(trace.runAgentCalls[1]?.handoffContent).toContain("<tier-escalation>");
-    expect(trace.runAgentCalls[2]?.handoffContent).toContain("<afk-gate-correction>");
-    expect(reseeds(trace).map((e) => e.payload?.trigger)).toEqual(["tier-escalation", "gate-stage"]);
+    expect(trace.runAgentCalls).toHaveLength(4);
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("<afk-gate-correction>");
+    expect(trace.runAgentCalls[2]?.handoffContent).toContain("<tier-escalation>");
+    expect(trace.runAgentCalls[3]?.handoffContent).toContain("<afk-gate-correction>");
+    expect(reseeds(trace).map((e) => e.payload?.trigger)).toEqual([
+      "gate-stage",
+      "tier-escalation",
+      "gate-stage",
+    ]);
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
   });
 
