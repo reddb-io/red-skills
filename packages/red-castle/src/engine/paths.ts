@@ -26,12 +26,6 @@ export interface EnginePaths {
   readonly stateRoot: string;
   readonly castleStateRoot: string;
   readonly castleHistory: string;
-  /**
-   * The attempt lane — append-only, durable, one line per narrative event of
-   * one worker × ticket × try (ADR 0128). Never under `tmp/`: `tmp/` holds only
-   * the attempt's disposable workspace.
-   */
-  readonly castleAttempts: string;
   readonly castleValidation: string;
   readonly tmpRoot: string;
   readonly supervisorsRoot: string;
@@ -73,7 +67,6 @@ export function createEnginePaths(redRoot: string): EnginePaths {
     stateRoot,
     castleStateRoot,
     castleHistory: resolve(castleStateRoot, "history.toonl"),
-    castleAttempts: resolve(castleStateRoot, "attempts.toonl"),
     castleValidation: resolve(castleStateRoot, "validation.toonl"),
     tmpRoot,
     supervisorsRoot,
