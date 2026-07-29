@@ -1,38 +1,35 @@
-// attempt-accounting — the resident's per-attempt resource accounting (ADR 0128
-// §8, Spec #2700 slice 5).
+// attempt-accounting — the supervisor's per-worker resource accounting.
 //
-// The resident samples what an attempt consumes while it runs and writes the
-// numbers into the attempt record when it closes — completed or terminated
-// alike. Three properties this module exists to hold:
+// The record this used to write is gone (Spec #2772): a Worker already IS one
+// Worker × one Ticket × one try, so the accounting is worker-keyed and its
+// numbers are consumed where they are measured. What survives is the sampling
+// and the budget decision:
 //
-//  1. ONE SAMPLE PER TICK FOR THE WHOLE FLEET. Memory is read through a single
-//     `sampleTreeRssMb(pids)` call, so accounting cost does not scale with fleet
-//     width and a wide fleet never pays a process-table read per slot.
-//  2. THE PEAK BELONGS TO THE ATTEMPT, NOT THE SLOT. A slot respawned onto a new
-//     attempt resets its peak, so a dead attempt's memory is never charged to a
+//  1. ONE SAMPLE PER TICK FOR EVERY SLOT. Memory is read through a single
+//     `sampleTreeRssMb(pids)` call, so accounting cost does not scale with the
+//     number of workers and a wide project never pays a process-table read per
+//     slot.
+//  2. THE PEAK BELONGS TO THE WORKER, NOT THE SLOT. A slot respawned onto a new
+//     worker resets its peak, so a dead worker's memory is never charged to a
 //     live one.
-//  3. THE RECORD IS DIAGNOSTIC — IT NEVER BREAKS EXECUTION. Every write is
-//     best-effort and swallowed; a broken lane costs observability, not work.
 //
 // The WALL-CLOCK budget is deliberately NOT enforced here: the per-issue ceiling
 // (#2701, LivenessEvaluator → pollStallDetector) already owns that kill and runs
-// it through the busy-vs-stuck gate. This module only enforces the budgets
-// nothing else watches — memory and cost — and NAMES whichever budget fired when
-// the record is written.
+// it through the busy-vs-stuck gate. This module only decides the budgets
+// nothing else watches — memory and cost — and NAMES whichever one fired.
 
 import {
-  attemptResources,
   evaluateAttemptBudgets,
   type AttemptBudgetBreach,
   type AttemptBudgets,
   type AttemptUsage,
 } from "../attempt-budget.js";
 import type { SlotState, SupervisorState } from "./state.js";
-import type { AttemptCloseRecord, IterDirInfo, SupervisorDeps } from "./types.js";
+import type { IterDirInfo, SupervisorDeps } from "./types.js";
 
 /**
- * Refresh every live slot's peak RSS from ONE fleet-wide sample. A slot whose
- * pid changed since the last sample starts a fresh peak — that is a new attempt.
+ * Refresh every live slot's peak RSS from ONE project-wide sample. A slot whose
+ * pid changed since the last sample starts a fresh peak — that is a new worker.
  * Best-effort: a sampler throw leaves the peaks untouched.
  */
 export function sampleFleetPeakRss(state: SupervisorState, deps: SupervisorDeps): void {
@@ -62,9 +59,9 @@ export function sampleFleetPeakRss(state: SupervisorState, deps: SupervisorDeps)
 }
 
 /**
- * What the slot's current attempt has consumed so far. An unsampled signal is
+ * What the slot's current worker has consumed so far. An unsampled signal is
  * omitted, never reported as 0 — "not measured" is a different claim from
- * "measured zero", and the record must not conflate them.
+ * "measured zero", and no reader may conflate them.
  */
 export function attemptUsage(slot: SlotState, info: IterDirInfo | null): AttemptUsage {
   return {
@@ -75,7 +72,7 @@ export function attemptUsage(slot: SlotState, info: IterDirInfo | null): Attempt
 }
 
 /**
- * The resource budget this attempt has reached, or null. Wall clock is excluded
+ * The resource budget this worker has reached, or null. Wall clock is excluded
  * on purpose — the per-issue ceiling owns that decision and runs it through the
  * busy-vs-stuck gate, so evaluating it here would turn a gated cut-off into an
  * ungated one.
@@ -92,40 +89,4 @@ export function resourceBudgetBreach(
  * all-unlimited table means the tick skips the extra state read entirely. */
 export function hasResourceBudget(budgets: AttemptBudgets): boolean {
   return budgets.peak_rss_mb !== undefined || budgets.cost_usd !== undefined;
-}
-
-export interface AttemptCloseInput {
-  info: IterDirInfo;
-  usage: AttemptUsage;
-  outcome: AttemptCloseRecord["outcome"];
-  pr?: number;
-  note?: string;
-}
-
-/**
- * Write one attempt's terminal record through the resident's writer. Charged to
- * this supervisor's fleet and cgroup scope (#2697), so "which fleet caused this
- * pressure" is answerable from the record rather than from `ps`. Best-effort by
- * contract — every failure is swallowed.
- */
-export async function recordAttemptClose(
-  deps: SupervisorDeps,
-  input: AttemptCloseInput,
-): Promise<void> {
-  if (!deps.recordAttemptClose) return;
-  if (input.info.issue === null) return;
-  try {
-    await deps.recordAttemptClose({
-      workerId: input.info.workerId,
-      issue: input.info.issue,
-      try: input.info.attempt,
-      outcome: input.outcome,
-      resources: attemptResources(input.usage, deps.fleetAttribution ?? {}),
-      ...(input.info.branch !== undefined ? { branch: input.info.branch } : {}),
-      ...(input.pr !== undefined ? { pr: input.pr } : {}),
-      ...(input.note !== undefined ? { note: input.note } : {}),
-    });
-  } catch {
-    // The record is diagnostic; it must never break execution (ADR 0128).
-  }
 }

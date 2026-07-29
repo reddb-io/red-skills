@@ -7,7 +7,6 @@ import { LABEL_READY, LABEL_RUNNING } from "../triage-labels.js";
 import { isRefused, parkOrHuman, planTransition, type StateTransition } from "../state-transition.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
 import type { AttemptBudgetBreach, AttemptUsage } from "../attempt-budget.js";
-import { recordAttemptClose } from "./attempt-accounting.js";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
 
 /** Unit each budget is measured in, for the envelope's duration line. */
@@ -190,27 +189,10 @@ export async function reconcileDeadWorkerClaim(
     return null;
   }
   if (!decideCrashReconcile({ issue: info.issue, ghOk: claim.ghOk, stillRunning: claim.stillRunning })) {
-    // The claim is no longer `running`, so the attempt closed ITSELF before the
-    // worker exited — a clean finish, the other half of ADR 0128's record.
-    if (claim.ghOk) {
-      await recordAttemptClose(deps, {
-        info,
-        usage: usage.wallClockS === undefined ? { ...usage, wallClockS: info.durationS } : usage,
-        outcome: {
-          kind: "done",
-          detail: "worker exited with its claim already conceded — the attempt closed itself",
-        },
-      });
-    }
+    // The claim is no longer `running`, so the worker closed its own ticket
+    // before it exited — a clean finish, and nothing for the sweep to reconcile.
     return null;
   }
-
-  // The worker died holding a live claim: a crash, not a budget and not a stall.
-  await recordAttemptClose(deps, {
-    info,
-    usage: usage.wallClockS === undefined ? { ...usage, wallClockS: info.durationS } : usage,
-    outcome: { kind: "killed", detail: "orchestrator died mid-attempt (crash-reconciled)" },
-  });
 
   // 1. No-sentinel envelope (skip when one already rode the issue).
   if (!claim.envelopePosted) {
