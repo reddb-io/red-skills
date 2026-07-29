@@ -241,7 +241,19 @@ describe("the memory floor", () => {
     expect(parseProcStat(`77 (my prog (x)) S 5 ${trailing} 12 0\n`)).toEqual({ pid: 77, ppid: 5, rssPages: 12 });
   });
 
-  it("measures nothing when the host offers no /proc, rather than reporting zero", () => {
-    expect(sampleTreeRss([worker()], { platform: "darwin" })).toEqual({});
+  it("measures a host with no /proc from its own process table instead of giving up", () => {
+    // macOS is the platform where this floor IS the memory ceiling, so an empty
+    // reading there would leave the only backend without kernel teeth unmeasured.
+    const reading = sampleTreeRss([worker({ worker_id: "tree", pid: 100 })], {
+      platform: "darwin",
+      psTable: () => " 100 1 4096\n 200 100 2048\n",
+    });
+
+    expect(reading.tree).toBe((4096 + 2048) * 1024);
+  });
+
+  it("measures nothing when no process table can be read at all, rather than reporting zero", () => {
+    expect(sampleTreeRss([worker()], { platform: "aix" })).toEqual({});
+    expect(sampleTreeRss([worker()], { platform: "darwin", psTable: () => "" })).toEqual({});
   });
 });
