@@ -127,6 +127,11 @@ export interface HarnessOptions {
   /** Scripted per-feedback-gate outcomes. Each feedback run executes the four
    * standard scripts; this controls the aggregate pass/fail for each run. */
   feedbackResults?: boolean[];
+  /** Scripted per-feedback-gate FAILURE SETS: entry `n` names the scripts that
+   * fail on feedback run `n` (`[]` = a green run). Where `feedbackResults` only
+   * says whether a run failed, this says HOW — which is what moves the failure
+   * signature (#2724) between rounds. Takes precedence when both are set. */
+  feedbackFailures?: readonly string[][];
   /** Operator-declared backpressure commands (afk.backpressure, #430). When set,
    * the backpressure gate runs after feedback against the worker branch. */
   backpressureCommands?: string[];
@@ -563,9 +568,15 @@ export function harness(opts: HarnessOptions = {}): {
       }
       const feedbackRun = Math.floor(pnpmCalls / 4);
       pnpmCalls += 1;
-      const ok = opts.feedbackResults
-        ? (opts.feedbackResults[feedbackRun] ?? opts.feedbackResults.at(-1) ?? true)
-        : opts.feedbackOk !== false;
+      const failures = opts.feedbackFailures
+        ? (opts.feedbackFailures[feedbackRun] ?? opts.feedbackFailures.at(-1) ?? [])
+        : undefined;
+      const script = Array.isArray(args) ? String(args[args.length - 1] ?? "") : "";
+      const ok = failures
+        ? !failures.includes(script)
+        : opts.feedbackResults
+          ? (opts.feedbackResults[feedbackRun] ?? opts.feedbackResults.at(-1) ?? true)
+          : opts.feedbackOk !== false;
       return { code: ok ? 0 : 1, stdout: "", stderr: "" };
     },
     layout: {
