@@ -161,6 +161,7 @@ import {
   withoutGateOutstanding,
   withoutReviewOutstanding,
 } from "./reseed-handoff.js";
+import { decideTierEscalation } from "./tier-escalation.js";
 import { failureSignature } from "../failure-signature.js";
 import {
   EMPTY_CORRECTION_LEDGER,
@@ -667,7 +668,16 @@ export async function processIssue(
     driftEligible?: boolean;
     /** Tier escalation only — which tier failed and which one now runs. */
     tiers?: { from: string; to: string };
+    /** The round's failure signature, when the caller already derived it to
+     * decide something (the tier escalation does). Absent, it is derived here
+     * from `sidecar` — one key either way. */
+    signature?: string;
   }
+  /** The failure signature of the round that just failed: the gate's sidecar
+   * plus whatever the review still has outstanding, which is exactly what the
+   * history line's repeat count and the tier escalation both key off. */
+  const roundSignature = (sidecar: readonly string[] | undefined): string =>
+    failureSignature({ sidecar, findings: reseedOutstanding.review?.findings ?? [] });
   /** The single Re-seed request path. Every caller that re-instructs the
    * implementer IN PLACE — same Worker, same Worktree, same branch — comes
    * through here: it checks the ceiling and the cause's sub-cap or reservation,
@@ -696,10 +706,7 @@ export async function processIssue(
     // outstanding rides along untouched.
     reseedOutstanding = noteReseedSignature(
       withGateOutstanding(reseedOutstanding, { gate, validation: req.validation, drift }),
-      failureSignature({
-        sidecar: req.sidecar,
-        findings: reseedOutstanding.review?.findings ?? [],
-      }),
+      req.signature ?? roundSignature(req.sidecar),
     );
     const gateSpend = reseedSpend.gate ?? 0;
     if (req.trigger === "tier-escalation") {
@@ -1134,22 +1141,35 @@ export async function processIssue(
         ? `${formatValidationScope(feedback.validationScope)}\n`
         : "";
       const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}`;
-      // A repeated failure buys a HIGHER tier rather than another round at the
-      // tier that just failed (ADR 0129). It draws the `tier` sub-cap, so gate
-      // correction keeps its own share — the mute this replaced cost a Ticket
-      // its whole gate budget for one tier bump.
-      if (!isInfra && activeTaskClass === "simple") {
+      // A REPEATED failure buys a HIGHER tier rather than another round at the
+      // tier that just failed (ADR 0129 decision 6, #2729). The trigger is the
+      // repeat, not the failure: a round that failed a different way is progress
+      // and is re-instructed at the tier that produced it. It draws the `tier`
+      // sub-cap, so gate correction keeps its own share — the mute this replaced
+      // cost a Ticket its whole gate budget for one tier bump.
+      const roundKey = roundSignature(feedback.sidecar);
+      const escalationDecision = isInfra
+        ? ({ escalate: false, refusal: "no-repeat" } as const)
+        : decideTierEscalation({
+            tier: activeTaskClass,
+            previousSignature: reseedOutstanding.signature,
+            signature: roundKey,
+            budget: reseedBudget,
+            spend: reseedSpend,
+          });
+      if (escalationDecision.escalate) {
         const escalation = await requestReseed({
           trigger: "tier-escalation",
           validation: validationText,
           sidecar: feedback.sidecar,
-          tiers: { from: "simple", to: "complex" },
+          signature: roundKey,
+          tiers: { from: escalationDecision.from, to: escalationDecision.to },
         });
         if (escalation === "hook-aborted") {
           return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
         }
         if (escalation === "granted") {
-          activeTaskClass = "complex";
+          activeTaskClass = escalationDecision.to;
           continue;
         }
       }
