@@ -30,6 +30,7 @@ import {
   type QuarantineEntry,
 } from "./quarantine.js";
 
+import { pendingInvariantSuites } from "./repo-invariants.js";
 import { type ValidationScope } from "./validation-scope.js";
 
 /** Result of a single executed command. Mirrors a child-process completion. */
@@ -488,6 +489,13 @@ export interface FeedbackCheck {
   label: string;
   /** Real package scope (repo-relative dir, `"."` for root, `""` for no-package). Used by the baseline probe. */
   scope: string;
+  /**
+   * The package script actually executed, when it differs from `script` — the
+   * repo-wide invariant suites run a dedicated script (`test:invariants`) while
+   * still classifying as a `test` check. The baseline probe must re-run THIS
+   * script, not the package's full `test`.
+   */
+  runScript?: string;
   status: ValidationStatus;
   record: ValidationRecord;
 }
@@ -587,6 +595,8 @@ export interface BaselineCheckRef {
   name: string;
   script: FeedbackScript;
   scope: string;
+  /** The script to actually execute, when it differs from `script` (see {@link FeedbackCheck.runScript}). */
+  runScript?: string;
 }
 
 export interface BaselineFailureEvidence {
@@ -667,10 +677,11 @@ async function runChecksForBaseline(
   env: NodeJS.ProcessEnv,
 ): Promise<Map<string, BaselineCheckResult>> {
   const out = new Map<string, BaselineCheckResult>();
-  for (const { name, script, scope } of refs) {
-    if (!layout.hasScript(scope, script)) continue;
+  for (const { name, script, scope, runScript } of refs) {
+    const command = runScript ?? script;
+    if (!layout.hasScript(scope, command)) continue;
     const dir = scopeDir(baselineWorktree, scope);
-    const result = await exec(["pnpm", "-C", dir, script], { env });
+    const result = await exec(["pnpm", "-C", dir, command], { env });
     if (result.code === 0) {
       out.set(name, { status: "passed" });
       continue;
@@ -872,12 +883,50 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     push({ name, script: "typecheck", label, scope, status, record });
   }
 
+  // Repo-wide invariant suites (#2762). A cone-scoped run validates the changed
+  // packages only, so an invariant that spans the repo but lives in ONE package
+  // (the TOON JSON file-I/O ratchet in apps/dev) never runs in the loop where the
+  // agent could still satisfy it — it first fires in root CI, after the worker
+  // reported DONE. Run every declared suite the cone does not already cover, and
+  // emit a visible `skipped` record when the script is absent rather than
+  // silently dropping the invariant.
+  for (const suite of pendingInvariantSuites(scopes)) {
+    const name = suite.name;
+    const label = scopeLabel(suite.scope);
+    // The owning package is absent → this repo does not carry the invariant at
+    // all (the gate also runs against consumer repos). Nothing to say.
+    if (!layout.hasPackage(suite.scope)) continue;
+    if (!layout.hasScript(suite.scope, suite.script)) {
+      const record = buildValidationRecord({
+        name,
+        status: "skipped",
+        summary: `invariant suite script missing (${suite.scope} has no \`${suite.script}\`)`,
+      });
+      push({ name, script: "test", label, scope: suite.scope, status: "skipped", record });
+      continue;
+    }
+    const dir = scopeDir(worktree, suite.scope);
+    const command = `pnpm -C ${dir} ${suite.script}`;
+    const start = now();
+    const result = await exec(["pnpm", "-C", dir, suite.script], { env: subprocessEnv });
+    const durationMs = now() - start;
+    const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
+    if (status === "failed") failed = true;
+    const output = joinCommandOutput(result.stdout, result.stderr);
+    const summary =
+      status === "failed"
+        ? `repo-wide invariant — ${suite.why}: ${outputSummary(status, output)}`.slice(0, 1000)
+        : outputSummary(status, output);
+    const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
+    push({ name, script: "test", label, scope: suite.scope, runScript: suite.script, status, record });
+  }
+
   // AFK runner improvement: baseline probe for pre-existing failures. Only
   // triggered when the gate failed AND a baseline worktree was supplied.
   if (failed && baselineWorktree) {
     const failing = checks
       .filter((c) => c.status === "failed")
-      .map((c) => ({ name: c.name, script: c.script, scope: c.scope }));
+      .map((c) => ({ name: c.name, script: c.script, scope: c.scope, runScript: c.runScript }));
     const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now, subprocessEnv);
     const baselineFailing = [...baselineResults.entries()]
       .filter(([, result]) => result.status === "failed")

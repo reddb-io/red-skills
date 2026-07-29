@@ -5,6 +5,7 @@
 // here — callers resolve target/runner/passthrough and inject them.
 
 import { spawn } from "node:child_process";
+import { readBuildInfo } from "@reddb-io/build-info";
 import { closeSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
@@ -203,6 +204,10 @@ export function stampFreshFleetHeartbeat(
   epoch: number,
   runner: string,
   target: number,
+  // The respawned supervisor runs THIS bundle, so the stamp knows its version
+  // before the first real tick. Leaving the field absent made every worker
+  // probing the lane read `version_unknown` for the whole boot window (#2752).
+  bundleVersion: string = readBuildInfo("dev").version,
 ): void {
   // TOON, never raw JSON — this is the fleet supervisor state snapshot surface
   // (ADR 0097); `readFleetState` sniffs so a stamp from an older bundle still reads.
@@ -215,6 +220,7 @@ export function stampFreshFleetHeartbeat(
     target,
     runner,
     shrink_mode: "drain-then-retire",
+    ...(bundleVersion ? { bundle_version: bundleVersion } : {}),
     ready_for_agent: 0,
     slots: { busy: 0, free: target, total: target, parked: 0 },
     slot_pids: [],

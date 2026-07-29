@@ -71,11 +71,13 @@ import {
   autoHealableClaimHygiene,
   BASE_FRESHNESS_PROBE_ID,
   CLAIM_HYGIENE_PROBE_ID,
+  FLEET_TRUTH_PROBE_ID,
   formatOperationalProbeFinding,
   LABEL_BODY_COHERENCE_PROBE_ID,
   QUEUE_VISIBILITY_PROBE_ID,
   runOperationalProbes,
   type BaseFreshnessProbeData,
+  type FleetTruthProbeData,
   type LabelBodyCoherenceAction,
   type LabelBodyCoherenceProbeData,
   type OperationalProbeContext,
@@ -901,6 +903,13 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   const queueVisibilityData = queueVisibility?.data as QueueVisibilityProbeData | undefined;
   if (queueVisibility?.verdict === "ok" && queueVisibilityData?.transient === true) {
     deps.log?.(queueVisibility.evidence);
+  }
+  // An unknown supervisor bundle version is inconclusive, not a fault: it never
+  // reaches `findings`, so log it here or it would vanish entirely (#2752).
+  const fleetTruth = operationalProbes.probes.find((probe) => probe.id === FLEET_TRUTH_PROBE_ID);
+  const fleetTruthData = fleetTruth?.data as FleetTruthProbeData | undefined;
+  if (fleetTruth?.verdict === "ok" && fleetTruthData?.notes?.includes("version-unknown")) {
+    deps.log?.(`${fleetTruth.name}: ${fleetTruth.evidence}`);
   }
   // A dangling `afk:claim` from THIS machine's dead-pid worker is provably safe
   // to concede, so auto-heal such claim-hygiene findings here instead of letting

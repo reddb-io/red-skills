@@ -64,6 +64,13 @@ export const fleetStatusOutputSchema = z.object({
     target: z.number(),
     bundle_version: z.string(),
     bundle_latest: z.string(),
+    /**
+     * 1 when the supervisor's bundle version was never measured. Distinct from
+     * `version_skew: 0`, which is a measured match: an absent version is
+     * inconclusive, and reporting it as no-skew is what let a missing field
+     * masquerade as a healthy one (#2752).
+     */
+    version_unknown: z.number(),
     /** 1 when the running supervisor's bundle differs from the newest cached one. */
     version_skew: z.number(),
     /** Seconds since the supervisor's last heartbeat; -1 when never observed. */

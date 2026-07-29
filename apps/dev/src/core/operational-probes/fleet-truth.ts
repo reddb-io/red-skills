@@ -15,10 +15,17 @@ export const FLEET_TRUTH_PROBE_NAME = "AFK fleet truth";
 export const FLEET_TRUTH_CANONICAL_FIX =
   "For zombie supervisors, confirm SIGTERM, verify the supervisor exits, then relaunch the fleet if requested. For version findings, restart the fleet from the current bundle.";
 
-export type FleetTruthFindingKind = "zombie" | "version-skew" | "version-unknown";
+/** Red findings: a fault the probe MEASURED. Each one halts a boot. */
+export type FleetTruthFindingKind = "zombie" | "version-skew";
+
+/** Inconclusive observations: a measurement the probe could NOT take. Reported
+ * everywhere a finding is, never red — an absent version is unknown, not skewed,
+ * and a missing measurement must never masquerade as a failed one (#2752). */
+export type FleetTruthNoteKind = "version-unknown";
 
 export interface FleetTruthProbeData {
   readonly findings: readonly FleetTruthFindingKind[];
+  readonly notes: readonly FleetTruthNoteKind[];
   readonly pid?: number;
   readonly target?: number;
   readonly runner?: string;
@@ -124,31 +131,52 @@ function isOwnSupervisorPid(input: FleetTruthProbeInput): boolean {
   return Boolean(input.supervisorPid && input.ownSupervisorPid && input.supervisorPid === input.ownSupervisorPid);
 }
 
-function fleetTruthFindings(input: FleetTruthProbeInput): FleetTruthFindingKind[] {
+/**
+ * Age of the freshest thing a live supervisor actually rewrites. The heartbeat
+ * epoch and the state snapshot are refreshed every tick; the pid file is written
+ * once at boot and never touched again, so its mtime measures nothing but the
+ * boot instant and ages out on its own. It is therefore the LAST resort — read
+ * only when no supervisor ever wrote a heartbeat at all (#2752).
+ */
+function supervisorHeartbeatAgeMs(input: FleetTruthProbeInput): number | undefined {
+  return ageMs(input.nowMs, input.heartbeatEpochMs ?? input.stateMtimeMs ?? input.supervisorPidMtimeMs);
+}
+
+interface FleetTruthObservations {
+  readonly findings: FleetTruthFindingKind[];
+  readonly notes: FleetTruthNoteKind[];
+}
+
+function fleetTruthObservations(input: FleetTruthProbeInput): FleetTruthObservations {
   const findings: FleetTruthFindingKind[] = [];
-  if (isOwnSupervisorPid(input)) return findings;
-  const heartbeatAge = ageMs(input.nowMs, input.heartbeatEpochMs ?? input.stateMtimeMs);
+  const notes: FleetTruthNoteKind[] = [];
+  if (isOwnSupervisorPid(input)) return { findings, notes };
+  const heartbeatAge = supervisorHeartbeatAgeMs(input);
   if (input.supervisorPidLive && heartbeatAge !== undefined && heartbeatAge > input.heartbeatStaleMs) {
     findings.push("zombie");
   }
   if (input.supervisorPidLive) {
     if (!input.bundleVersion) {
-      findings.push("version-unknown");
+      notes.push("version-unknown");
     } else if (input.latestBundleVersion && compareSemver(input.bundleVersion, input.latestBundleVersion) !== 0) {
       findings.push("version-skew");
     }
   }
-  return findings;
+  return { findings, notes };
 }
 
-function evidence(input: FleetTruthProbeInput, findings: readonly FleetTruthFindingKind[]): string {
+function evidence(
+  input: FleetTruthProbeInput,
+  findings: readonly FleetTruthFindingKind[],
+  notes: readonly FleetTruthNoteKind[],
+): string {
   if (!input.supervisorPid) return "no supervisor pid file";
   if (!input.supervisorPidLive) return `pid=${input.supervisorPid} is not live`;
 
   const parts = [
     `pid=${input.supervisorPid}`,
     `live=${String(input.supervisorPidLive)}`,
-    formatAge("heartbeat_age", ageMs(input.nowMs, input.heartbeatEpochMs ?? input.stateMtimeMs)),
+    formatAge("heartbeat_age", supervisorHeartbeatAgeMs(input)),
     formatAge("pid_mtime_age", ageMs(input.nowMs, input.supervisorPidMtimeMs)),
     formatAge("state_mtime_age", ageMs(input.nowMs, input.stateMtimeMs)),
     `threshold=${seconds(input.heartbeatStaleMs)}s`,
@@ -156,8 +184,8 @@ function evidence(input: FleetTruthProbeInput, findings: readonly FleetTruthFind
 
   if (findings.includes("version-skew")) {
     parts.push(`version_skew bundle=${input.bundleVersion} latest=${input.latestBundleVersion}`);
-  } else if (findings.includes("version-unknown")) {
-    parts.push(`version_unknown latest=${input.latestBundleVersion ?? "unknown"}`);
+  } else if (notes.includes("version-unknown")) {
+    parts.push(`version_unknown inconclusive latest=${input.latestBundleVersion ?? "unknown"}`);
   } else if (input.bundleVersion) {
     parts.push(`bundle=${input.bundleVersion}${input.latestBundleVersion ? ` latest=${input.latestBundleVersion}` : ""}`);
   }
@@ -176,9 +204,10 @@ export function runFleetTruthProbe(context: OperationalProbeContext): Operationa
     };
   }
 
-  const findings = fleetTruthFindings(input);
+  const { findings, notes } = fleetTruthObservations(input);
   const data: FleetTruthProbeData = {
     findings,
+    notes,
     ...(input.supervisorPid ? { pid: input.supervisorPid } : {}),
     ...(input.target !== undefined ? { target: input.target } : {}),
     ...(input.runner ? { runner: input.runner } : {}),
@@ -188,7 +217,7 @@ export function runFleetTruthProbe(context: OperationalProbeContext): Operationa
     id: FLEET_TRUTH_PROBE_ID,
     name: FLEET_TRUTH_PROBE_NAME,
     verdict: findings.length > 0 ? "red" : "ok",
-    evidence: evidence(input, findings),
+    evidence: evidence(input, findings, notes),
     canonicalFix: FLEET_TRUTH_CANONICAL_FIX,
     fix: findings.includes("zombie")
       ? {

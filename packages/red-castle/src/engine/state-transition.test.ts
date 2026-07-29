@@ -85,6 +85,30 @@ describe("planTransition", () => {
     expect(p.appendBody).toBe("two state roles");
   });
 
+  // #2749 — a park is not terminal. Parked work still lands (human merge,
+  // retake, adopt-branch landing) and the close must not preserve the park.
+  it("close: leaves ZERO state roles and keeps the permanent markers", () => {
+    // The live #2724/#2725 shape: delivered slices closed by GitHub's own
+    // PR-closes-issue on a human merge, still wearing their park.
+    const current = ["ready-for-human", "blocked:ci", "running", "spec:2723", "type:task"];
+    const p = plan(current, { kind: "close" });
+    expect(p.add).toEqual([]);
+    expect(new Set(p.remove)).toEqual(new Set(["ready-for-human", "blocked:ci", "running"]));
+    const after = current.filter((l) => !p.remove.includes(l));
+    expect(stateRolesOf(after, labels)).toEqual([]);
+    expect(after).toEqual(["spec:2723", "type:task"]);
+  });
+
+  it("close: consumes dependency edges alongside the wait state", () => {
+    const p = plan(["blocked:dependency", "req:12", "req:3"], { kind: "close" });
+    expect(p.add).toEqual([]);
+    expect(p.remove).toEqual(["blocked:dependency", "req:3", "req:12"]);
+  });
+
+  it("close: is a no-op mutation on an issue that carries no state", () => {
+    expect(plan(["spec:2723", "type:task"], { kind: "close" })).toEqual({ add: [], remove: [] });
+  });
+
   it("honours a host vocabulary that differs from the defaults", () => {
     const custom: StateTransitionLabels = { ...labels, ready: "queued", reqPrefix: "needs#" };
     const p = planTransition(["queued", "needs#5"], { kind: "promote" }, custom);

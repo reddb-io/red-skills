@@ -48,7 +48,7 @@ describe("fleet truth operational probe", () => {
     expect(result.fix?.gate).toBe("confirm");
   });
 
-  it("reports version skew and absent stamps distinctly", () => {
+  it("reds a measured skew and stays green on an unmeasured version", () => {
     const skew = runFleetTruthProbe({
       remoteUrls: [],
       fleetTruth: {
@@ -76,7 +76,7 @@ describe("fleet truth operational probe", () => {
         latestBundleVersion: "2.63.0",
       },
     });
-    expect(unknown.verdict).toBe("red");
+    expect(unknown.verdict).toBe("ok");
     expect(unknown.evidence).toContain("version_unknown");
   });
 
@@ -163,7 +163,9 @@ describe("fleet truth operational probe", () => {
     expect(skew.evidence).toContain("version_skew bundle=2.63.0 latest=2.64.1");
   });
 
-  it("still flags stale foreign supervisors with unknown versions", () => {
+  // No heartbeat was ever written, so the boot-time pid file is the only age
+  // evidence there is — the last resort, and the only case it may be read.
+  it("still flags a stale foreign supervisor that never wrote a heartbeat", () => {
     const result = runFleetTruthProbe({
       remoteUrls: [],
       fleetTruth: {
@@ -178,6 +180,7 @@ describe("fleet truth operational probe", () => {
     });
 
     expect(result.verdict).toBe("red");
+    expect((result.data as { findings: string[] }).findings).toEqual(["zombie"]);
     expect(result.evidence).toContain("version_unknown");
   });
 

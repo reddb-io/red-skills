@@ -84,7 +84,7 @@ describe("castle issue-state curator", () => {
 
     const result = await runIssueStateCurator({ tracker: h.tracker, store, labels, nowMs: Date.UTC(2026, 6, 23) });
 
-    expect(result).toEqual({ checked: 1, released: [11], parked: [] });
+    expect(result).toEqual({ checked: 1, released: [11], parked: [], reconciled: [] });
     expect(h.edits).toEqual([{ remove: ["quarantine"], add: ["ready-for-agent"] }]);
     expect(h.bodies[0]).toContain("<!-- afk:quarantine-release v1 issue=#11 -->");
     expect(h.bodies[0]).toContain("auto-released after coherence was restored");
@@ -99,9 +99,9 @@ describe("castle issue-state curator", () => {
     const second = await runIssueStateCurator({ tracker: h.tracker, store, labels, nowMs: 2_000 });
     const third = await runIssueStateCurator({ tracker: h.tracker, store, labels, nowMs: 3_000 });
 
-    expect(first).toEqual({ checked: 1, released: [], parked: [] });
-    expect(second).toEqual({ checked: 1, released: [], parked: [] });
-    expect(third).toEqual({ checked: 1, released: [], parked: [12] });
+    expect(first).toEqual({ checked: 1, released: [], parked: [], reconciled: [] });
+    expect(second).toEqual({ checked: 1, released: [], parked: [], reconciled: [] });
+    expect(third).toEqual({ checked: 1, released: [], parked: [12], reconciled: [] });
     // The pre-transition writer emitted a fixed `[quarantine, ready-for-agent]`
     // removal; `ready-for-agent` is absent here, so dropping it from the delta
     // is the same tracker outcome with one less no-op label (#2666).
@@ -128,8 +128,168 @@ describe("castle issue-state curator", () => {
 
     const result = await runIssueStateCurator({ tracker, store, labels, nowMs: 1_000 });
 
-    expect(result).toEqual({ checked: 2, released: [2], parked: [] });
+    expect(result).toEqual({ checked: 2, released: [2], parked: [], reconciled: [] });
     expect(tracker.editIssueLabels).toHaveBeenCalledTimes(2);
+  });
+});
+
+// #2749 — a park is treated as terminal, but it is not. A parked issue can
+// still land, and when GitHub's own PR-closes-issue mechanism performs the
+// close on a human merge, NO engine close path runs: the park role survives on
+// the closed issue and the audit reads a delivered slice as human-escalated.
+describe("closed-issue state reconcile (#2749)", () => {
+  /** A tracker with nothing quarantined and `closed` sitting in the tracker's
+   * closed set — i.e. every close here originated OUTSIDE the engine. */
+  function closedHarness(closed: TrackerIssue[]) {
+    const edits: Array<{ issue: number; remove: readonly string[]; add: readonly string[] }> = [];
+    const searches: Array<{ labels: readonly string[]; limit: number }> = [];
+    const tracker: TrackerPort = {
+      listOpenIssuesByLabel: async () => [],
+      listClosedIssuesByAnyLabel: async (names, limit) => {
+        searches.push({ labels: names, limit });
+        return closed.filter((issue) => issue.labels.some((label) => names.includes(label)));
+      },
+      isIssueClosed: async () => true,
+      editIssueLabels: async (issue, mutation) => {
+        edits.push({ issue, ...mutation });
+      },
+      editIssueBody: async () => undefined,
+      commentOnIssue: async () => undefined,
+      closeIssue: async () => undefined,
+    };
+    return { tracker, edits, searches };
+  }
+
+  it("strips the park role from an issue closed outside the engine", async () => {
+    const h = closedHarness([
+      { number: 2724, labels: ["ready-for-human", "blocked:ci", "spec:2723"], body: "" },
+      { number: 2725, labels: ["ready-for-human", "blocked:ci", "spec:2723"], body: "" },
+    ]);
+
+    const result = await runIssueStateCurator({
+      tracker: h.tracker,
+      store: memoryStore(),
+      labels,
+      nowMs: 1_000,
+    });
+
+    expect(result.reconciled).toEqual([2724, 2725]);
+    for (const edit of h.edits) {
+      expect(new Set(edit.remove)).toEqual(new Set(["ready-for-human", "blocked:ci"]));
+      expect(edit.add).toEqual([]);
+    }
+  });
+
+  it("keeps the Spec child label and every other permanent marker", async () => {
+    const h = closedHarness([
+      {
+        number: 2724,
+        labels: ["ready-for-human", "blocked:ci", "spec:2723", "type:task", "priority:high"],
+        body: "",
+      },
+    ]);
+
+    await runIssueStateCurator({ tracker: h.tracker, store: memoryStore(), labels, nowMs: 1_000 });
+
+    const removed = new Set(h.edits[0]!.remove);
+    expect(removed.has("spec:2723")).toBe(false);
+    expect(removed.has("type:task")).toBe(false);
+    expect(removed.has("priority:high")).toBe(false);
+  });
+
+  it("reads every state role in ONE bounded search, never a per-label loop", async () => {
+    const h = closedHarness([]);
+
+    await runIssueStateCurator({
+      tracker: h.tracker,
+      store: memoryStore(),
+      labels,
+      nowMs: 1_000,
+      closedReconcileLimit: 7,
+    });
+
+    expect(h.searches).toEqual([
+      {
+        labels: [
+          "ready-for-agent",
+          "ready-for-human",
+          "needs-triage",
+          "needs-info",
+          "quarantine",
+          "blocked:dependency",
+        ],
+        limit: 7,
+      },
+    ]);
+  });
+
+  it("writes nothing for a closed issue that already carries no state", async () => {
+    const h = closedHarness([{ number: 40, labels: ["ready-for-human"], body: "" }]);
+    // The search is label-driven, so a clean issue never lists; assert the
+    // planner's no-op guard directly by handing back one anyway.
+    h.tracker.listClosedIssuesByAnyLabel = async () => [
+      { number: 41, labels: ["spec:2723"], body: "" },
+    ];
+
+    const result = await runIssueStateCurator({
+      tracker: h.tracker,
+      store: memoryStore(),
+      labels,
+      nowMs: 1_000,
+    });
+
+    expect(result.reconciled).toEqual([]);
+    expect(h.edits).toEqual([]);
+  });
+
+  it("no-ops when the tracker adapter cannot list closed issues", async () => {
+    const tracker: TrackerPort = {
+      listOpenIssuesByLabel: async () => [],
+      isIssueClosed: async () => true,
+      editIssueLabels: vi.fn(async () => undefined),
+      commentOnIssue: async () => undefined,
+      closeIssue: async () => undefined,
+    };
+
+    const result = await runIssueStateCurator({ tracker, store: memoryStore(), labels, nowMs: 1 });
+
+    expect(result.reconciled).toEqual([]);
+    expect(tracker.editIssueLabels).not.toHaveBeenCalled();
+  });
+
+  it("keeps a read fault issue-local: the quarantine sweep still reports", async () => {
+    const h = closedHarness([]);
+    h.tracker.listClosedIssuesByAnyLabel = async () => {
+      throw new Error("tracker search unavailable");
+    };
+
+    const result = await runIssueStateCurator({
+      tracker: h.tracker,
+      store: memoryStore(),
+      labels,
+      nowMs: 1_000,
+    });
+
+    expect(result).toEqual({ checked: 0, released: [], parked: [], reconciled: [] });
+  });
+
+  it("keeps one unwritable issue from stopping the rest of the batch", async () => {
+    const h = closedHarness([
+      { number: 50, labels: ["ready-for-human"], body: "" },
+      { number: 51, labels: ["ready-for-human"], body: "" },
+    ]);
+    h.tracker.editIssueLabels = async (issue) => {
+      if (issue === 50) throw new Error("one issue is unwritable");
+    };
+
+    const result = await runIssueStateCurator({
+      tracker: h.tracker,
+      store: memoryStore(),
+      labels,
+      nowMs: 1_000,
+    });
+
+    expect(result.reconciled).toEqual([51]);
   });
 });
 
@@ -178,7 +338,7 @@ describe("curator label deltas are byte-identical to the pre-transition writer",
       labels,
       nowMs: 1_000,
     });
-    expect(result).toEqual({ checked: 1, released: [], parked: [] });
+    expect(result).toEqual({ checked: 1, released: [], parked: [], reconciled: [] });
     expect(h.edits).toEqual([]);
   });
 

@@ -44,6 +44,17 @@ export async function resolveHitlDecision(
   actions.push("rationale comment posted");
 
   if (input.decision === "close") {
+    // Closing is a TRANSITION, not just a tracker verb (#2749): the park role
+    // that brought the issue to HITL must not outlive the decision that ends
+    // it, or the audit reads a resolved issue as still human-escalated. The
+    // labels go first — a close that fails leaves an open, coherent issue,
+    // where the reverse would leave a closed one nobody re-reconciles.
+    const closing = await deps.viewLabels(input.issue);
+    const plan = planTransition(closing, { kind: "close" });
+    if (!isRefused(plan) && (plan.add.length > 0 || plan.remove.length > 0)) {
+      await deps.editLabels(input.issue, [...plan.remove], [...plan.add]);
+      actions.push(`close labels reconciled (-${plan.remove.join(",") || "∅"})`);
+    }
     await deps.closeIssue(input.issue);
     actions.push("issue closed");
     return { issue: input.issue, decision: input.decision, actions };
