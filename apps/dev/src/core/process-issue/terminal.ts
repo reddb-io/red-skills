@@ -532,11 +532,20 @@ export async function prLandingBlocked(
   outcome: "ci-failed" | "merge-conflict",
   prNumber: number | undefined,
   reason: string,
+  /** Replaces the outcome's default `next:` step. A merge REJECTION routes
+   * through the `ci-failed` outcome without a verified failing check, so it must
+   * not inherit "fix the failing required check" (#2807). */
+  nextStep?: string,
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   const prRef = prNumber !== undefined ? `PR #${prNumber}` : "the open PR";
   await routeRecovery(deps, input.issue, outcome, recoveryOrdinalFor(input), { forceDecision: "escalate" });
-  await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, { log: `${prRef}: ${reason}` }));
+  const blocker = blockerForFailure(outcome, { log: `${prRef}: ${reason}` });
+  await writeCurrentBlockerBestEffort(
+    deps,
+    input,
+    blocker && nextStep ? { ...blocker, next: nextStep } : blocker,
+  );
   const section = outcome === "merge-conflict" ? "merge-conflict" : "ci";
   const posted = await emitFailure(c, envelopeStatusFor(outcome), section, {
     log:

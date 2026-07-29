@@ -446,7 +446,15 @@ describe("doLanding — CI-aware merge (#812)", () => {
   it("a rejected admin merge after PR creation preserves the PR instead of collapsing to generic land-failed", async () => {
     const h = harness({ locked: false, prMergeCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "pr-merge-failed", locked: false, prNumber: 42 });
+    // #2807: the refusal carries the OBSERVED PR state, never a guessed cause.
+    expect(r).toEqual({
+      ok: false,
+      reason: "pr-merge-failed",
+      locked: false,
+      prNumber: 42,
+      message: "the forge rejected the merge and the PR state does not explain it (mergeStateStatus=CLEAN mergeable=MERGEABLE)",
+    });
+    expect((r as { message?: string }).message).not.toMatch(/usually|probably/i);
   });
 });
 

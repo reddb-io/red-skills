@@ -607,7 +607,15 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       }
       if (result.reason === "conflict") return { ok: false, reason: "pr-conflict", locked: input.locked, prNumber: result.prNumber };
       if (result.reason === "merge-failed" && result.prNumber !== undefined) {
-        return { ok: false, reason: "pr-merge-failed", locked: input.locked, prNumber: result.prNumber };
+        return {
+          ok: false,
+          reason: "pr-merge-failed",
+          locked: input.locked,
+          prNumber: result.prNumber,
+          // #2807: carry the OBSERVED rejection cause so the terminal names what
+          // the PR reported instead of guessing at branch protection.
+          ...(result.mergeFailure ? { message: result.mergeFailure.summary } : {}),
+        };
       }
       return {
         ok: false,
