@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-The Re-seed correction trail became visible without paying a pull request per attempt (#2731, ADR 0129). The first Re-seed of any cause opens a DRAFT pull request carrying the trail; an attempt that never re-seeds opens none and lands exactly as it did before, so a churning fleet no longer burns a CI run to document the majority of attempts that need no documentation. The Issue carries ONE comment upserted in place through the existing edit-comment primitive — five rounds are one notification rather than five — and the draft mirrors that same body plus the `Closes #N` link. Landing reuses the existing draft and marks it ready via `gh pr ready`, which is a no-op on a pull request that was never a draft; opening a second pull request is a defect, not a fallback. Both surfaces are best-effort projections: the Attempt record stays the source of truth, so a forge that refuses a post, a patch, or the draft itself costs fidelity on a projection and never a Re-seed round.

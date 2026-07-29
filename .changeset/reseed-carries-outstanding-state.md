@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-The re-seeded prompt now carries CURRENT OUTSTANDING STATE instead of the last trigger's block (#2728, ADR 0129). Three appenders — the `/afk` gate correction, the `/go` machine-gate retry, and the tier escalation — each rebuilt the prompt from the ORIGINAL handoff, and so did the adversarial-review correction; every one of them discarded whatever the previous round had appended. A gate round that followed a blocking review therefore re-instructed the implementer with the gate tail alone, leaving round N blind to findings rounds 1..N-1 had already confirmed. `reseed-handoff.ts` composes one `<outstanding-state>` section instead: the current gate tail and the current review findings together, deduped so a finding raised by more than one source appears once, bounded by the same 80-line tail ruler the appenders used, plus one `<reseed-history>` line carrying the round out of the lane's ceiling, the tier now running, and the repeat count from the round's failure signature. A stage that goes green drops out of the section, so the prompt states what is still outstanding rather than archiving what was.

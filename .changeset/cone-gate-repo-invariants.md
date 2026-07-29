@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-The AFK gate now runs the repo-wide invariant suites in every cone-scoped run (#2762). A worker that changed one package validated only that package's cone, so a ratchet that constrains the whole repo but lives in a single package — the TOON JSON file-I/O allowlist in `apps/dev` — never ran in the loop where the agent could still satisfy it; it first fired in root CI, after the correction budget was spent, which is how the same assertion failed three PRs in one hour. The suites are declared in `apps/dev/src/core/repo-invariants.ts` and run after the scoped checks whenever the cone does not already cover them, via `pnpm -C apps/dev test:invariants`. A missing script emits a visible `skipped` record rather than a silent drop, a repo without the owning package stays silent, and the baseline probe re-runs the invariant script itself instead of the owning package's full suite. The ratchet's own failure is now actionable: it names each offending path, the allowlist file that classifies it, and the recurring cause — a `*.toon` path written with `JSON.stringify`, which the decoder tolerates at runtime and policy does not.
