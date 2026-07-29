@@ -294,7 +294,7 @@ describe("planWorkerDirJanitor", () => {
   function worker(over: Partial<WorkerDirJanitorEntry>): WorkerDirJanitorEntry {
     return {
       path: "/red/tmp/workers/w1",
-      workerPidLive: false,
+      liveness: "dead",
       issues: [{ issue: 1, state: "CLOSED" }],
       ...over,
     };
@@ -305,8 +305,15 @@ describe("planWorkerDirJanitor", () => {
     expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [entry], spare: [] });
   });
 
-  it("spares worker dirs with a live worker.pid", () => {
-    const entry = worker({ workerPidLive: true });
+  it("spares worker dirs the daemon calls alive", () => {
+    const entry = worker({ liveness: "alive" });
+    expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
+  });
+
+  it("spares a worker dir the daemon could not answer for, closed issues and all", () => {
+    // The pid-keyed predecessor read a missing pid file as death and reclaimed
+    // exactly this dir. An unreachable authority is not evidence (#2679).
+    const entry = worker({ liveness: "unknown" });
     expect(planWorkerDirJanitor([entry])).toEqual({ reclaim: [], spare: [entry] });
   });
 
