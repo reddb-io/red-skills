@@ -173,4 +173,52 @@ describe("GitHub tracker adapter", () => {
       ],
     ]);
   });
+
+  // #2749 — the external-close reconcile read. Repeated `--label` flags are
+  // ANDed by gh, so every state role must ride ONE `label:"a","b"` search
+  // qualifier: a per-label loop on a timer-driven sweep is a flow bug.
+  it("reads closed issues for any state role in one bounded search", async () => {
+    const calls: string[][] = [];
+    const gh: GhExec = async (args) => {
+      calls.push([...args]);
+      return JSON.stringify([
+        { number: 2724, body: "B", labels: [{ name: "ready-for-human" }, { name: "spec:2723" }] },
+      ]);
+    };
+    const tracker = createGitHubTrackerAdapter({ gh, repo: "owner/repo" });
+
+    await expect(
+      tracker.listClosedIssuesByAnyLabel?.(["ready-for-human", "blocked:dependency"], 25),
+    ).resolves.toEqual([{ number: 2724, body: "B", labels: ["ready-for-human", "spec:2723"] }]);
+
+    expect(calls).toEqual([
+      [
+        "issue",
+        "list",
+        "--state",
+        "closed",
+        "--search",
+        'label:"ready-for-human","blocked:dependency"',
+        "--json",
+        "number,body,labels",
+        "--limit",
+        "25",
+        "--repo",
+        "owner/repo",
+      ],
+    ]);
+  });
+
+  it("skips the tracker call entirely for an empty label set", async () => {
+    const calls: string[][] = [];
+    const tracker = createGitHubTrackerAdapter({
+      gh: async (args) => {
+        calls.push([...args]);
+        return "";
+      },
+    });
+
+    await expect(tracker.listClosedIssuesByAnyLabel?.([], 25)).resolves.toEqual([]);
+    expect(calls).toEqual([]);
+  });
 });

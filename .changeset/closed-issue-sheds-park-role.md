@@ -1,0 +1,5 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+A park no longer survives on a closed issue (#2749). A park was treated as terminal, but it is not: parked work still lands — by a human merge of its PR, by a later retake, by an adopt-branch landing — and when GitHub's own PR-closes-issue mechanism performs the close, no engine path was watching to reconcile what the park left behind, so delivered slices stayed closed wearing `ready-for-human` + `blocked:ci` and any audit of label history read them as human-escalated. Closing is now a first-class `close` transition in the ADR 0122 API: it targets no state role at all, so the planner strips every role, the `running` projection, the blocked reasons, and the `req:*` edges in one proven-coherent mutation, while permanent markers such as the Spec child label, `type:*`, and `priority:*` ride through untouched. The `hitl_resolve` close decision routes through it before closing, and the ADR 0122 curator reconciles closes that originated outside the engine — one bounded `label:"a","b"` search per sweep over closed issues still carrying a state role, never a per-label loop.

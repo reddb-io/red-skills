@@ -100,15 +100,35 @@ describe("hitl_resolve decisions (#2369)", () => {
     expect(result.actions.some((a) => a.includes("rationale comment posted"))).toBe(true);
   });
 
-  it("close: closes with the rationale on record and touches nothing else", async () => {
-    const deps = makeDeps(["ready-for-human"]);
+  it("close: strips the park role BEFORE closing, keeping permanent markers (#2749)", async () => {
+    const deps = makeDeps(["ready-for-human", "blocked:ci", "spec:2723", "type:task"]);
 
-    await resolveHitlDecision(deps, { issue: 10, decision: "close", rationale: "superseded by #2523" });
+    const result = await resolveHitlDecision(deps, {
+      issue: 10,
+      decision: "close",
+      rationale: "superseded by #2523",
+    });
 
     expect(deps.closeIssue).toHaveBeenCalledWith(10);
     expect(deps.comment).toHaveBeenCalledTimes(1);
-    expect(deps.editLabels).not.toHaveBeenCalled();
     expect(deps.releaseClaims).not.toHaveBeenCalled();
+    expect(deps.editLabels).toHaveBeenCalledTimes(1);
+    const [, remove, add] = deps.editLabels.mock.calls[0]!;
+    expect(new Set(remove as string[])).toEqual(new Set(["ready-for-human", "blocked:ci"]));
+    expect(add).toEqual([]);
+    expect(deps.editLabels.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.closeIssue.mock.invocationCallOrder[0]!,
+    );
+    expect(result.actions.some((a) => a.includes("close labels reconciled"))).toBe(true);
+  });
+
+  it("close: writes no label edit when the issue carries no state to shed", async () => {
+    const deps = makeDeps(["spec:2723", "type:task"]);
+
+    await resolveHitlDecision(deps, { issue: 11, decision: "close", rationale: "duplicate" });
+
+    expect(deps.closeIssue).toHaveBeenCalledWith(11);
+    expect(deps.editLabels).not.toHaveBeenCalled();
   });
 
   it("requeue: clears an active body blocker of any kind (runner) and archives the rationale (#2597)", async () => {
