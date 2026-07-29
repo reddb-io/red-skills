@@ -12,13 +12,11 @@
 // Reserving the review's round makes it unreachable to gate and tier draws even
 // while the ceiling still has room.
 //
-// EXPAND STEP: the lifecycle's single `requestReseed` request path now draws
-// from this budget, but the operator-facing counters
-// (`resolveStallConvergenceBudget`, `resolveGoVerifyRetries`) still supply the
-// gate sub-cap through {@link withGateSubCap}. The retired stall-convergence key
-// therefore stays live and authoritative here; tombstoning it while the
-// lifecycle still reads it would break config loading, so that lands with the
-// contract slice.
+// The standalone stall-convergence counter is GONE (#2733): its key carries an
+// ADR 0117 tombstone and its replacement, `dev.reseed.afk.gate_budget`, folds in
+// through {@link withGateSubCap} as one cause's SHARE of this budget. The lane
+// keeps the ceiling and the review's reservation, so no operator setting can buy
+// an unbounded run or starve the review's round.
 
 import { LABEL_GO_LANE } from "../go.js";
 
