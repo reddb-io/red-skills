@@ -165,6 +165,16 @@ discovered:
   machine demanded it. Should one appear, daemon-to-daemon federation builds on
   the socket, which is a better base than the lane.
 
+  As executed (#2787), the retirement removed the aggregate
+  (`engine/federated-fleet-view`), its tool (`federated_fleet_view`), its output
+  contract, and the `federation` block of the `statusline_aggregate` payload. No
+  surface reports host-grouped state any more, and nothing writes
+  `fleet.supervisor.heartbeat` for one to group. The singleton event lane itself
+  stays — the webhook wake-source, the resident cron and the host capability
+  profile are its remaining, single-host consumers; only the cross-host reader
+  of it is gone. The single-host view is untouched: `project_status`,
+  `worker_vitals` and `statusline_aggregate` still serve it from the daemon.
+
 - **`afk.state.json` is off-mandate** and becomes TOON/TOONL, with contract
   `red.castle.state.v1` unchanged in meaning.
 

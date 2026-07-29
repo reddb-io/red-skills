@@ -128,31 +128,6 @@ const PAYLOAD: StatuslineAggregate = {
     cacheAgeS: 12,
   },
   queue: { ready_for_agent: 6, ready_for_human: 1, cache_age_s: 12 },
-  /** Federation view: cross-host fleet state aggregated from singleton event
-   * lane heartbeats. In single-host mode hosts contains exactly one entry.
-   * In multi-host mode each host carries its machine_id_hash marker and a
-   * staleness signal (`silent`) derived from last_event_age_s vs the
-   * configured threshold. */
-  federation: {
-    hosts: [
-      {
-        machine_id_hash: "abc123def456",
-        fleet_name: "default",
-        runner: "claude",
-        target: 4,
-        bundle_version: "2.78.0",
-        slots: { busy: 2, free: 1, total: 4, parked: 1 },
-        workers: [{ id: "wTST1", issue: "2344", activity: "editing" }],
-        ready_for_agent: 6,
-        last_event_at: "2026-07-23T12:00:00.000Z",
-        last_event_age_s: 8,
-        silent: false,
-      },
-    ],
-    total_busy: 2,
-    total_free: 1,
-    total_workers: 1,
-  },
 };
 
 /**
@@ -267,6 +242,14 @@ describe("statusline_aggregate field coverage", () => {
     const line = renderStatusline(input);
     expect(line).toContain("red-skills");
     expect(line).toContain("main");
+  });
+
+  // ADR 0130: the single-host view is the whole view. The cross-host aggregate
+  // grouped by host identity over fleet heartbeats and slots that no longer
+  // exist, so the payload reports no host-grouped state at all.
+  it("reports no host-grouped fleet state", () => {
+    expect(PAYLOAD).not.toHaveProperty("federation");
+    expect(Object.keys(PAYLOAD)).not.toContain("hosts");
   });
 
   it("omits the host-side blocks, which the tool must not fake", () => {

@@ -19,10 +19,6 @@ import {
 } from "./mcp/review.js";
 import { createRunnerTools, type RunnerDependencies } from "./mcp/runner.js";
 import {
-  createFederatedFleetTools,
-  type FederatedFleetDependencies,
-} from "./mcp/federated-fleet.js";
-import {
   createStatuslineTools,
   type StatuslineDependencies,
 } from "./mcp/statusline.js";
@@ -39,7 +35,6 @@ export type { CastleMcpTool } from "./mcp/tool.js";
 export type { DangerPosture } from "./mcp/posture.js";
 export {
   CASTLE_MCP_CONTRACT_VERSION,
-  federatedFleetViewOutputSchema,
   projectStatusOutputSchema,
   monitorOutputSchema,
   queueStatusOutputSchema,
@@ -48,7 +43,6 @@ export {
 } from "./mcp/contracts.js";
 export type {
   CastleMcpOutputContract,
-  FederatedFleetViewOutput,
   ProjectStatusOutput,
   MonitorOutput,
   QueueStatusOutput,
@@ -110,8 +104,7 @@ export interface CastleMcpDependencies
     WorktreeDependencies,
     WaitDependencies,
     ReviewDependencies,
-    StatuslineDependencies,
-    FederatedFleetDependencies {}
+    StatuslineDependencies {}
 
 /**
  * Compose the published castle tool surface from the per-domain registries.
@@ -146,7 +139,6 @@ export function createCastleMcpTools(
     ...createWaitTools(deps),
     ...createReviewTools(deps),
     ...createStatuslineTools(deps),
-    ...createFederatedFleetTools(deps),
   ];
   return applyDangerPosture(applyOutputContracts(tools), posture);
 }
