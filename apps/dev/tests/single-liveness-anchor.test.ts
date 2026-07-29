@@ -1,13 +1,18 @@
 /**
- * Every surface derives from ONE liveness anchor (ADR 0128 §5–§6, issue #2704).
+ * Every surface derives from ONE liveness anchor (issue #2704, Spec #2772).
  *
  * `project_status` reporting `alive: false` beside a fresh heartbeat (#2698) and
  * the janitor reclaiming the live supervisor's lane (#2679) are the same bug:
- * a writer maintaining one anchor and a reader trusting another. This slice
- * makes the contradiction UNREPRESENTABLE rather than unlikely — liveness and
- * freshness are resolved together, and an unattributable heartbeat is stale at
- * any age — and it ratchets the migration: a reader that reintroduces a private
- * source fails here.
+ * a writer maintaining one anchor and a reader trusting another. This makes the
+ * contradiction UNREPRESENTABLE rather than unlikely — liveness and freshness are
+ * resolved together, and an unattributable heartbeat is stale at any age — and it
+ * ratchets the migration: a reader that reintroduces a private source fails here.
+ *
+ * A WORKER's process liveness resolves through the DAEMON, which owns birth and
+ * death, and never through a pid file. The record that used to answer it is gone
+ * (Spec #2772), and the daemon is a stronger authority than the record was: it
+ * cannot be out of date about a process it holds. `dead` is therefore only
+ * representable beside a fresh daemon read.
  */
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +28,23 @@ vi.mock("../src/runtime/kill-tree.js", () => ({
   killTreeAndWait: vi.fn(async () => true),
 }));
 
+/**
+ * The daemon, mocked at the WIRE: the anchor's default read goes over the
+ * socket, so intercepting the protocol proves the shipped path rather than a
+ * seam invented for the test.
+ */
+const daemonAnswers = vi.hoisted(() => ({ calls: 0, payload: null as unknown }));
+
+vi.mock("@reddb-io/redskilled/protocol", () => ({
+  sendRedskilledRequest: async () => {
+    daemonAnswers.calls += 1;
+    return daemonAnswers.payload === null
+      ? { id: "x", ok: false as const, error: "no daemon" }
+      : { id: "x", ok: true as const, value: daemonAnswers.payload };
+  },
+  isRedskilledStatuslinePayload: () => true,
+}));
+
 vi.mock("../src/core/state.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/core/state.js")>();
   return {
@@ -36,7 +58,11 @@ import { renderFleetBlock } from "../src/core/statusline.js";
 import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
 import {
+  publishWorkerLiveness,
   resolveSupervisorLiveness,
+  resolveWorkerLiveness,
+  readWorkerLiveness,
+  type DaemonWorkerSet,
   type SupervisorPidDiscovery,
 } from "../src/runtime/liveness-anchor.js";
 import { collectStatuslineFleet } from "../src/runtime/wire/statusline.js";
@@ -277,6 +303,125 @@ describe("a stale read renders as stale, never as current (#2704)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// a Worker's process liveness resolves through the daemon (Spec #2772)
+// ---------------------------------------------------------------------------
+
+const WORKER = "wHU5U";
+
+/** A daemon answer in the shape the daemon publishes it. */
+function hostAnswer(over: {
+  stale?: boolean;
+  ageMs?: number | null;
+  reason?: string;
+  workers?: { worker_id: string; project_label: string; pid: number }[];
+} = {}): DaemonWorkerSet {
+  return {
+    staleness: {
+      stale: over.stale ?? false,
+      age_ms: over.ageMs === undefined ? 1_200 : over.ageMs,
+      threshold_ms: 30_000,
+      reason: over.reason ?? "measured 1200ms ago, within the 30000ms staleness window",
+    },
+    workers: over.workers ?? [{ worker_id: WORKER, project_label: "red-skills", pid: 4242 }],
+  };
+}
+
+describe("the daemon is the anchor for a Worker's process (Spec #2772)", () => {
+  it("names the Worker's pid and owning project when the daemon holds it", () => {
+    const liveness = resolveWorkerLiveness(hostAnswer(), WORKER);
+
+    expect(liveness).toMatchObject({
+      verdict: "alive",
+      anchor: "daemon",
+      pid: 4242,
+      project_label: "red-skills",
+    });
+  });
+
+  it("calls a Worker dead ONLY beside a fresh read", () => {
+    const liveness = resolveWorkerLiveness(hostAnswer({ workers: [] }), WORKER);
+
+    expect(liveness.verdict).toBe("dead");
+    // The whole criterion: a dead verdict cannot travel with a stale read, so
+    // "gone" is never published beside evidence the Worker was alive.
+    expect(liveness.staleness.stale).toBe(false);
+  });
+
+  it("answers unknown — never dead — when the daemon does not answer at all", async () => {
+    const unreachable = resolveWorkerLiveness(null, WORKER);
+    expect(unreachable).toMatchObject({ verdict: "unknown", anchor: "none", pid: null });
+    expect(unreachable.staleness.stale).toBe(true);
+    expect(unreachable.staleness.reason).toContain("did not answer");
+
+    // The same through the read seam, including when the read itself throws: a
+    // reader that could not reach the authority never reports a Worker gone.
+    await expect(
+      readWorkerLiveness(WORKER, () => {
+        throw new Error("no socket");
+      }),
+    ).resolves.toMatchObject({ verdict: "unknown" });
+  });
+
+  it("answers unknown on a stale read, carrying the daemon's own sentence", () => {
+    const reason = "this answer is stale: its measurement is 91000ms old, past the 30000ms staleness window";
+    const liveness = resolveWorkerLiveness(hostAnswer({ stale: true, ageMs: 91_000, reason }), WORKER);
+
+    // A stale Worker set is history. A Worker missing from history has not been
+    // shown to have died, and one present in it is not proven alive now.
+    expect(liveness.verdict).toBe("unknown");
+    // Staleness travels INSIDE the payload: the reason is the daemon's, quoted,
+    // never re-derived here from the age and a threshold of our own.
+    expect(liveness.staleness.reason).toBe(reason);
+  });
+
+  it("carries the daemon's age and threshold verbatim into the published block", () => {
+    const published = publishWorkerLiveness(resolveWorkerLiveness(hostAnswer({ ageMs: 7_500 }), WORKER));
+
+    expect(published.staleness).toEqual({
+      stale: false,
+      age_ms: 7_500,
+      threshold_ms: 30_000,
+      reason: "measured 1200ms ago, within the 30000ms staleness window",
+    });
+  });
+});
+
+describe("worker_vitals publishes the anchor's Worker verdict (Spec #2772)", () => {
+  it("asks the daemon once per call, over the shipped socket path", async () => {
+    const root = scratch();
+    daemonAnswers.calls = 0;
+    daemonAnswers.payload = hostAnswer({ workers: [] });
+    try {
+      lane(root, fleetSnapshot());
+
+      await createCastleMcpDependencies(root).workerVitals({ live_only: false });
+
+      // One question to the one authority, per call — never one read per Worker,
+      // and never a second source consulted beside it.
+      expect(daemonAnswers.calls).toBe(1);
+    } finally {
+      daemonAnswers.payload = null;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes the daemon's verdict for a Worker it holds", async () => {
+    const root = scratch();
+    daemonAnswers.payload = hostAnswer();
+    try {
+      lane(root, fleetSnapshot());
+
+      const liveness = await readWorkerLiveness(WORKER);
+
+      expect(liveness).toMatchObject({ verdict: "alive", anchor: "daemon", pid: 4242 });
+    } finally {
+      daemonAnswers.payload = null;
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // the ratchet: no migrated reader may hold a private liveness source
 // ---------------------------------------------------------------------------
 
@@ -310,6 +455,20 @@ describe("one anchor, enforced (#2704)", () => {
       expect(importsModule(source, PRIVATE_SOURCE_MODULE)).toBe(false);
     },
   );
+
+  /**
+   * The Worker half of the anchor may not read a pid file at all — not as a
+   * primary source and not as a fallback. A fallback IS a second anchor: it is
+   * consulted exactly when the daemon is unreachable, which is the moment its
+   * answer is least trustworthy and most likely to be acted on destructively.
+   */
+  it("resolves a Worker's process without touching a pid file", () => {
+    const source = readFileSync(join(HERE, "..", "src/runtime/liveness-anchor.ts"), "utf8");
+    const workerHalf = source.slice(source.indexOf("// a Worker's process liveness"));
+
+    expect(workerHalf.length).toBeGreaterThan(0);
+    expect(workerHalf).not.toMatch(/["']worker\.pid["']|readPidStartTime|isLivePid|\/proc\//);
+  });
 
   it("fails a reader that reintroduces a private source", () => {
     // The negative control: the same check that passes the migrated readers
