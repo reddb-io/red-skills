@@ -44,6 +44,12 @@ import {
   type RedskilledHostEvent,
 } from "./event-lane.js";
 import { buildHostState, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
+import {
+  evaluateMemoryBudgets,
+  sampleTreeRss,
+  type RedskilledBudgetTermination,
+  type RedskilledMemorySampler,
+} from "./memory-sampler.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
   detectWorkerLiveness,
@@ -69,6 +75,15 @@ import {
 
 /** Default idle window before a Worker-free daemon leaves. */
 export const DEFAULT_REDSKILLED_IDLE_MS = 300_000;
+
+/**
+ * Default window between memory samples.
+ *
+ * A whole-set sample is one pass over the process table, so the interval is
+ * chosen for how fast a runaway must be caught rather than for how many Workers
+ * are running — the cost does not move with the Worker count.
+ */
+export const DEFAULT_REDSKILLED_SAMPLE_MS = 15_000;
 
 /** Raised when another daemon already serves this user session. */
 export class RedskilledAlreadyRunningError extends Error {
@@ -99,6 +114,10 @@ export interface RedskilledDaemonOptions {
   readonly liveness?: RedskilledLivenessProbe;
   /** How the daemon stops a Worker it is reclaiming a budget from. */
   readonly stopWorker?: RedskilledStopProbe;
+  /** How the whole Worker set's tree RSS is read; `/proc` by default. */
+  readonly memorySampler?: RedskilledMemorySampler;
+  /** Window between memory samples; 0 or below leaves the sampler unarmed. */
+  readonly sampleMs?: number;
 }
 
 export interface RedskilledDaemon {
@@ -127,6 +146,14 @@ export interface RedskilledDaemon {
    * out of room must not have to distinguish it from a Worker that finished.
    */
   killWorkerOverBudget(workerId: string, detail: string): Promise<boolean>;
+  /**
+   * Sample the whole Worker set once and terminate everything over its budget.
+   *
+   * The floor every placement backend stands on, exposed so the tick can be
+   * driven by a test as well as by the timer. Returns the terminations it
+   * performed, each naming the budget it enforced.
+   */
+  sampleMemoryBudgets(): Promise<readonly RedskilledBudgetTermination[]>;
   /** Re-probe every re-attached Worker, retiring the ones the host no longer confirms. */
   sweepReattached(): Promise<readonly RedskilledWorkerView[]>;
   /** The Workers this daemon adopted at start rather than birthing itself. */
@@ -176,12 +203,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const eventLane = options.eventLane ?? createRedskilledEventLane(paths.eventLanePath);
   const liveness = options.liveness ?? detectWorkerLiveness;
   const stopProbe = options.stopWorker ?? stopWorker;
+  const memorySampler = options.memorySampler ?? sampleTreeRss;
+  const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
   const workers = new Map<string, RedskilledWorkerView>();
   // Re-attached Workers have no child handle to deliver an exit, so their death
   // is discovered by asking the host rather than by being told.
   const reattached = new Set<string>();
   const activeSockets = new Set<Socket>();
   let idleTimer: NodeJS.Timeout | undefined;
+  let sampleTimer: NodeJS.Timeout | undefined;
   let stopping = false;
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
@@ -297,6 +327,40 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     return true;
   }
 
+  /**
+   * One tick of the floor: sample the whole set, terminate what is over budget.
+   *
+   * The sample is taken ONCE for every Worker the daemon holds, so the tick's
+   * cost is the host's process table rather than the Worker count. An empty set
+   * is not sampled at all — there is nothing to measure and nothing to kill.
+   */
+  async function sampleMemoryBudgets(): Promise<readonly RedskilledBudgetTermination[]> {
+    const live = [...workers.values()];
+    if (live.length === 0) return [];
+    let rss: Awaited<ReturnType<RedskilledMemorySampler>>;
+    try {
+      rss = await memorySampler(live);
+    } catch {
+      // A sampler that could not read the host measured nothing, and a Worker
+      // nothing measured is never killed on suspicion.
+      return [];
+    }
+    const { terminations } = evaluateMemoryBudgets({ workers: live, rss });
+    const done: RedskilledBudgetTermination[] = [];
+    for (const termination of terminations) {
+      if (await killWorkerOverBudget(termination.worker_id, termination.reason)) done.push(termination);
+    }
+    return done;
+  }
+
+  function armSampleTimer(): void {
+    if (stopping || sampleTimer != null || sampleMs <= 0) return;
+    sampleTimer = setInterval(() => {
+      void sampleMemoryBudgets().catch(() => undefined);
+    }, sampleMs);
+    sampleTimer.unref();
+  }
+
   function armIdleTimer(): void {
     if (stopping) return;
     if (idleTimer) clearTimeout(idleTimer);
@@ -325,6 +389,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (stopping) return await closed;
     stopping = true;
     if (idleTimer) clearTimeout(idleTimer);
+    if (sampleTimer) clearInterval(sampleTimer);
     // Every event already handed over reaches the lane before the daemon lets go
     // of the session: a birth still in flight would leave the next daemon with a
     // Worker it holds a budget for and no record of.
@@ -395,6 +460,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   armIdleTimer();
+  armSampleTimer();
 
   return {
     socketPath: paths.socketPath,
@@ -405,6 +471,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     admit,
     ceiling: () => ceiling,
     killWorkerOverBudget,
+    sampleMemoryBudgets,
     sweepReattached,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
     flushEvents: () => eventLane.flush(),
