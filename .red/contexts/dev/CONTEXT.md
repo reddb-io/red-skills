@@ -147,7 +147,7 @@ Re-instructing the implementer **in place** — same **Worker**, same **Worktree
 _Avoid_: attempt (an Attempt is one Worker × one Ticket × one try; a Re-seed happens inside one), retry, attempt ordinal (retired by ADR 0103), correction retry
 
 **Re-seed budget**:
-The bound on how many **Re-seed** rounds one **Attempt** may spend. A single ceiling per lane holds sub-caps per cause — a failing gate stage, a repeated failure signature escalating the tier, a blocking review finding — and the review's round is a **reservation**, not a quota, so gate churn cannot consume it. Exhaustion with anything still outstanding parks `ready-for-human` + `blocked:validation`, uniformly and regardless of cause; landing with a known blocking finding is not reachable by config value.
+The bound on how many **Re-seed** rounds one **Attempt** may spend. A single ceiling per lane holds sub-caps per cause — a failing gate stage, a repeated failure signature escalating the tier, a blocking review finding — and the review's round is a **reservation**, not a quota, so gate churn cannot consume it. Exhaustion with anything still outstanding parks `ready-for-human` + `blocked:validation`, uniformly and regardless of cause; landing with a known blocking finding is not reachable by config value. An operator tunes only the gate's share (`dev.reseed.afk.gate_budget`); the ceiling and the reservation belong to the lane, so a raised setting can neither buy an unbounded run nor starve the review's round.
 _Avoid_: correction budget, convergence budget, stall convergence budget (the `afk.stallConvergenceBudget` key names the retired shape), heal ledger (that is the per-Ticket repair history, a different object), attempt ledger
 
 **Worker kind**:
