@@ -13,6 +13,7 @@ import {
   upsertCurrentBlocker,
 } from "./process-issue.test-helpers.js";
 import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./process-issue.test-helpers.js";
+import { reseedParkMarker } from "../src/core/process-issue/reseed-trail.js";
 import { vi } from "vitest";
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
   describe("landing.wait slot release (#2427)", () => {
@@ -1835,5 +1836,137 @@ describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", ()
     expect(trace.trailCommentEdits[0]?.body).toContain("2/4");
     // Still one pull request, still a draft.
     expect(prCreates(trace)).toHaveLength(1);
+  });
+});
+
+describe("processIssue — an exhausted Re-seed budget parks with the draft open (#2732)", () => {
+  const prCalls = (trace: { mergeCalls: string[][] }, verb: string): string[][] =>
+    trace.mergeCalls.filter((argv) => argv.includes("pr") && argv.includes(verb));
+  /** Every `gh pr edit --add-label` applied to the draft. */
+  const prLabels = (trace: { mergeCalls: string[][] }): string[] =>
+    prCalls(trace, "edit")
+      .filter((argv) => argv.includes("--add-label"))
+      .map((argv) => argv[argv.indexOf("--add-label") + 1] ?? "");
+  /** The LAST body written onto the draft — the park's own. */
+  const lastPrBody = (trace: { mergeCalls: string[][] }): string => {
+    const bodies = trace.mergeCalls
+      .filter((argv) => argv.includes("--body"))
+      .map((argv) => argv[argv.indexOf("--body") + 1] ?? "");
+    return bodies.at(-1) ?? "";
+  };
+  /** The LAST body written onto the trail's Issue comment. */
+  const lastIssueBody = (trace: {
+    trailComments: Array<{ body: string }>;
+    trailCommentEdits: Array<{ body: string }>;
+  }): string => trace.trailCommentEdits.at(-1)?.body ?? trace.trailComments.at(-1)?.body ?? "";
+
+  /** A budget exhausted by GATE churn: one correction round, then the same red
+   * gate again with nothing left to draw. */
+  const gateExhaustion = () =>
+    harness({
+      outcome: "done",
+      feedbackResults: [false, false],
+      stallConvergenceBudget: 1,
+    });
+
+  /** A budget exhausted by the RESERVED review round: a blocking finding draws
+   * it, and the finding survives the correction. */
+  const reviewExhaustion = () => {
+    const blocking = {
+      summary: "Blocking acceptance gaps remain.",
+      findings: [
+        {
+          path: "packages/x/src/a.ts",
+          line: 1,
+          body: "The implementation still omits the required audit trail.",
+          blocking: true,
+        },
+      ],
+    };
+    return harness({
+      outcomes: ["done", "done"],
+      feedbackOk: true,
+      locked: false,
+      adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
+      adversarialFindingsSequence: [blocking, blocking],
+    });
+  };
+
+  it("leaves the draft pull request OPEN — a validation park is when the diff is needed", async () => {
+    const { deps, input, trace } = gateExhaustion();
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    // The draft was minted by the first Re-seed and never closed on the way out.
+    expect(prCalls(trace, "create")).toHaveLength(1);
+    expect(prCalls(trace, "close")).toEqual([]);
+    expect(prCalls(trace, "merge")).toEqual([]);
+  });
+
+  it("marks the parked draft with the same blocked-validation label the Ticket carries", async () => {
+    const { deps, input, trace } = gateExhaustion();
+    await processIssue(deps, input);
+
+    expect(prLabels(trace)).toContain("blocked:validation");
+    // The Ticket parks with the very same label — one query answers for both.
+    expect(
+      trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation")),
+    ).toBe(true);
+    expect(lastPrBody(trace)).toContain(reseedParkMarker(9));
+  });
+
+  it("puts the accumulated evidence on BOTH the Issue and the pull request at park time", async () => {
+    const { deps, input, trace } = gateExhaustion();
+    await processIssue(deps, input);
+
+    for (const body of [lastIssueBody(trace), lastPrBody(trace)]) {
+      expect(body).toContain(reseedParkMarker(9));
+      // The rounds already spent…
+      expect(body).toContain("Re-seed trail");
+      expect(body).toContain("machine gate failed after DONE");
+      // …and the evidence that ended the budget.
+      expect(body).toContain("Evidence at park time");
+      expect(body).toContain('"status":"failed"');
+    }
+    // Still ONE comment: the park edits the trail rather than notifying again.
+    expect(trace.trailComments).toHaveLength(1);
+  });
+
+  it("parks identically whatever cause exhausted the budget", async () => {
+    const gate = gateExhaustion();
+    const review = reviewExhaustion();
+    const gateResult = await processIssue(gate.deps, gate.input);
+    const reviewResult = await processIssue(review.deps, review.input);
+
+    expect(gateResult.outcome).toBe("feedback-failed");
+    expect(reviewResult.outcome).toBe("feedback-failed");
+    for (const trace of [gate.trace, review.trace]) {
+      expect(prCalls(trace, "create")).toHaveLength(1);
+      expect(prCalls(trace, "close")).toEqual([]);
+      expect(prLabels(trace)).toContain("blocked:validation");
+      expect(lastPrBody(trace)).toContain(reseedParkMarker(9));
+      expect(lastIssueBody(trace)).toContain(reseedParkMarker(9));
+      expect(lastPrBody(trace)).toContain("Evidence at park time");
+      expect(lastIssueBody(trace)).toContain("Evidence at park time");
+    }
+    // The evidence itself is the one thing that differs: each cause carries what
+    // IT left red.
+    expect(lastIssueBody(review.trace)).toContain("The implementation still omits the required audit trail.");
+  });
+
+  it("parks with no draft to seal when the attempt never re-seeded", async () => {
+    // Budget 0: the first red gate has nothing to draw, so no round is ever
+    // published and no pull request is minted. The park is the Ticket's alone.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false],
+      stallConvergenceBudget: 0,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(prCalls(trace, "create")).toEqual([]);
+    expect(prLabels(trace)).toEqual([]);
+    expect(trace.trailComments).toEqual([]);
   });
 });
