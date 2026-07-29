@@ -47,6 +47,16 @@ export interface TrackerClaimDecision {
 export interface TrackerPort {
   createIssue?(spec: TrackerIssueCreateSpec): Promise<number>;
   listOpenIssuesByLabel(label: string): Promise<TrackerIssue[]>;
+  /** CLOSED issues carrying ANY of `labels`, at most `limit` of them — the
+   * external-close reconcile lane (#2749). A close performed outside the
+   * engine (GitHub's own PR-closes-issue on a human merge) leaves whatever
+   * state the issue was in; this read is how the curator finds it. Optional so
+   * read-only and legacy adapters keep working — the reconcile pass no-ops when
+   * the adapter omits it. */
+  listClosedIssuesByAnyLabel?(
+    labels: readonly string[],
+    limit: number,
+  ): Promise<TrackerIssue[]>;
   isIssueClosed(issue: number): Promise<boolean>;
   editIssueLabels(issue: number, mutation: TrackerLabelMutation): Promise<void>;
   /** Replace an issue body while preserving the tracker abstraction. Optional

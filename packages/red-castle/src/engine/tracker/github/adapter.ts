@@ -96,6 +96,27 @@ export function createGitHubTrackerAdapter(
       );
       return parseIssueList(stdout);
     },
+    async listClosedIssuesByAnyLabel(labelNames, limit) {
+      if (labelNames.length === 0) return [];
+      // ONE search request covers every role: repeated `--label` flags are ANDed
+      // by gh, while a single `label:"a","b"` search qualifier is the OR this
+      // read needs (#2749). Never a per-label loop — the sweep runs on a timer.
+      const stdout = await gh(
+        withRepo([
+          "issue",
+          "list",
+          "--state",
+          "closed",
+          "--search",
+          `label:${labelNames.map((name) => `"${name}"`).join(",")}`,
+          "--json",
+          "number,body,labels",
+          "--limit",
+          String(limit),
+        ]),
+      );
+      return parseIssueList(stdout);
+    },
     async isIssueClosed(issue) {
       const stdout = await gh(
         withRepo(["issue", "view", String(issue), "--json", "state"]),
