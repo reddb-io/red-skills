@@ -1,0 +1,163 @@
+// The placement planner, proven from injected probes with nothing spawned.
+// Both Linux cases matter and they matter differently: with a user session the
+// Worker gets a transient SERVICE unit (never a scope — a scope dies with the
+// caller), and without one the launch still happens but says so out loud.
+import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_WORKER_UNIT_PREFIX,
+  placementEnabled,
+  planWorkerPlacement,
+  REDSKILLED_PLACEMENT_ENV,
+  workerUnitName,
+  type WorkerPlacementProbes,
+} from "../src/worker-placement.js";
+
+const LINUX_WITH_SESSION: WorkerPlacementProbes = {
+  platform: "linux",
+  systemdRun: "/usr/bin/systemd-run",
+  userSession: true,
+};
+const LINUX_WITHOUT_SESSION: WorkerPlacementProbes = {
+  platform: "linux",
+  systemdRun: "/usr/bin/systemd-run",
+  userSession: false,
+};
+const LINUX_WITHOUT_SYSTEMD: WorkerPlacementProbes = {
+  platform: "linux",
+  systemdRun: null,
+  userSession: false,
+};
+const DARWIN: WorkerPlacementProbes = { platform: "darwin", systemdRun: null, userSession: false };
+
+function plan(probes: WorkerPlacementProbes, overrides: Record<string, unknown> = {}) {
+  return planWorkerPlacement({
+    workerId: "wQ9F2",
+    projectLabel: "acme/widgets",
+    workspacePath: "/given/workspace",
+    command: "/usr/bin/node",
+    args: ["worker.js", "--issue", "2774"],
+    budget: { memory_high: "3G", memory_max: "4G", cpu_weight: 200 },
+    probes,
+    ...overrides,
+  });
+}
+
+describe("worker placement — Linux with a user session", () => {
+  it("places the Worker in a transient service unit of its own", () => {
+    const placement = plan(LINUX_WITH_SESSION);
+
+    expect(placement.isolated).toBe(true);
+    expect(placement.command).toBe("/usr/bin/systemd-run");
+    expect(placement.unit).toBe("red-worker-acme-widgets-wq9f2.service");
+    expect(placement.args).toContain("--user");
+    expect(placement.args).toContain(`--unit=${placement.unit}`);
+    expect(placement.warning).toBeUndefined();
+  });
+
+  it("asks for a service unit, never a scope — a scope cannot outlive the daemon", () => {
+    const placement = plan(LINUX_WITH_SESSION);
+
+    expect(placement.args).not.toContain("--scope");
+    expect(placement.unit?.endsWith(".service")).toBe(true);
+  });
+
+  it("carries the budget as unit properties and the argv after the separator", () => {
+    const placement = plan(LINUX_WITH_SESSION);
+    const separator = placement.args.indexOf("--");
+
+    expect(placement.args.slice(0, separator)).toEqual(
+      expect.arrayContaining(["--property=MemoryHigh=3G", "--property=MemoryMax=4G", "--property=CPUWeight=200"]),
+    );
+    expect(placement.args.slice(separator + 1)).toEqual([
+      "/usr/bin/node",
+      "worker.js",
+      "--issue",
+      "2774",
+    ]);
+    expect(placement.budgetWarning).toBeUndefined();
+  });
+
+  it("hands the workspace path to the unit verbatim", () => {
+    const placement = plan(LINUX_WITH_SESSION, { workspacePath: "/nowhere/near/a/repo/x y" });
+
+    expect(placement.args).toContain("--working-directory=/nowhere/near/a/repo/x y");
+    expect(placement.args.filter((arg) => arg.startsWith("--working-directory="))).toHaveLength(1);
+  });
+
+  it("passes the Worker's environment through the unit, not through the daemon's", () => {
+    const placement = plan(LINUX_WITH_SESSION, { env: { RED_WORKER: "1" } });
+
+    expect(placement.args).toContain("--setenv=RED_WORKER=1");
+  });
+});
+
+describe("worker placement — Linux without a user session", () => {
+  it("still launches, and never silently: the warning names the cost", () => {
+    const placement = plan(LINUX_WITHOUT_SESSION);
+
+    expect(placement.isolated).toBe(false);
+    expect(placement.command).toBe("/usr/bin/node");
+    expect(placement.args).toEqual(["worker.js", "--issue", "2774"]);
+    expect(placement.cwd).toBe("/given/workspace");
+    expect(placement.unit).toBeUndefined();
+    expect(placement.warning).toMatch(/no systemd --user session/);
+  });
+
+  it("says the declared budget is now unenforceable rather than pretending it holds", () => {
+    expect(plan(LINUX_WITHOUT_SESSION).budgetWarning).toMatch(/cannot enforce it/);
+    expect(plan(LINUX_WITHOUT_SESSION, { budget: undefined }).budgetWarning).toBeUndefined();
+  });
+
+  it("warns about the missing binary when systemd-run is not on PATH", () => {
+    expect(plan(LINUX_WITHOUT_SYSTEMD).warning).toMatch(/systemd-run is not on PATH/);
+  });
+});
+
+describe("worker placement — every unisolated launch carries a warning", () => {
+  it("warns off Linux, where the transient-unit backend does not exist", () => {
+    const placement = plan(DARWIN);
+
+    expect(placement.isolated).toBe(false);
+    expect(placement.warning).toMatch(/platform=darwin/);
+  });
+
+  it("warns when the host kill-switch declined isolation", () => {
+    const placement = plan(LINUX_WITH_SESSION, { enabled: false });
+
+    expect(placement.isolated).toBe(false);
+    expect(placement.warning).toContain(REDSKILLED_PLACEMENT_ENV);
+  });
+
+  it("warns even when the client asked for `inherit` out loud", () => {
+    const placement = plan(LINUX_WITH_SESSION, { target: { isolation: "inherit" } });
+
+    expect(placement.isolated).toBe(false);
+    expect(placement.warning).toMatch(/inherit/);
+  });
+
+  it("leaves no unisolated plan without a warning, over every probe combination", () => {
+    for (const probes of [LINUX_WITH_SESSION, LINUX_WITHOUT_SESSION, LINUX_WITHOUT_SYSTEMD, DARWIN]) {
+      for (const enabled of [true, false]) {
+        for (const isolation of ["transient-unit", "inherit"] as const) {
+          const placement = plan(probes, { enabled, target: { isolation } });
+          expect(placement.isolated ? placement.warning === undefined : (placement.warning ?? "").length > 0).toBe(true);
+        }
+      }
+    }
+  });
+});
+
+describe("worker placement — naming and the kill-switch", () => {
+  it("slugifies both opaque labels instead of parsing them", () => {
+    expect(workerUnitName("Acme/Widgets.git", "wQ9F2/2774")).toBe("red-worker-acme-widgets-git-wq9f2-2774.service");
+    expect(workerUnitName("", "")).toBe(`${DEFAULT_WORKER_UNIT_PREFIX}-project-worker.service`);
+    expect(workerUnitName("p", "w", "red-gate")).toBe("red-gate-p-w.service");
+  });
+
+  it("reads the kill-switch off the environment, defaulting to enabled", () => {
+    expect(placementEnabled({})).toBe(true);
+    expect(placementEnabled({ [REDSKILLED_PLACEMENT_ENV]: "off" })).toBe(false);
+    expect(placementEnabled({ [REDSKILLED_PLACEMENT_ENV]: "0" })).toBe(false);
+    expect(placementEnabled({ [REDSKILLED_PLACEMENT_ENV]: "on" })).toBe(true);
+  });
+});

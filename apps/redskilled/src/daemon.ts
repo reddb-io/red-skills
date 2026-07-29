@@ -26,6 +26,12 @@ import { buildHostState, type RedskilledHostState, type RedskilledWorkerView } f
 import type { RedskilledPaths } from "./paths.js";
 import { REDSKILLED_PROTOCOL_VERSION, type RedskilledRequest, type RedskilledResponse } from "./protocol.js";
 import {
+  launchWorker,
+  type LaunchWorkerOptions,
+  type LaunchedWorker,
+  type RedskilledWorkerSpec,
+} from "./worker-launch.js";
+import {
   createRedskilledLeaseStore,
   currentProcessOwner,
   type RedskilledLease,
@@ -55,6 +61,8 @@ export interface RedskilledDaemonOptions {
   readonly owner?: RedskilledLeaseOwner;
   readonly leaseStore?: RedskilledLeaseStore;
   readonly clock?: () => string;
+  /** How a Worker is born; injected so a test can birth one without a spawn. */
+  readonly launch?: (options: LaunchWorkerOptions) => LaunchedWorker;
 }
 
 export interface RedskilledDaemon {
@@ -63,6 +71,8 @@ export interface RedskilledDaemon {
   readonly startedAt: string;
   /** Resolves when the daemon has stopped listening and released its lease. */
   readonly closed: Promise<void>;
+  /** Birth a Worker from a spec: plan placement, launch, track, report. */
+  startWorker(spec: RedskilledWorkerSpec): LaunchedWorker;
   /** Record a Worker the daemon believes is alive — the idle gate reads this set. */
   trackWorker(worker: RedskilledWorkerView): void;
   /** Forget a Worker the daemon has observed dying. */
@@ -86,6 +96,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const daemonVersion = options.daemonVersion ?? "0.0.0-dev";
   const idleMs = options.idleMs ?? DEFAULT_REDSKILLED_IDLE_MS;
   const clock = options.clock ?? (() => new Date().toISOString());
+  const launch = options.launch ?? launchWorker;
   const owner = options.owner ?? currentProcessOwner();
   const leaseStore = options.leaseStore ?? createRedskilledLeaseStore(paths.leasePath, {
     sessionKeyHash: paths.sessionKeyHash,
@@ -125,6 +136,27 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       startedAt,
       workers: [...workers.values()],
     });
+  }
+
+  /**
+   * Birth one Worker.
+   *
+   * Tracking happens here rather than in the caller, so the idle gate and the
+   * host state learn about a Worker at the same instant the process exists —
+   * a launch the daemon forgot to track would be an untracked budget.
+   */
+  function startWorker(spec: RedskilledWorkerSpec): LaunchedWorker {
+    const launched = launch({
+      spec,
+      clock,
+      onExit: (workerId) => {
+        workers.delete(workerId);
+        armIdleTimer();
+      },
+    });
+    workers.set(launched.worker.worker_id, launched.worker);
+    armIdleTimer();
+    return launched;
   }
 
   function armIdleTimer(): void {
@@ -187,6 +219,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         };
       }
       if (request.op === "host-state") return { id: request.id, ok: true, value: hostState() };
+      if (request.op === "worker-start") {
+        const launched = startWorker(request.spec);
+        return { id: request.id, ok: true, value: { worker: launched.worker, warnings: launched.warnings } };
+      }
       if (request.op === "shutdown") return { id: request.id, ok: true, value: { stopping: true } };
       const unknown = request as { id?: string; op?: string };
       return { id: unknown.id ?? randomUUID(), ok: false, error: `unsupported redskilled op: ${unknown.op ?? "unknown"}` };
@@ -202,6 +238,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     lease: acquisition.lease,
     startedAt,
     closed,
+    startWorker,
     trackWorker(worker) {
       workers.set(worker.worker_id, worker);
       armIdleTimer();
