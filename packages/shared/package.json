@@ -18,6 +18,7 @@
     "./toon-migration.js": "./toon-migration.ts",
     "./log.js": "./log.ts",
     "./plugin-gate.js": "./plugin-gate.ts",
+    "./project-identity.js": "./project-identity.ts",
     "./red-paths.js": "./red-paths.ts",
     "./repo-root.js": "./repo-root.ts",
     "./outcome-event.js": "./outcome-event.ts",
