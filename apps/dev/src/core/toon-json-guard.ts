@@ -133,6 +133,26 @@ export function formatToonJsonGuardViolations(report: ToonJsonGuardReport): stri
   return violations;
 }
 
+/**
+ * The failure message the ratchet assertion carries (issue #2762). A bare
+ * `expect(violations).toEqual([])` prints `expected [ Array(1) ] to deeply equal
+ * []` — the diff names neither the offending path nor what to do about it, so a
+ * worker reading its own gate output learns only that something broke. This
+ * spells out each violation, the allowlist file that classifies it, and the
+ * `.toon`-written-as-JSON shape that is the recurring cause. PURE.
+ */
+export function formatToonJsonGuardFailureMessage(violations: readonly string[]): string {
+  if (violations.length === 0) return "";
+  const plural = violations.length === 1 ? "site" : "sites";
+  return [
+    `TOON JSON file-I/O ratchet: ${violations.length} unresolved ${plural}.`,
+    ...violations.map((violation) => `  - ${violation}`),
+    `Fix each site (write TOON via @reddb-io/toon) or classify it in ${ALLOWLIST_PATH}.`,
+    "A `*.toon` path written with JSON.stringify is a violation even though the decoder" +
+      " sniffs JSON-or-TOON and accepts it at runtime — it looks correct locally and is wrong by policy.",
+  ].join("\n");
+}
+
 export function readToonJsonAllowlist(root: string): ToonJsonAllowlistEntry[] {
   const allowlistPath = join(root, ALLOWLIST_PATH);
   if (!existsSync(allowlistPath)) return [];

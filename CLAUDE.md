@@ -106,6 +106,13 @@ Use `rsp wait` as the standard waiting primitive for PR checks, GitHub Actions r
 
 Use raw commands when exact stdout/stderr is the behavior under test, when a wrapper does not support the command shape, or when resolving low-level git conflicts where every byte matters. In repos whose `.red/config.yaml` sets `rsp.enabled: true`, the pre-exec hook may rewrite simple supported commands to their `rsp` wrappers; absent that opt-in, call `rsp` explicitly. The ambient host instructions that replace legacy per-host terminal guidance are tracked in #1415 and should ship from the generated `apps/rsp/generated/AMBIENT-SKILL.md` surface.
 
+## Repo-wide invariants
+
+Some constraints span the whole repo but live in one package. They run in **every** gate run — including a cone-scoped one that touched a single package — via `pnpm -C apps/dev test:invariants`. The declared list is `apps/dev/src/core/repo-invariants.ts`; adding one is a single entry there plus the script it names.
+
+- **Write a `*.toon` file with the TOON encoder, never `JSON.stringify`.** The decoder sniffs JSON-or-TOON and accepts both, so a JSON-written `.toon` looks correct locally and is wrong by policy.
+- **New JSON file I/O under `apps/` or `packages/` must be fixed or classified.** The ratchet (`apps/dev/tests/toon-json-guard.test.ts`) names the offending path and the allowlist file, `.red/contracts/toon-json-file-io-allowlist.json`, when it fails. An `external` entry is a permanent exception and needs a one-line reason.
+
 ## Change report vs upstream
 
 **Whenever you modify, add, or remove a skill that came from `mattpocock/skills`, record it in `CHANGES.md`**.
