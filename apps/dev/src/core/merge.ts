@@ -787,6 +787,106 @@ export function classifyMergeState(view: MergeStateView, context: MergeClassifyC
   return "pending";
 }
 
+/** Why the forge refused a `gh pr merge`, READ BACK from the PR instead of
+ * guessed (#2807). */
+export type MergeRejectionCause =
+  /** Out of date vs base; branch protection requires branches to be up to date.
+   * The one cause the landing repairs itself: update the branch and merge. */
+  | "stale-branch"
+  | "ci-failed"
+  | "conflict"
+  /** BLOCKED with every check reported — an unsatisfied protection rule that is
+   * not a check (a required review, a code-owner gate, …). */
+  | "protection-blocked"
+  | "checks-pending"
+  /** The rejection is real but the PR state does not explain it (or could not be
+   * re-read). Named as unexplained rather than attributed to a probable cause. */
+  | "unknown";
+
+export interface MergeRejectionDiagnosis {
+  cause: MergeRejectionCause;
+  /** One line naming the OBSERVED state. Never says "usually" / "probably": the
+   * landing records what the PR reported, so no human is sent to fix a failing
+   * check that does not exist. */
+  summary: string;
+  /** True when the landing can clear it without a human. */
+  retryable: boolean;
+}
+
+function mergeStateEvidence(view: MergeStateView): string {
+  const state = up(view.mergeStateStatus) || "unreadable";
+  const mergeable = up(view.mergeable) || "unreadable";
+  return `mergeStateStatus=${state} mergeable=${mergeable}`;
+}
+
+/**
+ * Classify a merge rejection from the PR state observed AFTER it (#2807).
+ *
+ * The landing used to record every `gh pr merge` failure as "usually because
+ * branch protection or CI is not satisfied" and park `blocked:ci`. Observed
+ * twice in 40 minutes on PRs whose every required check was green and that were
+ * `mergeable=true` / `CLEAN`: `<base>` had simply advanced between the readiness
+ * poll and the merge call, so protection's *require branches to be up to date*
+ * declined it. A stale base is the NORMAL condition of a busy lane — every land
+ * moves `<base>` for every other in-flight worker — so it must be repaired in
+ * the landing lane, not parked with an instruction naming a check that never
+ * failed.
+ */
+export function diagnoseMergeRejection(view: MergeStateView): MergeRejectionDiagnosis {
+  const s = up(view.mergeStateStatus);
+  const m = up(view.mergeable);
+  if (m === "CONFLICTING" || s === "DIRTY") {
+    return {
+      cause: "conflict",
+      retryable: false,
+      summary: `the PR conflicts with its base (${mergeStateEvidence(view)})`,
+    };
+  }
+  if (view.anyFailed) {
+    const failed = (view.failedCheckNames ?? []).filter((name) => name !== "").join(", ");
+    return {
+      cause: "ci-failed",
+      retryable: false,
+      summary: failed
+        ? `a status check failed on the PR: ${failed}`
+        : `a status check failed on the PR (${mergeStateEvidence(view)})`,
+    };
+  }
+  if (s === "BEHIND") {
+    return {
+      cause: "stale-branch",
+      retryable: true,
+      summary:
+        `the PR branch is out of date with its base (${mergeStateEvidence(view)}) — no check failed; ` +
+        `branch protection requires branches to be up to date before merging`,
+    };
+  }
+  if (view.anyPending) {
+    const pending = (view.pendingCheckNames ?? []).filter((name) => name !== "").join(", ");
+    return {
+      cause: "checks-pending",
+      retryable: false,
+      summary: pending
+        ? `a status check has not reported a verdict yet: ${pending}`
+        : `a status check has not reported a verdict yet (${mergeStateEvidence(view)})`,
+    };
+  }
+  if (s === "BLOCKED") {
+    return {
+      cause: "protection-blocked",
+      retryable: false,
+      summary:
+        `branch protection blocks the PR with every check reported and none failing ` +
+        `(${mergeStateEvidence(view)}) — an unsatisfied non-check rule such as a required review`,
+    };
+  }
+  return {
+    cause: "unknown",
+    retryable: false,
+    summary: `the forge rejected the merge and the PR state does not explain it (${mergeStateEvidence(view)})`,
+  };
+}
+
 /** Extra evidence {@link classifyMergeState} uses to tell *no verdict yet* apart
  * from *a blocking verdict* on a BLOCKED PR (#2747). */
 export interface MergeClassifyContext {
@@ -993,6 +1093,10 @@ export interface LandPrResult {
   ciEvidence?: CiGreenEvidence;
   /** Set on `ok:false` — the distinct failure mode (#812). */
   reason?: LandPrFailReason;
+  /** Set on `reason: "merge-failed"` — the OBSERVED rejection cause and the one
+   * line describing it, read back from the PR (#2807). The caller records this
+   * verbatim instead of guessing at branch protection. */
+  mergeFailure?: MergeRejectionDiagnosis;
   /** Remaining landing tail when `releaseAt` stopped before the merge. */
   deferred?: {
     prNumber: number;
@@ -1006,6 +1110,77 @@ export interface LandPrResult {
 }
 
 const PR_BODY_PREFIX = "Automated AFK landing for #";
+
+/** How many times a rejected merge is repaired by updating the branch before the
+ * landing gives up. A busy lane can move `<base>` again during the retry, so one
+ * spare round absorbs a second land landing underneath this one; beyond that the
+ * loop would just chase the trunk. */
+const STALE_BRANCH_MERGE_ROUNDS = 2;
+
+async function readMergeStateView(exec: Exec, repo: string, prNumber: number): Promise<MergeStateView> {
+  const res = await exec([
+    "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
+  ]);
+  if (res.code !== 0) return emptyMergeStateView();
+  return parseMergeStateView(res.stdout);
+}
+
+/**
+ * Run the merge; on rejection, read the PR back and repair the one cause the
+ * landing owns — an out-of-date branch (#2807).
+ *
+ * Returns `undefined` once the merge succeeds, or the failing {@link LandPrResult}
+ * carrying the OBSERVED cause. A stale branch is updated (`gh pr update-branch`,
+ * exactly what a human does) and, when CI-aware, re-waited to green before the
+ * next merge, so a base that moved mid-landing never parks a green PR. Every
+ * other cause is returned unretried: a failing check, a conflict, or a review
+ * gate is genuinely refusable and no amount of retrying clears it.
+ */
+async function mergeWithStaleBranchRecovery(
+  exec: Exec,
+  input: {
+    repo: string;
+    gitRepo: string;
+    remote: string;
+    target: string;
+    prNumber: number;
+    mergeArgs: string[];
+    ciAwait?: CiAwaitInput;
+  },
+): Promise<LandPrResult | undefined> {
+  const { repo, prNumber, mergeArgs, ciAwait } = input;
+  for (let round = 0; ; round += 1) {
+    const merge = await exec(mergeArgs);
+    if (merge.code === 0) return undefined;
+    const diagnosis = diagnoseMergeRejection(await readMergeStateView(exec, repo, prNumber));
+    if (!diagnosis.retryable || round >= STALE_BRANCH_MERGE_ROUNDS) {
+      return { ok: false, prNumber, reason: "merge-failed", mergeFailure: diagnosis };
+    }
+    const updated = await exec(["gh", "-R", repo, "pr", "update-branch", String(prNumber)]);
+    if (updated.code !== 0) {
+      return {
+        ok: false,
+        prNumber,
+        reason: "merge-failed",
+        mergeFailure: {
+          ...diagnosis,
+          retryable: false,
+          summary: `${diagnosis.summary}; updating the branch from its base failed`,
+        },
+      };
+    }
+    if (!ciAwait) continue;
+    // The updated head is a new commit: its required checks must report again
+    // before protection will accept the merge.
+    const ready = await waitForMergeReadyWithEvidence(exec, repo, prNumber, {
+      ...ciAwait,
+      baseBranch: ciAwait.baseBranch ?? input.target,
+    });
+    if (ready.readiness === "conflict") return { ok: false, prNumber, reason: "conflict" };
+    if (ready.readiness === "ci-failed") return { ok: false, prNumber, reason: "ci-failed" };
+    if (ready.readiness === "pending") return { ok: false, prNumber, reason: "ci-pending" };
+  }
+}
 
 /**
  * Best-effort, non-destructive fast-forward of the primary checkout's local
@@ -1289,8 +1464,16 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     const mergeArgs = ["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"];
     if (mergeQueue) mergeArgs.push("--auto");
     if (mergeTitle) mergeArgs.push("--subject", mergeTitle);
-    const merge = await exec(mergeArgs);
-    if (merge.code !== 0) return { ok: false, prNumber, reason: "merge-failed" };
+    const rejected = await mergeWithStaleBranchRecovery(exec, {
+      repo,
+      gitRepo,
+      remote,
+      target,
+      prNumber,
+      mergeArgs,
+      ...(ciAwait ? { ciAwait } : {}),
+    });
+    if (rejected) return rejected;
 
     if (mergeQueue) return { ok: true, prNumber };
 

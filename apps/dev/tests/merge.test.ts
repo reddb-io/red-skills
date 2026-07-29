@@ -10,6 +10,7 @@ import {
   buildConflictPrompt,
   waitForReviewCheck,
   classifyMergeState,
+  diagnoseMergeRejection,
   parseMergeStateView,
   waitForMergeReady,
   waitForMergeReadyWithEvidence,
@@ -727,6 +728,37 @@ describe("CI-aware merge classification (#812)", () => {
   });
 });
 
+describe("diagnoseMergeRejection (#2807)", () => {
+  const view = (mergeStateStatus: string, rollup: unknown[] = [], mergeable = "MERGEABLE") =>
+    parseMergeStateView(JSON.stringify({ mergeStateStatus, mergeable, statusCheckRollup: rollup }));
+  const greenRollup = [{ name: "test", status: "COMPLETED", conclusion: "SUCCESS" }];
+
+  it("BEHIND with green checks → a retryable stale branch, never a CI failure", () => {
+    const d = diagnoseMergeRejection(view("BEHIND", greenRollup));
+    expect(d.cause).toBe("stale-branch");
+    expect(d.retryable).toBe(true);
+    expect(d.summary).toContain("out of date");
+  });
+
+  it("a failed check → ci-failed, naming the check", () => {
+    const d = diagnoseMergeRejection(view("BLOCKED", [{ name: "test", status: "COMPLETED", conclusion: "FAILURE" }]));
+    expect(d.cause).toBe("ci-failed");
+    expect(d.retryable).toBe(false);
+    expect(d.summary).toContain("test");
+  });
+
+  it("CONFLICTING → conflict", () => {
+    expect(diagnoseMergeRejection(view("DIRTY", [], "CONFLICTING")).cause).toBe("conflict");
+  });
+
+  it("an unreadable state is reported as unexplained, not attributed to a probable cause", () => {
+    const d = diagnoseMergeRejection(parseMergeStateView(""));
+    expect(d.cause).toBe("unknown");
+    expect(d.retryable).toBe(false);
+    expect(d.summary).not.toMatch(/usually|probably/i);
+  });
+});
+
 describe("waitForMergeReady (#812 poll loop)", () => {
   function pollExec(views: string[]): { exec: Exec; calls: string[][] } {
     const calls: string[][] = [];
@@ -1004,6 +1036,116 @@ describe("landPr CI-aware wiring (#812)", () => {
       ciAwait: { sleep: async () => {} },
     });
     expect(r).toEqual({ ok: false, prNumber: 5, reason: "conflict" });
+  });
+
+  // #2807 reproduction — the observed trace of #2774/PR #2803 and #2775/PR #2806:
+  // every required check green and `mergeable=true`, but `<base>` advanced between
+  // the readiness poll and the merge call, so protection's "require branches to be
+  // up to date" declined it. The landing recorded a guessed `blocked:ci` and told a
+  // human to fix a check that was not failing.
+  describe("a merge rejected for an out-of-date branch (#2807)", () => {
+    const green = [
+      { name: "test", status: "COMPLETED", conclusion: "SUCCESS" },
+      { name: "typecheck", status: "COMPLETED", conclusion: "SUCCESS" },
+    ];
+
+    it("updates the branch and merges instead of parking a green PR", async () => {
+      const calls: string[][] = [];
+      let merges = 0;
+      let updated = false;
+      const exec: Exec = async (argv) => {
+        calls.push(argv);
+        const cmd = argv.join(" ");
+        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
+          // CLEAN at the readiness poll, BEHIND once the base moves under the
+          // merge, CLEAN again after the branch is updated. Green throughout.
+          const behind = merges > 0 && !updated;
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              mergeStateStatus: behind ? "BEHIND" : "CLEAN",
+              mergeable: "MERGEABLE",
+              statusCheckRollup: green,
+            }),
+            stderr: "",
+          };
+        }
+        if (cmd.includes("pr update-branch")) {
+          updated = true;
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        if (cmd.includes("pr merge")) {
+          merges += 1;
+          // the base moved under the first merge; the second lands
+          return updated ? { code: 0, stdout: "", stderr: "" } : { code: 1, stdout: "", stderr: "Protected branch update failed" };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      };
+      const r = await landPr(exec, {
+        repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+        ciAwait: { sleep: async () => {}, maxPolls: 3 },
+      });
+      expect(r.ok).toBe(true);
+      expect(merges).toBe(2);
+      expect(calls.some((c) => c.join(" ").includes("pr update-branch 5"))).toBe(true);
+    });
+
+    it("names the OBSERVED cause when the rejection is not a stale branch", async () => {
+      const exec: Exec = async (argv) => {
+        const cmd = argv.join(" ");
+        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({ mergeStateStatus: "BLOCKED", mergeable: "MERGEABLE", statusCheckRollup: green }),
+            stderr: "",
+          };
+        }
+        if (cmd.includes("pr merge")) return { code: 1, stdout: "", stderr: "Protected branch update failed" };
+        return { code: 0, stdout: "", stderr: "" };
+      };
+      const r = await landPr(exec, {
+        repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+      });
+      expect(r.ok).toBe(false);
+      expect(r.reason).toBe("merge-failed");
+      expect(r.mergeFailure?.cause).toBe("protection-blocked");
+      expect(r.mergeFailure?.summary ?? "").not.toMatch(/usually|probably/i);
+    });
+
+    it("gives up after a bounded number of update-and-retry rounds", async () => {
+      let merges = 0;
+      let updates = 0;
+      const exec: Exec = async (argv) => {
+        const cmd = argv.join(" ");
+        if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
+          // a lane so busy the branch is BEHIND again on every look
+          return {
+            code: 0,
+            stdout: JSON.stringify({ mergeStateStatus: "BEHIND", mergeable: "MERGEABLE", statusCheckRollup: green }),
+            stderr: "",
+          };
+        }
+        if (cmd.includes("pr update-branch")) {
+          updates += 1;
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        if (cmd.includes("pr merge")) {
+          merges += 1;
+          return { code: 1, stdout: "", stderr: "Protected branch update failed" };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      };
+      const r = await landPr(exec, {
+        repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
+      });
+      expect(r.reason).toBe("merge-failed");
+      expect(r.mergeFailure?.cause).toBe("stale-branch");
+      expect(updates).toBe(2);
+      expect(merges).toBe(3);
+    });
   });
 
   it("does NOT poll merge state by default (ciAwait absent)", async () => {

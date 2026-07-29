@@ -180,6 +180,15 @@ import {
 } from "../stale-base-drift.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 
+/** Recorded when the forge refused the merge and the PR state did not explain it
+ * (#2807). It says the cause is unknown rather than inventing a probable one. */
+const MERGE_REJECTION_UNEXPLAINED =
+  "the open PR merge was rejected by GitHub and the PR state did not explain the refusal";
+/** The `next:` step for a rejected merge. It points at the recorded reason
+ * instead of asserting a failing required check that may well be green (#2807). */
+const MERGE_REJECTION_NEXT =
+  "Read the recorded rejection reason above, clear it on the open PR, then merge it (no full agent re-run needed).";
+
 function setupFailureExcerpt(log: string | null | undefined): string | undefined {
   const lines = (log ?? "")
     .split("\n")
@@ -1637,8 +1646,9 @@ export async function processIssue(
             "ci-failed",
             completed.prNumber,
             completed.reason === "pr-merge-failed"
-              ? "the observer's merge was rejected by GitHub"
+              ? completed.message ?? MERGE_REJECTION_UNEXPLAINED
               : `the observer could not finish the landing tail (${completed.reason})`,
+            completed.reason === "pr-merge-failed" ? MERGE_REJECTION_NEXT : undefined,
           );
         })
         .catch((error) => {
@@ -1711,11 +1721,16 @@ export async function processIssue(
       );
     }
     if (landing.reason === "pr-merge-failed") {
+      // #2807: the landing already re-read the PR and repaired the one cause it
+      // owns (an out-of-date branch). What survives to here is a refusal the PR
+      // itself explained, so the note carries that observed reason verbatim —
+      // never a probable one, and never a `next:` naming a check that is green.
       return await prLandingBlocked(
         common,
         "ci-failed",
         landing.prNumber,
-        `the open PR merge was rejected by GitHub, usually because branch protection or CI is not satisfied`,
+        landing.message ?? MERGE_REJECTION_UNEXPLAINED,
+        MERGE_REJECTION_NEXT,
       );
     }
     if (landing.reason === "post-merge-gate") {

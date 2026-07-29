@@ -439,6 +439,21 @@ describe("processIssue — CI-aware unlocked landing (#812)", () => {
     expect(trace.runAgentCalls.length).toBe(1);
     expect(trace.released).toEqual([9]);
   });
+
+  it("a rejected merge records the OBSERVED reason and never sends a human after an unverified failing check (#2807)", async () => {
+    // Field trace: PRs #2803 / #2806 were green, mergeable, and CLEAN; the base
+    // had merely advanced. The blocker still read "usually because branch
+    // protection or CI is not satisfied" and told a human to fix a check that
+    // did not exist.
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, locked: false, prMergeCode: 1 });
+    await processIssue(deps, input);
+
+    const written = [...trace.bodyEdits.map((e) => e.body), ...trace.comments.map((c) => c.body)].join("\n");
+    expect(written).not.toMatch(/usually|probably/i);
+    expect(written).not.toContain("Fix the failing required check");
+    const blocker = trace.bodyEdits.at(-1)?.body ?? "";
+    expect(blocker).toContain("Read the recorded rejection reason");
+  });
 });
 
 
