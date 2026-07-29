@@ -22,6 +22,7 @@
  *
  * PURE except for {@link sampleTreeRss}, the one function that reads the host.
  */
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseMemoryBudget } from "./budget-accounting.js";
@@ -190,25 +191,33 @@ export function buildBudgetTermination(
 const PAGE_SIZE_BYTES = 4096;
 
 /**
- * Read every Worker's tree RSS from `/proc` in ONE pass over the process table.
+ * Read every Worker's tree RSS in ONE pass over the host's process table.
  *
  * The pass is shared: the process table is read once and each Worker's subtree is
  * summed out of that one snapshot, so a host holding ten Workers pays what a host
  * holding one pays. A Worker whose pid is gone is absent from the reading rather
- * than zero, and a platform without `/proc` yields an empty reading — where the
- * kernel backend enforces, this floor is redundant, and where nothing enforces,
- * an empty reading is the honest report that nothing was measured.
+ * than zero.
+ *
+ * **The source of the table is the platform's, and only the source differs.**
+ * Linux reads `/proc`; macOS reads `ps`, because it has no `/proc` and IS the
+ * platform where this floor is the memory ceiling rather than a redundant second
+ * one — a macOS sampler that returned nothing would leave the only backend
+ * without kernel teeth with no teeth at all. A host whose table cannot be read
+ * yields an empty reading, which is the honest report that nothing was measured.
  */
 export function sampleTreeRss(
   workers: readonly RedskilledWorkerView[],
-  options: { readonly procRoot?: string; readonly platform?: NodeJS.Platform } = {},
+  options: {
+    readonly procRoot?: string;
+    readonly platform?: NodeJS.Platform;
+    /** Injected `ps` output, so the macOS arm is provable off a Mac. */
+    readonly psTable?: () => string;
+  } = {},
 ): RedskilledRssReading {
   const platform = options.platform ?? process.platform;
-  const procRoot = options.procRoot ?? "/proc";
-  if (platform !== "linux" && options.procRoot == null) return {};
   if (workers.length === 0) return {};
 
-  const table = readProcessTable(procRoot);
+  const table = readHostProcessTable(platform, options);
   if (table.size === 0) return {};
 
   const children = new Map<number, number[]>();
@@ -230,7 +239,7 @@ export function sampleTreeRss(
       seen.add(pid);
       const entry = table.get(pid);
       if (!entry) continue;
-      total += entry.rssPages * PAGE_SIZE_BYTES;
+      total += entry.rssBytes;
       for (const child of children.get(pid) ?? []) queue.push(child);
     }
     reading[worker.worker_id] = total;
@@ -238,14 +247,79 @@ export function sampleTreeRss(
   return reading;
 }
 
+/** One `/proc` row, in the kernel's own units. */
 interface ProcessEntry {
   readonly pid: number;
   readonly ppid: number;
   readonly rssPages: number;
 }
 
-function readProcessTable(procRoot: string): Map<number, ProcessEntry> {
-  const table = new Map<number, ProcessEntry>();
+/**
+ * One row of the host's process table, in bytes.
+ *
+ * Bytes rather than each source's own unit — pages on Linux, KiB from `ps` —
+ * because the summation above must not have to know which platform produced the
+ * row it is adding.
+ */
+interface HostProcessEntry {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly rssBytes: number;
+}
+
+/**
+ * The host's process table, from whichever source this platform has.
+ *
+ * An injected `procRoot` or `psTable` picks the arm regardless of platform, so
+ * each source is provable on a machine that is not the one it belongs to.
+ */
+function readHostProcessTable(
+  platform: NodeJS.Platform,
+  options: { readonly procRoot?: string; readonly psTable?: () => string },
+): Map<number, HostProcessEntry> {
+  if (options.procRoot != null || platform === "linux") return readProcessTable(options.procRoot ?? "/proc");
+  if (options.psTable != null || platform === "darwin") return parsePsTable(readPsTable(options.psTable));
+  return new Map();
+}
+
+/** `ps` in one call, or the empty string — an unreadable table is never a crash. */
+function readPsTable(injected?: () => string): string {
+  try {
+    return (injected ?? runPs)();
+  } catch {
+    return "";
+  }
+}
+
+function runPs(): string {
+  return execFileSync("ps", ["-axo", "pid=,ppid=,rss="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+}
+
+/** How `ps` reports RSS on macOS. */
+const PS_RSS_UNIT_BYTES = 1024;
+
+/**
+ * Parse `ps -axo pid=,ppid=,rss=` output into the host process table. PURE.
+ *
+ * Every line that is not three numbers is skipped rather than guessed at: a
+ * header a future `ps` decides to print, or a truncated final line, must cost a
+ * row and never a wrong parent — a mis-parsed ppid would attribute a stranger's
+ * memory to a Worker and terminate it for someone else's leak.
+ */
+export function parsePsTable(raw: string): Map<number, HostProcessEntry> {
+  const table = new Map<number, HostProcessEntry>();
+  for (const line of raw.split("\n")) {
+    const fields = line.trim().split(/\s+/);
+    if (fields.length !== 3) continue;
+    const [pid, ppid, rssKib] = fields.map(Number);
+    if (![pid, ppid, rssKib].every((value) => value != null && Number.isSafeInteger(value) && value >= 0)) continue;
+    table.set(pid!, { pid: pid!, ppid: ppid!, rssBytes: rssKib! * PS_RSS_UNIT_BYTES });
+  }
+  return table;
+}
+
+function readProcessTable(procRoot: string): Map<number, HostProcessEntry> {
+  const table = new Map<number, HostProcessEntry>();
   let entries: string[];
   try {
     entries = readdirSync(procRoot);
@@ -263,7 +337,7 @@ function readProcessTable(procRoot: string): Map<number, ProcessEntry> {
       continue;
     }
     const entry = parseProcStat(raw);
-    if (entry) table.set(entry.pid, entry);
+    if (entry) table.set(entry.pid, { pid: entry.pid, ppid: entry.ppid, rssBytes: entry.rssPages * PAGE_SIZE_BYTES });
   }
   return table;
 }

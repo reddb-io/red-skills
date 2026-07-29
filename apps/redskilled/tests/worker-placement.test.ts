@@ -14,29 +14,38 @@ import {
 
 const NO_JOB_OBJECTS = { available: false, reason: "Job Object placement is the Windows backend (platform=linux)" } as const;
 
+const NO_POSIX = { available: false, reason: "POSIX rlimit and priority placement is the macOS backend (platform=linux)" } as const;
+
 const LINUX_WITH_SESSION: WorkerPlacementProbes = {
   platform: "linux",
   systemdRun: "/usr/bin/systemd-run",
   userSession: true,
   jobObjects: NO_JOB_OBJECTS,
+  posix: NO_POSIX,
 };
 const LINUX_WITHOUT_SESSION: WorkerPlacementProbes = {
   platform: "linux",
   systemdRun: "/usr/bin/systemd-run",
   userSession: false,
   jobObjects: NO_JOB_OBJECTS,
+  posix: NO_POSIX,
 };
 const LINUX_WITHOUT_SYSTEMD: WorkerPlacementProbes = {
   platform: "linux",
   systemdRun: null,
   userSession: false,
   jobObjects: NO_JOB_OBJECTS,
+  posix: NO_POSIX,
 };
-const DARWIN: WorkerPlacementProbes = {
-  platform: "darwin",
+// An OS with neither backend: the case that proves an unknown platform still
+// launches and still says what it gave up. macOS has its own backend now, so it
+// is no longer the example of a host with nothing.
+const UNKNOWN_PLATFORM: WorkerPlacementProbes = {
+  platform: "aix",
   systemdRun: null,
   userSession: false,
-  jobObjects: { available: false, reason: "Job Object placement is the Windows backend (platform=darwin)" },
+  jobObjects: { available: false, reason: "Job Object placement is the Windows backend (platform=aix)" },
+  posix: { available: false, reason: "POSIX rlimit and priority placement is the macOS backend (platform=aix)" },
 };
 
 function plan(probes: WorkerPlacementProbes, overrides: Record<string, unknown> = {}) {
@@ -124,11 +133,11 @@ describe("worker placement — Linux without a user session", () => {
 });
 
 describe("worker placement — every unisolated launch carries a warning", () => {
-  it("warns off Linux, where the transient-unit backend does not exist", () => {
-    const placement = plan(DARWIN);
+  it("warns on a platform with no backend at all", () => {
+    const placement = plan(UNKNOWN_PLATFORM);
 
     expect(placement.isolated).toBe(false);
-    expect(placement.warning).toMatch(/platform=darwin/);
+    expect(placement.warning).toMatch(/platform=aix/);
   });
 
   it("warns when the host kill-switch declined isolation", () => {
@@ -146,7 +155,7 @@ describe("worker placement — every unisolated launch carries a warning", () =>
   });
 
   it("leaves no unisolated plan without a warning, over every probe combination", () => {
-    for (const probes of [LINUX_WITH_SESSION, LINUX_WITHOUT_SESSION, LINUX_WITHOUT_SYSTEMD, DARWIN]) {
+    for (const probes of [LINUX_WITH_SESSION, LINUX_WITHOUT_SESSION, LINUX_WITHOUT_SYSTEMD, UNKNOWN_PLATFORM]) {
       for (const enabled of [true, false]) {
         for (const isolation of ["transient-unit", "inherit"] as const) {
           const placement = plan(probes, { enabled, target: { isolation } });
