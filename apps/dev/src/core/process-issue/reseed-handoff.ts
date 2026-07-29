@@ -63,7 +63,7 @@ export interface ReseedReviewState {
   readonly diff?: string;
 }
 
-/** Everything still outstanding for this Attempt. Both halves may be present at
+/** Everything still outstanding for this Worker. Both halves may be present at
  * once: a gate that reddens on the round after a blocking review leaves the
  * findings outstanding and adds its tail beside them. */
 export interface ReseedOutstanding {
@@ -250,7 +250,7 @@ export function gateReseedDirectives(opts: {
 }
 
 /** The tier-escalation round's directives (ADR 0129 decision 6): the round buys
- * a HIGHER tier rather than another attempt at the tier that just failed. */
+ * a HIGHER tier rather than another round at the tier that just failed. */
 export function tierEscalationDirectives(opts: {
   from: string;
   to: string;
