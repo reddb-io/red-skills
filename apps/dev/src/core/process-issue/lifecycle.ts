@@ -552,9 +552,9 @@ export async function processIssue(
   }
   let activeRunner: Runner = toAgentRunner(input.runner);
   // The ROUND ordinal, not the attempt ordinal ADR 0103 retired: every bump
-  // below happens inside ONE Attempt — same Worker, same Worktree, same branch.
+  // below happens inside ONE Worker — same Worker, same Worktree, same branch.
   // It is still carried on the legacy `attempt`/`attempt_n` fields because those
-  // are the hook and record contracts; the name here says what it counts.
+  // are the hook contract; the name here says what it counts.
   let roundOrdinal = input.attempt;
   let activeTaskClass: AfkModelTier = taskClass;
   const issueType = deriveIssueType(labels);
@@ -623,7 +623,7 @@ export async function processIssue(
   const afkGateCap = resolveReseedGateBudget(deps);
   const isGoLane = input.laneLabel === LABEL_GO_LANE;
   const reseedLane: "/go" | "/afk" = isGoLane ? "/go" : "/afk";
-  // ONE budget for every Re-seed this Attempt may spend (ADR 0129): the lane
+  // ONE budget for every Re-seed this Worker may spend (ADR 0129): the lane
   // supplies the ceiling and the review's reservation, the operator's configured
   // counter supplies only the gate's share. A tier escalation therefore draws
   // its own round instead of muting gate correction outright.
@@ -689,7 +689,7 @@ export async function processIssue(
   const roundSignature = (sidecar: readonly string[] | undefined): string =>
     failureSignature({ sidecar, findings: reseedOutstanding.review?.findings ?? [] });
   /** The trail's two derived surfaces (#2731), built on the FIRST Re-seed and
-   * not before: an attempt that never re-seeds opens no pull request and posts
+   * not before: a Worker that never re-seeds opens no pull request and posts
    * no comment, which is the whole point of minting the draft lazily. The build
    * is deferred to first use so it pins the branch the agent actually ran on. */
   let trail: ReseedTrail | undefined;
@@ -713,8 +713,9 @@ export async function processIssue(
         ceiling: reseedBudget.ceiling,
       },
     );
-    // Best-effort by contract: the Attempt record already holds the round, so a
-    // forge that refuses a projection must never fail the Re-seed itself.
+    // Best-effort by contract: the Worker's branch and iteration log already
+    // hold the round, so a forge that refuses a projection must never fail the
+    // Re-seed itself.
     try {
       await trail.publish(round);
     } catch {
@@ -724,7 +725,7 @@ export async function processIssue(
   /** The ONE exit an exhausted Re-seed budget takes (#2732), whatever cause
    * exhausted it: seal both projections on the same `blocked:validation` state
    * and the same evidence, and leave the draft OPEN — a validation park is
-   * precisely when a human needs the diff. An attempt that never re-seeded has
+   * precisely when a human needs the diff. A Worker that never re-seeded has
    * no trail and therefore nothing to seal: it parks as it always did. */
   const parkReseedTrail = async (evidence: string): Promise<void> => {
     if (!trail) return;
