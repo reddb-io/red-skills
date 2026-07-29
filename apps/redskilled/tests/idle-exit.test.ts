@@ -22,7 +22,16 @@ async function sessionPaths(): Promise<RedskilledPaths> {
   return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root });
 }
 
-const WORKER = { worker_id: "w-1", project_label: "alpha", pid: 4242, started_at: "2026-07-29T10:00:00.000Z" };
+const WORKER = {
+  worker_id: "w-1",
+  project_label: "alpha",
+  pid: 4242,
+  started_at: "2026-07-29T10:00:00.000Z",
+  workspace_path: "/workspaces/alpha",
+  isolated: true,
+  unit: "red-worker-alpha-w-1.service",
+  warnings: [] as string[],
+};
 
 describe("redskilled idle exit", () => {
   it("exits on idle while it holds no workers", async () => {

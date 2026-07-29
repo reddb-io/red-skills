@@ -1,24 +1,37 @@
 /**
  * host-state — what the daemon knows about the machine, in one document.
  *
- * At this slice the answer is legitimately **empty**: no Worker is born yet, so
- * `workers` and `projects` are empty arrays. Empty is not the same as absent,
- * and the difference is the point — a client must be able to tell "the daemon is
- * up and nothing is running" from "the daemon did not answer". So the shape is
- * total from the first slice: every field is present, the collections are always
- * arrays, and a reader written today keeps working when the arrays fill.
+ * A client must be able to tell "the daemon is up and nothing is running" from
+ * "the daemon did not answer", so the shape is total: every field is present and
+ * the collections are always arrays, empty included.
  *
  * Read the host, write the project (ADR 0130 rule 9): this document is the read
  * half, and it is host-wide on purpose.
  */
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
 
-/** One Worker process, as the daemon sees it. Empty in this slice by construction. */
+/**
+ * One Worker process, as the daemon sees it.
+ *
+ * `project_label` and `workspace_path` are the client's own opaque strings,
+ * echoed back untouched — the daemon stores what it was given and interprets
+ * nothing. `isolated` and `warnings` travel WITH the Worker rather than being
+ * reported once at birth, so a reader of host state can still see that a
+ * long-lived Worker never got a unit of its own.
+ */
 export interface RedskilledWorkerView {
   readonly worker_id: string;
   readonly project_label: string;
   readonly pid: number;
   readonly started_at: string;
+  /** The path the client handed over, used verbatim as the Worker's workspace. */
+  readonly workspace_path: string;
+  /** True when the Worker runs inside a transient unit of its own. */
+  readonly isolated: boolean;
+  /** The transient unit's name, present only when `isolated`. */
+  readonly unit?: string;
+  /** Non-empty whenever the launch was a downgrade; never silently absent. */
+  readonly warnings: readonly string[];
 }
 
 /** One project with at least one Worker on this host. Empty in this slice. */
@@ -66,6 +79,19 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
       .map(([project_label, worker_count]) => ({ project_label, worker_count }))
       .sort((a, b) => a.project_label.localeCompare(b.project_label)),
   };
+}
+
+/** True when `value` is a complete Worker view — a client's fail-closed check. */
+export function isRedskilledWorkerView(value: unknown): value is RedskilledWorkerView {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const worker = value as Record<string, unknown>;
+  return typeof worker.worker_id === "string" &&
+    typeof worker.project_label === "string" &&
+    Number.isInteger(worker.pid) &&
+    typeof worker.started_at === "string" &&
+    typeof worker.workspace_path === "string" &&
+    typeof worker.isolated === "boolean" &&
+    Array.isArray(worker.warnings);
 }
 
 /** True when `value` is a complete host-state document — a client's fail-closed check. */

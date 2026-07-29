@@ -27,6 +27,20 @@ async function sessionPaths(): Promise<RedskilledPaths> {
   });
 }
 
+/** A tracked Worker view; placement fields are part of the total shape. */
+function view(worker_id: string, project_label: string, pid: number) {
+  return {
+    worker_id,
+    project_label,
+    pid,
+    started_at: "2026-07-29T00:00:00.000Z",
+    workspace_path: `/workspaces/${project_label}`,
+    isolated: true,
+    unit: `red-worker-${project_label}-${worker_id}.service`,
+    warnings: [] as string[],
+  };
+}
+
 describe("redskilled host state", () => {
   it("answers a client over the socket with an empty, well-formed host state", async () => {
     const paths = await sessionPaths();
@@ -59,9 +73,9 @@ describe("redskilled host state", () => {
     const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
 
-    daemon.trackWorker({ worker_id: "w1", project_label: "beta", pid: 1, started_at: "2026-07-29T00:00:00.000Z" });
-    daemon.trackWorker({ worker_id: "w2", project_label: "alpha", pid: 2, started_at: "2026-07-29T00:00:01.000Z" });
-    daemon.trackWorker({ worker_id: "w3", project_label: "alpha", pid: 3, started_at: "2026-07-29T00:00:02.000Z" });
+    daemon.trackWorker(view("w1", "beta", 1));
+    daemon.trackWorker(view("w2", "alpha", 2));
+    daemon.trackWorker(view("w3", "alpha", 3));
 
     expect(daemon.hostState().projects).toEqual([
       { project_label: "alpha", worker_count: 2 },
