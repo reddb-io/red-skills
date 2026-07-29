@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-A REPEATED failure signature now escalates the model tier instead of spending another round at the one that just failed (#2729, ADR 0129 decision 6). The trigger used to be the failure itself, and only ever for a simple-tier semantic one: the first red feedback gate on a `simple`-classified Ticket bought `complex` whether or not the round had learned anything. It is now the repeat. `decideTierEscalation` compares the round's failure signature (#2724) against the previous round's and escalates one step along `validate → simple → complex → think` only when they are equal — a changed signature, including a failure set that merely shrank, is progress and is re-instructed at the tier that produced it. The ladder terminates rather than saturating: a repeat on the dearest tier has nothing left to buy and falls through to gate correction and, once that is spent, to the uniform park. The escalation draws the `tier` sub-cap, never the gate's, so gate correction keeps its own share while the tier moves.
