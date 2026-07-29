@@ -1,7 +1,8 @@
 import { readdir, readlink, rm, stat, readFile } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   isLegacySlotLogName,
+  pathIsInsideTmp,
   planTmpJanitor,
   planWorkerDirJanitor,
   planSupervisorLaneJanitor,
@@ -17,10 +18,22 @@ import {
   type SupervisorLaneEntry,
   type SupervisorLanePlan,
 } from "../core/tmp-janitor.js";
+import {
+  planWorkerReclaim,
+  type WorkerArtifact,
+  type WorkerProcessVerdict,
+  type WorkerReclaimPlan,
+} from "../core/worker-reclaim.js";
 import { decodeDevSnapshotSniff } from "../core/toon-snapshot.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../core/worker-paths.js";
 import { execTool } from "./exec.js";
 import { killTreeAndWait } from "./kill-tree.js";
+import {
+  readDaemonWorkerSet,
+  resolveWorkerLiveness,
+  type DaemonWorkerSet,
+  type DaemonWorkerSetReader,
+} from "./liveness-anchor.js";
 
 export const ORPHAN_TEST_RUNNER_MIN_AGE_S = 300;
 
@@ -83,6 +96,13 @@ export type IssueStateLookup = (issue: number) => "OPEN" | "CLOSED" | "UNKNOWN";
 
 export interface TmpJanitorReport {
   plan: TmpJanitorPlan;
+  /**
+   * The daemon-keyed reclaim plan (Spec #2772 US 46): what the daemon's process
+   * truth says about the artifacts each Worker left, plus every observed path no
+   * Worker accounts for. This is the authority; the lanes below only ever narrow
+   * it, never widen it.
+   */
+  workerReclaim: WorkerReclaimPlan;
   staleWorkers: ReturnType<typeof planWorkerDirJanitor>;
   /** Supervisor fleet dirs partitioned by pid liveness. Live dirs are spared;
    * dead dirs are eligible for removal. */
@@ -110,6 +130,10 @@ export interface TmpJanitorApplyResult {
   orphanFeedback: string[];
   /** Confirmed orphan runner processes reaped by process-group ID. */
   orphanTestRunners: Array<{ pid: number; pgid: number }>;
+  /** Workspaces removed because the daemon called their Worker gone. */
+  workerWorkspaces: string[];
+  /** Workspaces spared because the daemon did not call their Worker gone. */
+  protectedLiveWorkspaces: string[];
   /** Paths a plan named outside this tmp tier: reported, never removed. */
   refusedOutsideTmp: string[];
   /** Every destructive action, including the liveness verdict authorising it. */
@@ -175,9 +199,103 @@ async function readText(path: string): Promise<string | null> {
   }
 }
 
+// ---------- the daemon is the reclaim authority (Spec #2772 US 46) ----------
+
+/**
+ * Ask the daemon about one Worker, and NOTHING else.
+ *
+ * `evidenceOfLife` is the one contribution a caller may make, and it is one-way:
+ * it can WITHHOLD a death claim, never manufacture a life. That is what keeps a
+ * `worker.pid` file out of reclaim eligibility while a Worker the project
+ * launched itself — one the daemon never birthed and so cannot vouch for — still
+ * survives the sweep.
+ */
+export type WorkerLivenessLookup = (
+  workerId: string,
+  evidenceOfLife?: boolean,
+) => WorkerProcessVerdict;
+
+function livenessLookup(hostAnswer: DaemonWorkerSet | null): WorkerLivenessLookup {
+  return (workerId, evidenceOfLife = false) =>
+    resolveWorkerLiveness(hostAnswer, workerId, { evidenceOfLife }).verdict;
+}
+
+/** One daemon read, or null when it did not answer. Every Worker in the sweep is
+ * judged against THIS answer, so two lanes of one sweep cannot disagree. */
+async function readDaemon(read: DaemonWorkerSetReader): Promise<DaemonWorkerSet | null> {
+  try {
+    return await read();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which Workers something OTHER than the daemon can still see running.
+ *
+ * Read once and applied to every lane of the sweep, so a Worker cannot be
+ * `unknown` to one lane and `dead` to the next — the disagreement that lets one
+ * pass spare a workspace while another deletes it.
+ */
+async function collectWorkerEvidence(tmpDir: string): Promise<Set<string>> {
+  const evidence = new Set<string>();
+  for (const workersRoot of allWorkersRoots(tmpDir)) {
+    for (const worker of await listNames(workersRoot)) {
+      if (pidAlive(await readText(join(workersRoot, worker, "worker.pid")))) evidence.add(worker);
+    }
+  }
+  return evidence;
+}
+
+/** The sweep's ONE liveness question, with the host's evidence already folded in. */
+function sweepLiveness(
+  hostAnswer: DaemonWorkerSet | null,
+  evidence: ReadonlySet<string>,
+): WorkerLivenessLookup {
+  const ask = livenessLookup(hostAnswer);
+  return (workerId, extraEvidence = false) =>
+    ask(workerId, evidence.has(workerId) || extraEvidence);
+}
+
+/**
+ * Every artifact the Worker lanes hold, attributed to its owning Worker.
+ *
+ * The workspace path is DERIVED from the Worker's identity (ADR 0103/0105) — it
+ * is a pure function of `workers/{id}/{issue}/worktree` — and the daemon still
+ * decides whether the bytes go.
+ */
+async function collectWorkerArtifacts(tmpDir: string): Promise<{
+  artifacts: WorkerArtifact[];
+  observedPaths: string[];
+}> {
+  const artifacts: WorkerArtifact[] = [];
+  const observedPaths: string[] = [];
+  for (const workersRoot of allWorkersRoots(tmpDir)) {
+    for (const worker of await listNames(workersRoot)) {
+      for (const issue of await listNames(join(workersRoot, worker))) {
+        const issueDir = join(workersRoot, worker, issue);
+        const worktree = join(issueDir, "worktree");
+        try {
+          if (!(await stat(worktree)).isDirectory()) continue;
+        } catch {
+          continue; // No workspace under this Worker's issue dir.
+        }
+        observedPaths.push(worktree);
+        artifacts.push({ worker_id: worker, kind: "worktree", path: worktree });
+        const log = join(issueDir, "worker.log.toonl");
+        if (await readText(log) !== null) {
+          artifacts.push({ worker_id: worker, kind: "log", path: log });
+        }
+      }
+    }
+  }
+  return { artifacts, observedPaths };
+}
+
 async function collectWorkerEntries(
   tmpDir: string,
   lookup: IssueStateLookup,
+  liveness: WorkerLivenessLookup,
 ): Promise<WorkerDirJanitorEntry[]> {
   const out: WorkerDirJanitorEntry[] = [];
   for (const workersRoot of allWorkersRoots(tmpDir)) {
@@ -190,7 +308,7 @@ async function collectWorkerEntries(
       } catch {
         continue;
       }
-      const workerPidLive = pidAlive(await readText(join(workerPath, "worker.pid")));
+      const verdict = liveness(worker);
       const issues = new Map<number, "OPEN" | "CLOSED" | "UNKNOWN">();
       for (const child of await listNames(workerPath)) {
         const childPath = join(workerPath, child);
@@ -207,7 +325,7 @@ async function collectWorkerEntries(
       }
       out.push({
         path: workerPath,
-        workerPidLive,
+        liveness: verdict,
         issues: [...issues].map(([issue, state]) => ({ issue, state })),
       });
     }
@@ -282,24 +400,24 @@ async function collectSupervisorEntries(tmpDir: string): Promise<SupervisorLaneE
 }
 
 /**
- * Build the live-worker PID index: a map from worker ID to liveness so the
- * orphan feedback sweep can decide per-entry without re-reading PID files.
- * Returns null when any worker is alive (signals that the shared baseline
- * worktree is in use and must be spared).
+ * Build the surviving-Worker index the orphan feedback sweep decides against.
+ *
+ * A Worker is in the set unless the DAEMON called it dead: `alive` and `unknown`
+ * both survive, because only a fresh daemon answer may release bytes. `anyAlive`
+ * reports whether any Worker survived at all, which is what the shared baseline
+ * worktree (owned by no single Worker) is judged against.
  */
-async function buildWorkerLivenessIndex(tmpDir: string): Promise<{ liveWorkers: Set<string>; anyAlive: boolean }> {
+async function buildWorkerLivenessIndex(
+  tmpDir: string,
+  liveness: WorkerLivenessLookup,
+): Promise<{ liveWorkers: Set<string>; anyAlive: boolean }> {
   const liveWorkers = new Set<string>();
-  let anyAlive = false;
   for (const workersRoot of allWorkersRoots(tmpDir)) {
     for (const workerDir of await listNames(workersRoot)) {
-      const pidFile = join(workersRoot, workerDir, "worker.pid");
-      if (pidAlive(await readText(pidFile))) {
-        liveWorkers.add(workerDir);
-        anyAlive = true;
-      }
+      if (liveness(workerDir) !== "dead") liveWorkers.add(workerDir);
     }
   }
-  return { liveWorkers, anyAlive };
+  return { liveWorkers, anyAlive: liveWorkers.size > 0 };
 }
 
 function feedbackIssueFromBasename(name: string): number | null {
@@ -307,19 +425,22 @@ function feedbackIssueFromBasename(name: string): number | null {
   return match?.[1] ? Number(match[1]) : null;
 }
 
+/** Whether the issue's claim lock still names a running process. Evidence of
+ * life only: a live claim WITHHOLDS a death claim about a resumed branch's
+ * Worker, and can never assert one. */
 async function feedbackClaimIsLive(tmpDir: string, name: string): Promise<boolean> {
   const issue = feedbackIssueFromBasename(name);
   if (issue === null) return false;
   return pidAlive(await readText(join(tmpDir, "claims", String(issue), "pid")));
 }
 
-async function collectOrphanFeedbackEntries(tmpDir: string): Promise<{
+async function collectOrphanFeedbackEntries(tmpDir: string, liveness: WorkerLivenessLookup): Promise<{
   entries: OrphanFeedbackEntry[];
   anyWorkerAlive: boolean;
 }> {
   const feedbackDir = join(tmpDir, "worktrees", "feedback");
   const names = await listNames(feedbackDir);
-  const { liveWorkers, anyAlive } = await buildWorkerLivenessIndex(tmpDir);
+  const { liveWorkers, anyAlive } = await buildWorkerLivenessIndex(tmpDir, liveness);
   const entries: OrphanFeedbackEntry[] = [];
   for (const name of names) {
     const path = join(feedbackDir, name);
@@ -333,10 +454,12 @@ async function collectOrphanFeedbackEntries(tmpDir: string): Promise<{
     const workerSlug = parseFeedbackWorktreeWorkerSlug(name);
     let ownerAlive: boolean | null;
     if (workerSlug !== null) {
-      // A re-claim may resume an old worker's branch, so the branch slug is not
-      // always the current process owner. The active issue claim is an equal
-      // liveness anchor and must spare that resumed workspace.
-      ownerAlive = liveWorkers.has(workerSlug) || await feedbackClaimIsLive(tmpDir, name);
+      // The daemon answers for the owning Worker; a re-claim that resumed an old
+      // Worker's branch contributes its live claim as EVIDENCE, which withholds
+      // the death claim without ever asserting a life of its own.
+      ownerAlive =
+        liveWorkers.has(workerSlug) ||
+        liveness(workerSlug, await feedbackClaimIsLive(tmpDir, name)) !== "dead";
     } else {
       // Non-afk entry (e.g. 'main'): liveness is inferred from anyAlive
       ownerAlive = null;
@@ -349,14 +472,16 @@ async function collectOrphanFeedbackEntries(tmpDir: string): Promise<{
 async function feedbackRemovalVerdict(
   tmpDir: string,
   path: string,
+  liveness: WorkerLivenessLookup,
 ): Promise<
   | { safe: false; verdict: "owner-live" }
   | { safe: true; verdict: "owner-dead" | "no-live-workers" }
 > {
   const workerSlug = parseFeedbackWorktreeWorkerSlug(basename(path));
-  const { liveWorkers, anyAlive } = await buildWorkerLivenessIndex(tmpDir);
+  const { liveWorkers, anyAlive } = await buildWorkerLivenessIndex(tmpDir, liveness);
   if (workerSlug !== null) {
-    return liveWorkers.has(workerSlug) || await feedbackClaimIsLive(tmpDir, basename(path))
+    const evidence = await feedbackClaimIsLive(tmpDir, basename(path));
+    return liveWorkers.has(workerSlug) || liveness(workerSlug, evidence) !== "dead"
       ? { safe: false, verdict: "owner-live" }
       : { safe: true, verdict: "owner-dead" };
   }
@@ -365,11 +490,29 @@ async function feedbackRemovalVerdict(
     : { safe: true, verdict: "no-live-workers" };
 }
 
+/** How this sweep reaches the daemon. Injected so a caller can hand the sweep a
+ * host answer it already holds, and so the read is testable at the seam the
+ * shipped path uses. */
+export interface TmpJanitorSources {
+  daemon?: DaemonWorkerSetReader;
+}
+
 export async function collectTmpJanitorReport(
   tmpDir: string,
   nowS: number,
   lookup: IssueStateLookup,
+  sources: TmpJanitorSources = {},
 ): Promise<TmpJanitorReport> {
+  const liveness = sweepLiveness(
+    await readDaemon(sources.daemon ?? readDaemonWorkerSet),
+    await collectWorkerEvidence(tmpDir),
+  );
+  const workerArtifacts = await collectWorkerArtifacts(tmpDir);
+  const workerReclaim = planWorkerReclaim(workerArtifacts.artifacts, {
+    liveness: (workerId) => liveness(workerId),
+    nowIso: new Date(nowS * 1000).toISOString(),
+    observedPaths: workerArtifacts.observedPaths,
+  });
   const [tmpRootNames, tmpRootEntries, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers, orphanFeedbackData, supervisorEntries] =
     await Promise.all([
       listNames(tmpDir),
@@ -378,8 +521,8 @@ export async function collectTmpJanitorReport(
       listEntries(join(tmpDir, "scratch")),
       listEntries(join(tmpDir, "diagnostics")),
       listEntries(join(tmpDir, "worktrees", "feedback")),
-      collectWorkerEntries(tmpDir, lookup),
-      collectOrphanFeedbackEntries(tmpDir),
+      collectWorkerEntries(tmpDir, lookup, liveness),
+      collectOrphanFeedbackEntries(tmpDir, liveness),
       collectSupervisorEntries(tmpDir),
     ]);
   const legacySlotLogEntries = tmpRootEntries.filter((entry) => isLegacySlotLogName(basename(entry.path)));
@@ -399,6 +542,7 @@ export async function collectTmpJanitorReport(
       legacySlotLogEntries,
       tmpRootNames,
     }),
+    workerReclaim,
     staleWorkers: planWorkerDirJanitor(workers),
     staleSupervisors: planSupervisorLaneJanitor(supervisorEntries),
     orphanFeedback,
@@ -409,12 +553,19 @@ export async function collectTmpJanitorReport(
 export async function applyTmpJanitorReport(
   tmpDir: string,
   report: TmpJanitorReport,
-  options: {
+  options: TmpJanitorSources & {
     worktreePrune?: () => Promise<void>;
     reapProcessGroup?: (pgid: number) => Promise<boolean>;
     log?: (line: string) => void;
   } = {},
 ): Promise<TmpJanitorApplyResult> {
+  // The daemon is RE-READ here, not carried from the plan: a Worker may have
+  // been born between collect and apply, and the plan is history the moment it
+  // is built. A removal is authorised by a CURRENT answer or not at all.
+  const liveness = sweepLiveness(
+    await readDaemon(options.daemon ?? readDaemonWorkerSet),
+    await collectWorkerEvidence(tmpDir),
+  );
   const expired = [
     ...report.plan.logs.reclaim,
     ...report.plan.scratch.reclaim,
@@ -432,6 +583,8 @@ export async function applyTmpJanitorReport(
     protectedLiveFeedback: [],
     orphanFeedback: [],
     orphanTestRunners: [],
+    workerWorkspaces: [],
+    protectedLiveWorkspaces: [],
     refusedOutsideTmp: [],
     removals: [],
   };
@@ -446,14 +599,14 @@ export async function applyTmpJanitorReport(
 
   for (const entry of expired) {
     if (dirname(entry.path) === feedbackDir) {
-      const liveness = await feedbackRemovalVerdict(tmpDir, entry.path);
-      if (!liveness.safe) {
+      const owner = await feedbackRemovalVerdict(tmpDir, entry.path, liveness);
+      if (!owner.safe) {
         protectFeedback(entry.path);
         continue;
       }
       await rm(entry.path, { recursive: true, force: true });
       removedFeedback.add(entry.path);
-      result.removals.push({ path: entry.path, livenessVerdict: liveness.verdict });
+      result.removals.push({ path: entry.path, livenessVerdict: owner.verdict });
       result.expiredLanes.push(entry.path);
       continue;
     }
@@ -462,8 +615,27 @@ export async function applyTmpJanitorReport(
     result.expiredLanes.push(entry.path);
   }
 
+  // The daemon-keyed pass runs FIRST: it is the authority, and the lanes below
+  // only narrow what it already decided. Every removal is re-authorised against
+  // the answer read at the top of this function.
+  for (const verdict of report.workerReclaim.reclaim) {
+    const path = verdict.artifact.path;
+    if (path === undefined) continue; // No bytes here to remove.
+    if (!pathIsInsideTmp(tmpDir, path)) {
+      result.refusedOutsideTmp.push(path);
+      continue;
+    }
+    if (liveness(verdict.worker_id) !== "dead") {
+      result.protectedLiveWorkspaces.push(path);
+      continue;
+    }
+    await rm(path, { recursive: true, force: true });
+    result.removals.push({ path, livenessVerdict: "worker-dead" });
+    result.workerWorkspaces.push(path);
+  }
+
   for (const worker of report.staleWorkers.reclaim) {
-    if (pidAlive(await readText(join(worker.path, "worker.pid")))) {
+    if (liveness(basename(worker.path)) !== "dead") {
       result.protectedLiveWorkers.push(worker.path);
       continue;
     }
@@ -498,15 +670,15 @@ export async function applyTmpJanitorReport(
   }
 
   for (const entry of report.orphanFeedback.reclaim) {
-    const liveness = await feedbackRemovalVerdict(tmpDir, entry.path);
-    if (!liveness.safe) {
+    const owner = await feedbackRemovalVerdict(tmpDir, entry.path, liveness);
+    if (!owner.safe) {
       protectFeedback(entry.path);
       continue;
     }
     if (!removedFeedback.has(entry.path)) {
       await rm(entry.path, { recursive: true, force: true });
       removedFeedback.add(entry.path);
-      result.removals.push({ path: entry.path, livenessVerdict: liveness.verdict });
+      result.removals.push({ path: entry.path, livenessVerdict: owner.verdict });
     }
     result.orphanFeedback.push(entry.path);
   }
@@ -535,18 +707,52 @@ export async function applyTmpJanitorReport(
   return result;
 }
 
+/** The Worker a Worker-lane path belongs to, or null when no lane owns it.
+ * Pure path arithmetic over the ADR 0103/0105 layout — it asks nothing about
+ * processes, which is exactly why the answer it feeds must come from the daemon. */
+export function workerIdForTmpPath(tmpDir: string, path: string): string | null {
+  const resolved = resolve(path);
+  for (const workersRoot of allWorkersRoots(tmpDir)) {
+    const rel = relative(resolve(workersRoot), resolved);
+    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+    return rel.split(sep)[0] ?? null;
+  }
+  return null;
+}
+
+/**
+ * The daemon's CURRENT verdict on the Worker that owns one tmp path.
+ *
+ * This is the guard an apply pass calls immediately before removing: a Worker
+ * may have been born since the plan was built. A path no Worker lane owns
+ * answers `unknown`, which spares it.
+ */
+export async function readWorkerLivenessForTmpPath(
+  tmpDir: string,
+  path: string,
+  sources: TmpJanitorSources = {},
+): Promise<WorkerProcessVerdict> {
+  const workerId = workerIdForTmpPath(tmpDir, path);
+  if (workerId === null) return "unknown";
+  const liveness = sweepLiveness(
+    await readDaemon(sources.daemon ?? readDaemonWorkerSet),
+    await collectWorkerEvidence(tmpDir),
+  );
+  return liveness(workerId);
+}
+
 export async function runTmpJanitor(
   tmpDir: string,
   nowS: number,
   lookup: IssueStateLookup,
-  options: {
+  options: TmpJanitorSources & {
     fix?: boolean;
     worktreePrune?: () => Promise<void>;
     reapProcessGroup?: (pgid: number) => Promise<boolean>;
     log?: (line: string) => void;
   } = {},
 ): Promise<TmpJanitorRunResult> {
-  const report = await collectTmpJanitorReport(tmpDir, nowS, lookup);
+  const report = await collectTmpJanitorReport(tmpDir, nowS, lookup, options);
   if (!options.fix) return report;
   return { ...report, applied: await applyTmpJanitorReport(tmpDir, report, options) };
 }
