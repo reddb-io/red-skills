@@ -222,6 +222,10 @@ _Avoid_: ad-hoc path convention, loose file namespace
 The gitignored durable generated-knowledge home at `.red/researches/`, used for date-disambiguated `/research` reports until they are curated into tracked docs or the wiki.
 _Avoid_: tmp research reports
 
+**redskilled**:
+The host-scoped execution daemon that owns worker **processes** across every project on one machine — birth, death, limits, and placement — while each project's bundle keeps owning the work (ADR 0130, decided and not yet implemented). One instance per user session behind a unix socket, it carries no castle semantics: it receives an argv, a placement target, a budget, and an opaque project label, and never derives repository layout, which is what lets one daemon serve checkouts pinned to different bundle versions. Workers run as transient init-system units rather than as its children, so it restarts and re-attaches instead of taking every project's work with it; when it is unreachable no worker is born at all. Its reach is asymmetric by design: a session reads every project on the host and writes only its own.
+_Avoid_: supervisor (the per-project demand producer is a different thing and stays in the repo), resident (that names the rsp core, ADR 0126), fleet (extinct — ADR 0130), scheduler (it admits and places, it never chooses whose work runs next)
+
 **Fleet supervisor**:
 The OS-process manager behind `/afk fleet`, maintaining a target number of independent AFK workers.
 _Avoid_: Claude fleet, task mirror, auto-monitor loop
