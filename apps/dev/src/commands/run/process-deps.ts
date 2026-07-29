@@ -58,7 +58,7 @@ import { deriveActivity } from "./activity.js";
 import { makeImplementerRunAgent } from "./implementer-run-agent.js";
 import { makeAgentConflictResolver, makeMechanicalConflictResolver } from "./reconcile.js";
 import { runLinkedSubagent } from "./linked-subagent.js";
-import { buildClaimGhPort, buildGhPort, buildReviewPorts } from "./ports/gh.js";
+import { buildClaimGhPort, buildGhPort, buildReseedTrailPort, buildReviewPorts } from "./ports/gh.js";
 import { buildGitPorts } from "./ports/git.js";
 import { buildFsPort } from "./ports/fs.js";
 import { buildHooks } from "./ports/hooks.js";
@@ -267,6 +267,8 @@ export function buildProcessDeps({
   return {
     gh: buildGhPort(ghCtx),
     claimGh: buildClaimGhPort(ghCtx),
+    // The Re-seed trail's Issue half (#2731): one comment, edited in place.
+    reseedTrailGh: buildReseedTrailPort(ghCtx),
     // Cross-host stale-claim recovery (#627, ADR 0066): a claim whose owner
     // stopped refreshing past `cadence × (tolerance + 1)` is presumed dead and
     // released by this sweep. The clock is sampled once per issue at deps build;

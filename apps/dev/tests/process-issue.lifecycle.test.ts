@@ -1763,3 +1763,77 @@ describe("processIssue — land-lock timeout self-requeue (#2596)", () => {
     expect(trace.postedEnvelopes).toEqual([]);
   });
 });
+
+describe("processIssue — the Re-seed trail's two derived surfaces (#2731)", () => {
+  const prCreates = (trace: { mergeCalls: string[][] }): string[][] =>
+    trace.mergeCalls.filter((argv) => argv.includes("pr") && argv.includes("create"));
+
+  it("opens NO pull request before landing when the attempt never re-seeds", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    // Exactly one create, and it is the landing's own — no draft, no trail.
+    expect(prCreates(trace)).toHaveLength(1);
+    expect(prCreates(trace)[0]).not.toContain("--draft");
+    expect(trace.trailComments).toEqual([]);
+    expect(trace.trailCommentEdits).toEqual([]);
+  });
+
+  it("mints exactly one DRAFT pull request on the first Re-seed", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      // One red gate, then green: one Re-seed, then landing.
+      feedbackResults: [false, true],
+      stallConvergenceBudget: 2,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    const creates = prCreates(trace);
+    expect(creates).toHaveLength(1);
+    expect(creates[0]).toContain("--draft");
+    // The draft body mirrors the trail and keeps the auto-close link.
+    const body = creates[0]![creates[0]!.indexOf("--body") + 1] ?? "";
+    expect(body).toContain("Re-seed trail");
+    expect(body).toContain("Closes #9");
+  });
+
+  it("lands by reusing that draft and marking it ready, never opening a second", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false, true],
+      stallConvergenceBudget: 2,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(prCreates(trace)).toHaveLength(1);
+    const joined = trace.mergeCalls.map((argv) => argv.join(" "));
+    expect(joined.some((c) => c.includes("pr ready 42"))).toBe(true);
+    expect(joined.some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
+  });
+
+  it("edits ONE Issue comment across repeated rounds instead of appending new ones", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      // Two red gates, then green: two Re-seed rounds on one comment.
+      feedbackResults: [false, false, true],
+      stallConvergenceBudget: 3,
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(3);
+    expect(trace.trailComments).toHaveLength(1);
+    expect(trace.trailCommentEdits).toHaveLength(1);
+    expect(trace.trailCommentEdits[0]?.commentId).toBe(trace.trailComments[0]?.id);
+    // The edit carries BOTH rounds; the original post carried only the first.
+    expect(trace.trailComments[0]?.body).toContain("1/4");
+    expect(trace.trailComments[0]?.body).not.toContain("2/4");
+    expect(trace.trailCommentEdits[0]?.body).toContain("2/4");
+    // Still one pull request, still a draft.
+    expect(prCreates(trace)).toHaveLength(1);
+  });
+});

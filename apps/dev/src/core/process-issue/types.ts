@@ -98,6 +98,7 @@ import {
   type IssueClassificationMetadata,
   type ReviewGateConfig,
 } from "../issue-classifier.js";
+import type { ReseedTrailGh } from "./reseed-trail.js";
 import type { AttemptStatus } from "../envelope.js";
 import type { Runner } from "../../types/runner.js";
 import { runnerSupportsStructuredOutput, toAgentRunner } from "../runner-spec.js";
@@ -340,6 +341,11 @@ export interface ProcessIssueDeps {
     body: string;
     findings: AdversarialReviewFindings;
   }): Promise<void>;
+  /** The Issue half of the Re-seed trail (#2731): ONE comment upserted in place
+   * through the existing edit-comment primitive, so repeated rounds edit rather
+   * than append. Absent, the trail keeps its draft pull request and drops the
+   * comment — both are derived projections of the Attempt record. */
+  reseedTrailGh?: ReseedTrailGh;
   envelope: EmitEnvelopeDeps;
   nowEpoch(): number;
   nowIso(): string;
