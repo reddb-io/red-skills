@@ -34,6 +34,28 @@ import type { RedskilledWorkerSpec } from "./worker-launch.js";
 /** How long a client waits for a daemon — its own or the race winner's — to answer. */
 export const DEFAULT_REDSKILLED_READY_TIMEOUT_MS = 10_000;
 
+/**
+ * Raised when no daemon could be reached, so nothing was born.
+ *
+ * A distinct type because the two refusals a caller can get mean opposite
+ * things: an admission refusal is the host saying "not this Worker, not now",
+ * while this one is the host saying nothing at all. Both end in no Worker — the
+ * fail-closed rule (ADR 0130 rule 6) — and only one of them is a fault.
+ */
+export class RedskilledUnreachableError extends Error {
+  constructor(
+    readonly socketPath: string,
+    override readonly cause: unknown,
+  ) {
+    super(
+      `redskilled daemon is unreachable on ${JSON.stringify(socketPath)}, so no Worker was started: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+    );
+    this.name = "RedskilledUnreachableError";
+  }
+}
+
 export interface RedskilledClientConfig {
   /** The command that runs the daemon; defaults to this bundle's own entry. */
   readonly serverCommand?: string;
@@ -128,6 +150,14 @@ export async function startRedskilledWorker(
   spec: RedskilledWorkerSpec,
   config: RedskilledClientConfig = {},
 ): Promise<RedskilledWorkerStarted> {
+  // Reaching the daemon is its own step so its failure is its own error: a
+  // caller must be able to tell "the host refused this Worker" from "there was
+  // no host to ask", and neither may end in a Worker.
+  try {
+    await ensureRedskilledDaemon(paths, config);
+  } catch (err) {
+    throw new RedskilledUnreachableError(paths.socketPath, err);
+  }
   const value = await requestRedskilled(paths, { op: "worker-start", spec }, config);
   if (!isRedskilledWorkerStarted(value)) throw new Error("redskilled daemon returned a malformed worker record");
   return value;
