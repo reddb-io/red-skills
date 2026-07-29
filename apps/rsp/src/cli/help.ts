@@ -104,7 +104,8 @@ function commandHelpLines(command: string | undefined): string[] {
       ], ["rsp status"]);
     case "sweep":
       return scopedHelp("rsp sweep", [
-        "No flags. Removes stale resident registry entries and prints TOON status.",
+        "No flags. Removes stale resident registry entries, reclaims orphan state temps,",
+        "re-bounds the gh ETag cache, and prints TOON status.",
       ], ["rsp sweep"]);
     case "setup":
       return scopedHelp("rsp setup", [
