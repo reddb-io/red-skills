@@ -7,10 +7,17 @@
  * because the moment it does, it stops being servable by checkouts on different
  * bundle versions. A path it needs is a path it was given.
  */
+import { readFileSync } from "node:fs";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
-import { readRedskilledHostState } from "./client.js";
+import { findUp } from "@reddb-io/shared/plugin-gate.js";
+import { declaredProjectNameInConfig } from "@reddb-io/shared/project-identity.js";
+import { readRedskilledHostState, readRedskilledStatuslineString } from "./client.js";
 import { DEFAULT_REDSKILLED_IDLE_MS, startRedskilledDaemon } from "./daemon.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
+import {
+  parseRedskilledStatuslineFlags,
+  resolveRedskilledStatuslineOptions,
+} from "./statusline-config.js";
 
 const SERVE_FLAGS = {
   socket: { kind: "value", coerce: (raw: string) => raw },
@@ -23,8 +30,8 @@ const SERVE_FLAGS = {
 } as const;
 
 export async function runRedskilledCli(argv: readonly string[]): Promise<number> {
-  const { command, args } = routeCommand<"serve" | "host-state">(argv, {
-    commands: { serve: {}, "host-state": {} },
+  const { command, args } = routeCommand<"serve" | "host-state" | "statusline">(argv, {
+    commands: { serve: {}, "host-state": {}, statusline: {} },
     default: "host-state",
   });
 
@@ -39,9 +46,63 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     return 0;
   }
 
+  if (command === "statusline") return await runStatusline(args);
+
   const state = await readRedskilledHostState(resolveRedskilledPaths());
   process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
   return 0;
+}
+
+/**
+ * `redskilled statusline [global] [--flags]` — the whole of an agent host's job.
+ *
+ * The host runs this and prints the one line it writes; it decides nothing about
+ * shape, order, width or degradation, because ADR 0130 rule 10 moves rendering
+ * off every host so that a second host cannot drift from the first. Config is
+ * read HERE, on the client side, and only decided values cross the socket.
+ */
+export async function runStatusline(
+  args: readonly string[],
+  io: {
+    readonly cwd?: string;
+    /** The session's socket; derived from the environment when absent. */
+    readonly paths?: RedskilledPaths;
+    readonly write?: (line: string) => void;
+    readonly warn?: (line: string) => void;
+  } = {},
+): Promise<number> {
+  const write = io.write ?? ((line: string) => process.stdout.write(line));
+  const warn = io.warn ?? ((line: string) => process.stderr.write(line));
+
+  const parsed = parseRedskilledStatuslineFlags(args);
+  const project = readProjectConfig(io.cwd ?? process.cwd());
+  const resolved = resolveRedskilledStatuslineOptions({
+    configText: project.configText,
+    project: project.name,
+    flags: parsed.flags,
+  });
+  for (const warning of [...resolved.warnings, ...parsed.warnings]) {
+    warn(`redskilled statusline: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);
+  }
+
+  const render = await readRedskilledStatuslineString(io.paths ?? resolveRedskilledPaths(), resolved.options, {
+    ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
+  });
+  write(`${render.line}\n`);
+  return 0;
+}
+
+/** The nearest `.red/config.yaml`, and the project name it declares. */
+function readProjectConfig(cwd: string): { configText?: string; name: string | null } {
+  const path = findUp(cwd, ".red/config.yaml");
+  if (path == null) return { name: null };
+  let configText: string;
+  try {
+    configText = readFileSync(path, "utf8");
+  } catch {
+    return { name: null };
+  }
+  return { configText, name: declaredProjectNameInConfig(configText) ?? null };
 }
 
 /**
