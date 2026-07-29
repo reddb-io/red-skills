@@ -903,6 +903,10 @@ async function fleetStatus(
       target: fleet?.target ?? fleet?.slotsTotal ?? 0,
       bundle_version: fleet?.bundleVersion ?? "",
       bundle_latest: latestBundleVersion,
+      // Unknown is its own answer, distinct from `version_skew: 0` — hiding it
+      // behind an empty string is what let an unmeasured version read as a
+      // measured match (#2752).
+      version_unknown: Number(!fleet?.bundleVersion),
       version_skew: Number(
         Boolean(
           fleet?.bundleVersion &&
