@@ -1468,6 +1468,15 @@ export async function editPrBody(exec: Exec, repo: string, prNumber: number, bod
   return r.code === 0;
 }
 
+/** Add ONE label to an open pull request (#2732). Best-effort like
+ * {@link editPrBody}: the label is what makes a parked draft and its parked
+ * Issue answer the same query, and a forge that refuses it costs that query a
+ * row, never the park. */
+export async function labelPr(exec: Exec, repo: string, prNumber: number, label: string): Promise<boolean> {
+  const r = await exec(["gh", "-R", repo, "pr", "edit", String(prNumber), "--add-label", label]);
+  return r.code === 0;
+}
+
 /** Inputs for the review-gate PR handoff, {@link openReviewPr}. */
 export interface OpenReviewPrInput {
   /** `owner/repo` slug passed to `gh -R`. */
