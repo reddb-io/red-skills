@@ -73,7 +73,14 @@ export type StateTransition =
   /** Back to the triage queue — the state a fresh or bounced issue sits in. */
   | { kind: "triage" }
   /** Close-cascade promotion: consume the `req:*` edges and re-queue. */
-  | { kind: "promote" };
+  | { kind: "promote" }
+  /** Terminal: the issue is closed, so it carries NO state role at all. Every
+   * role, the `running` projection, the blocked-reason modifiers, and the
+   * `req:*` edges go; permanent markers (`spec:N`, `type:*`, `priority:*`)
+   * stay. A park is not terminal — parked work still lands, by a human merge,
+   * a retake, or an adopt-branch landing — and the state the park left behind
+   * must not outlive the close (#2749). */
+  | { kind: "close" };
 
 export interface TransitionPlan {
   readonly add: readonly string[];
@@ -102,8 +109,12 @@ export function stateRolesOf(
   return stateRoleLabels(labels).filter((role) => current.includes(role));
 }
 
-function targetRole(t: StateTransition, labels: StateTransitionLabels): string {
+/** The single role the transition targets, or `null` for the terminal `close`
+ * transition — the one state an issue reaches by carrying no role at all. */
+function targetRole(t: StateTransition, labels: StateTransitionLabels): string | null {
   switch (t.kind) {
+    case "close":
+      return null;
     case "queue":
     case "promote":
       return labels.ready;
@@ -119,6 +130,16 @@ function targetRole(t: StateTransition, labels: StateTransitionLabels): string {
     case "triage":
       return labels.needsTriage;
   }
+}
+
+/** Dependency edges in numeric issue order, so the emitted mutation is
+ * deterministic regardless of the tracker's label listing order. */
+function sortedReqLabels(
+  reqLabels: readonly string[],
+  labels: StateTransitionLabels,
+): string[] {
+  const byIssue = (l: string): number => Number(l.slice(labels.reqPrefix.length)) || 0;
+  return [...reqLabels].sort((a, b) => byIssue(a) - byIssue(b));
 }
 
 /**
@@ -155,12 +176,13 @@ export function planTransition(
   const add = new Set<string>();
   const remove = new Set<string>();
 
-  // Every other state role present goes; the target role arrives.
+  // Every other state role present goes; the target role arrives. `close`
+  // targets no role, so every role present goes and nothing arrives.
   for (const role of stateRoleLabels(labels)) {
     if (role === target) continue;
     if (current.includes(role)) remove.add(role);
   }
-  if (!current.includes(target)) add.add(target);
+  if (target !== null && !current.includes(target)) add.add(target);
 
   // Leaving execution: `running` never survives a state transition.
   if (current.includes(labels.running)) remove.add(labels.running);
@@ -181,28 +203,31 @@ export function planTransition(
         if (!current.includes(label)) add.add(label);
       }
       break;
-    case "promote": {
+    case "promote":
+    case "close":
+      // Both consume the dependency edges: `promote` because the blockers
+      // closed, `close` because a closed issue holds no engine state at all.
       for (const l of blockedPresent) remove.add(l);
-      // Numeric req order keeps the emitted mutation deterministic regardless
-      // of the tracker's label listing order.
-      const byIssue = (l: string): number => Number(l.slice(labels.reqPrefix.length)) || 0;
-      for (const l of [...reqLabels].sort((a, b) => byIssue(a) - byIssue(b))) remove.add(l);
+      for (const l of sortedReqLabels(reqLabels, labels)) remove.add(l);
       break;
-    }
     default:
       for (const l of blockedPresent) remove.add(l);
       break;
   }
 
-  // Invariant proof: replay the mutation and demand exactly one state role.
+  // Invariant proof: replay the mutation and demand exactly one state role —
+  // or, for the terminal `close`, exactly none.
+  const expectedRoles = transition.kind === "close" ? 0 : 1;
   const result = new Set(current);
   for (const l of remove) result.delete(l);
   for (const l of add) result.add(l);
   const roles = stateRolesOf([...result], labels);
-  if (roles.length !== 1) {
+  if (roles.length !== expectedRoles) {
     return {
       refused: true,
-      reason: `transition would leave ${roles.length} state roles (${roles.join(", ") || "none"})`,
+      reason:
+        `transition would leave ${roles.length} state roles ` +
+        `(${roles.join(", ") || "none"}), expected ${expectedRoles}`,
     };
   }
 

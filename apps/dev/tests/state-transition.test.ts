@@ -87,6 +87,23 @@ describe("planTransition", () => {
     expect(stateRolesOf([...result])).toEqual(["ready-for-agent"]);
   });
 
+  // #2749 — a park is not terminal. The live shape: #2724/#2725 landed anyway
+  // and GitHub's PR-closes-issue closed them still wearing ready-for-human +
+  // blocked:ci, recording two delivered slices as human-escalated.
+  it("close: no park role survives, and the Spec child label is untouched", () => {
+    const current = ["ready-for-human", "blocked:ci", "running", "spec:2723", "priority:high"];
+    const p = plan(current, { kind: "close" });
+    expect(p.add).toEqual([]);
+    expect(new Set(p.remove)).toEqual(new Set(["ready-for-human", "blocked:ci", "running"]));
+    const after = current.filter((l) => !p.remove.includes(l));
+    expect(stateRolesOf(after)).toEqual([]);
+    expect(after).toEqual(["spec:2723", "priority:high"]);
+  });
+
+  it("close: refuses nothing and adds nothing on an already-clean issue", () => {
+    expect(plan(["type:task"], { kind: "close" })).toEqual({ add: [], remove: [] });
+  });
+
   it("human: plain human gate keeps no blocked modifiers", () => {
     const p = plan(["ready-for-agent", "blocked:validation"], { kind: "human" });
     expect(p.add).toEqual(["ready-for-human"]);
