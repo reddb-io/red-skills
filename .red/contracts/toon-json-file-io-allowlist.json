@@ -128,11 +128,6 @@
    "moveKey": "f632cd5f3c50"
   },
   {
-   "id": "apps/rsp/src/overhead-budget.ts#json-parse-file-read#e1e4e966b7a7",
-   "classification": "migrate",
-   "reason": "Legacy-format fallback read of rsp's own overhead ledger; the write path is already TOON, so the JSON branch retires once no pre-TOON ledger survives."
-  },
-  {
    "id": "apps/rsp/src/two-axis-benchmark.ts#json-parse-file-read#df5d9468826b",
    "classification": "external",
    "reason": "Benchmark baseline fixture is JSON input.",
