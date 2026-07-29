@@ -85,8 +85,9 @@ import {
   type QueueVisibilityProbeData,
 } from "./operational-probes.js";
 import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
-import { removableUnknownTmpRoots } from "./tmp-janitor.js";
+import { pathIsInsideTmp, removableUnknownTmpRoots } from "./tmp-janitor.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
+import type { WorkerProcessVerdict, WorkerReclaimPlan } from "./worker-reclaim.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 import { isRefused, planTransition, type StateTransition } from "./state-transition.js";
 
@@ -228,8 +229,19 @@ export interface BootFs {
   writeWorkerPid(pidFile: string, pid: number): Promise<void>;
   /** rm -rf an orphaned attempt dir. */
   removeDir(path: string): Promise<void>;
-  /** Final worker.pid liveness guard before removing a whole worker dir. */
-  workerPidLive?(workerDir: string): Promise<boolean>;
+  /**
+   * The DAEMON's verdict on the Worker that owns a dir, re-read immediately
+   * before removal (Spec #2772 US 46): a Worker may have been born since the
+   * plan was built. Only `dead` releases bytes — `unknown`, an unwired probe, or
+   * a throwing one all spare the dir, because a reader that could not reach the
+   * authority must never report a running Worker as gone (#2679).
+   */
+  workerLivenessVerdict?(workerDir: string): Promise<WorkerProcessVerdict>;
+  /**
+   * The same question about one WORKSPACE path, so the record-free reclaim pass
+   * re-authorises each removal against a current answer.
+   */
+  workerWorkspaceLivenessVerdict?(path: string): Promise<WorkerProcessVerdict>;
   /** Fresh owner-liveness verdict before removing a feedback worktree. */
   feedbackWorktreeLiveness?(
     path: string,
@@ -711,12 +723,16 @@ export interface BootOptions {
    * stale `needs-slicing` label once at least one slice exists. */
   specSubIssueCandidates?: readonly SpecSubIssueCandidate[];
   /** ADR 0098 tmp janitor plan: expired named lanes, audited unknown root entries,
-   * and stale worker dirs whose worker.pid was already observed dead and whose
-   * represented issues are closed. */
+   * and stale worker dirs the DAEMON already called dead and whose represented
+   * issues are closed. */
   tmpJanitor?: {
     plan: TmpJanitorPlan;
     staleWorkers: WorkerDirJanitorPlan;
     orphanTestRunners?: readonly OrphanTestRunnerSweepEntry[];
+    /** The daemon-keyed reclaim plan (Spec #2772 US 46). Absent means the caller
+     * had no daemon answer to plan against, so the sweep reclaims nothing on its
+     * behalf. */
+    workerReclaim?: WorkerReclaimPlan;
   };
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
@@ -799,6 +815,10 @@ export interface TmpJanitorSweepResult {
   protectedLiveWorkers: string[];
   protectedLiveFeedback: string[];
   orphanTestRunners: Array<{ pid: number; pgid: number }>;
+  /** Workspaces removed because the daemon called their Worker gone. */
+  workerWorkspaces: string[];
+  /** Workspaces spared because the daemon did not call their Worker gone. */
+  protectedLiveWorkspaces: string[];
   /** Paths a plan named outside this tmp tier: reported, never removed. */
   refusedOutsideTmp: string[];
   removals: Array<{
@@ -1012,10 +1032,35 @@ async function runTmpJanitorSweep(
     protectedLiveWorkers: [],
     protectedLiveFeedback: [],
     orphanTestRunners: [],
+    workerWorkspaces: [],
+    protectedLiveWorkspaces: [],
     refusedOutsideTmp: [],
     removals: [],
   };
   if (!sweep) return result;
+
+  // The daemon-keyed pass runs FIRST and is the authority (Spec #2772 US 46): a
+  // workspace goes because the daemon says the Worker that owns it is gone. The
+  // passes below only ever narrow what it already decided.
+  for (const verdict of sweep.workerReclaim?.reclaim ?? []) {
+    // A reclaimable artifact with no path has no bytes here to remove.
+    if (verdict.artifact.path === undefined) continue;
+    const path = verdict.artifact.path;
+    if (!pathIsInsideTmp(options.bootstrap.tmpDir, path)) {
+      result.refusedOutsideTmp.push(path);
+      continue;
+    }
+    // Fail CLOSED: an unanswerable — or unwired — liveness probe spares the
+    // workspace. The opposite default deleted a live lane once already (#2679).
+    const live = await deps.fs.workerWorkspaceLivenessVerdict?.(path).catch(() => "unknown" as const);
+    if (live !== "dead") {
+      result.protectedLiveWorkspaces.push(path);
+      continue;
+    }
+    await deps.fs.removeDir(path);
+    result.removals.push({ path, livenessVerdict: "worker-dead" });
+    result.workerWorkspaces.push(path);
+  }
 
   const expired = [
     ...sweep.plan.logs.reclaim,
@@ -1044,8 +1089,8 @@ async function runTmpJanitorSweep(
   }
 
   for (const worker of sweep.staleWorkers.reclaim) {
-    const live = await deps.fs.workerPidLive?.(worker.path).catch(() => true);
-    if (live !== false) {
+    const live = await deps.fs.workerLivenessVerdict?.(worker.path).catch(() => "unknown" as const);
+    if (live !== "dead") {
       result.protectedLiveWorkers.push(worker.path);
       continue;
     }

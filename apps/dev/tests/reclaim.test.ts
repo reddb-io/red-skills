@@ -202,31 +202,35 @@ describe("planLivenessReclaim (issue #1219)", () => {
   const input = (over: Partial<LivenessReclaimInput>): LivenessReclaimInput => ({
     attemptDir: "/r/.red/tmp/workers/wA/5-a1",
     worktreePath: "/r/.red/tmp/workers/wA/5-a1/worktree",
-    workerPidAlive: false,
+    liveness: "dead",
     preserved: false,
     ...over,
   });
 
+  it("never touches a dir the daemon has not called dead", () => {
+    expect(planLivenessReclaim([input({ liveness: "unknown" })])).toEqual([]);
+  });
+
   it("never touches a live worker's dir", () => {
-    expect(planLivenessReclaim([input({ workerPidAlive: true })])).toEqual([]);
+    expect(planLivenessReclaim([input({ liveness: "alive" })])).toEqual([]);
   });
 
   it("reclaims a dead, non-preserved worker's whole dir (worktree + dir)", () => {
-    const [action] = planLivenessReclaim([input({ workerPidAlive: false, preserved: false })]);
+    const [action] = planLivenessReclaim([input({ liveness: "dead", preserved: false })]);
     expect(action.removeWorktree).toBe(true);
     expect(action.reclaimDir).toBe(true);
   });
 
   it("removes only the worktree of a dead but preserved worker (keeps JSONL/handoff)", () => {
-    const [action] = planLivenessReclaim([input({ workerPidAlive: false, preserved: true })]);
+    const [action] = planLivenessReclaim([input({ liveness: "dead", preserved: true })]);
     expect(action.removeWorktree).toBe(true);
     expect(action.reclaimDir).toBe(false);
   });
 
   it("keeps a live worker's dir while reclaiming a sibling dead worker", () => {
     const actions = planLivenessReclaim([
-      input({ attemptDir: "/r/.red/tmp/workers/wLIVE/5-a1", workerPidAlive: true }),
-      input({ attemptDir: "/r/.red/tmp/go-workers/wDEAD/6-a1", workerPidAlive: false, preserved: false }),
+      input({ attemptDir: "/r/.red/tmp/workers/wLIVE/5-a1", liveness: "alive" }),
+      input({ attemptDir: "/r/.red/tmp/go-workers/wDEAD/6-a1", liveness: "dead", preserved: false }),
     ]);
     expect(actions.map((a) => a.attemptDir)).toEqual(["/r/.red/tmp/go-workers/wDEAD/6-a1"]);
   });

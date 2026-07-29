@@ -20,6 +20,7 @@
 // janitor never deletes outside its known lanes.
 
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import type { WorkerProcessVerdict } from "./worker-reclaim.js";
 
 /**
  * Whether a path lies strictly inside a tmp tier. An ATTEMPT RECORD may name any
@@ -298,7 +299,13 @@ export interface WorkerDirIssueState {
 
 export interface WorkerDirJanitorEntry {
   path: string;
-  workerPidLive: boolean;
+  /**
+   * The DAEMON's verdict on the Worker that owns this dir (Spec #2772 US 46).
+   * `unknown` — an unreachable or stale daemon — is not `dead`, so it spares the
+   * dir: a reader that could not reach the authority must never report a running
+   * Worker as gone, which is how a janitor came to delete a live lane (#2679).
+   */
+  liveness: WorkerProcessVerdict;
   issues: readonly WorkerDirIssueState[];
 }
 
@@ -307,21 +314,21 @@ export interface WorkerDirJanitorPlan {
   spare: WorkerDirJanitorEntry[];
 }
 
-/** Plan dead-worker-dir cleanup. A worker dir is reclaimable only when its
- * worker.pid is not live, it represents at least one issue, and every issue it
- * represents is known closed.
+/** Plan dead-worker-dir cleanup. A worker dir is reclaimable only when the
+ * DAEMON calls its Worker dead, it represents at least one issue, and every
+ * issue it represents is known closed.
  *
- * The removed liveness VETO — the one an open record used to cast, sparing a
- * worker whose pid file was missing — re-anchors onto the daemon in #2790, which
- * owns process death by construction. Nothing here may grow a pid-file rule of
- * its own in the meantime: keying reclaim on a missing pid file is what deleted
- * a live lane and kept the dead ones (#2679). */
+ * The liveness question is asked of the daemon, which owns process death by
+ * construction, and never of a pid file (Spec #2772 US 46): keying reclaim on a
+ * missing pid file is what deleted a live lane and kept the dead ones (#2679).
+ * A missing pid file is therefore not even an input here — only the daemon's own
+ * fresh answer can release a dir. */
 export function planWorkerDirJanitor(entries: readonly WorkerDirJanitorEntry[]): WorkerDirJanitorPlan {
   const reclaim: WorkerDirJanitorEntry[] = [];
   const spare: WorkerDirJanitorEntry[] = [];
   for (const entry of entries) {
     const issues = entry.issues;
-    if (!entry.workerPidLive && issues.length > 0 && issues.every((issue) => issue.state === "CLOSED")) {
+    if (entry.liveness === "dead" && issues.length > 0 && issues.every((issue) => issue.state === "CLOSED")) {
       reclaim.push(entry);
     } else {
       spare.push(entry);

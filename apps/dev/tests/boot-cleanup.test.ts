@@ -40,7 +40,7 @@ describe("runBoot tmp janitor", () => {
   });
 
   it("reclaims expired named lanes, closed-issue dead workers, and audited unknown tmp roots", async () => {
-    const { deps, fsCalls } = makeDeps({ workerPidLive: async () => false });
+    const { deps, fsCalls } = makeDeps({ workerLivenessVerdict: async () => "dead" });
     const result = await runBoot(
       deps,
       options({
@@ -57,7 +57,7 @@ describe("runBoot tmp janitor", () => {
             reclaim: [
               {
                 path: "/p/.red/tmp/workers/wOLD",
-                workerPidLive: false,
+                liveness: "dead",
                 issues: [{ issue: 9, state: "CLOSED" }],
               },
             ],
@@ -80,6 +80,8 @@ describe("runBoot tmp janitor", () => {
       protectedLiveWorkers: [],
       protectedLiveFeedback: [],
       orphanTestRunners: [],
+      workerWorkspaces: [],
+      protectedLiveWorkspaces: [],
       refusedOutsideTmp: [],
       removals: [
         { path: "/p/.red/tmp/logs/old", livenessVerdict: "not-worker-workspace" },
@@ -116,8 +118,8 @@ describe("runBoot tmp janitor", () => {
     expect(result.tmpJanitor?.removals.map((r) => r.path)).not.toContain("/p/.red/tmp/supervisors");
   });
 
-  it("rechecks worker.pid before removing a stale worker dir and protects live anchors", async () => {
-    const { deps, fsCalls } = makeDeps({ workerPidLive: async () => true });
+  it("re-asks the daemon before removing a stale worker dir and protects a live Worker", async () => {
+    const { deps, fsCalls } = makeDeps({ workerLivenessVerdict: async () => "alive" });
     const result = await runBoot(
       deps,
       options({
@@ -134,7 +136,7 @@ describe("runBoot tmp janitor", () => {
             reclaim: [
               {
                 path: "/p/.red/tmp/workers/wLIVE",
-                workerPidLive: false,
+                liveness: "dead",
                 issues: [{ issue: 9, state: "CLOSED" }],
               },
             ],

@@ -51,7 +51,8 @@ export function makeDeps(over: Partial<{
   straggler: BootDeps["lookups"]["straggler"];
   claimHolderAlive: BootDeps["lookups"]["claimHolderAlive"];
   claimedIssues: BootDeps["lookups"]["claimedIssues"];
-  workerPidLive: BootDeps["fs"]["workerPidLive"];
+  workerLivenessVerdict: BootDeps["fs"]["workerLivenessVerdict"];
+  workerWorkspaceLivenessVerdict: BootDeps["fs"]["workerWorkspaceLivenessVerdict"];
   viewLabels: (issue: number) => Promise<string[]>;
   env: Record<string, string | undefined>;
   config: Record<string, string | undefined>;
@@ -96,11 +97,19 @@ export function makeDeps(over: Partial<{
         calls.push(`fs.removeDir:${p}`);
         fsCalls.removeDir.push(p);
       },
-      ...(over.workerPidLive
+      ...(over.workerLivenessVerdict
         ? {
-            async workerPidLive(workerDir: string) {
-              calls.push(`fs.workerPidLive:${workerDir}`);
-              return over.workerPidLive!(workerDir);
+            async workerLivenessVerdict(workerDir: string) {
+              calls.push(`fs.workerLivenessVerdict:${workerDir}`);
+              return over.workerLivenessVerdict!(workerDir);
+            },
+          }
+        : {}),
+      ...(over.workerWorkspaceLivenessVerdict
+        ? {
+            async workerWorkspaceLivenessVerdict(path: string) {
+              calls.push(`fs.workerWorkspaceLivenessVerdict:${path}`);
+              return over.workerWorkspaceLivenessVerdict!(path);
             },
           }
         : {}),
