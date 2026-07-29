@@ -13,12 +13,13 @@
 
 import { watch, type FSWatcher } from "node:fs";
 import type { WakeSource } from "../core/event-wake.js";
+import { WORKER_STATE_FILENAME } from "../core/state.js";
 
 /** The worker state file every worker rewrites on each state transition. A watch
  * event naming this file is a genuine state change worth waking the supervisor
  * for; events on the noisier log/firehose siblings are ignored so a `tail -f`
  * churn does not wake the loop. */
-const STATE_FILENAME = "afk.state.toon";
+const STATE_FILENAME = WORKER_STATE_FILENAME;
 
 /**
  * Build the supervisor's worker-state-change {@link WakeSource} over a recursive

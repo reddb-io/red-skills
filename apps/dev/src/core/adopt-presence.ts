@@ -16,8 +16,8 @@
 // zero disk. No reader changes — the reader already unions every worker-lane
 // namespace and reads `origin` off the state (issue #1306).
 
-import { join } from "node:path";
 import { buildWorkerAttemptPath } from "./worker-paths.js";
+import { workerStatePath } from "./state.js";
 
 /** Spawn-time provenance stamped on an adopt-landing presence row, distinct from
  * `afk` / `go` / `urgent` so the monitor/statusline render its per-source count
@@ -105,7 +105,7 @@ export async function withAdoptPresence<T>(
     params.issue,
     REQUEUE_ADOPT_ATTEMPT,
   );
-  const statePath = join(attemptDir, "afk.state.toon");
+  const statePath = workerStatePath(attemptDir);
   io.seed({
     statePath,
     attemptDir,

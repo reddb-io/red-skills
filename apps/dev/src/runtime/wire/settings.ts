@@ -8,6 +8,7 @@ import { resolveLaneIdleStallConfig, type LaneIdleStallConfig } from "../../core
 import { resolveSandboxImageName } from "../../core/execution/sandbox-image.js";
 import { inspectProcessTreeNative } from "../proc-tree.js";
 import { readWorkerState } from "../../core/worker-state-reader.js";
+import { workerStatePath } from "../../core/state.js";
 import {
   evaluateLiveness,
   resolveLivenessCrossCheckArming,
@@ -174,7 +175,7 @@ export function agentLivenessVerdictSync(
   // leaves it undefined, which disables the ceiling rather than guessing an age.
   let issueClaimedAtMs: number | undefined;
   try {
-    const rec = readWorkerState(join(attemptDir, "afk.state.toon"));
+    const rec = readWorkerState(workerStatePath(attemptDir));
     const raw = rec === null ? "" : rec.state.current.started_at || rec.state.started_at;
     const parsed = raw ? Date.parse(raw) : Number.NaN;
     if (!Number.isNaN(parsed)) issueClaimedAtMs = parsed;

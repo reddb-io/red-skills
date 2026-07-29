@@ -12,6 +12,7 @@ import type { AttemptDir } from "../../core/reclaim.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../../core/triage-labels.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../../core/worker-paths.js";
 import { parseClaimRecords } from "../../core/claim.js";
+import { workerStatePath } from "../../core/state.js";
 import {
   collectFleetTruthProbeInput,
   HOST_PREREQUISITE_COMMANDS,
@@ -54,7 +55,7 @@ export async function collectBootOptions(
     // Cap-pass liveness keeps the pid-identity verdict (a live attempt is
     // excluded from the cap even when briefly quiet), read through the single
     // owner so the schema + legacy-key shim apply here too.
-    const live = readWorkerState(join(o.path, "afk.state.toon"))?.live ?? false;
+    const live = readWorkerState(workerStatePath(o.path))?.live ?? false;
     const mtimeS = nowS - o.ageS;
     const list = byIssue.get(parsed.issue) ?? [];
     list.push({ path: o.path, mtimeS, live });
