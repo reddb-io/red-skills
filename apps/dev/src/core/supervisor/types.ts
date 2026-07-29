@@ -1,7 +1,5 @@
 import type { LivenessVerdict } from "@reddb-io/red-castle";
 import type {
-  CastleAttemptOutcome,
-  CastleAttemptResources,
   CastleLaneRecord,
 } from "@reddb-io/red-castle/engine";
 import type { ProcessSnapshotEntry } from "../reaper-signal.js";
@@ -338,25 +336,6 @@ export interface SweepWork {
   supervisorLogPath: string;
 }
 
-/**
- * One closed attempt, as the resident observed it: who ran it, what it left
- * behind, what it consumed, and the terminal outcome — including, for a budgeted
- * termination, the budget that NAMED it (ADR 0128 §8).
- */
-export interface AttemptCloseRecord {
-  workerId: string;
-  issue: number;
-  /** The try number — one worker × one ticket × one try. */
-  try: number;
-  outcome: CastleAttemptOutcome;
-  resources: CastleAttemptResources;
-  /** The attempt's branch, when one was recovered. */
-  branch?: string;
-  /** The PR the attempt left open, when one exists. */
-  pr?: number;
-  /** One-line human-readable gloss for the record. */
-  note?: string;
-}
 
 /** All injected IO + the clock for one supervisor run. */
 export interface SupervisorDeps {
@@ -382,23 +361,6 @@ export interface SupervisorDeps {
    * built-in cap) when absent, so tests can omit it.
    */
   recoveryEnv?: RecoveryEnv;
-  /**
-   * Resident-owned attempt record writer (ADR 0128). The RESIDENT writes the
-   * record, never the worker — the moment it matters most is exactly when the
-   * worker is already gone. Called once per attempt the supervisor observes
-   * ending, whether it finished on its own or the supervisor terminated it.
-   * Best-effort by contract: the record is diagnostic and must never break
-   * execution, so the caller swallows every failure. Absent → nothing is
-   * recorded (tests, and any runtime with no `.red/state/castle` lane).
-   */
-  recordAttemptClose?(close: AttemptCloseRecord): Promise<void> | void;
-  /**
-   * Which fleet — and which cgroup scope (#2697) — this supervisor's resource
-   * consumption is charged to. Stamped onto every attempt record it writes, so
-   * "which fleet caused this pressure" is a record read rather than a `ps`
-   * reconstruction after the workers are gone.
-   */
-  fleetAttribution?: { fleet?: string; scope?: string };
   /**
    * Optional ADR 0122 heal ledger (castle engine store). When present, the
    * death-sweep consults it before re-queueing a dead worker's issue: the 3rd

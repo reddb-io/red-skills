@@ -23,7 +23,6 @@ export {
   type SupervisorLiveness,
 } from "./supervisor/lifecycle.js";
 export {
-  type AttemptCloseRecord,
   type FleetHeartbeat,
   type FleetHeartbeatEmitResult,
   type HeartbeatSlotDetail,
@@ -84,7 +83,6 @@ export { guardedTick } from "./supervisor/guarded-tick.js";
 export {
   attemptUsage,
   hasResourceBudget,
-  recordAttemptClose,
   resourceBudgetBreach,
   sampleFleetPeakRss,
 } from "./supervisor/attempt-accounting.js";
