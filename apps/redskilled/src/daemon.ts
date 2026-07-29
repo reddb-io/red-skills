@@ -58,7 +58,15 @@ import {
   type RedskilledLivenessProbe,
   type RedskilledStopProbe,
 } from "./reattach.js";
-import { REDSKILLED_PROTOCOL_VERSION, type RedskilledRequest, type RedskilledResponse } from "./protocol.js";
+import {
+  REDSKILLED_PROTOCOL_VERSION,
+  type RedskilledRequest,
+  type RedskilledResponse,
+  type RedskilledWorkerCommandRequest,
+  type RedskilledWorkerCommandResult,
+} from "./protocol.js";
+import { commandOp, evaluateSessionReach, type RedskilledSessionOp } from "./session-reach.js";
+import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
 import {
   launchWorker,
   type LaunchWorkerOptions,
@@ -139,6 +147,14 @@ export interface RedskilledDaemon {
   workerCount(): number;
   hostState(): RedskilledHostState;
   /**
+   * The whole machine in one document, dated by the daemon's own last sample.
+   *
+   * A read, never a measurement: sampling on demand would let two surfaces
+   * reading the same instant get two different answers, which is the very split
+   * the payload exists to close. The age of the last tick travels inside it.
+   */
+  statuslinePayload(): RedskilledStatuslinePayload;
+  /**
    * Reclaim a Worker's budget: stop it, record the kill, forget it.
    *
    * A budget kill is its own event rather than a death with a note, because the
@@ -210,6 +226,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // is discovered by asking the host rather than by being told.
   const reattached = new Set<string>();
   const activeSockets = new Set<Socket>();
+  // The last thing the sampler measured, kept so a read is dated rather than
+  // dating itself: staleness belongs to the daemon that took the measurement.
+  let lastReading: Awaited<ReturnType<RedskilledMemorySampler>> = {};
+  let lastSampledAt: string | null = null;
   let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
   let stopping = false;
@@ -227,6 +247,78 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       startedAt,
       workers: [...workers.values()],
     });
+  }
+
+  /**
+   * The host-wide payload, assembled from this daemon's own facts alone.
+   *
+   * Nothing here is read from a second place: the Worker set, the ceiling, the
+   * last RSS reading and the instant it was taken all belong to this process, so
+   * a consumer never holds a private source it could contradict the daemon with.
+   */
+  function statuslinePayload(): RedskilledStatuslinePayload {
+    return buildStatuslinePayload({
+      hostState: hostState(),
+      ceiling,
+      rss: lastReading,
+      sampledAt: lastSampledAt,
+      now: clock(),
+      reattachedWorkerIds: [...reattached],
+    });
+  }
+
+  /**
+   * Decide whether a session may do this, before any mechanism runs.
+   *
+   * Reach is checked FIRST and against the target's project, so a cross-project
+   * command is refused identically whether or not the daemon could have carried
+   * it out — a refusal that leaked "no such Worker" would let a session map
+   * another project's Worker set by guessing at it.
+   */
+  function authorize(op: RedskilledSessionOp, sessionProject: string | undefined, targetProject: string | null) {
+    return evaluateSessionReach({ op, sessionProject: sessionProject ?? null, targetProject });
+  }
+
+  /** Carry out one commanding verb, once reach has permitted it. */
+  async function runWorkerCommand(request: RedskilledWorkerCommandRequest): Promise<RedskilledWorkerCommandResult> {
+    const target = workers.get(request.worker_id);
+    const reach = authorize(commandOp(request.command), request.session_project, target?.project_label ?? null);
+    if (!reach.permitted) throw new Error(reach.reason);
+    if (request.command !== "stop") {
+      // Recycle and steer are work decisions — which Ticket is retried, what a
+      // runner is told — and the daemon carries no castle semantics (ADR 0130
+      // rule 3). Their reach is decided here; their mechanism belongs to the
+      // project's own bundle, on top of stop and birth.
+      throw new Error(
+        `redskilled does not implement ${request.command}: it owns birth, death and limits, and ${request.command} is a work decision the project's own bundle makes on top of them`,
+      );
+    }
+    const stopped = target != null && await stopWorkerNow(target, request.detail ?? "stopped by its own project");
+    return {
+      version: 1,
+      command: request.command,
+      worker_id: request.worker_id,
+      applied: stopped,
+      reach,
+      detail: stopped
+        ? `redskilled stopped Worker ${JSON.stringify(request.worker_id)} of project ${JSON.stringify(target!.project_label)}`
+        : `redskilled holds no live Worker ${JSON.stringify(request.worker_id)} to stop`,
+    };
+  }
+
+  /** Stop one Worker the daemon holds, and record its death. */
+  async function stopWorkerNow(worker: RedskilledWorkerView, detail: string): Promise<boolean> {
+    try {
+      await stopProbe(worker);
+    } catch {
+      // A stop the host refused still ends the daemon's claim: a Worker it keeps
+      // holding a budget for while nothing supervises it is the worse state.
+    }
+    workers.delete(worker.worker_id);
+    reattached.delete(worker.worker_id);
+    record("worker-death", worker, detail);
+    armIdleTimer();
+    return true;
   }
 
   /**
@@ -342,9 +434,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       rss = await memorySampler(live);
     } catch {
       // A sampler that could not read the host measured nothing, and a Worker
-      // nothing measured is never killed on suspicion.
+      // nothing measured is never killed on suspicion — nor is the last reading
+      // re-dated, because a failed tick must age the payload rather than refresh it.
       return [];
     }
+    lastReading = rss;
+    lastSampledAt = clock();
     const { terminations } = evaluateMemoryBudgets({ workers: live, rss });
     const done: RedskilledBudgetTermination[] = [];
     for (const termination of terminations) {
@@ -422,13 +517,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     armIdleTimer();
     handleSocket(socket, async (request) => {
       armIdleTimer();
-      const response = respond(request);
+      const response = await respond(request);
       writeResponse(socket, response);
       if (request.op === "shutdown") setImmediate(() => void stop());
     });
   });
 
-  function respond(request: RedskilledRequest): RedskilledResponse {
+  async function respond(request: RedskilledRequest): Promise<RedskilledResponse> {
     try {
       if (request.op === "ping") {
         return {
@@ -443,7 +538,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         };
       }
       if (request.op === "host-state") return { id: request.id, ok: true, value: hostState() };
+      if (request.op === "statusline-payload") {
+        // A host read, permitted from any project: seeing the machine is the
+        // requirement, and a session that could not would diagnose contention
+        // by leaving the session it is in.
+        return { id: request.id, ok: true, value: statuslinePayload() };
+      }
+      if (request.op === "worker-command") {
+        return { id: request.id, ok: true, value: await runWorkerCommand(request.command) };
+      }
       if (request.op === "worker-start") {
+        const reach = authorize("worker-start", request.session_project, request.spec.project_label);
+        if (!reach.permitted) return { id: request.id, ok: false, error: reach.reason };
         const launched = startWorker(request.spec);
         return {
           id: request.id,
@@ -490,6 +596,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     },
     workerCount: () => workers.size,
     hostState,
+    statuslinePayload,
     evaluateIdle,
     stop,
   };
