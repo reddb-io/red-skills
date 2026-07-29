@@ -26,9 +26,11 @@ of it.
 | Which session a daemon serves | `src/paths.ts` — session key, socket, lock, lease |
 | Who owns the session across restarts | `src/session-lease.ts` — pid + start time, TOON on disk |
 | Who owns the socket right now | `src/daemon.ts` — exclusive bind |
-| The frozen wire contract | `src/protocol.ts` — `ping`, `host-state`, `statusline-payload`, `worker-start`, `worker-command`, `shutdown` |
+| The frozen wire contract | `src/protocol.ts` — `ping`, `host-state`, `statusline-payload`, `statusline-string`, `worker-start`, `worker-command`, `shutdown` |
 | Who may read and who may write | `src/session-reach.ts` — read the host, write the project |
 | What this machine is doing, in one document | `src/statusline-payload.ts` — Workers, projects, vitals, budgets, staleness |
+| That same answer, as a finished line | `src/statusline-render.ts` — modes, degradation, width; a pure function of the payload |
+| The declared defaults and the flag above them | `src/statusline-config.ts` — `plugins.dev.statusline.*`, resolved client-side |
 | Where a Worker's resources are charged | `src/worker-placement.ts` — pure planner over injected probes |
 | Birth itself | `src/worker-launch.ts` — plan, spawn once, report the downgrade |
 | The host-wide read | `src/host-state.ts` — total shape, Workers plus the budget total |
@@ -85,6 +87,28 @@ of it.
   answers about the same instant. A tick that failed to read the host ages the
   payload instead of refreshing it, and an unmeasured Worker is `null` and named,
   never a zero that reads as idle.
+- **The string is a pure function of the payload.** Two surfaces exist because a
+  host wants a line and a UI wants structure; purity is what stops them becoming
+  two answers. The daemon renders the string from the very payload the other op
+  returns, and a test proves the daemon's line equals `renderRedskilledStatusline`
+  over the payload read beside it — so **no agent host renders anything**: it runs
+  `redskilled statusline` and prints what comes back.
+- **The default mode is the local project; `global` is the whole machine.** The
+  common case is one operator in one repository, so the quiet default lists only
+  that project's Workers. `global` lists every project's and names the owner of
+  each — an anonymous Worker on a busy machine is what the mode exists to fix.
+- **A crowded machine degrades, it never overflows.** When the Workers do not fit
+  the count budget or the width, the line drops to one entry per project; when
+  the projects do not fit either, it drops to the host total. Detail is lost on
+  purpose and the loss is stated (`detail`, `degraded`) rather than left to be
+  detected by re-parsing the line. The full picture stays with the dashboard and
+  the monitor.
+- **Defaults are declared once, in `plugins.dev.statusline.*`.** `mode`,
+  `max_workers`, `max_projects` and `max_width`; a flag beats config, config
+  beats the built-in. Config is read **client-side** — the daemon may not know
+  what a `.red/config.yaml` is — so only decided values cross the socket. A
+  malformed value is named on stderr and ignored, never fatal: this line renders
+  on every turn, and a blank statusline is the harder failure to diagnose.
 - **An unisolated launch is never silent.** When the host affords no transient
   unit the Worker still starts, and the reply — and the host-state record it
   keeps for its whole life — carries a warning naming what was lost. A declared
@@ -96,4 +120,10 @@ of it.
 pnpm -C apps/redskilled test        # the focused suite
 pnpm -C apps/redskilled typecheck
 pnpm -C apps/redskilled serve       # run the daemon on this session's socket
+```
+
+```bash
+redskilled statusline                       # this project's Workers
+redskilled statusline global                # every project's, each showing its owner
+redskilled statusline --max-width 60        # a flag overrides the declared default
 ```
