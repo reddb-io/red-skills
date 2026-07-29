@@ -85,7 +85,7 @@ import {
   type QueueVisibilityProbeData,
 } from "./operational-probes.js";
 import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
-import { pathIsInsideTmp, removableUnknownTmpRoots } from "./tmp-janitor.js";
+import { removableUnknownTmpRoots } from "./tmp-janitor.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 import { isRefused, planTransition, type StateTransition } from "./state-transition.js";

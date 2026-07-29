@@ -6,7 +6,6 @@ import {
   planWorkerDirJanitor,
   planSupervisorLaneJanitor,
   parseFeedbackWorktreeWorkerSlug,
-  pathIsInsideTmp,
   planOrphanFeedbackWorktreeSweep,
   removableUnknownTmpRoots,
   supervisorLaneIsLive,

@@ -568,9 +568,6 @@ export function buildSupervisorDeps(
   const claimHostPrefix = hostFingerprintPrefix();
   // slot index → exit code of the most recent worker for that slot.
   const slotExitCodes = new Map<number, number>();
-  // The resident's attempt-record writer (ADR 0128) and the cgroup its workers
-  // are charged to (#2697). The scope is resolved ONCE — a process cannot change the
-  // cgroup it is charged to without being relaunched.
   // Worker env (build_passthrough_env parity): start from the supervisor's full
   // env, then STRIP every internal supervisor knob in PASSTHROUGH_DENYLIST plus
   // every per-slot `_BASE` build-isolation var, so they never leak to the worker
