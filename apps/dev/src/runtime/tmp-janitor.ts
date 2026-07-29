@@ -1,16 +1,6 @@
 import { readdir, readlink, rm, stat, readFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
-  castleAttemptIsLive,
-  classifyCastleArtifact,
-  createEnginePaths,
-  planCastleReclaim,
-  readCastleAttemptRecords,
-  type CastleAttemptArtifact,
-  type CastleAttemptRecord,
-  type CastleReclaimPlan,
-} from "@reddb-io/red-castle/engine";
-import {
   isLegacySlotLogName,
   planTmpJanitor,
   planWorkerDirJanitor,
@@ -94,13 +84,6 @@ export type IssueStateLookup = (issue: number) => "OPEN" | "CLOSED" | "UNKNOWN";
 
 export interface TmpJanitorReport {
   plan: TmpJanitorPlan;
-  /**
-   * The record-keyed reclaim plan (ADR 0128): what each attempt's OWN record
-   * says about the artifacts it left, plus every observed path no record
-   * accounts for. This is the authority; the pid-keyed lanes below only ever
-   * narrow it, never widen it.
-   */
-  attemptReclaim: CastleReclaimPlan;
   staleWorkers: ReturnType<typeof planWorkerDirJanitor>;
   /** Supervisor fleet dirs partitioned by pid liveness. Live dirs are spared;
    * dead dirs are eligible for removal. */
@@ -128,11 +111,7 @@ export interface TmpJanitorApplyResult {
   orphanFeedback: string[];
   /** Confirmed orphan runner processes reaped by process-group ID. */
   orphanTestRunners: Array<{ pid: number; pgid: number }>;
-  /** Attempt workspaces removed because their own record said they could be. */
-  attemptWorkspaces: string[];
-  /** Workspaces spared because the record still had a live attempt on them. */
-  protectedLiveAttempts: string[];
-  /** Record-named paths outside this tmp tier: reported, never removed. */
+  /** Paths a plan named outside this tmp tier: reported, never removed. */
   refusedOutsideTmp: string[];
   /** Every destructive action, including the liveness verdict authorising it. */
   removals: Array<{
@@ -142,8 +121,7 @@ export interface TmpJanitorApplyResult {
       | "worker-dead"
       | "supervisor-dead"
       | "owner-dead"
-      | "no-live-workers"
-      | "attempt-closed";
+      | "no-live-workers";
   }>;
 }
 
@@ -198,111 +176,9 @@ async function readText(path: string): Promise<string | null> {
   }
 }
 
-// ---------- the attempt record is the reclaim authority (ADR 0128) ----------
-
-/**
- * The attempt lane beside a `.red/tmp` dir. `tmp/` holds only the attempt's
- * disposable workspace; the record itself is durable state one tier over.
- */
-export function attemptLanePathForTmpDir(tmpDir: string): string {
-  return createEnginePaths(dirname(resolve(tmpDir))).castleAttempts;
-}
-
-/** Read the lane, degrading to "no records" — an unreadable lane must never
- * read as "nothing is live", which is the inversion that started all this. */
-async function readAttemptRecords(tmpDir: string): Promise<CastleAttemptRecord[]> {
-  try {
-    return await readCastleAttemptRecords(attemptLanePathForTmpDir(tmpDir));
-  } catch {
-    return [];
-  }
-}
-
-/** Every worker worktree that exists on disk, in every worker lane. */
-async function listWorkerWorktrees(tmpDir: string): Promise<string[]> {
-  const out: string[] = [];
-  for (const workersRoot of allWorkersRoots(tmpDir)) {
-    for (const worker of await listNames(workersRoot)) {
-      for (const issue of await listNames(join(workersRoot, worker))) {
-        const path = join(workersRoot, worker, issue, "worktree");
-        try {
-          if ((await stat(path)).isDirectory()) out.push(path);
-        } catch {
-          // No worktree under this attempt dir.
-        }
-      }
-    }
-  }
-  return out;
-}
-
-/** The workspace path an attempt's identity implies, for a record that carries
- * no workspace artifact of its own yet. Only the PATH is derived — it is a pure
- * function of the attempt's identity (ADR 0103/0105) — and the record still
- * decides whether the bytes go. Derived for LIVE records too: that is how a
- * running attempt's workspace becomes a path the planner knows is owned, so a
- * previous try's closed record cannot offer it up. */
-function withDerivedWorkspace(
-  record: CastleAttemptRecord,
-  present: ReadonlySet<string>,
-  tmpDir: string,
-): CastleAttemptRecord {
-  if (record.artifacts.some((artifact) => classifyCastleArtifact(artifact.kind) === "workspace")) {
-    return record;
-  }
-  const derived: CastleAttemptArtifact[] = [];
-  for (const workersRoot of allWorkersRoots(tmpDir)) {
-    const path = join(workersRoot, record.worker_id, String(record.issue), "worktree");
-    if (present.has(path)) derived.push({ kind: "worktree", path, reclaimable: true });
-  }
-  if (derived.length === 0) return record;
-  return { ...record, artifacts: [...record.artifacts, ...derived] };
-}
-
-/** Every path a LIVE record still owns — the veto set the apply pass re-reads. */
-function liveAttemptPaths(
-  records: readonly CastleAttemptRecord[],
-  tmpDir: string,
-): Set<string> {
-  const live = new Set<string>();
-  for (const record of records) {
-    if (!castleAttemptIsLive(record)) continue;
-    for (const artifact of record.artifacts) {
-      if (artifact.path !== undefined) live.add(resolve(artifact.path));
-    }
-    for (const workersRoot of allWorkersRoots(tmpDir)) {
-      live.add(resolve(join(workersRoot, record.worker_id, String(record.issue), "worktree")));
-    }
-  }
-  return live;
-}
-
-/**
- * Whether the attempt lane, RE-READ NOW, still has a live attempt on one
- * workspace path. This is the guard an apply pass calls immediately before
- * removing: a retry may have claimed the same path since the plan was built.
- */
-export async function attemptWorkspaceIsLive(
-  tmpDir: string,
-  path: string,
-): Promise<boolean> {
-  return liveAttemptPaths(await readAttemptRecords(tmpDir), tmpDir).has(resolve(path));
-}
-
-/** Worker IDs the record calls live. A worker in this set is spared whether or
- * not it has a `worker.pid` file. */
-function liveAttemptWorkers(records: readonly CastleAttemptRecord[]): Set<string> {
-  const live = new Set<string>();
-  for (const record of records) {
-    if (castleAttemptIsLive(record)) live.add(record.worker_id);
-  }
-  return live;
-}
-
 async function collectWorkerEntries(
   tmpDir: string,
   lookup: IssueStateLookup,
-  liveWorkers: ReadonlySet<string>,
 ): Promise<WorkerDirJanitorEntry[]> {
   const out: WorkerDirJanitorEntry[] = [];
   for (const workersRoot of allWorkersRoots(tmpDir)) {
@@ -333,7 +209,6 @@ async function collectWorkerEntries(
       out.push({
         path: workerPath,
         workerPidLive,
-        attemptLive: liveWorkers.has(worker),
         issues: [...issues].map(([issue, state]) => ({ issue, state })),
       });
     }
@@ -491,24 +366,11 @@ async function feedbackRemovalVerdict(
     : { safe: true, verdict: "no-live-workers" };
 }
 
-export interface TmpJanitorSources {
-  /** The attempt records to plan against. Read from the lane when omitted. */
-  attemptRecords?: readonly CastleAttemptRecord[];
-}
-
 export async function collectTmpJanitorReport(
   tmpDir: string,
   nowS: number,
   lookup: IssueStateLookup,
-  sources: TmpJanitorSources = {},
 ): Promise<TmpJanitorReport> {
-  const records = sources.attemptRecords ?? (await readAttemptRecords(tmpDir));
-  const liveWorkers = liveAttemptWorkers(records);
-  const worktreePaths = await listWorkerWorktrees(tmpDir);
-  const attemptReclaim = planCastleReclaim(
-    records.map((record) => withDerivedWorkspace(record, new Set(worktreePaths), tmpDir)),
-    { nowIso: new Date(nowS * 1000).toISOString(), observedPaths: worktreePaths },
-  );
   const [tmpRootNames, tmpRootEntries, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers, orphanFeedbackData, supervisorEntries] =
     await Promise.all([
       listNames(tmpDir),
@@ -517,7 +379,7 @@ export async function collectTmpJanitorReport(
       listEntries(join(tmpDir, "scratch")),
       listEntries(join(tmpDir, "diagnostics")),
       listEntries(join(tmpDir, "worktrees", "feedback")),
-      collectWorkerEntries(tmpDir, lookup, liveWorkers),
+      collectWorkerEntries(tmpDir, lookup),
       collectOrphanFeedbackEntries(tmpDir),
       collectSupervisorEntries(tmpDir),
     ]);
@@ -527,7 +389,6 @@ export async function collectTmpJanitorReport(
   const feedbackSafeToAge = new Set(orphanFeedback.reclaim.map((entry) => entry.path));
 
   return {
-    attemptReclaim,
     plan: planTmpJanitor({
       nowS,
       logEntries,
@@ -572,8 +433,6 @@ export async function applyTmpJanitorReport(
     protectedLiveFeedback: [],
     orphanFeedback: [],
     orphanTestRunners: [],
-    attemptWorkspaces: [],
-    protectedLiveAttempts: [],
     refusedOutsideTmp: [],
     removals: [],
   };
@@ -602,31 +461,6 @@ export async function applyTmpJanitorReport(
     await rm(entry.path, { recursive: true, force: true });
     result.removals.push({ path: entry.path, livenessVerdict: "not-worker-workspace" });
     result.expiredLanes.push(entry.path);
-  }
-
-  // The record-keyed pass runs FIRST: it is the authority, and the pid-keyed
-  // passes below only narrow what it already decided. The lane is re-read here
-  // because a fresh attempt may have claimed the same workspace path between
-  // collect and apply — a live record vetoes the removal whatever the plan said.
-  if (report.attemptReclaim.reclaim.length > 0) {
-    const stillLive = liveAttemptPaths(await readAttemptRecords(tmpDir), tmpDir);
-    for (const verdict of report.attemptReclaim.reclaim) {
-      // A reclaimable artifact with no path has no bytes on disk; the record
-      // already accounts for it and there is nothing here to remove.
-      if (verdict.artifact.path === undefined) continue;
-      const path = resolve(verdict.artifact.path);
-      if (!pathIsInsideTmp(tmpDir, path)) {
-        result.refusedOutsideTmp.push(path);
-        continue;
-      }
-      if (stillLive.has(path)) {
-        result.protectedLiveAttempts.push(path);
-        continue;
-      }
-      await rm(path, { recursive: true, force: true });
-      result.removals.push({ path, livenessVerdict: "attempt-closed" });
-      result.attemptWorkspaces.push(path);
-    }
   }
 
   for (const worker of report.staleWorkers.reclaim) {
@@ -706,14 +540,14 @@ export async function runTmpJanitor(
   tmpDir: string,
   nowS: number,
   lookup: IssueStateLookup,
-  options: TmpJanitorSources & {
+  options: {
     fix?: boolean;
     worktreePrune?: () => Promise<void>;
     reapProcessGroup?: (pgid: number) => Promise<boolean>;
     log?: (line: string) => void;
   } = {},
 ): Promise<TmpJanitorRunResult> {
-  const report = await collectTmpJanitorReport(tmpDir, nowS, lookup, options);
+  const report = await collectTmpJanitorReport(tmpDir, nowS, lookup);
   if (!options.fix) return report;
   return { ...report, applied: await applyTmpJanitorReport(tmpDir, report, options) };
 }

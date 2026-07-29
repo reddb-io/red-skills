@@ -299,15 +299,6 @@ export interface WorkerDirIssueState {
 export interface WorkerDirJanitorEntry {
   path: string;
   workerPidLive: boolean;
-  /**
-   * Whether an ATTEMPT RECORD for this worker is still open (ADR 0128). This is
-   * the record's own liveness verdict, and it is a veto: a worker the record
-   * calls live is spared whether or not a `worker.pid` file exists. Keying on
-   * the pid file alone is what deleted a live lane and kept the dead ones
-   * (#2679). `undefined` means the record lane says nothing about this worker,
-   * so the pid/issue rule below decides on its own.
-   */
-  attemptLive?: boolean;
   issues: readonly WorkerDirIssueState[];
 }
 
@@ -316,18 +307,21 @@ export interface WorkerDirJanitorPlan {
   spare: WorkerDirJanitorEntry[];
 }
 
-/** Plan dead-worker-dir cleanup. A worker dir whose attempt record is still
- * open is ALWAYS spared. Otherwise it is reclaimable only when its worker.pid
- * is not live, it has at least one issue-bearing attempt, and every issue
- * represented by the worker dir is known closed. */
+/** Plan dead-worker-dir cleanup. A worker dir is reclaimable only when its
+ * worker.pid is not live, it represents at least one issue, and every issue it
+ * represents is known closed.
+ *
+ * The removed liveness VETO — the one an open record used to cast, sparing a
+ * worker whose pid file was missing — re-anchors onto the daemon in #2790, which
+ * owns process death by construction. Nothing here may grow a pid-file rule of
+ * its own in the meantime: keying reclaim on a missing pid file is what deleted
+ * a live lane and kept the dead ones (#2679). */
 export function planWorkerDirJanitor(entries: readonly WorkerDirJanitorEntry[]): WorkerDirJanitorPlan {
   const reclaim: WorkerDirJanitorEntry[] = [];
   const spare: WorkerDirJanitorEntry[] = [];
   for (const entry of entries) {
     const issues = entry.issues;
-    if (entry.attemptLive === true) {
-      spare.push(entry);
-    } else if (!entry.workerPidLive && issues.length > 0 && issues.every((issue) => issue.state === "CLOSED")) {
+    if (!entry.workerPidLive && issues.length > 0 && issues.every((issue) => issue.state === "CLOSED")) {
       reclaim.push(entry);
     } else {
       spare.push(entry);
