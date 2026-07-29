@@ -26,6 +26,15 @@ import {
   type RedskilledJobLimits,
   type RedskilledJobObjectReach,
 } from "./job-object.js";
+import {
+  describePosixPlacement,
+  planPosixLimits,
+  posixLimitsShellArgv,
+  posixLimitsUnavailable,
+  unenforcedPosixBudgetFields,
+  type RedskilledPosixLimits,
+  type RedskilledPosixReach,
+} from "./posix-limits.js";
 
 /** Env kill-switch: `REDSKILLED_PLACEMENT=off` launches unisolated — loudly. */
 export const REDSKILLED_PLACEMENT_ENV = "REDSKILLED_PLACEMENT";
@@ -48,7 +57,19 @@ export interface WorkerPlacementProbes {
    * the silent downgrade this field exists to prevent.
    */
   readonly jobObjects: RedskilledJobObjectReach;
+  /**
+   * Whether POSIX rlimits and priority are reachable here, and when not, why.
+   *
+   * The macOS arm of the same shape `jobObjects` has, for the same reason: this
+   * backend is the one that adds real teeth without adding a memory ceiling, so
+   * a host that cannot even reach it must degrade with a sentence rather than a
+   * flag.
+   */
+  readonly posix: RedskilledPosixReach;
 }
+
+/** The POSIX shell a macOS launch wraps itself in. Present on every Unix host. */
+export const POSIX_SHELL_PATH = "/bin/sh";
 
 /**
  * Where the client wants the Worker placed.
@@ -65,7 +86,7 @@ export interface RedskilledPlacementTarget {
    * on Windows gets a Job Object rather than a refusal — the answer to "isolate
    * me" must not depend on the client guessing the platform right.
    */
-  readonly isolation: "transient-unit" | "job-object" | "inherit";
+  readonly isolation: "transient-unit" | "job-object" | "posix-limits" | "inherit";
   readonly unit_prefix?: string;
 }
 
@@ -74,6 +95,14 @@ export interface RedskilledWorkerBudget {
   readonly memory_high?: string;
   readonly memory_max?: string;
   readonly cpu_weight?: number;
+  /**
+   * `RLIMIT_NPROC`, honoured by the macOS backend and named as unenforced by the
+   * others — a declared limit that quietly did nothing is the failure every
+   * warning in this module exists to prevent.
+   */
+  readonly max_processes?: number;
+  /** `RLIMIT_CPU` in seconds, on the same terms as {@link max_processes}. */
+  readonly cpu_seconds?: number;
 }
 
 /**
@@ -82,7 +111,7 @@ export interface RedskilledWorkerBudget {
  * `none` is a first-class answer, not an absent one: an unisolated launch is a
  * decision the host made, and it is read alongside its warning.
  */
-export type WorkerPlacementBackend = "transient-unit" | "job-object" | "none";
+export type WorkerPlacementBackend = "transient-unit" | "job-object" | "posix-limits" | "none";
 
 /** The Job Object a Windows plan asks for. The handle itself is minted at launch. */
 export interface WorkerJobObjectPlan {
@@ -91,9 +120,16 @@ export interface WorkerJobObjectPlan {
 }
 
 export interface WorkerPlacementPlan {
-  /** True when the Worker runs inside a resource group of its own. */
+  /**
+   * True when the Worker runs inside a resource group of its own.
+   *
+   * `posix-limits` is deliberately NOT isolated: macOS has no resource group to
+   * put a Worker in, so its memory charge lands on the daemon exactly as an
+   * unisolated launch's does — and the host-wide accounting must keep counting it
+   * that way, however many rlimits the launch also carries.
+   */
   readonly isolated: boolean;
-  /** The backend that isolated it, or `none`. Always set. */
+  /** The backend that placed it, or `none`. Always set. */
   readonly backend: WorkerPlacementBackend;
   readonly command: string;
   readonly args: readonly string[];
@@ -103,6 +139,8 @@ export interface WorkerPlacementPlan {
   readonly unit?: string;
   /** The Job Object to mint and assign this Worker to, only under `job-object`. */
   readonly job?: WorkerJobObjectPlan;
+  /** The rlimits and priority the launch applies to itself, only under `posix-limits`. */
+  readonly posix?: RedskilledPosixLimits;
   /**
    * Why isolation was skipped, and what the caller now carries instead. ALWAYS
    * set when `isolated` is false.
@@ -124,18 +162,52 @@ export function detectWorkerPlacementProbes(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): WorkerPlacementProbes {
+  const noPosix = posixLimitsUnavailable(
+    `POSIX rlimit and priority placement is the macOS backend (platform=${platform})`,
+  );
   if (platform === "win32") {
-    return { platform, systemdRun: null, userSession: false, jobObjects: loadJobObjectBinding({ platform }) };
+    return {
+      platform,
+      systemdRun: null,
+      userSession: false,
+      jobObjects: loadJobObjectBinding({ platform }),
+      posix: noPosix,
+    };
   }
   const noJobObjects = jobObjectsUnavailable(
     `Job Object placement is the Windows backend (platform=${platform}), so there is no native reach to load here`,
   );
+  if (platform === "darwin") {
+    return { platform, systemdRun: null, userSession: false, jobObjects: noJobObjects, posix: detectPosixReach(env) };
+  }
   if (platform !== "linux") {
-    return { platform, systemdRun: null, userSession: false, jobObjects: noJobObjects };
+    return { platform, systemdRun: null, userSession: false, jobObjects: noJobObjects, posix: noPosix };
   }
   const runtimeDir = (env.XDG_RUNTIME_DIR ?? "").trim();
   const userSession = runtimeDir !== "" && existsSync(join(runtimeDir, "systemd", "private"));
-  return { platform, systemdRun: which("systemd-run", env), userSession, jobObjects: noJobObjects };
+  return {
+    platform,
+    systemdRun: which("systemd-run", env),
+    userSession,
+    jobObjects: noJobObjects,
+    posix: noPosix,
+  };
+}
+
+/**
+ * Whether this host can wrap a launch in `sh` and, separately, in `nice`.
+ *
+ * The shell is checked on disk rather than looked up on PATH, because it is the
+ * process the daemon is about to exec by absolute path — a `sh` that exists only
+ * on a PATH the Worker will not inherit is not the one that would run.
+ */
+function detectPosixReach(env: NodeJS.ProcessEnv): RedskilledPosixReach {
+  if (!existsSync(POSIX_SHELL_PATH)) {
+    return posixLimitsUnavailable(
+      `no POSIX shell was found at ${POSIX_SHELL_PATH}, so there is nothing to apply rlimits or priority in`,
+    );
+  }
+  return { available: true, shell: POSIX_SHELL_PATH, nice: which("nice", env) };
 }
 
 /** True unless the env kill-switch declines isolation for this host. */
@@ -224,6 +296,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     return unisolated(`worker isolation disabled by ${REDSKILLED_PLACEMENT_ENV}: the Worker is charged to the daemon's own resource group`);
   }
   if (opts.probes.platform === "win32") return planJobObjectPlacement(opts, args, declaredBudget, unisolated);
+  if (opts.probes.platform === "darwin") return planPosixLimitsPlacement(opts, args, unisolated);
   if (opts.probes.platform !== "linux") {
     return unisolated(`transient-unit placement is the Linux backend (platform=${opts.probes.platform}): the Worker is charged to the daemon's own resource group`);
   }
@@ -251,12 +324,63 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
   if (budget.cpu_weight != null) unitArgs.push(`--property=CPUWeight=${budget.cpu_weight}`);
   for (const [key, value] of Object.entries(opts.env ?? {})) unitArgs.push(`--setenv=${key}=${value}`);
 
+  const unenforced = unenforcedPosixBudgetFields(opts.budget);
   return {
     isolated: true,
     backend: "transient-unit",
     unit,
     command: opts.probes.systemdRun,
     args: [...unitArgs, "--", opts.command, ...args],
+    ...(unenforced != null ? { budgetWarning: unenforced } : {}),
+  };
+}
+
+/**
+ * The macOS arm: rlimits and priority, with the floor left as the memory ceiling.
+ *
+ * Unlike both other backends this one returns `isolated: false` while still
+ * having done real work. That is the honesty the platform forces: the limits are
+ * genuine and the resource group does not exist, so the launch is a placement
+ * and an unisolated charge at the same time — and the accounting that decides
+ * how much of the machine is spoken for must read the second fact, not the first.
+ *
+ * With no shell to wrap the launch in, nothing is applied and the plan degrades
+ * to the plain argv with the same sentence any unisolated launch carries.
+ */
+function planPosixLimitsPlacement(
+  opts: PlanWorkerPlacementOptions,
+  args: readonly string[],
+  unisolated: (warning: string) => WorkerPlacementPlan,
+): WorkerPlacementPlan {
+  const reach = opts.probes.posix;
+  if (!reach.available) {
+    return unisolated(
+      `POSIX limit placement unavailable: ${reach.reason}. The Worker is charged to the daemon's own resource group ` +
+        "and the daemon's RSS sampling floor is the only remaining ceiling",
+    );
+  }
+
+  const limits = planPosixLimits(opts.budget, { canRenice: reach.nice != null });
+  const budget = opts.budget ?? {};
+  const declaredMemory = budget.memory_high != null || budget.memory_max != null;
+  return {
+    isolated: false,
+    backend: "posix-limits",
+    command: reach.shell,
+    args: posixLimitsShellArgv({ limits, nice: reach.nice, command: opts.command, args }),
+    cwd: opts.workspacePath,
+    posix: limits,
+    warning: describePosixPlacement(limits),
+    // Named for the same reason the Windows note is: the budget still holds, it
+    // just holds one layer down, and nobody should have to discover that from
+    // the absence of a limit.
+    ...(declaredMemory
+      ? {
+          budgetWarning:
+            `the declared memory budget is enforced by the daemon's RSS sampling floor rather than by the kernel: ` +
+            limits.memory_ceiling_reason,
+        }
+      : {}),
   };
 }
 
@@ -298,10 +422,16 @@ function planJobObjectPlacement(
     // A budget the job could not carry is named here for the same reason an
     // unisolated launch is: the floor still holds it, and nobody should have to
     // discover that from the absence of a limit.
-    ...(declaredBudget && limits.note != null
-      ? { budgetWarning: `${limits.note}; the daemon's RSS sampling floor is the ceiling for that budget` }
-      : {}),
+    ...(budgetWarningFor(declaredBudget && limits.note != null
+      ? `${limits.note}; the daemon's RSS sampling floor is the ceiling for that budget`
+      : null, unenforcedPosixBudgetFields(opts.budget))),
   };
+}
+
+/** Join what a placement could not carry into one warning, or into none. PURE. */
+function budgetWarningFor(...notes: ReadonlyArray<string | null>): { budgetWarning?: string } {
+  const said = notes.filter((note): note is string => note != null && note !== "");
+  return said.length > 0 ? { budgetWarning: said.join("; ") } : {};
 }
 
 function which(binary: string, env: NodeJS.ProcessEnv): string | null {
