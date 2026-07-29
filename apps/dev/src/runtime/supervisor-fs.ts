@@ -23,6 +23,7 @@ import {
   workerDir,
 } from "../core/worker-paths.js";
 import { readWorkerState } from "../core/worker-state-reader.js";
+import { workerStatePath } from "../core/state.js";
 import {
   evaluateLiveness,
   resolveLivenessCrossCheckArming,
@@ -128,7 +129,7 @@ export function sumWorkerCostUsd(tmpDir: string): number {
       continue;
     }
     for (const attempt of attempts) {
-      const rec = readWorkerState(join(wdir, attempt, "afk.state.toon"));
+      const rec = readWorkerState(workerStatePath(join(wdir, attempt)));
       if (rec === null) continue;
       const cost = rec.state.current.cost_usd;
       if (Number.isFinite(cost) && cost > 0) total += cost;
@@ -142,7 +143,7 @@ export function sumWorkerCostUsd(tmpDir: string): number {
  * (core/worker-state-reader) so the schema + legacy-key shim apply — no private
  * JSON.parse. */
 export function iterDirIssueNumber(dir: string): number | null {
-  const rec = readWorkerState(join(dir, "afk.state.toon"));
+  const rec = readWorkerState(workerStatePath(dir));
   const n = rec?.state.current.number;
   return typeof n === "number" && Number.isInteger(n) ? n : null;
 }
@@ -239,7 +240,7 @@ export function workerLivenessFor(
   let agentPid = 0;
   let issueClaimedAtMs: number | undefined;
   try {
-    const rec = readWorkerState(join(dir, "afk.state.toon"));
+    const rec = readWorkerState(workerStatePath(dir));
     if (rec !== null) {
       agentPid = rec.state.pid;
       const raw = rec.state.current.started_at || rec.state.started_at;
@@ -306,7 +307,7 @@ export function resolveIterDirInfo(
   let costUsd: number | undefined;
   // Single owner (core/worker-state-reader): null when the dir has no/malformed
   // state, in which case issue/worker stay empty and teardown still proceeds.
-  const rec = readWorkerState(join(dir, "afk.state.toon"));
+  const rec = readWorkerState(workerStatePath(dir));
   if (rec !== null) {
     const n = rec.state.current.number;
     if (typeof n === "number" && Number.isInteger(n)) issue = n;

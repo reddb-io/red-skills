@@ -1,6 +1,6 @@
 {
   "name": "red-skills",
-  "version": "2.87.7",
+  "version": "2.88.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.5.0",

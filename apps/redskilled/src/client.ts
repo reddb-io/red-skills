@@ -23,7 +23,13 @@ import { tryAcquireExclusiveLock } from "@reddb-io/shared/resident-core.js";
 import { socketAnswers } from "./daemon.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
-import { sendRedskilledRequest, type RedskilledRequest } from "./protocol.js";
+import {
+  isRedskilledWorkerStarted,
+  sendRedskilledRequest,
+  type RedskilledRequest,
+  type RedskilledWorkerStarted,
+} from "./protocol.js";
+import type { RedskilledWorkerSpec } from "./worker-launch.js";
 
 /** How long a client waits for a daemon — its own or the race winner's — to answer. */
 export const DEFAULT_REDSKILLED_READY_TIMEOUT_MS = 10_000;
@@ -71,10 +77,22 @@ export async function ensureRedskilledDaemon(
   }
 }
 
+/**
+ * An op the daemon accepts, minus the id the client mints per call.
+ *
+ * Distributive on purpose: a plain `Omit<RedskilledRequest, "id">` narrows to the
+ * keys every member shares, which would silently drop `worker-start`'s payload.
+ */
+export type RedskilledRequestBody = RedskilledRequest extends infer Member
+  ? Member extends { id: string }
+    ? Omit<Member, "id">
+    : never
+  : never;
+
 /** One request against a running daemon; auto-spawns first. Throws on refusal. */
 export async function requestRedskilled(
   paths: RedskilledPaths,
-  request: Omit<RedskilledRequest, "id">,
+  request: RedskilledRequestBody,
   config: RedskilledClientConfig = {},
 ): Promise<unknown> {
   await ensureRedskilledDaemon(paths, config);
@@ -96,6 +114,25 @@ export async function readRedskilledHostState(
   return value;
 }
 
+/**
+ * Ask the daemon for a Worker.
+ *
+ * The caller states the argv, the placement target, the budget and its own two
+ * opaque strings; it learns back the pid, the unit and any warning. **A refusal
+ * throws** — fail closed (ADR 0130 rule 6): a client that fell back to spawning
+ * the Worker itself would reinstate exactly the unbudgeted spawn the daemon
+ * exists to prevent.
+ */
+export async function startRedskilledWorker(
+  paths: RedskilledPaths,
+  spec: RedskilledWorkerSpec,
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledWorkerStarted> {
+  const value = await requestRedskilled(paths, { op: "worker-start", spec }, config);
+  if (!isRedskilledWorkerStarted(value)) throw new Error("redskilled daemon returned a malformed worker record");
+  return value;
+}
+
 async function waitForDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): Promise<void> {
   const deadline = Date.now() + (config.readyTimeoutMs ?? DEFAULT_REDSKILLED_READY_TIMEOUT_MS);
   for (;;) {
@@ -114,6 +151,8 @@ function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): vo
     paths.socketPath,
     "--lease",
     paths.leasePath,
+    "--events",
+    paths.eventLanePath,
     "--session-key-hash",
     paths.sessionKeyHash,
     "--machine-id-hash",

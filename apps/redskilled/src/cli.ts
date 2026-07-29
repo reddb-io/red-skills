@@ -15,6 +15,7 @@ import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 const SERVE_FLAGS = {
   socket: { kind: "value", coerce: (raw: string) => raw },
   lease: { kind: "value", coerce: (raw: string) => raw },
+  events: { kind: "value", coerce: (raw: string) => raw },
   "session-key-hash": { kind: "value", coerce: (raw: string) => raw },
   "machine-id-hash": { kind: "value", coerce: (raw: string) => raw },
   "idle-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
@@ -52,6 +53,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
 function servePaths(values: {
   socket?: string;
   lease?: string;
+  events?: string;
   "session-key-hash"?: string;
   "machine-id-hash"?: string;
 }): RedskilledPaths {
@@ -60,6 +62,7 @@ function servePaths(values: {
     ...derived,
     socketPath: values.socket ?? derived.socketPath,
     leasePath: values.lease ?? derived.leasePath,
+    eventLanePath: values.events ?? derived.eventLanePath,
     sessionKeyHash: values["session-key-hash"] ?? derived.sessionKeyHash,
     machineIdHash: values["machine-id-hash"] ?? derived.machineIdHash,
   };

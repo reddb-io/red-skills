@@ -45,7 +45,7 @@ import { deathCauseForRecoveredWorker } from "../../core/process-safety.js";
 import { join } from "node:path";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { appendAgentRecord, appendRecordToonlTaggedRow } from "../../core/jsonl-log.js";
-import { updateState } from "../../core/state.js";
+import { updateState, workerStatePath } from "../../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath } from "../../core/loc-memo.js";
 import { createActivityMeter } from "../../core/activity-meter.js";
@@ -556,7 +556,7 @@ export function buildProcessDeps({
         if (lastIter > 0) emit(formatIterationMarker(lastIter, "ended", iterMax), "ended", lastIter);
         lastIter = event.iteration;
         emit(formatIterationMarker(lastIter, "started", iterMax), "started", lastIter);
-        void updateState(join(dir0, "afk.state.toon"), { "current.iteration": String(lastIter) }).catch(() => {});
+        void updateState(workerStatePath(dir0), { "current.iteration": String(lastIter) }).catch(() => {});
       }
       const msg =
         event.type === "text"
@@ -621,7 +621,7 @@ export function buildProcessDeps({
             }
           : {};
       if (activity || discrete) {
-        void updateState(join(current.attemptDir, "afk.state.toon"), {
+        void updateState(workerStatePath(current.attemptDir), {
           ...(activity ? { "current.activity": activity, "current.last_stream_line": msg.slice(0, 200) } : {}),
           // Any inner-agent stream activity means we are in the macro `coding`
           // phase (collapses explore/impl/tests/commit — the fine activity lives in
@@ -729,7 +729,7 @@ export function buildProcessDeps({
           fields: { extra: hb.extra },
         }).catch(() => {});
         await fsx.appendLine(join(current.attemptDir, "afk.log"), `[heartbeat] ${hb.msg}`);
-        await updateState(join(current.attemptDir, "afk.state.toon"), {
+        await updateState(workerStatePath(current.attemptDir), {
           ...hb.statePatch,
           "current.loc_peak_added": peakLocAdded,
           "current.loc_peak_removed": peakLocRemoved,
@@ -781,7 +781,7 @@ export function buildProcessDeps({
     // signal must never fail the run.
     markPhase: (phase) => {
       void (async () => {
-        await updateState(join(current.attemptDir, "afk.state.toon"), {
+        await updateState(workerStatePath(current.attemptDir), {
           "current.phase": phase,
         }).catch(() => {});
         await castleBridge.snapshot().catch(() => {});
@@ -789,7 +789,7 @@ export function buildProcessDeps({
     },
     markState: (patch) => {
       void (async () => {
-        await updateState(join(current.attemptDir, "afk.state.toon"), patch).catch(() => {});
+        await updateState(workerStatePath(current.attemptDir), patch).catch(() => {});
         await castleBridge.snapshot().catch(() => {});
       })();
     },

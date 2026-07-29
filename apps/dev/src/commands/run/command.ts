@@ -50,7 +50,7 @@ import {
 } from "../../core/process-safety.js";
 import { dirname, join } from "node:path";
 import { workerIdentity } from "../../core/host-identity.js";
-import { initStateSync, readPidStartTime, updateState, writeIdentitySync } from "../../core/state.js";
+import { initStateSync, readPidStartTime, updateState, workerStatePath, writeIdentitySync } from "../../core/state.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { HOST_CONFIG_EXIT_CODE } from "../../core/worker-outcome.js";
 
@@ -323,7 +323,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         await fsx.removeDir(pi.attemptDir).catch(() => {});
         return result;
       }
-      const sp = join(pi.attemptDir, "afk.state.toon");
+      const sp = workerStatePath(pi.attemptDir);
       if (await fsx.pathExists(sp)) {
         await updateState(sp, { pid: 0 }, { allowPidReset: true }).catch(() => {});
         await castleBridge.snapshot().catch(() => {});
@@ -392,7 +392,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       // vitals but NO identity (rendered as a pid-0 `?`/idle ghost in monitor /
       // statusline). Seeding synchronously guarantees the identity exists before
       // any updateState runs, so every later read preserves it.
-      const statePath = join(attemptDir, "afk.state.toon");
+      const statePath = workerStatePath(attemptDir);
       const startedAt = new Date().toISOString();
       try {
         initStateSync(statePath, {

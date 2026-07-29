@@ -6,7 +6,7 @@ import { parseHistoryLines, requeueOrdinal } from "../../core/history.js";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { initStateSync, writeIdentitySync } from "../../core/state.js";
+import { initStateSync, workerStatePath, writeIdentitySync } from "../../core/state.js";
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
 import type { LocMemo } from "../../core/loc-memo.js";
 import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
@@ -32,7 +32,7 @@ export interface BootWorkerStateInput {
  */
 export async function initBootWorkerState(input: BootWorkerStateInput): Promise<string> {
   const attemptDir = join(workerDirPath(input.tmpDir, input.workerId), "boot");
-  const statePath = join(attemptDir, "afk.state.toon");
+  const statePath = workerStatePath(attemptDir);
   const nowMs = input.nowMs ?? (() => Date.now());
   const startedAt = new Date(nowMs()).toISOString();
   initStateSync(statePath, {

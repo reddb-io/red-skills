@@ -11,6 +11,19 @@ export function defaultState(): AfkState {
 }
 
 /**
+ * Filename of the Worker state document inside a Worker workspace. Named ONCE
+ * here so no consumer re-spells it: the document is TOON on disk (written by
+ * {@link writeStateAtomic} / {@link initStateSync} through the TOON encoder,
+ * never a JSON serializer) and read back through the sniffing decoder.
+ */
+export const WORKER_STATE_FILENAME = "afk.state.toon";
+
+/** Path of the Worker state document inside a Worker workspace dir. */
+export function workerStatePath(workspaceDir: string): string {
+  return join(workspaceDir, WORKER_STATE_FILENAME);
+}
+
+/**
  * The write-once identity sidecar filename in an attempt dir (issue #1219). The
  * filename is retained across the TOON migration (wave-1 in-place convention):
  * the content flips from raw JSON to TOON but the `.json` name stays, and the

@@ -4,7 +4,7 @@ import type { CastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridg
 import type { ConfigValues } from "../../core/config.js";
 import { getConfig } from "../../core/config.js";
 import type { LaneIdleStallConfig } from "../../core/lane-idle-reaper.js";
-import { updateState } from "../../core/state.js";
+import { updateState, workerStatePath } from "../../core/state.js";
 import {
   prepareImplementerEnvironment,
   type ImplementerPluginRoots,
@@ -82,7 +82,7 @@ export function makeImplementerRunAgent(
           environment.recordRunnerStartup(
             Math.max(0, Math.round(performance.now() - launchStarted)),
           );
-          void updateState(join(attemptDir, "afk.state.toon"), {
+          void updateState(workerStatePath(attemptDir), {
             "current.implementer_runner_startup_before_ms":
               environment.metrics.runner_startup_ms.before,
             "current.implementer_runner_startup_after_ms":

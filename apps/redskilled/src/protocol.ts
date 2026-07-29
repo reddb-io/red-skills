@@ -8,12 +8,16 @@
  * semantics, and an op that needed to know what a Ticket or a Gate is would
  * belong to the per-project bundle instead.
  *
- * This slice ships the two ops a daemon needs to be *reachable and honest about
- * its own life*: `ping` and `host-state`. Worker birth arrives later and widens
- * this union; nothing here presumes its shape.
+ * `ping` and `host-state` make the daemon reachable and honest about its own
+ * life. `worker-start` is the one op that changes the machine, and it stays
+ * inside rule 3 by taking the whole launch as data: an argv, a placement target,
+ * a budget, and two opaque strings — a project label and a workspace path. There
+ * is no repository, ticket or runner in this contract, so there is nothing here
+ * for a version-skewed client to disagree with the daemon about.
  */
 import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
-import type { RedskilledHostState } from "./host-state.js";
+import { isRedskilledWorkerView, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
+import type { RedskilledWorkerSpec } from "./worker-launch.js";
 
 /** The wire version. A daemon states it; a client that cannot read it must not proceed. */
 export const REDSKILLED_PROTOCOL_VERSION = 1;
@@ -21,6 +25,7 @@ export const REDSKILLED_PROTOCOL_VERSION = 1;
 export type RedskilledRequest =
   | { id: string; op: "ping" }
   | { id: string; op: "host-state" }
+  | { id: string; op: "worker-start"; spec: RedskilledWorkerSpec }
   | { id: string; op: "shutdown" };
 
 export type RedskilledResponse =
@@ -32,6 +37,24 @@ export interface RedskilledPong {
   readonly protocol_version: number;
   readonly daemon_version: string;
   readonly pid: number;
+}
+
+/**
+ * The answer to `worker-start`.
+ *
+ * `warnings` is part of the success reply, not an error channel: a Worker that
+ * started without isolation is running and is a downgrade at the same time, and
+ * collapsing that into ok/failed would lose whichever half the reader needed.
+ */
+export interface RedskilledWorkerStarted {
+  readonly worker: RedskilledWorkerView;
+  readonly warnings: readonly string[];
+}
+
+export function isRedskilledWorkerStarted(value: unknown): value is RedskilledWorkerStarted {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const started = value as Record<string, unknown>;
+  return Array.isArray(started.warnings) && isRedskilledWorkerView(started.worker);
 }
 
 export interface RedskilledClientOptions {
@@ -56,4 +79,4 @@ export function isRedskilledPong(value: unknown): value is RedskilledPong {
     Number.isInteger(pong.pid);
 }
 
-export type { RedskilledHostState };
+export type { RedskilledHostState, RedskilledWorkerView, RedskilledWorkerSpec };
