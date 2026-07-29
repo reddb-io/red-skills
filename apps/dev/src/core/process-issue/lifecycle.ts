@@ -150,6 +150,8 @@ import {
   totalReseedSpend,
   withGateSubCap,
 } from "./reseed-budget.js";
+import type { ReseedTrail, ReseedTrailRound } from "./reseed-trail.js";
+import { createReseedTrail } from "./reseed-trail.js";
 import type { ReseedOutstanding, ReseedSectionTag } from "./reseed-handoff.js";
 import {
   EMPTY_RESEED_OUTSTANDING,
@@ -677,6 +679,39 @@ export async function processIssue(
    * history line's repeat count and the tier escalation both key off. */
   const roundSignature = (sidecar: readonly string[] | undefined): string =>
     failureSignature({ sidecar, findings: reseedOutstanding.review?.findings ?? [] });
+  /** The trail's two derived surfaces (#2731), built on the FIRST Re-seed and
+   * not before: an attempt that never re-seeds opens no pull request and posts
+   * no comment, which is the whole point of minting the draft lazily. The build
+   * is deferred to first use so it pins the branch the agent actually ran on. */
+  let trail: ReseedTrail | undefined;
+  const publishReseedTrail = async (round: ReseedTrailRound): Promise<void> => {
+    trail ??= createReseedTrail(
+      {
+        gh: deps.reseedTrailGh,
+        mergeExec: deps.mergeExec,
+        remoteGit: deps.remoteGit,
+        appendIterLog: deps.appendIterLog,
+        recordWorkerEvent: deps.recordWorkerEvent,
+      },
+      {
+        issue,
+        repo: input.repo,
+        repoDir: input.repoDir,
+        branch: workerBranch,
+        base,
+        title: input.title,
+        lane: reseedLane,
+        ceiling: reseedBudget.ceiling,
+      },
+    );
+    // Best-effort by contract: the Attempt record already holds the round, so a
+    // forge that refuses a projection must never fail the Re-seed itself.
+    try {
+      await trail.publish(round);
+    } catch {
+      // observability only.
+    }
+  };
   /** The single Re-seed request path. Every caller that re-instructs the
    * implementer IN PLACE — same Worker, same Worktree, same branch — comes
    * through here: it checks the ceiling and the cause's sub-cap or reservation,
@@ -711,16 +746,19 @@ export async function processIssue(
       req.signature ?? roundSignature(req.sidecar),
     );
     const gateSpend = reseedSpend.gate ?? 0;
+    /** The round's one-line account. It reaches the iteration log AND the trail's
+     * two projections, so the surfaces cannot disagree about what the round was
+     * asked to fix. */
+    let note: string;
     if (req.trigger === "review-finding") {
       const reviewSpend = reseedSpend.review ?? 0;
       currentHandoff = composeReseed(
         "adversarial-review-correction",
         reviewReseedDirectives({ retry: reviewSpend, cap: reseedBudget.subCaps.review }),
       );
-      deps.appendIterLog(
+      note =
         `🤖 ${reseedLane}: adversarial review found blocking issue(s); ` +
-          `correction retry ${reviewSpend}/${reseedBudget.subCaps.review}.`,
-      );
+        `correction retry ${reviewSpend}/${reseedBudget.subCaps.review}.`;
     } else if (req.trigger === "tier-escalation") {
       currentHandoff = composeReseed(
         "tier-escalation",
@@ -732,23 +770,22 @@ export async function processIssue(
         }),
         req.tiers?.to,
       );
-      deps.appendIterLog(
+      note =
         `🤖 ${reseedLane}: ${req.tiers?.from ?? ""}-tier feedback failed for #${issue}; ` +
-          `re-seeding on the ${req.tiers?.to ?? ""} tier before terminal validation routing.`,
-      );
+        `re-seeding on the ${req.tiers?.to ?? ""} tier before terminal validation routing.`;
     } else {
       currentHandoff = composeReseed(
         isGoLane ? "go-machine-gate-retry" : "afk-gate-correction",
         gateReseedDirectives({ gate, retry: gateSpend, cap: gateSubCap, drift }),
       );
-      deps.appendIterLog(
-        drift
-          ? `🤖 ${reseedLane}: ${gate} machine gate failed after DONE, but ${attribution?.reason}; ` +
-            `granting a free stale-base correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
-            `budget untouched at ${gateSpend}/${gateSubCap}.`
-          : `🤖 ${reseedLane}: ${gate} machine gate failed after DONE; correction retry ${gateSpend}/${gateSubCap}.`,
-      );
+      note = drift
+        ? `🤖 ${reseedLane}: ${gate} machine gate failed after DONE, but ${attribution?.reason}; ` +
+          `granting a free stale-base correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
+          `budget untouched at ${gateSpend}/${gateSubCap}.`
+        : `🤖 ${reseedLane}: ${gate} machine gate failed after DONE; correction retry ${gateSpend}/${gateSubCap}.`;
     }
+    deps.appendIterLog(note);
+    await publishReseedTrail({ round: reseedRound, trigger: req.trigger, cause, note });
     deps.recordWorkerEvent?.("worker.reseeded", {
       trigger: req.trigger,
       cause,
