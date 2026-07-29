@@ -305,8 +305,8 @@ export function buildProcessDeps({
     adversarialReview,
     extractAdversarialReview,
     goVerifyRetries,
-    stallConvergenceBudget: (() => {
-      const raw = getConfig(config, "afk.stallConvergenceBudget");
+    reseedGateBudget: (() => {
+      const raw = getConfig(config, "dev.reseed.afk.gate_budget");
       const parsed = raw === undefined ? NaN : Number(raw);
       return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
     })(),
