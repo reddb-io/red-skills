@@ -18,7 +18,9 @@ import {
   resolveCiTimeoutSeconds,
   DEFAULT_MERGE_CI_TIMEOUT_S,
   rootDevConfigCollisionsFromText,
+  SANCTIONED_ROOT_CONFIG_KEYS,
 } from "../src/core/config.js";
+import { PROJECT_NAME_CONFIG_KEY } from "@reddb-io/shared/project-identity.js";
 import {
   aggregateAdversarialReviewFindings,
   decideAdversarialReview,
@@ -150,6 +152,40 @@ describe("config — retired-key tombstone (ADR 0117)", () => {
     for (const key of DELETED_CONFIG_KEYS) {
       expect(Object.prototype.hasOwnProperty.call(CONFIG_DEFAULTS, key)).toBe(false);
     }
+  });
+});
+
+describe("config — sanctioned root keys", () => {
+  const OPT_IN = "plugins:\n  dev:\n    enabled: true\n";
+
+  it("`project.name` at the root is sanctioned — no off-contract warning", () => {
+    const warnings: string[] = [];
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () => `project:\n  name: Red Skills\n${OPT_IN}`,
+      warn: (m) => warnings.push(m),
+    });
+    expect(audit.rootAccessorCollisions).toEqual([]);
+    expect(warnings.join("\n")).not.toContain("off-contract");
+    expect(getConfig(audit.values, "project.name")).toBe("Red Skills");
+  });
+
+  it("an unsanctioned root key is still off-contract", () => {
+    const warnings: string[] = [];
+    const audit = auditConfigLoad("/x/.red/config.yaml", {
+      read: () => `dev:\n  trunk: main\n${OPT_IN}`,
+      warn: (m) => warnings.push(m),
+    });
+    expect(audit.rootAccessorCollisions.map((c) => c.key)).toEqual(["dev.trunk"]);
+    expect(warnings.join("\n")).toContain("off-contract");
+  });
+
+  it("the sanction is per-key, not per-namespace — `project.other` is not sanctioned into existence", () => {
+    expect(SANCTIONED_ROOT_CONFIG_KEYS.has("project.name")).toBe(true);
+    expect(SANCTIONED_ROOT_CONFIG_KEYS.has("project.other")).toBe(false);
+  });
+
+  it("the sanctioned key matches the shared reader's key", () => {
+    expect(SANCTIONED_ROOT_CONFIG_KEYS.has(PROJECT_NAME_CONFIG_KEY)).toBe(true);
   });
 });
 
