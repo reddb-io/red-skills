@@ -19,45 +19,32 @@ const SURFACE: ReadonlyArray<{
   schema: string[];
 }> = [
   {
-    name: "fleet_list",
-    title: "List AFK fleets",
-    description: "List every registered named AFK fleet profile.",
-    schema: [],
-  },
-  {
-    name: "fleet_status",
-    title: "Get AFK fleet status",
+    name: "project_status",
+    title: "Get project worker status",
     description:
-      "Return structured supervisor, slots, churn, and live-worker status for a named fleet.",
+      "Return structured supervisor, slots, churn, and live-worker status for this project.",
     schema: ["fleet"],
   },
   {
-    name: "fleet_create",
-    title: "Create AFK fleet",
+    name: "project_start",
+    title: "Start this project's workers",
     description:
-      "MUTATING: persist a named fleet profile and spawn its supervisor.",
-    schema: ["name", "runner", "target", "selector", "config", "base"],
+      "MUTATING: start this project's demand producer with a runner, a target width, and its work policy.",
+    schema: ["runner", "target", "selector", "config", "base", "fleet"],
   },
   {
-    name: "fleet_edit",
-    title: "Edit AFK fleet",
+    name: "project_resize",
+    title: "Re-aim this project's workers",
     description:
-      "MUTATING: update a named fleet profile and send a live resize directive when requested.",
-    schema: ["name", "runner", "target", "selector", "config", "base"],
+      "MUTATING: change this project's target width, runner, or work policy and send the live directive.",
+    schema: ["runner", "target", "selector", "config", "base", "fleet"],
   },
   {
-    name: "fleet_stop",
-    title: "Stop AFK fleet",
+    name: "project_stop",
+    title: "Stop this project's workers",
     description:
-      "MUTATING: gracefully stop one named fleet; force hard teardown explicitly.",
-    schema: ["fleet", "force"],
-  },
-  {
-    name: "fleet_register",
-    title: "Adopt AFK fleet",
-    description:
-      "MUTATING: persist a profile for an already-running supervisor without restarting it.",
-    schema: ["name", "runner", "selector", "config", "base"],
+      "MUTATING: gracefully stop this project's supervisor; force hard teardown explicitly.",
+    schema: ["force", "fleet"],
   },
   {
     name: "logs",
@@ -84,7 +71,7 @@ const SURFACE: ReadonlyArray<{
     name: "monitor",
     title: "Read AFK monitor",
     description:
-      "Return the current workers, history events, and fleet monitor inputs.",
+      "Return the current workers, history events, and monitor inputs.",
     schema: [],
   },
   {
@@ -98,7 +85,7 @@ const SURFACE: ReadonlyArray<{
     name: "queue_status",
     title: "Read AFK queues",
     description:
-      "Return ready-for-agent and ready-for-human queue candidates. Pass `selector` to preview one fleet's scoped view of the ready queue (same facets as fleet selectors, e.g. tags/user).",
+      "Return ready-for-agent and ready-for-human queue candidates. Pass `selector` to preview the producer's scoped view of the ready queue (same facets as its work selector, e.g. tags/user).",
     schema: ["selector"],
   },
   {

@@ -54,8 +54,7 @@ export const heartbeatObservationSchema = z.object({
 
 export type HeartbeatObservationOutput = z.infer<typeof heartbeatObservationSchema>;
 
-export const fleetStatusOutputSchema = z.object({
-  fleet: z.string(),
+export const projectStatusOutputSchema = z.object({
   supervisor: z.object({
     pid: z.number(),
     alive: z.boolean(),
@@ -111,9 +110,9 @@ export const fleetStatusOutputSchema = z.object({
     }),
   ),
   /**
-   * Live workers this fleet does not own — a worker whose recorded fleet name
-   * differs, so a stale or foreign process is never silently counted as ours.
-   * `fleet` is null when the worker recorded no fleet name at all.
+   * Live workers this project's supervisor does not own — a process whose pid
+   * is absent from the supervisor's slot map, so a stale or foreign worker is
+   * never silently counted as ours.
    */
   unattributed_workers: z.array(
     z.object({
@@ -122,12 +121,11 @@ export const fleetStatusOutputSchema = z.object({
       issue: z.string(),
       activity: z.string(),
       origin: z.string(),
-      fleet: z.string().nullable(),
     }),
   ),
 });
 
-export type FleetStatusOutput = z.infer<typeof fleetStatusOutputSchema>;
+export type ProjectStatusOutput = z.infer<typeof projectStatusOutputSchema>;
 
 // ---------------------------------------------------------------------------
 // worker_vitals
@@ -361,7 +359,7 @@ export type FederatedFleetViewOutput = z.infer<
 // declaration + enforcement
 // ---------------------------------------------------------------------------
 
-export const fleetStatusContract = contract(fleetStatusOutputSchema);
+export const projectStatusContract = contract(projectStatusOutputSchema);
 export const federatedFleetViewContract = contract(federatedFleetViewOutputSchema);
 export const workerVitalsContract = contract(workerVitalsOutputSchema, {
   input: "fields",

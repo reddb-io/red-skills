@@ -6,7 +6,7 @@
  * heartbeat every tick. Before this fix the launch path maintained the lock and
  * every management read trusted ONLY the lock, so a ticking fleet whose lock was
  * missing read back as `pid 0 / alive false / health absent` while the same
- * response carried a 13-second-old heartbeat and two busy slots, and `fleet_stop`
+ * response carried a 13-second-old heartbeat and two busy slots, and `project_stop`
  * answered `status: none` on a fleet it could see working.
  *
  * These tests pin the reconciliation: every management reader resolves the
@@ -232,16 +232,14 @@ describe("supervisor identity anchors (#2698)", () => {
   });
 });
 
-describe("fleet_status coherence (#2698)", () => {
+describe("project_status coherence (#2698)", () => {
   it("never reports alive:false alongside a fresh heartbeat and busy slots", async () => {
     const root = scratch();
     try {
       // The exact reported lane: ticking heartbeat, two busy slots, no pid file.
       lane(root, fleetSnapshot({ ageS: 13, slotsBusy: 2 }));
 
-      const status = (await createCastleMcpDependencies(root).fleetStatus({
-        name: "default",
-      })) as {
+      const status = (await createCastleMcpDependencies(root).projectStatus()) as {
         supervisor: {
           pid: number;
           alive: boolean;
@@ -270,9 +268,7 @@ describe("fleet_status coherence (#2698)", () => {
     try {
       lane(root, fleetSnapshot({ pid: DEAD_PID }));
 
-      const status = (await createCastleMcpDependencies(root).fleetStatus({
-        name: "default",
-      })) as { supervisor: { pid: number; alive: boolean; health: string; identity_anchor: string } };
+      const status = (await createCastleMcpDependencies(root).projectStatus()) as { supervisor: { pid: number; alive: boolean; health: string; identity_anchor: string } };
 
       expect(status.supervisor.alive).toBe(false);
       expect(status.supervisor.pid).toBe(0);
@@ -284,13 +280,13 @@ describe("fleet_status coherence (#2698)", () => {
   });
 });
 
-describe("fleet_stop on a snapshot-anchored fleet (#2698)", () => {
+describe("project_stop on a snapshot-anchored fleet (#2698)", () => {
   it("signals the live supervisor and reports the pid it stopped", async () => {
     const root = scratch();
     try {
       const paths = lane(root, fleetSnapshot());
 
-      const result = await stopFleet(root, sink(), "default", { force: true });
+      const result = await stopFleet(root, sink(), { force: true });
 
       expect(result).toMatchObject({ status: "stopped", pid: LIVE_PID });
       expect(existsSync(paths.supervisorStopPath)).toBe(false);

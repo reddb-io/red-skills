@@ -19,7 +19,7 @@ const settings = { enabled: true, memoryHigh: "70%" };
 
 function plan(overrides: Partial<Parameters<typeof planFleetScope>[0]> = {}) {
   return planFleetScope({
-    fleet: "default",
+    label: "default",
     command: "/usr/bin/node",
     args: ["dev.bundle.min.mjs", "__supervise", "--fleet", "default"],
     settings,
@@ -89,8 +89,8 @@ describe("planFleetScope", () => {
   });
 
   it("derives the scope name from the fleet name, so two named fleets get two scopes", () => {
-    const a = plan({ fleet: "default" });
-    const b = plan({ fleet: "nightly" });
+    const a = plan({ label: "default" });
+    const b = plan({ label: "nightly" });
 
     expect(a.unit).not.toBe(b.unit);
     expect(a.unit).toContain("red-fleet-default");

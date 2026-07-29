@@ -6,17 +6,16 @@ import {
 import {
   CASTLE_MCP_CONTRACT_VERSION,
   applyOutputContracts,
-  fleetStatusOutputSchema,
+  projectStatusOutputSchema,
   monitorOutputSchema,
   queueStatusOutputSchema,
   workerVitalsContract,
   workerVitalsOutputSchema,
-  type FleetStatusOutput,
+  type ProjectStatusOutput,
 } from "./contracts.js";
 import type { CastleMcpTool } from "./tool.js";
 
-const FLEET_STATUS: FleetStatusOutput = {
-  fleet: "default",
+const PROJECT_STATUS: ProjectStatusOutput = {
   supervisor: {
     pid: 42,
     alive: true,
@@ -37,35 +36,20 @@ const FLEET_STATUS: FleetStatusOutput = {
     { id: "worker-1", pid: 43, issue: "2305", activity: "impl", origin: "afk" },
   ],
   unattributed_workers: [
-    {
-      id: "worker-2",
-      pid: 44,
-      issue: "2306",
-      activity: "impl",
-      origin: "afk",
-      fleet: "other",
-    },
-    // A worker that recorded no fleet name at all — exercises the nullable arm.
-    {
-      id: "worker-3",
-      pid: 45,
-      issue: "2307",
-      activity: "review",
-      origin: "go",
-      fleet: null,
-    },
+    { id: "worker-2", pid: 44, issue: "2306", activity: "impl", origin: "afk" },
+    { id: "worker-3", pid: 45, issue: "2307", activity: "review", origin: "go" },
   ],
 };
 
 function tool(output: unknown): CastleMcpTool {
   return {
-    name: "fleet_status",
-    title: "Get AFK fleet status",
+    name: "project_status",
+    title: "Get project worker status",
     description: "…",
     inputSchema: {},
     outputContract: {
       version: CASTLE_MCP_CONTRACT_VERSION,
-      schema: fleetStatusOutputSchema,
+      schema: projectStatusOutputSchema,
     },
     invoke: async () => output,
   };
@@ -75,7 +59,7 @@ describe("observability output contracts", () => {
   it("declares a versioned contract on every observability tool", () => {
     const tools = createCastleMcpTools({} as CastleMcpDependencies);
     const contracted = [
-      "fleet_status",
+      "project_status",
       "worker_vitals",
       "monitor",
       "queue_status",
@@ -89,7 +73,7 @@ describe("observability output contracts", () => {
   });
 
   it("passes a conforming payload through byte-identically", async () => {
-    const withExtra = { ...FLEET_STATUS, experimental_note: "additive" };
+    const withExtra = { ...PROJECT_STATUS, experimental_note: "additive" };
     const [wrapped] = applyOutputContracts([tool(withExtra)]);
 
     // Unknown keys survive: validation is enforcement, never serialization.
@@ -98,13 +82,13 @@ describe("observability output contracts", () => {
 
   it("turns shape drift into a named, located error", async () => {
     const drifted = {
-      ...FLEET_STATUS,
-      slots: { ...FLEET_STATUS.slots, total: "2" },
+      ...PROJECT_STATUS,
+      slots: { ...PROJECT_STATUS.slots, total: "2" },
     };
     const [wrapped] = applyOutputContracts([tool(drifted)]);
 
     await expect(wrapped!.invoke({})).rejects.toThrow(
-      /fleet_status output violates contract 1\.0\.0: slots\.total/,
+      /project_status output violates contract 1\.0\.0: slots\.total/,
     );
   });
 
@@ -161,7 +145,7 @@ describe("observability output contracts", () => {
 
   it("validates the observability payloads a live tool call returns", async () => {
     const deps = {
-      fleetStatus: vi.fn(async () => FLEET_STATUS),
+      projectStatus: vi.fn(async () => PROJECT_STATUS),
       workerVitals: vi.fn(async () => []),
       monitor: vi.fn(async () => ({ workers: [], events: [], fleet: null })),
       queueStatus: vi.fn(async () => ({
@@ -177,7 +161,7 @@ describe("observability output contracts", () => {
       tools.find((t) => t.name === name)!.invoke({});
 
     expect(
-      fleetStatusOutputSchema.safeParse(await invoke("fleet_status")).success,
+      projectStatusOutputSchema.safeParse(await invoke("project_status")).success,
     ).toBe(true);
     expect(
       workerVitalsOutputSchema.safeParse(await invoke("worker_vitals")).success,

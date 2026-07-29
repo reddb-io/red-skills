@@ -36,7 +36,6 @@ async function walk(variant: CanaryLaneVariant, workerDeadlineMs = 20_000) {
   });
   try {
     const result = await runMcpLaneCanary(transport, {
-      fleet: "canary",
       runner: "claude",
       target: 1,
       workerDeadlineMs,
@@ -69,7 +68,7 @@ describe("MCP lane canary over the real transport", () => {
         "ok",
         "ok",
       ]);
-      // Not "fleet_create returned a pid" — an actual worker directory holding
+      // Not "project_start returned a pid" — an actual worker directory holding
       // an actual live pid, which is the thing #2677's dead slots never wrote.
       expect(result.workers.length).toBeGreaterThan(0);
       const worker = result.workers[0]!;
@@ -98,7 +97,7 @@ describe("MCP lane canary over the real transport", () => {
       // #2677 survived unnoticed, and exactly what the canary must name.
       const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
       expect(byStep.get("connect")).toBe("ok");
-      expect(byStep.get("fleet_create")).toBe("ok");
+      expect(byStep.get("project_start")).toBe("ok");
       expect(byStep.get("supervisor_live")).toBe("ok");
       expect(byStep.get("worker_spawn")).toBe("inert");
       expect(result.workers).toHaveLength(0);
@@ -108,7 +107,7 @@ describe("MCP lane canary over the real transport", () => {
       expect(stderr).not.toContain("secret");
       // An inert lane is still torn down: the canary never leaves the fleet it
       // created running just because it failed.
-      expect(result.steps.find((step) => step.step === "fleet_stop")?.verdict).toBe("ok");
+      expect(result.steps.find((step) => step.step === "project_stop")?.verdict).toBe("ok");
       expect(isLive(result.supervisorPid!)).toBe(false);
     },
     TIMEOUT,
@@ -145,8 +144,6 @@ describe("the shipped castle-mcp bundle carries the canary", () => {
           sandbox.mcpEntry,
           "--root",
           sandbox.root,
-          "--fleet",
-          "canary",
           "--worker-deadline-ms",
           "20000",
         ],

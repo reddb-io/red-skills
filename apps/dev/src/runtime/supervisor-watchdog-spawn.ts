@@ -26,14 +26,13 @@ async function readLiveWatchdogPid(pidPath: string, startPath: string): Promise<
 
 export interface SpawnSupervisorWatchdogOptions {
   root: string;
-  fleet?: string;
 }
 
-/** Arm exactly one detached watchdog for one repo-scoped fleet lane. */
+/** Arm exactly one detached watchdog for the project's supervisor lane. */
 export async function spawnSupervisorWatchdog(
   options: SpawnSupervisorWatchdogOptions,
 ): Promise<number | null> {
-  const paths = afkPaths(options.root, options.fleet);
+  const paths = afkPaths(options.root);
   mkdirSync(dirname(paths.supervisorWatchdogPidPath), { recursive: true });
   const existing = await readLiveWatchdogPid(
     paths.supervisorWatchdogPidPath,
@@ -43,7 +42,7 @@ export async function spawnSupervisorWatchdog(
 
   const child = spawn(
     process.execPath,
-    [resolveDevScriptPath(process.argv[1] ?? ""), "__watchdog", "--fleet", paths.fleet],
+    [resolveDevScriptPath(process.argv[1] ?? ""), "__watchdog"],
     {
       cwd: options.root,
       env: process.env,

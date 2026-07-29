@@ -1,10 +1,11 @@
 // fleet-launch-runner.test.ts — the launch runner cascade (#2545).
 //
 // A fresh `fleet N` launch must honor, in order: the explicit --runner flag,
-// the operator's RED_AFK_RUNNER env AT THIS LAUNCH, and only then the
-// registered profile. The 2026-07-23 trap: kill the codex fleet, relaunch with
-// RED_AFK_RUNNER=claude, and the supervisor resumed codex from the stale
-// fleets.toonl profile because the profile was fed to detectRunner as the flag.
+// the operator's RED_AFK_RUNNER env AT THIS LAUNCH, and only then a runner
+// remembered from elsewhere. The 2026-07-23 trap: kill the codex fleet, relaunch
+// with RED_AFK_RUNNER=claude, and the supervisor resumed codex from a remembered
+// profile because that profile was fed to detectRunner as the flag. The registry
+// that supplied it is gone (ADR 0130); the cascade order is what this pins.
 
 import { describe, expect, it } from "vitest";
 import { resolveLaunchRunnerPin } from "../src/commands/fleet.js";

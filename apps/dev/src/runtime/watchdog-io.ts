@@ -26,9 +26,8 @@ import { appendRecordToonl } from "../core/jsonl-log.js";
 import {
   castleStateSnapshotPath,
   createEnginePaths,
-  fleetRegistryPath,
+  PROJECT_SUPERVISOR_LANE,
   readCastleStateSnapshot,
-  readFleetProfile,
 } from "@reddb-io/red-castle/engine";
 // The wait-and-escalate killer (SIGTERM → grace → SIGKILL → confirm) is shared
 // with the fleet reaper and `fleet stop` (#580). It matters for recovery
@@ -72,9 +71,8 @@ async function fileExists(path: string): Promise<boolean> {
 export function buildWatchdogIO(
   root: string,
   stdout: NodeJS.WritableStream = process.stdout,
-  fleet?: string,
 ): WatchdogIO {
-  const paths = afkPaths(root, fleet);
+  const paths = afkPaths(root);
   const pidFile = paths.supervisorPidPath;
   const pidStartFile = paths.supervisorPidStartPath;
   const stopFile = paths.supervisorStopPath;
@@ -132,9 +130,7 @@ export function buildWatchdogIO(
         pid !== null && isSupervisorIdentityLive({ pid, startTime }, isLivePid, readPidStartTime);
       const discovered = pinned
         ? null
-        : await discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid, {
-            fleet: paths.fleet,
-          });
+        : await discoverLiveSupervisorPid(paths.supervisorRuntimeDir, isLivePid);
       return {
         pid: pinned ? pid : (discovered?.pid ?? pid),
         pidAlive: pinned || discovered !== null,
@@ -151,8 +147,8 @@ export function buildWatchdogIO(
     killWorkers: async (): Promise<{ killed: number; survivors: number[] }> => {
       // Workers are spawned detached (nohup'd) so they are NOT children of the
       // supervisor — killTree misses them. A hard teardown may kill only workers
-      // whose castle snapshot attributes them to this named fleet; another
-      // fleet's workers and unstamped standalone workers are never collateral.
+      // whose castle snapshot attributes them to this project's supervisor lane;
+      // unstamped standalone workers are never collateral.
       let workerDirs: string[];
       try {
         workerDirs = await readdir(paths.workersRoot);
@@ -167,7 +163,7 @@ export function buildWatchdogIO(
           const snapshot = await readCastleStateSnapshot(
             castleStateSnapshotPath(enginePaths, "worker", workerDir),
           );
-          if (snapshot?.supervisor_id !== paths.fleet) continue;
+          if (snapshot?.supervisor_id !== PROJECT_SUPERVISOR_LANE) continue;
           const raw = (await readFile(pidPath, "utf8")).trim();
           if (!/^[1-9][0-9]*$/.test(raw)) continue;
           const workerPid = Number(raw);
@@ -241,17 +237,11 @@ export function buildWatchdogIO(
           processTree: callerProcessTreeNative(),
           scriptPath: process.argv[1],
         }).runner;
-      const profile = await readFleetProfile(
-        fleetRegistryPath(enginePaths),
-        paths.fleet,
-      ).catch(() => undefined);
       const spawnedPid = await spawnSupervisor({
         root,
         target: lastTarget,
         runner,
-        base: profile?.base,
         adoptSlotPids: lastSlotPids,
-        fleet: paths.fleet,
       });
       if (spawnedPid === null) return false;
       const identity = await readSupervisorIdentity(pidFile, pidStartFile);

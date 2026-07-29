@@ -55,8 +55,6 @@ import type {
   LivenessVerdict,
   FakeIo,
 } from "./supervisor-test-helpers.js";
-import type { FleetHookContext, FleetHookDispatchResult } from "../src/core/fleet-hook-dispatcher.js";
-import type { FleetHookName } from "../src/core/fleet-hook-config.js";
 
 describe("validateStallThresholds", () => {
   it("passes when KILL > STALL", () => {
@@ -802,14 +800,7 @@ describe("pollStallDetector reaper gating", () => {
     // The ceiling is its own deadline: the attempt already spent its budget, so
     // the reaper must not wait out a second, silence-shaped countdown it would
     // never accumulate behind a fresh lane. The kill still goes through
-    // decideReaperSignal + the on_stall_reap gate.
-    const dispatchFleetHook = vi.fn(
-      async (_name: FleetHookName, _context: FleetHookContext): Promise<FleetHookDispatchResult> => ({
-        aborted: false,
-        vetoed: false,
-        executions: [],
-      }),
-    );
+    // decideReaperSignal.
     const { deps, io } = makeDeps({
       workerLivenessVerdict: vi.fn((): LivenessVerdict => wallClockVerdict(3_000)),
       inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
@@ -827,7 +818,6 @@ describe("pollStallDetector reaper gating", () => {
       ),
       attemptBranchHead: vi.fn(async () => "aaa111"),
     });
-    deps.dispatchFleetHook = dispatchFleetHook;
     // Never previously flagged: the ceiling fires on first detection.
     const state = initSupervisorState(1);
     const slot = state.slots[0]!;
@@ -838,30 +828,6 @@ describe("pollStallDetector reaper gating", () => {
 
     expect(reaped).toEqual([0]);
     expect(io.killTree).toHaveBeenCalledWith(4242);
-    expect(dispatchFleetHook.mock.calls.map((call) => call[0])).toContain("on_stall_reap");
-  });
-
-  it("honours an on_stall_reap veto for a wall-clock-exceeded slot (#2286)", async () => {
-    const { deps, io } = makeDeps({
-      workerLivenessVerdict: vi.fn((): LivenessVerdict => wallClockVerdict(3_000)),
-      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => [{ command: "node", cpu: 0 }]),
-    });
-    deps.dispatchFleetHook = vi.fn(
-      async (name: FleetHookName, _context: FleetHookContext): Promise<FleetHookDispatchResult> => ({
-        aborted: false,
-        vetoed: name === "on_stall_reap",
-        executions: [],
-      }),
-    );
-    const state = initSupervisorState(1);
-    const slot = state.slots[0]!;
-    slot.pid = 4242;
-    slot.spawnEpoch = NOW - 3_000;
-
-    const reaped = await pollStallDetector(state, deps, config());
-
-    expect(reaped).toEqual([]);
-    expect(io.killTree).not.toHaveBeenCalled();
   });
 
   it("retries a genuinely-stalled slot UNDER the cap (kill + envelope + CLEAN re-queue)", async () => {

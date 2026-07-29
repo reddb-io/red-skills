@@ -5,7 +5,7 @@ import { GO_KIND, GO_ORIGIN } from "../../core/go.js";
 import { SCOUT_ORIGIN, SCOUT_WORKERS_SEGMENT } from "../../core/scout.js";
 import { readFile } from "node:fs/promises";
 import { isLivePid } from "../../runtime/kill-tree.js";
-import { parseFleetSelector } from "@reddb-io/red-castle/engine";
+import { parseWorkSelector } from "@reddb-io/red-castle/engine";
 
 export interface RunOptions {
   args: string[];
@@ -206,7 +206,7 @@ function coerceSelectorFilter(raw: string): SelectionFilter {
     throw new RunFlagError(`--selector requires a JSON object (got: ${JSON.stringify(raw)})`);
   }
   try {
-    return { kind: "selector", selector: parseFleetSelector(parsed) };
+    return { kind: "selector", selector: parseWorkSelector(parsed) };
   } catch (err) {
     throw new RunFlagError(`--selector is invalid: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -252,7 +252,7 @@ function foldTerritoryFacets(
   if (tags !== undefined) base.tags = tags;
   if (user !== undefined) base.user = user;
   try {
-    return { kind: "selector", selector: parseFleetSelector(base) };
+    return { kind: "selector", selector: parseWorkSelector(base) };
   } catch (err) {
     throw new RunFlagError(`--tags/--user is invalid: ${err instanceof Error ? err.message : String(err)}`);
   }

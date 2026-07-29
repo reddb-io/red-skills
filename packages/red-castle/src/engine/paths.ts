@@ -13,6 +13,14 @@ export const CASTLE_WORKTREE_LANES = [
 
 export type CastleWorktreeLane = (typeof CASTLE_WORKTREE_LANES)[number];
 
+/**
+ * On-disk name of the project's single supervisor runtime lane. It reads as a
+ * plain constant rather than a parameter because a project has exactly one
+ * supervisor: the per-fleet lanes it once sat beside are gone (ADR 0130). The
+ * name is retained so a checkout written by an older bundle still reads.
+ */
+export const PROJECT_SUPERVISOR_LANE = "default";
+
 export interface EnginePaths {
   readonly redRoot: string;
   readonly stateRoot: string;
@@ -25,13 +33,15 @@ export interface EnginePaths {
    */
   readonly castleAttempts: string;
   readonly castleValidation: string;
-  /** Named-fleet profile registry (`name -> FleetProfile`). */
-  readonly castleFleets: string;
   readonly tmpRoot: string;
   readonly supervisorsRoot: string;
   readonly supervisor: (id: string) => string;
-  /** Runtime lane of ONE named fleet's supervisor. */
-  readonly fleet: (name: string) => string;
+  /**
+   * The project's ONE supervisor runtime lane. There is exactly one — never one
+   * per fleet (ADR 0130) — and it keeps the on-disk name it carried before named
+   * fleets existed, so an existing checkout still reads its own state.
+   */
+  readonly projectSupervisor: string;
   readonly workersRoot: string;
   readonly worker: (workerId: string) => string;
   /** Live-steer file for a running worker (`workers/<id>/steer.toon`). */
@@ -65,11 +75,10 @@ export function createEnginePaths(redRoot: string): EnginePaths {
     castleHistory: resolve(castleStateRoot, "history.toonl"),
     castleAttempts: resolve(castleStateRoot, "attempts.toonl"),
     castleValidation: resolve(castleStateRoot, "validation.toonl"),
-    castleFleets: resolve(castleStateRoot, "fleets.toonl"),
     tmpRoot,
     supervisorsRoot,
     supervisor: (id) => resolve(supervisorsRoot, id),
-    fleet: (name) => resolve(supervisorsRoot, name),
+    projectSupervisor: resolve(supervisorsRoot, PROJECT_SUPERVISOR_LANE),
     workersRoot,
     worker: (workerId) => resolve(workersRoot, workerId),
     workerSteerFile: (workerId) => resolve(workersRoot, workerId, "steer.toon"),

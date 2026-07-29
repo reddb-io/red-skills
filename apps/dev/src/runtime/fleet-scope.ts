@@ -93,12 +93,12 @@ export function detectFleetScopeProbes(
 }
 
 /**
- * Derive the transient unit name from the fleet name, so two named fleets get
+ * Derive the transient unit name from the project's scope label, so two projects get
  * two scopes. `salt` (the launcher pid) keeps a relaunch from colliding with the
  * previous launch's still-registered unit.
  */
-export function fleetScopeUnitName(fleet: string, salt: string | number): string {
-  const slug = (fleet || "default")
+export function fleetScopeUnitName(label: string, salt: string | number): string {
+  const slug = (label || "default")
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
@@ -107,7 +107,7 @@ export function fleetScopeUnitName(fleet: string, salt: string | number): string
 }
 
 export interface PlanFleetScopeOptions {
-  fleet: string;
+  label: string;
   command: string;
   args: readonly string[];
   settings: FleetScopeSettings;
@@ -137,7 +137,7 @@ export function planFleetScope(opts: PlanFleetScopeOptions): FleetScopePlan {
     return { ...direct, warning: "fleet cgroup isolation unavailable: no systemd --user session; the fleet shares the caller's cgroup and a memory-pressure kill will hit the whole session" };
   }
 
-  const unit = fleetScopeUnitName(opts.fleet, opts.salt);
+  const unit = fleetScopeUnitName(opts.label, opts.salt);
   const scopeArgs = [
     "--user",
     "--scope",

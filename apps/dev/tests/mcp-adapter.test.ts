@@ -9,9 +9,6 @@ import {
   appendCastleLaneRecord,
   castleLanePath,
   createEnginePaths,
-  fleetRegistryPath,
-  readFleetProfile,
-  upsertFleetProfile,
 } from "@reddb-io/red-castle/engine";
 import { afkPaths } from "../src/runtime/wire.js";
 import { recordBootError } from "../src/commands/run/state.js";
@@ -59,26 +56,6 @@ describe("castle MCP host adapter", () => {
   it("parks worker boot output in the dated logs lane", () => {
     const path = dispatchLogPath("/repo", "2026-07-21T19:18:38.920Z-abc12345");
     expect(path).toBe(join("/repo", ".red", "tmp", "logs", "2026-07-21", "dispatch-2026-07-21T19-18-38-920Z-abc12345.log"));
-  });
-
-  it("lists registered fleets through the Castle registry primitive", async () => {
-    const cwd = await root();
-    const paths = createEnginePaths(join(cwd, ".red"));
-    await upsertFleetProfile(fleetRegistryPath(paths), {
-      name: "codex",
-      runner: "codex",
-      selector: { spec: 2303 },
-    });
-
-    await expect(createCastleMcpDependencies(cwd).fleetList()).resolves.toEqual(
-      [
-        {
-          name: "codex",
-          runner: "codex",
-          selector: { spec: 2303 },
-        },
-      ],
-    );
   });
 
   it("returns raw CastleLaneRecord entries and rejects lane-root escapes", async () => {
@@ -484,48 +461,36 @@ describe("castle MCP host adapter", () => {
   });
 });
 
-describe("fleet_register — adopt a live unregistered fleet", () => {
-  it("persists the profile for a live fleet without touching the supervisor", async () => {
+describe("project lifecycle — one producer, no registry to adopt into", () => {
+  it("re-aims a live supervisor with a directive rather than a persisted profile", async () => {
     const cwd = await root();
     const paths = afkPaths(cwd);
     await mkdir(paths.supervisorRuntimeDir, { recursive: true });
     await writeFile(paths.supervisorPidPath, String(process.pid), "utf8");
     await writeFile(paths.supervisorPidStartPath, readPidStartTime(process.pid)!, "utf8");
 
-    const result = await createCastleMcpDependencies(cwd).fleetRegister({
-      runner: "claude",
-      selector: { spec: 2303 },
-    }) as Record<string, unknown>;
-
-    expect(result).toMatchObject({ status: "registered", pid: process.pid });
-    expect(result.profile).toMatchObject({ name: "default", runner: "claude", selector: { spec: 2303 } });
-
-    const profile = await readFleetProfile(
-      fleetRegistryPath(createEnginePaths(join(cwd, ".red"))),
-      "default",
-    );
-    expect(profile).toEqual({ name: "default", runner: "claude", selector: { spec: 2303 } });
+    await expect(
+      createCastleMcpDependencies(cwd).projectResize({ target: 3, runner: "codex" }),
+    ).resolves.toMatchObject({ status: "resized", directive: "written", target: 3 });
   });
 
-  it("refuses adoption when the fleet supervisor is not running", async () => {
+  it("refuses to re-aim a project whose workers are not running", async () => {
     const cwd = await root();
     await expect(
-      createCastleMcpDependencies(cwd).fleetRegister({ runner: "claude" }),
-    ).rejects.toThrow(/not running/);
+      createCastleMcpDependencies(cwd).projectResize({ target: 3 }),
+    ).rejects.toThrow(/no running workers/);
   });
 
-  it("fleet_edit works immediately after fleet_register persists the profile", async () => {
+  it("refuses to start a project whose workers are already running", async () => {
     const cwd = await root();
-    const paths = afkPaths(cwd, "alpha");
+    const paths = afkPaths(cwd);
     await mkdir(paths.supervisorRuntimeDir, { recursive: true });
     await writeFile(paths.supervisorPidPath, String(process.pid), "utf8");
     await writeFile(paths.supervisorPidStartPath, readPidStartTime(process.pid)!, "utf8");
 
-    const deps = createCastleMcpDependencies(cwd);
-    await deps.fleetRegister({ name: "alpha", runner: "claude" });
     await expect(
-      deps.fleetEdit({ name: "alpha", runner: "codex" }),
-    ).resolves.toMatchObject({ status: "edited" });
+      createCastleMcpDependencies(cwd).projectStart({ runner: "claude", target: 1 }),
+    ).rejects.toThrow(/already running/);
   });
 });
 

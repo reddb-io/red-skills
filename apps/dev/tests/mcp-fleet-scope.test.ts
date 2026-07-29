@@ -1,8 +1,8 @@
 // The MCP lane is the interface (ADR 0120), so cgroup isolation (#2697) cannot
-// live in a CLI wrapper: a fleet created through `fleet_create` has its
+// live in a CLI wrapper: a fleet created through `project_start` has its
 // supervisor spawned by the MCP SERVER process and would inherit *its* cgroup —
 // on a desktop host, the terminal emulator's scope, exactly like the CLI case.
-// These tests drive the real `fleetCreate` dependency (spawnSupervisor NOT
+// These tests drive the real `projectStart` dependency (spawnSupervisor NOT
 // mocked) and assert the launch argv, so both lanes are proven to share one
 // implementation.
 
@@ -69,8 +69,8 @@ async function scopedHost(config: string): Promise<string> {
  * start-time token so the pinned-pid probe resolves on its first poll instead
  * of burning the boot window.
  */
-function publishPidOnSpawn(root: string, fleet: string): void {
-  const paths = afkPaths(root, fleet);
+function publishPidOnSpawn(root: string): void {
+  const paths = afkPaths(root);
   spawn.mockImplementation(() => {
     writeFileSync(paths.supervisorPidPath, String(process.pid), "utf8");
     writeFileSync(paths.supervisorPidStartPath, readPidStartTime(process.pid) ?? "", "utf8");
@@ -78,16 +78,15 @@ function publishPidOnSpawn(root: string, fleet: string): void {
   });
 }
 
-describe("fleet_create cgroup isolation", () => {
+describe("project_start cgroup isolation", () => {
   it("spawns the MCP-created supervisor inside its own transient scope", async () => {
     const root = await scopedHost(
       "plugins:\n  dev:\n    enabled: true\n    afk:\n      fleet:\n        scope:\n          enabled: true\n          memory_high: 55%\n",
     );
-    publishPidOnSpawn(root, "mcplane");
+    publishPidOnSpawn(root);
 
     await expect(
-      createCastleMcpDependencies(root).fleetCreate({
-        name: "mcplane",
+      createCastleMcpDependencies(root).projectStart({
         runner: "claude",
         target: 1,
       }),
@@ -99,8 +98,9 @@ describe("fleet_create cgroup isolation", () => {
     expect(args).toContain("--scope");
     expect(args).toContain("--property=Delegate=yes");
     expect(args).toContain("--property=MemoryHigh=55%");
-    // The scope is named for the fleet, so two named fleets get two scopes.
-    expect(args?.some((arg) => arg.startsWith("--unit=red-fleet-mcplane-"))).toBe(true);
+    // The scope is named for the project's supervisor lane, so a launch always
+    // lands in a unit of its own rather than in the caller's cgroup.
+    expect(args?.some((arg) => arg.startsWith("--unit=red-fleet-default-"))).toBe(true);
     // The supervisor argv survives intact behind the `--` separator.
     expect(args?.slice((args?.indexOf("--") ?? -1) + 1)).toContain("__supervise");
   });
@@ -111,7 +111,7 @@ describe("fleet_create cgroup isolation", () => {
     );
     // No systemd `--user` socket: isolation is impossible, never silent.
     vi.stubEnv("XDG_RUNTIME_DIR", join(root, "absent"));
-    publishPidOnSpawn(root, "bare");
+    publishPidOnSpawn(root);
 
     const warnings: string[] = [];
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
@@ -120,8 +120,7 @@ describe("fleet_create cgroup isolation", () => {
     });
     try {
       await expect(
-        createCastleMcpDependencies(root).fleetCreate({
-          name: "bare",
+        createCastleMcpDependencies(root).projectStart({
           runner: "claude",
           target: 1,
         }),

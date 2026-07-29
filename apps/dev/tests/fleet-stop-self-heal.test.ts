@@ -9,12 +9,12 @@
  *
  *   1. an explicit stop is terminal — the watchdog never resurrects a fleet
  *      whose stop was requested, on ANY of its recovery paths;
- *   2. `fleet_stop` names the pid and fleet it stopped whenever the recorded
+ *   2. `project_stop` names the pid and fleet it stopped whenever the recorded
  *      supervisor pid is alive, instead of reporting `none`;
  *   3. `--force` still finds the recorded pid when the strict identity anchor is
  *      unreadable, so a hard teardown is never blocked by a missing start pin;
  *   4. a supervisor the self-heal spawns is discoverable through the same anchor
- *      `fleet_stop` reads, so create and stop cannot disagree.
+ *      `project_stop` reads, so create and stop cannot disagree.
  */
 import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -91,8 +91,8 @@ function fleetSnapshot(options: { pid?: number; startTime?: string | null; ageS?
   });
 }
 
-function lane(root: string, fleet?: string): ReturnType<typeof afkPaths> {
-  const paths = afkPaths(root, fleet);
+function lane(root: string): ReturnType<typeof afkPaths> {
+  const paths = afkPaths(root);
   mkdirSync(paths.supervisorRuntimeDir, { recursive: true });
   return paths;
 }
@@ -215,7 +215,7 @@ describe("an explicit stop is terminal for the self-heal (#2714)", () => {
     const root = scratch();
     try {
       const paths = lane(root);
-      const io = buildWatchdogIO(root, sink(), "default");
+      const io = buildWatchdogIO(root, sink());
       expect(await io.isStopRequested?.()).toBe(false);
       writeFileSync(paths.supervisorStopPath, "", "utf8");
       expect(await io.isStopRequested?.()).toBe(true);
@@ -225,8 +225,8 @@ describe("an explicit stop is terminal for the self-heal (#2714)", () => {
   });
 });
 
-describe("fleet_stop names what it stopped (#2714)", () => {
-  it("reports the live recorded pid and fleet instead of status none", async () => {
+describe("project_stop names what it stopped (#2714)", () => {
+  it("reports the live recorded pid instead of status none", async () => {
     const root = scratch();
     try {
       const paths = lane(root);
@@ -234,14 +234,12 @@ describe("fleet_stop names what it stopped (#2714)", () => {
       writeFileSync(paths.supervisorPidStartPath, `start-${LIVE_PID}`, "utf8");
       writeFileSync(paths.fleetStatePath, fleetSnapshot(), "utf8");
 
-      const result = (await createCastleMcpDependencies(root).fleetStop({
-        name: "default",
+      const result = (await createCastleMcpDependencies(root).projectStop({
         force: true,
-      })) as { fleet: string; status: string; pid?: number };
+      })) as { status: string; pid?: number };
 
       expect(result.status).toBe("stopped");
       expect(result.pid).toBe(LIVE_PID);
-      expect(result.fleet).toBe("default");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -260,7 +258,7 @@ describe("forced stop falls back to the recorded pid (#2714)", () => {
 
       expect(await discoverLiveSupervisorPid(paths.supervisorRuntimeDir)).toBeNull();
 
-      const result = await stopFleet(root, sink(), "default", { force: true });
+      const result = await stopFleet(root, sink(), { force: true });
 
       expect(result).toMatchObject({ status: "stopped", pid: LIVE_PID });
       expect(existsSync(paths.supervisorPidPath)).toBe(false);
@@ -276,7 +274,7 @@ describe("forced stop falls back to the recorded pid (#2714)", () => {
       writeFileSync(paths.supervisorPidPath, String(LIVE_PID), "utf8");
       writeFileSync(paths.fleetStatePath, "}{ not a snapshot", "utf8");
 
-      const result = await stopFleet(root, sink(), "default");
+      const result = await stopFleet(root, sink());
 
       expect(result.status).not.toBe("stopped");
     } finally {
@@ -290,7 +288,7 @@ describe("forced stop falls back to the recorded pid (#2714)", () => {
       const paths = lane(root);
       writeFileSync(paths.supervisorPidPath, String(DEAD_PID), "utf8");
 
-      const result = await stopFleet(root, sink(), "default", { force: true });
+      const result = await stopFleet(root, sink(), { force: true });
 
       expect(result.status).not.toBe("stopped");
     } finally {
@@ -299,7 +297,7 @@ describe("forced stop falls back to the recorded pid (#2714)", () => {
   });
 });
 
-describe("the self-heal publishes the anchor fleet_stop reads (#2714)", () => {
+describe("the self-heal publishes the anchor project_stop reads (#2714)", () => {
   it("only reports a relaunch once discovery resolves the spawned supervisor", async () => {
     const root = scratch();
     try {
@@ -312,11 +310,11 @@ describe("the self-heal publishes the anchor fleet_stop reads (#2714)", () => {
         return SPAWNED_PID;
       });
 
-      const io = buildWatchdogIO(root, sink(), "default");
+      const io = buildWatchdogIO(root, sink());
       await io.liveness();
 
       expect(await io.relaunch()).toBe(true);
-      // Same anchor, same pid: fleet_stop can see what the self-heal created.
+      // Same anchor, same pid: project_stop can see what the self-heal created.
       const discovered = await discoverLiveSupervisorPid(paths.supervisorRuntimeDir);
       expect(discovered).toMatchObject({ pid: SPAWNED_PID, source: "pid-file" });
       expect(Number(readFileSync(paths.supervisorPidPath, "utf8").trim())).toBe(SPAWNED_PID);
@@ -335,7 +333,7 @@ describe("the self-heal publishes the anchor fleet_stop reads (#2714)", () => {
       writeFileSync(paths.fleetStatePath, fleetSnapshot({ pid: DEAD_PID }), "utf8");
       vi.mocked(spawnSupervisor).mockImplementation(async () => SPAWNED_PID);
 
-      const io = buildWatchdogIO(root, sink(), "default");
+      const io = buildWatchdogIO(root, sink());
       await io.liveness();
 
       expect(await io.relaunch()).toBe(false);

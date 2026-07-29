@@ -12,7 +12,7 @@ The server is registered as `castle` in `plugins/dev/.mcp.json`, so a host that
 loaded the `dev` plugin already has it. **Hosts prefix MCP tool names — call the
 tool your host actually exposes, not the bare name.** Claude Code and Codex
 surface plugin MCP tools as `mcp__<server-slug>__<tool>` (for example
-`mcp__plugin_dev_castle__fleet_status` under Claude Code); the slug is derived
+`mcp__plugin_dev_castle__project_status` under Claude Code); the slug is derived
 from the server name, so it never contains a colon — codex rejects `:` in server
 names. Resolve the exact identifier with a tool search for the bare name in the
 table below before the first call, then reuse it for the rest of the session.
@@ -42,34 +42,32 @@ mutating tool with a `MUTATING:` description prefix; the table below mirrors it.
 
 ### Fleet — named multi-fleet lifecycle
 
-A **named fleet** is a full profile: runner + work-scope selector + config knobs
-+ base. Several named fleets run concurrently on one checkout; the three-layer
-claim keeps two fleets on the same backlog from double-claiming an issue.
+**A project has exactly one producer.** The named fleet is gone (ADR 0130): the
+host daemon owns the budget, so nothing is left for a fleet name to address and
+no registry of profiles to keep. What the profile carried that was about *work* —
+the selector, the runner, the base branch — is passed to `project_start` and
+re-aimed by `project_resize`.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `fleet_list` | read | List every registered named fleet profile. |
-| `fleet_status` | read | Supervisor pid, slots, churn, and live workers for one fleet. |
-| `fleet_create` | mutating | Persist a named profile and spawn its supervisor. |
-| `fleet_edit` | mutating | Update a profile; sends a live resize directive when asked. |
-| `fleet_stop` | mutating | Gracefully stop one named fleet; pass `force: true` to hard-stop only its attributed workers. |
-| `fleet_register` | mutating | Adopt an already-running supervisor into the registry without restarting it. |
+| `project_status` | read | Supervisor pid, slots, churn, and live workers for this project. |
+| `project_start` | mutating | Start this project's workers with a runner, a target width, and its work policy. |
+| `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
+| `project_stop` | mutating | Gracefully stop this project's supervisor; pass `force: true` to hard-stop only its attributed workers. |
 
-`selector` scopes what a fleet drains — `{spec, lane, label, issues}`. Omit
-`fleet` on the read and stop tools to address the `default` fleet. Graceful
-stop leaves in-flight detached workers to finish; force never kills workers
-stamped for another fleet or unstamped standalone workers. Use
-`fleet_register` when a CLI-launched fleet shows up in `fleet_status` but
-not in `fleet_list` — it persists the profile in-place so `fleet_edit` works
-immediately after.
+`selector` scopes what the producer drains — `{spec, lane, label, issues, tags,
+user}`. Graceful stop leaves in-flight detached workers to finish; force never
+kills workers stamped for another lane or unstamped standalone workers. Passing
+`fleet` to any of these tools is refused with the replacement named, so a stale
+caller reads an answer rather than an internal error.
 
-**The lane carries its own canary.** `fleet_create` once spawned every slot
-against a bundle that cannot route `run`, so a fleet created through this
+**The lane carries its own canary.** `project_start` once spawned every slot
+against a bundle that cannot route `run`, so workers created through this
 interface drained zero issues while the CLI lane kept working and no surface
 reported the difference (#2677). Run
 `castle-mcp __mcp-canary --root <scratch-repo>` to walk the shipped lane end to
-end — `fleet_create` → a slot that spawns a real worker → `fleet_status` →
-`fleet_stop`. It exits non-zero naming the step that went inert, and it treats a
+end — `project_start` → a slot that spawns a real worker → `project_status` →
+`project_stop`. It exits non-zero naming the step that went inert, and it treats a
 returned supervisor pid as proof of nothing: only a worker directory holding a
 live `worker.pid` counts as drainage. CI runs the same walk on every PR against
 two bundles that differ solely in whether the slot entry routes `run`.
@@ -194,7 +192,7 @@ pattern and the cure to apply, without mutating anything. The resident cron
 refreshes it and `/red-doctor` renders the same report.
 
 `events_since` is the incremental read surface: use it instead of re-calling
-`queue_status`, `worker_status`, or `fleet_status` on every polling tick. **Cost
+`queue_status`, `worker_status`, or `project_status` on every polling tick. **Cost
 guidance:** omit `cursor` on the first call to get a baseline cursor with no
 events; store that cursor; pass it on every subsequent tick to receive only
 what changed. The resident caches `queue_status`, `claim_status`, and

@@ -88,18 +88,6 @@ export async function growFleetToTarget(
     slot.pid = spawned.pid;
     slot.spawnEpoch = spawned.spawnEpoch;
     result.respawned.push(slotIndex);
-    if (deps.dispatchFleetHook) {
-      try {
-        await deps.dispatchFleetHook("on_slot_spawn", {
-          event: "on_slot_spawn",
-          runner: config.runner,
-          slot: slotIndex,
-          pid: slot.pid,
-        });
-      } catch {
-        // best-effort
-      }
-    }
   }
 }
 

@@ -10,8 +10,8 @@ import { closeSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:
 import { basename, dirname, join } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { ElasticShrinkMode, HeartbeatSlotPid } from "../core/supervisor.js";
+import { PROJECT_SUPERVISOR_LANE } from "@reddb-io/red-castle/engine";
 import { afkPaths } from "./wire.js";
-import { FLEET_NAME_ENV } from "../core/fleet-name.js";
 import { readPidStartTime } from "../core/state.js";
 import { migrateLegacyDevPaths } from "./red-path-migration.js";
 import { isSupervisorIdentityLive, readSupervisorIdentity, reapStaleSupervisorState } from "./supervisor-state.js";
@@ -72,12 +72,12 @@ export interface SpawnSupervisorOptions {
   root: string;
   target: number;
   runner: string;
-  /** Fleet-profile Trunk override propagated to every worker. */
+  /** Trunk override from the project's work policy, propagated to every worker. */
   base?: string;
   /** Filter/policy argv (--spec/--issues/--alternate/--fallback-runner) threaded
    * into each slot's `run --once`. */
   passthrough?: readonly string[];
-  /** Optional fleet request, forwarded as RED_AFK_REQUEST + `--request`. */
+  /** Optional operator request, forwarded as RED_AFK_REQUEST + `--request`. */
   request?: string;
   /** Optional per-drain USD budget, forwarded as RED_AFK_DRAIN_MAX_COST_USD. */
   drainBudgetUsd?: number;
@@ -85,8 +85,6 @@ export interface SpawnSupervisorOptions {
   shrinkMode?: ElasticShrinkMode;
   /** Prior supervisor slot -> worker pid map for takeover/adoption. */
   adoptSlotPids?: readonly HeartbeatSlotPid[];
-  /** Named fleet this supervisor owns (defaults to the `default` lane). */
-  fleet?: string;
   /** Maximum time to wait for the child to publish its pid file. */
   probeDeadlineMs?: number;
   /** Where isolation notices go. Defaults to stderr — never silent. */
@@ -103,22 +101,18 @@ export interface SpawnSupervisorOptions {
  */
 export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<number | null> {
   await migrateLegacyDevPaths(opts.root).catch(() => undefined);
-  const paths = afkPaths(opts.root, opts.fleet);
+  const paths = afkPaths(opts.root);
   mkdirSync(dirname(paths.supervisorPidPath), { recursive: true });
   await reapStaleSupervisorState(dirname(paths.supervisorPidPath), isLivePid);
   const pidFile = paths.supervisorPidPath;
 
   const childArgs = [...(opts.passthrough ?? [])];
   if (opts.request) childArgs.unshift("--request", opts.request);
-  // Name the fleet on BOTH channels: the flag is what the supervisor parses, the
-  // env survives a re-exec that drops argv.
-  childArgs.unshift("--fleet", paths.fleet);
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     RED_AFK_TARGET: String(opts.target),
     RED_AFK_RUNNER: opts.runner,
-    [FLEET_NAME_ENV]: paths.fleet,
   };
   if (opts.request) env.RED_AFK_REQUEST = opts.request;
   if (opts.base?.trim()) env.RED_AFK_TRUNK = opts.base.trim();
@@ -144,7 +138,7 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
     args: [resolveDevScriptPath(process.argv[1] ?? ""), "__supervise", ...childArgs],
   };
   const plan = planFleetScope({
-    fleet: paths.fleet,
+    label: PROJECT_SUPERVISOR_LANE,
     command: direct.command,
     args: direct.args,
     settings: opts.scope?.settings ?? readFleetScopeSettings(

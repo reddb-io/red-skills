@@ -77,20 +77,6 @@ export async function handleDeadSlot(
     state.stalled = false;
     state.stallSinceEpoch = 0;
     state.reaped = false;
-    // Circuit-close spawn: on_slot_spawn fires; on_respawn does NOT (this is a
-    // circuit recovery, not a plain post-death respawn). Best-effort.
-    if (deps.dispatchFleetHook) {
-      try {
-        await deps.dispatchFleetHook("on_slot_spawn", {
-          event: "on_slot_spawn",
-          runner: config.runner,
-          slot,
-          ...(state.pid !== null ? { pid: state.pid } : {}),
-        });
-      } catch {
-        // best-effort
-      }
-    }
     return { parked: false };
   }
 
@@ -134,25 +120,6 @@ export async function handleDeadSlot(
   state.stalled = false;
   state.stallSinceEpoch = 0;
   state.reaped = false;
-  // Respawn after a death: on_slot_spawn + on_respawn. Best-effort.
-  if (deps.dispatchFleetHook) {
-    try {
-      await deps.dispatchFleetHook("on_slot_spawn", {
-        event: "on_slot_spawn",
-        runner: config.runner,
-        slot,
-        ...(state.pid !== null ? { pid: state.pid } : {}),
-      });
-      await deps.dispatchFleetHook("on_respawn", {
-        event: "on_respawn",
-        runner: config.runner,
-        slot,
-        ...(state.pid !== null ? { pid: state.pid } : {}),
-      });
-    } catch {
-      // best-effort
-    }
-  }
   return { parked: false };
 }
 

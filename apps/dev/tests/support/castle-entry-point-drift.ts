@@ -46,10 +46,6 @@ const HOST_ADAPTER_BOUNDARIES = [
     functions: ["collectStatuslineAfk", "collectStatuslineFleet"],
   },
   {
-    path: "core/fleet-hook-dispatcher.ts",
-    functions: ["deriveFleetHookEnv"],
-  },
-  {
     path: "core/hook-config.ts",
     functions: ["compareFilenames"],
   },

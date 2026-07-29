@@ -250,7 +250,6 @@ export async function collectStatuslineFleet(
   // verdict travels into the render so a stale read is drawn as stale, never as
   // current (ADR 0128 §6).
   const supervisor = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
-    fleet: paths.fleet,
     heartbeatEpoch: state.epoch,
     staleAfterS: maxAgeS,
     nowS,

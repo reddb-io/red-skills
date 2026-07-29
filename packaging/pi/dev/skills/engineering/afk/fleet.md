@@ -4,32 +4,33 @@ This file serves the `afk fleet` branch: launching, stopping, and supervising `N
 concurrent `run` workers on one checkout. Reached from *When To Use*
 (`/afk fleet [N]`, `/afk fleet stop`) in [`SKILL.md`](./SKILL.md).
 
-## Drive fleets through the `castle` MCP
+## Drive this project's workers through the `castle` MCP
 
-**A fleet is a named profile, and the `castle` MCP owns its lifecycle.** The
-five fleet tools are the primary surface; the CLI forms documented below are the
-fallback transport for the same operations, and they address the `default`
-fleet. Read [`MCP.md`](./MCP.md) for host prefixing and mutation modes.
+**A project has one producer, and the `castle` MCP owns its lifecycle.** The
+named fleet is gone (ADR 0130) — with the budget owned host-wide there is nothing
+for a name to address and no registry of profiles to keep. The four project tools
+are the primary surface; the CLI forms documented below are the fallback
+transport for the same operations. Read [`MCP.md`](./MCP.md) for host prefixing
+and mutation modes.
 
 | Verb | Tool | Notes |
 | --- | --- | --- |
-| launch | `fleet_create` | `{name, runner, target, selector?, config?, base?}` — persists the profile, then spawns its supervisor. |
-| resize / switch | `fleet_edit` | Same fields, all optional but `name`; sends the live resize directive instead of a second supervisor. |
-| ground truth | `fleet_status` | Supervisor pid, slots, churn, live workers for one fleet. |
-| inventory | `fleet_list` | Every registered profile. |
-| shutdown | `fleet_stop` | Gracefully stops that fleet's supervisor; `force: true` hard-stops only workers attributed to that fleet. |
+| launch | `project_start` | `{runner, target, selector?, config?, base?}` — hands the work policy to the supervisor it spawns. |
+| resize / switch | `project_resize` | Same fields, all optional; sends the live resize directive instead of a second supervisor. |
+| ground truth | `project_status` | Supervisor pid, slots, churn, live workers for this project. |
+| shutdown | `project_stop` | Gracefully stops this project's supervisor; `force: true` hard-stops only workers attributed to its lane. |
 | logs | `logs` | One structured lane per call (`supervisor` / `worker` / `monitor` / `liveness`). |
 
-**A named fleet is a full profile, not just a worker count**: runner +
-work-scope `selector` (`{spec, lane, label, issues, tags, user}`) + `config`
-knobs + `base`. The `tags` facet ANDs over `tag:<value>` labels — a candidate
-must carry EVERY requested tag, so an untagged issue is outside every
-tag-scoped fleet; `user` keeps only issues authored by that GitHub login
-(`@me` is resolved to a concrete login before the profile is persisted).
-Several named fleets run concurrently on one checkout — one on `claude` scoped
-to a Spec, another on `codex` draining the rest — and the three-layer claim is
-what guarantees they never double-claim an issue. Partition fleets by scope, not
-by hope: two fleets whose selectors overlap will contend for the same slices.
+**The work policy survived the fleet that used to hold it**: runner + work-scope
+`selector` (`{spec, lane, label, issues, tags, user}`) + `config` knobs + `base`.
+The `tags` facet ANDs over `tag:<value>` labels — a candidate must carry EVERY
+requested tag, so an untagged issue is outside every tag-scoped selector; `user`
+keeps only issues authored by that GitHub login (`@me` is resolved to a concrete
+login before the selector is matched). **Several selectors are an ordered
+priority inside ONE producer, never competing loops**: the first selector takes
+what it wants and a lower one gets whatever room survives, which is exactly the
+property a share-based split would lose. An invocation that still names a fleet
+is refused with the replacement named rather than failing internally.
 
 ## Fleet Mode (runner-portable — binding)
 
@@ -45,7 +46,7 @@ $ /dev:afk fleet 1   # every worker sees both vars
 
 Fleet mode is **runner-portable**: the supervisor is plain process orchestration, not a Claude Code primitive. Claude Code, Codex, and bare terminals may all launch and stop the supervisor when the normal AFK hard preconditions pass. Runner-specific observability degrades independently:
 
-- Claude Code: launch fleet. For manual monitoring, read the castle `monitor` and `fleet_status` tools; without the MCP, run `/dev:afk monitor` or tail `.red/tmp/supervisors/default/supervisor.log.toonl`.
+- Claude Code: launch fleet. For manual monitoring, read the castle `monitor` and `project_status` tools; without the MCP, run `/dev:afk monitor` or tail `.red/tmp/supervisors/default/supervisor.log.toonl`.
 - Codex: launch fleet with `RED_AFK_RUNNER=codex` and spawn one read-only Codex monitor agent from the bundle's `codex-monitor-agent --mode fleet` prompt when a sub-agent primitive is available. If no sub-agent primitive is available, launch fleet anyway and print the monitor status line below.
 - Bare terminal / unknown runner: launch fleet and print the manual-monitor guidance.
 
@@ -115,13 +116,13 @@ not part of the current fleet contract.
 
 Steps, in order:
 
-1. **Liveness check.** Read the named fleet's pinned supervisor identity. The three cases:
+1. **Liveness check.** Read the project supervisor's pinned identity. The three cases:
    - File missing → print `no fleet running.` and continue to step 3. Do not inspect or kill worker directories: an absent fleet owns no teardown target.
    - File present but the pinned identity is stale → clean its supervisor files, print `no fleet running (reason=dead supervisor pid; stale files cleaned).`, and continue to step 3. Do not kill detached workers.
    - File present and PID alive → continue to step 2.
-2. **Publish stop intent.** Write the named fleet's stop file and terminate its watchdog so it cannot relaunch the supervisor.
+2. **Publish stop intent.** Write the supervisor's stop file and terminate its watchdog so it cannot relaunch the supervisor.
    - Default graceful stop: the supervisor stops spawning/claiming and exits. Its detached one-shot workers are deliberately left alive to finish their in-flight Tickets; a later relaunch may adopt survivors. Wait up to **30 s** for the supervisor to exit. If it remains live, return `timeout` and leave the stop file armed; never escalate implicitly.
-   - Explicit force (`fleet_stop { fleet, force: true }`, CLI fallback `fleet stop --fleet <name> --force`): terminate the named supervisor immediately, then kill only detached workers whose castle worker snapshot has `supervisor_id` equal to the named fleet. Workers stamped for another fleet and unstamped standalone workers are untouched. Reconcile claims only when scoped workers were actually killed.
+   - Explicit force (`project_stop { force: true }`, CLI fallback `fleet stop --force`): terminate the supervisor immediately, then kill only detached workers whose castle worker snapshot has `supervisor_id` equal to this project's supervisor lane. Workers stamped for another lane and unstamped standalone workers are untouched. Reconcile claims only when scoped workers were actually killed.
 3. **Tear down runner-specific monitors.**
    - Claude Code: no automatic monitor cron to cancel. Print `no auto-monitor cron (manual monitoring only).`
    - Codex: do not stop workers through the monitor agent. It auto-closes when it observes no supervisor/live workers, and the user may close it manually. Print `Codex monitor agent will self-close when it observes fleet stopped.`
@@ -170,6 +171,6 @@ The safe fleet width for a given queue is the **degree of disjunction** — the 
 
 ### Refs
 
-- [`MCP.md`](./MCP.md) — the `castle` tool surface; `fleet_create`, `fleet_edit`, `fleet_status`, `fleet_list`, `fleet_stop`, and `logs` are the primary fleet interface.
+- [`MCP.md`](./MCP.md) — the `castle` tool surface; `project_start`, `project_resize`, `project_status`, `project_stop`, and `logs` are the primary interface.
 - The bundle's `fleet` / `fleet stop` commands — the CLI-fallback entrypoints this section drives. Stop-file path, env contract, circuit breaker, and trip-sweep are part of the supervisor behaviour described above.
 - [`monitor.md`](./monitor.md) — the readonly dashboard and native-task mirror.

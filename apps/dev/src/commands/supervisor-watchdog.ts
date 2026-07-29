@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { resolveSupervisorConfig } from "../core/supervisor.js";
 import { runSupervisorWatchdogLoop, runWatchdog } from "../core/watchdog.js";
-import { resolveFleetFromArgs } from "../core/fleet-name.js";
+import { refuseRemovedFleetFlag } from "../core/removed-fleet-flag.js";
 import { afkPaths } from "../runtime/wire.js";
 import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import { isLivePid } from "../runtime/kill-tree.js";
@@ -82,8 +82,8 @@ export async function supervisorWatchdogCommand(
   args: string[],
   cwd = process.cwd(),
 ): Promise<number> {
-  const fleet = resolveFleetFromArgs(args);
-  const paths = afkPaths(cwd, fleet);
+  refuseRemovedFleetFlag(args);
+  const paths = afkPaths(cwd);
   const existing = recordedLivePid(
     paths.supervisorWatchdogPidPath,
     paths.supervisorWatchdogPidStartPath,
@@ -92,7 +92,7 @@ export async function supervisorWatchdogCommand(
   if (!(await acquireWatchdogOwnership(paths))) return 1;
 
   const config = resolveSupervisorConfig();
-  const io = buildWatchdogIO(cwd, process.stdout, fleet);
+  const io = buildWatchdogIO(cwd, process.stdout);
   let stopping = false;
   const stop = (): void => {
     stopping = true;
@@ -136,7 +136,7 @@ export async function supervisorWatchdogCommand(
         if (result.crashLoopSuppressed) stopping = true;
         // A stop that landed mid-pass is observed by runWatchdog itself (#2714);
         // retire on it here too, so the loop does not keep an armed healer alive
-        // behind a fleet the operator already stopped.
+        // behind a supervisor the operator already stopped.
         if (result.stopRequested) stopping = true;
       },
     });

@@ -9,7 +9,7 @@ import {
   type WorkerVitalsProjectedOutput,
 } from "./contracts.js";
 import type { CastleMcpTool } from "./tool.js";
-import { fleetSelectorShape, type FleetSelectorInput } from "./fleet.js";
+import { workSelectorShape, type WorkSelectorInput } from "./project.js";
 
 export interface LogsInput {
   lane: "worker" | "supervisor" | "monitor" | "liveness";
@@ -28,7 +28,7 @@ export interface EventsSinceInput {
 }
 
 export interface QueueStatusInput {
-  selector?: FleetSelectorInput;
+  selector?: WorkSelectorInput;
 }
 
 export interface ObservabilityDependencies {
@@ -92,7 +92,7 @@ export function createObservabilityTools(
       name: "monitor",
       title: "Read AFK monitor",
       description:
-        "Return the current workers, history events, and fleet monitor inputs.",
+        "Return the current workers, history events, and monitor inputs.",
       inputSchema: {},
       outputContract: monitorContract,
       invoke: () => deps.monitor(),
@@ -112,14 +112,14 @@ export function createObservabilityTools(
       name: "queue_status",
       title: "Read AFK queues",
       description:
-        "Return ready-for-agent and ready-for-human queue candidates. Pass `selector` to preview one fleet's scoped view of the ready queue (same facets as fleet selectors, e.g. tags/user).",
+        "Return ready-for-agent and ready-for-human queue candidates. Pass `selector` to preview the producer's scoped view of the ready queue (same facets as its work selector, e.g. tags/user).",
       inputSchema: {
-        selector: z.object(fleetSelectorShape).optional(),
+        selector: z.object(workSelectorShape).optional(),
       },
       outputContract: queueStatusContract,
       invoke: (input) =>
         deps.queueStatus({
-          selector: input.selector as FleetSelectorInput | undefined,
+          selector: input.selector as WorkSelectorInput | undefined,
         }),
     },
     {
