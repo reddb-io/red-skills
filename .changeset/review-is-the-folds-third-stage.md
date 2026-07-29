@@ -1,0 +1,5 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+Review moved off the landing path and became the gate fold's third stage, running before any pull request exists (#2730, ADR 0129). The reviewer reads the WORKTREE diff against the merge base rather than a PR diff, and it runs only once the earlier stages are green — `gateVerdict` short-circuits at the earliest blocker, so the fold's most expensive stage never pays to review a branch the cheap stages already rejected. A reviewer that crashes yields a SKIPPED stage, which cannot block: infrastructure trouble in an advisory reviewer no longer threatens machine-validated work. A blocking finding requests a Re-seed through the unified path, drawing the RESERVED review round that gate churn cannot consume — three gate corrections used to spend every available round and the review's own round never fired. The adversarial decision function lost its cap-dependent branch: its verdicts are now `blocking` or `not-blocking`, and both the budget and the exhaustion rule live in the Re-seed budget, which parks uniformly. That is what revokes the behaviour where the documented default budget landed code carrying a known blocking finding.

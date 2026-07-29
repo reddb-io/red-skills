@@ -331,7 +331,10 @@ export type LandingResult =
         | "pr-conflict"
         | "pr-merge-failed"
         | "infra"
-        | "adversarial-correction"
+        // An `onPrResolved` callback asked to stop before the merge. Review no
+        // longer uses this (it is the gate fold's third stage now, #2730); the
+        // route survives for any other pre-merge observer that must abort.
+        | "pr-resolved-abort"
         // Legacy ADR 0083 landing-precondition route. New trunk freshness uses
         // the fleet-owned `red-trunk` mirror and no longer emits this from
         // landing, but older callers/tests may still reference the result shape.
@@ -588,7 +591,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       if (result.reason === "ci-failed") return { ok: false, reason: "ci-failed", locked: input.locked, prNumber: result.prNumber };
       if (result.reason === "ci-pending") return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: result.prNumber };
       if (result.reason === "pr-resolved-abort") {
-        return { ok: false, reason: "adversarial-correction", locked: input.locked, prNumber: result.prNumber };
+        return { ok: false, reason: "pr-resolved-abort", locked: input.locked, prNumber: result.prNumber };
       }
       if (result.reason === "before-merge-failed") {
         if (missingPostMergeFallback) {

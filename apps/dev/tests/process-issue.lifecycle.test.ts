@@ -1098,8 +1098,8 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
 });
 
 
-describe("processIssue — advisory adversarial review (#2207)", () => {
-  it("default-off path lands without running the adversarial reviewer", async () => {
+describe("processIssue — review is the gate fold's third stage (#2730)", () => {
+  it("default-off path lands without running the reviewer", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -1113,13 +1113,33 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     expect(trace.adversarialReviews).toEqual([]);
   });
 
-  it("enabled path reviews diff plus Issue only, comments on PR and Issue, then still lands", async () => {
+  it("hands the reviewer the WORKTREE diff against the merge base, never a PR diff", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      worktreeDiff: "diff --git a/packages/x/src/a.ts b/packages/x/src/a.ts\n+const fromWorktree = true;\n",
+      adversarialReview: { enabled: true, maxIterations: 2, reviewerCount: 1, quorum: "any" },
+      adversarialFindings: { summary: "Clean.", findings: [] },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    // The stage read the branch against the merge base, and read it BEFORE any
+    // PR existed — so `gh pr diff` was never called at all.
+    expect(trace.worktreeDiffCalls).toEqual([{ branch: "afk/9-fix-the-thing", base: "red-trunk" }]);
+    expect(trace.adversarialReviewContexts[0]).toMatchObject({ base: "red-trunk" });
+    expect(trace.adversarialReviewContexts[0]?.diff).toContain("const fromWorktree = true;");
+    expect(trace.mergeCalls.some((argv) => argv.includes("pr") && argv.includes("diff"))).toBe(false);
+  });
+
+  it("enabled path reviews diff plus Issue only, comments on the Issue, then still lands", async () => {
     const issueBody = [
       "## Agent brief",
       "Implement the tracer.",
       "",
       "## Acceptance criteria",
-      "- [ ] Post review findings to the PR and Issue.",
+      "- [ ] Post review findings to the Issue.",
     ].join("\n");
     const { deps, input, trace } = harness({
       outcome: "done",
@@ -1148,18 +1168,38 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
       issueNumber: 9,
       issueTitle: "Fix the thing",
       issueBody,
-      prNumber: 42,
       maxIterations: 2,
     });
     expect(trace.adversarialReviewContexts[0]?.diff).toContain("diff --git");
     expect(trace.adversarialReviews).toHaveLength(1);
     const body = trace.adversarialReviews[0]?.body ?? "";
     expect(body).toContain("AFK adversarial review");
-    expect(body).toContain("Decision: pass (advisory)");
+    expect(body).toContain("Decision: not-blocking (advisory)");
     expect(body).toContain("blocking: false");
     expect(body).toContain("Acceptance criteria conformance finding.");
-    expect(trace.comments).toContainEqual({ issue: 42, body });
     expect(trace.comments).toContainEqual({ issue: 9, body });
+    // No PR exists yet, so no PR comment was posted.
+    expect(trace.comments.some((comment) => comment.issue === 42)).toBe(false);
+  });
+
+  it("does not run while an earlier gate stage is blocking", async () => {
+    // `feedback` is red and the budget is spent, so the attempt parks there. The
+    // review stage is the fold's most expensive one: it must never pay to review
+    // a branch the cheap stages already rejected.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: false,
+      stallConvergenceBudget: 0,
+      locked: false,
+      adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
+      adversarialFindings: { summary: "Never asked.", findings: [] },
+    });
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.adversarialReviewContexts).toEqual([]);
+    expect(trace.worktreeDiffCalls).toEqual([]);
+    expect(trace.closed).toEqual([]);
   });
 
   it("blocking finding re-seeds the implementer with diff plus critiques, then clean review lands (#2208)", async () => {
@@ -1204,12 +1244,26 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     expect(retryHandoff).toContain("bounded correction retry 1/1");
     expect(retryHandoff).toContain("The implementation does not satisfy the acceptance criterion.");
     expect(retryHandoff).not.toContain("Prefer a clearer name.");
-    expect(retryHandoff).toContain("<pr-diff data-untrusted=\"true\">");
+    expect(retryHandoff).toContain("<worktree-diff data-untrusted=\"true\">");
     expect(retryHandoff).toContain("diff --git");
 
-    expect(trace.adversarialReviews[0]?.body).toContain("Decision: correct (blocking)");
-    expect(trace.adversarialReviews[1]?.body).toContain("Decision: pass (advisory)");
+    expect(trace.adversarialReviews[0]?.body).toContain("Decision: blocking");
+    expect(trace.adversarialReviews[1]?.body).toContain("Decision: not-blocking (advisory)");
     expect(trace.iterLogs.some((line) => line.includes("correction retry 1/1"))).toBe(true);
+    // The round drew the RESERVED review cause, not the gate's share.
+    expect(trace.workerEvents).toContainEqual({
+      kind: "worker.reseeded",
+      payload: {
+        trigger: "review-finding",
+        cause: "review",
+        lane: "/afk",
+        free: false,
+        round: 1,
+        ceiling: 4,
+        cause_spent: 1,
+        cause_cap: 1,
+      },
+    });
   });
 
   it("a gate round after a blocking review carries BOTH in one outstanding section (#2728)", async () => {
@@ -1282,7 +1336,7 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.adversarialReviewContexts).toHaveLength(1);
     expect(trace.closed).toEqual([9]);
-    expect(trace.adversarialReviews[0]?.body).toContain("Decision: pass (advisory)");
+    expect(trace.adversarialReviews[0]?.body).toContain("Decision: not-blocking (advisory)");
   });
 
   it("runs configured reviewer count and applies quorum with reviewer runner resolution (#2210)", async () => {
@@ -1332,12 +1386,17 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
       { runner: "codex", model: "gpt-review", effort: "low" },
     ]);
     expect(trace.adversarialReviews).toHaveLength(1);
-    expect(trace.adversarialReviews[0]?.body).toContain("Decision: pass (advisory)");
+    expect(trace.adversarialReviews[0]?.body).toContain("Decision: not-blocking (advisory)");
     expect(trace.adversarialReviews[0]?.body).toContain("blocking: false");
     expect(trace.closed).toEqual([9]);
   });
 
-  it("raised review budget parks ready-for-human when blocking findings remain at exhaustion (#2209)", async () => {
+  it("the DOCUMENTED DEFAULT review budget parks an unresolved blocking finding instead of landing it", async () => {
+    // The revoked behaviour (#2730): at the default budget the decision function
+    // read its own cap, and a cap below 2 turned an unresolved BLOCKING finding
+    // into "pass" — the Ticket landed carrying a defect the reviewer had named
+    // twice. The verdict is cap-free now, so exhaustion parks like every other
+    // Re-seed cause.
     const blocking = {
       summary: "Blocking acceptance gaps remain.",
       findings: [
@@ -1350,22 +1409,24 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
       ],
     };
     const { deps, input, trace } = harness({
-      outcomes: ["done", "done", "done"],
+      outcomes: ["done", "done"],
       feedbackOk: true,
       locked: false,
-      adversarialReview: { enabled: true, maxIterations: 2, reviewerCount: 1, quorum: "any" },
-      adversarialFindingsSequence: [blocking, blocking, blocking],
+      // `dev.review.max_iterations` at its documented default of 1.
+      adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
+      adversarialFindingsSequence: [blocking, blocking],
     });
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("feedback-failed");
-    expect(trace.runAgentCalls).toHaveLength(3);
-    expect(trace.adversarialReviewContexts).toHaveLength(3);
+    // One reserved review round was drawn; the second blocking review found the
+    // sub-cap spent and parked.
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.adversarialReviewContexts).toHaveLength(2);
     expect(trace.closed).toEqual([]);
     expect(labelTrace(trace)).toContain("-running|+ready-for-human+blocked:validation");
-    expect(trace.adversarialReviews[0]?.body).toContain("Decision: correct (blocking)");
-    expect(trace.adversarialReviews[1]?.body).toContain("Decision: correct (blocking)");
-    expect(trace.adversarialReviews[2]?.body).toContain("Decision: park (blocking)");
+    expect(trace.adversarialReviews[0]?.body).toContain("Decision: blocking");
+    expect(trace.adversarialReviews[1]?.body).toContain("Decision: blocking");
 
     const blocker = parseCurrentBlocker(trace.bodyEdits.at(-1)?.body ?? "");
     expect(blocker).toMatchObject({
@@ -1375,10 +1436,51 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
       next: expect.stringContaining("Decide whether to fix forward"),
     });
     expect(blocker?.summary).toContain("The implementation still omits the required audit trail.");
-    expect(trace.envelopeBodies.at(-1)).toContain("Adversarial review budget exhausted");
+    expect(trace.envelopeBodies.at(-1)).toContain("Re-seed budget exhausted for the review stage");
   });
 
-  it("a crashing reviewer CLI degrades to pass — the worker survives and lands (#2352)", async () => {
+  it("three gate Re-seeds do not starve the review's reserved round", async () => {
+    // The starvation defect (#2730): under one flat counter, gate churn spent
+    // every available round and the review's own round never fired — a blocking
+    // finding raised on a branch that had already corrected three times simply
+    // landed. The review round is a RESERVATION, so it is still there.
+    const { deps, input, trace } = harness({
+      outcomes: ["done", "done", "done", "done", "done"],
+      // Three red gate rounds, then a green one the review gets to see.
+      feedbackResults: [false, false, false, true, true],
+      stallConvergenceBudget: 3,
+      locked: false,
+      adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
+      adversarialFindingsSequence: [
+        {
+          summary: "Blocking finding after three gate corrections.",
+          findings: [
+            {
+              path: "packages/x/src/a.ts",
+              line: 1,
+              body: "The audit trail is still missing.",
+              blocking: true,
+            },
+          ],
+        },
+        { summary: "Clean after the review correction.", findings: [] },
+      ],
+    });
+    const result = await processIssue(deps, input);
+
+    // Three gate rounds spent the gate's sub-cap; the review still fired and got
+    // its own round, and the corrected branch landed.
+    expect(trace.runAgentCalls).toHaveLength(5);
+    expect(trace.adversarialReviewContexts).toHaveLength(2);
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls[4]?.handoffContent ?? "").toContain("<adversarial-review-correction>");
+    const causes = trace.workerEvents
+      .filter((event) => event.kind === "worker.reseeded")
+      .map((event) => (event.payload as { cause: string } | undefined)?.cause);
+    expect(causes).toEqual(["gate", "gate", "gate", "review"]);
+  });
+
+  it("a reviewer that throws yields a SKIPPED stage and the attempt proceeds (#2352)", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -1388,7 +1490,8 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     });
     const result = await processIssue(deps, input);
 
-    // The advisory pass ran and blew up — the machine-validated attempt still lands.
+    // The stage ran and blew up — a skipped stage never blocks, so the
+    // machine-validated attempt still lands.
     expect(trace.adversarialReviewContexts).toHaveLength(1);
     expect(result.outcome).toBe("done");
     expect(trace.closed).toEqual([9]);
@@ -1398,12 +1501,12 @@ describe("processIssue — advisory adversarial review (#2207)", () => {
     // The failure is logged AND recorded in the attempt ledger.
     expect(
       trace.iterLogs.some((line) =>
-        line.includes("[adversarial-review] advisory pass failed, degraded to pass: claude-code exited with code 1"),
+        line.includes("[adversarial-review] review stage skipped: claude-code exited with code 1"),
       ),
     ).toBe(true);
     expect(trace.workerEvents).toContainEqual({
       kind: "worker.review_degraded",
-      payload: { issue: 9, pr: 42, decision: "pass", reason: "claude-code exited with code 1" },
+      payload: { issue: 9, decision: "skipped", reason: "claude-code exited with code 1" },
     });
   });
 

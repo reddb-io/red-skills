@@ -88,8 +88,10 @@ export function buildReviewPorts(ghCtx: GhContext): Required<
     // it never touches the merge/park decision.
     postBackpressureReview: (pr, body) =>
       buildReviewGh(ghCtx).postReview(pr, { summary: body, comments: [] }),
-    postAdversarialReview: async ({ pr, issue, body }) => {
-      await buildReviewGh(ghCtx).comment(pr, body);
+    // The review verdict lands on the ISSUE (#2730). Review is the gate fold's
+    // third stage and runs pre-PR, so the pull-request comment this replaced had
+    // no pull request to address.
+    postAdversarialReview: async ({ issue, body }) => {
       await ghx.comment(ghCtx, issue, body);
     },
   };

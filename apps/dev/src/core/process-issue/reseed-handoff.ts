@@ -35,7 +35,8 @@ export const RESEED_TAIL_LINES = 80;
  * outstanding state, whichever stage observed it. */
 export const RESEED_FINDINGS_LINES = 80;
 
-/** The PR-diff bound, unchanged from the adversarial appender. */
+/** The reviewed-diff bound, unchanged from the adversarial appender. The diff is
+ * the WORKTREE against the merge base (#2730), not a pull request's. */
 export const RESEED_DIFF_LINES = 200;
 
 /** One outstanding review finding. Structurally a subset of
@@ -214,7 +215,13 @@ export function composeReseedHandoff(handoff: string, input: ComposeReseedHandof
   if (review) {
     lines.push("<review-critiques>", ...renderFindings(review), "</review-critiques>");
     if (review.diff) {
-      lines.push('<pr-diff data-untrusted="true">', "```diff", tailLines(review.diff, RESEED_DIFF_LINES), "```", "</pr-diff>");
+      lines.push(
+        '<worktree-diff data-untrusted="true">',
+        "```diff",
+        tailLines(review.diff, RESEED_DIFF_LINES),
+        "```",
+        "</worktree-diff>",
+      );
     }
   }
   if (!gate && !review) lines.push("Nothing is outstanding beyond the original task.");

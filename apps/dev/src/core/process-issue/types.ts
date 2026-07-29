@@ -186,6 +186,14 @@ export interface ProcessLookups {
   changedFiles(branch: string, base: string): Promise<string[]>;
   diffstat(branch: string, base: string): Promise<string>;
   /**
+   * The WORKTREE diff of `branch` against the merge base (#2730) — what the gate
+   * fold's review stage reads, because that stage runs before any pull request
+   * exists. Optional: absent, the review stage is SKIPPED rather than handed an
+   * empty diff, since a reviewer that reads nothing reports nothing and would
+   * pass a Ticket it never saw.
+   */
+  worktreeDiff?(branch: string, base: string): Promise<string>;
+  /**
    * What the base ref did while this attempt ran (issue #2711): its head sha
    * NOW plus the subjects of the commits it gained since `sinceSha`. The gate
    * runs on the branch merged with the live base, so a base that moved under
@@ -325,8 +333,9 @@ export interface ProcessIssueDeps {
     effort?: AgentEffort;
     maxIterations: number;
   }): Promise<AdversarialReviewFindings>;
+  /** Publish the review verdict. The Issue is the ONLY surface: the review runs
+   * pre-PR now, so there is no pull request to comment on (#2730). */
   postAdversarialReview?(input: {
-    pr: number;
     issue: number;
     body: string;
     findings: AdversarialReviewFindings;

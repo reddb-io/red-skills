@@ -57,14 +57,14 @@ export interface Trace {
   sidecarWrites: Array<{ path: string; lines: string[] }>;
   /** Non-blocking backpressure evidence reviews posted via the #1279 seam. */
   backpressureReviews: Array<{ pr: number; body: string }>;
-  /** Advisory adversarial reviews posted after the machine gate and before merge. */
-  adversarialReviews: Array<{ pr: number; issue: number; body: string; findings: AdversarialReviewFindings }>;
+  /** Review verdicts posted by the gate fold's third stage, pre-PR (#2730). */
+  adversarialReviews: Array<{ issue: number; body: string; findings: AdversarialReviewFindings }>;
   adversarialReviewContexts: Array<{
     issueNumber: number;
     issueTitle: string;
     issueBody: string;
-    prNumber: number;
     diff: string;
+    base: string;
     runner: string;
     model: string;
     effort?: AgentEffort;
@@ -85,6 +85,8 @@ export interface Trace {
   cascadeRebaseAttempts: string[];
   /** Arguments passed into feedback scope changed-file resolution. */
   changedFileCalls: Array<{ branch: string; base: string }>;
+  /** Every `lookups.worktreeDiff` read the review stage made (#2730). */
+  worktreeDiffCalls: Array<{ branch: string; base: string }>;
   baseMovementCalls: Array<{ baseRef: string; sinceSha: string }>;
   /** Raw pnpm argv vectors emitted by the feedback/backpressure fakes. */
   pnpmArgs: string[][];
@@ -264,6 +266,8 @@ export interface HarnessOptions {
   adversarialFindingsSequence?: AdversarialReviewFindings[];
   /** Reviewer CLI failure (#2352): the extract port rejects with this message. */
   adversarialExtractError?: string;
+  /** The worktree diff the review stage is handed (#2730). */
+  worktreeDiff?: string;
   /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
    * `gh pr view` verdict the unlocked landing polls before admin-merging. */
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict" | "skipped";
@@ -307,6 +311,7 @@ export function harness(opts: HarnessOptions = {}): {
     backpressureReviews: [],
     adversarialReviews: [],
     adversarialReviewContexts: [],
+    worktreeDiffCalls: [],
     outcomeEvents: [],
     classifierCalls: [],
     iterLogs: [],
@@ -618,7 +623,6 @@ export function harness(opts: HarnessOptions = {}): {
     postAdversarialReview: opts.adversarialReview
       ? async (review) => {
           trace.adversarialReviews.push(review);
-          trace.comments.push({ issue: review.pr, body: review.body });
           trace.comments.push({ issue: review.issue, body: review.body });
         }
       : undefined,
@@ -749,6 +753,15 @@ export function harness(opts: HarnessOptions = {}): {
       },
       async diffstat() {
         return "+1 -0 files=1";
+      },
+      // The review stage's subject (#2730): the worktree diff against the merge
+      // base, read before any PR exists.
+      async worktreeDiff(branch, base) {
+        trace.worktreeDiffCalls.push({ branch, base });
+        return (
+          opts.worktreeDiff ??
+          "diff --git a/packages/x/src/a.ts b/packages/x/src/a.ts\n+++ b/packages/x/src/a.ts\n@@ -0,0 +1 @@\n+export const ok = true;\n"
+        );
       },
       async branchPresent() {
         return opts.branchPresent ?? true;

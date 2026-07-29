@@ -78,6 +78,9 @@ export function buildLookups({
       }),
     changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
     diffstat: (branch, base) => gitx.diffstat(gitCtx, branch, base),
+    // The review stage's subject (#2730): the branch as it stands against the
+    // merge base, read before any PR exists.
+    worktreeDiff: (branch, base) => gitx.worktreeDiff(gitCtx, branch, base),
     // Stale-base drift evidence (#2711). The remote-tracking ref only advances
     // on a fetch, and the last one ran when the attempt started — so refresh it
     // first, otherwise a base that moved mid-run reads as standing still and the
