@@ -26,6 +26,16 @@
  * surface, never a queue to drain.
  */
 import type { RedskilledHostEvent } from "./event-lane.js";
+import {
+  expireLapsedReservations,
+  heldBackReason,
+  INTERACTIVE_RESERVATION_TTL_MS,
+  NO_INTERACTIVE_RESERVATIONS,
+  releaseInteractiveSlot,
+  reserveInteractiveSlot,
+  reservedSlotCount,
+  type InteractiveReservationState,
+} from "./interactive-reservation.js";
 import type { RedskilledWorkerStarted } from "./protocol.js";
 import {
   isSelectorParked,
@@ -50,6 +60,12 @@ import type { RedskilledWorkerSpec } from "./worker-launch.js";
 export interface DemandSelector {
   readonly selector_id: string;
   readonly desired: number;
+  /**
+   * Whether this selector carries interactive work. An interactive selector may
+   * spend a slot reserved for it; an autonomous one is held back from it, which
+   * is the whole of soft preemption — see `interactive-reservation.ts`.
+   */
+  readonly interactive?: boolean;
   /** Builds the spec for one Worker; the runner directive arrives as data. */
   readonly spec: (input: { readonly index: number; readonly runner: string | null }) => RedskilledWorkerSpec;
 }
@@ -68,6 +84,8 @@ export interface SkippedSelector {
 export interface DemandPlan {
   readonly requests: readonly DemandRequest[];
   readonly skipped: readonly SkippedSelector[];
+  /** Autonomous selectors that had room but yielded it to a reservation. */
+  readonly held_back: readonly SkippedSelector[];
 }
 
 export interface PlanProjectDemandInput {
@@ -80,6 +98,8 @@ export interface PlanProjectDemandInput {
   readonly breaker: ProjectBreakerState;
   readonly nowMs: number;
   readonly runner: string | null;
+  /** Slots claimed by interactive dispatches; withheld from autonomous demand. */
+  readonly reserved?: number;
 }
 
 /**
@@ -89,11 +109,17 @@ export interface PlanProjectDemandInput {
  * selector takes what it wants, and a lower one gets whatever room survives —
  * possibly none. That is the property a share-based split would lose, and the
  * reason one producer can serve every selector without them racing. PURE.
+ *
+ * A reservation narrows that budget for autonomous selectors only, so the next
+ * slot the machine frees goes to the interactive dispatch. **Nothing here can
+ * end a Worker**: the planner's only output is births it declines to ask for.
  */
 export function planProjectDemand(input: PlanProjectDemandInput): DemandPlan {
   const requests: DemandRequest[] = [];
   const skipped: SkippedSelector[] = [];
+  const heldBack: SkippedSelector[] = [];
   let room = Math.max(0, input.target - input.live);
+  let reserved = Math.max(0, input.reserved ?? 0);
 
   for (const selector of input.selectors) {
     if (isSelectorParked(input.breaker, selector.selector_id, input.nowMs)) {
@@ -104,21 +130,37 @@ export function planProjectDemand(input: PlanProjectDemandInput): DemandPlan {
       });
       continue;
     }
-    for (let index = 0; index < selector.desired && room > 0; index += 1) {
+    const interactive = selector.interactive === true;
+    let taken = 0;
+    for (let index = 0; index < selector.desired; index += 1) {
+      // An autonomous selector may only spend room that no reservation claims.
+      const affordable = interactive ? room : room - reserved;
+      if (affordable <= 0) break;
       requests.push({
         selector_id: selector.selector_id,
         index,
         spec: selector.spec({ index, runner: input.runner }),
       });
       room -= 1;
+      taken += 1;
+      // The interactive dispatch spends the slot that was being kept for it.
+      if (interactive && reserved > 0) reserved -= 1;
+    }
+    if (!interactive && taken < selector.desired && reserved > 0 && room > 0) {
+      heldBack.push({ selector_id: selector.selector_id, reason: heldBackReason(reserved) });
     }
   }
-  return { requests, skipped };
+  return { requests, skipped, held_back: heldBack };
 }
 
 /** What the producer tells its host about, in order, as a tick unfolds. */
 export interface DemandLifecycleEvent {
-  readonly event: "worker-granted" | "worker-refused" | "selector-parked" | "tick-complete";
+  readonly event:
+    | "worker-granted"
+    | "worker-refused"
+    | "selector-parked"
+    | "selector-held-back"
+    | "tick-complete";
   readonly project_label: string;
   readonly selector_id: string | null;
   readonly worker_id: string | null;
@@ -144,6 +186,9 @@ export interface DemandProductionResult {
   /** The host's own words for the refusal that ended the tick, if one did. */
   readonly refusal: string | null;
   readonly skipped: readonly SkippedSelector[];
+  readonly held_back: readonly SkippedSelector[];
+  /** Slots this tick kept for interactive dispatches, after lapses were dropped. */
+  readonly reserved: number;
   readonly runner: string | null;
 }
 
@@ -163,6 +208,8 @@ export interface DemandProducerOptions {
   readonly reconcileClaims?: (deaths: readonly WorkerDeathReport[]) => Promise<void> | void;
   readonly onLifecycle?: (event: DemandLifecycleEvent) => Promise<void> | void;
   readonly breakerConfig?: ProjectBreakerConfig;
+  /** How long an unwithdrawn interactive reservation survives. */
+  readonly reservationTtlMs?: number;
   readonly clock?: () => number;
 }
 
@@ -174,6 +221,15 @@ export interface DemandProducer {
   reportDeath(report: WorkerDeathReport): void;
   /** A Worker of this selector is working — the half-open circuit closes. */
   reportSurvival(selectorId: string): void;
+  /**
+   * Claim the next slot for an interactive dispatch. Autonomous demand is held
+   * back from that slot; **no live Worker is terminated to free it**.
+   */
+  reserveInteractive(input: { readonly reservation_id: string; readonly reason?: string | null }): void;
+  /** Withdraw a claim, so a slot cannot be held past the request that wanted it. */
+  releaseInteractive(reservationId: string): void;
+  /** The claims still standing, lapsed ones already dropped. */
+  reservations(): InteractiveReservationState;
   breakerState(): ProjectBreakerState;
   /** Releases the project's producer slot; a new producer may then be created. */
   close(): void;
@@ -205,7 +261,9 @@ export function createDemandProducer(options: DemandProducerOptions): DemandProd
 
   const clock = options.clock ?? (() => Date.now());
   const breakerConfig = options.breakerConfig ?? PROJECT_BREAKER_DEFAULTS;
+  const reservationTtlMs = options.reservationTtlMs ?? INTERACTIVE_RESERVATION_TTL_MS;
   let breaker: ProjectBreakerState = {};
+  let reserved: InteractiveReservationState = NO_INTERACTIVE_RESERVATIONS;
   let pendingDeaths: WorkerDeathReport[] = [];
   let ticking = false;
 
@@ -231,6 +289,23 @@ export function createDemandProducer(options: DemandProducerOptions): DemandProd
       breaker = recordWorkerSurvival(breaker, selectorId);
     },
 
+    reserveInteractive(input) {
+      reserved = reserveInteractiveSlot(reserved, {
+        reservation_id: input.reservation_id,
+        at_ms: clock(),
+        reason: input.reason ?? null,
+      });
+    },
+
+    releaseInteractive(reservationId) {
+      reserved = releaseInteractiveSlot(reserved, reservationId);
+    },
+
+    reservations() {
+      reserved = expireLapsedReservations(reserved, clock(), reservationTtlMs);
+      return reserved;
+    },
+
     breakerState() {
       return breaker;
     },
@@ -253,13 +328,18 @@ export function createDemandProducer(options: DemandProducerOptions): DemandProd
         const runner = (await options.resolveRunnerDirective?.()) ?? null;
         const live = (await options.liveWorkers?.()) ?? 0;
 
+        const nowMs = clock();
+        reserved = expireLapsedReservations(reserved, nowMs, reservationTtlMs);
+        const reservedSlots = reservedSlotCount(reserved, nowMs, reservationTtlMs);
+
         const plan = planProjectDemand({
           selectors: options.selectors,
           live,
           target,
           breaker,
-          nowMs: clock(),
+          nowMs,
           runner,
+          reserved: reservedSlots,
         });
         for (const skip of plan.skipped) {
           await emit({
@@ -268,6 +348,15 @@ export function createDemandProducer(options: DemandProducerOptions): DemandProd
             selector_id: skip.selector_id,
             worker_id: null,
             detail: skip.reason,
+          });
+        }
+        for (const held of plan.held_back) {
+          await emit({
+            event: "selector-held-back",
+            project_label: options.projectLabel,
+            selector_id: held.selector_id,
+            worker_id: null,
+            detail: held.reason,
           });
         }
 
@@ -315,6 +404,8 @@ export function createDemandProducer(options: DemandProducerOptions): DemandProd
           shortfall: plan.requests.length - granted.length,
           refusal,
           skipped: plan.skipped,
+          held_back: plan.held_back,
+          reserved: reservedSlots,
           runner,
         };
         await emit({
@@ -387,4 +478,4 @@ async function callQuietly(fn: (() => Promise<unknown> | unknown) | undefined): 
   }
 }
 
-export type { ProjectBreakerState, WorkerDeathReport };
+export type { InteractiveReservationState, ProjectBreakerState, WorkerDeathReport };
