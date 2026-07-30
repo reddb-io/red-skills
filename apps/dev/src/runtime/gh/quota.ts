@@ -6,9 +6,17 @@
 // 404s, merge conflicts). Dying on either is a flow bug; this module provides
 // the classifier and the bounded wait-and-retry primitive that prevents it.
 //
-// Every gh mutation in the worker path (landing, labels, comments, close)
-// routes through withGhQuotaBackoff when GhContext/GitContext carries a
-// quotaBackoff option. Without the option, behavior is unchanged.
+// **BACKOFF IS ON BY DEFAULT, NOT OPT-IN.** Every gh invocation the runtime
+// makes (landing, labels, comments, close) resolves its options through
+// resolveGhQuotaBackoff: an injected `quotaBackoff` wins, and its ABSENCE means
+// the documented default wait and cap — never "disabled". An opt-in safety
+// primitive whose only populator is a test ships as a green suite over a binary
+// with no protection at all (issue #2800); the resolver is what makes the
+// implemented behavior reachable without a test injecting it.
+//
+// Read-only boot probes opt OUT explicitly at the call site (see gh/auth.ts):
+// they classify a rate limit as transient themselves and proceed, so blocking
+// boot for up to the cap would convert a survivable blip into a stall.
 
 import { isGithubQuotaText } from "@reddb-io/shared/github-quota.js";
 
@@ -56,8 +64,78 @@ export interface GhQuotaBackoffOpts {
   defaultWaitMs?: number;
 }
 
-const DEFAULT_CAP_MS = 30 * 60 * 1000; // 30 minutes
-const DEFAULT_WAIT_MS = 60 * 1000;      // 60 seconds
+/** Maximum total wall-clock wait before the failing response is returned. */
+export const DEFAULT_CAP_MS = 30 * 60 * 1000; // 30 minutes
+/** Sleep between retries when no server-supplied reset time is available. */
+export const DEFAULT_WAIT_MS = 60 * 1000;      // 60 seconds
+
+/**
+ * Emit the wait as operator-visible `quota-wait` activity. The exec helpers hold
+ * no lane handle, so stderr is the surface that reaches the worker log: a bounded
+ * wait an operator can read beats silence that reads as a hang. A caller wiring
+ * a richer surface (vitals, lane records) overrides `onWait`.
+ */
+function announceQuotaWait(remainingMs: number, sleepForMs: number): void {
+  const secs = Math.max(1, Math.round(sleepForMs / 1000));
+  const budget = Math.max(0, Math.round(remainingMs / 1000));
+  process.stderr.write(
+    `quota-wait: github rate limit — waiting ${secs}s before retry (${budget}s of quota budget left)\n`,
+  );
+}
+
+/** Operator override for the per-retry wait, in ms. */
+export const WAIT_MS_ENV = "RED_GH_QUOTA_WAIT_MS";
+/** Operator override for the total wait budget, in ms. `0` disables waiting. */
+export const CAP_MS_ENV = "RED_GH_QUOTA_CAP_MS";
+
+/**
+ * A non-negative integer ms value from `env[name]`, else `fallback`. A malformed
+ * or negative value is IGNORED rather than throwing: a typo in an operator's
+ * shell must not brick every gh call, and the fallback is the safe behavior.
+ * PURE.
+ */
+export function readQuotaMsEnv(
+  name: string,
+  fallback: number,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.floor(parsed);
+}
+
+/**
+ * The production quota-backoff options: real clock, real sleep, documented cap
+ * and wait, and a `quota-wait` notice on every wait. `overrides` lets a caller
+ * tune one field without re-deriving the rest; absent an override, the cap and
+ * wait honour {@link CAP_MS_ENV} / {@link WAIT_MS_ENV} so an operator can widen
+ * the budget — or set the cap to `0` to refuse the wait — without a code change.
+ */
+export function defaultGhQuotaBackoff(
+  overrides: Partial<GhQuotaBackoffOpts> = {},
+): GhQuotaBackoffOpts {
+  const capMs = overrides.capMs ?? readQuotaMsEnv(CAP_MS_ENV, DEFAULT_CAP_MS);
+  const waitMs = overrides.defaultWaitMs ?? readQuotaMsEnv(WAIT_MS_ENV, DEFAULT_WAIT_MS);
+  return {
+    nowMs: overrides.nowMs ?? (() => Date.now()),
+    sleepMs: overrides.sleepMs ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
+    onWait: overrides.onWait ?? ((remainingMs) => announceQuotaWait(remainingMs, Math.min(waitMs, remainingMs))),
+    capMs,
+    defaultWaitMs: waitMs,
+  };
+}
+
+/**
+ * The options a gh invocation runs with. Injection stays available for tests;
+ * ABSENCE of injection no longer means absence of backoff — that is the whole
+ * defect of #2800, where the only populator in the tree was a test file. PURE
+ * apart from the clock/sleep closures it hands back.
+ */
+export function resolveGhQuotaBackoff(injected?: GhQuotaBackoffOpts): GhQuotaBackoffOpts {
+  return injected ?? defaultGhQuotaBackoff();
+}
 
 /**
  * Run `fn` once. If the result is a rate-limit, sleep for up to `capMs`

@@ -1,7 +1,16 @@
 import { runGh, type GhContext } from "./common.js";
 
+/**
+ * Both probes in this module opt OUT of quota backoff. They are read-only boot
+ * prechecks that already classify a rate limit as transient and let boot proceed
+ * (see `ghAuthTransientPattern`); waiting up to the 30-minute cap here would turn
+ * a survivable blip into a boot stall. The mutations boot leads to keep the
+ * default backoff.
+ */
+const NO_QUOTA_WAIT = { quota: "off" } as const;
+
 export async function ghInstalled(ctx: GhContext): Promise<boolean> {
-  const r = await runGh(ctx, ["--version"]);
+  const r = await runGh(ctx, ["--version"], NO_QUOTA_WAIT);
   return r.code !== 127;
 }
 
@@ -43,7 +52,7 @@ const ghAuthTransientPattern =
  * live-API failure is the stronger signal that the credential is present.
  */
 export async function ghAuthenticated(ctx: GhContext): Promise<boolean> {
-  const r = await runGh(ctx, ["auth", "status"]);
+  const r = await runGh(ctx, ["auth", "status"], NO_QUOTA_WAIT);
   if (r.code === 0) return true;
   const report = `${r.stdout}\n${r.stderr}`;
   if (ghAuthTransientPattern.test(report)) return true;
