@@ -26,7 +26,7 @@ This is a prompt-driven skill, not a deterministic script. Explore, present what
 ## Hot Path
 
 1. **Explore first.** Inspect the repo state listed in [REFERENCE.md](./REFERENCE.md#explore-checklist); do not assume prior RedSkills setup is absent or current.
-2. **Ask in sequence.** Walk the user through one setup section at a time. Keep the plugin-activation gate first, then continue through issue tracker, triage labels, domain docs, workflows, token efficiency, runtime launcher, required host binaries, statusline, config template, command guards, development workflow, and hook scripts. Use the exact section copy and choices in [INTERVIEW.md](./INTERVIEW.md).
+2. **Ask in sequence.** Walk the user through one setup section at a time. Keep the plugin-activation gate first, then continue through issue tracker, triage labels, domain docs, workflows, token efficiency, runtime launcher, required host binaries, execution daemon, statusline, config template, command guards, development workflow, and hook scripts. Use the exact section copy and choices in [INTERVIEW.md](./INTERVIEW.md).
 3. **Confirm before writing.** Show the draft agent-skills block, generated agent docs, development-workflow changes, and any accepted command-guard policy before editing. See [WRITE-CONTRACT.md](./WRITE-CONTRACT.md#confirm-and-edit).
 4. **Write under the no-clobber contract.** Never overwrite, rewrite, or reorder existing user-owned content except for the explicit surgical merges named in [WRITE-CONTRACT.md](./WRITE-CONTRACT.md#write). Use the existing-file selection rules, seed docs, workflow copy rules, plugin-activation merge, development-workflow injector, statusline wiring, and hook-script registration exactly as documented there.
 5. **Sweep existing issues only after setup.** If open issues exist, group label backfill candidates and ask for one batch approval before editing labels. See [ISSUE-SWEEP.md](./ISSUE-SWEEP.md).
@@ -35,6 +35,7 @@ This is a prompt-driven skill, not a deterministic script. Explore, present what
 ## Hard Rules
 
 - **Only this skill may create `.red/`.** Creating `.red/` is authorized only by the plugin-activation decision; if the user enables no plugins, write nothing.
+- **The daemon's home is the daemon's.** This skill's `.red/` authority is repository-scoped. `~/.red/redskilled/` is operator-scoped, owned by `redskilled` (ADR 0130 Amendment 1), and provisioned by running `redskilled provision` — never by creating the directory here.
 - **Global hooks are inert by default.** A plugin block alone is not enough: each enabled plugin must have `plugins.<name>.enabled: true` in `.red/config.yaml` (ADR 0067).
 - **GitHub Issues only.** In reddb.io repos there is no local fallback and no supported alternate issue tracker. Stop if the repo has no GitHub remote.
 - **No clobbering.** Existing files are project state. Skip existing targets unless the referenced write contract explicitly names a surgical exception.

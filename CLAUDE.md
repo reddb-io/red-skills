@@ -94,8 +94,11 @@ every agent, but a plugin only runs in a directory whose `.red/config.yaml` sets
 `plugins.<name>.enabled: true` (strict opt-in). No `.red/config.yaml`, or a block
 without the explicit `enabled: true`, → the plugin stays fully inert there (no
 bundle fetch, no hooks). `/red-setup` is the **only** thing authorized to
-create `.red/` and to write the activation flags — no other code path may create
-`.red/`. The gate lives in `packages/shared/plugin-gate.ts` (consumed by the dev
+create a repository's `.red/` and to write the activation flags — no other code
+path may create it. That authority is repository-scoped: the operator's
+host-scoped `~/.red/redskilled/` belongs to the `redskilled` daemon and is
+created only by `provisionRedskilledHome` (ADR 0130 Amendment 1), which
+`/red-setup` provisions by calling (`redskilled provision`). The gate lives in `packages/shared/plugin-gate.ts` (consumed by the dev
 launchers) with a mirrored inline copy in each of memory/brain's `bootstrap.mjs`;
 keep the three in lockstep.
 

@@ -86,6 +86,23 @@ vi.mock("../src/runtime/deadend-audit-report.js", () => ({
   collectDeadendAuditReport: vi.fn(async () => deadendReport),
 }));
 
+// The host under test may or may not have a daemon, so the FACTS are posed and
+// the real audit runs over them: what is being checked is that the doctor
+// reports provisioning and prints what to run, not what this machine happens to
+// have installed.
+vi.mock("@reddb-io/redskilled/provision", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@reddb-io/redskilled/provision")>()),
+  readRedskilledProvisionFacts: vi.fn(async () => ({
+    homePath: "/home/dev/.red/redskilled",
+    homePresent: false,
+    homeMode: undefined,
+    entry: { command: "/usr/bin/node", args: ["/bundles/redskilled.bundle.min.mjs"], source: "bundle-cache" as const },
+    socketPath: "/run/user/1000/red-skills/redskilled.sock",
+    reachable: false,
+    supervisorUnit: "absent" as const,
+  })),
+}));
+
 vi.mock("../src/core/castle-state-doctor.js", () => ({
   auditCastleStateLane: vi.fn(async () => ({
     status: "ok",
@@ -143,6 +160,46 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
     expect(human).toContain("red-doctor deadend audit");
     expect(human).toContain("deadends: 1");
     expect(human).toContain("dangling_claim #100 → cure: claim_release");
+    stdout.mockRestore();
+  });
+
+  it("reports an unprovisioned daemon and names what to run", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-doctor-redskilled-"));
+    roots.push(root);
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    const human = writes.join("");
+    expect(human).toContain("red-doctor redskilled daemon");
+    expect(human).toContain("provisioning: missing");
+    expect(human).toContain("/home/dev/.red/redskilled does not exist");
+    expect(human).toContain("no daemon answered on /run/user/1000/red-skills/redskilled.sock");
+    expect(human).toContain("fix: run `/red-setup`");
+    expect(human).toContain("redskilled provision");
+    stdout.mockRestore();
+  });
+
+  it("renders the redskilled provisioning verdict in the --json (TOON) form", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-doctor-redskilled-json-"));
+    roots.push(root);
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root, "--json"], root)).resolves.toBe(0);
+
+    const toon = writes.join("");
+    expect(toon).toContain("redskilled");
+    expect(toon).toContain("supervisor-unit");
     stdout.mockRestore();
   });
 

@@ -59,10 +59,13 @@ consults *first*, before any work:
      their plugin checkout and cannot import the shared module at runtime).
      Gated-off → honour the hooks' no-op contract (`{}` on stdout, `exit 0`).
 
-3. **`/setup-red-skills` is the sole creator of `.red/` and the only way to
-   enable a plugin.** It prompts which plugins to enable (Section A0), creates
-   `.red/` (authorized here and nowhere else), and writes the
-   `plugins.<name>.enabled` flags. Re-running it is how a plugin is enabled or
+3. **`/setup-red-skills` is the sole creator of a repository's `.red/` and the
+   only way to enable a plugin.** It prompts which plugins to enable (Section
+   A0), creates `.red/` (authorized here and nowhere else), and writes the
+   `plugins.<name>.enabled` flags. **This authority is repository-scoped**: the
+   operator's own `~/.red/redskilled/` is outside every checkout and belongs to
+   the daemon that lives in it (ADR 0130 Amendment 1), which setup provisions by
+   *calling* its owner rather than by creating the directory itself. Re-running it is how a plugin is enabled or
    disabled. Enabling memory/brain only *authorizes* them; their own init
    (`/memory:init`, brain setup) still configures them.
 

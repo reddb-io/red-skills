@@ -8,6 +8,7 @@
     "./client": "./src/client.ts",
     "./paths": "./src/paths.ts",
     "./protocol": "./src/protocol.ts",
+    "./provision": "./src/provision.ts",
     "./statusline-payload": "./src/statusline-payload.ts"
   },
   "description": "redskilled — the host-scoped execution daemon (ADR 0130): one singleton per user session behind a unix socket, owning Worker processes across every project on the machine while each project's bundle keeps owning the work.",

@@ -14,6 +14,7 @@ import { PROJECT_SUPERVISOR_LANE } from "@reddb-io/red-castle/engine";
 import { afkPaths } from "./wire.js";
 import { readPidStartTime } from "../core/state.js";
 import { migrateLegacyDevPaths } from "./red-path-migration.js";
+import { migrateCastleCutover } from "./castle-cutover-migration.js";
 import { isSupervisorIdentityLive, readSupervisorIdentity, reapStaleSupervisorState } from "./supervisor-state.js";
 import {
   detectFleetScopeProbes,
@@ -85,6 +86,13 @@ export interface SpawnSupervisorOptions {
   scope?: { probes?: FleetScopeProbes; settings?: FleetScopeSettings };
   /** Test/caller injection for the published-bundle entry resolution (#2808). */
   entry?: SupervisorEntryLookup;
+  /**
+   * Whether this launch births Workers through the redskilled daemon (#2855).
+   * A supervisor launch is the era boundary, so it is where the one-time cutover
+   * migration runs. Absent, `RED_CASTLE_CUTOVER` decides and the default is off,
+   * which keeps the migration inert until the daemon actually owns birth.
+   */
+  cutoverActive?: boolean;
 }
 
 /**
@@ -95,6 +103,15 @@ export interface SpawnSupervisorOptions {
  */
 export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<number | null> {
   await migrateLegacyDevPaths(opts.root).catch(() => undefined);
+  // The ADR 0130 cutover migration (#2855): a supervisor launch is the boundary
+  // between the era that births Workers here and the era that births them
+  // through the daemon, so the one-time carry-across of live pre-cutover state
+  // runs exactly here — never in a Worker's own boot, which must never quiesce
+  // its peers. Stamped and gated; inert until the daemon owns birth.
+  await migrateCastleCutover(opts.root, {
+    ...(opts.cutoverActive !== undefined ? { cutoverActive: opts.cutoverActive } : {}),
+    ...(opts.onNotice ? { deps: { notice: opts.onNotice } } : {}),
+  }).catch(() => undefined);
   const paths = afkPaths(opts.root);
   mkdirSync(dirname(paths.supervisorPidPath), { recursive: true });
   await reapStaleSupervisorState(dirname(paths.supervisorPidPath), isLivePid);

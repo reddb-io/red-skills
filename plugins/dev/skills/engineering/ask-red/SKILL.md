@@ -139,6 +139,12 @@ through `/memory:view`, `memory docs reference-graph`, and
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes. `/red-setup` owns `.red/config.yaml` authoring through its
   shipped config template and post-write loader check.
+- Execution-daemon provisioning is a setup route, not a feature-work one:
+  `/red-setup` (Section E3) provisions `redskilled` by running `redskilled
+  provision`, and `/red-doctor` (check 24) reports whether the host is
+  provisioned. The daemon's home `~/.red/redskilled/` belongs to `redskilled`
+  itself (ADR 0130 Amendment 1), never to `/red-setup`, whose `.red/` authority
+  is repository-scoped.
 - TOON/TOONL operational reader changes are documentation-maintenance work:
   `/red-setup` owns the pinned `tq` host binary, `/red-doctor` verifies it, and
   `/afk` plus `/daily-review` own the lane-reading examples.
