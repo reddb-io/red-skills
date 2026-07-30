@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-An exhausted GitHub read raises instead of rendering as an empty result set (#2801). Every gh JSON read in the dev runtime collapsed failure into absence with `if (r.code !== 0) return []`, and an empty result is a confident, well-formed, wrong answer: a PR listing that never ran came back as "no pull requests are open" while two were open, and reading it at face value supported the conclusion that the work had merged. GraphQL made it worse — an exhausted query can exit 0 with a null-filled `data` block and a `RATE_LIMITED` entry in `errors`, so even the exit code said nothing. The new read boundary (`runtime/gh/read.ts`) decides once for every consumer: a query that could not run raises `GhReadError`, a query that ran returns its rows even when there are none, and the raised failure carries the transient quota classification so the existing bounded wait-and-retry applies rather than a generic failure path. The open-PR and queue counters, the statusline count cache, the deadend audit and the dashboard read through it, so a failed read keeps the last known counts or fails loudly instead of publishing a false zero.
