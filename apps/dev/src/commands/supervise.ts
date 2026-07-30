@@ -1,13 +1,18 @@
-// commands/supervise.ts — the NATIVE worker supervisor (the hidden `__supervise`
-// command fleet.ts spawns instead of supervisor.sh).
+// commands/supervise.ts — the per-project runtime (the hidden `__supervise`
+// command fleet.ts spawns).
 //
 // It writes the supervisor pid file, polls the stop file, and drives
-// runSupervisor over real SupervisorDeps. Each slot spawns a `run --once` of
-// THIS SAME BUNDLE (node process.execPath bin __run-once), so the whole fleet is
-// native — no bash anywhere in the loop.
+// runSupervisor over real SupervisorDeps.
+//
+// **NOTHING HERE SPAWNS A WORKER.** Since the ADR 0130 cutover (#2851) every
+// Worker is born by the host `redskilled` daemon: this module states an argv, a
+// workspace and its own opaque project label, and the host decides admission,
+// the resource unit and the sampling floor. There is deliberately no local
+// `spawn` import left — a fallback would be an unbudgeted birth no host ever
+// judged, and its absence is what makes that unrepresentable rather than
+// merely discouraged.
 
-import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, rmSync, renameSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
 import {
@@ -38,6 +43,12 @@ import { inspectProcessTreeNative, sampleTreeRssMbNative } from "../runtime/proc
 import { refuseRemovedFleetFlag } from "../core/removed-fleet-flag.js";
 import { SUPERVISOR_LANE_ENV } from "../core/supervisor-lane.js";
 import { resolveDevScriptPath } from "../runtime/supervisor-spawn.js";
+import {
+  createRedskilledBirthPort,
+  redskilledUnreachableAdvice,
+  type RedskilledBirthPort,
+} from "../runtime/redskilled-birth.js";
+import { genWorkerId } from "../core/session.js";
 import {
   workerLivenessFor,
   slotLogDir,
@@ -315,12 +326,21 @@ export function buildSlotEnv(
   slot: number,
   policy: SpawnPolicy = {},
   retireFile?: string,
+  workerId?: string,
 ): Record<string, string> {
   const out: Record<string, string> = { ...workerEnv, RED_AFK_SLOT: String(slot) };
   if (policy.taskTierDowngrade) out.RED_AFK_TASK_TIER_DOWNGRADE = "1";
   else delete out.RED_AFK_TASK_TIER_DOWNGRADE;
   if (retireFile !== undefined) out.RED_AFK_RETIRE_FILE = retireFile;
   else delete out.RED_AFK_RETIRE_FILE;
+  // The host's handle on this Worker and the work's handle on it are ONE string
+  // (#2851). The daemon is told this id at birth and the Worker adopts it as its
+  // own directory name, so every surface that joins a Worker's process verdict
+  // to its work — `worker_vitals`, the statusline, the MCP lane canary — joins
+  // on a value both authorities agree on rather than on a mapping one of them
+  // maintains privately.
+  if (workerId !== undefined) out.RED_AFK_WORKER_ID = workerId;
+  else delete out.RED_AFK_WORKER_ID;
   return out;
 }
 
@@ -527,6 +547,12 @@ export function buildSupervisorDeps(
   trunk: string,
   slotArgs: readonly string[],
   adoptSlotPids: readonly HeartbeatSlotPid[] = [],
+  // How this supervisor reaches the host that births its Workers (#2851).
+  // Injected so a test can observe the SPEC a slot would be born from without a
+  // daemon on the machine; a real supervisor passes nothing and gets the
+  // session's own socket. There is no third option — with no port there is no
+  // birth, which is the fail-closed rule stated as a signature.
+  birth: RedskilledBirthPort = createRedskilledBirthPort({ root }),
 ): SupervisorDeps {
   // Slots run `run --once`, which ONLY the dev entry routes. Never infer the
   // worker entry from argv[1]: under the MCP lane this supervisor is itself the
@@ -581,35 +607,67 @@ export function buildSupervisorDeps(
   // one's, without relying solely on the slot-pid map (issue #2345).
   let workerEnv = { ...buildWorkerEnv(process.env, activeRunner), [SUPERVISOR_LANE_ENV]: PROJECT_SUPERVISOR_LANE };
 
+  // ---- the host is the launcher (#2851, ADR 0130) --------------------------
+  // Every Worker below is born by the daemon: the project states an argv, a
+  // workspace and its own opaque label, and the host decides admission, the
+  // resource unit and the sampling floor. There is deliberately NO local spawn
+  // left to fall back to — a fallback would reinstate the unbudgeted spawn the
+  // daemon exists to prevent, and would do it silently.
+  // The host's worker id, per slot — the handle a stop, a death and a log line
+  // are all addressed by. `slotPids` keeps answering the fs/liveness closures,
+  // which ask about a pid because that is what a process table is keyed on.
+  const slotWorkerIds = new Map<number, string>();
+  const workerSlots = new Map<string, number>();
+  const bornWorkerIds = new Set<string>();
+
+  /** The host's id for the Worker running at `pid`, when this project birthed it. */
+  const workerIdForPid = (pid: number): string | undefined => {
+    for (const [slot, live] of slotPids) {
+      if (live === pid) return slotWorkerIds.get(slot);
+    }
+    return undefined;
+  };
+
+  /** Ask the host for one Worker on `slot`. Fail closed: a refusal throws. */
+  const birthWorker = async (
+    slot: number,
+    runArgs: readonly string[],
+    policy: SpawnPolicy | undefined,
+    retireFile: string | undefined,
+  ): Promise<{ pid: number; spawnEpoch: number }> => {
+    const workerId = genWorkerId(Math.random, (id) => bornWorkerIds.has(id));
+    const slotLogFile = slotLogPath(tmpDir, slot, slotLogsDir);
+    if (retireFile !== undefined) rmSync(retireFile, { force: true });
+    let granted;
+    try {
+      granted = await birth.start({
+        worker_id: workerId,
+        workspace_path: root,
+        log_path: slotLogFile,
+        command: process.execPath,
+        args: [bundle, ...runArgs],
+        env: buildSlotEnv(workerEnv, slot, policy, retireFile, workerId),
+        project_label: "",
+      });
+    } catch (err) {
+      logLine(redskilledUnreachableAdvice(birth.socketPath, err));
+      throw err;
+    }
+    for (const warning of granted.warnings) logLine(`worker ${granted.workerId}: ${warning}`);
+    bornWorkerIds.add(granted.workerId);
+    slotWorkerIds.set(slot, granted.workerId);
+    workerSlots.set(granted.workerId, slot);
+    slotPids.set(slot, granted.pid);
+    return { pid: granted.pid, spawnEpoch: now() };
+  };
+
   return {
     proc: {
       spawnSlot: async (slot, policy) => {
         // Forward the Spec/Ticket filter + runner-swap policy so a supervised
         // fleet honours the same filter a single `/afk run` would (gap 5).
         const runArgs = ["run", "--once", "--runner", activeRunner, ...slotArgs];
-        // Each slot gets its own log file so the circuit-trip sweep can
-        // resolve which worker IDs ran in the slot via parseWorkerIdsFromLog
-        // (mirrors spawn_slot's per-slot slot_log in supervisor.sh).
-        const slotLogFile = slotLogPath(tmpDir, slot, slotLogsDir);
-        const slotFd = openSync(slotLogFile, "a");
-        const retireFile = slotRetirePath(statePath, slot);
-        rmSync(retireFile, { force: true });
-        const child = spawn(process.execPath, [bundle, ...runArgs], {
-          cwd: root,
-          env: buildSlotEnv(workerEnv, slot, policy, retireFile),
-          detached: true,
-          stdio: ["ignore", slotFd, slotFd],
-        });
-        // Close the parent's copy — the child inherits it and keeps it open.
-        closeSync(slotFd);
-        child.on("exit", (code) => {
-          // null means killed by signal; treat as non-clean (1).
-          slotExitCodes.set(slot, code ?? 1);
-        });
-        child.unref();
-        const pid = child.pid ?? 0;
-        slotPids.set(slot, pid);
-        return { pid, spawnEpoch: now() };
+        return birthWorker(slot, runArgs, policy, slotRetirePath(statePath, slot));
       },
       spawnReconcileWorker: async (slot, candidate) => {
         const runArgs = [
@@ -617,35 +675,57 @@ export function buildSupervisorDeps(
           "--reconcile-issue", String(candidate.issue),
           ...slotArgs,
         ];
-        const slotLogFile = slotLogPath(tmpDir, slot, slotLogsDir);
-        const slotFd = openSync(slotLogFile, "a");
-        const child = spawn(process.execPath, [bundle, ...runArgs], {
-          cwd: root,
-          env: buildSlotEnv(workerEnv, slot, undefined, slotRetirePath(statePath, slot)),
-          detached: true,
-          stdio: ["ignore", slotFd, slotFd],
-        });
-        closeSync(slotFd);
-        child.on("exit", (code) => {
-          // null means the process was killed by a signal; treat as non-clean (1).
-          slotExitCodes.set(slot, code ?? 1);
-        });
-        child.unref();
-        const pid = child.pid ?? 0;
-        slotPids.set(slot, pid);
-        return { pid, spawnEpoch: now() };
+        return birthWorker(slot, runArgs, undefined, slotRetirePath(statePath, slot));
       },
       slotPid: (slot) => slotPids.get(slot) ?? null,
       lastExitCode: (slot) => slotExitCodes.get(slot) ?? null,
+      // Deaths come from the HOST, not from a child handle this process no
+      // longer holds (#2851). The daemon appends every death to its event lane
+      // with the exit status it witnessed; draining that lane is what feeds the
+      // project's own circuit breaker, which is the half ADR 0130 rule 2 leaves
+      // here. Best-effort: an unreadable lane costs a tick's exit codes, never
+      // the tick.
+      observeHostDeaths: async () => {
+        let events;
+        try {
+          events = await birth.drainEvents();
+        } catch {
+          return;
+        }
+        for (const event of events) {
+          if (event.event === "worker-birth") continue;
+          const slot = workerSlots.get(event.worker_id);
+          if (slot === undefined) continue;
+          // A budget kill and a signal death are both non-clean; only a witnessed
+          // clean exit may be read as a clean drain, so an unknown status is 1.
+          slotExitCodes.set(slot, event.exit_code ?? 1);
+          workerSlots.delete(event.worker_id);
+          logLine(
+            `host reported worker ${event.worker_id} (slot ${slot}) ${event.event}: ${event.detail ?? "no detail"}`,
+          );
+        }
+      },
       isAlive,
       requestSlotRetire: async (slot) => {
         writeFileSync(slotRetirePath(statePath, slot), "", "utf8");
       },
-      // Wait-and-escalate killer (#580): SIGTERM → grace → SIGKILL → CONFIRM the
-      // tree is gone, then return whether it actually died. The reaper gates its
-      // `rm -rf` worktree teardown on this, so a SIGTERM-ignoring worker can
-      // never be torn down out from under itself.
-      killTree: (pid) => killTreeAndWait(pid),
+      // Death is the host's too, for a Worker the host birthed: the daemon holds
+      // the transient unit, so asking it to stop is what actually reaches the
+      // whole tree. A pid the host never birthed — an adopted pre-cutover worker,
+      // a stray — is still killed locally, because refusing to end a process
+      // nobody owns would leave it running forever.
+      killTree: async (pid) => {
+        const owned = workerIdForPid(pid);
+        if (owned !== undefined) {
+          try {
+            if (await birth.stop(owned, "the project's policy ended this Worker")) return true;
+          } catch {
+            // The host did not answer. The Worker is still running, so the local
+            // kill below is the only remaining way to honour the policy.
+          }
+        }
+        return killTreeAndWait(pid);
+      },
       // Real ps-backed tree sample. A ps failure returns a CONSERVATIVE BUSY
       // snapshot (never []), so a transient ps error can never authorise a reap.
       inspectTree: (pid) => inspectProcessTreeNative(pid),

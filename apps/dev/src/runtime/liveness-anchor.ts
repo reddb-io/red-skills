@@ -333,10 +333,30 @@ export function isDaemonSilence(reason: string): boolean {
   return reason === DAEMON_SILENCE_REASON;
 }
 
-/** Why a fresh answer that does not name the Worker still is not a death. */
-const UNCOVERED_REASON =
+/**
+ * Why a fresh answer that does not name the Worker still is not a death.
+ *
+ * Exported because since the ADR 0130 cutover (#2851) this sentence names a
+ * DEFECT rather than a tolerated gap: every Worker is born by the daemon, so a
+ * Worker the caller can see running and the host cannot vouch for was spawned
+ * behind the host's back — an unbudgeted birth no admission verdict judged. It
+ * is still not a death, which is why the verdict stays `unknown`; what changed
+ * is that a lane probe reading this reason has found something wrong.
+ */
+export const DAEMON_UNCOVERED_REASON =
   "the daemon holds no record of this Worker while the caller still sees it running, " +
   "so its silence is ignorance about a Worker it never birthed, not evidence of death";
+
+/**
+ * True when the daemon answered, and does not hold a Worker something still
+ * sees running. PURE — one reader for the sentinel, exactly as
+ * {@link isDaemonSilence}.
+ */
+export function isDaemonUncovered(reason: string): boolean {
+  return reason === DAEMON_UNCOVERED_REASON;
+}
+
+const UNCOVERED_REASON = DAEMON_UNCOVERED_REASON;
 
 function unknownLiveness(workerId: string, reason: string): WorkerLiveness {
   return {

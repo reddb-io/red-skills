@@ -261,6 +261,18 @@ export interface PlanWorkerPlacementOptions {
   readonly enabled?: boolean;
   /** Extra `KEY=VALUE` environment for the Worker. */
   readonly env?: Readonly<Record<string, string>>;
+  /**
+   * True when the caller gave a log path, so the Worker's own output must reach
+   * the launcher's file descriptors rather than the init system's journal.
+   *
+   * It is a placement input rather than a launch detail because only the plan
+   * knows whether an init system sits between the daemon and the Worker: a
+   * transient unit detaches stdio by default, so the same fds that work for an
+   * unisolated spawn silently capture nothing under isolation. A project that
+   * lost its Worker's log would lose the only record naming which Workers ran
+   * before a circuit trip.
+   */
+  readonly pipeOutput?: boolean;
 }
 
 /**
@@ -319,6 +331,11 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     `--unit=${unit}`,
     `--working-directory=${opts.workspacePath}`,
   ];
+  // `--pipe` connects the unit's stdio to this process's, which is what makes an
+  // inherited log fd reach the Worker at all. Without it a transient unit writes
+  // to the journal and the caller's log file stays empty — a downgrade nothing
+  // would report, because the launch itself succeeds.
+  if (opts.pipeOutput === true) unitArgs.push("--pipe");
   if (budget.memory_high != null) unitArgs.push(`--property=MemoryHigh=${budget.memory_high}`);
   if (budget.memory_max != null) unitArgs.push(`--property=MemoryMax=${budget.memory_max}`);
   if (budget.cpu_weight != null) unitArgs.push(`--property=CPUWeight=${budget.cpu_weight}`);

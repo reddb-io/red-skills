@@ -31,6 +31,12 @@ import { decodeDevSnapshotSniff } from "../src/core/toon-snapshot.js";
 import { afkPaths } from "../src/runtime/wire.js";
 
 const dirs: string[] = [];
+// The launch reaches the host daemon before it spawns anything, and refuses when
+// nothing answers (#2851). These cases are about which BUNDLE the launch
+// resolves, so the host is stubbed to "answered" and the era migration is pinned
+// off — both are covered by their own suites.
+const reachesDaemon = async (): Promise<void> => undefined;
+
 const unscoped = { settings: { enabled: false, memoryHigh: "" } };
 
 // The launching process poses as the stranded fleet of #2808: an MCP server on a
@@ -69,6 +75,8 @@ describe("fleet launch entry resolution (#2808)", () => {
     const cwd = await root();
 
     await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "claude",
@@ -91,6 +99,8 @@ describe("fleet launch entry resolution (#2808)", () => {
     const notices: string[] = [];
 
     await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "claude",
@@ -149,6 +159,8 @@ describe("fleet launch published-version failures are loud (#2808)", () => {
     const cwd = await root();
 
     await expect(spawnSupervisor({
+      reachDaemon: reachesDaemon,
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "claude",

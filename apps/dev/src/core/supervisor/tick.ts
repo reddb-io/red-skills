@@ -97,6 +97,18 @@ export async function superviseTick(
     return result;
   }
 
+  // Take in the host's deaths BEFORE anything reads a slot's exit code (#2851).
+  // Since ADR 0130 the daemon owns death, so a Worker's exit status arrives on
+  // the host event lane rather than on a child handle; draining it first is what
+  // lets the dead-slot scan below read the daemon's own number instead of
+  // guessing from a pid that stopped answering.
+  try {
+    await deps.proc.observeHostDeaths?.();
+  } catch {
+    // Best-effort: an unreadable lane costs this tick its exit codes, and the
+    // liveness scan still reports every death conservatively as non-clean.
+  }
+
   result.trunkFreshness = await refreshTrunkMirrorIfDue(state, deps, config);
 
   // Sample queue depth once per tick for idle-park / un-park decisions and the

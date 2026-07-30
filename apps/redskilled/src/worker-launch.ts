@@ -20,6 +20,8 @@
  */
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { closeSync, mkdirSync, openSync } from "node:fs";
+import { dirname } from "node:path";
 import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledJobObjectHandle } from "./job-object.js";
@@ -110,6 +112,27 @@ export interface LaunchWorkerOptions {
   readonly spawnFn?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
   /** Called when the daemon observes this Worker's process end. */
   readonly onExit?: (workerId: string, code: number | null, signal: NodeJS.Signals | null) => void;
+  /** False to leave the spec's `log_path` unopened — for a test with no real fs. */
+  readonly openLog?: boolean;
+}
+
+/** Open a Worker's log for append, or null when it has none / cannot be opened. */
+function openWorkerLog(logPath: string | undefined): number | null {
+  if (logPath == null || logPath.trim() === "") return null;
+  try {
+    mkdirSync(dirname(logPath), { recursive: true });
+    return openSync(logPath, "a");
+  } catch {
+    return null;
+  }
+}
+
+function closeWorkerLog(fd: number): void {
+  try {
+    closeSync(fd);
+  } catch {
+    // A descriptor the host already reclaimed is the outcome we wanted anyway.
+  }
 }
 
 /** Reject a spec the daemon cannot act on, naming the field rather than the shape. */
@@ -159,6 +182,11 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   const clock = options.clock ?? (() => new Date().toISOString());
   const workerId = (spec.worker_id ?? options.workerId ?? randomUUID()).trim() || randomUUID();
   const probes = options.probes ?? detectWorkerPlacementProbes(env);
+  // The Worker's own output is the project's log, so the daemon opens the file
+  // the client named and hands the descriptor to the process it owns. Failing to
+  // open it degrades to a silent Worker rather than a refused launch: a log is
+  // evidence, and losing evidence must never cost the work.
+  const logFd = options.openLog === false ? null : openWorkerLog(spec.log_path);
   const plan = planWorkerPlacement({
     workerId,
     projectLabel: spec.project_label,
@@ -170,6 +198,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     env: spec.env,
     enabled: options.enabled ?? placementEnabled(env),
     probes,
+    pipeOutput: logFd !== null,
   });
 
   const spawnFn = options.spawnFn ?? spawn;
@@ -179,11 +208,14 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     // would have run fine.
     ...(plan.cwd != null ? { cwd: plan.cwd } : {}),
     detached: true,
-    stdio: "ignore",
+    stdio: logFd === null ? "ignore" : ["ignore", logFd, logFd],
     // The Worker's own env goes through `--setenv` when isolated; unisolated it
     // has to be merged here, or the downgrade would silently change behaviour.
     env: plan.isolated ? { ...env } : { ...env, ...(spec.env ?? {}) },
   });
+  // The child holds its own copy from here on; a descriptor left open in the
+  // daemon would keep the file alive for the daemon's lifetime, not the Worker's.
+  if (logFd !== null) closeWorkerLog(logFd);
 
   if (child.pid == null) {
     child.once("error", () => undefined);

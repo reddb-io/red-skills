@@ -30,13 +30,24 @@ function worker(overrides: Partial<CanaryWorker> = {}): CanaryWorker {
 }
 
 /** One `worker_vitals` row in the shape the shipped adapter publishes it. */
-function vitals(daemonLiveness: unknown = daemonAnswered()): unknown {
+function vitals(daemonLiveness: unknown = daemonHolds()): unknown {
   return [{ worker: { id: "wCAN1", pid: WORKER_PID }, live: true, daemon_liveness: daemonLiveness }];
 }
 
-/** The daemon answered — about a Worker it never birthed, which is the honest
- * verdict for one this lane launched itself. */
-function daemonAnswered(): unknown {
+/** The daemon holds the Worker it birthed — the only green after #2851. */
+function daemonHolds(): unknown {
+  return {
+    verdict: "alive",
+    anchor: "daemon",
+    project_label: "acme/widgets",
+    pid: WORKER_PID,
+    staleness: { stale: false, age_ms: 120, threshold_ms: 5_000, reason: "sampled 120ms ago" },
+  };
+}
+
+/** The daemon answered and does not hold this Worker. Honest before the cutover,
+ * a defect after it: every Worker the lane produces is born by the daemon. */
+function daemonUncovered(): unknown {
   return {
     verdict: "unknown",
     anchor: "none",
@@ -217,14 +228,30 @@ describe("MCP lane canary — the socket boundary (#2794)", () => {
     expect(result.summary).toContain("redskilled session socket (path unresolved)");
   });
 
-  it("accepts a daemon that answered about a Worker it never birthed", async () => {
+  it("accepts a daemon that holds the Worker it birthed", async () => {
     const { deps } = harness();
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
     const step = result.steps.find((entry) => entry.step === "daemon_reach");
     expect(step?.verdict).toBe("ok");
-    expect(step?.detail).toContain("crossed the socket for wCAN1");
+    expect(step?.detail).toContain("the daemon answered about the Worker it birthed");
+  });
+
+  // The cutover's own canary assertion (#2851). Before ADR 0130 the project
+  // spawned its own Workers, so `unknown` was the daemon's honest answer about
+  // one it never saw. Now that every birth crosses the socket, a live worker on
+  // disk the host cannot vouch for is an unbudgeted birth — and tolerating it
+  // would be exactly the false green this canary exists to refuse.
+  it("fails at daemon_reach when a live worker exists that the daemon never birthed", async () => {
+    const { deps } = harness({ vitals: vitals(daemonUncovered()) });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET, daemonDeadlineMs: 0 });
+
+    expect(result.inertStep).toBe("daemon_reach");
+    expect(result.summary).toContain("holds no record of it while the lane still sees it running");
+    expect(result.summary).toContain("behind the host's back");
+    expect(result.summary).toContain(SOCKET);
   });
 
   it("fails at daemon_reach when the row carries no daemon verdict at all", async () => {
@@ -240,7 +267,7 @@ describe("MCP lane canary — the socket boundary (#2794)", () => {
     // The false-green shape: the reader answers, nothing it says is about the
     // work this walk performed.
     const { deps } = harness({
-      vitals: [{ worker: { id: "wOTHER" }, live: true, daemon_liveness: daemonAnswered() }],
+      vitals: [{ worker: { id: "wOTHER" }, live: true, daemon_liveness: daemonHolds() }],
     });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);

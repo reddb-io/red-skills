@@ -24,6 +24,26 @@ vi.mock("node:child_process", async (importOriginal) => ({
   spawn,
 }));
 
+// Since the ADR 0130 cutover (#2851) a launch reaches the host daemon before it
+// starts anything, and refuses when nothing answers. These cases are about the
+// SUPERVISOR's cgroup argv, so the host is stubbed to "answered": a real socket
+// would make them depend on whether a daemon happens to be running, which is a
+// fact about the developer's machine rather than about the launch.
+vi.mock("../src/runtime/redskilled-birth.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/runtime/redskilled-birth.js")>(),
+  createRedskilledBirthPort: () => ({
+    projectLabel: "scoped-host",
+    socketPath: "/nonexistent/redskilled.sock",
+    reach: async () => undefined,
+    start: async () => {
+      throw new Error("no Worker is born in a cgroup-argv test");
+    },
+    stop: async () => true,
+    liveWorkers: async () => 0,
+    drainEvents: async () => [],
+  }),
+}));
+
 import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
 import { afkPaths } from "../src/runtime/wire.js";
 import { readPidStartTime } from "../src/core/state.js";
@@ -78,6 +98,20 @@ function publishPidOnSpawn(root: string): void {
   });
 }
 
+/**
+ * The call that launched the SUPERVISOR.
+ *
+ * Selected by what it runs rather than by index: since #2851 a launch also runs
+ * the one-time cutover migration, whose git calls land in the same mock, and an
+ * index would silently start asserting about whichever process happened to run
+ * first.
+ */
+function supervisorLaunch(): [string, readonly string[], SpawnOptions] {
+  const call = spawn.mock.calls.find((entry) => (entry[1] ?? []).includes("__supervise"));
+  if (call === undefined) throw new Error("no supervisor launch was spawned");
+  return call as [string, readonly string[], SpawnOptions];
+}
+
 describe("project_start cgroup isolation", () => {
   it("spawns the MCP-created supervisor inside its own transient scope", async () => {
     const root = await scopedHost(
@@ -92,7 +126,7 @@ describe("project_start cgroup isolation", () => {
       }),
     ).resolves.toMatchObject({ status: "launched", pid: process.pid });
 
-    const [command, args] = spawn.mock.calls[0] ?? [];
+    const [command, args] = supervisorLaunch();
     expect(command).toBe(join(root, "bin", "systemd-run"));
     expect(args).toContain("--user");
     expect(args).toContain("--scope");
@@ -129,8 +163,8 @@ describe("project_start cgroup isolation", () => {
       stderr.mockRestore();
     }
 
-    expect(spawn.mock.calls[0]?.[0]).toBe(process.execPath);
-    expect(spawn.mock.calls[0]?.[1]).toContain("__supervise");
+    expect(supervisorLaunch()[0]).toBe(process.execPath);
+    expect(supervisorLaunch()[1]).toContain("__supervise");
     expect(warnings.join("\n")).toContain("fleet cgroup isolation unavailable");
   });
 });

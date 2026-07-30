@@ -32,6 +32,19 @@ const roots: string[] = [];
 // The legacy assertions below describe the unscoped argv, so pin the
 // cgroup-isolation decision (#2697) off instead of inheriting the host's.
 const unscoped = { settings: { enabled: false, memoryHigh: "" } };
+
+// The launch reaches the host daemon before it spawns anything (#2851). These
+// cases are about the ARGV and the pid probe, so the reach is stubbed to
+// "answered" — a real socket here would make every one of them depend on
+// whether the developer happens to be running a daemon.
+const reachesDaemon = async (): Promise<void> => undefined;
+
+// These cases also pin the ADR 0130 cutover migration OFF. It is ON by default
+// since #2851 — the launch IS the era boundary — and it runs git, so leaving it
+// on would put a process nobody here is asserting about into the spawn mock.
+// The migration's own behaviour is covered by castle-cutover-migration*.test.ts;
+// that it defaults ON is asserted below.
+
 const linuxProbes: FleetScopeProbes = {
   platform: "linux",
   systemdRun: "/usr/bin/systemd-run",
@@ -50,12 +63,40 @@ async function root(): Promise<string> {
   return value;
 }
 
+// The cutover's own assertion (#2851, ADR 0130 rule 6). Since every Worker is
+// born by the host daemon, a launch that could not reach one would produce a
+// supervisor that ticks forever and drains nothing — which is exactly the shape
+// that goes unnoticed. The launch must therefore refuse, and it must refuse
+// BEFORE anything is spawned.
+describe("spawnSupervisor without a reachable daemon", () => {
+  it("refuses the launch instead of falling back to spawning the supervisor itself", async () => {
+    const cwd = await root();
+    const silence = new Error("nothing answered on the session socket");
+
+    await expect(spawnSupervisor({
+      reachDaemon: async () => {
+        throw silence;
+      },
+      root: cwd,
+      target: 1,
+      runner: "codex",
+      scope: unscoped,
+      onNotice: () => undefined,
+    })).rejects.toThrow(silence.message);
+
+    expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
 describe("spawnSupervisor", () => {
   it("honours the configured pid-file probe deadline", async () => {
     const cwd = await root();
     const startedAt = performance.now();
 
     await expect(spawnSupervisor({
+      reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "codex",
@@ -79,6 +120,9 @@ describe("spawnSupervisor", () => {
     });
 
     await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "codex",
@@ -98,6 +142,9 @@ describe("spawnSupervisor", () => {
     await writeFile(paths.supervisorStopPath, "stale", "utf8");
 
     await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "codex",
@@ -113,6 +160,9 @@ describe("spawnSupervisor", () => {
     const cwd = await root();
 
     await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "codex",
@@ -132,6 +182,9 @@ describe("spawnSupervisor", () => {
     process.argv[1] = join("dist", "castle-mcp.bundle.min.mjs");
     try {
       await spawnSupervisor({
+        reachDaemon: reachesDaemon,
+
+        cutoverActive: false,
         root: cwd,
         target: 1,
         runner: "claude",
@@ -152,6 +205,9 @@ describe("spawnSupervisor", () => {
     process.argv[1] = join("/npx-cache", "castle-mcp-2.76.1.bundle.min.mjs");
     try {
       await spawnSupervisor({
+        reachDaemon: reachesDaemon,
+
+        cutoverActive: false,
         root: cwd,
         target: 1,
         runner: "claude",
@@ -172,6 +228,9 @@ describe("spawnSupervisor", () => {
     process.argv[1] = join("/npx-cache", "dev-2.76.1.bundle.min.mjs");
     try {
       await spawnSupervisor({
+        reachDaemon: reachesDaemon,
+
+        cutoverActive: false,
         root: cwd,
         target: 1,
         runner: "claude",
@@ -192,6 +251,9 @@ describe("spawnSupervisor cgroup isolation (#2697)", () => {
     const cwd = await root();
 
     await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "claude",
@@ -214,6 +276,9 @@ describe("spawnSupervisor cgroup isolation (#2697)", () => {
     const notices: string[] = [];
 
     await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "claude",
@@ -236,6 +301,9 @@ describe("spawnSupervisor cgroup isolation (#2697)", () => {
     const notices: string[] = [];
 
     await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "claude",
@@ -270,5 +338,37 @@ describe("resolveDevScriptPath", () => {
   it("passes through an arbitrary CLI shim path unchanged (no PATH-dependent shim lookup)", () => {
     const shim = "/usr/local/bin/red-skills-dev";
     expect(resolveDevScriptPath(shim)).toBe(shim);
+  });
+});
+
+// The era boundary is unconditional since the cutover (#2851). #2855 shipped
+// the migration gated and inert because nothing birthed through the daemon yet;
+// a launch that has just proved the daemon answers is exactly the boundary it
+// was written for, so an absent flag must read as ON — not as the pre-cutover
+// default that would leave live castle state stranded forever.
+describe("the cutover migration runs by default", () => {
+  it("does not need RED_CASTLE_CUTOVER to be set for the era boundary to run", async () => {
+    const cwd = await root();
+    const migrated: unknown[] = [];
+    const migrate = vi.spyOn(
+      await import("../src/runtime/castle-cutover-migration.js"),
+      "migrateCastleCutover",
+    ).mockImplementation(async (_root, options) => {
+      migrated.push(options?.cutoverActive);
+      return { status: "skipped", reason: "stubbed" } as never;
+    });
+
+    await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+      root: cwd,
+      target: 1,
+      runner: "codex",
+      probeDeadlineMs: 1,
+      scope: unscoped,
+      onNotice: () => undefined,
+    });
+
+    expect(migrated).toEqual([true]);
+    migrate.mockRestore();
   });
 });

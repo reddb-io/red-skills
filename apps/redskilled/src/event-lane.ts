@@ -59,6 +59,19 @@ export interface RedskilledHostEvent {
   readonly cpu_weight: number | null;
   /** Why, for a death or a kill: an exit status, a signal, a budget verdict. */
   readonly detail: string | null;
+  /**
+   * The Worker's exit status, when the daemon observed one.
+   *
+   * Carried STRUCTURALLY beside `detail` rather than only inside it: a project's
+   * policy turns on the code — a permanent host-configuration exit is parked
+   * without retry, a clean drain is not a crash — and a policy that recovered
+   * that number by parsing the daemon's sentence would break the day the
+   * sentence was reworded. `null` when the Worker died on a signal, or when the
+   * daemon learned of the death without witnessing the exit.
+   */
+  readonly exit_code: number | null;
+  /** The signal that ended the Worker, when one did. */
+  readonly signal: string | null;
 }
 
 /** The lane file's name inside the session runtime directory. */
@@ -69,6 +82,8 @@ export interface RecordEventInput {
   readonly worker: RedskilledWorkerView;
   readonly ts: string;
   readonly detail?: string | null;
+  readonly exitCode?: number | null;
+  readonly signal?: string | null;
 }
 
 /** Build one event from a Worker view. PURE. */
@@ -89,6 +104,8 @@ export function buildHostEvent(input: RecordEventInput): RedskilledHostEvent {
     memory_max: budget.memory_max ?? null,
     cpu_weight: budget.cpu_weight ?? null,
     detail: input.detail ?? null,
+    exit_code: input.exitCode ?? null,
+    signal: input.signal ?? null,
   };
 }
 
@@ -282,6 +299,11 @@ function fromRow(record: ToonlRecord): RedskilledHostEvent {
     memory_max: text(record.memory_max),
     cpu_weight: record.cpu_weight == null || record.cpu_weight === "" ? null : Number(record.cpu_weight),
     detail: text(record.detail),
+    // A lane written before the exit facts existed reads them as absent rather
+    // than as `0` — an exit code of zero is a CLEAN drain, and inventing one for
+    // an old row would tell a project a crashed Worker finished its work.
+    exit_code: record.exit_code == null || record.exit_code === "" ? null : Number(record.exit_code),
+    signal: text(record.signal),
   };
 }
 

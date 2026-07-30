@@ -480,6 +480,8 @@ describe("a death reported by the daemon drives the project's breaker", () => {
       memory_max: null,
       cpu_weight: null,
       detail: "exit 1",
+      exit_code: 1,
+      signal: null,
     };
     expect(
       deathReportFromHostEvent(event, { selector_id: "ready-for-agent", started_at: "2026-07-29T00:00:00.000Z" }),
@@ -490,6 +492,7 @@ describe("a death reported by the daemon drives the project's breaker", () => {
       lived_ms: 10_000,
       at_ms: Date.parse("2026-07-29T00:00:10.000Z"),
       detail: "exit 1",
+      exit_code: 1,
     });
   });
 });

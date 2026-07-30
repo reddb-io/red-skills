@@ -594,7 +594,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       onExit: (workerId, code, signal) => {
         const worker = workers.get(workerId);
         forgetWorker(workerId);
-        if (worker) record("worker-death", worker, `exit code=${code ?? "null"} signal=${signal ?? "null"}`);
+        if (worker) {
+          record("worker-death", worker, `exit code=${code ?? "null"} signal=${signal ?? "null"}`, {
+            exitCode: code,
+            signal,
+          });
+        }
         armIdleTimer();
       },
     });
@@ -615,12 +620,24 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     event: RedskilledHostEvent["event"],
     worker: RedskilledWorkerView,
     detail: string | null,
+    // The exit facts a project's policy turns on, when the daemon witnessed
+    // them. Absent for every event that is not an observed process exit.
+    exit: { readonly exitCode?: number | null; readonly signal?: NodeJS.Signals | null } = {},
   ): void {
     // A stopped daemon writes nothing. Its beliefs about who is alive stopped
     // being authoritative when it let go of the session, and the next daemon
     // re-derives every one of them by asking the host directly.
     if (stopping) return;
-    void eventLane.record({ event, worker, ts: clock(), detail }).catch(() => undefined);
+    void eventLane
+      .record({
+        event,
+        worker,
+        ts: clock(),
+        detail,
+        ...(exit.exitCode !== undefined ? { exitCode: exit.exitCode } : {}),
+        ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
+      })
+      .catch(() => undefined);
   }
 
   /**

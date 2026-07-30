@@ -152,6 +152,47 @@ discovered:
   **ADR 0129** re-anchor from the Attempt onto the Worker; those are renames,
   not redesigns.
 
+- **The cutover, as executed (#2851).** Every component of this record existed
+  and nothing called it: the daemon had never run, and `fleet.ts` and
+  `supervisor-spawn.ts` carried no reference to it. The crossing wired both
+  halves as one change, because removing the old spawn path alone leaves nothing
+  spawning and adding the new one alone leaves two things spawning.
+
+  Birth: the per-project runtime states an argv, a workspace, a log path and its
+  own opaque label, and asks the host
+  (`apps/dev/src/runtime/redskilled-birth.ts`). The old path is gone rather than
+  bypassed — `commands/supervise.ts` imports no `child_process` — and the
+  `host-owns-birth` ratchet keeps it gone in every gate run, because the local
+  spawn is always the convenient answer and what it produces is not a visible
+  regression but a Worker outside the budget. The launch reaches the daemon
+  before it starts anything and refuses when nothing answers (rule 6): a
+  supervisor with no host behind it would tick forever and drain nothing.
+
+  Death: the daemon appends the exit status it witnessed to the host event lane,
+  and the project's tick drains it before reading any slot's exit code — so the
+  circuit breaker is a policy over the host's facts rather than a second observer
+  of the same process, and the daemon holds no breaker policy, exactly as rule 2
+  has it.
+
+  Identity: the host's worker id and the work's worker id are ONE string, handed
+  down at birth. Without that, `worker_vitals`, the statusline and the lane
+  canary would each need a private mapping between the two authorities — which is
+  the second-source problem the single liveness anchor exists to remove.
+
+  The MCP lane canary changed with it. Before the cutover a daemon holding no
+  record of a live Worker was telling the truth, because the project had spawned
+  that Worker itself, so the canary tolerated the answer. It is now the false
+  green the canary exists to refuse: a worker running on disk that the host
+  cannot vouch for is a birth that never crossed the socket.
+
+  **Not yet crossed:** the supervisor still keeps its slot table, its
+  grow/shrink-to-target and its dead-slot bookkeeping. None of them creates a
+  process any more — every one routes through the birth port — but the *shape* is
+  still the fleet's, where rule 2 wants one demand producer per project
+  (`apps/redskilled/src/demand-producer.ts`, written and not yet driving the
+  loop). That remains a slice of its own: it is bookkeeping over daemon-owned
+  births, not a second launcher.
+
 - **ADR 0113 is amended on rendering.** Its seam 1 reads "produce → castle /
   render → dev" and keeps the statusline render in dev. Rendering moves to the
   MCP. This reverses the letter to serve the intent: 0113 wanted dev thin and

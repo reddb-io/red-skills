@@ -18,7 +18,10 @@ export async function handleDeadSlot(
   queueDepth = 0,
   spawnPolicy?: SpawnPolicy | "hard-stop",
 ): Promise<{ parked: boolean }> {
-  const spawn = async (): Promise<{ pid: number; spawnEpoch: number } | null> => {
+  // Named for what it does since the ADR 0130 cutover (#2851): this ASKS the
+  // host for a Worker, it does not create one. A closure called `spawn` in a
+  // module that no longer spawns is how the removed vocabulary walks back in.
+  const askHostForWorker = async (): Promise<{ pid: number; spawnEpoch: number } | null> => {
     if (spawnPolicy === "hard-stop") return null;
     return spawnPolicy ? deps.proc.spawnSlot(slot, spawnPolicy) : deps.proc.spawnSlot(slot);
   };
@@ -67,7 +70,7 @@ export async function handleDeadSlot(
     // Respawn immediately so the closed slot has a live worker.
     state.spawning = true;
     try {
-      const spawned = await spawn();
+      const spawned = await askHostForWorker();
       if (spawned === null) return { parked: true };
       state.pid = spawned.pid;
       state.spawnEpoch = spawned.spawnEpoch;
@@ -106,7 +109,7 @@ export async function handleDeadSlot(
 
   state.spawning = true;
   try {
-    const spawned = await spawn();
+    const spawned = await askHostForWorker();
     if (spawned === null) {
       state.pid = null;
       return { parked: true };
