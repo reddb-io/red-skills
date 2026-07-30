@@ -87,6 +87,17 @@ import {
   type RedskilledWorkerLogLine,
 } from "./worker-log.js";
 import {
+  completeRedskilledReplacement,
+  DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+  isRedskilledSupervised,
+  planRedskilledReplacement,
+  prepareRedskilledReplacement,
+  probePublishedRedskilledVersion,
+  type RedskilledPublishedVersionProbe,
+  type RedskilledReplacementDecision,
+  type RedskilledReplacementIO,
+} from "./self-replace.js";
+import {
   createRedskilledLeaseStore,
   currentProcessOwner,
   type RedskilledLease,
@@ -147,6 +158,20 @@ export interface RedskilledDaemonOptions {
    * line arrives on its own heartbeat.
    */
   readonly readLogTail?: RedskilledLogTailProbe;
+  /**
+   * How the daemon learns what version is published; the registry by default.
+   *
+   * Injected because the whole upgrade behaviour hangs off this one answer, and a
+   * test that could not state it would have to publish a release to prove
+   * anything.
+   */
+  readonly publishedVersion?: RedskilledPublishedVersionProbe;
+  /** Window between published-version checks; 0 or below leaves the watch unarmed. */
+  readonly replaceCheckMs?: number;
+  /** True when a unit will revive this process, so replacing means exiting. */
+  readonly supervised?: boolean;
+  /** How the successor is found and started; the real handover by default. */
+  readonly replacementIO?: RedskilledReplacementIO;
 }
 
 export interface RedskilledDaemon {
@@ -208,6 +233,22 @@ export interface RedskilledDaemon {
   flushEvents(): Promise<void>;
   /** Force the idle check to run now — the timer's body, exposed for tests. */
   evaluateIdle(): "exited" | "held-by-workers";
+  /**
+   * Resolve the published version and decide, WITHOUT acting on the decision.
+   *
+   * The observation and the handover are separate verbs so a reader can see a
+   * decided replacement before it happens — and so the daemon's own version stays
+   * the version it is running for the whole of that window.
+   */
+  observePublishedVersion(): Promise<RedskilledReplacementDecision>;
+  /**
+   * Observe, and if a newer version is published, hand the session over to it.
+   *
+   * Workers are untouched: they are init-system units (ADR 0130 rule 5), so a
+   * replacement is a restart and the successor re-attaches to every one of them
+   * through the event lane.
+   */
+  checkForReplacement(): Promise<RedskilledReplacementDecision>;
   stop(): Promise<void>;
 }
 
@@ -252,6 +293,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const memorySampler = options.memorySampler ?? sampleTreeRss;
   const readLogTail = options.readLogTail ?? readLastLogLine;
   const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
+  const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
+  const replaceCheckMs = options.replaceCheckMs ?? DEFAULT_REDSKILLED_REPLACE_CHECK_MS;
+  const supervised = options.supervised ?? isRedskilledSupervised();
+  const replacementIO = options.replacementIO ?? {};
   const workers = new Map<string, RedskilledWorkerView>();
   // Re-attached Workers have no child handle to deliver an exit, so their death
   // is discovered by asking the host rather than by being told.
@@ -265,8 +310,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // dating itself: staleness belongs to the daemon that took the measurement.
   let lastReading: Awaited<ReturnType<RedskilledMemorySampler>> = {};
   let lastSampledAt: string | null = null;
+  // What this daemon has resolved about the world's version, kept beside — never
+  // inside — the version it is running.
+  let publishedVersion: string | null = null;
+  let publishedCheckedAt: string | null = null;
+  let publishedIsNewer = false;
+  let replacementState: "none" | "pending" | "in-progress" = "none";
   let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
+  let replaceTimer: NodeJS.Timeout | undefined;
   let stopping = false;
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
@@ -281,6 +333,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       pid: owner.pid,
       startedAt,
       workers: [...workers.values()],
+      published: {
+        version: publishedVersion,
+        checkedAt: publishedCheckedAt,
+        newer: publishedIsNewer,
+        replacement: replacementState,
+      },
     });
   }
 
@@ -552,6 +610,62 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     return done;
   }
 
+  /**
+   * Ask what is published, record it, and decide — acting on nothing.
+   *
+   * A probe that throws leaves the answer UNKNOWN rather than asserting the
+   * running version: an unresolvable read must not manufacture the match that
+   * makes a superseded daemon look current (#2809).
+   */
+  async function observePublishedVersion(): Promise<RedskilledReplacementDecision> {
+    let observed: string | null;
+    try {
+      observed = await publishedProbe(daemonVersion);
+    } catch {
+      observed = null;
+    }
+    publishedVersion = observed;
+    publishedCheckedAt = clock();
+    const decision = planRedskilledReplacement({ running: daemonVersion, published: observed, supervised });
+    publishedIsNewer = decision.act === "replace";
+    // An in-progress handover is never talked back down: the socket and the lease
+    // are already going, and a later "hold" would only mislabel what is happening.
+    if (replacementState !== "in-progress") replacementState = decision.act === "replace" ? "pending" : "none";
+    return decision;
+  }
+
+  /**
+   * Observe, then hand the session over when a newer version is published.
+   *
+   * The order is the contract: flush the lane, let go of the socket and the
+   * lease, and only then start the successor — a successor racing this process
+   * for the exclusive bind would die, and the machine would keep the old bundle.
+   */
+  async function checkForReplacement(): Promise<RedskilledReplacementDecision> {
+    const decision = await observePublishedVersion();
+    if (decision.act !== "replace" || replacementState === "in-progress") return decision;
+    // The successor is found FIRST. A published bundle this host cannot reach
+    // costs the upgrade and nothing else: the throw leaves this daemon serving,
+    // still holding every Worker, still reporting the version it actually runs.
+    const prepared = prepareRedskilledReplacement(decision, replacementIO);
+    replacementState = "in-progress";
+    await eventLane.flush().catch(() => undefined);
+    await stop();
+    completeRedskilledReplacement(prepared, paths, {
+      ...(idleMs == null ? {} : { idleMs }),
+      io: replacementIO,
+    });
+    return decision;
+  }
+
+  function armReplaceTimer(): void {
+    if (stopping || replaceTimer != null || replaceCheckMs <= 0) return;
+    replaceTimer = setInterval(() => {
+      void checkForReplacement().catch(() => undefined);
+    }, replaceCheckMs);
+    replaceTimer.unref();
+  }
+
   function armSampleTimer(): void {
     if (stopping || sampleTimer != null || sampleMs <= 0) return;
     sampleTimer = setInterval(() => {
@@ -589,6 +703,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     stopping = true;
     if (idleTimer) clearTimeout(idleTimer);
     if (sampleTimer) clearInterval(sampleTimer);
+    if (replaceTimer) clearInterval(replaceTimer);
     // Every event already handed over reaches the lane before the daemon lets go
     // of the session: a birth still in flight would leave the next daemon with a
     // Worker it holds a budget for and no record of.
@@ -692,6 +807,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   armIdleTimer();
   armSampleTimer();
+  armReplaceTimer();
 
   return {
     socketPath: paths.socketPath,
@@ -725,6 +841,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     hostState,
     statuslinePayload,
     evaluateIdle,
+    observePublishedVersion,
+    checkForReplacement,
     stop,
   };
 }

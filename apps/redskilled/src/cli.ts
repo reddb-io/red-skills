@@ -19,6 +19,13 @@ import {
   parseRedskilledStatuslineFlags,
   resolveRedskilledStatuslineOptions,
 } from "./statusline-config.js";
+import {
+  installRedskilledUnit,
+  planRedskilledUnit,
+  readRedskilledUnitStatus,
+  uninstallRedskilledUnit,
+  type RedskilledUnitIO,
+} from "./supervision.js";
 
 const SERVE_FLAGS = {
   socket: { kind: "value", coerce: (raw: string) => raw },
@@ -42,8 +49,8 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     return 0;
   }
 
-  const { command, args } = routeCommand<"serve" | "host-state" | "statusline">(argv, {
-    commands: { serve: {}, "host-state": {}, statusline: {} },
+  const { command, args } = routeCommand<"serve" | "host-state" | "statusline" | "unit">(argv, {
+    commands: { serve: {}, "host-state": {}, statusline: {}, unit: {} },
     default: "host-state",
   });
 
@@ -52,17 +59,57 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     const daemon = await startRedskilledDaemon({
       paths: servePaths(values),
       idleMs: values["idle-ms"] ?? DEFAULT_REDSKILLED_IDLE_MS,
-      daemonVersion: values["daemon-version"],
+      // The artifact states what it IS. Absent, the daemon reports the version
+      // baked into this build rather than a placeholder, because "what version is
+      // answering" is the first fact a skew investigation needs.
+      daemonVersion: values["daemon-version"] ?? readBuildInfo("redskilled").version,
     });
     await daemon.closed;
     return 0;
   }
 
   if (command === "statusline") return await runStatusline(args);
+  if (command === "unit") return await runUnit(args);
 
   const state = await readRedskilledHostState(resolveRedskilledPaths());
   process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
   return 0;
+}
+
+/**
+ * `redskilled unit install|uninstall|status` — the optional supervisor.
+ *
+ * Optional is the whole point (ADR 0130 rule 7): a host that never runs this
+ * still gets a daemon, because auto-spawn is the floor and the unit only adds
+ * `Restart=on-failure` on top. The status answer says so out loud, so an absent
+ * unit reads as a supported configuration rather than as a broken machine.
+ */
+export async function runUnit(
+  args: readonly string[],
+  io: {
+    readonly paths?: RedskilledPaths;
+    readonly write?: (line: string) => void;
+    readonly unitIO?: RedskilledUnitIO;
+  } = {},
+): Promise<number> {
+  const write = io.write ?? ((line: string) => process.stdout.write(line));
+  const paths = io.paths ?? resolveRedskilledPaths();
+  const action = args[0] ?? "status";
+
+  if (action === "status") {
+    write(`${JSON.stringify(readRedskilledUnitStatus(io.unitIO ?? {}), null, 2)}\n`);
+    return 0;
+  }
+  if (action === "install") {
+    const installed = await installRedskilledUnit(planRedskilledUnit(paths), io.unitIO ?? {});
+    write(`${JSON.stringify(installed, null, 2)}\n`);
+    return installed.installed ? 0 : 1;
+  }
+  if (action === "uninstall") {
+    write(`${JSON.stringify(await uninstallRedskilledUnit(io.unitIO ?? {}), null, 2)}\n`);
+    return 0;
+  }
+  throw new Error(`unsupported redskilled unit action ${JSON.stringify(action)}: expected install, uninstall or status`);
 }
 
 /**

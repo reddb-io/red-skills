@@ -62,6 +62,30 @@ export interface RedskilledProjectView {
   readonly worker_count: number;
 }
 
+/**
+ * What the daemon is running, and what it has observed being published.
+ *
+ * Two fields rather than one, and never collapsed: `running_version` is the code
+ * answering this read, `published_version` is a resolved observation about the
+ * world. Folding the second into the first is how a stale process reports a
+ * confident zero skew while every Worker halts on the version it claimed to
+ * measure (#2809), so the daemon states both and compares them out loud.
+ */
+export interface RedskilledUpgradeState {
+  /** Identical to `daemon_version`, from the same value — never re-derived. */
+  readonly running_version: string;
+  /** The published version last resolved; null when it never was. */
+  readonly published_version: string | null;
+  /** 1 when the published answer could not be resolved at all. */
+  readonly published_unknown: number;
+  /** 1 when a newer version was resolved and this daemon is not it. */
+  readonly newer_published: number;
+  /** Where the replacement stands: nothing to do, decided, or under way. */
+  readonly replacement: "none" | "pending" | "in-progress";
+  /** When the published answer was last observed; null when it never was. */
+  readonly checked_at: string | null;
+}
+
 export interface RedskilledHostState {
   readonly version: 1;
   readonly protocol_version: number;
@@ -74,6 +98,8 @@ export interface RedskilledHostState {
   readonly projects: readonly RedskilledProjectView[];
   /** What the daemon has promised the machine, derived from `workers`. */
   readonly budget_accounting: RedskilledBudgetAccounting;
+  /** Running version against published version, and what is being done about it. */
+  readonly upgrade: RedskilledUpgradeState;
 }
 
 export interface BuildHostStateInput {
@@ -83,6 +109,14 @@ export interface BuildHostStateInput {
   readonly pid: number;
   readonly startedAt: string;
   readonly workers?: readonly RedskilledWorkerView[];
+  /** The version observation; a daemon that never checked reports unknown. */
+  readonly published?: {
+    readonly version: string | null;
+    readonly checkedAt: string | null;
+    /** Whether the observed version supersedes the running one — the daemon decides. */
+    readonly newer?: boolean;
+    readonly replacement?: RedskilledUpgradeState["replacement"];
+  };
 }
 
 /** The host state document. PURE — projects are derived, never separately tracked. */
@@ -103,6 +137,27 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
       .map(([project_label, worker_count]) => ({ project_label, worker_count }))
       .sort((a, b) => a.project_label.localeCompare(b.project_label)),
     budget_accounting: buildBudgetAccounting(workers),
+    upgrade: buildUpgradeState(input),
+  };
+}
+
+/**
+ * The version block. PURE.
+ *
+ * `running_version` is the SAME value the document reports as `daemon_version`,
+ * read from one input: a second source for "what am I running" is a second answer
+ * waiting to disagree with the first.
+ */
+export function buildUpgradeState(input: BuildHostStateInput): RedskilledUpgradeState {
+  const running = input.daemonVersion;
+  const published = input.published?.version ?? null;
+  return {
+    running_version: running,
+    published_version: published,
+    published_unknown: Number(published === null),
+    newer_published: Number(input.published?.newer === true),
+    replacement: input.published?.replacement ?? "none",
+    checked_at: input.published?.checkedAt ?? null,
   };
 }
 
@@ -132,5 +187,22 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     typeof state.started_at === "string" &&
     Array.isArray(state.workers) &&
     Array.isArray(state.projects) &&
-    isRedskilledBudgetAccounting(state.budget_accounting);
+    isRedskilledBudgetAccounting(state.budget_accounting) &&
+    // Checked only when present. One daemon serves checkouts pinned to different
+    // bundle versions (ADR 0130 rule 3), so a field this bundle added must not
+    // make an older daemon's complete answer read as malformed — while a field
+    // that IS there and is the wrong shape still fails closed.
+    (state.upgrade === undefined || isRedskilledUpgradeState(state.upgrade));
+}
+
+/** True when `value` is a complete version block. */
+export function isRedskilledUpgradeState(value: unknown): value is RedskilledUpgradeState {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const upgrade = value as Record<string, unknown>;
+  return typeof upgrade.running_version === "string" &&
+    (upgrade.published_version === null || typeof upgrade.published_version === "string") &&
+    typeof upgrade.published_unknown === "number" &&
+    typeof upgrade.newer_published === "number" &&
+    (upgrade.replacement === "none" || upgrade.replacement === "pending" || upgrade.replacement === "in-progress") &&
+    (upgrade.checked_at === null || typeof upgrade.checked_at === "string");
 }

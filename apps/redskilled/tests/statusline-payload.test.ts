@@ -263,5 +263,13 @@ function hostStateOf(workers: readonly RedskilledWorkerView[]) {
       unaccounted_workers: [],
       unisolated_workers: [],
     },
+    upgrade: {
+      running_version: "0.0.0-test",
+      published_version: null,
+      published_unknown: 1,
+      newer_published: 0,
+      replacement: "none" as const,
+      checked_at: null,
+    },
   };
 }
