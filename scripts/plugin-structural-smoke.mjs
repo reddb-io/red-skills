@@ -123,8 +123,10 @@ function validateNoWildcardToolGrants() {
 
 const claudePath = join(pluginDir, ".claude-plugin", "plugin.json");
 const codexPath = join(pluginDir, ".codex-plugin", "plugin.json");
+const geminiPath = join(pluginDir, ".gemini-plugin", "plugin.json");
 if (!existsSync(claudePath)) fail("missing .claude-plugin/plugin.json");
 if (!existsSync(codexPath)) fail("missing .codex-plugin/plugin.json");
+if (!existsSync(geminiPath)) fail("missing .gemini-plugin/plugin.json");
 
 const claude = existsSync(claudePath) ? readJson(claudePath) : {};
 const codex = existsSync(codexPath) ? readJson(codexPath) : {};

@@ -70,7 +70,7 @@ manifest is generated from it. Any runtime code for a plugin lives under
 ## Rules
 
 1. Every skill in `engineering/`, `knowledge/`, `productivity/`, or `misc/` must be listed in the root `README.md` **and** in the owning plugin's `.claude-plugin/plugin.json` (e.g. `plugins/dev/.claude-plugin/plugin.json`). Skills in `in-progress/` appear in neither.
-2. Codex manifests are generated artifacts. Do not hand-edit `.agents/plugins/marketplace.json` or `plugins/*/.codex-plugin/plugin.json`; change the Claude-side manifests or plugin tree, then run `pnpm codex:manifests`. Pi packages are generated the same way: never hand-edit `plugins/*/package.json`; run `pnpm pi:manifests` after editing the Claude-side manifests or the plugin tree.
+2. Codex and Gemini manifests are generated artifacts. Do not hand-edit `.agents/plugins/marketplace.json`, `.gemini-plugin/marketplace.json`, `plugins/*/.codex-plugin/plugin.json`, or `plugins/*/.gemini-plugin/plugin.json`; change the Claude-side manifests or plugin tree, then run `pnpm codex:manifests` and `pnpm gemini:manifests`. Pi packages are generated the same way: never hand-edit `plugins/*/package.json`; run `pnpm pi:manifests` after editing the Claude-side manifests or the plugin tree.
 3. Each entry in `README.md` links the skill name to its `SKILL.md`.
 4. Each bucket has its own `README.md` listing the bucket's skills with a one-line description.
 5. `LICENSE` is Apache-2.0. The `NOTICE` file preserves Matt Pocock's original MIT copyright for the upstream-derived skills under `plugins/dev/skills/` — **do not remove or alter that attribution**. See ADR 0004.
