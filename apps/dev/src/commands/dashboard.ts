@@ -14,6 +14,7 @@ import {
   resolveRepoContext,
 } from "../runtime/wire.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
+import { readGhJsonRows } from "../runtime/gh/read.js";
 import { readAllWorkerStates } from "../core/worker-state-reader.js";
 
 /** Output format. TOON is the default agent-facing wire format (PRD #928 / ADR
@@ -78,19 +79,13 @@ function labelsFrom(raw: unknown): string[] {
   }).filter(Boolean);
 }
 
-function parseJsonArray<T>(raw: string, fallback: T[] = []): T[] {
-  try {
-    const parsed = JSON.parse(raw || "[]");
-    return Array.isArray(parsed) ? parsed as T[] : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-async function ghJson<T>(exec: ExecFn, cwd: string, args: readonly string[]): Promise<T[]> {
-  const out = await exec("gh", args, { cwd, maxBuffer: 32 * 1024 * 1024 });
-  if (out.code !== 0) return [];
-  return parseJsonArray<T>(out.stdout);
+/**
+ * Read one dashboard input. RAISES {@link GhReadError} when the query could not
+ * run: a dashboard built from a failed read would report zero open pull requests
+ * and zero open issues as fact (#2801), so it fails loudly instead.
+ */
+function ghJson<T>(exec: ExecFn, cwd: string, args: readonly string[]): Promise<T[]> {
+  return readGhJsonRows<T>({ cwd, exec }, args, { maxBuffer: 32 * 1024 * 1024 });
 }
 
 function issueFrom(row: unknown): DashboardIssue {
