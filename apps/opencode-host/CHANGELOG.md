@@ -1,5 +1,13 @@
 # @reddb-io/red-skills
 
+## 3.0.1
+
+### Patch Changes
+
+- 3b9624a: `/report-bug` is user-invoked only. Filing a bug is a claim about the world that a maintainer stands behind, so the model may no longer reach for the skill on its own — the same reason `/go` and the other dispatch skills carry the flag.
+  - @reddb-io/shared@3.0.1
+  - @reddb-io/build-info@3.0.1
+
 ## 3.0.0
 
 ### Major Changes
