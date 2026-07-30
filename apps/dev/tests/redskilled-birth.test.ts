@@ -34,7 +34,7 @@ async function scratch(prefix: string): Promise<string> {
 
 async function sessionPaths(): Promise<RedskilledPaths> {
   const root = await scratch("dev-birth-session-");
-  return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root });
+  return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root });
 }
 
 /** Wait for `probe` to hold, or fail with what it last saw. */
@@ -134,7 +134,7 @@ describe("a project's Worker is born by the daemon", () => {
   it("refuses a birth when no daemon answers, rather than spawning one itself", async () => {
     const workspace = await scratch("dev-birth-silent-");
     const unreachable = resolveRedskilledPaths({
-      env: { REDSKILLED_SESSION: `test:${workspace}` },
+      env: { REDSKILLED_SESSION: `test:${workspace}`, REDSKILLED_MACHINE_DIR: workspace },
       runtimeDir: workspace,
     });
 

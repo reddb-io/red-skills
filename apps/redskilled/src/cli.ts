@@ -53,6 +53,7 @@ const SERVE_FLAGS = {
   events: { kind: "value", coerce: (raw: string) => raw },
   "session-key-hash": { kind: "value", coerce: (raw: string) => raw },
   "machine-id-hash": { kind: "value", coerce: (raw: string) => raw },
+  "machine-claim": { kind: "value", coerce: (raw: string) => raw },
   "idle-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
   "daemon-version": { kind: "value", coerce: (raw: string) => raw },
 } as const;
@@ -334,6 +335,7 @@ function servePaths(values: {
   events?: string;
   "session-key-hash"?: string;
   "machine-id-hash"?: string;
+  "machine-claim"?: string;
 }): RedskilledPaths {
   const derived = resolveRedskilledPaths();
   return {
@@ -343,6 +345,7 @@ function servePaths(values: {
     eventLanePath: values.events ?? derived.eventLanePath,
     sessionKeyHash: values["session-key-hash"] ?? derived.sessionKeyHash,
     machineIdHash: values["machine-id-hash"] ?? derived.machineIdHash,
+    machineClaimPath: values["machine-claim"] ?? derived.machineClaimPath,
   };
 }
 

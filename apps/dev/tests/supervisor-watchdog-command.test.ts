@@ -136,7 +136,10 @@ esac
     // (#2851), so this integration needs a REAL one. Bundling it beside the dev
     // CLI is how the shipped resolver finds it, and the session key is pinned to
     // this sandbox so the walk can never be served by a stranger's daemon — nor
-    // leave one behind for the next test.
+    // leave one behind for the next test. The machine claim is pinned into the
+    // sandbox for the same reason: since ADR 0130 Amendment 2 a second daemon on
+    // one machine is REFUSED, so a test that did not pose as its own machine
+    // would be turned away by whatever daemon the developer already runs.
     buildSync({
       entryPoints: [join(process.cwd(), "tests", "fixtures", "mcp-lane-canary", "redskilled-entry.ts")],
       outfile: join(root, "redskilled.bundle.min.mjs"),
@@ -151,6 +154,7 @@ esac
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       REDSKILLED_SESSION: `watchdog-integration-${process.pid}`,
+      REDSKILLED_MACHINE_DIR: join(root, "machine"),
       RED_AFK_POLL_S: "1",
       RED_AFK_WAKE_FALLBACK_S: "1",
       RED_AFK_TARGET: "1",

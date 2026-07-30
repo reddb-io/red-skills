@@ -93,7 +93,7 @@ child.on("exit", (code) => process.exit(code ?? 0));
     { mode: 0o755 },
   );
   return {
-    paths: resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root }),
+    paths: resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root }),
     cacheDir,
     publishedBundle,
     env: { ...process.env, RED_SKILLS_CACHE_DIR: cacheDir },

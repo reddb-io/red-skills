@@ -1,8 +1,10 @@
 # redskilled
 
-The host-scoped execution daemon of ADR 0130: **one singleton per user session,
-behind a unix socket**, owning Worker processes across every project on the
-machine while each project's bundle keeps owning the work.
+The host-scoped execution daemon of ADR 0130: **exactly one singleton per
+machine, behind a unix socket**, owning Worker processes across every project on
+that machine while each project's bundle keeps owning the work. A second OS user
+on the same machine is refused by name rather than served or silently doubled
+(Amendment 2).
 
 The core exists, is reachable, honest about its own life — and **births Workers**:
 a project hands over an argv, a placement target, a budget and two opaque

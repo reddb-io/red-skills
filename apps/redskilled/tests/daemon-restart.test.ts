@@ -41,7 +41,7 @@ async function scratch(prefix: string): Promise<string> {
 
 async function sessionPaths(): Promise<RedskilledPaths> {
   const root = await scratch("redskilled-restart-");
-  return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root });
+  return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root });
 }
 
 /** A Worker that outlives the daemon that birthed it — the whole point of the slice. */
