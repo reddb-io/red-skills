@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractFlags,
   parseFlags,
   parseLooseArgs,
   routeCommand,
@@ -285,5 +286,66 @@ describe("routeCommand", () => {
     it("still peels a known command", () => {
       expect(routeCommand(["monitor", "--once"], strict)).toEqual({ command: "monitor", args: ["--once"] });
     });
+  });
+});
+
+describe("extractFlags", () => {
+  const WRAPPER = {
+    "store-uri": { kind: "value", coerce: (raw: string) => raw },
+    brief: { kind: "boolean" },
+    terse: { kind: "boolean" },
+    query: { kind: "value", coerce: (raw: string) => raw },
+    help: { kind: "boolean", aliases: ["h"] },
+  } satisfies FlagSchema;
+
+  it("peels declared flags and leaves the wrapped command line verbatim", () => {
+    expect(extractFlags(["git", "log", "--oneline", "-n", "5", "--brief"], WRAPPER)).toEqual({
+      values: { brief: true },
+      rest: ["git", "log", "--oneline", "-n", "5"],
+    });
+  });
+
+  it("reads a value flag as `--flag value` and as `--flag=value`", () => {
+    expect(extractFlags(["--query", "a b", "git"], WRAPPER).values.query).toBe("a b");
+    expect(extractFlags(["--query=a b", "git"], WRAPPER).values.query).toBe("a b");
+  });
+
+  it("matches short aliases", () => {
+    expect(extractFlags(["git", "-h"], WRAPPER).values.help).toBe(true);
+  });
+
+  it("keeps the last occurrence of a repeated value flag", () => {
+    expect(extractFlags(["--query", "a", "--query", "b"], WRAPPER).values.query).toBe("b");
+  });
+
+  it("accumulates an array value flag in input order", () => {
+    const schema = { change: { kind: "value", type: "array", aliases: ["c"], coerce: (raw: string) => raw } } satisfies FlagSchema;
+    expect(extractFlags(["-c", "a", "--change=b", "keep"], schema)).toEqual({
+      values: { change: ["a", "b"] },
+      rest: ["keep"],
+    });
+  });
+
+  it("stops at `--` and keeps the separator and tail untouched", () => {
+    expect(extractFlags(["proxy", "--brief", "--", "git log --brief"], WRAPPER)).toEqual({
+      values: { brief: true },
+      rest: ["proxy", "--", "git log --brief"],
+    });
+  });
+
+  it("throws the shared 'requires a value' error for a value flag with no value", () => {
+    expect(() => extractFlags(["git", "--query"], WRAPPER)).toThrow("--query requires a value");
+    expect(() => extractFlags(["git", "--query", "--brief"], WRAPPER)).toThrow("--query requires a value");
+  });
+
+  it("scans past `--` when the separator belongs to the wrapped tool", () => {
+    expect(extractFlags(["git", "diff", "--", "src/a.ts", "--query", "fix"], WRAPPER, { stopAtSeparator: false })).toEqual({
+      values: { query: "fix" },
+      rest: ["git", "diff", "--", "src/a.ts"],
+    });
+  });
+
+  it("returns an empty result for an empty argv", () => {
+    expect(extractFlags([], WRAPPER)).toEqual({ values: {}, rest: [] });
   });
 });
