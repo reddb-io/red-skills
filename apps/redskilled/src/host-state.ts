@@ -52,8 +52,32 @@ export interface RedskilledWorkerView {
    * could state once and never again after a restart.
    */
   readonly budget?: RedskilledWorkerBudget;
+  /**
+   * What the last sample measured this Worker's tree burning, beside its budget.
+   *
+   * It rides here for the same reason the budget does — a number stated once at
+   * launch is a number no later reader can ask for — and it is a MEASUREMENT, not
+   * a verdict: the daemon reports the CPU a tree accumulated and says nothing
+   * about whether the project's task is going well (ADR 0130 rule 3).
+   */
+  readonly cpu?: RedskilledWorkerCpuSample;
   /** Non-empty whenever the launch was a downgrade; never silently absent. */
   readonly warnings: readonly string[];
+}
+
+/**
+ * One reading of a Worker tree's accumulated CPU time.
+ *
+ * The instant travels WITH the number rather than beside it, because one dated
+ * reading answers nothing on its own: "is this Worker working?" is two dated
+ * readings compared, and a value whose age a reader had to infer is a value that
+ * will one day be read as fresh long after the tick that took it.
+ */
+export interface RedskilledWorkerCpuSample {
+  /** `utime + stime` summed over the whole tree, in seconds. */
+  readonly cpu_seconds: number;
+  /** When the daemon took this reading — the daemon's clock, never the reader's. */
+  readonly sampled_at: string;
 }
 
 /** One project with at least one Worker on this host. Empty in this slice. */
@@ -171,7 +195,19 @@ export function isRedskilledWorkerView(value: unknown): value is RedskilledWorke
     typeof worker.started_at === "string" &&
     typeof worker.workspace_path === "string" &&
     typeof worker.isolated === "boolean" &&
-    Array.isArray(worker.warnings);
+    Array.isArray(worker.warnings) &&
+    // Checked only when present, exactly as the upgrade block is: a daemon that
+    // has not sampled yet, or one older than the reading, is complete without it.
+    (worker.cpu === undefined || isRedskilledWorkerCpuSample(worker.cpu));
+}
+
+/** True when `value` is a complete CPU reading — a client's fail-closed check. */
+export function isRedskilledWorkerCpuSample(value: unknown): value is RedskilledWorkerCpuSample {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const sample = value as Record<string, unknown>;
+  return typeof sample.cpu_seconds === "number" &&
+    Number.isFinite(sample.cpu_seconds) &&
+    typeof sample.sampled_at === "string";
 }
 
 /** True when `value` is a complete host-state document — a client's fail-closed check. */

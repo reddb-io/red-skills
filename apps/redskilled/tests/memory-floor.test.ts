@@ -7,13 +7,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { readRedskilledEvents } from "../src/event-lane.js";
-import type { RedskilledWorkerView } from "../src/host-state.js";
+import { isRedskilledWorkerView, type RedskilledWorkerView } from "../src/host-state.js";
 import {
   evaluateMemoryBudgets,
   parseProcStat,
   REDSKILLED_STALL_CLASSIFICATION,
   resolveEnforcedBudget,
-  sampleTreeRss,
+  sampleWorkerTrees,
+  type RedskilledTreeReading,
 } from "../src/memory-sampler.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 
@@ -34,6 +35,43 @@ async function scratch(prefix: string): Promise<string> {
 async function sessionPaths(): Promise<RedskilledPaths> {
   const root = await scratch("redskilled-floor-");
   return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root });
+}
+
+/** One synthetic `/proc/<pid>/stat` row, `utime`/`stime` in clock ticks. */
+interface StatRow {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly rssPages: number;
+  readonly utime?: number;
+  readonly stime?: number;
+}
+
+/**
+ * One `/proc/<pid>/stat` line, built by field index rather than by counting.
+ *
+ * The name carries spaces and parentheses on purpose: every fixture then proves
+ * the reader walks past `comm` instead of splitting on it.
+ */
+function procStatLine(row: StatRow): string {
+  // Fields after `comm`: index 0 `state`, 1 `ppid`, 11 `utime`, 12 `stime`, 21 `rss`.
+  const after = Array.from({ length: 22 }, () => "0");
+  after[0] = "S";
+  after[1] = String(row.ppid);
+  after[11] = String(row.utime ?? 0);
+  after[12] = String(row.stime ?? 0);
+  after[21] = String(row.rssPages);
+  return `${row.pid} (my prog (x)) ${after.join(" ")}\n`;
+}
+
+/** A synthetic `/proc` the sampler can walk, one directory per row. */
+async function procTable(rows: readonly StatRow[]): Promise<string> {
+  const procRoot = await scratch("redskilled-proc-");
+  const { mkdir, writeFile } = await import("node:fs/promises");
+  for (const row of rows) {
+    await mkdir(join(procRoot, String(row.pid)), { recursive: true });
+    await writeFile(join(procRoot, String(row.pid), "stat"), procStatLine(row), "utf8");
+  }
+  return procRoot;
 }
 
 /** A Worker view with no process behind it — the sampler is injected, not probed. */
@@ -65,7 +103,7 @@ describe("the memory floor", () => {
         stopped.push(w.worker_id);
         return true;
       },
-      memorySampler: () => ({ "w-1": 900 * 1024 * 1024 }),
+      treeSampler: () => ({ rss: { "w-1": 900 * 1024 * 1024 }, cpu_seconds: {} }),
     });
     running.push(daemon);
     daemon.trackWorker(worker());
@@ -85,7 +123,7 @@ describe("the memory floor", () => {
       idleMs: 60_000,
       sampleMs: 0,
       stopWorker: () => true,
-      memorySampler: () => ({ "w-1": 3 * 1024 ** 3 }),
+      treeSampler: () => ({ rss: { "w-1": 3 * 1024 ** 3 }, cpu_seconds: {} }),
     });
     running.push(daemon);
     daemon.trackWorker(worker({ budget: { memory_high: "512M", memory_max: "2G" } }));
@@ -111,7 +149,7 @@ describe("the memory floor", () => {
       idleMs: 60_000,
       sampleMs: 0,
       stopWorker: () => true,
-      memorySampler: () => ({ "w-1": 900 * 1024 * 1024 }),
+      treeSampler: () => ({ rss: { "w-1": 900 * 1024 * 1024 }, cpu_seconds: {} }),
     });
     running.push(daemon);
     daemon.trackWorker(worker());
@@ -151,7 +189,7 @@ describe("the memory floor", () => {
         return true;
       },
       // Exactly at the ceiling, and comfortably under it: neither is over.
-      memorySampler: () => ({ "w-1": 512 * 1024 * 1024, "w-2": 1024 }),
+      treeSampler: () => ({ rss: { "w-1": 512 * 1024 * 1024, "w-2": 1024 }, cpu_seconds: {} }),
     });
     running.push(daemon);
     daemon.trackWorker(worker());
@@ -171,10 +209,10 @@ describe("the memory floor", () => {
       idleMs: 60_000,
       sampleMs: 0,
       stopWorker: () => true,
-      memorySampler: (workers) => {
+      treeSampler: (workers) => {
         samples += 1;
         sampledSets.push(workers.length);
-        return {};
+        return { rss: {}, cpu_seconds: {} };
       },
     });
     running.push(daemon);
@@ -217,43 +255,151 @@ describe("the memory floor", () => {
   });
 
   it("reads a whole process tree out of one /proc snapshot", async () => {
-    const procRoot = await scratch("redskilled-proc-");
     // parent 100 → child 101 → grandchild 102, plus an unrelated 200.
-    const { mkdir, writeFile } = await import("node:fs/promises");
-    const rows: Array<[number, number, number]> = [[100, 1, 10], [101, 100, 20], [102, 101, 30], [200, 1, 999]];
-    for (const [pid, ppid, rssPages] of rows) {
-      await mkdir(join(procRoot, String(pid)), { recursive: true });
-      const trailing = Array.from({ length: 19 }, () => "0").join(" ");
-      await writeFile(
-        join(procRoot, String(pid), "stat"),
-        `${pid} (node (worker)) S ${ppid} ${trailing} ${rssPages} 0\n`,
-        "utf8",
-      );
-    }
+    const procRoot = await procTable([
+      { pid: 100, ppid: 1, rssPages: 10 },
+      { pid: 101, ppid: 100, rssPages: 20 },
+      { pid: 102, ppid: 101, rssPages: 30 },
+      { pid: 200, ppid: 1, rssPages: 999 },
+    ]);
 
-    const reading = sampleTreeRss([worker({ worker_id: "tree", pid: 100 })], { procRoot, platform: "linux" });
+    const reading = sampleWorkerTrees([worker({ worker_id: "tree", pid: 100 })], { procRoot, platform: "linux" });
 
-    expect(reading.tree).toBe((10 + 20 + 30) * 4096);
+    expect(reading.rss.tree).toBe((10 + 20 + 30) * 4096);
   });
 
   it("reads a process name containing spaces and parentheses without shifting fields", () => {
-    const trailing = Array.from({ length: 19 }, () => "0").join(" ");
-    expect(parseProcStat(`77 (my prog (x)) S 5 ${trailing} 12 0\n`)).toEqual({ pid: 77, ppid: 5, rssPages: 12 });
+    expect(parseProcStat(procStatLine({ pid: 77, ppid: 5, rssPages: 12, utime: 300, stime: 100 })))
+      .toEqual({ pid: 77, ppid: 5, rssPages: 12, cpuTicks: 400 });
   });
 
   it("measures a host with no /proc from its own process table instead of giving up", () => {
     // macOS is the platform where this floor IS the memory ceiling, so an empty
     // reading there would leave the only backend without kernel teeth unmeasured.
-    const reading = sampleTreeRss([worker({ worker_id: "tree", pid: 100 })], {
+    const reading = sampleWorkerTrees([worker({ worker_id: "tree", pid: 100 })], {
       platform: "darwin",
-      psTable: () => " 100 1 4096\n 200 100 2048\n",
+      psTable: () => " 100 1 4096 0:04.00\n 200 100 2048 0:06.00\n",
     });
 
-    expect(reading.tree).toBe((4096 + 2048) * 1024);
+    expect(reading.rss.tree).toBe((4096 + 2048) * 1024);
+    expect(reading.cpu_seconds.tree).toBe(10);
   });
 
   it("measures nothing when no process table can be read at all, rather than reporting zero", () => {
-    expect(sampleTreeRss([worker()], { platform: "aix" })).toEqual({});
-    expect(sampleTreeRss([worker()], { platform: "darwin", psTable: () => "" })).toEqual({});
+    const empty = { rss: {}, cpu_seconds: {} };
+    expect(sampleWorkerTrees([worker()], { platform: "aix" })).toEqual(empty);
+    expect(sampleWorkerTrees([worker()], { platform: "darwin", psTable: () => "" })).toEqual(empty);
+  });
+});
+
+describe("the CPU reading — what RSS alone cannot tell apart", () => {
+  it("separates a working Worker from a hung one at the same RSS", async () => {
+    // Same memory, different work: the busy tree burned 90s of CPU across its
+    // children, the wedged one has burned 0.30s since it was born.
+    const procRoot = await procTable([
+      { pid: 100, ppid: 1, rssPages: 500, utime: 4000, stime: 1000 },
+      { pid: 101, ppid: 100, rssPages: 500, utime: 3000, stime: 1000 },
+      { pid: 200, ppid: 1, rssPages: 500, utime: 20, stime: 10 },
+      { pid: 201, ppid: 200, rssPages: 500, utime: 0, stime: 0 },
+    ]);
+
+    const reading = sampleWorkerTrees(
+      [worker({ worker_id: "busy", pid: 100 }), worker({ worker_id: "hung", pid: 200 })],
+      { procRoot, platform: "linux" },
+    );
+
+    // Equivalent RSS: the memory reading cannot distinguish them at all.
+    expect(reading.rss.busy).toBe(reading.rss.hung);
+    // Divergent CPU: the reading does, and by a factor no rounding explains.
+    expect(reading.cpu_seconds.busy).toBe(90);
+    expect(reading.cpu_seconds.hung).toBe(0.3);
+  });
+
+  it("sums CPU over the whole tree, never the Worker's own process alone", async () => {
+    const procRoot = await procTable([
+      { pid: 100, ppid: 1, rssPages: 1, utime: 100, stime: 0 },
+      { pid: 101, ppid: 100, rssPages: 1, utime: 200, stime: 100 },
+      { pid: 102, ppid: 101, rssPages: 1, utime: 0, stime: 600 },
+      // A stranger the Worker never parented: its CPU is not the Worker's.
+      { pid: 300, ppid: 1, rssPages: 1, utime: 999_999, stime: 0 },
+    ]);
+
+    const reading = sampleWorkerTrees([worker({ worker_id: "tree", pid: 100 })], { procRoot, platform: "linux" });
+
+    expect(reading.cpu_seconds.tree).toBe(10);
+  });
+
+  it("costs ONE process-table read per tick, whatever the Worker count", () => {
+    let tableReads = 0;
+    const psTable = () => {
+      tableReads += 1;
+      return [
+        " 100 1 1024 0:01.00",
+        " 200 1 1024 0:02.00",
+        " 300 1 1024 0:03.00",
+        " 400 1 1024 0:04.00",
+      ].join("\n");
+    };
+    const four = [100, 200, 300, 400].map((pid) => worker({ worker_id: `w-${pid}`, pid }));
+
+    const one = sampleWorkerTrees(four.slice(0, 1), { platform: "darwin", psTable });
+    const all = sampleWorkerTrees(four, { platform: "darwin", psTable });
+
+    // Four Workers cost exactly what one Worker cost: one read each, not four.
+    expect(tableReads).toBe(2);
+    expect(Object.keys(one.cpu_seconds)).toHaveLength(1);
+    expect(Object.keys(all.cpu_seconds)).toHaveLength(4);
+    expect(all.cpu_seconds["w-400"]).toBe(4);
+  });
+
+  it("carries the sampled CPU on the Worker, dated by the tick that took it", async () => {
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      sampleMs: 0,
+      clock: () => "2026-07-30T12:00:00.000Z",
+      stopWorker: () => true,
+      treeSampler: () => ({ rss: { "w-1": 1024, "w-2": 1024 }, cpu_seconds: { "w-1": 612.5, "w-2": 0.2 } }),
+    });
+    running.push(daemon);
+    daemon.trackWorker(worker());
+    daemon.trackWorker(worker({ worker_id: "w-2", pid: 4243 }));
+
+    await daemon.sampleMemoryBudgets();
+    const workers = daemon.hostState().workers;
+
+    // Same RSS, different CPU — the host state says which is which, and when.
+    expect(workers.map((w) => w.cpu?.cpu_seconds)).toEqual([612.5, 0.2]);
+    expect(workers[0]!.cpu?.sampled_at).toBe("2026-07-30T12:00:00.000Z");
+    // A measurement the daemon took, never a verdict about the project's task.
+    expect(workers.every((w) => isRedskilledWorkerView(w))).toBe(true);
+  });
+
+  it("leaves a Worker this tick could not measure holding its last reading", async () => {
+    const paths = await sessionPaths();
+    const readings: RedskilledTreeReading[] = [
+      { rss: { "w-1": 1024 }, cpu_seconds: { "w-1": 4 } },
+      { rss: {}, cpu_seconds: {} },
+    ];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      sampleMs: 0,
+      stopWorker: () => true,
+      treeSampler: () => readings.shift() ?? { rss: {}, cpu_seconds: {} },
+    });
+    running.push(daemon);
+    daemon.trackWorker(worker());
+
+    await daemon.sampleMemoryBudgets();
+    const first = daemon.hostState().workers[0]!.cpu;
+    await daemon.sampleMemoryBudgets();
+    const second = daemon.hostState().workers[0]!.cpu;
+
+    // The unmeasured tick neither erases the number nor re-dates it: an erased
+    // reading loses the last thing known about a Worker exactly as it goes quiet.
+    expect(second).toEqual(first);
+    expect(second!.cpu_seconds).toBe(4);
   });
 });
