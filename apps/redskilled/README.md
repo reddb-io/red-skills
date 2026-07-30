@@ -26,11 +26,12 @@ of it.
 | Which session a daemon serves | `src/paths.ts` — session key, socket, lock, lease |
 | Who owns the session across restarts | `src/session-lease.ts` — pid + start time, TOON on disk |
 | Who owns the socket right now | `src/daemon.ts` — exclusive bind |
-| The frozen wire contract | `src/protocol.ts` — `ping`, `host-state`, `statusline-payload`, `statusline-string`, `worker-start`, `worker-command`, `shutdown` |
+| The frozen wire contract | `src/protocol.ts` — `ping`, `host-state`, `statusline-payload`, `statusline-string`, `worker-start`, `worker-command`, `worker-heartbeat`, `shutdown` |
 | Who may read and who may write | `src/session-reach.ts` — read the host, write the project |
 | What this machine is doing, in one document | `src/statusline-payload.ts` — Workers, projects, vitals, budgets, staleness |
 | That same answer, as a finished line | `src/statusline-render.ts` — modes, degradation, width; a pure function of the payload |
 | The declared defaults and the flag above them | `src/statusline-config.ts` — `plugins.dev.statusline.*`, resolved client-side |
+| A Worker's last logged line, published not read | `src/worker-log.ts` — the heartbeat's opaque string, and the restart-only recovery |
 | Where a Worker's resources are charged | `src/worker-placement.ts` — pure planner over injected probes |
 | Birth itself | `src/worker-launch.ts` — plan, spawn once, report the downgrade |
 | The host-wide read | `src/host-state.ts` — total shape, Workers plus the budget total |
@@ -103,8 +104,22 @@ of it.
   purpose and the loss is stated (`detail`, `degraded`) rather than left to be
   detected by re-parsing the line. The full picture stays with the dashboard and
   the monitor.
+- **`--verbose` adds a second line per Worker, and the Worker supplies it.** The
+  Worker publishes its last logged line on its heartbeat (`worker-heartbeat`) as an
+  opaque string; the daemon stores and returns it without ever parsing it, so the
+  whole global verbose view is still ONE read and opens no project's files. A
+  statusline that read each Worker's log itself would cost a disk read per Worker
+  per render, cross a project boundary, and hand every surface a private source.
+  A Worker that has logged nothing gets no second line at all.
+- **A restart is the one time the daemon reads a log — from the path it was given.**
+  A daemon that just came back holds Workers it has heard no heartbeat from, so for
+  those it reads once, using the `log_path` the client handed over at spawn and the
+  event lane carried through. A Worker whose client gave no path waits for its next
+  heartbeat; guessing a filename inside its workspace would be the derived layout
+  rule 3 forbids. Recovery is not the normal path, and the payload says which lines
+  came from it (`log.source`).
 - **Defaults are declared once, in `plugins.dev.statusline.*`.** `mode`,
-  `max_workers`, `max_projects` and `max_width`; a flag beats config, config
+  `max_workers`, `max_projects`, `max_width` and `verbose`; a flag beats config, config
   beats the built-in. Config is read **client-side** — the daemon may not know
   what a `.red/config.yaml` is — so only decided values cross the socket. A
   malformed value is named on stderr and ignored, never fatal: this line renders
@@ -126,4 +141,6 @@ pnpm -C apps/redskilled serve       # run the daemon on this session's socket
 redskilled statusline                       # this project's Workers
 redskilled statusline global                # every project's, each showing its owner
 redskilled statusline --max-width 60        # a flag overrides the declared default
+redskilled statusline global --verbose      # each Worker plus the last line it logged
+redskilled statusline --no-verbose          # one read without the second lines
 ```

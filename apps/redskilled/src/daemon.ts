@@ -65,6 +65,8 @@ import {
   type RedskilledStatuslineRenderRequest,
   type RedskilledWorkerCommandRequest,
   type RedskilledWorkerCommandResult,
+  type RedskilledWorkerHeartbeatAck,
+  type RedskilledWorkerHeartbeatRequest,
 } from "./protocol.js";
 import { commandOp, evaluateSessionReach, type RedskilledSessionOp } from "./session-reach.js";
 import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
@@ -79,6 +81,11 @@ import {
   type LaunchedWorker,
   type RedskilledWorkerSpec,
 } from "./worker-launch.js";
+import {
+  readLastLogLine,
+  type RedskilledLogTailProbe,
+  type RedskilledWorkerLogLine,
+} from "./worker-log.js";
 import {
   createRedskilledLeaseStore,
   currentProcessOwner,
@@ -132,6 +139,14 @@ export interface RedskilledDaemonOptions {
   readonly memorySampler?: RedskilledMemorySampler;
   /** Window between memory samples; 0 or below leaves the sampler unarmed. */
   readonly sampleMs?: number;
+  /**
+   * How the daemon recovers a Worker's last logged line after a restart.
+   *
+   * Injected so a test can prove the read happens exactly once, on exactly the
+   * path the client gave. It is never used on the normal path: a live Worker's
+   * line arrives on its own heartbeat.
+   */
+  readonly readLogTail?: RedskilledLogTailProbe;
 }
 
 export interface RedskilledDaemon {
@@ -176,6 +191,15 @@ export interface RedskilledDaemon {
    * performed, each naming the budget it enforced.
    */
   sampleMemoryBudgets(): Promise<readonly RedskilledBudgetTermination[]>;
+  /**
+   * Store one Worker's last logged line, exactly as it was published.
+   *
+   * The daemon widens by one string and learns nothing: it does not parse the
+   * line, does not date it from its content, and does not know which file it came
+   * out of. That ignorance is what keeps the verbose statusline a single read
+   * instead of a disk read per Worker per render.
+   */
+  publishWorkerHeartbeat(request: RedskilledWorkerHeartbeatRequest): RedskilledWorkerHeartbeatAck;
   /** Re-probe every re-attached Worker, retiring the ones the host no longer confirms. */
   sweepReattached(): Promise<readonly RedskilledWorkerView[]>;
   /** The Workers this daemon adopted at start rather than birthing itself. */
@@ -226,11 +250,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const liveness = options.liveness ?? detectWorkerLiveness;
   const stopProbe = options.stopWorker ?? stopWorker;
   const memorySampler = options.memorySampler ?? sampleTreeRss;
+  const readLogTail = options.readLogTail ?? readLastLogLine;
   const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
   const workers = new Map<string, RedskilledWorkerView>();
   // Re-attached Workers have no child handle to deliver an exit, so their death
   // is discovered by asking the host rather than by being told.
   const reattached = new Set<string>();
+  // The last line each Worker published, by Worker id. Held in memory only: it is
+  // a live progress note, and a durable copy would be a third authority on a
+  // Worker's story next to the tracker and git (ADR 0130).
+  const logLines = new Map<string, RedskilledWorkerLogLine>();
   const activeSockets = new Set<Socket>();
   // The last thing the sampler measured, kept so a read is dated rather than
   // dating itself: staleness belongs to the daemon that took the measurement.
@@ -268,6 +297,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       ceiling,
       rss: lastReading,
       sampledAt: lastSampledAt,
+      logLines: Object.fromEntries(logLines),
       now: clock(),
       reattachedWorkerIds: [...reattached],
     });
@@ -290,6 +320,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       maxWorkers: render?.max_workers ?? REDSKILLED_STATUSLINE_DEFAULTS.maxWorkers,
       maxProjects: render?.max_projects ?? REDSKILLED_STATUSLINE_DEFAULTS.maxProjects,
       maxWidth: render?.max_width ?? REDSKILLED_STATUSLINE_DEFAULTS.maxWidth,
+      verbose: render?.verbose ?? REDSKILLED_STATUSLINE_DEFAULTS.verbose,
     });
   }
 
@@ -332,6 +363,57 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     };
   }
 
+  /**
+   * Drop every belief about one Worker at once.
+   *
+   * One function rather than three deletes at each site: a Worker forgotten from
+   * the live set but left in the log-line map would keep a dead Worker's progress
+   * note alive and leak a little memory per death.
+   */
+  function forgetWorker(workerId: string): void {
+    workers.delete(workerId);
+    reattached.delete(workerId);
+    logLines.delete(workerId);
+  }
+
+  /**
+   * Record one heartbeat's line, once reach has permitted it.
+   *
+   * Reach is checked against the TARGET's project, exactly as a command is, so a
+   * session cannot publish a line into another project's statusline. A refusal
+   * throws and stores nothing.
+   */
+  function publishWorkerHeartbeat(request: RedskilledWorkerHeartbeatRequest): RedskilledWorkerHeartbeatAck {
+    const target = workers.get(request.worker_id);
+    const reach = authorize("worker-heartbeat", request.session_project, target?.project_label ?? null);
+    if (!reach.permitted) throw new Error(reach.reason);
+    if (typeof request.last_log_line !== "string") {
+      // The shape, not the content: the daemon must know it holds a string, and
+      // that is the last thing it ever asks about this value.
+      throw new Error("redskilled worker heartbeat last_log_line must be a string");
+    }
+    if (target == null) {
+      return {
+        version: 1,
+        worker_id: request.worker_id,
+        accepted: false,
+        reach,
+        published_at: null,
+        detail: `redskilled holds no live Worker ${JSON.stringify(request.worker_id)} to publish a line for`,
+      };
+    }
+    const publishedAt = clock();
+    logLines.set(request.worker_id, { line: request.last_log_line, published_at: publishedAt, source: "heartbeat" });
+    return {
+      version: 1,
+      worker_id: request.worker_id,
+      accepted: true,
+      reach,
+      published_at: publishedAt,
+      detail: `redskilled stored a line for Worker ${JSON.stringify(request.worker_id)} without reading it`,
+    };
+  }
+
   /** Stop one Worker the daemon holds, and record its death. */
   async function stopWorkerNow(worker: RedskilledWorkerView, detail: string): Promise<boolean> {
     try {
@@ -340,8 +422,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // A stop the host refused still ends the daemon's claim: a Worker it keeps
       // holding a budget for while nothing supervises it is the worse state.
     }
-    workers.delete(worker.worker_id);
-    reattached.delete(worker.worker_id);
+    forgetWorker(worker.worker_id);
     record("worker-death", worker, detail);
     armIdleTimer();
     return true;
@@ -380,8 +461,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       clock,
       onExit: (workerId, code, signal) => {
         const worker = workers.get(workerId);
-        workers.delete(workerId);
-        reattached.delete(workerId);
+        forgetWorker(workerId);
         if (worker) record("worker-death", worker, `exit code=${code ?? "null"} signal=${signal ?? "null"}`);
         armIdleTimer();
       },
@@ -420,8 +500,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (adopted.length === 0) return [];
     const { dead } = await reattachWorkers(adopted, liveness);
     for (const worker of dead) {
-      workers.delete(worker.worker_id);
-      reattached.delete(worker.worker_id);
+      forgetWorker(worker.worker_id);
       record("worker-death", worker, "the host no longer confirms this Worker");
     }
     if (dead.length > 0) armIdleTimer();
@@ -438,8 +517,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // daemon's claim on the budget, and a silent failure would leave the
       // accounting holding room for a Worker nobody is tracking any more.
     }
-    workers.delete(workerId);
-    reattached.delete(workerId);
+    forgetWorker(workerId);
     record("worker-budget-kill", worker, detail);
     armIdleTimer();
     return true;
@@ -536,6 +614,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   for (const worker of reattachment.dead) {
     record("worker-death", worker, "the Worker ended while no daemon was watching");
   }
+  // The bounded exception. A daemon that has just come back holds Workers it has
+  // never heard a heartbeat from, so for those — and only those — it reads the log
+  // ONCE, from the path the client GAVE at spawn and carried on the event lane. A
+  // Worker whose client gave no path stays without a line until it publishes one;
+  // guessing a filename inside its workspace would be the derived layout ADR 0130
+  // rule 3 forbids. Recovery is not the normal path.
+  for (const worker of reattachment.alive) {
+    if (worker.log_path == null || logLines.has(worker.worker_id)) continue;
+    const recovered = await readLogTail(worker.log_path).catch(() => null);
+    if (recovered == null || recovered.trim() === "") continue;
+    logLines.set(worker.worker_id, { line: recovered, published_at: clock(), source: "rehydrated" });
+  }
 
   server.on("connection", (socket) => {
     activeSockets.add(socket);
@@ -576,6 +666,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         // two surfaces are the same answer twice and never two answers.
         return { id: request.id, ok: true, value: statuslineString(request.render) };
       }
+      if (request.op === "worker-heartbeat") {
+        return { id: request.id, ok: true, value: publishWorkerHeartbeat(request.heartbeat) };
+      }
       if (request.op === "worker-command") {
         return { id: request.id, ok: true, value: await runWorkerCommand(request.command) };
       }
@@ -611,6 +704,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     killWorkerOverBudget,
     sampleMemoryBudgets,
     sweepReattached,
+    publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
     flushEvents: () => eventLane.flush(),
     trackWorker(worker) {
@@ -622,6 +716,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       const worker = workers.get(workerId);
       const removed = workers.delete(workerId);
       reattached.delete(workerId);
+      logLines.delete(workerId);
       if (worker) record("worker-death", worker, "released by the daemon");
       armIdleTimer();
       return removed;

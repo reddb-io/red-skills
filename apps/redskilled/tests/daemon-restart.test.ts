@@ -364,6 +364,7 @@ function laneEvent(event: RedskilledHostEvent["event"], workerId: string): Redsk
     project_label: "acme/widgets",
     pid: 4242,
     workspace_path: "/tmp/ws",
+    log_path: null,
     isolated: true,
     unit: `red-worker-${workerId}.service`,
     memory_high: "512M",

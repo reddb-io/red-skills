@@ -24,6 +24,7 @@ import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHost
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
 import type { RedskilledHostState, RedskilledWorkerView } from "./host-state.js";
 import { resolveEnforcedBudget, type RedskilledBudgetName, type RedskilledRssReading } from "./memory-sampler.js";
+import type { RedskilledWorkerLogLine } from "./worker-log.js";
 
 /**
  * How old a sample may be before the payload calls itself stale.
@@ -66,6 +67,22 @@ export interface RedskilledStatuslineWorkerBudget {
   readonly enforceable: boolean;
 }
 
+/**
+ * The last line this Worker logged, as the daemon received it.
+ *
+ * It rides on the payload because that is what makes the verbose view ONE read:
+ * a consumer that had to open each Worker's log would pay a disk read per Worker
+ * per render and would cross a project boundary to do it. `last_line` is `null`
+ * for a Worker that has published nothing — never `""`, because a consumer
+ * printing an empty second line is the broken render this field exists to avoid.
+ */
+export interface RedskilledStatuslineWorkerLog {
+  readonly last_line: string | null;
+  readonly published_at: string | null;
+  /** How the daemon came by the line; `null` when it has none. */
+  readonly source: "heartbeat" | "rehydrated" | null;
+}
+
 export interface RedskilledStatuslineWorker {
   readonly worker_id: string;
   readonly project_label: string;
@@ -79,6 +96,7 @@ export interface RedskilledStatuslineWorker {
   readonly warnings: readonly string[];
   readonly vitals: RedskilledStatuslineVitals;
   readonly budget: RedskilledStatuslineWorkerBudget;
+  readonly log: RedskilledStatuslineWorkerLog;
 }
 
 /** One project's share of the machine. */
@@ -145,6 +163,13 @@ export interface BuildStatuslinePayloadInput {
   readonly rss: RedskilledRssReading;
   /** When that reading was taken; `null` when nothing has been sampled yet. */
   readonly sampledAt: string | null;
+  /**
+   * The last line each Worker published, by Worker id.
+   *
+   * Passed in rather than read here: the lines belong to the daemon that received
+   * the heartbeats, and this document stays a pure function of its inputs.
+   */
+  readonly logLines?: Readonly<Record<string, RedskilledWorkerLogLine>>;
   readonly now: string;
   /** Workers this daemon adopted at start rather than birthing itself, by id. */
   readonly reattachedWorkerIds?: readonly string[];
@@ -167,6 +192,7 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       ageMs,
       sampleFresh,
       nowMs,
+      log: input.logLines?.[worker.worker_id],
       state: reattached.has(worker.worker_id) ? "reattached" : "running",
     })
   );
@@ -220,6 +246,8 @@ function buildWorker(
     readonly ageMs: number | null;
     readonly sampleFresh: boolean;
     readonly nowMs: number | null;
+    /** What this Worker published, when it has published anything. */
+    readonly log?: RedskilledWorkerLogLine;
     readonly state: RedskilledWorkerState;
   },
 ): RedskilledStatuslineWorker {
@@ -254,7 +282,21 @@ function buildWorker(
       used_fraction: enforced == null || enforced.bytes <= 0 || rssBytes == null ? null : rssBytes / enforced.bytes,
       enforceable: enforced != null,
     },
+    log: workerLog(ctx.log),
   };
+}
+
+/**
+ * The published line, echoed and never parsed. PURE.
+ *
+ * The one judgement made about the content is whether there is any: a line of
+ * spaces is the same absence as no line at all, and reporting it as present
+ * would hand every consumer a blank second line to render.
+ */
+function workerLog(log: RedskilledWorkerLogLine | undefined): RedskilledStatuslineWorkerLog {
+  const absent = { last_line: null, published_at: null, source: null } as const;
+  if (log == null || log.line.trim() === "") return absent;
+  return { last_line: log.line, published_at: log.published_at, source: log.source };
 }
 
 function buildProjects(workers: readonly RedskilledStatuslineWorker[]): readonly RedskilledStatuslineProject[] {

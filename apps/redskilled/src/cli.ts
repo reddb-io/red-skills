@@ -54,7 +54,8 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
 }
 
 /**
- * `redskilled statusline [global] [--flags]` — the whole of an agent host's job.
+ * `redskilled statusline [global] [--verbose] [--flags]` — the whole of an agent
+ * host's job.
  *
  * The host runs this and prints the one line it writes; it decides nothing about
  * shape, order, width or degradation, because ADR 0130 rule 10 moves rendering
@@ -88,7 +89,10 @@ export async function runStatusline(
   const render = await readRedskilledStatuslineString(io.paths ?? resolveRedskilledPaths(), resolved.options, {
     ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
   });
-  write(`${render.line}\n`);
+  // Every line the daemon rendered, in order — one write, whatever the taste.
+  // With `--verbose` that is the Worker line plus a second line per Worker; the
+  // host still decides nothing about shape (ADR 0130 rule 10).
+  write(`${render.lines.join("\n")}\n`);
   return 0;
 }
 

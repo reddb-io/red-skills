@@ -27,6 +27,7 @@ import {
   isRedskilledStatuslinePayload,
   isRedskilledStatuslineRender,
   isRedskilledWorkerCommandResult,
+  isRedskilledWorkerHeartbeatAck,
   isRedskilledWorkerStarted,
   sendRedskilledRequest,
   type RedskilledRequest,
@@ -35,9 +36,11 @@ import {
   type RedskilledStatuslineRenderRequest,
   type RedskilledWorkerCommandRequest,
   type RedskilledWorkerCommandResult,
+  type RedskilledWorkerHeartbeatAck,
   type RedskilledWorkerStarted,
 } from "./protocol.js";
 import type { RedskilledStatuslineOptions } from "./statusline-render.js";
+import { clampPublishedLogLine } from "./worker-log.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
 
 /** How long a client waits for a daemon — its own or the race winner's — to answer. */
@@ -209,7 +212,41 @@ function renderRequest(options: RedskilledStatuslineOptions): RedskilledStatusli
     max_workers: options.maxWorkers,
     max_projects: options.maxProjects,
     max_width: options.maxWidth,
+    verbose: options.verbose,
   };
+}
+
+/**
+ * Publish one Worker's last logged line — the verbose statusline's whole supply.
+ *
+ * The Worker's own project publishes it, on the heartbeat it already sends, and
+ * the daemon stores the string without reading it. **Clamping happens here, on the
+ * publisher's side**: the daemon shortening a line would be the daemon touching
+ * content, and a runaway log line must not make a heartbeat expensive.
+ *
+ * A refusal throws, exactly as a command's does; an ack that says `accepted:
+ * false` is the benign race where the daemon had already let the Worker go.
+ */
+export async function publishRedskilledWorkerLogLine(
+  paths: RedskilledPaths,
+  heartbeat: { readonly worker_id: string; readonly line: string; readonly session_project?: string },
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledWorkerHeartbeatAck> {
+  const sessionProject = heartbeat.session_project ?? config.sessionProject;
+  const value = await requestRedskilled(
+    paths,
+    {
+      op: "worker-heartbeat",
+      heartbeat: {
+        worker_id: heartbeat.worker_id,
+        last_log_line: clampPublishedLogLine(heartbeat.line),
+        ...(sessionProject == null ? {} : { session_project: sessionProject }),
+      },
+    },
+    config,
+  );
+  if (!isRedskilledWorkerHeartbeatAck(value)) throw new Error("redskilled daemon returned a malformed heartbeat ack");
+  return value;
 }
 
 /**

@@ -201,6 +201,10 @@ Nothing to install: OpenCode is an AFK API-auth runner lane (`--runner opencode`
 | `redskilled statusline` | the local project's Workers only — the quiet default |
 | `redskilled statusline global` | every project's Workers, each entry naming its owning project |
 | `redskilled statusline --max-width 60` | the same, under a narrower line |
+| `redskilled statusline --verbose` | each listed Worker plus a second line: the last line it logged |
+| `redskilled statusline global --verbose` | the same, machine-wide, each second line naming its Worker's owner |
+
+**The second line comes from the Worker, never from its log file.** With `--verbose` each listed Worker gets one extra line carrying the last line it logged. The Worker **publishes** that line on its heartbeat and the daemon stores it as an opaque string — so a verbose global view is still one read and opens no other project's files. A statusline that read each Worker's log directly would cost a disk read per Worker per render and cross a project boundary on every tick. A Worker that has logged nothing renders no second line, and the annotation disappears entirely once the line degrades past the Worker entries — a second line belongs to a Worker entry, and an aggregate row has no Worker to be the second line of.
 
 **A crowded machine degrades rather than overflowing.** Too many Workers for the count budget or the width drops the line to one entry per project; too many projects drops it to the host total (`host 6w/6p 1.5G`). The statusline answers "who is using this machine and how much" — the full picture stays with `/afk dashboard` and `/afk monitor`.
 
@@ -216,6 +220,7 @@ plugins:
       max_workers: 4       # Worker entries before the line drops to projects
       max_projects: 4      # project entries before the line drops to the host total
       max_width: 120       # hard ceiling in characters; the line never exceeds it
+      verbose: false       # `true` gives each Worker a second line: its last logged line
 ```
 
 Config is read **client-side** and only decided values cross the socket — the daemon must never learn what a `.red/config.yaml` is (ADR 0130 rule 3). A malformed value is named on stderr and ignored: this line renders on every turn, and a blank statusline is the harder failure to diagnose than a wrong `max_width`.
