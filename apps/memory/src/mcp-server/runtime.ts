@@ -26,6 +26,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
+import { parseFlags, routeCommand, type FlagSchema } from "@reddb-io/shared/args.js";
 import { type MemoryConfig, readConfig, resolveStoreUri } from "../config.js";
 import { diagnose } from "../doctor.js";
 import { runAutoCure } from "../auto-curation.js";
@@ -809,8 +810,24 @@ function describe(v: z.ZodTypeAny): Record<string, unknown> {
   return {};
 }
 
-if (process.argv[2] === "--version" || process.argv[2] === "-v" || process.argv[2] === "version") {
-  process.stdout.write(process.argv.includes("--json") ? `${JSON.stringify(buildInfo)}\n` : `${renderVersion(buildInfo)}\n`);
+/** The server's own flags — the same contract the `memory` CLI routes through. */
+const MCP_BINARY_FLAGS = {
+  version: { kind: "boolean", aliases: ["v"] },
+  json: { kind: "boolean" },
+} as const satisfies FlagSchema;
+
+const routedMcp = routeCommand<"serve" | "version">(process.argv.slice(2), {
+  commands: { serve: {}, version: {} },
+  default: "serve",
+});
+const mcpFlags = parseFlags(routedMcp.args, MCP_BINARY_FLAGS).values;
+
+// Answered before the store opens and before stdio is claimed: "which build is
+// this?" is asked of a server that would not start, so it must not need one.
+if (routedMcp.command === "version" || mcpFlags.version === true) {
+  process.stdout.write(
+    mcpFlags.json === true ? `${JSON.stringify(buildInfo)}\n` : `${renderVersion(buildInfo)}\n`,
+  );
 } else {
   main().catch((err) => {
     console.error("[memory-mcp] fatal:", err);

@@ -137,7 +137,7 @@ export { curateSkills, isCuratable, rollupsToCuratorInput } from "../skill-curat
 export { runCurateWorkflow } from "../curate-skill/workflow.js";
 export { slugify, storeNote } from "../store.js";
 export { readBuildInfo, renderVersion } from "@reddb-io/build-info";
-export { parseLooseArgs } from "@reddb-io/shared/args.js";
+export { parseFlags, parseLooseArgs, routeCommand, UnknownCommandError } from "@reddb-io/shared/args.js";
 export { renderToonOutput } from "../toon-output.js";
 export type { MemoryConfig } from "../config.js";
 export type { MemoryCapsuleSourceKind } from "../capsule.js";
@@ -176,4 +176,4 @@ export type { ReasoningWorkerPayload } from "../reasoning/worker-writer.js";
 export type { SkillEventSummary, SkillRollup } from "../skill-events.js";
 export type { CuratorReportEnvelope } from "../curate-skill/types.js";
 export type { Confidence, MemoryLayer, MemoryProvenance, MemoryScope } from "../schema.js";
-export type { LooseParsedArgs } from "@reddb-io/shared/args.js";
+export type { CommandSpec, FlagSchema, LooseParsedArgs, RouterSchema } from "@reddb-io/shared/args.js";
