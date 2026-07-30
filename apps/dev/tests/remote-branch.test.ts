@@ -63,7 +63,7 @@ describe("pushInitial (live namespace)", () => {
   it("pushes HEAD with upstream tracking and --force-with-lease", async () => {
     const { git, calls } = fakeGit();
     const out = await pushInitial(git, "/wt", "afk/wABC/42-slug");
-    expect(out).toEqual({ ok: true, ran: true });
+    expect(out).toEqual({ ok: true, ran: true, status: "pushed" });
     expect(calls).toEqual([
       ["-C", "/wt", "push", "origin", "-u", "HEAD:refs/heads/afk/wABC/42-slug", "--force-with-lease"],
     ]);
@@ -81,7 +81,7 @@ describe("pushInitial (live namespace)", () => {
   it("skips git entirely on an empty branch", async () => {
     const { git, calls } = fakeGit();
     const out = await pushInitial(git, "/wt", "");
-    expect(out).toEqual({ ok: true, ran: false, warn: expect.stringContaining("skipping") });
+    expect(out).toEqual({ ok: true, ran: false, status: "skipped", warn: expect.stringContaining("skipping") });
     expect(calls).toEqual([]);
   });
 });
@@ -102,7 +102,7 @@ describe("deleteRemote (live namespace only)", () => {
   it("deletes the live branch from the primary checkout", async () => {
     const { git, calls } = fakeGit();
     const out = await deleteRemote(git, "/repo", "afk/wABC/42-slug");
-    expect(out).toEqual({ ok: true, ran: true });
+    expect(out).toEqual({ ok: true, ran: true, status: "pushed" });
     expect(calls).toEqual([["-C", "/repo", "push", "origin", "--delete", "afk/wABC/42-slug"]]);
   });
 
@@ -124,7 +124,7 @@ describe("deleteRemote (live namespace only)", () => {
   it("skips git entirely on an empty branch", async () => {
     const { git, calls } = fakeGit();
     const out = await deleteRemote(git, "/repo", "");
-    expect(out).toEqual({ ok: true, ran: false, warn: expect.stringContaining("skipping") });
+    expect(out).toEqual({ ok: true, ran: false, status: "skipped", warn: expect.stringContaining("skipping") });
     expect(calls).toEqual([]);
   });
 });
@@ -133,7 +133,7 @@ describe("pushAttempt (live branch safety push)", () => {
   it("pushes a plain refspec into the live namespace (no --force-with-lease, no -u)", async () => {
     const { git, calls } = fakeGit();
     const out = await pushAttempt(git, "/repo", "afk/wABC/9-slug", "afk/wABC/9-slug");
-    expect(out).toEqual({ ok: true, ran: true });
+    expect(out).toEqual({ ok: true, ran: true, status: "pushed" });
     expect(calls).toEqual([
       ["-C", "/repo", "push", "origin", "afk/wABC/9-slug:refs/heads/afk/wABC/9-slug"],
     ]);

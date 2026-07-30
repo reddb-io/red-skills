@@ -70,7 +70,7 @@ import { isRefused, parkOrHuman, planTransition, transitionLabels } from "../sta
 import { deriveOutcomeRecord } from "../outcome-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
-import { applyCurrentBlockerEdit, parseCurrentBlocker, type CurrentBlocker } from "../blocker-state.js";
+import { applyCurrentBlockerEdit, makeBlocker, parseCurrentBlocker, type CurrentBlocker } from "../blocker-state.js";
 import {
   parseTrustPolicy,
   evaluateClaimTrust,
@@ -242,96 +242,83 @@ export function oneLine(value: string | undefined, fallback: string): string {
 export function blockerForFailure(outcome: ProcessOutcome, sections: SectionBodies): CurrentBlocker | null {
   switch (outcome) {
     case "blocked":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "spec",
         summary: oneLine(sections.notes, "Inner agent emitted BLOCKED."),
         next: "Review the blocker envelope and add human guidance.",
-      };
+      });
     case "feedback-failed":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "validation",
         summary: oneLine(sections.validation ?? sections.log, "Validation failed after implementation."),
         next: "Decide whether to fix forward, change scope, or adjust the acceptance criteria.",
-      };
+      });
     case "no-sentinel":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "runner",
         summary: oneLine(sections.log, "Inner agent exited without an AFK completion sentinel."),
         next: "Review the attempt log and decide whether to retry or revise the issue brief.",
-      };
+      });
     case "host-config":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "host-config",
         summary: oneLine(sections.log ?? sections.notes, "Required runner host configuration is unavailable."),
         next: "Install or restore the required shell/workspace on the host, then requeue this issue.",
-      };
+      });
     case "stalled":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "stalled",
         summary: oneLine(sections.log, "Inner agent made no progress (no new commit) within the attempt wall-clock."),
         next: "Review the work already pushed (branch/PR) and decide whether to continue, re-scope, or stop.",
-      };
+      });
     case "budget-exceeded":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "budget",
         summary: oneLine(sections.log, "Attempt aborted — per-attempt resource budget exceeded (#908)."),
         next: "Review the salvaged partial work (branch/PR) and decide whether to continue with a larger budget, re-scope, or stop.",
-      };
+      });
     case "merge-conflict":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "merge-conflict",
         summary: oneLine(sections.log, "Worker branch could not be merged cleanly."),
         next: "Resolve the merge conflict or add guidance for the next agent attempt.",
-      };
+      });
     case "ci-failed":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "ci",
         summary: oneLine(sections.log, "A required status check failed on the completed, mergeable PR."),
         next: "Fix the failing required check on the open PR, then merge it (no full agent re-run needed).",
-      };
+      });
     case "ci-pending":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "ci",
         summary: oneLine(sections.log, "Required status checks were still pending on the completed, mergeable PR."),
         next: "Wait for the required checks to go green, then merge the open PR (no full agent re-run needed).",
-      };
+      });
     case "trunk-diverged":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "trunk-diverged",
         summary: oneLine(sections.log, "Local trunk diverged from origin; landing aborted (ADR 0083)."),
         next: "Reconcile the primary checkout's local trunk with origin (no reset/stash/force-push), then requeue.",
-      };
+      });
     case "base-stale":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "base-stale",
         summary: oneLine(sections.log, "Remote base was unreachable and the local base is stale."),
         next: "Refresh the local base from origin, or restore remote access, then requeue.",
-      };
+      });
     case "infra":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "infra",
         summary: oneLine(sections.log, "Landing infrastructure precondition failed."),
         next: "Fix the landing infrastructure failure, then requeue.",
-      };
+      });
     case "manual-landing":
-      return {
-        status: "blocked",
+      return makeBlocker({
         kind: "manual-landing",
         summary: oneLine(sections.log, "Manual-landing hold: the full pipeline ran and the PR is open, awaiting a human merge."),
         next: "Merge the open PR to land the work (it auto-closes this issue); no full agent re-run is needed.",
-      };
+      });
     default:
       return null;
   }
@@ -340,6 +327,7 @@ export const ACTIONABLE_BLOCKER_KINDS = new Set([
   "spec",
   "validation",
   "merge-conflict",
+  "push-failed",
   "ci",
   "stalled",
   "decision",
@@ -447,9 +435,61 @@ export async function emitDone(
   });
   return result.posted;
 }
-export async function mergeFailed(c: StageCommon, _reason: string, locked = false): Promise<ProcessIssueResult> {
+/**
+ * Make work that already reached the remote VISIBLE on the tracker (#2811).
+ * A park leaves a labelled issue and an envelope; a branch carrying commits
+ * with no pull request leaves nothing anyone browsing the tracker can see, and
+ * 624 committed lines were found only by hand-inspecting `git ls-remote` while
+ * three workers re-did them. The PR is the visibility surface, so open it —
+ * `openManualLandingPr` reuses an existing one, making this idempotent.
+ *
+ * Best-effort by construction: the park is the caller's outcome and a forge
+ * that refuses the PR must not change it. Returns the PR number when the work
+ * is now visible.
+ */
+export async function ensureRemoteWorkVisible(c: StageCommon): Promise<number | undefined> {
+  const { deps, input } = c;
+  if (!c.branch || c.noBranchLink) return undefined;
+  try {
+    const ahead = await deps.mergeExec([
+      "git",
+      "-C",
+      input.repoDir,
+      "rev-list",
+      "--count",
+      `origin/${c.base}..origin/${c.branch}`,
+    ]);
+    // No commits on the remote branch → nothing to make visible. An unreadable
+    // count is treated as "nothing", never as a reason to mint an empty PR.
+    if (ahead.code !== 0 || !(Number(ahead.stdout.trim() || "0") > 0)) return undefined;
+    const opened = await openManualLandingPr(deps.mergeExec, {
+      repo: input.repo,
+      branch: c.branch,
+      target: c.base,
+      n: input.issue,
+      title: input.title,
+    });
+    return opened.ok ? opened.prNumber : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function mergeFailed(
+  c: StageCommon,
+  _reason: string,
+  locked = false,
+  opts: { ensureVisible?: boolean } = {},
+): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   deps.recordWorkerEvent?.("worker.blocked", { outcome: "merge-conflict", reason: _reason });
+  // Never park committed, pushed work out of sight (#2811). Skipped only where
+  // the caller already tried and failed to open the PR itself.
+  const visiblePr = opts.ensureVisible === false ? undefined : await ensureRemoteWorkVisible(c);
+  const reason =
+    visiblePr !== undefined
+      ? `${_reason || "(no merge log captured)"} — the worker branch carries commits on origin; PR #${visiblePr} is open on it`
+      : _reason;
   // Durable retry accounting (#2576): the worker-local attempt ordinal resets
   // to 1 on every replacement worker (ADR 0103 flat workspaces), so the
   // RED_AFK_RETRY_MERGE cap alone never trips across reclaims — the 2026-07-23
@@ -469,11 +509,11 @@ export async function mergeFailed(c: StageCommon, _reason: string, locked = fals
     await writeCurrentBlockerBestEffort(
       deps,
       input,
-      blockerForFailure("merge-conflict", { log: _reason || "(no merge log captured)" }),
+      blockerForFailure("merge-conflict", { log: reason || "(no merge log captured)" }),
     );
   }
   const posted = await emitFailure(c, envelopeStatusFor("merge-conflict"), "merge-conflict", {
-    log: _reason || "(no merge log captured)",
+    log: reason || "(no merge log captured)",
   });
   await recordOutcomeBestEffort(c, "merge-conflict", {
     durationS: deps.nowEpoch() - c.startedEpoch,
@@ -648,7 +688,7 @@ export async function handoffForReview(
     reviewLabel,
   });
   if (!opened.ok) {
-    return await mergeFailed(c, "review-pr-open-failed");
+    return await mergeFailed(c, "review-pr-open-failed", false, { ensureVisible: false });
   }
   await emitBackpressureReview(c, opened.prNumber);
   await parkTerminalHandoff(deps, input.issue, "review-requested");
@@ -686,7 +726,7 @@ export async function handoffForManualLanding(
     title: input.title,
   });
   if (!opened.ok) {
-    return await mergeFailed(c, "manual-landing-pr-open-failed");
+    return await mergeFailed(c, "manual-landing-pr-open-failed", false, { ensureVisible: false });
   }
   await emitBackpressureReview(c, opened.prNumber);
   const prRef = opened.prNumber !== undefined ? `PR #${opened.prNumber}` : "the open PR";

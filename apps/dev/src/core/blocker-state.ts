@@ -23,6 +23,92 @@ export interface ResolvedBlocker {
   resolution: string;
 }
 
+// ---------- self-consistency (#2811) ----------
+//
+// A blocker whose `summary` refutes its own `kind` is a self-inconsistent
+// record, and the tracker had one: `kind: merge-conflict` under a summary
+// stating "the true cause is the push, not a merge conflict", with a `next:`
+// telling a human to resolve a conflict that does not exist. Correcting the one
+// site that wrote it would leave every other site free to write the next one,
+// so consistency is enforced HERE, by construction: `makeBlocker` is the only
+// supported way to build a `CurrentBlocker`, and it re-derives the kind from
+// the evidence in the summary and the next-action from the final kind.
+
+/** A cause the summary text can NAME outright. When a summary names one, that
+ * cause — not the kind the call site guessed — is the recorded kind. */
+interface BlockerCauseRule {
+  kind: string;
+  /** Summary evidence that positively identifies this cause. */
+  names: RegExp;
+  next: string;
+}
+
+const BLOCKER_CAUSE_RULES: readonly BlockerCauseRule[] = [
+  {
+    kind: "push-failed",
+    names: /\bpush (?:failed|did not run|was rejected)\b|\bfailed to push\b|the true cause is the push/i,
+    next: "Restore push access to the worker branch's remote, then requeue — there is no merge conflict to resolve.",
+  },
+];
+
+/** Evidence that REFUTES a kind, without naming a replacement. A summary that
+ * denies its own kind loses the kind rather than keeping a contradiction. */
+const BLOCKER_KIND_REFUTED_BY: Readonly<Record<string, RegExp>> = {
+  "merge-conflict": /\bnot a merge conflict\b|\bmerges cleanly\b|\bno merge conflict\b/i,
+};
+
+/** The next-action each kind licenses. A `next:` is only ever as good as the
+ * cause it is derived from, so it is derived from the cause — never written
+ * beside it. Kinds absent here keep the call site's own next-action. */
+const BLOCKER_NEXT_BY_KIND: Readonly<Record<string, string>> = {
+  "push-failed": BLOCKER_CAUSE_RULES[0]!.next,
+  unclassified: "Read the summary and classify the real cause before choosing a recovery route.",
+};
+
+/** The kind the summary's own evidence supports, given the kind a call site
+ * proposed. Returns the proposal unchanged when nothing contradicts it. */
+export function reconcileBlockerKind(proposedKind: string, summary: string): string {
+  const named = BLOCKER_CAUSE_RULES.find((rule) => rule.names.test(summary));
+  if (named && named.kind !== proposedKind) return named.kind;
+  if (BLOCKER_KIND_REFUTED_BY[proposedKind]?.test(summary)) return "unclassified";
+  return proposedKind;
+}
+
+/** True when the summary refutes the kind, or the next-action prescribes work
+ * the kind does not license. The invariant `makeBlocker` guarantees. */
+export function blockerIsSelfConsistent(blocker: CurrentBlocker): boolean {
+  if (reconcileBlockerKind(blocker.kind, blocker.summary) !== blocker.kind) return false;
+  const required = BLOCKER_NEXT_BY_KIND[blocker.kind];
+  if (required !== undefined && blocker.next !== required) return false;
+  // A next-action may never send anyone after a conflict on a non-conflict kind.
+  return blocker.kind === "merge-conflict" || !/resolve the merge conflict/i.test(blocker.next);
+}
+
+/**
+ * Build a `CurrentBlocker` that cannot contradict itself: the kind is
+ * reconciled against the summary's evidence, and the next-action is re-derived
+ * from the reconciled kind whenever that kind prescribes one.
+ */
+export function makeBlocker(fields: {
+  kind: string;
+  summary: string;
+  next: string;
+  ref?: string;
+}): CurrentBlocker {
+  const kind = reconcileBlockerKind(fields.kind, fields.summary);
+  let next = BLOCKER_NEXT_BY_KIND[kind] ?? fields.next;
+  if (kind !== "merge-conflict" && /resolve the merge conflict/i.test(next)) {
+    next = BLOCKER_NEXT_BY_KIND[kind] ?? BLOCKER_NEXT_BY_KIND.unclassified!;
+  }
+  return {
+    status: "blocked",
+    kind,
+    ...(fields.ref !== undefined ? { ref: fields.ref } : {}),
+    summary: fields.summary,
+    next,
+  };
+}
+
 function normalizeLine(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
