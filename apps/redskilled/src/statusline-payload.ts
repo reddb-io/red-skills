@@ -24,6 +24,12 @@ import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHost
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
 import type { RedskilledHostState, RedskilledWorkerView } from "./host-state.js";
 import { resolveEnforcedBudget, type RedskilledBudgetName, type RedskilledRssReading } from "./memory-sampler.js";
+import {
+  buildActivityReport,
+  isRedskilledActivityReport,
+  type RedskilledActivityReport,
+  type RedskilledRepositoryActivity,
+} from "./repository-activity.js";
 import type { RedskilledWorkerLogLine } from "./worker-log.js";
 
 /**
@@ -154,6 +160,16 @@ export interface RedskilledStatuslinePayload {
   readonly host: RedskilledStatuslineHost;
   readonly projects: readonly RedskilledStatuslineProject[];
   readonly workers: readonly RedskilledStatuslineWorker[];
+  /**
+   * Each registered project's repository counts, dated on their own clock.
+   *
+   * They ride here rather than being fetched per surface because the counts are
+   * quota the whole host shares (ADR 0130 Amendment 1): a statusline that polled
+   * the tracker itself would spend the same token again per render. Their age is
+   * carried separately from the sampler's because they are polled on a different
+   * interval, and one number ageing does not make the other one old.
+   */
+  readonly repository_activity: RedskilledActivityReport;
 }
 
 export interface BuildStatuslinePayloadInput {
@@ -174,6 +190,15 @@ export interface BuildStatuslinePayloadInput {
   /** Workers this daemon adopted at start rather than birthing itself, by id. */
   readonly reattachedWorkerIds?: readonly string[];
   readonly stalenessMs?: number;
+  /**
+   * The last activity fetch, or `null` when the daemon polls no repository.
+   *
+   * Passed in for the same reason the log lines are: the counts belong to the
+   * daemon that spent the request for them, and this document stays a pure
+   * function of its inputs.
+   */
+  readonly repositoryActivity?: RedskilledRepositoryActivity | null;
+  readonly activityStalenessMs?: number;
 }
 
 /** The payload document. PURE — every aggregate is derived from the Worker set. */
@@ -235,6 +260,11 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
     },
     projects: buildProjects(workers),
     workers,
+    repository_activity: buildActivityReport({
+      activity: input.repositoryActivity ?? null,
+      now: input.now,
+      stalenessMs: input.activityStalenessMs,
+    }),
   };
 }
 
@@ -393,5 +423,10 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     Number.isInteger(host.project_count) &&
     typeof host.observed_rss_bytes === "number" &&
     Array.isArray(payload.projects) &&
-    Array.isArray(payload.workers);
+    Array.isArray(payload.workers) &&
+    // Absent is accepted, malformed is not: a daemon older than the activity
+    // poller answers a newer client's read, and rejecting its whole payload over
+    // a field this consumer did not ask for would lose the Worker set — the very
+    // version skew one host-scoped daemon exists to stop managing (ADR 0130).
+    (payload.repository_activity === undefined || isRedskilledActivityReport(payload.repository_activity));
 }
