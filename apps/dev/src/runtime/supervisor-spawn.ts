@@ -24,6 +24,7 @@ import {
   type FleetScopeSettings,
 } from "./fleet-scope.js";
 import { loadConfig } from "../core/config.js";
+import { createRedskilledBirthPort, redskilledUnreachableAdvice } from "./redskilled-birth.js";
 import {
   resolveSupervisorEntry,
   supervisorLaunchVersion,
@@ -93,6 +94,24 @@ export interface SpawnSupervisorOptions {
    * which keeps the migration inert until the daemon actually owns birth.
    */
   cutoverActive?: boolean;
+  /**
+   * How this launch proves the host daemon will answer (#2851).
+   *
+   * Injected so a test can pose as a host with no daemon; a real caller passes
+   * nothing and gets the session's own socket. The reach is NOT optional — see
+   * `spawnSupervisor` — only its implementation is.
+   */
+  reachDaemon?: (root: string) => Promise<void>;
+}
+
+/** The launch's own reach: start the session daemon, or fail with its reason. */
+async function defaultReachDaemon(root: string): Promise<void> {
+  const port = createRedskilledBirthPort({ root });
+  try {
+    await port.reach();
+  } catch (err) {
+    throw new Error(redskilledUnreachableAdvice(port.socketPath, err));
+  }
 }
 
 /**
@@ -102,6 +121,13 @@ export interface SpawnSupervisorOptions {
  * pid, or null when the pid file never appeared (the caller surfaces the log tail).
  */
 export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<number | null> {
+  // The host answers BEFORE anything is launched (#2851, ADR 0130 rule 6). Since
+  // the cutover every Worker is born by the daemon, so a supervisor started
+  // without one would boot, tick, and refuse every single birth — a fleet that
+  // looks launched and drains nothing. Failing here instead makes the missing
+  // daemon the launch's own error, with the socket named. Deliberately NOT
+  // caught: there is no old path to fall back to any more.
+  await (opts.reachDaemon ?? defaultReachDaemon)(opts.root);
   await migrateLegacyDevPaths(opts.root).catch(() => undefined);
   // The ADR 0130 cutover migration (#2855): a supervisor launch is the boundary
   // between the era that births Workers here and the era that births them

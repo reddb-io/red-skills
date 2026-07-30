@@ -78,6 +78,18 @@ export interface SupervisorProc {
    * still feeds the circuit breaker. Optional so test harnesses that do not
    * track exit codes compile without change. */
   lastExitCode?(slot: number): number | null;
+  /**
+   * Take in the deaths the HOST reported since the last tick (#2851, ADR 0130).
+   *
+   * The daemon owns birth and death, so the project no longer holds a child
+   * handle whose `exit` event it could listen to: what a Worker exited with
+   * arrives on the host's append-only event lane, and this is the tick's chance
+   * to drain it. The call answers nothing — it settles `lastExitCode` for the
+   * slots whose Workers died, and the tick's existing liveness scan then routes
+   * each death into the project's own circuit breaker, which is the half rule 2
+   * leaves here. Absent for a harness with no host behind it.
+   */
+  observeHostDeaths?(): Promise<void>;
 }
 
 /** Filesystem side effects. Best-effort, like the bash `|| true` cleanups. */
