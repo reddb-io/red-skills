@@ -90,6 +90,26 @@ export function readDevBundleCacheState(
   };
 }
 
+/**
+ * The published dev bundle version this host would run — the single definition
+ * of "published" shared by the boot probe (which reports `version_skew` against
+ * it) and the fleet launch (which must spawn the supervisor from it, #2808).
+ * Both reading the same function is what makes the probe's prescribed fix true:
+ * after a launch, the supervisor's version IS the version the probe compares to.
+ *
+ * Returns undefined when the installed version is not a semver point at all —
+ * an unresolvable published version, which the launch must report loudly rather
+ * than paper over with the caller's own bundle.
+ */
+export function resolvePublishedDevBundleVersion(
+  installedVersion: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (!semverParts(installedVersion)) return undefined;
+  const cached = newestCachedDevBundleVersion(installedVersion, env);
+  return cached && compareSemver(cached, installedVersion) > 0 ? cached : installedVersion;
+}
+
 export async function fetchNpmNewestDevBundleVersion(
   installedVersion: string | undefined,
   fetchText: (url: string) => Promise<string> = async (url) => {
