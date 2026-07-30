@@ -69,6 +69,14 @@ import {
   type RedskilledWorkerHeartbeatRequest,
 } from "./protocol.js";
 import { commandOp, evaluateSessionReach, type RedskilledSessionOp } from "./session-reach.js";
+import {
+  assertOneHostToken,
+  DEFAULT_REDSKILLED_ACTIVITY_MS,
+  fetchRepositoryActivity,
+  type RedskilledActivityTransport,
+  type RedskilledProjectRepository,
+  type RedskilledRepositoryActivity,
+} from "./repository-activity.js";
 import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
 import {
   REDSKILLED_STATUSLINE_DEFAULTS,
@@ -172,6 +180,31 @@ export interface RedskilledDaemonOptions {
   readonly supervised?: boolean;
   /** How the successor is found and started; the real handover by default. */
   readonly replacementIO?: RedskilledReplacementIO;
+  /**
+   * The repositories whose activity this daemon polls, and the one token it uses.
+   *
+   * Absent leaves the poller unarmed and the payload honestly empty: a daemon with
+   * no registered repository has nothing to count and must not invent zeros. The
+   * registration is decided by the client before it arrives, because the daemon
+   * must never learn what a `.red/config.yaml` is (ADR 0130 rule 3).
+   */
+  readonly repositoryActivity?: RedskilledActivityRegistration;
+}
+
+/**
+ * What one host-scoped poller needs, and nothing more.
+ *
+ * The token is named by reference rather than carried as a secret here: the
+ * transport already holds the credential, and the daemon needs the *identity*
+ * only to refuse a project that declares a different one (ADR 0130 Amendment 1).
+ */
+export interface RedskilledActivityRegistration {
+  readonly projects: readonly RedskilledProjectRepository[];
+  readonly hostTokenRef: string;
+  readonly transport: RedskilledActivityTransport;
+  /** Window between fetches; 0 or below leaves the poller unarmed. */
+  readonly intervalMs?: number;
+  readonly closedWindowMs?: number;
 }
 
 export interface RedskilledDaemon {
@@ -225,6 +258,14 @@ export interface RedskilledDaemon {
    * instead of a disk read per Worker per render.
    */
   publishWorkerHeartbeat(request: RedskilledWorkerHeartbeatRequest): RedskilledWorkerHeartbeatAck;
+  /**
+   * Fetch every registered project's counts once — one request, however many.
+   *
+   * Exposed so the interval can be driven by a test as well as by the timer, and
+   * because a caller that has just registered a repository should not have to wait
+   * a whole window to see it counted. Resolves to `null` when nothing is registered.
+   */
+  pollRepositoryActivity(): Promise<RedskilledRepositoryActivity | null>;
   /** Re-probe every re-attached Worker, retiring the ones the host no longer confirms. */
   sweepReattached(): Promise<readonly RedskilledWorkerView[]>;
   /** The Workers this daemon adopted at start rather than birthing itself. */
@@ -266,6 +307,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const clock = options.clock ?? (() => new Date().toISOString());
   const launch = options.launch ?? launchWorker;
   const ceiling = options.ceiling ?? resolveHostCeiling();
+  // Before the lease, before the socket: a host whose repositories do not all
+  // answer to one token has no arrangement to start with, and discovering that a
+  // window later would mean the daemon had already polled under a wrong identity.
+  if (options.repositoryActivity != null) {
+    assertOneHostToken(options.repositoryActivity.projects, options.repositoryActivity.hostTokenRef);
+  }
   const owner = options.owner ?? currentProcessOwner();
   const leaseStore = options.leaseStore ?? createRedskilledLeaseStore(paths.leasePath, {
     sessionKeyHash: paths.sessionKeyHash,
@@ -297,6 +344,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const replaceCheckMs = options.replaceCheckMs ?? DEFAULT_REDSKILLED_REPLACE_CHECK_MS;
   const supervised = options.supervised ?? isRedskilledSupervised();
   const replacementIO = options.replacementIO ?? {};
+  const activityRegistration = options.repositoryActivity;
+  const activityMs = activityRegistration?.intervalMs ?? DEFAULT_REDSKILLED_ACTIVITY_MS;
   const workers = new Map<string, RedskilledWorkerView>();
   // Re-attached Workers have no child handle to deliver an exit, so their death
   // is discovered by asking the host rather than by being told.
@@ -316,9 +365,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let publishedCheckedAt: string | null = null;
   let publishedIsNewer = false;
   let replacementState: "none" | "pending" | "in-progress" = "none";
+  // The last activity fetch, kept for the same reason the RSS reading is: a read
+  // between two polls is dated by the poll it came from, never by the read.
+  let lastActivity: RedskilledRepositoryActivity | null = null;
   let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
   let replaceTimer: NodeJS.Timeout | undefined;
+  let activityTimer: NodeJS.Timeout | undefined;
   let stopping = false;
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
@@ -358,7 +411,28 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       logLines: Object.fromEntries(logLines),
       now: clock(),
       reattachedWorkerIds: [...reattached],
+      repositoryActivity: lastActivity,
     });
+  }
+
+  /**
+   * One interval's activity fetch: ONE request, however many projects.
+   *
+   * The counts are stored and never read here — the daemon does not know what an
+   * open pull request is, only that it holds an integer someone else will render.
+   * A failed fetch replaces the stored document rather than leaving the last one
+   * to pass for current, because the failure is itself the fact a consumer needs.
+   */
+  async function pollRepositoryActivity(): Promise<RedskilledRepositoryActivity | null> {
+    if (activityRegistration == null || activityRegistration.projects.length === 0) return null;
+    lastActivity = await fetchRepositoryActivity({
+      projects: activityRegistration.projects,
+      hostTokenRef: activityRegistration.hostTokenRef,
+      transport: activityRegistration.transport,
+      closedWindowMs: activityRegistration.closedWindowMs,
+      now: clock(),
+    });
+    return lastActivity;
   }
 
   /**
@@ -674,6 +748,23 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     sampleTimer.unref();
   }
 
+  /**
+   * Arm the poller, once, on its own window.
+   *
+   * Its interval is the tracker's rather than the sampler's: repository activity
+   * moves at human speed and costs shared quota, so polling it as often as the
+   * process table would spend a budget every project on the host draws from.
+   */
+  function armActivityTimer(): void {
+    if (stopping || activityTimer != null) return;
+    if (activityRegistration == null || activityRegistration.projects.length === 0 || activityMs <= 0) return;
+    void pollRepositoryActivity().catch(() => undefined);
+    activityTimer = setInterval(() => {
+      void pollRepositoryActivity().catch(() => undefined);
+    }, activityMs);
+    activityTimer.unref();
+  }
+
   function armIdleTimer(): void {
     if (stopping) return;
     if (idleTimer) clearTimeout(idleTimer);
@@ -704,6 +795,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (idleTimer) clearTimeout(idleTimer);
     if (sampleTimer) clearInterval(sampleTimer);
     if (replaceTimer) clearInterval(replaceTimer);
+    if (activityTimer) clearInterval(activityTimer);
     // Every event already handed over reaches the lane before the daemon lets go
     // of the session: a birth still in flight would leave the next daemon with a
     // Worker it holds a budget for and no record of.
@@ -808,6 +900,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   armIdleTimer();
   armSampleTimer();
   armReplaceTimer();
+  armActivityTimer();
 
   return {
     socketPath: paths.socketPath,
@@ -819,6 +912,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     ceiling: () => ceiling,
     killWorkerOverBudget,
     sampleMemoryBudgets,
+    pollRepositoryActivity,
     sweepReattached,
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
