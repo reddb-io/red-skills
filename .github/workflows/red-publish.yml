@@ -579,6 +579,23 @@ jobs:
           set -euo pipefail
           pnpm bundle
 
+      # The redskilled daemon ships its single bundle
+      # (dist/redskilled.bundle.min.mjs) INSIDE the npm package, like rsp: the
+      # client's auto-spawn (ADR 0130 rule 7) resolves the packaged bundle, so it
+      # needs no checksum manifest. Without this step the app is a workspace
+      # member nothing packages — complete in source and absent from every
+      # release, which is exactly the silent failure issue #2842 closed.
+      - name: Build redskilled daemon bundle
+        if: steps.target.outputs.publish == 'true'
+        working-directory: apps/redskilled
+        env:
+          RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
+          RED_BUILD_GIT_SHA: ${{ steps.target.outputs.sha }}
+          RED_BUILD_TIME: ${{ steps.target.outputs.built_at }}
+        run: |
+          set -euo pipefail
+          pnpm bundle
+
       # ADR 0091: npm is the ONLY client transport. Stage the built bundles into
       # the packaging/npm package, pnpm pack it, then run the REAL client resolver
       # (the packaged bin) against the packed tarball as a producer/consumer
@@ -616,7 +633,8 @@ jobs:
             package/dist/code-nav.bundle.min.mjs \
             package/dist/memory.bundle.min.mjs \
             package/dist/brain.bundle.min.mjs \
-            package/dist/rsp.bundle.min.mjs; do
+            package/dist/rsp.bundle.min.mjs \
+            package/dist/redskilled.bundle.min.mjs; do
             if ! grep -qxF "$expected" <<<"$listing"; then
               echo "::error::npm tarball missing $expected"
               exit 1
@@ -645,6 +663,32 @@ jobs:
             exit 1
           fi
           echo "packaged rsp bin resolved its bundle"
+          # redskilled: start the packaged daemon for real and prove it binds its
+          # session socket. A `host-state` read would auto-spawn one anyway, so the
+          # cheap presence check would not distinguish a working artifact from a
+          # bundle that throws on load — and "present but not executable" is the
+          # failure this artifact was added to make impossible (issue #2842).
+          test -x "$smoke/node_modules/.bin/red-skills-redskilled"
+          rsdir="$(mktemp -d)"
+          REDSKILLED_SESSION="pack-smoke:$rsdir" node "$pkg/bin/red-skills-redskilled.mjs" serve \
+            --socket "$rsdir/redskilled.sock" \
+            --lease "$rsdir/redskilled.lease.toon" \
+            --events "$rsdir/redskilled.events.toonl" \
+            --idle-ms 5000 &
+          rspid=$!
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            [ -S "$rsdir/redskilled.sock" ] && break
+            if [ "$attempt" -eq 10 ]; then
+              echo "::error::packaged redskilled bundle never bound its socket"
+              kill "$rspid" 2>/dev/null || true
+              exit 1
+            fi
+            sleep 1
+          done
+          echo "packaged redskilled bundle started the daemon and bound its socket"
+          kill "$rspid" 2>/dev/null || true
+          wait "$rspid" 2>/dev/null || true
+          rm -rf "$rsdir"
           rm -rf "$smoke"
 
       - name: Publish to npm
@@ -779,7 +823,8 @@ jobs:
             dist/memory-runtime-manifest.json \
             dist/brain.bundle.min.mjs \
             dist/brain-mcp.bundle.min.mjs \
-            dist/brain-runtime-manifest.json
+            dist/brain-runtime-manifest.json \
+            dist/redskilled.bundle.min.mjs
 
       - name: GitHub Release
         if: steps.target.outputs.publish == 'true'
@@ -813,6 +858,7 @@ jobs:
             dist/brain.bundle.min.mjs
             dist/brain-mcp.bundle.min.mjs
             dist/brain-runtime-manifest.json
+            dist/redskilled.bundle.min.mjs
             dist/release-manifest.json
           )
           if gh release view "$NEXT" >/dev/null 2>&1; then
