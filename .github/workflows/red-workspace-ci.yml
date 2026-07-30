@@ -110,6 +110,11 @@ jobs:
       - name: Test CI affected-scope contract
         run: scripts/test-ci-affected-scope.sh
 
+      # Cheap and mechanical: asserts the canary still fires on a schedule and
+      # still is NOT a merge gate. The walk itself runs in red-mcp-lane-canary.
+      - name: Test MCP lane canary schedule contract
+        run: scripts/test-mcp-lane-canary-schedule.sh
+
   typecheck:
     runs-on: ubuntu-latest
     needs: scope

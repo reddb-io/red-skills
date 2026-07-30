@@ -17,7 +17,10 @@ import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 import { decode } from "@reddb-io/toon";
 import { runMcpLaneCanary } from "../src/core/mcp-lane-canary.js";
-import { connectMcpLaneCanary } from "../src/runtime/mcp-lane-canary-io.js";
+import {
+  connectMcpLaneCanary,
+  resolveCanarySocketPath,
+} from "../src/runtime/mcp-lane-canary-io.js";
 import {
   cleanupCanarySandboxes,
   createCanarySandbox,
@@ -34,6 +37,9 @@ async function walk(
   daemon: CanaryDaemonState = "up",
 ) {
   const sandbox = await createCanarySandbox(variant, daemon);
+  // Resolved from the sandbox's own env, so the path the canary names is the
+  // path this sandbox's daemon does or does not listen on.
+  const socketPath = await resolveCanarySocketPath(sandbox.env);
   const transport = await connectMcpLaneCanary({
     args: [sandbox.mcpEntry],
     cwd: sandbox.root,
@@ -47,8 +53,9 @@ async function walk(
       teardownDeadlineMs: 20_000,
       daemonDeadlineMs: 20_000,
       pollMs: 150,
+      ...(socketPath !== undefined ? { socketPath } : {}),
     });
-    return { result, stderr: transport.stderr(), sandbox };
+    return { result, stderr: transport.stderr(), sandbox, socketPath };
   } finally {
     await transport.close();
   }
@@ -130,7 +137,7 @@ describe("the socket boundary the lane grew under ADR 0130 (#2794)", () => {
       // tools answer, a real worker boots — and the lane still cannot vouch for
       // that worker's process, which is the failure a single-process canary
       // could not see.
-      const { result } = await walk("healthy", 20_000, "down");
+      const { result, socketPath } = await walk("healthy", 20_000, "down");
 
       expect(result.ok).toBe(false);
       expect(result.inertStep).toBe("daemon_reach");
@@ -143,6 +150,11 @@ describe("the socket boundary the lane grew under ADR 0130 (#2794)", () => {
       // Loudly, and naming what broke rather than "the lane did nothing".
       expect(result.summary).toContain("daemon_reach");
       expect(result.summary).toContain("the tool is reachable and the socket is not");
+      // Naming the socket, not the tool: the operator's next move is on that
+      // path, and a generic "worker_vitals failed" would send them to the wrong
+      // process entirely.
+      expect(socketPath).toBeTruthy();
+      expect(result.summary).toContain(socketPath!);
       // Still torn down: a red socket boundary leaves no live process behind.
       expect(byStep.get("project_stop")).toBe("ok");
       expect(isLive(result.supervisorPid!)).toBe(false);

@@ -108,6 +108,26 @@ export function resolveShippedMcpEntry(argv1: string): string {
 }
 
 /**
+ * The session socket the lane under test must cross, resolved exactly the way
+ * the lane resolves it (same env, same session key) so the two cannot name two
+ * different sockets.
+ *
+ * An unresolvable path returns undefined rather than throwing: a canary that
+ * cannot state the path must still run and still say the hop broke — the walk
+ * reports "path unresolved", which is itself an operator-routing fact.
+ */
+export async function resolveCanarySocketPath(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  try {
+    const { resolveRedskilledPaths } = await import("@reddb-io/redskilled/paths");
+    return resolveRedskilledPaths({ env }).socketPath;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Open a real MCP stdio session against `target` and return the canary's deps.
  * The caller owns `close()` — a canary that leaks its server child is one more
  * inert process on the host.
