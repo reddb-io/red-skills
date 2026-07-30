@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-A merge rejected for an out-of-date branch is repaired in the landing lane instead of parked as `blocked:ci` (#2807). Every `gh pr merge` refusal was recorded as "usually because branch protection or CI is not satisfied" — a guess, and the wrong one on two green, `mergeable=true`, `CLEAN` PRs whose only defect was that `<base>` had advanced between the readiness poll and the merge call. The `next:` step then sent a human to fix a failing required check that did not exist, while the issue parked `ready-for-human` and stopped every dependent below it. The landing now reads the PR back after a rejection and classifies the OBSERVED cause: an out-of-date branch is updated (`gh pr update-branch`) and re-merged — bounded to two rounds, re-waiting for green when the landing is CI-aware — which is exactly what a human does. A failing check, a conflict, an unreported rollup, and a protection rule that is not a check are each named verbatim in the terminal note, and the recorded `next:` points at that observed reason rather than asserting a check that may well be green.
