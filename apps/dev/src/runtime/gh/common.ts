@@ -1,5 +1,5 @@
 import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "../exec.js";
-import { withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./quota.js";
+import { resolveGhQuotaBackoff, withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./quota.js";
 
 export type { GhQuotaBackoffOpts };
 
@@ -15,13 +15,24 @@ export interface GhContext {
    */
   exec?: ExecFn;
   /**
-   * When present, rate-limit responses (REST 403/429, GraphQL RATE_LIMITED)
-   * trigger a bounded wait-and-retry rather than being returned immediately as
-   * failures. onWait emits 'quota-wait' activity so the wait is visible in
-   * worker vitals/lane records. After the cap, the failing response is returned
-   * so the caller can park with an explicit quota reason.
+   * Overrides the quota-backoff options this context's gh calls run with.
+   * ABSENT MEANS DEFAULT, NOT DISABLED (issue #2800): rate-limit responses
+   * (REST 403/429, GraphQL RATE_LIMITED) always trigger a bounded wait-and-retry
+   * unless a call site opts out. onWait emits 'quota-wait' activity so the wait
+   * is visible rather than reading as silence. After the cap, the failing
+   * response is returned so the caller can park with an explicit quota reason.
    */
   quotaBackoff?: GhQuotaBackoffOpts;
+}
+
+/** Per-call quota policy. Omitted → the context default (backoff ON). */
+export interface RunGhOpts {
+  /**
+   * `"off"` runs the invocation with NO wait-and-retry. Reserved for read-only
+   * probes that classify a rate limit as transient themselves and proceed —
+   * blocking those for up to the cap turns a survivable blip into a stall.
+   */
+  quota?: "default" | "off";
 }
 
 function opts(ctx: GhContext): ExecOptions {
@@ -30,12 +41,18 @@ function opts(ctx: GhContext): ExecOptions {
 
 /**
  * Dispatch a `gh <args>` invocation through the injected exec when present, else
- * the real `gh` helper. When `ctx.quotaBackoff` is set, rate-limit responses
- * are retried with a bounded wait instead of returned immediately as failures.
+ * the real `gh` helper. Rate-limit responses are retried with a bounded wait by
+ * DEFAULT — `ctx.quotaBackoff` only tunes the options, and only an explicit
+ * `{ quota: "off" }` disables the retry.
  */
-export function runGh(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {
+export function runGh(
+  ctx: GhContext,
+  args: readonly string[],
+  runOpts: RunGhOpts = {},
+): Promise<ExecOutput> {
   const fn = () => (ctx.exec ?? execTool)("gh", args, opts(ctx));
-  return ctx.quotaBackoff ? withGhQuotaBackoff(fn, ctx.quotaBackoff) : fn();
+  if (runOpts.quota === "off") return fn();
+  return withGhQuotaBackoff(fn, resolveGhQuotaBackoff(ctx.quotaBackoff));
 }
 
 export function runRsp(ctx: GhContext, args: readonly string[]): Promise<ExecOutput> {
