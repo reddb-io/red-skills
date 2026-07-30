@@ -10,8 +10,11 @@
  * the executable from the caller's argv).
  *
  * This module resolves the entry from the published version instead: the launch
- * asks {@link resolvePublishedDevBundleVersion} — the same function the boot
- * probe compares against — and then finds an entry that runs THAT version. When
+ * asks {@link resolvePublishedDevBundleVersion} and then finds an entry that
+ * runs THAT version. The reporting surfaces resolve the same fact through
+ * `published-version.ts` (#2809), which records the answer so a reader replays
+ * it instead of deriving its own; both paths must agree on what "published"
+ * means, and a disagreement between them is the bug class, not a detail. When
  * the published version cannot be resolved it says so, loudly
  * ({@link SupervisorEntryError}), because silently falling back to the caller's
  * bundle is what turned a detectable skew into a wider one.

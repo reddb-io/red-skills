@@ -54,6 +54,24 @@ export const heartbeatObservationSchema = z.object({
 
 export type HeartbeatObservationOutput = z.infer<typeof heartbeatObservationSchema>;
 
+/**
+ * One owner answers "what version is published" and every surface derives from
+ * it (#2809). `source` names where the answer came from, so a disagreement is
+ * diagnosable from the report itself; `version: ""` means unresolved, which is a
+ * distinct answer from a measured match.
+ */
+export const publishedVersionObservationSchema = z.object({
+  version: z.string(),
+  source: z.enum(["registry", "recorded", "bundle-cache", "unresolved"]),
+  /** Milliseconds since the answer was observed; -1 when never observed. */
+  age_ms: z.number(),
+  stale_after_ms: z.number(),
+  stale: z.boolean(),
+  reason: z.enum(["fresh", "aged-out", "cache-only", "never-observed"]),
+});
+
+export type PublishedVersionObservationOutput = z.infer<typeof publishedVersionObservationSchema>;
+
 export const projectStatusOutputSchema = z.object({
   supervisor: z.object({
     pid: z.number(),
@@ -70,8 +88,21 @@ export const projectStatusOutputSchema = z.object({
      * masquerade as a healthy one (#2752).
      */
     version_unknown: z.number(),
-    /** 1 when the running supervisor's bundle differs from the newest cached one. */
+    /**
+     * 1 when the published version could not be resolved at all. A skew verdict
+     * needs BOTH sides measured, so an unresolved published version reports
+     * unknown instead of a confident `version_skew: 0` derived from a
+     * substituted local value (#2809).
+     */
+    published_unknown: z.number().optional(),
+    /** 1 when the running supervisor's bundle differs from the published one. */
     version_skew: z.number(),
+    /**
+     * The published-version answer WITH its own currency, from the same owner
+     * the Worker boot probe consults. Staleness travels inside the payload
+     * (ADR 0128 §6) so a cached read cannot be rendered as current (#2809).
+     */
+    published_version: publishedVersionObservationSchema.optional(),
     /** Seconds since the supervisor's last heartbeat; -1 when never observed. */
     heartbeat_age_s: z.number(),
     /**
