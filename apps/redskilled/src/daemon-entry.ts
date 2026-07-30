@@ -113,6 +113,57 @@ export class RedskilledDaemonEntryError extends Error {
   }
 }
 
+/**
+ * The session a `serve` argv points at — every path the daemon may not derive.
+ *
+ * Structural on purpose: {@link RedskilledPaths} satisfies it, and typing the
+ * parameter this way keeps the argv builder free of the module that resolves a
+ * session, so both the client spawn and the supervisor unit can render the same
+ * flags from the same one function.
+ */
+export interface RedskilledServeTarget {
+  readonly socketPath: string;
+  readonly leasePath: string;
+  readonly eventLanePath: string;
+  readonly sessionKeyHash: string;
+  readonly machineIdHash: string;
+}
+
+/**
+ * The `serve` argv for one session — ONE builder, for every way a daemon starts.
+ *
+ * A client spawn, a supervisor unit and a self-replacement all hand the daemon
+ * the same flags, because ADR 0130 rule 7 makes them one behaviour with an
+ * optional supervisor rather than separate start modes. A second copy of this
+ * list is how a flag added to one start path goes missing from the others.
+ */
+export function redskilledServeArgv(
+  target: RedskilledServeTarget,
+  options: { readonly idleMs?: number; readonly daemonVersion?: string } = {},
+): string[] {
+  const argv = [
+    "serve",
+    "--socket",
+    target.socketPath,
+    "--lease",
+    target.leasePath,
+    "--events",
+    target.eventLanePath,
+    "--session-key-hash",
+    target.sessionKeyHash,
+    "--machine-id-hash",
+    target.machineIdHash,
+  ];
+  if (options.idleMs != null) argv.push("--idle-ms", String(options.idleMs));
+  if (options.daemonVersion != null) argv.push("--daemon-version", options.daemonVersion);
+  return argv;
+}
+
+/** Where cache-keyed bundles land, so every resolver probes one directory. */
+export function redskilledBundleCacheRoot(env: NodeJS.ProcessEnv = process.env): string {
+  return bundleCacheRoot(env);
+}
+
 const VERSIONED_BUNDLE = /^([a-z0-9-]+)-(.+)\.bundle\.min\.mjs$/;
 const REDSKILLED_VERSIONED_BUNDLE = /^redskilled-(.+)\.bundle\.min\.mjs$/;
 const PLUGIN_ROOT_VARS = [
