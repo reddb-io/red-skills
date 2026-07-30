@@ -213,3 +213,43 @@ async function listIssuesByLabel(ctx: GhContext, label: string): Promise<Reconci
     return [];
   }
 }
+
+/**
+ * The repo's open pull requests, projected to what adoption and the
+ * orphaned-work census need: the number, the head ref, and the body a closing
+ * reference may live in (#2893).
+ *
+ * A failed or unparseable read yields an EMPTY list, which is the conservative
+ * answer for a census: nothing is claimed to be covered by a PR nobody could
+ * see, so a branch is reported rather than silently excused.
+ */
+export async function listOpenPullRequests(
+  ctx: GhContext,
+): Promise<Array<{ number: number; headRefName: string; body?: string }>> {
+  const r = await runGh(ctx, [
+    "pr",
+    "list",
+    ...repoArgs(ctx),
+    "--state",
+    "open",
+    "--limit",
+    "100",
+    "--json",
+    "number,headRefName,body",
+  ]);
+  if (r.code !== 0) return [];
+  try {
+    const rows = JSON.parse(r.stdout || "[]") as unknown;
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .map((row) => row as { number?: unknown; headRefName?: unknown; body?: unknown })
+      .map((row) => ({
+        number: Number(row.number ?? 0),
+        headRefName: String(row.headRefName ?? ""),
+        ...(typeof row.body === "string" ? { body: row.body } : {}),
+      }))
+      .filter((row) => row.number > 0 && row.headRefName.length > 0);
+  } catch {
+    return [];
+  }
+}
