@@ -2,7 +2,7 @@
 
 - **Status**: accepted
 - **Date**: 2026-07-28
-- **Related**: ADR 0103 (the attempt model is removed; a retry is a fresh Worker), ADR 0110 (adversarial review — amended by this record), ADR 0119 (one gate verdict), ADR 0128 (the Attempt is the unit of truth), ADR 0117 (retired keys carry a tombstone)
+- **Related**: ADR 0103 (the attempt model is removed; a retry is a fresh Worker), ADR 0110 (adversarial review — amended by this record), ADR 0119 (one gate verdict), ADR 0128 (the Attempt is the unit of truth — archived, superseded by ADR 0130, which re-anchors this record's budget and trail onto the Worker), ADR 0117 (retired keys carry a tombstone)
 
 ## Context
 

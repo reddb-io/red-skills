@@ -23,8 +23,8 @@ A coherent class of **Ticket** labels with one job: current state, permanent typ
 _Avoid_: loose label, tag bucket
 
 **Tag label (`tag:<value>`)**:
-The territory-scoping **Label family** (`tag:backend`, `tag:infra`) that partitions one shared `ready-for-agent` pool between several humans' fleets. A fleet selector's `tags` facet ANDs over them — a **Ticket** must carry every requested tag label, so an untagged Ticket sits outside every tag-scoped fleet — while an unfiltered `/afk` still drains everything. Stamped at creation time (`/go --tags`, `/to-spec`, `/to-tickets` with Spec→Ticket inheritance; missing labels auto-created); never drives lifecycle transitions. Always the two-word name.
-_Avoid_: territory (as a label name), bare "tag", topic label
+The territory-scoping **Label family** (`tag:backend`, `tag:infra`) that partitions one shared `ready-for-agent` pool between several humans' **Demand producers**. A **Work selector**'s `tags` facet ANDs over them — a **Ticket** must carry every requested tag label, so an untagged Ticket sits outside every tag-scoped selector — while an unfiltered `/afk` still drains everything. Stamped at creation time (`/go --tags`, `/to-spec`, `/to-tickets` with Spec→Ticket inheritance; missing labels auto-created); never drives lifecycle transitions. Always the two-word name.
+_Avoid_: territory (as a label name), bare "tag", topic label, fleet tag (the Fleet is extinct, ADR 0130 — a tag scopes a **Work selector**)
 
 **HITL queue**:
 The operator-facing set of non-Spec **Tickets** that need human decision resolution, selected by `ready-for-human`.
@@ -83,8 +83,8 @@ Issue comments that are human-authored, contain no **Directive block**, and are 
 _Avoid_: chatter, background comment
 
 **Envelope**:
-A structured `<details data-attempt-status="...">` issue-thread ledger entry posted by an AFK Worker.
-_Avoid_: report, worker log, audit comment
+A structured `<details data-attempt-status="...">` issue-thread ledger entry posted by an AFK **Worker**. The attribute name is frozen wire vocabulary from before ADR 0130 extinguished the Attempt; readers still parse that literal string, and it describes the Worker's run, not a live unit called an attempt.
+_Avoid_: report, worker log, audit comment; attempt envelope, attempt status (the attribute keeps the retired word, the concept does not)
 
 **Task mirror**:
 A read-only reflection of AFK worker state onto a runner-native background-task surface.
@@ -130,32 +130,28 @@ _Avoid_: main repo, root checkout
 A single AFK orchestrator instance, identified by `w` + 4 characters (e.g. `wZ2R4`). It owns `.red/tmp/workers/{wid}/` and a single `worker.pid` liveness anchor, written once at bootstrap and removed on exit.
 _Avoid_: agent, slot, runner
 
-**Attempt**:
-One **Worker** × one **Ticket** × one try — the unit of truth of the execution plane (ADR 0128). A Ticket's history is the ordered list of its Attempts and a Worker's history is the ordered list of the Attempts it ran; both are derived views, never separately maintained state.
-_Avoid_: try, run, execution (these name a phase of an Attempt, not the unit); attempt ordinal (retired by ADR 0103 — a retry is a fresh Worker)
+**Attempt / Attempt record — EXTINCT (ADR 0130)**:
+The retired name for one **Worker** × one **Ticket** × one try, and for the durable per-try record that carried its narrative on `.red/state/castle/attempts.toonl`. Neither named a fact the **Worker** did not already carry: ADR 0103 had made a retry a fresh Worker, so a Worker *is* that unit, and the record was a third copy of pointers the **Issue tracker** and git already own. ADR 0130 removed the noun, the lane, the `red.castle.attempt.v1` contract and the retention rule together; what the record got right moved rather than died — process liveness re-anchored onto the **Liveness anchor**'s daemon read, and reclaim onto the **Worker reclaim rule**. The **redskilled** host event lane keeps the one fact no other authority holds, Worker-to-process: birth, death, and a budget-driven kill. The term survives only for reading the archived ADR 0128, ADR 0129, and historical **Envelopes**; never describe live execution with it.
+_Avoid_: attempt, attempt record, attempt id, attempt ordinal, attempt lane, attempt state, per-attempt budget, attempt worktree, `attempts.toonl` (every one is extinct — say **Worker**, and the **Worker outcome** for how its run ended); try, run, execution (these name a phase of a Worker's run, never a unit of its own); worker log (the `worker.log.toonl` **Tmp tier** lane is disposable and worker-written, and was never this record)
 
-**Attempt record**:
-The **Attempt**'s whole narrative and every pointer it produced — claim and concede, the routing decision, iteration events, commits, branch, PR, gate verdicts, landing steps, terminal outcome, resource consumption, and the artifacts it left with their reclaim eligibility. It lives on the append-only TOONL lane `.red/state/castle/attempts.toonl` (**State tier**, contract `red.castle.attempt.v1`), and the record for an Attempt is the fold of every entry sharing its `attempt_id`. Two rules are load-bearing: the **Fleet supervisor** resident writes it and the **Worker** never does, because the record matters most once the Worker is already gone; and the write path degrades to append-and-continue, because the record is diagnostic and must never fail an Attempt.
-_Avoid_: worker log, attempt log (the `worker.log.toonl` **Tmp tier** lane is disposable and worker-written, not this); attempt state (nothing is rewritten in place)
-
-**Retention tier**:
-What an **Attempt record**'s terminal outcome retains, and therefore what the janitor may reclaim: `live` (no outcome yet) retains everything; `landed` (`done`) retains the record and its branch/PR/commit pointers while its workspace and evidence become reclaimable; `failed` (any other terminal outcome) additionally retains the cheap evidence a rescue reads and reclaims only the expensive workspace; `discarded` reclaims both. An artifact is reclaimable when its record says so — never when a pid file happens to be missing, which is the inversion that deleted a live lane and kept the dead ones (#2679). Within a closed tier, `reclaimable: false` pins an artifact and `reclaim_after` holds it until that instant. The planner is total: every artifact lands in exactly one of reclaim, retain, or dropped, so a cap or an unaccounted path is reported rather than silently truncated.
-_Avoid_: TTL, grace period (these are inputs to a tier's verdict, not the tier); pid liveness, worker.pid check (retired as a reclaim anchor by ADR 0128)
+**Worker reclaim rule**:
+When the janitor may reclaim what a **Worker** left behind, stated once: an artifact is reclaimable only when the daemon says the Worker that owns it is gone. The **redskilled** daemon owns birth and death by construction, so it cannot be out of date about a process it holds — a stronger authority than the extinct **Attempt record**, which could only repeat what it had last been told, and never a pid file, whose absence is what deleted the live lane while the dead ones survived (#2679). Three verdicts, and the third is load-bearing: `alive` (the daemon names the Worker — nothing it owns may go), `unknown` (the daemon did not answer, its answer is stale, or something else still sees the Worker — retained, because failing to reach the authority is not evidence of death), and `dead` (the daemon answered currently and does not name it — only here may bytes go). What a dead Worker leaves splits by *cost*: `workspace` is expensive and regenerable and goes, `evidence` is cheap and irreplaceable and stays (it is what a human reads to rescue orphaned work, #2701), `pointer` names a branch/PR/commit and holds no bytes, and an unrecognised `unknown` kind is retained and reported rather than guessed at. Two artifact-level overrides beat a dead Worker's release — `reclaimable: false` pins one, `reclaim_after` holds one until that instant. The planner is total: every artifact lands in exactly one of reclaim, retain, or dropped, so a cap or an unaccounted path is reported and never silently truncated.
+_Avoid_: retention tier, attempt record retention (both extinct with the **Attempt** — the daemon's verdict and the artifact's cost class replace them); pid liveness, `worker.pid` check, mtime age (each is the anchor inversion this rule exists to forbid); TTL, grace period (inputs to `reclaim_after`, not the rule)
 
 **Re-seed**:
-Re-instructing the implementer **in place** — same **Worker**, same **Worktree**, same branch — after a **Gate stage order** stage blocked the work, so the committed branch is carried forward instead of rebuilt. It is the deliberate opposite of the ADR 0103 re-queue (fresh Worker, clean worktree from **Trunk**, `prev-failure-reason` in the prompt), and the contrast is the term's whole job: a re-queue discards, a Re-seed resumes. A Re-seed never mints a new **Attempt**; the rounds are events inside the running one.
-_Avoid_: attempt (an Attempt is one Worker × one Ticket × one try; a Re-seed happens inside one), retry, attempt ordinal (retired by ADR 0103), correction retry
+Re-instructing the implementer **in place** — same **Worker**, same **Worktree**, same branch — after a **Gate stage order** stage blocked the work, so the committed branch is carried forward instead of rebuilt. It is the deliberate opposite of the ADR 0103 re-queue (fresh Worker, clean worktree from **Trunk**, `prev-failure-reason` in the prompt), and the contrast is the term's whole job: a re-queue discards, a Re-seed resumes. A Re-seed never mints a new **Worker**; the rounds are events inside the running one.
+_Avoid_: attempt, new attempt (extinct — the **Worker** is the unit, and a Re-seed happens inside one running Worker), retry, attempt ordinal (retired by ADR 0103), correction retry
 
 **Re-seed budget**:
 The bound on how many **Re-seed** rounds one **Worker** may spend. A single ceiling per lane holds sub-caps per cause — a failing gate stage, a repeated failure signature escalating the tier, a blocking review finding — and the review's round is a **reservation**, not a quota, so gate churn cannot consume it. Exhaustion with anything still outstanding parks `ready-for-human` + `blocked:validation`, uniformly and regardless of cause; landing with a known blocking finding is not reachable by config value. An operator tunes only the gate's share (`dev.reseed.afk.gate_budget`); the ceiling and the reservation belong to the lane, so a raised setting can neither buy an unbounded run nor starve the review's round.
 _Avoid_: correction budget, convergence budget, stall convergence budget (the `afk.stallConvergenceBudget` key names the retired shape), heal ledger (that is the per-Ticket repair history, a different object), attempt ledger, per-attempt budget (the rounds are events inside one running **Worker**, never a new unit of work)
 
 **Worker kind**:
-The castle engine provenance stamp that distinguishes why a **Worker** exists while all new workers share `.red/tmp/workers/`: `current.kind=afk` for queue-draining fleet work, `current.kind=go` for approved one-off `/go` dispatch, and `current.kind=scout` for read-only `/go --scout` investigations. The legacy `.red/tmp/go-workers/` and `.red/tmp/scout-workers/` roots are read only as transitional observability inputs until they age out; they are not the live isolation contract.
+The castle engine provenance stamp that distinguishes why a **Worker** exists while all new workers share `.red/tmp/workers/`: `current.kind=afk` for the **Demand producer**'s queue-draining work, `current.kind=go` for approved one-off `/go` dispatch, and `current.kind=scout` for read-only `/go --scout` investigations. The legacy `.red/tmp/go-workers/` and `.red/tmp/scout-workers/` roots are read only as transitional observability inputs until they age out; they are not the live isolation contract.
 _Avoid_: worker namespace, go-workers root, scout-workers root
 
 **Worker state reader**:
-The single owner of "read a **Worker**'s `afk.state.json`" — `readWorkerState(path)` wraps `parseState` (with the legacy shim), liveness (`isStateActive`), and stage extraction for one file, and `readWorkerStates(root)` globs every worker and maps to normalized, liveness-tagged records. The monitor, statusline, dashboard, **Task mirror**, boot facts, and the **Fleet supervisor** stall-reaper all read through it instead of each re-globbing, re-parsing, and re-deriving liveness — closing the divergent hand-rolled parse path that skipped the schema/shim.
+The single owner of "read a **Worker**'s `afk.state.json`" — `readWorkerState(path)` wraps `parseState` (with the legacy shim), liveness (`isStateActive`), and stage extraction for one file, and `readWorkerStates(root)` globs every worker and maps to normalized, liveness-tagged records. The monitor, statusline, dashboard, **Task mirror**, boot facts, and the **Demand producer**'s stall-reaper all read through it instead of each re-globbing, re-parsing, and re-deriving liveness — closing the divergent hand-rolled parse path that skipped the schema/shim.
 _Avoid_: state glob, status reader (these are the per-consumer loops the Worker state reader replaces)
 
 **OpenCode auth env precedence**:
@@ -180,11 +176,11 @@ _Avoid_: implementer payload list, full-environment inheritance
 
 **Worker outcome**:
 How a **Worker**'s execution of an **Issue** ended, and what that ending *means* for the **Issue**: the single concept that maps a terminal result to its `blocked:<reason>` label, its envelope status, and its bounded-recovery policy key. The historical three-enum smear (`ProcessOutcome` / `BlockedReason` / `RecoveryReason`) is resolved — adding an outcome now touches one set of exhaustive switches.
-_Avoid_: attempt outcome (an **Attempt**'s terminal outcome is a field of its **Attempt record**, not this concept), process outcome, blocked reason, recovery reason (these were the three views now unified, not separate concepts)
+_Avoid_: attempt outcome (extinct with the **Attempt** — a **Worker**'s run ends in a Worker outcome), process outcome, blocked reason, recovery reason (these were the three views now unified, not separate concepts)
 
 **Worker disposition**:
-What AFK *does* about a **Worker outcome** — the single owner that composes the outcome's recovery decision (retry vs escalate, from the cap policy), its typed `blocked:*` label, its envelope status, and the standard escalation announcement into one pure descriptor. The worker per-issue path, the no-agent **reconcile** path, and the **Fleet supervisor** stall-reaper all consume the same disposition instead of each re-deriving labels, statuses, and comments.
-_Avoid_: attempt disposition (not a term — an **Attempt** carries an outcome, and disposition is what AFK does about it), recovery routing, park logic (per-site applications of one disposition)
+What AFK *does* about a **Worker outcome** — the single owner that composes the outcome's recovery decision (retry vs escalate, from the cap policy), its typed `blocked:*` label, its envelope status, and the standard escalation announcement into one pure descriptor. The worker per-issue path, the no-agent **reconcile** path, and the **Demand producer**'s stall-reaper all consume the same disposition instead of each re-deriving labels, statuses, and comments.
+_Avoid_: attempt disposition (not a term, and the **Attempt** is extinct — a **Worker** carries an outcome, and disposition is what AFK does about it), recovery routing, park logic (per-site applications of one disposition)
 
 **Worktree**:
 An isolated `git worktree` created by AFK per **Worker** execution, inside the worker's workspace under `.red/tmp/workers/{wid}/{issue}/`. One worker = one issue execution = one worktree; a retry is a fresh worker, not a numbered sub-directory (ADR 0103).
@@ -224,34 +220,34 @@ _Avoid_: tmp research reports
 
 **redskilled**:
 The host-scoped execution daemon that owns worker **processes** across every project on one machine — birth, death, limits, and placement — while each project's bundle keeps owning the work (ADR 0130, decided and being implemented). One instance per user session behind a unix socket, it carries no castle semantics: it receives an argv, a placement target, a budget, and an opaque project label, and never derives repository layout, which is what lets one daemon serve checkouts pinned to different bundle versions. Workers run as transient init-system units rather than as its children, so it restarts and re-attaches instead of taking every project's work with it; when it is unreachable no worker is born at all. Its reach is asymmetric by design: a session reads every project on the host and writes only its own.
-_Avoid_: supervisor (the per-project demand producer is a different thing and stays in the repo), resident (that names the rsp core, ADR 0126), fleet (extinct — ADR 0130), scheduler (it admits and places, it never chooses whose work runs next)
+_Avoid_: supervisor, fleet supervisor (the per-project **Demand producer** is a different thing and stays in the repo), resident (that names the rsp core, ADR 0126), fleet (extinct — ADR 0130), scheduler (it admits and places, it never chooses whose work runs next)
 
-**Fleet supervisor**:
-The OS-process manager behind `/afk fleet`, maintaining a target number of independent AFK workers. **There is exactly one per project and it has no name**: the named-fleet registry, the `--fleet` flag, the fleet hook class, and the per-fleet `.red/tmp/supervisors/<fleet>/` lanes were removed with the Fleet itself (ADR 0130), leaving one supervisor runtime lane per checkout. What the fleet profile carried that was about *work* — the **Work selector**, the runner, and the base branch — survives on the project's demand producer, which applies several selectors as an ordered priority rather than as competing loops.
-_Avoid_: Claude fleet, task mirror, auto-monitor loop, named fleet (extinct — an invocation that names one is refused with its replacement)
+**Demand producer**:
+The per-project runtime that owns knowledge about *work* and holds none about *processes* (ADR 0130). It refreshes the **Trunk** mirror, samples queue depth, resolves an elastic target, carries runner directives, reconciles claims and fires lifecycle hooks; it holds no slot table, no birth, no reaping, no respawn and no resource sampling, because authority over the process belongs to the **redskilled** daemon. It says "I want N **Workers** with this profile" and consumes what the host grants, **which may be fewer** — a smaller grant is an ordinary answer from the only authority that sees every project at once, so the producer records the shortfall with the host's own reason and ends the tick rather than re-asking a full machine in a busy loop. **There is exactly one per project**: with the Fleet extinct, several **Work selectors** are an ordered priority *inside* one producer, and the registry refuses a second producer instead of serialising it, because a second loop is a bug to surface and never a queue to drain.
+_Avoid_: fleet supervisor, fleet, named fleet, `--fleet`, slot manager, process manager (all extinct with the Fleet, ADR 0130 — an invocation that names one is refused with its replacement); daemon (that is **redskilled**, host-scoped and outside the repo); Claude fleet, task mirror, auto-monitor loop (observers, never producers)
 
 **Work selector**:
 Which slice of the backlog a producer is allowed to drain — `{spec, lane, label, issues, tags, user}`, every present facet narrowing the pool, an empty selector meaning the whole backlog. It is **work policy, not a resource unit**, which is why it outlived the named fleet that used to own it (ADR 0130): the registry that stored `name -> profile` is gone, and the selector is handed to `project_start` and matched against candidates in the drain.
 _Avoid_: fleet selector (the noun it hung off is extinct), filter (that names the `--spec`/`--issues` argv forms this generalises), territory (that names the `tag:`/`user` facets alone)
 
 **Liveness anchor**:
-The single resolution every management surface asks "is this **Fleet supervisor** there, and how current is what I am reading?" (ADR 0128 §5). One call answers both, from one read, so a payload cannot carry `alive: false` beside a fresh heartbeat — the contradiction behind #2698 and #2679. Two rules make it hold: an unattributable heartbeat is **orphaned** and therefore stale at any age, and the verdict travels *inside* the payload so a consumer renders staleness rather than re-deriving it. `project_status`, `project_stop`, `monitor`, `worker_vitals` and the statusline are migrated consumers; a migrated reader that reintroduces a private source fails the ratchet test.
-_Avoid_: pid file, heartbeat snapshot, `state.toon` (each is an *anchor of the same identity*, never a source a reader picks between); liveness probe (the raw pid check the anchor uses)
+The single resolution every management surface asks "is this **Worker** there, and how current is what I am reading?" — a Worker's process liveness resolves through the **redskilled** daemon, which owns birth and death, and a **Demand producer**'s through its own identity read (ADR 0128 §5, which survived its record's archiving into ADR 0130). One call answers both questions, from one read, so a payload cannot carry `alive: false` beside a fresh heartbeat — the contradiction behind #2698 and #2679. Two rules make it hold: an unattributable heartbeat is **orphaned** and therefore stale at any age, and the verdict travels *inside* the payload so a consumer renders staleness rather than re-deriving it. `project_status`, `project_stop`, `monitor`, `worker_vitals` and the statusline are migrated consumers; a migrated reader that reintroduces a private source fails the ratchet test.
+_Avoid_: pid file, heartbeat snapshot, `state.toon` (each is an *anchor of the same identity*, never a source a reader picks between); attempt record, attempt liveness (extinct — the anchor a Worker's process verdict came from is the daemon, ADR 0130); liveness probe (the raw pid check the anchor uses)
 
 **AFK polling cadence rule**:
-The prompt-cache-aware rule for recurring AFK lane cadences: default recurring polls should be cache-warm at 270 seconds or less, or intentionally amortized at 20 minutes or more. Do not add defaults in the dead zone around 300 seconds. The current recurring-cadence inventory is: **Fleet supervisor** health tick `RED_AFK_POLL_S` 15s before/after; event-driven supervisor fallback `RED_AFK_WAKE_FALLBACK_S` 60s before/after; worker proof-of-life heartbeat `RED_AFK_HEARTBEAT_S` 60s before/after; periodic dependency Unblock Sweep `RED_AFK_UNBLOCK_SWEEP_INTERVAL_S` 60s before/after; statusline/monitor expensive-fact cache `RED_AFK_STATUSLINE_CACHE_TTL_S` 180s before/after; stale-claim refresh `RED_AFK_CLAIM_REFRESH_S` 300s before, 270s after. Supervisor watchdog values such as `RED_AFK_SUPERVISOR_STALE_S` and `RED_AFK_SUPERVISOR_RESTART_WINDOW_S` are recovery windows rather than polling cadences; keep them above their safety thresholds instead of treating them as recurring polls.
+The prompt-cache-aware rule for recurring AFK lane cadences: default recurring polls should be cache-warm at 270 seconds or less, or intentionally amortized at 20 minutes or more. Do not add defaults in the dead zone around 300 seconds. The current recurring-cadence inventory is: **Demand producer** health tick `RED_AFK_POLL_S` 15s before/after; event-driven supervisor fallback `RED_AFK_WAKE_FALLBACK_S` 60s before/after; worker proof-of-life heartbeat `RED_AFK_HEARTBEAT_S` 60s before/after; periodic dependency Unblock Sweep `RED_AFK_UNBLOCK_SWEEP_INTERVAL_S` 60s before/after; statusline/monitor expensive-fact cache `RED_AFK_STATUSLINE_CACHE_TTL_S` 180s before/after; stale-claim refresh `RED_AFK_CLAIM_REFRESH_S` 300s before, 270s after. Supervisor watchdog values such as `RED_AFK_SUPERVISOR_STALE_S` and `RED_AFK_SUPERVISOR_RESTART_WINDOW_S` are recovery windows rather than polling cadences; keep them above their safety thresholds instead of treating them as recurring polls.
 _Avoid_: 300s default poll, prompt-cache dead-zone cadence
 
 **Auto-monitor loop**:
 An optional session-level observability loop that periodically renders AFK monitor state.
-_Avoid_: fleet supervisor, worker scheduler
+_Avoid_: demand producer, fleet supervisor (extinct, ADR 0130), worker scheduler
 
 **Codex monitor agent**:
 A Codex TUI sub-agent used only as a read-only AFK state presentation surface.
 _Avoid_: AFK worker, supervisor
 
 **Execution environment**:
-A non-interactive runtime that drives `/afk --issues N --runner opencode --once` for one issue per invocation. The two target surfaces are the GitHub Actions lane (the published `reusable-afk-attempt.yml` reusable workflow in `reddb-io/red-skills`) and the k8s lane (a container image + `Job` manifest the team runs on a self-hosted cluster). Both share the same runtime contract — one issue, one PR, no fleet — and differ only in trigger and secret-injection surface. Issue [#631](https://github.com/reddb-io/red-skills/issues/631) (ADR 0059) tracks the k8s piece; the GHA piece lands in this slice.
+A non-interactive runtime that drives `/afk --issues N --runner opencode --once` for one issue per invocation. The two target surfaces are the GitHub Actions lane (the published `reusable-afk-attempt.yml` reusable workflow in `reddb-io/red-skills`) and the k8s lane (a container image + `Job` manifest the team runs on a self-hosted cluster). Both share the same runtime contract — one issue, one PR, no **Demand producer** — and differ only in trigger and secret-injection surface. Issue [#631](https://github.com/reddb-io/red-skills/issues/631) (ADR 0059) tracks the k8s piece; the GHA piece lands in this slice.
 _Avoid_: GHA-only, k8s-only, CI lane, production lane
 
 **Actions lane**:
@@ -265,12 +261,12 @@ An agent-loadable behavior package rooted at a `SKILL.md` plus optional support 
 _Avoid_: command, plugin
 
 **Manager**:
-The single operator-facing `dev` **Skill** that acts as liaison over RedSkills' existing execution and control surfaces: it routes work through the appropriate workflow, supervises the resulting fleet, escalates only genuine operator decisions, and reports outcomes without replacing the underlying workers, queues, or landing contracts. The operator explicitly starts or resumes it; once activated, it remains the liaison for the session until the managed effort completes or the operator ends management. Its local **Manager portfolio** is authoritative for portfolio membership, unmaterialised intent, and coordination across repositories; each published artifact remains authoritative for its own work state, decisions, and delivery evidence.
-_Avoid_: FirstMate (the external reference), second fleet, parallel orchestrator
+The single operator-facing `dev` **Skill** that acts as liaison over RedSkills' existing execution and control surfaces: it routes work through the appropriate workflow, supervises the resulting **Workers**, escalates only genuine operator decisions, and reports outcomes without replacing the underlying workers, queues, or landing contracts. The operator explicitly starts or resumes it; once activated, it remains the liaison for the session until the managed effort completes or the operator ends management. Its local **Manager portfolio** is authoritative for portfolio membership, unmaterialised intent, and coordination across repositories; each published artifact remains authoritative for its own work state, decisions, and delivery evidence.
+_Avoid_: FirstMate (the external reference), second **Demand producer**, parallel orchestrator
 
 **Manager runtime**:
 The deterministic support surface behind the **Manager** Skill for portfolio records, effort leases, checkpoints, Manager-map publication and reconciliation, event consumption, and Manager-brief rendering. It enables a functional end-to-end liaison but never claims work, runs agents, validates changes, or lands delivery in place of the existing owner workflows.
-_Avoid_: SKILL.md-only implementation, execution engine, fleet scheduler
+_Avoid_: SKILL.md-only implementation, execution engine, worker scheduler
 
 **Manager host parity**:
 The first-slice contract that Claude Code, Codex, and OpenCode expose the same **Manager** Skill and deterministic runtime behavior. A host uses its event adapter when it supports meaningful wakes and otherwise reconciles on `resume` and `status`; event capability may change responsiveness but never portfolio correctness.
@@ -338,11 +334,11 @@ _Avoid_: confirmation for every routine transition, autonomous product decisions
 
 **Manager reconciliation**:
 The deterministic refresh of a managed effort from its **Manager portfolio**, repository-owned **Manager maps**, published artifacts, and existing execution-state projections. It runs when management starts or resumes and before the Manager reports or ends; while supervision is active, only meaningful transitions such as completion, failure, HITL, dependency release, or frontier change wake the liaison. Unchanged state never wakes an LLM merely to poll.
-_Avoid_: periodic agent polling, invocation-only snapshot, second fleet monitor
+_Avoid_: periodic agent polling, invocation-only snapshot, second worker monitor
 
 **Manager brief**:
 The stable bounded projection shown when the **Manager** starts, resumes, or reports status: destination and overall state; repository-owned **Manager maps**; actionable frontier; work underway; pending human decisions; risks; and recently delivered outcomes. Each actionable section shows at most five named items linked to their owning artifacts plus the count omitted, never a full graph dump or a fresh unstructured narrative.
-_Avoid_: issue dump, fleet log, freeform status essay
+_Avoid_: issue dump, raw worker log, freeform status essay
 
 **Manager effort completion**:
 The terminal state of a managed effort after its destination has acceptance evidence, no work or HITL remains active, and every in-scope artifact has an explicit terminal disposition: delivered, cancelled, superseded, or removed from scope. Any artifact intended to remain active is detached into another effort before the current effort and its repository-owned **Manager maps** complete.
@@ -445,8 +441,9 @@ _Avoid_: deleted ADR, rewritten decision, superseded (the status/pointer, not th
 - A non-delegable **HITL resolution** keeps the **Issue** in `ready-for-human` with the next pending decision stated explicitly.
 - A delegable **HITL resolution** moves the **Issue** to `ready-for-agent` and removes all labels that keep it in the **HITL queue**.
 - An **Issue** accumulates **Envelopes**, **Directive blocks**, **Human guidance**, and **Thread discussion**.
-- A **Fleet supervisor** maintains AFK workers; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
-- A **Fleet supervisor** manages many **Workers**; each **Worker** resolves exactly one **Issue** and holds one **Worktree**. The **Worker**'s `worker.pid` is the single liveness signal consumers read.
+- A **Demand producer** asks for AFK **Workers** and **redskilled** births them; **Auto-monitor loop**, **Task mirror**, **Codex monitor agent**, and `monitor.sh` only observe.
+- There is exactly one **Demand producer** per project and one **redskilled** daemon per host; each **Worker** resolves exactly one **Issue** and holds one **Worktree**, and its process liveness resolves through the **Liveness anchor**'s daemon read, never a pid file.
+- A **Worker reclaim rule** verdict decides what a dead **Worker**'s artifacts cost to keep; the daemon's answer is the only authority that releases them.
 - A **Worker kind** distinguishes `/afk`, `/go`, and `/go --scout` inside the shared castle worker root without creating separate live worker namespaces.
 - A **Branch lock** constrains the **Primary checkout**; AFK **Worktrees** remain exempt.
 - A **Pinned branch** constrains AFK base and merge target; a **Branch lock**, when set, overrides it (precedence lock > pin > main) and additionally toggles how completed work lands (locked → local locked branch; unlocked → admin-merged PR).
