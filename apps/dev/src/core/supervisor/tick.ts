@@ -4,7 +4,7 @@ import {
 } from "../slot-circuit.js";
 import { emitSupervisorEvent } from "./events.js";
 import { reconcileDeadWorkerClaim } from "./envelopes.js";
-import { attemptUsage } from "./attempt-accounting.js";
+import { workerUsage } from "./worker-accounting.js";
 import {
   logDrainBudgetTransition,
   readDrainBudget,
@@ -219,7 +219,7 @@ export async function superviseTick(
       // Snapshot the resource usage the resident measured for the dying attempt
       // BEFORE the slot is recycled (ADR 0128 §8) — the peak resets the moment
       // the slot is respawned onto a new attempt.
-      const deadUsage = attemptUsage(slot, deadInfo);
+      const deadUsage = workerUsage(slot, deadInfo);
       result.deaths.push(i);
       if (spawnPolicy === "hard-stop") {
         slot.pid = null;

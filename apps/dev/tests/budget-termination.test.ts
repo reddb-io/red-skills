@@ -25,7 +25,7 @@ import {
   type LivenessVerdict,
   type ProcessSnapshotEntry,
 } from "./supervisor-test-helpers.js";
-import { ATTEMPT_BUDGET_HANDOFF_MARKER } from "../src/core/attempt-budget.js";
+import { WORKER_BUDGET_HANDOFF_MARKER } from "../src/core/worker-budget.js";
 import { LABEL_BUDGET, LABEL_HUMAN, LABEL_READY } from "../src/core/triage-labels.js";
 
 const PID = 4242;
@@ -37,7 +37,7 @@ function info(over: Partial<IterDirInfo> = {}): IterDirInfo {
     issue: 2707,
     workerId: "wTEST",
     branch: "afk/wTEST/2707-budgets",
-    logTail: "[afk] inner: toolCall edit apps/dev/src/core/attempt-budget.ts",
+    logTail: "[afk] inner: toolCall edit apps/dev/src/core/worker-budget.ts",
     notes: "4 commits, +210/-30",
     durationS: 900,
     attempt: 1,
@@ -78,7 +78,7 @@ describe("a budgeted termination names its budget (#2707)", () => {
     const reaped = await pollStallDetector(
       busyState(),
       d,
-      config({ attemptBudgets: { wall_clock_s: CAP_S, peak_rss_mb: 4096 } }),
+      config({ workerBudgets: { wall_clock_s: CAP_S, peak_rss_mb: 4096 } }),
     );
 
     expect(reaped).toEqual([0]);
@@ -97,12 +97,12 @@ describe("a budgeted termination names its budget (#2707)", () => {
       findAttemptPullRequest: vi.fn(async () => 4242),
     });
 
-    await pollStallDetector(busyState(), d, config({ attemptBudgets: { peak_rss_mb: 4096 } }));
+    await pollStallDetector(busyState(), d, config({ workerBudgets: { peak_rss_mb: 4096 } }));
 
     // The ref reaches the remote BEFORE the labels rotate, so branch discovery
     // can actually see it.
     expect(publishAttemptBranch).toHaveBeenCalledWith("afk/wTEST/2707-budgets");
-    const handoff = commentsOf(io).find((body) => body.includes(ATTEMPT_BUDGET_HANDOFF_MARKER))!;
+    const handoff = commentsOf(io).find((body) => body.includes(WORKER_BUDGET_HANDOFF_MARKER))!;
     expect(handoff).toContain("resume-from-branch: `afk/wTEST/2707-budgets`");
     expect(handoff).toContain("do NOT start over from main");
     expect(handoff).toContain("PR #4242");
@@ -114,7 +114,7 @@ describe("a budgeted termination names its budget (#2707)", () => {
   it("pages a human with blocked:budget — a resource runaway is not blind-retried", async () => {
     const { deps: d, io } = deps({ sampleTreeRssMb: vi.fn(() => new Map([[PID, 5120]])) });
 
-    await pollStallDetector(busyState(), d, config({ attemptBudgets: { peak_rss_mb: 4096 } }));
+    await pollStallDetector(busyState(), d, config({ workerBudgets: { peak_rss_mb: 4096 } }));
 
     const [, add] = io.editLabels.mock.calls[0] as [number, string[], string[]];
     expect(add).toContain(LABEL_HUMAN);
@@ -125,7 +125,7 @@ describe("a budgeted termination names its budget (#2707)", () => {
   it("an unset budget is unlimited: a huge worker is never terminated", async () => {
     const { deps: d, io } = deps({ sampleTreeRssMb: vi.fn(() => new Map([[PID, 65_536]])) });
 
-    const reaped = await pollStallDetector(busyState(), d, config({ attemptBudgets: {} }));
+    const reaped = await pollStallDetector(busyState(), d, config({ workerBudgets: {} }));
 
     expect(reaped).toEqual([]);
     expect(io.killTree).not.toHaveBeenCalled();
@@ -141,11 +141,11 @@ describe("the three terminations stay distinct (#2707)", () => {
       sampleTreeRssMb: vi.fn(() => new Map([[PID, 512]])),
     });
 
-    await pollStallDetector(state, d, config({ attemptBudgets: { peak_rss_mb: 4096 } }));
+    await pollStallDetector(state, d, config({ workerBudgets: { peak_rss_mb: 4096 } }));
 
     const bodies = commentsOf(io);
     expect(bodies.some((body) => body.includes("stall-reaped"))).toBe(true);
-    expect(bodies.some((body) => body.includes(ATTEMPT_BUDGET_HANDOFF_MARKER))).toBe(false);
+    expect(bodies.some((body) => body.includes(WORKER_BUDGET_HANDOFF_MARKER))).toBe(false);
   });
 
   it("a wall-clock cap hands its work forward under the cap's own comment", async () => {

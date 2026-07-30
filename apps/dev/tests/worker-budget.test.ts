@@ -10,13 +10,13 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  ATTEMPT_BUDGET_CONFIG_KEYS,
-  ATTEMPT_BUDGET_HANDOFF_MARKER,
-  ATTEMPT_BUDGET_UNLIMITED,
-  evaluateAttemptBudgets,
+  WORKER_BUDGET_CONFIG_KEYS,
+  WORKER_BUDGET_HANDOFF_MARKER,
+  WORKER_BUDGET_UNLIMITED,
+  evaluateWorkerBudgets,
   planBudgetHandoff,
-  resolveAttemptBudgets,
-} from "../src/core/attempt-budget.js";
+  resolveWorkerBudgets,
+} from "../src/core/worker-budget.js";
 import { CAP_HANDOFF_MARKER } from "../src/core/wall-clock-cap.js";
 import { CONFIG_DEFAULTS, getConfig, loadConfig } from "../src/core/config.js";
 import { resolveSupervisorConfig } from "../src/core/supervisor.js";
@@ -27,16 +27,16 @@ describe("budget resolution: unset means unlimited, never zero (#2707)", () => {
       ignoreActivationGate: true,
       warn: () => {},
     });
-    expect(getConfig(values, "afk.attempt.budget.peak_rss_mb")).toBe(ATTEMPT_BUDGET_UNLIMITED);
-    expect(getConfig(values, "afk.attempt.budget.cost_usd")).toBe(ATTEMPT_BUDGET_UNLIMITED);
+    expect(getConfig(values, "afk.attempt.budget.peak_rss_mb")).toBe(WORKER_BUDGET_UNLIMITED);
+    expect(getConfig(values, "afk.attempt.budget.cost_usd")).toBe(WORKER_BUDGET_UNLIMITED);
 
-    const budgets = resolveAttemptBudgets({ getCfg: (key) => getConfig(values, key) });
+    const budgets = resolveWorkerBudgets({ getCfg: (key) => getConfig(values, key) });
     expect(budgets.peak_rss_mb).toBeUndefined();
     expect(budgets.cost_usd).toBeUndefined();
     // Unlimited is ABSENT, not 0 — a 0 ceiling would terminate every attempt the
     // instant it was sampled.
     expect(budgets.peak_rss_mb).not.toBe(0);
-    expect(evaluateAttemptBudgets({ peakRssMb: 999_999, costUsd: 999 }, budgets)).toBeNull();
+    expect(evaluateWorkerBudgets({ peakRssMb: 999_999, costUsd: 999 }, budgets)).toBeNull();
   });
 
   it("both budget keys are documented v1 keys under plugins.dev.afk.*", async () => {
@@ -48,17 +48,17 @@ describe("budget resolution: unset means unlimited, never zero (#2707)", () => {
       read: () =>
         "plugins:\n  dev:\n    afk:\n      attempt:\n        budget:\n          peak_rss_mb: 4096\n          cost_usd: 12.5\n",
     });
-    const budgets = resolveAttemptBudgets({ getCfg: (key) => getConfig(values, key) });
+    const budgets = resolveWorkerBudgets({ getCfg: (key) => getConfig(values, key) });
     expect(budgets.peak_rss_mb).toBe(4096);
     expect(budgets.cost_usd).toBe(12.5);
   });
 
   it("a garbage or non-positive value is unlimited, never an instant killer", () => {
-    const budgets = resolveAttemptBudgets({
+    const budgets = resolveWorkerBudgets({
       getCfg: (key) =>
-        key === ATTEMPT_BUDGET_CONFIG_KEYS.peak_rss_mb
+        key === WORKER_BUDGET_CONFIG_KEYS.peak_rss_mb
           ? "0"
-          : key === ATTEMPT_BUDGET_CONFIG_KEYS.cost_usd
+          : key === WORKER_BUDGET_CONFIG_KEYS.cost_usd
             ? "not-a-number"
             : "",
     });
@@ -67,9 +67,9 @@ describe("budget resolution: unset means unlimited, never zero (#2707)", () => {
   });
 
   it("env overrides the config file, and the wall-clock budget IS the per-issue ceiling", () => {
-    const budgets = resolveAttemptBudgets({
+    const budgets = resolveWorkerBudgets({
       env: { RED_AFK_ATTEMPT_PEAK_RSS_MB: "2048" },
-      getCfg: (key) => (key === ATTEMPT_BUDGET_CONFIG_KEYS.peak_rss_mb ? "8192" : ""),
+      getCfg: (key) => (key === WORKER_BUDGET_CONFIG_KEYS.peak_rss_mb ? "8192" : ""),
       wallClockS: 2700,
     });
     expect(budgets.peak_rss_mb).toBe(2048);
@@ -81,14 +81,14 @@ describe("budget resolution: unset means unlimited, never zero (#2707)", () => {
       { RED_AFK_ATTEMPT_COST_USD: "9" },
       (key) => (key === "afk.issue_wall_clock_max_s" ? "1800" : ""),
     );
-    expect(config.attemptBudgets).toEqual({ wall_clock_s: 1800, cost_usd: 9 });
-    expect(config.attemptBudgets.peak_rss_mb).toBeUndefined();
+    expect(config.workerBudgets).toEqual({ wall_clock_s: 1800, cost_usd: 9 });
+    expect(config.workerBudgets.peak_rss_mb).toBeUndefined();
   });
 });
 
 describe("budget evaluation names the budget that fired (#2707)", () => {
   it("reports the first budget reached, in time → memory → cost order", () => {
-    const breach = evaluateAttemptBudgets(
+    const breach = evaluateWorkerBudgets(
       { wallClockS: 100, peakRssMb: 5000, costUsd: 3 },
       { peak_rss_mb: 4096, cost_usd: 1 },
     );
@@ -96,7 +96,7 @@ describe("budget evaluation names the budget that fired (#2707)", () => {
   });
 
   it("an unsampled signal never fires a budget", () => {
-    expect(evaluateAttemptBudgets({}, { peak_rss_mb: 1, cost_usd: 1 })).toBeNull();
+    expect(evaluateWorkerBudgets({}, { peak_rss_mb: 1, cost_usd: 1 })).toBeNull();
   });
 
 });
@@ -116,7 +116,7 @@ describe("a budgeted termination hands its work forward (#2707)", () => {
     });
     expect(handoff.handsWorkForward).toBe(true);
     expect(handoff.resumeRef).toBe("afk/w1/2707-budgets");
-    expect(handoff.comment).toContain(ATTEMPT_BUDGET_HANDOFF_MARKER);
+    expect(handoff.comment).toContain(WORKER_BUDGET_HANDOFF_MARKER);
     expect(handoff.comment).toContain("peak_rss_mb");
     expect(handoff.comment).toContain("resume-from-branch: `afk/w1/2707-budgets`");
     expect(handoff.comment).toContain("do NOT start over from main");

@@ -1,5 +1,5 @@
 import { SLOT_CIRCUIT_DEFAULTS } from "../slot-circuit.js";
-import { resolveAttemptBudgets, type AttemptBudgets } from "../attempt-budget.js";
+import { resolveWorkerBudgets, type WorkerBudgets } from "../worker-budget.js";
 
 import type { CastleLaneRecord } from "@reddb-io/red-castle/engine";
 
@@ -153,12 +153,12 @@ export interface SupervisorConfig {
   /** RED_AFK_SHRINK_MODE — runtime fleet shrink behavior. */
   shrinkMode: ElasticShrinkMode;
   /**
-   * Per-attempt resource ceilings (ADR 0128 §8). An ABSENT budget is unlimited,
+   * Per-worker resource ceilings (ADR 0128 §8). An ABSENT budget is unlimited,
    * never zero — the default table sets only `wall_clock_s` (from the per-issue
    * ceiling), so a repo that configures nothing enforces exactly today's
    * behaviour and pays no extra sampling.
    */
-  attemptBudgets: AttemptBudgets;
+  workerBudgets: WorkerBudgets;
 }
 
 export const SUPERVISOR_DEFAULTS = {
@@ -183,9 +183,9 @@ export const SUPERVISOR_DEFAULTS = {
   supervisorRestartWindowS: 300,
   reapContestWindowS: 30,
   shrinkMode: "drain-then-retire",
-  // Empty = every per-attempt budget unlimited. The real table is resolved in
+  // Empty = every per-worker budget unlimited. The real table is resolved in
   // resolveSupervisorConfig, which folds the per-issue wall-clock ceiling in.
-  attemptBudgets: {},
+  workerBudgets: {},
 } as const satisfies SupervisorConfig;
 
 export type ElasticShrinkMode = "hard-kill" | "drain-then-retire";
@@ -349,7 +349,7 @@ export function resolveSupervisorConfig(
     // reports the ceiling that is actually enforced instead of minting a second
     // one. Memory and cost default to `unlimited` (ADR 0128 §8), so an
     // unconfigured repo pays no per-tick sampling.
-    attemptBudgets: resolveAttemptBudgets({ env, getCfg, wallClockS: issueWallClockMaxS }),
+    workerBudgets: resolveWorkerBudgets({ env, getCfg, wallClockS: issueWallClockMaxS }),
   };
 }
 

@@ -1,9 +1,11 @@
-// attempt-accounting — the supervisor's per-worker resource accounting.
+// worker-accounting — the supervisor's per-worker resource accounting.
 //
-// The record this used to write is gone (Spec #2772): a Worker already IS one
-// Worker × one Ticket × one try, so the accounting is worker-keyed and its
-// numbers are consumed where they are measured. What survives is the sampling
-// and the budget decision:
+// The record this used to write is gone, and so is the noun it was keyed to
+// (issue #2850, Spec #2772, ADR 0130): a Worker already IS one Worker × one
+// Ticket × one try, so the accounting is worker-keyed and its numbers are
+// consumed where they are measured. Sampling itself was never the leftover —
+// the ATTEMPT-KEYED IDENTITY around it was. What survives is the sampling and
+// the budget decision:
 //
 //  1. ONE SAMPLE PER TICK FOR EVERY SLOT. Memory is read through a single
 //     `sampleTreeRssMb(pids)` call, so accounting cost does not scale with the
@@ -19,11 +21,11 @@
 // nothing else watches — memory and cost — and NAMES whichever one fired.
 
 import {
-  evaluateAttemptBudgets,
-  type AttemptBudgetBreach,
-  type AttemptBudgets,
-  type AttemptUsage,
-} from "../attempt-budget.js";
+  evaluateWorkerBudgets,
+  type WorkerBudgetBreach,
+  type WorkerBudgets,
+  type WorkerUsage,
+} from "../worker-budget.js";
 import type { SlotState, SupervisorState } from "./state.js";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
 
@@ -32,7 +34,7 @@ import type { IterDirInfo, SupervisorDeps } from "./types.js";
  * pid changed since the last sample starts a fresh peak — that is a new worker.
  * Best-effort: a sampler throw leaves the peaks untouched.
  */
-export function sampleFleetPeakRss(state: SupervisorState, deps: SupervisorDeps): void {
+export function sampleWorkerPeakRss(state: SupervisorState, deps: SupervisorDeps): void {
   if (!deps.proc.sampleTreeRssMb) return;
   const pids = state.slots
     .map((slot) => slot.pid)
@@ -63,7 +65,7 @@ export function sampleFleetPeakRss(state: SupervisorState, deps: SupervisorDeps)
  * omitted, never reported as 0 — "not measured" is a different claim from
  * "measured zero", and no reader may conflate them.
  */
-export function attemptUsage(slot: SlotState, info: IterDirInfo | null): AttemptUsage {
+export function workerUsage(slot: SlotState, info: IterDirInfo | null): WorkerUsage {
   return {
     ...(info !== null && info.durationS > 0 ? { wallClockS: info.durationS } : {}),
     ...(slot.peakRssMb > 0 ? { peakRssMb: slot.peakRssMb } : {}),
@@ -78,15 +80,15 @@ export function attemptUsage(slot: SlotState, info: IterDirInfo | null): Attempt
  * ungated one.
  */
 export function resourceBudgetBreach(
-  usage: AttemptUsage,
-  budgets: AttemptBudgets,
-): AttemptBudgetBreach | null {
+  usage: WorkerUsage,
+  budgets: WorkerBudgets,
+): WorkerBudgetBreach | null {
   const { wall_clock_s: _wallClock, ...resourceBudgets } = budgets;
-  return evaluateAttemptBudgets(usage, resourceBudgets);
+  return evaluateWorkerBudgets(usage, resourceBudgets);
 }
 
 /** True when at least one resource budget (memory or cost) is configured. An
  * all-unlimited table means the tick skips the extra state read entirely. */
-export function hasResourceBudget(budgets: AttemptBudgets): boolean {
+export function hasResourceBudget(budgets: WorkerBudgets): boolean {
   return budgets.peak_rss_mb !== undefined || budgets.cost_usd !== undefined;
 }

@@ -1,4 +1,4 @@
-// attempt-budget — per-worker resource budgets and the NAMED termination they
+// worker-budget — per-worker resource budgets and the NAMED termination they
 // produce.
 //
 // Three rules shape every line below:
@@ -12,9 +12,15 @@
 //     budget into an instant killer — the same failure mode the wall-clock
 //     ceiling floors away in supervisor/config.ts.
 //  3. A BUDGETED TERMINATION HANDS ITS WORK FORWARD. The cut-off is policy, not
-//     a hang: whatever the attempt committed is the next worker's starting
+//     a hang: whatever the worker committed is the next worker's starting
 //     point, so the plan names the branch to resume from and the PR the issue is
 //     pending on (the same contract #2701 gave the wall-clock cap).
+//
+// The budget is keyed to the WORKER, which is the unit that survived ADR 0130's
+// extinction of the Attempt — a Worker already IS one Worker × one Ticket × one
+// try, so there is no smaller thing left to charge. The `afk.attempt.budget.*`
+// config keys and the `RED_AFK_ATTEMPT_*` env overrides keep their published
+// spelling: renaming an operator-facing key is a separate breaking change.
 //
 // PURE (no IO, no clock, no env read at module scope): the supervisor samples
 // the usage and executes the plan; this module only decides.
@@ -26,19 +32,19 @@ import { planCapHandoff, type CapHandoff, type CapHandoffInput } from "./wall-cl
  * the evaluator and the hand-forward alike, so a reader never has to map one
  * spelling onto another.
  */
-export type AttemptBudgetName = "wall_clock_s" | "peak_rss_mb" | "cost_usd";
+export type WorkerBudgetName = "wall_clock_s" | "peak_rss_mb" | "cost_usd";
 
 /** Stable evaluation order: time, then memory, then money. */
-export const ATTEMPT_BUDGET_NAMES = [
+export const WORKER_BUDGET_NAMES = [
   "wall_clock_s",
   "peak_rss_mb",
   "cost_usd",
-] as const satisfies readonly AttemptBudgetName[];
+] as const satisfies readonly WorkerBudgetName[];
 
 /** The documented default for an unlimited budget — an explicit word, never an
  * empty string (every config key must resolve to a non-empty default) and never
  * `0` (which would read as "terminate immediately"). */
-export const ATTEMPT_BUDGET_UNLIMITED = "unlimited";
+export const WORKER_BUDGET_UNLIMITED = "unlimited";
 
 /**
  * Where each budget is configured, under `plugins.dev.afk.*` (folded to bare
@@ -46,34 +52,34 @@ export const ATTEMPT_BUDGET_UNLIMITED = "unlimited";
  * per-issue ceiling rather than minting a second wall-clock knob: two ceilings
  * disagreeing is the bug class ADR 0128 forbids.
  */
-export const ATTEMPT_BUDGET_CONFIG_KEYS = {
+export const WORKER_BUDGET_CONFIG_KEYS = {
   wall_clock_s: "afk.issue_wall_clock_max_s",
   peak_rss_mb: "afk.attempt.budget.peak_rss_mb",
   cost_usd: "afk.attempt.budget.cost_usd",
-} as const satisfies Record<AttemptBudgetName, string>;
+} as const satisfies Record<WorkerBudgetName, string>;
 
 /** Env overrides, mirroring the `RED_AFK_*` ladder the supervisor config uses. */
-export const ATTEMPT_BUDGET_ENV_KEYS = {
+export const WORKER_BUDGET_ENV_KEYS = {
   wall_clock_s: "RED_AFK_ISSUE_WALL_CLOCK_MAX_S",
   peak_rss_mb: "RED_AFK_ATTEMPT_PEAK_RSS_MB",
   cost_usd: "RED_AFK_ATTEMPT_COST_USD",
-} as const satisfies Record<AttemptBudgetName, string>;
+} as const satisfies Record<WorkerBudgetName, string>;
 
 /** Resolved ceilings. An ABSENT key is unlimited — never 0. */
-export type AttemptBudgets = { readonly [K in AttemptBudgetName]?: number };
+export type WorkerBudgets = { readonly [K in WorkerBudgetName]?: number };
 
 /** What one worker actually consumed, as sampled by the supervisor. */
-export interface AttemptUsage {
-  /** Wall clock the attempt held its ticket, in seconds. */
+export interface WorkerUsage {
+  /** Wall clock the worker held its ticket, in seconds. */
   wallClockS?: number;
-  /** Highest resident-set size observed across the attempt's process tree, MB. */
+  /** Highest resident-set size observed across the worker's process tree, MB. */
   peakRssMb?: number;
-  /** Reported spend for the attempt, USD. */
+  /** Reported spend for the worker, USD. */
   costUsd?: number;
 }
 
-export interface AttemptBudgetBreach {
-  budget: AttemptBudgetName;
+export interface WorkerBudgetBreach {
+  budget: WorkerBudgetName;
   /** The configured ceiling. */
   limit: number;
   /** What was observed when it fired. */
@@ -83,13 +89,13 @@ export interface AttemptBudgetBreach {
 function positive(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
-  if (trimmed.length === 0 || trimmed === ATTEMPT_BUDGET_UNLIMITED) return undefined;
+  if (trimmed.length === 0 || trimmed === WORKER_BUDGET_UNLIMITED) return undefined;
   const value = Number(trimmed);
   if (!Number.isFinite(value) || value <= 0) return undefined;
   return value;
 }
 
-export interface AttemptBudgetSource {
+export interface WorkerBudgetSource {
   /** Env view for the `RED_AFK_*` overrides. */
   env?: Record<string, string | undefined>;
   /** `.red/config.yaml` reader for the `afk.*` keys. */
@@ -107,14 +113,14 @@ export interface AttemptBudgetSource {
  * key, then (for the wall clock only) the ceiling the supervisor resolved.
  * Anything that is not a positive finite number resolves to UNLIMITED.
  */
-export function resolveAttemptBudgets(source: AttemptBudgetSource = {}): AttemptBudgets {
+export function resolveWorkerBudgets(source: WorkerBudgetSource = {}): WorkerBudgets {
   const env = source.env ?? {};
   const getCfg = source.getCfg ?? ((): undefined => undefined);
-  const budgets: { -readonly [K in AttemptBudgetName]?: number } = {};
-  for (const name of ATTEMPT_BUDGET_NAMES) {
+  const budgets: { -readonly [K in WorkerBudgetName]?: number } = {};
+  for (const name of WORKER_BUDGET_NAMES) {
     const resolved =
-      positive(env[ATTEMPT_BUDGET_ENV_KEYS[name]]) ??
-      positive(getCfg(ATTEMPT_BUDGET_CONFIG_KEYS[name])) ??
+      positive(env[WORKER_BUDGET_ENV_KEYS[name]]) ??
+      positive(getCfg(WORKER_BUDGET_CONFIG_KEYS[name])) ??
       (name === "wall_clock_s" ? positive(String(source.wallClockS ?? "")) : undefined);
     if (resolved !== undefined) budgets[name] = resolved;
   }
@@ -122,7 +128,7 @@ export function resolveAttemptBudgets(source: AttemptBudgetSource = {}): Attempt
 }
 
 /** The observation for one budget, or undefined when it was never sampled. */
-function observationFor(usage: AttemptUsage, name: AttemptBudgetName): number | undefined {
+function observationFor(usage: WorkerUsage, name: WorkerBudgetName): number | undefined {
   const raw =
     name === "wall_clock_s"
       ? usage.wallClockS
@@ -133,15 +139,15 @@ function observationFor(usage: AttemptUsage, name: AttemptBudgetName): number | 
 }
 
 /**
- * The first budget this usage reaches, in {@link ATTEMPT_BUDGET_NAMES} order, or
+ * The first budget this usage reaches, in {@link WORKER_BUDGET_NAMES} order, or
  * null when every budget is unlimited or still unspent. A budget is EXCEEDED
  * when the observation REACHES it — a 4096 MB ceiling fires at 4096 MB.
  */
-export function evaluateAttemptBudgets(
-  usage: AttemptUsage,
-  budgets: AttemptBudgets,
-): AttemptBudgetBreach | null {
-  for (const budget of ATTEMPT_BUDGET_NAMES) {
+export function evaluateWorkerBudgets(
+  usage: WorkerUsage,
+  budgets: WorkerBudgets,
+): WorkerBudgetBreach | null {
+  for (const budget of WORKER_BUDGET_NAMES) {
     const limit = budgets[budget];
     if (limit === undefined) continue;
     const observed = observationFor(usage, budget);
@@ -157,7 +163,7 @@ function round(value: number, digits: number): number {
 }
 
 /** Unit each budget is measured in, for the human-readable detail line. */
-const BUDGET_UNITS: Record<AttemptBudgetName, string> = {
+const BUDGET_UNITS: Record<WorkerBudgetName, string> = {
   wall_clock_s: "s",
   peak_rss_mb: "MB",
   cost_usd: "USD",
@@ -165,11 +171,11 @@ const BUDGET_UNITS: Record<AttemptBudgetName, string> = {
 
 /** Marker every budget hand-forward comment opens with, so a surface (or a
  * test) finds it without matching prose. */
-export const ATTEMPT_BUDGET_HANDOFF_MARKER = "🤖 /afk attempt budget";
+export const WORKER_BUDGET_HANDOFF_MARKER = "🤖 /afk attempt budget";
 
-export type AttemptBudgetHandoffInput = Omit<CapHandoffInput, "capSeconds" | "durationS"> & {
+export type WorkerBudgetHandoffInput = Omit<CapHandoffInput, "capSeconds" | "durationS"> & {
   /** The budget that fired, with its ceiling and the observation. */
-  breach: AttemptBudgetBreach;
+  breach: WorkerBudgetBreach;
 };
 
 /**
@@ -179,7 +185,7 @@ export type AttemptBudgetHandoffInput = Omit<CapHandoffInput, "capSeconds" | "du
  * budget. The ref is handed forward when the branch carries commits, and the PR
  * is named whenever one is open — the work is already published on it.
  */
-export function planBudgetHandoff(input: AttemptBudgetHandoffInput): CapHandoff {
+export function planBudgetHandoff(input: WorkerBudgetHandoffInput): CapHandoff {
   const { breach, ...rest } = input;
   if (breach.budget === "wall_clock_s") {
     return planCapHandoff({ ...rest, capSeconds: breach.limit, durationS: breach.observed });
@@ -193,15 +199,15 @@ export function planBudgetHandoff(input: AttemptBudgetHandoffInput): CapHandoff 
   const unit = BUDGET_UNITS[breach.budget];
 
   const lines: string[] = [
-    `${ATTEMPT_BUDGET_HANDOFF_MARKER}: this worker was stopped by the per-attempt ` +
+    `${WORKER_BUDGET_HANDOFF_MARKER}: this worker was stopped by the per-worker ` +
       `\`${breach.budget}\` budget (used ${round(breach.observed, 4)}${unit}, budget ` +
-      `${round(breach.limit, 4)}${unit}, \`${ATTEMPT_BUDGET_CONFIG_KEYS[breach.budget]}\`). ` +
+      `${round(breach.limit, 4)}${unit}, \`${WORKER_BUDGET_CONFIG_KEYS[breach.budget]}\`). ` +
       "It was NOT stalled — the cut-off is policy, not a hang.",
   ];
   if (pendingPullRequest !== undefined) {
     lines.push(
       `pending artifact: PR #${pendingPullRequest} — the issue is waiting on that PR, ` +
-        "not on a fresh attempt. The next worker adopts it through the no-agent gate.",
+        "not on a fresh worker. The next worker adopts it through the no-agent gate.",
     );
   }
   if (resumeRef !== undefined) {

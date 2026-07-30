@@ -28,6 +28,14 @@
 //  3. PROSE IS NOT A READER. Comments explaining what was removed — including
 //     this one — are the migration's own documentation, so comments are stripped
 //     before matching. A reference in code or in a path/tool-name literal counts.
+//  4. A NAME IS A SECOND DIMENSION. `EXTINCT_SOURCES` catches a reader reaching
+//     for something removed; `EXTINCT_NAMES` catches the concept coming back as
+//     VOCABULARY — a module basename or an identifier carrying an extinct noun's
+//     name — even when nothing removed is read. Issue #2850 is why: the
+//     supervisor's `attempt-accounting.ts` imported nothing extinct, so the
+//     source dimension saw a clean file while a live module still keyed resource
+//     accounting to a unit of work that no longer exists. Both dimensions fail
+//     the same way, through the same baseline and the same message.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
@@ -136,11 +144,73 @@ export const EXTINCT_SOURCES: readonly ExtinctSource[] = [
   },
 ];
 
+/**
+ * One NAME an extinct concept owned. A source entry names an artifact a reader
+ * can reach for; a name entry names the concept's own vocabulary, matched
+ * against a module basename and against every identifier and path token in the
+ * code. It fires on a module that reads nothing removed and merely CARRIES the
+ * extinct noun — the leftover the source dimension cannot see (issue #2850).
+ *
+ * The pattern is scoped to the concept, never to the bare noun: `Attempt` and
+ * `fleet` still appear in surviving vocabulary (an ordinary retry, the live
+ * `CastleAttemptStatus` envelope attribute, the fleet heartbeat), so an entry
+ * pairs the noun with what it owned. A name that must be tolerated for a while
+ * goes in `EXTINCT_SOURCE_BASELINE` like any other location — one tolerance
+ * mechanism, and it only ever shrinks.
+ */
+export interface ExtinctName {
+  /** Stable slug — half of a baseline key, and the name the failure carries. */
+  id: string;
+  noun: ExtinctNoun;
+  /** What the name used to identify, in one noun phrase. */
+  what: string;
+  /** The vocabulary that replaced it, named concretely enough to rename onto. */
+  replacement: string;
+  /** Matched against the module basename and every identifier/path token. */
+  pattern: RegExp;
+}
+
+/**
+ * The declared extinct-name inventory. Resource accounting is the whole content
+ * for now: ADR 0130 killed the Attempt, and #2850 found its accounting module
+ * still standing because nothing in the tree failed on a NAME.
+ *
+ * The `afk.attempt.budget.*` config keys and the `RED_AFK_ATTEMPT_*` env
+ * overrides are deliberately NOT matched — they are the published operator
+ * contract, and renaming a key is a breaking change of its own, not a rename.
+ */
+export const EXTINCT_NAMES: readonly ExtinctName[] = [
+  {
+    id: "attempt-keyed-accounting",
+    noun: "attempt",
+    what: "resource accounting, usage and budgets named for the Attempt",
+    replacement:
+      "the Worker, the unit that survived — `supervisor/worker-accounting.ts` (`workerUsage`, `sampleWorkerPeakRss`) and `core/worker-budget.ts` (`WorkerUsage`, `WorkerBudgets`, `resolveWorkerBudgets`)",
+    pattern: /attempt[^A-Za-z]?(?:accounting|budget|usage|spend)/i,
+  },
+  {
+    id: "fleet-keyed-accounting",
+    noun: "fleet",
+    what: "resource accounting keyed to the fleet rather than to the worker whose process tree it measures",
+    replacement:
+      "`sampleWorkerPeakRss` — the peak belongs to the Worker, so a slot respawned onto a new worker never charges a dead worker's memory to a live one",
+    // `usage` is deliberately absent here: `FLEET_USAGE` is the CLI's help text,
+    // and a pattern that reds a usage STRING would teach a worker to rename the
+    // wrong thing. The accounting sense is carried by the other three words.
+    pattern: /fleet[^A-Za-z]?(?:accounting|budget|rss|peak[^A-Za-z]?rss)/i,
+  },
+];
+
+/** What made a location a finding — a source being read, or a name being carried. */
+export type ExtinctFindingKind = "source" | "module-name" | "symbol-name";
+
 /** One reference to an extinct source, at the location that carries it. */
 export interface ExtinctSourceFinding {
   /** `<source id>:<repo-relative path>` — the key the baseline declares. */
   locationKey: string;
+  /** The inventory entry that fired — an `EXTINCT_SOURCES` or `EXTINCT_NAMES` id. */
   sourceId: string;
+  kind: ExtinctFindingKind;
   noun: ExtinctNoun;
   relativePath: string;
   line: number;
@@ -217,10 +287,11 @@ export function collectExtinctSourceFindings(root: string): ExtinctSourceFinding
 export function collectExtinctSourceFindingsFromFiles(
   files: readonly ExtinctSourceFile[],
   sources: readonly ExtinctSource[] = EXTINCT_SOURCES,
+  names: readonly ExtinctName[] = EXTINCT_NAMES,
 ): ExtinctSourceFinding[] {
   return files
     .filter((file) => file.relativePath !== GUARD_SELF_PATH)
-    .flatMap((file) => collectFileFindings(file, sources))
+    .flatMap((file) => [...collectFileFindings(file, sources), ...collectFileNameFindings(file, names)])
     .sort((a, b) => a.locationKey.localeCompare(b.locationKey) || a.line - b.line || a.column - b.column);
 }
 
@@ -253,9 +324,12 @@ export function formatExtinctSourceViolations(report: ExtinctSourceGuardReport):
       remaining.set(finding.locationKey, available - 1);
       continue;
     }
+    // A name is not "read" — it is CARRIED, and a module carries it in its own
+    // filename. Naming the dimension is what tells a worker whether to change an
+    // import or to rename the module it is standing in.
     violations.push(
-      `${finding.noun} source ${finding.sourceId} read at ${finding.relativePath}:${finding.line}:${finding.column}` +
-        ` — \`${finding.match}\` (${finding.snippet})`,
+      `${finding.noun} ${FINDING_PHRASE[finding.kind]} ${finding.sourceId} at` +
+        ` ${finding.relativePath}:${finding.line}:${finding.column} — \`${finding.match}\` (${finding.snippet})`,
     );
   }
 
@@ -272,14 +346,16 @@ export function formatExtinctSourceViolations(report: ExtinctSourceGuardReport):
 export function formatExtinctSourceFailureMessage(
   violations: readonly string[],
   sources: readonly ExtinctSource[] = EXTINCT_SOURCES,
+  names: readonly ExtinctName[] = EXTINCT_NAMES,
 ): string {
   if (violations.length === 0) return "";
   const plural = violations.length === 1 ? "reference" : "references";
-  const routes = sources
-    .filter((source) => violations.some((violation) => violation.includes(source.id)))
-    .map((source) => `  ${source.id} — ${source.what} → ${source.replacement}`);
+  const routes = [...sources, ...names]
+    .filter((entry) => violations.some((violation) => violation.includes(entry.id)))
+    .map((entry) => `  ${entry.id} — ${entry.what} → ${entry.replacement}`);
   return [
-    `extinction ratchet (ADR 0130): ${violations.length} reintroduced ${plural} to an extinct Fleet or Attempt source.`,
+    `extinction ratchet (ADR 0130): ${violations.length} reintroduced ${plural} to an extinct Fleet or Attempt` +
+      " source, or carrying an extinct concept's name.",
     ...violations.map((violation) => `  - ${violation}`),
     ...(routes.length > 0 ? ["Routes:", ...routes] : []),
     `Read the replacement instead. The baseline in ${EXTINCT_SOURCE_BASELINE_DECLARATION} only ever shrinks —` +
@@ -318,6 +394,7 @@ function collectFileFindings(
         findings.push({
           locationKey: `${source.id}:${file.relativePath}`,
           sourceId: source.id,
+          kind: "source",
           noun: source.noun,
           relativePath: file.relativePath,
           line: index + 1,
@@ -332,6 +409,72 @@ function collectFileFindings(
   }
   return findings;
 }
+
+/**
+ * Every extinct NAME this file carries — its own module basename first, then
+ * every identifier and path token in the code. The module basename is the whole
+ * point of the dimension: `attempt-accounting.ts` read nothing removed, so only
+ * its filename could ever have failed it (issue #2850).
+ *
+ * Tokens allow `-` so one token spans a module specifier (`attempt-accounting`
+ * inside `"./attempt-accounting.js"`) as well as an identifier. Dots are token
+ * boundaries, which is why a dotted config key (`afk.attempt.budget.peak_rss_mb`)
+ * is NOT a name being carried — it is the published operator contract.
+ */
+function collectFileNameFindings(
+  file: ExtinctSourceFile,
+  names: readonly ExtinctName[],
+): ExtinctSourceFinding[] {
+  const basename = moduleBasename(file.relativePath);
+  const lines = stripComments(file.sourceText).split("\n");
+  const findings: ExtinctSourceFinding[] = [];
+
+  for (const name of names) {
+    // A `g`-flagged pattern would carry `lastIndex` from token to token and skip
+    // half of them — the silent hole that makes a ratchet decorative.
+    const pattern = new RegExp(name.pattern.source, name.pattern.flags.replace("g", ""));
+    const at = (kind: ExtinctFindingKind, line: number, column: number, match: string, snippet: string) => ({
+      locationKey: `${name.id}:${file.relativePath}`,
+      sourceId: name.id,
+      kind,
+      noun: name.noun,
+      relativePath: file.relativePath,
+      line,
+      column,
+      match,
+      snippet,
+    });
+    if (pattern.test(basename)) {
+      findings.push(at("module-name", 1, 1, basename, `module ${file.relativePath}`));
+    }
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]!;
+      TOKEN_PATTERN.lastIndex = 0;
+      for (let token = TOKEN_PATTERN.exec(line); token !== null; token = TOKEN_PATTERN.exec(line)) {
+        if (!pattern.test(token[0])) continue;
+        findings.push(at("symbol-name", index + 1, token.index + 1, token[0], bound(line.trim())));
+      }
+    }
+  }
+  return findings;
+}
+
+/** The module's own name — path and extension dropped, so `x/attempt-budget.ts` is `attempt-budget`. */
+function moduleBasename(relativePath: string): string {
+  const base = relativePath.split("/").at(-1) ?? "";
+  const dot = base.indexOf(".");
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+/** One identifier or path segment. `-` is inside a token so a kebab module name is one name. */
+const TOKEN_PATTERN = /[A-Za-z_$][\w$-]*/g;
+
+/** How each dimension reads in a violation line — a source is READ, a name is CARRIED. */
+const FINDING_PHRASE: Record<ExtinctFindingKind, string> = {
+  source: "reader of extinct source",
+  "module-name": "module named for extinct concept",
+  "symbol-name": "symbol named for extinct concept",
+};
 
 function bound(text: string): string {
   return text.length <= SNIPPET_LIMIT ? text : `${text.slice(0, SNIPPET_LIMIT)}…`;
