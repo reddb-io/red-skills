@@ -66,7 +66,7 @@ describe("doLanding — first-attempt mechanical conflict resolution (#2072)", (
 
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
+    expect(r).toMatchObject({ ok: false, reason: "pr-conflict", locked: false });
     expect(h.mechanicalResolverDirs).toEqual([RWT]);
     expect(h.agentResolverDirs).toEqual([]);
     expect(h.postMergeGateDirs).toEqual([]);
@@ -169,7 +169,7 @@ describe("doLanding — agent-tier semantic conflict resolution (#2075)", () => 
 
     const r = await doLanding(h.deps, h.input, h.hooks);
 
-    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
+    expect(r).toMatchObject({ ok: false, reason: "pr-conflict", locked: false });
     expect(h.mechanicalResolverDirs).toEqual([RWT]);
     expect(h.agentResolverDirs).toEqual([RWT, RWT]);
     expect(h.postMergeGateDirs).toEqual([]);

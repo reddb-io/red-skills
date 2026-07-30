@@ -27,36 +27,31 @@ runs:
       run: |
         set -euo pipefail
 
+        # Same retrying fetcher the workflows use (#2867). curl's own --retry,
+        # which this used to carry, does not reschedule a 403 — and a blipping
+        # 403 from the Releases API is exactly how this fetch fails.
+        fetch="$GITHUB_ACTION_PATH/../../../scripts/ci-fetch-with-retry.sh"
+
         curl_auth=()
         if [ -n "${RED_GITHUB_TOKEN:-}" ]; then
           curl_auth=(-H "Authorization: Bearer ${RED_GITHUB_TOKEN}")
         fi
 
-        curl_json() {
-          curl -fsSL \
-            --retry 3 \
-            --retry-connrefused \
-            --retry-delay 2 \
-            --max-time 60 \
+        fetch_json() {
+          CI_FETCH_MAX_TIME_S=60 "$fetch" "$1" "$2" \
             "${curl_auth[@]}" \
-            -H "Accept: application/vnd.github+json" \
-            "$@"
+            -H "Accept: application/vnd.github+json"
         }
 
-        curl_asset() {
-          curl -fsSL \
-            --retry 3 \
-            --retry-connrefused \
-            --retry-delay 2 \
-            --max-time 120 \
+        fetch_asset() {
+          CI_FETCH_MAX_TIME_S=120 "$fetch" "$1" "$2" \
             "${curl_auth[@]}" \
-            -H "Accept: application/octet-stream" \
-            "$@"
+            -H "Accept: application/octet-stream"
         }
 
         release_json="$RUNNER_TEMP/red-release.json"
-        curl_json "https://api.github.com/repos/reddb-io/reddb/releases/tags/${RED_VERSION}" \
-          -o "$release_json"
+        fetch_json "https://api.github.com/repos/reddb-io/reddb/releases/tags/${RED_VERSION}" \
+          "$release_json"
 
         asset_id="$(
           node -e 'const fs = require("node:fs"); const name = process.argv[1]; const release = JSON.parse(fs.readFileSync(0, "utf8")); const asset = release.assets.find((entry) => entry.name === name); if (!asset) throw new Error(`${name} release asset not found`); console.log(asset.id);' \
@@ -74,10 +69,10 @@ runs:
 
         red_bin="$RUNNER_TEMP/red"
         checksum_file="$RUNNER_TEMP/red.sha256"
-        curl_asset "https://api.github.com/repos/reddb-io/reddb/releases/assets/${asset_id}" \
-          -o "$red_bin"
-        curl_asset "https://api.github.com/repos/reddb-io/reddb/releases/assets/${checksum_asset_id}" \
-          -o "$checksum_file"
+        fetch_asset "https://api.github.com/repos/reddb-io/reddb/releases/assets/${asset_id}" \
+          "$red_bin"
+        fetch_asset "https://api.github.com/repos/reddb-io/reddb/releases/assets/${checksum_asset_id}" \
+          "$checksum_file"
 
         expected="$(awk '{print $1}' "$checksum_file")"
         actual="$(sha256sum "$red_bin" | awk '{print $1}')"

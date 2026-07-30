@@ -199,8 +199,47 @@ export interface PreMergeRebaseResult {
   ok: boolean;
   /** Set on `ok:false` — the distinct failure mode. */
   reason?: PreMergeRebaseFailReason;
-  /** Actionable refusal text, set on `stale-branch`. */
+  /** Actionable refusal text, set on `stale-branch` and on `conflict`. */
   message?: string;
+  /**
+   * The paths git reported UNMERGED when the rebase stopped (#2864) — the
+   * EVIDENCE that this refusal really is a conflict, and the list the human
+   * needs. Read before `rebase --abort` clears the index; empty when git could
+   * not answer, which the summary says rather than implying there are none.
+   */
+  conflictPaths?: readonly string[];
+}
+
+/** How many conflicting paths a refusal summary names before it counts the rest. */
+const CONFLICT_PATHS_NAMED = 10;
+
+/** Parse `git diff --name-only --diff-filter=U` stdout into unique paths. */
+export function parseUnmergedPaths(stdout: string): string[] {
+  const seen = new Set<string>();
+  for (const line of stdout.split("\n")) {
+    const path = line.trim();
+    if (path !== "") seen.add(path);
+  }
+  return [...seen];
+}
+
+/**
+ * One line naming a GENUINE conflict and the files it is in (#2864).
+ *
+ * `blocked:merge-conflict` is reserved for a branch that actually conflicts, so
+ * the summary that rides it must name the conflicting paths — a human sent to
+ * "resolve the conflict" with no path was, often as not, sent to resolve a
+ * branch that was merely out of date. An unreadable path list says so instead
+ * of reading as "no files".
+ */
+export function describeRebaseConflict(base: string, paths: readonly string[]): string {
+  if (paths.length === 0) {
+    return `the worker branch conflicts with ${base} (the conflicting paths could not be read)`;
+  }
+  const named = paths.slice(0, CONFLICT_PATHS_NAMED).join(", ");
+  const rest = paths.length - CONFLICT_PATHS_NAMED;
+  const tail = rest > 0 ? `, and ${rest} more` : "";
+  return `the worker branch conflicts with ${base} in ${paths.length} file(s): ${named}${tail}`;
 }
 
 /**
@@ -212,11 +251,16 @@ export interface PreMergeRebaseResult {
  * never touched. Sequence, mirroring the issue spec:
  *   1. `git fetch <remote> <base>`, then short-circuit if `<remote>/<base>` is
  *      already an ancestor of `HEAD`; otherwise `git rebase <remote>/<base>`;
- *   2. on a rebase conflict → `git rebase --abort` → `{ ok:false, conflict }`;
+ *   2. on a rebase conflict → read the unmerged paths → `git rebase --abort` →
+ *      `{ ok:false, conflict, conflictPaths }`;
  *   3. `git push <remote> HEAD:refs/heads/<branch> --force-with-lease`;
  *   4. on a push reject (a landing race), re-fetch + re-rebase the advanced base
  *      and retry up to `maxPushRetries` times; exhausting them → `push-rejected`.
- * Both failure modes map to `blocked:merge-conflict` at the caller.
+ *
+ * Only `conflict` (and the #2481 `stale-branch` refusal, whose whole point is a
+ * doomed replay) maps to `blocked:merge-conflict` at the caller. A failed fetch
+ * and an exhausted force-with-lease race are landing-infrastructure failures on
+ * a branch that never conflicted, and each carries a `message` saying so (#2864).
  */
 export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Promise<PreMergeRebaseResult> {
   const { repo, remote, base, branch } = input;
@@ -282,7 +326,13 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
   // push-retry loop so a racing base advance is re-integrated before each retry.
   const rebaseOntoBase = async (): Promise<PreMergeRebaseResult & { alreadyIntegrated?: boolean }> => {
     const fetch = await exec(["git", "-C", repo, "fetch", remote, base, "--quiet"]);
-    if (fetch.code !== 0) return { ok: false, reason: "fetch-failed" };
+    if (fetch.code !== 0) {
+      return {
+        ok: false,
+        reason: "fetch-failed",
+        message: `the landing could not fetch ${baseRef} before the pre-merge rebase — no rebase was attempted and nothing was merged`,
+      };
+    }
     const alreadyIntegrated = await exec(["git", "-C", repo, "merge-base", "--is-ancestor", baseRef, "HEAD"]);
     if (alreadyIntegrated.code === 0) return { ok: true, alreadyIntegrated: true };
     await squashOwnHistory();
@@ -303,8 +353,18 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
           return { ok: true };
         }
       }
+      // Name WHAT conflicts before the abort clears the index (#2864). The park
+      // that consumes this is the one label reserved for a real conflict, so it
+      // carries the evidence rather than an instruction to go looking for it.
+      const unmerged = await exec(["git", "-C", repo, "diff", "--name-only", "--diff-filter=U"]);
+      const conflictPaths = unmerged.code === 0 ? parseUnmergedPaths(unmerged.stdout) : [];
       await exec(["git", "-C", repo, "rebase", "--abort"]);
-      return { ok: false, reason: "conflict" };
+      return {
+        ok: false,
+        reason: "conflict",
+        conflictPaths,
+        message: describeRebaseConflict(baseRef, conflictPaths),
+      };
     }
     return { ok: true };
   };
@@ -324,7 +384,13 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
       if (!again.ok) return again;
     }
   }
-  return { ok: false, reason: "push-rejected" };
+  return {
+    ok: false,
+    reason: "push-rejected",
+    message:
+      `the rebased worker branch could not be force-pushed to ${remote} after ${maxRetries + 1} attempts ` +
+      `(--force-with-lease kept losing the race for ${branch}) — the rebase itself never conflicted and nothing was merged`,
+  };
 }
 
 /** Inputs for the LOCKED landing path, {@link landMerge}. */

@@ -362,6 +362,9 @@ export type LandingResult =
       infraReason?: string;
     };
 
+/** Why a landing refused, as one named union the callers can route on (#2864). */
+export type LandingFailureReason = Extract<LandingResult, { ok: false }>["reason"];
+
 export type LandingPostMergeValidation =
   | {
       path: "satisfied-by-ci";
@@ -630,6 +633,21 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
           ...(result.mergeFailure ? { message: result.mergeFailure.summary } : {}),
         };
       }
+      // #2864: a branch that never reached a pull request never conflicted with
+      // anything. Route the two no-merge-attempted modes to `infra` so neither
+      // can land on a conflict terminal by falling through.
+      if (result.reason === "push-failed" || result.reason === "no-pr") {
+        return {
+          ok: false,
+          reason: "infra",
+          locked: input.locked,
+          prNumber: result.prNumber,
+          infraReason:
+            result.reason === "push-failed"
+              ? "the worker branch could not be force-pushed before the pull request was opened; nothing was merged"
+              : "no pull request could be opened or reused for the worker branch; nothing was merged",
+        };
+      }
       return {
         ok: false,
         reason: "land-failed",
@@ -660,8 +678,9 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
     if (r.ok) return mapResult(r);
     // Route the CI-aware failure modes (#812) distinctly. A failed required check
     // or a still-pending PR is NOT a merge conflict — preserve the open PR and hand
-    // it to the `blocked:ci` path rather than the merge-conflict re-run. Everything
-    // else (real conflict / push / no-PR / admin-merge rejection) stays land-failed.
+    // it to the `blocked:ci` path rather than the merge-conflict re-run. A push or
+    // PR-open failure is infra (#2864); only an unmapped merge-step refusal is
+    // left as land-failed.
     // `locked` echoes the session's lock state (#842): the admin-PR path is no
     // longer unlocked-only — lock=X + openPr=true also lands through here.
     return mapResult(r);
@@ -675,8 +694,10 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
  * on the worker branch and {@link preMergeRebase} it onto the fetched base,
  * force-pushing the result. Returns a failing {@link LandingResult} to abort the
  * landing (parked as blocked:merge-conflict via `pr-conflict`) on a real conflict
- * or an exhausted force-with-lease retry; returns an infra failure when the
- * rebase worktree provisioner is absent or cannot create a checkout; returns
+ * or the #2481 stale-branch refusal; returns an infra failure when the rebase
+ * worktree provisioner is absent or cannot create a checkout, when the base
+ * could not be fetched, or when the force-with-lease race outlived its retries
+ * (#2864 — none of those is a conflict); returns
  * `undefined` — "proceed to the admin-merge" — only on completed integration.
  * The worktree is always torn down.
  */
@@ -728,18 +749,33 @@ async function preparePrRebaseWorktree(
       maxAgentResolveAttempts: deps.maxAgentConflictResolveAttempts,
     });
     if (!rebased.ok) {
-      // Real conflict / exhausted force-with-lease retries → park merge-conflict.
-      // A `stale-branch` refusal (#2481) parks through the same route but carries
-      // its own actionable text, so the human sees WHY the landing declined to
-      // replay a fat branch onto a base that moved hours ago.
       await deps.removeRebaseWorktree?.(dir);
+      // #2864: `pr-conflict` — and the `blocked:merge-conflict` park behind it —
+      // is reserved for a branch that GENUINELY conflicts. A real rebase conflict
+      // qualifies and now names its conflicting paths; a `stale-branch` refusal
+      // (#2481) qualifies because its whole finding is that replaying this branch
+      // would conflict commit by commit, and it carries its own actionable text.
+      // A failed fetch and an exhausted force-with-lease race are neither: the
+      // rebase never conflicted, so they route to `infra` with the observed
+      // reason instead of sending a human to resolve a conflict that never was.
+      if (rebased.reason === "conflict" || rebased.reason === "stale-branch") {
+        return {
+          ok: false,
+          result: {
+            ok: false,
+            reason: "pr-conflict",
+            locked: input.locked,
+            ...(rebased.message ? { message: rebased.message } : {}),
+          },
+        };
+      }
       return {
         ok: false,
         result: {
           ok: false,
-          reason: "pr-conflict",
+          reason: "infra",
           locked: input.locked,
-          ...(rebased.reason === "stale-branch" && rebased.message ? { message: rebased.message } : {}),
+          infraReason: rebased.message ?? `the pre-merge rebase failed (${rebased.reason ?? "unexplained"}); nothing was merged`,
         },
       };
     }

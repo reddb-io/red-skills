@@ -48,7 +48,7 @@ import type {
   PackageLayout,
   RunFeedbackResult,
 } from "./feedback.js";
-import type { doLanding, LandingPostMergeValidation } from "./landing.js";
+import type { doLanding, LandingFailureReason, LandingPostMergeValidation } from "./landing.js";
 import { type CiAwaitInput, type ConflictResolver, type Exec as MergeExec, type WaitForReviewInput } from "./merge.js";
 import type { deleteRemote, pushAttempt, GitExec } from "./remote-branch.js";
 import { type LandLock } from "./land-lock.js";
@@ -320,7 +320,75 @@ export interface ReconcileInput {
 
 // ---------- result ----------
 
-export type ReconcileSkipReason = "not-mechanical" | "active-blocker" | "no-commits" | "branch-absent" | "already-closed";
+export type ReconcileSkipReason =
+  | "not-mechanical"
+  | "active-blocker"
+  | "no-commits"
+  | "branch-absent"
+  | "already-closed"
+  /** Another worker held the land-lock past the wait timeout — a BACKOFF, so the
+   * branch is left exactly as it was for the next sweep (#2864). */
+  | "land-lock-timeout";
+
+/** The reasons a reconcile park records, one per landing refusal class (#2864). */
+export type ReconcileParkReason =
+  | "feedback-failed"
+  | "feedback-failed-infra"
+  | "merge-conflict"
+  | "ci-failed"
+  | "ci-pending"
+  | "hook-aborted"
+  | "trunk-diverged"
+  | "infra";
+
+/**
+ * Route a LANDING refusal to the terminal that names it (#2864).
+ *
+ * The reconcile lane used to funnel every non-infra landing failure into
+ * `parkMergeConflict`, so a PR that was merely BEHIND its base — zero conflicts,
+ * zero failing checks, `mergeable=true`, one `gh pr update-branch` from
+ * merging — was parked `blocked:merge-conflict` and a human was sent to resolve
+ * a conflict that did not exist. `behind` and `dirty` are different states and
+ * the forge reports them differently, so the park must be too:
+ *
+ *   - `pr-conflict`        → `merge-conflict`. The ONLY route to that label: the
+ *                            rebase genuinely conflicted (and names its paths).
+ *   - `ci-failed` /
+ *     `pr-merge-failed`    → `ci-failed`. A merge the forge REJECTED on a
+ *                            mergeable PR — a stale base, a red required check,
+ *                            an unsatisfied protection rule. The landing already
+ *                            re-read the PR and repaired the one cause it owns
+ *                            (an out-of-date branch, #2807); what reaches here is
+ *                            the refusal the PR itself explained.
+ *   - `ci-pending`         → `ci-pending`. Checks still running on an intact PR.
+ *   - `post-merge-gate`    → `feedback-failed`. The integrated tree failed the
+ *                            gate; the rebase before it succeeded (#2339).
+ *   - `pre_merge-abort`    → `hook-aborted`. A hook, not a conflict.
+ *   - `trunk-diverged`     → `trunk-diverged`.
+ *   - `land-lock-timeout`  → null. A backoff: nothing to park.
+ *   - everything else      → `infra`, carrying the observed reason verbatim.
+ */
+export function routeLandingFailure(reason: LandingFailureReason): ReconcileParkReason | null {
+  switch (reason) {
+    case "pr-conflict":
+      return "merge-conflict";
+    case "ci-failed":
+    case "pr-merge-failed":
+      return "ci-failed";
+    case "ci-pending":
+      return "ci-pending";
+    case "post-merge-gate":
+      return "feedback-failed";
+    case "pre_merge-abort":
+      return "hook-aborted";
+    case "trunk-diverged":
+      return "trunk-diverged";
+    case "land-lock-timeout":
+      return null;
+    default:
+      return "infra";
+  }
+}
 
 export type ReconcileResult =
   | { outcome: "landed"; mergeSha: string; locked: boolean; posted: boolean }
@@ -331,7 +399,9 @@ export type ReconcileResult =
       // that the `validation-infra` recovery policy re-queues (or escalates
       // when the cap is exhausted). The original `feedback-failed` keeps its
       // semantic meaning (the worker's code really has a problem, page human).
-      reason: "feedback-failed" | "feedback-failed-infra" | "merge-conflict" | "infra";
+      // The landing refusals each park under their own reason (#2864), so
+      // `merge-conflict` names a branch that really conflicts and nothing else.
+      reason: ReconcileParkReason;
       posted: boolean;
     }
   | { outcome: "skipped"; reason: ReconcileSkipReason };
@@ -546,9 +616,17 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
         startedEpoch,
       );
     }
-    // The land path's own gates (drift-guard + integrate/rebase) rejected the
-    // branch — park it as a merge conflict, exactly like the DONE path does.
-    return await parkMergeConflict(deps, input, landing.reason, startedEpoch);
+    // #2864: park under the terminal the REFUSAL names, never a blanket
+    // merge-conflict. A land-lock timeout is a backoff — leave the branch as it
+    // is and let the next sweep take it.
+    const parkReason = routeLandingFailure(landing.reason);
+    if (parkReason === null) {
+      deps.appendIterLog(
+        `🤖 /afk reconcile #${issue}: skipped (land-lock-timeout) — another worker holds the land-lock; \`${branch}\` is untouched for the next sweep.`,
+      );
+      return { outcome: "skipped", reason: "land-lock-timeout" };
+    }
+    return await parkLandingRefusal(deps, input, parkReason, landing.message, startedEpoch);
   }
 
   if (landing.postMergeValidation) {
@@ -749,30 +827,65 @@ async function parkInfraLanding(
   return { outcome: "parked", reason: "infra", posted };
 }
 
-/** The land path rejected the branch (integrate/rebase/drift) → park as a merge
- * conflict, mirroring the DONE path's merge-failed terminal. */
-async function parkMergeConflict(
+/**
+ * The one line a landing refusal records, per park reason (#2864). It states
+ * what was OBSERVED — never a probable cause — because the note is the whole
+ * brief the next human reads. `observed` is the landing's own message when it
+ * carried one (the conflicting paths, the forge's rejection cause); absent, the
+ * line still says which refusal happened rather than falling back to a conflict.
+ */
+export function landingRefusalSummary(reason: ReconcileParkReason, observed?: string): string {
+  const detail = observed && observed.trim() !== "" ? observed.trim() : undefined;
+  switch (reason) {
+    case "merge-conflict":
+      return detail ?? "the worker branch conflicts with its base and could not be rebased for the landing";
+    case "ci-failed":
+      return detail ?? "the forge rejected the merge on the open PR and the PR state did not explain it";
+    case "ci-pending":
+      return detail ?? "required status checks had not reported a verdict on the open PR";
+    case "feedback-failed":
+      return "the post-merge integration gate failed on the rebased tree; nothing was merged";
+    case "hook-aborted":
+      return detail ?? "a pre_merge hook aborted the landing before anything merged";
+    case "trunk-diverged":
+      return detail ?? "the local trunk has diverged from its remote, so the landing refused to merge";
+    case "feedback-failed-infra":
+    case "infra":
+      return detail ?? "the landing failed before anything merged";
+  }
+}
+
+/**
+ * The land path refused the validated branch → park under the terminal that
+ * NAMES the refusal (#2864).
+ *
+ * Every non-infra refusal used to park `blocked:merge-conflict`, so a branch
+ * that was merely behind its base sent a human to resolve a conflict that did
+ * not exist. The composer owns the typed label + envelope status; reconcile
+ * ALWAYS parks a failed land to a human here (the land path already exhausted
+ * its own gates), so it uses the typed label and status but not the composer's
+ * retry-vs-escalate decision.
+ */
+async function parkLandingRefusal(
   deps: ReconcileDeps,
   input: ReconcileInput,
-  reason: string,
+  reason: ReconcileParkReason,
+  observed: string | undefined,
   startedEpoch: number,
 ): Promise<ReconcileResult> {
   const { issue, labels } = input;
-  // The composer owns the typed blocked label + envelope status. reconcile ALWAYS
-  // parks a failed land to a human here (the land path already exhausted its own
-  // gates), so it uses the typed label + status but not the composer's
-  // retry-vs-escalate decision.
-  const disp = dispose("merge-conflict", input.attempt, deps.recoveryEnv ?? {});
-  const typed = disp.typedLabel!;
-  await deps.gh.ensureLabel(typed);
+  const summary = landingRefusalSummary(reason, observed);
+  const disp = dispose(reason, input.attempt, deps.recoveryEnv ?? {});
+  const typed = disp.typedLabel;
+  if (typed) await deps.gh.ensureLabel(typed);
   await applyReconcileTransition(deps, issue, labels, parkOrHuman(typed));
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
-    log: `reconcile land failed: ${reason}`,
+    log: `reconcile land failed (${reason}): ${summary}`,
   });
   deps.appendIterLog(
-    `🤖 /afk reconcile #${issue}: \`${input.branch}\` validated green but the land failed (${reason}) — parked to ready-for-human.`,
+    `🤖 /afk reconcile #${issue}: \`${input.branch}\` validated green but the land was refused — ${summary} — parked to ready-for-human as ${typed ?? reason}.`,
   );
-  return { outcome: "parked", reason: "merge-conflict", posted };
+  return { outcome: "parked", reason, posted };
 }
 
 /**
