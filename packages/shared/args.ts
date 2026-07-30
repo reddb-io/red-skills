@@ -15,6 +15,13 @@
  *    with a single, shared "<flag> requires a value" error for value flags
  *    missing their argument.
  *
+ *  - `extractFlags(argv, schema)` — the same schema, applied to an argv that is
+ *    only partly ours. It peels the declared flags out and hands back every
+ *    other token untouched, in order, so a wrapper CLI can own `--brief` while
+ *    the command it wraps keeps `--oneline` and `-n 5` verbatim. `parseFlags`
+ *    cannot do this: it absorbs unknown flags, which is correct for a CLI that
+ *    owns its whole argv and destructive for one that proxies a foreign tail.
+ *
  *  - `routeCommand(argv, commands)` — a minimal command router: it peels the
  *    leading token, matches it (or an alias) against the known command set, and
  *    returns `{ command, args }` with the remaining argv untouched. Unknown
@@ -207,6 +214,103 @@ export function parseFlags<Schema extends FlagSchema>(
   }
 
   return { values, positionals: parsed.rest } as ParseFlagsResult<Schema>;
+}
+
+/** Typed result of `extractFlags`: the declared flags, and everything else. */
+export interface ExtractFlagsResult<Schema extends FlagSchema> {
+  values: { [K in keyof Schema]?: FlagValue<Schema[K]> };
+  /** `argv` minus every declared flag and its value, order preserved. */
+  rest: string[];
+}
+
+export interface ExtractFlagsOptions {
+  /**
+   * Stop at a bare `--` and copy the tail through untouched (default: true).
+   *
+   * Set false when the separator in this argv is the wrapped tool's own — `git
+   * diff -- <path>` — rather than the boundary of what this CLI owns. Then the
+   * whole argv is scanned, which is what a caller re-reading its own flag out of
+   * an argv it already assembled needs.
+   */
+  stopAtSeparator?: boolean;
+}
+
+/** `--name`, `--name=value`, `-n`, `-n=value`. Anything else is not ours. */
+const FLAG_TOKEN = /^--([^=]+)(?:=([\s\S]*))?$/;
+const SHORT_FLAG_TOKEN = /^-([^-=])(?:=([\s\S]*))?$/;
+
+function aliasIndexOf(schema: FlagSchema): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const [name, spec] of Object.entries(schema)) {
+    index.set(name, name);
+    for (const alias of spec.aliases ?? []) index.set(alias, name);
+  }
+  return index;
+}
+
+/**
+ * Peel the schema's flags out of `argv` and return the remaining tokens verbatim.
+ *
+ * This is the contract for a CLI that does not own its whole argv — a wrapper
+ * whose tail is another program's command line. Only declared flags are touched:
+ * an undeclared `--oneline` is not a parse error and not a positional, it is a
+ * token this parser has no opinion about and copies through unchanged.
+ *
+ * A bare `--` ends extraction. Everything from it onward, including the `--`
+ * itself, lands in `rest` untouched, because past that separator the tokens
+ * belong to the wrapped command and a flag that merely shares our spelling is
+ * not ours to consume.
+ *
+ * A declared value flag with no value throws the same `"<flag> requires a
+ * value"` error {@link parseFlags} raises, so both entry points fail one way.
+ */
+export function extractFlags<Schema extends FlagSchema>(
+  argv: readonly string[],
+  schema: Schema,
+  options: ExtractFlagsOptions = {},
+): ExtractFlagsResult<Schema> {
+  const canonical = aliasIndexOf(schema);
+  const stopAtSeparator = options.stopAtSeparator ?? true;
+  const values: Record<string, unknown> = {};
+  const rest: string[] = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index]!;
+    if (token === "--" && stopAtSeparator) {
+      rest.push(...argv.slice(index));
+      break;
+    }
+
+    const match = FLAG_TOKEN.exec(token) ?? SHORT_FLAG_TOKEN.exec(token);
+    const name = match === null ? undefined : canonical.get(match[1]!);
+    const spec = name === undefined ? undefined : schema[name];
+    if (name === undefined || spec === undefined) {
+      rest.push(token);
+      continue;
+    }
+
+    if (spec.kind === "boolean") {
+      values[name] = true;
+      continue;
+    }
+
+    let raw = match![2];
+    if (raw === undefined && looksLikeValue(argv[index + 1])) {
+      raw = argv[index + 1];
+      index += 1;
+    }
+    if (raw === undefined) throw new Error(`${token} requires a value`);
+
+    if (spec.type === "array") {
+      const accumulated = (values[name] as unknown[] | undefined) ?? [];
+      accumulated.push(spec.coerce(raw));
+      values[name] = accumulated;
+    } else {
+      values[name] = spec.coerce(raw);
+    }
+  }
+
+  return { values, rest } as ExtractFlagsResult<Schema>;
 }
 
 /**

@@ -141,6 +141,10 @@ function commandHelpLines(command: string | undefined): string[] {
         "-f name=value     string GitHub API field",
         "-F name=value     typed GitHub API field",
       ], ["rsp gh-api-json repos/{owner}/{repo}", "rsp gh-api-json repos/{owner}/{repo}/pulls -f state=open"]);
+    case "dashboard":
+      return scopedHelp("rsp dashboard", [
+        "No flags. The explicit spelling of the bare `rsp` invocation.",
+      ], ["rsp", "rsp dashboard"]);
     case "hook":
       return scopedHelp("rsp hook <claude-pre-exec|codex-pre-exec|claude-post-exec|codex-post-exec>", [
         "Reads hook payload from stdin. Defaults come from the calling host.",
@@ -154,7 +158,7 @@ function commandHelpLines(command: string | undefined): string[] {
         "    renders a live TOON dashboard with recovery handles, active waits, savings, and health.",
         "",
         "Subcommands:",
-        "  stats, gains, show, git, gh, vitest, cargo, cat, exec, proxy, wait",
+        "  dashboard, stats, gains, show, git, gh, vitest, cargo, cat, exec, proxy, wait",
         "  doctor, status, sweep, setup, mcp, shell-init, server, warm-resident, gh-api-json, hook",
         "",
         "Global flags:",
@@ -163,6 +167,7 @@ function commandHelpLines(command: string | undefined): string[] {
         "  --terse            aggressive summaries with recovery handles",
         "  --query <text>     filter supported rendered output",
         "  --help, -h         scoped help",
+        "  --version, -v      build version; add --json for structured build info",
         "",
         "Examples:",
         "  rsp",

@@ -5,14 +5,15 @@ import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { renderStructuredError } from "../structured-error.js";
 import {
-  isHelpRequest,
   isStructuredUsageRenderable,
-  numericValueAfter,
+  isUnknownCommandError,
   parseArgs,
+  parseEntryIntent,
   parseGhApiJsonArgs,
+  parseResidentFlags,
+  renderUnknownCommand,
   sinceDays,
   statsFull,
-  valueAfter,
 } from "./args.js";
 import { readDashboardSnapshot, renderDashboard } from "./dashboard.js";
 import { runDoctor, renderDoctor } from "./doctor.js";
@@ -37,17 +38,25 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   // Answered before enablement, config, or the resident: "which build is this?"
   // must stay answerable in exactly the situation you need to ask it — a
   // directory that never opted in, a host with no socket, a degraded shell.
-  if (argv[0] === "--version" || argv[0] === "-v") {
-    process.stdout.write(
-      argv.includes("--json") ? `${JSON.stringify(buildInfo)}\n` : `${renderVersion(buildInfo)}\n`,
-    );
+  const intent = parseEntryIntent(argv);
+  if (intent.kind === "version") {
+    process.stdout.write(intent.json ? `${JSON.stringify(buildInfo)}\n` : `${renderVersion(buildInfo)}\n`);
     return 0;
   }
-  if (isHelpRequest(argv)) {
+  if (intent.kind === "help") {
     process.stdout.write(renderCliHelp(argv));
     return 0;
   }
-  const args = parseArgs(argv);
+  let args: ReturnType<typeof parseArgs>;
+  try {
+    args = parseArgs(argv);
+  } catch (err) {
+    if (isUnknownCommandError(err)) {
+      process.stdout.write(renderUnknownCommand(err));
+      return 2;
+    }
+    throw err;
+  }
   if (args.command === "hook" && args.positional[1] === "claude-pre-exec") {
     const { runClaudePreExecHook } = await import("../intercept.js");
     return await runClaudePreExecHook();
@@ -128,55 +137,50 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   if (args.command === "server") {
     const { runResidentServer } = await import("../resident-server.js");
     const serverPaths = resolveResidentPaths(process.cwd());
-    const socket = valueAfter(args.positional, "--socket") ?? serverPaths.socketPath;
-    const serverConfig = resolveRspConfig(process.cwd(), process.env, args.storeUri ?? valueAfter(args.positional, "--store-uri"));
+    const flags = parseResidentFlags(args.positional);
+    const serverConfig = resolveRspConfig(process.cwd(), process.env, args.storeUri);
     if (!serverConfig.enabled) {
       process.stdout.write(`${rspDisabledReason()}\n`);
       return 0;
     }
     await runResidentServer({
-      socketPath: socket,
-      pidPath: valueAfter(args.positional, "--pid-file") ?? resolveResidentPaths(process.cwd()).pidPath,
+      socketPath: flags.socket ?? serverPaths.socketPath,
+      pidPath: flags["pid-file"] ?? serverPaths.pidPath,
       rootDir: serverPaths.rootDir,
       storeUri: serverConfig.storeUri,
-      ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? serverConfig.ttlDays,
-      ephemeralTtlHours: numericValueAfter(args.positional, "--ephemeral-ttl-hours") ?? serverConfig.ephemeralTtlHours,
-      byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? serverConfig.byteBudget,
-      telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? serverConfig.telemetryTtlDays,
-      telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? serverConfig.telemetryByteBudget,
-      telemetryDrainIntervalMs: numericValueAfter(args.positional, "--telemetry-drain-interval-ms") ??
-        serverConfig.telemetryDrainIntervalMs,
-      telemetryDrainTimeoutMs: numericValueAfter(args.positional, "--telemetry-drain-timeout-ms") ??
-        serverConfig.telemetryDrainTimeoutMs,
-      idleMs: numericValueAfter(args.positional, "--idle-ms") ?? serverConfig.idleMs,
-      residentVersion: valueAfter(args.positional, "--resident-version") ?? buildInfo.version,
-      registryPath: valueAfter(args.positional, "--registry") ?? serverPaths.registryPath,
+      ttlDays: flags["ttl-days"] ?? serverConfig.ttlDays,
+      ephemeralTtlHours: flags["ephemeral-ttl-hours"] ?? serverConfig.ephemeralTtlHours,
+      byteBudget: flags["byte-budget"] ?? serverConfig.byteBudget,
+      telemetryTtlDays: flags["telemetry-ttl-days"] ?? serverConfig.telemetryTtlDays,
+      telemetryByteBudget: flags["telemetry-byte-budget"] ?? serverConfig.telemetryByteBudget,
+      telemetryDrainIntervalMs: flags["telemetry-drain-interval-ms"] ?? serverConfig.telemetryDrainIntervalMs,
+      telemetryDrainTimeoutMs: flags["telemetry-drain-timeout-ms"] ?? serverConfig.telemetryDrainTimeoutMs,
+      idleMs: flags["idle-ms"] ?? serverConfig.idleMs,
+      residentVersion: flags["resident-version"] ?? buildInfo.version,
+      registryPath: flags.registry ?? serverPaths.registryPath,
     });
     return 0;
   }
   if (args.command === "warm-resident") {
     const warmPaths = resolveResidentPaths(process.cwd());
-    const socket = valueAfter(args.positional, "--socket") ?? warmPaths.socketPath;
-    const wakeLock = valueAfter(args.positional, "--wake-lock") ?? warmPaths.wakeLockPath;
-    const warmConfig = resolveRspConfig(process.cwd(), process.env, args.storeUri ?? valueAfter(args.positional, "--store-uri"));
+    const flags = parseResidentFlags(args.positional);
+    const warmConfig = resolveRspConfig(process.cwd(), process.env, args.storeUri);
     if (!warmConfig.enabled) return 0;
     const { warmResidentServer } = await import("../resident-client.js");
     await warmResidentServer({
       ...warmPaths,
-      socketPath: socket,
-      wakeLockPath: wakeLock,
+      socketPath: flags.socket ?? warmPaths.socketPath,
+      wakeLockPath: flags["wake-lock"] ?? warmPaths.wakeLockPath,
     }, {
       storeUri: warmConfig.storeUri,
-      ttlDays: numericValueAfter(args.positional, "--ttl-days") ?? warmConfig.ttlDays,
-      ephemeralTtlHours: numericValueAfter(args.positional, "--ephemeral-ttl-hours") ?? warmConfig.ephemeralTtlHours,
-      byteBudget: numericValueAfter(args.positional, "--byte-budget") ?? warmConfig.byteBudget,
-      telemetryTtlDays: numericValueAfter(args.positional, "--telemetry-ttl-days") ?? warmConfig.telemetryTtlDays,
-      telemetryByteBudget: numericValueAfter(args.positional, "--telemetry-byte-budget") ?? warmConfig.telemetryByteBudget,
-      telemetryDrainIntervalMs: numericValueAfter(args.positional, "--telemetry-drain-interval-ms") ??
-        warmConfig.telemetryDrainIntervalMs,
-      telemetryDrainTimeoutMs: numericValueAfter(args.positional, "--telemetry-drain-timeout-ms") ??
-        warmConfig.telemetryDrainTimeoutMs,
-      idleMs: numericValueAfter(args.positional, "--idle-ms") ?? warmConfig.idleMs,
+      ttlDays: flags["ttl-days"] ?? warmConfig.ttlDays,
+      ephemeralTtlHours: flags["ephemeral-ttl-hours"] ?? warmConfig.ephemeralTtlHours,
+      byteBudget: flags["byte-budget"] ?? warmConfig.byteBudget,
+      telemetryTtlDays: flags["telemetry-ttl-days"] ?? warmConfig.telemetryTtlDays,
+      telemetryByteBudget: flags["telemetry-byte-budget"] ?? warmConfig.telemetryByteBudget,
+      telemetryDrainIntervalMs: flags["telemetry-drain-interval-ms"] ?? warmConfig.telemetryDrainIntervalMs,
+      telemetryDrainTimeoutMs: flags["telemetry-drain-timeout-ms"] ?? warmConfig.telemetryDrainTimeoutMs,
+      idleMs: flags["idle-ms"] ?? warmConfig.idleMs,
       clientVersion: buildInfo.version,
     });
     return 0;
@@ -229,7 +233,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     if (response.stderr) process.stderr.write(`${response.stderr}\n`);
     return response.status;
   }
-  if (!args.command) {
+  if (args.command === "dashboard") {
     const dashboard = await readDashboardSnapshot(config);
     process.stdout.write(renderDashboard(dashboard));
     return 0;
