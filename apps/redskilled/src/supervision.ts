@@ -37,7 +37,7 @@ import {
 } from "./daemon-entry.js";
 import type { RedskilledPaths } from "./paths.js";
 
-/** The unit's name — one per user session, matching the daemon's own scope. */
+/** The unit's name — one per machine, matching the daemon's own scope. */
 export const REDSKILLED_UNIT_NAME = "redskilled.service";
 
 /** Env var the unit sets, so a daemon knows a supervisor will revive it. */

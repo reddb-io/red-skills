@@ -19,7 +19,7 @@ afterEach(async () => {
 async function sessionPaths(): Promise<RedskilledPaths> {
   const root = await mkdtemp(join(tmpdir(), "redskilled-idle-"));
   roots.push(root);
-  return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root });
+  return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root });
 }
 
 const WORKER = {

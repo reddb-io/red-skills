@@ -164,7 +164,7 @@ The installed version must be `0.3.0`. Record the same pin in `.red/config.yaml`
 
 **Section E3 — Execution daemon (`redskilled`) — mandatory when `dev` is enabled.**
 
-> Explainer: `redskilled` is the host-scoped execution daemon (ADR 0130): one singleton per user session, behind a unix socket, owning Worker processes across every project on this machine while each project's bundle keeps owning the work. It is what makes "what is this machine currently doing" answerable, and it fails closed — no daemon, no Worker. A daemon starts on first use, but three things must exist before it can: its host-scoped home, a published bundle to run, and a socket that answers.
+> Explainer: `redskilled` is the host-scoped execution daemon (ADR 0130): exactly one singleton per machine, behind a unix socket, owning Worker processes across every project on this machine while each project's bundle keeps owning the work. It is what makes "what is this machine currently doing" answerable, and it fails closed — no daemon, no Worker. A daemon starts on first use, but three things must exist before it can: its host-scoped home, a published bundle to run, and a socket that answers.
 
 **The home is the daemon's, not this skill's.** `~/.red/redskilled/` is operator-scoped and lives outside every checkout, so it is *not* the `.red/` this skill has sole authority over. Its one owner is `provisionRedskilledHome` in `apps/redskilled/src/provision.ts` (ADR 0130 Amendment 1) — never `mkdir` it here, and never treat a repo's ADR 0067 authority as covering it. Setup provisions it by **calling** its owner:
 
