@@ -17,7 +17,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import {
   declaredProjectNameInConfig,
   resolveProjectIdentity,
@@ -27,17 +27,19 @@ import {
   commandRedskilledWorker,
   ensureRedskilledDaemon,
   readRedskilledHostState,
-  RedskilledUnreachableError,
   startRedskilledWorker,
   type RedskilledClientConfig,
 } from "@reddb-io/redskilled/client";
 import { resolveRedskilledPaths, type RedskilledPaths } from "@reddb-io/redskilled/paths";
 import type { RedskilledWorkerSpec } from "@reddb-io/redskilled/worker-launch";
-import type { RedskilledWorkerStarted } from "@reddb-io/redskilled/protocol";
 import { readRedskilledEvents, type RedskilledHostEvent } from "@reddb-io/redskilled/event-lane";
 
-export { RedskilledUnreachableError };
-export type { RedskilledHostEvent, RedskilledWorkerSpec, RedskilledWorkerStarted };
+// Re-exported so a consumer of this port imports the host's vocabulary from the
+// one module that owns the project's reach into it — a second import path for
+// the same names is how two spellings of one boundary start.
+export { RedskilledUnreachableError } from "@reddb-io/redskilled/client";
+export type { RedskilledWorkerStarted } from "@reddb-io/redskilled/protocol";
+export type { RedskilledHostEvent, RedskilledWorkerSpec };
 
 /**
  * Resolve this checkout's project label — the one opaque string the daemon keys
@@ -206,9 +208,4 @@ export function redskilledUnreachableAdvice(socketPath: string, cause: unknown):
     `rather than spawning an unbudgeted Worker of its own. Run \`redskilled provision\` (or ` +
     `\`/red-setup\`) to install it, then retry. (${detail})`
   );
-}
-
-/** The Worker's own directory name, for a spec that wants a readable label. */
-export function workerLabelForRoot(root: string): string {
-  return basename(root);
 }

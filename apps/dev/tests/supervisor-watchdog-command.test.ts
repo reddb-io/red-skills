@@ -132,9 +132,25 @@ esac
         __REDDB_BINARY_TAG__: JSON.stringify(""),
       },
     });
+    // The watchdog's respawn reaches the host daemon before it launches anything
+    // (#2851), so this integration needs a REAL one. Bundling it beside the dev
+    // CLI is how the shipped resolver finds it, and the session key is pinned to
+    // this sandbox so the walk can never be served by a stranger's daemon — nor
+    // leave one behind for the next test.
+    buildSync({
+      entryPoints: [join(process.cwd(), "tests", "fixtures", "mcp-lane-canary", "redskilled-entry.ts")],
+      outfile: join(root, "redskilled.bundle.min.mjs"),
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node22",
+      banner: { js: "import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);" },
+    });
+
     const env = {
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ""}`,
+      REDSKILLED_SESSION: `watchdog-integration-${process.pid}`,
       RED_AFK_POLL_S: "1",
       RED_AFK_WAKE_FALLBACK_S: "1",
       RED_AFK_TARGET: "1",
