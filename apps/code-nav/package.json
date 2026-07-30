@@ -9,10 +9,12 @@
     "typecheck": "tsc -p tsconfig.json",
     "bundle": "node ../../scripts/bundle-app.mjs --entry src/index.ts --outfile ../../dist/code-nav-mcp.bundle.min.mjs --asset code-nav.bundle.min.mjs --minify",
     "build": "pnpm run typecheck && pnpm run bundle",
+    "test": "NODE_OPTIONS=--max-old-space-size=6144 vitest run",
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "catalog:",
     "vscode-jsonrpc": "^8.2.0",
     "vscode-languageserver-protocol": "^3.17.5",
@@ -22,6 +24,7 @@
     "@types/node": "^25.9.1",
     "esbuild": "^0.28.0",
     "tsx": "catalog:",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }
