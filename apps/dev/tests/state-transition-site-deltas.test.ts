@@ -21,6 +21,7 @@ import { lifecycleTransitionFor } from "../src/core/process-issue/recovery.js";
 import { dispose } from "../src/core/disposition.js";
 import type { StateTransition } from "../src/core/state-transition.js";
 import {
+  LABEL_CI,
   LABEL_CRASHED,
   LABEL_DEPENDENCY,
   LABEL_HUMAN,
@@ -77,11 +78,20 @@ const SITES: SiteDelta[] = [
     add: [LABEL_HUMAN, LABEL_INFRA],
   },
   {
-    site: "core/reconcile.ts:parkMergeConflict",
+    // #2864: the merge-conflict park is now ONE route of parkLandingRefusal —
+    // the one a genuinely conflicting branch reaches.
+    site: "core/reconcile.ts:parkLandingRefusal (merge-conflict)",
     current: [LABEL_RUNNING],
     transition: parkOrHuman(LABEL_MERGE_CONFLICT),
     remove: [LABEL_RUNNING],
     add: [LABEL_HUMAN, LABEL_MERGE_CONFLICT],
+  },
+  {
+    site: "core/reconcile.ts:parkLandingRefusal (ci-failed — a rejected merge on a mergeable PR)",
+    current: [LABEL_RUNNING],
+    transition: parkOrHuman(LABEL_CI),
+    remove: [LABEL_RUNNING],
+    add: [LABEL_HUMAN, LABEL_CI],
   },
   {
     site: "core/reconcile.ts:runCloseCascade (mirror of the DONE-path promote)",

@@ -10,7 +10,9 @@ import {
   buildConflictPrompt,
   waitForReviewCheck,
   classifyMergeState,
+  describeRebaseConflict,
   diagnoseMergeRejection,
+  parseUnmergedPaths,
   parseMergeStateView,
   waitForMergeReady,
   waitForMergeReadyWithEvidence,
@@ -1420,7 +1422,9 @@ describe("preMergeRebase (#1006)", () => {
       { match: (a) => a.includes("fetch"), result: { code: 1 } },
     ]);
     const r = await preMergeRebase(exec, base);
-    expect(r).toEqual({ ok: false, reason: "fetch-failed" });
+    // #2864: the refusal says a fetch failed, so no caller can read it as a conflict.
+    expect(r).toMatchObject({ ok: false, reason: "fetch-failed" });
+    expect(r.message).toContain("could not fetch origin/main");
     expect(joined(calls).some((c) => c.includes("rebase"))).toBe(false);
   });
 
@@ -1430,7 +1434,7 @@ describe("preMergeRebase (#1006)", () => {
       { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
     ]);
     const r = await preMergeRebase(exec, base);
-    expect(r).toEqual({ ok: false, reason: "conflict" });
+    expect(r).toMatchObject({ ok: false, reason: "conflict" });
     const j = joined(calls);
     expect(j).toContain("git -C /wt rebase --abort");
     expect(j.some((c) => c.includes("push"))).toBe(false);
@@ -1463,7 +1467,7 @@ describe("preMergeRebase (#1006)", () => {
       { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
     ]);
     const r = await preMergeRebase(exec, { ...base, resolveMechanical: async () => false });
-    expect(r).toEqual({ ok: false, reason: "conflict" });
+    expect(r).toMatchObject({ ok: false, reason: "conflict" });
     const j = joined(calls);
     expect(j).toContain("git -C /wt rebase --abort");
     expect(j.some((c) => c.includes("push"))).toBe(false);
@@ -1505,7 +1509,9 @@ describe("preMergeRebase (#1006)", () => {
       return { code: 0, stdout: "", stderr: "" };
     };
     const r = await preMergeRebase(exec, { ...base, maxPushRetries: 2 });
-    expect(r).toEqual({ ok: false, reason: "push-rejected" });
+    // #2864: an exhausted force-with-lease race says the rebase never conflicted.
+    expect(r).toMatchObject({ ok: false, reason: "push-rejected" });
+    expect(r.message).toContain("never conflicted");
     expect(pushes).toBe(3);
   });
 
@@ -1523,6 +1529,55 @@ describe("preMergeRebase (#1006)", () => {
       return { code: 0, stdout: "", stderr: "" };
     };
     const r = await preMergeRebase(exec, base);
-    expect(r).toEqual({ ok: false, reason: "conflict" });
+    expect(r).toMatchObject({ ok: false, reason: "conflict" });
+  });
+
+  // #2864: `blocked:merge-conflict` is reserved for a branch that genuinely
+  // conflicts, so the refusal that reaches that label must carry the evidence —
+  // the paths git reported unmerged, read BEFORE the abort clears the index.
+  it("a rebase conflict names the conflicting paths, read before the abort", async () => {
+    const { exec, calls } = fakeExec([
+      needsRebase,
+      { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
+      {
+        match: (a) => a.includes("--diff-filter=U"),
+        result: { code: 0, stdout: "src/a.ts\nsrc/b.ts\n" },
+      },
+    ]);
+    const r = await preMergeRebase(exec, base);
+    expect(r.reason).toBe("conflict");
+    expect(r.conflictPaths).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(r.message).toBe("the worker branch conflicts with origin/main in 2 file(s): src/a.ts, src/b.ts");
+    const j = joined(calls);
+    const unmergedIdx = j.findIndex((c) => c.includes("--diff-filter=U"));
+    const abortIdx = j.findIndex((c) => c.includes("rebase --abort"));
+    expect(unmergedIdx).toBeGreaterThanOrEqual(0);
+    expect(abortIdx).toBeGreaterThan(unmergedIdx);
+  });
+
+  it("an unreadable unmerged-path list SAYS so rather than implying there are none (#2864)", async () => {
+    const { exec } = fakeExec([
+      needsRebase,
+      { match: (a) => a.join(" ") === "git -C /wt rebase origin/main", result: { code: 1 } },
+      { match: (a) => a.includes("--diff-filter=U"), result: { code: 128, stdout: "" } },
+    ]);
+    const r = await preMergeRebase(exec, base);
+    expect(r.conflictPaths).toEqual([]);
+    expect(r.message).toBe("the worker branch conflicts with origin/main (the conflicting paths could not be read)");
+  });
+});
+
+describe("describeRebaseConflict / parseUnmergedPaths (#2864)", () => {
+  it("parses, de-duplicates and trims the unmerged path list", () => {
+    expect(parseUnmergedPaths("a.ts\n\n b.ts \na.ts\n")).toEqual(["a.ts", "b.ts"]);
+    expect(parseUnmergedPaths("")).toEqual([]);
+  });
+
+  it("names up to ten paths, then counts the rest", () => {
+    const paths = Array.from({ length: 12 }, (_, i) => `f${i}.ts`);
+    const summary = describeRebaseConflict("origin/main", paths);
+    expect(summary).toContain("in 12 file(s): f0.ts");
+    expect(summary).toContain("f9.ts, and 2 more");
+    expect(summary).not.toContain("f10.ts,");
   });
 });
