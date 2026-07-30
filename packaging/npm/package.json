@@ -18,6 +18,7 @@
     "red-skills-code-nav": "bin/red-skills-code-nav.mjs",
     "red-skills-memory": "bin/red-skills-memory.mjs",
     "red-skills-brain": "bin/red-skills-brain.mjs",
+    "red-skills-redskilled": "bin/red-skills-redskilled.mjs",
     "rsp": "bin/rsp.mjs"
   },
   "files": [
