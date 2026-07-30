@@ -19,7 +19,7 @@
 // unreachable daemon is exactly the shape #2677 taught us goes unnoticed.
 
 import { encode as encodeToon } from "@reddb-io/toon";
-import { isDaemonSilence } from "../runtime/liveness-anchor.js";
+import { isDaemonSilence, isDaemonUncovered } from "../runtime/liveness-anchor.js";
 
 /** The ordered lane the canary walks. A step name IS the failure vocabulary. */
 export type McpLaneCanaryStep =
@@ -373,17 +373,25 @@ export async function runMcpLaneCanary(
   };
 
   /**
-   * Prove the tool's answer came FROM the daemon rather than from its silence.
+   * Prove the socket CARRIED THIS BIRTH — not merely that something answered.
+   *
+   * Before the ADR 0130 cutover (#2851) a Worker was spawned by the project, so
+   * the daemon's `unknown` was the honest answer about a Worker it never
+   * birthed, and only silence was a defect. **That tolerance is now the false
+   * green.** Every Worker the lane produces is born by the daemon, so a live
+   * worker on disk that the daemon cannot vouch for means the lane stopped
+   * asking the host and started spawning behind its back — which is precisely
+   * the shape this canary exists to catch, one process further out.
    *
    * The verdict is read for a worker the canary watched appear on disk, never
-   * for whatever the reader happens to list: a payload about no work is exactly
-   * the false green this probe exists to refuse. What the daemon says about that
-   * worker is not asserted — a Worker this lane launched itself was never in the
-   * daemon's set, so `unknown` is the honest answer and only SILENCE is a defect.
+   * for whatever the reader happens to list: a payload about no work is the
+   * other false green. A stale daemon read is retried until the deadline, since
+   * a sampler that has not caught up yet is a delay, not a defect.
    */
   async function reachDaemon(live: readonly CanaryWorker[]): Promise<string> {
     const wanted = new Set(live.map((worker) => worker.worker));
     const deadline = deps.now() + daemonDeadlineMs;
+    let lastRefusal = `worker_vitals never published a daemon verdict for ${[...wanted].join(", ")}`;
     for (;;) {
       const payload = await invoke("daemon_reach", "worker_vitals", { live_only: false });
       const rows = (Array.isArray(payload) ? payload : [])
@@ -391,22 +399,35 @@ export async function runMcpLaneCanary(
         .filter((row): row is Record<string, unknown> => row !== null);
       const ids = rows.map(vitalsWorkerId);
       const at = ids.findIndex((id) => id !== null && wanted.has(id));
-      if (at !== -1) return daemonVerdict(rows[at]!, ids[at]!);
+      if (at !== -1) {
+        const verdict = daemonVerdict(rows[at]!, ids[at]!);
+        if (verdict.confirmed) return verdict.detail;
+        lastRefusal = verdict.detail;
+      } else if (rows.length === 0) {
+        lastRefusal = `worker_vitals listed no worker at all, so nothing was published for ${[...wanted].join(", ")}`;
+      } else {
+        lastRefusal = `worker_vitals listed only ${ids.map((id) => id ?? "<unnamed>").join(", ")}, never the live worker(s) ${[...wanted].join(", ")} — the lane's own reader cannot see the worker the lane just spawned`;
+      }
       if (deps.now() >= deadline) {
-        const listed = rows.length === 0
-          ? "listed no worker at all"
-          : `listed only ${ids.map((id) => id ?? "<unnamed>").join(", ")}`;
-        inert(
-          "daemon_reach",
-          `worker_vitals ${listed} within ${daemonDeadlineMs}ms, so no daemon verdict was ever published for the live worker(s) ${[...wanted].join(", ")} — the lane's own reader cannot see the worker the lane just spawned`,
-        );
+        inert("daemon_reach", `${lastRefusal} (within ${daemonDeadlineMs}ms, against ${socket})`);
       }
       await deps.sleep(pollMs);
     }
   }
 
-  /** Read one vitals row's daemon block, or name how the boundary failed. */
-  function daemonVerdict(row: Record<string, unknown>, workerId: string): string {
+  /**
+   * Read one vitals row's daemon block.
+   *
+   * `confirmed: false` is a RETRYABLE refusal carrying its own sentence — a
+   * daemon whose sampler has not caught up says `unknown` for a moment, and
+   * failing on the first read would make a slow host look like a broken one.
+   * The structural faults below are not retryable and fail on the spot: a
+   * missing block or an undatable answer cannot become true by waiting.
+   */
+  function daemonVerdict(
+    row: Record<string, unknown>,
+    workerId: string,
+  ): { confirmed: boolean; detail: string } {
     const block = asRecord(row.daemon_liveness);
     if (!block) {
       inert(
@@ -427,9 +448,33 @@ export async function runMcpLaneCanary(
         `worker_vitals answered over MCP for ${workerId} but the redskilled daemon behind it did not: ${reason} — the tool is reachable and the socket is not, which is what an inert lane looks like once it spans two processes; nothing answered on ${socket}`,
       );
     }
-    return `worker_vitals crossed the socket for ${workerId}: the daemon answered (verdict=${
-      typeof block.verdict === "string" ? block.verdict : "none"
-    }, anchor=${typeof block.anchor === "string" ? block.anchor : "none"}, ${reason})`;
+    // THE CUTOVER'S ASSERTION (#2851). A Worker the lane can see running and the
+    // host cannot vouch for is a birth that never crossed the socket. It is the
+    // only `unknown` that is a defect rather than a delay, and it is not
+    // retryable: waiting cannot make the host remember a Worker it never
+    // birthed. A `dead` verdict is not this shape — the daemon answered and
+    // nothing claims the Worker is still running.
+    if (isDaemonUncovered(reason)) {
+      inert(
+        "daemon_reach",
+        `the redskilled daemon on ${socket} answered about ${workerId} and holds no record of it while the lane still sees it running: ${reason} — ` +
+          `since ADR 0130 every Worker is BORN by that daemon, so this is a Worker the lane spawned behind the host's back: an unbudgeted birth no admission verdict ever judged`,
+      );
+    }
+    const verdict = typeof block.verdict === "string" ? block.verdict : "none";
+    const anchor = typeof block.anchor === "string" ? block.anchor : "none";
+    if (verdict === "unknown") {
+      // The daemon's own answer is not current yet. A sampler catching up is a
+      // delay, so this refusal is retried until the deadline.
+      return {
+        confirmed: false,
+        detail: `the daemon on ${socket} has not published a current verdict for ${workerId} yet: ${reason}`,
+      };
+    }
+    return {
+      confirmed: true,
+      detail: `worker_vitals crossed the socket for ${workerId}: the daemon answered about the Worker it birthed (verdict=${verdict}, anchor=${anchor}, ${reason})`,
+    };
   }
 
   /** Stop the workers and CONFIRM the supervisor and its workers are gone. */

@@ -128,36 +128,37 @@ describe("MCP lane canary over the real transport", () => {
   );
 });
 
-describe("the socket boundary the lane grew under ADR 0130 (#2794)", () => {
+describe("the socket boundary the lane grew under ADR 0130 (#2794, #2851)", () => {
   it(
-    "goes RED at daemon_reach when every tool answers over an unreachable daemon",
+    "goes RED at project_start when no daemon answers, and starts nothing at all",
     async () => {
       // Identical to the green walk in every byte except one: no daemon is
-      // listening on this sandbox's session socket. The MCP server is up, its
-      // tools answer, a real worker boots — and the lane still cannot vouch for
-      // that worker's process, which is the failure a single-process canary
-      // could not see.
+      // listening on this sandbox's session socket.
+      //
+      // Before the cutover (#2851) this walk got as far as `daemon_reach`: the
+      // project spawned its own workers, so the lane produced a live worker it
+      // could not vouch for. Now that the daemon owns every birth, the failure
+      // moved EARLIER and got louder — the launch itself refuses, because a
+      // supervisor with no host behind it would tick forever and drain nothing.
+      // Failing at the launch is the stronger signal: nothing was started, so
+      // there is no unvouched worker left running to reason about.
       const { result, socketPath } = await walk("healthy", 20_000, "down");
 
       expect(result.ok).toBe(false);
-      expect(result.inertStep).toBe("daemon_reach");
+      expect(result.inertStep).toBe("project_start");
       const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
       expect(byStep.get("connect")).toBe("ok");
-      expect(byStep.get("project_start")).toBe("ok");
-      expect(byStep.get("supervisor_live")).toBe("ok");
-      expect(byStep.get("worker_spawn")).toBe("ok");
-      expect(byStep.get("daemon_reach")).toBe("inert");
-      // Loudly, and naming what broke rather than "the lane did nothing".
-      expect(result.summary).toContain("daemon_reach");
-      expect(result.summary).toContain("the tool is reachable and the socket is not");
-      // Naming the socket, not the tool: the operator's next move is on that
-      // path, and a generic "worker_vitals failed" would send them to the wrong
-      // process entirely.
+      expect(byStep.get("project_start")).toBe("inert");
+      // Nothing downstream ran, and nothing downstream needed to.
+      expect(byStep.get("worker_spawn")).toBe("skipped");
+      expect(result.workers).toHaveLength(0);
+      // Loudly, and naming the socket rather than the tool: the operator's next
+      // move is on that path, and "project_start failed" alone would send them
+      // to the wrong process entirely.
+      expect(result.summary).toContain("project_start");
+      expect(result.summary).toContain("redskilled");
       expect(socketPath).toBeTruthy();
       expect(result.summary).toContain(socketPath!);
-      // Still torn down: a red socket boundary leaves no live process behind.
-      expect(byStep.get("project_stop")).toBe("ok");
-      expect(isLive(result.supervisorPid!)).toBe(false);
     },
     TIMEOUT,
   );
