@@ -1,0 +1,58 @@
+name: red-mcp-lane-canary
+
+# The MCP lane's own liveness proof, run WITHOUT anyone remembering to run it
+# (#2844). ADR 0130 reached a closed Spec with twenty delivered slices and no
+# running process: a complete, tested, source-wired daemon with no delivery path
+# produced no signal at all. A canary that exists only as a command someone could
+# type reproduces exactly that silence.
+#
+# Deliberately NOT a pull_request gate. Its job is to make an inert lane loud,
+# and a probe that blocks merges on an unrelated transient becomes something
+# people route around — at which point it stops being a signal. It fires on a
+# schedule, on pushes that touch the lane, and on demand.
+
+on:
+  schedule:
+    # Daily. An inert lane is discovered the next morning, not weeks later.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - apps/dev/src/core/mcp-lane-canary.ts
+      - apps/dev/src/commands/mcp-lane-canary.ts
+      - apps/dev/src/runtime/mcp-lane-canary-io.ts
+      - apps/dev/src/runtime/liveness-anchor.ts
+      - apps/dev/tests/mcp-lane-canary*.ts
+      - apps/dev/tests/fixtures/mcp-lane-canary/**
+      - apps/redskilled/**
+      - .github/workflows/red-mcp-lane-canary.yml
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    # The walk bundles four entries and drives live process trees twice over.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Install workspace dependencies
+        env:
+          REDDB_SKIP_POSTINSTALL: "1"
+        run: pnpm install --frozen-lockfile
+
+      # Walks the shipped castle-mcp bundle against a live redskilled daemon,
+      # and walks two deliberately broken lanes that must come back RED — so a
+      # green run here is evidence rather than an assumption.
+      - name: Run the MCP lane canary
+        run: pnpm -C apps/dev test:canary

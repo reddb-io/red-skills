@@ -78,9 +78,17 @@ daemon listening, every tool still replies and the verdict degrades to
 `unknown`. The `daemon_reach` step reads `worker_vitals` for the worker the walk
 just spawned and fails when that verdict was reached without the daemon
 answering, so a reachable tool over an unreachable daemon is a red canary rather
-than a quiet one. CI runs the same walk on every PR against bundles that differ
-solely in whether the slot entry routes `run`, and against a session whose
-daemon socket is dead.
+than a quiet one. Its failure names the session socket path, because "restart
+the daemon" and "fix the lane that stopped asking it" are different repairs.
+
+**The canary fires without being remembered.** `red-mcp-lane-canary` runs the
+walk daily, on every push that touches the lane, and on demand — against the
+shipped bundle with a live daemon, and against two deliberately broken lanes
+(a slot entry that cannot route `run`, and a session whose daemon socket is
+dead) that must come back red. It is deliberately NOT a pull-request gate: its
+job is to make an inert lane loud, and a probe that blocks merges on an
+unrelated transient is one people route around. `scripts/test-mcp-lane-canary-schedule.sh`
+holds both halves of that in place.
 
 ### Worker — one worker's lifecycle
 

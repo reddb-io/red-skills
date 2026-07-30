@@ -86,6 +86,11 @@ export interface McpLaneCanaryOptions {
   /** How long the lane's reader may take to publish the spawned Worker with the
    * daemon's verdict on it. */
   readonly daemonDeadlineMs?: number;
+  /** The unix socket this walk expects `redskilled` to answer on. Named in every
+   * `daemon_reach` failure, because "restart the daemon" and "fix the lane that
+   * stopped asking it" are different repairs and the path is what tells them
+   * apart. Absent reads as unresolved rather than as no boundary. */
+  readonly socketPath?: string;
   readonly pollMs?: number;
 }
 
@@ -187,6 +192,10 @@ export async function runMcpLaneCanary(
   const teardownDeadlineMs = options.teardownDeadlineMs ?? DEFAULTS.teardownDeadlineMs;
   const daemonDeadlineMs = options.daemonDeadlineMs ?? DEFAULTS.daemonDeadlineMs;
   const pollMs = options.pollMs ?? DEFAULTS.pollMs;
+  // One phrase, so both boundary failures route an operator to the same place.
+  const socket = options.socketPath
+    ? `the redskilled session socket ${options.socketPath}`
+    : "the redskilled session socket (path unresolved)";
 
   const steps: McpLaneCanaryStepResult[] = [];
   const record = (step: McpLaneCanaryStep, verdict: McpLaneCanaryVerdict, detail: string): void => {
@@ -402,7 +411,7 @@ export async function runMcpLaneCanary(
     if (!block) {
       inert(
         "daemon_reach",
-        `worker_vitals published ${workerId} with no daemon_liveness block — the shipped lane no longer crosses the socket to redskilled at all, so nothing on it measures a Worker's process`,
+        `worker_vitals published ${workerId} with no daemon_liveness block — the shipped lane no longer crosses ${socket} at all, so nothing on it measures a Worker's process`,
       );
     }
     const reason = asRecord(block.staleness)?.reason;
@@ -415,7 +424,7 @@ export async function runMcpLaneCanary(
     if (isDaemonSilence(reason)) {
       inert(
         "daemon_reach",
-        `worker_vitals answered over MCP for ${workerId} but the redskilled daemon behind it did not: ${reason} — the tool is reachable and the socket is not, which is what an inert lane looks like once it spans two processes`,
+        `worker_vitals answered over MCP for ${workerId} but the redskilled daemon behind it did not: ${reason} — the tool is reachable and the socket is not, which is what an inert lane looks like once it spans two processes; nothing answered on ${socket}`,
       );
     }
     return `worker_vitals crossed the socket for ${workerId}: the daemon answered (verdict=${

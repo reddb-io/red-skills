@@ -17,6 +17,7 @@ import {
 } from "../core/mcp-lane-canary.js";
 import {
   connectMcpLaneCanary,
+  resolveCanarySocketPath,
   resolveShippedMcpEntry,
 } from "../runtime/mcp-lane-canary-io.js";
 
@@ -106,6 +107,7 @@ function positiveInteger(flag: string | undefined, raw: string): number {
 export async function runMcpLaneCanaryAgainstEntry(
   parsed: ParsedMcpLaneCanaryArgs,
 ): Promise<{ result: McpLaneCanaryResult; stderr: string }> {
+  const socketPath = await resolveCanarySocketPath();
   const transport = await connectMcpLaneCanary({
     args: [parsed.entry],
     cwd: parsed.root,
@@ -116,6 +118,7 @@ export async function runMcpLaneCanaryAgainstEntry(
       target: parsed.target,
       workerDeadlineMs: parsed.workerDeadlineMs,
       teardownDeadlineMs: parsed.teardownDeadlineMs,
+      ...(socketPath !== undefined ? { socketPath } : {}),
     });
     return { result, stderr: transport.stderr() };
   } finally {

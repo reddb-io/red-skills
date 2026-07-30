@@ -16,6 +16,8 @@ import { DAEMON_SILENCE_REASON } from "../src/runtime/liveness-anchor.js";
 
 const SUPERVISOR_PID = 40_100;
 const WORKER_PID = 40_200;
+/** The session socket a canary walk is pinned to, as an operator would read it. */
+const SOCKET = "/run/user/1000/redskilled/canary-session.sock";
 
 function worker(overrides: Partial<CanaryWorker> = {}): CanaryWorker {
   return {
@@ -180,6 +182,39 @@ describe("MCP lane canary — the socket boundary (#2794)", () => {
     expect(result.summary).toContain("the tool is reachable and the socket is not");
     // An inert lane is still torn down.
     expect(byStep.get("project_stop")).toBe("ok");
+  });
+
+  it("names the socket the lane failed to cross, not just the tool that answered", async () => {
+    // An operator reading this has two different repairs available — restart the
+    // daemon, or fix the lane that no longer asks it — and only the socket path
+    // tells them which one they are looking at.
+    const { deps } = harness({ vitals: vitals(daemonSilent()) });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+
+    expect(result.inertStep).toBe("daemon_reach");
+    expect(result.summary).toContain(SOCKET);
+  });
+
+  it("names the socket when the published row carries no daemon block at all", async () => {
+    const { deps } = harness({ vitals: [{ worker: { id: "wCAN1" }, live: true }] });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+
+    expect(result.inertStep).toBe("daemon_reach");
+    expect(result.summary).toContain("no daemon_liveness block");
+    expect(result.summary).toContain(SOCKET);
+  });
+
+  it("still says which boundary broke when no socket path was resolved", async () => {
+    // A canary that cannot resolve the path must not go quiet about the hop:
+    // "unresolved" is itself an operator-routing fact.
+    const { deps } = harness({ vitals: vitals(daemonSilent()) });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.inertStep).toBe("daemon_reach");
+    expect(result.summary).toContain("redskilled session socket (path unresolved)");
   });
 
   it("accepts a daemon that answered about a Worker it never birthed", async () => {
