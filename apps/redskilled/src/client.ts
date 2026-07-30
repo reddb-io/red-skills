@@ -17,8 +17,10 @@
  */
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tryAcquireExclusiveLock } from "@reddb-io/shared/resident-core.js";
 import { socketAnswers } from "./daemon.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
@@ -343,5 +345,33 @@ function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): vo
 }
 
 function defaultServerArgs(): string[] {
-  return [new URL("./cli.js", import.meta.url).pathname];
+  return [resolveRedskilledDaemonEntry()];
+}
+
+/** The shipped bundle's file name — the artifact a release carries (issue #2842). */
+export const REDSKILLED_BUNDLE_ASSET = "redskilled.bundle.min.mjs";
+
+/**
+ * The file a spawn must invoke to get a daemon — named, never inferred from argv.
+ *
+ * A bundled release has no `cli.js`: `pnpm bundle` collapses the whole app into
+ * one `redskilled.bundle.min.mjs`, so the sibling-`cli.js` guess this used to
+ * make resolved to a path that never ships and the auto-spawn died on a missing
+ * file. Ordering is explicit-before-inferred, for the same reason #2736 gave rsp
+ * a named resolver: **this module is only the entry when it IS the bundle**,
+ * because a foreign host that inlines this client (a plugin bundle importing
+ * `@reddb-io/redskilled/client`) would otherwise re-exec *itself* with `serve`.
+ *
+ * PURE apart from the injected existence check.
+ */
+export function resolveRedskilledDaemonEntry(
+  lookup: { readonly self?: string; readonly exists?: (path: string) => boolean } = {},
+): string {
+  const self = lookup.self ?? fileURLToPath(import.meta.url);
+  const exists = lookup.exists ?? existsSync;
+  const dir = dirname(self);
+  if (basename(self) === REDSKILLED_BUNDLE_ASSET) return self;
+  const sibling = join(dir, REDSKILLED_BUNDLE_ASSET);
+  if (exists(sibling)) return sibling;
+  return join(dir, "cli.js");
 }

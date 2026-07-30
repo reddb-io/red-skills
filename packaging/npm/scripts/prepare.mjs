@@ -33,6 +33,7 @@ const BUNDLES = [
   { dest: "memory.bundle.min.mjs", sources: ["memory.bundle.min.mjs"] },
   { dest: "brain.bundle.min.mjs", sources: ["brain.bundle.min.mjs"] },
   { dest: "rsp.bundle.min.mjs", sources: ["rsp.bundle.min.mjs"] },
+  { dest: "redskilled.bundle.min.mjs", sources: ["redskilled.bundle.min.mjs"] },
 ];
 
 mkdirSync(destDist, { recursive: true });

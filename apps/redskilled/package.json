@@ -15,7 +15,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "NODE_OPTIONS=--max-old-space-size=4096 vitest run",
-    "build": "pnpm run typecheck",
+    "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/redskilled.bundle.min.mjs --asset redskilled.bundle.min.mjs --minify",
+    "build": "pnpm run typecheck && pnpm run bundle",
     "build:native": "node-gyp rebuild --directory=native",
     "serve": "tsx src/cli.ts serve"
   },
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "esbuild": "catalog:",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
