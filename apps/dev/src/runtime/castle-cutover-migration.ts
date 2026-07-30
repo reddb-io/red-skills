@@ -18,7 +18,6 @@ import { dirname, join } from "node:path";
 import { afkStateDir, goWorkersDir, scoutWorkersDir, tmpDir, workersDir } from "@reddb-io/shared/red-paths.js";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import {
-  CASTLE_CUTOVER_CONTRACT,
   buildCastleCutoverReport,
   planCastleCutover,
   resolveCutoverActive,
@@ -266,4 +265,4 @@ export async function migrateCastleCutover(
   return { status: "migrated", plan, report, reportPath };
 }
 
-export { CASTLE_CUTOVER_CONTRACT };
+export { CASTLE_CUTOVER_CONTRACT } from "../core/castle-cutover-migration.js";
