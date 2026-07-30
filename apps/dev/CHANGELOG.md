@@ -1,5 +1,13 @@
 # @reddb-io/dev
 
+## 2.88.1
+
+### Patch Changes
+
+- @reddb-io/shared@2.88.1
+- @reddb-io/build-info@2.88.1
+- @reddb-io/redskilled@0.1.0
+
 ## 2.88.0
 
 ### Minor Changes

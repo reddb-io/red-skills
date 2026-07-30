@@ -310,6 +310,9 @@ importers:
 
   apps/redskilled:
     dependencies:
+      '@reddb-io/build-info':
+        specifier: workspace:*
+        version: link:../../packages/build-info
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
