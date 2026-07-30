@@ -13,6 +13,7 @@
     "./paths": "./src/paths.ts",
     "./project-breaker": "./src/project-breaker.ts",
     "./protocol": "./src/protocol.ts",
+    "./reclaim": "./src/reclaim.ts",
     "./provision": "./src/provision.ts",
     "./statusline-payload": "./src/statusline-payload.ts",
     "./worker-launch": "./src/worker-launch.ts"

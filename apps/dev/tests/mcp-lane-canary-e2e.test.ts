@@ -12,10 +12,12 @@
 // case is an assertion, not a smoke test.
 
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, describe, expect, it } from "vitest";
 import { decode } from "@reddb-io/toon";
+import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
 import { runMcpLaneCanary } from "../src/core/mcp-lane-canary.js";
 import {
   connectMcpLaneCanary,
@@ -203,6 +205,59 @@ describe("the shipped castle-mcp bundle carries the canary", () => {
       const report = decode(stdout.trim()) as { ok: boolean; inert_step?: string };
       expect(report.inert_step).toBeUndefined();
       expect(report.ok).toBe(true);
+    },
+    TIMEOUT,
+  );
+});
+
+// Deliberately LAST in the file: the closing case runs the harness's own
+// cleanup, which drops the shared bundle cache every earlier test reuses.
+describe("the canary's daemon lives in a runtime directory the sandbox owns (#2884)", () => {
+  it(
+    "writes its socket, lease and lane outside the operator's runtime directory",
+    async () => {
+      const sandbox = await createCanarySandbox("healthy");
+      const paths = resolveRedskilledPaths({ env: sandbox.env });
+
+      // The daemon really ran, and really ran HERE — an isolation claim that
+      // held only because nothing was started would prove nothing.
+      expect(paths.runtimeDir.startsWith(`${sandbox.runtimeRoot}/`)).toBe(true);
+      expect(existsSync(paths.socketPath)).toBe(true);
+      expect(existsSync(paths.leasePath)).toBe(true);
+
+      // The path this sandbox WOULD have used before the fix: same session key,
+      // the operator's real environment. Nothing may exist there. This is a pure
+      // function of the session key, so it names the one directory this sandbox
+      // could have littered rather than diffing a directory other tests share.
+      const strayed = resolveRedskilledPaths({
+        env: { ...process.env, REDSKILLED_SESSION: sandbox.env.REDSKILLED_SESSION },
+      });
+      expect(strayed.runtimeDir).not.toBe(paths.runtimeDir);
+      expect(existsSync(strayed.runtimeDir)).toBe(false);
+
+      // The isolation the fixture depends on survives the move: two sandboxes
+      // still land on two runtime directories, so an `up` sandbox can never be
+      // served by another sandbox's daemon.
+      const other = await createCanarySandbox("healthy", "down");
+      expect(resolveRedskilledPaths({ env: other.env }).runtimeDir).not.toBe(paths.runtimeDir);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "leaves no runtime directory behind when a walk fails mid-way",
+    async () => {
+      const sandbox = await createCanarySandbox("healthy");
+      const paths = resolveRedskilledPaths({ env: sandbox.env });
+      expect(existsSync(paths.socketPath)).toBe(true);
+
+      // A walk that throws never reaches its own teardown; the harness's
+      // `afterAll` is the only thing that runs, so that is what is exercised.
+      await cleanupCanarySandboxes();
+
+      expect(existsSync(sandbox.runtimeRoot)).toBe(false);
+      expect(existsSync(sandbox.root)).toBe(false);
+      expect(existsSync(paths.runtimeDir)).toBe(false);
     },
     TIMEOUT,
   );
