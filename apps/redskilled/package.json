@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./cli": "./src/cli.ts",
     "./client": "./src/client.ts",
     "./paths": "./src/paths.ts",
     "./protocol": "./src/protocol.ts",

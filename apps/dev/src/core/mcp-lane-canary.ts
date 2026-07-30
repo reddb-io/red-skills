@@ -11,8 +11,15 @@
 // (runtime/mcp-lane-canary-io.ts) and the regression tests drive the same
 // ordered contract. Every step names itself on failure, so a red canary reports
 // WHICH step went inert instead of "the lane did nothing".
+//
+// The lane grew a SECOND process under ADR 0130 (#2794): a Worker's process
+// liveness now resolves over a unix socket to the `redskilled` daemon, so the
+// MCP server answering is no longer evidence that the lane behind it answers.
+// `daemon_reach` is that boundary's own step — a reachable tool over an
+// unreachable daemon is exactly the shape #2677 taught us goes unnoticed.
 
 import { encode as encodeToon } from "@reddb-io/toon";
+import { isDaemonSilence } from "../runtime/liveness-anchor.js";
 
 /** The ordered lane the canary walks. A step name IS the failure vocabulary. */
 export type McpLaneCanaryStep =
@@ -20,6 +27,7 @@ export type McpLaneCanaryStep =
   | "project_start"
   | "supervisor_live"
   | "worker_spawn"
+  | "daemon_reach"
   | "project_status"
   | "project_stop";
 
@@ -28,6 +36,7 @@ export const MCP_LANE_CANARY_STEPS: readonly McpLaneCanaryStep[] = [
   "project_start",
   "supervisor_live",
   "worker_spawn",
+  "daemon_reach",
   "project_status",
   "project_stop",
 ];
@@ -37,6 +46,7 @@ export const MCP_LANE_CANARY_REQUIRED_TOOLS: readonly string[] = [
   "project_start",
   "project_status",
   "project_stop",
+  "worker_vitals",
 ];
 
 /** One worker directory as observed on disk — the anchor `project_start`'s
@@ -73,6 +83,9 @@ export interface McpLaneCanaryOptions {
   readonly workerDeadlineMs?: number;
   /** How long `project_stop` may take to retire the supervisor and its workers. */
   readonly teardownDeadlineMs?: number;
+  /** How long the lane's reader may take to publish the spawned Worker with the
+   * daemon's verdict on it. */
+  readonly daemonDeadlineMs?: number;
   readonly pollMs?: number;
 }
 
@@ -100,6 +113,7 @@ const DEFAULTS = {
   target: 1,
   workerDeadlineMs: 45_000,
   teardownDeadlineMs: 20_000,
+  daemonDeadlineMs: 20_000,
   pollMs: 250,
 } as const;
 
@@ -139,6 +153,12 @@ function readBool(value: unknown): boolean {
   return value === true || value === "true" || value === 1 || value === "1";
 }
 
+/** The worker id one `worker_vitals` row is about, or null when it names none. */
+function vitalsWorkerId(row: Record<string, unknown>): string | null {
+  const id = asRecord(row.worker)?.id;
+  return typeof id === "string" && id !== "" ? id : null;
+}
+
 function describe(worker: CanaryWorker): string {
   return `${worker.worker} (pid=${worker.pid ?? "none"}, dir=${worker.dir})`;
 }
@@ -165,6 +185,7 @@ export async function runMcpLaneCanary(
   const target = options.target ?? DEFAULTS.target;
   const workerDeadlineMs = options.workerDeadlineMs ?? DEFAULTS.workerDeadlineMs;
   const teardownDeadlineMs = options.teardownDeadlineMs ?? DEFAULTS.teardownDeadlineMs;
+  const daemonDeadlineMs = options.daemonDeadlineMs ?? DEFAULTS.daemonDeadlineMs;
   const pollMs = options.pollMs ?? DEFAULTS.pollMs;
 
   const steps: McpLaneCanaryStepResult[] = [];
@@ -175,17 +196,24 @@ export async function runMcpLaneCanary(
   let workers: readonly CanaryWorker[] = [];
   let inertStep: McpLaneCanaryStep | undefined;
 
+  const invoke = async (
+    step: McpLaneCanaryStep,
+    tool: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> => {
+    try {
+      return await deps.callTool(tool, args);
+    } catch (error) {
+      inert(step, `${tool} threw over the MCP transport: ${errorText(error)}`);
+    }
+  };
+
   const call = async (
     step: McpLaneCanaryStep,
     tool: string,
     args: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
-    let payload: unknown;
-    try {
-      payload = await deps.callTool(tool, args);
-    } catch (error) {
-      inert(step, `${tool} threw over the MCP transport: ${errorText(error)}`);
-    }
+    const payload = await invoke(step, tool, args);
     const shaped = asRecord(payload);
     if (!shaped) inert(step, `${tool} returned a non-object payload: ${JSON.stringify(payload)}`);
     return shaped;
@@ -256,7 +284,15 @@ export async function runMcpLaneCanary(
       workers = live;
       record("worker_spawn", "ok", `${live.length} live worker(s): ${live.map(describe).join("; ")}`);
 
-      // ---- 5. project_status: the canonical reader observes that worker ----
+      // ---- 5. daemon_reach: the lane crosses the socket to the daemon ----
+      // ADR 0130 put a second process behind this tool: `worker_vitals` answers
+      // in the MCP server, but the verdict on a Worker's PROCESS is fetched over
+      // a unix socket from `redskilled`. A dead socket does not make the tool
+      // fail — it makes it answer `unknown`, which is why this needs its own
+      // step and its own sentence in the report.
+      record("daemon_reach", "ok", await reachDaemon(live));
+
+      // ---- 6. project_status: the canonical reader observes that worker ----
       const observedStatus = await call("project_status", "project_status", {});
       const supervisor = asRecord(observedStatus.supervisor);
       if (!supervisor || !readBool(supervisor.alive)) {
@@ -272,7 +308,7 @@ export async function runMcpLaneCanary(
       }
       record("project_status", "ok", `project_status observes supervisor ${pid} with slots.busy=${busy}`);
     } finally {
-      // ---- 6. project_stop: teardown, always attempted once workers exist ----
+      // ---- 7. project_stop: teardown, always attempted once workers exist ----
       // Nothing thrown here may mask the walk's own verdict, so the teardown
       // reports its failure as a step rather than as an exception.
       try {
@@ -319,13 +355,73 @@ export async function runMcpLaneCanary(
     steps,
     ...(resolvedInert ? { inertStep: resolvedInert } : {}),
     summary: ok
-      ? "MCP lane canary green: project_start → live worker → project_status → project_stop all answered"
+      ? "MCP lane canary green: project_start → live worker → a daemon verdict over the socket → project_status → project_stop all answered"
       : `MCP lane canary FAILED — the ${resolvedInert} step went inert: ${
         steps.find((entry) => entry.step === resolvedInert)?.detail ?? "no detail"
       }`,
     ...(supervisorPid !== undefined ? { supervisorPid } : {}),
     workers,
   };
+
+  /**
+   * Prove the tool's answer came FROM the daemon rather than from its silence.
+   *
+   * The verdict is read for a worker the canary watched appear on disk, never
+   * for whatever the reader happens to list: a payload about no work is exactly
+   * the false green this probe exists to refuse. What the daemon says about that
+   * worker is not asserted — a Worker this lane launched itself was never in the
+   * daemon's set, so `unknown` is the honest answer and only SILENCE is a defect.
+   */
+  async function reachDaemon(live: readonly CanaryWorker[]): Promise<string> {
+    const wanted = new Set(live.map((worker) => worker.worker));
+    const deadline = deps.now() + daemonDeadlineMs;
+    for (;;) {
+      const payload = await invoke("daemon_reach", "worker_vitals", { live_only: false });
+      const rows = (Array.isArray(payload) ? payload : [])
+        .map(asRecord)
+        .filter((row): row is Record<string, unknown> => row !== null);
+      const ids = rows.map(vitalsWorkerId);
+      const at = ids.findIndex((id) => id !== null && wanted.has(id));
+      if (at !== -1) return daemonVerdict(rows[at]!, ids[at]!);
+      if (deps.now() >= deadline) {
+        const listed = rows.length === 0
+          ? "listed no worker at all"
+          : `listed only ${ids.map((id) => id ?? "<unnamed>").join(", ")}`;
+        inert(
+          "daemon_reach",
+          `worker_vitals ${listed} within ${daemonDeadlineMs}ms, so no daemon verdict was ever published for the live worker(s) ${[...wanted].join(", ")} — the lane's own reader cannot see the worker the lane just spawned`,
+        );
+      }
+      await deps.sleep(pollMs);
+    }
+  }
+
+  /** Read one vitals row's daemon block, or name how the boundary failed. */
+  function daemonVerdict(row: Record<string, unknown>, workerId: string): string {
+    const block = asRecord(row.daemon_liveness);
+    if (!block) {
+      inert(
+        "daemon_reach",
+        `worker_vitals published ${workerId} with no daemon_liveness block — the shipped lane no longer crosses the socket to redskilled at all, so nothing on it measures a Worker's process`,
+      );
+    }
+    const reason = asRecord(block.staleness)?.reason;
+    if (typeof reason !== "string" || reason === "") {
+      inert(
+        "daemon_reach",
+        `worker_vitals published ${workerId} with a daemon_liveness block carrying no staleness reason (${JSON.stringify(block)}) — an answer that cannot say how current it is cannot be the daemon's`,
+      );
+    }
+    if (isDaemonSilence(reason)) {
+      inert(
+        "daemon_reach",
+        `worker_vitals answered over MCP for ${workerId} but the redskilled daemon behind it did not: ${reason} — the tool is reachable and the socket is not, which is what an inert lane looks like once it spans two processes`,
+      );
+    }
+    return `worker_vitals crossed the socket for ${workerId}: the daemon answered (verdict=${
+      typeof block.verdict === "string" ? block.verdict : "none"
+    }, anchor=${typeof block.anchor === "string" ? block.anchor : "none"}, ${reason})`;
+  }
 
   /** Stop the workers and CONFIRM the supervisor and its workers are gone. */
   async function stopFleet(): Promise<McpLaneCanaryStepResult> {
