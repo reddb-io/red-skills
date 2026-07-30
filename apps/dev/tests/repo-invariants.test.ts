@@ -6,6 +6,7 @@ import {
   type PackageLayout,
 } from "../src/core/feedback.js";
 import {
+  pendingInvariantRuns,
   pendingInvariantSuites,
   REPO_INVARIANT_SUITES,
   scopesCoverInvariantSuite,
@@ -78,7 +79,8 @@ const LIVE_LAYOUT = fakeLayout({
 
 describe("pendingInvariantSuites", () => {
   it("is pending for a cone that excludes the owning package", () => {
-    expect(pendingInvariantSuites(["apps/rsp"])).toEqual([INVARIANT]);
+    expect(pendingInvariantSuites(["apps/rsp"])).toContain(INVARIANT);
+    expect(pendingInvariantSuites(["apps/rsp"])).toEqual([...REPO_INVARIANT_SUITES]);
   });
 
   it("is already covered when the cone contains the owning package or the whole workspace", () => {
@@ -109,7 +111,76 @@ describe("pendingInvariantSuites", () => {
   });
 });
 
+describe("pendingInvariantRuns groups the declared invariants into script executions (#2795)", () => {
+  it("collapses invariants that share one suite script into a single run", () => {
+    const runs = pendingInvariantRuns(["apps/rsp"]);
+
+    // Two invariants live in apps/dev behind one `test:invariants` script; one
+    // run per DECLARED invariant would tax every cone-scoped landing twice.
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ scope: INVARIANT.scope, script: INVARIANT.script });
+    expect(runs[0]!.suites).toEqual([...REPO_INVARIANT_SUITES]);
+  });
+
+  it("keeps a distinct script as its own run", () => {
+    const suites = [
+      { name: "invariants:a", scope: "apps/dev", script: "test:invariants", why: "a" },
+      { name: "invariants:b", scope: "apps/dev", script: "test:other", why: "b" },
+      { name: "invariants:c", scope: "packages/shared", script: "test:invariants", why: "c" },
+    ];
+
+    expect(pendingInvariantRuns(["apps/rsp"], suites).map((run) => `${run.scope} ${run.script}`)).toEqual([
+      "apps/dev test:invariants",
+      "apps/dev test:other",
+      "packages/shared test:invariants",
+    ]);
+  });
+
+  it("has nothing to run when the cone already covers every owning package", () => {
+    expect(pendingInvariantRuns(["apps/dev"])).toEqual([]);
+    expect(pendingInvariantRuns([])).toEqual([]);
+  });
+});
+
 describe("cone-scoped gate runs the repo-wide invariant suites (#2762)", () => {
+  it("runs the shared script once and reports every invariant it carries (#2795)", async () => {
+    const { exec, calls } = fakeExec();
+    const result = await runFeedback(exec, {
+      worktree: "/wt",
+      scopes: ["apps/rsp"],
+      layout: LIVE_LAYOUT,
+      now: clock(),
+    });
+
+    const invariantCalls = joined(calls).filter(
+      (call) => call === `pnpm -C /wt/${INVARIANT.scope} ${INVARIANT.script}`,
+    );
+    expect(invariantCalls).toHaveLength(1);
+    // ...and each declared invariant still gets its own record, so a park names
+    // the constraint rather than only the script that reported it.
+    expect(result.checks.map((check) => check.name)).toEqual(
+      expect.arrayContaining(REPO_INVARIANT_SUITES.map((suite) => suite.name)),
+    );
+  });
+
+  it("carries the failing invariant's own `why` onto each record (#2795)", async () => {
+    const { exec } = fakeExec([
+      { match: (argv) => argv.includes(INVARIANT.script), result: { code: 1, stdout: "violation" } },
+    ]);
+    const result = await runFeedback(exec, {
+      worktree: "/wt",
+      scopes: ["apps/rsp"],
+      layout: LIVE_LAYOUT,
+      now: clock(),
+    });
+
+    for (const suite of REPO_INVARIANT_SUITES) {
+      const check = result.checks.find((entry) => entry.name === suite.name);
+      expect(check?.status).toBe("failed");
+      expect(check?.record.summary).toContain(suite.why.slice(0, 40));
+    }
+  });
+
   it("runs the ratchet for a single-package cone that does not include apps/dev", async () => {
     const scope = computeValidationScope(["apps/rsp/src/proxy.ts"], LIVE_LAYOUT, GRAPH);
     const scopes = scopesForValidationScope(scope);
