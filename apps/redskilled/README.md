@@ -43,6 +43,7 @@ of it.
 | Reviving a daemon nobody asked for | `src/supervision.ts` — the optional user unit, `Restart=on-failure` |
 | Becoming the version that is published | `src/self-replace.ts` — decide, find the successor, hand the session over |
 | The home, and the route to a reachable daemon | `src/provision.ts` — the ONE creator of `~/.red/redskilled/`, the pure provisioning audit, and the optional user unit |
+| Clearing the sessions that died | `src/reclaim.ts` — the lease decides, another tool's directory is left alone |
 
 ## Behaviours worth knowing
 
@@ -216,3 +217,32 @@ redskilled unit status                      # is a supervisor installed? (absent
 redskilled unit install                     # write the user unit and enable it now
 redskilled unit uninstall                   # remove it; auto-spawn stays the floor
 ```
+
+```bash
+redskilled reclaim --dry-run                # what a sweep would take, and why
+redskilled reclaim                          # remove the runtime dirs whose owner is gone
+redskilled reclaim --grace-ms 60000         # how old a lease-less dir must be to count
+```
+
+## Reclaiming dead sessions
+
+A daemon that crashes leaves its runtime directory behind: a socket nothing
+listens on, a lease naming a pid that died, an event lane nobody will rehydrate.
+`redskilled reclaim` sweeps both runtime parents — the `XDG_RUNTIME_DIR` one and
+the `tmpdir()` fallback — and reports every directory it looked at.
+
+- **The lease decides, not the directory.** A dead pid in a lease is proof the
+  holder is gone; nothing else on disk proves anything. A lease naming a live
+  pid keeps its directory whatever else it contains.
+- **A directory with no lease is only a corpse once it is stale.** A daemon
+  mid-spawn has made its directory but not yet won its lease, so a lease-less
+  directory younger than the grace window is reported `young` and kept — as is
+  one whose socket still answers.
+- **The runtime parent is shared, so foreignness is judged by name.** `rsp`'s
+  resident sockets live under the same `red-skills/` parent. Only `redskilled.*`
+  files are this sweep's business; a directory holding anything else is reported
+  `foreign` and left alone.
+- **The report is the point.** An operator reaching for this is usually
+  mid-diagnosis — "which of these is a live daemon" is the question — so the
+  sweep names every directory and its reason, and `--dry-run` is that same report
+  with nothing removed.
