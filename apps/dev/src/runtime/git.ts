@@ -737,6 +737,33 @@ export async function listLocalBranches(ctx: GitContext, pattern: string): Promi
   return r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
+/**
+ * Local branches matching a glob whose commits `base` ALREADY CARRIES — the
+ * landed fact the branch reclaim decides on (#2866).
+ *
+ * `base` should be the trunk's remote ref (`origin/<trunk>`), because a stale
+ * local trunk under-reports what has landed. Under-reporting is the safe
+ * direction and is why a git failure returns nothing: a base git cannot resolve
+ * spares every branch rather than condemning them all.
+ */
+export async function listMergedLocalBranches(
+  ctx: GitContext,
+  pattern: string,
+  base: string,
+): Promise<string[]> {
+  if (!base) return [];
+  const r = await runGit(ctx, [
+    "branch",
+    "--list",
+    pattern,
+    "--merged",
+    base,
+    "--format=%(refname:short)",
+  ]);
+  if (r.code !== 0) return [];
+  return r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+}
+
 /** Local branches currently checked out (to exclude from the local reaper). */
 export async function checkedOutBranches(ctx: GitContext): Promise<Set<string>> {
   const out = new Set<string>();

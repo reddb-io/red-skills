@@ -683,9 +683,16 @@ export async function applyTmpJanitorReport(
     result.orphanFeedback.push(entry.path);
   }
 
-  // After removing orphaned feedback worktrees, ask git to prune its own
-  // internal registry so stale worktree entries do not accumulate there either.
-  if (result.orphanFeedback.length > 0 && options.worktreePrune) {
+  // Removing the BYTES of a registered git worktree is only half the reclaim:
+  // git's own registry still points at the deleted path, and a registration
+  // nothing cleaned up is the trap this sweep exists to remove — it blocks a new
+  // worktree at that path and can hold a lock a later gate run trips over
+  // (#2866). Every lane that can delete a worktree is counted, not just the
+  // feedback lane that used to be counted alone: a Worker's workspace is a
+  // registered worktree exactly as much as a feedback lane is.
+  const removedWorktrees =
+    removedFeedback.size + result.workerWorkspaces.length + result.staleWorkers.length;
+  if (removedWorktrees > 0 && options.worktreePrune) {
     await options.worktreePrune().catch(() => {});
   }
 

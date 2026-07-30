@@ -122,6 +122,7 @@ import {
   planLiveBranchCleanup,
   planLocalBranchCleanup,
 } from "./core/branch-cleanup.js";
+import { planBranchReclaim } from "./core/branch-reclaim.js";
 import { executeUnblockSweep } from "./core/boot-sweep.js";
 import { collectReapInputs } from "./runtime/wire/reap.js";
 import { collectActivityReview } from "./commands/activity-review.js";
@@ -478,13 +479,24 @@ export function createDefaultDevAfkMcpOperations(
         inputs.lookup,
         nowS,
       );
-      const localPlan = planLocalBranchCleanup(
-        inputs.localLiveRefs,
-        inputs.lookup,
-        nowS,
+      // The local pass runs the one reclaim (#2866): it decides on the landed
+      // fact and refuses infrastructure refs by name, and it reports its spares
+      // so a caller of this tool sees what was kept on purpose.
+      const issueClosed = new Set(
+        branchesToReap(planLocalBranchCleanup(inputs.localLiveRefs, inputs.lookup, nowS))
+          .map((item) => item.branch),
+      );
+      const landed = new Set(inputs.landedLocalBranches);
+      const localPlan = planBranchReclaim(
+        inputs.localLiveRefs.map((ref) => ({
+          branch: ref.branch,
+          landed: landed.has(ref.branch),
+          issueClosed: issueClosed.has(ref.branch),
+        })),
+        { trunk: inputs.trunk },
       );
       const remoteReaped = branchesToReap(remotePlan).map((item) => item.branch);
-      const localReaped = branchesToReap(localPlan).map((item) => item.branch);
+      const localReaped = localPlan.reclaim.map((item) => item.branch);
       for (const branch of remoteReaped) await inputs.deleteRemote(branch);
       for (const branch of localReaped) await inputs.deleteLocal(branch);
       return {
@@ -492,6 +504,11 @@ export function createDefaultDevAfkMcpOperations(
         local_found: inputs.localLiveRefs.length,
         remote_reaped: remoteReaped,
         local_reaped: localReaped,
+        local_spared: localPlan.spare.map((item) => ({
+          branch: item.branch,
+          verdict: item.verdict,
+          reason: item.reason,
+        })),
       };
     },
     async unblockSweep() {

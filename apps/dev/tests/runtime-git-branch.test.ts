@@ -15,6 +15,7 @@ import {
   worktreePathUnder,
   unquotePorcelainPath,
   listRemoteBranches,
+  listMergedLocalBranches,
 } from "../src/runtime/git.js";
 import type { GitContext } from "../src/runtime/git.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
@@ -400,5 +401,35 @@ describe("exit-time salvage surface (ADR 0103)", () => {
     const gitModule = await import("../src/runtime/git.js");
     expect(Object.keys(gitModule)).not.toContain("salvageUncommitted");
     expect(Object.keys(gitModule)).not.toContain("pushBranch");
+  });
+});
+
+describe("listMergedLocalBranches reads the landed fact (#2866)", () => {
+  it("asks git which matching branches the base already carries", async () => {
+    const { exec, calls } = recordingExec(() => ok("afk/9-landed\nafk/3-also-landed\n"));
+    const ctx: GitContext = { cwd: "/repo", exec };
+    const merged = await listMergedLocalBranches(ctx, "afk/*", "origin/main");
+    expect(merged).toEqual(["afk/9-landed", "afk/3-also-landed"]);
+    expect(calls[0]).toEqual([
+      "git",
+      "branch",
+      "--list",
+      "afk/*",
+      "--merged",
+      "origin/main",
+      "--format=%(refname:short)",
+    ]);
+  });
+
+  it("reports NOTHING landed when git cannot resolve the base", async () => {
+    // Under-reporting spares every branch; over-reporting deletes unlanded work.
+    const { exec } = recordingExec(() => fail());
+    expect(await listMergedLocalBranches({ cwd: "/repo", exec }, "afk/*", "origin/main")).toEqual([]);
+  });
+
+  it("asks git nothing at all when no base was resolved", async () => {
+    const { exec, calls } = recordingExec(() => ok("afk/9-landed\n"));
+    expect(await listMergedLocalBranches({ cwd: "/repo", exec }, "afk/*", "")).toEqual([]);
+    expect(calls).toEqual([]);
   });
 });

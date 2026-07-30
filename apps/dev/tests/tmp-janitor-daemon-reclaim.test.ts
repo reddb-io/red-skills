@@ -286,3 +286,42 @@ describe("the reclaim planner stays total", () => {
     expect(plan.retain.map((verdict) => verdict.verdict)).toEqual(["worker-live", "worker-live"]);
   });
 });
+
+describe("reclaiming a worktree also drops git's registration of it (#2866)", () => {
+  it("prunes after removing a dead Worker's workspace", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    const { worktree } = await workspace(tmp, "wDONE", 2866);
+    let pruned = 0;
+
+    const result = await runTmpJanitor(tmp, NOW, () => "OPEN", {
+      fix: true,
+      daemon: daemonNaming("wOTHER"),
+      worktreePrune: async () => {
+        pruned += 1;
+      },
+    });
+
+    expect(result.applied?.workerWorkspaces).toEqual([worktree]);
+    // Without this, git keeps pointing at a path that no longer exists — the
+    // stale registration that blocked a gate worktree from being created.
+    expect(pruned).toBe(1);
+  });
+
+  it("does not prune when nothing was removed", async () => {
+    const root = await tempRoot();
+    const tmp = join(root, ".red", "tmp");
+    await workspace(tmp, "wLIVE", 2866);
+    let pruned = 0;
+
+    await runTmpJanitor(tmp, NOW, () => "OPEN", {
+      fix: true,
+      daemon: daemonNaming("wLIVE"),
+      worktreePrune: async () => {
+        pruned += 1;
+      },
+    });
+
+    expect(pruned).toBe(0);
+  });
+});

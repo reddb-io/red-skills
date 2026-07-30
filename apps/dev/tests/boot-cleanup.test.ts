@@ -14,6 +14,33 @@ import {
   type UnblockCandidate,
 } from "./boot.helpers.js";
 import { KNOWN_TMP_LANES } from "../src/core/tmp-janitor.js";
+import type { WorkerArtifactVerdict } from "../src/core/worker-reclaim.js";
+
+type JanitorSweep = NonNullable<NonNullable<Parameters<typeof options>[0]>["tmpJanitor"]>;
+
+function emptyJanitorPlan(): JanitorSweep["plan"] {
+  return {
+    logs: { reclaim: [], spare: [] },
+    scratch: { reclaim: [], spare: [] },
+    diagnostics: { reclaim: [], spare: [] },
+    feedbackWorktrees: { reclaim: [], spare: [] },
+    legacySlotLogs: { reclaim: [], spare: [] },
+    unknownTmpRoots: [],
+  };
+}
+
+/** One dead Worker's workspace, already condemned by the daemon-keyed planner. */
+function workspaceVerdict(workerId: string, path: string): WorkerArtifactVerdict {
+  return {
+    worker_id: workerId,
+    artifact: { worker_id: workerId, kind: "worktree", path },
+    class: "workspace",
+    liveness: "dead",
+    reclaim: true,
+    verdict: "workspace-reclaimable",
+    reason: "the daemon calls this Worker gone",
+  };
+}
 
 describe("runBoot tmp janitor", () => {
   it("reaps orphan test-runner groups and records an audit row", async () => {
@@ -90,6 +117,49 @@ describe("runBoot tmp janitor", () => {
         { path: "/p/.red/tmp/work-old", livenessVerdict: "not-worker-workspace" },
       ],
     });
+  });
+
+  // #2866: removing a worktree's bytes leaves git still registering the path,
+  // which is what blocked a gate worktree from being created there.
+  it("prunes git's worktree registry after reclaiming a dead Worker's workspace", async () => {
+    const { deps, gitCalls } = makeDeps({ workerWorkspaceLivenessVerdict: async () => "dead" });
+    await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: emptyJanitorPlan(),
+          staleWorkers: { reclaim: [], spare: [] },
+          workerReclaim: {
+            workers: [],
+            reclaim: [
+              workspaceVerdict("wDEAD", "/p/.red/tmp/workers/wDEAD/2866/worktree"),
+            ],
+            retain: [],
+            dropped: [],
+            truncated: false,
+            totals: { considered: 1, reclaim: 1, retain: 0, dropped: 0 },
+          },
+        },
+      }),
+    );
+    expect(gitCalls.worktreePrune).toBe(1);
+  });
+
+  it("does not prune when only logs and scratch expired", async () => {
+    const { deps, gitCalls } = makeDeps();
+    await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: {
+            ...emptyJanitorPlan(),
+            logs: { reclaim: [{ path: "/p/.red/tmp/logs/old", mtimeS: NOW - 99 }], spare: [] },
+          },
+          staleWorkers: { reclaim: [], spare: [] },
+        },
+      }),
+    );
+    expect(gitCalls.worktreePrune).toBe(0);
   });
 
   it("refuses to remove a registered lane named as an unknown tmp root (#2679)", async () => {
@@ -417,10 +487,60 @@ describe("runBoot branch cleanup deletes the planned refs", () => {
     );
     expect(gitCalls.deleteRemote).toEqual(["afk/wAAA/9-slug"]);
     expect(gitCalls.deleteLocal).toEqual(["afk/wAAA/9-local"]);
-    expect(r.branchCleanup).toEqual({
-      remoteLiveReaped: ["afk/wAAA/9-slug"],
-      localLiveReaped: ["afk/wAAA/9-local"],
-    });
+    expect(r.branchCleanup?.remoteLiveReaped).toEqual(["afk/wAAA/9-slug"]);
+    expect(r.branchCleanup?.localLiveReaped).toEqual(["afk/wAAA/9-local"]);
+    expect(r.branchCleanup?.localSpared).toEqual([]);
+  });
+
+  // #2866: a branch whose PR merged while its issue stayed open is exactly the
+  // branch that accumulated 75-deep. Landing is the merge-base fact, so the
+  // reclaim must not wait for the tracker to catch up.
+  it("reaps a landed local branch even while its issue is still open", async () => {
+    const { deps, gitCalls } = makeDeps({ branchIssue: () => ({ state: "OPEN" } as IssueMeta) });
+    const localLiveRefs: BranchRef[] = [
+      { branch: "afk/wAAA/9-landed" },
+      { branch: "afk/wAAA/3-in-flight" },
+    ];
+    const r = await runBoot(
+      deps,
+      options({
+        branches: {
+          remoteLiveRefs: [],
+          localLiveRefs,
+          landedLocalBranches: ["afk/wAAA/9-landed"],
+          trunk: "main",
+        },
+      }),
+    );
+    expect(gitCalls.deleteLocal).toEqual(["afk/wAAA/9-landed"]);
+    expect(r.branchCleanup?.localSpared?.map((s) => [s.branch, s.verdict])).toEqual([
+      ["afk/wAAA/3-in-flight", "unlanded"],
+    ]);
+  });
+
+  it("never deletes red-trunk or the trunk, however landed they look", async () => {
+    const { deps, gitCalls } = makeDeps({ branchIssue: () => ({ state: "CLOSED", closedAt: "2000-01-01T00:00:00Z" } as IssueMeta) });
+    const localLiveRefs: BranchRef[] = [
+      { branch: "red-trunk" },
+      { branch: "main" },
+      { branch: "afk/wAAA/9-landed" },
+    ];
+    const r = await runBoot(
+      deps,
+      options({
+        branches: {
+          remoteLiveRefs: [],
+          localLiveRefs,
+          landedLocalBranches: ["red-trunk", "main", "afk/wAAA/9-landed"],
+          trunk: "main",
+        },
+      }),
+    );
+    expect(gitCalls.deleteLocal).toEqual(["afk/wAAA/9-landed"]);
+    expect(r.branchCleanup?.localSpared?.map((s) => [s.branch, s.verdict])).toEqual([
+      ["red-trunk", "infrastructure"],
+      ["main", "trunk"],
+    ]);
   });
 });
 

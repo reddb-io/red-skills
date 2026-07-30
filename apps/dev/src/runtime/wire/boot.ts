@@ -71,6 +71,7 @@ export async function collectBootOptions(
     remoteLiveRefs,
     localAll,
     checkedOut,
+    landedLocalBranches,
     unblockCandidates,
     staleClaimDirs,
     legacyWorkDirs,
@@ -82,6 +83,9 @@ export async function collectBootOptions(
       gitx.listRemoteBranches(gitCtx, "afk/"),
       gitx.listLocalBranches(gitCtx, "afk/*"),
       gitx.checkedOutBranches(gitCtx),
+      // Read against the trunk's REMOTE ref: a stale local trunk under-reports
+      // what has landed, and under-reporting only ever spares (#2866).
+      gitx.listMergedLocalBranches(gitCtx, "afk/*", `origin/${facts.configuredTrunk ?? DEFAULT_BRANCH}`),
       ghx.listUnblockCandidates(ghCtx),
       fsx.listStaleClaimDirs(paths.tmpDir),
       fsx.listLegacyWorkDirs(paths.tmpDir),
@@ -100,7 +104,12 @@ export async function collectBootOptions(
     bootstrap,
     orphans: orphans as readonly OrphanDir[],
     attemptCap: { byIssue },
-    branches: { remoteLiveRefs, localLiveRefs },
+    branches: {
+      remoteLiveRefs,
+      localLiveRefs,
+      landedLocalBranches,
+      trunk: facts.configuredTrunk ?? DEFAULT_BRANCH,
+    },
     unblockCandidates,
     staleClaimDirs,
     legacyWorkDirs,
@@ -509,6 +518,7 @@ export async function buildBootDeps(
       deleteLocalBranch: async (branch) => {
         await gitx.deleteLocalBranch(gitCtx, branch);
       },
+      worktreePrune: () => gitx.worktreePrune(gitCtx),
     },
     log,
     fastForwardLocalBase: ({ remote, target }) =>

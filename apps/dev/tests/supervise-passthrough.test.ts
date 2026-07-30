@@ -164,13 +164,21 @@ describe("formatBootSweepResult — supervisor boot log shape (#623)", () => {
       bootstrap: { ok: true },
       orphanCleanup: { removed: ["a", "b"], restored: [7], kept: ["c"], legacyWiped: [], claimsReleased: [] },
       attemptCap: { reclaimed: ["x"] },
-      branchCleanup: { remoteLiveReaped: [], localLiveReaped: ["l1", "l2"] },
+      branchCleanup: {
+        remoteLiveReaped: [],
+        localLiveReaped: ["l1", "l2"],
+        localSpared: [
+          // #2866: the spare is reported, so an operator can see the trunk
+          // mirror was kept on purpose rather than missed by accident.
+          { branch: "red-trunk", reclaim: false, verdict: "infrastructure", reason: "infrastructure ref" },
+        ],
+      },
       unblockSweep: { promoted: [9] },
       straggler: { counts: { unlabeled: 2, needsTriage: 1, needsInfo: 0 }, warn: true },
     };
     expect(formatBootSweepResult(result)).toBe(
       "boot sweeps complete: orphans removed=2 restored=1 kept=1 | attempt-cap reclaimed=1 | " +
-        "branches remote=0 local=2 | tmp-janitor expired=0 workers=0 orphan-runners=0 unknown=0 protected=0 | " +
+        "branches remote=0 local=2 spared=1 | tmp-janitor expired=0 workers=0 orphan-runners=0 unknown=0 protected=0 | " +
         "docs-sweep clean files=0 | unblocked=1 | stragglers unlabeled=2 triage=1 info=0",
     );
   });

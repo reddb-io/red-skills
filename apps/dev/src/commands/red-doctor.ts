@@ -457,7 +457,13 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
         installTq: () => execTool("sh", ["-c", tqInstallRecipe()], { cwd: ctx.root }),
       },
     );
-    const applied = flags.fix ? await applyTmpJanitorReport(paths.tmpDir, report) : undefined;
+    // `worktreePrune` is wired so a doctor that removes a worktree's bytes also
+    // drops git's registration of it — half a reclaim leaves the trap (#2866).
+    const applied = flags.fix
+      ? await applyTmpJanitorReport(paths.tmpDir, report, {
+          worktreePrune: () => gitx.worktreePrune({ cwd: ctx.root }),
+        })
+      : undefined;
     // Detection only — /red-doctor consumes the same read-only deadend audit
     // the `deadend_audit` MCP tool serves; it renders findings and never mutates.
     // A gather failure degrades to an empty section, never a failed doctor.

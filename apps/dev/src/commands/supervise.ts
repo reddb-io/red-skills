@@ -476,7 +476,9 @@ export function formatBootSweepResult(result: BootResult): string {
     "boot sweeps complete: " +
     `orphans removed=${oc?.removed.length ?? 0} restored=${oc?.restored.length ?? 0} kept=${oc?.kept.length ?? 0}` +
     ` | attempt-cap reclaimed=${ac?.reclaimed.length ?? 0}` +
-    ` | branches remote=${bc?.remoteLiveReaped.length ?? 0} local=${bc?.localLiveReaped.length ?? 0}` +
+    // `spared` is reported beside `local` on purpose (#2866): a reclaim that
+    // only ever prints its deletions cannot be audited for what it refused.
+    ` | branches remote=${bc?.remoteLiveReaped.length ?? 0} local=${bc?.localLiveReaped.length ?? 0} spared=${bc?.localSpared?.length ?? 0}` +
     ` | tmp-janitor expired=${tj?.expiredLanes.length ?? 0} workers=${tj?.staleWorkers.length ?? 0} orphan-runners=${tj?.orphanTestRunners?.length ?? 0} unknown=${tj?.unknownTmpRoots.length ?? 0} protected=${(tj?.protectedLiveWorkers.length ?? 0) + (tj?.protectedLiveFeedback.length ?? 0)}` +
     janitorRemovalLog +
     ` | docs-sweep ${ds?.action ?? "clean"} files=${ds?.files.length ?? 0}` +
