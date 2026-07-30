@@ -10,12 +10,42 @@ import {
   diffCheckRuns,
   nextPollDelayMs,
   parseConditionalResponse,
+  rateLimitDelayMs,
   snapshotCheckRuns,
   type CheckSnapshot,
+  type RateLimitPacing,
 } from "../core/etag-polling.js";
 import { type ExecFn, execTool } from "./exec.js";
+import { isGhRateLimited } from "./gh/quota.js";
 
 export const ETAG_POLL_FLOOR_S = 60;
+/** Upper bound on one quota wait — the same 30-minute cap the worker path's
+ * `withGhQuotaBackoff` uses, so every quota wait in the process is bounded
+ * alike. */
+export const ETAG_QUOTA_WAIT_CAP_MS = 30 * 60 * 1000;
+
+/**
+ * A poll that GitHub refused for quota reasons, carrying whatever pacing the
+ * response supplied. Distinct from a generic transport fault: the cure is to
+ * sleep until the window resets, not to retry at the floor.
+ */
+export class EtagQuotaExhaustedError extends Error {
+  readonly pacing: RateLimitPacing;
+
+  constructor(pacing: RateLimitPacing) {
+    super("github rate limit exhausted during conditional poll");
+    this.name = "EtagQuotaExhaustedError";
+    this.pacing = pacing;
+  }
+}
+
+/** The pacing fields of a parsed response, without the undefined keys. */
+function pacingOf(parsed: { resetAtMs?: number; retryAfterS?: number }): RateLimitPacing {
+  return {
+    ...(parsed.resetAtMs !== undefined ? { resetAtMs: parsed.resetAtMs } : {}),
+    ...(parsed.retryAfterS !== undefined ? { retryAfterS: parsed.retryAfterS } : {}),
+  };
+}
 
 export interface EtagPollingOptions {
   readonly root: string;
@@ -26,6 +56,13 @@ export interface EtagPollingOptions {
    * the two transports never double-emit. */
   readonly paused?: () => boolean;
   readonly sleep?: (ms: number) => Promise<void>;
+  /** Current epoch in ms; injectable so quota waits are testable on a fake clock. */
+  readonly nowMs?: () => number;
+  /** Called before each quota wait with its length, so a long sleep is
+   * observable rather than indistinguishable from a hang. */
+  readonly onQuotaWait?: (waitMs: number) => void;
+  /** Upper bound on a single quota wait (default {@link ETAG_QUOTA_WAIT_CAP_MS}). */
+  readonly quotaWaitCapMs?: number;
 }
 
 /**
@@ -59,16 +96,29 @@ export class EtagPollingForwarder extends EventEmitter implements ResidentWebhoo
   private async loop(): Promise<void> {
     const sleep =
       this.options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms).unref?.()));
+    const floorS = this.options.floorS ?? ETAG_POLL_FLOOR_S;
     while (!this.dead) {
       let pollIntervalS: number | undefined;
+      let quotaWaitMs: number | undefined;
       try {
         if (!this.options.paused?.()) {
           pollIntervalS = await this.pollOnce();
         }
-      } catch {
-        // transport fault — retry after the floor.
+      } catch (error) {
+        if (error instanceof EtagQuotaExhaustedError) {
+          // The quota is at zero: sleep until the window resets instead of
+          // spending the floor cadence on requests that cannot succeed.
+          quotaWaitMs = rateLimitDelayMs(
+            error.pacing,
+            (this.options.nowMs ?? Date.now)(),
+            floorS,
+            this.options.quotaWaitCapMs ?? ETAG_QUOTA_WAIT_CAP_MS,
+          );
+          this.options.onQuotaWait?.(quotaWaitMs);
+        }
+        // any other transport fault — retry after the floor.
       }
-      await sleep(nextPollDelayMs(pollIntervalS, this.options.floorS ?? ETAG_POLL_FLOOR_S));
+      await sleep(quotaWaitMs ?? nextPollDelayMs(pollIntervalS, floorS));
     }
   }
 
@@ -80,6 +130,9 @@ export class EtagPollingForwarder extends EventEmitter implements ResidentWebhoo
       const args = ["api", "-i", path, ...(etag ? ["-H", `If-None-Match: ${etag}`] : [])];
       const r = await exec("gh", args, { cwd: this.options.root });
       const parsed = parseConditionalResponse(r.stdout);
+      // The quota taxonomy has one owner (`gh/quota.ts`); a rate limit is
+      // raised as its own fault so the loop can pace on the reset instant.
+      if (isGhRateLimited(r)) throw new EtagQuotaExhaustedError(pacingOf(parsed));
       if (parsed.etag) this.etags.set(path, parsed.etag);
       return parsed;
     };
@@ -113,6 +166,9 @@ export class EtagPollingForwarder extends EventEmitter implements ResidentWebhoo
         ["pr", "view", String(record.pr), "--json", "headRefOid", "--jq", ".headRefOid"],
         { cwd: this.options.root },
       );
+      // A quota-exhausted head read means every later read in this cycle is
+      // exhausted too — abort the cycle rather than spend the rest of it.
+      if (isGhRateLimited(head)) throw new EtagQuotaExhaustedError({});
       const sha = head.stdout.trim();
       if (head.code !== 0 || sha === "") continue;
       const checks = await conditional(`repos/{owner}/{repo}/commits/${sha}/check-runs`);
