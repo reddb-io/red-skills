@@ -89,7 +89,7 @@ async function host(): Promise<Host> {
   await writeFile(publishedBundle, publishedBundleSource(launchLog), { mode: 0o755 });
   await writeFile(callerEntry, "", { mode: 0o755 });
 
-  const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root });
+  const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root });
   return {
     paths,
     launchLog,

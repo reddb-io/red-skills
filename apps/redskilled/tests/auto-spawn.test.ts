@@ -91,7 +91,7 @@ async function host(options: { readonly publishBundle?: boolean } = {}): Promise
   // observation rather than an accident of a missing file.
   await writeFile(callerEntry, recordingSource(callerLog, CALLER_VERSION), { mode: 0o755 });
 
-  const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root });
+  const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root });
   return {
     paths,
     launchLog,

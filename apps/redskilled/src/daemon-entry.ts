@@ -127,6 +127,8 @@ export interface RedskilledServeTarget {
   readonly eventLanePath: string;
   readonly sessionKeyHash: string;
   readonly machineIdHash: string;
+  /** The machine-wide claim the daemon must hold; given, never derived (rule 3). */
+  readonly machineClaimPath: string;
 }
 
 /**
@@ -153,6 +155,8 @@ export function redskilledServeArgv(
     target.sessionKeyHash,
     "--machine-id-hash",
     target.machineIdHash,
+    "--machine-claim",
+    target.machineClaimPath,
   ];
   if (options.idleMs != null) argv.push("--idle-ms", String(options.idleMs));
   if (options.daemonVersion != null) argv.push("--daemon-version", options.daemonVersion);

@@ -19,7 +19,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { tryAcquireExclusiveLock } from "@reddb-io/shared/resident-core.js";
+import { isPidAlive, tryAcquireExclusiveLock } from "@reddb-io/shared/resident-core.js";
 import {
   redskilledServeArgv,
   requireRedskilledEntry,
@@ -28,6 +28,7 @@ import {
 } from "./daemon-entry.js";
 import { socketAnswers } from "./daemon.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
+import { createRedskilledMachineClaimStore, RedskilledMachineHeldError } from "./machine-scope.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
   isRedskilledStatuslinePayload,
@@ -64,6 +65,15 @@ export {
   type RedskilledEntryResolution,
   type RedskilledEntrySource,
 } from "./daemon-entry.js";
+
+// Re-exported for the same reason: a caller that reaches the daemon is the caller
+// that can be refused the machine, and it should not need a second import path to
+// name the refusal it just received.
+export {
+  RedskilledMachineHeldError,
+  type RedskilledMachineClaim,
+  type RedskilledMachineRefusal,
+} from "./machine-scope.js";
 
 /** How long a client waits for a daemon — its own or the race winner's — to answer. */
 export const DEFAULT_REDSKILLED_READY_TIMEOUT_MS = 10_000;
@@ -130,8 +140,11 @@ export async function ensureRedskilledDaemon(
   try {
     return await reachRedskilledDaemon(paths, config);
   } catch (err) {
-    // Every way this can end without a live socket becomes ONE named state, so a
+    // A machine already held is not "unreachable": there IS a daemon, it is not
+    // this session's, and the operator's next action is to reach or stop it. Every
+    // OTHER way this ends without a live socket becomes ONE named state, so a
     // caller can never read "no host answered" as "the host answered nothing".
+    if (err instanceof RedskilledMachineHeldError) throw err;
     throw err instanceof RedskilledUnreachableError ? err : new RedskilledUnreachableError(paths.socketPath, err);
   }
 }
@@ -142,6 +155,11 @@ async function reachRedskilledDaemon(
 ): Promise<"already-running" | "spawned" | "joined"> {
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
   if (await socketAnswers(paths.socketPath)) return "already-running";
+
+  // Our own socket is silent — so before spawning, ask the machine whether it
+  // already has a daemon somewhere this session cannot see (ADR 0130 Amendment 2).
+  // Spawning first and refusing afterwards would still have been two daemons.
+  await refuseWhenMachineIsHeld(paths);
 
   const lock = await tryAcquireExclusiveLock(paths.lockPath);
   if (!lock) {
@@ -162,6 +180,30 @@ async function reachRedskilledDaemon(
     await lock.close();
     await rm(paths.lockPath, { force: true });
   }
+}
+
+/**
+ * Refuse a spawn the machine already has an answer for.
+ *
+ * The claim is only consulted to REFUSE, never to admit: a machine whose claim is
+ * absent, stale or unreadable falls through to the ordinary start, where the
+ * daemon's own claim, lease and exclusive bind decide. Reading it here buys one
+ * thing the daemon cannot — the second daemon is never spawned at all, so a
+ * foreign user gets a message instead of a process that lives for a heartbeat.
+ */
+async function refuseWhenMachineIsHeld(paths: RedskilledPaths): Promise<void> {
+  const store = createRedskilledMachineClaimStore(paths.machineClaimPath, {
+    machineIdHash: paths.machineIdHash,
+    sessionKeyHash: paths.sessionKeyHash,
+    socketPath: paths.socketPath,
+  });
+  const claim = await store.read().catch(() => undefined);
+  if (claim == null) return;
+  // Our own machine's daemon, on our own socket: that is the daemon this client
+  // wants, and it is simply not answering yet.
+  if (claim.socket_path === paths.socketPath) return;
+  if (!isPidAlive(claim.pid)) return;
+  throw new RedskilledMachineHeldError(paths.machineClaimPath, "held", claim);
 }
 
 /**

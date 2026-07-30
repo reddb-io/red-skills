@@ -137,6 +137,10 @@ export async function createCanarySandbox(
     // systemd user-session placement out of the picture, which is the same
     // opt-out the scope line above already declares.
     XDG_RUNTIME_DIR: runtimeRoot,
+    // The same isolation one level up: the sandbox poses as its own MACHINE, so
+    // the machine-wide claim (ADR 0130 Amendment 2) that refuses a second daemon
+    // on a real host cannot refuse the harness against the developer's own.
+    REDSKILLED_MACHINE_DIR: join(root, "machine"),
   };
 
   // Loud, not hopeful: `runtimeSocketDir` silently falls back to `tmpdir()` when

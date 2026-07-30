@@ -164,7 +164,7 @@ describe("provisioning a machine with no prior state", () => {
   it("yields a reachable daemon, and the second run changes nothing", async () => {
     const home = await fakeHome();
     const runtimeDir = await fakeHome();
-    const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${runtimeDir}` }, runtimeDir });
+    const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${runtimeDir}`, REDSKILLED_MACHINE_DIR: runtimeDir }, runtimeDir });
     // The daemon runs from a stated command rather than a resolved bundle, so
     // the test exercises provisioning without shipping an artifact first.
     const client = { serverCommand: process.execPath, serverArgs: ["--import", tsxLoader, cliEntry] };
@@ -192,7 +192,7 @@ describe("provisioning a machine with no prior state", () => {
   it("reports without creating or starting anything under --check", async () => {
     const home = await fakeHome();
     const runtimeDir = await fakeHome();
-    const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `check:${runtimeDir}` }, runtimeDir });
+    const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `check:${runtimeDir}`, REDSKILLED_MACHINE_DIR: runtimeDir }, runtimeDir });
     const lines: string[] = [];
 
     const code = await runProvision(["--check"], {
