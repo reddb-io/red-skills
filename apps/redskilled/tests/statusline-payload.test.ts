@@ -64,7 +64,7 @@ async function twoProjectDaemon(): Promise<{ daemon: RedskilledDaemon; paths: Re
     sampleMs: 0,
     ceiling: UNBOUNDED_HOST_CEILING,
     stopWorker: () => true,
-    memorySampler: () => ({ "w-1": 512 * 1024 * 1024, "w-2": 128 * 1024 * 1024 }),
+    treeSampler: () => ({ rss: { "w-1": 512 * 1024 * 1024, "w-2": 128 * 1024 * 1024 }, cpu_seconds: {} }),
   });
   running.push(daemon);
   daemon.trackWorker(worker());

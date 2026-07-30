@@ -20,7 +20,14 @@
  * value, the observed RSS, and the workspace whose branch or PR is handed
  * forward.
  *
- * PURE except for {@link sampleTreeRss}, the one function that reads the host.
+ * **RSS and CPU come out of the SAME walk.** Three states hold memory and read
+ * alike by RSS alone — a Worker running a long gate, a Worker hung on a wedged
+ * command, and a Worker already dead and unreaped — and accumulated CPU time is
+ * what separates them. It is read from the `/proc/<pid>/stat` line already open
+ * for RSS, so the second measurement costs no second instrument and no per-Worker
+ * read: the tick's price stays the host's process table.
+ *
+ * PURE except for {@link sampleWorkerTrees}, the one function that reads the host.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
@@ -90,10 +97,31 @@ export interface RedskilledMemoryTickOutcome {
  */
 export type RedskilledRssReading = Readonly<Record<string, number>>;
 
+/**
+ * Accumulated tree CPU time per Worker, in seconds, keyed by `worker_id`.
+ *
+ * Absent rather than zero for the same reason RSS is, and for a sharper one: a
+ * Worker reported at zero CPU reads as a Worker that has done nothing, which is
+ * exactly the state a reader would act on.
+ */
+export type RedskilledCpuReading = Readonly<Record<string, number>>;
+
+/**
+ * One tick's reading of the whole Worker set — both measurements, one walk.
+ *
+ * The two arrive together because they were taken together: a caller that could
+ * ask for CPU separately would be asking the host a second time, and the second
+ * ask is the per-Worker cost this module exists to refuse.
+ */
+export interface RedskilledTreeReading {
+  readonly rss: RedskilledRssReading;
+  readonly cpu_seconds: RedskilledCpuReading;
+}
+
 /** Measures the whole Worker set in one call. Injected, so a test needs no process. */
-export type RedskilledMemorySampler = (
+export type RedskilledTreeSampler = (
   workers: readonly RedskilledWorkerView[],
-) => RedskilledRssReading | Promise<RedskilledRssReading>;
+) => RedskilledTreeReading | Promise<RedskilledTreeReading>;
 
 /**
  * The budget this Worker's floor enforces, or `null` when there is none to enforce.
@@ -191,12 +219,18 @@ export function buildBudgetTermination(
 const PAGE_SIZE_BYTES = 4096;
 
 /**
- * Read every Worker's tree RSS in ONE pass over the host's process table.
+ * Read every Worker's tree RSS and CPU in ONE pass over the host's process table.
  *
  * The pass is shared: the process table is read once and each Worker's subtree is
  * summed out of that one snapshot, so a host holding ten Workers pays what a host
  * holding one pays. A Worker whose pid is gone is absent from the reading rather
  * than zero.
+ *
+ * **CPU rides the same rows RSS does.** Both numbers are summed in the same
+ * traversal of the same snapshot, so the reading answers "is this Worker alive
+ * and working?" without a second instrument. What the number MEANS is the
+ * reader's business: the daemon measures a Worker, it never judges the project's
+ * task (ADR 0130 rule 3).
  *
  * **The source of the table is the platform's, and only the source differs.**
  * Linux reads `/proc`; macOS reads `ps`, because it has no `/proc` and IS the
@@ -205,7 +239,7 @@ const PAGE_SIZE_BYTES = 4096;
  * without kernel teeth with no teeth at all. A host whose table cannot be read
  * yields an empty reading, which is the honest report that nothing was measured.
  */
-export function sampleTreeRss(
+export function sampleWorkerTrees(
   workers: readonly RedskilledWorkerView[],
   options: {
     readonly procRoot?: string;
@@ -213,12 +247,13 @@ export function sampleTreeRss(
     /** Injected `ps` output, so the macOS arm is provable off a Mac. */
     readonly psTable?: () => string;
   } = {},
-): RedskilledRssReading {
+): RedskilledTreeReading {
   const platform = options.platform ?? process.platform;
-  if (workers.length === 0) return {};
+  const empty: RedskilledTreeReading = { rss: {}, cpu_seconds: {} };
+  if (workers.length === 0) return empty;
 
   const table = readHostProcessTable(platform, options);
-  if (table.size === 0) return {};
+  if (table.size === 0) return empty;
 
   const children = new Map<number, number[]>();
   for (const entry of table.values()) {
@@ -227,10 +262,12 @@ export function sampleTreeRss(
     else children.set(entry.ppid, [entry.pid]);
   }
 
-  const reading: Record<string, number> = {};
+  const rss: Record<string, number> = {};
+  const cpuSeconds: Record<string, number> = {};
   for (const worker of workers) {
     if (!table.has(worker.pid)) continue;
-    let total = 0;
+    let totalRss = 0;
+    let totalCpu = 0;
     const queue = [worker.pid];
     const seen = new Set<number>();
     while (queue.length > 0) {
@@ -239,12 +276,14 @@ export function sampleTreeRss(
       seen.add(pid);
       const entry = table.get(pid);
       if (!entry) continue;
-      total += entry.rssBytes;
+      totalRss += entry.rssBytes;
+      totalCpu += entry.cpuSeconds;
       for (const child of children.get(pid) ?? []) queue.push(child);
     }
-    reading[worker.worker_id] = total;
+    rss[worker.worker_id] = totalRss;
+    cpuSeconds[worker.worker_id] = totalCpu;
   }
-  return reading;
+  return { rss, cpu_seconds: cpuSeconds };
 }
 
 /** One `/proc` row, in the kernel's own units. */
@@ -252,19 +291,22 @@ interface ProcessEntry {
   readonly pid: number;
   readonly ppid: number;
   readonly rssPages: number;
+  /** `utime + stime`, in the clock ticks `/proc` counts them in. */
+  readonly cpuTicks: number;
 }
 
 /**
- * One row of the host's process table, in bytes.
+ * One row of the host's process table, in bytes and seconds.
  *
- * Bytes rather than each source's own unit — pages on Linux, KiB from `ps` —
- * because the summation above must not have to know which platform produced the
- * row it is adding.
+ * Bytes rather than each source's own unit — pages on Linux, KiB from `ps` — and
+ * seconds rather than ticks or `ps`'s clock string, because the summation above
+ * must not have to know which platform produced the row it is adding.
  */
 interface HostProcessEntry {
   readonly pid: number;
   readonly ppid: number;
   readonly rssBytes: number;
+  readonly cpuSeconds: number;
 }
 
 /**
@@ -292,30 +334,59 @@ function readPsTable(injected?: () => string): string {
 }
 
 function runPs(): string {
-  return execFileSync("ps", ["-axo", "pid=,ppid=,rss="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+  return execFileSync("ps", ["-axo", "pid=,ppid=,rss=,time="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
 }
 
 /** How `ps` reports RSS on macOS. */
 const PS_RSS_UNIT_BYTES = 1024;
 
 /**
- * Parse `ps -axo pid=,ppid=,rss=` output into the host process table. PURE.
+ * Parse `ps -axo pid=,ppid=,rss=,time=` output into the host process table. PURE.
  *
- * Every line that is not three numbers is skipped rather than guessed at: a
- * header a future `ps` decides to print, or a truncated final line, must cost a
- * row and never a wrong parent — a mis-parsed ppid would attribute a stranger's
- * memory to a Worker and terminate it for someone else's leak.
+ * The CPU column rides the SAME `ps` call the RSS column does — one invocation,
+ * one table, both numbers — for the reason `/proc` reads both out of one line.
+ *
+ * Every line that is not three numbers and a clock is skipped rather than guessed
+ * at: a header a future `ps` decides to print, or a truncated final line, must
+ * cost a row and never a wrong parent — a mis-parsed ppid would attribute a
+ * stranger's memory to a Worker and terminate it for someone else's leak.
  */
 export function parsePsTable(raw: string): Map<number, HostProcessEntry> {
   const table = new Map<number, HostProcessEntry>();
   for (const line of raw.split("\n")) {
     const fields = line.trim().split(/\s+/);
-    if (fields.length !== 3) continue;
-    const [pid, ppid, rssKib] = fields.map(Number);
+    if (fields.length !== 4) continue;
+    const [pid, ppid, rssKib] = fields.slice(0, 3).map(Number);
     if (![pid, ppid, rssKib].every((value) => value != null && Number.isSafeInteger(value) && value >= 0)) continue;
-    table.set(pid!, { pid: pid!, ppid: ppid!, rssBytes: rssKib! * PS_RSS_UNIT_BYTES });
+    const cpuSeconds = parsePsCpuSeconds(fields[3]!);
+    if (cpuSeconds == null) continue;
+    table.set(pid!, { pid: pid!, ppid: ppid!, rssBytes: rssKib! * PS_RSS_UNIT_BYTES, cpuSeconds });
   }
   return table;
+}
+
+/**
+ * Parse `ps`'s accumulated CPU clock — `[[dd-]hh:]mm:ss[.ff]` — into seconds. PURE.
+ *
+ * Read from the right so the same reader handles every width `ps` prints: the
+ * last segment is seconds, each one to its left is sixty times the one after it,
+ * and an optional leading `dd-` is days. A segment that is not a number costs the
+ * whole row rather than a guessed magnitude.
+ */
+export function parsePsCpuSeconds(raw: string): number | null {
+  const dash = raw.indexOf("-");
+  const days = dash < 0 ? 0 : Number(raw.slice(0, dash));
+  if (!Number.isFinite(days) || days < 0) return null;
+  const segments = raw.slice(dash + 1).split(":");
+  let seconds = days * 86_400;
+  let multiplier = 1;
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const value = Number(segments[i]);
+    if (!Number.isFinite(value) || value < 0 || segments[i] === "") return null;
+    seconds += value * multiplier;
+    multiplier *= 60;
+  }
+  return seconds;
 }
 
 function readProcessTable(procRoot: string): Map<number, HostProcessEntry> {
@@ -337,10 +408,27 @@ function readProcessTable(procRoot: string): Map<number, HostProcessEntry> {
       continue;
     }
     const entry = parseProcStat(raw);
-    if (entry) table.set(entry.pid, { pid: entry.pid, ppid: entry.ppid, rssBytes: entry.rssPages * PAGE_SIZE_BYTES });
+    if (entry) {
+      table.set(entry.pid, {
+        pid: entry.pid,
+        ppid: entry.ppid,
+        rssBytes: entry.rssPages * PAGE_SIZE_BYTES,
+        cpuSeconds: entry.cpuTicks / CLOCK_TICKS_PER_SECOND,
+      });
+    }
   }
   return table;
 }
+
+/**
+ * The `USER_HZ` `/proc` counts CPU time in.
+ *
+ * 100 on every Linux this daemon runs on, and stated as a constant rather than
+ * asked of the host: `sysconf` is not reachable from Node without a native
+ * binding, and a binding for a number that has not moved would be a new
+ * dependency for the instrument that must stay cheapest.
+ */
+const CLOCK_TICKS_PER_SECOND = 100;
 
 /**
  * Parse one `/proc/<pid>/stat` line. PURE.
@@ -348,6 +436,9 @@ function readProcessTable(procRoot: string): Map<number, HostProcessEntry> {
  * The command name is read past rather than split on: it is the process's own
  * bytes, parentheses and spaces included, so a field split from the left would
  * mis-index every field after it for a process named `(my prog)`.
+ *
+ * `utime` and `stime` are read from THIS line, next to `rss`: the CPU reading
+ * costs the same open file the memory reading already paid for.
  */
 export function parseProcStat(raw: string): ProcessEntry | null {
   const close = raw.lastIndexOf(")");
@@ -355,9 +446,18 @@ export function parseProcStat(raw: string): ProcessEntry | null {
   const pid = Number(raw.slice(0, raw.indexOf(" ")));
   const fields = raw.slice(close + 1).trim().split(/\s+/);
   // Fields after `comm` are 1-indexed from `state` (field 3), so `ppid` (field 4)
-  // is index 1 and `rss` (field 24) is index 21.
+  // is index 1, `utime` (field 14) is index 11, `stime` (field 15) is index 12 and
+  // `rss` (field 24) is index 21.
   const ppid = Number(fields[1]);
+  const utime = Number(fields[11]);
+  const stime = Number(fields[12]);
   const rssPages = Number(fields[21]);
   if (!Number.isSafeInteger(pid) || !Number.isSafeInteger(ppid) || !Number.isFinite(rssPages)) return null;
-  return { pid, ppid, rssPages: Math.max(0, rssPages) };
+  if (!Number.isFinite(utime) || !Number.isFinite(stime)) return null;
+  return {
+    pid,
+    ppid,
+    rssPages: Math.max(0, rssPages),
+    cpuTicks: Math.max(0, utime) + Math.max(0, stime),
+  };
 }

@@ -208,7 +208,7 @@ describe("the line the Worker publishes", () => {
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
       clock: () => "2026-07-29T01:00:05.000Z",
-      memorySampler: () => ({ "w-1": 512 * MB }),
+      treeSampler: () => ({ rss: { "w-1": 512 * MB }, cpu_seconds: {} }),
     });
     running.push(daemon);
     daemon.trackWorker(worker());
@@ -243,7 +243,7 @@ describe("the line the Worker publishes", () => {
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
       clock: () => "2026-07-29T01:00:05.000Z",
-      memorySampler: () => ({}),
+      treeSampler: () => ({ rss: {}, cpu_seconds: {} }),
     });
     running.push(daemon);
     daemon.trackWorker(worker());
@@ -267,7 +267,7 @@ describe("the line the Worker publishes", () => {
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
       clock: () => "2026-07-29T01:00:05.000Z",
-      memorySampler: () => ({ "w-1": 512 * MB, "w-2": 128 * MB }),
+      treeSampler: () => ({ rss: { "w-1": 512 * MB, "w-2": 128 * MB }, cpu_seconds: {} }),
     });
     running.push(daemon);
     daemon.trackWorker(worker());
@@ -327,7 +327,7 @@ describe("a restart with no information", () => {
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
       clock: () => "2026-07-29T01:00:05.000Z",
-      memorySampler: () => ({}),
+      treeSampler: () => ({ rss: {}, cpu_seconds: {} }),
     });
     first.trackWorker(worker({ workspace_path: workspace, log_path: given }));
     first.trackWorker(worker({ worker_id: "w-2", pid: 43, workspace_path: workspace }));
@@ -341,7 +341,7 @@ describe("a restart with no information", () => {
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
       clock: () => "2026-07-29T01:05:00.000Z",
-      memorySampler: () => ({}),
+      treeSampler: () => ({ rss: {}, cpu_seconds: {} }),
       // The host still confirms both Workers, so the daemon holds two Workers it
       // has never heard a heartbeat from — the one state that permits a read.
       liveness: () => true,

@@ -7,8 +7,9 @@ import { describe, expect, it } from "vitest";
 import { evaluateWorkerAdmission, UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import {
   evaluateMemoryBudgets,
+  parsePsCpuSeconds,
   parsePsTable,
-  sampleTreeRss,
+  sampleWorkerTrees,
 } from "../src/memory-sampler.js";
 import {
   MAX_POSIX_NICE,
@@ -123,34 +124,49 @@ describe("macOS placement — the memory ceiling it refuses to claim", () => {
     expect(plan(DARWIN, { budget: { cpu_weight: 50 } }).budgetWarning).toBeUndefined();
   });
 
-  it("measures RSS on macOS from the process table `ps` reports, so the floor has a number to act on", () => {
+  it("measures RSS and CPU on macOS from the process table `ps` reports, so the floor has numbers to act on", () => {
     const ps = [
-      "  100     1  1048576",
-      "  200   100  2097152",
-      "  300   999    65536",
+      "  100     1  1048576    2:30.00",
+      "  200   100  2097152    0:30.00",
+      "  300   999    65536  120:00.00",
     ].join("\n");
-    const reading = sampleTreeRss([worker({ pid: 100 })], { platform: "darwin", psTable: () => ps });
+    const reading = sampleWorkerTrees([worker({ pid: 100 })], { platform: "darwin", psTable: () => ps });
 
     // KiB from `ps`, bytes in the reading — the child is summed, the stranger is not.
-    expect(reading).toEqual({ wQ9F2: (1048576 + 2097152) * 1024 });
+    expect(reading.rss).toEqual({ wQ9F2: (1048576 + 2097152) * 1024 });
+    // The same one `ps` call answers both: three minutes of tree CPU, and the
+    // stranger's two hours stays the stranger's.
+    expect(reading.cpu_seconds).toEqual({ wQ9F2: 180 });
   });
 
   it("reports nothing rather than zero when the host process table cannot be read", () => {
-    const reading = sampleTreeRss([worker({ pid: 100 })], {
+    const reading = sampleWorkerTrees([worker({ pid: 100 })], {
       platform: "darwin",
       psTable: () => {
         throw new Error("ps: command not found");
       },
     });
 
-    expect(reading).toEqual({});
+    expect(reading).toEqual({ rss: {}, cpu_seconds: {} });
   });
 
   it("parses `ps` output and ignores every line that is not a process row", () => {
-    const table = parsePsTable("  PID  PPID   RSS\n 12 1 2048\nnonsense\n");
+    const table = parsePsTable("  PID  PPID   RSS  TIME\n 12 1 2048 0:07.50\nnonsense\n 13 1 2048 later\n");
 
-    expect(table.get(12)).toEqual({ pid: 12, ppid: 1, rssBytes: 2048 * 1024 });
+    expect(table.get(12)).toEqual({ pid: 12, ppid: 1, rssBytes: 2048 * 1024, cpuSeconds: 7.5 });
+    // A row whose clock cannot be read costs the row, never a guessed magnitude.
     expect(table.size).toBe(1);
+  });
+
+  it("reads every width `ps` prints its accumulated CPU clock in", () => {
+    expect(parsePsCpuSeconds("0:00.00")).toBe(0);
+    expect(parsePsCpuSeconds("12:34.56")).toBe(12 * 60 + 34.56);
+    // BSD lets the minutes column run past sixty rather than growing a column.
+    expect(parsePsCpuSeconds("125:00.00")).toBe(125 * 60);
+    expect(parsePsCpuSeconds("3:04:05")).toBe(3 * 3600 + 4 * 60 + 5);
+    expect(parsePsCpuSeconds("2-03:04:05")).toBe(2 * 86_400 + 3 * 3600 + 4 * 60 + 5);
+    expect(parsePsCpuSeconds("-")).toBeNull();
+    expect(parsePsCpuSeconds("")).toBeNull();
   });
 });
 

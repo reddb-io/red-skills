@@ -50,9 +50,12 @@ import {
 import { buildHostState, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
 import {
   evaluateMemoryBudgets,
-  sampleTreeRss,
+  sampleWorkerTrees,
   type RedskilledBudgetTermination,
-  type RedskilledMemorySampler,
+  type RedskilledCpuReading,
+  type RedskilledRssReading,
+  type RedskilledTreeReading,
+  type RedskilledTreeSampler,
 } from "./memory-sampler.js";
 import {
   createRedskilledMachineClaimStore,
@@ -170,8 +173,8 @@ export interface RedskilledDaemonOptions {
   readonly liveness?: RedskilledLivenessProbe;
   /** How the daemon stops a Worker it is reclaiming a budget from. */
   readonly stopWorker?: RedskilledStopProbe;
-  /** How the whole Worker set's tree RSS is read; `/proc` by default. */
-  readonly memorySampler?: RedskilledMemorySampler;
+  /** How the whole Worker set's tree RSS and CPU are read; `/proc` by default. */
+  readonly treeSampler?: RedskilledTreeSampler;
   /** Window between memory samples; 0 or below leaves the sampler unarmed. */
   readonly sampleMs?: number;
   /**
@@ -382,7 +385,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const eventLane = options.eventLane ?? createRedskilledEventLane(paths.eventLanePath);
   const liveness = options.liveness ?? detectWorkerLiveness;
   const stopProbe = options.stopWorker ?? stopWorker;
-  const memorySampler = options.memorySampler ?? sampleTreeRss;
+  const treeSampler = options.treeSampler ?? sampleWorkerTrees;
   const readLogTail = options.readLogTail ?? readLastLogLine;
   const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
   const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
@@ -402,7 +405,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const activeSockets = new Set<Socket>();
   // The last thing the sampler measured, kept so a read is dated rather than
   // dating itself: staleness belongs to the daemon that took the measurement.
-  let lastReading: Awaited<ReturnType<RedskilledMemorySampler>> = {};
+  let lastReading: RedskilledRssReading = {};
   let lastSampledAt: string | null = null;
   // What this daemon has resolved about the world's version, kept beside — never
   // inside — the version it is running.
@@ -724,27 +727,50 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * The sample is taken ONCE for every Worker the daemon holds, so the tick's
    * cost is the host's process table rather than the Worker count. An empty set
    * is not sampled at all — there is nothing to measure and nothing to kill.
+   *
+   * The tick's CPU reading is recorded on every Worker it measured and acted on
+   * by nothing here: this tick enforces the memory budget, exactly as it did
+   * before the second number existed.
    */
   async function sampleMemoryBudgets(): Promise<readonly RedskilledBudgetTermination[]> {
     const live = [...workers.values()];
     if (live.length === 0) return [];
-    let rss: Awaited<ReturnType<RedskilledMemorySampler>>;
+    let reading: RedskilledTreeReading;
     try {
-      rss = await memorySampler(live);
+      reading = await treeSampler(live);
     } catch {
       // A sampler that could not read the host measured nothing, and a Worker
       // nothing measured is never killed on suspicion — nor is the last reading
       // re-dated, because a failed tick must age the payload rather than refresh it.
       return [];
     }
+    const rss = reading.rss;
     lastReading = rss;
     lastSampledAt = clock();
+    recordCpuReading(reading.cpu_seconds, lastSampledAt);
     const { terminations } = evaluateMemoryBudgets({ workers: live, rss });
     const done: RedskilledBudgetTermination[] = [];
     for (const termination of terminations) {
       if (await killWorkerOverBudget(termination.worker_id, termination.reason)) done.push(termination);
     }
     return done;
+  }
+
+  /**
+   * Carry this tick's CPU reading onto the Workers it measured.
+   *
+   * A Worker the tick did NOT measure keeps the sample it already had, dated by
+   * the tick that took it: dropping the number would erase the last thing known
+   * about a Worker exactly when it went quiet, and re-dating it would forge a
+   * measurement this tick never made.
+   */
+  function recordCpuReading(cpuSeconds: RedskilledCpuReading, sampledAt: string): void {
+    for (const [workerId, seconds] of Object.entries(cpuSeconds)) {
+      if (typeof seconds !== "number" || !Number.isFinite(seconds)) continue;
+      const held = workers.get(workerId);
+      if (!held) continue;
+      workers.set(workerId, { ...held, cpu: { cpu_seconds: seconds, sampled_at: sampledAt } });
+    }
   }
 
   /**
