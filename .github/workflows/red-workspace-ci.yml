@@ -142,6 +142,10 @@ jobs:
         if: needs.scope.outputs.run_manifest_checks == 'true'
         run: pnpm codex:manifests:check
 
+      - name: Check generated Gemini manifests
+        if: needs.scope.outputs.run_manifest_checks == 'true'
+        run: pnpm gemini:manifests:check
+
       - name: Check generated Pi manifests
         if: needs.scope.outputs.run_manifest_checks == 'true'
         run: pnpm pi:manifests:check
