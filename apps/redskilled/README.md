@@ -39,6 +39,7 @@ of it.
 | Finding the Workers a restart left running | `src/reattach.ts` — the unit name first, the pid only as fallback |
 | What the host has been promised | `src/budget-accounting.ts` — pure totals over the Worker set |
 | Reaching (and starting) the daemon | `src/client.ts` — auto-spawn, loser joins the winner |
+| Which file a spawn runs | `src/daemon-entry.ts` — the published bundle by name, never the caller's own entry |
 
 ## Behaviours worth knowing
 
@@ -46,6 +47,19 @@ of it.
   processes; the exclusive bind stops the ones that slip past from both
   believing they own the socket. The loser waits and connects to the winner — it
   never fails.
+- **A spawn runs the published bundle, and refuses rather than fall back.** The
+  entry is resolved by name — `REDSKILLED_BIN`, the caller's entry *only when it
+  is itself a redskilled entry*, then the bundle shipped beside a host, the repo
+  `dist/`, the workspace, the installed package, the bundle cache — and an
+  unresolvable bundle throws `RedskilledDaemonEntryError` naming every path it
+  probed. Re-executing the caller's own entry is the defect this repository has
+  already fixed twice (#2736, #2677): the launcher's version becomes the
+  daemon's, so a stale caller mints a staler daemon and the skew widens.
+- **No host answered is not the host answering nothing.** Every failure to reach
+  the daemon — an unresolvable bundle, a spawn that never bound, a socket that
+  died mid-request — surfaces as `RedskilledUnreachableError` carrying its cause.
+  An operator reading an empty host state must be reading an idle machine, never
+  a failed lookup.
 - **A pid is not an identity.** The lease pins `pid` *and* `start_time`, so a
   former process whose pid the OS reused cannot renew or release the current
   holder's lease. A crash leaves the record behind on purpose; the next acquirer

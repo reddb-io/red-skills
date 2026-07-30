@@ -17,11 +17,14 @@
  */
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import { tryAcquireExclusiveLock } from "@reddb-io/shared/resident-core.js";
+import {
+  requireRedskilledEntry,
+  type RedskilledEntryLookup,
+  type ResolvedRedskilledEntry,
+} from "./daemon-entry.js";
 import { socketAnswers } from "./daemon.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
 import type { RedskilledPaths } from "./paths.js";
@@ -44,6 +47,22 @@ import {
 import type { RedskilledStatuslineOptions } from "./statusline-render.js";
 import { clampPublishedLogLine } from "./worker-log.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
+
+// The entry resolver is re-exported here because reaching the daemon and
+// resolving what to spawn are one story for a caller, and a second import path
+// for the bundle's own name is how two names for one artifact start.
+export {
+  isRedskilledEntryPath,
+  isResolvedRedskilledEntry,
+  REDSKILLED_BIN_ENV,
+  REDSKILLED_BUNDLE_ASSET,
+  REDSKILLED_ENTRY_UNRESOLVED,
+  RedskilledDaemonEntryError,
+  requireRedskilledEntry,
+  resolveRedskilledEntry,
+  type RedskilledEntryResolution,
+  type RedskilledEntrySource,
+} from "./daemon-entry.js";
 
 /** How long a client waits for a daemon — its own or the race winner's — to answer. */
 export const DEFAULT_REDSKILLED_READY_TIMEOUT_MS = 10_000;
@@ -71,9 +90,16 @@ export class RedskilledUnreachableError extends Error {
 }
 
 export interface RedskilledClientConfig {
-  /** The command that runs the daemon; defaults to this bundle's own entry. */
+  /** The command that runs the daemon; defaults to the resolved published bundle. */
   readonly serverCommand?: string;
   readonly serverArgs?: readonly string[];
+  /**
+   * Where to look for the published bundle, when no `serverCommand` is stated.
+   *
+   * Injected so a test can pose as a foreign host at another version; a real
+   * caller passes nothing and gets the process's own environment.
+   */
+  readonly entryLookup?: RedskilledEntryLookup;
   readonly idleMs?: number;
   readonly readyTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
@@ -100,6 +126,19 @@ export async function ensureRedskilledDaemon(
   paths: RedskilledPaths,
   config: RedskilledClientConfig = {},
 ): Promise<"already-running" | "spawned" | "joined"> {
+  try {
+    return await reachRedskilledDaemon(paths, config);
+  } catch (err) {
+    // Every way this can end without a live socket becomes ONE named state, so a
+    // caller can never read "no host answered" as "the host answered nothing".
+    throw err instanceof RedskilledUnreachableError ? err : new RedskilledUnreachableError(paths.socketPath, err);
+  }
+}
+
+async function reachRedskilledDaemon(
+  paths: RedskilledPaths,
+  config: RedskilledClientConfig,
+): Promise<"already-running" | "spawned" | "joined"> {
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
   if (await socketAnswers(paths.socketPath)) return "already-running";
 
@@ -111,9 +150,12 @@ export async function ensureRedskilledDaemon(
     return "joined";
   }
   try {
+    // Re-checked under the lock: between the first probe and the acquisition a
+    // winner may already have bound, and spawning on top of it is the very
+    // second daemon the lock exists to prevent.
     if (await socketAnswers(paths.socketPath)) return "already-running";
-    spawnDaemon(paths, config);
-    await waitForDaemon(paths, config);
+    const spawned = spawnDaemon(paths, config);
+    await waitForDaemon(paths, config, spawned);
     return "spawned";
   } finally {
     await lock.close();
@@ -140,10 +182,17 @@ export async function requestRedskilled(
   config: RedskilledClientConfig = {},
 ): Promise<unknown> {
   await ensureRedskilledDaemon(paths, config);
-  const response = await sendRedskilledRequest(
-    { socketPath: paths.socketPath, timeoutMs: config.requestTimeoutMs ?? 2_000 },
-    { ...request, id: randomUUID() } as RedskilledRequest,
-  );
+  let response;
+  try {
+    response = await sendRedskilledRequest(
+      { socketPath: paths.socketPath, timeoutMs: config.requestTimeoutMs ?? 2_000 },
+      { ...request, id: randomUUID() } as RedskilledRequest,
+    );
+  } catch (err) {
+    // A socket that answered a ping and then died mid-request is still the host
+    // saying nothing; only an `ok: false` answer is the host refusing something.
+    throw new RedskilledUnreachableError(paths.socketPath, err);
+  }
   if (!response.ok) throw new Error(response.error);
   return response.value;
 }
@@ -293,11 +342,9 @@ export async function startRedskilledWorker(
   // Reaching the daemon is its own step so its failure is its own error: a
   // caller must be able to tell "the host refused this Worker" from "there was
   // no host to ask", and neither may end in a Worker.
-  try {
-    await ensureRedskilledDaemon(paths, config);
-  } catch (err) {
-    throw new RedskilledUnreachableError(paths.socketPath, err);
-  }
+  // `ensureRedskilledDaemon` already speaks that state, so it is rethrown as-is:
+  // re-wrapping it would bury the resolved-bundle diagnostic one cause deeper.
+  await ensureRedskilledDaemon(paths, config);
   // A client that stated no session project is dispatching into itself: the
   // spec's own label IS the session's project, and the reach rule only ever had
   // something to refuse when a session named a DIFFERENT one.
@@ -310,19 +357,57 @@ export async function startRedskilledWorker(
   return value;
 }
 
-async function waitForDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): Promise<void> {
+/**
+ * A spawn in flight: what was started, and the first thing that went wrong.
+ *
+ * `failure` exists so a daemon that never bound is diagnosed by the reason it
+ * died rather than by a bare timeout — `ENOENT` on the resolved bundle and a
+ * daemon that is merely slow read identically otherwise.
+ */
+interface SpawnedDaemon {
+  readonly entry: ResolvedRedskilledEntry;
+  failure?: Error;
+  exit?: string;
+}
+
+async function waitForDaemon(
+  paths: RedskilledPaths,
+  config: RedskilledClientConfig,
+  spawned?: SpawnedDaemon,
+): Promise<void> {
   const deadline = Date.now() + (config.readyTimeoutMs ?? DEFAULT_REDSKILLED_READY_TIMEOUT_MS);
   for (;;) {
     if (await socketAnswers(paths.socketPath)) return;
-    if (Date.now() >= deadline) throw new Error(`redskilled daemon did not start on ${JSON.stringify(paths.socketPath)}`);
+    if (spawned?.failure) {
+      throw new Error(
+        `redskilled daemon failed to start from ${JSON.stringify(spawned.entry.entry ?? spawned.entry.command)} ` +
+          `(resolved as ${spawned.entry.source}): ${spawned.failure.message}`,
+      );
+    }
+    if (Date.now() >= deadline) {
+      const from = spawned
+        ? ` from ${JSON.stringify(spawned.entry.entry ?? spawned.entry.command)} (resolved as ${spawned.entry.source})${
+            spawned.exit ? `, which ${spawned.exit}` : ""
+          }`
+        : "";
+      throw new Error(`redskilled daemon did not start on ${JSON.stringify(paths.socketPath)}${from}`);
+    }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
 
-function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): void {
-  const command = config.serverCommand ?? process.execPath;
+function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): SpawnedDaemon {
+  // Resolved before anything is launched: a missing bundle must be a named error
+  // (ADR 0130 rule 6), never a process started from whatever the caller happens
+  // to be running.
+  const stated = config.serverCommand ?? (config.serverArgs != null ? process.execPath : undefined);
+  const entry = requireRedskilledEntry(
+    { ...(stated != null ? { serverCommand: stated } : {}), serverArgs: config.serverArgs },
+    config.entryLookup ?? {},
+  );
+  const spawned: SpawnedDaemon = { entry };
   const args = [
-    ...(config.serverArgs ?? defaultServerArgs()),
+    ...entry.args,
     "serve",
     "--socket",
     paths.socketPath,
@@ -336,42 +421,20 @@ function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): vo
     paths.machineIdHash,
   ];
   if (config.idleMs != null) args.push("--idle-ms", String(config.idleMs));
-  const child = spawn(command, args, {
+  const child = spawn(entry.command, args, {
     detached: true,
     stdio: "ignore",
     env: { ...(config.env ?? process.env), REDSKILLED_DAEMON: "1" },
   });
+  // A detached child still reports its own launch failure to this process, and an
+  // unhandled `error` event on a child is an uncaught exception in the caller —
+  // so the listener is both the diagnosis and the safety.
+  child.on("error", (err: Error) => {
+    spawned.failure = err;
+  });
+  child.on("exit", (code, signal) => {
+    spawned.exit = signal ? `died on ${signal}` : `exited with code ${code ?? -1}`;
+  });
   child.unref();
-}
-
-function defaultServerArgs(): string[] {
-  return [resolveRedskilledDaemonEntry()];
-}
-
-/** The shipped bundle's file name — the artifact a release carries (issue #2842). */
-export const REDSKILLED_BUNDLE_ASSET = "redskilled.bundle.min.mjs";
-
-/**
- * The file a spawn must invoke to get a daemon — named, never inferred from argv.
- *
- * A bundled release has no `cli.js`: `pnpm bundle` collapses the whole app into
- * one `redskilled.bundle.min.mjs`, so the sibling-`cli.js` guess this used to
- * make resolved to a path that never ships and the auto-spawn died on a missing
- * file. Ordering is explicit-before-inferred, for the same reason #2736 gave rsp
- * a named resolver: **this module is only the entry when it IS the bundle**,
- * because a foreign host that inlines this client (a plugin bundle importing
- * `@reddb-io/redskilled/client`) would otherwise re-exec *itself* with `serve`.
- *
- * PURE apart from the injected existence check.
- */
-export function resolveRedskilledDaemonEntry(
-  lookup: { readonly self?: string; readonly exists?: (path: string) => boolean } = {},
-): string {
-  const self = lookup.self ?? fileURLToPath(import.meta.url);
-  const exists = lookup.exists ?? existsSync;
-  const dir = dirname(self);
-  if (basename(self) === REDSKILLED_BUNDLE_ASSET) return self;
-  const sibling = join(dir, REDSKILLED_BUNDLE_ASSET);
-  if (exists(sibling)) return sibling;
-  return join(dir, "cli.js");
+  return spawned;
 }
