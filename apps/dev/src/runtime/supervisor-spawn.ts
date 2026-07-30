@@ -7,7 +7,7 @@
 import { spawn } from "node:child_process";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { closeSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { encodeDevSnapshotToon } from "../core/toon-snapshot.js";
 import type { ElasticShrinkMode, HeartbeatSlotPid } from "../core/supervisor.js";
 import { PROJECT_SUPERVISOR_LANE } from "@reddb-io/red-castle/engine";
@@ -23,25 +23,17 @@ import {
   type FleetScopeSettings,
 } from "./fleet-scope.js";
 import { loadConfig } from "../core/config.js";
+import {
+  resolveSupervisorEntry,
+  supervisorLaunchVersion,
+  type SupervisorEntryLookup,
+} from "./supervisor-entry.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/**
- * Resolve the dev CLI bundle path from argv[1]. In MCP context argv[1] is the
- * castle-mcp bundle, which has no `__supervise` entry point; the sibling dev
- * bundle does. Falls back to argv1 unchanged so the CLI path (argv[1] already
- * is the dev bundle or a shim) is unaffected.
- */
-export function resolveDevScriptPath(argv1: string): string {
-  const file = basename(argv1);
-  if (file === "castle-mcp.bundle.min.mjs") {
-    return join(dirname(argv1), "dev.bundle.min.mjs");
-  }
-  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(argv1), file.replace(/^castle-mcp-/, "dev-"));
-  }
-  return argv1;
-}
+// The launch entry resolver owns argv[1] interpretation (#2808); re-exported here
+// so the `__watchdog`/`__supervise` callers keep one import site.
+export { resolveDevScriptPath } from "./supervisor-entry.js";
 
 function isLivePid(pid: number): boolean {
   try {
@@ -91,6 +83,8 @@ export interface SpawnSupervisorOptions {
   onNotice?: (message: string) => void;
   /** Test/caller injection for the cgroup-isolation decision (#2697). */
   scope?: { probes?: FleetScopeProbes; settings?: FleetScopeSettings };
+  /** Test/caller injection for the published-bundle entry resolution (#2808). */
+  entry?: SupervisorEntryLookup;
 }
 
 /**
@@ -130,12 +124,25 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
     }
   });
 
+  // The supervisor runs the PUBLISHED bundle, not the launching process's own
+  // (#2808): an MCP server on a stale plugin cache used to hand the fleet a
+  // supervisor older than the one the boot probe already called skewed. An
+  // unresolvable published version throws out of here — loudly, by contract.
+  const entry = resolveSupervisorEntry(opts.entry);
+  if (entry.source !== "local-build" && entry.source !== "caller-entry") {
+    const launching = opts.entry?.installedVersion ?? readBuildInfo("dev").version;
+    notify(
+      `fleet launch resolved the published bundle ${entry.version} (${entry.source}); ` +
+        `the launching process runs ${launching}`,
+    );
+  }
+
   // Cgroup isolation (#2697): the scope must exist BEFORE the supervisor starts,
   // because moving a running process between cgroups leaves its memory charge
   // behind. Every worker, gate install, and test fork inherits this scope.
   const direct = {
-    command: process.execPath,
-    args: [resolveDevScriptPath(process.argv[1] ?? ""), "__supervise", ...childArgs],
+    command: entry.command,
+    args: [...entry.args, "__supervise", ...childArgs],
   };
   const plan = planFleetScope({
     label: PROJECT_SUPERVISOR_LANE,
@@ -198,10 +205,11 @@ export function stampFreshFleetHeartbeat(
   epoch: number,
   runner: string,
   target: number,
-  // The respawned supervisor runs THIS bundle, so the stamp knows its version
-  // before the first real tick. Leaving the field absent made every worker
+  // The respawned supervisor runs the bundle the LAUNCH resolves — the published
+  // one, which is not always this process's own (#2808) — so the stamp knows its
+  // version before the first real tick. Leaving the field absent made every worker
   // probing the lane read `version_unknown` for the whole boot window (#2752).
-  bundleVersion: string = readBuildInfo("dev").version,
+  bundleVersion: string = supervisorLaunchVersion(),
 ): void {
   // TOON, never raw JSON — this is the fleet supervisor state snapshot surface
   // (ADR 0097); `readFleetState` sniffs so a stamp from an older bundle still reads.
