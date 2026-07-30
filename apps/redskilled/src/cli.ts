@@ -8,6 +8,7 @@
  * bundle versions. A path it needs is a path it was given.
  */
 import { readFileSync } from "node:fs";
+import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
 import { findUp } from "@reddb-io/shared/plugin-gate.js";
 import { declaredProjectNameInConfig } from "@reddb-io/shared/project-identity.js";
@@ -30,6 +31,17 @@ const SERVE_FLAGS = {
 } as const;
 
 export async function runRedskilledCli(argv: readonly string[]): Promise<number> {
+  // Answered before routing, because the daemon's own version is the fact a
+  // skew investigation starts from — and `serve` takes `--daemon-version` from
+  // its caller, so the binary must still be able to state what IT is.
+  if (argv[0] === "--version" || argv[0] === "-v") {
+    const info = readBuildInfo("redskilled");
+    process.stdout.write(
+      argv.includes("--json") ? `${JSON.stringify(info)}\n` : `${renderVersion(info)}\n`,
+    );
+    return 0;
+  }
+
   const { command, args } = routeCommand<"serve" | "host-state" | "statusline">(argv, {
     commands: { serve: {}, "host-state": {}, statusline: {} },
     default: "host-state",
