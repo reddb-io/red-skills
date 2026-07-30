@@ -17,6 +17,8 @@ red-skills/                         ← repo root + marketplace
 │   └── marketplace.json            ← marketplace manifest, lists every plugin
 ├── .agents/
 │   └── plugins/marketplace.json    ← Codex marketplace manifest
+├── .gemini-plugin/
+│   └── marketplace.json            ← Gemini CLI marketplace manifest
 ├── .red/
 │   ├── CONTEXT.md                  ← compatibility pointer; start at CONTEXT-MAP.md
 │   ├── CONTEXT-MAP.md              ← multi-context glossary entry point
@@ -40,6 +42,7 @@ red-skills/                         ← repo root + marketplace
     ├── dev/                        ← shipped `dev` plugin definition
     │   ├── .claude-plugin/plugin.json
     │   ├── .codex-plugin/plugin.json
+    │   ├── .gemini-plugin/plugin.json
     │   └── skills/
     │       ├── engineering/        ← day-to-day code work
     │       ├── knowledge/          ← knowledge accumulation and curation (LLM Wiki pattern)
@@ -60,10 +63,13 @@ repo root — with shared dependency versions consolidated into a pnpm `catalog:
 
 Future plugins (e.g. `data`, `ops`) live as additional siblings under
 `plugins/` with their own `.claude-plugin/plugin.json`, generated
-`.codex-plugin/plugin.json`, and their own `skills/` tree. Each plugin appears
-as a separate entry in the Claude marketplace manifest; the Codex marketplace
-manifest is generated from it. Any runtime code for a plugin lives under
-`apps/<plugin>/`.
+`.codex-plugin/plugin.json` and `.gemini-plugin/plugin.json`, and their own
+`skills/` tree. **The Claude-side manifest is the source; Codex and Gemini are
+projections of it.** Each plugin appears as a separate entry in the Claude
+marketplace manifest, and the Codex and Gemini marketplace manifests are
+generated from it — which is why the marketplace validation asserts that all
+three list exactly the same plugin names. Any runtime code for a plugin lives
+under `apps/<plugin>/`.
 
 `personal/` and `deprecated/` were removed from upstream and **must not be recreated**.
 
