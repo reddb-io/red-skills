@@ -34,7 +34,7 @@ async function scratch(prefix: string): Promise<string> {
 
 async function sessionPaths(): Promise<RedskilledPaths> {
   const root = await scratch("redskilled-floor-");
-  return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}` }, runtimeDir: root });
+  return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root });
 }
 
 /** One synthetic `/proc/<pid>/stat` row, `utime`/`stime` in clock ticks. */

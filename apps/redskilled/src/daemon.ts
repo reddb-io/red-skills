@@ -1,15 +1,19 @@
 /**
- * daemon — the `redskilled` singleton: one per user session, behind a socket.
+ * daemon — the `redskilled` singleton: one per MACHINE, behind a socket.
  *
- * Two mechanisms guard the singleton, and they answer different questions.
+ * Three mechanisms guard the singleton, and they answer different questions.
  * **Exclusive bind** answers "who owns the socket right now" — the kernel
  * refuses a second `listen()` on a bound path, so the start race between several
  * projects auto-spawning at once resolves without a vote. **The session lease**
- * answers "who owns the session across restarts" — a record that survives the
- * process, so a crash is reapable and a pid the OS reused cannot impersonate the
- * holder. Neither is sufficient alone: a lease without a bind lets two daemons
- * both believe they own the socket, and a bind without a lease loses the
- * ownership fact the moment the process dies.
+ * answers "who owns this runtime directory across restarts" — a record that
+ * survives the process, so a crash is reapable and a pid the OS reused cannot
+ * impersonate the holder. **The machine claim** answers the one neither can see:
+ * "does this machine already have a daemon somewhere else" — in another OS user's
+ * `0700` runtime directory, which is invisible to both of the others (ADR 0130
+ * Amendment 2). None is sufficient alone: a lease without a bind lets two daemons
+ * both believe they own the socket, a bind without a lease loses the ownership
+ * fact the moment the process dies, and both together still permit the second
+ * daemon that voids the host budget.
  *
  * **Idle exit never runs while a Worker is believed alive** (ADR 0130 rule 7).
  * The rule is written into the timer rather than into a caller's discipline: on
@@ -53,6 +57,14 @@ import {
   type RedskilledTreeReading,
   type RedskilledTreeSampler,
 } from "./memory-sampler.js";
+import {
+  createRedskilledMachineClaimStore,
+  currentMachineOwner,
+  describeMachineScope,
+  RedskilledMachineHeldError,
+  type RedskilledMachineClaimStore,
+  type RedskilledMachineOwner,
+} from "./machine-scope.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
   detectWorkerLiveness,
@@ -148,6 +160,10 @@ export interface RedskilledDaemonOptions {
   readonly ceiling?: RedskilledHostCeiling;
   readonly owner?: RedskilledLeaseOwner;
   readonly leaseStore?: RedskilledLeaseStore;
+  /** Who this daemon is to the machine — pid, start instant and uid. */
+  readonly machineOwner?: RedskilledMachineOwner;
+  /** The machine-wide arbiter; this machine's own claim by default. */
+  readonly machineClaimStore?: RedskilledMachineClaimStore;
   readonly clock?: () => string;
   /** How a Worker is born; injected so a test can birth one without a spawn. */
   readonly launch?: (options: LaunchWorkerOptions) => LaunchedWorker;
@@ -323,16 +339,45 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     socketPath: paths.socketPath,
   }, { clock });
 
+  const machineOwner = options.machineOwner ?? currentMachineOwner();
+  const claimLabels = {
+    machineIdHash: paths.machineIdHash,
+    sessionKeyHash: paths.sessionKeyHash,
+    socketPath: paths.socketPath,
+  };
+  const machineClaimStore = options.machineClaimStore ??
+    createRedskilledMachineClaimStore(paths.machineClaimPath, claimLabels, { clock });
+
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
 
+  // The machine before the runtime directory: a daemon that bound a socket and
+  // then discovered another user already holds the machine would have been the
+  // second arbiter for the length of that window, and the budget is only
+  // meaningful if it never was (ADR 0130 Amendment 2).
+  const claimed = await machineClaimStore.claim(machineOwner);
+  if (!claimed.claimed) {
+    // A holder on OUR OWN socket is not the machine-scope story: it is the
+    // ordinary start race, and the caller that loses it wants the refusal that
+    // names a running daemon it can join. The machine claim speaks only for the
+    // case the lease and the bind cannot see — a daemon somewhere else.
+    if (claimed.claim?.socket_path === paths.socketPath) {
+      throw new RedskilledAlreadyRunningError(paths.socketPath);
+    }
+    throw new RedskilledMachineHeldError(machineClaimStore.claimPath, claimed.reason, claimed.claim);
+  }
+
   const acquisition = await leaseStore.acquire(owner);
-  if (!acquisition.acquired) throw new RedskilledAlreadyRunningError(paths.socketPath, acquisition.lease);
+  if (!acquisition.acquired) {
+    await machineClaimStore.release(machineOwner).catch(() => undefined);
+    throw new RedskilledAlreadyRunningError(paths.socketPath, acquisition.lease);
+  }
 
   let server: Server;
   try {
     server = await bindExclusive(paths.socketPath);
   } catch (err) {
     await leaseStore.release(owner).catch(() => undefined);
+    await machineClaimStore.release(machineOwner).catch(() => undefined);
     throw err;
   }
 
@@ -388,6 +433,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       sessionKeyHash: paths.sessionKeyHash,
       pid: owner.pid,
       startedAt,
+      scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
       workers: [...workers.values()],
       published: {
         version: publishedVersion,
@@ -848,6 +894,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     await new Promise<void>((resolve) => server.once("close", () => resolve()));
     await rm(paths.socketPath, { force: true });
     await leaseStore.release(owner).catch(() => undefined);
+    // Released last, in the reverse order it was taken: the machine is free only
+    // once nothing of this daemon is left holding it.
+    await machineClaimStore.release(machineOwner).catch(() => undefined);
     resolveClosed();
     return await closed;
   }

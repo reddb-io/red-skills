@@ -36,8 +36,9 @@ repository.
 **One host-scoped daemon, `redskilled`, owns worker processes across every
 project on the machine. The per-project MCP is its client.**
 
-1. **Singleton and scope.** One daemon per user session, reached over a unix
-   socket, with `machineIdHash` labelling the host. The vendored red-castle
+1. **Singleton and scope.** One daemon per **machine** (Amendment 2 — this
+   originally read "per user session"), reached over a unix socket, with
+   `machineIdHash` labelling the host. The vendored red-castle
    cannot *be* this daemon — every checkout carries its own copy — so the
    daemon is a distinct binary in its own app, consuming the already-shared
    `resident-client` infrastructure.
@@ -314,3 +315,71 @@ file is never rewritten, since an operator's edit to it is their configuration.
 spawning the daemon it is reporting on**. The optional unit is reported and never
 flagged: an absent unit is `ok` with a stated absence, because a doctor that
 reddened over an optional thing teaches operators to ignore a red row.
+
+## Amendment 2 — one daemon per machine, and the multi-user case is refused (#2885)
+
+Rule 1 said "one daemon per user session", and `paths.ts` argued the rejected
+alternative in its header: keying on the host would make one daemon per machine,
+"wrong the moment an operator has two logged-in sessions". **The premise was
+wrong, and the conclusion with it.** `XDG_RUNTIME_DIR` is per *user*, not per
+login session — every terminal and every login of one operator resolves to the
+same `/run/user/<uid>` — so the derivation the rule described already yields one
+daemon per user, and always did. Two logged-in sessions were never two daemons.
+
+**Decision: there is exactly one `redskilled` per machine.** The host budget is
+the reason the daemon exists, and a second daemon does not degrade it — it
+**voids** it, silently, because each one is correct about a total that is not the
+machine's. A scope that holds only by accident of a derivation is not a scope; it
+is a coincidence waiting for the case that breaks it.
+
+That case is the only one the old wording and the current code actually differ
+on: **two different OS users on one machine.** Their runtime directories differ
+by construction and are `0700` against each other, so neither daemon can see the
+other, and the machine ends up with two arbiters and no error. Four questions had
+to be answered in code rather than in prose — where the record lives when it
+cannot live in one user's `/run/user/<uid>`, what permissions let a second user
+reach it, which user the daemon and therefore every Worker runs as, and whether a
+second user is admitted at all.
+
+**The second user is refused, and told why.** The alternatives were considered
+and are worse:
+
+1. **Serve the second user from the first user's daemon.** Every Worker it births
+   would run as the *first* user, against that user's checkouts and credentials.
+   That is a privilege boundary crossed silently, to save one sentence of
+   explanation.
+2. **Widen the socket to `0666`.** The same crossing, with the kernel's help.
+3. **Refuse, and say so.** The budget stays the machine's, Workers stay their
+   owner's, and the second user gets a message naming the pid, uid and socket
+   that hold the machine.
+
+The mechanism is a **machine claim**: one world-readable TOON record in a shared,
+sticky directory (`$TMPDIR/redskilled-<machineIdHash>`, `%PROGRAMDATA%` on
+Windows), written `wx` so acquisition is a race exactly one caller wins. It joins
+the two guards already there and does not replace either — the exclusive bind
+owns "who has the socket right now", the session lease owns "who has this runtime
+directory across restarts", and the claim owns the third question neither can
+see, because both live inside a directory a foreign session never looks at. A
+claim is this daemon's only when pid, start instant **and socket path** all
+match: a pid serving a different socket is not the same daemon, and treating it
+as one would let a single process admit itself twice.
+
+**A corpse is not a holder, and an unremovable corpse is not an opening.** A
+claim whose pid is dead is reaped and retried; a dead claim this process may not
+unlink — a foreign uid's file under a sticky directory — ends in a stated refusal
+naming the file, because writing a second claim beside it is precisely the second
+daemon this record prevents. The refusal is the deliberate answer: a directory
+full of corpses must never let the next daemon believe it is the first.
+
+**The daemon reports the scope it holds.** `host-state` carries a `scope` block —
+kind, claim path, owner uid, machine and session digests, socket — so an operator
+reads the property instead of trusting a comment, and so a second daemon would be
+visible rather than inferable from damage. The block is optional on read for the
+same reason the upgrade block is: one daemon serves checkouts pinned to different
+bundle versions (rule 3), and a field this bundle added must not make an older
+daemon's complete answer read as malformed.
+
+`REDSKILLED_MACHINE_DIR` pins the claim directory outright, for an operator who
+must state it and for tests that pose as their own machine. It is an explicit
+statement, never a silent fallback — which is the line this record draws: a
+second daemon is either impossible or announced, and never a surprise.

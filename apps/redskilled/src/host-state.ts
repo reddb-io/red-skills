@@ -13,6 +13,7 @@ import {
   isRedskilledBudgetAccounting,
   type RedskilledBudgetAccounting,
 } from "./budget-accounting.js";
+import { isRedskilledScopeState, type RedskilledScopeState } from "./machine-scope.js";
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
@@ -118,6 +119,14 @@ export interface RedskilledHostState {
   readonly session_key_hash: string;
   readonly pid: number;
   readonly started_at: string;
+  /**
+   * The scope this daemon believes it holds, and the record that proves it.
+   *
+   * Reported rather than assumed: "one per machine" is a property an operator has
+   * to be able to SEE without reading the source, and a daemon that could not
+   * state its own scope would leave a second one detectable only by its damage.
+   */
+  readonly scope?: RedskilledScopeState;
   readonly workers: readonly RedskilledWorkerView[];
   readonly projects: readonly RedskilledProjectView[];
   /** What the daemon has promised the machine, derived from `workers`. */
@@ -132,6 +141,8 @@ export interface BuildHostStateInput {
   readonly sessionKeyHash: string;
   readonly pid: number;
   readonly startedAt: string;
+  /** The scope block; absent leaves the document without one rather than inventing it. */
+  readonly scope?: RedskilledScopeState;
   readonly workers?: readonly RedskilledWorkerView[];
   /** The version observation; a daemon that never checked reports unknown. */
   readonly published?: {
@@ -156,6 +167,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     session_key_hash: input.sessionKeyHash,
     pid: input.pid,
     started_at: input.startedAt,
+    ...(input.scope == null ? {} : { scope: input.scope }),
     workers,
     projects: [...counts.entries()]
       .map(([project_label, worker_count]) => ({ project_label, worker_count }))
@@ -224,6 +236,9 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     Array.isArray(state.workers) &&
     Array.isArray(state.projects) &&
     isRedskilledBudgetAccounting(state.budget_accounting) &&
+    // Same tolerance the upgrade block gets, for the same reason: a daemon from a
+    // bundle that predates the scope block still answers completely.
+    (state.scope === undefined || isRedskilledScopeState(state.scope)) &&
     // Checked only when present. One daemon serves checkouts pinned to different
     // bundle versions (ADR 0130 rule 3), so a field this bundle added must not
     // make an older daemon's complete answer read as malformed — while a field
