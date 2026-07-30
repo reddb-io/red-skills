@@ -209,6 +209,14 @@ export interface ProcessLookups {
   /** Discover all remote afk/* branches (issue #2397). Used to detect a prior
    * pushed attempt so re-claim can resume instead of rebuilding from scratch. */
   discoverBranches?(): Promise<BranchRef[]>;
+  /**
+   * How many commits a discovered branch carries ahead of `base` (#2865) — the
+   * evidence that separates a dead Worker's finished work from the empty ref
+   * worktree creation pushes. Optional, and `undefined` means "could not tell":
+   * an unread branch is adopted rather than reset, because the branch a Worker
+   * declines to adopt is the branch it deletes.
+   */
+  branchCommitsAhead?(branch: string, base: string): Promise<number | undefined>;
   /** List open PRs that may already carry this issue's work. The lifecycle
    * applies its own body/head match before adopting one. */
   discoverOpenPullRequests?(issue: number): Promise<AttemptPullRequest[]>;

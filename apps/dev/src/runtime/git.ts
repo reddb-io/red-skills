@@ -472,6 +472,43 @@ export async function branchMergedInto(ctx: GitContext, branch: string, base: st
   return r.code === 0;
 }
 
+/**
+ * How many commits `<branch>` carries ahead of `<base>` — the evidence a
+ * dispatched Worker needs before it decides whether a prior branch holds
+ * finished work (#2865). The branch name cannot answer this: worktree creation
+ * pushes `afk/<issue>-<slug>` before the agent writes a line, so a name match
+ * alone reads the same for nine committed slices and for an empty placeholder.
+ *
+ * The tip is read from the local ref first, then `origin/<branch>`, fetching
+ * once when neither is present. `undefined` means "could not tell" and is never
+ * collapsed to zero: the caller deletes the branches it reads as empty, so a
+ * branch this probe merely failed to see must not look like one with no work.
+ */
+export async function branchCommitsAhead(
+  ctx: GitContext,
+  branch: string,
+  base: string,
+): Promise<number | undefined> {
+  if (!branch || !base) return undefined;
+  let head = await branchHead(ctx, branch);
+  if (!head) {
+    const remoteRef = `refs/remotes/origin/${branch}`;
+    let r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", remoteRef]);
+    if (r.code !== 0 || r.stdout.trim() === "") {
+      await fetchBranch(ctx, branch);
+      r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", remoteRef]);
+    }
+    head = r.code === 0 && r.stdout.trim() !== "" ? r.stdout.trim() : undefined;
+  }
+  if (!head) return undefined;
+  const baseTip = (await revParse(ctx, base)) ?? (await revParse(ctx, `origin/${base}`));
+  if (!baseTip) return undefined;
+  const count = await runGit(ctx, ["rev-list", "--count", `${baseTip}..${head}`]);
+  if (count.code !== 0) return undefined;
+  const n = Number(count.stdout.trim());
+  return Number.isInteger(n) && n >= 0 ? n : undefined;
+}
+
 /** Changed files of <branch> vs <base> (git diff --name-only base...branch). */
 export async function changedFiles(ctx: GitContext, branch: string, base: string): Promise<string[]> {
   const r = await runGit(ctx, ["diff", "--name-only", `${base}...${branch}`]);

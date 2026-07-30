@@ -9,8 +9,10 @@ import {
 import { buildHandoff, buildHumanGuidance, exitProtocolFor, type HandoffComment } from "../handoff.js";
 import {
   buildResumeInstruction,
+  decideBranchAdoption,
   discoverResumableBranch,
   extractFailureReason,
+  formatAdoptionNotice,
   isExplicitRestartRequested,
   isGateGreenBranch,
   pullRequestMatchesAttempt,
@@ -420,11 +422,34 @@ export async function processIssue(
   const allBranches = await deps.lookups.discoverBranches?.() ?? [];
   const humanGuidanceForResume = buildHumanGuidance(comments);
   const explicitRestart = isExplicitRestartRequested(humanGuidanceForResume);
+  const candidateBranch = discoverResumableBranch(allBranches, issue);
+  // Issue #2865 — ask git what the branch HOLDS before deciding its fate. The
+  // ref name is not evidence: worktree creation pushes `afk/<issue>-<slug>`
+  // before the agent writes a line, so a dead Worker's nine committed slices and
+  // an empty placeholder read identically by name. Whatever this Worker declines
+  // to adopt, `prepareFreshWorkerBranch` deletes from origin.
+  const candidateCommitsAhead = candidateBranch
+    ? await deps.lookups.branchCommitsAhead?.(candidateBranch.branch, base).catch(() => undefined)
+    : undefined;
+  const adoption = decideBranchAdoption({
+    candidate: candidateBranch,
+    commitsAhead: candidateCommitsAhead,
+    explicitRestart,
+    hasOpenPullRequest: matchingPullRequests.length > 0,
+  });
+  // Committed work is never invisible: a refusal states its reason on the issue,
+  // and a branch carrying commits that no pull request mentions is named rather
+  // than silently orphaned.
+  const adoptionNotice = formatAdoptionNotice(adoption, issue);
+  if (adoptionNotice) {
+    await deps.gh.comment(issue, adoptionNotice);
+    deps.appendIterLog(adoptionNotice);
+  }
   const resumableBranch = adoptedPullRequest
     ? { branch: adoptedPullRequest.headRefName }
-    : explicitRestart
-      ? null
-      : discoverResumableBranch(allBranches, issue);
+    : adoption.kind === "adopt"
+      ? candidateBranch
+      : null;
   const failureReason = extractFailureReason(prevFailureContext);
   const resumeIsGateGreen = adoptedPullRequest !== null ||
     (resumableBranch !== null && isGateGreenBranch(failureReason));

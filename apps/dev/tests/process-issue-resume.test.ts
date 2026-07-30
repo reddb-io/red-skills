@@ -250,3 +250,79 @@ describe("branch-resume: existing open PR adoption (issue #2416)", () => {
     )).toBe(true);
   });
 });
+
+describe("branch adoption is decided on commits, not on the ref name (issue #2865)", () => {
+  /** The empty ref every worktree creation pushes before the agent writes a line. */
+  const EMPTY_REFS: BranchRef[] = [{ branch: "afk/9-fix-the-thing", commitS: 9000 }];
+
+  it("prepares a fresh branch when the matching ref carries no commits ahead of the base", async () => {
+    const { deps, input, trace } = harness({});
+    deps.lookups.discoverBranches = async () => EMPTY_REFS;
+    Object.assign(deps.lookups, { branchCommitsAhead: async () => 0 });
+
+    await import("../src/core/process-issue.js").then((m) => m.processIssue(deps, input));
+
+    expect(trace.freshWorkerBranchCalls).toHaveLength(1);
+    expect(trace.handoffs[0]?.content ?? "").not.toContain("<resume-from-branch>");
+  });
+
+  it("surfaces a branch that carries commits and has no open pull request", async () => {
+    const { deps, input, trace } = harness({});
+    deps.lookups.discoverBranches = async () => PRIOR_REFS;
+    Object.assign(deps.lookups, { branchCommitsAhead: async () => 9 });
+
+    await import("../src/core/process-issue.js").then((m) => m.processIssue(deps, input));
+
+    expect(trace.comments.some((c) =>
+      c.body.includes(PRIOR_BRANCH) && c.body.includes("9 commits") &&
+      c.body.includes("no open pull request")
+    )).toBe(true);
+    expect(trace.freshWorkerBranchCalls).toHaveLength(0);
+    expect(trace.handoffs[0]?.content ?? "").toContain("<resume-from-branch>");
+  });
+
+  it("records on the issue why a restart refused a branch that carries work", async () => {
+    const { deps, input, trace } = harness({});
+    deps.lookups.discoverBranches = async () => PRIOR_REFS;
+    Object.assign(deps.lookups, { branchCommitsAhead: async () => 9 });
+    deps.lookups.comments = async () => [
+      {
+        body: "<details data-kind=\"directive\">\n<summary>directive</summary>\nPlease restart from scratch.\n</details>",
+        author: "maintainer",
+        sourceTrust: "trusted" as const,
+      },
+    ];
+
+    await import("../src/core/process-issue.js").then((m) => m.processIssue(deps, input));
+
+    expect(trace.comments.some((c) =>
+      c.body.includes(PRIOR_BRANCH) && c.body.includes("NOT adopted") && c.body.includes("restart")
+    )).toBe(true);
+    expect(trace.freshWorkerBranchCalls).toHaveLength(1);
+  });
+
+  it("adopts rather than resets when the commit count cannot be read", async () => {
+    const { deps, input, trace } = harness({});
+    deps.lookups.discoverBranches = async () => PRIOR_REFS;
+    Object.assign(deps.lookups, { branchCommitsAhead: async () => undefined });
+
+    await import("../src/core/process-issue.js").then((m) => m.processIssue(deps, input));
+
+    expect(trace.freshWorkerBranchCalls).toHaveLength(0);
+    expect(trace.handoffs[0]?.content ?? "").toContain("<resume-from-branch>");
+  });
+
+  it("adopts rather than resets when the commit probe throws", async () => {
+    const { deps, input, trace } = harness({});
+    deps.lookups.discoverBranches = async () => PRIOR_REFS;
+    Object.assign(deps.lookups, {
+      branchCommitsAhead: async () => {
+        throw new Error("ls-remote unreachable");
+      },
+    });
+
+    await import("../src/core/process-issue.js").then((m) => m.processIssue(deps, input));
+
+    expect(trace.freshWorkerBranchCalls).toHaveLength(0);
+  });
+});
