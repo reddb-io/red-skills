@@ -3,7 +3,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { readBuildInfo } from "@reddb-io/build-info";
+import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
+import { parseFlags, routeCommand, type FlagSchema } from "@reddb-io/shared/args.js";
 import { withBrainRuntime } from "./runtime.js";
 import { brainAct } from "./brain-act.js";
 import { ARTIFACT_KINDS, CONNECTION_KINDS } from "./schema.js";
@@ -197,7 +198,27 @@ function zodShape(_schema: z.ZodTypeAny): Record<string, unknown> {
   return { type: "object", additionalProperties: true };
 }
 
-main().catch((err) => {
-  console.error(err instanceof Error ? err.message : String(err));
-  process.exit(1);
+/** The server's own flags — the same contract the `brain` CLI routes through. */
+const MCP_BINARY_FLAGS = {
+  version: { kind: "boolean", aliases: ["v"] },
+  json: { kind: "boolean" },
+} satisfies FlagSchema;
+
+const routedMcp = routeCommand<"serve" | "version">(process.argv.slice(2), {
+  commands: { serve: {}, version: {} },
+  default: "serve",
 });
+const mcpFlags = parseFlags(routedMcp.args, MCP_BINARY_FLAGS).values;
+
+// Answered before the store opens and before stdio is claimed: "which build is
+// this?" is asked of a server that would not start, so it must not need one.
+if (routedMcp.command === "version" || mcpFlags.version === true) {
+  process.stdout.write(
+    mcpFlags.json === true ? `${JSON.stringify(buildInfo)}\n` : `${renderVersion(buildInfo)}\n`,
+  );
+} else {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  });
+}
