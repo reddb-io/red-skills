@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -13,7 +14,30 @@ if (!args.entry || !args.outfile || !args.asset) {
 }
 
 const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
-const version = (process.env.RED_BUILD_VERSION || pkg.version || "0.0.0-dev").replace(/^v/, "");
+
+// The product has ONE version anchor — the same `apps/dev/package.json` that
+// scripts/sync-version.mjs calls SOURCE — and every bundle carries it.
+//
+// Reading the *cwd's* package.json instead was wrong for the bundles that ship
+// inside the product without being published on their own: `rsp` sat at 2.23.1
+// and `redskilled` at 0.1.0 while the product was at 2.88.x, so a locally built
+// binary reported a version that corresponded to nothing. A release was correct
+// only because RED_BUILD_VERSION overrode it — the fallback was the lie.
+const PRODUCT_VERSION_ANCHOR = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "apps/dev/package.json",
+);
+const anchorVersion = readAnchorVersion(PRODUCT_VERSION_ANCHOR);
+const version = (process.env.RED_BUILD_VERSION || anchorVersion || pkg.version || "0.0.0-dev").replace(/^v/, "");
+
+function readAnchorVersion(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")).version;
+  } catch {
+    return undefined;
+  }
+}
 const gitSha = process.env.RED_BUILD_GIT_SHA || "unknown";
 const buildTime =
   process.env.RED_BUILD_TIME ||

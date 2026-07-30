@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { type JsonObject } from "@reddb-io/toon";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
-import { readBuildInfo } from "@reddb-io/build-info";
+import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { renderStructuredError } from "../structured-error.js";
 import {
   isHelpRequest,
@@ -34,6 +34,15 @@ import { LazyRspElisionStore, runColdWrappedCommand } from "./store-lifecycle.js
 
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const buildInfo = readBuildInfo("rsp");
+  // Answered before enablement, config, or the resident: "which build is this?"
+  // must stay answerable in exactly the situation you need to ask it — a
+  // directory that never opted in, a host with no socket, a degraded shell.
+  if (argv[0] === "--version" || argv[0] === "-v") {
+    process.stdout.write(
+      argv.includes("--json") ? `${JSON.stringify(buildInfo)}\n` : `${renderVersion(buildInfo)}\n`,
+    );
+    return 0;
+  }
   if (isHelpRequest(argv)) {
     process.stdout.write(renderCliHelp(argv));
     return 0;
