@@ -16,6 +16,7 @@ import {
   unquotePorcelainPath,
   listRemoteBranches,
   listMergedLocalBranches,
+  branchCommitsAhead,
 } from "../src/runtime/git.js";
 import type { GitContext } from "../src/runtime/git.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
@@ -431,5 +432,55 @@ describe("listMergedLocalBranches reads the landed fact (#2866)", () => {
     const { exec, calls } = recordingExec(() => ok("afk/9-landed\n"));
     expect(await listMergedLocalBranches({ cwd: "/repo", exec }, "afk/*", "")).toEqual([]);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("branchCommitsAhead reads the remote tip, not a stale local ref (#2893)", () => {
+  it("counts zero for a branch whose work already landed, even with a stale local branch of the same name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "commits-ahead-"));
+    const origin = join(root, "origin.git");
+    const repo = join(root, "repo");
+    const branch = "afk/2888-memory-sampler";
+
+    try {
+      await git(root, ["init", "--bare", "--initial-branch=main", origin]);
+      await git(root, ["clone", origin, repo]);
+      await git(repo, ["config", "user.email", "agent@example.test"]);
+      await git(repo, ["config", "user.name", "Agent"]);
+
+      await writeFile(join(repo, "base.txt"), "base\n");
+      await git(repo, ["add", "base.txt"]);
+      await git(repo, ["commit", "-m", "base"]);
+      await git(repo, ["push", "-u", "origin", "main"]);
+
+      // The worker's branch: one commit, pushed.
+      await git(repo, ["checkout", "-b", branch]);
+      await writeFile(join(repo, "slice.txt"), "the slice\n");
+      await git(repo, ["add", "slice.txt"]);
+      await git(repo, ["commit", "-m", "the slice"]);
+      await git(repo, ["push", "origin", `HEAD:refs/heads/${branch}`]);
+      const staleTip = await git(repo, ["rev-parse", "HEAD"]);
+
+      const ctx: GitContext = { cwd: repo };
+      expect(await branchCommitsAhead(ctx, branch, "origin/main")).toBe(1);
+
+      // The branch is rewritten and force-pushed (a rebase before landing), and
+      // that rewritten tip is what lands. The LOCAL ref is left behind pointing
+      // at a commit `main` will never contain — the leftover that made a landed
+      // slice read as 7 commits stranded.
+      await git(repo, ["commit", "--amend", "-m", "the slice, rebased"]);
+      await git(repo, ["push", "--force", "origin", `HEAD:refs/heads/${branch}`]);
+      const landed = await git(repo, ["rev-parse", "HEAD"]);
+      await git(repo, ["checkout", "main"]);
+      await git(repo, ["merge", "--ff-only", landed]);
+      await git(repo, ["push", "origin", "main"]);
+      await git(repo, ["update-ref", `refs/heads/${branch}`, staleTip]);
+      await git(repo, ["fetch", "origin", "main"]);
+
+      expect(await git(repo, ["rev-list", "--count", `origin/main..refs/heads/${branch}`])).toBe("1");
+      expect(await branchCommitsAhead(ctx, branch, "origin/main")).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
