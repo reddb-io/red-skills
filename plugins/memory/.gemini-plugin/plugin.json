@@ -1,0 +1,47 @@
+{
+  "name": "memory",
+  "version": "2.88.0",
+  "description": "reddb.io memory plugin - governed operational memory for code agents that lives on top of dev. Supports markdown notes, RedDB graph memory, zero-token governed recall, context packs, claim checks, readiness, optional lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "dependencies": [
+    "dev"
+  ],
+  "keywords": [
+    "gemini-cli",
+    "skills",
+    "agents",
+    "memory"
+  ],
+  "skills": [
+    "./skills/core/"
+  ],
+  "hooks": "./hooks/gemini.hooks.json",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "RedSkills Memory",
+    "shortDescription": "reddb.io memory plugin - governed operational memory for code agents that lives on top of dev. Supports markdown notes, RedDB graph memory, zero-token governed recall, context packs, claim checks, readiness, optional lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
+    "longDescription": "reddb.io memory plugin - governed operational memory for code agents that lives on top of dev. Supports markdown notes, RedDB graph memory, zero-token governed recall, context packs, claim checks, readiness, optional lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Use $init when this workspace needs it.",
+      "Use $store when this workspace needs it.",
+      "Use $recall when this workspace needs it.",
+      "Use $ingest when this workspace needs it."
+    ],
+    "brandColor": "#D92D20"
+  }
+}

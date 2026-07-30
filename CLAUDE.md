@@ -17,6 +17,8 @@ red-skills/                         ← repo root + marketplace
 │   └── marketplace.json            ← marketplace manifest, lists every plugin
 ├── .agents/
 │   └── plugins/marketplace.json    ← Codex marketplace manifest
+├── .gemini-plugin/
+│   └── marketplace.json            ← Gemini CLI marketplace manifest
 ├── .red/
 │   ├── CONTEXT.md                  ← compatibility pointer; start at CONTEXT-MAP.md
 │   ├── CONTEXT-MAP.md              ← multi-context glossary entry point
@@ -40,6 +42,7 @@ red-skills/                         ← repo root + marketplace
     ├── dev/                        ← shipped `dev` plugin definition
     │   ├── .claude-plugin/plugin.json
     │   ├── .codex-plugin/plugin.json
+    │   ├── .gemini-plugin/plugin.json
     │   └── skills/
     │       ├── engineering/        ← day-to-day code work
     │       ├── knowledge/          ← knowledge accumulation and curation (LLM Wiki pattern)
@@ -60,17 +63,20 @@ repo root — with shared dependency versions consolidated into a pnpm `catalog:
 
 Future plugins (e.g. `data`, `ops`) live as additional siblings under
 `plugins/` with their own `.claude-plugin/plugin.json`, generated
-`.codex-plugin/plugin.json`, and their own `skills/` tree. Each plugin appears
-as a separate entry in the Claude marketplace manifest; the Codex marketplace
-manifest is generated from it. Any runtime code for a plugin lives under
-`apps/<plugin>/`.
+`.codex-plugin/plugin.json` and `.gemini-plugin/plugin.json`, and their own
+`skills/` tree. **The Claude-side manifest is the source; Codex and Gemini are
+projections of it.** Each plugin appears as a separate entry in the Claude
+marketplace manifest, and the Codex and Gemini marketplace manifests are
+generated from it — which is why the marketplace validation asserts that all
+three list exactly the same plugin names. Any runtime code for a plugin lives
+under `apps/<plugin>/`.
 
 `personal/` and `deprecated/` were removed from upstream and **must not be recreated**.
 
 ## Rules
 
 1. Every skill in `engineering/`, `knowledge/`, `productivity/`, or `misc/` must be listed in the root `README.md` **and** in the owning plugin's `.claude-plugin/plugin.json` (e.g. `plugins/dev/.claude-plugin/plugin.json`). Skills in `in-progress/` appear in neither.
-2. Codex manifests are generated artifacts. Do not hand-edit `.agents/plugins/marketplace.json` or `plugins/*/.codex-plugin/plugin.json`; change the Claude-side manifests or plugin tree, then run `pnpm codex:manifests`. Pi packages are generated the same way: never hand-edit `plugins/*/package.json`; run `pnpm pi:manifests` after editing the Claude-side manifests or the plugin tree.
+2. Codex and Gemini manifests are generated artifacts. Do not hand-edit `.agents/plugins/marketplace.json`, `.gemini-plugin/marketplace.json`, `plugins/*/.codex-plugin/plugin.json`, or `plugins/*/.gemini-plugin/plugin.json`; change the Claude-side manifests or plugin tree, then run `pnpm codex:manifests` and `pnpm gemini:manifests`. Pi packages are generated the same way: never hand-edit `plugins/*/package.json`; run `pnpm pi:manifests` after editing the Claude-side manifests or the plugin tree.
 3. Each entry in `README.md` links the skill name to its `SKILL.md`.
 4. Each bucket has its own `README.md` listing the bucket's skills with a one-line description.
 5. `LICENSE` is Apache-2.0. The `NOTICE` file preserves Matt Pocock's original MIT copyright for the upstream-derived skills under `plugins/dev/skills/` — **do not remove or alter that attribution**. See ADR 0004.

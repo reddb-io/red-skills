@@ -47,6 +47,7 @@ the right surface for each host:
 | --- | --- |
 | Claude Code | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
 | Codex CLI | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
+| Gemini CLI | Registers the RedSkills marketplace and installs `dev`, `memory`, and `brain`. |
 | OpenCode | Generates and installs OpenCode plugin modules, skills, MCP config, provider config, and TUI attention config. |
 | Pi | Registers one Pi package per plugin via `pi install`, exposes the same skill buckets through the standard agent skills protocol. |
 
@@ -151,6 +152,33 @@ command-backed statusline. Use `$dev:afk monitor` when the client exposes
 namespace-qualified skills, or `$afk monitor` when it exposes unqualified skill
 names.
 
+### Manual: Gemini CLI
+
+Gemini CLI support requires installing from a local path or using the native marketplace setup script when released. For local setups, run from a checkout:
+
+```bash
+gemini plugin install ./plugins/dev
+gemini plugin install ./plugins/memory
+gemini plugin install ./plugins/brain
+```
+
+Or you can use the global marketplace flow if registered:
+
+```bash
+gemini plugin marketplace add reddb-io/red-skills
+gemini plugin install dev@red-skills
+gemini plugin install memory@red-skills
+gemini plugin install brain@red-skills
+```
+
+Gemini invokes skills natively and requires loading skills ahead of tool calls (see `activate_skill`). Common commands:
+
+```text
+/red-setup
+/triage
+/afk --once
+```
+
 ### Codex Manifest Maintenance
 
 Codex manifests are generated artifacts. Do not hand-edit
@@ -159,9 +187,10 @@ Change the Claude-side marketplace/plugin manifests or plugin tree, then run:
 
 ```bash
 pnpm codex:manifests
+pnpm gemini:manifests
 ```
 
-CI runs `pnpm codex:manifests:check` and fails when committed Codex manifests
+CI runs `pnpm codex:manifests:check` and `pnpm gemini:manifests:check` and fails when committed Codex or Gemini manifests
 drift from the generator output.
 
 ### Pi Manifest Maintenance
@@ -464,6 +493,7 @@ knowledge the human wants preserved, searched, and cited later.
 | --- | --- | --- |
 | Claude Code | Marketplace plugins, slash commands, skills, hooks, MCP servers | Primary interactive host. |
 | Codex CLI | Marketplace plugins, `$skill` invocation, MCP servers, footer integration | Namespace-qualified skill names may appear depending on client version. |
+| Gemini CLI | Marketplace plugins, skills, hooks, MCP servers | Fully natively supported via generated manifests. |
 | OpenCode | Generated `.opencode/skills`, plugin modules, MCP config, provider config, TUI attention config | Installed through `scripts/install-opencode.sh`. |
 | Pi | One npm-published package per plugin (`@reddb-io/red-skills-<plugin>` on npm, staged under `packaging/pi/<name>/`) carrying the shared skill buckets | Installed through `pi install npm:@reddb-io/red-skills-<plugin>`, or via `scripts/install-pi.sh` for repo-scoped installs and the `--source-dir` dev path. |
 | GitHub Actions | Reusable AFK attempt workflow and composable action | Runs one AFK attempt per issue in adopter repos. |
