@@ -15,7 +15,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildSupervisorDeps } from "../src/commands/supervise.js";
 import { parseCli } from "../src/cli.js";
 import { main as mcpMain } from "../src/mcp-server.js";
-import type { RedskilledBirthPort, RedskilledWorkerSpec } from "../src/runtime/redskilled-birth.js";
+import type {
+  RedskilledBirthPort,
+  RedskilledHostEvent,
+  RedskilledWorkerSpec,
+} from "../src/runtime/redskilled-birth.js";
 
 const roots: string[] = [];
 /** Every spec this project asked the host for, in order. */
@@ -212,7 +216,7 @@ describe("the host is the launcher", () => {
   it("routes a Worker's death from the host event lane into the slot's exit code", async () => {
     const cwd = await root();
     const host = recordingHost();
-    let events: Awaited<ReturnType<RedskilledBirthPort["drainEvents"]>> = [];
+    let events: RedskilledHostEvent[] = [];
     const { proc } = buildSupervisorDeps(
       cwd,
       join(cwd, ".red", "tmp"),
