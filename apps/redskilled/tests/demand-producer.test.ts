@@ -473,6 +473,7 @@ describe("a death reported by the daemon drives the project's breaker", () => {
       project_label: "acme/widgets",
       pid: 4242,
       workspace_path: "/tmp/acme/w-1",
+      log_path: null,
       isolated: true,
       unit: "redskilled-w-1.service",
       memory_high: null,

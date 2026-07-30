@@ -1,7 +1,8 @@
 /**
  * statusline-config — the declared defaults, and the flag that beats them.
  *
- * **Every statusline default is declarable in `.red/config.yaml`.** The block is
+ * **Every statusline default is declarable in `.red/config.yaml`** — the modes,
+ * the count budgets, the width and `verbose`. The block is
  * new rather than migrated: the file has never held a statusline key, so there
  * is no legacy spelling to keep working and no deprecation to carry.
  *
@@ -47,6 +48,7 @@ export interface RedskilledStatuslineConfig {
   readonly maxWorkers?: number;
   readonly maxProjects?: number;
   readonly maxWidth?: number;
+  readonly verbose?: boolean;
 }
 
 /** A declared value that could not be honoured, in a sentence a human can act on. */
@@ -68,6 +70,7 @@ export interface RedskilledStatuslineFlags {
   readonly maxWorkers?: number;
   readonly maxProjects?: number;
   readonly maxWidth?: number;
+  readonly verbose?: boolean;
 }
 
 export interface ResolveStatuslineOptionsInput {
@@ -101,6 +104,7 @@ export function readRedskilledStatuslineConfig(text: string): RedskilledStatusli
     maxWorkers?: number;
     maxProjects?: number;
     maxWidth?: number;
+    verbose?: boolean;
   } = {};
 
   if (mode != null) {
@@ -120,11 +124,18 @@ export function readRedskilledStatuslineConfig(text: string): RedskilledStatusli
     else warnings.push({ ...declared, reason: "expected a whole number of zero or more" });
   }
 
+  const verbose = raw("verbose");
+  if (verbose != null) {
+    if (verbose.value === "true" || verbose.value === "false") config.verbose = verbose.value === "true";
+    else warnings.push({ ...verbose, reason: "expected `true` or `false`" });
+  }
+
   return { config, warnings };
 }
 
 const STATUSLINE_FLAGS = {
   mode: { kind: "value", coerce: (raw: string) => raw },
+  verbose: { kind: "boolean" },
   project: { kind: "value", coerce: (raw: string) => raw },
   "max-workers": { kind: "value", coerce: (raw: string) => raw },
   "max-projects": { kind: "value", coerce: (raw: string) => raw },
@@ -152,6 +163,7 @@ export function parseRedskilledStatuslineFlags(argv: readonly string[]): {
     maxWorkers?: number;
     maxProjects?: number;
     maxWidth?: number;
+    verbose?: boolean;
   } = {};
 
   const declaredMode = values.mode ?? positionals.find((word) => word === "global" || word === "local");
@@ -160,6 +172,9 @@ export function parseRedskilledStatuslineFlags(argv: readonly string[]): {
     else warnings.push({ key: "--mode", value: declaredMode, reason: "expected `local` or `global`" });
   }
   if (values.project != null) flags.project = values.project;
+  // `--no-verbose` is a stated `false`, not an absent flag: an operator who
+  // declared `verbose: true` in config needs one read without it.
+  if (values.verbose !== undefined) flags.verbose = values.verbose === true;
 
   const counts = [
     { flag: "max-workers", assign: (n: number) => { flags.maxWorkers = n; } },
@@ -201,6 +216,7 @@ export function resolveRedskilledStatuslineOptions(
       maxWorkers: flags.maxWorkers ?? read.config.maxWorkers ?? REDSKILLED_STATUSLINE_DEFAULTS.maxWorkers,
       maxProjects: flags.maxProjects ?? read.config.maxProjects ?? REDSKILLED_STATUSLINE_DEFAULTS.maxProjects,
       maxWidth: flags.maxWidth ?? read.config.maxWidth ?? REDSKILLED_STATUSLINE_DEFAULTS.maxWidth,
+      verbose: flags.verbose ?? read.config.verbose ?? REDSKILLED_STATUSLINE_DEFAULTS.verbose,
     },
     warnings: read.warnings,
   };

@@ -37,7 +37,7 @@ disable-model-invocation: true
 
 ## 5. Report The Worker Modes
 
-**Never render the Worker line yourself.** The daemon serves it finished — `redskilled statusline` prints the local project's Workers, `redskilled statusline global` prints every project's and names the owner of each. A host that formatted its own line would be the second renderer that drifts from the first (ADR 0130 rule 10).
+**Never render the Worker line yourself.** The daemon serves it finished — `redskilled statusline` prints the local project's Workers, `redskilled statusline global` prints every project's and names the owner of each, and `--verbose` adds one second line per Worker carrying the last line that Worker logged. A host that formatted its own line would be the second renderer that drifts from the first (ADR 0130 rule 10).
 
 **State the mode and the declared defaults, do not guess them.** Read `plugins.dev.statusline.*` from `.red/config.yaml` and report what it declares; the keys are in [HOST-NOTES.md](HOST-NOTES.md#worker-statusline-modes-and-config).
 
