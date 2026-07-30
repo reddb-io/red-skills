@@ -134,6 +134,9 @@ Read the focused reference before touching that concern:
   [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 - Boot cleanup, stale attempts, branch reapers, and unblock sweep mechanics:
   [`docs/BOOT-SWEEPS.md`](./docs/BOOT-SWEEPS.md).
+- What happens to live state when the daemon takes over birth — Workers in
+  flight, durable lanes, stale artifacts, the report, and the rollback path:
+  [`docs/CUTOVER.md`](./docs/CUTOVER.md).
 - Durable AFK process state lives under `.red/state/castle/`; disposable worker
   attempts, claim locks, worktrees, logs, and diagnostics stay in registered
   `.red/tmp/` lanes and are the only targets of the lane janitor.
