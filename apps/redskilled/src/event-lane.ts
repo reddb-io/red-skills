@@ -49,6 +49,8 @@ export interface RedskilledHostEvent {
   readonly project_label: string;
   readonly pid: number;
   readonly workspace_path: string;
+  /** The log path the client gave at spawn, so a restart can recover a heartbeat. */
+  readonly log_path: string | null;
   readonly isolated: boolean;
   /** The transient unit name — the handle a restarted daemon re-attaches by. */
   readonly unit: string | null;
@@ -80,6 +82,7 @@ export function buildHostEvent(input: RecordEventInput): RedskilledHostEvent {
     project_label: input.worker.project_label,
     pid: input.worker.pid,
     workspace_path: input.worker.workspace_path,
+    log_path: input.worker.log_path ?? null,
     isolated: input.worker.isolated,
     unit: input.worker.unit ?? null,
     memory_high: budget.memory_high ?? null,
@@ -244,6 +247,7 @@ export function toWorkerView(event: RedskilledHostEvent): RedskilledWorkerView {
     pid: event.pid,
     started_at: event.ts,
     workspace_path: event.workspace_path,
+    ...(event.log_path != null ? { log_path: event.log_path } : {}),
     isolated: event.isolated,
     ...(event.unit != null ? { unit: event.unit } : {}),
     ...(Object.keys(budget).length > 0 ? { budget } : {}),
@@ -271,6 +275,7 @@ function fromRow(record: ToonlRecord): RedskilledHostEvent {
     project_label: text(record.project_label) ?? "",
     pid: Number(record.pid ?? 0),
     workspace_path: text(record.workspace_path) ?? "",
+    log_path: text(record.log_path),
     isolated: record.isolated === true || record.isolated === "true",
     unit: text(record.unit),
     memory_high: text(record.memory_high),

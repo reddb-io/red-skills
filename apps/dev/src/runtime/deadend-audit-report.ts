@@ -30,7 +30,8 @@ import {
   listIssueStates,
   type GhContext,
 } from "./gh.js";
-import { runGh, isRecord } from "./gh/common.js";
+import { isRecord } from "./gh/common.js";
+import { readGhJsonRows } from "./gh/read.js";
 import { afkPaths, collectMonitorInputs, resolveRepoContext } from "./wire.js";
 
 function issueStateOf(raw: string): IssueState {
@@ -69,8 +70,13 @@ function rollupIsRed(pr: RollupState): boolean {
   });
 }
 
+/**
+ * The audit's open-PR source. RAISES {@link GhReadError} when the read failed:
+ * an audit that cannot see the open pull requests must say so, never report a
+ * clean board because the query never ran (#2801).
+ */
 async function listOpenAfkPrs(gh: GhContext): Promise<Array<{ number: number; issue: number; red: boolean }>> {
-  const result = await runGh(gh, [
+  const rows = await readGhJsonRows<unknown>(gh, [
     "pr",
     "list",
     "--repo",
@@ -82,14 +88,6 @@ async function listOpenAfkPrs(gh: GhContext): Promise<Array<{ number: number; is
     "--json",
     "number,headRefName,statusCheckRollup",
   ]);
-  if (result.code !== 0) return [];
-  let rows: unknown;
-  try {
-    rows = JSON.parse(result.stdout ?? "[]");
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(rows)) return [];
   const out: Array<{ number: number; issue: number; red: boolean }> = [];
   for (const row of rows) {
     if (!isRecord(row)) continue;

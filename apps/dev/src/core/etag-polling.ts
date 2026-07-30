@@ -19,6 +19,11 @@ export interface ConditionalResponse {
   readonly etag?: string;
   /** Server-requested minimum poll interval in seconds (X-Poll-Interval). */
   readonly pollIntervalS?: number;
+  /** Epoch ms at which the rate-limit window resets (`x-ratelimit-reset`, sent
+   * by GitHub in epoch SECONDS). */
+  readonly resetAtMs?: number;
+  /** The `retry-after` directive in seconds, when the response carries one. */
+  readonly retryAfterS?: number;
   /** Parsed JSON body when status is 200. */
   readonly body?: unknown;
 }
@@ -33,6 +38,8 @@ export function parseConditionalResponse(raw: string): ConditionalResponse {
   const status = statusMatch ? Number(statusMatch[1]) : 0;
   const etagMatch = /^etag:\s*(.+)$/im.exec(head);
   const pollMatch = /^x-poll-interval:\s*(\d+)$/im.exec(head);
+  const resetMatch = /^x-ratelimit-reset:\s*(\d+)$/im.exec(head);
+  const retryAfterMatch = /^retry-after:\s*(\d+)$/im.exec(head);
   let body: unknown;
   if (status === 200 && bodyText !== "") {
     try {
@@ -45,8 +52,40 @@ export function parseConditionalResponse(raw: string): ConditionalResponse {
     status,
     ...(etagMatch ? { etag: etagMatch[1]!.trim() } : {}),
     ...(pollMatch ? { pollIntervalS: Number(pollMatch[1]) } : {}),
+    ...(resetMatch ? { resetAtMs: Number(resetMatch[1]) * 1000 } : {}),
+    ...(retryAfterMatch ? { retryAfterS: Number(retryAfterMatch[1]) } : {}),
     ...(body !== undefined ? { body } : {}),
   };
+}
+
+/** The server-supplied pacing carried by a rate-limited response. */
+export interface RateLimitPacing {
+  /** Epoch ms at which the exhausted window resets. */
+  readonly resetAtMs?: number;
+  /** The `retry-after` directive in seconds. */
+  readonly retryAfterS?: number;
+}
+
+/**
+ * Delay before the next poll after a RATE-LIMITED response: sleep until the
+ * reset instant the response supplied, else honour its `retry-after`
+ * directive, else fall back to the floor. Never shorter than the floor —
+ * polling a quota at zero is what this replaces — and never longer than
+ * `capMs`, so a bogus far-future reset cannot turn the loop into a hang.
+ */
+export function rateLimitDelayMs(
+  pacing: RateLimitPacing,
+  nowMs: number,
+  floorS: number,
+  capMs: number,
+): number {
+  const requestedMs =
+    pacing.resetAtMs !== undefined
+      ? pacing.resetAtMs - nowMs
+      : pacing.retryAfterS !== undefined
+        ? pacing.retryAfterS * 1000
+        : 0;
+  return Math.min(Math.max(requestedMs, floorS * 1000), capMs);
 }
 
 /** Next poll delay: the server's X-Poll-Interval always wins when larger than

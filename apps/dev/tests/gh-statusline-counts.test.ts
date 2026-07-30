@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { countStatuslineQueueCounts, countPrsCreatedToday } from "../src/runtime/gh.js";
 import type { ExecFn } from "../src/runtime/exec.js";
+import { GhReadError } from "../src/runtime/gh/read.js";
 
 describe("gh statusline counts", () => {
   it("prefers rsp conditional REST search counts when available", async () => {
@@ -65,6 +66,29 @@ describe("gh statusline counts", () => {
     expect(calls[3]!.args).toContain('human=repo:o/r is:issue is:open label:"ready-for-human"');
     expect(calls[3]!.args).toContain('quarantine=repo:o/r is:issue is:open label:"quarantine"');
   });
+  it("raises when the GraphQL payload reports RATE_LIMITED instead of counting zeroes", async () => {
+    // gh exits 0 with a well-formed body: `data` is null-filled and `errors`
+    // says the query never ran. Zero counts here would render an exhausted read
+    // as an empty queue (#2801).
+    const exec: ExecFn = async (tool) =>
+      tool === "rsp"
+        ? { code: 1, stdout: "", stderr: "rsp unavailable" }
+        : {
+            code: 0,
+            stdout: JSON.stringify({
+              data: { ready: null, human: null, quarantine: null },
+              errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }],
+            }),
+            stderr: "",
+          };
+
+    const error = await countStatuslineQueueCounts({ cwd: "/repo", repo: "o/r", exec }).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(GhReadError);
+    expect((error as GhReadError).classification).toBe("quota");
+  });
 });
 
 describe("gh countPrsCreatedToday", () => {
@@ -89,16 +113,28 @@ describe("gh countPrsCreatedToday", () => {
     expect(count).toBeLessThanOrEqual(3);
   });
 
-  it("returns 0 on gh failure", async () => {
+  // A read that never ran is NOT a count of zero: reporting 0 here renders the
+  // failure as fact (#2801). Both cases raise so the caller keeps its last
+  // known value instead of publishing a false zero.
+  it("raises on gh failure rather than reporting 0", async () => {
     const exec: ExecFn = async () => ({ code: 1, stdout: "", stderr: "auth error" });
-    const count = await countPrsCreatedToday({ cwd: "/repo", repo: "o/r", exec }, "2026-07-08");
-    expect(count).toBe(0);
+    await expect(
+      countPrsCreatedToday({ cwd: "/repo", repo: "o/r", exec }, "2026-07-08"),
+    ).rejects.toBeInstanceOf(GhReadError);
   });
 
-  it("returns 0 on invalid JSON response", async () => {
+  it("raises on an invalid JSON response rather than reporting 0", async () => {
     const exec: ExecFn = async () => ({ code: 0, stdout: "not-json", stderr: "" });
-    const count = await countPrsCreatedToday({ cwd: "/repo", repo: "o/r", exec }, "2026-07-08");
-    expect(count).toBe(0);
+    await expect(
+      countPrsCreatedToday({ cwd: "/repo", repo: "o/r", exec }, "2026-07-08"),
+    ).rejects.toBeInstanceOf(GhReadError);
+  });
+
+  it("reports 0 when the query ran and matched no pull requests", async () => {
+    const exec: ExecFn = async () => ({ code: 0, stdout: "[]", stderr: "" });
+    await expect(
+      countPrsCreatedToday({ cwd: "/repo", repo: "o/r", exec }, "2026-07-08"),
+    ).resolves.toBe(0);
   });
 
   it("passes the date as a --search created: filter to gh", async () => {

@@ -40,6 +40,14 @@ export interface RedskilledWorkerSpec {
   readonly project_label: string;
   /** Used verbatim as the Worker's working directory. */
   readonly workspace_path: string;
+  /**
+   * Where this Worker will write its log, if the client wants it recoverable.
+   *
+   * Optional, and opaque: the daemon opens it only to rehydrate a heartbeat it
+   * lost to a restart. A client that gives none keeps the whole mechanism on the
+   * heartbeat, which is the normal path anyway.
+   */
+  readonly log_path?: string;
   readonly command: string;
   readonly args?: readonly string[];
   readonly env?: Readonly<Record<string, string>>;
@@ -213,6 +221,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     pid: child.pid,
     started_at: clock(),
     workspace_path: spec.workspace_path,
+    ...(spec.log_path != null ? { log_path: spec.log_path } : {}),
     isolated,
     ...(plan.unit != null ? { unit: plan.unit } : {}),
     ...(spec.budget != null ? { budget: spec.budget } : {}),

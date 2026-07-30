@@ -38,7 +38,8 @@ export type RedskilledSessionOp =
   | "worker-start"
   | "worker-stop"
   | "worker-recycle"
-  | "worker-steer";
+  | "worker-steer"
+  | "worker-heartbeat";
 
 /** The three reaches. A reader of this type knows the whole model. */
 export type RedskilledReachKind = "host-read" | "project-write" | "daemon-life";
@@ -53,6 +54,11 @@ export const REDSKILLED_OP_REACH: Readonly<Record<RedskilledSessionOp, Redskille
   "worker-stop": "project-write",
   "worker-recycle": "project-write",
   "worker-steer": "project-write",
+  // A heartbeat is a Worker telling the daemon about itself, so it lands where
+  // every other statement about a Worker lands: inside its own project. A
+  // cross-project publish would let one session write a line another session's
+  // statusline then shows as that project's own.
+  "worker-heartbeat": "project-write",
 };
 
 /** The commanding verbs, as a session names them. Each maps onto one write op. */

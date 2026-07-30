@@ -29,6 +29,7 @@ import {
   readFleetState,
   readFileSync,
   readToonCache,
+  refreshStatuslineCountCache,
   resolveAttemptProbeArming,
   resolveAttemptHead,
   resolveRunSettings,
@@ -43,6 +44,7 @@ import {
   type ExecOutput,
   withTimeout,
   withFakeGh,
+  withRateLimitedGh,
   writeCastleStateSnapshot,
   writeFileSync,
   writeRenderableAttempt,
@@ -444,6 +446,28 @@ describe("statusline count cache write-through", () => {
   });
 });
 
+describe("refreshStatuslineCountCache — an exhausted read writes nothing (#2801)", () => {
+  it("leaves the known queue counts in place instead of caching zeroes", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-counts-"));
+    try {
+      const cachePath = statuslineCountCachePath(root);
+      mkdirSync(dirname(cachePath), { recursive: true });
+      const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
+      writeFileSync(cachePath, encode({ queue: 4, human: 1, quarantine: 0, ts: staleTs }), "utf8");
+
+      await withRateLimitedGh(() => refreshStatuslineCountCache(root, "o/r"));
+
+      expect(readToonCache<{ queue: number; human: number; ts: number }>(cachePath)).toMatchObject({
+        queue: 4,
+        human: 1,
+        ts: staleTs,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("statusline repo slug inference", () => {
   it("parses GitHub ssh and https remotes", () => {
     expect(parseGitHubRepoSlugFromRemoteUrl("git@github.com:reddb-io/red-skills.git")).toBe("reddb-io/red-skills");
@@ -560,6 +584,39 @@ describe("collectStatuslineRepo — cache discipline", () => {
       expect(result.localAdded).toBe(20);
       expect(result.localRemoved).toBe(3);
       expect(readToonCache<{ ts: number }>(cachePath).ts).toBe(freshTs);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("exhausted read: keeps the known open-PR count and never publishes a false zero (#2801)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
+    try {
+      const tmpDir = join(root, ".red", "tmp");
+      mkdirSync(tmpDir, { recursive: true });
+      const cachePath = afkPaths(root).statuslineRepoCachePath;
+      mkdirSync(dirname(cachePath), { recursive: true });
+
+      const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
+      writeFileSync(
+        cachePath,
+        encode({ baseRef: "origin/main", openPrs: 2, todayPrs: 1, openIssues: 5, ts: staleTs }),
+        "utf8",
+      );
+
+      // The read cannot run, so "0 open pull requests" is not an answer this
+      // surface is allowed to give: it keeps the last known 2 and reports the
+      // staleness instead.
+      const result = await withRateLimitedGh(() =>
+        collectStatuslineRepo({ root, repo: "o/r", remote: "origin" }),
+      );
+
+      expect(result.openPrs).toBe(2);
+      expect(result.cacheAgeS).toBeGreaterThan(0);
+      expect(readToonCache<{ openPrs: number; ts: number }>(cachePath)).toMatchObject({
+        openPrs: 2,
+        ts: staleTs,
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

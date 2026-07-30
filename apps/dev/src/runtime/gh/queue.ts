@@ -11,6 +11,7 @@ import type {
 import type { ExecOutput } from "../exec.js";
 import { listCandidates } from "./candidates.js";
 import { apiPath, isRecord, repoArgs, runGh, runRsp, type GhContext } from "./common.js";
+import { readGhGraphql, readGhJsonRows } from "./read.js";
 
 async function countIssues(ctx: GhContext, args: string[]): Promise<number> {
   const r = await runGh(ctx, 
@@ -115,7 +116,12 @@ async function countSearchViaRsp(ctx: GhContext, query: string): Promise<number 
   }
 }
 
-/** Count both statusline queue buckets with one GraphQL search request. */
+/** Count both statusline queue buckets with one GraphQL search request.
+ *
+ * RAISES {@link GhReadError} when the GraphQL read could not run — including the
+ * exit-0 response whose `data` block is null-filled and whose `errors` carry
+ * `RATE_LIMITED`. Zeroes here would read as "the queue is empty", the falsehood
+ * this repo treats as a flow bug to diagnose. */
 export async function countStatuslineQueueCounts(ctx: GhContext): Promise<StatuslineQueueCounts> {
   if (!ctx.repo) return { queue: 0, human: 0, quarantine: 0 };
   const [queue, human, quarantine] = await Promise.all([
@@ -131,7 +137,7 @@ export async function countStatuslineQueueCounts(ctx: GhContext): Promise<Status
       quarantine: search(type: ISSUE, query: $quarantine) { issueCount }
     }
   `;
-  const r = await runGh(ctx, [
+  const data = await readGhGraphql(ctx, [
     "api",
     "graphql",
     "-f",
@@ -143,23 +149,11 @@ export async function countStatuslineQueueCounts(ctx: GhContext): Promise<Status
     "-F",
     `quarantine=${statuslineSearchQuery(ctx.repo, LABEL_QUARANTINE)}`,
   ]);
-  if (r.code !== 0) return { queue: 0, human: 0, quarantine: 0 };
-  try {
-    const parsed = JSON.parse(r.stdout) as {
-      data?: {
-        ready?: { issueCount?: unknown };
-        human?: { issueCount?: unknown };
-        quarantine?: { issueCount?: unknown };
-      };
-    };
-    return {
-      queue: Number(parsed.data?.ready?.issueCount ?? 0),
-      human: Number(parsed.data?.human?.issueCount ?? 0),
-      quarantine: Number(parsed.data?.quarantine?.issueCount ?? 0),
-    };
-  } catch {
-    return { queue: 0, human: 0, quarantine: 0 };
-  }
+  const bucket = (key: string): number => {
+    const node = data[key];
+    return isRecord(node) ? Number(node.issueCount ?? 0) : 0;
+  };
+  return { queue: bucket("ready"), human: bucket("human"), quarantine: bucket("quarantine") };
 }
 
 /** Count issues that carry NO labels (the unlabeled straggler bucket). */
@@ -199,11 +193,14 @@ export function countOpenIssues(ctx: GhContext): Promise<number> {
   return countIssues(ctx, []);
 }
 
-/** Count open pull requests — the repo-global `pr` statusline count. Mirrors
- * {@link countIssues} against `gh pr list`. Returns 0 on any gh/auth/parse
- * failure so the statusline stays fail-open. */
+/** Count open pull requests — the repo-global `pr` statusline count.
+ *
+ * RAISES {@link GhReadError} when the query could not run, because 0 here reads
+ * as "nothing is open" and that is the exact falsehood of #2801. Callers that
+ * must stay fail-open (the statusline refresh) catch the raise and keep their
+ * last known value; a genuinely empty repo still counts 0. */
 export async function countOpenPrs(ctx: GhContext): Promise<number> {
-  const r = await runGh(ctx, [
+  const rows = await readGhJsonRows<unknown>(ctx, [
     "pr",
     "list",
     ...repoArgs(ctx),
@@ -214,25 +211,20 @@ export async function countOpenPrs(ctx: GhContext): Promise<number> {
     "--json",
     "number",
   ]);
-  if (r.code !== 0) return 0;
-  try {
-    const parsed = JSON.parse(r.stdout) as unknown[];
-    return Array.isArray(parsed) ? parsed.length : 0;
-  } catch {
-    return 0;
-  }
+  return rows.length;
 }
 
 /** Count pull requests created on the given local calendar day (YYYY-MM-DD).
  * Uses `--search created:<day>` as a server-side filter then re-filters by
- * local date in JS to absorb UTC/local-timezone boundary drift. Returns 0 on
- * any gh/auth/parse failure so the statusline stays fail-open. The `localDay`
- * parameter defaults to today's local date and is exposed for testing. */
+ * local date in JS to absorb UTC/local-timezone boundary drift. RAISES
+ * {@link GhReadError} on a query that could not run, for the same reason as
+ * {@link countOpenPrs}. The `localDay` parameter defaults to today's local date
+ * and is exposed for testing. */
 export async function countPrsCreatedToday(
   ctx: GhContext,
   localDay = new Date().toLocaleDateString("en-CA"),
 ): Promise<number> {
-  const r = await runGh(ctx, [
+  const rows = await readGhJsonRows<{ createdAt?: unknown }>(ctx, [
     "pr",
     "list",
     ...repoArgs(ctx),
@@ -245,18 +237,11 @@ export async function countPrsCreatedToday(
     "--search",
     `created:${localDay}`,
   ]);
-  if (r.code !== 0) return 0;
-  try {
-    const parsed = JSON.parse(r.stdout) as Array<{ createdAt: string }>;
-    if (!Array.isArray(parsed)) return 0;
-    return parsed.filter(
-      (pr) =>
-        typeof pr.createdAt === "string" &&
-        new Date(pr.createdAt).toLocaleDateString("en-CA") === localDay,
-    ).length;
-  } catch {
-    return 0;
-  }
+  return rows.filter(
+    (pr) =>
+      typeof pr.createdAt === "string" &&
+      new Date(pr.createdAt).toLocaleDateString("en-CA") === localDay,
+  ).length;
 }
 
 /** Count `needs-info` straggler issues. */
