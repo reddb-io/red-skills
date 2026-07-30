@@ -144,7 +144,10 @@ describe("rsp gh fidelity fixtures", () => {
         status: 1,
         stderr: Buffer.from("API rate limit exceeded for installation ID 12345.\n"),
       });
-      expect(rateError).toMatchObject({ category: "real-error", help: ["gh auth status"] });
+      // A rate limit is transient and has nothing to do with the token (#2830).
+      expect(rateError.category).toBe("transient");
+      expect(rateError.help[0]).toMatch(/wait/i);
+      expect(rateError.help[0]).not.toMatch(/auth/i);
     } finally {
       await store.close();
     }
