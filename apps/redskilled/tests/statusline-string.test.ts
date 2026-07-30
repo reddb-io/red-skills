@@ -114,7 +114,7 @@ describe("the rendered statusline", () => {
       // A frozen clock so the two reads describe the same instant: purity is the
       // claim under test, and a moving clock would test the clock instead.
       clock: () => "2026-07-29T01:00:05.000Z",
-      memorySampler: () => ({ "w-1": 512 * MB, "w-2": 128 * MB }),
+      treeSampler: () => ({ rss: { "w-1": 512 * MB, "w-2": 128 * MB }, cpu_seconds: {} }),
     });
     running.push(daemon);
     daemon.trackWorker(worker());
@@ -327,7 +327,7 @@ describe("the host's whole job", () => {
       ceiling: UNBOUNDED_HOST_CEILING,
       stopWorker: () => true,
       clock: () => "2026-07-29T01:00:05.000Z",
-      memorySampler: () => ({ "w-1": 512 * MB }),
+      treeSampler: () => ({ rss: { "w-1": 512 * MB }, cpu_seconds: {} }),
     });
     running.push(daemon);
     daemon.trackWorker(worker());
