@@ -36,6 +36,16 @@ export interface WorkerDeathReport {
   readonly at_ms: number;
   /** The host's own words for why — an exit status, a signal, a budget. */
   readonly detail: string | null;
+  /**
+   * The exit status the daemon witnessed, when it witnessed one.
+   *
+   * The breaker itself never reads it — a fast death is a fast death whatever it
+   * exited with. It rides here because the project's OTHER policies do turn on
+   * it (a permanent host-configuration exit is parked without retry, a clean
+   * drain with an empty queue is not a crash), and the report is the one place
+   * every one of those policies already receives the death.
+   */
+  readonly exit_code?: number | null;
 }
 
 export interface ProjectBreakerConfig {

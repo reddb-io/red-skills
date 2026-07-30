@@ -464,6 +464,7 @@ export function deathReportFromHostEvent(
     lived_ms: Number.isNaN(diedAt) || Number.isNaN(bornAt) ? 0 : Math.max(0, diedAt - bornAt),
     at_ms: atMs,
     detail: event.detail,
+    exit_code: event.exit_code,
   };
 }
 
