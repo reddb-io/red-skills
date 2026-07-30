@@ -4,9 +4,12 @@
  * Re-exports the shared CLI argument layer built over `cli-args-parser`.
  */
 export {
+  extractFlags,
   parseFlags,
   parseLooseArgs,
   routeCommand,
+  UnknownCommandError,
+  type ExtractFlagsResult,
   type BooleanFlagSpec,
   type ValueFlagSpec,
   type FlagSpec,

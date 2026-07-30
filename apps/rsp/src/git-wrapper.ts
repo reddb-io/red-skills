@@ -3,7 +3,7 @@ import { startChildProcessTimer } from "./overhead-budget.js";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 import { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
 import { type RspMintMeta, type RspLossLevel } from "./elision-store.js";
-import { extractQueryArg, filterRows, withHelp } from "./output-levers.js";
+import { extractLeverArgs, filterRows, withHelp } from "./output-levers.js";
 import { classifyWrappedFailure, renderStructuredError, renderUnknownFlag } from "./structured-error.js";
 
 export { DEFAULT_RSP_HEAVY_GIT_BYTE_THRESHOLD } from "./config.js";
@@ -146,19 +146,10 @@ interface ParsedGitRenderCommand {
 }
 
 function parseGitRenderCommand(command: readonly string[]): ParsedGitRenderCommand {
-  const parsed = extractQueryArg(command);
-  const argv: string[] = [];
-  let full = false;
-  for (const arg of parsed.argv) {
-    if (arg === "--full") {
-      full = true;
-      continue;
-    }
-    argv.push(arg);
-  }
+  const { argv, query, full } = extractLeverArgs(command);
   const unknown = argv.slice(2).find((arg) => arg.startsWith("--rsp-"));
   if (unknown) throw new StructuredUsageError(command.join(" "), unknown, ["--full", "--brief", "--terse", "--query"]);
-  return { argv, query: parsed.query, full };
+  return { argv, query, full };
 }
 
 function shouldEmitFull(

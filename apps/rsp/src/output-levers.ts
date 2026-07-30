@@ -1,26 +1,37 @@
 import type { JsonObject, JsonValue } from "@reddb-io/toon";
+import { extractFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 
 export interface QueryParseResult {
   argv: string[];
   query?: string;
 }
 
+/**
+ * rsp's own levers, as they reach a wrapper: the rendering filter and the
+ * "keep everything" escape hatch. Both are peeled back off before the argv is
+ * handed to the wrapped tool, which has never heard of either.
+ */
+const LEVER_FLAGS = {
+  query: { kind: "value", coerce: (raw: string) => raw },
+  full: { kind: "boolean" },
+} as const satisfies FlagSchema;
+
+/**
+ * A bare `--` here belongs to the wrapped tool (`git diff -- <path>`), not to
+ * rsp, and rsp appends its own `--query` after it — so this scan deliberately
+ * runs past the separator rather than stopping at it.
+ */
+const LEVER_SCAN = { stopAtSeparator: false } as const;
+
 export function extractQueryArg(argv: readonly string[]): QueryParseResult {
-  const out: string[] = [];
-  let query: string | undefined;
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
-    if (arg === "--query") {
-      query = argv[++i];
-      continue;
-    }
-    if (arg.startsWith("--query=")) {
-      query = arg.slice("--query=".length);
-      continue;
-    }
-    out.push(arg);
-  }
-  return { argv: out, query: query?.trim() || undefined };
+  const { values, rest } = extractFlags(argv, { query: LEVER_FLAGS.query }, LEVER_SCAN);
+  return { argv: rest, query: values.query?.trim() || undefined };
+}
+
+/** `extractQueryArg` plus `--full`, for the wrappers that honour both. */
+export function extractLeverArgs(argv: readonly string[]): QueryParseResult & { full: boolean } {
+  const { values, rest } = extractFlags(argv, LEVER_FLAGS, LEVER_SCAN);
+  return { argv: rest, query: values.query?.trim() || undefined, full: values.full === true };
 }
 
 export function matchesQuery(value: unknown, query?: string): boolean {
