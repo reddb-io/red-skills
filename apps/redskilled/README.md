@@ -40,6 +40,8 @@ of it.
 | What the host has been promised | `src/budget-accounting.ts` — pure totals over the Worker set |
 | Reaching (and starting) the daemon | `src/client.ts` — auto-spawn, loser joins the winner |
 | Which file a spawn runs | `src/daemon-entry.ts` — the published bundle by name, never the caller's own entry |
+| Reviving a daemon nobody asked for | `src/supervision.ts` — the optional user unit, `Restart=on-failure` |
+| Becoming the version that is published | `src/self-replace.ts` — decide, find the successor, hand the session over |
 
 ## Behaviours worth knowing
 
@@ -138,6 +140,26 @@ of it.
   what a `.red/config.yaml` is — so only decided values cross the socket. A
   malformed value is named on stderr and ignored, never fatal: this line renders
   on every turn, and a blank statusline is the harder failure to diagnose.
+- **Supervision is optional; auto-spawn is the floor.** `redskilled unit install`
+  writes a user unit whose `ExecStart` is the very argv a client spawn builds —
+  one builder, so a flag cannot reach one start path and miss the other — plus
+  `Restart=on-failure`, which is what revives a daemon that died *without a
+  client having to want work first*. A host that never installs it is a supported
+  configuration and the status says so (`floor: "auto-spawn"`); the binary, the
+  socket and the contract are identical either way.
+- **A superseded daemon replaces itself, and a Worker never notices.** The daemon
+  resolves the published version on its own tick and, when a newer one exists,
+  finds a successor that runs *exactly that version*, flushes the lane, lets go
+  of the socket and the lease, and starts it — or, under a supervisor, exits
+  non-zero so `Restart=on-failure` starts it. Workers are init-system units, so
+  this is a restart and not an evacuation: the successor re-adopts every one of
+  them off the lane. A published bundle this host cannot reach costs the upgrade
+  and nothing else, because the successor is found *before* anything is given up.
+- **The version it reports is the version it runs.** The published answer travels
+  beside the running one (`upgrade.published_version` next to `daemon_version`),
+  never folded into it, and an unresolvable read stays `published_unknown` rather
+  than becoming a match — a manufactured zero skew is exactly how a stale process
+  looks current while every Worker halts on the version it claimed to measure.
 - **An unisolated launch is never silent.** When the host affords no transient
   unit the Worker still starts, and the reply — and the host-state record it
   keeps for its whole life — carries a warning naming what was lost. A declared
@@ -157,4 +179,10 @@ redskilled statusline global                # every project's, each showing its 
 redskilled statusline --max-width 60        # a flag overrides the declared default
 redskilled statusline global --verbose      # each Worker plus the last line it logged
 redskilled statusline --no-verbose          # one read without the second lines
+```
+
+```bash
+redskilled unit status                      # is a supervisor installed? (absent is fine)
+redskilled unit install                     # write the user unit and enable it now
+redskilled unit uninstall                   # remove it; auto-spawn stays the floor
 ```

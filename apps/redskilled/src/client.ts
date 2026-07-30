@@ -21,6 +21,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { tryAcquireExclusiveLock } from "@reddb-io/shared/resident-core.js";
 import {
+  redskilledServeArgv,
   requireRedskilledEntry,
   type RedskilledEntryLookup,
   type ResolvedRedskilledEntry,
@@ -408,19 +409,8 @@ function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): Sp
   const spawned: SpawnedDaemon = { entry };
   const args = [
     ...entry.args,
-    "serve",
-    "--socket",
-    paths.socketPath,
-    "--lease",
-    paths.leasePath,
-    "--events",
-    paths.eventLanePath,
-    "--session-key-hash",
-    paths.sessionKeyHash,
-    "--machine-id-hash",
-    paths.machineIdHash,
+    ...redskilledServeArgv(paths, config.idleMs == null ? {} : { idleMs: config.idleMs }),
   ];
-  if (config.idleMs != null) args.push("--idle-ms", String(config.idleMs));
   const child = spawn(entry.command, args, {
     detached: true,
     stdio: "ignore",
