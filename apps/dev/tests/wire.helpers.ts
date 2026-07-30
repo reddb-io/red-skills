@@ -30,6 +30,7 @@ import {
   inferGitHubRepoSlug,
   resolveStatuslineCacheTtl,
   resolveAttemptHead,
+  refreshStatuslineCountCache,
 } from "../src/runtime/wire.js";
 import { runBoot } from "../src/core/boot.js";
 import type { ExecOutput } from "../src/runtime/exec.js";
@@ -58,6 +59,7 @@ export {
   parseGitHubRepoSlugFromRemoteUrl,
   readFleetState,
   readFileSync,
+  refreshStatuslineCountCache,
   resolveAttemptProbeArming,
   resolveAttemptHead,
   resolveRunSettings,
@@ -109,6 +111,31 @@ export function fakeBinDir(): string {
 /** Run `fn` with a fake `gh` binary prepended to PATH, then restore PATH. */
 export async function withFakeGh<T>(fn: () => Promise<T>): Promise<T> {
   const dir = fakeBinDir();
+  const orig = process.env.PATH;
+  process.env.PATH = `${dir}:${orig ?? ""}`;
+  try {
+    return await fn();
+  } finally {
+    process.env.PATH = orig;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Write a fake `gh` script that fails the way an exhausted GitHub quota does:
+ * a 403 rate-limit body on stderr and a non-zero exit. */
+export function rateLimitedBinDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "quota-gh-"));
+  writeFileSync(
+    join(dir, "gh"),
+    "#!/bin/sh\necho 'gh: API rate limit exceeded for user ID 1. (HTTP 403)' 1>&2\nexit 1\n",
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
+/** Run `fn` with a rate-limited fake `gh` on PATH, then restore PATH. */
+export async function withRateLimitedGh<T>(fn: () => Promise<T>): Promise<T> {
+  const dir = rateLimitedBinDir();
   const orig = process.env.PATH;
   process.env.PATH = `${dir}:${orig ?? ""}`;
   try {
