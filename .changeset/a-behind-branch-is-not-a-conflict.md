@@ -1,9 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-A branch that is merely behind its base is no longer parked as a merge conflict (#2864). `behind` and `dirty` are different states and GitHub reports them differently, but the no-agent landing lane funnelled every non-infra landing refusal into one park — so a pull request with zero conflicts, zero failing checks and `mergeable=true`, one `gh pr update-branch` from merging, was recorded `blocked:merge-conflict` and a human was sent to resolve something that did not exist. A stale base is the NORMAL condition of a busy lane, since every land moves the base for every other in-flight Worker, so that label was reached often and each time it stranded finished work.
-
-**`blocked:merge-conflict` is now reserved for a branch that genuinely conflicts, and its summary names the conflicting paths.** One router, `routeLandingFailure`, decides the terminal from the refusal that was observed: only a real pre-merge-rebase conflict reaches the conflict park (carrying the paths git reported unmerged, read before the abort clears the index); a merge the forge rejected on a mergeable PR and a CI hold park under `blocked:ci` with the cause the PR itself reported; a failed integrated-tree gate parks under `blocked:validation`; a hook abort under `blocked:policy`; and a land-lock timeout parks nothing at all, because it is a backoff and the branch is left untouched for the next sweep.
-
-The landing itself stops passing three non-conflicts off as conflicts: a base that could not be fetched, a force-with-lease race that outlived its retries, and a pull request that could never be opened are now infra refusals that state which step failed. A merely-behind branch keeps taking the repair it always deserved — one `gh pr update-branch`, then the merge — inside the landing lane rather than parking.
