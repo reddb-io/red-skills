@@ -23,6 +23,12 @@ import {
   type HostToolchainFixReceipt,
   type HostToolchainReport,
 } from "../core/host-toolchain-doctor.js";
+import {
+  auditRedskilledProvisioning,
+  readRedskilledProvisionFacts,
+  REDSKILLED_PROVISION_FIX,
+  type RedskilledProvisionReport,
+} from "@reddb-io/redskilled/provision";
 import { getConfig, loadConfig } from "../core/config.js";
 import { auditExecutableAcceptanceCriteria, type ExecutableAcceptanceDoctorReport } from "../core/executable-acceptance-doctor.js";
 import { collectDeadendAuditReport } from "../runtime/deadend-audit-report.js";
@@ -125,6 +131,26 @@ async function collectHostToolchainReport(root: string): Promise<HostToolchainRe
   });
 }
 
+/**
+ * Whether this host has a daemon at all — read-only, and never spawning one.
+ *
+ * A collection failure degrades to a named `missing` row rather than to a failed
+ * doctor: a machine with no daemon is the very state this check exists to
+ * report, so the report must survive reading it.
+ */
+async function collectRedskilledProvisionReport(): Promise<RedskilledProvisionReport> {
+  try {
+    return auditRedskilledProvisioning(await readRedskilledProvisionFacts());
+  } catch (error) {
+    const evidence = error instanceof Error ? error.message : String(error);
+    return {
+      verdict: "missing",
+      rows: [{ check: "home", verdict: "missing", evidence, fix: REDSKILLED_PROVISION_FIX }],
+      findings: [{ check: "home", verdict: "missing", evidence, fix: REDSKILLED_PROVISION_FIX }],
+    };
+  }
+}
+
 function renderHuman(
   root: string,
   probeReport: OperationalProbeReport,
@@ -133,6 +159,7 @@ function renderHuman(
   report: TmpJanitorReport,
   hostReport: HostToolchainReport,
   deadendReport: DeadendAuditReport,
+  redskilledReport: RedskilledProvisionReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
@@ -192,6 +219,11 @@ function renderHuman(
       (drop) => `  ${drop.reason} ${drop.path ? rel(root, drop.path) : (drop.worker_id ?? "")}: ${drop.detail}`,
     ),
     "",
+    "red-doctor redskilled daemon",
+    `provisioning: ${redskilledReport.verdict}`,
+    ...redskilledReport.rows.map((row) => `  ${row.verdict === "ok" ? "✅" : "❌"} ${row.check}: ${row.evidence}`),
+    ...redskilledReport.findings.map((finding) => `  fix: ${finding.fix}`),
+    "",
     "red-doctor deadend audit",
     `deadends: ${deadendReport.total}`,
     ...deadendReport.classes.flatMap((cls) =>
@@ -224,6 +256,7 @@ function renderToon(
   report: TmpJanitorReport,
   hostReport: HostToolchainReport,
   deadendReport: DeadendAuditReport,
+  redskilledReport: RedskilledProvisionReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
@@ -287,6 +320,19 @@ function renderToon(
         kind: finding.kind,
         verdict: finding.verdict,
         fix: finding.canonicalFix,
+      })),
+    },
+    redskilled: {
+      verdict: redskilledReport.verdict,
+      checks: redskilledReport.rows.map((row) => ({
+        check: row.check,
+        verdict: row.verdict,
+        evidence: row.evidence,
+      })),
+      findings: redskilledReport.findings.map((finding) => ({
+        check: finding.check,
+        verdict: finding.verdict,
+        fix: finding.fix,
       })),
     },
     deadendAudit: {
@@ -418,10 +464,13 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     const deadendReport = await collectDeadendAuditReport(ctx.root).catch(() =>
       emptyDeadendReport(Date.now()),
     );
+    // Read-only: the provisioning report probes the socket and never spawns the
+    // daemon it is reporting on, which would answer its own question.
+    const redskilledReport = await collectRedskilledProvisionReport();
     process.stdout.write(
       flags.json
-        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, applied, probeFixes, hostFixes)
-        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, applied, probeFixes, hostFixes),
+        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, applied, probeFixes, hostFixes)
+        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, applied, probeFixes, hostFixes),
     );
     return 0;
   } catch (error) {

@@ -8,11 +8,27 @@
  * bundle versions. A path it needs is a path it was given.
  */
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { encode as encodeToon } from "@reddb-io/toon";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
 import { findUp } from "@reddb-io/shared/plugin-gate.js";
 import { declaredProjectNameInConfig } from "@reddb-io/shared/project-identity.js";
-import { readRedskilledHostState, readRedskilledStatuslineString } from "./client.js";
+import {
+  ensureRedskilledDaemon,
+  readRedskilledHostState,
+  readRedskilledStatuslineString,
+  type RedskilledClientConfig,
+} from "./client.js";
+import { isResolvedRedskilledEntry } from "./daemon-entry.js";
+import {
+  auditRedskilledProvisioning,
+  installRedskilledUserUnit,
+  provisionRedskilledHome,
+  readRedskilledProvisionFacts,
+  renderRedskilledUserUnit,
+} from "./provision.js";
 import { DEFAULT_REDSKILLED_IDLE_MS, startRedskilledDaemon } from "./daemon.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 import {
@@ -49,8 +65,10 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     return 0;
   }
 
-  const { command, args } = routeCommand<"serve" | "host-state" | "statusline" | "unit">(argv, {
-    commands: { serve: {}, "host-state": {}, statusline: {}, unit: {} },
+  const { command, args } = routeCommand<
+    "serve" | "host-state" | "statusline" | "unit" | "provision"
+  >(argv, {
+    commands: { serve: {}, "host-state": {}, statusline: {}, unit: {}, provision: {} },
     default: "host-state",
   });
 
@@ -70,6 +88,8 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
 
   if (command === "statusline") return await runStatusline(args);
   if (command === "unit") return await runUnit(args);
+
+  if (command === "provision") return await runProvision(args);
 
   const state = await readRedskilledHostState(resolveRedskilledPaths());
   process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
@@ -153,6 +173,90 @@ export async function runStatusline(
   // host still decides nothing about shape (ADR 0130 rule 10).
   write(`${render.lines.join("\n")}\n`);
   return 0;
+}
+
+const PROVISION_FLAGS = {
+  "no-start": { kind: "boolean" },
+  "install-unit": { kind: "boolean" },
+  check: { kind: "boolean" },
+} as const;
+
+/**
+ * `redskilled provision` — a machine with no prior state, made ready.
+ *
+ * It creates the host-scoped home (the one thing this app owns outright),
+ * starts the daemon through the ordinary auto-spawn path, and prints the audit.
+ * **Idempotent**: a second run creates nothing, rewrites nothing and reports the
+ * same verdicts, which is what makes it safe for `/red-setup` to run on every
+ * pass rather than only when something looks wrong.
+ *
+ * `--check` is the read-only half — the shape `/red-doctor` consumes — and never
+ * creates or starts anything.
+ */
+export async function runProvision(
+  args: readonly string[],
+  io: {
+    readonly write?: (text: string) => void;
+    /** The session to provision; derived from the environment when absent. */
+    readonly paths?: RedskilledPaths;
+    readonly homeDir?: string;
+    readonly configHome?: string;
+    /** Client options for the start, so a test can pose as another host. */
+    readonly client?: RedskilledClientConfig;
+  } = {},
+): Promise<number> {
+  const write = io.write ?? ((text: string) => process.stdout.write(text));
+  const { values } = parseFlags(args, PROVISION_FLAGS);
+  const paths = io.paths ?? resolveRedskilledPaths();
+  const home = values.check ? undefined : await provisionRedskilledHome(io.homeDir ?? homedir());
+
+  // The daemon is started through the very path a client uses, so provisioning
+  // proves the route a project will take rather than a private one beside it.
+  let startError: string | undefined;
+  if (!values.check && !values["no-start"]) {
+    try {
+      await ensureRedskilledDaemon(paths, io.client ?? {});
+    } catch (err) {
+      startError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  const facts = await readRedskilledProvisionFacts({
+    paths,
+    ...(io.homeDir == null ? {} : { homeDir: io.homeDir }),
+    ...(io.configHome == null ? {} : { configHome: io.configHome }),
+    ...(io.client?.serverCommand == null
+      ? {}
+      : { entryOverride: { serverCommand: io.client.serverCommand, serverArgs: io.client.serverArgs } }),
+  });
+  const unit = values["install-unit"] && isResolvedRedskilledEntry(facts.entry)
+    ? await installRedskilledUserUnit({
+        configHome: io.configHome ?? configHome(),
+        unit: renderRedskilledUserUnit({
+          command: [facts.entry.command, ...facts.entry.args].join(" "),
+          socketPath: paths.socketPath,
+        }),
+      })
+    : undefined;
+
+  const report = auditRedskilledProvisioning(facts);
+  write(`${encodeToon({
+    verdict: report.verdict,
+    home: home == null
+      ? { path: facts.homePath, created: false, tightened: false }
+      : { path: home.path, created: home.created, tightened: home.tightened },
+    socket: facts.socketPath,
+    ...(startError == null ? {} : { start_error: startError }),
+    ...(unit == null ? {} : { unit: { path: unit.path, status: unit.status } }),
+    checks: report.rows.map((row) => ({ check: row.check, verdict: row.verdict, evidence: row.evidence })),
+    fixes: report.findings.map((finding) => ({ check: finding.check, fix: finding.fix })),
+  })}\n`);
+  return report.verdict === "ok" ? 0 : 1;
+}
+
+function configHome(): string {
+  const declared = process.env.XDG_CONFIG_HOME?.trim();
+  return declared && declared !== "" ? declared : join(homedir(), ".config");
 }
 
 /** The nearest `.red/config.yaml`, and the project name it declares. */
