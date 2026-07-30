@@ -62,11 +62,17 @@ import {
   REDSKILLED_PROTOCOL_VERSION,
   type RedskilledRequest,
   type RedskilledResponse,
+  type RedskilledStatuslineRenderRequest,
   type RedskilledWorkerCommandRequest,
   type RedskilledWorkerCommandResult,
 } from "./protocol.js";
 import { commandOp, evaluateSessionReach, type RedskilledSessionOp } from "./session-reach.js";
 import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
+import {
+  REDSKILLED_STATUSLINE_DEFAULTS,
+  renderRedskilledStatusline,
+  type RedskilledStatuslineRender,
+} from "./statusline-render.js";
 import {
   launchWorker,
   type LaunchWorkerOptions,
@@ -264,6 +270,26 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       sampledAt: lastSampledAt,
       now: clock(),
       reattachedWorkerIds: [...reattached],
+    });
+  }
+
+  /**
+   * The rendered line, from that same payload and from nothing else.
+   *
+   * The request carries taste already settled by the client — mode, project and
+   * the count budgets — because a daemon that resolved a config would have to
+   * know what a `.red/config.yaml` is, and ADR 0130 rule 3 keeps repository
+   * layout out of this process entirely. An absent field takes the shared
+   * default, so a bare read still renders.
+   */
+  function statuslineString(render?: RedskilledStatuslineRenderRequest): RedskilledStatuslineRender {
+    return renderRedskilledStatusline(statuslinePayload(), {
+      ...REDSKILLED_STATUSLINE_DEFAULTS,
+      mode: render?.mode ?? REDSKILLED_STATUSLINE_DEFAULTS.mode,
+      project: render?.project ?? REDSKILLED_STATUSLINE_DEFAULTS.project,
+      maxWorkers: render?.max_workers ?? REDSKILLED_STATUSLINE_DEFAULTS.maxWorkers,
+      maxProjects: render?.max_projects ?? REDSKILLED_STATUSLINE_DEFAULTS.maxProjects,
+      maxWidth: render?.max_width ?? REDSKILLED_STATUSLINE_DEFAULTS.maxWidth,
     });
   }
 
@@ -543,6 +569,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         // requirement, and a session that could not would diagnose contention
         // by leaving the session it is in.
         return { id: request.id, ok: true, value: statuslinePayload() };
+      }
+      if (request.op === "statusline-string") {
+        // The same host read, already rendered. The daemon renders it from the
+        // payload the other op returns — one call of a pure function — so the
+        // two surfaces are the same answer twice and never two answers.
+        return { id: request.id, ok: true, value: statuslineString(request.render) };
       }
       if (request.op === "worker-command") {
         return { id: request.id, ok: true, value: await runWorkerCommand(request.command) };

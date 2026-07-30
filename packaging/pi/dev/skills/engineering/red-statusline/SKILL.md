@@ -35,7 +35,13 @@ disable-model-invocation: true
 
 **Install nothing.** OpenCode is a runner lane, not an interactive host UI with a footer adapter. Point the user to `/afk monitor`, `/afk dashboard`, and Actions output. The full note is in [HOST-NOTES.md](HOST-NOTES.md#opencode-adapter).
 
-## 5. Finish
+## 5. Report The Worker Modes
+
+**Never render the Worker line yourself.** The daemon serves it finished — `redskilled statusline` prints the local project's Workers, `redskilled statusline global` prints every project's and names the owner of each. A host that formatted its own line would be the second renderer that drifts from the first (ADR 0130 rule 10).
+
+**State the mode and the declared defaults, do not guess them.** Read `plugins.dev.statusline.*` from `.red/config.yaml` and report what it declares; the keys are in [HOST-NOTES.md](HOST-NOTES.md#worker-statusline-modes-and-config).
+
+## 6. Finish
 
 Tell the user which host branch you used, what changed or why nothing changed, and how to observe live AFK state.
 
@@ -49,6 +55,7 @@ Tell the user which host branch you used, what changed or why nothing changed, a
 - **Claude Code command-backed adapter:** [HOST-NOTES.md](HOST-NOTES.md#claude-code-adapter-recipe).
 - **Codex native footer adapter:** [HOST-NOTES.md](HOST-NOTES.md#codex-adapter-recipe).
 - **OpenCode no-install note:** [HOST-NOTES.md](HOST-NOTES.md#opencode-adapter).
+- **Worker modes and the config block:** [HOST-NOTES.md](HOST-NOTES.md#worker-statusline-modes-and-config).
 
 ## Invocation Notes
 

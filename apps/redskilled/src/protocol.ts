@@ -18,7 +18,12 @@
  * `statusline-payload` is the second read, and it widens nothing the daemon does
  * not already own: it is the host-wide Worker set the daemon holds anyway, dated
  * by the daemon's own sampler, so a surface that needs structure never has to
- * parse a rendered line and never needs a private source. `worker-command`
+ * parse a rendered line and never needs a private source. `statusline-string` is
+ * the same answer already rendered, and it widens the contract by exactly one
+ * string because the alternative is every agent host reimplementing the line —
+ * which is the drift the pair of ops exists to prevent (ADR 0130 rule 10). The
+ * daemon renders it from the very payload the other op returns, so the two can
+ * disagree only if a pure function is impure. `worker-command`
  * carries the commanding verbs — stop, recycle, steer — as data rather than as
  * three ops, so the reach rule is decided once for all of them.
  *
@@ -31,6 +36,7 @@ import { isRedskilledAdmissionVerdict, type RedskilledAdmissionVerdict } from ".
 import { isRedskilledWorkerView, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
 import { isRedskilledReachVerdict, type RedskilledReachVerdict, type RedskilledWorkerCommandName } from "./session-reach.js";
 import { isRedskilledStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
+import type { RedskilledStatuslineMode, RedskilledStatuslineRender } from "./statusline-render.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
 
 /** The wire version. A daemon states it; a client that cannot read it must not proceed. */
@@ -51,10 +57,27 @@ export interface RedskilledWorkerCommandRequest {
   readonly detail?: string;
 }
 
+/**
+ * How one statusline read wants to be rendered.
+ *
+ * Every field is optional and every one is a decided value: the client resolves
+ * config and flags before it asks, because the daemon must never learn what a
+ * `.red/config.yaml` is (ADR 0130 rule 3). What travels here is taste already
+ * settled, never a place to go and look it up.
+ */
+export interface RedskilledStatuslineRenderRequest {
+  readonly mode?: RedskilledStatuslineMode;
+  readonly project?: string | null;
+  readonly max_workers?: number;
+  readonly max_projects?: number;
+  readonly max_width?: number;
+}
+
 export type RedskilledRequest =
   | { id: string; op: "ping" }
   | { id: string; op: "host-state" }
   | { id: string; op: "statusline-payload"; session_project?: string }
+  | { id: string; op: "statusline-string"; session_project?: string; render?: RedskilledStatuslineRenderRequest }
   | { id: string; op: "worker-start"; spec: RedskilledWorkerSpec; session_project?: string }
   | { id: string; op: "worker-command"; command: RedskilledWorkerCommandRequest }
   | { id: string; op: "shutdown" };
@@ -149,6 +172,26 @@ export function isRedskilledPong(value: unknown): value is RedskilledPong {
     Number.isInteger(pong.pid);
 }
 
+/**
+ * True when `value` is a rendered statusline.
+ *
+ * The line alone would have been enough to print, and is not enough to trust: a
+ * consumer that could not tell a degraded line from a full one, or a stale one
+ * from a current one, would have to read those facts back out of the text.
+ */
+export function isRedskilledStatuslineRender(value: unknown): value is RedskilledStatuslineRender {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const render = value as Record<string, unknown>;
+  return render.version === 1 &&
+    typeof render.line === "string" &&
+    (render.mode === "local" || render.mode === "global") &&
+    (render.project === null || typeof render.project === "string") &&
+    typeof render.detail === "string" &&
+    typeof render.degraded === "boolean" &&
+    typeof render.stale === "boolean" &&
+    typeof render.generated_at === "string";
+}
+
 /** True when `value` is a complete payload — re-exported so a client checks one surface. */
 export { isRedskilledStatuslinePayload };
 
@@ -156,7 +199,9 @@ export type {
   RedskilledAdmissionVerdict,
   RedskilledHostState,
   RedskilledReachVerdict,
+  RedskilledStatuslineMode,
   RedskilledStatuslinePayload,
+  RedskilledStatuslineRender,
   RedskilledWorkerCommandName,
   RedskilledWorkerView,
   RedskilledWorkerSpec,

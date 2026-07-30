@@ -25,15 +25,19 @@ import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js
 import type { RedskilledPaths } from "./paths.js";
 import {
   isRedskilledStatuslinePayload,
+  isRedskilledStatuslineRender,
   isRedskilledWorkerCommandResult,
   isRedskilledWorkerStarted,
   sendRedskilledRequest,
   type RedskilledRequest,
   type RedskilledStatuslinePayload,
+  type RedskilledStatuslineRender,
+  type RedskilledStatuslineRenderRequest,
   type RedskilledWorkerCommandRequest,
   type RedskilledWorkerCommandResult,
   type RedskilledWorkerStarted,
 } from "./protocol.js";
+import type { RedskilledStatuslineOptions } from "./statusline-render.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
 
 /** How long a client waits for a daemon — its own or the race winner's — to answer. */
@@ -168,6 +172,44 @@ export async function readRedskilledStatuslinePayload(
   );
   if (!isRedskilledStatuslinePayload(value)) throw new Error("redskilled daemon returned a malformed statusline payload");
   return value;
+}
+
+/**
+ * The statusline string: the same read, already rendered.
+ *
+ * The caller resolves its own taste first — config then flags — and hands the
+ * decided options over, because the daemon may not read a repository's config
+ * (ADR 0130 rule 3). **An agent host calls this and prints what comes back.**
+ * That is the whole point: a host that rendered the line itself would be the
+ * second renderer whose drift from this one nobody would notice for weeks.
+ */
+export async function readRedskilledStatuslineString(
+  paths: RedskilledPaths,
+  options: RedskilledStatuslineOptions | undefined = undefined,
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledStatuslineRender> {
+  const value = await requestRedskilled(
+    paths,
+    {
+      op: "statusline-string",
+      ...(config.sessionProject != null ? { session_project: config.sessionProject } : {}),
+      ...(options == null ? {} : { render: renderRequest(options) }),
+    },
+    config,
+  );
+  if (!isRedskilledStatuslineRender(value)) throw new Error("redskilled daemon returned a malformed statusline render");
+  return value;
+}
+
+/** The wire shape of decided render options. PURE. */
+function renderRequest(options: RedskilledStatuslineOptions): RedskilledStatuslineRenderRequest {
+  return {
+    mode: options.mode,
+    project: options.project,
+    max_workers: options.maxWorkers,
+    max_projects: options.maxProjects,
+    max_width: options.maxWidth,
+  };
 }
 
 /**

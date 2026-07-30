@@ -191,3 +191,31 @@ and idempotent; disable it by removing the second `SessionStart` entry in
 ## OpenCode Adapter
 
 Nothing to install: OpenCode is an AFK API-auth runner lane (`--runner opencode`), not an interactive host UI, so it has no footer/statusline adapter — observe it through `/afk monitor`, `/afk dashboard`, and Actions output like any other runner.
+
+## Worker Statusline Modes And Config
+
+**The Worker line comes from the daemon finished; no host renders it.** `redskilled` serves two ops over one socket — `statusline-payload` for a surface that needs structure, `statusline-string` for one that needs a line — and the string is a **pure function of the payload**, proven by test rather than by discipline. ADR 0130 rule 10 moved rendering here precisely so Claude Code, Codex and OpenCode print identical lines without any of them reimplementing anything.
+
+| Invocation | What it lists |
+| --- | --- |
+| `redskilled statusline` | the local project's Workers only — the quiet default |
+| `redskilled statusline global` | every project's Workers, each entry naming its owning project |
+| `redskilled statusline --max-width 60` | the same, under a narrower line |
+
+**A crowded machine degrades rather than overflowing.** Too many Workers for the count budget or the width drops the line to one entry per project; too many projects drops it to the host total (`host 6w/6p 1.5G`). The statusline answers "who is using this machine and how much" — the full picture stays with `/afk dashboard` and `/afk monitor`.
+
+### The config block
+
+Declare the defaults once under `plugins.dev.statusline.*` (the folded `dev.statusline.*` spelling is read too). Precedence is one sentence: **flag beats config beats built-in.**
+
+```yaml
+plugins:
+  dev:
+    statusline:
+      mode: local          # `local` (default) or `global`
+      max_workers: 4       # Worker entries before the line drops to projects
+      max_projects: 4      # project entries before the line drops to the host total
+      max_width: 120       # hard ceiling in characters; the line never exceeds it
+```
+
+Config is read **client-side** and only decided values cross the socket — the daemon must never learn what a `.red/config.yaml` is (ADR 0130 rule 3). A malformed value is named on stderr and ignored: this line renders on every turn, and a blank statusline is the harder failure to diagnose than a wrong `max_width`.
