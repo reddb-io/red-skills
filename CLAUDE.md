@@ -113,6 +113,7 @@ Some constraints span the whole repo but live in one package. They run in **ever
 
 - **Write a `*.toon` file with the TOON encoder, never `JSON.stringify`.** The decoder sniffs JSON-or-TOON and accepts both, so a JSON-written `.toon` looks correct locally and is wrong by policy.
 - **New JSON file I/O under `apps/` or `packages/` must be fixed or classified.** The ratchet (`apps/dev/tests/toon-json-guard.test.ts`) names the offending path and the allowlist file, `.red/contracts/toon-json-file-io-allowlist.json`, when it fails. An `external` entry is a permanent exception and needs a one-line reason.
+- **The Fleet and the Attempt stay extinct.** ADR 0130 removed the named-fleet registry, its name, its hooks, its `fleet_*` tools, the cross-host federated view, and the attempt record, retention and lane. A reader that reintroduces any of them fails the extinction ratchet (`apps/dev/tests/extinct-source-guard.test.ts`), which names the offending location and the route that replaced the source. The inventory and the `EXTINCT_SOURCE_BASELINE` live in `apps/dev/src/core/extinct-source-guard.ts`; the baseline only ever shrinks — raising a count to admit a new reference is the regression it exists to refuse. Prose describing what was removed is documentation, not a reader: comments are stripped before matching.
 
 ## Change report vs upstream
 

@@ -30,7 +30,7 @@ import {
   type QuarantineEntry,
 } from "./quarantine.js";
 
-import { pendingInvariantSuites } from "./repo-invariants.js";
+import { pendingInvariantRuns } from "./repo-invariants.js";
 import { type ValidationScope } from "./validation-scope.js";
 
 /** Result of a single executed command. Mirrors a child-process completion. */
@@ -677,11 +677,16 @@ async function runChecksForBaseline(
   env: NodeJS.ProcessEnv,
 ): Promise<Map<string, BaselineCheckResult>> {
   const out = new Map<string, BaselineCheckResult>();
+  // One execution per (scope, script): several checks can share one script — the
+  // repo-wide invariant suites do — and the probe already runs on the slow path.
+  const executed = new Map<string, ExecResult>();
   for (const { name, script, scope, runScript } of refs) {
     const command = runScript ?? script;
     if (!layout.hasScript(scope, command)) continue;
     const dir = scopeDir(baselineWorktree, scope);
-    const result = await exec(["pnpm", "-C", dir, command], { env });
+    const cacheKey = `${scope} ${command}`;
+    const result = executed.get(cacheKey) ?? (await exec(["pnpm", "-C", dir, command], { env }));
+    executed.set(cacheKey, result);
     if (result.code === 0) {
       out.set(name, { status: "passed" });
       continue;
@@ -890,35 +895,47 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
   // reported DONE. Run every declared suite the cone does not already cover, and
   // emit a visible `skipped` record when the script is absent rather than
   // silently dropping the invariant.
-  for (const suite of pendingInvariantSuites(scopes)) {
-    const name = suite.name;
-    const label = scopeLabel(suite.scope);
+  for (const run of pendingInvariantRuns(scopes)) {
+    const label = scopeLabel(run.scope);
     // The owning package is absent → this repo does not carry the invariant at
     // all (the gate also runs against consumer repos). Nothing to say.
-    if (!layout.hasPackage(suite.scope)) continue;
-    if (!layout.hasScript(suite.scope, suite.script)) {
-      const record = buildValidationRecord({
-        name,
-        status: "skipped",
-        summary: `invariant suite script missing (${suite.scope} has no \`${suite.script}\`)`,
-      });
-      push({ name, script: "test", label, scope: suite.scope, status: "skipped", record });
+    if (!layout.hasPackage(run.scope)) continue;
+    if (!layout.hasScript(run.scope, run.script)) {
+      for (const suite of run.suites) {
+        const record = buildValidationRecord({
+          name: suite.name,
+          status: "skipped",
+          summary: `invariant suite script missing (${run.scope} has no \`${run.script}\`)`,
+        });
+        push({ name: suite.name, script: "test", label, scope: run.scope, status: "skipped", record });
+      }
       continue;
     }
-    const dir = scopeDir(worktree, suite.scope);
-    const command = `pnpm -C ${dir} ${suite.script}`;
+    const dir = scopeDir(worktree, run.scope);
+    const command = `pnpm -C ${dir} ${run.script}`;
     const start = now();
-    const result = await exec(["pnpm", "-C", dir, suite.script], { env: subprocessEnv });
+    const result = await exec(["pnpm", "-C", dir, run.script], { env: subprocessEnv });
     const durationMs = now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
     const output = joinCommandOutput(result.stdout, result.stderr);
-    const summary =
-      status === "failed"
-        ? `repo-wide invariant — ${suite.why}: ${outputSummary(status, output)}`.slice(0, 1000)
-        : outputSummary(status, output);
-    const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
-    push({ name, script: "test", label, scope: suite.scope, runScript: suite.script, status, record });
+    // One execution, one record per invariant it carries: the park names the
+    // constraint a human must satisfy, not only the script that reported it.
+    for (const suite of run.suites) {
+      const summary =
+        status === "failed"
+          ? `repo-wide invariant — ${suite.why}: ${outputSummary(status, output)}`.slice(0, 1000)
+          : outputSummary(status, output);
+      const record = buildValidationRecord({
+        name: suite.name,
+        status,
+        command,
+        exitCode: result.code,
+        durationMs,
+        summary,
+      });
+      push({ name: suite.name, script: "test", label, scope: run.scope, runScript: run.script, status, record });
+    }
   }
 
   // AFK runner improvement: baseline probe for pre-existing failures. Only
