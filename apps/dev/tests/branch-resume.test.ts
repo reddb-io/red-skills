@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildResumeInstruction,
+  decideBranchAdoption,
   discoverResumableBranch,
   extractFailureReason,
+  formatAdoptionNotice,
   isExplicitRestartRequested,
   isGateGreenBranch,
 } from "../src/core/branch-resume.js";
@@ -191,5 +193,129 @@ describe("buildResumeInstruction", () => {
     expect(text).toContain("git fetch origin develop");
     expect(text).toContain("git rebase origin/develop");
     expect(text).toContain("origin/develop..HEAD");
+  });
+});
+
+// Refs #2865
+
+describe("decideBranchAdoption", () => {
+  const CANDIDATE: BranchRef = { branch: "afk/9-fix-the-thing", commitS: 1000 };
+
+  it("returns none when no branch for the issue exists", () => {
+    expect(
+      decideBranchAdoption({
+        candidate: null,
+        commitsAhead: undefined,
+        explicitRestart: false,
+        hasOpenPullRequest: false,
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("returns none for a branch that carries no commits ahead of the base", () => {
+    // Worktree creation pushes the deterministic ref before the agent writes a
+    // line, so a name match alone is not evidence of work.
+    expect(
+      decideBranchAdoption({
+        candidate: CANDIDATE,
+        commitsAhead: 0,
+        explicitRestart: false,
+        hasOpenPullRequest: false,
+      }),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("adopts a branch that carries commits ahead of the base", () => {
+    expect(
+      decideBranchAdoption({
+        candidate: CANDIDATE,
+        commitsAhead: 9,
+        explicitRestart: false,
+        hasOpenPullRequest: false,
+      }),
+    ).toEqual({
+      kind: "adopt",
+      branch: CANDIDATE.branch,
+      commitsAhead: 9,
+      hasOpenPullRequest: false,
+    });
+  });
+
+  it("adopts when the commit count is unknown — an unread branch is never assumed empty", () => {
+    const decision = decideBranchAdoption({
+      candidate: CANDIDATE,
+      commitsAhead: undefined,
+      explicitRestart: false,
+      hasOpenPullRequest: false,
+    });
+    expect(decision.kind).toBe("adopt");
+  });
+
+  it("refuses with a stated reason when a human directive asked for a restart", () => {
+    const decision = decideBranchAdoption({
+      candidate: CANDIDATE,
+      commitsAhead: 9,
+      explicitRestart: true,
+      hasOpenPullRequest: false,
+    });
+    expect(decision.kind).toBe("refused");
+    if (decision.kind !== "refused") throw new Error("unreachable");
+    expect(decision.branch).toBe(CANDIDATE.branch);
+    expect(decision.commitsAhead).toBe(9);
+    expect(decision.reason).toMatch(/restart/i);
+  });
+
+  it("does not announce a refusal for an empty branch a restart would discard", () => {
+    expect(
+      decideBranchAdoption({
+        candidate: CANDIDATE,
+        commitsAhead: 0,
+        explicitRestart: true,
+        hasOpenPullRequest: false,
+      }),
+    ).toEqual({ kind: "none" });
+  });
+});
+
+describe("formatAdoptionNotice", () => {
+  it("surfaces a branch that carries commits and has no open pull request", () => {
+    const notice = formatAdoptionNotice(
+      { kind: "adopt", branch: "afk/9-fix-the-thing", commitsAhead: 9, hasOpenPullRequest: false },
+      9,
+    );
+    expect(notice).toContain("afk/9-fix-the-thing");
+    expect(notice).toContain("9 commits");
+    expect(notice).toContain("no open pull request");
+  });
+
+  it("stays silent when an open pull request already surfaces the work", () => {
+    expect(
+      formatAdoptionNotice(
+        { kind: "adopt", branch: "afk/9-fix-the-thing", commitsAhead: 9, hasOpenPullRequest: true },
+        9,
+      ),
+    ).toBeNull();
+  });
+
+  it("records the reason adoption was refused", () => {
+    const notice = formatAdoptionNotice(
+      { kind: "refused", branch: "afk/9-fix-the-thing", commitsAhead: 9, reason: "a human directive asked for a restart" },
+      9,
+    );
+    expect(notice).toContain("afk/9-fix-the-thing");
+    expect(notice).toContain("a human directive asked for a restart");
+    expect(notice).toContain("9 commits");
+  });
+
+  it("says nothing when there was no branch to decide about", () => {
+    expect(formatAdoptionNotice({ kind: "none" }, 9)).toBeNull();
+  });
+
+  it("names an unknown commit count as unknown rather than as zero", () => {
+    const notice = formatAdoptionNotice(
+      { kind: "adopt", branch: "afk/9-fix-the-thing", commitsAhead: undefined, hasOpenPullRequest: false },
+      9,
+    );
+    expect(notice).toContain("an unknown number of commits");
   });
 });

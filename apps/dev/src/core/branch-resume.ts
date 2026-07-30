@@ -62,6 +62,76 @@ export function discoverResumableBranch(refs: readonly BranchRef[], issue: numbe
 }
 
 /**
+ * What a dispatched Worker decided about the branch its issue already has
+ * (#2865). `none` means there was nothing to adopt; `refused` means work exists
+ * and the Worker deliberately left it, which is a fact the issue must carry.
+ */
+export type BranchAdoption =
+  | { kind: "adopt"; branch: string; commitsAhead: number | undefined; hasOpenPullRequest: boolean }
+  | { kind: "refused"; branch: string; commitsAhead: number | undefined; reason: string }
+  | { kind: "none" };
+
+const RESTART_REFUSAL_REASON = "a human directive in the thread asked for a restart";
+
+/**
+ * Decide whether a dispatched Worker adopts the branch its issue already has.
+ *
+ * The commit count is the evidence, not the branch name: worktree creation
+ * pushes the deterministic `afk/<issue>-<slug>` ref before the agent writes a
+ * line, so a name match alone cannot tell a dead Worker's finished work from an
+ * empty placeholder. A count of `undefined` means the probe could not tell —
+ * and an unread branch is adopted, never assumed empty, because the branch a
+ * Worker declines to adopt is the branch `prepareFreshWorkerBranch` deletes.
+ */
+export function decideBranchAdoption(input: {
+  candidate: { branch: string } | null;
+  commitsAhead: number | undefined;
+  explicitRestart: boolean;
+  hasOpenPullRequest: boolean;
+}): BranchAdoption {
+  const { candidate, commitsAhead, explicitRestart, hasOpenPullRequest } = input;
+  if (!candidate) return { kind: "none" };
+  // A branch proven empty carries no work to lose, so declining it is not a
+  // refusal worth announcing — it is the ordinary first dispatch.
+  if (commitsAhead === 0) return { kind: "none" };
+  if (explicitRestart) {
+    return { kind: "refused", branch: candidate.branch, commitsAhead, reason: RESTART_REFUSAL_REASON };
+  }
+  return { kind: "adopt", branch: candidate.branch, commitsAhead, hasOpenPullRequest };
+}
+
+function describeCommits(commitsAhead: number | undefined): string {
+  if (commitsAhead === undefined) return "an unknown number of commits";
+  return `${commitsAhead} commit${commitsAhead === 1 ? "" : "s"}`;
+}
+
+/**
+ * The issue comment an adoption decision owes the record, or `null` when the
+ * decision needs no announcement (#2865).
+ *
+ * Two things are never left unsaid: a refusal (the reason belongs on the issue,
+ * not only in a Worker's log), and pushed work that no pull request mentions —
+ * the exact shape in which a dead Worker's finished slice goes invisible. An
+ * adopted branch that already has an open PR is silent here because the
+ * attempt-PR census comment already names it.
+ */
+export function formatAdoptionNotice(decision: BranchAdoption, issue: number): string | null {
+  if (decision.kind === "none") return null;
+  const commits = describeCommits(decision.commitsAhead);
+  if (decision.kind === "refused") {
+    return (
+      `🤖 /afk #${issue}: branch \`${decision.branch}\` carries ${commits} ahead of the base and was NOT adopted — ` +
+      `${decision.reason}. The commits stay on the branch until someone takes them.`
+    );
+  }
+  if (decision.hasOpenPullRequest) return null;
+  return (
+    `🤖 /afk #${issue}: branch \`${decision.branch}\` carries ${commits} ahead of the base and has no open pull request. ` +
+    `Adopting it — this Worker continues that branch instead of starting over.`
+  );
+}
+
+/**
  * Extract the `prev-failure-reason:` value from a prior-attempt-context block.
  * Returns undefined when the marker is absent or the context is empty.
  */

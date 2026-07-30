@@ -106,6 +106,10 @@ export function buildLookups({
     // Branch-resume discovery (issue #2397): list all remote afk/* refs so the
     // lifecycle can detect a prior pushed branch and resume instead of rebuilding.
     discoverBranches: () => gitx.listRemoteBranches(gitCtx, "afk/"),
+    // Adoption evidence (#2865): a discovered branch is only prior work if it
+    // carries commits the base does not. Without this the lifecycle cannot tell
+    // finished work from the empty ref worktree creation pushes.
+    branchCommitsAhead: (branch, base) => gitx.branchCommitsAhead(gitCtx, branch, base),
     // Attempt-adoption sanity check (#2416): one cheap open-PR census before
     // any agent run. The lifecycle owns exact body/head matching and adoption.
     discoverOpenPullRequests: async () => {
