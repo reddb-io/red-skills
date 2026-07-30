@@ -1,8 +1,27 @@
 # 0128 — The attempt is the unit of truth, and the resident owns it
 
-- **Status**: accepted
+## Status
+
+Superseded by ADR 0130.
+
+superseded-by: 0130
+
+Originally accepted 2026-07-28 as the answer to the Spec #2700 charter. ADR 0130
+extinguishes the noun this record is built on: since ADR 0103 made a retry a
+fresh Worker, a Worker already *is* one worker × one ticket × one try, so the
+Attempt carried a lane, a contract and a retention rule for no additional fact.
+What survives moves rather than dies — §5's single liveness anchor re-anchors
+onto the `redskilled` daemon, which owns process death by construction and is
+therefore a stronger authority than the record it replaces (and still never a
+pid file); §6's "every surface is a consumer" and §7's canary on the shipped MCP
+lane hold verbatim; and §8's budgeted termination keeps naming its budget and
+handing its branch or PR forward, attributed per Worker now that the Fleet is
+gone too. What lapses is the durable per-Attempt record itself: the tracker, git
+and the daemon's append-only host event lane already own those facts, so a third
+copy could only drift from them.
+
 - **Date**: 2026-07-28
-- **Related**: ADR 0098 (`.red` lifecycle taxonomy), ADR 0105 (durable castle state), ADR 0120 (castle MCP as the canonical interface), ADR 0126 (resident-as-core, the same shape one layer down), Spec #2700 (executable charter)
+- **Related**: ADR 0098 (`.red` lifecycle taxonomy), ADR 0105 (durable castle state), ADR 0120 (castle MCP as the canonical interface), ADR 0126 (resident-as-core, the same shape one layer down), ADR 0130 (successor — the host-scoped daemon that extinguishes the Attempt), Spec #2700 (executable charter), Spec #2772 (the charter that retired this record)
 
 ## Context
 
