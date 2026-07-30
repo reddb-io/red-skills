@@ -314,8 +314,10 @@ describe("doLanding — locked conflict self-resolve", () => {
       return { code: 0, stdout: "", stderr: "" };
     };
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: false });
-    expect((r as { message?: string }).message).toContain("merge step");
+    // #2864: a branch that never reached a PR never conflicted — the refusal is
+    // infra and says which step failed, so no conflict terminal can claim it.
+    expect(r).toMatchObject({ ok: false, reason: "infra", locked: false });
+    expect((r as { infraReason?: string }).infraReason).toContain("no pull request could be opened");
   });
 });
 
@@ -490,8 +492,10 @@ describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
   it("a real rebase conflict aborts and parks blocked:merge-conflict (never admin-merges)", async () => {
     const h = harness({ locked: false, rebaseWorktree: true, rebaseCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    // pr-conflict routes to blocked:merge-conflict at the caller (existing behaviour).
-    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
+    // pr-conflict routes to blocked:merge-conflict at the caller (existing behaviour),
+    // and #2864 makes it carry the conflicting paths so the park names them.
+    expect(r).toMatchObject({ ok: false, reason: "pr-conflict", locked: false });
+    expect((r as { message?: string }).message).toContain("conflicts with origin/main in 1 file(s): src/x.ts");
     const j = joined(h.mergeCalls);
     expect(j).toContain(`git -C ${RWT} rebase --abort`);
     // Never force-pushed, never admin-merged, post_merge never fired.
@@ -524,10 +528,13 @@ describe("doLanding — PR-path pre-merge rebase (#1006)", () => {
     expect(joined(h.mergeCalls)).toContain(`git -C ${RWT} rebase origin/main`);
   });
 
-  it("force-with-lease rejected on every attempt → parks blocked:merge-conflict after the bounded retry", async () => {
+  it("#2864: force-with-lease rejected on every attempt is INFRA, not a conflict", async () => {
     const h = harness({ locked: false, rebaseWorktree: true, rebasePushCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
+    // The rebase itself completed cleanly — a lost push race is a landing-race
+    // failure, so it must never reach the merge-conflict park.
+    expect(r).toMatchObject({ ok: false, reason: "infra", locked: false });
+    expect((r as { infraReason?: string }).infraReason).toContain("could not be force-pushed");
     const j = joined(h.mergeCalls);
     // Three force-with-lease pushes (1 + 2 retries) then gives up — never merges.
     const pushes = j.filter((c) => c.includes("--force-with-lease")).length;
@@ -902,7 +909,7 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
   it("PR rebase conflict → gate is never called (gate only runs on successful rebase)", async () => {
     const h = harness({ locked: false, openPr: true, postMergeGate: true, rebaseCode: 1 });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toEqual({ ok: false, reason: "pr-conflict", locked: false });
+    expect(r).toMatchObject({ ok: false, reason: "pr-conflict", locked: false });
     expect(h.postMergeGateDirs).toEqual([]);
   });
 });

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  landingRefusalSummary,
   mechanicalDisqualifier,
   reconcile,
+  routeLandingFailure,
   type ReconcileDeps,
   type ReconcileInput,
 } from "../src/core/reconcile.js";
@@ -55,6 +57,17 @@ interface HarnessOptions {
   locked?: boolean;
   /** When true, the unlocked `gh pr merge` returns non-zero (land fails). */
   landFail?: boolean;
+  /**
+   * #2864: the PR is merely BEHIND its base — zero conflicts, zero failing
+   * checks, `mergeable=true`. The first `gh pr merge` is rejected; a single
+   * `gh pr update-branch` makes it CLEAN and the retry merges.
+   */
+  behindBase?: boolean;
+  /**
+   * #2864: the pre-merge rebase hits a GENUINE conflict in these paths (the
+   * only state that may reach `blocked:merge-conflict`).
+   */
+  rebaseConflict?: string[];
   /** Close-cascade fixture: open dependents returned by gh.listByLabel(req:N). */
   dependentsByLabel?: Record<string, { number: number; labels: string[] }[]>;
   closedIssues?: number[];
@@ -86,6 +99,9 @@ function harness(opts: HarnessOptions = {}): {
     pnpmArgs: [],
     changedFileCalls: [],
   };
+
+  /** #2864: flipped by the landing's `gh pr update-branch` repair. */
+  let branchUpdated = false;
 
   const deps: ReconcileDeps = {
     ...HOST_RECONCILE_PORTS,
@@ -146,6 +162,36 @@ function harness(opts: HarnessOptions = {}): {
     mergeExec: async (argv) => {
       trace.mergeCalls.push(argv);
       const j = argv.join(" ");
+      // #2864 fixtures: a genuinely conflicting rebase, and a merely-behind PR
+      // the landing repairs with `gh pr update-branch`.
+      if (opts.rebaseConflict) {
+        if (j.includes("merge-base --is-ancestor")) return { code: 1, stdout: "", stderr: "" };
+        if (j === "git -C /rwt rebase origin/main") return { code: 1, stdout: "", stderr: "CONFLICT" };
+        if (j.includes("--diff-filter=U")) {
+          return { code: 0, stdout: `${opts.rebaseConflict.join("\n")}\n`, stderr: "" };
+        }
+      }
+      if (opts.behindBase) {
+        if (j.includes("pr update-branch")) {
+          branchUpdated = true;
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        if (j.includes("pr merge") && !branchUpdated) {
+          return { code: 1, stdout: "", stderr: "Base branch was modified. Review and try the merge again." };
+        }
+        if (j.includes("pr view") && j.includes("mergeStateStatus")) {
+          return {
+            code: 0,
+            stdout: JSON.stringify({
+              mergeStateStatus: branchUpdated ? "CLEAN" : "BEHIND",
+              mergeable: "MERGEABLE",
+              baseRefOid: "0r1g1nsha",
+              statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }],
+            }),
+            stderr: "",
+          };
+        }
+      }
       if (j === "git -C /repo fetch origin afk/wAAAA/9-fix-the-thing --quiet") {
         return { code: 0, stdout: "", stderr: "" };
       }
@@ -340,18 +386,22 @@ describe("reconcile — green → land", () => {
     expect(trace.sidecarWrites.at(-1)?.lines.some((line) => line.includes("post-merge:local-rerun"))).toBe(true);
   });
 
-  it("parks a trusted merge-conflict reland when the in-lock integrated-tree gate fails", async () => {
+  it("parks a trusted reland as VALIDATION when the in-lock integrated-tree gate fails (#2864)", async () => {
     const { deps, input, trace } = harness({
       labels: ["ready-for-human", "blocked:merge-conflict", "priority:high"],
       postMergeFeedbackOk: false,
     });
     const result = await reconcile(deps, { ...input, trustPriorValidation: true });
 
-    expect(result).toEqual({ outcome: "parked", reason: "merge-conflict", posted: true });
+    // The rebase that precedes the gate SUCCEEDED — nothing conflicted, so the
+    // park names the gate that failed instead of re-asserting a conflict.
+    expect(result).toEqual({ outcome: "parked", reason: "feedback-failed", posted: true });
     expect(trace.pnpmCalls).toBe(8);
     expect(trace.closed).toEqual([]);
     expect(trace.deletedRemote).toEqual([]);
-    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
+    expect(trace.ensuredLabels).toContain("blocked:validation");
+    expect(trace.labelEdits.at(-1)!.add).toContain("blocked:validation");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
   });
 
   it("lands a PARKED issue, shedding ready-for-human + the mechanical blocked label", async () => {
@@ -405,8 +455,11 @@ describe("reconcile — red → park", () => {
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
   });
 
-  it("parks as a merge-conflict when the land path rejects the green branch", async () => {
-    const { deps, input, trace } = harness({ feedbackOk: true, landFail: true });
+  it("parks as a merge-conflict when the rebase GENUINELY conflicts, naming the paths (#2864)", async () => {
+    const { deps, input, trace } = harness({
+      feedbackOk: true,
+      rebaseConflict: ["src/a.ts", "src/b.ts"],
+    });
     const result = await reconcile(deps, input);
 
     expect(result.outcome).toBe("parked");
@@ -417,6 +470,40 @@ describe("reconcile — red → park", () => {
     expect(park.add).toContain("ready-for-human");
     expect(park.add).toContain("blocked:merge-conflict");
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "merge-conflict" }]);
+    // The summary names WHAT conflicts, so no human hunts for a phantom.
+    expect(trace.iterLogs.some((line) => line.includes("in 2 file(s): src/a.ts, src/b.ts"))).toBe(true);
+  });
+
+  // #2864 — the defect: a rejected merge on a PR with zero conflicts and zero
+  // failing checks was parked `blocked:merge-conflict`, sending a human to
+  // resolve something that did not exist.
+  it("parks a REJECTED merge on a mergeable PR as blocked:ci, never merge-conflict (#2864)", async () => {
+    const { deps, input, trace } = harness({ feedbackOk: true, landFail: true });
+    const result = await reconcile(deps, input);
+
+    expect(result.outcome).toBe("parked");
+    if (result.outcome === "parked") expect(result.reason).toBe("ci-failed");
+    expect(trace.closed).toEqual([]);
+    expect(trace.ensuredLabels).not.toContain("blocked:merge-conflict");
+    expect(trace.ensuredLabels).toContain("blocked:ci");
+    const park = trace.labelEdits.at(-1)!;
+    expect(park.add).toContain("ready-for-human");
+    expect(park.add).toContain("blocked:ci");
+    expect(park.add).not.toContain("blocked:merge-conflict");
+    // Never a `merge-conflict` envelope on a PR that never conflicted.
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
+  });
+
+  it("updates a merely-BEHIND branch and lands it instead of parking (#2864)", async () => {
+    const { deps, input, trace } = harness({ feedbackOk: true, behindBase: true });
+    const result = await reconcile(deps, input);
+
+    // One `gh pr update-branch` — exactly what a human does — then it merges.
+    expect(result.outcome).toBe("landed");
+    expect(trace.mergeCalls.some((c) => c.join(" ").includes("pr update-branch"))).toBe(true);
+    expect(trace.closed).toEqual([9]);
+    expect(trace.ensuredLabels).not.toContain("blocked:merge-conflict");
+    expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "done" }]);
   });
 });
 
@@ -610,5 +697,56 @@ describe("reconcile — pre-fetch safety push (ADR 0103)", () => {
     expect(barePushes.length).toBeGreaterThanOrEqual(1);
     expect(trace.iterLogs.some((l) => l.includes("exit barrier"))).toBe(false);
     expect(trace.iterLogs.some((l) => l.includes("uncommitted file(s)"))).toBe(false);
+  });
+});
+
+// #2864: `blocked:merge-conflict` is reserved for a branch that GENUINELY
+// conflicts. This table is the whole contract — exactly one landing refusal
+// reaches that label, and every other refusal names itself.
+describe("routeLandingFailure — one landing refusal, one terminal (#2864)", () => {
+  it("routes each refusal to the terminal that names it", () => {
+    expect(routeLandingFailure("pr-conflict")).toBe("merge-conflict");
+    expect(routeLandingFailure("ci-failed")).toBe("ci-failed");
+    expect(routeLandingFailure("pr-merge-failed")).toBe("ci-failed");
+    expect(routeLandingFailure("ci-pending")).toBe("ci-pending");
+    expect(routeLandingFailure("post-merge-gate")).toBe("feedback-failed");
+    expect(routeLandingFailure("pre_merge-abort")).toBe("hook-aborted");
+    expect(routeLandingFailure("trunk-diverged")).toBe("trunk-diverged");
+    expect(routeLandingFailure("land-failed")).toBe("infra");
+    expect(routeLandingFailure("pr-resolved-abort")).toBe("infra");
+    expect(routeLandingFailure("infra")).toBe("infra");
+  });
+
+  it("reaches merge-conflict from `pr-conflict` and from nothing else", () => {
+    const reasons = [
+      "pre_merge-abort",
+      "integrate-failed",
+      "land-failed",
+      "ci-failed",
+      "ci-pending",
+      "pr-conflict",
+      "pr-merge-failed",
+      "infra",
+      "pr-resolved-abort",
+      "trunk-diverged",
+      "post-merge-gate",
+      "land-lock-timeout",
+    ] as const;
+    const conflictRoutes = reasons.filter((r) => routeLandingFailure(r) === "merge-conflict");
+    expect(conflictRoutes).toEqual(["pr-conflict"]);
+  });
+
+  it("a land-lock timeout is a BACKOFF, so it parks nothing", () => {
+    expect(routeLandingFailure("land-lock-timeout")).toBeNull();
+  });
+
+  it("every summary states what was observed, and never invents a conflict", () => {
+    expect(landingRefusalSummary("merge-conflict", "conflicts with origin/main in 1 file(s): a.ts"))
+      .toBe("conflicts with origin/main in 1 file(s): a.ts");
+    expect(landingRefusalSummary("ci-failed")).toContain("rejected the merge");
+    expect(landingRefusalSummary("ci-failed")).not.toContain("conflict");
+    expect(landingRefusalSummary("ci-pending")).not.toContain("conflict");
+    expect(landingRefusalSummary("feedback-failed", "ignored")).toContain("post-merge integration gate");
+    expect(landingRefusalSummary("infra")).not.toContain("conflict");
   });
 });
