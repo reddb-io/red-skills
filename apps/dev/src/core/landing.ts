@@ -422,11 +422,24 @@ export async function doLanding(
   if (!pushed.ok) {
     // Carry the REAL failure into the terminal record (#2576): a generic
     // land-failed with no diagnostic was being misread as a merge conflict.
+    //
+    // #2811: route the push refusal to `infra`, NOT `land-failed`. `land-failed`
+    // funnels into the merge-conflict terminal, so the record said
+    // `kind: merge-conflict` under a summary stating the cause was the push and
+    // not a merge conflict, and told the next human to resolve a conflict that
+    // does not exist. `infra` is the honest kind for a push that never landed a
+    // byte, and its next-action ("fix the failure, then requeue") applies.
+    // `pushed.status` keeps "the git call never ran" distinct from "the remote
+    // refused it" — both were previously narrated as *the push failed*.
+    const detail = pushed.warn ? `: ${pushed.warn}` : "";
     return {
       ok: false,
-      reason: "land-failed",
+      reason: "infra",
       locked,
-      message: `worker branch push failed${"warn" in pushed && pushed.warn ? `: ${pushed.warn}` : ""} — nothing was merged; the true cause is the push, not a merge conflict`,
+      infraReason:
+        pushed.status === "skipped"
+          ? `worker branch push did not run${detail} — nothing reached origin and nothing was merged`
+          : `worker branch push failed${detail} — the branch is not on origin at its local tip, so nothing was merged`,
     };
   }
   await deps.landingPhase?.("gate", { step: "push", status: "done" });
