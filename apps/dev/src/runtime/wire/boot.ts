@@ -262,6 +262,12 @@ export async function collectPrecheckFacts(
   const pnpmInstalled = pnpmProbe.code !== 127;
   const installedBundleVersion = readBuildInfo("dev").version;
   const bundleCache = readDevBundleCacheState(installedBundleVersion);
+  // One definition of "published", shared with the fleet launch, so the skew the
+  // probe reports is the skew a relaunch actually clears (#2808). That owner is
+  // now `published-version.ts` (#2809), which additionally RECORDS the answer and
+  // leaves it undefined when unresolved instead of substituting the running
+  // bundle — the substitution is what let a stale local value read as `skew: 0`
+  // while every Worker died of the skew it was hiding.
   let npmNewestVersion: string | undefined;
   let npmError: string | undefined;
   let published = readPublishedBundleVersion();

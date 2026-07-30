@@ -142,6 +142,16 @@ export interface Opts {
    * answers nothing, the guard is unmeasurable, and the landing behaves as before.
    */
   staleBranch?: { ahead: number; ageHours: number };
+  /**
+   * rc the landing's opening `pushAttempt` returns (#2811). Non-zero → the push
+   * exits non-zero, and `remoteTipSha`/`localTipSha` decide whether the
+   * verification proves the branch reached origin anyway.
+   */
+  pushAttemptCode?: number;
+  /** sha `ls-remote origin refs/heads/<branch>` answers (#2811 verification). */
+  remoteTipSha?: string;
+  /** sha the local `rev-parse` answers (#2811 verification). */
+  localTipSha?: string;
 }
 
 export function harness(opts: Opts = {}): Harness {
@@ -282,8 +292,16 @@ export function harness(opts: Opts = {}): Harness {
       return { code: 0, stdout: "", stderr: "" };
     },
     remoteGit: async (argv) => {
+      const j = argv.join(" ");
+      // #2811 push verification reads — recorded, but not counted as pushes.
+      if (j.includes("ls-remote")) {
+        return { code: 0, stdout: opts.remoteTipSha ? `${opts.remoteTipSha}\trefs/heads/x\n` : "", stderr: "" };
+      }
+      if (j.includes("rev-parse")) {
+        return { code: opts.localTipSha ? 0 : 1, stdout: opts.localTipSha ?? "", stderr: "" };
+      }
       pushedAttempt.push(argv);
-      return { code: 0, stdout: "", stderr: "" };
+      return { code: opts.pushAttemptCode ?? 0, stdout: "", stderr: "" };
     },
     async fireHook(name) {
       firedHooks.push(name);

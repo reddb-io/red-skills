@@ -311,9 +311,27 @@ export interface DaemonWorkerSet {
   }[];
 }
 
-/** What an absent daemon read reports: unknown, and honest about why. */
-const NO_DAEMON_REASON =
+/**
+ * What an absent daemon read reports: unknown, and honest about why.
+ *
+ * Exported because it is the ONE sentence in a published payload that means
+ * "the socket boundary is broken": every other `unknown` was reached WITH the
+ * daemon's participation. The MCP lane canary reads it to tell a reachable tool
+ * over an unreachable daemon from a daemon that simply never birthed the Worker.
+ */
+export const DAEMON_SILENCE_REASON =
   "the daemon did not answer, so nothing here can vouch for this Worker's process";
+
+/**
+ * True when this verdict was reached WITHOUT the daemon answering. PURE.
+ *
+ * A predicate rather than a bare comparison at the call site, so the sentinel
+ * has one reader and a rewording of the sentence cannot leave a surface
+ * silently believing every unreachable daemon is a reachable one.
+ */
+export function isDaemonSilence(reason: string): boolean {
+  return reason === DAEMON_SILENCE_REASON;
+}
 
 /** Why a fresh answer that does not name the Worker still is not a death. */
 const UNCOVERED_REASON =
@@ -365,7 +383,7 @@ export function resolveWorkerLiveness(
   workerId: string,
   evidence: WorkerLivenessEvidence = {},
 ): WorkerLiveness {
-  if (hostAnswer === null) return unknownLiveness(workerId, NO_DAEMON_REASON);
+  if (hostAnswer === null) return unknownLiveness(workerId, DAEMON_SILENCE_REASON);
   if (hostAnswer.staleness.stale) return unknownLiveness(workerId, hostAnswer.staleness.reason);
 
   const fresh = {

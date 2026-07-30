@@ -20,11 +20,26 @@ export interface GitExecResult {
 
 export type GitExec = (args: string[]) => Promise<GitExecResult>;
 
+/** Tri-state push contract (#2811). A consumer that only reads `ok` cannot tell
+ * "the git call never ran" from "it ran and the remote refused it", and both
+ * were being reported to humans as *the push failed*:
+ *
+ *   - `skipped` — input validation refused; no git call was made.
+ *   - `failed`  — the push ran, exited non-zero, AND the remote ref does not
+ *                 carry the local tip. Nothing reached origin.
+ *   - `pushed`  — the branch is on origin at the local tip. Includes a non-zero
+ *                 exec whose ref check proves the remote already carries the
+ *                 work (a concurrent/duplicate push, a `--force-with-lease`
+ *                 race): a successful push is NEVER recorded as a failed push.
+ */
+export type RemoteBranchStatus = "skipped" | "pushed" | "failed";
+
 /** Outcome of a best-effort remote operation. `ran` is false when input
  * validation skipped the git call entirely (empty branch / malformed ref). */
 export interface RemoteBranchOutcome {
   ok: boolean;
   ran: boolean;
+  status: RemoteBranchStatus;
   warn?: string;
 }
 
@@ -112,6 +127,16 @@ export function pushAttemptArgs(repoDir: string, branch: string, remoteName: str
   return ["-C", repoDir, "push", "origin", `${branch}:refs/heads/${remoteName}`];
 }
 
+/** argv resolving a local ref to its sha (push verification, #2811). */
+export function localShaArgs(repoDir: string, ref: string): string[] {
+  return ["-C", repoDir, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`];
+}
+
+/** argv resolving the remote head's sha (push verification, #2811). */
+export function remoteShaArgs(repoDir: string, remoteName: string): string[] {
+  return ["-C", repoDir, "ls-remote", "origin", `refs/heads/${remoteName}`];
+}
+
 // ---------- best-effort operations ----------
 
 /** Push HEAD of <worktree> to origin live branch, --force-with-lease, upstream
@@ -123,13 +148,13 @@ export async function pushInitial(
   branch: string,
 ): Promise<RemoteBranchOutcome> {
   if (!worktree || !branch) {
-    return { ok: true, ran: false, warn: "push_initial called with empty worktree or branch — skipping" };
+    return { ok: true, ran: false, status: "skipped", warn: "push_initial called with empty worktree or branch — skipping" };
   }
   const { code } = await git(pushInitialArgs(worktree, branch));
   if (code !== 0) {
-    return { ok: true, ran: true, warn: `initial push for ${branch} failed, continuing without remote backup` };
+    return { ok: true, ran: true, status: "failed", warn: `initial push for ${branch} failed, continuing without remote backup` };
   }
-  return { ok: true, ran: true };
+  return { ok: true, ran: true, status: "pushed" };
 }
 
 /** Body of the executable post-commit hook installed into a worktree's gitdir.
@@ -154,20 +179,21 @@ export async function deleteRemote(
   branch: string,
 ): Promise<RemoteBranchOutcome> {
   if (!branch) {
-    return { ok: true, ran: false, warn: "delete_remote called with empty branch — skipping" };
+    return { ok: true, ran: false, status: "skipped", warn: "delete_remote called with empty branch — skipping" };
   }
   if (!isValidRef(branch)) {
-    return { ok: true, ran: false, warn: `delete_remote called with non-live branch ${branch} — skipping` };
+    return { ok: true, ran: false, status: "skipped", warn: `delete_remote called with non-live branch ${branch} — skipping` };
   }
   const { code } = await git(deleteRemoteArgs(repoDir, branch));
   if (code !== 0) {
     return {
       ok: true,
       ran: true,
+      status: "failed",
       warn: `failed to delete remote ${branch} after close, branch survives on origin for cleanup later`,
     };
   }
-  return { ok: true, ran: true };
+  return { ok: true, ran: true, status: "pushed" };
 }
 
 /** Push a live worker branch to another live worker ref. Returns ok:false
@@ -180,14 +206,57 @@ export async function pushAttempt(
   remoteName: string,
 ): Promise<RemoteBranchOutcome> {
   if (!branch || !remoteName) {
-    return { ok: false, ran: false, warn: "push_attempt called with empty branch or remote — skipping" };
+    return { ok: false, ran: false, status: "skipped", warn: "push_attempt called with empty branch or remote — skipping" };
   }
   if (!isValidRef(branch) || !isValidRef(remoteName)) {
-    return { ok: false, ran: false, warn: "push_attempt called with non-live branch or remote — skipping" };
+    return { ok: false, ran: false, status: "skipped", warn: "push_attempt called with non-live branch or remote — skipping" };
   }
   const { code } = await git(pushAttemptArgs(repoDir, branch, remoteName));
   if (code !== 0) {
-    return { ok: false, ran: true, warn: `failed to push attempt branch to origin/${remoteName}` };
+    // #2811: a non-zero push is EVIDENCE OF NOTHING until the remote ref is
+    // read. A concurrent post-commit-hook push, a stale `--force-with-lease`
+    // lease, or a transient forge hiccup on a ref that already advanced all
+    // exit non-zero while origin carries the exact work. Recording those as a
+    // failed push stranded 624 committed lines on a branch nobody looked at.
+    const verified = await verifyPushed(git, repoDir, branch, remoteName);
+    if (verified.pushed) {
+      return {
+        ok: true,
+        ran: true,
+        status: "pushed",
+        warn: `push to origin/${remoteName} exited non-zero but origin already carries ${verified.sha} — the push succeeded`,
+      };
+    }
+    return { ok: false, ran: true, status: "failed", warn: `failed to push attempt branch to origin/${remoteName}` };
   }
-  return { ok: true, ran: true };
+  return { ok: true, ran: true, status: "pushed" };
+}
+
+/** Read a ref's sha, or "" when it does not resolve. */
+async function shaOf(git: GitExec, args: string[], pick: (stdout: string) => string): Promise<string> {
+  try {
+    const { code, stdout } = await git(args);
+    if (code !== 0) return "";
+    return pick(stdout).trim();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Prove — or refuse to assume — that `branch` reached `origin/<remoteName>`
+ * (#2811). The remote ref either exists at the local tip or it does not, and
+ * reading it is one cheap `ls-remote`. Any inability to resolve either side is
+ * reported as NOT pushed: this verifier only ever turns a reported failure into
+ * a success on positive evidence, never the reverse.
+ */
+export async function verifyPushed(
+  git: GitExec,
+  repoDir: string,
+  branch: string,
+  remoteName: string,
+): Promise<{ pushed: boolean; sha: string; remoteSha: string }> {
+  const local = await shaOf(git, localShaArgs(repoDir, branch), (out) => out);
+  const remote = await shaOf(git, remoteShaArgs(repoDir, remoteName), (out) => out.split(/\s+/)[0] ?? "");
+  return { pushed: local !== "" && local === remote, sha: local, remoteSha: remote };
 }

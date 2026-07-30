@@ -12,6 +12,7 @@ import {
 } from "../src/core/mcp-lane-canary.js";
 import { parseMcpLaneCanaryArgs } from "../src/commands/mcp-lane-canary.js";
 import { resolveShippedMcpEntry } from "../src/runtime/mcp-lane-canary-io.js";
+import { DAEMON_SILENCE_REASON } from "../src/runtime/liveness-anchor.js";
 
 const SUPERVISOR_PID = 40_100;
 const WORKER_PID = 40_200;
@@ -26,11 +27,45 @@ function worker(overrides: Partial<CanaryWorker> = {}): CanaryWorker {
   };
 }
 
+/** One `worker_vitals` row in the shape the shipped adapter publishes it. */
+function vitals(daemonLiveness: unknown = daemonAnswered()): unknown {
+  return [{ worker: { id: "wCAN1", pid: WORKER_PID }, live: true, daemon_liveness: daemonLiveness }];
+}
+
+/** The daemon answered — about a Worker it never birthed, which is the honest
+ * verdict for one this lane launched itself. */
+function daemonAnswered(): unknown {
+  return {
+    verdict: "unknown",
+    anchor: "none",
+    project_label: null,
+    pid: null,
+    staleness: { stale: true, age_ms: null, threshold_ms: null, reason: DAEMON_UNCOVERED },
+  };
+}
+
+/** The daemon said nothing at all — the socket boundary is broken. */
+function daemonSilent(): unknown {
+  return {
+    verdict: "unknown",
+    anchor: "none",
+    project_label: null,
+    pid: null,
+    staleness: { stale: true, age_ms: null, threshold_ms: null, reason: DAEMON_SILENCE_REASON },
+  };
+}
+
+const DAEMON_UNCOVERED =
+  "the daemon holds no record of this Worker while the caller still sees it running, " +
+  "so its silence is ignorance about a Worker it never birthed, not evidence of death";
+
 interface HarnessOptions {
   tools?: readonly string[];
   create?: unknown;
   status?: unknown;
   stop?: unknown;
+  /** What `worker_vitals` answers. */
+  vitals?: unknown;
   /** Worker observations, consumed one per scan; the last repeats forever. */
   observations?: readonly (readonly CanaryWorker[])[];
   /** Pids that are alive; a pid absent here reads dead. */
@@ -50,11 +85,20 @@ function harness(options: HarnessOptions = {}) {
 
   const deps: McpLaneCanaryDeps = {
     listTools: async () =>
-      options.tools ?? ["project_start", "project_status", "project_stop", "worker_status"],
+      options.tools ?? [
+        "project_start",
+        "project_status",
+        "project_stop",
+        "worker_vitals",
+        "worker_status",
+      ],
     callTool: async (tool, args) => {
       calls.push({ tool, args });
       if (tool === "project_start") {
         return options.create ?? { status: "launched", pid: SUPERVISOR_PID, target: 1 };
+      }
+      if (tool === "worker_vitals") {
+        return options.vitals ?? vitals();
       }
       if (tool === "project_status") {
         return (
@@ -88,7 +132,13 @@ function harness(options: HarnessOptions = {}) {
   return { deps, calls };
 }
 
-const OPTIONS = { fleet: "canary", runner: "claude", pollMs: 10, workerDeadlineMs: 200 };
+const OPTIONS = {
+  fleet: "canary",
+  runner: "claude",
+  pollMs: 10,
+  workerDeadlineMs: 200,
+  daemonDeadlineMs: 200,
+};
 
 describe("MCP lane canary — green lane", () => {
   it("walks every step and reports the lane alive", async () => {
@@ -105,9 +155,82 @@ describe("MCP lane canary — green lane", () => {
     // The real tool surface was driven, in lane order.
     expect(calls.map((call) => call.tool)).toEqual([
       "project_start",
+      "worker_vitals",
       "project_status",
       "project_stop",
     ]);
+  });
+});
+
+describe("MCP lane canary — the socket boundary (#2794)", () => {
+  it("fails at daemon_reach when the tool answers and the daemon does not", async () => {
+    const { deps } = harness({ vitals: vitals(daemonSilent()) });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.ok).toBe(false);
+    expect(result.inertStep).toBe("daemon_reach");
+    // The lane looked healthy up to the socket: this is the two-process shape of
+    // the same silent inertness #2677 taught, so the report must say so.
+    const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
+    expect(byStep.get("worker_spawn")).toBe("ok");
+    expect(byStep.get("daemon_reach")).toBe("inert");
+    expect(byStep.get("project_status")).toBe("skipped");
+    expect(result.summary).toContain("daemon_reach");
+    expect(result.summary).toContain("the tool is reachable and the socket is not");
+    // An inert lane is still torn down.
+    expect(byStep.get("project_stop")).toBe("ok");
+  });
+
+  it("accepts a daemon that answered about a Worker it never birthed", async () => {
+    const { deps } = harness();
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    const step = result.steps.find((entry) => entry.step === "daemon_reach");
+    expect(step?.verdict).toBe("ok");
+    expect(step?.detail).toContain("crossed the socket for wCAN1");
+  });
+
+  it("fails at daemon_reach when the row carries no daemon verdict at all", async () => {
+    const { deps } = harness({ vitals: [{ worker: { id: "wCAN1" }, live: true }] });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.inertStep).toBe("daemon_reach");
+    expect(result.summary).toContain("no daemon_liveness block");
+  });
+
+  it("refuses a verdict about some other worker as evidence for this one", async () => {
+    // The false-green shape: the reader answers, nothing it says is about the
+    // work this walk performed.
+    const { deps } = harness({
+      vitals: [{ worker: { id: "wOTHER" }, live: true, daemon_liveness: daemonAnswered() }],
+    });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.inertStep).toBe("daemon_reach");
+    expect(result.summary).toContain("listed only wOTHER");
+    expect(result.summary).toContain("wCAN1");
+  });
+
+  it("fails at daemon_reach when the reader publishes no worker at all", async () => {
+    const { deps } = harness({ vitals: [] });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.inertStep).toBe("daemon_reach");
+    expect(result.summary).toContain("listed no worker at all");
+  });
+
+  it("fails at connect when the lane exposes no worker_vitals to ask", async () => {
+    const { deps } = harness({ tools: ["project_start", "project_status", "project_stop"] });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.inertStep).toBe("connect");
+    expect(result.summary).toContain("worker_vitals");
   });
 });
 

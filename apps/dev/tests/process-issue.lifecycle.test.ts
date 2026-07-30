@@ -1740,8 +1740,14 @@ describe("processIssue — pre_merge hook abort (primary checkout untouched, #26
     expect(result.outcome).toBe("merge-conflict");
     // The attempt was pushed (push precedes the hook) — the remote ref exists.
     expect(trace.pushedAttempt).toHaveLength(1);
-    // No merge or integration command ran after the abort.
-    expect(trace.mergeCalls).toEqual([]);
+    // No merge or integration command ran after the abort. The park does run
+    // the #2811 tracker-visibility probe (`rev-list --count` on the pushed
+    // branch, then the idempotent PR open) — committed work that reached origin
+    // is never parked out of sight — but nothing integrates or merges.
+    const mergeJoined = trace.mergeCalls.map((c) => c.join(" "));
+    expect(mergeJoined.some((c) => /\bgit .*\bmerge\b|\bpr merge\b/.test(c))).toBe(false);
+    expect(mergeJoined.some((c) => c.includes("rev-list --count"))).toBe(true);
+    expect(mergeJoined.some((c) => c.includes("pr create"))).toBe(true);
     // pre_merge fired; post_merge did not — no integration ran.
     expect(result.hooksFired).toContain("pre_merge");
     expect(result.hooksFired).not.toContain("post_merge");

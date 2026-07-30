@@ -66,11 +66,21 @@ against a bundle that cannot route `run`, so workers created through this
 interface drained zero issues while the CLI lane kept working and no surface
 reported the difference (#2677). Run
 `castle-mcp __mcp-canary --root <scratch-repo>` to walk the shipped lane end to
-end — `project_start` → a slot that spawns a real worker → `project_status` →
-`project_stop`. It exits non-zero naming the step that went inert, and it treats a
-returned supervisor pid as proof of nothing: only a worker directory holding a
-live `worker.pid` counts as drainage. CI runs the same walk on every PR against
-two bundles that differ solely in whether the slot entry routes `run`.
+end — `project_start` → a slot that spawns a real worker → a daemon verdict over
+the socket → `project_status` → `project_stop`. It exits non-zero naming the step
+that went inert, and it treats a returned supervisor pid as proof of nothing:
+only a worker directory holding a live `worker.pid` counts as drainage.
+
+**The walk crosses the socket, because the lane does.** Under ADR 0130 a
+Worker's process liveness resolves over a unix socket to the `redskilled`
+daemon, so a tool answering says nothing about the daemon behind it — with no
+daemon listening, every tool still replies and the verdict degrades to
+`unknown`. The `daemon_reach` step reads `worker_vitals` for the worker the walk
+just spawned and fails when that verdict was reached without the daemon
+answering, so a reachable tool over an unreachable daemon is a red canary rather
+than a quiet one. CI runs the same walk on every PR against bundles that differ
+solely in whether the slot entry routes `run`, and against a session whose
+daemon socket is dead.
 
 ### Worker — one worker's lifecycle
 
@@ -235,6 +245,8 @@ the comment is on a pull request.
 - ADR 0120 — red-castle is the AFK MCP; CLI and skills are clients.
 - ADR 0128 §7 — the CLI is a thin client of the same core, so the MCP lane
   carries a canary that exercises the shipped path end to end and fails loudly.
+- ADR 0130 — the lane spans two processes and a socket, so the canary carries a
+  step for the daemon boundary that a single-process walk could not see.
 - ADR 0113 — castle owns the truth, dev owns the host boundary.
 - [`SKILL.md`](./SKILL.md), [`fleet.md`](./fleet.md), [`monitor.md`](./monitor.md) — the `/afk` clients.
 - [`../go/SKILL.md`](../go/SKILL.md) — the `/go` client.

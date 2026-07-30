@@ -192,13 +192,18 @@ describe("doLanding — formerly-sensitive paths land normally (#2417)", () => {
 });
 
 describe("doLanding — abort / failure short-circuits", () => {
-  it("push failure → { ok:false, land-failed } before any hook fires (no silent zero-diff)", async () => {
+  it("push failure → { ok:false, infra } before any hook fires (no silent zero-diff)", async () => {
     const h = harness({ locked: false });
-    // Simulate the continuous-push hook having failed: the initial push also fails.
+    // Simulate the continuous-push hook having failed: the initial push also
+    // fails, and the ref reads confirm nothing reached origin. The refusal is
+    // `infra`, never `land-failed` — the latter funnels into the merge-conflict
+    // terminal, which is how a push failure came to be labelled a conflict
+    // under a summary denying it was one (#2811).
     h.deps.remoteGit = async () => ({ code: 1, stdout: "", stderr: "fatal: authentication failed" });
     const r = await doLanding(h.deps, h.input, h.hooks);
-    expect(r).toMatchObject({ ok: false, reason: "land-failed", locked: false });
-    expect((r as { message?: string }).message).toContain("push failed");
+    expect(r).toMatchObject({ ok: false, reason: "infra", locked: false });
+    expect((r as { infraReason?: string }).infraReason).toContain("push failed");
+    expect((r as { infraReason?: string }).infraReason).not.toMatch(/merge conflict/i);
     // No hooks should fire — the push is the first mandatory step.
     expect(h.firedHooks).toEqual([]);
   });
