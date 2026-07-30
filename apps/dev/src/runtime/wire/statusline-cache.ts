@@ -6,6 +6,7 @@ import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/too
 import { encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY } from "../../core/triage-labels.js";
 import * as ghx from "../gh.js";
+import { GhReadError } from "../gh/read.js";
 import { afkPaths, type RepoContext } from "./paths.js";
 import { parsePositive } from "./settings.js";
 
@@ -215,6 +216,13 @@ export async function editLabelsWithStatuslineCache(
   return ok;
 }
 
+/**
+ * Refresh the cached statusline counts, LEAVING THE CACHE UNTOUCHED when the
+ * read failed. A read that could not run yields no counts to write: overwriting
+ * known counts with zeroes would render "the queue is empty" as fact (#2801), so
+ * a {@link GhReadError} skips the write and the previous counts keep serving
+ * until a read succeeds.
+ */
 export async function refreshStatuslineCountCache(
   root: string,
   repo: string = inferGitHubRepoSlug(root),
@@ -222,7 +230,11 @@ export async function refreshStatuslineCountCache(
 ): Promise<void> {
   try {
     const cachePath = statuslineCountCachePath(root);
-    const counts = await ghx.countStatuslineQueueCounts({ cwd: root, repo });
+    const counts = await ghx.countStatuslineQueueCounts({ cwd: root, repo }).catch((error: unknown) => {
+      if (error instanceof GhReadError) return null;
+      throw error;
+    });
+    if (counts === null) return;
     writeStatuslineCacheAtomic(cachePath, { ...counts, ts: Math.floor(Date.now() / 1000) });
   } finally {
     if (lockPath) releaseStatuslineRefreshLock(lockPath);
