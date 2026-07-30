@@ -6,13 +6,14 @@
     "moduleResolution": "Node16",
     "lib": ["ES2022"],
     "noEmit": true,
-    "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "declaration": false,
     "sourceMap": false,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "types": ["node"]
   },
-  "include": ["src"]
+  "comment-include": "The shared args source is typechecked here because code-nav imports it; its *.test.ts runs under vitest and resolves its own deps, so it is not compiled by code-nav's tsc.",
+  "include": ["src", "tests", "../../packages/shared/args.ts"]
 }
