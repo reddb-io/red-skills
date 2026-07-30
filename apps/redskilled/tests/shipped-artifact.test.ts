@@ -16,7 +16,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { REDSKILLED_BUNDLE_ASSET, resolveRedskilledDaemonEntry } from "../src/client.js";
+import { REDSKILLED_BUNDLE_ASSET, resolveRedskilledEntry } from "../src/client.js";
 import { socketAnswers } from "../src/daemon.js";
 
 const APP = resolve(__dirname, "..");
@@ -75,15 +75,29 @@ describe("redskilled ships as a bundled artifact", () => {
   });
 
   it("names the bundle as the daemon entry a spawn invokes, never the caller's own file", () => {
+    const lookup = { execPath: "/usr/bin/node", execArgv: [], env: {}, listDir: () => [] };
     // Bundled: the artifact IS the entry, and no `cli.js` ships beside it.
-    expect(resolveRedskilledDaemonEntry({ self: `/opt/red/dist/${REDSKILLED_BUNDLE_ASSET}`, exists: () => false }))
-      .toBe(`/opt/red/dist/${REDSKILLED_BUNDLE_ASSET}`);
+    const bundled = resolveRedskilledEntry(
+      {},
+      { ...lookup, callerEntry: `/opt/red/dist/${REDSKILLED_BUNDLE_ASSET}`, exists: () => false },
+    );
+    expect(bundled).toMatchObject({ entry: `/opt/red/dist/${REDSKILLED_BUNDLE_ASSET}`, source: "caller-entry" });
     // Inlined into a foreign host bundle: the sibling artifact, NOT the host.
-    expect(resolveRedskilledDaemonEntry({ self: "/opt/red/dist/dev.bundle.min.mjs", exists: () => true }))
-      .toBe(`/opt/red/dist/${REDSKILLED_BUNDLE_ASSET}`);
-    // Compiled workspace layout, with no bundle beside it.
-    expect(resolveRedskilledDaemonEntry({ self: "/w/apps/redskilled/dist/client.js", exists: () => false }))
-      .toBe("/w/apps/redskilled/dist/client.js".replace("client.js", "cli.js"));
+    const inlined = resolveRedskilledEntry(
+      {},
+      { ...lookup, callerEntry: "/opt/red/dist/dev.bundle.min.mjs", exists: () => true },
+    );
+    expect(inlined).toMatchObject({
+      entry: `/opt/red/dist/${REDSKILLED_BUNDLE_ASSET}`,
+      source: "caller-sibling-bundle",
+    });
+    // Compiled workspace layout: `apps/redskilled/dist/cli.js` is a redskilled
+    // entry by package, so a caller inside the app resolves to itself.
+    const workspace = resolveRedskilledEntry(
+      {},
+      { ...lookup, callerEntry: "/w/apps/redskilled/dist/cli.js", exists: () => false },
+    );
+    expect(workspace).toMatchObject({ entry: "/w/apps/redskilled/dist/cli.js", source: "caller-entry" });
   });
 
   it(
