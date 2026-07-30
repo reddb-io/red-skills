@@ -1,6 +1,12 @@
+import { GITHUB_QUOTA_REMEDY, isGithubQuotaText } from "@reddb-io/shared/github-quota.js";
 import { encode, type JsonObject, type JsonValue } from "@reddb-io/toon";
 
-export type RspErrorCategory = "usage" | "real-error" | "no-op";
+/**
+ * `transient` is a failure that clears on its own — a GitHub quota window
+ * resetting, not anything the operator must repair. It exits non-zero like a
+ * `real-error`, but its help describes the wait instead of a fix (#2830).
+ */
+export type RspErrorCategory = "usage" | "real-error" | "transient" | "no-op";
 
 export interface RspStructuredErrorOptions {
   command: string;
@@ -15,6 +21,8 @@ export interface RspStructuredErrorOptions {
 export function structuredExitCode(category: RspErrorCategory): 0 | 1 | 2 {
   if (category === "no-op") return 0;
   if (category === "usage") return 2;
+  // `transient` joins `real-error` at 1: the command still failed, so the caller
+  // must not treat it as success — only the remedy differs.
   return 1;
 }
 
@@ -51,21 +59,24 @@ export function classifyWrappedFailure(command: string, stdout: string, stderr: 
   const diagnostics = [stderr, stdout].find((text) => text.trim()) ?? "";
   const normalized = diagnostics.trim();
   const lower = normalized.toLowerCase();
+  // Quota first: GitHub's rate-limit bodies advertise that "authenticated
+  // requests get a higher rate limit", so an auth-keyed match would claim them
+  // and send the operator to inspect a token that is perfectly fine.
+  if (/\bgh\b/.test(command) && isGithubQuotaText(normalized)) {
+    return {
+      command,
+      category: "transient",
+      error: firstLine(normalized) || "GitHub API rate limit exceeded",
+      help: GITHUB_QUOTA_REMEDY,
+      diagnostics: normalized,
+    };
+  }
   if (/\bgh\b/.test(command) && (lower.includes("gh_token") || lower.includes("not logged in") || lower.includes("authentication"))) {
     return {
       command,
       category: "real-error",
       error: firstLine(normalized) || "GitHub authentication failed",
       help: "gh auth login",
-      diagnostics: normalized,
-    };
-  }
-  if (/\bgh\b/.test(command) && lower.includes("rate limit")) {
-    return {
-      command,
-      category: "real-error",
-      error: firstLine(normalized) || "GitHub API rate limit exceeded",
-      help: "gh auth status",
       diagnostics: normalized,
     };
   }

@@ -12,6 +12,7 @@
     "./channel.js": "./channel.ts",
     "./entrypoint-cli.js": "./entrypoint-cli.ts",
     "./github-batch.js": "./github-batch.ts",
+    "./github-quota.js": "./github-quota.ts",
     "./github-webhook.js": "./github-webhook.ts",
     "./red-runtime.js": "./red-runtime.ts",
     "./self-update.js": "./self-update.ts",

@@ -10,13 +10,14 @@
 // routes through withGhQuotaBackoff when GhContext/GitContext carries a
 // quotaBackoff option. Without the option, behavior is unchanged.
 
+import { isGithubQuotaText } from "@reddb-io/shared/github-quota.js";
+
 import type { ExecOutput } from "../exec.js";
 
-// Patterns covering REST 403/429 rate-limit bodies and GraphQL RATE_LIMITED.
-// Note: the auth transient pattern in gh/auth.ts overlaps for boot purposes;
-// this classifier is specifically for mutation retry, so it is narrower.
-const RATE_LIMIT_PATTERN =
-  /rate limit exceeded|secondary rate limit|abuse detection mechanism|API rate limit|API rate limited|RATE_LIMITED|too many requests/i;
+// The quota taxonomy itself — primary limits, secondary/abuse limits, GraphQL
+// exhaustion — is owned by `@reddb-io/shared/github-quota.js` so that every
+// boundary that classifies a GitHub failure reads the same patterns (#2830).
+// This module owns only the exec-output shape and the bounded retry around it.
 
 /**
  * True when `output` is a GitHub rate-limit response (REST 403/429 with
@@ -25,8 +26,7 @@ const RATE_LIMIT_PATTERN =
  */
 export function isGhRateLimited(output: ExecOutput): boolean {
   if (output.code === 0) return false;
-  const combined = `${output.stdout}\n${output.stderr}`;
-  return RATE_LIMIT_PATTERN.test(combined);
+  return isGithubQuotaText(`${output.stdout}\n${output.stderr}`);
 }
 
 export interface GhQuotaBackoffOpts {
