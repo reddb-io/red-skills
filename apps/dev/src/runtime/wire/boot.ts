@@ -4,7 +4,11 @@ import { readBuildInfo } from "@reddb-io/build-info";
 import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/red-castle/engine";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { auditConfigLoad, loadConfig, getConfig } from "../../core/config.js";
-import { compareSemver, fetchNpmNewestDevBundleVersion, readDevBundleCacheState } from "../../core/bundle-version.js";
+import {
+  fetchNpmNewestDevBundleVersion,
+  readDevBundleCacheState,
+  resolvePublishedDevBundleVersion,
+} from "../../core/bundle-version.js";
 import { resolveBaseWithSource } from "../../core/base-resolver.js";
 import { DEFAULT_BRANCH } from "../../core/pin-reader.js";
 import type { PrecheckFacts, BootOptions, BootDeps, BootstrapInput, OrphanDir } from "../../core/boot.js";
@@ -261,11 +265,9 @@ export async function collectPrecheckFacts(
   const pnpmInstalled = pnpmProbe.code !== 127;
   const installedBundleVersion = readBuildInfo("dev").version;
   const bundleCache = readDevBundleCacheState(installedBundleVersion);
-  const cachedBundleVersion = bundleCache.laneNewestVersion;
-  const latestBundleVersion =
-    cachedBundleVersion && compareSemver(cachedBundleVersion, installedBundleVersion) > 0
-      ? cachedBundleVersion
-      : installedBundleVersion;
+  // One definition of "published", shared with the fleet launch, so the skew the
+  // probe reports is the skew a relaunch actually clears (#2808).
+  const latestBundleVersion = resolvePublishedDevBundleVersion(installedBundleVersion) ?? installedBundleVersion;
   let npmNewestVersion: string | undefined;
   let npmError: string | undefined;
   if (options.includeNpmBundleCoherence) {
