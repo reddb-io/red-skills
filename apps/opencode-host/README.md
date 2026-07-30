@@ -56,7 +56,18 @@ pnpm --filter @reddb-io/red-skills generate -- --with-slice-2 --copy
 # Bundled form (release asset)
 pnpm --filter @reddb-io/red-skills bundle
 node ./dist/opencode-host.bundle.min.mjs --with-slice-2 --plugins-root ./plugins
+
+# Which build is answering?
+node ./dist/opencode-host.bundle.min.mjs --version         # opencode-host <version> <sha>
+node ./dist/opencode-host.bundle.min.mjs --version --json  # the structured build info
+node ./dist/opencode-host.bundle.min.mjs --help
 ```
+
+Commands and flags are routed by the shared arg contract
+(`@reddb-io/shared/args`, ADR 0114): `generate` is the default command, `-v` is
+version (never verbose), and a flag the schema does not declare fails with exit
+2 and a message naming it. The accepted surface is declared in
+`src/cli-args.ts`.
 
 ## Universal install (recommended)
 
