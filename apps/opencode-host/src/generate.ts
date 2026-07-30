@@ -11,6 +11,9 @@
  *   pnpm --filter @reddb-io/red-skills generate
  *   pnpm --filter @reddb-io/red-skills generate -- --config ./.red/config.yaml --out ./dist/opencode
  *
+ * Arguments are routed and parsed by the shared contract (ADR 0114); the
+ * accepted surface is declared in `cli-args.ts`.
+ *
  * Behaviour:
  *   - reads `<config>` (default `./.red/config.yaml`),
  *   - checks the ADR 0067 strict opt-in gate (`plugins.dev.enabled: true`),
@@ -26,6 +29,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
+import {
+  isVersionRequest,
+  OpencodeHostUsageError,
+  parseOpencodeHostArgs,
+  renderHelp,
+  type OpencodeHostArgs,
+} from "./cli-args.js";
 import {
   buildProviderBlock,
   isDevPluginEnabled,
@@ -68,125 +78,38 @@ function mcpPlansToObject(plans: McpPlan[]): Record<string, McpEntry> {
   return out;
 }
 
-interface CliArgs {
-  configPath: string;
-  /** Slice 1: write the provider block to this file path. */
-  outPath: string;
-  /** Slice 2: write the dist tree under this directory. */
-  outDir: string;
-  pluginsRoot: string;
-  showHelp: boolean;
-  printJson: boolean;
-  copySkills: boolean;
-  pluginFilter: string[] | null;
-  slice2: boolean;
+/** Print the build version — the answer this binary owes before anything else. */
+function writeVersion(asJson: boolean): void {
+  const info = readBuildInfo("opencode-host");
+  process.stdout.write(asJson ? `${JSON.stringify(info)}\n` : `${renderVersion(info)}\n`);
 }
-
-function parseArgs(argv: ReadonlyArray<string>): CliArgs {
-  const args: CliArgs = {
-    configPath: "./.red/config.yaml",
-    outPath: "./opencode.json",
-    outDir: "./dist/opencode",
-    pluginsRoot: "./plugins",
-    showHelp: false,
-    printJson: false,
-    copySkills: false,
-    pluginFilter: null,
-    slice2: true,
-  };
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--config" || arg === "-c") {
-      const next = argv[++i];
-      if (typeof next !== "string" || next.length === 0) {
-        process.stderr.write("opencode-host: --config requires a path\n");
-        process.exit(2);
-      }
-      args.configPath = next;
-    } else if (arg === "--out" || arg === "-o") {
-      const next = argv[++i];
-      if (typeof next !== "string" || next.length === 0) {
-        process.stderr.write("opencode-host: --out requires a path\n");
-        process.exit(2);
-      }
-      args.outPath = next;
-    } else if (arg === "--out-dir" || arg === "-d") {
-      const next = argv[++i];
-      if (typeof next !== "string" || next.length === 0) {
-        process.stderr.write("opencode-host: --out-dir requires a path\n");
-        process.exit(2);
-      }
-      args.outDir = next;
-    } else if (arg === "--plugins-root" || arg === "-p") {
-      const next = argv[++i];
-      if (typeof next !== "string" || next.length === 0) {
-        process.stderr.write("opencode-host: --plugins-root requires a path\n");
-        process.exit(2);
-      }
-      args.pluginsRoot = next;
-    } else if (arg === "--plugin") {
-      const next = argv[++i];
-      if (typeof next !== "string" || next.length === 0) {
-        process.stderr.write("opencode-host: --plugin requires a name\n");
-        process.exit(2);
-      }
-      args.pluginFilter = [...(args.pluginFilter ?? []), next];
-    } else if (arg === "--with-slice-2" || arg === "--slice-2") {
-      args.slice2 = true;
-    } else if (arg === "--no-slice-2") {
-      args.slice2 = false;
-    } else if (arg === "--copy") {
-      args.copySkills = true;
-    } else if (arg === "--help" || arg === "-h") {
-      args.showHelp = true;
-    } else if (arg === "--print") {
-      args.printJson = true;
-    } else {
-      process.stderr.write(`opencode-host: unknown arg ${arg}\n`);
-      process.exit(2);
-    }
-  }
-  return args;
-}
-
-const HELP = `opencode-host generate — emit the opencode-host runtime tree
-
-Slice 1: opencode.json (provider block) at <out>
-Slice 2: dist tree at <out-dir>/<plugin>/{opencode.json, .opencode/...}
-
-Usage:
-  opencode-host generate [--config <path>] [--out <path>] [--out-dir <path>] [--plugins-root <path>] [--plugin <name>] [--copy] [--print] [--no-slice-2]
-  opencode-host generate --help
-
-Options:
-  -c, --config <path>        path to .red/config.yaml (default: ./.red/config.yaml)
-  -o, --out <path>           Slice 1: path to write opencode.json (default: ./opencode.json)
-  -d, --out-dir <path>       Slice 2: dist root (default: ./dist/opencode)
-  -p, --plugins-root <path>  path to the plugins/ tree (default: ./plugins)
-      --plugin <name>        emit only this plugin (repeatable; Slice 2 only)
-      --copy                 copy SKILL.md instead of symlinking
-      --with-slice-2         emit the Slice 2 dist tree (default; kept for compatibility)
-      --no-slice-2           opt out of the Slice 2 dist tree
-  --print                    print Slice 1 JSON to stdout (Slice 2 not written)
-  -h, --help                 show this help
-
-Exit codes:
-  0  wrote (or printed) successfully
-  1  read/write failure or opt-in gate closed (plugins.dev.enabled: true missing)
-  2  usage error
-
-Notes:
-  - The ADR 0067 strict opt-in gate applies: plugins.dev.enabled: true must be set.
-  - Slice 1 (--out) is unaffected by --plugin/--no-slice-2; it is the standalone
-    provider-block JSON file.
-  - Planner errors (bad name, missing frontmatter) are reported on stderr but
-    do NOT fail the build. The events the generator can map are emitted.
-`;
 
 function main(argv: ReadonlyArray<string>): void {
-  const args = parseArgs(argv);
+  // Answered before config, the opt-in gate, or any plugin discovery: "which
+  // build is this?" must stay answerable in exactly the situation you need to
+  // ask it — an unconfigured directory, a closed gate, an empty plugins tree.
+  if (isVersionRequest(argv)) {
+    writeVersion(argv.includes("--json"));
+    return;
+  }
+
+  let args: OpencodeHostArgs;
+  try {
+    args = parseOpencodeHostArgs(argv);
+  } catch (err) {
+    if (err instanceof OpencodeHostUsageError) {
+      process.stderr.write(`opencode-host: ${err.message}\n`);
+      process.exit(2);
+    }
+    throw err;
+  }
+
+  if (args.showVersion) {
+    writeVersion(args.versionJson);
+    return;
+  }
   if (args.showHelp) {
-    process.stdout.write(HELP);
+    process.stdout.write(renderHelp());
     return;
   }
 

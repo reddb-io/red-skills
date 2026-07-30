@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { parseFlags, parseLooseArgs, routeCommand, UnknownCommandError, type FlagSchema, type RouterSchema } from "./args.js";
+import {
+  parseFlags,
+  parseLooseArgs,
+  routeCommand,
+  UnknownCommandError,
+  UnknownFlagError,
+  type FlagSchema,
+  type RouterSchema,
+} from "./args.js";
 
 const SCHEMA = {
   prd: { kind: "value", coerce: (raw: string) => Number(raw) },
@@ -115,6 +123,46 @@ describe("parseFlags", () => {
 
   it("accepts a negative number as a value", () => {
     expect(parseFlags(["-n", "-5"], SCHEMA).values.n).toBe(-5);
+  });
+
+  it("names the offending flag when the caller opts into strict unknown handling", () => {
+    expect(() => parseFlags(["--once", "--bogus"], SCHEMA, { unknownFlags: "error" })).toThrow(
+      UnknownFlagError,
+    );
+    expect(() => parseFlags(["--once", "--bogus"], SCHEMA, { unknownFlags: "error" })).toThrow(
+      /unknown flag '--bogus'/,
+    );
+  });
+
+  it("names a short unknown flag with a single dash", () => {
+    expect(() => parseFlags(["-z"], SCHEMA, { unknownFlags: "error" })).toThrow(/unknown flag '-z'/);
+  });
+
+  it("lists the declared flags alongside the unknown one", () => {
+    try {
+      parseFlags(["--bogus"], REPEATED_SCHEMA, { unknownFlags: "error" });
+      expect.unreachable("expected UnknownFlagError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(UnknownFlagError);
+      expect((err as UnknownFlagError).flag).toBe("--bogus");
+      expect((err as UnknownFlagError).known).toEqual(["--change"]);
+    }
+  });
+
+  it("accepts declared aliases and negated booleans under strict handling", () => {
+    const schema = {
+      "slice-2": { kind: "boolean", aliases: ["with-slice-2"] },
+      config: { kind: "value", aliases: ["c"], coerce: (raw: string) => raw },
+    } satisfies FlagSchema;
+    expect(parseFlags(["--no-slice-2", "-c", "x"], schema, { unknownFlags: "error" }).values).toEqual({
+      "slice-2": false,
+      config: "x",
+    });
+    expect(parseFlags(["--with-slice-2"], schema, { unknownFlags: "error" }).values["slice-2"]).toBe(true);
+  });
+
+  it("still ignores unknown flags by default", () => {
+    expect(parseFlags(["--bogus", "--once"], SCHEMA).values.once).toBe(true);
   });
 });
 

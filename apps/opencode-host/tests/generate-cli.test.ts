@@ -90,13 +90,39 @@ describe("opencode-host generate (CLI smoke)", () => {
     expect(r.stdout).toContain("--config");
   });
 
-  it("rejects unknown args with exit 2", () => {
+  it("rejects unknown args with exit 2 and names the flag", () => {
     const r = runGenerate(["--bogus"], {});
     // pnpm propagates the child exit code as 1 when non-zero (a quirk of
     // pnpm's recursive exec wrapper), so we accept either the documented
     // 2 or pnpm's 1. The contract under test is "non-zero + clear stderr".
     expect([1, 2]).toContain(r.status);
-    expect(r.stderr).toMatch(/unknown arg/);
+    expect(r.stderr).toMatch(/unknown flag '--bogus'/);
+  });
+
+  it("prints the build version on --version and -v", () => {
+    for (const flag of ["--version", "-v"]) {
+      const r = runGenerate([flag], {});
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/^opencode-host \S+ \S+\n$/);
+    }
+  });
+
+  it("prints the structured build info on --version --json", () => {
+    const r = runGenerate(["--version", "--json"], {});
+    expect(r.status).toBe(0);
+    const info = JSON.parse(r.stdout) as { app: string; version: string; gitSha: string };
+    expect(info.app).toBe("opencode-host");
+    expect(typeof info.version).toBe("string");
+    expect(typeof info.gitSha).toBe("string");
+  });
+
+  it("answers --version without reading a config or opening the gate", () => {
+    // No --config exists at this path and the CWD's gate is irrelevant: the
+    // version answer must come before either is touched.
+    const r = runGenerate(["--version", "--config", "/nonexistent/config.yaml"], {});
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/^opencode-host /);
+    expect(r.stderr).not.toMatch(/could not read config/);
   });
 
   it("refuses to emit when the dev plugin is not enabled (ADR 0067)", () => {

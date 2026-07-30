@@ -63,6 +63,32 @@ export interface ParseFlagsResult<Schema extends FlagSchema> {
   positionals: string[];
 }
 
+/** How `parseFlags` answers a flag the schema never declared. */
+export interface ParseFlagsOptions {
+  /**
+   * `"ignore"` (default) leaves undeclared flags alone for the caller to handle
+   * elsewhere; `"error"` throws {@link UnknownFlagError} naming the first one.
+   */
+  unknownFlags?: "ignore" | "error";
+}
+
+/**
+ * Raised by {@link parseFlags} under `unknownFlags: "error"` when argv carries a
+ * flag the schema never declared — e.g. `--bogus`. Naming the flag is the point:
+ * a binary that silently swallows a typo'd flag runs with a default the caller
+ * believed they had overridden.
+ */
+export class UnknownFlagError extends Error {
+  readonly flag: string;
+  readonly known: readonly string[];
+  constructor(flag: string, known: readonly string[]) {
+    super(`unknown flag '${flag}'; expected one of: ${known.join(", ")}`);
+    this.name = "UnknownFlagError";
+    this.flag = flag;
+    this.known = known;
+  }
+}
+
 export interface LooseParsedArgs {
   command: string | undefined;
   positional: string[];
@@ -130,11 +156,14 @@ function collectArrayValues(argv: readonly string[], schema: FlagSchema): Map<st
  *
  * Last occurrence wins unless a value flag opts into `type: "array"`, which
  * accumulates occurrences in input order. Unknown flags are ignored (left for
- * the caller to handle elsewhere), matching the permissive scan dev relied on.
+ * the caller to handle elsewhere), matching the permissive scan dev relied on;
+ * pass `{ unknownFlags: "error" }` to have the contract throw
+ * {@link UnknownFlagError} naming the offending flag instead.
  */
 export function parseFlags<Schema extends FlagSchema>(
   argv: readonly string[],
   schema: Schema,
+  options: ParseFlagsOptions = {},
 ): ParseFlagsResult<Schema> {
   const parser = createParser({
     options: buildParserOptions(schema),
@@ -150,6 +179,20 @@ export function parseFlags<Schema extends FlagSchema>(
   }
 
   if (parsed.errors.length > 0) throw new Error(parsed.errors[0]);
+
+  if (options.unknownFlags === "error") {
+    // The parser normalises aliases and `--no-x` negation onto the canonical
+    // name, so anything left in `options` that the schema never declared is a
+    // flag nobody defined — report it in the spelling the caller can retype.
+    const declared = new Set(Object.keys(schema));
+    for (const name of Object.keys(parsed.options)) {
+      if (declared.has(name)) continue;
+      throw new UnknownFlagError(
+        name.length === 1 ? `-${name}` : `--${name}`,
+        Object.keys(schema).map((flag) => (flag.length === 1 ? `-${flag}` : `--${flag}`)),
+      );
+    }
+  }
 
   for (const [name, spec] of Object.entries(schema)) {
     const raw = parsed.options[name];

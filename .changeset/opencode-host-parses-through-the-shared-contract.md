@@ -1,0 +1,9 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+`opencode-host` parses its arguments through the shared contract, and answers `--version` (#2875). The binary carried its own `parseArgs` — a hand-rolled walk over argv — and exposed no version surface at all, despite importing the version helper for the header it stamps into the generated `opencode.json`. Every hand-rolled parser has its own answer to the questions a parser must answer: what counts as a flag, what happens to an unknown one, whether `-v` is version or verbose, whether the command may be omitted. Those answers differed per binary, which is why `--version` existed on some shipped binaries and not others — nothing guaranteed it, so each author decided separately.
+
+**Routing and flags now go through `@reddb-io/shared/args`, and the accepted surface is declared rather than walked.** `src/cli-args.ts` states the schema; `routeCommand` peels the (optional) `generate` verb and rejects a typo'd one; `parseFlags` handles `--flag`, `--flag=value`, `-f value`, `--no-slice-2` negation, and repeated `--plugin` accumulation the same way every other RedSkills binary does. `--version`/`-v` print the build version and `--json` prints the structured build info, answered before the config is read, before the ADR 0067 opt-in gate is consulted, and before any plugin is discovered — because "which build is this?" is asked exactly when a directory is unconfigured or its gate is closed. `--help`/`-h` print usage from the same declaration.
+
+The contract itself grew the strictness the binaries needed: `parseFlags(argv, schema, { unknownFlags: "error" })` throws `UnknownFlagError` naming the offending flag and listing the declared ones. The default stays permissive, so existing callers are unchanged; opencode-host opts in and a typo'd flag now exits 2 with `unknown flag '--bogus'` instead of being silently swallowed into a default the caller believed they had overridden.
