@@ -1,0 +1,34 @@
+{
+  "name": "fixture-marketplace",
+  "interface": {
+    "displayName": "Fixture Marketplace"
+  },
+  "plugins": [
+    {
+      "name": "alpha",
+      "source": {
+        "source": "local",
+        "path": "./plugins/alpha"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "description": "Alpha fixture plugin.",
+      "category": "Developer Tools"
+    },
+    {
+      "name": "beta",
+      "source": {
+        "source": "local",
+        "path": "./plugins/beta"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "description": "Beta fixture plugin.",
+      "category": "Developer Tools"
+    }
+  ]
+}

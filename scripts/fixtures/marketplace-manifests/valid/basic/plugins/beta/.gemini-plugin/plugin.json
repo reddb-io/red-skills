@@ -1,0 +1,42 @@
+{
+  "name": "beta",
+  "version": "0.1.0",
+  "description": "Beta fixture plugin.",
+  "author": {
+    "name": "reddb.io",
+    "url": "https://github.com/reddb-io"
+  },
+  "homepage": "https://github.com/reddb-io/red-skills",
+  "repository": "https://github.com/reddb-io/red-skills",
+  "license": "Apache-2.0",
+  "dependencies": [
+    "alpha"
+  ],
+  "keywords": [
+    "gemini-cli",
+    "skills",
+    "agents",
+    "beta"
+  ],
+  "skills": [
+    "./skills/core/"
+  ],
+  "interface": {
+    "displayName": "RedSkills Beta",
+    "shortDescription": "Beta fixture plugin.",
+    "longDescription": "Beta fixture plugin.",
+    "developerName": "reddb.io",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write",
+      "Shell"
+    ],
+    "websiteURL": "https://github.com/reddb-io/red-skills",
+    "defaultPrompt": [
+      "Use $remember when this workspace needs it."
+    ],
+    "brandColor": "#D92D20"
+  }
+}
