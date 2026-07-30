@@ -13,6 +13,14 @@
 // pinned to this sandbox; `daemon: "down"` pins a session key nothing is
 // listening on. The two differ in one fact — whether the socket answers — which
 // is exactly the boundary the canary's `daemon_reach` step must see.
+//
+// That daemon lives in a runtime directory the SANDBOX owns (#2884). The session
+// key alone made the socket unique but left it under the operator's real
+// `XDG_RUNTIME_DIR`, so a day of canary runs deposited a thousand dead sessions
+// in the directory the singleton's own arbitration reads from — litter
+// indistinguishable from the one-daemon-per-project failure ADR 0130 exists to
+// prevent. The sandbox therefore pins `XDG_RUNTIME_DIR` too: every process in
+// the lane derives the same runtime dir, and it is a temp dir cleanup removes.
 
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
@@ -20,6 +28,7 @@ import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { terminatePid } from "@reddb-io/shared/resident-core.js";
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
 import { sendRedskilledRequest } from "@reddb-io/redskilled/protocol";
 
@@ -35,6 +44,8 @@ export interface CanarySandbox {
   readonly root: string;
   /** The MCP bundle entry the canary launches. */
   readonly mcpEntry: string;
+  /** The runtime root this sandbox owns — every socket, lease and lane is under it. */
+  readonly runtimeRoot: string;
   readonly env: Record<string, string>;
 }
 
@@ -109,6 +120,10 @@ export async function createCanarySandbox(
   // about this sandbox rather than about whatever the developer happens to be
   // running, and an `up` sandbox can never be served by a stranger's daemon.
   sessions += 1;
+  // And a runtime root this sandbox owns, so that uniqueness lands in a
+  // directory cleanup can take back rather than in the operator's live one.
+  const runtimeRoot = await mkdtemp(join(tmpdir(), "mcp-canary-run-"));
+  sandboxes.push(runtimeRoot);
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     // The harness runs many times in CI; a transient cgroup scope per launch
@@ -116,10 +131,27 @@ export async function createCanarySandbox(
     RED_AFK_FLEET_SCOPE: "off",
     RED_AFK_TARGET: "1",
     REDSKILLED_SESSION: `mcp-canary-${process.pid}-${sessions}`,
+    // Every process in the lane derives its runtime dir from this one variable,
+    // so pinning it here is what makes the isolation reach the daemon the MCP
+    // bundle spawns rather than only the one this file starts. It also takes
+    // systemd user-session placement out of the picture, which is the same
+    // opt-out the scope line above already declares.
+    XDG_RUNTIME_DIR: runtimeRoot,
   };
+
+  // Loud, not hopeful: `runtimeSocketDir` silently falls back to `tmpdir()` when
+  // the derived socket path would exceed `sun_path`, and a silent fallback is
+  // exactly how this litter reached the operator's directory in the first place.
+  const derived = resolveRedskilledPaths({ env }).runtimeDir;
+  if (!derived.startsWith(`${runtimeRoot}/`)) {
+    throw new Error(
+      `canary sandbox runtime dir escaped its own root: ${derived} is not under ${runtimeRoot}`,
+    );
+  }
+
   if (daemon === "up") await startCanaryDaemon(built.redskilled, env);
 
-  return { root, mcpEntry, env };
+  return { root, mcpEntry, runtimeRoot, env };
 }
 
 /** Start the real daemon on this sandbox's session socket and wait for it to
@@ -169,15 +201,18 @@ async function pings(socketPath: string): Promise<boolean> {
   }
 }
 
+/**
+ * Take back everything a run created: the daemons, the scratch repos, and the
+ * runtime roots those daemons wrote into.
+ *
+ * The daemons go FIRST and are waited on, because a daemon still alive when its
+ * directory is removed writes the lease back and leaves the very corpse this
+ * cleanup exists to prevent. Callers run it from `afterAll`, so a walk that
+ * fails mid-way is cleaned up on exactly the same path as one that passes.
+ */
 export async function cleanupCanarySandboxes(): Promise<void> {
   bundles = undefined;
-  for (const pid of daemonPids.splice(0)) {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // Already gone; a daemon that exited on its own needs no help.
-    }
-  }
+  await Promise.all(daemonPids.splice(0).map((pid) => terminatePid(pid, 2_000)));
   await Promise.all(
     sandboxes.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );

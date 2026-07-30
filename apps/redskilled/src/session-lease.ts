@@ -67,6 +67,29 @@ export interface RedskilledLeaseStore {
   release(owner: RedskilledLeaseOwner): Promise<boolean>;
 }
 
+/**
+ * Read a lease record off disk without acquiring anything.
+ *
+ * A reader that only wants to know who holds a session — `reclaim`, a doctor,
+ * a bug report — must not have to mint the labels an acquirer needs, because
+ * inventing labels to read a record is how a reader ends up writing one.
+ * Absent or unreadable reads as `undefined`, never as a throw: the whole point
+ * of looking is that the record may be missing or corrupt.
+ */
+export async function readRedskilledLeaseFile(
+  leasePath: string,
+): Promise<RedskilledLease | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(leasePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const parsed = parseSnapshot(raw);
+  return isLease(parsed) ? parsed : undefined;
+}
+
 let cachedProcessOwner: RedskilledLeaseOwner | undefined;
 
 /**
@@ -92,15 +115,7 @@ export function createRedskilledLeaseStore(
   const pidAlive = options.isPidAlive ?? isPidAlive;
 
   async function readLease(): Promise<RedskilledLease | undefined> {
-    let raw: string;
-    try {
-      raw = await readFile(leasePath, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw error;
-    }
-    const parsed = parseSnapshot(raw);
-    return isLease(parsed) ? parsed : undefined;
+    return await readRedskilledLeaseFile(leasePath);
   }
 
   async function replace(lease: RedskilledLease): Promise<void> {

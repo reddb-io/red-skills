@@ -30,6 +30,10 @@ import {
   renderRedskilledUserUnit,
 } from "./provision.js";
 import { DEFAULT_REDSKILLED_IDLE_MS, startRedskilledDaemon } from "./daemon.js";
+import {
+  reclaimRedskilledRuntimeDirs,
+  type RedskilledReclaimOptions,
+} from "./reclaim.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 import {
   parseRedskilledStatuslineFlags,
@@ -66,9 +70,9 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   }
 
   const { command, args } = routeCommand<
-    "serve" | "host-state" | "statusline" | "unit" | "provision"
+    "serve" | "host-state" | "statusline" | "unit" | "provision" | "reclaim"
   >(argv, {
-    commands: { serve: {}, "host-state": {}, statusline: {}, unit: {}, provision: {} },
+    commands: { serve: {}, "host-state": {}, statusline: {}, unit: {}, provision: {}, reclaim: {} },
     default: "host-state",
   });
 
@@ -90,6 +94,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   if (command === "unit") return await runUnit(args);
 
   if (command === "provision") return await runProvision(args);
+  if (command === "reclaim") return await runReclaim(args);
 
   const state = await readRedskilledHostState(resolveRedskilledPaths());
   process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
@@ -252,6 +257,51 @@ export async function runProvision(
     fixes: report.findings.map((finding) => ({ check: finding.check, fix: finding.fix })),
   })}\n`);
   return report.verdict === "ok" ? 0 : 1;
+}
+
+const RECLAIM_FLAGS = {
+  "dry-run": { kind: "boolean" },
+  "grace-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
+} as const;
+
+/**
+ * `redskilled reclaim [--dry-run] [--grace-ms N]` — a host that already
+ * accumulated dead sessions, cleared without hand-deleting paths.
+ *
+ * It reports every directory it looked at and why it kept or removed it, because
+ * the operator reaching for this command is usually mid-diagnosis: "which of
+ * these is a live daemon" is the question, and a sweep that answered it only by
+ * changing the filesystem underneath them would destroy the evidence it was
+ * called to explain. `--dry-run` is that same report with nothing removed.
+ */
+export async function runReclaim(
+  args: readonly string[],
+  io: {
+    readonly write?: (text: string) => void;
+    readonly options?: RedskilledReclaimOptions;
+  } = {},
+): Promise<number> {
+  const write = io.write ?? ((text: string) => process.stdout.write(text));
+  const { values } = parseFlags(args, RECLAIM_FLAGS);
+  const report = await reclaimRedskilledRuntimeDirs({
+    ...(io.options ?? {}),
+    dryRun: values["dry-run"] === true,
+    ...(Number.isFinite(values["grace-ms"]) ? { graceMs: values["grace-ms"] as number } : {}),
+  });
+  write(`${encodeToon({
+    roots: [...report.roots],
+    scanned: report.scanned,
+    reclaimed: report.reclaimed,
+    dry_run: report.dryRun,
+    entries: report.entries.map((entry) => ({
+      dir: entry.dir,
+      verdict: entry.verdict,
+      reason: entry.reason,
+      removed: [...entry.removed],
+    })),
+  })}\n`);
+  // A failure to read or remove is the one thing an operator must not miss.
+  return report.entries.some((entry) => entry.verdict === "failed") ? 1 : 0;
 }
 
 function configHome(): string {
