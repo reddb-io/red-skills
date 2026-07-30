@@ -33,6 +33,10 @@ import {
   type IssueLookup,
 } from "./branch-cleanup.js";
 import {
+  planBranchReclaim,
+  type BranchReclaimVerdict,
+} from "./branch-reclaim.js";
+import {
   executeMixedBlockedNormalize,
   executeUnblockSweep,
   planReconcileSweep,
@@ -287,6 +291,9 @@ export interface BootGit {
   deleteRemoteBranch(branch: string): Promise<void>;
   /** Delete a local branch (git branch -D <branch>). */
   deleteLocalBranch(branch: string): Promise<void>;
+  /** Drop git's registrations of worktrees whose bytes are gone (#2866).
+   * Optional: a caller that does not wire it simply leaves the registry alone. */
+  worktreePrune?(): Promise<void>;
 }
 
 /** Injected lookups the deciders need. Each mirrors a `gh issue view`/`gh issue
@@ -678,6 +685,12 @@ export interface AttemptCapInput {
 export interface BranchCleanupInput {
   remoteLiveRefs: readonly BranchRef[];
   localLiveRefs: readonly BranchRef[];
+  /** Local branches the trunk already carries — the LANDED fact the reclaim
+   * decides on (#2866). Absent leaves the reclaim on the tracker's weaker
+   * verdict alone, which is the pre-#2866 behaviour. */
+  landedLocalBranches?: readonly string[];
+  /** The repo's configured trunk, so the reclaim can spare it by name. */
+  trunk?: string;
 }
 
 /** A `.red/tmp/claims/<N>/` lock dir whose recorded pid the caller already
@@ -766,6 +779,10 @@ export interface AttemptCapResult {
 export interface BranchCleanupResult {
   remoteLiveReaped: string[];
   localLiveReaped: string[];
+  /** Local branches the reclaim deliberately KEPT, each with the reason (#2866).
+   * Reported rather than dropped, because the spares — `red-trunk` above all —
+   * are the half of this sweep that a silent pass gets catastrophically wrong. */
+  localSpared?: BranchReclaimVerdict[];
 }
 
 export interface UnblockSweepResult {
@@ -1070,6 +1087,9 @@ async function runTmpJanitorSweep(
     ...sweep.plan.legacySlotLogs.reclaim,
   ];
   const feedbackPaths = new Set(sweep.plan.feedbackWorktrees.reclaim.map((entry) => entry.path));
+  // Counted apart from `expiredLanes`, which also holds logs and scratch: only a
+  // removed WORKTREE leaves a git registration behind to prune (#2866).
+  let removedFeedbackWorktrees = 0;
   for (const entry of expired) {
     if (feedbackPaths.has(entry.path)) {
       const verdict = await deps.fs.feedbackWorktreeLiveness?.(entry.path).catch(() => "owner-live" as const)
@@ -1079,6 +1099,7 @@ async function runTmpJanitorSweep(
         continue;
       }
       await deps.fs.removeDir(entry.path);
+      removedFeedbackWorktrees += 1;
       result.removals.push({ path: entry.path, livenessVerdict: verdict });
       result.expiredLanes.push(entry.path);
       continue;
@@ -1121,6 +1142,15 @@ async function runTmpJanitorSweep(
     deps.log?.(
       `tmp-janitor reaped orphan test runner pid=${orphan.pid} pgid=${orphan.pgid} cwd=${relative(options.bootstrap.tmpDir, orphan.cwd)} command=${orphan.command}`,
     );
+  }
+
+  // Deleting a registered worktree's bytes leaves git still pointing at the
+  // path, which blocks the next worktree created there (#2866). Every lane above
+  // that can delete one is counted; prune once, at the end, for all of them.
+  const removedWorktrees =
+    result.workerWorkspaces.length + result.staleWorkers.length + removedFeedbackWorktrees;
+  if (removedWorktrees > 0 && deps.git.worktreePrune) {
+    await deps.git.worktreePrune().catch(() => {});
   }
 
   return result;
@@ -1394,18 +1424,31 @@ async function runBranchCleanup(
     remoteLiveReaped.push(d.branch);
   }
 
+  // The local pass reclaims on LANDED-ness, with the tracker's closed-issue
+  // verdict folded in as the weaker second route (#2866). The reclaim planner is
+  // the authority over both: it alone may spare `red-trunk` and the trunk.
   const localLivePlan = planLocalBranchCleanup(
     input.localLiveRefs,
     deps.lookups.branchIssue,
     deps.nowS,
   );
+  const issueClosed = new Set(branchesToReap(localLivePlan).map((d) => d.branch));
+  const landed = new Set(input.landedLocalBranches ?? []);
+  const localPlan = planBranchReclaim(
+    input.localLiveRefs.map((ref) => ({
+      branch: ref.branch,
+      landed: landed.has(ref.branch),
+      issueClosed: issueClosed.has(ref.branch),
+    })),
+    { trunk: input.trunk },
+  );
   const localLiveReaped: string[] = [];
-  for (const d of branchesToReap(localLivePlan)) {
+  for (const d of localPlan.reclaim) {
     await deps.git.deleteLocalBranch(d.branch);
     localLiveReaped.push(d.branch);
   }
 
-  return { remoteLiveReaped, localLiveReaped };
+  return { remoteLiveReaped, localLiveReaped, localSpared: localPlan.spare };
 }
 
 /** Step 6: planUnblockSweep, then promote each planned issue (remove its holding
