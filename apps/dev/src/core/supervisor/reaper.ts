@@ -15,18 +15,18 @@ import {
 import type { CapHandoff } from "../wall-clock-cap.js";
 import {
   planBudgetHandoff,
-  type AttemptBudgetBreach,
-  type AttemptUsage,
-} from "../attempt-budget.js";
+  type WorkerBudgetBreach,
+  type WorkerUsage,
+} from "../worker-budget.js";
 import {
-  attemptUsage,
+  workerUsage,
   hasResourceBudget,
   resourceBudgetBreach,
-  sampleFleetPeakRss,
-} from "./attempt-accounting.js";
+  sampleWorkerPeakRss,
+} from "./worker-accounting.js";
 import { SUPERVISOR_DEFAULTS, type SupervisorConfig } from "./config.js";
 import {
-  buildAttemptBudgetEnvelope,
+  buildWorkerBudgetEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
   buildWallClockCapEnvelope,
@@ -116,10 +116,10 @@ export interface ReapOptions {
    * record, hands the branch/PR forward exactly like a wall-clock cap, and pages
    * a human — a resource runaway is not a transient flake to blind-retry.
    */
-  budget?: AttemptBudgetBreach;
+  budget?: WorkerBudgetBreach;
   /** What the attempt consumed, as sampled by the resident. Recorded on the
    * attempt record for a terminated attempt exactly as for a completed one. */
-  usage?: AttemptUsage;
+  usage?: WorkerUsage;
 }
 
 export async function reapStalledSlot(
@@ -165,7 +165,7 @@ export async function reapStalledSlot(
     // interchangeable: a stall is silence, a cap is the wall-clock policy
     // deadline, a budget termination is a resource ceiling that NAMES itself
     // (ADR 0128 §8). Only the first is ever reported as a stall.
-    const budgetBreach: AttemptBudgetBreach | undefined =
+    const budgetBreach: WorkerBudgetBreach | undefined =
       opts.budget ??
       (capped
         ? { budget: "wall_clock_s", limit: capSeconds, observed: info.durationS }
@@ -174,7 +174,7 @@ export async function reapStalledSlot(
     await deps.gh.comment(
       info.issue,
       resourceBudget
-        ? buildAttemptBudgetEnvelope(info, opts.budget!)
+        ? buildWorkerBudgetEnvelope(info, opts.budget!)
         : capped
           ? buildWallClockCapEnvelope(info, capSeconds)
           : buildReaperEnvelope(info),
@@ -247,7 +247,7 @@ export async function reapStalledSlot(
 async function handOffBudgetedWork(
   info: IterDirInfo,
   deps: SupervisorDeps,
-  breach: AttemptBudgetBreach,
+  breach: WorkerBudgetBreach,
 ): Promise<CapHandoff | null> {
   if (info.issue === null) return null;
 
@@ -440,15 +440,15 @@ export async function pollStallDetector(
     | "runner"
     | "reapContestWindowS"
     | "issueWallClockMaxS"
-    | "attemptBudgets"
+    | "workerBudgets"
   >,
 ): Promise<number[]> {
   const now = deps.now();
   const reaped: number[] = [];
   // ONE process-table read per tick charges memory to every live attempt (ADR
   // 0128 §8), independent of fleet width.
-  sampleFleetPeakRss(state, deps);
-  const budgets = config.attemptBudgets ?? {};
+  sampleWorkerPeakRss(state, deps);
+  const budgets = config.workerBudgets ?? {};
   const watchResources = hasResourceBudget(budgets);
 
   for (let i = 0; i < state.slots.length; i += 1) {
@@ -462,7 +462,7 @@ export async function pollStallDetector(
     // state read entirely.
     if (watchResources && !slot.reaped && slot.pid !== null) {
       const info = deps.fs.resolveIterDir(i);
-      const usage = attemptUsage(slot, info);
+      const usage = workerUsage(slot, info);
       const breach = resourceBudgetBreach(usage, budgets);
       if (breach !== null) {
         await reapStalledSlot(i, slot, deps, config, { budget: breach, usage });
@@ -521,7 +521,7 @@ export async function pollStallDetector(
         });
         if (decision === "kill") {
           const info = deps.fs.resolveIterDir(i);
-          const usage = attemptUsage(slot, info);
+          const usage = workerUsage(slot, info);
           await reapStalledSlot(
             i,
             slot,

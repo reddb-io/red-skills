@@ -154,7 +154,7 @@ export function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     shrinkMode: "drain-then-retire",
     // Unlimited by default, exactly like an unconfigured repo: a test that
     // exercises a budget sets it explicitly.
-    attemptBudgets: {},
+    workerBudgets: {},
     ...over,
   };
 }

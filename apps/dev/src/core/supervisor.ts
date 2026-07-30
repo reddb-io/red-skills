@@ -50,7 +50,7 @@ export {
   type SupervisorState,
 } from "./supervisor/state.js";
 export {
-  buildAttemptBudgetEnvelope,
+  buildWorkerBudgetEnvelope,
   buildCrashEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
@@ -81,8 +81,8 @@ export {
 } from "./supervisor/runtime.js";
 export { guardedTick } from "./supervisor/guarded-tick.js";
 export {
-  attemptUsage,
+  workerUsage,
   hasResourceBudget,
   resourceBudgetBreach,
-  sampleFleetPeakRss,
-} from "./supervisor/attempt-accounting.js";
+  sampleWorkerPeakRss,
+} from "./supervisor/worker-accounting.js";

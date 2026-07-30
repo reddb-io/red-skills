@@ -6,11 +6,11 @@ import { workerIdentity } from "../host-identity.js";
 import { LABEL_READY, LABEL_RUNNING } from "../triage-labels.js";
 import { isRefused, parkOrHuman, planTransition, type StateTransition } from "../state-transition.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
-import type { AttemptBudgetBreach, AttemptUsage } from "../attempt-budget.js";
+import type { WorkerBudgetBreach, WorkerUsage } from "../worker-budget.js";
 import type { IterDirInfo, SupervisorDeps } from "./types.js";
 
 /** Unit each budget is measured in, for the envelope's duration line. */
-const ATTEMPT_BUDGET_UNITS: Record<AttemptBudgetBreach["budget"], string> = {
+const WORKER_BUDGET_UNITS: Record<WorkerBudgetBreach["budget"], string> = {
   wall_clock_s: "s",
   peak_rss_mb: "MB",
   cost_usd: "USD",
@@ -89,11 +89,11 @@ export function buildWallClockCapEnvelope(info: IterDirInfo, capSeconds: number)
  * already carries in worker-outcome), because a resource runaway pages a human
  * instead of blind-retrying.
  */
-export function buildAttemptBudgetEnvelope(
+export function buildWorkerBudgetEnvelope(
   info: IterDirInfo,
-  breach: AttemptBudgetBreach,
+  breach: WorkerBudgetBreach,
 ): string {
-  const unit = ATTEMPT_BUDGET_UNITS[breach.budget];
+  const unit = WORKER_BUDGET_UNITS[breach.budget];
   return buildEnvelope({
     status: "blocked",
     worker: info.workerId.length > 0 ? info.workerId : "unknown",
@@ -175,7 +175,7 @@ export function decideCrashReconcile(input: {
 export async function reconcileDeadWorkerClaim(
   info: IterDirInfo | null,
   deps: SupervisorDeps,
-  usage: AttemptUsage = {},
+  usage: WorkerUsage = {},
 ): Promise<number | null> {
   if (info === null || info.issue === null) return null;
   if (!deps.gh.crashedClaimState) return null;
