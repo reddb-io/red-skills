@@ -230,3 +230,46 @@ registered repository is a security posture, not only an architectural one.
 Staleness travels inside the payload, as everywhere else: counts age between
 intervals, and a consumer renders the age rather than presenting a stale count
 as current.
+
+## Amendment 1 — the host-scoped home is `redskilled`'s, and `/red-setup` provisions through it (#2853)
+
+Rule 7 said a daemon starts on first use and said nothing about what has to
+exist before it can. Three things do — the host-scoped home, a published bundle
+to run, and a socket that answers — and one of them had no owner at all. Nothing
+created `~/.red/redskilled/`, nothing declared it, and `/red-setup` had never
+heard of the daemon, so a fresh machine had no route to a working one.
+
+That left an ownership question between two records. ADR 0067 makes
+`/red-setup` the **sole creator of a repository's `.red/`**; this home is
+operator-scoped and sits outside every checkout, so it was never inside that
+authority — and it must not be brought inside it.
+
+**Decision: the home belongs to `redskilled`.** `provisionRedskilledHome` in
+`apps/redskilled/src/provision.ts` is the only thing that creates it; every other
+surface reads the one namer in `packages/shared/redskilled-home.ts` and never
+brings the directory into being. A home only an interactive installer could
+create would leave rule 7's auto-spawn failing closed forever on a machine where
+setup had never run, with no path back — the daemon would depend on the very
+tool that depends on the daemon. ADR 0067's authority is therefore unchanged and
+now explicitly **repository-scoped**: it governs a checkout's `.red/`, not the
+operator's `~/.red/`.
+
+Setup does not lose a job here, it gains a caller's one. `/red-setup` Section E3
+runs `redskilled provision`, which creates the home owner-only (`0700`), starts
+the daemon through the ordinary client path, and prints the audit. **Idempotent
+by construction**: an existing home is kept with everything in it, and the only
+thing a second run can change is a permission bit that drifted wider than
+owner-only — a repair, not a rewrite. That is what makes it safe for setup to run
+on every pass instead of only when something already looks wrong.
+
+The same section offers the optional supervising unit rule 7 mentions, because
+setup is the one interactive, authorized installer in the system. The unit adds
+`Restart=on-failure` over the identical binary, socket and contract — still one
+behaviour with a supervisor, never a second spawn path — and an existing unit
+file is never rewritten, since an operator's edit to it is their configuration.
+
+`/red-doctor` reports the same four checks (`home`, `daemon-entry`, `reach`,
+`supervisor-unit`) from the same pure audit, probing the socket **without ever
+spawning the daemon it is reporting on**. The optional unit is reported and never
+flagged: an absent unit is `ok` with a stated absence, because a doctor that
+reddened over an optional thing teaches operators to ignore a red row.

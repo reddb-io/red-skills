@@ -162,6 +162,42 @@ tq --version
 
 The installed version must be `0.3.0`. Record the same pin in `.red/config.yaml` under `host_binaries.tq.version` so `/red-doctor` can red-flag absence or drift and print the same canonical installer fix. Do not document or offer a jq fallback.
 
+**Section E3 — Execution daemon (`redskilled`) — mandatory when `dev` is enabled.**
+
+> Explainer: `redskilled` is the host-scoped execution daemon (ADR 0130): one singleton per user session, behind a unix socket, owning Worker processes across every project on this machine while each project's bundle keeps owning the work. It is what makes "what is this machine currently doing" answerable, and it fails closed — no daemon, no Worker. A daemon starts on first use, but three things must exist before it can: its host-scoped home, a published bundle to run, and a socket that answers.
+
+**The home is the daemon's, not this skill's.** `~/.red/redskilled/` is operator-scoped and lives outside every checkout, so it is *not* the `.red/` this skill has sole authority over. Its one owner is `provisionRedskilledHome` in `apps/redskilled/src/provision.ts` (ADR 0130 Amendment 1) — never `mkdir` it here, and never treat a repo's ADR 0067 authority as covering it. Setup provisions it by **calling** its owner:
+
+```bash
+redskilled provision
+```
+
+That one command creates the home owner-only (`0700`), starts the daemon through the ordinary client path, and prints the audit as TOON. **It is idempotent**: a second run creates nothing and rewrites nothing, so run it on every setup pass rather than only when something already looks wrong. Two flags matter:
+
+- `redskilled provision --check` — the read-only half. Reports without creating the home or starting anything; this is the shape `/red-doctor` consumes.
+- `redskilled provision --install-unit` — writes the optional supervising unit (below). Off unless the user asks for it.
+
+Verify afterwards:
+
+```bash
+redskilled provision --check      # verdict: ok
+redskilled host-state             # the machine's Workers, from the daemon itself
+```
+
+A `verdict: missing` names which of the four checks failed — `home`, `daemon-entry`, `reach`, `supervisor-unit` — and prints the exact command for each. A `daemon-entry` finding means no published bundle was found on this host; it names every path probed, and re-running `redskilled provision` after the bundle is warmed is the cure. Do not work around it by pointing the daemon at a caller's own entry — a stale caller mints a staler daemon and the skew widens (#2736, #2677).
+
+**Optional supervising unit (default NO).** Auto-spawn already starts the daemon on first use; the user unit only adds `Restart=on-failure` over the identical binary, socket and contract (ADR 0130 rule 7). Offer it, defaulting to no, and only on a Linux host with a `systemd --user` session. On a yes:
+
+1. Run `redskilled provision --install-unit`. It writes `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/redskilled.service` **only when absent** — an existing unit is the operator's configuration and is never rewritten.
+2. Tell the user the two commands that activate it; do not run them for them:
+
+   ```bash
+   systemctl --user daemon-reload
+   systemctl --user enable --now redskilled.service
+   ```
+
+An absent unit is never a defect — `/red-doctor` reports it as `ok` with a stated absence, because auto-spawn is the supported start path either way.
+
 **Section F — RedSkills statusline (optional).**
 
 > Explainer: RedSkills has one shared statusline producer in the dev bundle: the `statusline` subcommand reads each worker's `.red/tmp/workers/*/*/afk.state.json`, filters by `kill -0` liveness, sums diffstats locally, and caches GitHub-derived counts for 60 s to stay under the ~100 ms refresh budget. Host adapters differ. Claude Code can run that producer through a command-backed `statusLine`, so it can show live worker count, queue depth, and aggregated diffstat at a glance. Codex currently exposes native `tui.status_line` footer widgets instead of a command hook; under Codex, use `$red-statusline` to inspect or configure the footer and rely on `/afk monitor` for the live AFK block.

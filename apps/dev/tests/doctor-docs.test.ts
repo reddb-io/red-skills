@@ -267,6 +267,25 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("delegate to `/triage`");
   });
 
+  it("reports execution daemon provisioning read-only, with red-setup as the fix-home", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Execution daemon provisioning");
+    for (const check of ["`home`", "`daemon-entry`", "`reach`", "`supervisor-unit`"]) {
+      expect(skill).toContain(check);
+    }
+    expect(skill).toContain("~/.red/redskilled/");
+    expect(skill).toContain("apps/redskilled/src/provision.ts");
+    expect(skill).toContain("auditRedskilledProvisioning");
+    // The optional unit is reported, never flagged.
+    expect(skill).toContain("The optional unit is reported and never flagged");
+    // Read-only means it neither starts the daemon nor creates the home.
+    expect(skill).toContain("never spawn the daemon");
+    expect(skill).toContain("never create the home");
+    expect(skill).toContain("execution daemon provisioning (check 24)");
+    expect(skill).toContain("redskilled provision");
+  });
+
   it("documents the operational probe families, fix authority, and fleet boot refusal", async () => {
     const skill = await readDoctorSkill();
 

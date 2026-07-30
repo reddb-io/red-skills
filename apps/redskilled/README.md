@@ -42,6 +42,7 @@ of it.
 | Which file a spawn runs | `src/daemon-entry.ts` — the published bundle by name, never the caller's own entry |
 | Reviving a daemon nobody asked for | `src/supervision.ts` — the optional user unit, `Restart=on-failure` |
 | Becoming the version that is published | `src/self-replace.ts` — decide, find the successor, hand the session over |
+| The home, and the route to a reachable daemon | `src/provision.ts` — the ONE creator of `~/.red/redskilled/`, the pure provisioning audit, and the optional user unit |
 
 ## Behaviours worth knowing
 
@@ -164,6 +165,35 @@ of it.
   unit the Worker still starts, and the reply — and the host-state record it
   keeps for its whole life — carries a warning naming what was lost. A declared
   budget that cannot be enforced says so as its own warning.
+
+## Provisioning
+
+A daemon starts on first use, but three things must exist before it can: the
+host-scoped home, a published bundle to run, and a socket that answers. One
+command establishes all three, and `/red-setup` (Section E3) runs it:
+
+```bash
+redskilled provision              # create the home, start the daemon, print the audit
+redskilled provision --check      # the read-only half — creates nothing, starts nothing
+redskilled provision --install-unit   # also write the optional supervising user unit
+```
+
+- **The home is this app's.** `~/.red/redskilled/` is operator-scoped and sits
+  outside every checkout, so it is not the `.red/` ADR 0067 gave `/red-setup`
+  sole authority over. `provisionRedskilledHome` is the only thing that creates
+  it (ADR 0130 Amendment 1); every other surface reads the one namer in
+  `packages/shared/redskilled-home.ts`. A home only an interactive installer
+  could create would leave auto-spawn failing closed forever on a fresh machine.
+- **Idempotent by construction.** An existing home is kept with everything in
+  it, and the only thing a second run can change is a permission bit that
+  drifted wider than owner-only — a repair, not a rewrite.
+- **The audit is pure, and the doctor consumes it.** `/red-doctor` renders the
+  same four checks (`home`, `daemon-entry`, `reach`, `supervisor-unit`) from
+  `auditRedskilledProvisioning` over injected facts, probing the socket
+  **without spawning** the daemon it reports on.
+- **The optional unit is optional.** It adds `Restart=on-failure` over the same
+  binary, socket and contract auto-spawn uses (rule 7), and an absent unit is
+  reported as `ok`. An existing unit file is never rewritten.
 
 ## Commands
 

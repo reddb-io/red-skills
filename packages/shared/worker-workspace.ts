@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { flatConfigValue } from "./plugin-gate.js";
 import { workersDir as repoWorkersDir } from "./red-paths.js";
+import { redskilledHomeDir } from "./redskilled-home.js";
 
 /**
  * worker-workspace.ts — where a Worker's worktree, log and state live (Spec #2772).
@@ -12,7 +13,9 @@ import { workersDir as repoWorkersDir } from "./red-paths.js";
  *     worktree as its direct child. It needs no per-repository segmentation
  *     because it is already inside the repository.
  *   - `tmp`  — `/tmp/.redskilled/repositories/<slug>/workers/…`
- *   - `host` — `~/.red/redskilled/repositories/<slug>/workers/…`
+ *   - `host` — `~/.red/redskilled/repositories/<slug>/workers/…`, under the
+ *     daemon's own home, which `redskilled` owns and creates (ADR 0130
+ *     Amendment 1). This module names that root, it never brings it into being.
  *
  * The two shared presets segment by repository under the deterministic slug from
  * `project-identity.ts`, so the whole machine lists with one directory listing.
@@ -163,9 +166,12 @@ export function resolveWorkspaceLayout(input: WorkspaceLayoutInput): WorkspaceLa
     );
   }
 
+  // The `host` root is NAMED here and created elsewhere: the home is the
+  // daemon's (ADR 0130 Amendment 1), so this layer reads `redskilledHomeDir`
+  // rather than spelling the path a second time.
   const root = preset === "tmp"
     ? join(input.tmpRoot ?? DEFAULT_TMP_ROOT, ".redskilled")
-    : join(input.homeDir, ".red", "redskilled");
+    : redskilledHomeDir(input.homeDir);
   return { lane: preset, workersDir: join(root, REPOSITORIES_SEGMENT, slug, WORKERS_SEGMENT), segmented: true };
 }
 
