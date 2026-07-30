@@ -112,39 +112,8 @@ export function buildLookups({
     branchCommitsAhead: (branch, base) => gitx.branchCommitsAhead(gitCtx, branch, base),
     // Attempt-adoption sanity check (#2416): one cheap open-PR census before
     // any agent run. The lifecycle owns exact body/head matching and adoption.
-    discoverOpenPullRequests: async () => {
-      const run = exec ?? execTool;
-      const result = await run(
-        "gh",
-        [
-          "pr",
-          "list",
-          "--repo",
-          ghCtx.repo,
-          "--state",
-          "open",
-          "--limit",
-          "100",
-          "--json",
-          "number,headRefName,body",
-        ],
-        { cwd: root },
-      );
-      if (result.code !== 0) return [];
-      try {
-        const rows = JSON.parse(result.stdout || "[]") as unknown;
-        if (!Array.isArray(rows)) return [];
-        return rows
-          .map((row) => row as { number?: unknown; headRefName?: unknown; body?: unknown })
-          .map((row) => ({
-            number: Number(row.number ?? 0),
-            headRefName: String(row.headRefName ?? ""),
-            body: typeof row.body === "string" ? row.body : undefined,
-          }))
-          .filter((row) => row.number > 0 && row.headRefName.length > 0);
-      } catch {
-        return [];
-      }
-    },
+    // One census, one implementation: the exit-time orphaned-work check (#2893)
+    // reads the same open-PR list through the same runtime helper.
+    discoverOpenPullRequests: () => ghx.listOpenPullRequests(ghCtx),
   };
 }
