@@ -4,7 +4,8 @@ import { readBuildInfo } from "@reddb-io/build-info";
 import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/red-castle/engine";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { auditConfigLoad, loadConfig, getConfig } from "../../core/config.js";
-import { compareSemver, fetchNpmNewestDevBundleVersion, readDevBundleCacheState } from "../../core/bundle-version.js";
+import { readDevBundleCacheState } from "../../core/bundle-version.js";
+import { readPublishedBundleVersion, refreshPublishedBundleVersion } from "../../core/published-version.js";
 import { resolveBaseWithSource } from "../../core/base-resolver.js";
 import { DEFAULT_BRANCH } from "../../core/pin-reader.js";
 import type { PrecheckFacts, BootOptions, BootDeps, BootstrapInput, OrphanDir } from "../../core/boot.js";
@@ -261,20 +262,24 @@ export async function collectPrecheckFacts(
   const pnpmInstalled = pnpmProbe.code !== 127;
   const installedBundleVersion = readBuildInfo("dev").version;
   const bundleCache = readDevBundleCacheState(installedBundleVersion);
-  const cachedBundleVersion = bundleCache.laneNewestVersion;
-  const latestBundleVersion =
-    cachedBundleVersion && compareSemver(cachedBundleVersion, installedBundleVersion) > 0
-      ? cachedBundleVersion
-      : installedBundleVersion;
   let npmNewestVersion: string | undefined;
   let npmError: string | undefined;
+  let published = readPublishedBundleVersion();
   if (options.includeNpmBundleCoherence) {
     try {
-      npmNewestVersion = await fetchNpmNewestDevBundleVersion(installedBundleVersion);
+      // The one path that pays for the registry call records the answer, so the
+      // status surfaces replay THIS resolution instead of deriving their own.
+      published = await refreshPublishedBundleVersion(installedBundleVersion);
+      npmNewestVersion = published.source === "registry" ? published.version ?? undefined : undefined;
     } catch (error) {
       npmError = error instanceof Error ? error.message : String(error);
     }
   }
+  // The probe that halts a boot and the dashboard an operator reads resolve the
+  // published version from the same owner (#2809). An unresolved answer stays
+  // undefined here, so the probe records `version-unknown` rather than matching
+  // the running bundle against a substituted local value.
+  const latestBundleVersion = published.version ?? undefined;
   const supervisorCfg = resolveSupervisorConfig();
   const fleetTruth = await collectFleetTruthProbeInput(
     {

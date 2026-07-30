@@ -55,6 +55,7 @@ import type {
 } from "@reddb-io/red-castle/mcp-server";
 import { listWaits as listRspWaits } from "../../rsp/src/wait/registry.js";
 import { readBuildInfo } from "@reddb-io/build-info";
+import { publishedVersionReport, readPublishedBundleVersion } from "./core/published-version.js";
 import { collectDashboardReport } from "./commands/dashboard.js";
 import { stopFleet, writeResizeRequest } from "./commands/fleet.js";
 import {
@@ -870,8 +871,10 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
   }
   const liveWorkers = allLiveWorkers.filter(attributedToThisProject);
   const unattributedWorkers = allLiveWorkers.filter((w) => !attributedToThisProject(w));
-  const latestBundleVersion =
-    fleet?.latestBundleVersion ?? readBuildInfo("dev").version;
+  // The published version comes from the one owner the boot probe also consults
+  // (#2809) — never from the fleet snapshot's stamped copy, which ages with the
+  // snapshot and contradicted the path that was halting every Worker boot.
+  const version = publishedVersionReport(fleet?.bundleVersion, readPublishedBundleVersion());
   return {
     supervisor: {
       pid: supervisor.pid,
@@ -880,18 +883,11 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
       runner: fleet?.runner ?? "",
       target: fleet?.target ?? fleet?.slotsTotal ?? 0,
       bundle_version: fleet?.bundleVersion ?? "",
-      bundle_latest: latestBundleVersion,
       // Unknown is its own answer, distinct from `version_skew: 0` — hiding it
       // behind an empty string is what let an unmeasured version read as a
-      // measured match (#2752).
-      version_unknown: Number(!fleet?.bundleVersion),
-      version_skew: Number(
-        Boolean(
-          fleet?.bundleVersion &&
-          latestBundleVersion &&
-          fleet.bundleVersion !== latestBundleVersion,
-        ),
-      ),
+      // measured match (#2752). `published_version` carries the currency of the
+      // latest answer, so a cached read cannot render as current (#2809).
+      ...version,
       heartbeat_age_s: supervisor.heartbeat.age_s,
       identity_anchor: supervisor.anchor,
       heartbeat: supervisor.heartbeat,

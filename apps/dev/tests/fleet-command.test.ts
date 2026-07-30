@@ -379,7 +379,10 @@ describe("fleet command stale supervisor state", () => {
     }
   });
 
-  it("statusFleet reports reverse skew against the current dev bundle without cached bundles (#2204)", async () => {
+  // The installed version answers "what am I running", never "what is published".
+  // Substituting it produced a confident verdict against a value that measured
+  // nothing — the report that read healthy while every Worker halted (#2809).
+  it("statusFleet reports the published version as unknown rather than substituting the installed one (#2809)", async () => {
     const root = scratch();
     const priorCacheDir = process.env.RED_SKILLS_CACHE_DIR;
     const priorBuildVersion = process.env.RED_BUILD_VERSION;
@@ -417,13 +420,15 @@ describe("fleet command stale supervisor state", () => {
         supervisor: {
           bundle_version: string;
           bundle_latest: string;
+          published_unknown: number;
           version_skew: number;
         };
       };
       expect(report.supervisor).toMatchObject({
         bundle_version: "2.76.0",
-        bundle_latest: "2.75.2",
-        version_skew: 1,
+        bundle_latest: "",
+        published_unknown: 1,
+        version_skew: 0,
       });
     } finally {
       if (priorCacheDir === undefined) delete process.env.RED_SKILLS_CACHE_DIR;

@@ -1,7 +1,6 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
-import { readBuildInfo } from "@reddb-io/build-info";
 import {
   castleLanePath,
   createEnginePaths,
@@ -30,6 +29,7 @@ import {
   reapStaleSupervisorState,
 } from "../runtime/liveness-anchor.js";
 import { refuseRemovedFleetFlag } from "../core/removed-fleet-flag.js";
+import { publishedVersionReport, readPublishedBundleVersion } from "../core/published-version.js";
 
 export interface FleetLaunchResult {
   status: "launched" | "resized";
@@ -663,7 +663,9 @@ export async function statusFleet(
   const repo = await resolveRepoSlug(root).catch(() => "");
   const inputs = await collectMonitorInputs(root, repo);
   const fleet = inputs.fleet;
-  const latestBundleVersion = fleet?.latestBundleVersion || readBuildInfo("dev").version;
+  // Same owner as the boot probe (#2809): the CLI never re-derives "what is
+  // published" from the fleet snapshot or from its own installed version.
+  const version = publishedVersionReport(fleet?.bundleVersion, readPublishedBundleVersion());
   const liveWorkers = inputs.workers.filter((w) => w.pidLive === true || w.live);
   const heartbeatAgeS = supervisor.heartbeat.age_s;
 
@@ -683,14 +685,9 @@ export async function statusFleet(
       runner: fleet?.runner ?? "",
       target: fleet?.target ?? fleet?.slotsTotal ?? 0,
       bundle_version: fleet?.bundleVersion ?? "",
-      bundle_latest: latestBundleVersion,
-      // Unknown is its own answer, distinct from `version_skew: 0` (#2752).
-      version_unknown: Number(!fleet?.bundleVersion),
-      version_skew: Number(Boolean(
-        fleet?.bundleVersion &&
-        latestBundleVersion &&
-        fleet.bundleVersion !== latestBundleVersion
-      )),
+      // Unknown is its own answer, distinct from `version_skew: 0` (#2752); the
+      // published answer carries its own staleness (#2809).
+      ...version,
       heartbeat_age_s: heartbeatAgeS,
       identity_anchor: supervisor.anchor,
       heartbeat: { ...publishSupervisorLiveness(supervisor).heartbeat },

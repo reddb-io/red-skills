@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { readDevBundleCacheState } from "../../core/bundle-version.js";
+import { readPublishedBundleVersion } from "../../core/published-version.js";
 import { decodeDevSnapshotSniff } from "../../core/toon-snapshot.js";
 import type { CompactWorker, FleetState, SlotDetail } from "../../core/monitor.js";
 import {
@@ -358,7 +358,9 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
     (await readCastleMonitorFleetState(castlePaths)) ??
     (await readFleetState(paths.fleetStatePath));
   if (fleet?.bundleVersion) {
-    fleet.latestBundleVersion = readDevBundleCacheState(fleet.bundleVersion).laneNewestVersion ?? undefined;
+    // Same owner as the boot probe and the status surfaces (#2809) — the render
+    // never derives its own notion of what is published.
+    fleet.latestBundleVersion = readPublishedBundleVersion().version ?? undefined;
   }
 
   // Remote facts: read the statusline TTL cache passively (no refresh — the monitor
