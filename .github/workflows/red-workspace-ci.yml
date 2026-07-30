@@ -98,6 +98,17 @@ jobs:
       - name: Test version sync contract
         run: scripts/test-version-sync-contract.sh
 
+      # ADR 0121: a changeset that cannot resolve does not get skipped — it
+      # throws and abandons the whole release plan, so one bad file fails every
+      # release after it (#2863). This job is the only one a changeset-only PR
+      # reaches: `.changeset/` is INERT to scripts/ci-affected-scope.mjs, so the
+      # test and typecheck jobs narrow themselves away on exactly that PR.
+      - name: Validate pending changesets resolve against the workspace
+        run: node scripts/validate-changesets.mjs
+
+      - name: Test changeset validation contract
+        run: scripts/test-validate-changesets.sh
+
       - name: Test red-castle vendor contract
         run: scripts/test-red-castle-vendor-contract.sh
 
