@@ -90,8 +90,9 @@ export interface SpawnSupervisorOptions {
   /**
    * Whether this launch births Workers through the redskilled daemon (#2855).
    * A supervisor launch is the era boundary, so it is where the one-time cutover
-   * migration runs. Absent, `RED_CASTLE_CUTOVER` decides and the default is off,
-   * which keeps the migration inert until the daemon actually owns birth.
+   * migration runs. **Absent, it is ON** (#2851): since the cutover every Worker
+   * this launch produces is the daemon's, so the boundary is unconditional. A
+   * caller states `false` only to rehearse the era that ended.
    */
   cutoverActive?: boolean;
   /**
@@ -134,8 +135,14 @@ export async function spawnSupervisor(opts: SpawnSupervisorOptions): Promise<num
   // through the daemon, so the one-time carry-across of live pre-cutover state
   // runs exactly here — never in a Worker's own boot, which must never quiesce
   // its peers. Stamped and gated; inert until the daemon owns birth.
+  //
+  // The era is ACTIVE from here on (#2851). #2855 shipped the migration gated
+  // and inert because nothing birthed through the daemon yet; this launch just
+  // proved the daemon answers and every Worker it produces will be the daemon's,
+  // so the boundary this migration was written for is exactly here. A caller may
+  // still state `false` — a test rehearsing the pre-cutover era.
   await migrateCastleCutover(opts.root, {
-    ...(opts.cutoverActive !== undefined ? { cutoverActive: opts.cutoverActive } : {}),
+    cutoverActive: opts.cutoverActive ?? true,
     ...(opts.onNotice ? { deps: { notice: opts.onNotice } } : {}),
   }).catch(() => undefined);
   const paths = afkPaths(opts.root);

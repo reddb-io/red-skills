@@ -39,6 +39,12 @@ const unscoped = { settings: { enabled: false, memoryHigh: "" } };
 // whether the developer happens to be running a daemon.
 const reachesDaemon = async (): Promise<void> => undefined;
 
+// These cases also pin the ADR 0130 cutover migration OFF. It is ON by default
+// since #2851 — the launch IS the era boundary — and it runs git, so leaving it
+// on would put a process nobody here is asserting about into the spawn mock.
+// The migration's own behaviour is covered by castle-cutover-migration*.test.ts;
+// that it defaults ON is asserted below.
+
 const linuxProbes: FleetScopeProbes = {
   platform: "linux",
   systemdRun: "/usr/bin/systemd-run",
@@ -89,6 +95,8 @@ describe("spawnSupervisor", () => {
 
     await expect(spawnSupervisor({
       reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "codex",
@@ -113,6 +121,8 @@ describe("spawnSupervisor", () => {
 
     await spawnSupervisor({
       reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "codex",
@@ -133,6 +143,8 @@ describe("spawnSupervisor", () => {
 
     await spawnSupervisor({
       reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "codex",
@@ -149,6 +161,8 @@ describe("spawnSupervisor", () => {
 
     await spawnSupervisor({
       reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "codex",
@@ -169,6 +183,8 @@ describe("spawnSupervisor", () => {
     try {
       await spawnSupervisor({
         reachDaemon: reachesDaemon,
+
+        cutoverActive: false,
         root: cwd,
         target: 1,
         runner: "claude",
@@ -190,6 +206,8 @@ describe("spawnSupervisor", () => {
     try {
       await spawnSupervisor({
         reachDaemon: reachesDaemon,
+
+        cutoverActive: false,
         root: cwd,
         target: 1,
         runner: "claude",
@@ -211,6 +229,8 @@ describe("spawnSupervisor", () => {
     try {
       await spawnSupervisor({
         reachDaemon: reachesDaemon,
+
+        cutoverActive: false,
         root: cwd,
         target: 1,
         runner: "claude",
@@ -232,6 +252,8 @@ describe("spawnSupervisor cgroup isolation (#2697)", () => {
 
     await spawnSupervisor({
       reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "claude",
@@ -255,6 +277,8 @@ describe("spawnSupervisor cgroup isolation (#2697)", () => {
 
     await spawnSupervisor({
       reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "claude",
@@ -278,6 +302,8 @@ describe("spawnSupervisor cgroup isolation (#2697)", () => {
 
     await spawnSupervisor({
       reachDaemon: reachesDaemon,
+
+      cutoverActive: false,
       root: cwd,
       target: 1,
       runner: "claude",
@@ -312,5 +338,37 @@ describe("resolveDevScriptPath", () => {
   it("passes through an arbitrary CLI shim path unchanged (no PATH-dependent shim lookup)", () => {
     const shim = "/usr/local/bin/red-skills-dev";
     expect(resolveDevScriptPath(shim)).toBe(shim);
+  });
+});
+
+// The era boundary is unconditional since the cutover (#2851). #2855 shipped
+// the migration gated and inert because nothing birthed through the daemon yet;
+// a launch that has just proved the daemon answers is exactly the boundary it
+// was written for, so an absent flag must read as ON — not as the pre-cutover
+// default that would leave live castle state stranded forever.
+describe("the cutover migration runs by default", () => {
+  it("does not need RED_CASTLE_CUTOVER to be set for the era boundary to run", async () => {
+    const cwd = await root();
+    const migrated: unknown[] = [];
+    const migrate = vi.spyOn(
+      await import("../src/runtime/castle-cutover-migration.js"),
+      "migrateCastleCutover",
+    ).mockImplementation(async (_root, options) => {
+      migrated.push(options?.cutoverActive);
+      return { status: "skipped", reason: "stubbed" } as never;
+    });
+
+    await spawnSupervisor({
+      reachDaemon: reachesDaemon,
+      root: cwd,
+      target: 1,
+      runner: "codex",
+      probeDeadlineMs: 1,
+      scope: unscoped,
+      onNotice: () => undefined,
+    });
+
+    expect(migrated).toEqual([true]);
+    migrate.mockRestore();
   });
 });
