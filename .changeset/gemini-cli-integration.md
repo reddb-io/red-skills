@@ -1,5 +1,5 @@
 ---
-"red-skills": minor
+"@reddb-io/red-skills": minor
 ---
 
-Added native support for the Gemini CLI by generating `.gemini-plugin` metadata from the Claude source-of-truth.
+Generate `.gemini-plugin` manifests so RedSkills installs in Gemini CLI, projected from the Claude-side manifest that remains the source of truth.
