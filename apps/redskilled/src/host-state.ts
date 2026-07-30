@@ -32,6 +32,14 @@ export interface RedskilledWorkerView {
   readonly started_at: string;
   /** The path the client handed over, used verbatim as the Worker's workspace. */
   readonly workspace_path: string;
+  /**
+   * Where this Worker's log is, when the client said so at spawn.
+   *
+   * Given, never derived: the daemon reads it only to rehydrate a Worker it holds
+   * no heartbeat for after a restart, and a daemon that guessed a filename inside
+   * the workspace would have learned a repository's layout (ADR 0130 rule 3).
+   */
+  readonly log_path?: string;
   /** True when the Worker runs inside a transient unit of its own. */
   readonly isolated: boolean;
   /** The transient unit's name, present only when `isolated`. */

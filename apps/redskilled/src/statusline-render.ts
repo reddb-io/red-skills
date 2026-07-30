@@ -16,6 +16,15 @@
  * every project's Workers and names the owner of each, because an anonymous
  * Worker on a busy machine is the exact thing the mode exists to fix.
  *
+ * **`verbose` gives each listed Worker a second line: the last line it logged.**
+ * That line arrives inside the payload, published by the Worker on its heartbeat,
+ * so a verbose global view still costs ONE read and opens no project's files. The
+ * renderer treats it as text to fit on a line and never as a fact to interpret:
+ * whitespace is collapsed so one Worker cannot break the line contract, and the
+ * width clamp is the same one every other line answers to. A Worker that has
+ * logged nothing gets no second line at all — a blank one would be a render
+ * defect wearing the shape of information.
+ *
  * **A crowded machine degrades to an aggregate rather than overflowing.** The
  * statusline answers "who is using this machine and how much"; it is not the
  * dashboard. When the Workers do not fit, the line drops to one entry per
@@ -45,6 +54,8 @@ export interface RedskilledStatuslineOptions {
   /** The hard ceiling in characters. The line never exceeds it. */
   readonly maxWidth: number;
   readonly separator: string;
+  /** Give each listed Worker a second line carrying its last logged line. */
+  readonly verbose: boolean;
 }
 
 /**
@@ -56,7 +67,17 @@ export interface RedskilledStatuslineOptions {
  */
 export interface RedskilledStatuslineRender {
   readonly version: 1;
+  /** The statusline itself — the first line, and the only one when quiet. */
   readonly line: string;
+  /**
+   * Every line to print, `line` first.
+   *
+   * A list rather than one string with newlines in it: a host that had to split
+   * on `\n` to know how many rows to reserve would be parsing the render, which
+   * is the one thing this surface exists to spare it.
+   */
+  readonly lines: readonly string[];
+  readonly verbose: boolean;
   readonly mode: RedskilledStatuslineMode;
   readonly project: string | null;
   readonly detail: RedskilledStatuslineDetail;
@@ -75,6 +96,7 @@ export const REDSKILLED_STATUSLINE_DEFAULTS: RedskilledStatuslineOptions = {
   maxProjects: 4,
   maxWidth: 120,
   separator: " · ",
+  verbose: false,
 };
 
 /**
@@ -106,6 +128,12 @@ export function renderRedskilledStatusline(
   // Even the host aggregate can outgrow a very narrow line; a clamp is the last
   // resort and never the normal path, so it keeps the ellipsis visible.
   const line = clamp(chosen.line, options.maxWidth);
+  // Second lines belong to Worker entries, so they exist only while the line is
+  // still listing Workers: annotating an aggregate would attach a Worker's log to
+  // a row that names a project.
+  const extra = options.verbose && chosen.detail === "workers"
+    ? workerLogLines(workers, options)
+    : [];
   // Degradation is measured against the richest detail this payload COULD have
   // shown, not against the richest one the budgets allowed: a line that dropped
   // the Workers because `max_workers` said so is degraded in the only sense a
@@ -115,6 +143,8 @@ export function renderRedskilledStatusline(
   return {
     version: 1,
     line,
+    lines: [line, ...extra],
+    verbose: options.verbose,
     mode: options.mode,
     project: options.project,
     detail: chosen.detail,
@@ -239,7 +269,7 @@ function stalenessMark(payload: RedskilledStatuslinePayload): string {
  * or it is not shown at all.
  */
 function renderWorker(worker: RedskilledStatuslineWorker, options: RedskilledStatuslineOptions): string {
-  const name = options.mode === "global" ? `${worker.project_label}:${worker.worker_id}` : worker.worker_id;
+  const name = workerName(worker, options);
   const used = worker.vitals.rss_bytes;
   // An unmeasured Worker says so. A zero here would read as an idle Worker, and
   // "nothing measured it" and "it is using nothing" are opposite facts.
@@ -249,6 +279,51 @@ function renderWorker(worker: RedskilledStatuslineWorker, options: RedskilledSta
       ? formatBytes(used)
       : `${formatBytes(used)}/${formatBytes(worker.budget.bytes)}`;
   return `${name} ${usage}`;
+}
+
+/**
+ * One second line per Worker that has actually logged something.
+ *
+ * The Worker is named again rather than left to position: the lines are printed
+ * under a first line whose entries may have been reordered or clamped away, and
+ * an unlabelled log line would belong to whichever Worker the reader guessed.
+ */
+function workerLogLines(
+  workers: readonly RedskilledStatuslineWorker[],
+  options: RedskilledStatuslineOptions,
+): readonly string[] {
+  const lines: string[] = [];
+  for (const worker of workers) {
+    const logged = flatten(worker.log.last_line);
+    if (logged == null) continue;
+    lines.push(clamp(`  ${LOG_LINE_MARK} ${workerName(worker, options)}: ${logged}`, options.maxWidth));
+  }
+  return lines;
+}
+
+/** The mark that says "this line belongs to the entry above it". */
+const LOG_LINE_MARK = "↳";
+
+/**
+ * A published line reduced to something that fits on one row. PURE.
+ *
+ * Whitespace — a newline included — is collapsed rather than escaped, and control
+ * characters are dropped: the daemon stored the string a Worker published
+ * verbatim, and this is the last moment before it becomes a terminal's line.
+ * Returns `null` when nothing survives, which is the same absence as no publish.
+ */
+function flatten(line: string | null): string | null {
+  if (line == null) return null;
+  const collapsed = line
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return collapsed === "" ? null : collapsed;
+}
+
+/** How one Worker is named on this line: owner-qualified in `global`. PURE. */
+function workerName(worker: RedskilledStatuslineWorker, options: RedskilledStatuslineOptions): string {
+  return options.mode === "global" ? `${worker.project_label}:${worker.worker_id}` : worker.worker_id;
 }
 
 function renderProject(project: RedskilledStatuslineProject): string {

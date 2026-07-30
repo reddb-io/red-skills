@@ -23,7 +23,11 @@
  * string because the alternative is every agent host reimplementing the line —
  * which is the drift the pair of ops exists to prevent (ADR 0130 rule 10). The
  * daemon renders it from the very payload the other op returns, so the two can
- * disagree only if a pure function is impure. `worker-command`
+ * disagree only if a pure function is impure. `worker-heartbeat` widens it by one
+ * more string, in the one direction the daemon has no other way to learn: the
+ * Worker's own last logged line. It is stored and echoed, never parsed — transport
+ * is not semantics — which is what keeps the verbose statusline one read and keeps
+ * the daemon ignorant of where a project's logs live. `worker-command`
  * carries the commanding verbs — stop, recycle, steer — as data rather than as
  * three ops, so the reach rule is decided once for all of them.
  *
@@ -71,6 +75,23 @@ export interface RedskilledStatuslineRenderRequest {
   readonly max_workers?: number;
   readonly max_projects?: number;
   readonly max_width?: number;
+  /** Ask for the second line per Worker: the last line each one logged. */
+  readonly verbose?: boolean;
+}
+
+/**
+ * One Worker publishing its own last logged line.
+ *
+ * `last_log_line` is opaque: the daemon checks that it is a string and stores it,
+ * and nothing in this process ever reads it for meaning. The alternative — a
+ * statusline reading each Worker's log itself — would cost a disk read per Worker
+ * per render, cross a project boundary, and give every surface a private source
+ * to contradict the daemon with.
+ */
+export interface RedskilledWorkerHeartbeatRequest {
+  readonly worker_id: string;
+  readonly last_log_line: string;
+  readonly session_project?: string;
 }
 
 export type RedskilledRequest =
@@ -80,6 +101,7 @@ export type RedskilledRequest =
   | { id: string; op: "statusline-string"; session_project?: string; render?: RedskilledStatuslineRenderRequest }
   | { id: string; op: "worker-start"; spec: RedskilledWorkerSpec; session_project?: string }
   | { id: string; op: "worker-command"; command: RedskilledWorkerCommandRequest }
+  | { id: string; op: "worker-heartbeat"; heartbeat: RedskilledWorkerHeartbeatRequest }
   | { id: string; op: "shutdown" };
 
 export type RedskilledResponse =
@@ -150,6 +172,34 @@ export function isRedskilledWorkerCommandResult(value: unknown): value is Redski
     isRedskilledReachVerdict(result.reach);
 }
 
+/**
+ * The answer to a permitted heartbeat.
+ *
+ * `accepted` is false — not an error — when the daemon holds no such live Worker:
+ * a Worker whose death the daemon observed a moment before its last heartbeat
+ * landed is a race, not a fault, and a publisher must not treat it as one.
+ */
+export interface RedskilledWorkerHeartbeatAck {
+  readonly version: 1;
+  readonly worker_id: string;
+  readonly accepted: boolean;
+  readonly reach: RedskilledReachVerdict;
+  /** When the daemon recorded the line; `null` when it recorded nothing. */
+  readonly published_at: string | null;
+  readonly detail: string;
+}
+
+export function isRedskilledWorkerHeartbeatAck(value: unknown): value is RedskilledWorkerHeartbeatAck {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const ack = value as Record<string, unknown>;
+  return ack.version === 1 &&
+    typeof ack.worker_id === "string" &&
+    typeof ack.accepted === "boolean" &&
+    typeof ack.detail === "string" &&
+    (ack.published_at === null || typeof ack.published_at === "string") &&
+    isRedskilledReachVerdict(ack.reach);
+}
+
 export interface RedskilledClientOptions {
   socketPath: string;
   timeoutMs?: number;
@@ -184,6 +234,9 @@ export function isRedskilledStatuslineRender(value: unknown): value is Redskille
   const render = value as Record<string, unknown>;
   return render.version === 1 &&
     typeof render.line === "string" &&
+    Array.isArray(render.lines) &&
+    render.lines.every((line) => typeof line === "string") &&
+    typeof render.verbose === "boolean" &&
     (render.mode === "local" || render.mode === "global") &&
     (render.project === null || typeof render.project === "string") &&
     typeof render.detail === "string" &&
