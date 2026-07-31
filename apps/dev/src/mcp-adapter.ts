@@ -97,6 +97,7 @@ import {
   getConfig,
   loadConfig,
   readBackpressure,
+  readHitlTypeLabels,
   readValidationResourceBudget,
 } from "./core/config.js";
 import * as gitx from "./runtime/git.js";
@@ -510,6 +511,11 @@ export function createDefaultDevAfkMcpOperations(
       const context = await resolveRepoContext(root);
       const gh = { cwd: context.root, repo: context.repo };
       const candidates = await ghx.listUnblockCandidates(gh);
+      // The lane comes from THIS repo's installed vocabulary (#2966), so a
+      // HUMAN-ONLY dependent parks for its human instead of joining the queue.
+      const hitlTypes = readHitlTypeLabels(
+        loadConfig(afkPaths(root).configPath, { warn: () => undefined }),
+      );
       const promoted = await executeUnblockSweep(
         candidates,
         async (issue) => ((await ghx.issueClosed(gh, issue)) ? "CLOSED" : "OPEN"),
@@ -520,6 +526,7 @@ export function createDefaultDevAfkMcpOperations(
           comment: (issue, body) => ghx.comment(gh, issue, body),
           issueReference: (issue) => ghx.issueReference(gh, issue),
         },
+        hitlTypes,
       );
       return { promoted };
     },
@@ -631,22 +638,29 @@ export function createDefaultDevAfkMcpOperations(
         if (!reqs.includes(input.issue)) continue;
         dependents.push({
           number,
+          labels: row.labels,
           reqs: reqs.map((n) => ({
             n,
             closed: (states.get(n)?.state ?? "").toUpperCase() === "CLOSED",
           })),
         });
       }
+      // An operator reading this projection must see WHERE each promotion would
+      // land, not just that it would happen (#2966).
+      const hitlTypes = readHitlTypeLabels(
+        loadConfig(afkPaths(root).configPath, { warn: () => undefined }),
+      );
       return {
         issue: input.issue,
         dependents: dependents.map((dependent) => ({
           number: dependent.number,
           reqs: dependent.reqs,
         })),
-        promotable: planCloseCascade(input.issue, dependents).map((plan) => ({
+        promotable: planCloseCascade(input.issue, dependents, hitlTypes).map((plan) => ({
           number: plan.number,
           refs: plan.refs,
           req_labels: plan.reqLabels,
+          lane: plan.lane,
         })),
       };
     },
