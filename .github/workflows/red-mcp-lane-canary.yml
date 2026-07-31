@@ -52,7 +52,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # Walks the shipped castle-mcp bundle against a live redskilled daemon,
-      # and walks two deliberately broken lanes that must come back RED — so a
-      # green run here is evidence rather than an assumption.
+      # and walks a deliberately broken lane — a dead daemon socket — that must
+      # come back RED, so a green run here is evidence rather than an assumption.
       - name: Run the MCP lane canary
         run: pnpm -C apps/dev test:canary
