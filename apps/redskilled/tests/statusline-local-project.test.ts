@@ -174,6 +174,8 @@ describe("`project unknown`", () => {
           registered_at: "2026-07-29T00:00:00.000Z",
           renew_within_ms: 60_000,
           renew_by: "2026-07-29T00:01:00.000Z",
+          renewed_at: "2026-07-29T00:00:00.000Z",
+          renewals: 0,
         })),
       }),
       ceiling: UNBOUNDED_HOST_CEILING,

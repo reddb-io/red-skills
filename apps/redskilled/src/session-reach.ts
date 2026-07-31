@@ -41,6 +41,7 @@ export type RedskilledSessionOp =
   | "worker-steer"
   | "worker-heartbeat"
   | "project-register"
+  | "project-renew"
   | "project-deregister";
 
 /** The three reaches. A reader of this type knows the whole model. */
@@ -66,6 +67,10 @@ export const REDSKILLED_OP_REACH: Readonly<Record<RedskilledSessionOp, Redskille
   // that project. A cross-project registration would let one session commit
   // another project's name to an argv it never chose.
   "project-register": "project-write",
+  // Keeping one alive lands where taking it did, and for a sharper reason: a
+  // session that could renew another project's registration could keep a drain
+  // nobody is watching running past the deadline that exists to end it.
+  "project-renew": "project-write",
   // Releasing one lands exactly where taking it did: a session that could release
   // another project's registration could stop its work from outside it.
   "project-deregister": "project-write",

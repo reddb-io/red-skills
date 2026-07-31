@@ -77,6 +77,9 @@ import {
 import type { RedskilledPaths } from "./paths.js";
 import {
   buildProjectRegistration,
+  renewProjectRegistration,
+  RedskilledProjectUnregisteredError,
+  sweepLapsedRegistrations,
   type RedskilledProjectRegistration,
   type RedskilledProjectRegistrationRequest,
 } from "./project-registration.js";
@@ -102,6 +105,7 @@ import {
   type RedskilledWorkerCommandRequest,
   type RedskilledProjectDeregistered,
   type RedskilledProjectRegistered,
+  type RedskilledProjectRenewed,
   type RedskilledWorkerCommandResult,
   type RedskilledWorkerHeartbeatAck,
   type RedskilledWorkerHeartbeatRequest,
@@ -335,7 +339,19 @@ export interface RedskilledDaemon {
    * and the session that ends — so the second one must read as done, not failed.
    */
   deregisterProject(projectLabel: string, sessionProject?: string): RedskilledProjectDeregistered;
-  /** The registrations this daemon holds, ordered by project label. */
+  /**
+   * Push a project's registration out to a new deadline, because its session lives.
+   *
+   * Renewal is the ONLY thing that keeps a registration standing, and its absence
+   * is the only thing that ends one on its own: the daemon holds no connection to
+   * a session — every request arrives on its own socket — so a closed terminal is
+   * something it learns by not being told anything for a window.
+   */
+  renewProject(
+    projectLabel: string,
+    options?: { readonly sessionProject?: string; readonly renewWithinMs?: number },
+  ): RedskilledProjectRenewed;
+  /** The registrations this daemon holds, ordered by project label; lapsed ones swept. */
   registrations(): readonly RedskilledProjectRegistration[];
   hostState(): RedskilledHostState;
   /**
@@ -398,7 +414,7 @@ export interface RedskilledDaemon {
   /** Resolves once every event handed to the lane has reached disk. */
   flushEvents(): Promise<void>;
   /** Force the idle check to run now — the timer's body, exposed for tests. */
-  evaluateIdle(): "exited" | "held-by-workers";
+  evaluateIdle(): "exited" | "held-by-workers" | "held-by-registrations";
   /**
    * Resolve the published version and decide, WITHOUT acting on the decision.
    *
@@ -556,8 +572,26 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     resolveClosed = resolve;
   });
 
+  /**
+   * Drop every registration whose deadline has passed, and say which those were.
+   *
+   * Called from each surface that reads the set rather than from a timer of its
+   * own: a lapse is only ever observable at a read, and a timer would have to keep
+   * this process awake to enforce a deadline whose whole purpose is to let it
+   * sleep. A registration therefore stops being polled, stops being reported and
+   * stops holding the daemon alive at the same instant — the first read past it.
+   */
+  function expireLapsedRegistrations(nowMs: number): readonly RedskilledProjectRegistration[] {
+    const swept = sweepLapsedRegistrations(registrations.values(), nowMs);
+    for (const lapsed of swept.lapsed) registrations.delete(lapsed.project_label);
+    return swept.lapsed;
+  }
+
   function hostState(): RedskilledHostState {
+    const now = clock();
+    expireLapsedRegistrations(Date.parse(now));
     return buildHostState({
+      now,
       daemonVersion,
       machineIdHash: paths.machineIdHash,
       sessionKeyHash: paths.sessionKeyHash,
@@ -629,6 +663,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    */
   async function pollQueueDiscovery(): Promise<RedskilledQueueDiscovery | null> {
     if (queueTransport == null) return null;
+    const now = clock();
+    // Swept before the set is snapshotted, so a lapsed project is absent from the
+    // very poll that would otherwise have asked the tracker about it again.
+    expireLapsedRegistrations(Date.parse(now));
     const projects = [...registrations.values()]
       .map((registration) => ({ project_label: registration.project_label, selector: registration.selector }))
       // By label, like every other list the daemon reports: the order a client
@@ -638,7 +676,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     lastQueue = await fetchQueueDiscovery({
       projects,
       transport: queueTransport,
-      now: clock(),
+      now,
       ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
     });
     return lastQueue;
@@ -830,11 +868,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   ): RedskilledProjectRegistered {
     const reach = authorize("project-register", sessionProject, request.project_label);
     if (!reach.permitted) throw new Error(reach.reason);
+    const now = clock();
+    // Swept first, so a project whose last session died is refused nothing: the
+    // record it would collide with is one no session has renewed past its deadline.
+    expireLapsedRegistrations(Date.parse(now));
     const registration = buildProjectRegistration(request, {
-      now: clock(),
+      now,
       held: registrations.get(request.project_label),
     });
     registrations.set(registration.project_label, registration);
+    // A registration holds the daemon awake, exactly as a Worker does: a drain the
+    // operator walked away from must outlive the terminal, and a daemon that idled
+    // out under a standing registration would take the promise with it.
+    armIdleTimer();
     return {
       version: 1,
       registration,
@@ -842,6 +888,41 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       detail:
         `redskilled holds a registration for project ${JSON.stringify(registration.project_label)} at a target of ` +
         `${registration.target} until ${registration.renew_by}, and has read neither its selector nor its argv`,
+    };
+  }
+
+  /**
+   * Keep one project's registration standing, once reach has permitted it.
+   *
+   * Reach is checked against the project being renewed — its own label, exactly as
+   * at registration. A renewal for a record the daemon is not holding is REFUSED
+   * rather than minted: the selector, the argv and the target were deliberately
+   * not kept anywhere else, so a renewal that created a registration would be
+   * inventing the very strings ADR 0130 rule 3 forbids this process to author.
+   */
+  function renewProject(
+    projectLabel: string,
+    options: { readonly sessionProject?: string; readonly renewWithinMs?: number } = {},
+  ): RedskilledProjectRenewed {
+    const reach = authorize("project-renew", options.sessionProject, projectLabel);
+    if (!reach.permitted) throw new Error(reach.reason);
+    const now = clock();
+    expireLapsedRegistrations(Date.parse(now));
+    const held = registrations.get(projectLabel);
+    if (held == null) throw new RedskilledProjectUnregisteredError(projectLabel);
+    const registration = renewProjectRegistration(held, {
+      now,
+      ...(options.renewWithinMs == null ? {} : { renew_within_ms: options.renewWithinMs }),
+    });
+    registrations.set(registration.project_label, registration);
+    armIdleTimer();
+    return {
+      version: 1,
+      registration,
+      reach,
+      detail:
+        `redskilled renewed the registration for project ${JSON.stringify(registration.project_label)}, which now ` +
+        `stands until ${registration.renew_by} after renewal ${registration.renewals}`,
     };
   }
 
@@ -1161,12 +1242,22 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     idleTimer.unref();
   }
 
-  function evaluateIdle(): "exited" | "held-by-workers" {
+  function evaluateIdle(): "exited" | "held-by-workers" | "held-by-registrations" {
     // The rule that will matter once Workers exist, in place from the start: a
     // daemon that believes it holds live Workers rearms instead of exiting.
     if (workers.size > 0) {
       armIdleTimer();
       return "held-by-workers";
+    }
+    // A standing registration holds the daemon just as a Worker does, and holds it
+    // for the state a Worker cannot: a project between Workers is a project the
+    // host must still be awake to poll for. The deadline is what keeps this from
+    // being "awake forever" — a registration nobody renews lapses in the sweep
+    // above, and the very next tick finds nothing holding anything.
+    expireLapsedRegistrations(Date.parse(clock()));
+    if (registrations.size > 0) {
+      armIdleTimer();
+      return "held-by-registrations";
     }
     void stop();
     return "exited";
@@ -1289,6 +1380,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       if (request.op === "project-register") {
         return { id: request.id, ok: true, value: registerProject(request.registration, request.session_project) };
       }
+      if (request.op === "project-renew") {
+        return {
+          id: request.id,
+          ok: true,
+          value: renewProject(request.project_label, {
+            ...(request.session_project == null ? {} : { sessionProject: request.session_project }),
+            ...(request.renew_within_ms == null ? {} : { renewWithinMs: request.renew_within_ms }),
+          }),
+        };
+      }
       if (request.op === "project-deregister") {
         return { id: request.id, ok: true, value: deregisterProject(request.project_label, request.session_project) };
       }
@@ -1358,6 +1459,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     },
     workerCount: () => workers.size,
     registerProject,
+    renewProject,
     deregisterProject,
     registrations: () => hostState().registrations ?? [],
     hostState,
