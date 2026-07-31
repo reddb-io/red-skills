@@ -704,7 +704,9 @@ export function buildSupervisorDeps(
           return;
         }
         for (const event of events) {
-          if (event.event === "worker-birth") continue;
+          // A birth is not a death — and neither is the daemon's own stop, which
+          // rides the same lane and names itself rather than a Worker (#2919).
+          if (event.event === "worker-birth" || event.event === "daemon-stop") continue;
           const slot = workerSlots.get(event.worker_id);
           if (slot === undefined) continue;
           // A budget kill and a signal death are both non-clean; only a witnessed

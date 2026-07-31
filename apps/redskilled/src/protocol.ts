@@ -43,12 +43,23 @@
  * field a client is obliged to state, because a renewal is a session saying "I am
  * still here" rather than a second chance to restate what it wants.
  *
+ * `shutdown` is the daemon's own life rather than any project's, and it answers
+ * with a REPORT rather than an acknowledgement: what the daemon is holding and
+ * what survives its departure. That is the whole difference between asking a
+ * daemon to stop and signalling its pid — a signal ends the same process and can
+ * state nothing about what it was carrying (#2919).
+ *
  * **Every request may name the project its session belongs to.** That single
  * opaque string is what makes reach asymmetric (ADR 0130 rule 9): a session reads
  * the whole host and writes only its own project.
  */
 import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
 import { isRedskilledAdmissionVerdict, type RedskilledAdmissionVerdict } from "./admission.js";
+import {
+  isRedskilledDaemonStopped,
+  type RedskilledDaemonStopped,
+  type RedskilledStopReason,
+} from "./daemon-stop.js";
 import { isRedskilledWorkerView, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
 import {
   isRedskilledProjectRegistration,
@@ -122,7 +133,10 @@ export type RedskilledRequest =
   | { id: string; op: "project-register"; registration: RedskilledProjectRegistrationRequest; session_project?: string }
   | { id: string; op: "project-renew"; project_label: string; renew_within_ms?: number; session_project?: string }
   | { id: string; op: "project-deregister"; project_label: string; session_project?: string }
-  | { id: string; op: "shutdown" };
+  // `detail` is the operator's own words for WHY — opaque to the daemon, recorded
+  // with the stop on the event lane so the successor inherits the intent and not
+  // just the fact (#2919).
+  | { id: string; op: "shutdown"; detail?: string };
 
 export type RedskilledResponse =
   | { id: string; ok: true; value: unknown }
@@ -345,8 +359,20 @@ export function isRedskilledStatuslineRender(value: unknown): value is Redskille
 /** True when `value` is a complete payload — re-exported so a client checks one surface. */
 export { isRedskilledStatuslinePayload };
 
+/**
+ * The answer to `shutdown`: what the daemon holds, and what survives it.
+ *
+ * Re-exported here for the same reason the payload guard is — a client that
+ * speaks the wire checks the shapes it reads on one surface — and it is a whole
+ * report rather than an acknowledgement because a stop an operator cannot see
+ * the consequences of is the hand-sent signal this op exists to replace (#2919).
+ */
+export { isRedskilledDaemonStopped };
+
 export type {
   RedskilledAdmissionVerdict,
+  RedskilledDaemonStopped,
+  RedskilledStopReason,
   RedskilledHostState,
   RedskilledProjectRegistration,
   RedskilledProjectRegistrationRequest,

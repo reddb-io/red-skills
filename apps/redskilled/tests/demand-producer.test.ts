@@ -482,6 +482,7 @@ describe("a death reported by the daemon drives the project's breaker", () => {
       detail: "exit 1",
       exit_code: 1,
       signal: null,
+      reason: null,
     };
     expect(
       deathReportFromHostEvent(event, { selector_id: "ready-for-agent", started_at: "2026-07-29T00:00:00.000Z" }),

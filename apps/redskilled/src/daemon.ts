@@ -55,6 +55,11 @@ import {
   type RedskilledEventLane,
   type RedskilledHostEvent,
 } from "./event-lane.js";
+import {
+  buildRedskilledStopReport,
+  type RedskilledDaemonStopped,
+  type RedskilledStopReason,
+} from "./daemon-stop.js";
 import { buildHostState, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
 import {
   evaluateMemoryBudgets,
@@ -431,7 +436,32 @@ export interface RedskilledDaemon {
    * through the event lane.
    */
   checkForReplacement(): Promise<RedskilledReplacementDecision>;
-  stop(): Promise<void>;
+  /**
+   * What a stop right now would be giving up — WITHOUT stopping anything.
+   *
+   * The report and the act are separate verbs for the same reason the version
+   * observation and the handover are: an operator about to replace a daemon must
+   * be able to read what it is holding before deciding to take it away.
+   */
+  stopReport(reason?: RedskilledStopReason): RedskilledDaemonStopped;
+  /**
+   * Let go of the session, stating why.
+   *
+   * The reason is written to the event lane before anything is released, so a
+   * successor replaying it can tell a planned handover from a death (#2919). The
+   * Workers are untouched either way — they are init-system units, so a stop is a
+   * restart and not an evacuation.
+   */
+  stop(intent?: RedskilledStopIntent): Promise<void>;
+}
+
+/** Why a daemon is being stopped, and by what, when a signal asked. */
+export interface RedskilledStopIntent {
+  /** Defaults to `requested`: someone asked, through the socket or in code. */
+  readonly reason?: RedskilledStopReason;
+  readonly signal?: string;
+  /** The asker's own words, recorded with the stop and never interpreted. */
+  readonly note?: string;
 }
 
 /**
@@ -567,6 +597,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let activityTimer: NodeJS.Timeout | undefined;
   let queueTimer: NodeJS.Timeout | undefined;
   let stopping = false;
+  // Raised the instant a stop begins; `stopping` follows once the daemon's own
+  // departure has reached the lane. See `stop`.
+  let leaving = false;
+  // The one append that says this daemon left, held so every route to a stop —
+  // the op, a signal, idle, a handover — writes it exactly once.
+  let departure: Promise<unknown> | null = null;
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
@@ -1171,7 +1207,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const prepared = prepareRedskilledReplacement(decision, replacementIO);
     replacementState = "in-progress";
     await eventLane.flush().catch(() => undefined);
-    await stop();
+    await stop({ reason: "replaced" });
     completeRedskilledReplacement(prepared, paths, {
       ...(idleMs == null ? {} : { idleMs }),
       io: replacementIO,
@@ -1259,12 +1295,62 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       armIdleTimer();
       return "held-by-registrations";
     }
-    void stop();
+    void stop({ reason: "idle" });
     return "exited";
   }
 
-  async function stop(): Promise<void> {
-    if (stopping) return await closed;
+  /**
+   * What this daemon is holding, and what a stop for `reason` would leave behind.
+   *
+   * Answered BEFORE anything is given up, so the report a caller reads describes
+   * the machine it is about to change rather than the one left over afterwards.
+   */
+  function stopReport(reason: RedskilledStopReason): RedskilledDaemonStopped {
+    return buildRedskilledStopReport({
+      reason,
+      socketPath: paths.socketPath,
+      daemonVersion,
+      pid: owner.pid,
+      workers: [...workers.values()],
+      projects: [...registrations.keys()],
+    });
+  }
+
+  /**
+   * Write this daemon's departure to the lane — ONCE, however often it is asked.
+   *
+   * Separate from `stop` because the two have different deadlines: the stop op
+   * answers only after the departure is on disk, so an operator told "stopping"
+   * holds a fact a successor can already read, while the release of the socket and
+   * the lease follows behind it.
+   */
+  function recordDeparture(intent: RedskilledStopIntent): Promise<unknown> {
+    if (departure != null) return departure;
+    const reason = intent.reason ?? "requested";
+    const note = intent.note?.trim();
+    departure = eventLane
+      .recordDaemonStop({
+        ts: clock(),
+        pid: owner.pid,
+        socketPath: paths.socketPath,
+        reason,
+        detail: note == null || note === "" ? stopReport(reason).detail : `${stopReport(reason).detail} — ${note}`,
+        ...(intent.signal == null ? {} : { signal: intent.signal }),
+      })
+      .catch(() => undefined);
+    return departure;
+  }
+
+  async function stop(intent: RedskilledStopIntent = {}): Promise<void> {
+    // `leaving` rather than `stopping`: the departure is awaited before the daemon
+    // stops trusting itself, and a second caller arriving inside that window would
+    // otherwise release a session whose record was still in flight.
+    if (leaving) return await closed;
+    leaving = true;
+    // Recorded before `stopping` is set, because the daemon writes nothing to the
+    // lane once it is — and awaited, because a stop still in flight when the
+    // process leaves is indistinguishable from the crash it exists to rule out.
+    await recordDeparture(intent);
     stopping = true;
     if (idleTimer) clearTimeout(idleTimer);
     if (sampleTimer) clearInterval(sampleTimer);
@@ -1343,7 +1429,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       armIdleTimer();
       const response = await respond(request);
       writeResponse(socket, response);
-      if (request.op === "shutdown") setImmediate(() => void stop());
+      // The report is written to the caller BEFORE the daemon leaves: a stop that
+      // took the socket down first would be indistinguishable, from the operator's
+      // side, from a daemon that died while being asked.
+      if (request.op === "shutdown") setImmediate(() => void stop({ reason: "requested" }));
     });
   });
 
@@ -1412,7 +1501,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           value: { worker: launched.worker, admission: launched.admission, warnings: launched.warnings },
         };
       }
-      if (request.op === "shutdown") return { id: request.id, ok: true, value: { stopping: true } };
+      if (request.op === "shutdown") {
+        const report = stopReport("requested");
+        // The departure reaches the lane BEFORE the caller is told: an operator
+        // holding a stop report and a successor replaying the lane must never
+        // disagree about whether this daemon left on purpose (#2919).
+        await recordDeparture({ reason: "requested", ...(request.detail == null ? {} : { note: request.detail }) });
+        return { id: request.id, ok: true, value: report };
+      }
       const unknown = request as { id?: string; op?: string };
       return { id: unknown.id ?? randomUUID(), ok: false, error: `unsupported redskilled op: ${unknown.op ?? "unknown"}` };
     } catch (err) {
@@ -1467,6 +1563,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     evaluateIdle,
     observePublishedVersion,
     checkForReplacement,
+    stopReport,
     stop,
   };
 }
