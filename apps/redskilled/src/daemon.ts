@@ -121,6 +121,7 @@ import {
   type RedskilledQueueDiscovery,
   type RedskilledQueueTransport,
 } from "./queue-discovery.js";
+import { planQueueDrain, type RedskilledQueueDrain } from "./queue-drain.js";
 import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
 import {
   REDSKILLED_STATUSLINE_DEFAULTS,
@@ -391,6 +392,13 @@ export interface RedskilledDaemon {
   pollQueueDiscovery(): Promise<RedskilledQueueDiscovery | null>;
   /** The last queue fetch, dated by the poll it came from; `null` before the first. */
   queueDiscovery(): RedskilledQueueDiscovery | null;
+  /**
+   * What that fetch decided about each registration — released, or held and why.
+   *
+   * `null` before the first poll: a daemon that has counted nothing has drained
+   * nothing, which is not the same as having found every queue full.
+   */
+  queueDrain(): RedskilledQueueDrain | null;
   /** Re-probe every re-attached Worker, retiring the ones the host no longer confirms. */
   sweepReattached(): Promise<readonly RedskilledWorkerView[]>;
   /** The Workers this daemon adopted at start rather than birthing itself. */
@@ -545,6 +553,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // two cadences produce two instants, and a document that carried one date for
   // both would age the fast half by the slow half's clock.
   let lastQueue: RedskilledQueueDiscovery | null = null;
+  // What the last queue fetch decided about the registrations it covered, kept so
+  // a project's disappearance from the list carries the sentence that removed it
+  // rather than leaving a caller to guess which of the three outcomes it was.
+  let lastDrain: RedskilledQueueDrain | null = null;
   let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
   let replaceTimer: NodeJS.Timeout | undefined;
@@ -641,7 +653,30 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now: clock(),
       ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
     });
+    applyQueueDrain(lastQueue);
     return lastQueue;
+  }
+
+  /**
+   * Release every project this poll found genuinely drained.
+   *
+   * The registration set is re-read HERE rather than reused from before the
+   * request, so a project that registered while the answer was in flight cannot
+   * be judged by a poll that never named it. The plan is the whole decision — a
+   * counted zero and nothing else — and this function only applies it.
+   */
+  function applyQueueDrain(discovery: RedskilledQueueDiscovery): void {
+    const plan = planQueueDrain({
+      discovery,
+      registered: [...registrations.keys()],
+      busyProjects: [...workers.values()].map((worker) => worker.project_label),
+      now: clock(),
+    });
+    for (const projectLabel of plan.deregistered) registrations.delete(projectLabel);
+    lastDrain = plan;
+    // A host that just let go of its last registration may now have nothing to
+    // hold it open, exactly as a Worker's death does.
+    if (plan.deregistered.length > 0) armIdleTimer();
   }
 
   /**
@@ -1338,6 +1373,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     pollRepositoryActivity,
     pollQueueDiscovery,
     queueDiscovery: () => lastQueue,
+    queueDrain: () => lastDrain,
     sweepReattached,
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
