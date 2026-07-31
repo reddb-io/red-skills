@@ -211,29 +211,41 @@ of it.
 
 ## Provisioning
 
-A daemon starts on first use, but three things must exist before it can: the
-host-scoped home, a published bundle to run, and a socket that answers. One
-command establishes all three, and `/red-setup` (Section E3) runs it:
+A daemon starts on first use. Two things must exist before it can — a published
+bundle to run and a socket that answers — and one command establishes both,
+prints the audit, and is what `/red-setup` (Section E3) runs:
 
 ```bash
-redskilled provision              # create the home, start the daemon, print the audit
-redskilled provision --check      # the read-only half — creates nothing, starts nothing
+redskilled provision                  # start the daemon, print the audit
+redskilled provision --check          # the read-only half — creates nothing, starts nothing
+redskilled provision --workspace host # a lane under the home: provision the home too
 redskilled provision --install-unit   # also write the optional supervising user unit
 ```
 
+- **The home is NOT a precondition for a daemon.** The daemon binds its socket
+  and writes its lease and event lane under the session runtime dir; it resolves
+  `~/.red/redskilled/` nowhere. Exactly one thing reads the home: a workspace
+  lane rooted inside it (`plugins.dev.workspace.target: host`, or a custom parent
+  under the home). So the home is created **when a declared target reads it** and
+  never otherwise — creating it unconditionally left most machines with an empty
+  directory and put `/red-setup` on the critical path of a daemon that never
+  touched it (#2958). Selecting the `host` preset provisions it at that moment,
+  and the receipt names the declaration (`needed_by`) that asked for it.
 - **The home is this app's.** `~/.red/redskilled/` is operator-scoped and sits
   outside every checkout, so it is not the `.red/` ADR 0067 gave `/red-setup`
   sole authority over. `provisionRedskilledHome` is the only thing that creates
   it (ADR 0130 Amendment 2); every other surface reads the one namer in
-  `packages/shared/redskilled-home.ts`. A home only an interactive installer
-  could create would leave auto-spawn failing closed forever on a fresh machine.
+  `packages/shared/redskilled-home.ts`. Deciding *when* to call it changes
+  nothing about *who* calls it.
 - **Idempotent by construction.** An existing home is kept with everything in
   it, and the only thing a second run can change is a permission bit that
   drifted wider than owner-only — a repair, not a rewrite.
 - **The audit is pure, and the doctor consumes it.** `/red-doctor` renders the
   same four checks (`home`, `daemon-entry`, `reach`, `supervisor-unit`) from
   `auditRedskilledProvisioning` over injected facts, probing the socket
-  **without spawning** the daemon it reports on.
+  **without spawning** the daemon it reports on. An absent home is two states,
+  not one: absent-and-unneeded is `ok` with the declaration that says so, and
+  only absent-and-needed is a finding.
 - **The optional unit is optional.** It adds `Restart=on-failure` over the same
   binary, socket and contract auto-spawn uses (rule 7), and an absent unit is
   reported as `ok`. An existing unit file is never rewritten.
