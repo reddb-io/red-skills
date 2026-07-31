@@ -381,6 +381,25 @@ describe("wayfinder docs", () => {
     }
   });
 
+  // #2966: the unblock sweep queued HITL tickets for agents because nothing
+  // told it which types are human-only. The declaration is per-repo config, so
+  // the docs that teach it are the only thing standing between a consumer repo
+  // and the same defect.
+  it("teaches the HUMAN-ONLY type declaration in every doc a consumer installs", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/wayfinder/SKILL.md");
+    const labels = await readRepoFile("plugins/dev/skills/engineering/red-setup/triage-labels.md");
+    const config = await readRepoFile("plugins/dev/skills/engineering/afk/docs/CONFIG.md");
+    const operations = await readRepoFile("plugins/dev/skills/engineering/afk/docs/OPERATIONS.md");
+
+    for (const doc of [skill, labels, config, operations]) {
+      expect(doc).toContain("hitl_types");
+    }
+    expect(labels).toContain("ready-for-human");
+    expect(config).toContain("ready-for-human");
+    // The whole point of the key: the names are the repo's, not ours.
+    expect(config).toContain("never from a built-in one");
+  });
+
   it("pins the fidelity-restoration directives from upstream v1.1.0", async () => {
     const skill = await readRepoFile("plugins/dev/skills/engineering/wayfinder/SKILL.md");
 
