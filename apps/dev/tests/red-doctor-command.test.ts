@@ -96,6 +96,9 @@ vi.mock("@reddb-io/redskilled/provision", async (importOriginal) => ({
     homePath: "/home/dev/.red/redskilled",
     homePresent: false,
     homeMode: undefined,
+    // A machine whose project declares the `host` preset, so the absent home is
+    // a real defect rather than the ordinary shape of a `local` one (#2958).
+    homeNeed: { needed: true, declaredBy: "plugins.dev.workspace.target: host (/repo/.red/config.yaml)" },
     entry: { command: "/usr/bin/node", args: ["/bundles/redskilled.bundle.min.mjs"], source: "bundle-cache" as const },
     socketPath: "/run/user/1000/red-skills/redskilled.sock",
     reachable: false,
@@ -178,10 +181,42 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
     const human = writes.join("");
     expect(human).toContain("red-doctor redskilled daemon");
     expect(human).toContain("provisioning: missing");
-    expect(human).toContain("/home/dev/.red/redskilled does not exist");
+    expect(human).toContain("/home/dev/.red/redskilled does not exist, and it is needed");
     expect(human).toContain("no daemon answered on /run/user/1000/red-skills/redskilled.sock");
     expect(human).toContain("fix: run `/red-setup`");
     expect(human).toContain("redskilled provision");
+    stdout.mockRestore();
+  });
+
+  it("reads an absent home as ok when this project's preset never reads it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-doctor-redskilled-unneeded-"));
+    roots.push(root);
+    const { readRedskilledProvisionFacts } = await import("@reddb-io/redskilled/provision");
+    vi.mocked(readRedskilledProvisionFacts).mockResolvedValueOnce({
+      homePath: "/home/dev/.red/redskilled",
+      homePresent: false,
+      homeMode: undefined,
+      homeNeed: { needed: false, declaredBy: "/repo/.red/config.yaml declares no workspace target (default local)" },
+      entry: { command: "/usr/bin/node", args: ["/bundles/redskilled.bundle.min.mjs"], source: "bundle-cache" },
+      socketPath: "/run/user/1000/red-skills/redskilled.sock",
+      reachable: true,
+      supervisorUnit: "absent",
+    });
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    const human = writes.join("");
+    // A daemon that answers on a machine with no home is a fully provisioned
+    // host: the doctor must not send its operator after a directory nothing reads.
+    expect(human).toContain("provisioning: ok");
+    expect(human).toContain("absent and unneeded");
+    expect(human).not.toContain("fix: run `/red-setup`");
     stdout.mockRestore();
   });
 
