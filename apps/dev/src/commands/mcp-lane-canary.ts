@@ -1,9 +1,10 @@
 // `castle-mcp __mcp-canary` — run the MCP lane canary against a bundle.
 //
 // Internal by design (the `__` prefix): this is a probe CI and operators fire
-// deliberately, not a queue surface. It STARTS a real one-slot producer through
-// the canonical MCP interface and stops it again, because that round trip is
-// the only thing that proves the lane is not inert (#2677, ADR 0128 §7).
+// deliberately, not a queue surface. It really REGISTERS this project through
+// the canonical MCP interface and gives the registration back again, because
+// that round trip against a live daemon is the only thing that proves the lane
+// is not inert (#2677, #2902, ADR 0128 §7).
 //
 // It is routed from the castle-mcp entry rather than the dev CLI: the canary
 // needs the MCP CLIENT SDK, whose bundled ajv leaves bare `require()` calls
@@ -32,22 +33,22 @@ export interface ParsedMcpLaneCanaryArgs {
   root: string;
   runner: string;
   target: number;
-  workerDeadlineMs: number;
+  quietDeadlineMs: number;
   teardownDeadlineMs: number;
 }
 
 const USAGE = `Usage: castle-mcp __mcp-canary [options]
 
-Drives the shipped MCP lane end to end — project_start -> a slot that spawns a
-real worker -> project_status -> project_stop — and fails loudly naming the step
-that went inert.
+Drives the shipped MCP lane end to end — project_start -> a registration the
+daemon holds -> no process of the project's own -> project_status -> project_stop
+— and fails loudly naming the step that went inert.
 
   --entry <path>              MCP bundle entry (default: the castle-mcp bundle
                               beside this process's own entry)
   --root <dir>                repo the canary starts its worker in (default: cwd)
   --runner <runner>           runner for the canary worker (default: claude)
-  --worker-deadline-ms <n>    how long a healthy lane may take to produce a
-                              live worker (default: 45000)
+  --quiet-deadline-ms <n>     how long the probe watches for a process the
+                              project must never have started (default: 3000)
   --teardown-deadline-ms <n>  how long project_stop may take (default: 20000)
 `;
 
@@ -60,7 +61,7 @@ export function parseMcpLaneCanaryArgs(
     root: cwd,
     runner: "claude",
     target: 1,
-    workerDeadlineMs: 45_000,
+    quietDeadlineMs: 3_000,
     teardownDeadlineMs: 20_000,
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -81,8 +82,8 @@ export function parseMcpLaneCanaryArgs(
       case "--runner":
         parsed.runner = require();
         break;
-      case "--worker-deadline-ms":
-        parsed.workerDeadlineMs = positiveInteger(flag, require());
+      case "--quiet-deadline-ms":
+        parsed.quietDeadlineMs = positiveInteger(flag, require());
         break;
       case "--teardown-deadline-ms":
         parsed.teardownDeadlineMs = positiveInteger(flag, require());
@@ -116,7 +117,7 @@ export async function runMcpLaneCanaryAgainstEntry(
     const result = await runMcpLaneCanary(transport, {
       runner: parsed.runner,
       target: parsed.target,
-      workerDeadlineMs: parsed.workerDeadlineMs,
+      quietDeadlineMs: parsed.quietDeadlineMs,
       teardownDeadlineMs: parsed.teardownDeadlineMs,
       ...(socketPath !== undefined ? { socketPath } : {}),
     });
