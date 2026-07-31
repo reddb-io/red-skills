@@ -10,6 +10,8 @@ import {
   companionBundlePlugins,
   ensureBundle,
   fetchNewestSameMajor,
+  fetchPublishedVersionHorizon,
+  newestPublished,
   newestSameMajor,
   npmPackageSpec,
   packagedBundleName,
@@ -293,6 +295,26 @@ describe("registry version discovery", () => {
     expect(newest).toBe("1.146.0");
     expect(fetches).toEqual([url]);
     expect(fetches.every((u) => !u.includes("releases/download"))).toBe(true);
+  });
+
+  it("picks the newest version published at ALL, ignoring prereleases", () => {
+    expect(newestPublished(parseRegistryVersions(metadata))).toBe("2.0.0");
+    // A prerelease is not a major an operator is asked to cross to.
+    expect(newestPublished(["1.0.0", "2.0.0-rc.1"])).toBe("1.0.0");
+    expect(newestPublished([])).toBeNull();
+  });
+
+  it("answers both version questions from ONE registry read", async () => {
+    const url = registryPackageUrl();
+    const { io, fetches } = makeIO({ registry: { [url]: metadata } });
+
+    // Two answers that must describe the same instant: a second read could see a
+    // release land between them and report a gap that never existed.
+    expect(await fetchPublishedVersionHorizon(io, "1.140.0")).toEqual({
+      sameMajor: "1.146.0",
+      newest: "2.0.0",
+    });
+    expect(fetches).toEqual([url]);
   });
 });
 

@@ -183,6 +183,18 @@ of it.
   never folded into it, and an unresolvable read stays `published_unknown` rather
   than becoming a match — a manufactured zero skew is exactly how a stale process
   looks current while every Worker halts on the version it claimed to measure.
+- **A major boundary is held, and the hold is said out loud.** The self-replacement
+  only ever resolves inside the running major, because a breaking change must not
+  arrive on a machine that is holding Workers just because a timer noticed it. The
+  hold is reported rather than kept: `upgrade.newest_published_version` names the
+  newest release whatever its major, `upgrade.major_held` is 1 while one is being
+  withheld, and `upgrade.major_hold` carries the reason and the manual step that
+  crosses it — re-pointing the unit under supervision, stopping this daemon
+  without one. A silent hold is indistinguishable from being current, which is how
+  an operator who updated the plugin to a new major and saw nothing change was
+  left with no surface to ask (#2926). A daemon that is genuinely current, one
+  merely behind inside its major, and one whose probe resolved nothing all report
+  no hold at all.
 - **An unisolated launch is never silent.** When the host affords no transient
   unit the Worker still starts, and the reply — and the host-state record it
   keeps for its whole life — carries a warning naming what was lost. A declared
