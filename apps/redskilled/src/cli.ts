@@ -28,6 +28,7 @@ import {
   auditRedskilledProvisioning,
   installRedskilledUserUnit,
   provisionRedskilledHome,
+  readRedskilledHomeNeed,
   readRedskilledProvisionFacts,
   renderRedskilledUserUnit,
 } from "./provision.js";
@@ -120,13 +121,20 @@ Manages the OPTIONAL user supervisor unit — auto-spawn is the floor, and a hos
 with no unit is a supported configuration (ADR 0130 rule 7). Defaults to status.
 `,
   provision: `Usage: redskilled provision [--check] [--no-start] [--install-unit]
+                          [--workspace <target>] [--project <dir>]
 
 Makes a machine with no prior state ready, and prints the audit. Idempotent: a
 second run creates nothing and reports the same verdicts.
 
+The host-scoped home is created only when a declared workspace target reads it
+(the \`host\` preset, or a custom parent under the home). The daemon never reads
+the home, so the default \`local\` preset needs none — and never gets an empty one.
+
   --check         read-only; creates and starts nothing
-  --no-start      provision the home without starting the daemon
+  --no-start      make the host ready without starting the daemon
   --install-unit  also install the user supervisor unit
+  --workspace <t> state the workspace target outright, instead of reading a config
+  --project <dir> the repository whose config declares the target (default: cwd)
 `,
   stop: `Usage: redskilled stop [--detail <why>]
 
@@ -442,13 +450,22 @@ const PROVISION_FLAGS = {
   "no-start": { kind: "boolean" },
   "install-unit": { kind: "boolean" },
   check: { kind: "boolean" },
+  /** The repository whose declared workspace target decides whether the home is needed. */
+  project: { kind: "value", coerce: (raw: string) => raw },
+  /** A workspace target stated outright — the moment an operator selects one. */
+  workspace: { kind: "value", coerce: (raw: string) => raw },
 } as const;
 
 /**
  * `redskilled provision` — a machine with no prior state, made ready.
  *
- * It creates the host-scoped home (the one thing this app owns outright),
- * starts the daemon through the ordinary auto-spawn path, and prints the audit.
+ * It starts the daemon through the ordinary auto-spawn path, prints the audit,
+ * and creates the host-scoped home **when a declared workspace target reads it**
+ * (`--workspace host`, or a repository whose config declares it). The home is not
+ * a precondition for a daemon — the daemon never resolves it — so creating it
+ * unconditionally left most machines with a directory nothing would ever open
+ * (#2958).
+ *
  * **Idempotent**: a second run creates nothing, rewrites nothing and reports the
  * same verdicts, which is what makes it safe for `/red-setup` to run on every
  * pass rather than only when something looks wrong.
@@ -464,6 +481,8 @@ export async function runProvision(
     readonly paths?: RedskilledPaths;
     readonly homeDir?: string;
     readonly configHome?: string;
+    /** The repository in view when no `--project` is stated. */
+    readonly projectRoot?: string;
     /** Client options for the start, so a test can pose as another host. */
     readonly client?: RedskilledClientConfig;
   } = {},
@@ -471,7 +490,17 @@ export async function runProvision(
   const write = io.write ?? ((text: string) => process.stdout.write(text));
   const { values } = parseFlags(args, PROVISION_FLAGS);
   const paths = io.paths ?? resolveRedskilledPaths();
-  const home = values.check ? undefined : await provisionRedskilledHome(io.homeDir ?? homedir());
+  const homeDir = io.homeDir ?? homedir();
+
+  // The need is read BEFORE anything is created: `provisionRedskilledHome` stays
+  // the ONE creator (ADR 0130 Amendment 2) and this only decides whether to call
+  // it — a home no declared lane reads is never brought into being.
+  const need = await readRedskilledHomeNeed({
+    homeDir,
+    declaredTarget: values.workspace,
+    projectRoot: values.project ?? io.projectRoot ?? process.cwd(),
+  });
+  const home = values.check || !need.needed ? undefined : await provisionRedskilledHome(homeDir);
 
   // The daemon is started through the very path a client uses, so provisioning
   // proves the route a project will take rather than a private one beside it.
@@ -486,6 +515,7 @@ export async function runProvision(
 
   const facts = await readRedskilledProvisionFacts({
     paths,
+    homeNeed: need,
     ...(io.homeDir == null ? {} : { homeDir: io.homeDir }),
     ...(io.configHome == null ? {} : { configHome: io.configHome }),
     ...(io.client?.serverCommand == null
@@ -505,9 +535,15 @@ export async function runProvision(
   const report = auditRedskilledProvisioning(facts);
   write(`${encodeToon({
     verdict: report.verdict,
-    home: home == null
-      ? { path: facts.homePath, created: false, tightened: false }
-      : { path: home.path, created: home.created, tightened: home.tightened },
+    home: {
+      path: home?.path ?? facts.homePath,
+      created: home?.created ?? false,
+      tightened: home?.tightened ?? false,
+      // Stated on every run, so "why is it empty / why is it absent?" is answered
+      // by the receipt instead of by an operator guessing.
+      needed: need.needed,
+      needed_by: need.declaredBy,
+    },
     socket: facts.socketPath,
     ...(startError == null ? {} : { start_error: startError }),
     ...(unit == null ? {} : { unit: { path: unit.path, status: unit.status } }),
