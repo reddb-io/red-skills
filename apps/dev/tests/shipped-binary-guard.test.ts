@@ -1,7 +1,8 @@
 /**
  * The shipped-binary invariant: a binary declared in a workspace `bin` map that
- * cannot answer `--version`, or that walks `process.argv` instead of routing it
- * through the shared contract, fails here (issue #2878).
+ * cannot answer `--version` (#2878), cannot answer `--help` without a working
+ * machine (#2918), or that walks `process.argv` instead of routing it through
+ * the shared contract, fails here.
  *
  * The convergence tickets fixed five offenders one by one. This suite exists for
  * the sixth: every failure mode is proved with a FIXTURE, because a suite that
@@ -16,7 +17,9 @@ import {
   collectDeclaredBinaries,
   collectModuleChain,
   findArgvWalks,
+  findHelpEnvironmentTouches,
   findShippedBinaryViolations,
+  linesRunBefore,
   formatShippedBinaryFailureMessage,
   isArgvRead,
   readBinaryPackageManifests,
@@ -44,14 +47,20 @@ function binary(target: string, name = "demo"): DeclaredBinary {
   return { name, declaredIn: "apps/demo/package.json", target };
 }
 
-/** A converged entry: the stamp answer and the route that reaches it. */
+/** The usage half of a converged entry — a constant and the route that prints it. */
+const HELP_SURFACE = `
+  const USAGE = "Usage: demo <command>";
+  if (values.help === true) process.stdout.write(USAGE);
+`;
+
+/** A converged entry: the stamp answer, the usage answer, and both routes. */
 const CONVERGED_ENTRY = `
   import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
   import { parseFlags } from "@reddb-io/shared/args.js";
-  const FLAGS = { version: { kind: "boolean", aliases: ["v"] } };
+  const FLAGS = { version: { kind: "boolean", aliases: ["v"] }, help: { kind: "boolean" } };
   const { values } = parseFlags(process.argv.slice(2), FLAGS);
   if (values.version === true) process.stdout.write(renderVersion(readBuildInfo("demo")));
-`;
+${HELP_SURFACE}`;
 
 describe("every shipped binary in the live tree answers --version (#2878)", () => {
   const manifests = readBinaryPackageManifests(ROOT);
@@ -128,6 +137,7 @@ describe("a binary with no version surface fails, naming the binary and the file
 
     expect(violations).toEqual([
       { binary: "demo", kind: "no-version-answer", file: "apps/demo/src/cli.ts" },
+      { binary: "demo", kind: "no-help-answer", file: "apps/demo/src/cli.ts" },
     ]);
     const message = formatShippedBinaryFailureMessage(violations);
     expect(message).toContain("demo");
@@ -146,7 +156,10 @@ describe("a binary with no version surface fails, naming the binary and the file
 
     expect(
       findShippedBinaryViolations([binary("apps/demo/dist/cli.js")], files, new Map()),
-    ).toEqual([{ binary: "demo", kind: "no-version-route", file: "apps/demo/src/cli.ts" }]);
+    ).toEqual([
+      { binary: "demo", kind: "no-version-route", file: "apps/demo/src/cli.ts" },
+      { binary: "demo", kind: "no-help-answer", file: "apps/demo/src/cli.ts" },
+    ]);
   });
 
   it("accepts a route declared in the flag module the answering file imports", () => {
@@ -154,11 +167,12 @@ describe("a binary with no version surface fails, naming the binary and the file
     const files = tree({
       "apps/demo/src/cli.ts": `
         import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
-        import { isVersionRequest } from "./cli-args.js";
+        import { isVersionRequest, renderHelp } from "./cli-args.js";
         if (isVersionRequest(process.argv.slice(2))) process.stdout.write(renderVersion(readBuildInfo("demo")));
       `,
       "apps/demo/src/cli-args.ts": `
-        export const FLAGS = { version: { kind: "boolean", aliases: ["v"] } };
+        export const FLAGS = { version: { kind: "boolean", aliases: ["v"] }, help: { kind: "boolean" } };
+        export function renderHelp() { return "Usage: demo <command>"; }
       `,
     });
 
@@ -197,6 +211,146 @@ describe("a binary with no version surface fails, naming the binary and the file
   });
 });
 
+describe("a binary whose --help needs a working machine fails (#2918)", () => {
+  it("fails when the entry routes no help at all", () => {
+    // redskilled's shape before the fix: routing fell through to the default
+    // command, which asked a daemon that was not running what the state was.
+    const files = tree({
+      "apps/demo/src/cli.ts": `
+        import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
+        import { routeCommand } from "@reddb-io/shared/args.js";
+        const { command } = routeCommand(process.argv.slice(2), { commands: { serve: {} }, default: "host-state" });
+        if (command === "version") process.stdout.write(renderVersion(readBuildInfo("demo")));
+      `,
+    });
+
+    const violations = findShippedBinaryViolations(
+      [binary("apps/demo/dist/cli.js")],
+      files,
+      new Map(),
+    );
+
+    expect(violations).toEqual([
+      { binary: "demo", kind: "no-help-answer", file: "apps/demo/src/cli.ts" },
+    ]);
+    expect(formatShippedBinaryFailureMessage(violations)).toContain("already lost");
+  });
+
+  it("fails when usage is printed only AFTER the socket is reached", () => {
+    const files = tree({
+      "apps/demo/src/cli.ts": `
+        import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
+        const DEMO_USAGE = "Usage: demo <command>";
+        async function main(argv) {
+          if (argv[0] === "--version") process.stdout.write(renderVersion(readBuildInfo("demo")));
+          const client = await connect(socketPath);
+          if (argv[0] === "--help") return process.stdout.write(DEMO_USAGE);
+        }
+      `,
+    });
+
+    const violations = findShippedBinaryViolations(
+      [binary("apps/demo/dist/cli.js")],
+      files,
+      new Map(),
+    );
+
+    expect(violations).toEqual([
+      {
+        binary: "demo",
+        kind: "help-touches-environment",
+        file: "apps/demo/src/cli.ts",
+        line: 6,
+        evidence: "connect( — a socket",
+      },
+    ]);
+    expect(formatShippedBinaryFailureMessage(violations)).toContain("before it answers");
+  });
+
+  it("names config and store touches too, not only the socket", () => {
+    const touches = findHelpEnvironmentTouches({
+      relativePath: "apps/demo/src/cli.ts",
+      sourceText: [
+        `const config = readProjectConfig(cwd);`,
+        `const store = readFileSync(storePath, "utf8");`,
+        `if (argv[0] === "--help") process.stdout.write(USAGE);`,
+      ].join("\n"),
+    });
+
+    expect(touches).toEqual([
+      { line: 1, evidence: "readProjectConfig(", what: "config" },
+      { line: 2, evidence: "readFileSync(", what: "the filesystem" },
+    ]);
+  });
+
+  it("counts only what a help request actually RUNS on its way to the answer", () => {
+    // A helper defined above the route but never entered is not on the path;
+    // flagging it would make the invariant unusable for any real entry file.
+    const source = [
+      `function later() {`,
+      `  return readFileSync(configPath, "utf8");`,
+      `}`,
+      `if (argv[0] === "--help") process.stdout.write(USAGE);`,
+    ].join("\n");
+
+    expect(linesRunBefore(source, 4)).toEqual([1]);
+    expect(
+      findHelpEnvironmentTouches({ relativePath: "apps/demo/src/cli.ts", sourceText: source }),
+    ).toEqual([]);
+  });
+
+  it("is not fooled by a brace inside the usage text itself", () => {
+    const source = [
+      "const USAGE = `Usage: demo --selector '{\"issue\":1}'`;",
+      `const config = readFileSync(configPath, "utf8");`,
+      `if (argv[0] === "--help") process.stdout.write(USAGE);`,
+    ].join("\n");
+
+    // The `{` in the usage string must not open a scope, or the config read
+    // above the route would look like it lives in a block that already closed.
+    expect(
+      findHelpEnvironmentTouches({ relativePath: "apps/demo/src/cli.ts", sourceText: source }),
+    ).toEqual([{ line: 2, evidence: "readFileSync(", what: "the filesystem" }]);
+  });
+
+  it("does not accept a route with no usage beside it", () => {
+    // "help" is an ordinary word; a module that merely mentions it has not
+    // answered anyone who typed `--help`.
+    const files = tree({
+      "apps/demo/src/cli.ts": `
+        import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
+        import { helpTicket } from "./tickets.js";
+        if (process.argv.slice(2)[0] === "--version") process.stdout.write(renderVersion(readBuildInfo("demo")));
+      `,
+      "apps/demo/src/tickets.ts": `export const helpTicket = { kind: "help", label: "needs-help" };`,
+    });
+
+    expect(
+      findShippedBinaryViolations([binary("apps/demo/dist/cli.js")], files, new Map())[0]?.kind,
+    ).toBe("no-help-answer");
+  });
+
+  it("does not accept usage that only a lazily-loaded subcommand module holds", () => {
+    // castle-mcp's shape: a `__canary` module answered `--help` for itself while
+    // the entry answered the operator with "unroutable subcommand".
+    const files = tree({
+      "apps/demo/src/cli.ts": `
+        import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
+        if (process.argv.slice(2)[0] === "--version") process.stdout.write(renderVersion(readBuildInfo("demo")));
+        if (process.argv.slice(2)[0] === "__canary") await import("./canary.js");
+      `,
+      "apps/demo/src/canary.ts": `
+        const USAGE = "Usage: demo __canary";
+        if (args.includes("--help")) process.stdout.write(USAGE);
+      `,
+    });
+
+    expect(
+      findShippedBinaryViolations([binary("apps/demo/dist/cli.js")], files, new Map())[0]?.kind,
+    ).toBe("no-help-answer");
+  });
+});
+
 describe("a binary that parses argv directly fails, naming the offending call", () => {
   it("fails on a hand-rolled argv walk in the entry", () => {
     const files = tree({
@@ -214,7 +368,7 @@ describe("a binary that parses argv directly fails, naming the offending call", 
         binary: "demo",
         kind: "argv-walk",
         file: "apps/demo/src/cli.ts",
-        line: 8,
+        line: 11,
         evidence: 'process.argv.includes("--json")',
       },
     ]);

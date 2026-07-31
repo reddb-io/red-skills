@@ -48,6 +48,86 @@ import {
   type RedskilledUnitIO,
 } from "./supervision.js";
 
+/**
+ * Usage, as a CONSTANT — the answer owes nothing to the machine it is asked on.
+ *
+ * `--help` is asked under exactly the conditions `--version` is (#2918): the
+ * daemon will not start, or the operator is hunting for the subcommand that
+ * stops it. Deriving usage from a socket, a config file or a store makes the
+ * subcommand list unavailable precisely when someone is lost, which is how a
+ * one-second question became a detour during a version migration.
+ */
+export const REDSKILLED_USAGE = `Usage: redskilled <command> [options]
+
+Commands:
+  host-state (default)  print the host's state as JSON
+  serve                 run the daemon in this process
+  statusline [global]   render one agent-host status line
+  unit                  install | uninstall | status — the optional supervisor
+  provision             make this machine ready; --check is the read-only half
+  reclaim               clear runtime dirs left by dead sessions
+
+Run \`redskilled <command> --help\` for a command's own usage.
+\`--version\` (\`-v\`) prints the build stamp; both answer offline.
+`;
+
+/** Each subcommand's scoped usage — same contract, same offline answer. */
+const COMMAND_USAGE = {
+  serve: `Usage: redskilled serve [options]
+
+Runs the daemon in this process. Every path is a flag and none is derived
+(ADR 0130 rule 3); what is absent falls back to the session derivation.
+
+  --socket <path>             the unix socket to listen on
+  --lease <path>              the singleton lease record
+  --events <path>             the append-only host event lane
+  --session-key-hash <hex>    publishable session identity
+  --machine-id-hash <hex>     publishable host label
+  --machine-claim <path>      the machine-wide claim record
+  --idle-ms <n>               exit after this long with no work
+  --daemon-version <v>        the version this daemon reports as
+`,
+  "host-state": `Usage: redskilled host-state
+
+Prints the host's state as JSON. Contacts the running daemon; the default
+command when none is named.
+`,
+  statusline: `Usage: redskilled statusline [global] [--verbose] [flags]
+
+Renders the status line the agent host prints verbatim. Config is read on this
+side and only decided values cross the socket (ADR 0130 rule 10).
+
+  global      render the host-wide line instead of this project's
+  --verbose   add one line per Worker
+`,
+  unit: `Usage: redskilled unit [install|uninstall|status]
+
+Manages the OPTIONAL user supervisor unit — auto-spawn is the floor, and a host
+with no unit is a supported configuration (ADR 0130 rule 7). Defaults to status.
+`,
+  provision: `Usage: redskilled provision [--check] [--no-start] [--install-unit]
+
+Makes a machine with no prior state ready, and prints the audit. Idempotent: a
+second run creates nothing and reports the same verdicts.
+
+  --check         read-only; creates and starts nothing
+  --no-start      provision the home without starting the daemon
+  --install-unit  also install the user supervisor unit
+`,
+  reclaim: `Usage: redskilled reclaim [--dry-run] [--grace-ms <n>]
+
+Reports every session runtime dir it looked at and why it kept or removed it.
+
+  --dry-run        the same report with nothing removed
+  --grace-ms <n>   how long a dir must be idle before it is reclaimed
+`,
+} as const satisfies Record<string, string>;
+
+/** The three spellings of "tell me what this does", asked of the top level. */
+function isHelpToken(token: string | undefined): boolean {
+  return token === "--help" || token === "-h" || token === "help";
+}
+
 const SERVE_FLAGS = {
   socket: { kind: "value", coerce: (raw: string) => raw },
   lease: { kind: "value", coerce: (raw: string) => raw },
@@ -71,12 +151,28 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     return 0;
   }
 
+  // Answered before routing, for the same reason `--version` is: routing lands
+  // on `host-state`, which reaches for the socket — so an operator whose daemon
+  // is down would be told the daemon is down when they asked what the commands
+  // are (#2918). Usage never contacts a socket, starts a daemon or reads config.
+  if (isHelpToken(argv[0])) {
+    process.stdout.write(REDSKILLED_USAGE);
+    return 0;
+  }
+
   const { command, args } = routeCommand<
     "serve" | "host-state" | "statusline" | "unit" | "provision" | "reclaim"
   >(argv, {
     commands: { serve: {}, "host-state": {}, statusline: {}, unit: {}, provision: {}, reclaim: {} },
     default: "host-state",
   });
+
+  // The same guarantee one level down: `<command> --help` prints that command's
+  // usage BEFORE dispatch, so no subcommand's help path can reach the daemon.
+  if (args.some((arg) => arg === "--help" || arg === "-h")) {
+    process.stdout.write(COMMAND_USAGE[command]);
+    return 0;
+  }
 
   if (command === "serve") {
     const { values } = parseFlags(args, SERVE_FLAGS);

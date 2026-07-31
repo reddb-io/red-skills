@@ -260,6 +260,24 @@ export interface McpEntrypointDependencies {
   canary?(args: string[]): Promise<number>;
 }
 
+/**
+ * Usage, as a CONSTANT — the roles this bundle owns, stated without a transport.
+ *
+ * `--help` used to fall into the unroutable-subcommand error, so the one command
+ * that says which subcommands exist answered by refusing an unknown one (#2918).
+ * Like `--version`, it is asked when the surrounding machinery is broken.
+ */
+export const CASTLE_MCP_USAGE = `Usage: red-skills-castle-mcp [command]
+
+Commands:
+  (none)        serve the castle MCP surface over stdio
+  __supervise   run the supervisor role from this same bundle
+  --version     print the build stamp (--json for the build info)
+  --help        print this usage
+
+Worker subcommands (run, monitor, fleet, …) belong to red-skills-dev.
+`;
+
 /** Route every executable role shipped in the afk-mcp bundle. The supervisor
  * launcher deliberately re-execs the current bundle, so `__supervise` must be
  * handled before the default stdio MCP transport is opened. */
@@ -272,6 +290,10 @@ export async function main(
     connect: run,
   },
 ): Promise<number> {
+  if (argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
+    process.stdout.write(CASTLE_MCP_USAGE);
+    return 0;
+  }
   if (argv[0] === "__supervise") {
     return dependencies.supervise(argv.slice(1));
   }

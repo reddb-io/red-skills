@@ -22,6 +22,29 @@ describe("dev:afk MCP entrypoint routing", () => {
     expect(startCurator).not.toHaveBeenCalled();
   });
 
+  // #2918: `--help` fell into the unroutable-subcommand refusal below, so the
+  // one question that asks which subcommands exist was answered by rejecting an
+  // unknown one. Usage opens no transport and starts no supervisor.
+  it.each([["--help"], ["-h"], ["help"]])("answers %s with usage, touching nothing", async (arg) => {
+    const supervise = vi.fn(async () => 0);
+    const connect = vi.fn(async () => undefined);
+    const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await expect(
+      main([arg], {
+        supervise,
+        connect,
+        startCurator: async () => undefined,
+        startMergeDriver: async () => undefined,
+      }),
+    ).resolves.toBe(0);
+
+    expect(String(stdout.mock.calls[0]![0])).toContain("Usage: red-skills-castle-mcp");
+    stdout.mockRestore();
+    expect(supervise).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+  });
+
   // #2677: a slot spawned against this bundle used to fall through to the
   // resident path, contend on the singleton leases and die with an opaque
   // "singleton lease pid" error — deaths == respawns, zero drainage.
