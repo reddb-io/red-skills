@@ -27,7 +27,7 @@
 /** The literal `## Blocked by` heading line, allowing only trailing whitespace.
  * Mirrors awk `/^## Blocked by[[:space:]]*$/`. */
 import { LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT, LABEL_DEPENDENCY, LABEL_READY, LABEL_RUNNING, LABEL_HUMAN } from "./triage-labels.js";
-import { isRefused, planTransition } from "./state-transition.js";
+import { hostHitlTypesIn, isRefused, planTransition } from "./state-transition.js";
 import {
   renderIssueReferenceList,
   resolveIssueReferences,
@@ -142,31 +142,68 @@ export interface DependentIssue {
   number: number;
   /** One entry per `req:<n>` label, with `n` resolved to its closed-state. */
   reqs: { n: number; closed: boolean }[];
+  /** Full label set, read to decide the promotion LANE (#2966). Optional for
+   * back-compat with callers that only resolved the dependency edges. */
+  labels?: string[];
+}
+
+/** Which queue a promotion routes to: the autonomous `ready-for-agent` pool, or
+ * the `ready-for-human` park a HUMAN-ONLY type demands (#2966). */
+export type PromotionLane = "agent" | "human";
+
+/**
+ * The lane sentence appended to a promotion's audit comment, so a human reading
+ * the Ticket can tell a sweep promotion from a hand-set label AND see why it
+ * landed where it did. Empty when the repo declares no HUMAN-ONLY type — there
+ * is no routing decision to explain, and such a repo's comments stay exactly as
+ * they were before this rule existed. Pure.
+ */
+export function promotionLaneNote(
+  lane: PromotionLane,
+  carried: readonly string[],
+  declared: readonly string[],
+): string {
+  if (declared.length === 0) return "";
+  if (lane === "human") {
+    return (
+      ` Routed to \`${LABEL_HUMAN}\`: this Ticket carries ${carried.join(", ")}, declared` +
+      ` HUMAN-ONLY in this repo's label vocabulary — a human owns the next move, and the` +
+      ` agent never stands in for their side of it.`
+    );
+  }
+  return ` Routed to \`${LABEL_READY}\`: this Ticket carries no HUMAN-ONLY type.`;
 }
 
 /**
  * Plan the event-driven close cascade triggered when `closedIssue` closes. For
  * each dependent issue carrying `req:closedIssue` (and possibly other `req:*`
- * deps), promote it to `ready-for-agent` IFF EVERY one of its `req:*` deps is
- * now CLOSED (and it has ≥1 dep) — the same all-closed semantics as
- * `shouldPromote`. The audit comment names every now-satisfied dep in ascending
- * order. `refs` holds the dep ids as `#N` strings for parity with the sweep's
- * PromotionPlan. Pure — closed-states are resolved by the caller.
+ * deps), promote it IFF EVERY one of its `req:*` deps is now CLOSED (and it has
+ * ≥1 dep) — the same all-closed semantics as `shouldPromote`. The LANE follows
+ * the dependent's type: a Ticket carrying one of `hitlTypes` routes to
+ * `ready-for-human`, everything else to `ready-for-agent` (#2966). The audit
+ * comment names every now-satisfied dep in ascending order. `refs` holds the dep
+ * ids as `#N` strings for parity with the sweep's PromotionPlan. Pure —
+ * closed-states are resolved by the caller.
  */
 export function planCloseCascade(
   closedIssue: number,
   dependents: readonly DependentIssue[],
+  hitlTypes: readonly string[] = [],
 ): PromotionPlan[] {
   const plans: PromotionPlan[] = [];
   for (const dep of dependents) {
     const states: BlockerState[] = dep.reqs.map((r) => (r.closed ? "CLOSED" : "open-or-unknown"));
     if (!shouldPromote(states)) continue;
     const reqs = dep.reqs.map((r) => r.n).sort((a, b) => a - b);
+    const carried = hostHitlTypesIn(dep.labels ?? [], hitlTypes);
+    const lane: PromotionLane = carried.length > 0 ? "human" : "agent";
     plans.push({
       number: dep.number,
       refs: reqs.map((n) => `#${n}`),
       reqLabels: reqs.map((n) => `req:${n}`),
-      comment: cascadeAuditComment(reqs),
+      comment: cascadeAuditComment(reqs) + promotionLaneNote(lane, carried, hitlTypes),
+      lane,
+      hitlTypes: carried,
     });
   }
   return plans;
@@ -201,6 +238,12 @@ export interface PromotionPlan {
   reqLabels: string[];
   /** The audit comment to post on promotion. */
   comment: string;
+  /** Which queue this promotion routes to (#2966). `human` whenever the Ticket
+   * carries a type the repo's vocabulary declares HUMAN-ONLY. */
+  lane: PromotionLane;
+  /** The declared HUMAN-ONLY type labels the Ticket carries — the reason the
+   * lane is `human`, named in the audit comment. Empty for the agent lane. */
+  hitlTypes: string[];
 }
 
 /**
@@ -220,6 +263,7 @@ export interface PromotionPlan {
 export async function planUnblockSweep(
   candidates: readonly UnblockCandidate[],
   fetchBlockerState: BlockerStateLookup,
+  hitlTypes: readonly string[] = [],
 ): Promise<PromotionPlan[]> {
   const plans: PromotionPlan[] = [];
   for (const candidate of candidates) {
@@ -227,6 +271,10 @@ export async function planUnblockSweep(
     if (!labels.includes(LABEL_DEPENDENCY)) continue;
 
     const reqIds = parseReqLabels(labels);
+    // The LANE is the candidate's own type, not the sweep's default (#2966):
+    // blockers closing frees a HUMAN-ONLY Ticket for its human, never for an agent.
+    const carried = hostHitlTypesIn(labels, hitlTypes);
+    const lane: PromotionLane = carried.length > 0 ? "human" : "agent";
 
     // Prefer the structured req:* dependency labels when present.
     if (reqIds.length > 0) {
@@ -240,7 +288,9 @@ export async function planUnblockSweep(
           number: candidate.number,
           refs: reqIds.map((n) => `#${n}`),
           reqLabels: reqIds.map((n) => `req:${n}`),
-          comment: cascadeAuditComment(reqIds),
+          comment: cascadeAuditComment(reqIds) + promotionLaneNote(lane, carried, hitlTypes),
+          lane,
+          hitlTypes: carried,
         });
       }
       continue;
@@ -259,7 +309,14 @@ export async function planUnblockSweep(
     }
 
     if (shouldPromote(states)) {
-      plans.push({ number: candidate.number, refs, reqLabels: [], comment: auditComment(refs) });
+      plans.push({
+        number: candidate.number,
+        refs,
+        reqLabels: [],
+        comment: auditComment(refs) + promotionLaneNote(lane, carried, hitlTypes),
+        lane,
+        hitlTypes: carried,
+      });
     }
   }
   return plans;
@@ -295,8 +352,9 @@ export async function executeUnblockSweep(
   candidates: readonly UnblockCandidate[],
   fetchBlockerState: BlockerStateLookup,
   gh: UnblockSweepGh,
+  hitlTypes: readonly string[] = [],
 ): Promise<number[]> {
-  const plans = await planUnblockSweep(candidates, fetchBlockerState);
+  const plans = await planUnblockSweep(candidates, fetchBlockerState, hitlTypes);
   // Resolve each promoted issue's holding label from its candidate label set.
   const labelsByIssue = new Map<number, string[]>();
   for (const c of candidates) labelsByIssue.set(c.number, c.labels ?? []);
@@ -307,18 +365,23 @@ export async function executeUnblockSweep(
     // labels were listed: one atomic edit that consumes every req:* edge and
     // provably leaves exactly one state role. The legacy edit survives only for
     // a label-less candidate (degraded listing), where no plan can be proven.
-    const plan = held.length > 0 ? planTransition(held, { kind: "promote" }) : undefined;
+    const plan = held.length > 0 ? planTransition(held, { kind: "promote" }, hitlTypes) : undefined;
     if (plan && !isRefused(plan)) {
       await gh.editLabels(p.number, [...plan.remove], [...plan.add]);
     } else if (plan && isRefused(plan)) {
       continue;
     } else {
       const remove = held.includes(LABEL_DEPENDENCY) ? LABEL_DEPENDENCY : LABEL_HUMAN;
-      await gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);
+      await gh.editLabels(
+        p.number,
+        [remove, ...p.reqLabels],
+        [p.lane === "human" ? LABEL_HUMAN : LABEL_READY],
+      );
     }
     const reqs = p.refs.map(refToNumber).filter((n): n is number => n !== null);
     const comment = p.reqLabels.length > 0 && reqs.length > 0
-      ? await cascadeAuditCommentFor(reqs, gh.issueReference)
+      ? (await cascadeAuditCommentFor(reqs, gh.issueReference)) +
+        promotionLaneNote(p.lane, p.hitlTypes, hitlTypes)
       : p.comment;
     await gh.comment(p.number, comment);
     promoted.push(p.number);
