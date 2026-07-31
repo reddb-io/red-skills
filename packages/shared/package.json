@@ -29,6 +29,7 @@
     "./resident-client.js": "./resident-client.ts",
     "./resident-core.js": "./resident-core.ts",
     "./resident-protocol.js": "./resident-protocol.ts",
+    "./resident-wire.js": "./resident-wire.ts",
     "./rsp-entry.js": "./rsp-entry.ts"
   },
   "dependencies": {
