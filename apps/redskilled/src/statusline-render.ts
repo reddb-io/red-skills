@@ -43,6 +43,22 @@ export type RedskilledStatuslineMode = "local" | "global";
 /** How much detail survived the width and count budgets. */
 export type RedskilledStatuslineDetail = "workers" | "projects" | "host";
 
+/**
+ * Whether the calling directory's project is one this host knows.
+ *
+ * Three states rather than a boolean, because the two failures need different
+ * sentences: a directory that resolved to no project at all has nothing to look
+ * up, while one that resolved to `acme/widgets` and found no such project on the
+ * host has a name to put in front of the operator. Collapsing either into
+ * `matched` is how "the host holds three of your Workers" renders as `0w`.
+ */
+export type RedskilledStatuslineProjectMatch =
+  | "matched"
+  | "unregistered"
+  | "unresolved"
+  /** No daemon answered, so whether this host knows the project is unknowable. */
+  | "unanswered";
+
 export interface RedskilledStatuslineOptions {
   readonly mode: RedskilledStatuslineMode;
   /** The project this session belongs to; `null` when it declared none. */
@@ -80,6 +96,12 @@ export interface RedskilledStatuslineRender {
   readonly verbose: boolean;
   readonly mode: RedskilledStatuslineMode;
   readonly project: string | null;
+  /**
+   * Whether this host knows {@link project}, stated rather than left to be read
+   * off the line. A consumer that had to notice the word `unknown` in the text
+   * would be parsing the render, which is the failure this surface removes.
+   */
+  readonly project_match: RedskilledStatuslineProjectMatch;
   readonly detail: RedskilledStatuslineDetail;
   /** True when the line lost detail to the width or the count budgets. */
   readonly degraded: boolean;
@@ -111,9 +133,10 @@ export function renderRedskilledStatusline(
   payload: RedskilledStatuslinePayload,
   options: RedskilledStatuslineOptions = REDSKILLED_STATUSLINE_DEFAULTS,
 ): RedskilledStatuslineRender {
+  const match = resolveProjectMatch(payload, options);
   const workers = selectWorkers(payload, options);
   const projects = selectProjects(payload, options);
-  const head = renderHead(payload, options, workers);
+  const head = renderHead(payload, options, workers, match);
 
   const ladder = detailLadder(options, workers, projects);
   let chosen: { detail: RedskilledStatuslineDetail; line: string } = {
@@ -147,12 +170,88 @@ export function renderRedskilledStatusline(
     verbose: options.verbose,
     mode: options.mode,
     project: options.project,
+    project_match: match,
     detail: chosen.detail,
     degraded: chosen.detail !== richest || line !== chosen.line,
     stale: payload.staleness.stale,
     generated_at: payload.generated_at,
   };
 }
+
+/**
+ * The size a render may reach, as three numbers a test can pin.
+ *
+ * Stated as a function of the OPTIONS alone, never of the host: that is the whole
+ * claim. A machine holding five hundred Workers must hand a statusline consumer
+ * the same-sized answer a machine holding one does, because the consumer is a
+ * single row of a terminal refreshed every sixty seconds — the 571 KB document
+ * #2928 found in that path was sized by the host instead.
+ */
+export interface RedskilledStatuslineBound {
+  /** The head, plus at most one second line per listed Worker. */
+  readonly max_lines: number;
+  readonly max_line_width: number;
+  /** Every rendered line together, separators included. */
+  readonly max_characters: number;
+}
+
+/** What {@link renderRedskilledStatusline} may at most produce. PURE. */
+export function redskilledStatuslineBound(
+  options: RedskilledStatuslineOptions = REDSKILLED_STATUSLINE_DEFAULTS,
+): RedskilledStatuslineBound {
+  // A second line exists only while the line still lists Workers, and the line
+  // lists Workers only while there are no more of them than the budget allows —
+  // so the Worker budget bounds the row count, whatever the host holds.
+  const maxLines = options.verbose ? 1 + Math.max(0, options.maxWorkers) : 1;
+  const maxWidth = Math.max(0, options.maxWidth);
+  return {
+    max_lines: maxLines,
+    max_line_width: maxWidth,
+    // The newlines a host writes between the rows count too: the bound is what
+    // the consumer receives, not what the renderer chose to call content.
+    max_characters: maxLines * maxWidth + Math.max(0, maxLines - 1),
+  };
+}
+
+/** The characters a finished render actually costs a consumer. PURE. */
+export function redskilledStatuslineCharacters(render: RedskilledStatuslineRender): number {
+  return render.lines.reduce((total, line) => total + width(line), 0) + Math.max(0, render.lines.length - 1);
+}
+
+/**
+ * The line for a host that did not answer — a STATED absence, never a blank one.
+ *
+ * A statusline that renders nothing is indistinguishable from a machine with no
+ * Workers, which is the worst possible reading of "the daemon is down": the
+ * operator sees calm. So the absence gets a line of its own, and every field that
+ * would otherwise be a fact about the host says it is not one.
+ */
+export function renderRedskilledStatuslineAbsence(input: {
+  readonly options?: RedskilledStatuslineOptions;
+  /** The instant the consumer asked, since no daemon supplied one. */
+  readonly generated_at: string;
+}): RedskilledStatuslineRender {
+  const options = input.options ?? REDSKILLED_STATUSLINE_DEFAULTS;
+  const line = clamp(REDSKILLED_STATUSLINE_ABSENCE, options.maxWidth);
+  return {
+    version: 1,
+    line,
+    lines: [line],
+    verbose: options.verbose,
+    mode: options.mode,
+    project: options.project,
+    project_match: "unanswered",
+    detail: "host",
+    degraded: true,
+    // Not `false`: an answer nobody gave is the oldest answer there is, and a
+    // consumer that keys freshness off this field must never read it as current.
+    stale: true,
+    generated_at: input.generated_at,
+  };
+}
+
+/** The one sentence an unreachable host renders as. */
+export const REDSKILLED_STATUSLINE_ABSENCE = "redskilled unreachable — Worker state unknown";
 
 /**
  * The detail levels this render may use, richest first.
@@ -213,6 +312,23 @@ function selectProjects(
 }
 
 /**
+ * Does this host know the project the caller is standing in? PURE.
+ *
+ * A daemon older than `known_projects` cannot say, and the answer then is
+ * `matched`, never a guess at a mismatch: this decides whether an operator is
+ * told their project is unregistered, and inventing that from a missing field
+ * would put a false accusation on every line a skewed daemon serves.
+ */
+function resolveProjectMatch(
+  payload: RedskilledStatuslinePayload,
+  options: RedskilledStatuslineOptions,
+): RedskilledStatuslineProjectMatch {
+  if (options.project == null) return "unresolved";
+  if (payload.known_projects == null) return "matched";
+  return payload.known_projects.includes(options.project) ? "matched" : "unregistered";
+}
+
+/**
  * The head — the one part of the line that never degrades.
  *
  * Whatever else is dropped, "how much of this machine is in use" survives,
@@ -222,17 +338,38 @@ function renderHead(
   payload: RedskilledStatuslinePayload,
   options: RedskilledStatuslineOptions,
   workers: readonly RedskilledStatuslineWorker[],
+  match: RedskilledStatuslineProjectMatch,
 ): string {
   const parts: string[] = [];
   if (options.mode === "global") {
     parts.push(`host ${payload.host.worker_count}w/${payload.host.project_count}p`);
+    parts.push(memoryFigure(payload, options));
+  } else if (match === "matched") {
+    parts.push(`${options.project} ${workers.length}w`);
+    parts.push(memoryFigure(payload, options));
+    if (workers.length === 0) parts.push("idle");
   } else {
-    parts.push(`${options.project ?? "project unknown"} ${workers.length}w`);
+    // NOT `0w idle`. An unmatched directory has no Worker count to report — the
+    // host may be holding a dozen for a project this one failed to name — so the
+    // head states the mismatch instead of an aggregate that reads as calm.
+    parts.push(unmatchedHead(options.project, match));
   }
-  parts.push(memoryFigure(payload, options));
-  if (options.mode === "local" && workers.length === 0) parts.push("idle");
   if (payload.staleness.stale) parts.push(stalenessMark(payload));
   return parts.join(" ");
+}
+
+/**
+ * The head for a directory this host knows no project for. PURE.
+ *
+ * `project unknown` appears HERE and nowhere else, and it always carries the
+ * reason: the two mismatches are fixed by different actions — one wants a
+ * `project.name` or a git remote, the other wants the project registered — and a
+ * line that named neither would leave the operator with a word and no next step.
+ */
+function unmatchedHead(project: string | null, match: RedskilledStatuslineProjectMatch): string {
+  return match === "unregistered"
+    ? `project unknown — ${project} is not registered on this host`
+    : "project unknown — this directory resolved to no project";
 }
 
 /**
