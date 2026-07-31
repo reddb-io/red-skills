@@ -141,9 +141,12 @@ import {
   completeRedskilledReplacement,
   DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
   isRedskilledSupervised,
+  planRedskilledMajorHold,
   planRedskilledReplacement,
   prepareRedskilledReplacement,
   probePublishedRedskilledVersion,
+  readPublishedObservation,
+  type RedskilledMajorHold,
   type RedskilledPublishedVersionProbe,
   type RedskilledReplacementDecision,
   type RedskilledReplacementIO,
@@ -521,6 +524,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let publishedCheckedAt: string | null = null;
   let publishedIsNewer = false;
   let replacementState: "none" | "pending" | "in-progress" = "none";
+  // The world's newest version whatever its major, and the hold it implies. Kept
+  // beside the in-major answer because that one is capped by construction: on its
+  // own it cannot tell a current daemon from one holding at a boundary (#2926).
+  let publishedNewest: string | null = null;
+  let majorHold: RedskilledMajorHold | null = null;
   // The last activity fetch, kept for the same reason the RSS reading is: a read
   // between two polls is dated by the poll it came from, never by the read.
   let lastActivity: RedskilledRepositoryActivity | null = null;
@@ -554,6 +562,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         checkedAt: publishedCheckedAt,
         newer: publishedIsNewer,
         replacement: replacementState,
+        newest: publishedNewest,
+        majorHold,
       },
     });
   }
@@ -1007,16 +1017,23 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * A probe that throws leaves the answer UNKNOWN rather than asserting the
    * running version: an unresolvable read must not manufacture the match that
    * makes a superseded daemon look current (#2809).
+   *
+   * The major beyond this one is RECORDED and never acted on: adopting it would
+   * be a breaking change arriving on a timer, and staying quiet about it is how a
+   * held daemon becomes indistinguishable from a current one (#2926).
    */
   async function observePublishedVersion(): Promise<RedskilledReplacementDecision> {
-    let observed: string | null;
+    let observation: { version: string | null; newest?: string | null };
     try {
-      observed = await publishedProbe(daemonVersion);
+      observation = readPublishedObservation(await publishedProbe(daemonVersion));
     } catch {
-      observed = null;
+      observation = { version: null, newest: null };
     }
+    const observed = observation.version;
     publishedVersion = observed;
+    publishedNewest = observation.newest ?? null;
     publishedCheckedAt = clock();
+    majorHold = planRedskilledMajorHold({ running: daemonVersion, newest: publishedNewest, supervised });
     const decision = planRedskilledReplacement({ running: daemonVersion, published: observed, supervised });
     publishedIsNewer = decision.act === "replace";
     // An in-progress handover is never talked back down: the socket and the lease
