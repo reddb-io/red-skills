@@ -137,6 +137,16 @@ describe("memory CLI argument contract", () => {
     expect((JSON.parse(json.stdout) as { app: string }).app).toBe("memory-mcp");
   });
 
+  test("the MCP server answers usage without opening a store (#2918)", () => {
+    for (const args of [["--help"], ["-h"], ["help"]]) {
+      const result = runMemoryMcp(args);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Usage: memory-mcp");
+      expect(result.stdout).toContain("serve");
+    }
+  });
+
   test("no CLI module walks argv by hand", async () => {
     const cliDir = resolve(__dirname, "..", "src", "cli");
     const offenders: string[] = [];
