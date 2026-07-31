@@ -51,7 +51,7 @@ re-aimed by `project_resize`.
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `project_status` | read | Supervisor pid, slots, churn, and live workers for this project. |
-| `project_start` | mutating | Start this project's workers with a runner, a target width, and its work policy. |
+| `project_start` | mutating | Register this project with the host daemon — a runner, a target width, and its work policy. It registers; it launches no process of the project's own. |
 | `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
 | `project_stop` | mutating | Gracefully stop this project's supervisor; pass `force: true` to hard-stop only its attributed workers. |
 
