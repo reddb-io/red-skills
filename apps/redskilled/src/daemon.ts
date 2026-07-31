@@ -67,6 +67,11 @@ import {
 } from "./machine-scope.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
+  buildProjectRegistration,
+  type RedskilledProjectRegistration,
+  type RedskilledProjectRegistrationRequest,
+} from "./project-registration.js";
+import {
   detectWorkerLiveness,
   reattachWorkers,
   stopWorker,
@@ -79,6 +84,7 @@ import {
   type RedskilledResponse,
   type RedskilledStatuslineRenderRequest,
   type RedskilledWorkerCommandRequest,
+  type RedskilledProjectRegistered,
   type RedskilledWorkerCommandResult,
   type RedskilledWorkerHeartbeatAck,
   type RedskilledWorkerHeartbeatRequest,
@@ -243,6 +249,19 @@ export interface RedskilledDaemon {
   /** Forget a Worker the daemon has observed dying. */
   releaseWorker(workerId: string): boolean;
   workerCount(): number;
+  /**
+   * Hold a project's registration, or refuse it because one already stands.
+   *
+   * Storing it is the whole of this: nothing polls the selector, nothing is
+   * dispatched from the argv, and the daemon reads neither. What it does read is
+   * the label, which is the same opaque string a Worker already carries.
+   */
+  registerProject(
+    request: RedskilledProjectRegistrationRequest,
+    sessionProject?: string,
+  ): RedskilledProjectRegistered;
+  /** The registrations this daemon holds, ordered by project label. */
+  registrations(): readonly RedskilledProjectRegistration[];
   hostState(): RedskilledHostState;
   /**
    * The whole machine in one document, dated by the daemon's own last sample.
@@ -402,6 +421,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // a live progress note, and a durable copy would be a third authority on a
   // Worker's story next to the tracker and git (ADR 0130).
   const logLines = new Map<string, RedskilledWorkerLogLine>();
+  // What each project asked the host to hold for it, by project label. In memory,
+  // like the log lines and for the same reason: a registration is a live statement
+  // a session renews, and a durable copy would outlive the thing it describes. The
+  // slice that polls it owns keeping the daemon alive while one stands.
+  const registrations = new Map<string, RedskilledProjectRegistration>();
   const activeSockets = new Set<Socket>();
   // The last thing the sampler measured, kept so a read is dated rather than
   // dating itself: staleness belongs to the daemon that took the measurement.
@@ -435,6 +459,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       startedAt,
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
       workers: [...workers.values()],
+      registrations: [...registrations.values()],
       published: {
         version: publishedVersion,
         checkedAt: publishedCheckedAt,
@@ -592,6 +617,35 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       reach,
       published_at: publishedAt,
       detail: `redskilled stored a line for Worker ${JSON.stringify(request.worker_id)} without reading it`,
+    };
+  }
+
+  /**
+   * Hold one project's registration, once reach has permitted it.
+   *
+   * Reach is checked against the registration's OWN label — the project being
+   * registered is the target — so a session cannot commit another project to an
+   * argv it never chose. The record is then built and stored without a single
+   * question being asked about what its selector says (ADR 0130 rule 3).
+   */
+  function registerProject(
+    request: RedskilledProjectRegistrationRequest,
+    sessionProject?: string,
+  ): RedskilledProjectRegistered {
+    const reach = authorize("project-register", sessionProject, request.project_label);
+    if (!reach.permitted) throw new Error(reach.reason);
+    const registration = buildProjectRegistration(request, {
+      now: clock(),
+      held: registrations.get(request.project_label),
+    });
+    registrations.set(registration.project_label, registration);
+    return {
+      version: 1,
+      registration,
+      reach,
+      detail:
+        `redskilled holds a registration for project ${JSON.stringify(registration.project_label)} at a target of ` +
+        `${registration.target} until ${registration.renew_by}, and has read neither its selector nor its argv`,
     };
   }
 
@@ -968,6 +1022,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       if (request.op === "worker-heartbeat") {
         return { id: request.id, ok: true, value: publishWorkerHeartbeat(request.heartbeat) };
       }
+      if (request.op === "project-register") {
+        return { id: request.id, ok: true, value: registerProject(request.registration, request.session_project) };
+      }
       if (request.op === "worker-command") {
         return { id: request.id, ok: true, value: await runWorkerCommand(request.command) };
       }
@@ -1024,6 +1081,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       return removed;
     },
     workerCount: () => workers.size,
+    registerProject,
+    registrations: () => hostState().registrations ?? [],
     hostState,
     statuslinePayload,
     evaluateIdle,
