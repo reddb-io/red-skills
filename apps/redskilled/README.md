@@ -4,7 +4,7 @@ The host-scoped execution daemon of ADR 0130: **exactly one singleton per
 machine, behind a unix socket**, owning Worker processes across every project on
 that machine while each project's bundle keeps owning the work. A second OS user
 on the same machine is refused by name rather than served or silently doubled
-(Amendment 2).
+(Amendment 3).
 
 The core exists, is reachable, honest about its own life — and **births Workers**:
 a project hands over an argv, a placement target, a budget and two opaque
@@ -184,7 +184,7 @@ redskilled provision --install-unit   # also write the optional supervising user
 - **The home is this app's.** `~/.red/redskilled/` is operator-scoped and sits
   outside every checkout, so it is not the `.red/` ADR 0067 gave `/red-setup`
   sole authority over. `provisionRedskilledHome` is the only thing that creates
-  it (ADR 0130 Amendment 1); every other surface reads the one namer in
+  it (ADR 0130 Amendment 2); every other surface reads the one namer in
   `packages/shared/redskilled-home.ts`. A home only an interactive installer
   could create would leave auto-spawn failing closed forever on a fresh machine.
 - **Idempotent by construction.** An existing home is kept with everything in

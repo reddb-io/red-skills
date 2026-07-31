@@ -36,7 +36,7 @@ repository.
 **One host-scoped daemon, `redskilled`, owns worker processes across every
 project on the machine. The per-project MCP is its client.**
 
-1. **Singleton and scope.** One daemon per **machine** (Amendment 2 — this
+1. **Singleton and scope.** One daemon per **machine** (Amendment 3 — this
    originally read "per user session"), reached over a unix socket, with
    `machineIdHash` labelling the host. The vendored red-castle
    cannot *be* this daemon — every checkout carries its own copy — so the
@@ -273,7 +273,7 @@ Staleness travels inside the payload, as everywhere else: counts age between
 intervals, and a consumer renders the age rather than presenting a stale count
 as current.
 
-## Amendment 1 — the host-scoped home is `redskilled`'s, and `/red-setup` provisions through it (#2853)
+## Amendment 2 — the host-scoped home is `redskilled`'s, and `/red-setup` provisions through it (#2853)
 
 Rule 7 said a daemon starts on first use and said nothing about what has to
 exist before it can. Three things do — the host-scoped home, a published bundle
@@ -316,7 +316,7 @@ spawning the daemon it is reporting on**. The optional unit is reported and neve
 flagged: an absent unit is `ok` with a stated absence, because a doctor that
 reddened over an optional thing teaches operators to ignore a red row.
 
-## Amendment 2 — one daemon per machine, and the multi-user case is refused (#2885)
+## Amendment 3 — one daemon per machine, and the multi-user case is refused (#2885)
 
 Rule 1 said "one daemon per user session", and `paths.ts` argued the rejected
 alternative in its header: keying on the host would make one daemon per machine,
@@ -384,7 +384,7 @@ must state it and for tests that pose as their own machine. It is an explicit
 statement, never a silent fallback — which is the line this record draws: a
 second daemon is either impossible or announced, and never a surprise.
 
-## Amendment 3 — the daemon owns the demand loop; a project has no process of its own
+## Amendment 4 — the daemon owns the demand loop; a project has no process of its own
 
 Rule 2 kept a per-project runtime and named what it retained: trunk mirror
 refresh, queue depth, target resolution as a *request*, runner directives, claim

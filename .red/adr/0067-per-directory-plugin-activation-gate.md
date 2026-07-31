@@ -64,7 +64,7 @@ consults *first*, before any work:
    A0), creates `.red/` (authorized here and nowhere else), and writes the
    `plugins.<name>.enabled` flags. **This authority is repository-scoped**: the
    operator's own `~/.red/redskilled/` is outside every checkout and belongs to
-   the daemon that lives in it (ADR 0130 Amendment 1), which setup provisions by
+   the daemon that lives in it (ADR 0130 Amendment 2), which setup provisions by
    *calling* its owner rather than by creating the directory itself. Re-running it is how a plugin is enabled or
    disabled. Enabling memory/brain only *authorizes* them; their own init
    (`/memory:init`, brain setup) still configures them.

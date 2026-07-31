@@ -1,4 +1,4 @@
-// One `redskilled` per machine (ADR 0130 Amendment 2). The failure mode guarded
+// One `redskilled` per machine (ADR 0130 Amendment 3). The failure mode guarded
 // here is the one the host budget cannot survive: two daemons, each correct
 // about a total that is not the machine's. A second user session — a different
 // runtime directory, a different socket, plausibly a different OS user — must

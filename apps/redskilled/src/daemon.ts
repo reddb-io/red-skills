@@ -10,7 +10,7 @@
  * impersonate the holder. **The machine claim** answers the one neither can see:
  * "does this machine already have a daemon somewhere else" — in another OS user's
  * `0700` runtime directory, which is invisible to both of the others (ADR 0130
- * Amendment 2). None is sufficient alone: a lease without a bind lets two daemons
+ * Amendment 3). None is sufficient alone: a lease without a bind lets two daemons
  * both believe they own the socket, a bind without a lease loses the ownership
  * fact the moment the process dies, and both together still permit the second
  * daemon that voids the host budget.
@@ -353,7 +353,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // The machine before the runtime directory: a daemon that bound a socket and
   // then discovered another user already holds the machine would have been the
   // second arbiter for the length of that window, and the budget is only
-  // meaningful if it never was (ADR 0130 Amendment 2).
+  // meaningful if it never was (ADR 0130 Amendment 3).
   const claimed = await machineClaimStore.claim(machineOwner);
   if (!claimed.claimed) {
     // A holder on OUR OWN socket is not the machine-scope story: it is the

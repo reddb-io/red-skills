@@ -157,7 +157,7 @@ async function reachRedskilledDaemon(
   if (await socketAnswers(paths.socketPath)) return "already-running";
 
   // Our own socket is silent — so before spawning, ask the machine whether it
-  // already has a daemon somewhere this session cannot see (ADR 0130 Amendment 2).
+  // already has a daemon somewhere this session cannot see (ADR 0130 Amendment 3).
   // Spawning first and refusing afterwards would still have been two daemons.
   await refuseWhenMachineIsHeld(paths);
 
