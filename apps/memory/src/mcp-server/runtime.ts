@@ -813,18 +813,35 @@ function describe(v: z.ZodTypeAny): Record<string, unknown> {
 /** The server's own flags — the same contract the `memory` CLI routes through. */
 const MCP_BINARY_FLAGS = {
   version: { kind: "boolean", aliases: ["v"] },
+  help: { kind: "boolean", aliases: ["h"] },
   json: { kind: "boolean" },
 } as const satisfies FlagSchema;
 
-const routedMcp = routeCommand<"serve" | "version">(process.argv.slice(2), {
-  commands: { serve: {}, version: {} },
+/** Usage as a CONSTANT — the answer needs no store, no config and no stdio. */
+const MCP_USAGE = `Usage: memory-mcp [command] [flags]
+
+Commands:
+  serve (default)  speak MCP over stdio against this project's memory store
+  version          print the build stamp
+  help             print this usage
+
+Flags:
+  -v, --version    print the build stamp (--json for the build info)
+  -h, --help       print this usage
+`;
+
+const routedMcp = routeCommand<"serve" | "version" | "help">(process.argv.slice(2), {
+  commands: { serve: {}, version: {}, help: {} },
   default: "serve",
 });
 const mcpFlags = parseFlags(routedMcp.args, MCP_BINARY_FLAGS).values;
 
 // Answered before the store opens and before stdio is claimed: "which build is
-// this?" is asked of a server that would not start, so it must not need one.
-if (routedMcp.command === "version" || mcpFlags.version === true) {
+// this?" and "what can it do?" are asked of a server that would not start, so
+// neither may need one (#2878, #2918).
+if (routedMcp.command === "help" || mcpFlags.help === true) {
+  process.stdout.write(MCP_USAGE);
+} else if (routedMcp.command === "version" || mcpFlags.version === true) {
   process.stdout.write(
     mcpFlags.json === true ? `${JSON.stringify(buildInfo)}\n` : `${renderVersion(buildInfo)}\n`,
   );
