@@ -736,6 +736,59 @@ describe("processIssue — PR review gate (ADR 0064 §10, #749)", () => {
     expect(trace.closed).toContain(9);
   });
 
+  // #2936: the PR used to be born on the boot-time base — `pushAttempt` was
+  // followed straight by `openReviewPr`, with no fetch and no conflict check
+  // between them. A base that moved therefore only surfaced at landing time,
+  // with the worker dead and a human holding a dirty PR (PRs #2933, #2934).
+  it("integrates origin/<base> into the branch BEFORE opening the review PR", async () => {
+    const { deps, input } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      classifyIssue: async () => "complex",
+      reviewGate: { enabled: true, threshold: "complex" },
+    });
+    const calls = recordingMerge(deps);
+    const result = await processIssue(deps, input);
+    const joined = calls.map((c) => c.join(" "));
+
+    expect(result.outcome).toBe("review-requested");
+    const integrated = joined.findIndex((c) => c === "git -C /rwt merge --no-edit origin/main");
+    const published = joined.findIndex((c) => c.startsWith("git -C /rwt push origin HEAD:refs/heads/"));
+    const prCreated = joined.findIndex((c) => c.includes("pr create"));
+    expect(joined).toContain("git -C /rwt fetch origin main --quiet");
+    expect(integrated).toBeGreaterThan(-1);
+    expect(published).toBeGreaterThan(integrated);
+    expect(prCreated).toBeGreaterThan(published);
+  });
+
+  it("a base that moved into a conflict parks merge-conflict instead of opening a stale PR", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      classifyIssue: async () => "complex",
+      reviewGate: { enabled: true, threshold: "complex" },
+    });
+    const inner = deps.mergeExec;
+    deps.mergeExec = async (argv) => {
+      const j = argv.join(" ");
+      // The moved base conflicts with the worker's slice.
+      if (j === "git -C /rwt merge --no-edit origin/main") return { code: 1, stdout: "", stderr: "" };
+      if (j === "git -C /rwt diff --name-only --diff-filter=U") {
+        return { code: 0, stdout: "shared.ts\n", stderr: "" };
+      }
+      return inner(argv);
+    };
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("merge-conflict");
+    // The conflict is reported HERE, naming the files, while a retry can still
+    // resolve it — not inherited by a human at landing time.
+    expect(trace.envelopeBodies.some((b) => b.includes("shared.ts"))).toBe(true);
+    expect(trace.envelopeBodies.some((b) => b.includes("BEFORE the pull request was opened"))).toBe(true);
+  });
+
   it("disabled gate → non-mechanical change still fast-merges", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",

@@ -42,7 +42,16 @@ import { formatPreconditionFailure, runBoot, type BootResult, type BootstrapInpu
 import { inspectProcessTreeNative, sampleTreeRssMbNative } from "../runtime/proc-tree.js";
 import { refuseRemovedFleetFlag } from "../core/removed-fleet-flag.js";
 import { SUPERVISOR_LANE_ENV } from "../core/supervisor-lane.js";
-import { resolveDevScriptPath } from "../runtime/supervisor-spawn.js";
+import { resolveDevScriptPath, spawnSupervisor } from "../runtime/supervisor-spawn.js";
+import { resolveSupervisorEntry } from "../runtime/supervisor-entry.js";
+import { compareSemver } from "../core/bundle-version.js";
+import { refreshPublishedBundleVersion } from "../core/published-version.js";
+import {
+  createProducerReplacementWatch,
+  handOverProducer,
+  producerReplaceCheckMs,
+  type ProducerSlotPid,
+} from "../core/producer-self-replace.js";
 import {
   createRedskilledBirthPort,
   redskilledUnreachableAdvice,
@@ -1195,7 +1204,65 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
   process.once("exit", onProcessExit);
   process.once("uncaughtExceptionMonitor", onUncaughtException);
 
-  const stopRequested = (): boolean => existsSync(stopFile);
+  // ---- the producer re-checks its own bundle (#2925) -----------------------
+  // Resolving a bundle once at launch is what stranded this process on every
+  // release: `project_start` went on reporting 3.0.3 while npm served 3.0.4, and
+  // every Worker born afterwards boot-halted on skew while the producer reported
+  // itself healthy. The daemon already answers this for itself; the cadence and
+  // the four rules are deliberately its own (`producer-self-replace.ts`).
+  const runningVersion = readBuildInfo("dev").version;
+  const laneLog = (line: string): void => {
+    try {
+      process.stderr.write(`${line}\n`);
+    } catch {
+      // a closed stderr never costs the handover.
+    }
+    void exitWriter
+      .append({ kind: "supervisor.message", supervisor_id: supervisorId, payload: { message: line } })
+      .catch(() => undefined);
+  };
+  const replaceWatch = createProducerReplacementWatch({
+    running: runningVersion,
+    // One registry read per check, recorded so every passive surface replays it
+    // instead of deriving its own answer (#2809). A published version this host
+    // cannot RUN is not an adoptable answer: resolving the successor's entry here
+    // is what keeps preparation ahead of anything being given up.
+    probePublished: async () => {
+      const observed = await refreshPublishedBundleVersion(runningVersion, process.env);
+      const published = observed.version;
+      if (!published || compareSemver(published, runningVersion) <= 0) return published;
+      try {
+        resolveSupervisorEntry({ installedVersion: runningVersion, resolvePublished: () => published });
+      } catch (err) {
+        laneLog(
+          `producer self-replace deferred: the published bundle ${published} runs from nowhere on this host ` +
+            `(${err instanceof Error ? err.message : String(err)})`,
+        );
+        return null;
+      }
+      return published;
+    },
+  });
+  const replaceCheckMs = producerReplaceCheckMs(process.env);
+  const replaceTimer =
+    replaceCheckMs > 0
+      ? setInterval(() => {
+          void replaceWatch
+            .tick()
+            .then((decision) => {
+              if (decision.act === "replace") {
+                laneLog(
+                  `producer self-replace decided: ${runningVersion} is superseded by ${decision.to}; ` +
+                    `stopping the tick loop to hand over`,
+                );
+              }
+            })
+            .catch(() => undefined);
+        }, replaceCheckMs)
+      : undefined;
+  replaceTimer?.unref();
+
+  const stopRequested = (): boolean => existsSync(stopFile) || replaceWatch.decided() !== null;
   let state: SupervisorState | undefined;
   let deps: SupervisorDeps | undefined;
   let shuttingDown = false;
@@ -1251,7 +1318,50 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
     );
     await runSupervisor(state, deps, config, stopRequested);
     completed = true;
-    await exitRecorder.record(stopRequested() ? "explicit-stop" : "completed");
+    const replacement = replaceWatch.decided();
+    if (replacement === null) {
+      await exitRecorder.record(existsSync(stopFile) ? "explicit-stop" : "completed");
+      return 0;
+    }
+
+    // The tick loop stopped because a newer bundle is published, not because
+    // anyone asked this project to stop. The live Workers are the daemon's units
+    // and outlive this process, so they are handed to the successor by pid rather
+    // than terminated; the control files this process owns are given up first,
+    // because one producer per project is enforced by exactly that identity.
+    const liveSlotPids: ProducerSlotPid[] = state.slots.flatMap((slot, index) =>
+      slot.pid !== null && isAlive(slot.pid) ? [{ slot: index, pid: slot.pid }] : [],
+    );
+    await exitRecorder.record("self-replace", { from: runningVersion, to: replacement.to });
+    const handover = await handOverProducer(
+      { to: replacement.to, target: state.slots.length, adoptSlotPids: liveSlotPids },
+      {
+        release: () => {
+          // Do NOT let the finally block remove these again: from here on they
+          // belong to whoever wins the identity next.
+          completed = false;
+          rmSync(pidFile, { force: true });
+          rmSync(paths.supervisorPidStartPath, { force: true });
+          rmSync(stopFile, { force: true });
+        },
+        spawn: (input) =>
+          spawnSupervisor({
+            root,
+            target: input.target,
+            runner: config.runner,
+            base: trunk,
+            passthrough: slotArgs,
+            adoptSlotPids: input.adoptSlotPids,
+            // The successor is PINNED to the decided version: an entry resolved
+            // afresh could land on any other one, and the skew would survive the
+            // restart it exists to end.
+            entry: { installedVersion: runningVersion, resolvePublished: () => input.to },
+            onNotice: laneLog,
+          }),
+        log: laneLog,
+      },
+    );
+    return handover.ok ? 0 : 1;
   } catch (error) {
     await exitRecorder.record("exception", {
       name: error instanceof Error ? error.name : "Error",
@@ -1259,6 +1369,7 @@ export async function superviseCommand(args: string[], cwd = process.cwd()): Pro
     });
     throw error;
   } finally {
+    if (replaceTimer !== undefined) clearInterval(replaceTimer);
     process.removeListener("exit", onProcessExit);
     process.removeListener("uncaughtExceptionMonitor", onUncaughtException);
     process.removeListener("SIGTERM", onSigterm);

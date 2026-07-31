@@ -39,6 +39,9 @@ function recordingHost(): RedskilledBirthPort {
     register: async () => {
       throw new Error("no project registers itself in a slot-argv test");
     },
+    renew: async () => {
+      throw new Error("no project renews a registration in a slot-argv test");
+    },
     deregister: async () => false,
     liveWorkers: async () => asked.length,
     drainEvents: async () => [],

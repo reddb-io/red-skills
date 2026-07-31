@@ -86,12 +86,22 @@ describe("fleet status published-version agreement (#2809)", () => {
   const roots: string[] = [];
   const caches: string[] = [];
   let priorCacheDir: string | undefined;
+  let priorHome: string | undefined;
 
   beforeEach(() => {
     priorCacheDir = process.env.RED_SKILLS_CACHE_DIR;
+    // An empty HOME: the installed-plugin rung (#2924) reads the operator's
+    // plugin cache, so without this the assertions below would answer from the
+    // machine running the test rather than from the fixture.
+    priorHome = process.env.HOME;
+    const home = mkdtempSync(join(tmpdir(), "fleet-published-home-"));
+    caches.push(home);
+    process.env.HOME = home;
     return () => {
       if (priorCacheDir === undefined) delete process.env.RED_SKILLS_CACHE_DIR;
       else process.env.RED_SKILLS_CACHE_DIR = priorCacheDir;
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
       for (const dir of roots.splice(0).concat(caches.splice(0))) {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -184,6 +194,32 @@ describe("fleet status published-version agreement (#2809)", () => {
       },
     });
     expect(probe.verdict).toBe("ok");
+  });
+
+  // The reported case: the operator updated the plugin to 3.0.4, and every
+  // surface kept reporting a stale cache-only 3.0.3 as the published version.
+  it("makes an operator's plugin upgrade visible on the status surface (#2924)", async () => {
+    const cacheDir = useCache();
+    writeFileSync(join(cacheDir, "dev-3.0.3.bundle.min.mjs"), "", "utf8");
+    for (const version of ["2.88.0", "3.0.0", "3.0.1", "3.0.3", "3.0.4"]) {
+      mkdirSync(join(process.env.HOME as string, ".claude", "plugins", "cache", "red-skills", "dev", version), {
+        recursive: true,
+      });
+    }
+    const root = useRoot();
+    writeLiveSupervisor(root, "3.0.3");
+
+    const supervisor = await readSupervisor(root);
+    expect(supervisor.bundle_latest).toBe("3.0.4");
+    expect(supervisor.published_version).toMatchObject({
+      version: "3.0.4",
+      source: "installed-plugin",
+      stale: true,
+      reason: "installed-only",
+    });
+    // Honest about what it proves: intent and local availability, so the skew
+    // against the running bundle is reported rather than hidden.
+    expect(supervisor).toMatchObject({ published_unknown: 0, version_skew: 1 });
   });
 
   it("carries the staleness of its version answer, so a cached read is never current", async () => {

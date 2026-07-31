@@ -38,7 +38,10 @@
  * The daemon still does not know what an Issue, a label, a Spec, a gate or a
  * Landing is, which is what keeps this a frozen surface rather than a growing one.
  * `project-deregister` widens it by nothing at all: it names a project the daemon
- * already keys registrations by, and takes the record back out.
+ * already keys registrations by, and takes the record back out. `project-renew`
+ * widens it by less than nothing: it names that same project and carries no new
+ * field a client is obliged to state, because a renewal is a session saying "I am
+ * still here" rather than a second chance to restate what it wants.
  *
  * `shutdown` is the daemon's own life rather than any project's, and it answers
  * with a REPORT rather than an acknowledgement: what the daemon is holding and
@@ -128,6 +131,7 @@ export type RedskilledRequest =
   | { id: string; op: "worker-command"; command: RedskilledWorkerCommandRequest }
   | { id: string; op: "worker-heartbeat"; heartbeat: RedskilledWorkerHeartbeatRequest }
   | { id: string; op: "project-register"; registration: RedskilledProjectRegistrationRequest; session_project?: string }
+  | { id: string; op: "project-renew"; project_label: string; renew_within_ms?: number; session_project?: string }
   | { id: string; op: "project-deregister"; project_label: string; session_project?: string }
   // `detail` is the operator's own words for WHY — opaque to the daemon, recorded
   // with the stop on the event lane so the successor inherits the intent and not
@@ -254,6 +258,30 @@ export function isRedskilledProjectRegistered(value: unknown): value is Redskill
 }
 
 /**
+ * The answer to an accepted `project-renew`.
+ *
+ * The whole renewed record travels back rather than the new deadline alone: a
+ * session renewing is precisely the moment it should be able to see the record
+ * the host is holding for it, and one that received only a timestamp would have
+ * to ask a second question to check the host still holds what it thinks it does.
+ */
+export interface RedskilledProjectRenewed {
+  readonly version: 1;
+  readonly registration: RedskilledProjectRegistration;
+  readonly reach: RedskilledReachVerdict;
+  readonly detail: string;
+}
+
+export function isRedskilledProjectRenewed(value: unknown): value is RedskilledProjectRenewed {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const renewed = value as Record<string, unknown>;
+  return renewed.version === 1 &&
+    typeof renewed.detail === "string" &&
+    isRedskilledProjectRegistration(renewed.registration) &&
+    isRedskilledReachVerdict(renewed.reach);
+}
+
+/**
  * The answer to a permitted `project-deregister`.
  *
  * `released` is false — not an error — when the daemon held no registration for
@@ -319,6 +347,10 @@ export function isRedskilledStatuslineRender(value: unknown): value is Redskille
     (render.mode === "local" || render.mode === "global") &&
     (render.project === null || typeof render.project === "string") &&
     typeof render.detail === "string" &&
+    // Checked only when present, for the reason every optional field here is: a
+    // daemon predating the match verdict still serves a complete line, and a
+    // client that rejected it would blank the statusline over a diagnostic.
+    (render.project_match === undefined || typeof render.project_match === "string") &&
     typeof render.degraded === "boolean" &&
     typeof render.stale === "boolean" &&
     typeof render.generated_at === "string";

@@ -46,6 +46,7 @@ import {
   type WaitForReviewInput,
   type CiAwaitInput,
 } from "../merge.js";
+import { integrateBaseBeforePr, type PrePrIntegrationResult } from "../pre-pr-integration.js";
 import type { LandLock } from "../land-lock.js";
 import { doLanding } from "../landing.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
@@ -671,6 +672,62 @@ async function parkTerminalHandoff(
     deps.appendIterLog(`🤖 terminal park for #${issue} refused by the state planner: ${result.reason}`);
   }
 }
+/**
+ * Give the branch the current base BEFORE its PR is opened (#2936).
+ *
+ * The PR used to be born on whatever base the Worker saw at boot, so a base that
+ * moved during the run first showed up at landing time — with the Worker dead
+ * and a human holding a `dirty` PR. The integration runs in an ISOLATED worktree
+ * provisioned from the freshly-fetched `origin/<branch>` (never the primary
+ * checkout, never the local ref), immediately after the branch is pushed.
+ *
+ * Absent worktree ports, or a worktree that fails to materialise, SKIP: this is
+ * an earlier barrier, not a replacement for the landing's `preMergeRebase`, so a
+ * provisioning fault must not turn a completed run into a refusal.
+ */
+async function integrateBaseBeforeOpeningPr(c: StageCommon, base: string): Promise<PrePrIntegrationResult> {
+  const { deps, input } = c;
+  const make = deps.makeRebaseWorktree;
+  if (!make) return { ok: true, action: "skipped" };
+  const dir = await make(c.branch);
+  if (dir === null) return { ok: true, action: "skipped" };
+  try {
+    return await integrateBaseBeforePr(deps.mergeExec, {
+      repo: dir,
+      remote: input.remote,
+      base,
+      branch: c.branch,
+    });
+  } finally {
+    await deps.removeRebaseWorktree?.(dir);
+  }
+}
+
+/**
+ * Park a pre-PR integration refusal, or let the PR open anyway.
+ *
+ * Only a `conflict` is a statement about the branch, so only a conflict spends
+ * `blocked:merge-conflict` — with the conflicting paths named, while a retry can
+ * still resolve them. A failed fetch or a failed push is landing infrastructure
+ * on a branch that never conflicted: it is logged and the PR opens, because the
+ * landing barrier still stands behind it.
+ */
+async function parkPrePrIntegrationRefusal(
+  c: StageCommon,
+  integrated: PrePrIntegrationResult,
+): Promise<ProcessIssueResult | undefined> {
+  if (integrated.ok) return undefined;
+  const detail = integrated.message ?? "the base could not be integrated before the pull request was opened";
+  if (integrated.reason !== "conflict") {
+    c.deps.appendIterLog(`🤖 pre-PR base integration for #${c.input.issue} did not run to completion: ${detail}`);
+    return undefined;
+  }
+  return await mergeFailed(
+    c,
+    `${detail} — reported BEFORE the pull request was opened, while the branch can still be corrected (#2936)`,
+  );
+}
+
 export async function handoffForReview(
   c: StageCommon,
   taskClass: AfkModelTier,
@@ -679,6 +736,8 @@ export async function handoffForReview(
   const { deps, input } = c;
   const reviewLabel = deps.reviewGateLabel ?? LABEL_READY_FOR_REVIEW;
   await pushAttempt(deps.remoteGit, input.repoDir, c.branch, c.branch);
+  const parked = await parkPrePrIntegrationRefusal(c, await integrateBaseBeforeOpeningPr(c, c.base));
+  if (parked) return parked;
   const opened = await openReviewPr(deps.mergeExec, {
     repo: input.repo,
     branch: c.branch,
@@ -718,6 +777,8 @@ export async function handoffForManualLanding(
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   await pushAttempt(deps.remoteGit, input.repoDir, c.branch, c.branch);
+  const parked = await parkPrePrIntegrationRefusal(c, await integrateBaseBeforeOpeningPr(c, base));
+  if (parked) return parked;
   const opened = await openManualLandingPr(deps.mergeExec, {
     repo: input.repo,
     branch: c.branch,

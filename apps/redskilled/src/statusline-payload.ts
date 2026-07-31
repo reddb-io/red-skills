@@ -159,6 +159,20 @@ export interface RedskilledStatuslinePayload {
   readonly staleness: RedskilledStatuslineStaleness;
   readonly host: RedskilledStatuslineHost;
   readonly projects: readonly RedskilledStatuslineProject[];
+  /**
+   * Every project label this host knows: registered, or holding a Worker.
+   *
+   * Beside `projects` rather than folded into it, because a project with a
+   * registration and no Worker is real. Without this field a consumer could not
+   * tell "this directory belongs to a project the host knows, which happens to be
+   * idle" from "this directory matches no project at all", and both collapse into
+   * the same idle zero — the answer #2928 was filed about.
+   *
+   * OPTIONAL on the wire: one daemon serves checkouts pinned to different bundle
+   * versions (ADR 0130 rule 3), so a daemon older than this field still answers
+   * completely, and a consumer that finds it absent must not invent a mismatch.
+   */
+  readonly known_projects?: readonly string[];
   readonly workers: readonly RedskilledStatuslineWorker[];
   /**
    * Each registered project's repository counts, dated on their own clock.
@@ -259,6 +273,7 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
         : consumption.memory_bytes / input.ceiling.memory_bytes,
     },
     projects: buildProjects(workers),
+    known_projects: knownProjects(input.hostState),
     workers,
     repository_activity: buildActivityReport({
       activity: input.repositoryActivity ?? null,
@@ -327,6 +342,21 @@ function workerLog(log: RedskilledWorkerLogLine | undefined): RedskilledStatusli
   const absent = { last_line: null, published_at: null, source: null } as const;
   if (log == null || log.line.trim() === "") return absent;
   return { last_line: log.line, published_at: log.published_at, source: log.source };
+}
+
+/**
+ * Every project this host has heard of, by label, ordered and deduplicated. PURE.
+ *
+ * The union of the two ways a host comes to know a project: a registration it was
+ * handed, and a Worker it is holding. Either one alone is a real project, so
+ * either one alone answers "yes, this host knows you" — and a project it knows
+ * neither way is the only kind a consumer may call unmatched.
+ */
+function knownProjects(hostState: RedskilledHostState): readonly string[] {
+  const labels = new Set<string>();
+  for (const registration of hostState.registrations ?? []) labels.add(registration.project_label);
+  for (const project of hostState.projects) labels.add(project.project_label);
+  return [...labels].sort((a, b) => a.localeCompare(b));
 }
 
 function buildProjects(workers: readonly RedskilledStatuslineWorker[]): readonly RedskilledStatuslineProject[] {
@@ -424,6 +454,12 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     typeof host.observed_rss_bytes === "number" &&
     Array.isArray(payload.projects) &&
     Array.isArray(payload.workers) &&
+    // Absent is accepted for the same reason the activity report's is: a daemon
+    // older than this field answers completely without it, and a consumer that
+    // rejected the whole payload would lose the Worker set over a fact it only
+    // needed to tell an idle project from an unknown one.
+    (payload.known_projects === undefined ||
+      (Array.isArray(payload.known_projects) && payload.known_projects.every((label) => typeof label === "string"))) &&
     // Absent is accepted, malformed is not: a daemon older than the activity
     // poller answers a newer client's read, and rejecting its whole payload over
     // a field this consumer did not ask for would lose the Worker set — the very

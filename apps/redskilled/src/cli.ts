@@ -7,15 +7,15 @@
  * because the moment it does, it stops being servable by checkouts on different
  * bundle versions. A path it needs is a path it was given.
  */
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
-import { findUp } from "@reddb-io/shared/plugin-gate.js";
-import { declaredProjectNameInConfig, resolveProjectIdentity } from "@reddb-io/shared/project-identity.js";
+import {
+  readDeclaredProjectName,
+  resolveProjectLabelForDir,
+} from "@reddb-io/shared/project-identity-resolve.js";
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
@@ -41,6 +41,7 @@ import {
   parseRedskilledStatuslineFlags,
   resolveRedskilledStatuslineOptions,
 } from "./statusline-config.js";
+import { renderRedskilledStatuslineAbsence } from "./statusline-render.js";
 import {
   installRedskilledUnit,
   planRedskilledUnit,
@@ -48,6 +49,95 @@ import {
   uninstallRedskilledUnit,
   type RedskilledUnitIO,
 } from "./supervision.js";
+
+/**
+ * Usage, as a CONSTANT — the answer owes nothing to the machine it is asked on.
+ *
+ * `--help` is asked under exactly the conditions `--version` is (#2918): the
+ * daemon will not start, or the operator is hunting for the subcommand that
+ * stops it. Deriving usage from a socket, a config file or a store makes the
+ * subcommand list unavailable precisely when someone is lost, which is how a
+ * one-second question became a detour during a version migration.
+ */
+export const REDSKILLED_USAGE = `Usage: redskilled <command> [options]
+
+Commands:
+  host-state (default)  print the host's state as JSON
+  serve                 run the daemon in this process
+  statusline [global]   render one agent-host status line
+  unit                  install | uninstall | status — the optional supervisor
+  provision             make this machine ready; --check is the read-only half
+  reclaim               clear runtime dirs left by dead sessions
+
+Run \`redskilled <command> --help\` for a command's own usage.
+\`--version\` (\`-v\`) prints the build stamp; both answer offline.
+`;
+
+/** Each subcommand's scoped usage — same contract, same offline answer. */
+const COMMAND_USAGE = {
+  serve: `Usage: redskilled serve [options]
+
+Runs the daemon in this process. Every path is a flag and none is derived
+(ADR 0130 rule 3); what is absent falls back to the session derivation.
+
+  --socket <path>             the unix socket to listen on
+  --lease <path>              the singleton lease record
+  --events <path>             the append-only host event lane
+  --session-key-hash <hex>    publishable session identity
+  --machine-id-hash <hex>     publishable host label
+  --machine-claim <path>      the machine-wide claim record
+  --idle-ms <n>               exit after this long with no work
+  --daemon-version <v>        the version this daemon reports as
+`,
+  "host-state": `Usage: redskilled host-state
+
+Prints the host's state as JSON. Contacts the running daemon; the default
+command when none is named.
+`,
+  statusline: `Usage: redskilled statusline [global] [--verbose] [flags]
+
+Renders the status line the agent host prints verbatim. Config is read on this
+side and only decided values cross the socket (ADR 0130 rule 10).
+
+  global      render the host-wide line instead of this project's
+  --verbose   add one line per Worker
+`,
+  unit: `Usage: redskilled unit [install|uninstall|status]
+
+Manages the OPTIONAL user supervisor unit — auto-spawn is the floor, and a host
+with no unit is a supported configuration (ADR 0130 rule 7). Defaults to status.
+`,
+  provision: `Usage: redskilled provision [--check] [--no-start] [--install-unit]
+
+Makes a machine with no prior state ready, and prints the audit. Idempotent: a
+second run creates nothing and reports the same verdicts.
+
+  --check         read-only; creates and starts nothing
+  --no-start      provision the home without starting the daemon
+  --install-unit  also install the user supervisor unit
+`,
+  stop: `Usage: redskilled stop [--detail <why>]
+
+Asks the daemon to shut down and reports what it was holding. Every Worker
+survives: they are init-system units, so a stop is a restart and not an
+evacuation. A socket nobody answers on is a success with a stated reason.
+
+  --detail <why>  the operator's own words, recorded on the event lane so a
+                  successor can tell a planned handover from a crash
+`,
+  reclaim: `Usage: redskilled reclaim [--dry-run] [--grace-ms <n>]
+
+Reports every session runtime dir it looked at and why it kept or removed it.
+
+  --dry-run        the same report with nothing removed
+  --grace-ms <n>   how long a dir must be idle before it is reclaimed
+`,
+} as const satisfies Record<string, string>;
+
+/** The three spellings of "tell me what this does", asked of the top level. */
+function isHelpToken(token: string | undefined): boolean {
+  return token === "--help" || token === "-h" || token === "help";
+}
 
 const SERVE_FLAGS = {
   socket: { kind: "value", coerce: (raw: string) => raw },
@@ -72,12 +162,28 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     return 0;
   }
 
+  // Answered before routing, for the same reason `--version` is: routing lands
+  // on `host-state`, which reaches for the socket — so an operator whose daemon
+  // is down would be told the daemon is down when they asked what the commands
+  // are (#2918). Usage never contacts a socket, starts a daemon or reads config.
+  if (isHelpToken(argv[0])) {
+    process.stdout.write(REDSKILLED_USAGE);
+    return 0;
+  }
+
   const { command, args } = routeCommand<
     "serve" | "stop" | "host-state" | "statusline" | "unit" | "provision" | "reclaim"
   >(argv, {
     commands: { serve: {}, stop: {}, "host-state": {}, statusline: {}, unit: {}, provision: {}, reclaim: {} },
     default: "host-state",
   });
+
+  // The same guarantee one level down: `<command> --help` prints that command's
+  // usage BEFORE dispatch, so no subcommand's help path can reach the daemon.
+  if (args.some((arg) => arg === "--help" || arg === "-h")) {
+    process.stdout.write(COMMAND_USAGE[command]);
+    return 0;
+  }
 
   if (command === "serve") {
     const { values } = parseFlags(args, SERVE_FLAGS);
@@ -224,6 +330,12 @@ export async function runUnit(
  * shape, order, width or degradation, because ADR 0130 rule 10 moves rendering
  * off every host so that a second host cannot drift from the first. Config is
  * read HERE, on the client side, and only decided values cross the socket.
+ *
+ * **It always writes a line and always exits 0.** A statusline that printed
+ * nothing when the daemon was down would be indistinguishable from a machine
+ * with no Workers — the operator would read an outage as calm — so an
+ * unreachable host renders as a stated absence and the diagnosis goes to stderr,
+ * where a host's statusline plumbing does not put it on screen.
  */
 export async function runStatusline(
   args: readonly string[],
@@ -233,25 +345,39 @@ export async function runStatusline(
     readonly paths?: RedskilledPaths;
     readonly write?: (line: string) => void;
     readonly warn?: (line: string) => void;
+    /** How to reach the daemon; injected so a test can pose as a dead host. */
+    readonly client?: RedskilledClientConfig;
+    /** The clock, for the one instant no daemon supplies: an absence's own. */
+    readonly now?: () => string;
   } = {},
 ): Promise<number> {
   const write = io.write ?? ((line: string) => process.stdout.write(line));
   const warn = io.warn ?? ((line: string) => process.stderr.write(line));
 
   const parsed = parseRedskilledStatuslineFlags(args);
-  const project = readProjectConfig(io.cwd ?? process.cwd());
+  const project = readStatuslineProject(io.cwd ?? process.cwd());
   const resolved = resolveRedskilledStatuslineOptions({
-    configText: project.configText,
-    project: project.name,
+    ...(project.configText == null ? {} : { configText: project.configText }),
+    project: project.label,
     flags: parsed.flags,
   });
   for (const warning of [...resolved.warnings, ...parsed.warnings]) {
     warn(`redskilled statusline: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);
   }
 
-  const render = await readRedskilledStatuslineString(io.paths ?? resolveRedskilledPaths(), resolved.options, {
-    ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
-  });
+  let render;
+  try {
+    render = await readRedskilledStatuslineString(io.paths ?? resolveRedskilledPaths(), resolved.options, {
+      ...(io.client ?? {}),
+      ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
+    });
+  } catch (err) {
+    warn(`redskilled statusline: ${err instanceof Error ? err.message : String(err)}\n`);
+    render = renderRedskilledStatuslineAbsence({
+      options: resolved.options,
+      generated_at: (io.now ?? (() => new Date().toISOString()))(),
+    });
+  }
   // Every line the daemon rendered, in order — one write, whatever the taste.
   // With `--verbose` that is the Worker line plus a second line per Worker; the
   // host still decides nothing about shape (ADR 0130 rule 10).
@@ -388,55 +514,22 @@ function configHome(): string {
   return declared && declared !== "" ? declared : join(homedir(), ".config");
 }
 
-/** The nearest `.red/config.yaml`, and the project name it declares. */
 /**
- * The calling directory's project, resolved the way its Workers were LABELLED.
+ * The calling directory's project label, and the config that carries its taste.
  *
- * A declared name is only the first rung. The identity a Worker carries is
- * produced by `resolveProjectIdentity`, which falls back to the git remote and
- * then to the checkout's basename — so a repository that declares nothing still
- * has a label, and the daemon is already storing it. Reading only the declared
- * name here made the statusline ask a question in a vocabulary the daemon does
- * not answer in: on a repo with no `name:` in its config, the local mode
- * reported `project unknown 0w` while the daemon held three Workers stamped
- * `owner/repo`.
- *
- * One fact, one resolver. Anything else is two spellings of the same project
- * that only agree when someone remembered to declare it.
+ * **Resolved through the SAME authority that labels a Worker at birth**, which is
+ * the whole of the fix for #2928. Reading only a declared `project.name` here
+ * meant a repository that declares none — most of them — asked the daemon about
+ * `null` while every one of its Workers was filed under the label the remote
+ * gave, so the local mode reported an idle zero from a host holding three.
  */
-function readProjectConfig(cwd: string): { configText?: string; name: string | null } {
-  const path = findUp(cwd, ".red/config.yaml");
-  const root = path == null ? cwd : dirname(dirname(path));
-  let configText: string | undefined;
-  if (path != null) {
-    try {
-      configText = readFileSync(path, "utf8");
-    } catch {
-      configText = undefined;
-    }
-  }
-  const declared = configText == null ? undefined : declaredProjectNameInConfig(configText);
-  const identity = resolveProjectIdentity({
-    checkoutPath: root,
-    ...(declared == null ? {} : { declaredName: declared }),
-    ...(gitValue(root, ["rev-parse", "--git-common-dir"]) == null
-      ? {}
-      : { gitCommonDir: gitValue(root, ["rev-parse", "--git-common-dir"]) }),
-    ...(gitValue(root, ["remote", "get-url", "origin"]) == null
-      ? {}
-      : { remoteUrl: gitValue(root, ["remote", "get-url", "origin"]) }),
-  });
-  return { ...(configText == null ? {} : { configText }), name: identity.name };
-}
-
-/** One git read, or `undefined` — a directory that is not a checkout is normal. */
-function gitValue(root: string, args: readonly string[]): string | undefined {
-  try {
-    const out = execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return out === "" ? undefined : out;
-  } catch {
-    return undefined;
-  }
+function readStatuslineProject(cwd: string): { configText?: string; label: string | null } {
+  const declared = readDeclaredProjectName(cwd);
+  // No `.red/config.yaml` anywhere above is a directory outside any RedSkills
+  // project: it has no taste to read and no project to be, and guessing a label
+  // from git alone would file a stray shell under a repository it is only near.
+  if (declared.configText == null) return { label: null };
+  return { configText: declared.configText, label: resolveProjectLabelForDir(cwd) };
 }
 
 /**

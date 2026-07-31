@@ -15,19 +15,17 @@
 // runner serves it and what its prompt says never enter here (rule 2), and
 // neither does the spawn — the daemon owns birth, this only asks for it.
 
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
-  declaredProjectNameInConfig,
-  resolveProjectIdentity,
-  type ProjectIdentity,
-} from "@reddb-io/shared/project-identity.js";
+  resolveProjectIdentityForDir,
+  resolveProjectLabelForDir,
+} from "@reddb-io/shared/project-identity-resolve.js";
+import type { ProjectIdentity } from "@reddb-io/shared/project-identity.js";
 import {
   commandRedskilledWorker,
   deregisterRedskilledProject,
   ensureRedskilledDaemon,
   registerRedskilledProject,
+  renewRedskilledProject,
   readRedskilledHostState,
   startRedskilledWorker,
   type RedskilledClientConfig,
@@ -60,49 +58,19 @@ export type ProjectRegistrationRequest = Omit<RedskilledProjectRegistrationReque
  * Resolve this checkout's project label — the one opaque string the daemon keys
  * a project by (ADR 0130 rule 11).
  *
- * Every input is collected here and the DECISION stays in the pure resolver, so
- * a checkout with no git, no remote and no declared name still resolves to a
- * stable label instead of failing. A git call that throws contributes nothing
- * rather than aborting the launch: an unlabelled Worker is worse than one
- * labelled by its directory.
+ * **The collection lives in `@reddb-io/shared`, not here.** It used to live in
+ * this file, and the statusline grew its own shorter version that read only a
+ * declared `project.name`: two answers to "where am I", diverging silently until
+ * a repository that declared no name filed its Workers under one label and asked
+ * about another (#2928). One resolver, imported by both.
  */
 export function resolveProjectLabel(root: string): string {
-  return resolveProjectIdentityForRoot(root).name;
+  return resolveProjectLabelForDir(root);
 }
 
 /** The full identity, for a caller that needs the slug as well as the name. */
 export function resolveProjectIdentityForRoot(root: string): ProjectIdentity {
-  const declaredName = readDeclaredProjectName(root);
-  const gitCommonDir = gitOutput(root, ["rev-parse", "--absolute-git-dir"]) ??
-    gitOutput(root, ["rev-parse", "--git-common-dir"]);
-  const remoteUrl = gitOutput(root, ["remote", "get-url", "origin"]);
-  return resolveProjectIdentity({
-    checkoutPath: root,
-    ...(gitCommonDir !== undefined ? { gitCommonDir } : {}),
-    ...(remoteUrl !== undefined ? { remoteUrl } : {}),
-    ...(declaredName !== undefined ? { declaredName } : {}),
-  });
-}
-
-function readDeclaredProjectName(root: string): string | undefined {
-  try {
-    return declaredProjectNameInConfig(readFileSync(join(root, ".red", "config.yaml"), "utf8"));
-  } catch {
-    return undefined;
-  }
-}
-
-function gitOutput(root: string, args: readonly string[]): string | undefined {
-  try {
-    const out = execFileSync("git", [...args], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return out === "" ? undefined : out;
-  } catch {
-    return undefined;
-  }
+  return resolveProjectIdentityForDir(root);
 }
 
 /** A Worker the host granted, in the two facts the project needs back. */
@@ -137,6 +105,16 @@ export interface RedskilledBirthPort {
    * opaque to the host; a refusal throws, and nothing is started instead.
    */
   register(request: ProjectRegistrationRequest): Promise<RedskilledProjectRegistration>;
+  /**
+   * Say this session is still here, so the registration keeps standing.
+   *
+   * The registration outlives this session on purpose — a drain has to survive
+   * the operator closing the terminal — and the renewal is the only reason it
+   * does not outlive it forever. A refusal throws, including the one that says
+   * the record lapsed: a session that read that as renewed would keep renewing
+   * nothing while its work sat undrained, and its next move is to register again.
+   */
+  renew(): Promise<RedskilledProjectRegistration>;
   /**
    * Take this project's presence back. Reports whether a record stood.
    *
@@ -208,6 +186,11 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
         config,
       );
       return registered.registration;
+    },
+
+    async renew() {
+      const renewed = await renewRedskilledProject(paths, { project_label: projectLabel }, config);
+      return renewed.registration;
     },
 
     async deregister() {

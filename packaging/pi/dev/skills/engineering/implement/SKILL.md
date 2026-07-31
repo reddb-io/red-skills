@@ -58,6 +58,16 @@ name. Create one with the dev loop:
 git worktree add .red/tmp/worktrees/manual/<slug> -b feat/<slug> origin/main
 ```
 
+**Resuming an EXISTING branch checks out the remote ref, not the local one.**
+The bare `git worktree add <dir> <branch>` resolves the LOCAL ref, which can
+trail `origin/<branch>`; work built on that stale tip comes back from the push as
+`non-fast-forward`. Pin the checkout to the remote:
+
+```
+git fetch origin <branch>
+git worktree add .red/tmp/worktrees/manual/<slug> -B <branch> origin/<branch>
+```
+
 `/retake` expects hand-worked worktrees to live under
 `.red/tmp/worktrees/manual/<slug>`. After the adopted branch lands, the worktree
 is pruned automatically.

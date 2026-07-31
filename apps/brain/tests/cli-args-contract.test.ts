@@ -158,6 +158,16 @@ describe("brain CLI argument contract", () => {
     expect((JSON.parse(json.stdout) as { app: string }).app).toBe("brain-mcp");
   });
 
+  test("the brain-mcp server answers usage without opening a store (#2918)", () => {
+    for (const args of [["--help"], ["-h"], ["help"]]) {
+      const result = runBrainMcp(args);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("Usage: brain-mcp");
+      expect(result.stdout).toContain("serve");
+    }
+  });
+
   test("the CLI entry walks no argv by hand", async () => {
     const source = await readFile(cliEntry, "utf8");
 

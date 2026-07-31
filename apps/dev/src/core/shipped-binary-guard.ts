@@ -27,6 +27,12 @@
 //    store is missing or the socket is dead. An answer assembled from any of those
 //    is unavailable exactly when it is needed, so the version surface must come
 //    from the stamp and nothing else.
+//  - **A USAGE ANSWER, reached before the binary touches anything.** `--help` is
+//    asked under exactly the conditions `--version` is, and usually by someone
+//    already lost: the daemon will not start, or they are looking for the
+//    subcommand that stops it (issue #2918). A binary that routes no help, or
+//    that reaches a socket, a config file or a store on the way to printing it,
+//    fails the question precisely when it is being asked.
 //  - **ARGUMENTS THROUGH THE SHARED CONTRACT.** A binary that walks `process.argv`
 //    itself re-decides what `--version` spells, whether `-v` is an alias, and
 //    whether `--json` survives — which is how five binaries ended up with five
@@ -82,6 +88,8 @@ export type ShippedBinaryViolationKind =
   | "unresolved-entry"
   | "no-version-answer"
   | "no-version-route"
+  | "no-help-answer"
+  | "help-touches-environment"
   | "argv-walk";
 
 export interface ShippedBinaryViolation {
@@ -210,6 +218,8 @@ function resolveTargetSource(
 
 /** A relative specifier in a static `import`/`export … from`, or a dynamic import. */
 const RELATIVE_SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["'](\.[^"']*)["']/g;
+/** The same, minus the lazily-loaded ones — the modules the entry loads to start. */
+const STATIC_SPECIFIER = /\bfrom\s*["'](\.[^"']*)["']/g;
 
 /**
  * Every repo file reachable from `entry` through relative imports, entry first.
@@ -224,6 +234,7 @@ export function collectModuleChain(
   entry: string,
   files: ReadonlyMap<string, BinarySourceFile>,
   maxDepth = Number.POSITIVE_INFINITY,
+  options: { readonly staticOnly?: boolean } = {},
 ): string[] {
   const seen = new Set<string>([entry]);
   const chain: string[] = [entry];
@@ -231,7 +242,7 @@ export function collectModuleChain(
   for (let depth = 0; depth < maxDepth && frontier.length > 0; depth += 1) {
     const next: string[] = [];
     for (const current of frontier) {
-      for (const imported of importedPaths(current, files)) {
+      for (const imported of importedPaths(current, files, options.staticOnly === true)) {
         if (seen.has(imported)) continue;
         seen.add(imported);
         chain.push(imported);
@@ -243,12 +254,18 @@ export function collectModuleChain(
   return chain;
 }
 
-function importedPaths(from: string, files: ReadonlyMap<string, BinarySourceFile>): string[] {
+function importedPaths(
+  from: string,
+  files: ReadonlyMap<string, BinarySourceFile>,
+  staticOnly = false,
+): string[] {
   const file = files.get(from);
   if (file === undefined) return [];
   const dir = dirname(from);
   const found: string[] = [];
-  for (const match of stripComments(file.sourceText).matchAll(RELATIVE_SPECIFIER)) {
+  for (const match of stripComments(file.sourceText).matchAll(
+    staticOnly ? STATIC_SPECIFIER : RELATIVE_SPECIFIER,
+  )) {
     const resolved = resolveRelativeImport(dir, match[1]!, files);
     if (resolved !== undefined) found.push(resolved);
   }
@@ -298,6 +315,156 @@ export const VERSION_SURFACE_DEPTH = 2;
 const VERSION_ANSWER = /\brenderVersion\s*\(/;
 /** The route that reaches it: a `--version` flag, a `version` command, or `-v`. */
 const VERSION_ROUTE = /--version\b|\bversion\s*:\s*\{|["']version["']/;
+
+/**
+ * How far from the entry usage may live: the entry, or the ONE module it hands
+ * its whole command surface to. Tighter than the version depth on purpose —
+ * `help` is an ordinary English word that occurs in modules a binary merely
+ * imports, and a wider net finds those instead of a usage answer.
+ */
+export const HELP_SURFACE_DEPTH = 1;
+
+/** The route that reaches usage: a `--help` flag, a `-h` alias, a `help` command. */
+const HELP_ROUTE = /--help\b|["']-h["']|["']help["']|\bhelp\s*:\s*\{/;
+/**
+ * The usage text itself — a constant or a renderer over one.
+ *
+ * Paired with the route in the SAME file for the reason the version surface is:
+ * the word "help" occurs in plenty of modules a binary happens to import, and a
+ * route with no answer beside it satisfies nobody who typed `--help`.
+ */
+const HELP_ANSWER = /\b[A-Z][A-Z0-9_]*USAGE\b|\bUSAGE\b|\brender\w*(?:Help|Usage)\s*\(|Usage:/;
+
+/**
+ * The touches a usage answer must not make on its way to being printed.
+ *
+ * Named one by one rather than as "side effects" because the list IS the claim:
+ * a socket the daemon is not listening on, a config file this directory never
+ * had, a store `init` never created, a child process that inherits all three.
+ * Each is a thing that is broken exactly when someone reaches for `--help`.
+ */
+export const ENVIRONMENT_TOUCHES: readonly { readonly what: string; readonly pattern: RegExp }[] = [
+  { what: "a socket", pattern: /\b(?:connect|createConnection|createServer|listen)\s*\(/ },
+  { what: "a daemon", pattern: /\bensure\w*Daemon\s*\(|\b(?:spawn|spawnSync|fork|exec|execSync|execFile|execFileSync)\s*\(/ },
+  { what: "config", pattern: /\bread\w*Config\s*\(|\bfindUp\s*\(/ },
+  {
+    what: "the filesystem",
+    pattern: /\b(?:readFileSync|writeFileSync|existsSync|readdirSync|statSync|mkdirSync)\s*\(/,
+  },
+];
+
+/**
+ * The brace depth AFTER each line, with strings masked so a `{` inside usage
+ * text cannot open a scope that never closes. PURE.
+ */
+function scopeDepths(source: string): number[] {
+  const masked = maskStrings(stripComments(source));
+  const depths: number[] = [];
+  let depth = 0;
+  for (const line of masked.split("\n")) {
+    for (const char of line) {
+      if (char === "{" || char === "(" || char === "[") depth += 1;
+      else if (char === "}" || char === ")" || char === "]") depth -= 1;
+    }
+    depths.push(depth);
+  }
+  return depths;
+}
+
+/** Every string's contents replaced by spaces, keeping quotes and line count. */
+function maskStrings(source: string): string {
+  let out = "";
+  let quote: string | undefined;
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i]!;
+    if (quote === undefined) {
+      out += char;
+      if (char === '"' || char === "'" || char === "`") quote = char;
+      continue;
+    }
+    if (char === "\\") {
+      out += "  ";
+      i += 1;
+      continue;
+    }
+    if (char === quote) {
+      out += char;
+      quote = undefined;
+      continue;
+    }
+    if (char === "\n") {
+      out += "\n";
+      // A single-quoted string cannot span lines; treat the newline as its end
+      // rather than masking the rest of the file.
+      if (quote !== "`") quote = undefined;
+      continue;
+    }
+    out += " ";
+  }
+  return out;
+}
+
+/**
+ * The 1-based lines that RUN before `line` does — the statements a help request
+ * actually executes on its way to the answer.
+ *
+ * A line qualifies when its own scope is still open at `line`: module-level
+ * statements above it, and the statements above it inside the same function. A
+ * helper DEFINED above but never entered does not qualify, because a body that
+ * closed before the help route is a body the help request never ran. PURE.
+ */
+export function linesRunBefore(source: string, line: number): number[] {
+  const depths = scopeDepths(source);
+  const target = line - 1;
+  const before: number[] = [];
+  for (let index = 0; index < target; index += 1) {
+    const opened = index === 0 ? 0 : depths[index - 1]!;
+    let stillOpen = true;
+    for (let scan = index; scan < target; scan += 1) {
+      if (depths[scan]! < opened) {
+        stillOpen = false;
+        break;
+      }
+    }
+    if (stillOpen) before.push(index + 1);
+  }
+  return before;
+}
+
+/**
+ * Where a file first routes a help request, or undefined when it never does.
+ * PURE.
+ */
+export function findHelpRouteLine(file: BinarySourceFile): number | undefined {
+  const lines = stripComments(file.sourceText).split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (HELP_ROUTE.test(lines[index]!)) return index + 1;
+  }
+  return undefined;
+}
+
+/**
+ * Every environment touch a help request runs through before it is answered.
+ * An empty array is the healthy state. PURE.
+ */
+export function findHelpEnvironmentTouches(
+  file: BinarySourceFile,
+): { line: number; evidence: string; what: string }[] {
+  const route = findHelpRouteLine(file);
+  if (route === undefined) return [];
+  const lines = stripComments(file.sourceText).split("\n");
+  const found: { line: number; evidence: string; what: string }[] = [];
+  for (const line of linesRunBefore(file.sourceText, route)) {
+    const text = lines[line - 1]!;
+    for (const touch of ENVIRONMENT_TOUCHES) {
+      const match = touch.pattern.exec(text);
+      if (match === null) continue;
+      found.push({ line, evidence: match[0].trim(), what: touch.what });
+      break;
+    }
+  }
+  return found;
+}
 
 /** `process.argv` followed by a member access — the shape that reads a token. */
 const ARGV_ACCESS = /process\s*\.\s*argv\s*(?:\.\s*(\w+)\s*(\(\s*(\d+)?[^)]*\))?|\[\s*(\d+)\s*\])/g;
@@ -382,6 +549,27 @@ export function findShippedBinaryViolations(
       violations.push({ binary: declared.name, kind: "no-version-route", file: answering[0]! });
     }
 
+    // Static imports only: a usage answer inside a lazily-loaded subcommand
+    // module is not on the path `--help` takes, and counting it is how a binary
+    // that answers "unroutable subcommand" to `--help` reads as green.
+    const routing = collectModuleChain(resolved.entry, files, HELP_SURFACE_DEPTH, {
+      staticOnly: true,
+    }).filter((path) => HELP_ROUTE.test(text(files, path)) && HELP_ANSWER.test(text(files, path)));
+    if (routing.length === 0) {
+      violations.push({ binary: declared.name, kind: "no-help-answer", file: resolved.entry });
+    }
+    for (const path of routing) {
+      for (const touch of findHelpEnvironmentTouches(files.get(path)!)) {
+        violations.push({
+          binary: declared.name,
+          kind: "help-touches-environment",
+          file: path,
+          line: touch.line,
+          evidence: `${touch.evidence} — ${touch.what}`,
+        });
+      }
+    }
+
     for (const path of collectModuleChain(resolved.entry, files)) {
       for (const walk of findArgvWalks(files.get(path)!)) {
         violations.push({
@@ -416,7 +604,8 @@ export function formatShippedBinaryFailureMessage(
       violations.length === 1 ? "obligation" : "obligations"
     } across the declared bin maps.`,
     ...lines,
-    `A binary earns its bin entry by answering --version off the build stamp and` +
+    `A binary earns its bin entry by answering --version off the build stamp,` +
+      ` answering --help before it touches anything, and` +
       ` routing its arguments through @reddb-io/shared/args.` +
       ` The obligations are defined in ${SHIPPED_BINARY_GUARD_SOURCE}.`,
   ].join("\n");
@@ -438,6 +627,16 @@ function describeViolation(violation: ShippedBinaryViolation): string {
       return (
         "it reads the build stamp but routes no --version to it, so the answer is unreachable." +
         " Declare `--version` (and `-v`) in the binary's flag schema or as a `version` command"
+      );
+    case "no-help-answer":
+      return (
+        "it routes no --help. An operator reaching for usage is usually already lost," +
+        " so route `--help`/`-h` to a usage constant near the front door, ahead of any dispatch"
+      );
+    case "help-touches-environment":
+      return (
+        `its --help reaches ${violation.evidence ?? "the environment"} before it answers.` +
+        " Print usage first: what is touched on the way is exactly what is broken when help is asked"
       );
     case "argv-walk":
       return (
