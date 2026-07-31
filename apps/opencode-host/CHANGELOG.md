@@ -1,5 +1,27 @@
 # @reddb-io/red-skills
 
+## 3.0.4
+
+### Patch Changes
+
+- 370b39d: A restarted `redskilled` daemon re-attaches the Workers that survived it, instead of leaving them outside the host budget (#2917). The survival half of ADR 0130 rule 5 always worked — a Worker is an init-system unit, so it outlives the daemon that asked for it — and the re-attach half did not: a daemon moved from 3.0.1 to 3.0.2 came back reporting `workers: []` while its predecessor's Worker was still `active` with its own MainPID. A Worker no daemon claims is a Worker the arbiter does not count, so the machine's total is wrong in the one direction that hurts: the next admission believes it has room it does not have.
+
+  **The launch client is not the Worker.** Under the transient-unit backend the process the daemon spawns is `systemd-run --wait`, a client standing beside the unit; the daemon's own teardown kills it while the init system keeps the Worker running. The daemon recorded that exit as a `worker-death`, and a death on the append-only lane is forever — every successor replayed it and adopted nothing. An observed exit is now a question for the host: if the unit is still active the Worker is still held, by unit name, with its death left to the sweep that asks the host. The pid it watches is refreshed from the unit, because a budget sampled through a reclaimed pid is a budget nobody measures.
+
+  **A birth is acknowledged only once it is on the lane.** `worker-start` used to answer before the record reached disk, so a daemon replaced in that window left a live Worker whose birth nothing had written — the same invisibility by a different route. A signalled daemon now stops rather than being cut off, flushing the lane, releasing the lease and unlinking its socket; the Workers are untouched, because a replacement is a restart and not an evacuation.
+
+  **A Worker with no owner is reported, never silently absent.** A start additionally asks the init system for the Worker units no lane accounts for and adopts them under a stated placeholder — their project, id and budget belonged to a daemon that is gone, so they are named unknown rather than guessed — and a re-attached Worker whose lane row carries no project label is kept under the same placeholder instead of being dropped. Only the daemon holding the machine-wide claim sweeps the machine, since a second instance adopting the arbiter's Workers is the same accounting hole from the other side, and `REDSKILLED_UNIT_DISCOVERY=off` declines the sweep.
+
+  **Proven against a real predecessor and a real successor.** The new suite kills a daemon process that holds a live Worker, starts a second one, and reads the Worker back out of `host-state` with its project label, workspace, unit and budget accounting intact — alongside a fixture that reproduces the observed case exactly: the survivor present, the daemon reporting `workers: []`.
+
+- a7401c9: The `redskilled` daemon now holds a **project registration**: a record it stores for each project that wants work done, and reports back in `host-state` (#2901). Under ADR 0130 Amendment 3 a project contributes a registration rather than a process, and this is the record and the route that writes it — nothing polls it and nothing is dispatched from it yet.
+
+  **A registration carries five things, and the daemon interprets none of them.** The repository identity, already carried today as the opaque project label; an opaque **selector**, the query that names this project's work; an opaque **argv**, what to run when a Worker is born for it; a target width; and a renewal deadline, stated as a window and dated on the daemon's own clock so a client's skew cannot silently lengthen every registration on the host. The selector and the argv are opaque in exactly the sense a Worker's last logged line already is: stored, echoed, never read. Rule 3 holds — the daemon still does not know what an Issue, a label, a Spec, a gate or a Landing is, and shape is all it checks.
+
+  **Registering a project twice is refused, and the refusal names the registration standing** — its instant, its target and its deadline — because the two ways a client gets there want opposite next moves: a session that should be renewing reads the deadline it has to beat, and a duplicate loop learns the other one exists. `project-register` is a project-write like every other statement about a project, so a session registers only its own. The new `registrations` block in `host-state` is checked only when present, exactly as the scope and upgrade blocks are: one daemon serves checkouts pinned to different bundle versions, so an older daemon's answer without it is complete rather than malformed.
+  - @reddb-io/shared@3.0.4
+  - @reddb-io/build-info@3.0.4
+
 ## 3.0.3
 
 ### Patch Changes
