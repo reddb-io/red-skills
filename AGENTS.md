@@ -28,6 +28,7 @@ for now. See `plugins/dev/skills/engineering/red-setup/domain.md`.
 - **ask-red maintenance rule.** any skill add, rename, removal, or flow change must re-check `plugins/dev/skills/engineering/ask-red/SKILL.md`, update its Coverage Inventory and routes, and keep the `/red-doctor` router sync check green.
 - When working by hand instead (e.g. a slice the maintainer decided to land manually), work in an isolated worktree under `.red/tmp/worktrees/manual/<slug>/`; do not create sibling worktrees outside the repo.
 - Create task branches with `git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> origin/main`, not with `git checkout -b` or `git switch -c` in the primary checkout.
+- Check out an EXISTING branch against the REMOTE ref: `git fetch origin <branch> && git worktree add .red/tmp/worktrees/manual/<slug> -B <branch> origin/<branch>`. Never the bare `git worktree add <dir> <branch>` — that resolves the LOCAL ref, which can trail `origin/<branch>`, so the work is built on a stale tip and the push comes back `non-fast-forward`.
 - Commit the worktree, push the branch early, open a PR, monitor its checks, then merge it or park the issue/PR for `/hitl`.
 - The agent never switches the primary checkout's branch; only the user does. With `plugins.dev.enabled: true`, the dev command proxy blocks agent-created worktrees outside registered `.red/tmp/` lanes and primary-checkout branch movement.
 
