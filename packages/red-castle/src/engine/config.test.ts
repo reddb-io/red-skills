@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   loadEngineConfig,
   parseEngineConfigYaml,
+  readEngineHitlTypeLabels,
   readEngineLabelVocabulary,
   readEngineBackpressure,
 } from "./config.js";
@@ -151,6 +152,58 @@ describe("engine config reader", () => {
       dependencyBlocked: "wait:dependency",
       blockedPrefix: "blocked:",
       reqPrefix: "depends-on:",
+      hitlTypes: [],
     });
+  });
+
+  it("reads the declared HUMAN-ONLY type labels as a list", () => {
+    const redRoot = redRootWithConfig(
+      [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      labels:",
+        "        hitl_types:",
+        "          - wayfinder:grilling",
+        "          - wayfinder:prototype",
+        "",
+      ].join("\n"),
+    );
+
+    const cfg = loadEngineConfig(redRoot, { env: {} });
+
+    expect(readEngineHitlTypeLabels(cfg)).toEqual([
+      "wayfinder:grilling",
+      "wayfinder:prototype",
+    ]);
+    expect(readEngineLabelVocabulary(cfg).hitlTypes).toEqual([
+      "wayfinder:grilling",
+      "wayfinder:prototype",
+    ]);
+  });
+
+  it("accepts a single HUMAN-ONLY type written as a scalar", () => {
+    const redRoot = redRootWithConfig(
+      [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      labels:",
+        "        hitl_types: wayfinder:grilling",
+        "",
+      ].join("\n"),
+    );
+
+    expect(readEngineHitlTypeLabels(loadEngineConfig(redRoot, { env: {} }))).toEqual([
+      "wayfinder:grilling",
+    ]);
+  });
+
+  it("declares no HUMAN-ONLY type when the repo never opted in", () => {
+    const redRoot = redRootWithConfig("plugins:\n  dev:\n    enabled: true\n");
+
+    expect(readEngineHitlTypeLabels(loadEngineConfig(redRoot, { env: {} }))).toEqual([]);
   });
 });
