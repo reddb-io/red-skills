@@ -2,12 +2,16 @@
 // that wants work done, and reports back. Nothing polls it and nothing is
 // dispatched from it at this slice — what is proven here is that the record
 // exists, that it survives the socket verbatim, and above all that the daemon
-// never reads the two opaque strings it carries (ADR 0130 rule 3, Amendment 3).
+// never reads the two opaque strings it carries (ADR 0130 rule 3, Amendment 4).
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { readRedskilledHostState, registerRedskilledProject } from "../src/client.js";
+import {
+  deregisterRedskilledProject,
+  readRedskilledHostState,
+  registerRedskilledProject,
+} from "../src/client.js";
 import { isRedskilledHostState } from "../src/host-state.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
@@ -235,5 +239,66 @@ describe("redskilled project registration", () => {
     expect(isRedskilledHostState(older)).toBe(true);
     expect(isRedskilledHostState({ ...older, registrations: "not a list" })).toBe(false);
     expect(isRedskilledHostState({ ...older, registrations: [{ project_label: "acme/widgets" }] })).toBe(false);
+  });
+});
+
+describe("redskilled project deregistration", () => {
+  it("releases the registration a project stops, and holds the others", async () => {
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({ paths });
+    running.push(daemon);
+
+    daemon.registerProject(request({ project_label: "acme/gadgets" }));
+    await registerRedskilledProject(paths, request(), { sessionProject: "acme/widgets" });
+
+    const released = await deregisterRedskilledProject(paths, { project_label: "acme/widgets" }, {
+      sessionProject: "acme/widgets",
+    });
+    expect(released.released).toBe(true);
+    expect(released.project_label).toBe("acme/widgets");
+    expect(released.detail).toContain("acme/widgets");
+
+    const state = await readRedskilledHostState(paths);
+    expect(state.registrations!.map((held) => held.project_label)).toEqual(["acme/gadgets"]);
+  });
+
+  it("answers a project it never held without raising, so stopping twice is not a fault", async () => {
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({ paths });
+    running.push(daemon);
+
+    // Work stopped twice — by an operator and by a session ending — must not
+    // turn the second answer into an error a caller has to tell from a real one.
+    const first = await deregisterRedskilledProject(paths, { project_label: "acme/widgets" }, {
+      sessionProject: "acme/widgets",
+    });
+    expect(first.released).toBe(false);
+    expect(daemon.hostState().registrations).toEqual([]);
+  });
+
+  it("registers again after a release, because the record it conflicted with is gone", async () => {
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({ paths });
+    running.push(daemon);
+
+    await registerRedskilledProject(paths, request(), { sessionProject: "acme/widgets" });
+    await deregisterRedskilledProject(paths, { project_label: "acme/widgets" }, { sessionProject: "acme/widgets" });
+    const again = await registerRedskilledProject(paths, request({ target: 9 }), {
+      sessionProject: "acme/widgets",
+    });
+    expect(again.registration.target).toBe(9);
+  });
+
+  it("deregisters into the session's own project and refuses another one", async () => {
+    expect(REDSKILLED_OP_REACH["project-deregister"]).toBe("project-write");
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({ paths });
+    running.push(daemon);
+
+    daemon.registerProject(request({ project_label: "acme/gadgets" }));
+    await expect(
+      deregisterRedskilledProject(paths, { project_label: "acme/gadgets" }, { sessionProject: "acme/widgets" }),
+    ).rejects.toThrow(/acme\/gadgets/);
+    expect(daemon.hostState().registrations).toHaveLength(1);
   });
 });

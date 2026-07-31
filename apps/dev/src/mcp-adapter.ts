@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { Writable } from "node:stream";
-import { decode as decodeToon, encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
+import { decode as decodeToon } from "@reddb-io/toon";
 import {
   armPr,
   castleLanePath,
@@ -68,7 +68,11 @@ import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
 import { matchesSelector } from "./core/session.js";
 import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import * as ghx from "./runtime/gh.js";
-import { spawnSupervisor } from "./runtime/supervisor-spawn.js";
+import { publishedBundleArgv } from "./runtime/supervisor-entry.js";
+import {
+  createRedskilledBirthPort,
+  redskilledRegistrationRefusal,
+} from "./runtime/redskilled-birth.js";
 import {
   publishWorkerLiveness,
   readDaemonWorkerSet,
@@ -115,7 +119,6 @@ import {
   renderClaimComment,
   type ClaimRecord,
 } from "./core/claim.js";
-import { reapOrphanedFleetWorkers } from "./core/fleet-create-reap.js";
 import { parseReqLabels, planCloseCascade, type DependentIssue } from "./core/boot-sweep.js";
 import {
   branchesToReap,
@@ -938,15 +941,34 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
 }
 
 /**
- * Start this project's workers. There is no registry to write and no name to
- * take: the runner, the work scope and the base branch ARE the request, handed
- * straight to the supervisor that will apply them (ADR 0130).
+ * The one string this project hands the daemon as its work query.
+ *
+ * The same JSON the launch argv already carried, so the registration and the
+ * argv state the selector once rather than twice — two encodings of one query is
+ * how a registered project and the Worker born for it start drifting. An absent
+ * selector encodes as the empty object: "all this project's ready work" is a
+ * query, and a registration that named no work at all would be refused.
  */
-async function projectStart(
-  root: string,
-  rawInput: ProjectStartInput,
-  concedeClaim: (issue: number, worker: { id: string; runner: string }) => Promise<void>,
-) {
+function encodeRegistrationSelector(selector: ProjectStartInput["selector"]): string {
+  return JSON.stringify(selector ?? {});
+}
+
+/**
+ * Start work on this project — by REGISTERING it, not by launching it.
+ *
+ * ADR 0130 Amendment 4's two-player model, from the operator's side: **the MCP
+ * registers, the daemon drives.** The project's presence on the machine is the
+ * record the daemon holds — a repository identity, an opaque selector, an opaque
+ * argv and a target width — and beginning work creates no process of the
+ * project's own. The runner, the work scope and the base branch are still the
+ * whole request; what changed is who is handed them.
+ *
+ * **A daemon that does not answer refuses the start** (ADR 0130 rule 6). Falling
+ * back to spawning a supervisor here would put a demand producer on the machine
+ * that no host admitted, no host counts and no host can stop — precisely the
+ * shape the registration exists to end.
+ */
+async function projectStart(root: string, rawInput: ProjectStartInput) {
   const input: ProjectStartInput = {
     ...rawInput,
     ...(rawInput.selector
@@ -961,104 +983,73 @@ async function projectStart(
     );
   }
 
-  const priorFleetState = await readFleetState(paths.fleetStatePath).catch(
-    () => null,
-  );
-  let supervisorLogStart: number | undefined;
+  const selector = encodeRegistrationSelector(input.selector);
+  // What runs when a Worker is born for this project — resolved from the
+  // PUBLISHED bundle, exactly as a supervisor launch resolves it (#2808), so a
+  // registration made from a stale plugin cache never commits the host to an
+  // older Worker than the one this project publishes.
+  const argv = [
+    ...publishedBundleArgv(),
+    "run",
+    "--once",
+    "--runner",
+    input.runner,
+    ...(input.selector ? ["--selector", JSON.stringify(input.selector)] : []),
+  ];
+
+  const port = createRedskilledBirthPort({ root });
+  let registered;
   try {
-    supervisorLogStart = (await stat(paths.supervisorLogPath)).size;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      supervisorLogStart = 0;
-    }
-  }
-  type ErrnoError = Error & { code?: string; syscall?: string };
-  let spawnErr: ErrnoError | undefined;
-  let pid: number | null;
-  try {
-    pid = await spawnSupervisor({
-      root,
-      target: input.target,
-      runner: input.runner,
-      ...(input.base !== undefined ? { base: input.base } : {}),
-      passthrough: input.selector
-        ? ["--selector", JSON.stringify(input.selector)]
-        : [],
-      adoptSlotPids: priorFleetState?.slotPids ?? [],
-    });
+    await port.reach();
+    registered = await port.register({ selector, argv, target: input.target });
   } catch (err) {
-    spawnErr = err instanceof Error ? (err as ErrnoError) : new Error(String(err));
-    pid = null;
+    throw new Error(redskilledRegistrationRefusal(port.socketPath, err));
   }
-  if (pid === null) {
-    // Reap any workers the fast-dying supervisor dispatched before it could write
-    // its pid file. Best-effort: swallow all errors so the reap never shadows the
-    // real spawn error.
-    await reapOrphanedFleetWorkers(
-      paths.fleetStatePath,
-      paths.tmpDir,
-      concedeClaim,
-    ).catch(() => undefined);
-    let tail = "";
-    if (supervisorLogStart !== undefined && !spawnErr) {
-      try {
-        const bytes = await readFile(paths.supervisorLogPath);
-        const launchBytes =
-          bytes.length < supervisorLogStart
-            ? bytes
-            : bytes.subarray(supervisorLogStart);
-        tail = launchBytes
-          .toString("utf8")
-          .split(/\r?\n/)
-          .slice(-20)
-          .join("\n");
-      } catch {
-        // The explicit no-output marker below still distinguishes an empty boot
-        // from a caller-visible but unexplained failure.
-      }
-    }
-    // Best-effort diagnostic artifact: always leave a spawn-failure.toon when
-    // spawn itself throws so the caller has a pinned artifact to inspect even
-    // when no supervisor log was written.
-    if (spawnErr) {
-      try {
-        await mkdir(paths.supervisorRuntimeDir, { recursive: true });
-        const doc: ToonValue = {
-          kind: "spawn-failed",
-          runner: input.runner,
-          error: spawnErr.message,
-          ...(spawnErr.code ? { code: spawnErr.code } : {}),
-          ...(spawnErr.syscall ? { syscall: spawnErr.syscall } : {}),
-        };
-        await writeFile(
-          join(paths.supervisorRuntimeDir, "spawn-failure.toon"),
-          encodeToon(doc),
-          "utf8",
-        );
-      } catch {
-        // Diagnostic write must not shadow the real spawn error.
-      }
-    }
-    if (spawnErr) {
-      throw new Error(
-        `this project's workers failed to start: spawn failed: ${spawnErr.message}; ` +
-          `diagnostic: .red/tmp/supervisors/${PROJECT_SUPERVISOR_LANE}/spawn-failure.toon`,
-      );
-    }
-    const evidence = tail || "(no supervisor log output was captured)";
-    throw new Error(
-      `this project's workers failed to start: supervisor pid file did not appear; ` +
-        `log: .red/tmp/supervisors/${PROJECT_SUPERVISOR_LANE}/supervisor.log.toonl\n${evidence}`,
-    );
-  }
+
   return {
-    status: "launched",
-    pid,
-    target: input.target,
+    status: "registered",
+    project: registered.project_label,
+    target: registered.target,
     runner: input.runner,
-    ...(input.selector ? { selector: input.selector } : {}),
+    selector: registered.selector,
+    argv: [...registered.argv],
+    socket: port.socketPath,
+    renew_by: registered.renew_by,
+    ...(input.selector ? { work_selector: input.selector } : {}),
     ...(input.base !== undefined ? { base: input.base } : {}),
+    // Stated, never swallowed: the frozen contract carries no environment, and a
+    // trunk override travels to a Worker in one. Naming it here keeps a dropped
+    // override visible to the operator who asked for it.
+    ...(input.base !== undefined
+      ? {
+          warnings: [
+            `the base branch ${JSON.stringify(input.base)} does not travel in a registration yet; ` +
+              `a Worker born from it will use this project's configured trunk`,
+          ],
+        }
+      : {}),
   };
+}
+
+/**
+ * Give this project's registration back — the other half of stopping work.
+ *
+ * A stop that could not reach the daemon reports it and does NOT raise, unlike a
+ * start: refusing to stop would leave an operator holding a project they cannot
+ * put down, and the registration lapses on its own renewal deadline anyway. What
+ * is never allowed is silence — the outcome always rides on the answer.
+ */
+async function releaseProjectRegistration(root: string) {
+  const port = createRedskilledBirthPort({ root });
+  try {
+    return { deregistered: await port.deregister(), project: port.projectLabel };
+  } catch (err) {
+    return {
+      deregistered: false,
+      project: port.projectLabel,
+      warnings: [redskilledRegistrationRefusal(port.socketPath, err)],
+    };
+  }
 }
 
 /**
@@ -1613,21 +1604,7 @@ export function createCastleMcpDependencies(
 ): CastleMcpDependencies {
   const baseDeps: CastleMcpDependencies = {
     projectStatus: () => projectStatus(root),
-    projectStart: async (input) => {
-      const concedeClaim = async (issue: number, worker: { id: string; runner: string }) => {
-        try {
-          const context = await resolveRepoContext(root);
-          await ghx.postClaimComment(
-            { cwd: root, repo: context.repo },
-            issue,
-            renderClaimComment({ worker: worker.id, runner: worker.runner }, "concede", "released"),
-          );
-        } catch {
-          // best-effort — never shadow the real spawn error
-        }
-      };
-      return projectStart(root, input, concedeClaim);
-    },
+    projectStart: (input) => projectStart(root, input),
     projectResize: (input) => projectResize(root, input),
     projectStop: async (input) => {
       const silent = new Writable({
@@ -1635,9 +1612,10 @@ export function createCastleMcpDependencies(
           callback();
         },
       });
-      return stopFleet(root, silent, {
+      const stopped = await stopFleet(root, silent, {
         ...(input.force ? { force: true } : {}),
       });
+      return { ...stopped, ...(await releaseProjectRegistration(root)) };
     },
     logs: (input) => laneLogs(root, input),
     workerVitals: async (input) => {

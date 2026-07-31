@@ -12,31 +12,36 @@
 // ordered contract. Every step names itself on failure, so a red canary reports
 // WHICH step went inert instead of "the lane did nothing".
 //
-// The lane grew a SECOND process under ADR 0130 (#2794): a Worker's process
-// liveness now resolves over a unix socket to the `redskilled` daemon, so the
-// MCP server answering is no longer evidence that the lane behind it answers.
-// `daemon_reach` is that boundary's own step — a reachable tool over an
-// unreachable daemon is exactly the shape #2677 taught us goes unnoticed.
+// **What the lane is changed under ADR 0130 Amendment 3 (#2902): the MCP
+// registers, the daemon drives.** Starting work no longer launches a process of
+// the project's own — it hands the host a repository identity, an opaque
+// selector, an opaque argv and a target, and the host owns every birth from
+// there. So the canary's load-bearing assertion INVERTED. It once refused to
+// accept a returned supervisor pid as evidence of drainage; it now refuses to
+// accept a lane that produced any process of its own at all, and reads the
+// registration the daemon handed back as the lane's only proof of life.
+//
+// The socket is still the boundary that decides the walk — a start that cannot
+// reach the daemon must REFUSE rather than fall back to spawning (ADR 0130 rule
+// 6), and `project_start` going inert while naming that socket is what a dead
+// host looks like from here.
 
 import { encode as encodeToon } from "@reddb-io/toon";
-import { isDaemonSilence, isDaemonUncovered } from "../runtime/liveness-anchor.js";
 
 /** The ordered lane the canary walks. A step name IS the failure vocabulary. */
 export type McpLaneCanaryStep =
   | "connect"
   | "project_start"
-  | "supervisor_live"
-  | "worker_spawn"
-  | "daemon_reach"
+  | "registration_held"
+  | "no_project_process"
   | "project_status"
   | "project_stop";
 
 export const MCP_LANE_CANARY_STEPS: readonly McpLaneCanaryStep[] = [
   "connect",
   "project_start",
-  "supervisor_live",
-  "worker_spawn",
-  "daemon_reach",
+  "registration_held",
+  "no_project_process",
   "project_status",
   "project_stop",
 ];
@@ -46,11 +51,10 @@ export const MCP_LANE_CANARY_REQUIRED_TOOLS: readonly string[] = [
   "project_start",
   "project_status",
   "project_stop",
-  "worker_vitals",
 ];
 
-/** One worker directory as observed on disk — the anchor `project_start`'s
- * returned pid can never substitute for. */
+/** One worker directory as observed on disk — the anchor no returned payload can
+ * substitute for, in either direction. */
 export interface CanaryWorker {
   /** Worker id (the `.red/tmp/workers/<id>` directory name). */
   readonly worker: string;
@@ -62,6 +66,19 @@ export interface CanaryWorker {
   readonly alive: boolean;
 }
 
+/** The registration the daemon handed back, as the canary reads it. */
+export interface CanaryRegistration {
+  /** The daemon's opaque label for this project. */
+  readonly project: string;
+  readonly target: number;
+  /** The project's work query, verbatim as the daemon holds it. */
+  readonly selector: string;
+  /** What runs when a Worker is born for this project. */
+  readonly argv: readonly string[];
+  /** When the registration lapses unless the session renews it. */
+  readonly renewBy: string;
+}
+
 export interface McpLaneCanaryDeps {
   /** Real `tools/list` over the transport. */
   listTools(): Promise<readonly string[]>;
@@ -69,7 +86,7 @@ export interface McpLaneCanaryDeps {
   callTool(name: string, args: Record<string, unknown>): Promise<unknown>;
   /** Fresh on-disk scan of the worker lane. */
   observeWorkers(): Promise<readonly CanaryWorker[]>;
-  /** Liveness for a pid the canary holds directly (the supervisor's). */
+  /** Liveness for a pid the canary holds directly. */
   isLive(pid: number): boolean;
   sleep(ms: number): Promise<void>;
   now(): number;
@@ -79,17 +96,16 @@ export interface McpLaneCanaryOptions {
   readonly runner: string;
   /** Slots to ask for. One is enough to prove the lane is not inert. */
   readonly target?: number;
-  /** How long a healthy lane may take to produce a live worker. */
-  readonly workerDeadlineMs?: number;
-  /** How long `project_stop` may take to retire the supervisor and its workers. */
+  /** How long the canary watches for a process the project must never have
+   * started. Absence is only worth asserting once the lane has had time to
+   * betray it. */
+  readonly quietDeadlineMs?: number;
+  /** How long `project_stop` may take to give the registration back. */
   readonly teardownDeadlineMs?: number;
-  /** How long the lane's reader may take to publish the spawned Worker with the
-   * daemon's verdict on it. */
-  readonly daemonDeadlineMs?: number;
   /** The unix socket this walk expects `redskilled` to answer on. Named in every
-   * `daemon_reach` failure, because "restart the daemon" and "fix the lane that
-   * stopped asking it" are different repairs and the path is what tells them
-   * apart. Absent reads as unresolved rather than as no boundary. */
+   * start failure, because "restart the daemon" and "fix the lane that stopped
+   * asking it" are different repairs and the path is what tells them apart.
+   * Absent reads as unresolved rather than as no boundary. */
   readonly socketPath?: string;
   readonly pollMs?: number;
 }
@@ -109,16 +125,17 @@ export interface McpLaneCanaryResult {
   readonly inertStep?: McpLaneCanaryStep;
   /** One line naming the inert step, or the green lane. */
   readonly summary: string;
-  readonly supervisorPid?: number;
-  /** Live workers the canary observed at its high-water mark. */
+  /** The registration the lane produced, once `project_start` answered. */
+  readonly registration?: CanaryRegistration;
+  /** Live workers the canary observed at its high-water mark. On a green walk
+   * this is EMPTY: the project births nothing of its own. */
   readonly workers: readonly CanaryWorker[];
 }
 
 const DEFAULTS = {
   target: 1,
-  workerDeadlineMs: 45_000,
+  quietDeadlineMs: 3_000,
   teardownDeadlineMs: 20_000,
-  daemonDeadlineMs: 20_000,
   pollMs: 250,
 } as const;
 
@@ -158,10 +175,8 @@ function readBool(value: unknown): boolean {
   return value === true || value === "true" || value === 1 || value === "1";
 }
 
-/** The worker id one `worker_vitals` row is about, or null when it names none. */
-function vitalsWorkerId(row: Record<string, unknown>): string | null {
-  const id = asRecord(row.worker)?.id;
-  return typeof id === "string" && id !== "" ? id : null;
+function readText(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function describe(worker: CanaryWorker): string {
@@ -175,24 +190,24 @@ function errorText(error: unknown): string {
 /**
  * Walk the MCP lane end to end and report the first step that went inert.
  *
- * The load-bearing asymmetry lives in `worker_spawn`: a returned supervisor pid
- * is NOT evidence of drainage. The lane is only alive once a worker directory
- * with a live pid exists on disk, which is exactly what #2677's dead slots
- * never produced.
+ * The load-bearing asymmetry lives in `no_project_process`: a registration the
+ * daemon acknowledged is NOT permission to have started something as well. The
+ * lane is only correct once the project's whole presence on the machine is that
+ * record — which is exactly what a fallback launch, quietly restored, would
+ * stop being true while every payload still read `registered`.
  *
  * Teardown is unconditional after a successful `project_start` — a canary that
- * leaves a live supervisor behind is worse than no canary.
+ * leaves a registration behind commits the host to work nobody is watching.
  */
 export async function runMcpLaneCanary(
   deps: McpLaneCanaryDeps,
   options: McpLaneCanaryOptions,
 ): Promise<McpLaneCanaryResult> {
   const target = options.target ?? DEFAULTS.target;
-  const workerDeadlineMs = options.workerDeadlineMs ?? DEFAULTS.workerDeadlineMs;
+  const quietDeadlineMs = options.quietDeadlineMs ?? DEFAULTS.quietDeadlineMs;
   const teardownDeadlineMs = options.teardownDeadlineMs ?? DEFAULTS.teardownDeadlineMs;
-  const daemonDeadlineMs = options.daemonDeadlineMs ?? DEFAULTS.daemonDeadlineMs;
   const pollMs = options.pollMs ?? DEFAULTS.pollMs;
-  // One phrase, so both boundary failures route an operator to the same place.
+  // One phrase, so every boundary failure routes an operator to the same place.
   const socket = options.socketPath
     ? `the redskilled session socket ${options.socketPath}`
     : "the redskilled session socket (path unresolved)";
@@ -201,7 +216,7 @@ export async function runMcpLaneCanary(
   const record = (step: McpLaneCanaryStep, verdict: McpLaneCanaryVerdict, detail: string): void => {
     steps.push({ step, verdict, detail });
   };
-  let supervisorPid: number | undefined;
+  let registration: CanaryRegistration | undefined;
   let workers: readonly CanaryWorker[] = [];
   let inertStep: McpLaneCanaryStep | undefined;
 
@@ -242,86 +257,96 @@ export async function runMcpLaneCanary(
     }
     record("connect", "ok", `tools/list served ${tools.length} tools including ${MCP_LANE_CANARY_REQUIRED_TOOLS.join(", ")}`);
 
-    // ---- 2. project_start: the canonical interface accepts the launch ----
+    // ---- 2. project_start: the canonical interface accepts the start ----
+    // A start that could not reach the host must arrive here as a THROWN tool
+    // error, not as a payload: the refusal is the contract (ADR 0130 rule 6),
+    // and it is the socket, not the tool, an operator has to go and repair.
     const created = await call("project_start", "project_start", {
       runner: options.runner,
       target,
     });
     const status = created.status;
-    if (status !== "launched" && status !== "resized") {
-      inert("project_start", `project_start returned status=${JSON.stringify(status)} instead of launched`);
+    if (status !== "registered") {
+      inert(
+        "project_start",
+        `project_start returned status=${JSON.stringify(status)} instead of registered — ` +
+          `the lane still launches a process of the project's own instead of registering it with the daemon on ${socket}`,
+      );
     }
-    const pid = readPid(created.pid);
-    if (pid === null) {
-      inert("project_start", `project_start returned no supervisor pid (payload: ${JSON.stringify(created)})`);
-    }
-    supervisorPid = pid;
-    record("project_start", "ok", `project_start launched this project's workers with supervisor pid ${pid}`);
+    record("project_start", "ok", `project_start registered this project with the daemon on ${socket}`);
 
     try {
-      // ---- 3. supervisor_live: the returned pid is a real process ----
-      if (!deps.isLive(pid)) {
-        inert("supervisor_live", `project_start returned supervisor pid ${pid} but no such process is alive — the supervisor died inside its own launch probe`);
-      }
-      record("supervisor_live", "ok", `supervisor pid ${pid} is alive`);
+      // ---- 3. registration_held: the answer is a real registration ----
+      // Only the daemon can mint a project label and a renewal deadline, so a
+      // payload carrying them is the walk's proof that the start CROSSED the
+      // socket rather than being answered by the MCP server on its own.
+      registration = readRegistration(created);
+      record(
+        "registration_held",
+        "ok",
+        `the daemon on ${socket} holds project ${registration.project} at target ${registration.target} until ${registration.renewBy}, ` +
+          `for selector ${registration.selector} and argv ${registration.argv.join(" ")}`,
+      );
 
-      // ---- 4. worker_spawn: a worker directory AND a live worker pid ----
-      // The #2677 assertion. A supervisor pid proves the launch; only this
-      // proves the slot entry spawned something that boots.
-      const deadline = deps.now() + workerDeadlineMs;
-      let seen: readonly CanaryWorker[] = [];
-      let live: readonly CanaryWorker[] = [];
-      for (;;) {
-        seen = await deps.observeWorkers();
-        live = seen.filter((worker) => worker.alive);
-        if (live.length > 0) break;
-        if (deps.now() >= deadline) break;
-        if (!deps.isLive(pid)) {
-          inert("worker_spawn", `supervisor pid ${pid} died before any worker appeared — the lane went inert during its first ticks`);
-        }
-        await deps.sleep(pollMs);
-      }
-      if (live.length === 0) {
-        const observed = seen.length === 0
-          ? "no worker directory was ever written"
-          : `only dead worker directories exist: ${seen.map(describe).join("; ")}`;
+      // ---- 4. no_project_process: the start birthed nothing of its own ----
+      // The inversion of the old #2677 assertion. Then, a returned pid was not
+      // evidence of a worker; now, ANY process this project started is evidence
+      // of a fallback launch the host never admitted, never counts and cannot
+      // stop — including one dressed in a `registered` payload.
+      const pid = readPid(created.pid);
+      if (pid !== null) {
         inert(
-          "worker_spawn",
-          `project_start returned supervisor pid ${pid} but ${observed} within ${workerDeadlineMs}ms — the slot entry spawned nothing that boots (the #2677 shape: a bundle whose slot entry cannot route \`run\`)`,
+          "no_project_process",
+          `project_start answered registered but handed back pid ${pid}${deps.isLive(pid) ? " and that process is alive" : ""} — ` +
+            `the lane launched a process of the project's own behind the registration`,
         );
       }
-      workers = live;
-      record("worker_spawn", "ok", `${live.length} live worker(s): ${live.map(describe).join("; ")}`);
+      const deadline = deps.now() + quietDeadlineMs;
+      for (;;) {
+        const seen = await deps.observeWorkers();
+        const live = seen.filter((worker) => worker.alive);
+        if (live.length > 0) {
+          workers = live;
+          inert(
+            "no_project_process",
+            `project_start registered this project but ${live.length} live worker(s) appeared under it: ${live.map(describe).join("; ")} — ` +
+              `a Worker born outside the daemon is an unbudgeted birth no admission verdict ever judged`,
+          );
+        }
+        if (deps.now() >= deadline) break;
+        await deps.sleep(pollMs);
+      }
+      record(
+        "no_project_process",
+        "ok",
+        `no process of this project's own appeared within ${quietDeadlineMs}ms — the registration is the project's whole presence on the machine`,
+      );
 
-      // ---- 5. daemon_reach: the lane crosses the socket to the daemon ----
-      // ADR 0130 put a second process behind this tool: `worker_vitals` answers
-      // in the MCP server, but the verdict on a Worker's PROCESS is fetched over
-      // a unix socket from `redskilled`. A dead socket does not make the tool
-      // fail — it makes it answer `unknown`, which is why this needs its own
-      // step and its own sentence in the report.
-      record("daemon_reach", "ok", await reachDaemon(live));
-
-      // ---- 6. project_status: the canonical reader observes that worker ----
+      // ---- 5. project_status: the canonical reader agrees nothing runs ----
       const observedStatus = await call("project_status", "project_status", {});
       const supervisor = asRecord(observedStatus.supervisor);
-      if (!supervisor || !readBool(supervisor.alive)) {
-        inert("project_status", `project_status reports the supervisor as not alive while pid ${pid} is running — the lane's reader and writer disagree`);
-      }
-      const reportedPid = readPid(supervisor.pid);
-      if (reportedPid !== pid) {
-        inert("project_status", `project_status reports supervisor pid ${reportedPid ?? "none"}, not the ${pid} project_start returned`);
+      const reportedPid = supervisor ? readPid(supervisor.pid) : null;
+      if (supervisor && readBool(supervisor.alive)) {
+        inert(
+          "project_status",
+          `project_status reports supervisor pid ${reportedPid ?? "none"} alive after a registration — ` +
+            `the lane's reader can still see a per-project process the start was supposed to have stopped creating`,
+        );
       }
       const busy = readCount(asRecord(observedStatus.slots)?.busy);
-      if (busy < 1) {
-        inert("project_status", `project_status reports slots.busy=${busy} while ${live.length} live worker(s) exist on disk — the lane cannot see its own workers`);
+      if (busy > 0) {
+        inert(
+          "project_status",
+          `project_status reports slots.busy=${busy} while this project started nothing — the lane's reader and writer disagree`,
+        );
       }
-      record("project_status", "ok", `project_status observes supervisor ${pid} with slots.busy=${busy}`);
+      record("project_status", "ok", "project_status answers with no per-project supervisor and no busy slot");
     } finally {
-      // ---- 7. project_stop: teardown, always attempted once workers exist ----
+      // ---- 6. project_stop: give the registration back, always ----
       // Nothing thrown here may mask the walk's own verdict, so the teardown
       // reports its failure as a step rather than as an exception.
       try {
-        steps.push(await stopFleet());
+        steps.push(await stopProject());
       } catch (error) {
         steps.push({
           step: "project_stop",
@@ -364,129 +389,80 @@ export async function runMcpLaneCanary(
     steps,
     ...(resolvedInert ? { inertStep: resolvedInert } : {}),
     summary: ok
-      ? "MCP lane canary green: project_start → live worker → a daemon verdict over the socket → project_status → project_stop all answered"
+      ? "MCP lane canary green: project_start → a registration the daemon holds → no process of the project's own → project_status → project_stop all answered"
       : `MCP lane canary FAILED — the ${resolvedInert} step went inert: ${
         steps.find((entry) => entry.step === resolvedInert)?.detail ?? "no detail"
       }`,
-    ...(supervisorPid !== undefined ? { supervisorPid } : {}),
+    ...(registration ? { registration } : {}),
     workers,
   };
 
   /**
-   * Prove the socket CARRIED THIS BIRTH — not merely that something answered.
+   * Read the registration out of the start payload.
    *
-   * Before the ADR 0130 cutover (#2851) a Worker was spawned by the project, so
-   * the daemon's `unknown` was the honest answer about a Worker it never
-   * birthed, and only silence was a defect. **That tolerance is now the false
-   * green.** Every Worker the lane produces is born by the daemon, so a live
-   * worker on disk that the daemon cannot vouch for means the lane stopped
-   * asking the host and started spawning behind its back — which is precisely
-   * the shape this canary exists to catch, one process further out.
-   *
-   * The verdict is read for a worker the canary watched appear on disk, never
-   * for whatever the reader happens to list: a payload about no work is the
-   * other false green. A stale daemon read is retried until the deadline, since
-   * a sampler that has not caught up yet is a delay, not a defect.
+   * Every field is required and none is repaired: a start that answered without
+   * the argv the host will run, or without the selector it was given, has not
+   * registered this project — it has agreed to something else. The selector and
+   * the argv are read VERBATIM (ADR 0130 rule 3): the canary asserts they came
+   * back, never what they should say.
    */
-  async function reachDaemon(live: readonly CanaryWorker[]): Promise<string> {
-    const wanted = new Set(live.map((worker) => worker.worker));
-    const deadline = deps.now() + daemonDeadlineMs;
-    let lastRefusal = `worker_vitals never published a daemon verdict for ${[...wanted].join(", ")}`;
-    for (;;) {
-      const payload = await invoke("daemon_reach", "worker_vitals", { live_only: false });
-      const rows = (Array.isArray(payload) ? payload : [])
-        .map(asRecord)
-        .filter((row): row is Record<string, unknown> => row !== null);
-      const ids = rows.map(vitalsWorkerId);
-      const at = ids.findIndex((id) => id !== null && wanted.has(id));
-      if (at !== -1) {
-        const verdict = daemonVerdict(rows[at]!, ids[at]!);
-        if (verdict.confirmed) return verdict.detail;
-        lastRefusal = verdict.detail;
-      } else if (rows.length === 0) {
-        lastRefusal = `worker_vitals listed no worker at all, so nothing was published for ${[...wanted].join(", ")}`;
-      } else {
-        lastRefusal = `worker_vitals listed only ${ids.map((id) => id ?? "<unnamed>").join(", ")}, never the live worker(s) ${[...wanted].join(", ")} — the lane's own reader cannot see the worker the lane just spawned`;
-      }
-      if (deps.now() >= deadline) {
-        inert("daemon_reach", `${lastRefusal} (within ${daemonDeadlineMs}ms, against ${socket})`);
-      }
-      await deps.sleep(pollMs);
-    }
-  }
-
-  /**
-   * Read one vitals row's daemon block.
-   *
-   * `confirmed: false` is a RETRYABLE refusal carrying its own sentence — a
-   * daemon whose sampler has not caught up says `unknown` for a moment, and
-   * failing on the first read would make a slow host look like a broken one.
-   * The structural faults below are not retryable and fail on the spot: a
-   * missing block or an undatable answer cannot become true by waiting.
-   */
-  function daemonVerdict(
-    row: Record<string, unknown>,
-    workerId: string,
-  ): { confirmed: boolean; detail: string } {
-    const block = asRecord(row.daemon_liveness);
-    if (!block) {
+  function readRegistration(payload: Record<string, unknown>): CanaryRegistration {
+    const project = readText(payload.project);
+    if (project === "") {
       inert(
-        "daemon_reach",
-        `worker_vitals published ${workerId} with no daemon_liveness block — the shipped lane no longer crosses ${socket} at all, so nothing on it measures a Worker's process`,
+        "registration_held",
+        `project_start answered registered but named no project (payload: ${JSON.stringify(payload)}) — ` +
+          `only the daemon mints that label, so nothing here proves the start reached ${socket}`,
       );
     }
-    const reason = asRecord(block.staleness)?.reason;
-    if (typeof reason !== "string" || reason === "") {
+    const renewBy = readText(payload.renew_by);
+    if (renewBy === "") {
       inert(
-        "daemon_reach",
-        `worker_vitals published ${workerId} with a daemon_liveness block carrying no staleness reason (${JSON.stringify(block)}) — an answer that cannot say how current it is cannot be the daemon's`,
+        "registration_held",
+        `the registration for ${project} carries no renewal deadline — a record that never lapses outlives the session that asked for it`,
       );
     }
-    if (isDaemonSilence(reason)) {
+    const selector = readText(payload.selector);
+    if (selector === "") {
       inert(
-        "daemon_reach",
-        `worker_vitals answered over MCP for ${workerId} but the redskilled daemon behind it did not: ${reason} — the tool is reachable and the socket is not, which is what an inert lane looks like once it spans two processes; nothing answered on ${socket}`,
+        "registration_held",
+        `the registration for ${project} carries no selector — a project registered against no work at all is a target the host can never fill`,
       );
     }
-    // THE CUTOVER'S ASSERTION (#2851). A Worker the lane can see running and the
-    // host cannot vouch for is a birth that never crossed the socket. It is the
-    // only `unknown` that is a defect rather than a delay, and it is not
-    // retryable: waiting cannot make the host remember a Worker it never
-    // birthed. A `dead` verdict is not this shape — the daemon answered and
-    // nothing claims the Worker is still running.
-    if (isDaemonUncovered(reason)) {
+    const argv = Array.isArray(payload.argv) ? payload.argv.map(readText) : [];
+    if (argv.length === 0 || argv.some((entry) => entry === "")) {
       inert(
-        "daemon_reach",
-        `the redskilled daemon on ${socket} answered about ${workerId} and holds no record of it while the lane still sees it running: ${reason} — ` +
-          `since ADR 0130 every Worker is BORN by that daemon, so this is a Worker the lane spawned behind the host's back: an unbudgeted birth no admission verdict ever judged`,
+        "registration_held",
+        `the registration for ${project} carries no argv (payload: ${JSON.stringify(payload.argv)}) — ` +
+          `the host would hold a target it has no way to fill`,
       );
     }
-    const verdict = typeof block.verdict === "string" ? block.verdict : "none";
-    const anchor = typeof block.anchor === "string" ? block.anchor : "none";
-    if (verdict === "unknown") {
-      // The daemon's own answer is not current yet. A sampler catching up is a
-      // delay, so this refusal is retried until the deadline.
-      return {
-        confirmed: false,
-        detail: `the daemon on ${socket} has not published a current verdict for ${workerId} yet: ${reason}`,
-      };
+    if (!argv.includes("run")) {
+      inert(
+        "registration_held",
+        `the registration for ${project} carries an argv that never routes \`run\`: ${argv.join(" ")} — ` +
+          `the #2677 shape, moved one process out: the host would birth Workers that boot into nothing`,
+      );
     }
     return {
-      confirmed: true,
-      detail: `worker_vitals crossed the socket for ${workerId}: the daemon answered about the Worker it birthed (verdict=${verdict}, anchor=${anchor}, ${reason})`,
+      project,
+      target: readCount(payload.target),
+      selector,
+      argv,
+      renewBy,
     };
   }
 
-  /** Stop the workers and CONFIRM the supervisor and its workers are gone. */
-  async function stopFleet(): Promise<McpLaneCanaryStepResult> {
-    if (supervisorPid === undefined) {
+  /** Give the registration back, and CONFIRM the daemon released it. */
+  async function stopProject(): Promise<McpLaneCanaryStepResult> {
+    if (registration === undefined) {
       return {
         step: "project_stop",
         verdict: "skipped",
-        detail: "nothing was started, so there is nothing to stop",
+        detail: "nothing was registered, so there is nothing to give back",
       };
     }
-    const pid = supervisorPid;
+    const project = registration.project;
     let stopped: Record<string, unknown>;
     try {
       stopped = await call("project_stop", "project_stop", { force: true });
@@ -497,30 +473,30 @@ export async function runMcpLaneCanary(
         detail: error instanceof InertStepError ? error.message : errorText(error),
       };
     }
-    if (stopped.status !== "stopped" && stopped.status !== "none") {
+    if (!readBool(stopped.deregistered)) {
       return {
         step: "project_stop",
         verdict: "inert",
-        detail: `project_stop returned status=${JSON.stringify(stopped.status)} for supervisor pid ${pid} — the canonical stop no-opped`,
+        detail:
+          `project_stop answered ${JSON.stringify(stopped.status)} without deregistering ${project} on ${socket} — ` +
+          `a project that cannot be put down keeps its target claimed against the host forever`,
       };
     }
     const deadline = deps.now() + teardownDeadlineMs;
     for (;;) {
       const remaining = (await deps.observeWorkers()).filter((worker) => worker.alive);
-      if (!deps.isLive(pid) && remaining.length === 0) {
+      if (remaining.length === 0) {
         return {
           step: "project_stop",
           verdict: "ok",
-          detail: `project_stop retired supervisor ${pid} and every worker it spawned`,
+          detail: `project_stop gave back the registration for ${project} and left nothing running`,
         };
       }
       if (deps.now() >= deadline) {
-        const survivors = deps.isLive(pid) ? [`supervisor ${pid}`] : [];
-        survivors.push(...remaining.map(describe));
         return {
           step: "project_stop",
           verdict: "inert",
-          detail: `project_stop returned ${String(stopped.status)} but ${survivors.join(", ")} survived ${teardownDeadlineMs}ms`,
+          detail: `project_stop deregistered ${project} but ${remaining.map(describe).join(", ")} survived ${teardownDeadlineMs}ms`,
         };
       }
       await deps.sleep(pollMs);
@@ -535,7 +511,17 @@ export function renderMcpLaneCanaryToon(result: McpLaneCanaryResult): string {
     canary: "mcp-lane",
     ok: result.ok,
     ...(result.inertStep ? { inert_step: result.inertStep } : {}),
-    ...(result.supervisorPid !== undefined ? { supervisor_pid: result.supervisorPid } : {}),
+    ...(result.registration
+      ? {
+        registration: {
+          project: result.registration.project,
+          target: result.registration.target,
+          selector: result.registration.selector,
+          argv: [...result.registration.argv],
+          renew_by: result.registration.renewBy,
+        },
+      }
+      : {}),
     steps: result.steps.map((step) => ({
       step: step.step,
       verdict: step.verdict,

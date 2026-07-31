@@ -15,7 +15,7 @@ and mutation modes.
 
 | Verb | Tool | Notes |
 | --- | --- | --- |
-| launch | `project_start` | `{runner, target, selector?, config?, base?}` — hands the work policy to the supervisor it spawns. |
+| launch | `project_start` | `{runner, target, selector?, config?, base?}` — hands the work policy to the host daemon as a registration; the project spawns nothing. |
 | resize / switch | `project_resize` | Same fields, all optional; sends the live resize directive instead of a second supervisor. |
 | ground truth | `project_status` | Supervisor pid, slots, churn, live workers for this project. |
 | shutdown | `project_stop` | Gracefully stops this project's supervisor; `force: true` hard-stops only workers attributed to its lane. |

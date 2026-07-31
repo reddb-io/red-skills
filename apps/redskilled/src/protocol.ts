@@ -32,11 +32,13 @@
  * three ops, so the reach rule is decided once for all of them.
  *
  * `project-register` widens the contract by a query string and no further (ADR
- * 0130 Amendment 3). A project contributes a registration rather than a process,
+ * 0130 Amendment 4). A project contributes a registration rather than a process,
  * and the two strings it carries — a selector and an argv — are opaque in exactly
  * the sense a Worker's last logged line already is: stored, echoed, never read.
  * The daemon still does not know what an Issue, a label, a Spec, a gate or a
  * Landing is, which is what keeps this a frozen surface rather than a growing one.
+ * `project-deregister` widens it by nothing at all: it names a project the daemon
+ * already keys registrations by, and takes the record back out.
  *
  * **Every request may name the project its session belongs to.** That single
  * opaque string is what makes reach asymmetric (ADR 0130 rule 9): a session reads
@@ -115,6 +117,7 @@ export type RedskilledRequest =
   | { id: string; op: "worker-command"; command: RedskilledWorkerCommandRequest }
   | { id: string; op: "worker-heartbeat"; heartbeat: RedskilledWorkerHeartbeatRequest }
   | { id: string; op: "project-register"; registration: RedskilledProjectRegistrationRequest; session_project?: string }
+  | { id: string; op: "project-deregister"; project_label: string; session_project?: string }
   | { id: string; op: "shutdown" };
 
 export type RedskilledResponse =
@@ -234,6 +237,32 @@ export function isRedskilledProjectRegistered(value: unknown): value is Redskill
     typeof registered.detail === "string" &&
     isRedskilledProjectRegistration(registered.registration) &&
     isRedskilledReachVerdict(registered.reach);
+}
+
+/**
+ * The answer to a permitted `project-deregister`.
+ *
+ * `released` is false — not an error — when the daemon held no registration for
+ * that project. Work is stopped by an operator and again by a session ending, and
+ * a client that had to tell "already released" from a real failure would either
+ * retry a no-op forever or swallow a refusal it needed to see.
+ */
+export interface RedskilledProjectDeregistered {
+  readonly version: 1;
+  readonly project_label: string;
+  readonly released: boolean;
+  readonly reach: RedskilledReachVerdict;
+  readonly detail: string;
+}
+
+export function isRedskilledProjectDeregistered(value: unknown): value is RedskilledProjectDeregistered {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const released = value as Record<string, unknown>;
+  return released.version === 1 &&
+    typeof released.project_label === "string" &&
+    typeof released.released === "boolean" &&
+    typeof released.detail === "string" &&
+    isRedskilledReachVerdict(released.reach);
 }
 
 export interface RedskilledClientOptions {
