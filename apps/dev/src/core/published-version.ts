@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   compareSemver,
@@ -15,10 +16,13 @@ import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "./toon-snapshot.j
  * longer contradict the path that halts a boot. The two-source contradiction
  * ADR 0128 §5 forbids for liveness is forbidden here for version.
  *
- * The resolution is deliberately installed-version-independent: the answer must
- * not change with who is asking. Substituting the caller's own installed version
- * as "the published one" is exactly the bug this replaces — it manufactures a
- * confident `version_skew: 0` out of a value that measured nothing.
+ * The resolution is deliberately independent of the CALLER's running bundle: the
+ * answer must not change with who is asking. Substituting the caller's own
+ * version as "the published one" is exactly the bug this replaces — it
+ * manufactures a confident `version_skew: 0` out of a value that measured
+ * nothing. The host's installed plugin is a different thing and does count
+ * (#2924): it is an operator's declared intent, read off disk, identical for
+ * every asker on the host — not the asker's own version reflected back.
  */
 
 /** How long a recorded registry answer stays current before it reads as stale. */
@@ -26,13 +30,15 @@ export const PUBLISHED_VERSION_STALE_AFTER_MS = 30 * 60_000;
 
 /**
  * Where the published-version answer came from. `registry` is a live read;
- * `recorded` replays the last registry read this host made; `bundle-cache` is
- * weaker evidence — a downloaded bundle proves that version was published once,
- * but nothing vouches for it still being the newest.
+ * `recorded` replays the last registry read this host made; `installed-plugin`
+ * is the operator's declared intent — somebody chose to install that version,
+ * which proves publication and local availability but not currency (#2924);
+ * `bundle-cache` is the weakest — a downloaded bundle proves that version was
+ * published once, but nothing vouches for it still being the newest.
  */
-export type PublishedVersionSource = "registry" | "recorded" | "bundle-cache" | "unresolved";
+export type PublishedVersionSource = "registry" | "recorded" | "installed-plugin" | "bundle-cache" | "unresolved";
 
-export type PublishedVersionReason = "fresh" | "aged-out" | "cache-only" | "never-observed";
+export type PublishedVersionReason = "fresh" | "aged-out" | "installed-only" | "cache-only" | "never-observed";
 
 /**
  * The published-version answer WITH its own currency attached (ADR 0128 §6).
@@ -59,6 +65,8 @@ export interface PublishedVersionInputs {
   /** A live registry read, when the caller just performed one. */
   readonly fetched?: string | undefined;
   readonly record?: PublishedVersionRecord | null;
+  /** Newest RedSkills plugin version installed on this host, from the plugin cache. */
+  readonly installed?: string | undefined;
   /** Newest version this host has a bundle for, from the local bundle cache. */
   readonly cached?: string | undefined;
   readonly nowMs?: number;
@@ -84,18 +92,35 @@ export function resolvePublishedVersion(inputs: PublishedVersionInputs): Publish
   }
 
   const recorded = inputs.record && normalizeVersion(inputs.record.version) ? inputs.record : null;
-  if (recorded) {
-    const age = Math.max(0, nowMs - recorded.observedAtMs);
-    const stale = age > staleAfterMs;
+  const recordedAgeMs = recorded ? Math.max(0, nowMs - recorded.observedAtMs) : -1;
+  const recordedStale = recorded ? recordedAgeMs > staleAfterMs : true;
+  const recordedObservation = (): PublishedVersionObservation => ({
+    version: (recorded as PublishedVersionRecord).version,
+    source: "recorded",
+    age_ms: recordedAgeMs,
+    stale_after_ms: staleAfterMs,
+    stale: recordedStale,
+    reason: recordedStale ? "aged-out" : "fresh",
+  });
+  if (recorded && !recordedStale) return recordedObservation();
+
+  // An installed plugin is an operator's decision, a cached bundle only a
+  // byproduct of once having run a version — so intent outranks the byproduct
+  // (#2924). It stays below an aged-out record that already proved a NEWER
+  // publication: adding intent must never walk the answer backwards.
+  const installed = normalizeVersion(inputs.installed);
+  if (installed && !(recorded && compareSemver(recorded.version, installed) > 0)) {
     return {
-      version: recorded.version,
-      source: "recorded",
-      age_ms: age,
+      version: installed,
+      source: "installed-plugin",
+      age_ms: -1,
       stale_after_ms: staleAfterMs,
-      stale,
-      reason: stale ? "aged-out" : "fresh",
+      stale: true,
+      reason: "installed-only",
     };
   }
+
+  if (recorded) return recordedObservation();
 
   const cached = normalizeVersion(inputs.cached);
   if (cached) {
@@ -122,10 +147,44 @@ export function readPublishedBundleVersion(
 ): PublishedVersionObservation {
   return resolvePublishedVersion({
     record: readPublishedVersionRecord(env),
+    installed: newestInstalledPluginVersion(env),
     cached: newestPublishedEvidenceInCache(env),
     nowMs,
     staleAfterMs,
   });
+}
+
+/** The agent homes an operator's RedSkills plugin install lands under. */
+const PLUGIN_CACHE_AGENT_HOMES = [".claude", ".codex"] as const;
+
+/**
+ * Newest RedSkills plugin version installed on this host. A local directory
+ * read: it costs no network call and no registry quota, which is why the answer
+ * was available all along while every surface reported `cache-only` (#2924).
+ */
+export function newestInstalledPluginVersion(
+  env: NodeJS.ProcessEnv = process.env,
+  plugin = "dev",
+): string | undefined {
+  const home = env.HOME || homedir();
+  let best: string | undefined;
+  for (const agentHome of PLUGIN_CACHE_AGENT_HOMES) {
+    let entries;
+    try {
+      entries = readdirSync(join(home, agentHome, "plugins", "cache", "red-skills", plugin), {
+        withFileTypes: true,
+      });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const version = normalizeVersion(entry.name);
+      if (!version) continue;
+      if (best === undefined || compareSemver(version, best) > 0) best = version;
+    }
+  }
+  return best;
 }
 
 /** Read the last registry answer this host recorded. */
@@ -171,6 +230,7 @@ export async function refreshPublishedBundleVersion(
   return resolvePublishedVersion({
     fetched,
     record: readPublishedVersionRecord(env),
+    installed: newestInstalledPluginVersion(env),
     cached: newestPublishedEvidenceInCache(env),
     nowMs,
   });
