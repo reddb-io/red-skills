@@ -56,6 +56,14 @@ import {
   type RedskilledHostEvent,
 } from "./event-lane.js";
 import {
+  DEFAULT_REDSKILLED_DEMAND_MS,
+  emptyDemandTick,
+  planHostDemand,
+  REDSKILLED_DEMAND_BACKOFF_MS,
+  type RedskilledDemandGrant,
+  type RedskilledDemandTick,
+} from "./demand-loop.js";
+import {
   buildRedskilledStopReport,
   type RedskilledDaemonStopped,
   type RedskilledStopReason,
@@ -267,6 +275,17 @@ export interface RedskilledDaemonOptions {
    * would spend more quota than the batching saves.
    */
   readonly queueDiscovery?: RedskilledQueueRegistration;
+  /**
+   * Window between demand ticks; 0 or below leaves the loop unarmed.
+   *
+   * Its own window rather than the queue poller's callback, because the two
+   * answer different questions: the poll asks the tracker how much work exists,
+   * and the tick asks this host what it can afford right now — which changes
+   * every time a Worker dies, with no request involved.
+   */
+  readonly demandMs?: number;
+  /** How long a refusal holds the loop back; the module's window when absent. */
+  readonly demandBackoffMs?: number;
 }
 
 /**
@@ -412,6 +431,17 @@ export interface RedskilledDaemon {
   pollQueueDiscovery(): Promise<RedskilledQueueDiscovery | null>;
   /** The last queue fetch, dated by the poll it came from; `null` before the first. */
   queueDiscovery(): RedskilledQueueDiscovery | null;
+  /**
+   * One tick of the demand loop: decide what every project may ask for, ask, live
+   * with the answer.
+   *
+   * Exposed so the loop can be driven by a test as well as by the timer. It
+   * RESOLVES on a refusal — a smaller grant is what the machine could afford,
+   * which is an outcome carrying the host's own reason and never an error.
+   */
+  driveDemand(): Promise<RedskilledDemandTick>;
+  /** The last demand tick; `null` before the first one ran. */
+  demand(): RedskilledDemandTick | null;
   /** Re-probe every re-attached Worker, retiring the ones the host no longer confirms. */
   sweepReattached(): Promise<readonly RedskilledWorkerView[]>;
   /** The Workers this daemon adopted at start rather than birthing itself. */
@@ -555,6 +585,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const queueRegistration = options.queueDiscovery;
   const queueTransport = queueRegistration?.transport ?? activityRegistration?.transport;
   const queueMs = queueRegistration?.intervalMs ?? DEFAULT_REDSKILLED_QUEUE_MS;
+  const demandMs = options.demandMs ?? DEFAULT_REDSKILLED_DEMAND_MS;
+  const demandBackoffMs = options.demandBackoffMs ?? REDSKILLED_DEMAND_BACKOFF_MS;
   const workers = new Map<string, RedskilledWorkerView>();
   // Re-attached Workers have no child handle to deliver an exit, so their death
   // is discovered by asking the host rather than by being told.
@@ -591,8 +623,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // two cadences produce two instants, and a document that carried one date for
   // both would age the fast half by the slow half's clock.
   let lastQueue: RedskilledQueueDiscovery | null = null;
+  // The loop's own memory: the last tick a reader can ask about, and the instant
+  // the host's refusal stops holding every project back. The backoff is
+  // host-wide because the ceiling that produced it is — a refusal aimed at one
+  // project would let the next one walk into the same wall.
+  let lastDemand: RedskilledDemandTick | null = null;
+  let demandBackoffUntilMs: number | null = null;
+  let demandTicking = false;
   let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
+  let demandTimer: NodeJS.Timeout | undefined;
   let replaceTimer: NodeJS.Timeout | undefined;
   let activityTimer: NodeJS.Timeout | undefined;
   let queueTimer: NodeJS.Timeout | undefined;
@@ -716,6 +756,96 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
     });
     return lastQueue;
+  }
+
+  /**
+   * One tick of the demand loop: what may be asked for, asked for.
+   *
+   * The depths come from the last poll rather than from a fetch of this tick's
+   * own: one aliased request per interval is the whole point of Amendment 3, and
+   * a tick that fetched would spend the quota the batching saves. A depth nobody
+   * measured yet holds its project back rather than standing in for a zero.
+   *
+   * **A refusal ends the tick and arms the backoff.** The host refused on a
+   * host-wide ceiling, so every further request this tick would meet the same
+   * wall; asking anyway is how a full machine becomes a busy loop. The refusal is
+   * recorded with the host's own words and returned as an ordinary outcome.
+   *
+   * **Nothing here reads a selector or an argv.** The plan is built from three
+   * integers per project, and the argv is handed to the launcher exactly as the
+   * registration stated it (ADR 0130 rule 3).
+   */
+  async function driveDemand(): Promise<RedskilledDemandTick> {
+    const at = clock();
+    // One tick at a time: a second one overlapping the first would judge its
+    // targets against a live count the first has not finished changing.
+    if (demandTicking) return lastDemand ?? emptyDemandTick(at);
+    demandTicking = true;
+    try {
+      const live: Record<string, number> = {};
+      for (const worker of workers.values()) {
+        live[worker.project_label] = (live[worker.project_label] ?? 0) + 1;
+      }
+      const queue: Record<string, number | null> = {};
+      for (const project of lastQueue?.projects ?? []) queue[project.project_label] = project.depth;
+
+      const nowMs = Date.parse(at);
+      const plan = planHostDemand({
+        projects: [...registrations.values()].map((registration) => ({
+          project_label: registration.project_label,
+          selector: registration.selector,
+          argv: registration.argv,
+          workspace_path: registration.workspace_path,
+          target: registration.target,
+        })),
+        queue,
+        live,
+        nowMs: Number.isFinite(nowMs) ? nowMs : 0,
+        backoffUntilMs: demandBackoffUntilMs,
+      });
+
+      const granted: RedskilledDemandGrant[] = [];
+      let refusal: string | null = null;
+      for (const birth of plan.births) {
+        let launched: LaunchedWorker;
+        try {
+          launched = startWorker({
+            project_label: birth.project_label,
+            workspace_path: birth.workspace_path,
+            command: birth.argv[0]!,
+            args: birth.argv.slice(1),
+          });
+        } catch (err) {
+          refusal = err instanceof Error ? err.message : String(err);
+          demandBackoffUntilMs = (Number.isFinite(nowMs) ? nowMs : Date.now()) + demandBackoffMs;
+          break;
+        }
+        granted.push({
+          project_label: birth.project_label,
+          worker_id: launched.worker.worker_id,
+          pid: launched.worker.pid,
+          warnings: launched.warnings,
+        });
+      }
+      // A tick that asked and was never refused clears the hold, so the room a
+      // dying Worker freed is spent on the next tick rather than on the timer
+      // the last refusal set.
+      if (refusal == null && plan.births.length > 0) demandBackoffUntilMs = null;
+
+      lastDemand = {
+        version: 1,
+        at,
+        requested: plan.births.length,
+        granted,
+        shortfall: plan.births.length - granted.length,
+        refusal,
+        retry_after: demandBackoffUntilMs == null ? null : new Date(demandBackoffUntilMs).toISOString(),
+        projects: plan.intents,
+      };
+      return lastDemand;
+    } finally {
+      demandTicking = false;
+    }
   }
 
   /**
@@ -1265,6 +1395,21 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     queueTimer.unref();
   }
 
+  /**
+   * Arm the demand loop on its own window.
+   *
+   * Armed at start and never re-armed per registration: the loop is the daemon's
+   * from the moment it exists (ADR 0130 Amendment 4), and a tick with nothing
+   * registered plans nothing and asks nobody.
+   */
+  function armDemandTimer(): void {
+    if (stopping || demandTimer != null || demandMs <= 0) return;
+    demandTimer = setInterval(() => {
+      void driveDemand().catch(() => undefined);
+    }, demandMs);
+    demandTimer.unref();
+  }
+
   function armIdleTimer(): void {
     if (stopping) return;
     if (idleTimer) clearTimeout(idleTimer);
@@ -1357,6 +1502,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (replaceTimer) clearInterval(replaceTimer);
     if (activityTimer) clearInterval(activityTimer);
     if (queueTimer) clearInterval(queueTimer);
+    if (demandTimer) clearInterval(demandTimer);
     // Every event already handed over reaches the lane before the daemon lets go
     // of the session: a birth still in flight would leave the next daemon with a
     // Worker it holds a budget for and no record of.
@@ -1521,6 +1667,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   armReplaceTimer();
   armActivityTimer();
   armQueueTimer();
+  armDemandTimer();
 
   return {
     socketPath: paths.socketPath,
@@ -1535,6 +1682,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     pollRepositoryActivity,
     pollQueueDiscovery,
     queueDiscovery: () => lastQueue,
+    driveDemand,
+    demand: () => lastDemand,
     sweepReattached,
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),

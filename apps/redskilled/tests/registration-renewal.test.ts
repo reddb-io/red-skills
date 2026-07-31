@@ -56,6 +56,7 @@ function request(
     project_label: "acme/widgets",
     selector: "is:open label:ready-for-agent",
     argv: ["red-skills-dev", "__work"],
+    workspace_path: "/tmp/acme-widgets",
     target: 3,
     renew_within_ms: WINDOW_MS,
     ...overrides,

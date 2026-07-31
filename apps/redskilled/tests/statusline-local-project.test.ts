@@ -170,6 +170,7 @@ describe("`project unknown`", () => {
           project_label,
           selector: "opaque",
           argv: ["opaque"],
+          workspace_path: "/tmp/opaque",
           target: 1,
           registered_at: "2026-07-29T00:00:00.000Z",
           renew_within_ms: 60_000,
