@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/benchmark-code-understanding",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "private": true,
   "description": "Internal A/B benchmark for RedSkills code understanding against CodeGraph and native agent search.",
   "license": "Apache-2.0",
