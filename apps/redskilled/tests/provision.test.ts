@@ -18,6 +18,7 @@ import {
   auditRedskilledProvisioning,
   installRedskilledUserUnit,
   provisionRedskilledHome,
+  readRedskilledHomeNeed,
   redskilledUserUnitPath,
   renderRedskilledUserUnit,
   type RedskilledProvisionFacts,
@@ -55,6 +56,7 @@ function facts(overrides: Partial<RedskilledProvisionFacts> = {}): RedskilledPro
     homePath: "/home/dev/.red/redskilled",
     homePresent: true,
     homeMode: REDSKILLED_HOME_MODE,
+    homeNeed: { needed: true, declaredBy: "plugins.dev.workspace.target: host (/repo/.red/config.yaml)" },
     entry: { command: "/usr/bin/node", args: ["/bundles/redskilled.bundle.min.mjs"], source: "bundle-cache" },
     socketPath: "/run/user/1000/red-skills/redskilled.sock",
     reachable: true,
@@ -102,6 +104,51 @@ describe("redskilled home ownership", () => {
   });
 });
 
+describe("who needs the home", () => {
+  async function project(target?: string): Promise<string> {
+    const root = await fakeHome();
+    await mkdir(join(root, ".red"), { recursive: true });
+    if (target !== undefined) {
+      await writeFile(join(root, ".red", "config.yaml"), `plugins:\n  dev:\n    workspace:\n      target: ${target}\n`, "utf8");
+    }
+    return root;
+  }
+
+  it("needs the home only for a target rooted inside it", async () => {
+    const homeDir = "/home/dev";
+    for (const target of ["host", "~/.red/redskilled/scratch"]) {
+      expect((await readRedskilledHomeNeed({ homeDir, declaredTarget: target })).needed, target).toBe(true);
+    }
+    for (const target of ["local", "tmp", "/mnt/fast/workers", "~/other"]) {
+      expect((await readRedskilledHomeNeed({ homeDir, declaredTarget: target })).needed, target).toBe(false);
+    }
+  });
+
+  it("reads the repository's declaration, and names it", async () => {
+    const need = await readRedskilledHomeNeed({ homeDir: "/home/dev", projectRoot: await project("host") });
+
+    expect(need.needed).toBe(true);
+    expect(need.declaredBy).toContain("plugins.dev.workspace.target: host");
+    expect(need.declaredBy).toContain("config.yaml");
+  });
+
+  it("treats an undeclared, an absent and an off-contract target as no need at all", async () => {
+    // None of the three can be the `host` preset, and a provisioning run is the
+    // wrong place to re-raise a config error the workspace layer refuses at use.
+    expect((await readRedskilledHomeNeed({ projectRoot: await project() })).needed).toBe(false);
+    expect((await readRedskilledHomeNeed({ projectRoot: await fakeHome() })).needed).toBe(false);
+    const bogus = await readRedskilledHomeNeed({ projectRoot: await project("hosty") });
+    expect(bogus.needed).toBe(false);
+    expect(bogus.declaredBy).toContain("off-contract");
+  });
+
+  it("lets a stated target win over the repository in view", async () => {
+    const projectRoot = await project("local");
+    expect((await readRedskilledHomeNeed({ projectRoot, declaredTarget: "host" })).needed).toBe(true);
+    expect((await readRedskilledHomeNeed({ projectRoot })).needed).toBe(false);
+  });
+});
+
 describe("redskilled provisioning audit", () => {
   it("reports a provisioned host as ok, with the optional unit staying ok while absent", () => {
     const report = auditRedskilledProvisioning(facts());
@@ -114,15 +161,36 @@ describe("redskilled provisioning audit", () => {
     expect(report.rows.at(-1)?.evidence).toContain("optional");
   });
 
-  it("says what to run when the home was never provisioned", () => {
+  it("says what to run when a NEEDED home was never provisioned", () => {
     const report = auditRedskilledProvisioning(facts({ homePresent: false, homeMode: undefined, reachable: false }));
 
     expect(report.verdict).toBe("missing");
     const home = report.findings.find((finding) => finding.check === "home");
     expect(home?.verdict).toBe("missing");
     expect(home?.evidence).toContain("/home/dev/.red/redskilled");
+    // The declaration that needs it, so the row is actionable rather than bare.
+    expect(home?.evidence).toContain("plugins.dev.workspace.target: host");
     expect(home?.fix).toContain("/red-setup");
     expect(home?.fix).toContain("redskilled provision");
+  });
+
+  it("reads an absent home as ok when no declared target reads it", () => {
+    const report = auditRedskilledProvisioning(
+      facts({
+        homePresent: false,
+        homeMode: undefined,
+        homeNeed: { needed: false, declaredBy: "/repo/.red/config.yaml declares no workspace target (default local)" },
+      }),
+    );
+
+    // Absent and unneeded is not a defect: the daemon never reads the home, so a
+    // red row here would send an operator to cure a machine that already works.
+    expect(report.verdict).toBe("ok");
+    expect(report.findings).toEqual([]);
+    const home = report.rows.find((row) => row.check === "home");
+    expect(home?.evidence).toContain("absent and unneeded");
+    expect(home?.evidence).toContain("default local");
+    expect(home?.fix).toBe("");
   });
 
   it("degrades a home the machine can read, naming the exact chmod", () => {
@@ -161,7 +229,7 @@ describe("redskilled provisioning audit", () => {
 });
 
 describe("provisioning a machine with no prior state", () => {
-  it("yields a reachable daemon, and the second run changes nothing", async () => {
+  it("yields a reachable daemon with the host preset, and the second run changes nothing", async () => {
     const home = await fakeHome();
     const runtimeDir = await fakeHome();
     const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${runtimeDir}`, REDSKILLED_MACHINE_DIR: runtimeDir }, runtimeDir });
@@ -172,7 +240,7 @@ describe("provisioning a machine with no prior state", () => {
 
     expect(await socketAnswers(paths.socketPath)).toBe(false);
 
-    const first = await runProvision([], io);
+    const first = await runProvision(["--workspace", "host"], io);
     started.push(paths.socketPath);
 
     expect(first).toBe(0);
@@ -180,13 +248,73 @@ describe("provisioning a machine with no prior state", () => {
     expect(await modeOf(redskilledHomeDir(home))).toBe(REDSKILLED_HOME_MODE);
 
     const lines: string[] = [];
-    const second = await runProvision([], { ...io, write: (text) => lines.push(text) });
+    const second = await runProvision(["--workspace", "host"], { ...io, write: (text) => lines.push(text) });
 
     expect(second).toBe(0);
     expect(lines.join("")).toContain("verdict: ok");
     // Nothing created, nothing tightened, nothing restarted: a no-op second run.
     expect(lines.join("")).toContain("created: false");
     expect(lines.join("")).toContain("tightened: false");
+  }, 30_000);
+
+  // The whole point of #2958: the home is a workspace lane's root, not a daemon
+  // precondition, so a default machine reaches a daemon without one — and
+  // `/red-setup` leaves the critical path of "have a daemon" entirely.
+  it("reaches a daemon on the default preset without ever creating the home", async () => {
+    const home = await fakeHome();
+    const runtimeDir = await fakeHome();
+    const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `local:${runtimeDir}`, REDSKILLED_MACHINE_DIR: runtimeDir }, runtimeDir });
+    const client = { serverCommand: process.execPath, serverArgs: ["--import", tsxLoader, cliEntry] };
+    const lines: string[] = [];
+
+    const code = await runProvision([], {
+      paths,
+      homeDir: home,
+      configHome: join(home, ".config"),
+      // A repository that declares nothing: the default `local` preset.
+      projectRoot: await fakeHome(),
+      client,
+      write: (text) => lines.push(text),
+    });
+    started.push(paths.socketPath);
+
+    expect(code).toBe(0);
+    expect(await socketAnswers(paths.socketPath)).toBe(true);
+    await expect(stat(redskilledHomeDir(home)), "the home was created for a preset that never reads it").rejects.toThrow();
+    expect(lines.join("")).toContain("verdict: ok");
+    expect(lines.join("")).toContain("needed: false");
+  }, 30_000);
+
+  it("provisions the home the moment the host preset is selected, and says so", async () => {
+    const home = await fakeHome();
+    const runtimeDir = await fakeHome();
+    const projectRoot = await fakeHome();
+    await mkdir(join(projectRoot, ".red"), { recursive: true });
+    await writeFile(
+      join(projectRoot, ".red", "config.yaml"),
+      "plugins:\n  dev:\n    workspace:\n      target: host\n",
+      "utf8",
+    );
+    const paths = resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `host:${runtimeDir}`, REDSKILLED_MACHINE_DIR: runtimeDir }, runtimeDir });
+    const lines: string[] = [];
+
+    const code = await runProvision(["--no-start"], {
+      paths,
+      homeDir: home,
+      configHome: join(home, ".config"),
+      projectRoot,
+      write: (text) => lines.push(text),
+    });
+
+    expect(await modeOf(redskilledHomeDir(home))).toBe(REDSKILLED_HOME_MODE);
+    expect(lines.join("")).toContain("created: true");
+    expect(lines.join("")).toContain("needed: true");
+    // The receipt names the declaration, not just the fact — an operator asking
+    // "why is this here?" gets the config key back.
+    expect(lines.join("")).toContain("plugins.dev.workspace.target");
+    // The daemon was never started, so reach is the only thing outstanding.
+    expect(code).toBe(1);
+    expect(lines.join("")).toContain("reach,missing");
   }, 30_000);
 
   it("reports without creating or starting anything under --check", async () => {
