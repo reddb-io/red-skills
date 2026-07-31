@@ -288,6 +288,91 @@ describe("processIssue — backpressure fail (#430)", () => {
     expect(bp.summary).toBe("npm run e2e exploded stack trace here");
   });
 
+  // #2964 — six green branches on `reddb-io/brand` parked `blocked:validation`
+  // carrying `backpressure:bash scripts/gate.sh … durationMs: 0`, and each was
+  // re-instructed three times to repair a gate that never executed a byte. The
+  // report guessed at two candidates inside the FEEDBACK stage's classifier;
+  // neither fired. The cause is that the guard was never wired to the
+  // BACKPRESSURE stage at all — `isInfraFeedbackFailure` was consulted only in
+  // the feedback branch, so a backpressure check short-circuited by a failed
+  // `materialise()` fell straight through to `reseedAfterGate`.
+  const WORKTREE_SETUP_FAILED =
+    "feedback worktree setup failed for afk/w1/9-x; validation blocked " +
+    "(pnpm install --frozen-lockfile failed (exit 1): ERR_PNPM_OUTDATED_LOCKFILE)";
+
+  it("REGRESSION: a backpressure check the worktree setup blocked was charged as semantic", async () => {
+    // The failing fixture. With the guard wired to the feedback stage ONLY, this
+    // spent the whole gate share of the Re-seed budget (a second runAgent) and
+    // parked as `feedback-failed`, exactly as the field report describes.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      backpressureCommands: ["bash scripts/gate.sh"],
+      backpressureOk: false,
+      backpressureStderr: WORKTREE_SETUP_FAILED,
+      reseedGateBudget: 1,
+    });
+    const result = await processIssue(deps, input);
+
+    // No correction round is charged — the branch is never re-instructed.
+    expect(trace.runAgentCalls).toHaveLength(1);
+    // And it parks under the BOUNDED validation-infra policy, not as a worker-
+    // code failure.
+    expect(result.outcome).toBe("feedback-failed-infra");
+  });
+
+  it("names the materialise() cause in the record, so the three setup paths are distinguishable", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      backpressureCommands: ["bash scripts/gate.sh"],
+      backpressureOk: false,
+      backpressureStderr: WORKTREE_SETUP_FAILED,
+    });
+    await processIssue(deps, input);
+
+    const records = trace.sidecarWrites
+      .at(-1)!
+      .lines.map((l) => JSON.parse(l) as { name: string; summary?: string });
+    const bp = records.find((r) => r.name === "backpressure:bash scripts/gate.sh")!;
+    // Not just "setup failed" — WHICH of lock-wait / worktree-add / install.
+    expect(bp.summary).toContain("pnpm install --frozen-lockfile failed");
+    expect(bp.summary).toContain("ERR_PNPM_OUTDATED_LOCKFILE");
+  });
+
+  it("honours a hook that overrides the backpressure classification, and says so in the record", async () => {
+    // The classifier reads this as INFRA; the hook forces SEMANTIC. The override
+    // wins (the routing charges a correction round again) and is NAMED — the
+    // silent rewrite is what made the original diagnosis a guess.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      backpressureCommands: ["bash scripts/gate.sh"],
+      backpressureOk: false,
+      backpressureStderr: WORKTREE_SETUP_FAILED,
+      reseedGateBudget: 1,
+    });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      hooks: {
+        ...deps.hooks,
+        config: { "afk.hooks.on_feedback_classify": "cls" },
+        exec: async (command) =>
+          command === "cls"
+            ? { code: 0, stdout: JSON.stringify({ class: "semantic" }) }
+            : { code: 0, stdout: "" },
+      },
+    };
+    const result = await processIssue(customDeps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    const envelope = trace.envelopeBodies.join("\n");
+    expect(envelope).toContain("classification override");
+    expect(envelope).toContain("`on_feedback_classify`");
+    expect(envelope).toContain("`semantic`");
+  });
+
   it("merges + closes when feedback and backpressure both pass, sidecar carrying both", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",

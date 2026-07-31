@@ -934,3 +934,94 @@ describe("makeFeedbackWorktree — shared baseline serialization (#2437)", () =>
     expect(shared.calls.filter((c) => c.op === "install")).toHaveLength(1);
   });
 });
+
+// #2964 — `materialise()` returns a bare `null` on three distinct paths, and the
+// blocked message named none of them. A field report on `reddb-io/brand` could
+// not conclude which one fired ("lock contention" was stated as a suspicion
+// precisely because the evidence had been thrown away), so every recurrence was
+// a fresh investigation. Each path now carries its own cause into the message
+// the validation record's `summary` is built from.
+describe("makeFeedbackWorktree setup failure names its cause (#2964)", () => {
+  const BROKEN = "afk/w1/9-x";
+
+  it("names a failed `worktree add`, carrying git's own stderr", async () => {
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => ({ ok: false, stderr: "fatal: couldn't find remote ref refs/heads/nope" }),
+      worktreeRemove: async () => {},
+      pnpm: async () => ({ code: 0, stdout: "", stderr: "" }),
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
+
+    const r = await fb.backpressure({ command: "bash scripts/gate.sh", cwd: BROKEN, timeoutMs: 1000 });
+
+    expect(r.code).toBe(1);
+    // The literal the INFRA classifier matches survives verbatim…
+    expect(r.stderr).toContain("feedback worktree setup failed");
+    // …and the cause is appended after it.
+    expect(r.stderr).toContain("worktree add failed");
+    expect(r.stderr).toContain("couldn't find remote ref refs/heads/nope");
+  });
+
+  it("names a failed install, with its exit code and pnpm's stderr", async () => {
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => ({ ok: true, stderr: "" }),
+      worktreeRemove: async () => {},
+      pnpm: async () => ({ code: 1, stdout: "", stderr: "ERR_PNPM_OUTDATED_LOCKFILE" }),
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
+
+    const r = await fb.backpressure({ command: "bash scripts/gate.sh", cwd: BROKEN, timeoutMs: 1000 });
+
+    expect(r.stderr).toContain("pnpm install --frozen-lockfile failed (exit 1)");
+    expect(r.stderr).toContain("ERR_PNPM_OUTDATED_LOCKFILE");
+    // Distinguishable from the add path — that is the whole point.
+    expect(r.stderr).not.toContain("worktree add failed");
+  });
+
+  it("names a lock-wait timeout, which no other path can be mistaken for", async () => {
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => ({ ok: true, stderr: "" }),
+      worktreeRemove: async () => {},
+      pnpm: async () => ({ code: 0, stdout: "", stderr: "" }),
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+      lock: async () => null, // the wait timed out
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
+
+    const r = await fb.backpressure({ command: "bash scripts/gate.sh", cwd: BROKEN, timeoutMs: 1000 });
+
+    expect(r.stderr).toContain("lock wait timed out");
+    expect(r.stderr).not.toContain("worktree add failed");
+    expect(r.stderr).not.toContain("pnpm install");
+  });
+
+  it("keeps the cause on the LATCHED calls — the ones a reader actually sees", async () => {
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => ({ ok: false, stderr: "fatal: couldn't find remote ref refs/heads/nope" }),
+      worktreeRemove: async () => {},
+      pnpm: async () => ({ code: 0, stdout: "", stderr: "" }),
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
+
+    // Burn through MAX_SETUP_ATTEMPTS so the branch latches to `resolved -> null`.
+    for (let i = 0; i < 3; i++) await fb.backpressure({ command: "x", cwd: BROKEN, timeoutMs: 1000 });
+    const latched = await fb.backpressure({ command: "x", cwd: BROKEN, timeoutMs: 1000 });
+
+    expect(latched.stderr).toContain("worktree add failed");
+  });
+});
