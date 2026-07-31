@@ -5,7 +5,7 @@ import { join } from "node:path";
  *
  * `~/.red/redskilled/` is operator-scoped and sits outside every checkout, so it
  * is not the `.red/` ADR 0067 gave `/red-setup` sole authority over. ADR 0130
- * Amendment 1 settles the ownership the two records left between them: **the
+ * Amendment 2 settles the ownership the two records left between them: **the
  * home belongs to `redskilled`**, and `provisionRedskilledHome` in
  * `apps/redskilled/src/provision.ts` is the only thing that creates it.
  *

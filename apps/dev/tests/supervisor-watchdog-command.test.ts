@@ -137,7 +137,7 @@ esac
     // CLI is how the shipped resolver finds it, and the session key is pinned to
     // this sandbox so the walk can never be served by a stranger's daemon — nor
     // leave one behind for the next test. The machine claim is pinned into the
-    // sandbox for the same reason: since ADR 0130 Amendment 2 a second daemon on
+    // sandbox for the same reason: since ADR 0130 Amendment 3 a second daemon on
     // one machine is REFUSED, so a test that did not pose as its own machine
     // would be turned away by whatever daemon the developer already runs.
     buildSync({

@@ -97,7 +97,7 @@ bundle fetch, no hooks). `/red-setup` is the **only** thing authorized to
 create a repository's `.red/` and to write the activation flags — no other code
 path may create it. That authority is repository-scoped: the operator's
 host-scoped `~/.red/redskilled/` belongs to the `redskilled` daemon and is
-created only by `provisionRedskilledHome` (ADR 0130 Amendment 1), which
+created only by `provisionRedskilledHome` (ADR 0130 Amendment 2), which
 `/red-setup` provisions by calling (`redskilled provision`). The gate lives in `packages/shared/plugin-gate.ts` (consumed by the dev
 launchers) with a mirrored inline copy in each of memory/brain's `bootstrap.mjs`;
 keep the three in lockstep.
