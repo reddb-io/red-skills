@@ -30,13 +30,16 @@ import { socketAnswers } from "./daemon.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
 import { createRedskilledMachineClaimStore, RedskilledMachineHeldError } from "./machine-scope.js";
 import type { RedskilledPaths } from "./paths.js";
+import type { RedskilledProjectRegistrationRequest } from "./project-registration.js";
 import {
+  isRedskilledProjectRegistered,
   isRedskilledStatuslinePayload,
   isRedskilledStatuslineRender,
   isRedskilledWorkerCommandResult,
   isRedskilledWorkerHeartbeatAck,
   isRedskilledWorkerStarted,
   sendRedskilledRequest,
+  type RedskilledProjectRegistered,
   type RedskilledRequest,
   type RedskilledStatuslinePayload,
   type RedskilledStatuslineRender,
@@ -365,6 +368,35 @@ export async function commandRedskilledWorker(
     config,
   );
   if (!isRedskilledWorkerCommandResult(value)) throw new Error("redskilled daemon returned a malformed command result");
+  return value;
+}
+
+/**
+ * Register this project with the daemon — what work it wants, and what to run.
+ *
+ * A project contributes a registration rather than a process (ADR 0130 Amendment
+ * 3), and the two strings it hands over are opaque to the host: the daemon stores
+ * the selector and the argv and returns them unread. **A refusal throws** — a
+ * second registration for one project is a duplicate loop to surface, never a
+ * record to quietly replace, and the thrown sentence names the one standing.
+ */
+export async function registerRedskilledProject(
+  paths: RedskilledPaths,
+  registration: RedskilledProjectRegistrationRequest,
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledProjectRegistered> {
+  // A client that stated no session project is registering itself, exactly as a
+  // dispatch into its own label is: the registration's own project IS the session's.
+  const value = await requestRedskilled(
+    paths,
+    {
+      op: "project-register",
+      registration,
+      session_project: config.sessionProject ?? registration.project_label,
+    },
+    config,
+  );
+  if (!isRedskilledProjectRegistered(value)) throw new Error("redskilled daemon returned a malformed registration");
   return value;
 }
 
