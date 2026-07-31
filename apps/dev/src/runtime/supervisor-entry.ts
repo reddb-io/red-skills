@@ -110,6 +110,21 @@ export function isLocalDevBuild(version: string): boolean {
  * then a version-pinned npx dispatch. Nothing in that list is the caller's own
  * stale bundle.
  */
+/**
+ * The published bundle as a bare argv head — `[command, …args]`.
+ *
+ * A registration states what to RUN rather than what to spawn (ADR 0130
+ * Amendment 4), so it needs the same resolution a launch does and none of the
+ * launch: same published-first order, same loud failure when the published
+ * bundle cannot be resolved. Sharing the resolver is the point — a registration
+ * that named the caller's own stale bundle is how a release strands a project
+ * without ever spawning anything (#2808).
+ */
+export function publishedBundleArgv(lookup: SupervisorEntryLookup = {}): readonly string[] {
+  const entry = resolveSupervisorEntry(lookup);
+  return [entry.command, ...entry.args];
+}
+
 export function resolveSupervisorEntry(lookup: SupervisorEntryLookup = {}): ResolvedSupervisorEntry {
   const env = lookup.env ?? process.env;
   const exists = lookup.exists ?? existsSync;

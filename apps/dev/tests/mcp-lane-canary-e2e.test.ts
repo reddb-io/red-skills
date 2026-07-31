@@ -2,14 +2,20 @@
 // transport (#2706, ADR 0128 §7).
 //
 // This is the file that makes the canary a canary. It runs the SAME production
-// walk twice against two sandboxes that differ in exactly one byte-level fact —
-// whether the bundle beside the MCP entry can route `run` — and requires:
+// walk against real sandboxes that differ in exactly one fact each, and
+// requires:
 //
-//   healthy    -> green, with a worker directory and a live worker pid
-//   unroutable -> RED at `worker_spawn`, reproducing #2677
+//   daemon up   -> green: a registration the daemon holds, and no process of
+//                  the project's own anywhere under it
+//   daemon down -> RED at `project_start`, naming the socket (ADR 0130 rule 6)
 //
-// A canary that cannot catch its own motivating bug is not a canary, so the red
-// case is an assertion, not a smoke test.
+// Under ADR 0130 Amendment 3 (#2902) the project no longer resolves a slot entry
+// at all — it registers an argv and the host runs it. So #2677's byte-level
+// fact, whether the bundle beside the entry can route `run`, moved into the
+// REGISTERED argv, asserted in the step contract (mcp-lane-canary.test.ts). The
+// fixture keeps building its `unroutable` dev bundle: the assertion that a
+// Worker born from that argv boots into nothing belongs to the slice where the
+// daemon drives the registration.
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -35,7 +41,7 @@ const TIMEOUT = 180_000;
 
 async function walk(
   variant: CanaryLaneVariant,
-  workerDeadlineMs = 20_000,
+  quietDeadlineMs = 3_000,
   daemon: CanaryDaemonState = "up",
 ) {
   const sandbox = await createCanarySandbox(variant, daemon);
@@ -51,9 +57,8 @@ async function walk(
     const result = await runMcpLaneCanary(transport, {
       runner: "claude",
       target: 1,
-      workerDeadlineMs,
+      quietDeadlineMs,
       teardownDeadlineMs: 20_000,
-      daemonDeadlineMs: 20_000,
       pollMs: 150,
       ...(socketPath !== undefined ? { socketPath } : {}),
     });
@@ -69,9 +74,9 @@ afterAll(async () => {
 
 describe("MCP lane canary over the real transport", () => {
   it(
-    "goes green when the slot entry routes `run`, on evidence of a live worker",
+    "goes green on a registration the daemon holds, with no process of the project's own",
     async () => {
-      const { result } = await walk("healthy");
+      const { result, stderr } = await walk("healthy");
 
       expect(result.inertStep).toBeUndefined();
       expect(result.ok).toBe(true);
@@ -82,49 +87,18 @@ describe("MCP lane canary over the real transport", () => {
         "ok",
         "ok",
         "ok",
-        "ok",
       ]);
-      // Not "project_start returned a pid" — an actual worker directory holding
-      // an actual live pid, which is the thing #2677's dead slots never wrote.
-      expect(result.workers.length).toBeGreaterThan(0);
-      const worker = result.workers[0]!;
-      expect(worker.alive).toBe(true);
-      expect(worker.pid).toBeGreaterThan(0);
-      expect(worker.dir).toContain("/.red/tmp/workers/");
-      expect(result.supervisorPid).toBeGreaterThan(0);
-      // A probe that leaks a live fleet is worse than no probe.
-      expect(isLive(result.supervisorPid!)).toBe(false);
-      expect(isLive(worker.pid!)).toBe(false);
-    },
-    TIMEOUT,
-  );
-
-  it(
-    "goes RED at worker_spawn against a bundle whose slot entry cannot route `run` (#2677)",
-    async () => {
-      // Every slot dies on spawn here, so a short deadline is enough — the
-      // failure is deterministic, not a race the canary might lose.
-      const { result, stderr } = await walk("unroutable", 8_000);
-
-      expect(result.ok).toBe(false);
-      expect(result.inertStep).toBe("worker_spawn");
-      // The lane looked healthy right up to the step that matters: the tools
-      // answered, the fleet launched, the supervisor lived. That is exactly why
-      // #2677 survived unnoticed, and exactly what the canary must name.
-      const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
-      expect(byStep.get("connect")).toBe("ok");
-      expect(byStep.get("project_start")).toBe("ok");
-      expect(byStep.get("supervisor_live")).toBe("ok");
-      expect(byStep.get("worker_spawn")).toBe("inert");
+      // Not "project_start answered" — a registration the daemon minted, naming
+      // this project and carrying the argv the host would run for it.
+      const registration = result.registration!;
+      expect(registration.project).not.toBe("");
+      expect(registration.renewBy).not.toBe("");
+      expect(registration.selector).toBe("{}");
+      expect(registration.argv).toContain("run");
+      expect(registration.argv.join(" ")).toContain("--runner claude");
+      // The slice's whole claim: beginning work created nothing.
       expect(result.workers).toHaveLength(0);
-      // The failure output names the step that went inert and why.
-      expect(result.summary).toContain("worker_spawn");
-      expect(result.summary).toContain("cannot route `run`");
       expect(stderr).not.toContain("secret");
-      // An inert lane is still torn down: the canary never leaves the fleet it
-      // created running just because it failed.
-      expect(result.steps.find((step) => step.step === "project_stop")?.verdict).toBe("ok");
-      expect(isLive(result.supervisorPid!)).toBe(false);
     },
     TIMEOUT,
   );
@@ -140,11 +114,11 @@ describe("the socket boundary the lane grew under ADR 0130 (#2794, #2851)", () =
       // Before the cutover (#2851) this walk got as far as `daemon_reach`: the
       // project spawned its own workers, so the lane produced a live worker it
       // could not vouch for. Now that the daemon owns every birth, the failure
-      // moved EARLIER and got louder — the launch itself refuses, because a
-      // supervisor with no host behind it would tick forever and drain nothing.
-      // Failing at the launch is the stronger signal: nothing was started, so
+      // moved EARLIER and got louder — the start itself refuses, because a
+      // project the host never registered is work nothing will ever drive.
+      // Failing at the start is the stronger signal: nothing was started, so
       // there is no unvouched worker left running to reason about.
-      const { result, socketPath } = await walk("healthy", 20_000, "down");
+      const { result, socketPath } = await walk("healthy", 3_000, "down");
 
       expect(result.ok).toBe(false);
       expect(result.inertStep).toBe("project_start");
@@ -152,7 +126,8 @@ describe("the socket boundary the lane grew under ADR 0130 (#2794, #2851)", () =
       expect(byStep.get("connect")).toBe("ok");
       expect(byStep.get("project_start")).toBe("inert");
       // Nothing downstream ran, and nothing downstream needed to.
-      expect(byStep.get("worker_spawn")).toBe("skipped");
+      expect(byStep.get("registration_held")).toBe("skipped");
+      expect(byStep.get("no_project_process")).toBe("skipped");
       expect(result.workers).toHaveLength(0);
       // Loudly, and naming the socket rather than the tool: the operator's next
       // move is on that path, and "project_start failed" alone would send them
@@ -196,8 +171,8 @@ describe("the shipped castle-mcp bundle carries the canary", () => {
           sandbox.mcpEntry,
           "--root",
           sandbox.root,
-          "--worker-deadline-ms",
-          "20000",
+          "--quiet-deadline-ms",
+          "3000",
         ],
         { cwd: sandbox.root, env: sandbox.env },
       );
@@ -262,12 +237,3 @@ describe("the canary's daemon lives in a runtime directory the sandbox owns (#28
     TIMEOUT,
   );
 });
-
-function isLive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}

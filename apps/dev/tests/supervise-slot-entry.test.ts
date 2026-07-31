@@ -36,6 +36,10 @@ function recordingHost(): RedskilledBirthPort {
       return { workerId: spec.worker_id ?? "wTEST", pid: 4242, warnings: [], admission: "admitted" };
     },
     stop: async () => true,
+    register: async () => {
+      throw new Error("no project registers itself in a slot-argv test");
+    },
+    deregister: async () => false,
     liveWorkers: async () => asked.length,
     drainEvents: async () => [],
   };

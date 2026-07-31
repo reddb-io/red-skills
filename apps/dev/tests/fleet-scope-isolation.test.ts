@@ -1,10 +1,13 @@
-// The MCP lane is the interface (ADR 0120), so cgroup isolation (#2697) cannot
-// live in a CLI wrapper: a fleet created through `project_start` has its
-// supervisor spawned by the MCP SERVER process and would inherit *its* cgroup —
-// on a desktop host, the terminal emulator's scope, exactly like the CLI case.
-// These tests drive the real `projectStart` dependency (spawnSupervisor NOT
-// mocked) and assert the launch argv, so both lanes are proven to share one
-// implementation.
+// Cgroup isolation (#2697) belongs to the LAUNCH, not to whichever surface asked
+// for it: a supervisor inherits the cgroup of the process that spawned it — on a
+// desktop host, the terminal emulator's scope — so the transient scope has to be
+// built where the spawn is. These tests drive the real `spawnSupervisor` and
+// assert its argv, which is the one implementation every remaining launch lane
+// shares.
+//
+// The MCP is no longer one of those lanes (#2902): since ADR 0130 Amendment 4 the
+// project's MCP registers its project with the daemon and launches no process of
+// its own, so `project_start` has no supervisor argv left to isolate.
 
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { writeFileSync } from "node:fs";
@@ -44,7 +47,7 @@ vi.mock("../src/runtime/redskilled-birth.js", async (importOriginal) => ({
   }),
 }));
 
-import { createCastleMcpDependencies } from "../src/mcp-adapter.js";
+import { spawnSupervisor } from "../src/runtime/supervisor-spawn.js";
 import { afkPaths } from "../src/runtime/wire.js";
 import { readPidStartTime } from "../src/core/state.js";
 
@@ -66,7 +69,7 @@ beforeEach(() => {
  * fake host that looks like Linux with a live systemd `--user` session.
  */
 async function scopedHost(config: string): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "mcp-fleet-scope-"));
+  const root = await mkdtemp(join(tmpdir(), "fleet-scope-"));
   roots.push(root);
   await mkdir(join(root, ".red"), { recursive: true });
   await writeFile(join(root, ".red", "config.yaml"), config, "utf8");
@@ -112,19 +115,14 @@ function supervisorLaunch(): [string, readonly string[], SpawnOptions] {
   return call as [string, readonly string[], SpawnOptions];
 }
 
-describe("project_start cgroup isolation", () => {
-  it("spawns the MCP-created supervisor inside its own transient scope", async () => {
+describe("supervisor cgroup isolation", () => {
+  it("spawns the supervisor inside its own transient scope", async () => {
     const root = await scopedHost(
       "plugins:\n  dev:\n    enabled: true\n    afk:\n      fleet:\n        scope:\n          enabled: true\n          memory_high: 55%\n",
     );
     publishPidOnSpawn(root);
 
-    await expect(
-      createCastleMcpDependencies(root).projectStart({
-        runner: "claude",
-        target: 1,
-      }),
-    ).resolves.toMatchObject({ status: "launched", pid: process.pid });
+    await expect(spawnSupervisor({ root, runner: "claude", target: 1 })).resolves.toBe(process.pid);
 
     const [command, args] = supervisorLaunch();
     expect(command).toBe(join(root, "bin", "systemd-run"));
@@ -153,12 +151,7 @@ describe("project_start cgroup isolation", () => {
       return true;
     });
     try {
-      await expect(
-        createCastleMcpDependencies(root).projectStart({
-          runner: "claude",
-          target: 1,
-        }),
-      ).resolves.toMatchObject({ status: "launched", pid: process.pid });
+      await expect(spawnSupervisor({ root, runner: "claude", target: 1 })).resolves.toBe(process.pid);
     } finally {
       stderr.mockRestore();
     }

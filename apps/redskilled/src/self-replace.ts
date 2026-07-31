@@ -26,12 +26,21 @@
  * point on the published lane, so comparing it to a release is meaningless and
  * acting on the comparison would take a developer's own daemon away mid-session.
  *
+ * **A major boundary is held, and the hold is SAID.** A breaking change must not
+ * arrive on a machine because a background timer noticed it, so the resolver only
+ * ever adopts inside the running major — but a silent hold is indistinguishable
+ * from being current, and an operator who updated the plugin to a new major and
+ * saw nothing change had no surface that would tell them why (#2926). The daemon
+ * therefore reports the newest published version *whatever its major*, states
+ * that not adopting it is deliberate, and names the step that crosses it. A
+ * refusal that is stated is a decision; a refusal that is silent is a bug.
+ *
  * PURE apart from the injected spawn, exit and existence lookups.
  */
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fetchNewestSameMajor } from "@reddb-io/shared/bundle-fetch.js";
+import { fetchPublishedVersionHorizon } from "@reddb-io/shared/bundle-fetch.js";
 import { compareSemver, parseSemver } from "@reddb-io/shared/self-update.js";
 import {
   redskilledBundleCacheRoot,
@@ -58,8 +67,109 @@ export const REDSKILLED_REPLACEMENT_ENTRY_UNRESOLVED = "redskilled-replacement-e
 /** Env var that turns the registry read off, leaving local evidence only. */
 export const REDSKILLED_NO_REGISTRY_PROBE_ENV = "REDSKILLED_NO_REGISTRY_PROBE";
 
-/** Answers "what version is published?" — null when it cannot be resolved. */
-export type RedskilledPublishedVersionProbe = (running: string) => Promise<string | null>;
+/**
+ * What one probe resolved about the published world.
+ *
+ * Two numbers rather than one: `version` is the newest release this daemon may
+ * ADOPT — same major, by construction — while `newest` is the newest release
+ * that EXISTS. Folding them together would either adopt a major on a timer or
+ * hide one, and both are the failure this module reports its way out of.
+ */
+export interface RedskilledPublishedObservation {
+  /** The newest in-major version; null when it could not be resolved. */
+  readonly version: string | null;
+  /** The newest version published at all; null when it could not be resolved. */
+  readonly newest?: string | null;
+}
+
+/**
+ * Answers "what is published?" — an unresolvable answer is null, never a match.
+ *
+ * A bare version is accepted and read as the in-major answer alone: a probe that
+ * only ever knew one number leaves the major horizon UNKNOWN rather than having
+ * its single answer promoted into a claim about every major.
+ */
+export type RedskilledPublishedVersionProbe = (
+  running: string,
+) => Promise<string | null | RedskilledPublishedObservation>;
+
+/** Read a probe's answer as an observation. PURE. */
+export function readPublishedObservation(
+  answer: string | null | RedskilledPublishedObservation,
+): RedskilledPublishedObservation {
+  if (answer === null || typeof answer === "string") return { version: answer, newest: null };
+  return { version: answer.version, newest: answer.newest ?? null };
+}
+
+/**
+ * A published major this daemon deliberately will not adopt, and the way across.
+ *
+ * `reason` and `action` are sentences rather than codes because this block exists
+ * to be READ: the operator it is written for has already updated something and
+ * watched nothing happen, and a surface that answered them with `major_held: 1`
+ * would leave them exactly where the silent hold did.
+ */
+export interface RedskilledMajorHold {
+  /** The newest published version, which lives beyond the running major. */
+  readonly version: string;
+  readonly running_major: number;
+  readonly held_major: number;
+  /** Why this daemon is not on it — stated so it does not read as a fault. */
+  readonly reason: string;
+  /** The manual step that crosses the boundary. */
+  readonly action: string;
+}
+
+export interface PlanRedskilledMajorHoldInput {
+  /** The version this process is RUNNING — never the one it resolved. */
+  readonly running: string;
+  /** The newest version published at all; null or unknown holds nothing. */
+  readonly newest: string | null | undefined;
+  /** True when a unit will revive this process — it decides the operator's step. */
+  readonly supervised: boolean;
+}
+
+/**
+ * Decide whether a major is being held, and say so. PURE.
+ *
+ * Null is "nothing is being withheld", and it is the answer for a daemon that is
+ * current, one merely behind inside its major, and one whose probe resolved
+ * nothing — a hold reported off an answer that was never read would make an
+ * unreachable registry look like a pending breaking change.
+ */
+export function planRedskilledMajorHold(input: PlanRedskilledMajorHoldInput): RedskilledMajorHold | null {
+  const running = input.running.trim();
+  if (isLocalRedskilledBuild(running)) return null;
+  const newest = input.newest?.trim() ?? "";
+  const held = parseSemver(newest);
+  const now = parseSemver(running);
+  if (held === null || now === null || held.major <= now.major) return null;
+  return {
+    version: newest,
+    running_major: now.major,
+    held_major: held.major,
+    reason:
+      `redskilled ${newest} is published and this daemon runs ${running}; a major version is ` +
+      `deliberately never adopted by the background check, because a breaking change must not ` +
+      `arrive on a machine that is holding Workers`,
+    action: majorHoldAction(held.major, input.supervised),
+  };
+}
+
+/**
+ * The step, addressed to whoever would revive this daemon.
+ *
+ * Under a unit the `ExecStart` is what has to move — a bare restart would revive
+ * the same argv and the same major — so re-installing it is named first. With no
+ * unit nothing revives this process at all, and stopping it is the whole step:
+ * the next client start resolves the bundle the machine now holds.
+ */
+function majorHoldAction(heldMajor: number, supervised: boolean): string {
+  const install = `install the ${heldMajor}.x bundle (update this machine's plugin pin), then `;
+  return supervised
+    ? `${install}re-point the unit and restart it: redskilled unit install && systemctl --user restart redskilled.service`
+    : `${install}stop this daemon — the next client start resolves the newly installed bundle`;
+}
 
 /** Who carries out the swap: the supervisor that will revive us, or ourselves. */
 export type RedskilledReplacementVia = "supervisor-exit" | "self-spawn";
@@ -279,20 +389,27 @@ function defaultExit(code: number): void {
  * only consulted when the registry could not be read at all. Never substitutes
  * the running version for the published one — an unresolvable answer stays null,
  * because a manufactured match is what makes a stale daemon look current.
+ *
+ * The adoptable answer is capped at the running major on EVERY path, the cache
+ * included: a host that happens to hold a next-major bundle must not cross the
+ * boundary just because the registry was unreachable that minute — that is the
+ * timer-driven breaking change the hold exists to refuse. The cached bundle still
+ * counts towards `newest`, so the gap is reported rather than acted on.
  */
 export async function probePublishedRedskilledVersion(
   running: string,
   env: NodeJS.ProcessEnv = process.env,
   fetchText: (url: string) => Promise<string> = defaultFetchText,
-): Promise<string | null> {
-  const cached = newestCachedRedskilledVersion(env);
-  if (env[REDSKILLED_NO_REGISTRY_PROBE_ENV] === "1") return cached;
+): Promise<RedskilledPublishedObservation> {
+  const cachedNewest = newestCachedRedskilledVersion(env);
+  const cachedInMajor = newestCachedRedskilledVersionInMajor(running, env);
+  if (env[REDSKILLED_NO_REGISTRY_PROBE_ENV] === "1") return { version: cachedInMajor, newest: cachedNewest };
   const floor = parseSemver(running) === null ? "0.0.0" : running;
   try {
-    const newest = await fetchNewestSameMajor({ fetchText }, floor);
-    return newest ?? cached;
+    const horizon = await fetchPublishedVersionHorizon({ fetchText }, floor);
+    return { version: horizon.sameMajor ?? cachedInMajor, newest: horizon.newest ?? cachedNewest };
   } catch {
-    return cached;
+    return { version: cachedInMajor, newest: cachedNewest };
   }
 }
 
@@ -301,10 +418,37 @@ export function newestCachedRedskilledVersion(
   env: NodeJS.ProcessEnv = process.env,
   listDir: (path: string) => readonly string[] = listDirSafe,
 ): string | null {
-  let best: string | null = null;
+  return newestCached(cachedRedskilledVersions(env, listDir));
+}
+
+/** The newest cached bundle inside `running`'s major — the only one adoptable. */
+export function newestCachedRedskilledVersionInMajor(
+  running: string,
+  env: NodeJS.ProcessEnv = process.env,
+  listDir: (path: string) => readonly string[] = listDirSafe,
+): string | null {
+  const major = parseSemver(running.trim())?.major;
+  if (major === undefined) return null;
+  return newestCached(cachedRedskilledVersions(env, listDir).filter((v) => parseSemver(v)?.major === major));
+}
+
+/** Every version this host holds a redskilled bundle for, unordered. */
+function cachedRedskilledVersions(
+  env: NodeJS.ProcessEnv,
+  listDir: (path: string) => readonly string[],
+): readonly string[] {
+  const versions: string[] = [];
   for (const name of listDir(redskilledBundleCacheRoot(env))) {
     const version = /^redskilled-(.+)\.bundle\.min\.mjs$/.exec(name)?.[1];
     if (!version || parseSemver(version) === null) continue;
+    versions.push(version);
+  }
+  return versions;
+}
+
+function newestCached(versions: readonly string[]): string | null {
+  let best: string | null = null;
+  for (const version of versions) {
     if (best === null || compareSemver(version, best) > 0) best = version;
   }
   return best;
