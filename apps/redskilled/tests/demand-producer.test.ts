@@ -513,8 +513,21 @@ describe("the seam holds in both directions", () => {
       const source = readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
       const code = source.replace(/\/\*\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
       expect(code, `${file} must hold no circuit-breaker policy`).not.toMatch(
-        /breaker|half.?open|cooldown|\bparked?\b|backoff/i,
+        /breaker|half.?open|cooldown|\bparked?\b/i,
       );
     }
+  });
+
+  it("holds back after a refusal the host itself made, and keys nothing to a selector", () => {
+    // ADR 0130 Amendment 4 moved the demand loop into the daemon, so the hold
+    // that follows a refusal moved with it — the host refuses on its OWN ceiling,
+    // and re-asking into a full machine is the busy loop the hold exists to
+    // prevent. What must NOT follow it is the breaker: a policy keyed to which
+    // selector's Workers keep dying is work knowledge, and the daemon has none.
+    const code = readFileSync(new URL("../src/daemon.ts", import.meta.url), "utf8")
+      .replace(/\/\*\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(code).toMatch(/demandBackoff/);
+    expect(code, "daemon.ts must key no policy to a selector").not.toMatch(/selector_id|selectorId/);
   });
 });

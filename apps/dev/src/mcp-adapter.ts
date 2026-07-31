@@ -1001,7 +1001,11 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
   let registered;
   try {
     await port.reach();
-    registered = await port.register({ selector, argv, target: input.target });
+    // Where a Worker runs, stated rather than derived: the daemon owns the demand
+    // loop (ADR 0130 Amendment 4), so it births the Worker itself, and a host that
+    // had to work out a working directory would have to know what a checkout looks
+    // like — the one thing rule 3 forbids.
+    registered = await port.register({ selector, argv, workspace_path: root, target: input.target });
   } catch (err) {
     throw new Error(redskilledRegistrationRefusal(port.socketPath, err));
   }

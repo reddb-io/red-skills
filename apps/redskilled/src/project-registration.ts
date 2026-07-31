@@ -7,12 +7,18 @@
  * machine, which will own the demand loop. A registration is the whole of the
  * project's side of that seam: a record the daemon stores and reports back.
  *
- * **A registration carries five things, and the daemon interprets none of them.**
+ * **A registration carries six things, and the daemon interprets none of them.**
  * The repository identity — already carried today as the opaque project label. An
  * opaque **selector**, the query that names this project's work. An opaque
- * **argv**, what to run when a Worker is born for it. A target width. And a
- * renewal deadline, because a registration that died with its MCP would defeat
- * the purpose and one that never expired would make a closed laptop poll forever.
+ * **argv**, what to run when a Worker is born for it. An opaque **workspace
+ * path**, where to run it. A target width. And a renewal deadline, because a
+ * registration that died with its MCP would defeat the purpose and one that never
+ * expired would make a closed laptop poll forever.
+ *
+ * The workspace is stated for the same reason the argv is: the daemon owns the
+ * demand loop (Amendment 4), so it births the Worker itself, and a host that had
+ * to *derive* a working directory would have to know what a checkout looks like
+ * — the one thing rule 3 forbids. A path it needs is a path it was given.
  *
  * **Rule 3 is the constraint that shapes this.** The daemon must not learn what
  * an Issue, a label, a Spec, a gate or a Landing *is*. A selector is a string it
@@ -54,6 +60,8 @@ export interface RedskilledProjectRegistrationRequest {
   readonly selector: string;
   /** What to run when a Worker is born for this project. Opaque, likewise. */
   readonly argv: readonly string[];
+  /** Where to run it — used verbatim as the Worker's working directory. */
+  readonly workspace_path: string;
   /** How many Workers this project wants; the host still decides how many it gets. */
   readonly target: number;
   /** How long this registration stands without renewal; the default when absent. */
@@ -66,6 +74,7 @@ export interface RedskilledProjectRegistration {
   readonly project_label: string;
   readonly selector: string;
   readonly argv: readonly string[];
+  readonly workspace_path: string;
   readonly target: number;
   /** The daemon's own clock, at the instant it accepted this registration. */
   readonly registered_at: string;
@@ -133,6 +142,13 @@ export function buildProjectRegistration(
     }
     return word;
   });
+  // Same shape check, same reason as the argv: a registration the host could
+  // never start a Worker for is a client bug the daemon can see without reading
+  // anything about what the path names.
+  const workspacePath = requireText(
+    request.workspace_path,
+    `a workspace path for project ${JSON.stringify(projectLabel)}`,
+  );
   if (!Number.isInteger(request.target) || request.target < 0) {
     throw new Error(
       `redskilled needs a whole, non-negative target to register project ${JSON.stringify(projectLabel)}, not ` +
@@ -156,6 +172,7 @@ export function buildProjectRegistration(
     project_label: projectLabel,
     selector,
     argv,
+    workspace_path: workspacePath,
     target: request.target,
     registered_at: new Date(nowMs).toISOString(),
     renew_within_ms: renewWithinMs,
@@ -172,6 +189,7 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     typeof registration.selector === "string" &&
     Array.isArray(registration.argv) &&
     registration.argv.every((word) => typeof word === "string") &&
+    typeof registration.workspace_path === "string" &&
     Number.isInteger(registration.target) &&
     typeof registration.registered_at === "string" &&
     typeof registration.renew_within_ms === "number" &&

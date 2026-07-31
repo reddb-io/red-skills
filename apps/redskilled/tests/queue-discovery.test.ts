@@ -226,6 +226,7 @@ function registration(index: number) {
     project_label: `acme/p${index}`,
     selector: `repo:acme/p${index} label:ready-for-agent`,
     argv: ["red-skills-dev", "work"],
+    workspace_path: `/tmp/acme/p${index}`,
     target: 1,
   };
 }

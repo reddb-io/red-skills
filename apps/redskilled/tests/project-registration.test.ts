@@ -49,6 +49,7 @@ function request(
     project_label: "acme/widgets",
     selector: "is:open label:ready-for-agent",
     argv: ["red-skills-dev", "__work", "--selector", "ready"],
+    workspace_path: "/tmp/acme/widgets",
     target: 3,
     ...overrides,
   };
@@ -216,6 +217,7 @@ describe("redskilled project registration", () => {
     expect(() => buildProjectRegistration(request({ project_label: "" }), { now: NOW })).toThrow(/project label/);
     expect(() => buildProjectRegistration(request({ selector: "" }), { now: NOW })).toThrow(/selector/);
     expect(() => buildProjectRegistration(request({ argv: [] }), { now: NOW })).toThrow(/argv/);
+    expect(() => buildProjectRegistration(request({ workspace_path: "" }), { now: NOW })).toThrow(/workspace path/);
     expect(() => buildProjectRegistration(request({ target: -1 }), { now: NOW })).toThrow(/target/);
     expect(() => buildProjectRegistration(request({ target: 1.5 }), { now: NOW })).toThrow(/target/);
     expect(() => buildProjectRegistration(request({ renew_within_ms: 0 }), { now: NOW })).toThrow(/renew/);
