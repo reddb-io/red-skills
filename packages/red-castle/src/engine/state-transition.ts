@@ -38,6 +38,27 @@ export interface StateTransitionLabels {
   readonly blockedPrefix: string;
   /** The prefix of a dependency edge label (`req:{issue}`). */
   readonly reqPrefix: string;
+  /**
+   * The TYPE labels this repo's vocabulary declares HUMAN-ONLY (red-skills
+   * #2966). A ticket carrying one resolves only through a live exchange with a
+   * human, so a `promote` routes it to {@link human} instead of the executable
+   * queue — the blockers closing means the human may now act, never that an
+   * agent may act for them. A vocabulary that declares none (the default) leaves
+   * every promotion in the autonomous lane, exactly as before.
+   */
+  readonly hitlTypes?: readonly string[];
+}
+
+/**
+ * The declared HUMAN-ONLY type labels `current` carries, in vocabulary order.
+ * Empty when the repo declares no HITL type — the reason a repo that never
+ * opted in keeps its previous behaviour. Pure.
+ */
+export function hitlTypesIn(
+  current: readonly string[],
+  labels: StateTransitionLabels,
+): string[] {
+  return (labels.hitlTypes ?? []).filter((type) => current.includes(type));
 }
 
 /** Every label that counts as a STATE ROLE, in the deterministic order the
@@ -110,13 +131,24 @@ export function stateRolesOf(
 }
 
 /** The single role the transition targets, or `null` for the terminal `close`
- * transition — the one state an issue reaches by carrying no role at all. */
-function targetRole(t: StateTransition, labels: StateTransitionLabels): string | null {
+ * transition — the one state an issue reaches by carrying no role at all.
+ *
+ * `promote` is the one transition whose target depends on the ISSUE and not
+ * only on the request: a dependent carrying a declared HUMAN-ONLY type lands in
+ * the human lane. The edges are consumed either way — the dependency wait is
+ * genuinely over; only who acts next differs.
+ */
+function targetRole(
+  t: StateTransition,
+  labels: StateTransitionLabels,
+  current: readonly string[],
+): string | null {
   switch (t.kind) {
     case "close":
       return null;
-    case "queue":
     case "promote":
+      return hitlTypesIn(current, labels).length > 0 ? labels.human : labels.ready;
+    case "queue":
       return labels.ready;
     case "park":
     case "human":
@@ -172,7 +204,7 @@ export function planTransition(
     };
   }
 
-  const target = targetRole(transition, labels);
+  const target = targetRole(transition, labels, current);
   const add = new Set<string>();
   const remove = new Set<string>();
 
