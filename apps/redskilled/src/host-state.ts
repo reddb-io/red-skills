@@ -280,7 +280,7 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     // bundle that predates the scope block still answers completely.
     (state.scope === undefined || isRedskilledScopeState(state.scope)) &&
     // The same tolerance again, and for the same reason: a daemon from a bundle
-    // that predates Amendment 3 answers completely without a registrations block,
+    // that predates Amendment 4 answers completely without a registrations block,
     // while a block that IS there and is the wrong shape still fails closed.
     (state.registrations === undefined ||
       (Array.isArray(state.registrations) && state.registrations.every(isRedskilledProjectRegistration))) &&

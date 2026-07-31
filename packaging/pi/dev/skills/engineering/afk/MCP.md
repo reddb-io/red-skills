@@ -51,9 +51,9 @@ re-aimed by `project_resize`.
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `project_status` | read | Supervisor pid, slots, churn, and live workers for this project. |
-| `project_start` | mutating | Start this project's workers with a runner, a target width, and its work policy. |
+| `project_start` | mutating | Register this project with the host daemon — a runner, a target width, and its work policy. It registers; it launches no process of the project's own. |
 | `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
-| `project_stop` | mutating | Gracefully stop this project's supervisor; pass `force: true` to hard-stop only its attributed workers. |
+| `project_stop` | mutating | Give this project's registration back and stop what it still holds; pass `force: true` to hard-stop only its attributed workers. |
 
 `selector` scopes what the producer drains — `{spec, lane, label, issues, tags,
 user}`. Graceful stop leaves in-flight detached workers to finish; force never
@@ -66,27 +66,30 @@ against a bundle that cannot route `run`, so workers created through this
 interface drained zero issues while the CLI lane kept working and no surface
 reported the difference (#2677). Run
 `castle-mcp __mcp-canary --root <scratch-repo>` to walk the shipped lane end to
-end — `project_start` → a slot that spawns a real worker → a daemon verdict over
-the socket → `project_status` → `project_stop`. It exits non-zero naming the step
-that went inert, and it treats a returned supervisor pid as proof of nothing:
-only a worker directory holding a live `worker.pid` counts as drainage.
+end — `project_start` → a registration the daemon holds → no process of the
+project's own → `project_status` → `project_stop`. It exits non-zero naming the
+step that went inert.
 
-**The walk crosses the socket, because the lane does.** Under ADR 0130 a
-Worker's process liveness resolves over a unix socket to the `redskilled`
-daemon, so a tool answering says nothing about the daemon behind it — with no
-daemon listening, every tool still replies and the verdict degrades to
-`unknown`. The `daemon_reach` step reads `worker_vitals` for the worker the walk
-just spawned and fails when that verdict was reached without the daemon
-answering, so a reachable tool over an unreachable daemon is a red canary rather
-than a quiet one. Its failure names the session socket path, because "restart
-the daemon" and "fix the lane that stopped asking it" are different repairs.
+**The load-bearing assertion inverted with the lane.** The canary once refused
+to accept a returned supervisor pid as proof of drainage; since the MCP
+registers instead of launching, it refuses to accept a project that started
+anything at all. A `registered` payload carrying a pid, or a live worker
+appearing under the project, is a fallback launch the host never admitted,
+never counts and cannot stop. #2677's own fact — whether the entry can route
+`run` — travels one process out, in the argv the registration commits the host
+to running, and the walk reads it there.
+
+**The walk crosses the socket, because the lane does.** With no daemon
+listening, `project_start` must REFUSE (ADR 0130 rule 6) rather than fall back
+to spawning, so the canary's dead-daemon walk goes red at the first mutating
+step. Its failure names the session socket path, because "restart the daemon"
+and "fix the lane that stopped asking it" are different repairs.
 
 **The canary fires without being remembered.** `red-mcp-lane-canary` runs the
 walk daily, on every push that touches the lane, and on demand — against the
-shipped bundle with a live daemon, and against two deliberately broken lanes
-(a slot entry that cannot route `run`, and a session whose daemon socket is
-dead) that must come back red. It is deliberately NOT a pull-request gate: its
-job is to make an inert lane loud, and a probe that blocks merges on an
+shipped bundle with a live daemon, and against a deliberately broken lane (a
+session whose daemon socket is dead) that must come back red. It is deliberately
+NOT a pull-request gate: its job is to make an inert lane loud, and a probe that blocks merges on an
 unrelated transient is one people route around. `scripts/test-mcp-lane-canary-schedule.sh`
 holds both halves of that in place.
 

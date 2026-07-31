@@ -29,7 +29,8 @@ const SURFACE: ReadonlyArray<{
     name: "project_start",
     title: "Start this project's workers",
     description:
-      "MUTATING: start this project's demand producer with a runner, a target width, and its work policy.",
+      "MUTATING: register this project with the host daemon — a runner, a target width, and its work policy. " +
+      "Registers rather than launches: the project contributes a record, never a process of its own.",
     schema: ["runner", "target", "selector", "config", "base", "fleet"],
   },
   {
@@ -43,7 +44,7 @@ const SURFACE: ReadonlyArray<{
     name: "project_stop",
     title: "Stop this project's workers",
     description:
-      "MUTATING: gracefully stop this project's supervisor; force hard teardown explicitly.",
+      "MUTATING: stop this project's work and give its registration back; force hard teardown explicitly.",
     schema: ["force", "fleet"],
   },
   {

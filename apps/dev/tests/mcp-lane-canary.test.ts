@@ -1,6 +1,11 @@
-// The canary's step contract. The e2e sibling proves the canary catches #2677
-// against real processes; this file pins WHAT each step asserts and that a red
-// run names the step that went inert.
+// The canary's step contract. The e2e sibling proves the canary walks the real
+// lane against real processes; this file pins WHAT each step asserts and that a
+// red run names the step that went inert.
+//
+// Since #2902 the lane the canary walks is the two-player one: the MCP
+// registers, the daemon drives. So the assertions below are about a
+// REGISTRATION the daemon handed back — and about the absence of anything the
+// project started for itself.
 import { describe, expect, it, vi } from "vitest";
 import { decode } from "@reddb-io/toon";
 import {
@@ -12,12 +17,13 @@ import {
 } from "../src/core/mcp-lane-canary.js";
 import { parseMcpLaneCanaryArgs } from "../src/commands/mcp-lane-canary.js";
 import { resolveShippedMcpEntry } from "../src/runtime/mcp-lane-canary-io.js";
-import { DAEMON_SILENCE_REASON } from "../src/runtime/liveness-anchor.js";
 
-const SUPERVISOR_PID = 40_100;
+const STRAY_PID = 40_100;
 const WORKER_PID = 40_200;
 /** The session socket a canary walk is pinned to, as an operator would read it. */
 const SOCKET = "/run/user/1000/redskilled/canary-session.sock";
+/** The daemon's opaque label for the project under test. */
+const PROJECT = "p_8f21c0";
 
 function worker(overrides: Partial<CanaryWorker> = {}): CanaryWorker {
   return {
@@ -29,56 +35,26 @@ function worker(overrides: Partial<CanaryWorker> = {}): CanaryWorker {
   };
 }
 
-/** One `worker_vitals` row in the shape the shipped adapter publishes it. */
-function vitals(daemonLiveness: unknown = daemonHolds()): unknown {
-  return [{ worker: { id: "wCAN1", pid: WORKER_PID }, live: true, daemon_liveness: daemonLiveness }];
-}
-
-/** The daemon holds the Worker it birthed — the only green after #2851. */
-function daemonHolds(): unknown {
+/** What `project_start` answers on a healthy lane: a registration, no process. */
+function registered(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    verdict: "alive",
-    anchor: "daemon",
-    project_label: "acme/widgets",
-    pid: WORKER_PID,
-    staleness: { stale: false, age_ms: 120, threshold_ms: 5_000, reason: "sampled 120ms ago" },
+    status: "registered",
+    project: PROJECT,
+    target: 1,
+    runner: "claude",
+    selector: "{}",
+    argv: ["/usr/bin/node", "/opt/red/dist/dev.bundle.min.mjs", "run", "--once", "--runner", "claude"],
+    socket: SOCKET,
+    renew_by: "2026-07-31T05:30:00.000Z",
+    ...overrides,
   };
 }
-
-/** The daemon answered and does not hold this Worker. Honest before the cutover,
- * a defect after it: every Worker the lane produces is born by the daemon. */
-function daemonUncovered(): unknown {
-  return {
-    verdict: "unknown",
-    anchor: "none",
-    project_label: null,
-    pid: null,
-    staleness: { stale: true, age_ms: null, threshold_ms: null, reason: DAEMON_UNCOVERED },
-  };
-}
-
-/** The daemon said nothing at all — the socket boundary is broken. */
-function daemonSilent(): unknown {
-  return {
-    verdict: "unknown",
-    anchor: "none",
-    project_label: null,
-    pid: null,
-    staleness: { stale: true, age_ms: null, threshold_ms: null, reason: DAEMON_SILENCE_REASON },
-  };
-}
-
-const DAEMON_UNCOVERED =
-  "the daemon holds no record of this Worker while the caller still sees it running, " +
-  "so its silence is ignorance about a Worker it never birthed, not evidence of death";
 
 interface HarnessOptions {
   tools?: readonly string[];
   create?: unknown;
   status?: unknown;
   stop?: unknown;
-  /** What `worker_vitals` answers. */
-  vitals?: unknown;
   /** Worker observations, consumed one per scan; the last repeats forever. */
   observations?: readonly (readonly CanaryWorker[])[];
   /** Pids that are alive; a pid absent here reads dead. */
@@ -90,10 +66,10 @@ interface HarnessOptions {
 function harness(options: HarnessOptions = {}) {
   let stopped = false;
   let clock = 0;
-  const observations = options.observations ?? [[worker()]];
+  const observations = options.observations ?? [[]];
   let scans = 0;
-  const live = new Set(options.livePids ?? [SUPERVISOR_PID, WORKER_PID]);
-  const diesOnStop = new Set(options.diesOnStop ?? [SUPERVISOR_PID, WORKER_PID]);
+  const live = new Set(options.livePids ?? [STRAY_PID, WORKER_PID]);
+  const diesOnStop = new Set(options.diesOnStop ?? [STRAY_PID, WORKER_PID]);
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
 
   const deps: McpLaneCanaryDeps = {
@@ -108,22 +84,19 @@ function harness(options: HarnessOptions = {}) {
     callTool: async (tool, args) => {
       calls.push({ tool, args });
       if (tool === "project_start") {
-        return options.create ?? { status: "launched", pid: SUPERVISOR_PID, target: 1 };
-      }
-      if (tool === "worker_vitals") {
-        return options.vitals ?? vitals();
+        return options.create ?? registered();
       }
       if (tool === "project_status") {
         return (
           options.status ?? {
-            supervisor: { pid: SUPERVISOR_PID, alive: true },
-            slots: { busy: 1, free: 0, total: 1, parked: 0 },
+            supervisor: { pid: null, alive: false },
+            slots: { busy: 0, free: 0, total: 0, parked: 0 },
           }
         );
       }
       if (tool === "project_stop") {
         stopped = true;
-        return options.stop ?? { status: "stopped", pid: SUPERVISOR_PID };
+        return options.stop ?? { status: "none", deregistered: true, project: PROJECT };
       }
       throw new Error(`unexpected tool ${tool}`);
     },
@@ -146,11 +119,9 @@ function harness(options: HarnessOptions = {}) {
 }
 
 const OPTIONS = {
-  fleet: "canary",
   runner: "claude",
   pollMs: 10,
-  workerDeadlineMs: 200,
-  daemonDeadlineMs: 200,
+  quietDeadlineMs: 100,
 };
 
 describe("MCP lane canary — green lane", () => {
@@ -163,191 +134,175 @@ describe("MCP lane canary — green lane", () => {
     expect(result.inertStep).toBeUndefined();
     expect(result.steps.map((step) => step.step)).toEqual([...MCP_LANE_CANARY_STEPS]);
     expect(result.steps.every((step) => step.verdict === "ok")).toBe(true);
-    expect(result.supervisorPid).toBe(SUPERVISOR_PID);
+    expect(result.registration?.project).toBe(PROJECT);
     expect(result.summary).toContain("green");
+    // Green means the project holds a registration and NOTHING else: no worker
+    // of its own ever appeared.
+    expect(result.workers).toHaveLength(0);
     // The real tool surface was driven, in lane order.
     expect(calls.map((call) => call.tool)).toEqual([
       "project_start",
-      "worker_vitals",
       "project_status",
       "project_stop",
     ]);
   });
-});
 
-describe("MCP lane canary — the socket boundary (#2794)", () => {
-  it("fails at daemon_reach when the tool answers and the daemon does not", async () => {
-    const { deps } = harness({ vitals: vitals(daemonSilent()) });
+  it("reports the registration the daemon handed back, verbatim", async () => {
+    // ADR 0130 rule 3: the selector and the argv are the project's, carried
+    // unread. The canary states what came back and asserts nothing about what it
+    // should say beyond its existence.
+    const { deps } = harness({
+      create: registered({ selector: '{"labels":["ready-for-agent"]}' }),
+    });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
+    expect(result.registration?.selector).toBe('{"labels":["ready-for-agent"]}');
+    expect(result.registration?.argv).toContain("run");
+    expect(result.registration?.renewBy).toBe("2026-07-31T05:30:00.000Z");
+    const step = result.steps.find((entry) => entry.step === "registration_held");
+    expect(step?.verdict).toBe("ok");
+    expect(step?.detail).toContain(PROJECT);
+  });
+});
+
+describe("MCP lane canary — the registration is the whole presence (#2902)", () => {
+  // The cutover's own assertion, and the inversion of #2677's: a `registered`
+  // payload is not permission to have started something as well.
+  it("fails at no_project_process when the start hands back a pid", async () => {
+    const { deps } = harness({ create: registered({ pid: STRAY_PID }) });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+
     expect(result.ok).toBe(false);
-    expect(result.inertStep).toBe("daemon_reach");
-    // The lane looked healthy up to the socket: this is the two-process shape of
-    // the same silent inertness #2677 taught, so the report must say so.
+    expect(result.inertStep).toBe("no_project_process");
+    expect(result.summary).toContain(`pid ${STRAY_PID}`);
+    expect(result.summary).toContain("launched a process of the project's own");
+    // The steps BEFORE the inert one still read green — the failure is located,
+    // not smeared across the lane.
     const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
-    expect(byStep.get("worker_spawn")).toBe("ok");
-    expect(byStep.get("daemon_reach")).toBe("inert");
+    expect(byStep.get("project_start")).toBe("ok");
+    expect(byStep.get("registration_held")).toBe("ok");
     expect(byStep.get("project_status")).toBe("skipped");
-    expect(result.summary).toContain("daemon_reach");
-    expect(result.summary).toContain("the tool is reachable and the socket is not");
-    // An inert lane is still torn down.
+    // An inert lane still gives its registration back.
     expect(byStep.get("project_stop")).toBe("ok");
   });
 
-  it("names the socket the lane failed to cross, not just the tool that answered", async () => {
-    // An operator reading this has two different repairs available — restart the
-    // daemon, or fix the lane that no longer asks it — and only the socket path
-    // tells them which one they are looking at.
-    const { deps } = harness({ vitals: vitals(daemonSilent()) });
+  it("fails at no_project_process when a live worker appears under the project", async () => {
+    const { deps } = harness({ observations: [[], [worker()]] });
 
-    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+    const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("daemon_reach");
-    expect(result.summary).toContain(SOCKET);
+    expect(result.inertStep).toBe("no_project_process");
+    expect(result.summary).toContain("wCAN1");
+    expect(result.summary).toContain("unbudgeted birth");
+    expect(result.workers).toHaveLength(1);
   });
 
-  it("names the socket when the published row carries no daemon block at all", async () => {
-    const { deps } = harness({ vitals: [{ worker: { id: "wCAN1" }, live: true }] });
+  it("reads a dead worker directory as no process at all", async () => {
+    // Only a LIVE process is a birth. A directory left by an earlier run is
+    // litter, and failing on it would make the probe unusable on a real repo.
+    const { deps } = harness({ observations: [[worker({ alive: false })]] });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.ok).toBe(true);
+    expect(result.steps.find((step) => step.step === "no_project_process")?.verdict).toBe("ok");
+  });
+
+  it("fails at project_start when the lane still launches instead of registering", async () => {
+    const { deps } = harness({ create: { status: "launched", pid: STRAY_PID, target: 1 } });
 
     const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
 
-    expect(result.inertStep).toBe("daemon_reach");
-    expect(result.summary).toContain("no daemon_liveness block");
+    expect(result.inertStep).toBe("project_start");
+    expect(result.summary).toContain("instead of registered");
+    expect(result.summary).toContain(SOCKET);
+  });
+});
+
+describe("MCP lane canary — the socket boundary (#2794, #2851)", () => {
+  it("fails at project_start when no daemon answers, naming the socket", async () => {
+    // ADR 0130 rule 6: a start that cannot reach the host refuses. The tool
+    // throws the refusal, and the operator's next move is on that path — not on
+    // the tool that reported it.
+    const { deps } = harness();
+    deps.callTool = vi.fn(async () => {
+      throw new Error(`redskilled did not answer on ${SOCKET}: ECONNREFUSED`);
+    });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+
+    expect(result.inertStep).toBe("project_start");
+    expect(result.summary).toContain(SOCKET);
+    expect(result.summary).toContain("ECONNREFUSED");
+  });
+
+  it("refuses a registration no daemon could have minted", async () => {
+    // Only the daemon issues the project label: a payload without one proves
+    // nothing crossed the socket, however healthy its `status` reads.
+    const { deps } = harness({ create: registered({ project: "" }) });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+
+    expect(result.inertStep).toBe("registration_held");
+    expect(result.summary).toContain("named no project");
     expect(result.summary).toContain(SOCKET);
   });
 
   it("still says which boundary broke when no socket path was resolved", async () => {
     // A canary that cannot resolve the path must not go quiet about the hop:
     // "unresolved" is itself an operator-routing fact.
-    const { deps } = harness({ vitals: vitals(daemonSilent()) });
+    const { deps } = harness({ create: registered({ project: "" }) });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("daemon_reach");
+    expect(result.inertStep).toBe("registration_held");
     expect(result.summary).toContain("redskilled session socket (path unresolved)");
-  });
-
-  it("accepts a daemon that holds the Worker it birthed", async () => {
-    const { deps } = harness();
-
-    const result = await runMcpLaneCanary(deps, OPTIONS);
-
-    const step = result.steps.find((entry) => entry.step === "daemon_reach");
-    expect(step?.verdict).toBe("ok");
-    expect(step?.detail).toContain("the daemon answered about the Worker it birthed");
-  });
-
-  // The cutover's own canary assertion (#2851). Before ADR 0130 the project
-  // spawned its own Workers, so `unknown` was the daemon's honest answer about
-  // one it never saw. Now that every birth crosses the socket, a live worker on
-  // disk the host cannot vouch for is an unbudgeted birth — and tolerating it
-  // would be exactly the false green this canary exists to refuse.
-  it("fails at daemon_reach when a live worker exists that the daemon never birthed", async () => {
-    const { deps } = harness({ vitals: vitals(daemonUncovered()) });
-
-    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET, daemonDeadlineMs: 0 });
-
-    expect(result.inertStep).toBe("daemon_reach");
-    expect(result.summary).toContain("holds no record of it while the lane still sees it running");
-    expect(result.summary).toContain("behind the host's back");
-    expect(result.summary).toContain(SOCKET);
-  });
-
-  it("fails at daemon_reach when the row carries no daemon verdict at all", async () => {
-    const { deps } = harness({ vitals: [{ worker: { id: "wCAN1" }, live: true }] });
-
-    const result = await runMcpLaneCanary(deps, OPTIONS);
-
-    expect(result.inertStep).toBe("daemon_reach");
-    expect(result.summary).toContain("no daemon_liveness block");
-  });
-
-  it("refuses a verdict about some other worker as evidence for this one", async () => {
-    // The false-green shape: the reader answers, nothing it says is about the
-    // work this walk performed.
-    const { deps } = harness({
-      vitals: [{ worker: { id: "wOTHER" }, live: true, daemon_liveness: daemonHolds() }],
-    });
-
-    const result = await runMcpLaneCanary(deps, OPTIONS);
-
-    expect(result.inertStep).toBe("daemon_reach");
-    expect(result.summary).toContain("listed only wOTHER");
-    expect(result.summary).toContain("wCAN1");
-  });
-
-  it("fails at daemon_reach when the reader publishes no worker at all", async () => {
-    const { deps } = harness({ vitals: [] });
-
-    const result = await runMcpLaneCanary(deps, OPTIONS);
-
-    expect(result.inertStep).toBe("daemon_reach");
-    expect(result.summary).toContain("listed no worker at all");
-  });
-
-  it("fails at connect when the lane exposes no worker_vitals to ask", async () => {
-    const { deps } = harness({ tools: ["project_start", "project_status", "project_stop"] });
-
-    const result = await runMcpLaneCanary(deps, OPTIONS);
-
-    expect(result.inertStep).toBe("connect");
-    expect(result.summary).toContain("worker_vitals");
   });
 });
 
-describe("MCP lane canary — the #2677 shape", () => {
-  // The motivating bug: project_start answers with a supervisor pid, the
-  // supervisor lives, and every slot dies before writing a worker directory.
-  it("fails at worker_spawn when a returned pid produces no worker directory", async () => {
-    const { deps } = harness({ observations: [[]] });
+describe("MCP lane canary — a registration the host cannot act on", () => {
+  it("fails when the registration carries no argv", async () => {
+    const { deps } = harness({ create: registered({ argv: [] }) });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.ok).toBe(false);
-    expect(result.inertStep).toBe("worker_spawn");
-    expect(result.summary).toContain("worker_spawn");
-    expect(result.summary).toContain("no worker directory was ever written");
-    expect(result.summary).toContain("#2677");
-    // The steps BEFORE the inert one still read green — the failure is located,
-    // not smeared across the lane.
-    const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
-    expect(byStep.get("project_start")).toBe("ok");
-    expect(byStep.get("supervisor_live")).toBe("ok");
-    expect(byStep.get("project_status")).toBe("skipped");
+    expect(result.inertStep).toBe("registration_held");
+    expect(result.summary).toContain("carries no argv");
   });
 
-  it("refuses to accept a dead worker directory as drainage", async () => {
+  // The #2677 shape, moved one process out: then a slot entry that could not
+  // route `run` spawned Workers that booted into nothing. Now the same fact
+  // lives in the argv the host is committed to running.
+  it("fails when the registered argv never routes `run`", async () => {
     const { deps } = harness({
-      observations: [[worker({ alive: false })]],
-      livePids: [SUPERVISOR_PID],
+      create: registered({ argv: ["/usr/bin/node", "/opt/red/dist/dev.bundle.min.mjs", "--once"] }),
     });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("worker_spawn");
-    expect(result.summary).toContain("only dead worker directories exist");
-    expect(result.summary).toContain("wCAN1");
+    expect(result.inertStep).toBe("registration_held");
+    expect(result.summary).toContain("never routes `run`");
+    expect(result.summary).toContain("#2677");
   });
 
-  it("names the supervisor death when the fleet dies before its first worker", async () => {
-    const { deps } = harness({ observations: [[]], livePids: [SUPERVISOR_PID] });
-    // Alive for the supervisor_live check, dead on the next poll.
-    let probes = 0;
-    deps.isLive = (pid) => pid === SUPERVISOR_PID && probes++ < 1;
+  it("fails when the registration carries no selector", async () => {
+    const { deps } = harness({ create: registered({ selector: "" }) });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("worker_spawn");
-    expect(result.summary).toContain("died before any worker appeared");
+    expect(result.inertStep).toBe("registration_held");
+    expect(result.summary).toContain("carries no selector");
   });
 
-  it("tears the fleet down even when the lane went inert", async () => {
-    const { deps, calls } = harness({ observations: [[]] });
+  it("fails when the registration never lapses", async () => {
+    const { deps } = harness({ create: registered({ renew_by: "" }) });
 
-    await runMcpLaneCanary(deps, OPTIONS);
+    const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(calls.map((call) => call.tool)).toContain("project_stop");
+    expect(result.inertStep).toBe("registration_held");
+    expect(result.summary).toContain("no renewal deadline");
   });
 });
 
@@ -365,79 +320,69 @@ describe("MCP lane canary — the other inert steps", () => {
   it("fails at project_start when the tool throws over the transport", async () => {
     const { deps } = harness();
     deps.callTool = vi.fn(async () => {
-      throw new Error("MCP error -32603: registry write failed");
+      throw new Error("MCP error -32603: registration refused");
     });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
     expect(result.inertStep).toBe("project_start");
-    expect(result.summary).toContain("registry write failed");
+    expect(result.summary).toContain("registration refused");
   });
 
-  it("fails at project_start when no supervisor pid comes back", async () => {
-    const { deps } = harness({ create: { status: "launched" } });
-
-    const result = await runMcpLaneCanary(deps, OPTIONS);
-
-    expect(result.inertStep).toBe("project_start");
-    expect(result.summary).toContain("no supervisor pid");
-  });
-
-  it("fails at supervisor_live when the returned pid names no process", async () => {
-    const { deps } = harness({ livePids: [WORKER_PID] });
-
-    const result = await runMcpLaneCanary(deps, OPTIONS);
-
-    expect(result.inertStep).toBe("supervisor_live");
-    expect(result.summary).toContain("no such process is alive");
-  });
-
-  it("fails at project_status when the reader cannot see its own live worker", async () => {
+  it("fails at project_status when the reader still sees a per-project supervisor", async () => {
     const { deps } = harness({
-      status: {
-        supervisor: { pid: SUPERVISOR_PID, alive: true },
-        slots: { busy: 0, free: 1, total: 1, parked: 0 },
-      },
+      status: { supervisor: { pid: STRAY_PID, alive: true }, slots: { busy: 0 } },
     });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
     expect(result.inertStep).toBe("project_status");
-    expect(result.summary).toContain("slots.busy=0");
+    expect(result.summary).toContain(`supervisor pid ${STRAY_PID} alive`);
   });
 
-  it("fails at project_status when reader and writer disagree about liveness", async () => {
+  it("fails at project_status when the reader reports busy slots nothing started", async () => {
     const { deps } = harness({
-      status: { supervisor: { pid: SUPERVISOR_PID, alive: false }, slots: { busy: 1 } },
+      status: { supervisor: { pid: null, alive: false }, slots: { busy: 1, free: 0, total: 1 } },
     });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
     expect(result.inertStep).toBe("project_status");
-    expect(result.summary).toContain("reader and writer disagree");
+    expect(result.summary).toContain("slots.busy=1");
   });
 
-  it("fails at project_stop when the canonical stop leaves the supervisor alive", async () => {
-    const { deps } = harness({ diesOnStop: [WORKER_PID] });
-
-    const result = await runMcpLaneCanary(deps, {
-      ...OPTIONS,
-      teardownDeadlineMs: 100,
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.inertStep).toBe("project_stop");
-    expect(result.summary).toContain(`supervisor ${SUPERVISOR_PID}`);
-    expect(result.summary).toContain("survived");
-  });
-
-  it("fails at project_stop when the stop no-ops", async () => {
-    const { deps } = harness({ stop: { status: "timeout", pid: SUPERVISOR_PID } });
+  it("fails at project_stop when the registration is not given back", async () => {
+    const { deps } = harness({ stop: { status: "none", deregistered: false, project: PROJECT } });
 
     const result = await runMcpLaneCanary(deps, { ...OPTIONS, teardownDeadlineMs: 100 });
 
+    expect(result.ok).toBe(false);
     expect(result.inertStep).toBe("project_stop");
-    expect(result.summary).toContain("no-opped");
+    expect(result.summary).toContain("without deregistering");
+    expect(result.summary).toContain(PROJECT);
+  });
+
+  it("fails at project_stop when a live worker survives the stop", async () => {
+    // The worker appears only once the walk has stopped watching for one, so the
+    // teardown is what has to catch it.
+    const { deps } = harness({ observations: [[], [worker()]], diesOnStop: [] });
+
+    const result = await runMcpLaneCanary(deps, {
+      ...OPTIONS,
+      quietDeadlineMs: 0,
+      teardownDeadlineMs: 100,
+    });
+
+    expect(result.inertStep).toBe("project_stop");
+    expect(result.summary).toContain("survived");
+  });
+
+  it("gives the registration back even when the lane went inert", async () => {
+    const { deps, calls } = harness({ create: registered({ pid: STRAY_PID }) });
+
+    await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(calls.map((call) => call.tool)).toContain("project_stop");
   });
 });
 
@@ -464,11 +409,11 @@ describe("MCP lane canary target resolution", () => {
 
   it("parses the probe's tuning flags and refuses unknown ones", () => {
     const parsed = parseMcpLaneCanaryArgs(
-      ["--runner", "codex", "--worker-deadline-ms", "9000"],
+      ["--runner", "codex", "--quiet-deadline-ms", "9000"],
       "/scratch",
     );
 
-    expect(parsed).toMatchObject({ runner: "codex", workerDeadlineMs: 9_000 });
+    expect(parsed).toMatchObject({ runner: "codex", quietDeadlineMs: 9_000 });
     expect(parsed.root).toBe("/scratch");
     expect(() => parseMcpLaneCanaryArgs(["--nope"], "/scratch")).toThrow(/unknown flag/);
     expect(() => parseMcpLaneCanaryArgs(["--fleet", "probe"], "/scratch")).toThrow(/unknown flag/);
@@ -478,7 +423,7 @@ describe("MCP lane canary target resolution", () => {
 
 describe("MCP lane canary report", () => {
   it("renders the walk as TOON with the inert step addressable", async () => {
-    const { deps } = harness({ observations: [[]] });
+    const { deps } = harness({ create: registered({ argv: [] }) });
 
     const rendered = renderMcpLaneCanaryToon(await runMcpLaneCanary(deps, OPTIONS));
     const decoded = decode(rendered) as {
@@ -489,7 +434,17 @@ describe("MCP lane canary report", () => {
 
     expect(rendered).not.toContain("{\n");
     expect(decoded.ok).toBe(false);
-    expect(decoded.inert_step).toBe("worker_spawn");
+    expect(decoded.inert_step).toBe("registration_held");
     expect(decoded.steps).toHaveLength(MCP_LANE_CANARY_STEPS.length);
+  });
+
+  it("renders the registration the walk produced", async () => {
+    const { deps } = harness();
+
+    const rendered = renderMcpLaneCanaryToon(await runMcpLaneCanary(deps, OPTIONS));
+    const decoded = decode(rendered) as { registration: { project: string; argv: string[] } };
+
+    expect(decoded.registration.project).toBe(PROJECT);
+    expect(decoded.registration.argv).toContain("run");
   });
 });
