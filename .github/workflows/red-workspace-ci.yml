@@ -23,6 +23,12 @@ name: red-workspace-ci
 
 on:
   pull_request:
+  # A merge queue tests each candidate on a temporary `gh-readonly-queue/*` branch
+  # and reports through the `merge_group` event. Without this trigger the required
+  # checks never report for a queued entry, so the queue accepts pull requests and
+  # then holds them forever — which is exactly what it did on 2026-07-31, with
+  # three entries queued and no run against any queue branch.
+  merge_group:
   push:
     # automation/toon-bump is written with GITHUB_TOKEN, whose events never
     # trigger pull_request workflows. The Version Packages PR uses RELEASE_PAT
