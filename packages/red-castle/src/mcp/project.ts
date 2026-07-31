@@ -8,7 +8,9 @@
 // name (ADR 0130, amending ADR 0120's tool surface).
 //
 // What survived the removal is the work policy: the selector, the runner and
-// the base branch are handed to the producer at start and re-aimed by resize.
+// the base branch are handed over at start and re-aimed by resize. Since ADR 0130
+// Amendment 3 they are handed to the HOST as a registration rather than to a
+// supervisor the project spawned — the MCP registers, the daemon drives (#2902).
 
 import { z } from "zod/v3";
 import { refuseFleetNaming } from "../engine/extinct-nouns.js";
@@ -96,7 +98,8 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
       name: "project_start",
       title: "Start this project's workers",
       description:
-        "MUTATING: start this project's demand producer with a runner, a target width, and its work policy.",
+        "MUTATING: register this project with the host daemon — a runner, a target width, and its work policy. " +
+        "Registers rather than launches: the project contributes a record, never a process of its own.",
       inputSchema: {
         runner: z.string().min(1),
         target: z.number().int().min(0).default(2),
@@ -132,7 +135,7 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
       name: "project_stop",
       title: "Stop this project's workers",
       description:
-        "MUTATING: gracefully stop this project's supervisor; force hard teardown explicitly.",
+        "MUTATING: stop this project's work and give its registration back; force hard teardown explicitly.",
       inputSchema: { force: z.boolean().optional(), fleet: removedFleetName },
       invoke: async ({ force, fleet }) => {
         refuseFleetNaming(fleet);

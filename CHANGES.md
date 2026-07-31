@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## afk (engineering) — `project_start` registers the project instead of launching it (issue #2902)
+
+- **status**: modified
+- **upstream**: —
+- **why**: ADR 0130 Amendment 4's two-player model, from the operator's side — the MCP registers, the daemon drives. Beginning work on a repository must create no process of the project's own.
+- **what changed**:
+  - `MCP.md` and `fleet.md`: the `project_start` row now says it registers this project with the host daemon and launches no process of the project's own, instead of describing the supervisor it spawned.
+  - The tool's own description follows the same wording, and `project_stop` now says it gives the registration back.
+
 ## red-statusline, red-setup (engineering) — the host displays the Worker line instead of rendering it (issue #2928)
 
 - **status**: modified

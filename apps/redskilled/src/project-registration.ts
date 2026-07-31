@@ -2,7 +2,7 @@
  * project-registration — what a project contributes, now that it contributes no
  * process.
  *
- * ADR 0130 Amendment 3: **there are exactly two players.** The project's MCP,
+ * ADR 0130 Amendment 4: **there are exactly two players.** The project's MCP,
  * alive in a user's session, which REGISTERS; and the daemon, alive on the
  * machine, which will own the demand loop. A registration is the whole of the
  * project's side of that seam: a record the daemon stores and reports back.

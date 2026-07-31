@@ -22,12 +22,18 @@ import {
 import type { ProjectIdentity } from "@reddb-io/shared/project-identity.js";
 import {
   commandRedskilledWorker,
+  deregisterRedskilledProject,
   ensureRedskilledDaemon,
+  registerRedskilledProject,
   readRedskilledHostState,
   startRedskilledWorker,
   type RedskilledClientConfig,
 } from "@reddb-io/redskilled/client";
 import { resolveRedskilledPaths, type RedskilledPaths } from "@reddb-io/redskilled/paths";
+import type {
+  RedskilledProjectRegistration,
+  RedskilledProjectRegistrationRequest,
+} from "@reddb-io/redskilled/project-registration";
 import type { RedskilledWorkerSpec } from "@reddb-io/redskilled/worker-launch";
 import { readRedskilledEvents, type RedskilledHostEvent } from "@reddb-io/redskilled/event-lane";
 
@@ -36,7 +42,16 @@ import { readRedskilledEvents, type RedskilledHostEvent } from "@reddb-io/redski
 // the same names is how two spellings of one boundary start.
 export { RedskilledUnreachableError } from "@reddb-io/redskilled/client";
 export type { RedskilledWorkerStarted } from "@reddb-io/redskilled/protocol";
-export type { RedskilledHostEvent, RedskilledWorkerSpec };
+export type { RedskilledHostEvent, RedskilledWorkerSpec, RedskilledProjectRegistration };
+
+/**
+ * A registration as the PROJECT states it — everything but its own label.
+ *
+ * The label is the port's, not the caller's: a surface that could state it would
+ * be a surface that could register another project by typo, and the daemon would
+ * believe it (ADR 0130 rule 11).
+ */
+export type ProjectRegistrationRequest = Omit<RedskilledProjectRegistrationRequest, "project_label">;
 
 /**
  * Resolve this checkout's project label — the one opaque string the daemon keys
@@ -81,6 +96,21 @@ export interface RedskilledBirthPort {
   reach(): Promise<void>;
   /** Ask for one Worker. A refusal throws; the project never spawns instead. */
   start(spec: RedskilledWorkerSpec): Promise<GrantedWorkerBirth>;
+  /**
+   * State this project's presence: what work it wants and what to run for it.
+   *
+   * The project's whole contribution since ADR 0130 Amendment 4 — a record the
+   * daemon holds instead of a process the project launched. Both strings are
+   * opaque to the host; a refusal throws, and nothing is started instead.
+   */
+  register(request: ProjectRegistrationRequest): Promise<RedskilledProjectRegistration>;
+  /**
+   * Take this project's presence back. Reports whether a record stood.
+   *
+   * `false` is an answer, not a fault: work stops from two directions — an
+   * operator and a session that ends — and the second one must read as done.
+   */
+  deregister(): Promise<boolean>;
   /** Ask the host to end one Worker. The kill is the daemon's, the policy is ours. */
   stop(workerId: string, detail: string): Promise<boolean>;
   /** How many Workers this project holds on the host, as the host counts them. */
@@ -138,6 +168,20 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
       };
     },
 
+    async register(request) {
+      const registered = await registerRedskilledProject(
+        paths,
+        { ...request, project_label: projectLabel },
+        config,
+      );
+      return registered.registration;
+    },
+
+    async deregister() {
+      const released = await deregisterRedskilledProject(paths, { project_label: projectLabel }, config);
+      return released.released;
+    },
+
     async stop(workerId, detail) {
       const result = await commandRedskilledWorker(paths, { command: "stop", worker_id: workerId, detail }, config);
       return result.applied;
@@ -167,6 +211,25 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
  * stopped asking it" are different jobs, and the socket path is what tells them
  * apart.
  */
+/**
+ * The one sentence a project prints when it could not register itself.
+ *
+ * A sibling of {@link redskilledUnreachableAdvice} rather than a reuse of it,
+ * because the two refusals leave different states behind: that one says no Worker
+ * was born, this one says the project has no presence at all. Both name the
+ * socket, because "start the daemon" and "fix the client that stopped asking it"
+ * are still the two repairs, and the socket is what tells them apart.
+ */
+export function redskilledRegistrationRefusal(socketPath: string, cause: unknown): string {
+  const detail = cause instanceof Error ? cause.message : String(cause);
+  return (
+    `this project was not registered: the redskilled daemon did not answer on ${socketPath}. ` +
+    `Since ADR 0130 Amendment 4 a project contributes a registration rather than a process, so a project ` +
+    `that cannot reach the daemon starts nothing rather than launching a demand producer no host admitted, ` +
+    `counts or can stop. Run \`redskilled provision\` (or \`/red-setup\`) to install it, then retry. (${detail})`
+  );
+}
+
 export function redskilledUnreachableAdvice(socketPath: string, cause: unknown): string {
   const detail = cause instanceof Error ? cause.message : String(cause);
   return (

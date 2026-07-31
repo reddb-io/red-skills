@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
+import { execFileSync } from "node:child_process";
 import { runStatusline } from "../src/cli.js";
 import { readRedskilledStatuslinePayload, readRedskilledStatuslineString } from "../src/client.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
@@ -374,5 +375,42 @@ describe("the host's whole job", () => {
     expect(written[0]).toContain("host 1w/1p");
     expect(written[0]).toContain("acme/widgets:w-1 512M/1G");
     expect(written[0].endsWith("\n")).toBe(true);
+  });
+
+  // A repository that declares no `project.name` still HAS an identity: the one
+  // its Workers were labelled with, produced by `resolveProjectIdentity` from the
+  // git remote. Reading only the declared name made the local mode ask in a
+  // vocabulary the daemon does not answer in — it reported `project unknown 0w`
+  // on a host holding three Workers stamped `owner/repo`.
+  it("resolves the project from the git remote when the config declares no name", async () => {
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      sampleMs: 0,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      stopWorker: () => true,
+      clock: () => "2026-07-29T01:00:05.000Z",
+      treeSampler: () => ({ rss: { "w-1": 512 * MB }, cpu_seconds: {} }),
+    });
+    running.push(daemon);
+    daemon.trackWorker({ ...worker(), project_label: "reddb-io/red-skills" });
+    await daemon.sampleMemoryBudgets();
+
+    const cwd = await scratch("redskilled-statusline-undeclared-cwd-");
+    await mkdir(join(cwd, ".red"), { recursive: true });
+    // No `project.name` — exactly the shape this repository ships.
+    await writeFile(join(cwd, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\n", "utf8");
+    execFileSync("git", ["-C", cwd, "init", "-q"]);
+    execFileSync("git", ["-C", cwd, "remote", "add", "origin", "git@github.com:reddb-io/red-skills.git"]);
+
+    const written: string[] = [];
+    const code = await runStatusline([], { cwd, paths, write: (l) => written.push(l), warn: () => undefined });
+
+    expect(code).toBe(0);
+    // The defect: `project unknown 0w` while the daemon held a labelled Worker.
+    expect(written[0]).not.toContain("project unknown");
+    expect(written[0]).not.toContain("0w");
+    expect(written[0]).toContain("reddb-io/red-skills");
   });
 });
