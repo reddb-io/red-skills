@@ -27,10 +27,7 @@ import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
 import { createMedicIo } from "./runtime/medic-io.js";
 import { createFileMedicStore, runMedicPass } from "./core/pr-medic.js";
 import { resolveRepoContext, resolveRepoSlug } from "./runtime/wire.js";
-import {
-  buildSupervisorBootSweeps,
-  superviseCommand,
-} from "./commands/supervise.js";
+import { buildProjectBootSweeps } from "./commands/boot-sweeps.js";
 import { createCastleMcpDependencies } from "./mcp-adapter.js";
 import {
   createResidentWebhook,
@@ -136,7 +133,7 @@ async function run(): Promise<void> {
         sweep: async () => {
           if (!sharedBootSweeps) {
             const repo = await resolveRepoSlug(root).catch(() => "");
-            sharedBootSweeps = buildSupervisorBootSweeps(root, repo, (line) =>
+            sharedBootSweeps = buildProjectBootSweeps(root, repo, (line) =>
               process.stderr.write(`castle resident: ${line}\n`),
             );
           }
@@ -251,7 +248,6 @@ export async function startResidentIssueCurator(
 }
 
 export interface McpEntrypointDependencies {
-  supervise(args: string[]): Promise<number>;
   startCurator(): Promise<void>;
   startMergeDriver(): Promise<void>;
   connect(): Promise<void>;
@@ -271,20 +267,18 @@ export const CASTLE_MCP_USAGE = `Usage: red-skills-castle-mcp [command]
 
 Commands:
   (none)        serve the castle MCP surface over stdio
-  __supervise   run the supervisor role from this same bundle
   --version     print the build stamp (--json for the build info)
   --help        print this usage
 
 Worker subcommands (run, monitor, fleet, …) belong to red-skills-dev.
 `;
 
-/** Route every executable role shipped in the afk-mcp bundle. The supervisor
- * launcher deliberately re-execs the current bundle, so `__supervise` must be
- * handled before the default stdio MCP transport is opened. */
+/** Route every executable role shipped in the afk-mcp bundle. Since ADR 0130
+ * Amendment 4 a project contributes a registration rather than a process, so the
+ * only roles here are the stdio MCP surface, the lane canary and `--version`. */
 export async function main(
   argv = process.argv.slice(2),
   dependencies: McpEntrypointDependencies = {
-    supervise: superviseCommand,
     startCurator: startResidentIssueCurator,
     startMergeDriver: startResidentMergeDriver,
     connect: run,
@@ -293,9 +287,6 @@ export async function main(
   if (argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
     process.stdout.write(CASTLE_MCP_USAGE);
     return 0;
-  }
-  if (argv[0] === "__supervise") {
-    return dependencies.supervise(argv.slice(1));
   }
   // The lane's canary lives in THIS bundle on purpose (#2706): it must launch
   // the shipped MCP entry over the real transport, and the dev bundle contract
@@ -325,7 +316,7 @@ export async function main(
   if (leading !== undefined) {
     process.stderr.write(
       `castle MCP: unroutable subcommand ${JSON.stringify(leading)} — ` +
-        "the castle-mcp bundle routes only `__supervise` and `--version`; " +
+        "the castle-mcp bundle routes only `--version` and `--help`; " +
         "worker subcommands belong to the dev entry (red-skills-dev)\n",
     );
     return 2;

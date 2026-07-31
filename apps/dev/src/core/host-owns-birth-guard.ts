@@ -22,10 +22,13 @@
 //     birthing Workers. Removing one is admitting a birth path back.
 //  2. PROSE IS NOT A SPAWN. Comments explaining what was removed — including
 //     this one — are documentation, so comments are stripped before matching.
-//  3. THE SUPERVISOR IS NOT A WORKER. `spawnSupervisor` and the watchdog start
-//     the project's OWN runtime process, which ADR 0130 leaves with the project;
-//     they are not on this list and must not be. What the daemon owns is the
-//     Worker — the process that claims a ticket and does the work.
+//  3. DELETION IS THE STRONGEST FORM, NOT A GAP. A declared site whose module is
+//     GONE satisfies the invariant more completely than an emptied one — there
+//     is no file left to reach from. It is declared `removed: true` so the
+//     absence is a stated fact rather than a silent pass, and a site that is
+//     merely missing without that declaration still fails: a module renamed out
+//     from under this list would empty the ratchet with nothing failing, which is
+//     the same invisibility the ratchet exists to close.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -38,6 +41,14 @@ export interface HostOwnedBirthSite {
   what: string;
   /** Where that launch goes instead, named concretely enough to act on. */
   replacement: string;
+  /**
+   * The module was DELETED, not emptied — so its absence is the pass.
+   *
+   * Stated per site rather than inferred from a missing file, because those are
+   * opposite facts: a site declared removed is a slice that finished the job, and
+   * a site missing without the declaration is a rename this ratchet must catch.
+   */
+  removed?: boolean;
 }
 
 /**
@@ -53,6 +64,9 @@ export const HOST_OWNED_BIRTH_SITES: readonly HostOwnedBirthSite[] = [
     what: "the per-slot Worker spawn (`spawnSlot`) and the reconcile Worker spawn",
     replacement:
       "`runtime/redskilled-birth.ts` — `createRedskilledBirthPort(...).start(spec)`, which fails closed when no daemon answers",
+    // ADR 0130 Amendment 4 removed the per-project process itself (#2909), so the
+    // module that used to hold both births is gone rather than emptied.
+    removed: true,
   },
   {
     path: "apps/dev/src/core/supervisor/tick.ts",
@@ -116,9 +130,11 @@ const SNIPPET_LIMIT = 160;
 /**
  * Scan every declared site for a process-creation reach. PURE over `read`.
  *
- * A site that does not exist is itself a finding rather than a silent pass: a
+ * A site that does not exist is itself a finding rather than a silent pass — a
  * module renamed out from under this list would empty the ratchet without
- * anything failing, which is the same invisibility the ratchet exists to close.
+ * anything failing — UNLESS it is declared `removed`, in which case its absence
+ * is exactly the state that site is required to be in, and a file reappearing at
+ * that path is the finding instead.
  */
 export function collectHostOwnedBirthFindings(
   root: string,
@@ -129,11 +145,23 @@ export function collectHostOwnedBirthFindings(
   for (const site of sites) {
     const text = read(join(root, site.path));
     if (text === null) {
+      if (site.removed) continue;
       findings.push({
         path: site.path,
         line: 0,
         match: "<missing>",
         snippet: "the declared site no longer exists at this path",
+        what: site.what,
+        replacement: site.replacement,
+      });
+      continue;
+    }
+    if (site.removed) {
+      findings.push({
+        path: site.path,
+        line: 0,
+        match: "<resurrected>",
+        snippet: "this module was DELETED; a file at this path is the removal coming back",
         what: site.what,
         replacement: site.replacement,
       });

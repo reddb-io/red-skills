@@ -1,4 +1,3 @@
-import { Writable } from "node:stream";
 import { readFile } from "node:fs/promises";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { isValidWorkerId, workerPidFile } from "../core/worker-paths.js";
@@ -6,7 +5,7 @@ import { isLivePid, killTreeAndWait } from "../runtime/kill-tree.js";
 import { listStaleClaimDirs, removeDir } from "../runtime/fs.js";
 import { afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import * as ghx from "../runtime/gh.js";
-import { stopFleet, type FleetStopResult } from "./fleet.js";
+import { createRedskilledBirthPort } from "../runtime/redskilled-birth.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
 
 async function readWorkerPid(pidFile: string): Promise<number | null> {
@@ -19,9 +18,51 @@ async function readWorkerPid(pidFile: string): Promise<number | null> {
   }
 }
 
+/** What giving this project's registration back accomplished. */
+export interface ProjectStopResult {
+  /** False when the host held no registration — an answer, not a fault. */
+  deregistered: boolean;
+  /** The Workers the host ended on our behalf, as the host names them. */
+  workersStopped: readonly string[];
+  /** Why the host could not be reached; absent when it answered. */
+  refusal?: string;
+}
+
+/**
+ * Give this project's registration back and ask the host to end its Workers.
+ *
+ * The whole of stopping, since ADR 0130 Amendment 4 removed the per-project
+ * process: there is nothing of the project's own left to kill, and the Workers
+ * go through the daemon that birthed them. A Worker the host no longer names is
+ * the outcome asked for, not a failure — between the read and the stop it may
+ * have finished.
+ */
+export async function releaseProject(root: string): Promise<ProjectStopResult> {
+  const port = createRedskilledBirthPort({ root });
+  try {
+    const workersStopped: string[] = [];
+    for (const workerId of await port.workerIds()) {
+      try {
+        if (await port.stop(workerId, "afk stop gave this project's registration back")) {
+          workersStopped.push(workerId);
+        }
+      } catch {
+        // Already gone. The next read is the daemon's, and it agrees.
+      }
+    }
+    return { deregistered: await port.deregister(), workersStopped };
+  } catch (error) {
+    return {
+      deregistered: false,
+      workersStopped: [],
+      refusal: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 /** Injectable IO for deterministic testing. */
 export interface StopIO {
-  stopFleet(root: string, out: NodeJS.WritableStream): Promise<FleetStopResult>;
+  releaseProject(root: string): Promise<ProjectStopResult>;
   listStaleClaimDirs(tmpDir: string): Promise<Array<{ path: string; issue?: number }>>;
   restoreClaimLabels(root: string, issue: number): Promise<boolean>;
   removeDir(path: string): Promise<void>;
@@ -31,7 +72,7 @@ export interface StopIO {
 }
 
 const defaultIO: StopIO = {
-  stopFleet,
+  releaseProject,
   listStaleClaimDirs,
   restoreClaimLabels,
   removeDir,
@@ -41,7 +82,7 @@ const defaultIO: StopIO = {
 };
 
 export interface ParsedStopArgs {
-  /** Worker id from --worker <wid>; null means fleet-level stop. */
+  /** Worker id from --worker <wid>; null means project-level stop. */
   worker: string | null;
 }
 
@@ -61,17 +102,15 @@ export function parseStopArgs(args: readonly string[]): ParsedStopArgs {
   return { worker };
 }
 
-const discardStream = new Writable({ write(_chunk, _enc, cb) { cb(); } });
-
 /**
- * `afk stop` — safe fleet shutdown verb.
+ * `afk stop` — safe project shutdown verb.
  *
- * Without --worker: discover the supervisor via afk-supervisor.pid, SIGTERM it,
- * wait for the tree to exit (escalating to SIGKILL after the grace), reconcile
- * stale claim-lock dirs, then emit a TOON summary.
+ * Without --worker: give this project's registration back, ask the host to end
+ * the Workers it holds for us, reconcile stale claim-lock dirs, then emit a TOON
+ * summary.
  *
- * With --worker <wid>: SIGTERM exactly one worker's process tree (supervisor
- * notices the empty slot and respawns it) — the sanctioned recycle path.
+ * With --worker <wid>: SIGTERM exactly one worker's process tree — the
+ * sanctioned recycle path.
  */
 export async function stopCommand(
   args: readonly string[],
@@ -86,7 +125,7 @@ export async function stopCommand(
     if (parsed.worker !== null) {
       return await stopWorker(parsed.worker, paths.tmpDir, stdout, io);
     }
-    return await stopFleetWithReconcile(cwd, paths.tmpDir, stdout, io);
+    return await stopProjectWithReconcile(cwd, paths.tmpDir, stdout, io);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     process.stderr.write(`[afk stop] ✗ ${message}\n`);
@@ -94,14 +133,13 @@ export async function stopCommand(
   }
 }
 
-async function stopFleetWithReconcile(
+async function stopProjectWithReconcile(
   cwd: string,
   tmpDir: string,
   stdout: NodeJS.WritableStream,
   io: StopIO,
 ): Promise<number> {
-  // Suppress stopFleet's prose — all output from this verb is TOON.
-  const fleetResult = await io.stopFleet(cwd, discardStream);
+  const released = await io.releaseProject(cwd);
 
   const stale = await io.listStaleClaimDirs(tmpDir).catch(() => []);
   let claimsReleased = 0;
@@ -118,14 +156,15 @@ async function stopFleetWithReconcile(
   stdout.write(
     encodeToon({
       op: "stop",
-      supervisor_pid: fleetResult.pid ?? null,
-      supervisor_status: fleetResult.status,
+      deregistered: released.deregistered,
+      workers_stopped: released.workersStopped.length,
       claims_released: claimsReleased,
       labels_restored: labelsRestored,
+      ...(released.refusal === undefined ? {} : { refusal: released.refusal }),
     }) + "\n",
   );
 
-  return fleetResult.status === "timeout" ? 1 : 0;
+  return released.refusal === undefined ? 0 : 1;
 }
 
 function issueFromClaimDirPath(path: string): number | null {

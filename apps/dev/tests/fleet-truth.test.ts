@@ -220,7 +220,6 @@ describe("fleet truth operational probe", () => {
 
     const applied = await applyFleetTruthFix(finding, {
       confirm: async () => true,
-      confirmRelaunch: async () => false,
       terminateSupervisor: terminateSupervisorPid,
     });
     expect(applied.status).toBe("applied");

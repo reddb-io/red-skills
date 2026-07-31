@@ -3,7 +3,7 @@
 // N consecutive identical boot-death signatures trip the breaker: the
 // supervisor stops feeding the respawn loop, the resident healer is invoked
 // immediately, and a loud alert record is emitted. A different signature or one
-// successful boot resets the run; the watchdog refuses to respawn while the
+// successful boot resets the run; the boot probe refuses to proceed while the
 // breaker is open.
 
 import { describe, expect, it, vi } from "vitest";
@@ -23,7 +23,6 @@ import {
   type SupervisorDeps,
 } from "../src/core/supervisor.js";
 import { BootHaltError } from "../src/core/boot.js";
-import { runWatchdog, type WatchdogIO } from "../src/core/watchdog.js";
 import { renderFleetBlock } from "../src/core/statusline.js";
 import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
 import type { LivenessVerdict } from "@reddb-io/red-castle";
@@ -178,88 +177,5 @@ describe("runSupervisor — boot breaker wiring (#2527)", () => {
     await runSupervisor(initSupervisorState(1), deps, config({ target: 1 }), () => true);
 
     expect(current()).toBeNull();
-  });
-});
-
-// ---------- watchdog suppression ----------
-
-describe("runWatchdog — open breaker suppresses the dead-supervisor respawn (#2527)", () => {
-  function makeIo(breaker: BootBreakerLedger | null): { io: WatchdogIO; relaunch: ReturnType<typeof vi.fn>; log: ReturnType<typeof vi.fn> } {
-    const relaunch = vi.fn(async () => true);
-    const log = vi.fn();
-    const io = {
-      now: vi.fn(() => NOW),
-      liveness: vi.fn(async () => ({
-        pid: 4242,
-        pidAlive: false,
-        lastHeartbeatEpoch: NOW - 5,
-        lastProgressEpoch: null,
-        slotsBusy: 0,
-      })),
-      killTree: vi.fn(async () => {}),
-      killWorkers: vi.fn(async () => {}),
-      clearControlFiles: vi.fn(async () => {}),
-      reconcile: vi.fn(async () => {}),
-      relaunch,
-      deadSupervisorSignals: vi.fn(async () => ({
-        readyForAgent: 5,
-        target: 3,
-        liveWorkers: 0,
-        stopRequested: false,
-      })),
-      readRestartLedger: vi.fn(async () => []),
-      writeRestartLedger: vi.fn(async () => {}),
-      readBootBreaker: vi.fn(async () => breaker),
-      log,
-    } as unknown as WatchdogIO;
-    return { io, relaunch, log };
-  }
-
-  it("refuses to respawn while the breaker is open, and says so loudly", async () => {
-    const open: BootBreakerLedger = {
-      version: 1,
-      signature: "operational-probe|claim-hygiene|#2521 marker w8DI1",
-      count: 3,
-      trippedAtEpoch: NOW - 30,
-      updatedAtEpoch: NOW - 30,
-    };
-    const { io, relaunch, log } = makeIo(open);
-
-    const result = await runWatchdog(io, 60, 300);
-
-    expect(result.bootBreakerSuppressed).toBe(true);
-    expect(result.respawnedDeadSupervisor).toBe(false);
-    expect(relaunch).not.toHaveBeenCalled();
-    expect(log.mock.calls.some(([line]) => String(line).includes("boot breaker is OPEN"))).toBe(true);
-  });
-
-  it("respawns normally when the breaker is closed", async () => {
-    const { io, relaunch } = makeIo(null);
-
-    const result = await runWatchdog(io, 60, 300);
-
-    expect(result.bootBreakerSuppressed).toBeUndefined();
-    expect(result.respawnedDeadSupervisor).toBe(true);
-    expect(relaunch).toHaveBeenCalledTimes(1);
-  });
-});
-
-// ---------- statusline visibility ----------
-
-describe("renderFleetBlock — breaker token (#2527)", () => {
-  it("renders a loud breaker token while the breaker is open", () => {
-    const line = renderFleetBlock({
-      runner: "codex",
-      busy: 0,
-      total: 3,
-      queue: 12,
-      breaker: { count: 3 },
-    });
-    expect(line).toContain("⛔brk=3×");
-  });
-
-  it("renders no breaker token when closed", () => {
-    const line = renderFleetBlock({ runner: "codex", busy: 2, total: 3, queue: 12 });
-    expect(line).not.toContain("brk=");
   });
 });

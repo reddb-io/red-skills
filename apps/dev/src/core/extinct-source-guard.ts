@@ -1,10 +1,15 @@
-// extinct-source-guard — the ratchet that keeps the Fleet and the Attempt extinct
-// (issue #2795, Spec #2772, ADR 0130).
+// extinct-source-guard — the ratchet that keeps the Fleet, the Attempt and the
+// per-project supervisor extinct (issue #2795, Spec #2772, ADR 0130).
 //
-// ADR 0130 extinguished two nouns. The Fleet lost its reason to exist once the
+// ADR 0130 extinguished three nouns. The Fleet lost its reason to exist once the
 // budget went host-wide and each project got exactly one demand producer; the
 // Attempt was already a synonym of the Worker, so its lane, contract and
-// retention rule recorded no additional fact. Deleting the code is the crossing.
+// retention rule recorded no additional fact; and Amendment 4 removed the
+// per-project PROCESS by DELETION rather than rename (#2909), because
+// `project_start` called it a demand producer, `project_status` answered with the
+// key `supervisor:` and its command line was `__supervise` — three names for one
+// process is the shape saying it has no place in the model that replaced it, and
+// a fourth word would preserve the confusion. Deleting the code is the crossing.
 // Keeping it deleted is a different job: nothing in the tree fails when a later
 // slice reads a fleet profile again "just to attribute a worker", and the noun
 // comes back one convenience at a time.
@@ -41,7 +46,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 /** The noun an extinct source belonged to. */
-export type ExtinctNoun = "fleet" | "attempt";
+export type ExtinctNoun = "fleet" | "attempt" | "supervisor";
 
 /** One artifact ADR 0130 removed, with the route that replaced it. */
 export interface ExtinctSource {
@@ -142,6 +147,35 @@ export const EXTINCT_SOURCES: readonly ExtinctSource[] = [
     replacement: "the envelope and history contracts, which describe the Worker directly",
     pattern: /red\.castle\.attempt\.v1/,
   },
+  {
+    id: "project-supervisor-entrypoint",
+    noun: "supervisor",
+    what: "the per-project process — its hidden `__supervise` / `__watchdog` entrypoints and the `fleet` launcher",
+    replacement:
+      "the registration a project contributes: `project_start` registers with the daemon through" +
+      " `runtime/redskilled-birth.ts`, and the daemon polls the tracker and births the Worker",
+    pattern:
+      /\b__supervise\b|\b__watchdog\b|\b(?:superviseCommand|supervisorWatchdogCommand|buildSupervisorBootSweeps|launchFleet|stopFleet|statusFleet)\b/,
+  },
+  {
+    id: "project-supervisor-spawn",
+    noun: "supervisor",
+    what: "the launch path that spawned the per-project process and the watchdog that relaunched it",
+    replacement:
+      "`createRedskilledBirthPort(...).register(...)` — the daemon owns birth, so nothing a project" +
+      " runs can put a producer on the machine that no host admitted (ADR 0130 rule 6)",
+    pattern:
+      /\bsupervisor-(?:spawn|entry|watchdog-spawn)(?:\.js)?\b|\bwatchdog-io(?:\.js)?\b|\b(?:spawnSupervisor|spawnSupervisorWatchdog|resolveSupervisorEntry|supervisorLaunchVersion|buildWatchdogIO|runWatchdog|teardownWedgedSupervisor)\b/,
+  },
+  {
+    id: "project-supervisor-payload-key",
+    noun: "supervisor",
+    what: "the `supervisor:` key `project_status` and `monitor` answered with",
+    replacement:
+      "the `registration:` block — what the HOST holds for this project, with the poll it last ran" +
+      " against it (`projectRegistrationStatusSchema`)",
+    pattern: /\bsupervisorHealthSchema\b|\bpublishSupervisorLiveness\b/,
+  },
 ];
 
 /**
@@ -198,6 +232,21 @@ export const EXTINCT_NAMES: readonly ExtinctName[] = [
     // and a pattern that reds a usage STRING would teach a worker to rename the
     // wrong thing. The accounting sense is carried by the other three words.
     pattern: /fleet[^A-Za-z]?(?:accounting|budget|rss|peak[^A-Za-z]?rss)/i,
+  },
+  {
+    id: "project-supervisor-naming",
+    noun: "supervisor",
+    what: "a module or symbol named for the per-project PROCESS — the thing it entered, spawned, watched or relaunched",
+    replacement:
+      "the registration and the daemon that drives it — `runtime/redskilled-birth.ts`" +
+      " (`createRedskilledBirthPort`, `register`, `restateLaunch`), and `runtime/published-entry.ts` for" +
+      " WHICH BUNDLE a Worker runs",
+    // Paired with what the process OWNED, never reddening the bare noun: an
+    // ordinary English "supervise" in prose is stripped before matching, and the
+    // project's own lane vocabulary (`PROJECT_SUPERVISOR_LANE`,
+    // `supervisorRuntimeDir`) named a DIRECTORY the process wrote to rather than
+    // the process itself, so it outlives it.
+    pattern: /supervis(?:e|or)[^A-Za-z]?(?:command|entry|spawn|watchdog|launch|relaunch|process)|(?:spawn|launch|relaunch)[^A-Za-z]?supervisor/i,
   },
 ];
 
@@ -354,8 +403,8 @@ export function formatExtinctSourceFailureMessage(
     .filter((entry) => violations.some((violation) => violation.includes(entry.id)))
     .map((entry) => `  ${entry.id} — ${entry.what} → ${entry.replacement}`);
   return [
-    `extinction ratchet (ADR 0130): ${violations.length} reintroduced ${plural} to an extinct Fleet or Attempt` +
-      " source, or carrying an extinct concept's name.",
+    `extinction ratchet (ADR 0130): ${violations.length} reintroduced ${plural} to a source ADR 0130` +
+      " removed, or carrying an extinct concept's name.",
     ...violations.map((violation) => `  - ${violation}`),
     ...(routes.length > 0 ? ["Routes:", ...routes] : []),
     `Read the replacement instead. The baseline in ${EXTINCT_SOURCE_BASELINE_DECLARATION} only ever shrinks —` +

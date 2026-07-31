@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { fleetMonitorSuggestion } from "../src/commands/fleet.js";
 import { renderCodexMonitorAgentPrompt } from "../src/core/codex-monitor-agent.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
@@ -17,7 +16,6 @@ const LABEL_WINDOW = 3;
 
 /** Surfaces from the #2668 census, plus the docs that pin their printed strings. */
 const CENSUS = [
-  "apps/dev/src/commands/fleet.ts",
   "apps/dev/src/commands/codex-statusline.ts",
   "apps/dev/src/core/codex-monitor-agent.ts",
   "plugins/dev/skills/engineering/afk/monitor.md",
@@ -69,15 +67,6 @@ describe("MCP-first suggestion compliance", () => {
       const named = toolNames.filter((tool) => text.includes(`\`${tool}\``));
       expect(named, `${path} should name a castle tool from MCP.md verbatim`).not.toEqual([]);
     }
-  });
-
-  it("points the fleet launch banner at the castle monitor tool first", () => {
-    const suggestion = fleetMonitorSuggestion();
-
-    expect(suggestion).toContain("`monitor`");
-    expect(suggestion).toContain("`worker_vitals`");
-    expect(suggestion.indexOf("monitor` tool")).toBeLessThan(suggestion.indexOf("/dev:afk monitor"));
-    expect(suggestion).toContain(NO_MCP_LABEL);
   });
 
   it("makes the Codex monitor agent poll the castle monitor tool first", () => {

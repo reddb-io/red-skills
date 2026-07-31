@@ -256,23 +256,14 @@ export async function applyFleetTruthFix(
     return { probeId: finding.id, status: "noop", evidence: `supervisor pid=${data.pid} still live after SIGTERM` };
   }
 
-  const relaunch = deps.confirmRelaunch ? await deps.confirmRelaunch(finding) : false;
-  if (!relaunch) {
-    return { probeId: finding.id, status: "applied", evidence: "supervisor pid exited; relaunch declined" };
-  }
-  if (!deps.relaunchFleet) {
-    return { probeId: finding.id, status: "applied", evidence: "supervisor pid exited; relaunch not wired" };
-  }
-
-  const launched = await deps.relaunchFleet({
-    target: data.target,
-    runner: data.runner,
-    args: data.relaunchArgs,
-  });
+  // The repair ENDS here. ADR 0130 Amendment 4 removed the per-project process
+  // (#2909), so there is nothing left to relaunch: work resumes by registering
+  // the project with the daemon, which is an operator's `project_start` and not
+  // a doctor reaching for a launcher. Naming the route beats a silent stop.
   return {
     probeId: finding.id,
     status: "applied",
-    evidence: `supervisor pid exited; relaunch ${launched.status}${launched.pid ? ` pid=${launched.pid}` : ""}`,
+    evidence: "supervisor pid exited; register the project again with `project_start` to resume work",
   };
 }
 

@@ -103,9 +103,12 @@ describe("dev:afk observability output contracts", () => {
     const root = await fixtureRoot();
     const status = await createCastleMcpDependencies(root).projectStatus();
 
+    // No daemon answers in the fixture, so the registration reports the host's
+    // silence rather than inventing a record — the distinction `daemon_reachable`
+    // exists to carry.
     expect(projectStatusOutputSchema.parse(status)).toMatchObject({
-      supervisor: { runner: "claude", target: 2 },
-      slots: { busy: 1, total: 2 },
+      registration: { held: false, daemon_reachable: false, target: 0 },
+      slots: { busy: 0, total: 0 },
     });
   });
 

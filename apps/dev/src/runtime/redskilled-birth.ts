@@ -37,13 +37,21 @@ import type {
 } from "@reddb-io/redskilled/project-registration";
 import type { RedskilledWorkerSpec } from "@reddb-io/redskilled/worker-launch";
 import { readRedskilledEvents, type RedskilledHostEvent } from "@reddb-io/redskilled/event-lane";
+import type { RedskilledRegistrationView } from "@reddb-io/redskilled/host-state";
+import type { RedskilledLaunchTemplate } from "@reddb-io/redskilled/launch-template";
 
 // Re-exported so a consumer of this port imports the host's vocabulary from the
 // one module that owns the project's reach into it — a second import path for
 // the same names is how two spellings of one boundary start.
 export { RedskilledUnreachableError } from "@reddb-io/redskilled/client";
 export type { RedskilledWorkerStarted } from "@reddb-io/redskilled/protocol";
-export type { RedskilledHostEvent, RedskilledWorkerSpec, RedskilledProjectRegistration };
+export type {
+  RedskilledHostEvent,
+  RedskilledWorkerSpec,
+  RedskilledProjectRegistration,
+  RedskilledRegistrationView,
+  RedskilledLaunchTemplate,
+};
 
 /**
  * A registration as the PROJECT states it — everything but its own label.
@@ -116,6 +124,17 @@ export interface RedskilledBirthPort {
    */
   renew(): Promise<RedskilledProjectRegistration>;
   /**
+   * Restate what the NEXT Worker is started with, on the renewal (Amendment 5).
+   *
+   * A Worker's runner, model tier and effort are decided per BIRTH, not per
+   * project, so the one argv a registration carries has to be restatable — a
+   * tick that swapped the runner sends the new pair rather than deregistering
+   * and re-registering, which would leave the host holding no record of a
+   * project that is still draining. Restating is all-or-nothing: an argv given
+   * without an env replaces the env with none.
+   */
+  restateLaunch(launch: RedskilledLaunchTemplate): Promise<RedskilledProjectRegistration>;
+  /**
    * Take this project's presence back. Reports whether a record stood.
    *
    * `false` is an answer, not a fault: work stops from two directions — an
@@ -124,6 +143,16 @@ export interface RedskilledBirthPort {
   deregister(): Promise<boolean>;
   /** Ask the host to end one Worker. The kill is the daemon's, the policy is ours. */
   stop(workerId: string, detail: string): Promise<boolean>;
+  /**
+   * The registration the host holds for this project, or `null` for none.
+   *
+   * The answer to "is this project's work being driven", now that a project
+   * contributes a record rather than a process (ADR 0130 Amendment 4, #2909).
+   * `null` is a real answer — the host is reachable and holds nothing — and it
+   * is distinct from the throw a caller gets when the host does not answer at
+   * all, which is the distinction a reader needs to know where to look next.
+   */
+  registration(): Promise<RedskilledRegistrationView | null>;
   /** How many Workers this project holds on the host, as the host counts them. */
   liveWorkers(): Promise<number>;
   /**
@@ -210,6 +239,11 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
       return renewed.registration;
     },
 
+    async restateLaunch(launch) {
+      const renewed = await renewRedskilledProject(paths, { project_label: projectLabel, launch }, config);
+      return renewed.registration;
+    },
+
     async deregister() {
       const released = await deregisterRedskilledProject(paths, { project_label: projectLabel }, config);
       return released.released;
@@ -218,6 +252,11 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
     async stop(workerId, detail) {
       const result = await commandRedskilledWorker(paths, { command: "stop", worker_id: workerId, detail }, config);
       return result.applied;
+    },
+
+    async registration() {
+      const state = await readRedskilledHostState(paths, config);
+      return (state.registrations ?? []).find((held) => held.project_label === projectLabel) ?? null;
     },
 
     async liveWorkers() {

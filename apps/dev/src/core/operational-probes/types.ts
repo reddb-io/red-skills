@@ -183,7 +183,6 @@ export interface OperationalProbeResult {
 
 export interface OperationalProbeFixDeps {
   confirm(finding: OperationalProbeResult): Promise<boolean>;
-  confirmRelaunch?(finding: OperationalProbeResult): Promise<boolean>;
   setRemoteUrl?(name: string, url: string): Promise<void>;
   removeBranchLock?(): Promise<void>;
   writeBranchLock?(branch: string): Promise<void>;
@@ -197,11 +196,6 @@ export interface OperationalProbeFixDeps {
   readText?(path: string): Promise<string | null>;
   writeText?(path: string, text: string): Promise<void>;
   showDiffPreview?(finding: OperationalProbeResult, diff: string): Promise<void>;
-  relaunchFleet?(request: {
-    readonly target?: number;
-    readonly runner?: string;
-    readonly args?: readonly string[];
-  }): Promise<{ readonly status: string; readonly pid?: number | null }>;
 }
 
 export type OperationalProbeFixStatus = "applied" | "declined" | "noop";

@@ -8,10 +8,8 @@
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createCastleMcpServer, main } from "../../../src/mcp-server.js";
-import { canarySupervise } from "./canary-supervisor.js";
 
 process.exitCode = await main(process.argv.slice(2), {
-  supervise: (args) => canarySupervise(args),
   startCurator: async () => undefined,
   startMergeDriver: async () => undefined,
   connect: async () => {

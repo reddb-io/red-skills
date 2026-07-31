@@ -69,22 +69,19 @@ const PAYLOAD: StatuslineAggregate = {
   },
   docs: { unlanded: 2 },
   fleet: {
-    supervisor: {
-      pid: 4242,
-      alive: true,
-      health: "healthy",
-      runner: "claude",
+    registration: {
+      held: true,
+      daemon_reachable: true,
+      project: "red-skills",
+      socket: "/run/redskilled.sock",
+      selector: "{}",
       target: 4,
-      bundle_version: "2.78.0",
-      bundle_latest: "2.79.0",
-      version_unknown: 0,
-      version_skew: 1,
-      heartbeat_age_s: 8,
-      identity_anchor: "pid-file",
-      heartbeat: { age_s: 8, stale: false, stale_after_s: 300, reason: "fresh" },
+      renewal: "renewing",
+      renew_by: "2026-07-31T05:30:00.000Z",
+      renewals: 3,
+      launch_revision: 1,
     },
     slots: { busy: 2, free: 1, parked: 1, total: 4 },
-    churn: { deaths: 1, respawns: 1, window_s: 900 },
     live_workers: [
       { id: "wTST1", pid: 4243, issue: "2344", activity: "editing", origin: "afk" },
     ],
@@ -173,8 +170,8 @@ const fleet = (p: StatuslineAggregate): Required<FleetInput> | undefined => {
     breaker: { count: chip.breaker_count },
     stale: chip.stale,
     staleAgeS: chip.stale_age_s,
-    bundleVersion: chip.bundle_version ?? p.fleet?.supervisor.bundle_version ?? "",
-    latestBundleVersion: p.fleet?.supervisor.bundle_latest ?? p.project.version,
+    bundleVersion: chip.bundle_version ?? "",
+    latestBundleVersion: p.project.version,
     pointerVersion: p.project.pointer_version ?? p.project.version,
   };
 };

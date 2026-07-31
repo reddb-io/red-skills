@@ -1,7 +1,6 @@
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
-import { Writable } from "node:stream";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { afkPaths, collectPrecheckFacts, resolveRepoContext } from "../runtime/wire.js";
 import { editBody, listCandidates, listIssueStates, postClaimComment, type GhContext } from "../runtime/gh.js";
@@ -37,7 +36,6 @@ import { LABEL_READY } from "../core/triage-labels.js";
 import { fastForwardLocalTarget } from "../core/merge.js";
 import { execTool } from "../runtime/exec.js";
 import * as gitx from "../runtime/git.js";
-import { launchFleet } from "./fleet.js";
 
 interface RedDoctorFlags {
   fix: boolean;
@@ -382,7 +380,6 @@ function renderToon(
   });
 }
 
-const discardStream = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
 
 export async function redDoctorCommand(args: readonly string[], cwd = process.cwd()): Promise<number> {
   try {
@@ -437,16 +434,11 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
           showDiffPreview: async (_finding, diff) => {
             process.stdout.write(`diff preview:\n${diff}`);
           },
-          confirmRelaunch: async () => flags.yes,
-          relaunchFleet: async (request) => {
-            const args = [
-              String(request.target ?? 2),
-              ...(request.runner ? ["--runner", request.runner] : []),
-              ...(request.args ?? []),
-            ];
-            const launched = await launchFleet(args, ctx.root, discardStream);
-            return { status: launched.status, pid: launched.pid };
-          },
+          // No relaunch is wired, and that is the fix: ADR 0130 Amendment 4
+          // removed the per-project process, so a repair that "restarts the
+          // fleet" has nothing to restart. The probe reports the route —
+          // register through `project_start` — instead of a doctor reaching for
+          // a launcher that no longer exists (#2909).
         })
       : [];
     const hostFixes = await applyHostToolchainFixes(
