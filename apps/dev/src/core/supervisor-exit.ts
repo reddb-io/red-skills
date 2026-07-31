@@ -5,6 +5,9 @@ export type SupervisorExitReason =
   | "exception"
   | "explicit-stop"
   | "completed"
+  /** The tick loop stopped so a successor on a newer published bundle can take
+   * over (#2925) — a restart, not a stop: the live Workers are handed across. */
+  | "self-replace"
   | "process-exit";
 
 type SupervisorExitRecord = Omit<CastleLaneRecord, "at">;
