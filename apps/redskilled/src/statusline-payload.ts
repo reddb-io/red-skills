@@ -30,6 +30,12 @@ import {
   type RedskilledActivityReport,
   type RedskilledRepositoryActivity,
 } from "./repository-activity.js";
+import {
+  buildQueueReport,
+  isRedskilledQueueReport,
+  type RedskilledQueueDiscovery,
+  type RedskilledQueueReport,
+} from "./queue-discovery.js";
 import type { RedskilledWorkerLogLine } from "./worker-log.js";
 
 /**
@@ -184,6 +190,17 @@ export interface RedskilledStatuslinePayload {
    * interval, and one number ageing does not make the other one old.
    */
   readonly repository_activity: RedskilledActivityReport;
+  /**
+   * Each registered project's queue depth, and the outcome that produced it.
+   *
+   * **A spent quota is not an empty queue.** The fetch has three outcomes and
+   * only `counted` is ever a number, so a consumer deciding whether to ask for a
+   * Worker reads the outcome before the depth: a project that could not be
+   * reached and a project whose quota ran out both carry `null`, and a queue that
+   * has genuinely drained carries a zero. Reading the first two as the third is
+   * how one exhausted token stops a whole host that still has work.
+   */
+  readonly queue: RedskilledQueueReport;
 }
 
 export interface BuildStatuslinePayloadInput {
@@ -213,6 +230,15 @@ export interface BuildStatuslinePayloadInput {
    */
   readonly repositoryActivity?: RedskilledRepositoryActivity | null;
   readonly activityStalenessMs?: number;
+  /**
+   * The last queue fetch, or `null` when the daemon polls no selector.
+   *
+   * Passed in for the reason the activity counts are: the depths belong to the
+   * daemon that spent the request for them, and this document stays a pure
+   * function of its inputs.
+   */
+  readonly queueDiscovery?: RedskilledQueueDiscovery | null;
+  readonly queueStalenessMs?: number;
 }
 
 /** The payload document. PURE — every aggregate is derived from the Worker set. */
@@ -279,6 +305,11 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       activity: input.repositoryActivity ?? null,
       now: input.now,
       stalenessMs: input.activityStalenessMs,
+    }),
+    queue: buildQueueReport({
+      discovery: input.queueDiscovery ?? null,
+      now: input.now,
+      stalenessMs: input.queueStalenessMs,
     }),
   };
 }
@@ -464,5 +495,9 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     // poller answers a newer client's read, and rejecting its whole payload over
     // a field this consumer did not ask for would lose the Worker set — the very
     // version skew one host-scoped daemon exists to stop managing (ADR 0130).
-    (payload.repository_activity === undefined || isRedskilledActivityReport(payload.repository_activity));
+    (payload.repository_activity === undefined || isRedskilledActivityReport(payload.repository_activity)) &&
+    // Same posture for the queue: a daemon older than the queue poller answers a
+    // newer client's read, and losing the Worker set over a missing field would
+    // be the version skew one host-scoped daemon exists to stop managing.
+    (payload.queue === undefined || isRedskilledQueueReport(payload.queue));
 }

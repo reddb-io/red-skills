@@ -69,6 +69,18 @@ export interface RedskilledProjectQueue {
   readonly outcome: RedskilledQueueOutcome;
   /** How many items the selector matched; `null` for every outcome but `counted`. */
   readonly depth: number | null;
+  /**
+   * The last depth this selector actually returned, carried across the failures
+   * that followed it; `null` until it has answered once.
+   *
+   * A failed fetch replaces the stored document, so without this a spent quota
+   * would erase the depth the poll before it counted — and a consumer holding
+   * nothing behaves exactly like a consumer holding a zero, which is the whole
+   * confusion this module exists to refuse.
+   */
+  readonly last_counted_depth: number | null;
+  /** When that depth was counted, so its age is read rather than guessed. */
+  readonly last_counted_at: string | null;
   readonly detail: string;
 }
 
@@ -150,16 +162,27 @@ export function buildQueueDiscoveryQuery(
   return { query, aliases };
 }
 
+/** What a previous fetch already knew, so a failure loses no fact it held. */
+export interface QueueDiscoveryHistory {
+  /** The instant this answer belongs to; dates a fresh count. */
+  readonly now?: string | null;
+  /** The projects of the last fetch, whatever its outcomes were. */
+  readonly previous?: readonly RedskilledProjectQueue[];
+}
+
 /**
  * Turn one answer into one document. PURE.
  *
  * Each project is judged on its own alias: a selector the token cannot resolve
  * fails alone while its neighbours still count, because one refused query is a
- * fact about that project and not about the host.
+ * fact about that project and not about the host. A project that fails inherits
+ * the last depth it counted — inheriting a NEIGHBOUR's would be the same lie in
+ * the other direction, so the carry is keyed by project label and nothing else.
  */
 export function parseQueueDiscoveryResponse(
   operation: RedskilledQueueOperation,
   payload: unknown,
+  history: QueueDiscoveryHistory = {},
 ): { readonly projects: readonly RedskilledProjectQueue[]; readonly rate_limit: RedskilledQueueRateLimit } {
   const root = asRecord(payload);
   const data = asRecord(root.data);
@@ -167,12 +190,15 @@ export function parseQueueDiscoveryResponse(
   const rateLimit = readRateLimit(data.rateLimit, errors);
 
   const projects = operation.aliases.map(({ alias, project }): RedskilledProjectQueue => {
+    const held = heldCount(history, project.project_label);
     const depth = issueCount(data[alias]);
     if (depth != null) {
       return {
         project_label: project.project_label,
         outcome: "counted",
         depth,
+        last_counted_depth: depth,
+        last_counted_at: history.now ?? null,
         detail: `project ${JSON.stringify(project.project_label)} has ${depth} item(s) matching its selector`,
       };
     }
@@ -182,6 +208,7 @@ export function parseQueueDiscoveryResponse(
         project_label: project.project_label,
         outcome: "rate-limited",
         depth: null,
+        ...held,
         detail:
           `the host token's quota was spent before project ${JSON.stringify(project.project_label)} answered, so this ` +
           `queue has no depth rather than a depth of zero` +
@@ -192,6 +219,7 @@ export function parseQueueDiscoveryResponse(
       project_label: project.project_label,
       outcome: "unreachable",
       depth: null,
+      ...held,
       detail:
         `project ${JSON.stringify(project.project_label)} could not be counted with the host token: ` +
         `${stringValue(aliasError?.message) || "the query returned no count for this selector"}`,
@@ -222,6 +250,13 @@ export interface FetchQueueDiscoveryInput {
   readonly transport: RedskilledQueueTransport;
   readonly now: string;
   readonly batchSize?: number;
+  /**
+   * The document this fetch replaces, so a failure keeps what the last one knew.
+   *
+   * Optional and never required: a first fetch has no history, and a caller that
+   * forgets to pass one gets honest nulls rather than a wrong number.
+   */
+  readonly previous?: RedskilledQueueDiscovery | null;
 }
 
 /**
@@ -239,12 +274,13 @@ export async function fetchQueueDiscovery(input: FetchQueueDiscoveryInput): Prom
   const batches = planQueueDiscoveryBatches(input.projects, batchSize);
 
   const projects: RedskilledProjectQueue[] = [];
+  const history: QueueDiscoveryHistory = { now: input.now, previous: input.previous?.projects ?? [] };
   let rateLimit: RedskilledQueueRateLimit = { remaining: null, reset_at: null, exhausted: false };
   for (const batch of batches) {
     const operation = buildQueueDiscoveryQuery(batch, { batchSize });
     try {
       const payload = await input.transport(operation.query);
-      const parsed = parseQueueDiscoveryResponse(operation, payload);
+      const parsed = parseQueueDiscoveryResponse(operation, payload, history);
       projects.push(...parsed.projects);
       rateLimit = mergeRateLimit(rateLimit, parsed.rate_limit);
     } catch (err) {
@@ -256,6 +292,7 @@ export async function fetchQueueDiscovery(input: FetchQueueDiscoveryInput): Prom
           project_label: project.project_label,
           outcome: rateLimited ? "rate-limited" : "unreachable",
           depth: null,
+          ...heldCount(history, project.project_label),
           detail: `the queue fetch failed before project ${JSON.stringify(project.project_label)} answered: ${reason}`,
         });
       }
@@ -278,6 +315,15 @@ export interface RedskilledQueueView extends RedskilledProjectQueue {
   readonly fetched_at: string;
   readonly age_ms: number | null;
   readonly stale: boolean;
+  /**
+   * How old the last SUCCESSFUL count is, which is not how old the fetch is.
+   *
+   * A poll that came back rate-limited is current and knows nothing; the depth a
+   * consumer would act on came from an earlier one, and this is the only number
+   * that says whether it is still worth acting on. `null` when the selector has
+   * never answered.
+   */
+  readonly last_counted_age_ms: number | null;
 }
 
 export interface RedskilledQueueReport {
@@ -336,6 +382,7 @@ export function buildQueueReport(input: {
       fetched_at: discovery.fetched_at,
       age_ms: ageMs,
       stale,
+      last_counted_age_ms: countedAge(nowMs, project.last_counted_at),
     })),
     reason: discovery.projects.length === 0
       ? "the daemon polls no selector, so there are no queue depths to age"
@@ -384,6 +431,30 @@ function assertQueueProjects(projects: readonly RedskilledProjectSelector[]): vo
     }
     seen.add(project.project_label);
   }
+}
+
+/**
+ * What this project last counted, by label. PURE.
+ *
+ * Absent history is nulls rather than a zero: a selector that has never answered
+ * has no depth to hold, and inventing one would be the confusion in miniature.
+ */
+function heldCount(
+  history: QueueDiscoveryHistory,
+  projectLabel: string,
+): { readonly last_counted_depth: number | null; readonly last_counted_at: string | null } {
+  const held = history.previous?.find((candidate) => candidate.project_label === projectLabel);
+  return {
+    last_counted_depth: held?.last_counted_depth ?? null,
+    last_counted_at: held?.last_counted_at ?? null,
+  };
+}
+
+/** Milliseconds since the last successful count, or `null` when there is none. */
+function countedAge(nowMs: number, countedAt: string | null): number | null {
+  if (countedAt == null || !Number.isFinite(nowMs)) return null;
+  const countedMs = Date.parse(countedAt);
+  return Number.isFinite(countedMs) ? Math.max(0, nowMs - countedMs) : null;
 }
 
 function mergeRateLimit(held: RedskilledQueueRateLimit, next: RedskilledQueueRateLimit): RedskilledQueueRateLimit {

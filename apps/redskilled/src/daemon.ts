@@ -594,6 +594,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now: clock(),
       reattachedWorkerIds: [...reattached],
       repositoryActivity: lastActivity,
+      queueDiscovery: lastQueue,
     });
   }
 
@@ -639,6 +640,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       projects,
       transport: queueTransport,
       now: clock(),
+      // The document this fetch replaces: a failed poll must not erase the depth
+      // the poll before it counted, because a consumer holding nothing behaves
+      // exactly like one holding a zero.
+      previous: lastQueue,
       ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
     });
     return lastQueue;
