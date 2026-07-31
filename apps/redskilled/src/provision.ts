@@ -23,6 +23,12 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { REDSKILLED_HOME_MODE, redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
+import {
+  declaredWorkspaceTargetInConfig,
+  parseWorkspaceTarget,
+  workspaceReadsRedskilledHome,
+  WORKSPACE_TARGET_CONFIG_KEY,
+} from "@reddb-io/shared/worker-workspace.js";
 import { socketAnswers } from "./daemon.js";
 import {
   isResolvedRedskilledEntry,
@@ -75,6 +81,73 @@ export async function provisionRedskilledHome(
   return { path, created: false, tightened: true, mode: REDSKILLED_HOME_MODE };
 }
 
+/**
+ * Whether anything on this host READS the home, and what says so.
+ *
+ * The daemon does not: it binds its socket, writes its lease and its event lane
+ * under the session runtime dir, and never resolves the home at all. Exactly one
+ * thing reads it — a workspace lane rooted inside it (`plugins.dev.workspace.target:
+ * host`, or a custom parent under the home). So the need is a PROPERTY OF A
+ * PROJECT'S DECLARATION, not of the machine, and `declaredBy` carries the
+ * declaration into the audit's evidence so an operator is never told a bare
+ * absence they cannot act on.
+ */
+export interface RedskilledHomeNeed {
+  readonly needed: boolean;
+  /** The declaration that decided it, quoted verbatim into the audit's evidence. */
+  readonly declaredBy: string;
+}
+
+/** Nothing declared a need — what a host with no project in view reports. */
+export const REDSKILLED_HOME_UNNEEDED: RedskilledHomeNeed = {
+  needed: false,
+  declaredBy: `no ${WORKSPACE_TARGET_CONFIG_KEY} in view`,
+};
+
+export interface RedskilledHomeNeedOptions {
+  /** The repository whose `.red/config.yaml` declares the workspace target. */
+  readonly projectRoot?: string | undefined;
+  /** A target stated outright — wins over the file, for the moment a preset is chosen. */
+  readonly declaredTarget?: string | undefined;
+  readonly homeDir?: string | undefined;
+}
+
+/**
+ * Read whether this host's declared workspace target needs the home.
+ *
+ * An unreadable config and an off-contract target both read as "not needed":
+ * neither can be the `host` preset, and a provisioning run is the wrong place to
+ * re-raise a config error the workspace layer already refuses at the point of
+ * use.
+ */
+export async function readRedskilledHomeNeed(
+  options: RedskilledHomeNeedOptions = {},
+): Promise<RedskilledHomeNeed> {
+  const homeDir = options.homeDir ?? homedir();
+  const stated = options.declaredTarget?.trim();
+  if (stated) return needOf(stated, homeDir, "stated on the command line");
+
+  const projectRoot = options.projectRoot?.trim();
+  if (!projectRoot) return REDSKILLED_HOME_UNNEEDED;
+  const configPath = join(projectRoot, ".red", "config.yaml");
+  const text = await readFile(configPath, "utf8").catch(() => undefined);
+  if (text === undefined) return { needed: false, declaredBy: `no ${configPath}` };
+  const declared = declaredWorkspaceTargetInConfig(text);
+  if (declared === undefined) {
+    return { needed: false, declaredBy: `${configPath} declares no workspace target (default local)` };
+  }
+  return needOf(declared, homeDir, configPath);
+}
+
+function needOf(declared: string, homeDir: string, source: string): RedskilledHomeNeed {
+  const declaredBy = `${WORKSPACE_TARGET_CONFIG_KEY}: ${declared} (${source})`;
+  try {
+    return { needed: workspaceReadsRedskilledHome(parseWorkspaceTarget(declared), homeDir), declaredBy };
+  } catch {
+    return { needed: false, declaredBy: `${declaredBy} — off-contract, so it names no lane under the home` };
+  }
+}
+
 /** The four things a provisioned host has. Order is the order they must be cured in. */
 export type RedskilledProvisionCheck = "home" | "daemon-entry" | "reach" | "supervisor-unit";
 
@@ -90,6 +163,8 @@ export interface RedskilledProvisionFacts {
   readonly homePresent: boolean;
   /** Permission bits of the home, when it exists. */
   readonly homeMode?: number | undefined;
+  /** Whether anything on this host reads the home. Absent reads as unneeded. */
+  readonly homeNeed?: RedskilledHomeNeed | undefined;
   readonly entry: RedskilledEntryResolution;
   readonly socketPath: string;
   /** Whether a daemon answered a ping. Probed WITHOUT spawning one. */
@@ -136,12 +211,31 @@ export function auditRedskilledProvisioning(facts: RedskilledProvisionFacts): Re
   return { verdict, rows, findings };
 }
 
+/**
+ * An absent home is two different states, and reporting them as one is the defect
+ * this row was fixed for (#2958).
+ *
+ * **Absent and not needed is `ok`** — the daemon never reads the home, so on the
+ * default `local` preset the directory that was created was one nothing would
+ * ever open. A row that reddened over it sent operators to `/red-setup` to cure a
+ * machine that was already working. Absent and NEEDED stays `missing`, and names
+ * the declaration that needs it.
+ */
 function homeRow(facts: RedskilledProvisionFacts): RedskilledProvisionRow {
+  const need = facts.homeNeed ?? REDSKILLED_HOME_UNNEEDED;
   if (!facts.homePresent) {
+    if (!need.needed) {
+      return {
+        check: "home",
+        verdict: "ok",
+        evidence: `${facts.homePath} is absent and unneeded — ${need.declaredBy}; the daemon never reads it`,
+        fix: "",
+      };
+    }
     return {
       check: "home",
       verdict: "missing",
-      evidence: `${facts.homePath} does not exist`,
+      evidence: `${facts.homePath} does not exist, and it is needed — ${need.declaredBy}`,
       fix: REDSKILLED_PROVISION_FIX,
     };
   }
@@ -219,6 +313,12 @@ export interface RedskilledProvisionFactsOptions {
    */
   readonly entryOverride?: RedskilledEntryOverride;
   readonly env?: NodeJS.ProcessEnv;
+  /** The repository whose declared workspace target decides whether the home is needed. */
+  readonly projectRoot?: string | undefined;
+  /** A workspace target stated outright, for the moment an operator selects one. */
+  readonly declaredTarget?: string | undefined;
+  /** The need, already read — so a caller that has it does not read the config twice. */
+  readonly homeNeed?: RedskilledHomeNeed | undefined;
 }
 
 /**
@@ -235,14 +335,18 @@ export async function readRedskilledProvisionFacts(
   const homeDir = options.homeDir ?? homedir();
   const paths = options.paths ?? resolveRedskilledPaths({ env });
   const homePath = redskilledHomeDir(homeDir);
-  const [homeMode, reachable] = await Promise.all([
+  const [homeMode, reachable, homeNeed] = await Promise.all([
     modeOf(homePath),
     socketAnswers(paths.socketPath),
+    options.homeNeed
+      ? Promise.resolve(options.homeNeed)
+      : readRedskilledHomeNeed({ homeDir, projectRoot: options.projectRoot, declaredTarget: options.declaredTarget }),
   ]);
   return {
     homePath,
     homePresent: homeMode !== undefined,
     homeMode,
+    homeNeed,
     entry: resolveRedskilledEntry(options.entryOverride ?? {}, { env, ...options.entryLookup }),
     socketPath: paths.socketPath,
     reachable,
