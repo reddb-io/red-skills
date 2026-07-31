@@ -372,7 +372,32 @@ export function formatValidationLine(record: ValidationRecord): string {
  */
 export function isInfraFeedbackFailure(feedback: RunFeedbackResult): boolean {
   if (feedback.ok) return false;
-  for (const check of feedback.checks) {
+  return isInfraValidationFailure(feedback.checks);
+}
+
+/**
+ * The minimum a check has to expose to be classified: its status plus the
+ * `red.afk.validation.v1` record whose `summary` carries the evidence. Both
+ * gates already emit exactly this — feedback's {@link FeedbackCheck} and
+ * backpressure's `BackpressureCheck` — which is what lets ONE classifier serve
+ * both instead of the feedback stage owning a guard the backpressure stage
+ * silently lacked (#2964).
+ */
+export interface ClassifiableCheck {
+  status: ValidationStatus;
+  record: ValidationRecord;
+}
+
+/**
+ * INFRA-vs-SEMANTIC classification over any gate's checks — the stage-agnostic
+ * core of {@link isInfraFeedbackFailure}. An operator-declared backpressure
+ * command that never ran because the feedback worktree failed to materialise is
+ * an infra failure by exactly the same evidence a feedback check is; routing it
+ * as semantic charged three correction rounds against a branch whose gate had
+ * not executed a single byte (#2964).
+ */
+export function isInfraValidationFailure(checks: readonly ClassifiableCheck[]): boolean {
+  for (const check of checks) {
     if (check.status !== "failed") continue;
     const exitCode = check.record.exitCode;
     if (exitCode === 0) continue;

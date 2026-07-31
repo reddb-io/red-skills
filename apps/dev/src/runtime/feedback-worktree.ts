@@ -15,7 +15,12 @@
 //
 // When the worktree cannot be materialised (worktreeAdd failure) or the
 // install fails, the gate fails closed: all validation calls return code 1.
-// A failed setup never silently validates the primary checkout.
+// A failed setup never silently validates the primary checkout. It also NAMES
+// its cause (#2964): the blocked message carries which of lock-wait timeout,
+// `worktree add` failure or `pnpm install` failure fired, plus the underlying
+// stderr, so the validation record it lands in is diagnosable on its own. An
+// infra failure that cannot name its own cause turns every occurrence into a
+// fresh investigation.
 //
 // AFK runner improvement — cross-session worktree cache: by default, a
 // materialised worktree whose branch HEAD matches the live branch's HEAD
@@ -351,6 +356,34 @@ export function makeFeedbackWorktree(
   // worktree looks exactly like a hard failure at the first attempt, and
   // latching it made one collision fail every remaining check of the cycle.
   const setupFailures = new Map<string, number>();
+  // WHY the last materialise failed, per branch (#2964). `materialise()` returns
+  // a bare `null` on three distinct paths — lock-wait timeout, `worktree add`
+  // failure, `pnpm install` failure — and until this map existed the underlying
+  // stderr went only to this process's stderr. The validation record then read
+  // `setup failed … validation blocked` with no cause, so every occurrence in
+  // the field became a fresh investigation that could not even confirm which
+  // path fired. The reason SURVIVES latching (it is never cleared by
+  // `noteSetupFailure`) precisely because the latched calls are the ones a
+  // reader sees in the record.
+  const setupFailureReason = new Map<string, string>();
+
+  /** Cap a captured stderr so one cause line stays a summary, not a log dump. */
+  function briefly(detail: string): string {
+    const flat = detail.replace(/\s+/g, " ").trim();
+    return flat.length > 400 ? `${flat.slice(0, 400)}…` : flat;
+  }
+
+  /**
+   * The blocked-validation message for a branch whose worktree never
+   * materialised. The literal prefix is frozen wire vocabulary — the INFRA
+   * classifier (`isInfraValidationFailure`) matches it as a substring — so the
+   * cause is appended after it rather than woven into it.
+   */
+  function setupFailureMessage(branch: string, suffix = "validation blocked"): string {
+    const reason = setupFailureReason.get(branch);
+    const because = reason ? ` (${reason})` : "";
+    return `feedback worktree setup failed for ${branch}; ${suffix}${because}`;
+  }
 
   async function runValidationCommand(
     run: () => Promise<ExecOutput>,
@@ -377,9 +410,10 @@ export function makeFeedbackWorktree(
    * {@link MAX_SETUP_ATTEMPTS} consecutive failures; before that the next
    * validation call retries the baseline step from scratch.
    */
-  function noteSetupFailure(branch: string): null {
+  function noteSetupFailure(branch: string, reason: string): null {
     const attempts = (setupFailures.get(branch) ?? 0) + 1;
     setupFailures.set(branch, attempts);
+    setupFailureReason.set(branch, reason);
     if (attempts >= MAX_SETUP_ATTEMPTS) resolved.set(branch, null);
     return null;
   }
@@ -444,7 +478,10 @@ export function makeFeedbackWorktree(
         `warn: feedback worktree ${dest} is busy (lock wait timed out); ` +
           `baseline setup for ${branch} will be retried\n`,
       );
-      return noteSetupFailure(branch);
+      return noteSetupFailure(
+        branch,
+        `lock wait timed out after ${WORKTREE_LOCK_WAIT_MS}ms for ${dest}`,
+      );
     }
     try {
       return await materialiseLocked(branch, dest, release !== null);
@@ -493,7 +530,10 @@ export function makeFeedbackWorktree(
         `error: feedback worktree add failed for ${branch}; blocking validation: ` +
           `${added.stderr?.trim() || "no git detail"}\n`,
       );
-      return noteSetupFailure(branch);
+      return noteSetupFailure(
+        branch,
+        `worktree add failed: ${briefly(added.stderr ?? "") || "no git detail"}`,
+      );
     }
     // A freshly added worktree has NO node_modules. Without an install here,
     // the feedback gate's `pnpm -C <dest> test/build` calls fail with
@@ -510,7 +550,11 @@ export function makeFeedbackWorktree(
         `error: feedback worktree install failed for ${branch} (exit ${ins.code}); ` +
           `blocking validation\n${ins.stderr.trim()}\n`,
       );
-      return noteSetupFailure(branch);
+      return noteSetupFailure(
+        branch,
+        `pnpm install --frozen-lockfile failed (exit ${ins.code}): ` +
+          `${briefly(ins.stderr) || "no install detail"}`,
+      );
     }
     // AFK runner improvement (Pattern 2): best-effort rebase onto the session
     // base so a worker test written against a now-moved main validates against
@@ -573,7 +617,7 @@ export function makeFeedbackWorktree(
       const { branch, scope } = splitBranchDir(args[cIdx + 1]!, layout.hasPackage);
       const base = await pathFor(branch);
       if (base === null) {
-        return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${branch}; validation blocked` };
+        return { code: 1, stdout: "", stderr: setupFailureMessage(branch) };
       }
       const rewritten = scope === "." ? base : join(base, scope);
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
@@ -598,7 +642,7 @@ export function makeFeedbackWorktree(
   const backpressure: BackpressureExec = async ({ command, cwd, timeoutMs }) => {
     const dir = await pathFor(cwd);
     if (dir === null) {
-      return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${cwd}; validation blocked` };
+      return { code: 1, stdout: "", stderr: setupFailureMessage(cwd) };
     }
     const env = buildFeedbackSubprocessEnv(process.env, resourceBudget);
     const r = await runValidationCommand(
@@ -618,7 +662,7 @@ export function makeFeedbackWorktree(
   const postWorkerFormat: PostWorkerFormatExec = async ({ command, cwd, timeoutMs }) => {
     const dir = await pathFor(cwd);
     if (dir === null) {
-      return { code: 1, stdout: "", stderr: `feedback worktree setup failed for ${cwd}; format aborted`, committed: false };
+      return { code: 1, stdout: "", stderr: setupFailureMessage(cwd, "format aborted"), committed: false };
     }
 
     const r = await io.exec("sh", ["-c", command], { cwd: dir, timeoutMs });
@@ -667,6 +711,7 @@ export function makeFeedbackWorktree(
       created.clear();
       resolved.clear();
       setupFailures.clear();
+      setupFailureReason.clear();
     },
   };
 }

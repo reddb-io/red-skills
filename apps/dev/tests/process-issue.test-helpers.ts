@@ -145,6 +145,10 @@ export interface HarnessOptions {
   /** When false, the backpressure exec returns a non-zero code (a failing gate).
    * Defaults to passing. Only consulted when `backpressureCommands` is set. */
   backpressureOk?: boolean;
+  /** Stderr the backpressure exec reports on a failing command. Models the
+   * short-circuit the feedback-worktree manager returns when `materialise()`
+   * never produced a checkout — the command itself never ran (#2964). */
+  backpressureStderr?: string;
   locked?: boolean;
   /**
    * Landing-mode flag (#842), decoupled from the lock. Defaults to `!locked` so
@@ -618,8 +622,11 @@ export function harness(opts: HarnessOptions = {}): {
     // failing-command output is captured so the envelope/sidecar carry the tail.
     backpressure: async ({ command }) => ({
       code: opts.backpressureOk === false ? 1 : 0,
-      stdout: opts.backpressureOk === false ? `${command} exploded\nstack trace here\n` : "",
-      stderr: "",
+      stdout:
+        opts.backpressureOk === false && opts.backpressureStderr === undefined
+          ? `${command} exploded\nstack trace here\n`
+          : "",
+      stderr: opts.backpressureOk === false ? (opts.backpressureStderr ?? "") : "",
     }),
     backpressureCommands: opts.backpressureCommands,
     outputShaping: opts.outputShaping,

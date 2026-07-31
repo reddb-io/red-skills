@@ -34,7 +34,8 @@ import {
   buildValidationRecord,
   formatValidationLine,
   runFeedback,
-  isInfraFeedbackFailure,
+  isInfraValidationFailure,
+  type ClassifiableCheck,
   type Exec as PnpmExec,
   type PackageLayout,
   type RunFeedbackResult,
@@ -870,6 +871,43 @@ export async function processIssue(
     if (!correctionBudgetExhausted(correctionLedger, gateSubCap)) return "";
     return ` Post-DONE gate-correction budget exhausted (${describeCorrectionLedger(correctionLedger, gateSubCap)}).`;
   };
+  /**
+   * Classify a FAILED gate stage as INFRA or SEMANTIC, for EITHER stage (#2964).
+   *
+   * The guard used to live inline in the feedback branch alone, so a backpressure
+   * command that never executed — the feedback worktree failed to materialise and
+   * the executor short-circuited to exit 1 with `durationMs: 0` — was charged as
+   * a semantic failure and re-instructed three times against a gate that had run
+   * nothing. Both stages emit the same `red.afk.validation.v1` records, so both
+   * get the same classifier and the same mutable `on_feedback_classify` hook.
+   *
+   * A hook override is HONOURED and NAMED: the returned `note` states what the
+   * classifier said and what the hook made it, so a reclassification is visible
+   * in the record instead of silently rewriting the routing.
+   */
+  const classifyGateFailure = async (
+    stage: "feedback" | "backpressure",
+    checks: readonly ClassifiableCheck[],
+  ): Promise<{ isInfra: boolean; note: string }> => {
+    const classified = isInfraValidationFailure(checks);
+    const classResult = await fireHookCtx(
+      "on_feedback_classify",
+      hookContext({
+        issue,
+        title: input.title,
+        workspace: branch,
+        class: classified ? "infra" : "semantic",
+      }),
+    );
+    const override = parseFeedbackClass(classResult.context);
+    if (override === null) return { isInfra: classified, note: "" };
+    const isInfra = override === "infra";
+    const note =
+      `🤖 classification override: the \`on_feedback_classify\` hook set the ${stage} ` +
+      `failure to \`${override}\` (the classifier read it as ` +
+      `\`${classified ? "infra" : "semantic"}\`).`;
+    return { isInfra, note };
+  };
   /** What the review stage decided, in the fold's own vocabulary plus what the
    * lifecycle must do next. */
   interface ReviewStageResult {
@@ -1337,17 +1375,13 @@ export async function processIssue(
     );
     if (gateVerdict(gateStages).failedStage === "feedback") {
       await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
-      let isInfra = isInfraFeedbackFailure(feedback);
-      const classResult = await fireHookCtx(
-        "on_feedback_classify",
-        hookContext({ issue, title: input.title, workspace: branch, class: isInfra ? "infra" : "semantic" }),
-      );
-      const classOverride = parseFeedbackClass(classResult.context);
-      if (classOverride !== null) isInfra = classOverride === "infra";
+      const classification = await classifyGateFailure("feedback", feedback.checks);
+      const isInfra = classification.isInfra;
       const scopeHeader = feedback.validationScope
         ? `${formatValidationScope(feedback.validationScope)}\n`
         : "";
-      const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}`;
+      const overrideFooter = classification.note === "" ? "" : `\n${classification.note}`;
+      const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}${overrideFooter}`;
       // A REPEATED failure buys a HIGHER tier rather than another round at the
       // tier that just failed (ADR 0129 decision 6, #2729). The trigger is the
       // repeat, not the failure: a round that failed a different way is progress
@@ -1389,6 +1423,7 @@ export async function processIssue(
       } else {
         notes = "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
       }
+      if (classification.note !== "") notes += ` ${classification.note}`;
       if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar))) {
         continue;
       }
@@ -1416,14 +1451,27 @@ export async function processIssue(
       gateStages.push({ stage: "backpressure", ok: backpressure.ok });
       if (gateVerdict(gateStages).failedStage === "backpressure") {
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
-        let bpNotes = "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
-        const validationText = backpressure.sidecar.join("\n");
-        if (await reseedAfterGate("gate-stage", "backpressure", validationText, backpressure.sidecar)) {
+        // The backpressure stage is classified exactly like the feedback stage
+        // (#2964). It has to be: `bash scripts/gate.sh` failing at `durationMs:
+        // 0` because the feedback worktree never materialised is an environment
+        // failure, and charging it as semantic re-instructed six green branches
+        // three times each against a gate that never executed.
+        const bpClass = await classifyGateFailure("backpressure", backpressure.checks);
+        const bpInfra = bpClass.isInfra;
+        let bpNotes = bpInfra
+          ? `Backpressure validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`
+          : "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
+        if (bpClass.note !== "") bpNotes += ` ${bpClass.note}`;
+        const overrideFooter = bpClass.note === "" ? "" : `\n${bpClass.note}`;
+        const validationText = `${backpressure.sidecar.join("\n")}${overrideFooter}`;
+        if (!bpInfra && (await reseedAfterGate("gate-stage", "backpressure", validationText, backpressure.sidecar))) {
           continue;
         }
-        bpNotes += correctionBudgetNote();
-        await parkReseedTrail(validationText);
-        return await terminalFailure(common, "feedback-failed", "feedback", {
+        if (!bpInfra) {
+          bpNotes += correctionBudgetNote();
+          await parkReseedTrail(validationText);
+        }
+        return await terminalFailure(common, bpInfra ? "feedback-failed-infra" : "feedback-failed", "feedback", {
           notes: bpNotes,
           validation: validationText,
         }, { validationSummary: validationText });
