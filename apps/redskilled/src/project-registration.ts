@@ -33,8 +33,22 @@
  * that names no work is a client bug the daemon can see without reading anything
  * — not because the daemon formed an opinion about what the query says.
  *
+ * **The launch is restated, never frozen (Amendment 5).** A Worker's runner, its
+ * model tier, its effort and its slot-scoped env are decided per birth, and one
+ * fixed argv cannot express a decision made per Worker. So the argv and the env
+ * are the one part of a registration a renewal MAY restate: the session rotates
+ * them on the message it already sends every half-window, and the daemon expands
+ * the daemon's own facts into them at birth (`launch-template.ts`). Everything
+ * else a renewal carries over untouched, because a renewal is still a session
+ * saying "I am still here" and not a second chance to restate what work it wants.
+ *
  * PURE: every input is passed in, the clock included.
  */
+import {
+  requireLaunchArgv,
+  requireLaunchEnv,
+  type RedskilledLaunchTemplate,
+} from "./launch-template.js";
 
 /**
  * Default window a registration survives without renewal.
@@ -83,6 +97,15 @@ export interface RedskilledProjectRegistrationRequest {
   readonly argv: readonly string[];
   /** Where to run it — used verbatim as the Worker's working directory. */
   readonly workspace_path: string;
+  /**
+   * What to add to a Worker's environment at birth. Opaque, likewise.
+   *
+   * The slot-scoped bag that used to be composed at the spawn site — a retire
+   * file, a worker id, a slot — arrives here, with the per-birth facts written as
+   * `{{worker_id}}`-style placeholders the daemon fills in. Absent means nothing
+   * to add, which is an ordinary answer rather than a missing one.
+   */
+  readonly env?: Readonly<Record<string, string>>;
   /** How many Workers this project wants; the host still decides how many it gets. */
   readonly target: number;
   /** How long this registration stands without renewal; the default when absent. */
@@ -96,6 +119,7 @@ export interface RedskilledProjectRegistration {
   readonly selector: string;
   readonly argv: readonly string[];
   readonly workspace_path: string;
+  readonly env: Readonly<Record<string, string>>;
   readonly target: number;
   /** The daemon's own clock, at the instant it accepted this registration. */
   readonly registered_at: string;
@@ -112,6 +136,15 @@ export interface RedskilledProjectRegistration {
   readonly renewed_at: string;
   /** How many renewals the daemon has accepted; 0 for a registration never renewed. */
   readonly renewals: number;
+  /**
+   * How many times the launch has been restated; 0 for the one registered with.
+   *
+   * Separate from `renewals` because most renewals restate nothing, and the two
+   * questions an operator asks are different: `renewals` answers "is a session
+   * still here", while this answers "is the Worker born next the one this project
+   * last asked for" — the number that moves when a runner directive lands.
+   */
+  readonly launch_revision: number;
 }
 
 /**
@@ -158,21 +191,8 @@ export function buildProjectRegistration(
   // Shape, not meaning. The daemon asks whether it holds a non-empty string and
   // never asks a second question about what the string says.
   const selector = requireText(request.selector, "a selector");
-  if (!Array.isArray(request.argv) || request.argv.length === 0) {
-    throw new Error(
-      `redskilled needs an argv to register project ${JSON.stringify(projectLabel)}: a registration with nothing to run ` +
-        `is a project the host could never start a Worker for`,
-    );
-  }
-  const argv = request.argv.map((word, index) => {
-    if (typeof word !== "string" || word === "") {
-      throw new Error(
-        `redskilled needs every word of an argv to be a non-empty string, and word ${index} of project ` +
-          `${JSON.stringify(projectLabel)} is not`,
-      );
-    }
-    return word;
-  });
+  const argv = requireLaunchArgv(request.argv, projectLabel);
+  const env = requireLaunchEnv(request.env, projectLabel);
   // Same shape check, same reason as the argv: a registration the host could
   // never start a Worker for is a client bug the daemon can see without reading
   // anything about what the path names.
@@ -204,12 +224,14 @@ export function buildProjectRegistration(
     selector,
     argv,
     workspace_path: workspacePath,
+    env,
     target: request.target,
     registered_at: new Date(nowMs).toISOString(),
     renew_within_ms: renewWithinMs,
     renew_by: new Date(nowMs + renewWithinMs).toISOString(),
     renewed_at: new Date(nowMs).toISOString(),
     renewals: 0,
+    launch_revision: 0,
   };
 }
 
@@ -236,15 +258,29 @@ export interface RenewProjectRegistrationOptions {
   readonly now: string;
   /** A restated window; the one the registration already stands on when absent. */
   readonly renew_within_ms?: number;
+  /**
+   * A restated launch — what the NEXT Worker of this project is started with.
+   *
+   * The one part of a registration a renewal may rewrite (Amendment 5), because
+   * it is the one part decided per birth rather than per project: a runner that
+   * degraded mid-drain is swapped by restating the argv on the next renewal, with
+   * no re-registration and so no window where the host holds no record of a
+   * project that is still draining. **Restating it is all-or-nothing**: a launch
+   * half from one tick's decision and half from an older one is a Worker neither
+   * tick asked for, so an argv given without an env replaces the env with none.
+   */
+  readonly launch?: RedskilledLaunchTemplate;
 }
 
 /**
- * Push one registration's deadline out. PURE.
+ * Push one registration's deadline out, and restate its launch if asked. PURE.
  *
- * Everything the project said about its work is carried over untouched — the
- * selector, the argv, the target and the instant it first registered — because a
- * renewal is a session saying "I am still here", never a second chance to restate
- * what it wants. The only fields that move are the ones about time.
+ * Everything the project said about its WORK is carried over untouched — the
+ * selector, the target and the instant it first registered — because a renewal is
+ * a session saying "I am still here", never a second chance to restate what work
+ * it wants. What a renewal may restate is the launch, and only because the launch
+ * is a per-birth decision the registration would otherwise freeze; a renewal that
+ * restates nothing is byte-for-byte the renewal that existed before Amendment 5.
  */
 export function renewProjectRegistration(
   held: RedskilledProjectRegistration,
@@ -261,8 +297,19 @@ export function renewProjectRegistration(
         `${JSON.stringify(options.renew_within_ms)}`,
     );
   }
+  // The fallbacks are for a record from a daemon older than Amendment 5, which
+  // carried an argv and no launch revision: a renewal that read one back as
+  // `undefined` would strand the field rather than carry the record forward.
+  const launch = options.launch == null
+    ? { env: held.env ?? {}, launch_revision: held.launch_revision ?? 0 }
+    : {
+      argv: requireLaunchArgv(options.launch.argv, held.project_label),
+      env: requireLaunchEnv(options.launch.env, held.project_label),
+      launch_revision: (held.launch_revision ?? 0) + 1,
+    };
   return {
     ...held,
+    ...launch,
     renew_within_ms: renewWithinMs,
     renewed_at: new Date(nowMs).toISOString(),
     // Dated from the renewal rather than from the registration: a deadline that
@@ -345,7 +392,15 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     // record from a daemon older than renewal must still read as complete — while
     // a field that IS there and is the wrong shape still fails closed.
     (registration.renewed_at === undefined || typeof registration.renewed_at === "string") &&
-    (registration.renewals === undefined || Number.isInteger(registration.renewals));
+    (registration.renewals === undefined || Number.isInteger(registration.renewals)) &&
+    (registration.env === undefined || isLaunchEnvShape(registration.env)) &&
+    (registration.launch_revision === undefined || Number.isInteger(registration.launch_revision));
+}
+
+/** True when `value` is a map of strings to strings — a launch env's whole shape. */
+function isLaunchEnvShape(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>).every((entry) => typeof entry === "string");
 }
 
 function requireText(value: unknown, what: string): string {

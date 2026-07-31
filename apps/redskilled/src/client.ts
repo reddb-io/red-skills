@@ -30,6 +30,7 @@ import { socketAnswers } from "./daemon.js";
 import { buildRedskilledNotRunningStop, type RedskilledDaemonStopped } from "./daemon-stop.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
 import { createRedskilledMachineClaimStore, RedskilledMachineHeldError } from "./machine-scope.js";
+import type { RedskilledLaunchTemplate } from "./launch-template.js";
 import type { RedskilledPaths } from "./paths.js";
 import type { RedskilledProjectRegistrationRequest } from "./project-registration.js";
 import {
@@ -480,7 +481,7 @@ export async function registerRedskilledProject(
  */
 export async function renewRedskilledProject(
   paths: RedskilledPaths,
-  request: { project_label: string; renew_within_ms?: number },
+  request: { project_label: string; renew_within_ms?: number; launch?: RedskilledLaunchTemplate },
   config: RedskilledClientConfig = {},
 ): Promise<RedskilledProjectRenewed> {
   const value = await requestRedskilled(
@@ -489,6 +490,10 @@ export async function renewRedskilledProject(
       op: "project-renew",
       project_label: request.project_label,
       ...(request.renew_within_ms == null ? {} : { renew_within_ms: request.renew_within_ms }),
+      // The one field a renewal may restate: what the NEXT Worker is started
+      // with. A tick that swapped the runner sends it here rather than
+      // re-registering, so the project is never momentarily unheld (Amendment 5).
+      ...(request.launch == null ? {} : { launch: request.launch }),
       session_project: config.sessionProject ?? request.project_label,
     },
     config,

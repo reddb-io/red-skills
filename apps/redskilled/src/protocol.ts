@@ -39,9 +39,13 @@
  * Landing is, which is what keeps this a frozen surface rather than a growing one.
  * `project-deregister` widens it by nothing at all: it names a project the daemon
  * already keys registrations by, and takes the record back out. `project-renew`
- * widens it by less than nothing: it names that same project and carries no new
- * field a client is obliged to state, because a renewal is a session saying "I am
- * still here" rather than a second chance to restate what it wants.
+ * names that same project and obliges a client to state nothing further, because
+ * a renewal is a session saying "I am still here" rather than a second chance to
+ * restate what work it wants. It carries ONE optional field: the launch, which a
+ * project may restate because a runner, a model tier and a slot-scoped env are
+ * decided per birth and one frozen argv cannot express them (Amendment 5). That
+ * field is opaque in the same sense the registered argv already is — stored,
+ * expanded with the daemon's own facts, never read.
  *
  * `shutdown` is the daemon's own life rather than any project's, and it answers
  * with a REPORT rather than an acknowledgement: what the daemon is holding and
@@ -61,6 +65,7 @@ import {
   type RedskilledStopReason,
 } from "./daemon-stop.js";
 import { isRedskilledWorkerView, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
+import type { RedskilledLaunchTemplate } from "./launch-template.js";
 import {
   isRedskilledProjectRegistration,
   type RedskilledProjectRegistration,
@@ -131,7 +136,15 @@ export type RedskilledRequest =
   | { id: string; op: "worker-command"; command: RedskilledWorkerCommandRequest }
   | { id: string; op: "worker-heartbeat"; heartbeat: RedskilledWorkerHeartbeatRequest }
   | { id: string; op: "project-register"; registration: RedskilledProjectRegistrationRequest; session_project?: string }
-  | { id: string; op: "project-renew"; project_label: string; renew_within_ms?: number; session_project?: string }
+  | {
+    id: string;
+    op: "project-renew";
+    project_label: string;
+    renew_within_ms?: number;
+    /** What the NEXT Worker is started with; the standing launch when absent. */
+    launch?: RedskilledLaunchTemplate;
+    session_project?: string;
+  }
   | { id: string; op: "project-deregister"; project_label: string; session_project?: string }
   // `detail` is the operator's own words for WHY — opaque to the daemon, recorded
   // with the stop on the event lane so the successor inherits the intent and not
@@ -374,6 +387,7 @@ export type {
   RedskilledDaemonStopped,
   RedskilledStopReason,
   RedskilledHostState,
+  RedskilledLaunchTemplate,
   RedskilledProjectRegistration,
   RedskilledProjectRegistrationRequest,
   RedskilledReachVerdict,

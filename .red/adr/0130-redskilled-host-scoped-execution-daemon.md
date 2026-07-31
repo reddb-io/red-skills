@@ -444,3 +444,61 @@ key all go, instead of converging on a fourth word for a thing that should not
 exist. The migration is the harder half — a machine carrying live per-project
 runtimes must reach the two-player model without stranding the Workers those
 runtimes are holding.
+
+## Amendment 5 — a launch is restated, not frozen
+
+Amendment 4 moves birth onto the registration, and a registration carries **one**
+argv. But a Worker's runner, its model tier, its effort, its retire file and its
+slot are decided **per birth**, not per project. The runner most of all: a runner
+can degrade mid-drain, which is exactly why the directive is applied on a tick
+rather than at launch, so a fleet can start on `claude`, meet repeated deaths, and
+swap to `codex` for the next birth. **One fixed argv per project cannot express a
+decision made per Worker**, and freezing them at registration time would delete
+the capability rather than move it.
+
+**Decision: the launch is the one part of a registration a RENEWAL may restate.**
+A project states an argv and an env at registration; a tick that decided
+something new sends the new pair on the renewal its session already sends every
+half-window, and the daemon holds it as the launch for the **next** Worker.
+Per-birth facts the project cannot know in advance — the Worker's id, its slot,
+its workspace, its log path — are written as `{{worker_id}}`-style placeholders,
+and the daemon substitutes the four facts it already owns at birth. Restating is
+all-or-nothing: an argv given without an env replaces the env with none, because
+a launch half from one tick's decision and half from an older one is a Worker
+neither tick asked for.
+
+**Why this shape.** It costs no new op, no round trip and no window. The renewal
+is a message a live session already sends, so a swap is a field on a message that
+was going to be sent anyway; and a registration that restates nothing is
+byte-for-byte the renewal that existed before this amendment.
+
+**The two shapes rejected, and why.**
+
+*Ask the project for the argv per grant.* Preserves everything, and is the shape
+closest to what the per-project process does today. It fails on the seam: the
+daemon holds **no connection** to a session — every request arrives on its own
+socket — so it would need a reverse channel it does not have. It also reinstates
+the round trip the demand loop exists to remove, and makes every birth fail while
+a session is momentarily blocked, when the whole promise of Amendment 4 is that a
+drain outlives its terminal.
+
+*Re-register to swap.* Needs no new field at all. But the daemon **refuses** a
+duplicate registration, so a swap is a deregister followed by a register, and the
+window between them is a state where the host holds no record of a project that
+is still draining — a state that would have to be defined, reported and recovered
+from, to buy nothing the renewal does not already buy.
+
+**Rule 3 survives untouched.** The daemon learns nothing about what a runner, a
+model or an effort is. It knows four facts about a birth and the only question it
+asks a launch word is whether that word mentions one of them; a word that
+mentions none is copied. An unknown placeholder is **refused** rather than passed
+through, because a Worker started with a literal `{{tier}}` in its argv is a
+Worker nobody meant to start.
+
+**What still holds after the move.** A runner directive changes the runner of the
+next Worker without anything restarting, and disturbs no Worker in flight. Model
+and effort stay out of the launch on purpose: they resolve per tier, per run,
+inside the Worker, from the project's own config in the workspace it was born
+into — and the one input they take from outside, the runner, is what the launch
+carries. The slot-scoped env is composed per birth, from placeholders, so two
+Workers of one project can never share a retire file or a build directory.
