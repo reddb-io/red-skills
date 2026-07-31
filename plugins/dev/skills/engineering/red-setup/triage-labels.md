@@ -101,6 +101,22 @@ The issue body contains a complete `## Agent brief` section (see `triage/AGENT-B
 ### `ready-for-human`
 The issue requires human decision or resolution before it can proceed or be delegated. Two sources: `/triage` decides it during evaluation (e.g. architectural call, design review needed), or `/afk` promotes it from `running` after a blocker (inner agent gave up, merge conflict couldn't be auto-resolved, both runners exhausted). When `/afk` promotes, the worktree is **preserved at the moment of blocker** so the human can inspect or resolve the blocker in place.
 
+### HUMAN-ONLY types (`afk.labels.hitl_types`)
+
+**A type can be declared human-only, and the dependency machinery then routes it to `ready-for-human` instead of the queue.** A Ticket of such a type resolves only through a live exchange with a human — an agent answering its own grilling questions has broken exactly the thing the type exists to protect. List those type labels in `.red/config.yaml`:
+
+```yaml
+plugins:
+  dev:
+    afk:
+      labels:
+        hitl_types:
+          - wayfinder:grilling
+          - wayfinder:prototype
+```
+
+When the last `req:N` blocker of a dependent carrying one of these labels closes, the unblock sweep and the close cascade promote it to **`ready-for-human`** (edges consumed, `blocked:dependency` shed) rather than `ready-for-agent`, and the audit comment names the lane and the type that chose it. **Declare your own repo's names here — the routing reads this list, never a built-in `wayfinder:*` list**, so a repo whose decision tickets are called something else inherits the same protection. A repo that declares none behaves exactly as before: every unblocked dependent goes to `ready-for-agent`.
+
 ### `quarantine`
 An issue-local safety hold for mechanically detected queue incoherence (ADR 0122). The probe removes `ready-for-agent`, adds `quarantine`, and appends its diagnosis to the issue body; healthy sibling issues continue through the same boot. The castle resident curator periodically re-runs the coherence check. It removes `quarantine` and restores `ready-for-agent` when the defect dissolves, or replaces `quarantine` with `ready-for-human` after three failed re-checks so `/hitl` owns the judgment. The per-issue heal ledger uses the same hold instead of applying a third heal within 24 hours.
 
@@ -140,8 +156,8 @@ These exist for filtering and don't drive lifecycle transitions:
 | `spec:{N}`      | Issue belongs to Spec #N                         | `/to-tickets` when splitting a Spec |
 | `wayfinder:map` | Planning map Ticket for work too large for one agent session. Carries `## Destination`, `## Not yet specified`, and `## Out of scope`; the map is an index, not a store. | `/wayfinder` |
 | `wayfinder:research` | Wayfinder child type for AFK-typed research scoped to one session. Unblocked children use `ready-for-agent`; blocked children use `blocked:dependency` plus `req:N`. | `/wayfinder` |
-| `wayfinder:grilling` | Wayfinder child type for HITL-typed decision work routed to a `/start` session and claimed by assignment. | `/wayfinder` |
-| `wayfinder:prototype` | Wayfinder child type for HITL-typed design or logic exploration routed to a `/prototype` session and claimed by assignment. | `/wayfinder` |
+| `wayfinder:grilling` | Wayfinder child type for HITL-typed decision work routed to a `/start` session and claimed by assignment. Declare it under `afk.labels.hitl_types` so an unblocked grilling Ticket parks for its human instead of joining the agent queue. | `/wayfinder` |
+| `wayfinder:prototype` | Wayfinder child type for HITL-typed design or logic exploration routed to a `/prototype` session and claimed by assignment. Declare it under `afk.labels.hitl_types` alongside `wayfinder:grilling`. | `/wayfinder` |
 | `wayfinder:task` | Wayfinder child type for AFK-typed implementation/docs work scoped to one session. Unblocked children use `ready-for-agent`; blocked children use `blocked:dependency` plus `req:N`. | `/wayfinder` |
 | `runner-error` | `/afk` fleet supervisor parked a slot after fast-death streak; affected issues were restored to `ready-for-agent` after the runner was discarded | `/afk` fleet supervisor on circuit trip |
 | `landing:manual` | Per-issue **manual-landing** mode (#1049): on a `ready-for-agent` issue, `/afk` runs the full pipeline + opens the PR, then **holds for a human's merge click** (parks `ready-for-human`, never auto-merges, never re-runs the agent). The issue auto-closes on PR merge via `Closes #N`. Lets agent-codable slices that must not be auto-merged stay in the autonomous lane instead of being hand-dispatched via `/go`. | `/triage` at brief time, or `/hitl`'s **delegable-manual-landing** disposition |
