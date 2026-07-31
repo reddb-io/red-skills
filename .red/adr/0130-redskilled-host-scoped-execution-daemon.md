@@ -502,3 +502,74 @@ inside the Worker, from the project's own config in the workspace it was born
 into — and the one input they take from outside, the runner, is what the launch
 carries. The slot-scoped env is composed per birth, from placeholders, so two
 Workers of one project can never share a retire file or a build directory.
+
+## Amendment 6 — reaching the two-player model is a re-adoption, not an evacuation (#2910)
+
+Amendment 4 names the migration as its harder half: a machine already running
+per-project runtimes has to reach the two-player model without stranding the
+Workers those runtimes are holding. The mechanism is **ADR 0105's boot
+migration** — the same one `core/red-path-migration.ts` and
+`core/castle-cutover-migration.ts` use — planned purely, executed best-effort,
+stamped once, and a no-op the second time.
+
+**Decision: the runtime is stopped, the Workers are kept.** A Worker is an
+init-system unit, so it outlives the process that asked for it, and the daemon
+already re-attaches to it *by unit name*. The previous cutover had to quiesce
+Workers because they were born by a path with no unit to be named by; these were
+born through the daemon and carry one. Stopping them would strand work the model
+can keep, so the migration stops exactly one thing — the removed third player —
+and stops it first, so no demand it decides lands behind the migration.
+
+**What travels, and what stays.** The project's label travels with each live
+Worker, so a re-adopted Worker appears in `host-state` under the repository it
+belongs to rather than under the stated `(unowned)` placeholder. Claims do not
+move: the Worker is still working the Ticket, and releasing a live claim would
+put a second Worker on the same work. A dead Worker's claim, branch and workspace
+stay exactly where they are — the crash reconcile path already returns those
+Tickets, and the migration recovers nothing itself.
+
+**The migration never registers the project.** Registering is the MCP's one
+contribution to this model, and it carries a selector and an argv only the
+project states — a migration that invented either would start Workers on work
+nobody asked for. So the migration runs on the registration path, clears the
+process that would refuse the registration, and leaves the registering to the
+player entitled to make it. It is reported as kept, not as done.
+
+**Idempotent twice over.** The report at `.red/state/castle/two-player.toon` is
+also the gate: a second run reads the stamp and touches nothing. Under it, the
+plan is idempotent on its own — a dead runtime, a Worker the host already holds,
+and a project already registered each produce no action — so a stamp lost to a
+wiped state tier costs a re-run, never a second migration's worth of moves.
+
+**It reports both halves.** Everything moved and everything deliberately left
+behind is named with its reason, including moves the host refused: an operator's
+next step depends on knowing which Worker the host did *not* take.
+
+## Recovering from a bad two-player migration
+
+The way back, for an operator whose machine the migration left confusing. Every
+step is safe to run twice, and none of them touches a Worker's branch, workspace
+or claim.
+
+1. **Read the report first.** `.red/state/castle/two-player.toon` names what was
+   stopped, what was re-adopted, what was registered, and — the field that
+   usually explains the symptom — what the host `failed` to take.
+2. **Ask the host what it holds.** `redskilled host-state` lists the live Workers
+   and their project labels. A Worker running here but absent from that list is
+   the one to act on; a Worker present under `(unowned)` was re-adopted without
+   its label and can be left running while the project registers again.
+3. **Put the project back in the daemon's list.** Re-register from the project's
+   MCP (`project_start`). A registration is a record, not a process, so restating
+   it costs nothing and a duplicate is refused rather than doubled.
+4. **Re-run the migration deliberately.** Remove the stamp
+   (`rm .red/state/castle/two-player.toon`) and launch again with
+   `RED_TWO_PLAYER_CUTOVER=1`. The plan re-derives from what the machine actually
+   carries now, so a move that already succeeded produces no action.
+5. **Decline the era to stand still.** Leaving `RED_TWO_PLAYER_CUTOVER` unset
+   makes the migration inert: it observes nothing and moves nothing, so a machine
+   can be inspected — or left running its Workers — before the cutover is
+   declared again.
+
+**What never appears in this list:** stopping a live Worker, deleting a branch,
+or releasing a claim. Those are the three things the migration itself refuses,
+and a recovery that did them would destroy work the failure did not.

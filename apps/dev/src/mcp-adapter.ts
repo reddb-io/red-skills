@@ -66,6 +66,7 @@ import {
   createRedskilledBirthPort,
   redskilledRegistrationRefusal,
 } from "./runtime/redskilled-birth.js";
+import { migrateToTwoPlayer } from "./runtime/two-player-migration.js";
 import {
   publishWorkerLiveness,
   readDaemonWorkerSet,
@@ -944,6 +945,25 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
   // A project already registered is refused by the DAEMON, which is the one
   // party that can see the record — a pre-check of our own would be a second
   // opinion racing the authority (ADR 0130 Amendment 4).
+  const port = createRedskilledBirthPort({ root });
+  // ADR 0130 Amendment 6 (#2910): registering is the boundary between a machine
+  // that still carries a per-project runtime and one in the two-player model, so
+  // the one-time carry-across runs exactly here — before anything this project
+  // registers, which is the very thing a leftover runtime would collide with.
+  // Stamped, idempotent, and INERT until an operator declares the era with
+  // `RED_TWO_PLAYER_CUTOVER=1`: an undeclared era must never stop a runtime the
+  // operator is still relying on.
+  await migrateToTwoPlayer(root, {
+    deps: {
+      projectLabel: () => port.projectLabel,
+      // The host's own answer to "which Workers are mine", so a Worker it already
+      // holds is never re-adopted and a Worker it does not hold is named rather
+      // than assumed — re-adoption is confirmed against host state, never claimed.
+      hostWorkers: async () =>
+        new Map((await port.workerIds()).map((workerId) => [workerId, port.projectLabel])),
+      readopt: async (workerId) => (await port.workerIds()).includes(workerId),
+    },
+  }).catch(() => undefined);
   const selector = encodeRegistrationSelector(input.selector);
   // What runs when a Worker is born for this project — resolved from the
   // PUBLISHED bundle rather than from this process's own entry (#2808), so a
@@ -958,7 +978,6 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
     ...(input.selector ? ["--selector", JSON.stringify(input.selector)] : []),
   ];
 
-  const port = createRedskilledBirthPort({ root });
   let registered;
   try {
     await port.reach();
