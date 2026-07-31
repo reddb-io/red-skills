@@ -276,6 +276,10 @@ export function isRedskilledStatuslineRender(value: unknown): value is Redskille
     (render.mode === "local" || render.mode === "global") &&
     (render.project === null || typeof render.project === "string") &&
     typeof render.detail === "string" &&
+    // Checked only when present, for the reason every optional field here is: a
+    // daemon predating the match verdict still serves a complete line, and a
+    // client that rejected it would blank the statusline over a diagnostic.
+    (render.project_match === undefined || typeof render.project_match === "string") &&
     typeof render.degraded === "boolean" &&
     typeof render.stale === "boolean" &&
     typeof render.generated_at === "string";
