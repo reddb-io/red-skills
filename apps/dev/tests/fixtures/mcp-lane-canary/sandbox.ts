@@ -25,6 +25,8 @@
 import { build } from "esbuild";
 import { spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +49,63 @@ export interface CanarySandbox {
   /** The runtime root this sandbox owns — every socket, lease and lane is under it. */
   readonly runtimeRoot: string;
   readonly env: Record<string, string>;
+  /** How many queries this sandbox's tracker answered; 0 when it has none. */
+  trackerRequests(): number;
+}
+
+/**
+ * The tracker this sandbox's daemon polls — a local HTTP endpoint, not a mock
+ * inside the daemon.
+ *
+ * The transport under test is the shipped one, built from a token and pointed at
+ * an endpoint, so the only thing standing in for GitHub is GitHub: the daemon
+ * really issues its aliased query over a socket and really parses an answer. It
+ * counts its requests, which is what makes "one request covers every registered
+ * project" an assertion rather than a hope.
+ */
+interface CanaryTracker {
+  readonly endpoint: string;
+  readonly requests: () => number;
+  readonly close: () => Promise<void>;
+}
+
+/** How many items the stub tracker says every selector matches. One is enough to
+ * justify exactly one Worker against a target of one. */
+const CANARY_QUEUE_DEPTH = 1;
+
+async function startCanaryTracker(): Promise<CanaryTracker> {
+  let requests = 0;
+  const server: Server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk: Buffer) => {
+      body += chunk.toString("utf8");
+    });
+    request.on("end", () => {
+      requests += 1;
+      // One `issueCount` per alias the query asked for, answered from the query
+      // itself: a stub that invented its own aliases would answer a question the
+      // daemon never asked, and the parser would read every project as unreachable.
+      const data: Record<string, unknown> = {
+        rateLimit: { remaining: 5_000, resetAt: "2099-01-01T00:00:00Z" },
+      };
+      for (const [, alias] of body.matchAll(/\b(q\d+):\s*search\(/g)) {
+        data[alias!] = { issueCount: CANARY_QUEUE_DEPTH };
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    endpoint: `http://127.0.0.1:${port}/graphql`,
+    requests: () => requests,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections?.();
+        server.close(() => resolve());
+      }),
+  };
 }
 
 interface BuiltBundles {
@@ -59,6 +118,7 @@ interface BuiltBundles {
 let bundles: Promise<BuiltBundles> | undefined;
 const sandboxes: string[] = [];
 const daemonPids: number[] = [];
+const trackers: CanaryTracker[] = [];
 let sessions = 0;
 
 async function bundleOne(entry: string, outfile: string): Promise<void> {
@@ -153,15 +213,25 @@ export async function createCanarySandbox(
     );
   }
 
-  if (daemon === "up") await startCanaryDaemon(built.redskilled, env);
+  // The tracker exists either way: a `down` sandbox must differ from an `up` one
+  // in exactly one fact — whether the socket answers — and nothing else.
+  const tracker = await startCanaryTracker();
+  trackers.push(tracker);
+  env.REDSKILLED_HOST_TOKEN = "canary-token";
 
-  return { root, mcpEntry, runtimeRoot, env };
+  if (daemon === "up") await startCanaryDaemon(built.redskilled, env, tracker);
+
+  return { root, mcpEntry, runtimeRoot, env, trackerRequests: tracker.requests };
 }
 
 /** Start the real daemon on this sandbox's session socket and wait for it to
  * answer. A daemon that never answers fails HERE, so a canary red can only ever
  * mean the lane failed to reach one that was there. */
-async function startCanaryDaemon(entry: string, env: Record<string, string>): Promise<void> {
+async function startCanaryDaemon(
+  entry: string,
+  env: Record<string, string>,
+  tracker: CanaryTracker,
+): Promise<void> {
   const paths = resolveRedskilledPaths({ env });
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
   const child = spawn(
@@ -177,6 +247,12 @@ async function startCanaryDaemon(entry: string, env: Record<string, string>): Pr
       // Longer than any canary walk: an idle exit mid-probe would read as a
       // broken socket boundary when it is only a bored daemon.
       "--idle-ms", "600000",
+      // The lane's own cadence, compressed. The production windows are fifteen
+      // seconds apiece and a probe that waited two of them would time out on a
+      // healthy host; what is under test is that the loop RUNS, not how slowly.
+      "--queue-endpoint", tracker.endpoint,
+      "--queue-ms", "300",
+      "--demand-ms", "300",
     ],
     { detached: true, stdio: "ignore", env: { ...env, REDSKILLED_DAEMON: "1" } },
   );
@@ -217,6 +293,10 @@ async function pings(socketPath: string): Promise<boolean> {
 export async function cleanupCanarySandboxes(): Promise<void> {
   bundles = undefined;
   await Promise.all(daemonPids.splice(0).map((pid) => terminatePid(pid, 2_000)));
+  // After the daemons: a tracker closed while one still polls it would answer a
+  // live poller with a connection error, which is a fact about this cleanup
+  // rather than about the lane.
+  await Promise.all(trackers.splice(0).map((tracker) => tracker.close()));
   await Promise.all(
     sandboxes.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );

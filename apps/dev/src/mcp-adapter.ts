@@ -1046,7 +1046,25 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
 async function releaseProjectRegistration(root: string) {
   const port = createRedskilledBirthPort({ root });
   try {
-    return { deregistered: await port.deregister(), project: port.projectLabel };
+    // The Workers go FIRST, and they go through the host. A registration given
+    // back while its Workers run leaves work nothing is watching: the demand loop
+    // has stopped asking for them, so nobody would ever ask them to stop either.
+    // The kill is the daemon's — this only names which of its Workers are ours.
+    //
+    // A Worker the host no longer names is the outcome asked for, not a failure:
+    // between the read and the stop it may have finished, and a teardown that
+    // raised on it would leave the registration standing over an empty project.
+    const stopped: string[] = [];
+    for (const workerId of await port.workerIds()) {
+      try {
+        if (await port.stop(workerId, "project_stop gave this project's registration back")) {
+          stopped.push(workerId);
+        }
+      } catch {
+        // Already gone. The next read is the daemon's, and it agrees.
+      }
+    }
+    return { deregistered: await port.deregister(), project: port.projectLabel, workers_stopped: stopped };
   } catch (err) {
     return {
       deregistered: false,

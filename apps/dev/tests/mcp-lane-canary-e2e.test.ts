@@ -59,6 +59,9 @@ async function walk(
       target: 1,
       quietDeadlineMs,
       teardownDeadlineMs: 20_000,
+      // The sandbox daemon polls and ticks every 300ms, so a walk that needed
+      // longer than this is one where the loop did not run at all.
+      demandDeadlineMs: 30_000,
       pollMs: 150,
       ...(socketPath !== undefined ? { socketPath } : {}),
     });
@@ -74,13 +77,15 @@ afterAll(async () => {
 
 describe("MCP lane canary over the real transport", () => {
   it(
-    "goes green on a registration the daemon holds, with no process of the project's own",
+    "goes green on registration -> one poll covering it -> a Worker the daemon birthed",
     async () => {
-      const { result, stderr } = await walk("healthy");
+      const { result, stderr, sandbox } = await walk("healthy");
 
       expect(result.inertStep).toBeUndefined();
       expect(result.ok).toBe(true);
       expect(result.steps.map((step) => step.verdict)).toEqual([
+        "ok",
+        "ok",
         "ok",
         "ok",
         "ok",
@@ -96,8 +101,15 @@ describe("MCP lane canary over the real transport", () => {
       expect(registration.selector).toBe("{}");
       expect(registration.argv).toContain("run");
       expect(registration.argv.join(" ")).toContain("--runner claude");
-      // The slice's whole claim: beginning work created nothing.
-      expect(result.workers).toHaveLength(0);
+      // The daemon really asked the tracker, in one aliased request, and really
+      // counted this project in it.
+      expect(result.poll?.outcome).toBe("counted");
+      expect(result.poll?.requestCount).toBe(1);
+      expect(sandbox.trackerRequests()).toBeGreaterThan(0);
+      // And then acted on what it counted: a Worker this project never spawned,
+      // running out of the argv the registration stated.
+      expect(result.workers).toHaveLength(1);
+      expect(result.workers[0]!.alive).toBe(true);
       expect(stderr).not.toContain("secret");
     },
     TIMEOUT,
@@ -128,6 +140,8 @@ describe("the socket boundary the lane grew under ADR 0130 (#2794, #2851)", () =
       // Nothing downstream ran, and nothing downstream needed to.
       expect(byStep.get("registration_held")).toBe("skipped");
       expect(byStep.get("no_project_process")).toBe("skipped");
+      expect(byStep.get("queue_polled")).toBe("skipped");
+      expect(byStep.get("worker_born")).toBe("skipped");
       expect(result.workers).toHaveLength(0);
       // Loudly, and naming the socket rather than the tool: the operator's next
       // move is on that path, and "project_start failed" alone would send them
@@ -173,6 +187,8 @@ describe("the shipped castle-mcp bundle carries the canary", () => {
           sandbox.root,
           "--quiet-deadline-ms",
           "3000",
+          "--demand-deadline-ms",
+          "30000",
         ],
         { cwd: sandbox.root, env: sandbox.env },
       );

@@ -21,6 +21,7 @@ import {
   type RedskilledRenewalStatus,
 } from "./project-registration.js";
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
+import type { RedskilledQueueDiscovery, RedskilledQueueOutcome } from "./queue-discovery.js";
 import type { RedskilledMajorHold } from "./self-replace.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
@@ -142,6 +143,33 @@ export interface RedskilledUpgradeState {
 export interface RedskilledRegistrationView extends RedskilledProjectRegistration {
   /** Whether a session is still renewing this; absent when the read stated no instant. */
   readonly renewal?: RedskilledRenewalStatus;
+  /**
+   * The last poll that covered this project; absent when none has yet.
+   *
+   * Reported per registration rather than as one queue document, because "why is
+   * nothing happening here" is asked about a project and answered by the poll that
+   * project was in — and an absent block says *nobody has counted this yet*, which
+   * is a different answer from a depth of zero and sends an operator somewhere else.
+   */
+  readonly last_poll?: RedskilledRegistrationPoll;
+}
+
+/**
+ * What the last poll said about one project.
+ *
+ * `request_count` rides along because the whole of Amendment 3 is the claim that N
+ * projects cost ONE request: a reader that could see the depth but not the cost
+ * could not tell the batched shape from the per-project one it replaced.
+ */
+export interface RedskilledRegistrationPoll {
+  /** When the poll this project was in answered — the fetch's instant, not the read's. */
+  readonly at: string;
+  readonly outcome: RedskilledQueueOutcome;
+  /** How many items the selector matched; `null` for every outcome but `counted`. */
+  readonly depth: number | null;
+  /** What that whole interval cost, however many projects it covered. */
+  readonly request_count: number;
+  readonly detail: string;
 }
 
 export interface RedskilledHostState {
@@ -189,6 +217,13 @@ export interface BuildHostStateInput {
   readonly workers?: readonly RedskilledWorkerView[];
   /** The registrations the daemon holds; absent is a host with none, not an error. */
   readonly registrations?: readonly RedskilledProjectRegistration[];
+  /**
+   * The last queue poll, as the poller left it; absent when none has run.
+   *
+   * Passed whole and attached per project here, so the daemon states the poll in
+   * one place and this document reports it where a reader is already looking.
+   */
+  readonly queue?: RedskilledQueueDiscovery | null;
   /**
    * The instant the document is dated at, for judging renewal against.
    *
@@ -247,10 +282,27 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
 function buildRegistrationViews(input: BuildHostStateInput): readonly RedskilledRegistrationView[] {
   const nowMs = input.now == null ? Number.NaN : Date.parse(input.now);
   const judged = Number.isFinite(nowMs);
+  const queue = input.queue ?? null;
+  const polls = new Map(queue == null ? [] : queue.projects.map((project) => [project.project_label, project]));
   return [...(input.registrations ?? [])]
-    .map((registration) =>
-      judged ? { ...registration, renewal: registrationRenewalStatus(registration, nowMs) } : registration,
-    )
+    .map((registration): RedskilledRegistrationView => {
+      const polled = polls.get(registration.project_label);
+      return {
+        ...registration,
+        ...(judged ? { renewal: registrationRenewalStatus(registration, nowMs) } : {}),
+        ...(queue == null || polled == null
+          ? {}
+          : {
+            last_poll: {
+              at: queue.fetched_at,
+              outcome: polled.outcome,
+              depth: polled.depth,
+              request_count: queue.request_count,
+              detail: polled.detail,
+            },
+          }),
+      };
+    })
     .sort((a, b) => a.project_label.localeCompare(b.project_label));
 }
 

@@ -31,7 +31,12 @@ import {
   readRedskilledProvisionFacts,
   renderRedskilledUserUnit,
 } from "./provision.js";
-import { DEFAULT_REDSKILLED_IDLE_MS, startRedskilledDaemon } from "./daemon.js";
+import {
+  DEFAULT_REDSKILLED_IDLE_MS,
+  startRedskilledDaemon,
+  type RedskilledQueueRegistration,
+} from "./daemon.js";
+import { createGitHubActivityTransport } from "./repository-activity.js";
 import {
   reclaimRedskilledRuntimeDirs,
   type RedskilledReclaimOptions,
@@ -88,6 +93,13 @@ Runs the daemon in this process. Every path is a flag and none is derived
   --machine-claim <path>      the machine-wide claim record
   --idle-ms <n>               exit after this long with no work
   --daemon-version <v>        the version this daemon reports as
+  --queue-endpoint <url>      where the queue poll asks; GitHub's when absent
+  --queue-ms <n>              window between queue polls
+  --demand-ms <n>             window between demand ticks
+
+The poller is armed by a token in REDSKILLED_HOST_TOKEN (GITHUB_TOKEN or
+GH_TOKEN when it is unset). With none, the daemon holds registrations and counts
+no queue — an honest unknown, never a drained one.
 `,
   "host-state": `Usage: redskilled host-state
 
@@ -148,7 +160,41 @@ const SERVE_FLAGS = {
   "machine-claim": { kind: "value", coerce: (raw: string) => raw },
   "idle-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
   "daemon-version": { kind: "value", coerce: (raw: string) => raw },
+  "queue-endpoint": { kind: "value", coerce: (raw: string) => raw },
+  "queue-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
+  "demand-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
 } as const;
+
+/**
+ * The env var naming the credential this host polls the tracker with.
+ *
+ * ONE token per host, by construction: quota is per credential, so the whole
+ * point of batching every project into one request is lost the moment a second
+ * one appears (ADR 0130 Amendment 3).
+ */
+export const REDSKILLED_HOST_TOKEN_ENV = "REDSKILLED_HOST_TOKEN";
+
+/**
+ * Arm the queue poller, or say nothing and leave it unarmed.
+ *
+ * **No token, no poller** — and no invented depth either. A daemon that cannot
+ * reach the tracker holds registrations it never counts, which reads as
+ * `queue-unknown` at every demand tick; that is the honest state, and it is
+ * distinguishable from a drained queue, which is the distinction the whole
+ * Amendment turns on.
+ */
+export function resolveServeQueueDiscovery(
+  values: { readonly "queue-endpoint"?: string; readonly "queue-ms"?: number },
+  env: NodeJS.ProcessEnv = process.env,
+): RedskilledQueueRegistration | undefined {
+  const token = (env[REDSKILLED_HOST_TOKEN_ENV] ?? env.GITHUB_TOKEN ?? env.GH_TOKEN ?? "").trim();
+  if (token === "") return undefined;
+  const endpoint = values["queue-endpoint"] ?? env.GITHUB_GRAPHQL_URL;
+  return {
+    transport: createGitHubActivityTransport({ token, ...(endpoint ? { endpoint } : {}) }),
+    ...(values["queue-ms"] == null ? {} : { intervalMs: values["queue-ms"] }),
+  };
+}
 
 export async function runRedskilledCli(argv: readonly string[]): Promise<number> {
   // Answered before routing, because the daemon's own version is the fact a
@@ -187,6 +233,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
 
   if (command === "serve") {
     const { values } = parseFlags(args, SERVE_FLAGS);
+    const queueDiscovery = resolveServeQueueDiscovery(values);
     const daemon = await startRedskilledDaemon({
       paths: servePaths(values),
       idleMs: values["idle-ms"] ?? DEFAULT_REDSKILLED_IDLE_MS,
@@ -194,6 +241,12 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       // baked into this build rather than a placeholder, because "what version is
       // answering" is the first fact a skew investigation needs.
       daemonVersion: values["daemon-version"] ?? readBuildInfo("redskilled").version,
+      // The two halves of the loop ADR 0130 Amendment 4 moved in here: what the
+      // tracker says exists, and how often this host decides what it can afford.
+      // Absent flags take the modules' own windows; an absent token leaves the
+      // poller unarmed rather than counting a queue it never reached.
+      ...(queueDiscovery == null ? {} : { queueDiscovery }),
+      ...(values["demand-ms"] == null ? {} : { demandMs: values["demand-ms"] }),
     });
     // A signalled daemon LETS GO rather than being cut off: the stop path flushes
     // the event lane, releases the lease and unlinks the socket, so the successor

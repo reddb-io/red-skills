@@ -127,6 +127,15 @@ export interface RedskilledBirthPort {
   /** How many Workers this project holds on the host, as the host counts them. */
   liveWorkers(): Promise<number>;
   /**
+   * WHICH Workers this project holds, as the host names them.
+   *
+   * The list rather than the count, for the caller that has to act on each one:
+   * stopping this project's work means naming its Workers to the daemon, and a
+   * project that could only count them would have to guess at ids or reach for
+   * pids of its own — which is the unadmitted, uncounted path ADR 0130 removed.
+   */
+  workerIds(): Promise<readonly string[]>;
+  /**
    * Host events appended since the last drain, narrowed to this project.
    *
    * The lane is the daemon's record of birth, death and budget-kill, so a death
@@ -160,6 +169,14 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
   // state a drain needs — and a cursor that is re-derived from the lane's own
   // length can never replay a death the breaker already counted.
   let drained = 0;
+
+  /** This project's Workers, as the host names them. One read, two callers. */
+  const readProjectWorkerIds = async (): Promise<readonly string[]> => {
+    const state = await readRedskilledHostState(paths, config);
+    return state.workers
+      .filter((worker) => worker.project_label === projectLabel)
+      .map((worker) => worker.worker_id);
+  };
 
   return {
     projectLabel,
@@ -204,8 +221,11 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
     },
 
     async liveWorkers() {
-      const state = await readRedskilledHostState(paths, config);
-      return state.workers.filter((worker) => worker.project_label === projectLabel).length;
+      return (await readProjectWorkerIds()).length;
+    },
+
+    async workerIds() {
+      return await readProjectWorkerIds();
     },
 
     async drainEvents() {
