@@ -16,6 +16,7 @@
 // that engine code routes through this API.
 
 import {
+  hitlTypesIn,
   isRefused,
   planTransition as planTransitionWithLabels,
   stateRoleLabels,
@@ -79,8 +80,27 @@ export function stateRolesOf(labels: readonly string[]): string[] {
 export function planTransition(
   current: readonly string[],
   transition: StateTransition,
+  hitlTypes: readonly string[] = [],
 ): TransitionPlan | RefusedTransition {
-  return planTransitionWithLabels(current, transition, HOST_STATE_TRANSITION_LABELS);
+  return planTransitionWithLabels(current, transition, hostLabels(hitlTypes));
+}
+
+/** The host vocabulary with this repo's declared HUMAN-ONLY type labels folded
+ * in (#2966). The spellings are constants; the HITL types are per-repo config,
+ * so they arrive at the call site rather than at module load. */
+function hostLabels(hitlTypes: readonly string[]): StateTransitionLabels {
+  return hitlTypes.length === 0
+    ? HOST_STATE_TRANSITION_LABELS
+    : { ...HOST_STATE_TRANSITION_LABELS, hitlTypes };
+}
+
+/** The declared HUMAN-ONLY type labels `current` carries (empty when the repo
+ * declares none). Callers use it to explain the lane in their audit comment. */
+export function hostHitlTypesIn(
+  current: readonly string[],
+  hitlTypes: readonly string[],
+): string[] {
+  return hitlTypesIn(current, hostLabels(hitlTypes));
 }
 
 /**
@@ -120,8 +140,9 @@ export async function transitionLabels(
   edit: (remove: string[], add: string[]) => Promise<unknown>,
   current: readonly string[],
   transition: StateTransition,
+  hitlTypes: readonly string[] = [],
 ): Promise<TransitionLabelsResult> {
-  const plan = planTransition(current, transition);
+  const plan = planTransition(current, transition, hitlTypes);
   if (isRefused(plan)) return { applied: false, ...plan };
   const result = await edit([...plan.remove], [...plan.add]);
   return { applied: true, ok: result !== false, plan };
