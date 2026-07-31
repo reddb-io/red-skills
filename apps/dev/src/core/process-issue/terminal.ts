@@ -66,7 +66,7 @@ import {
 } from "../worker-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
-import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "../boot-sweep.js";
+import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, promotionLaneNote, type DependentIssue } from "../boot-sweep.js";
 import { isRefused, parkOrHuman, planTransition, transitionLabels } from "../state-transition.js";
 import { deriveOutcomeRecord } from "../outcome-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
@@ -81,7 +81,7 @@ import {
   type RepoVisibility,
   type ActorTrustSignals,
 } from "../trust-gate.js";
-import { getConfig } from "../config.js";
+import { getConfig, readHitlTypeLabels } from "../config.js";
 import type { AfkModelTier, ConfigValues } from "../config.js";
 import { runNotesLoop, notesPath, type NotesLoopConfig } from "../notes-loop.js";
 import {
@@ -846,13 +846,17 @@ export async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: numbe
       dependents.push({ number: dep.number, reqs });
     }
     const labelsByNumber = new Map(dependentsRaw.map((dep) => [dep.number, dep.labels]));
-    const plans = planCloseCascade(closedIssue, dependents);
+    for (const dep of dependents) dep.labels = labelsByNumber.get(dep.number);
+    // A dependent carrying a type this repo declares HUMAN-ONLY parks for its
+    // human instead of joining the autonomous queue (#2966).
+    const hitlTypes = readHitlTypeLabels(deps.hooks.config);
+    const plans = planCloseCascade(closedIssue, dependents, hitlTypes);
     for (const p of plans) {
       // Promote through the ADR 0122 transition API (#2528): one atomic edit
       // that consumes every req:* edge and provably leaves exactly one state
       // role, so a cascade can never stack ready-for-agent onto a park.
       const current = labelsByNumber.get(p.number);
-      const plan = current ? planTransition(current, { kind: "promote" }) : undefined;
+      const plan = current ? planTransition(current, { kind: "promote" }, hitlTypes) : undefined;
       if (plan && !isRefused(plan)) {
         await deps.gh.editLabels(p.number, [...plan.remove], [...plan.add]);
       } else {
@@ -860,10 +864,18 @@ export async function runCloseCascade(deps: ProcessIssueDeps, closedIssue: numbe
           deps.appendIterLog(`🤖 close-cascade promote refused for #${p.number}: ${plan.reason}`);
           continue;
         }
-        await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);
+        await deps.gh.editLabels(
+          p.number,
+          [LABEL_DEPENDENCY, ...p.reqLabels],
+          [p.lane === "human" ? LABEL_HUMAN : LABEL_READY],
+        );
       }
       const reqs = p.refs.map((ref) => Number(ref.slice(1))).filter((n) => Number.isFinite(n));
-      await deps.gh.comment(p.number, await cascadeAuditCommentFor(reqs, deps.gh.issueReference));
+      await deps.gh.comment(
+        p.number,
+        (await cascadeAuditCommentFor(reqs, deps.gh.issueReference)) +
+          promotionLaneNote(p.lane, p.hitlTypes, hitlTypes),
+      );
     }
   } catch (err) {
     deps.appendIterLog(
