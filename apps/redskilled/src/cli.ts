@@ -6,10 +6,16 @@
  * that a contract, not a style: the daemon must never learn repository layout,
  * because the moment it does, it stops being servable by checkouts on different
  * bundle versions. A path it needs is a path it was given.
+ *
+ * **Every command writes TOON** (#2946). The reader of this stdout is an agent,
+ * and the daemon already speaks TOON everywhere else it writes — the event lane
+ * is `.toonl`, the lease is `.toon`. The two exceptions are opt-outs rather than
+ * omissions: `--version --json` is a caller ASKING for JSON, and an error that
+ * quotes a path is quoting a string for legibility, not encoding a payload.
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { encode as encodeToon } from "@reddb-io/toon";
+import { encode as encodeToon, type JsonValue } from "@reddb-io/toon";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
 import {
@@ -62,7 +68,7 @@ import {
 export const REDSKILLED_USAGE = `Usage: redskilled <command> [options]
 
 Commands:
-  host-state (default)  print the host's state as JSON
+  host-state (default)  print the host's state as TOON
   serve                 run the daemon in this process
   statusline [global]   render one agent-host status line
   unit                  install | uninstall | status — the optional supervisor
@@ -91,7 +97,7 @@ Runs the daemon in this process. Every path is a flag and none is derived
 `,
   "host-state": `Usage: redskilled host-state
 
-Prints the host's state as JSON. Contacts the running daemon; the default
+Prints the host's state as TOON. Contacts the running daemon; the default
 command when none is named.
 `,
   statusline: `Usage: redskilled statusline [global] [--verbose] [flags]
@@ -133,6 +139,19 @@ Reports every session runtime dir it looked at and why it kept or removed it.
   --grace-ms <n>   how long a dir must be idle before it is reclaimed
 `,
 } as const satisfies Record<string, string>;
+
+/**
+ * One DECLARED record, printed as TOON.
+ *
+ * The cast is the same one `session-lease` and `machine-scope` make: these shapes
+ * are JSON-safe by construction — they either crossed the socket as JSON or were
+ * built here — but an `interface` declares no index signature, so the encoder's
+ * `JsonValue` cannot see that. The commands that hand-shape an object literal at
+ * the emit point need no helper; they already have the type.
+ */
+function toonDocument(document: unknown): string {
+  return `${encodeToon(document as JsonValue)}\n`;
+}
 
 /** The three spellings of "tell me what this does", asked of the top level. */
 function isHelpToken(token: string | undefined): boolean {
@@ -218,7 +237,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   if (command === "reclaim") return await runReclaim(args);
 
   const state = await readRedskilledHostState(resolveRedskilledPaths());
-  process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
+  process.stdout.write(toonDocument(state));
   return 0;
 }
 
@@ -307,18 +326,20 @@ export async function runUnit(
   const action = args[0] ?? "status";
 
   if (action === "status") {
-    write(`${JSON.stringify(readRedskilledUnitStatus(io.unitIO ?? {}), null, 2)}\n`);
+    write(toonDocument(readRedskilledUnitStatus(io.unitIO ?? {})));
     return 0;
   }
   if (action === "install") {
     const installed = await installRedskilledUnit(planRedskilledUnit(paths), io.unitIO ?? {});
-    write(`${JSON.stringify(installed, null, 2)}\n`);
+    write(toonDocument(installed));
     return installed.installed ? 0 : 1;
   }
   if (action === "uninstall") {
-    write(`${JSON.stringify(await uninstallRedskilledUnit(io.unitIO ?? {}), null, 2)}\n`);
+    write(toonDocument(await uninstallRedskilledUnit(io.unitIO ?? {})));
     return 0;
   }
+  // Quoting the word back at its author is legibility, not encoding: without the
+  // quotes, `redskilled unit ""` would report an error naming nothing at all.
   throw new Error(`unsupported redskilled unit action ${JSON.stringify(action)}: expected install, uninstall or status`);
 }
 
