@@ -32,6 +32,7 @@ import { createRedskilledMachineClaimStore, RedskilledMachineHeldError } from ".
 import type { RedskilledPaths } from "./paths.js";
 import type { RedskilledProjectRegistrationRequest } from "./project-registration.js";
 import {
+  isRedskilledProjectDeregistered,
   isRedskilledProjectRegistered,
   isRedskilledStatuslinePayload,
   isRedskilledStatuslineRender,
@@ -39,6 +40,7 @@ import {
   isRedskilledWorkerHeartbeatAck,
   isRedskilledWorkerStarted,
   sendRedskilledRequest,
+  type RedskilledProjectDeregistered,
   type RedskilledProjectRegistered,
   type RedskilledRequest,
   type RedskilledStatuslinePayload,
@@ -397,6 +399,32 @@ export async function registerRedskilledProject(
     config,
   );
   if (!isRedskilledProjectRegistered(value)) throw new Error("redskilled daemon returned a malformed registration");
+  return value;
+}
+
+/**
+ * Give this project's registration back — the project stops contributing.
+ *
+ * **A refusal throws; an already-released project does not.** The two are
+ * different answers: a cross-project release is a client aiming at work that is
+ * not its own, while releasing twice is the ordinary shape of stopping work an
+ * operator and an ending session can both stop.
+ */
+export async function deregisterRedskilledProject(
+  paths: RedskilledPaths,
+  request: { project_label: string },
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledProjectDeregistered> {
+  const value = await requestRedskilled(
+    paths,
+    {
+      op: "project-deregister",
+      project_label: request.project_label,
+      session_project: config.sessionProject ?? request.project_label,
+    },
+    config,
+  );
+  if (!isRedskilledProjectDeregistered(value)) throw new Error("redskilled daemon returned a malformed release");
   return value;
 }
 

@@ -40,7 +40,8 @@ export type RedskilledSessionOp =
   | "worker-recycle"
   | "worker-steer"
   | "worker-heartbeat"
-  | "project-register";
+  | "project-register"
+  | "project-deregister";
 
 /** The three reaches. A reader of this type knows the whole model. */
 export type RedskilledReachKind = "host-read" | "project-write" | "daemon-life";
@@ -65,6 +66,9 @@ export const REDSKILLED_OP_REACH: Readonly<Record<RedskilledSessionOp, Redskille
   // that project. A cross-project registration would let one session commit
   // another project's name to an argv it never chose.
   "project-register": "project-write",
+  // Releasing one lands exactly where taking it did: a session that could release
+  // another project's registration could stop its work from outside it.
+  "project-deregister": "project-write",
 };
 
 /** The commanding verbs, as a session names them. Each maps onto one write op. */

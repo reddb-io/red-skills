@@ -100,6 +100,7 @@ import {
   type RedskilledResponse,
   type RedskilledStatuslineRenderRequest,
   type RedskilledWorkerCommandRequest,
+  type RedskilledProjectDeregistered,
   type RedskilledProjectRegistered,
   type RedskilledWorkerCommandResult,
   type RedskilledWorkerHeartbeatAck,
@@ -288,6 +289,14 @@ export interface RedskilledDaemon {
     request: RedskilledProjectRegistrationRequest,
     sessionProject?: string,
   ): RedskilledProjectRegistered;
+  /**
+   * Release a project's registration, whether or not one stood.
+   *
+   * A release the daemon had nothing to do is reported, never raised: stopping
+   * work is the one act two sources perform on the same project — the operator
+   * and the session that ends — so the second one must read as done, not failed.
+   */
+  deregisterProject(projectLabel: string, sessionProject?: string): RedskilledProjectDeregistered;
   /** The registrations this daemon holds, ordered by project label. */
   registrations(): readonly RedskilledProjectRegistration[];
   hostState(): RedskilledHostState;
@@ -751,6 +760,29 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     };
   }
 
+  /**
+   * Give one project's registration back.
+   *
+   * Reach is checked against the project being released — its own label, exactly
+   * as at registration — so a session cannot stop another project's work. What is
+   * NOT checked is whether a record stood: a release states the outcome and lets
+   * the caller decide what an already-released project means to it.
+   */
+  function deregisterProject(projectLabel: string, sessionProject?: string): RedskilledProjectDeregistered {
+    const reach = authorize("project-deregister", sessionProject, projectLabel);
+    if (!reach.permitted) throw new Error(reach.reason);
+    const released = registrations.delete(projectLabel);
+    return {
+      version: 1,
+      project_label: projectLabel,
+      released,
+      reach,
+      detail: released
+        ? `redskilled released the registration for project ${JSON.stringify(projectLabel)}`
+        : `redskilled held no registration for project ${JSON.stringify(projectLabel)}, so there was nothing to release`,
+    };
+  }
+
   /** Stop one Worker the daemon holds, and record its death. */
   async function stopWorkerNow(worker: RedskilledWorkerView, detail: string): Promise<boolean> {
     try {
@@ -1154,6 +1186,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       if (request.op === "project-register") {
         return { id: request.id, ok: true, value: registerProject(request.registration, request.session_project) };
       }
+      if (request.op === "project-deregister") {
+        return { id: request.id, ok: true, value: deregisterProject(request.project_label, request.session_project) };
+      }
       if (request.op === "worker-command") {
         return { id: request.id, ok: true, value: await runWorkerCommand(request.command) };
       }
@@ -1217,6 +1252,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     },
     workerCount: () => workers.size,
     registerProject,
+    deregisterProject,
     registrations: () => hostState().registrations ?? [],
     hostState,
     statuslinePayload,
