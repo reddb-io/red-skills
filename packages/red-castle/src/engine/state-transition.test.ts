@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   applyTransition,
+  hitlTypesIn,
   isRefused,
   planTransition,
   stateRoleLabels,
@@ -46,6 +47,47 @@ describe("planTransition", () => {
     const p = plan(["blocked:dependency", "req:12", "req:3"], { kind: "promote" });
     expect(p.add).toEqual(["ready-for-agent"]);
     expect(p.remove).toEqual(["blocked:dependency", "req:3", "req:12"]);
+  });
+
+  it("promote: routes a HITL-typed dependent to the human lane, edges still consumed", () => {
+    const hitl: StateTransitionLabels = { ...labels, hitlTypes: ["wayfinder:grilling"] };
+    const p = planTransition(
+      ["blocked:dependency", "req:8", "req:9", "wayfinder:grilling"],
+      { kind: "promote" },
+      hitl,
+    );
+    if (isRefused(p)) throw new Error(`unexpected refusal: ${p.reason}`);
+    expect(p.add).toEqual(["ready-for-human"]);
+    expect(p.remove).toEqual(["blocked:dependency", "req:8", "req:9"]);
+  });
+
+  it("promote: a vocabulary declaring no HITL type re-queues the same dependent", () => {
+    const p = plan(["blocked:dependency", "req:8", "wayfinder:grilling"], { kind: "promote" });
+    expect(p.add).toEqual(["ready-for-agent"]);
+    expect(p.remove).toEqual(["blocked:dependency", "req:8"]);
+  });
+
+  it("promote: a dependent outside the HITL vocabulary still re-queues", () => {
+    const hitl: StateTransitionLabels = { ...labels, hitlTypes: ["wayfinder:grilling"] };
+    const p = planTransition(
+      ["blocked:dependency", "req:8", "wayfinder:task"],
+      { kind: "promote" },
+      hitl,
+    );
+    if (isRefused(p)) throw new Error(`unexpected refusal: ${p.reason}`);
+    expect(p.add).toEqual(["ready-for-agent"]);
+  });
+
+  it("hitlTypesIn: names the declared human-only types the label set carries", () => {
+    const hitl: StateTransitionLabels = {
+      ...labels,
+      hitlTypes: ["wayfinder:grilling", "wayfinder:prototype"],
+    };
+    expect(hitlTypesIn(["bug", "wayfinder:prototype", "req:3"], hitl)).toEqual([
+      "wayfinder:prototype",
+    ]);
+    expect(hitlTypesIn(["bug"], hitl)).toEqual([]);
+    expect(hitlTypesIn(["wayfinder:prototype"], labels)).toEqual([]);
   });
 
   it("park: swaps the blocked reason without stacking a second one", () => {
