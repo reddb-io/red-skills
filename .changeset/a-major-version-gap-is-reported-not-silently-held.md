@@ -1,9 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-A major-version gap is reported rather than silently held (#2926). The daemon's self-replacement resolves the newest version *within the same major*, and holding at a major boundary is correct — a breaking change must not arrive on a machine that is holding Workers just because a background timer noticed it. But the hold was silent, and a daemon on 3.x with 4.0.0 published looked exactly like a daemon that was already current: no skew, no pending action, no reason. An operator who updated the plugin to a new major and watched nothing change had no surface that would tell them why.
-
-**The daemon now states the gap, states that not crossing it is deliberate, and names the step that crosses it.** `upgrade.newest_published_version` carries the newest release whatever its major, beside the in-major answer rather than folded into it — the same rule that keeps `published_version` from ever standing in for `running_version`. `upgrade.major_held` is 1 while a major is being withheld and `upgrade.major_hold` carries the running and held majors, the reason, and the operator's step, addressed to whoever would revive this daemon: re-point and restart the unit under supervision, stop this daemon without one. Both numbers come from ONE registry read, so a release landing mid-check cannot produce a gap that existed at no instant.
-
-**A hold is reported only when one is real.** A daemon that is genuinely current, one merely behind inside its own major, one running a local build, and one whose probe resolved nothing all report no hold — a notice raised off an answer that was never read would make an unreachable registry look like a pending breaking change. In-major adoption is unchanged and still automatic, and the cached-bundle fallback is now capped at the running major too: a host that happens to hold a next-major bundle no longer crosses the boundary because the registry was briefly unreachable.
