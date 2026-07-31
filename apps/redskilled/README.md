@@ -89,6 +89,25 @@ of it.
   event lane, asks the host about each Worker by unit name, adopts the ones still
   running and records the deaths of the ones that ended while nobody was
   watching. A pid is only consulted for a Worker that never got a unit.
+- **A death is the host's answer, never the launch client's exit.** Under the
+  transient-unit backend the process the daemon watches is `systemd-run --wait`,
+  standing beside the unit rather than being it — and the daemon's own teardown
+  kills that client while the Worker keeps running. Writing the exit onto the lane
+  as a death is what let a live Worker escape the budget permanently (#2917):
+  every successor replayed the death and adopted nothing. An exit is now resolved
+  against the unit before it is believed, and the pid the daemon then watches is
+  the unit's own, because a budget sampled through a reclaimed pid is unmeasured.
+- **A birth is acknowledged only once it is on the lane.** The client is told its
+  Worker exists after the record reaches disk, so a daemon replaced a millisecond
+  later cannot leave a live Worker whose birth nothing wrote — and a signalled
+  daemon stops rather than being cut off, flushing the lane on its way out.
+- **The lane is this daemon's memory; the host is the machine's.** A start also
+  asks the init system for the Worker units no lane accounts for and adopts them,
+  named as unowned rather than left invisible: an unheld Worker is room the next
+  admission believes the machine has and it does not. Only the daemon holding the
+  machine-wide claim sweeps — a second instance adopting the arbiter's Workers
+  would be the same accounting hole from the other side — and
+  `REDSKILLED_UNIT_DISCOVERY=off` declines the sweep outright.
 - **Three facts on the lane, and no per-Worker durable record.** Birth, death and
   budget-kill are the daemon's own — issue-to-PR belongs to the tracker and
   branch-to-commits to git, and a third copy of those would only drift.
