@@ -9,6 +9,7 @@ import type { RedDB } from "@reddb-io/sdk";
 import { type JsonObject } from "@reddb-io/toon";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import { removeResidentRegistry, writeResidentRegistry } from "@reddb-io/shared/resident-client.js";
+import { serveWireSocket } from "@reddb-io/shared/resident-core.js";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import type { RspExpiredHandle, RspElisionRecord } from "./elision-store.js";
 import { RspElisionStore } from "./elision-store.js";
@@ -60,7 +61,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
     activeSockets.add(socket);
     socket.once("close", () => activeSockets.delete(socket));
     touch();
-    handleSocket(socket, async (request) => {
+    handleSocket(socket, async (request, reply) => {
       touch();
       const value = await handleRequest(storeState, request, opts.storeUri, opts.residentVersion ?? "0.0.0-dev");
       const response: RspResidentResponse = {
@@ -70,7 +71,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
         storeOpenCount: storeState.kind === "ready" ? storeState.storeOpenCount : undefined,
         storeElapsedMs: storeState.kind === "ready" ? storeState.storeElapsedMs : undefined,
       };
-      safeSocketWrite(socket, response);
+      reply(response);
       if (request.op === "handover") setImmediate(() => beginShutdown());
     });
   });
@@ -768,41 +769,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function handleSocket(socket: Socket, handler: (request: RspResidentRequest) => Promise<void>): void {
-  let buffer = "";
-  socket.setEncoding("utf8");
-  socket.on("error", () => undefined);
-  socket.on("data", (chunk) => {
-    buffer += chunk;
-    const newline = buffer.indexOf("\n");
-    if (newline < 0) return;
-    const line = buffer.slice(0, newline);
-    socket.pause();
-    void (async () => {
-      let request: RspResidentRequest | undefined;
-      try {
-        request = JSON.parse(line) as RspResidentRequest;
-        await handler(request);
-      } catch (err) {
-        const id = request?.id ?? randomUUID();
-        const response: RspResidentResponse = {
-          id,
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        };
-        safeSocketWrite(socket, response);
-      } finally {
-        socket.end();
-      }
-    })();
-  });
-}
-
-function safeSocketWrite(socket: Socket, response: RspResidentResponse): void {
-  if (socket.destroyed || !socket.writable) return;
-  try {
-    socket.write(`${JSON.stringify(response)}\n`);
-  } catch {}
+/**
+ * Read one framed request and answer it in the encoding it arrived in.
+ *
+ * The resident shares its framing and its two encodings with `redskilled`
+ * through `resident-wire`, which states the order a client and a daemon may
+ * adopt them in. The error answer carries a FRESH id because a frame that never
+ * became a request has no id to echo — the difference a newer client reads to
+ * recognise a resident too old to understand it.
+ */
+function handleSocket(
+  socket: Socket,
+  handler: (request: RspResidentRequest, respond: (response: RspResidentResponse) => void) => Promise<void>,
+): void {
+  serveWireSocket<RspResidentRequest>(
+    socket,
+    (request, respond) => handler(request, respond as (response: RspResidentResponse) => void),
+    (err, request, respond) => {
+      respond({
+        id: request?.id ?? randomUUID(),
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      } satisfies RspResidentResponse);
+    },
+  );
 }
 
 async function handleRequest(

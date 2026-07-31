@@ -42,7 +42,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { isPidAlive, sendLineRequest } from "@reddb-io/shared/resident-core.js";
+import { isPidAlive, sendLineRequest, serveWireSocket } from "@reddb-io/shared/resident-core.js";
 import {
   evaluateWorkerAdmission,
   resolveHostCeiling,
@@ -1571,10 +1571,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     activeSockets.add(socket);
     socket.once("close", () => activeSockets.delete(socket));
     armIdleTimer();
-    handleSocket(socket, async (request) => {
+    handleSocket(socket, async (request, reply) => {
       armIdleTimer();
       const response = await respond(request);
-      writeResponse(socket, response);
+      reply(response);
       // The report is written to the caller BEFORE the daemon leaves: a stop that
       // took the socket down first would be indistinguishable, from the operator's
       // side, from a daemon that died while being asked.
@@ -1760,37 +1760,30 @@ export async function socketAnswers(socketPath: string, timeoutMs = 250): Promis
   }
 }
 
-function handleSocket(socket: Socket, handler: (request: RedskilledRequest) => Promise<void>): void {
-  let buffer = "";
-  socket.setEncoding("utf8");
-  socket.on("error", () => undefined);
-  socket.on("data", (chunk: string) => {
-    buffer += chunk;
-    const newline = buffer.indexOf("\n");
-    if (newline < 0) return;
-    const line = buffer.slice(0, newline);
-    socket.pause();
-    void (async () => {
-      let request: RedskilledRequest | undefined;
-      try {
-        request = JSON.parse(line) as RedskilledRequest;
-        await handler(request);
-      } catch (err) {
-        writeResponse(socket, {
-          id: request?.id ?? randomUUID(),
-          ok: false,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      } finally {
-        socket.end();
-      }
-    })();
-  });
-}
-
-function writeResponse(socket: Socket, response: RedskilledResponse): void {
-  if (socket.destroyed || !socket.writable) return;
-  try {
-    socket.write(`${JSON.stringify(response)}\n`);
-  } catch {}
+/**
+ * Read one framed request and answer it in the encoding it arrived in.
+ *
+ * The framing, the two encodings and the order client and daemon may adopt them
+ * in all live in `resident-wire`; the daemon holds none of that itself so it
+ * cannot drift from the rsp resident, which reads the same wire.
+ *
+ * The error answer carries a FRESH id on purpose: a frame that never became a
+ * request has no id to echo, and that difference is exactly how a newer client
+ * recognises a daemon too old to read it (`isUnintelligibleResponse`).
+ */
+function handleSocket(
+  socket: Socket,
+  handler: (request: RedskilledRequest, respond: (response: RedskilledResponse) => void) => Promise<void>,
+): void {
+  serveWireSocket<RedskilledRequest>(
+    socket,
+    (request, respond) => handler(request, respond as (response: RedskilledResponse) => void),
+    (err, request, respond) => {
+      respond({
+        id: request?.id ?? randomUUID(),
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      } satisfies RedskilledResponse);
+    },
+  );
 }
