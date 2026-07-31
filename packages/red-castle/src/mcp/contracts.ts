@@ -62,12 +62,12 @@ export type HeartbeatObservationOutput = z.infer<typeof heartbeatObservationSche
  */
 export const publishedVersionObservationSchema = z.object({
   version: z.string(),
-  source: z.enum(["registry", "recorded", "bundle-cache", "unresolved"]),
+  source: z.enum(["registry", "recorded", "installed-plugin", "bundle-cache", "unresolved"]),
   /** Milliseconds since the answer was observed; -1 when never observed. */
   age_ms: z.number(),
   stale_after_ms: z.number(),
   stale: z.boolean(),
-  reason: z.enum(["fresh", "aged-out", "cache-only", "never-observed"]),
+  reason: z.enum(["fresh", "aged-out", "installed-only", "cache-only", "never-observed"]),
 });
 
 export type PublishedVersionObservationOutput = z.infer<typeof publishedVersionObservationSchema>;
