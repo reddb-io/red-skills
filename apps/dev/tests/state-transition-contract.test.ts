@@ -68,9 +68,15 @@ const PLANNER_BACKED_WRAPPERS = ["editIssueLifecycleLabels", "applyLifecycleLabe
 const RAW_WRITER_PATTERN =
   /\beditLabels\(|\beditIssueLabels\(|\beditLabelsTagged\(|--(?:add|remove)-label|\baddLabels:\s*\[/;
 
-/** Interface members and implementations of a writer, not call sites of one. */
+/** Interface members and implementations of a writer, not call sites of one.
+ *
+ * The `function` form closes the #2894 hole: the port's OWN implementation
+ * (`export async function editLabels(ctx: GhContext, …)`) leads with a context
+ * parameter, so the member form missed it, and the statement collapser then
+ * swallowed the first lines of the body — making the lane-isolation guard
+ * inside the port read as a raw state write by its own port. */
 const WRITER_DECLARATION_PATTERN =
-  /\bedit(?:Issue)?Labels(?:Tagged)?\??\(\s*(?:issue|pr|candidate|number|n)\s*:/;
+  /\bedit(?:Issue)?Labels(?:Tagged)?\??\(\s*(?:issue|pr|candidate|number|n)\s*:|\bfunction\s+edit(?:Issue)?Labels(?:Tagged)?\(/;
 
 /** State-role vocabulary (constants, literals, and injected-config accessors)
  * that marks an edit as a STATE mutation. `running`/`contested`/typed
@@ -298,6 +304,25 @@ describe("transition-API contract lint (#2528, #2664)", () => {
       ["await gh.editLabels(pr, [LABEL_READY_FOR_REVIEW], []);"].join("\n"),
     );
     expect(reviewLane).toEqual([]);
+  });
+
+  it("does not flag the port's own implementation, guard body included (#2894)", () => {
+    const port = scanSource(
+      "apps/dev/src/runtime/gh/synthetic.ts",
+      [
+        "export async function editLabels(",
+        "  ctx: GhContext,",
+        "  issue: number,",
+        "  remove: string[],",
+        "  add: string[],",
+        "): Promise<boolean> {",
+        "  if (add.includes(LABEL_READY)) {",
+        '    const refusal = laneIsolationRefusal("direct label write", next);',
+        "  }",
+        "}",
+      ].join("\n"),
+    );
+    expect(port).toEqual([]);
   });
 
   it("does not flag planner-backed transitions", () => {

@@ -54,6 +54,9 @@ export interface CastleSelectionLabels {
   typeSpec: string;
   urgent: string;
   high: string;
+  /** Labels marking a lane ISOLATED from this pool — a candidate carrying one is
+   * invisible unless the filter's own selector names that lane. */
+  laneIsolated: readonly string[];
 }
 
 export const DEFAULT_CASTLE_SELECTION_LABELS: CastleSelectionLabels = {
@@ -61,7 +64,25 @@ export const DEFAULT_CASTLE_SELECTION_LABELS: CastleSelectionLabels = {
   typeSpec: "type:spec",
   urgent: "priority:urgent",
   high: "priority:high",
+  laneIsolated: ["lane:go", "lane:scout"],
 };
+
+/**
+ * Is this candidate in an isolated lane that is NOT the pool being drained? The
+ * lane label — not the absence of `ready-for-agent` — is what keeps a `/go`
+ * dispatch away from the fleet, so a stale promotion can never hand one over
+ * (#2894). The `/go` and scout workers list their own lane as the pool and still
+ * see their issue; a fleet draining `ready-for-agent` never does, whatever
+ * labels the issue has accumulated.
+ */
+function isolatedFromPool(
+  candidate: CastleIssueCandidate,
+  poolLabel: string,
+  laneIsolated: readonly string[],
+): boolean {
+  const carried = laneIsolated.filter((label) => hasLabel(candidate, label));
+  return carried.length > 0 && !carried.every((label) => label === poolLabel);
+}
 
 export class CastleIssueSelectionError extends Error {
   constructor(
@@ -94,12 +115,22 @@ function sortByPriority(
   });
 }
 
+/**
+ * @param poolLabel the label the candidates were LISTED under — `ready-for-agent`
+ * for a fleet, the lane label for an isolated `/go` or scout dispatch. It decides
+ * which lane-isolated issues this drain is allowed to see.
+ */
 export function selectCastleIssues(
   candidates: readonly CastleIssueCandidate[],
   filter: CastleSelectionFilter,
   labels: CastleSelectionLabels = DEFAULT_CASTLE_SELECTION_LABELS,
+  poolLabel: string = labels.ready,
 ): CastleIssueCandidate[] {
-  const excluded = candidates.filter((candidate) => !hasLabel(candidate, labels.typeSpec));
+  const excluded = candidates.filter(
+    (candidate) =>
+      !hasLabel(candidate, labels.typeSpec) &&
+      !isolatedFromPool(candidate, poolLabel, labels.laneIsolated),
+  );
   // The work scope applies BEFORE the urgent prepend, so an urgent issue outside
   // the producer's scope is never pulled across the boundary into a double-claim.
   const pool =
@@ -208,6 +239,9 @@ export interface CastleWorkerDrainContext<TIssueTemplate = unknown> {
   policy?: CastleWorkerDrainPolicy;
   /** This machine's durable capability declaration. Absent keeps legacy permissive routing. */
   hostProfile?: HostCapabilityProfile;
+  /** The label the candidate listing was drawn from (`--lane`). Absent means the
+   * default `ready-for-agent` fleet pool, which sees no isolated lane. */
+  poolLabel?: string;
 }
 
 export interface CastleWorkerDrainProcessed {
@@ -368,6 +402,7 @@ export async function runCastleWorkerDrain<
       candidates.filter((candidate) => !quarantined.has(candidate.number)),
       ctx.filter,
       deps.labels,
+      ctx.poolLabel,
     );
     const total = queue.length;
     await fireSessionHook("post_pick", JSON.stringify({ issues: queue.map((candidate) => candidate.number) }));

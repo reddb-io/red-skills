@@ -127,6 +127,43 @@ describe("castle worker drain", () => {
     ).toEqual([10, 30]);
   });
 
+  // #2894 — the lane label, not the absence of `ready-for-agent`, is what keeps
+  // an isolated dispatch out of the fleet. A stale promotion must not hand one
+  // over, and the lane's own worker must still see it.
+  it("hides a lane-isolated issue from the fleet pool even when it carries ready-for-agent", () => {
+    const candidates = [
+      candidate(10),
+      candidate(20, ["ready-for-agent", "lane:go"]),
+      candidate(30, ["ready-for-agent", "lane:scout"]),
+    ];
+
+    // The fleet lists `ready-for-agent` — neither isolated issue is a candidate.
+    expect(
+      selectCastleIssues(candidates, { kind: "all" }).map((row) => row.number),
+    ).toEqual([10]);
+    // Not even when the operator names the number outright: the issue is not in
+    // this pool, so `--issues` reports it missing rather than claiming it.
+    expect(() => selectCastleIssues(candidates, { kind: "issues", numbers: [20] })).toThrow(
+      /missing from the ready-for-agent queue/,
+    );
+
+    // The `/go` worker lists `lane:go` as its pool and still sees its own issue.
+    expect(
+      selectCastleIssues(
+        candidates,
+        { kind: "issues", numbers: [20] },
+        undefined,
+        "lane:go",
+      ).map((row) => row.number),
+    ).toEqual([20]);
+    // A pool is one lane: the go worker does not inherit the scout's issue.
+    expect(
+      selectCastleIssues(candidates, { kind: "all" }, undefined, "lane:go").map(
+        (row) => row.number,
+      ),
+    ).toEqual([10, 20]);
+  });
+
   it("ANDs every requested tag facet and excludes untagged candidates outright", () => {
     const both = candidate(1, ["ready-for-agent", "tag:backend", "tag:infra"]);
     const oneOfTwo = candidate(2, ["ready-for-agent", "tag:backend"]);
