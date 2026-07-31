@@ -114,6 +114,12 @@ import {
   type RedskilledProjectRepository,
   type RedskilledRepositoryActivity,
 } from "./repository-activity.js";
+import {
+  DEFAULT_REDSKILLED_QUEUE_MS,
+  fetchQueueDiscovery,
+  type RedskilledQueueDiscovery,
+  type RedskilledQueueTransport,
+} from "./queue-discovery.js";
 import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
 import {
   REDSKILLED_STATUSLINE_DEFAULTS,
@@ -239,6 +245,15 @@ export interface RedskilledDaemonOptions {
    * must never learn what a `.red/config.yaml` is (ADR 0130 rule 3).
    */
   readonly repositoryActivity?: RedskilledActivityRegistration;
+  /**
+   * How this daemon reaches the tracker for queue depth, and how often.
+   *
+   * Its own block and its own window, next to the activity poller rather than
+   * inside it: ADR 0130 Amendment 3 batches the two fetches but keeps their
+   * cadences apart, because forcing the slow half onto the fast half's rhythm
+   * would spend more quota than the batching saves.
+   */
+  readonly queueDiscovery?: RedskilledQueueRegistration;
 }
 
 /**
@@ -255,6 +270,29 @@ export interface RedskilledActivityRegistration {
   /** Window between fetches; 0 or below leaves the poller unarmed. */
   readonly intervalMs?: number;
   readonly closedWindowMs?: number;
+}
+
+/**
+ * What the queue poller needs, and nothing more.
+ *
+ * No project list: the queue is discovered for whatever is REGISTERED at the
+ * instant a poll begins, so a project registered a moment ago is counted from the
+ * next interval instead of waiting for the daemon to be restarted with a wider
+ * list. The selectors come from the registrations; this block is only the reach.
+ */
+export interface RedskilledQueueRegistration {
+  /**
+   * How the query reaches the tracker; the activity transport when absent.
+   *
+   * One token serves both fetches (ADR 0130 Amendment 1), so stating a second
+   * transport is for a caller that wants the two windows separable — a test that
+   * counts each cadence, above all.
+   */
+  readonly transport?: RedskilledQueueTransport;
+  /** Window between fetches; 0 or below leaves the poller unarmed. */
+  readonly intervalMs?: number;
+  /** How many selectors one request may span; the module's bound when absent. */
+  readonly batchSize?: number;
 }
 
 export interface RedskilledDaemon {
@@ -329,6 +367,18 @@ export interface RedskilledDaemon {
    * a whole window to see it counted. Resolves to `null` when nothing is registered.
    */
   pollRepositoryActivity(): Promise<RedskilledRepositoryActivity | null>;
+  /**
+   * Discover every registered project's queue depth once — one request, not N.
+   *
+   * The registrations are read at the instant the poll begins and never again
+   * inside it: a project registered while a request is in flight belongs to the
+   * next interval, because folding it into an answer built without it would date
+   * its depth to a fetch that never asked about it. Resolves to `null` when
+   * nothing is registered — a host with no selector has no depth, not a zero.
+   */
+  pollQueueDiscovery(): Promise<RedskilledQueueDiscovery | null>;
+  /** The last queue fetch, dated by the poll it came from; `null` before the first. */
+  queueDiscovery(): RedskilledQueueDiscovery | null;
   /** Re-probe every re-attached Worker, retiring the ones the host no longer confirms. */
   sweepReattached(): Promise<readonly RedskilledWorkerView[]>;
   /** The Workers this daemon adopted at start rather than birthing itself. */
@@ -444,6 +494,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const replacementIO = options.replacementIO ?? {};
   const activityRegistration = options.repositoryActivity;
   const activityMs = activityRegistration?.intervalMs ?? DEFAULT_REDSKILLED_ACTIVITY_MS;
+  const queueRegistration = options.queueDiscovery;
+  const queueTransport = queueRegistration?.transport ?? activityRegistration?.transport;
+  const queueMs = queueRegistration?.intervalMs ?? DEFAULT_REDSKILLED_QUEUE_MS;
   const workers = new Map<string, RedskilledWorkerView>();
   // Re-attached Workers have no child handle to deliver an exit, so their death
   // is discovered by asking the host rather than by being told.
@@ -471,10 +524,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // The last activity fetch, kept for the same reason the RSS reading is: a read
   // between two polls is dated by the poll it came from, never by the read.
   let lastActivity: RedskilledRepositoryActivity | null = null;
+  // The last queue fetch, held beside the activity one rather than merged into it:
+  // two cadences produce two instants, and a document that carried one date for
+  // both would age the fast half by the slow half's clock.
+  let lastQueue: RedskilledQueueDiscovery | null = null;
   let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
   let replaceTimer: NodeJS.Timeout | undefined;
   let activityTimer: NodeJS.Timeout | undefined;
+  let queueTimer: NodeJS.Timeout | undefined;
   let stopping = false;
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
@@ -538,6 +596,33 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now: clock(),
     });
     return lastActivity;
+  }
+
+  /**
+   * One interval's queue fetch: ONE request, however many projects are registered.
+   *
+   * The registration set is snapshotted before the request leaves and never
+   * consulted again inside this call, which is what makes "included from the next
+   * interval" a property rather than a race: a project that registers mid-flight
+   * is simply absent from an answer that never asked about it, and present in the
+   * one after. The depths are stored and never read here — the daemon holds an
+   * integer per opaque selector and knows nothing about what the selector says.
+   */
+  async function pollQueueDiscovery(): Promise<RedskilledQueueDiscovery | null> {
+    if (queueTransport == null) return null;
+    const projects = [...registrations.values()]
+      .map((registration) => ({ project_label: registration.project_label, selector: registration.selector }))
+      // By label, like every other list the daemon reports: the order a client
+      // happened to register in is not a fact about the host.
+      .sort((left, right) => left.project_label.localeCompare(right.project_label));
+    if (projects.length === 0) return null;
+    lastQueue = await fetchQueueDiscovery({
+      projects,
+      transport: queueTransport,
+      now: clock(),
+      ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
+    });
+    return lastQueue;
   }
 
   /**
@@ -997,6 +1082,23 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     activityTimer.unref();
   }
 
+  /**
+   * Arm the queue poller on ITS window, which is not the activity poller's.
+   *
+   * Armed even with nothing registered, unlike the activity poller: the selectors
+   * arrive by registration rather than at start, so a timer that waited for a
+   * non-empty set would never start on a daemon that outlives every session — and
+   * a poll with nothing registered costs no request at all.
+   */
+  function armQueueTimer(): void {
+    if (stopping || queueTimer != null) return;
+    if (queueTransport == null || queueMs <= 0) return;
+    queueTimer = setInterval(() => {
+      void pollQueueDiscovery().catch(() => undefined);
+    }, queueMs);
+    queueTimer.unref();
+  }
+
   function armIdleTimer(): void {
     if (stopping) return;
     if (idleTimer) clearTimeout(idleTimer);
@@ -1028,6 +1130,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (sampleTimer) clearInterval(sampleTimer);
     if (replaceTimer) clearInterval(replaceTimer);
     if (activityTimer) clearInterval(activityTimer);
+    if (queueTimer) clearInterval(queueTimer);
     // Every event already handed over reaches the lane before the daemon lets go
     // of the session: a birth still in flight would leave the next daemon with a
     // Worker it holds a budget for and no record of.
@@ -1168,6 +1271,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   armSampleTimer();
   armReplaceTimer();
   armActivityTimer();
+  armQueueTimer();
 
   return {
     socketPath: paths.socketPath,
@@ -1180,6 +1284,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     killWorkerOverBudget,
     sampleMemoryBudgets,
     pollRepositoryActivity,
+    pollQueueDiscovery,
+    queueDiscovery: () => lastQueue,
     sweepReattached,
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
