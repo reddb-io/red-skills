@@ -34,6 +34,7 @@ import type { RedskilledProjectRegistrationRequest } from "./project-registratio
 import {
   isRedskilledProjectDeregistered,
   isRedskilledProjectRegistered,
+  isRedskilledProjectRenewed,
   isRedskilledStatuslinePayload,
   isRedskilledStatuslineRender,
   isRedskilledWorkerCommandResult,
@@ -42,6 +43,7 @@ import {
   sendRedskilledRequest,
   type RedskilledProjectDeregistered,
   type RedskilledProjectRegistered,
+  type RedskilledProjectRenewed,
   type RedskilledRequest,
   type RedskilledStatuslinePayload,
   type RedskilledStatuslineRender,
@@ -399,6 +401,36 @@ export async function registerRedskilledProject(
     config,
   );
   if (!isRedskilledProjectRegistered(value)) throw new Error("redskilled daemon returned a malformed registration");
+  return value;
+}
+
+/**
+ * Say this project's session is still here, so its registration keeps standing.
+ *
+ * **The registration outlives the session, and the renewal is why it does not
+ * outlive it forever.** A drain keeps being polled after the operator closes the
+ * terminal, all the way to the deadline the last renewal set; a laptop that closed
+ * mid-tick stops being a registered project one window later instead of polling a
+ * repository for the rest of the afternoon. **A refusal throws**, including the
+ * one that says the daemon holds no such registration: a client that read a lapsed
+ * record as renewed would keep renewing nothing while its work sat undrained.
+ */
+export async function renewRedskilledProject(
+  paths: RedskilledPaths,
+  request: { project_label: string; renew_within_ms?: number },
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledProjectRenewed> {
+  const value = await requestRedskilled(
+    paths,
+    {
+      op: "project-renew",
+      project_label: request.project_label,
+      ...(request.renew_within_ms == null ? {} : { renew_within_ms: request.renew_within_ms }),
+      session_project: config.sessionProject ?? request.project_label,
+    },
+    config,
+  );
+  if (!isRedskilledProjectRenewed(value)) throw new Error("redskilled daemon returned a malformed renewal");
   return value;
 }
 

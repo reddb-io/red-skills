@@ -38,7 +38,10 @@
  * The daemon still does not know what an Issue, a label, a Spec, a gate or a
  * Landing is, which is what keeps this a frozen surface rather than a growing one.
  * `project-deregister` widens it by nothing at all: it names a project the daemon
- * already keys registrations by, and takes the record back out.
+ * already keys registrations by, and takes the record back out. `project-renew`
+ * widens it by less than nothing: it names that same project and carries no new
+ * field a client is obliged to state, because a renewal is a session saying "I am
+ * still here" rather than a second chance to restate what it wants.
  *
  * **Every request may name the project its session belongs to.** That single
  * opaque string is what makes reach asymmetric (ADR 0130 rule 9): a session reads
@@ -117,6 +120,7 @@ export type RedskilledRequest =
   | { id: string; op: "worker-command"; command: RedskilledWorkerCommandRequest }
   | { id: string; op: "worker-heartbeat"; heartbeat: RedskilledWorkerHeartbeatRequest }
   | { id: string; op: "project-register"; registration: RedskilledProjectRegistrationRequest; session_project?: string }
+  | { id: string; op: "project-renew"; project_label: string; renew_within_ms?: number; session_project?: string }
   | { id: string; op: "project-deregister"; project_label: string; session_project?: string }
   | { id: string; op: "shutdown" };
 
@@ -237,6 +241,30 @@ export function isRedskilledProjectRegistered(value: unknown): value is Redskill
     typeof registered.detail === "string" &&
     isRedskilledProjectRegistration(registered.registration) &&
     isRedskilledReachVerdict(registered.reach);
+}
+
+/**
+ * The answer to an accepted `project-renew`.
+ *
+ * The whole renewed record travels back rather than the new deadline alone: a
+ * session renewing is precisely the moment it should be able to see the record
+ * the host is holding for it, and one that received only a timestamp would have
+ * to ask a second question to check the host still holds what it thinks it does.
+ */
+export interface RedskilledProjectRenewed {
+  readonly version: 1;
+  readonly registration: RedskilledProjectRegistration;
+  readonly reach: RedskilledReachVerdict;
+  readonly detail: string;
+}
+
+export function isRedskilledProjectRenewed(value: unknown): value is RedskilledProjectRenewed {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const renewed = value as Record<string, unknown>;
+  return renewed.version === 1 &&
+    typeof renewed.detail === "string" &&
+    isRedskilledProjectRegistration(renewed.registration) &&
+    isRedskilledReachVerdict(renewed.reach);
 }
 
 /**

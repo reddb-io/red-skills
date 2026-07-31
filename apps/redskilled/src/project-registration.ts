@@ -46,6 +46,27 @@
 export const REDSKILLED_REGISTRATION_TTL_MS = 300_000;
 
 /**
+ * The fraction of its window a session is expected to renew inside.
+ *
+ * **A lease's half-life is the only cadence a deadline states on its own.** The
+ * daemon holds no connection to the session — every request arrives on its own
+ * socket — so the one thing it can tell a live session from a closed terminal by
+ * is silence, and silence is only readable against an expected rhythm. Renewing
+ * at the half-life leaves a whole half-window of slack for a slow tick, and going
+ * quiet past it is what "nothing is renewing this any more" looks like from here.
+ */
+export const REDSKILLED_RENEWAL_CADENCE = 0.5;
+
+/**
+ * Whether a session is still renewing a registration, or it is running on alone.
+ *
+ * Both states are POLLED — a drain must outlive the terminal that started it —
+ * and that is exactly why they have to be distinguishable: an operator reading
+ * `running-on` is reading work nobody is watching, on a deadline it will lapse at.
+ */
+export type RedskilledRenewalStatus = "renewing" | "running-on";
+
+/**
  * One project asking to be held, as it states itself.
  *
  * The deadline arrives as a WINDOW rather than as an instant, and the daemon
@@ -79,8 +100,18 @@ export interface RedskilledProjectRegistration {
   /** The daemon's own clock, at the instant it accepted this registration. */
   readonly registered_at: string;
   readonly renew_within_ms: number;
-  /** When this registration lapses unless renewed — `registered_at` plus the window. */
+  /** When this registration lapses unless renewed — the last renewal plus the window. */
   readonly renew_by: string;
+  /**
+   * The last instant a session was heard from about this registration.
+   *
+   * The registration itself counts as the first: a record the daemon accepted a
+   * second ago is being renewed by definition, and dating it from a renewal that
+   * has not happened yet would report every new registration as abandoned.
+   */
+  readonly renewed_at: string;
+  /** How many renewals the daemon has accepted; 0 for a registration never renewed. */
+  readonly renewals: number;
 }
 
 /**
@@ -177,7 +208,122 @@ export function buildProjectRegistration(
     registered_at: new Date(nowMs).toISOString(),
     renew_within_ms: renewWithinMs,
     renew_by: new Date(nowMs + renewWithinMs).toISOString(),
+    renewed_at: new Date(nowMs).toISOString(),
+    renewals: 0,
   };
+}
+
+/**
+ * Raised when a project asks to renew a registration the daemon is not holding.
+ *
+ * **A renewal is never a registration.** A client whose record lapsed while its
+ * session was blocked must re-register — stating its selector, its argv and its
+ * target again — because the daemon deliberately kept none of them, and a renewal
+ * that quietly minted a record would resurrect an argv nobody restated.
+ */
+export class RedskilledProjectUnregisteredError extends Error {
+  constructor(readonly projectLabel: string) {
+    super(
+      `redskilled holds no registration for project ${JSON.stringify(projectLabel)} to renew: it lapsed or was never ` +
+        `held, and a renewal never mints a record — register again, stating the selector, the argv and the target`,
+    );
+    this.name = "RedskilledProjectUnregisteredError";
+  }
+}
+
+export interface RenewProjectRegistrationOptions {
+  /** The daemon's clock, as an instant it can parse. */
+  readonly now: string;
+  /** A restated window; the one the registration already stands on when absent. */
+  readonly renew_within_ms?: number;
+}
+
+/**
+ * Push one registration's deadline out. PURE.
+ *
+ * Everything the project said about its work is carried over untouched — the
+ * selector, the argv, the target and the instant it first registered — because a
+ * renewal is a session saying "I am still here", never a second chance to restate
+ * what it wants. The only fields that move are the ones about time.
+ */
+export function renewProjectRegistration(
+  held: RedskilledProjectRegistration,
+  options: RenewProjectRegistrationOptions,
+): RedskilledProjectRegistration {
+  const nowMs = Date.parse(options.now);
+  if (!Number.isFinite(nowMs)) {
+    throw new Error(`redskilled needs an instant to date a renewal, not ${JSON.stringify(options.now)}`);
+  }
+  const renewWithinMs = options.renew_within_ms ?? held.renew_within_ms;
+  if (!Number.isFinite(renewWithinMs) || renewWithinMs <= 0) {
+    throw new Error(
+      `redskilled needs a positive renewal window to renew project ${JSON.stringify(held.project_label)}, not ` +
+        `${JSON.stringify(options.renew_within_ms)}`,
+    );
+  }
+  return {
+    ...held,
+    renew_within_ms: renewWithinMs,
+    renewed_at: new Date(nowMs).toISOString(),
+    // Dated from the renewal rather than from the registration: a deadline that
+    // kept counting from the first record would lapse a session that renewed on
+    // time, which is the one thing renewing is for.
+    renew_by: new Date(nowMs + renewWithinMs).toISOString(),
+    renewals: held.renewals + 1,
+  };
+}
+
+/** True once a registration's deadline has passed with nothing renewing it. PURE. */
+export function hasRegistrationLapsed(registration: RedskilledProjectRegistration, nowMs: number): boolean {
+  const renewBy = Date.parse(registration.renew_by);
+  // An undatable deadline is not a lapse: dropping a record because its own
+  // timestamp is unreadable would stop work over a field nobody meant to act on.
+  if (!Number.isFinite(renewBy)) return false;
+  return nowMs >= renewBy;
+}
+
+/**
+ * Whether a session is still renewing this registration, at one instant. PURE.
+ *
+ * Read off silence and nothing else: the daemon has no session to ask, so the
+ * question it can answer is "have I heard about this within the cadence a session
+ * renews at", and the answer past that is `running-on` — still held, still polled,
+ * on its way to a deadline.
+ */
+export function registrationRenewalStatus(
+  registration: RedskilledProjectRegistration,
+  nowMs: number,
+): RedskilledRenewalStatus {
+  // The fallback is for a record from a daemon older than renewal, which dates
+  // itself by the only instant it carries: the one it was registered at.
+  const heardAt = Date.parse(registration.renewed_at ?? registration.registered_at);
+  if (!Number.isFinite(heardAt)) return "running-on";
+  return nowMs - heardAt <= registration.renew_within_ms * REDSKILLED_RENEWAL_CADENCE ? "renewing" : "running-on";
+}
+
+/** What one sweep of a registration set decided, at one instant. */
+export interface LapsedRegistrationSweep {
+  readonly standing: readonly RedskilledProjectRegistration[];
+  readonly lapsed: readonly RedskilledProjectRegistration[];
+}
+
+/**
+ * Split a registration set into the ones still standing and the ones that lapsed. PURE.
+ *
+ * Both halves are returned because the lapse is a fact somebody has to be told:
+ * a caller that only received the survivors could drop a project's work without
+ * ever being able to say which project stopped, or when.
+ */
+export function sweepLapsedRegistrations(
+  registrations: Iterable<RedskilledProjectRegistration>,
+  nowMs: number,
+): LapsedRegistrationSweep {
+  const standing: RedskilledProjectRegistration[] = [];
+  const lapsed: RedskilledProjectRegistration[] = [];
+  for (const registration of registrations) {
+    (hasRegistrationLapsed(registration, nowMs) ? lapsed : standing).push(registration);
+  }
+  return { standing, lapsed };
 }
 
 /** True when `value` is a complete registration — a client's fail-closed check. */
@@ -193,7 +339,13 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     Number.isInteger(registration.target) &&
     typeof registration.registered_at === "string" &&
     typeof registration.renew_within_ms === "number" &&
-    typeof registration.renew_by === "string";
+    typeof registration.renew_by === "string" &&
+    // Checked only when present, exactly as the host state's own optional blocks
+    // are: one daemon serves checkouts pinned to different bundle versions, so a
+    // record from a daemon older than renewal must still read as complete — while
+    // a field that IS there and is the wrong shape still fails closed.
+    (registration.renewed_at === undefined || typeof registration.renewed_at === "string") &&
+    (registration.renewals === undefined || Number.isInteger(registration.renewals));
 }
 
 function requireText(value: unknown, what: string): string {

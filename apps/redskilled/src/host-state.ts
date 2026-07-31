@@ -16,7 +16,9 @@ import {
 import { isRedskilledScopeState, type RedskilledScopeState } from "./machine-scope.js";
 import {
   isRedskilledProjectRegistration,
+  registrationRenewalStatus,
   type RedskilledProjectRegistration,
+  type RedskilledRenewalStatus,
 } from "./project-registration.js";
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
 import type { RedskilledMajorHold } from "./self-replace.js";
@@ -128,6 +130,20 @@ export interface RedskilledUpgradeState {
   readonly major_hold: RedskilledMajorHold | null;
 }
 
+/**
+ * One registration as the host reports it: the record, plus how it is being held.
+ *
+ * `renewal` is DERIVED at the instant of the read and never stored, because it is
+ * a fact about silence rather than a fact about the record: the same registration
+ * is `renewing` a second after its session spoke and `running-on` a minute later,
+ * with nothing about it having changed. A stored copy would be a second answer
+ * waiting to disagree with the clock.
+ */
+export interface RedskilledRegistrationView extends RedskilledProjectRegistration {
+  /** Whether a session is still renewing this; absent when the read stated no instant. */
+  readonly renewal?: RedskilledRenewalStatus;
+}
+
 export interface RedskilledHostState {
   readonly version: 1;
   readonly protocol_version: number;
@@ -155,7 +171,7 @@ export interface RedskilledHostState {
    * with a registration and no Worker is real, and so is a Worker whose project
    * registered nothing — collapsing them would make each one unsayable.
    */
-  readonly registrations?: readonly RedskilledProjectRegistration[];
+  readonly registrations?: readonly RedskilledRegistrationView[];
   /** What the daemon has promised the machine, derived from `workers`. */
   readonly budget_accounting: RedskilledBudgetAccounting;
   /** Running version against published version, and what is being done about it. */
@@ -173,6 +189,15 @@ export interface BuildHostStateInput {
   readonly workers?: readonly RedskilledWorkerView[];
   /** The registrations the daemon holds; absent is a host with none, not an error. */
   readonly registrations?: readonly RedskilledProjectRegistration[];
+  /**
+   * The instant the document is dated at, for judging renewal against.
+   *
+   * Optional, and its absence is honest rather than defaulted: a caller that
+   * states no instant gets each registration reported without a renewal verdict,
+   * because a judgement made up from the daemon's start time would call a
+   * registration nobody has renewed in an hour `renewing`.
+   */
+  readonly now?: string;
   /** The version observation; a daemon that never checked reports unknown. */
   readonly published?: {
     readonly version: string | null;
@@ -207,10 +232,26 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
       .sort((a, b) => a.project_label.localeCompare(b.project_label)),
     // Ordered by the one field the daemon is allowed to read. A document ordered
     // by anything a selector says would be the daemon having read one.
-    registrations: [...(input.registrations ?? [])].sort((a, b) => a.project_label.localeCompare(b.project_label)),
+    registrations: buildRegistrationViews(input),
     budget_accounting: buildBudgetAccounting(workers),
     upgrade: buildUpgradeState(input),
   };
+}
+
+/**
+ * The registration block: every record, each judged against the read's instant. PURE.
+ *
+ * Ordered by the one field the daemon is allowed to read. A document ordered by
+ * anything a selector says would be the daemon having read one.
+ */
+function buildRegistrationViews(input: BuildHostStateInput): readonly RedskilledRegistrationView[] {
+  const nowMs = input.now == null ? Number.NaN : Date.parse(input.now);
+  const judged = Number.isFinite(nowMs);
+  return [...(input.registrations ?? [])]
+    .map((registration) =>
+      judged ? { ...registration, renewal: registrationRenewalStatus(registration, nowMs) } : registration,
+    )
+    .sort((a, b) => a.project_label.localeCompare(b.project_label));
 }
 
 /**
