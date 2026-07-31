@@ -93,6 +93,7 @@ import { pathIsInsideTmp, removableUnknownTmpRoots } from "./tmp-janitor.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import type { WorkerProcessVerdict, WorkerReclaimPlan } from "./worker-reclaim.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
+import { readHitlTypeLabels } from "./config.js";
 import { isRefused, planTransition, type StateTransition } from "./state-transition.js";
 
 // ---------- precheck (hard preconditions) ----------
@@ -1460,7 +1461,14 @@ async function runUnblockSweep(
 ): Promise<UnblockSweepResult> {
   // Delegate to the shared sweep core so the boot-time safety net and the
   // periodic supervisor sweep (#844) promote through exactly one code path.
-  const promoted = await executeUnblockSweep(candidates, deps.lookups.blockerState, deps.gh);
+  // The repo's own vocabulary decides the LANE (#2966): a dependent carrying a
+  // declared HUMAN-ONLY type parks for its human instead of joining the queue.
+  const promoted = await executeUnblockSweep(
+    candidates,
+    deps.lookups.blockerState,
+    deps.gh,
+    readHitlTypeLabels(deps.config ?? {}),
+  );
   return { promoted };
 }
 
