@@ -29,12 +29,20 @@
  * per-Worker durable record, because the two authorities that already hold the
  * rest of a Worker's story — the tracker and git — would only be contradicted by
  * a third copy.
+ *
+ * **A death is the host's answer, never the launch client's exit.** The process
+ * the daemon watches under the transient-unit backend is `systemd-run --wait`,
+ * which its own teardown kills while the init system keeps the Worker running.
+ * Writing that exit onto the lane as a death is what let a live Worker escape the
+ * host budget for good (#2917) — every successor replayed the death and adopted
+ * nothing — so an exit is resolved against the unit before it is believed, and a
+ * start additionally asks the host for the Worker units no lane accounts for.
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
-import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
+import { isPidAlive, sendLineRequest } from "@reddb-io/shared/resident-core.js";
 import {
   evaluateWorkerAdmission,
   resolveHostCeiling,
@@ -62,6 +70,7 @@ import {
   currentMachineOwner,
   describeMachineScope,
   RedskilledMachineHeldError,
+  resolveMachineClaimPath,
   type RedskilledMachineClaimStore,
   type RedskilledMachineOwner,
 } from "./machine-scope.js";
@@ -72,11 +81,18 @@ import {
   type RedskilledProjectRegistrationRequest,
 } from "./project-registration.js";
 import {
+  detectUnitMainPid,
   detectWorkerLiveness,
+  discoverUnownedWorkers,
+  listActiveWorkerUnits,
+  maySweepMachine,
+  nameUnownedProject,
   reattachWorkers,
   stopWorker,
   type RedskilledLivenessProbe,
   type RedskilledStopProbe,
+  type RedskilledUnitInventoryProbe,
+  type RedskilledUnitPidProbe,
 } from "./reattach.js";
 import {
   REDSKILLED_PROTOCOL_VERSION,
@@ -179,6 +195,15 @@ export interface RedskilledDaemonOptions {
   readonly liveness?: RedskilledLivenessProbe;
   /** How the daemon stops a Worker it is reclaiming a budget from. */
   readonly stopWorker?: RedskilledStopProbe;
+  /**
+   * How the daemon lists the Worker units this host has active.
+   *
+   * Injected so the sweep is provable without systemd — and so a test daemon on a
+   * machine that already runs the real one does not adopt its Workers.
+   */
+  readonly unitInventory?: RedskilledUnitInventoryProbe;
+  /** How a unit's live process is resolved when the recorded pid is spent. */
+  readonly unitMainPid?: RedskilledUnitPidProbe;
   /** How the whole Worker set's tree RSS and CPU are read; `/proc` by default. */
   readonly treeSampler?: RedskilledTreeSampler;
   /** Window between memory samples; 0 or below leaves the sampler unarmed. */
@@ -404,6 +429,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const eventLane = options.eventLane ?? createRedskilledEventLane(paths.eventLanePath);
   const liveness = options.liveness ?? detectWorkerLiveness;
   const stopProbe = options.stopWorker ?? stopWorker;
+  const unitInventory = options.unitInventory ??
+    (() =>
+      maySweepMachine(paths.machineClaimPath, resolveMachineClaimPath({ machineIdHash: paths.machineIdHash }))
+        ? listActiveWorkerUnits()
+        : []);
+  const unitMainPid = options.unitMainPid ?? detectUnitMainPid;
   const treeSampler = options.treeSampler ?? sampleWorkerTrees;
   const readLogTail = options.readLogTail ?? readLastLogLine;
   const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
@@ -621,6 +652,67 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /**
+   * Decide what one observed process exit MEANS, before recording anything.
+   *
+   * Under the transient-unit backend the process the daemon watches is
+   * `systemd-run --wait` — a client standing beside the unit, not the unit — so
+   * its exit is evidence and not a verdict. The daemon's own teardown kills that
+   * client (its cgroup goes with it) while the init system keeps the Worker
+   * running, and a daemon that wrote a death for it put a live Worker outside the
+   * host budget permanently: the death is on the lane, so every successor replays
+   * it and adopts nothing (#2917). An unisolated Worker has no such gap — the
+   * process that exited IS the Worker — so its exit is a death exactly as before.
+   */
+  async function resolveObservedExit(
+    worker: RedskilledWorkerView,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): Promise<void> {
+    const ended = `exit code=${code ?? "null"} signal=${signal ?? "null"}`;
+    if (worker.unit != null && worker.unit !== "" && (await confirmedAlive(worker))) {
+      adoptSurvivingUnit(
+        worker,
+        `its launch client ended (${ended}) while unit ${JSON.stringify(worker.unit)} stayed active, ` +
+          "so the daemon holds it by unit name from here on and its death is discovered by asking the host",
+      );
+      return;
+    }
+    forgetWorker(worker.worker_id);
+    record("worker-death", worker, ended, { exitCode: code, signal });
+    armIdleTimer();
+  }
+
+  /** Ask the host about one Worker; an unanswerable probe is not a confirmation. */
+  async function confirmedAlive(worker: RedskilledWorkerView): Promise<boolean> {
+    try {
+      return (await liveness(worker)) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Keep holding a Worker whose unit outlived the process that launched it.
+   *
+   * Nothing is written to the lane: the birth already there is exactly what a
+   * successor needs, and the daemon's own belief moves into the re-attached set
+   * because there is no child handle left to deliver an exit — from here the
+   * Worker's death is discovered by the sweep, on the same terms as one adopted
+   * across a restart. The pid is refreshed from the unit for the sampler's sake:
+   * a budget watched through a reclaimed pid is a budget nobody measures.
+   */
+  function adoptSurvivingUnit(worker: RedskilledWorkerView, reason: string): void {
+    const pid = worker.unit == null ? null : unitMainPid(worker.unit);
+    workers.set(worker.worker_id, {
+      ...worker,
+      ...(pid != null && pid > 0 ? { pid } : {}),
+      warnings: [...worker.warnings, reason],
+    });
+    reattached.add(worker.worker_id);
+    armIdleTimer();
+  }
+
+  /**
    * Hold one project's registration, once reach has permitted it.
    *
    * Reach is checked against the registration's OWN label — the project being
@@ -696,14 +788,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       clock,
       onExit: (workerId, code, signal) => {
         const worker = workers.get(workerId);
-        forgetWorker(workerId);
-        if (worker) {
-          record("worker-death", worker, `exit code=${code ?? "null"} signal=${signal ?? "null"}`, {
-            exitCode: code,
-            signal,
-          });
+        if (worker == null) {
+          armIdleTimer();
+          return;
         }
-        armIdleTimer();
+        void resolveObservedExit(worker, code, signal).catch(() => undefined);
       },
     });
     workers.set(launched.worker.worker_id, launched.worker);
@@ -961,11 +1050,34 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const replayed = rehydrateWorkers(await eventLane.read().catch(() => []));
   const reattachment = await reattachWorkers(replayed, liveness);
   for (const worker of reattachment.alive) {
-    workers.set(worker.worker_id, worker);
-    reattached.add(worker.worker_id);
+    // Named, never dropped: a Worker whose owning project the lane no longer
+    // carries is still a live process charged to this machine, and the label it
+    // is reported under is the only thing an operator has to act on.
+    const adopted = nameUnownedProject(worker);
+    // The lane's pid is the launch client's, which a restart routinely outlives;
+    // the unit is the identity, so the pid is re-asked rather than believed.
+    const refreshed = adopted.unit == null || isPidAlive(adopted.pid) ? null : unitMainPid(adopted.unit);
+    workers.set(adopted.worker_id, refreshed != null && refreshed > 0 ? { ...adopted, pid: refreshed } : adopted);
+    reattached.add(adopted.worker_id);
   }
   for (const worker of reattachment.dead) {
     record("worker-death", worker, "the Worker ended while no daemon was watching");
+  }
+  // The lane is this daemon's memory, not the machine's: a Worker whose birth was
+  // never written — or was written and then falsely retired — is invisible to the
+  // replay and very much alive to the host. So the host itself is asked, and a
+  // unit nobody accounts for is adopted rather than left outside the budget
+  // (#2917). Failing to ask costs the sweep and never the start.
+  const discovered = discoverUnownedWorkers({
+    units: await Promise.resolve(unitInventory()).catch(() => []),
+    held: [...workers.values()],
+    mainPid: unitMainPid,
+    now: startedAt,
+  });
+  for (const worker of discovered) {
+    workers.set(worker.worker_id, worker);
+    reattached.add(worker.worker_id);
+    record("worker-birth", worker, "adopted from an active unit with no birth on this lane");
   }
   // The bounded exception. A daemon that has just come back holds Workers it has
   // never heard a heartbeat from, so for those — and only those — it reads the log
@@ -1032,6 +1144,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         const reach = authorize("worker-start", request.session_project, request.spec.project_label);
         if (!reach.permitted) return { id: request.id, ok: false, error: reach.reason };
         const launched = startWorker(request.spec);
+        // The acknowledgement waits for the birth to reach the lane. A client told
+        // "your Worker exists" by a daemon that is then replaced a millisecond
+        // later — the ordinary operation — would otherwise leave a live Worker
+        // whose birth nothing recorded, and no successor can re-attach to a Worker
+        // it was never told about (#2917).
+        await eventLane.flush().catch(() => undefined);
         return {
           id: request.id,
           ok: true,

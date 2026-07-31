@@ -87,6 +87,14 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       // answering" is the first fact a skew investigation needs.
       daemonVersion: values["daemon-version"] ?? readBuildInfo("redskilled").version,
     });
+    // A signalled daemon LETS GO rather than being cut off: the stop path flushes
+    // the event lane, releases the lease and unlinks the socket, so the successor
+    // inherits a complete record instead of whatever had reached disk by the time
+    // the default handler killed this process (#2917). The Workers are untouched —
+    // they are init-system units, and this is a restart, not an evacuation.
+    for (const signal of ["SIGTERM", "SIGINT"] as const) {
+      process.once(signal, () => void daemon.stop().catch(() => undefined));
+    }
     await daemon.closed;
     return 0;
   }
