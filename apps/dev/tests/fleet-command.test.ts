@@ -320,6 +320,10 @@ describe("fleet command stale supervisor state", () => {
   it("statusFleet discovers a live supervisor from the structured lane and calls out bundle skew (#2204)", async () => {
     const root = scratch();
     const priorCacheDir = process.env.RED_SKILLS_CACHE_DIR;
+    // An empty HOME: the installed-plugin rung (#2924) reads the operator's
+    // plugin cache, so the fixture — not this machine — must answer.
+    const priorHome = process.env.HOME;
+    process.env.HOME = root;
     try {
       const paths = afkPaths(root);
       const epoch = Math.floor(Date.now() / 1000);
@@ -375,6 +379,8 @@ describe("fleet command stale supervisor state", () => {
     } finally {
       if (priorCacheDir === undefined) delete process.env.RED_SKILLS_CACHE_DIR;
       else process.env.RED_SKILLS_CACHE_DIR = priorCacheDir;
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -386,6 +392,10 @@ describe("fleet command stale supervisor state", () => {
     const root = scratch();
     const priorCacheDir = process.env.RED_SKILLS_CACHE_DIR;
     const priorBuildVersion = process.env.RED_BUILD_VERSION;
+    // No evidence at all means no installed plugin either — the answer must stay
+    // unresolved, never a version substituted from this machine's install.
+    const priorHome = process.env.HOME;
+    process.env.HOME = root;
     try {
       const paths = afkPaths(root);
       const epoch = Math.floor(Date.now() / 1000);
@@ -435,6 +445,8 @@ describe("fleet command stale supervisor state", () => {
       else process.env.RED_SKILLS_CACHE_DIR = priorCacheDir;
       if (priorBuildVersion === undefined) delete process.env.RED_BUILD_VERSION;
       else process.env.RED_BUILD_VERSION = priorBuildVersion;
+      if (priorHome === undefined) delete process.env.HOME;
+      else process.env.HOME = priorHome;
       rmSync(root, { recursive: true, force: true });
     }
   });
