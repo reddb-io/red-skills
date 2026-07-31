@@ -131,12 +131,12 @@ const ALLOWLIST = new Map<string, string>([
   // never listed, or claim / PR / maintainer-command vocabulary that is not an
   // issue STATE transition at all.
   [
-    "apps/dev/src/core/boot-sweep.ts :: await gh.editLabels(p.number, [remove, ...p.reqLabels], [LABEL_READY]);",
-    "unblock-sweep fallback when the candidate's labels were not listed (#2528)",
+    'apps/dev/src/core/boot-sweep.ts :: await gh.editLabels( p.number, [remove, ...p.reqLabels], [p.lane === "human" ? LABEL_HUMAN : LABEL_READY], );',
+    "unblock-sweep fallback when the candidate's labels were not listed (#2528); the lane still follows the planned HUMAN-ONLY routing (#2966)",
   ],
   [
-    "apps/dev/src/core/process-issue/terminal.ts :: await deps.gh.editLabels(p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [LABEL_READY]);",
-    "close-cascade fallback when the dependent's labels were not listed (#2528)",
+    'apps/dev/src/core/process-issue/terminal.ts :: await deps.gh.editLabels( p.number, [LABEL_DEPENDENCY, ...p.reqLabels], [p.lane === "human" ? LABEL_HUMAN : LABEL_READY], );',
+    "close-cascade fallback when the dependent's labels were not listed (#2528); the lane still follows the planned HUMAN-ONLY routing (#2966)",
   ],
   // --- claim machinery: ready<->running swaps are claims, not state transitions ---
   [
