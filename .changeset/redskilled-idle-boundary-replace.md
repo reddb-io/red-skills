@@ -1,0 +1,5 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+The `redskilled` daemon now asks whether it is superseded on its way out, so self-replacement can fire on a quiet host. Two constants disagreed: the daemon idle-exits at five minutes and checked for a newer version at fifteen, so a Worker-free daemon left three times over before the timer's first tick and the upgrade path shipped unable to run anywhere except on a machine busy for a quarter of an hour straight. The failure hid itself — a daemon born after a release reports the right version without ever having upgraded — while every release published under a running host cost a hand-written pinned dispatch. The idle exit is now the check a quiet host reaches: one registry read at the boundary, skipped entirely on a local build, and a replacement there is a restart the live Workers do not notice. The interval stays what it always was, the busy daemon's check, and both declarations now state the relationship rather than encoding it. The published-version read also gained a deadline, because an exit that waits on a registry must be able to stop waiting.
