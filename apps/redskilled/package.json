@@ -12,6 +12,7 @@
     "./host-state": "./src/host-state.ts",
     "./paths": "./src/paths.ts",
     "./project-breaker": "./src/project-breaker.ts",
+    "./project-registration": "./src/project-registration.ts",
     "./protocol": "./src/protocol.ts",
     "./reclaim": "./src/reclaim.ts",
     "./provision": "./src/provision.ts",
