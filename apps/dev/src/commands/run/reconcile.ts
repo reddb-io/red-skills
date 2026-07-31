@@ -20,7 +20,7 @@ import * as fsx from "../../runtime/fs.js";
 import type { GhContext } from "../../runtime/gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
-import { getConfig, loadConfig, readValidationResourceBudget, resolveTier } from "../../core/config.js";
+import { getConfig, loadConfig, readHitlTypeLabels, readValidationResourceBudget, resolveTier } from "../../core/config.js";
 import { LABEL_MERGE_CONFLICT } from "../../core/triage-labels.js";
 import { createFsIssueLeaseStore } from "@reddb-io/red-castle/engine";
 import { readFile } from "node:fs/promises";
@@ -183,6 +183,7 @@ export function makeBootReconcileRunner(
     }
     const reconcileDeps: ReconcileDeps = {
       ...HOST_RECONCILE_PORTS,
+      hitlTypes: readHitlTypeLabels(reconcileConfig),
       gh: {
         editLabels: async (issue, remove, add) => {
           await ghx.editLabels(ghCtx, issue, remove, add);
