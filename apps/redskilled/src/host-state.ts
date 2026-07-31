@@ -14,6 +14,10 @@ import {
   type RedskilledBudgetAccounting,
 } from "./budget-accounting.js";
 import { isRedskilledScopeState, type RedskilledScopeState } from "./machine-scope.js";
+import {
+  isRedskilledProjectRegistration,
+  type RedskilledProjectRegistration,
+} from "./project-registration.js";
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
@@ -129,6 +133,16 @@ export interface RedskilledHostState {
   readonly scope?: RedskilledScopeState;
   readonly workers: readonly RedskilledWorkerView[];
   readonly projects: readonly RedskilledProjectView[];
+  /**
+   * The projects this daemon holds a registration for, ordered by label.
+   *
+   * Beside `projects` rather than folded into it, because the two are different
+   * kinds of fact: `projects` is DERIVED from the live Worker set, while a
+   * registration is a record a project contributed and the host stores. A project
+   * with a registration and no Worker is real, and so is a Worker whose project
+   * registered nothing — collapsing them would make each one unsayable.
+   */
+  readonly registrations?: readonly RedskilledProjectRegistration[];
   /** What the daemon has promised the machine, derived from `workers`. */
   readonly budget_accounting: RedskilledBudgetAccounting;
   /** Running version against published version, and what is being done about it. */
@@ -144,6 +158,8 @@ export interface BuildHostStateInput {
   /** The scope block; absent leaves the document without one rather than inventing it. */
   readonly scope?: RedskilledScopeState;
   readonly workers?: readonly RedskilledWorkerView[];
+  /** The registrations the daemon holds; absent is a host with none, not an error. */
+  readonly registrations?: readonly RedskilledProjectRegistration[];
   /** The version observation; a daemon that never checked reports unknown. */
   readonly published?: {
     readonly version: string | null;
@@ -172,6 +188,9 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     projects: [...counts.entries()]
       .map(([project_label, worker_count]) => ({ project_label, worker_count }))
       .sort((a, b) => a.project_label.localeCompare(b.project_label)),
+    // Ordered by the one field the daemon is allowed to read. A document ordered
+    // by anything a selector says would be the daemon having read one.
+    registrations: [...(input.registrations ?? [])].sort((a, b) => a.project_label.localeCompare(b.project_label)),
     budget_accounting: buildBudgetAccounting(workers),
     upgrade: buildUpgradeState(input),
   };
@@ -239,6 +258,11 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     // Same tolerance the upgrade block gets, for the same reason: a daemon from a
     // bundle that predates the scope block still answers completely.
     (state.scope === undefined || isRedskilledScopeState(state.scope)) &&
+    // The same tolerance again, and for the same reason: a daemon from a bundle
+    // that predates Amendment 3 answers completely without a registrations block,
+    // while a block that IS there and is the wrong shape still fails closed.
+    (state.registrations === undefined ||
+      (Array.isArray(state.registrations) && state.registrations.every(isRedskilledProjectRegistration))) &&
     // Checked only when present. One daemon serves checkouts pinned to different
     // bundle versions (ADR 0130 rule 3), so a field this bundle added must not
     // make an older daemon's complete answer read as malformed — while a field
