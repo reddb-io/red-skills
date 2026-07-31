@@ -159,6 +159,7 @@ import {
 import {
   completeRedskilledReplacement,
   DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+  isLocalRedskilledBuild,
   isRedskilledSupervised,
   planRedskilledMajorHold,
   planRedskilledReplacement,
@@ -166,6 +167,7 @@ import {
   probePublishedRedskilledVersion,
   readPublishedObservation,
   type RedskilledMajorHold,
+  type RedskilledPublishedObservation,
   type RedskilledPublishedVersionProbe,
   type RedskilledReplacementDecision,
   type RedskilledReplacementIO,
@@ -178,8 +180,29 @@ import {
   type RedskilledLeaseStore,
 } from "./session-lease.js";
 
-/** Default idle window before a Worker-free daemon leaves. */
+/**
+ * Default idle window before a Worker-free daemon leaves.
+ *
+ * **Shorter than `DEFAULT_REDSKILLED_REPLACE_CHECK_MS` (fifteen minutes), which
+ * is why the idle exit asks about the published version on its way out.** A quiet
+ * host's daemon leaves three times over before that interval's first tick, so an
+ * upgrade that only ever rode the timer could not fire here at all (#2968) — and
+ * the failure hid itself, because a daemon born after a release reports the right
+ * version without ever having upgraded. `leaveIdleSession` is the coupling; these
+ * two numbers may move freely, in either direction, without reintroducing it.
+ */
 export const DEFAULT_REDSKILLED_IDLE_MS = 300_000;
+
+/**
+ * How long a published-version read may take before it counts as unresolved.
+ *
+ * A bound rather than a preference: the shipped probe is a `fetch` with no
+ * timeout of its own, and the idle exit now waits on one — a registry that
+ * accepts the connection and never answers would otherwise strand a daemon that
+ * had already decided to leave, holding the session for a host that wanted none.
+ * A read that runs out of time is UNKNOWN, which is the answer that holds.
+ */
+export const DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS = 10_000;
 
 /**
  * Default window between memory samples.
@@ -254,6 +277,14 @@ export interface RedskilledDaemonOptions {
   readonly publishedVersion?: RedskilledPublishedVersionProbe;
   /** Window between published-version checks; 0 or below leaves the watch unarmed. */
   readonly replaceCheckMs?: number;
+  /**
+   * How long one published-version read may take before it counts as unresolved.
+   *
+   * Injected so the bound itself is provable: an idle exit that waits on a read
+   * has to be able to stop waiting, and a test that could not shorten the
+   * deadline would have to spend it.
+   */
+  readonly publishedProbeTimeoutMs?: number;
   /** True when a unit will revive this process, so replacing means exiting. */
   readonly supervised?: boolean;
   /** How the successor is found and started; the real handover by default. */
@@ -454,7 +485,13 @@ export interface RedskilledDaemon {
   reattached(): readonly RedskilledWorkerView[];
   /** Resolves once every event handed to the lane has reached disk. */
   flushEvents(): Promise<void>;
-  /** Force the idle check to run now — the timer's body, exposed for tests. */
+  /**
+   * Force the idle check to run now — the timer's body, exposed for tests.
+   *
+   * `"exited"` is the DECISION to give the session up, not a completed exit: a
+   * daemon on its way out first asks whether it should come back newer instead
+   * (#2968), so the leaving finishes on `closed` rather than on this return.
+   */
   evaluateIdle(): "exited" | "held-by-workers" | "held-by-registrations";
   /**
    * Resolve the published version and decide, WITHOUT acting on the decision.
@@ -584,6 +621,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
   const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
   const replaceCheckMs = options.replaceCheckMs ?? DEFAULT_REDSKILLED_REPLACE_CHECK_MS;
+  const publishedProbeTimeoutMs = options.publishedProbeTimeoutMs ?? DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS;
   const supervised = options.supervised ?? isRedskilledSupervised();
   const replacementIO = options.replacementIO ?? {};
   const activityRegistration = options.repositoryActivity;
@@ -1319,13 +1357,39 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * be a breaking change arriving on a timer, and staying quiet about it is how a
    * held daemon becomes indistinguishable from a current one (#2926).
    */
-  async function observePublishedVersion(): Promise<RedskilledReplacementDecision> {
-    let observation: { version: string | null; newest?: string | null };
+  /**
+   * One read of the published world, bounded — a throw and a silence both answer
+   * `null`.
+   *
+   * The two failures are the same fact: nothing was resolved. Distinguishing them
+   * would only tempt a caller into treating a slow registry as evidence, and the
+   * deadline exists because the idle exit WAITS on this answer — an unbounded read
+   * would hold a daemon that had already decided to leave.
+   */
+  async function askWhatIsPublished(): Promise<string | null | RedskilledPublishedObservation> {
     try {
-      observation = readPublishedObservation(await publishedProbe(daemonVersion));
+      if (publishedProbeTimeoutMs <= 0) return await publishedProbe(daemonVersion);
+      return await new Promise((resolve) => {
+        const deadline = setTimeout(() => resolve(null), publishedProbeTimeoutMs);
+        deadline.unref();
+        publishedProbe(daemonVersion).then(
+          (answer) => {
+            clearTimeout(deadline);
+            resolve(answer);
+          },
+          () => {
+            clearTimeout(deadline);
+            resolve(null);
+          },
+        );
+      });
     } catch {
-      observation = { version: null, newest: null };
+      return null;
     }
+  }
+
+  async function observePublishedVersion(): Promise<RedskilledReplacementDecision> {
+    const observation = readPublishedObservation(await askWhatIsPublished());
     const observed = observation.version;
     publishedVersion = observed;
     publishedNewest = observation.newest ?? null;
@@ -1458,8 +1522,42 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       armIdleTimer();
       return "held-by-registrations";
     }
-    void stop({ reason: "idle" });
+    void leaveIdleSession();
     return "exited";
+  }
+
+  /**
+   * Leave — as a newer daemon when one is published, or for good.
+   *
+   * **The idle boundary is where a quiet host's daemon asks, because it is the
+   * only moment it ever reaches.** The check interval is three times the idle
+   * window, so this process exits three times over before the timer's first tick;
+   * self-replacement shipped unable to fire here at all (#2968). It is also the
+   * safest instant to ask: nothing is waiting on this socket, and the alternative
+   * already on the table was going away entirely — so an upgrade that fails costs
+   * only the upgrade.
+   *
+   * ONE read, and only when it can decide something. A local build is not a point
+   * on the published lane, so it leaves exactly as it did before, without asking —
+   * which is also why a developer's own daemon never spends a registry read to be
+   * told what it already knows.
+   */
+  async function leaveIdleSession(): Promise<void> {
+    if (!isLocalRedskilledBuild(daemonVersion)) {
+      // A replacement stops this daemon itself, and by a different name: the
+      // successor is what takes the session, so there is no idle exit to make.
+      const decision = await checkForReplacement().catch(() => null);
+      if (decision?.act === "replace") return;
+      if (leaving || stopping) return;
+      // A Worker or a registration that arrived while the registry was being read
+      // holds this daemon exactly as it would have a moment earlier — the read is
+      // a window the instantaneous decision never had.
+      if (workers.size > 0 || registrations.size > 0) {
+        armIdleTimer();
+        return;
+      }
+    }
+    await stop({ reason: "idle" });
   }
 
   /**
