@@ -37,7 +37,8 @@ of it.
 | Where a Worker's resources are charged | `src/worker-placement.ts` — pure planner over injected probes |
 | Birth itself | `src/worker-launch.ts` — plan, spawn once, report the downgrade |
 | The host-wide read | `src/host-state.ts` — total shape, Workers plus the budget total |
-| What the daemon remembers across a restart | `src/event-lane.ts` — append-only TOONL: birth, death, budget-kill |
+| What the daemon remembers across a restart | `src/event-lane.ts` — append-only TOONL: birth, death, budget-kill, and the daemon's own stop |
+| What a stop is giving up | `src/daemon-stop.ts` — the pure report: what is held, what survives, why it stopped |
 | Finding the Workers a restart left running | `src/reattach.ts` — the unit name first, the pid only as fallback |
 | What the host has been promised | `src/budget-accounting.ts` — pure totals over the Worker set |
 | Reaching (and starting) the daemon | `src/client.ts` — auto-spawn, loser joins the winner |
@@ -195,6 +196,14 @@ of it.
   left with no surface to ask (#2926). A daemon that is genuinely current, one
   merely behind inside its major, and one whose probe resolved nothing all report
   no hold at all.
+- **Stop is asked for, never signalled.** `redskilled stop` reports the Workers
+  and projects the daemon is holding, states that every one of them survives —
+  they are init-system units, so a stop is a restart and not an evacuation — and
+  writes the intent to the event lane BEFORE the operator is told, so a successor
+  replaying the lane can tell a planned handover from a crash. A signal reaches
+  the same code and records itself as a signal; the reason is a field, not a
+  sentence to parse. A socket nobody answers on is a success with a stated reason:
+  the operator asked for a machine with no daemon on it and that is what they have.
 - **An unisolated launch is never silent.** When the host affords no transient
   unit the Worker still starts, and the reply — and the host-state record it
   keeps for its whole life — carries a warning naming what was lost. A declared
@@ -235,6 +244,11 @@ redskilled provision --install-unit   # also write the optional supervising user
 pnpm -C apps/redskilled test        # the focused suite
 pnpm -C apps/redskilled typecheck
 pnpm -C apps/redskilled serve       # run the daemon on this session's socket
+```
+
+```bash
+redskilled stop                             # stop the daemon; print what survives it
+redskilled stop --reason "moving to 3.0.3"  # the words ride onto the event lane
 ```
 
 ```bash
