@@ -64,11 +64,25 @@ function worker(overrides: Partial<RedskilledWorkerView> = {}): RedskilledWorker
 
 const MB = 1024 * 1024;
 
+/** A registration, so a host can KNOW a project it holds no Worker for. */
+function registrationOf(project_label: string) {
+  return {
+    version: 1 as const,
+    project_label,
+    selector: "opaque",
+    argv: ["opaque"],
+    target: 1,
+    registered_at: "2026-07-29T00:00:00.000Z",
+    renew_within_ms: 60_000,
+    renew_by: "2026-07-29T00:01:00.000Z",
+  };
+}
+
 /** A payload built the way the daemon builds it, from a fixed instant. */
 function payloadOf(
   workers: readonly RedskilledWorkerView[],
   rss: Record<string, number> = {},
-  overrides: { sampledAt?: string | null; now?: string } = {},
+  overrides: { sampledAt?: string | null; now?: string; registrations?: readonly string[] } = {},
 ): RedskilledStatuslinePayload {
   return buildStatuslinePayload({
     hostState: buildHostState({
@@ -78,6 +92,7 @@ function payloadOf(
       pid: 99,
       startedAt: "2026-07-29T00:00:00.000Z",
       workers,
+      registrations: (overrides.registrations ?? []).map(registrationOf),
     }),
     ceiling: UNBOUNDED_HOST_CEILING,
     rss,
@@ -216,9 +231,12 @@ describe("the rendered statusline", () => {
     expect(renderRedskilledStatusline(stale, options({ project: "acme/widgets" })).stale).toBe(true);
     expect(renderRedskilledStatusline(stale, options({ project: "acme/widgets" })).line).toContain("!stale 60s");
 
-    const idle = payloadOf([], {}, { sampledAt: null });
+    // Registered and holding nothing — an idle project, which is a fact about
+    // the project and not about whether the host has heard of it (#2928).
+    const idle = payloadOf([], {}, { sampledAt: null, registrations: ["acme/widgets"] });
     const render = renderRedskilledStatusline(idle, options({ project: "acme/widgets" }));
     expect(render.stale).toBe(false);
+    expect(render.project_match).toBe("matched");
     expect(render.line).toBe("acme/widgets 0w 0B idle");
   });
 });
