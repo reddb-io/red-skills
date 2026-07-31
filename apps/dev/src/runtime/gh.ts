@@ -48,6 +48,7 @@ export {
   listByLabel,
   issueClosed,
   listParkedMechanicalCandidates,
+  listOpenPullRequests,
 } from "./gh/sweeps.js";
 export {
   issueTrust,

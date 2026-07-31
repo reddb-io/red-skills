@@ -479,10 +479,14 @@ export async function branchMergedInto(ctx: GitContext, branch: string, base: st
  * pushes `afk/<issue>-<slug>` before the agent writes a line, so a name match
  * alone reads the same for nine committed slices and for an empty placeholder.
  *
- * The tip is read from the local ref first, then `origin/<branch>`, fetching
- * once when neither is present. `undefined` means "could not tell" and is never
- * collapsed to zero: the caller deletes the branches it reads as empty, so a
- * branch this probe merely failed to see must not look like one with no work.
+ * The tip is read from the FRESHLY FETCHED remote ref, and only then from the
+ * local one (#2893). A worker branch lives on origin; the local ref of the same
+ * name is a leftover of some earlier checkout, and preferring it counted a
+ * branch whose work had already landed as still carrying 7 commits ahead — the
+ * false positive that would accuse a finished slice of being stranded.
+ * `undefined` means "could not tell" and is never collapsed to zero: the caller
+ * deletes the branches it reads as empty, so a branch this probe merely failed
+ * to see must not look like one with no work.
  */
 export async function branchCommitsAhead(
   ctx: GitContext,
@@ -490,16 +494,14 @@ export async function branchCommitsAhead(
   base: string,
 ): Promise<number | undefined> {
   if (!branch || !base) return undefined;
-  let head = await branchHead(ctx, branch);
-  if (!head) {
-    const remoteRef = `refs/remotes/origin/${branch}`;
-    let r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", remoteRef]);
-    if (r.code !== 0 || r.stdout.trim() === "") {
-      await fetchBranch(ctx, branch);
-      r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", remoteRef]);
-    }
-    head = r.code === 0 && r.stdout.trim() !== "" ? r.stdout.trim() : undefined;
-  }
+  const remoteRef = `refs/remotes/origin/${branch}`;
+  // Fetched EVERY time, not only when the ref is missing: this probe runs right
+  // after a worker pushed, and a remote-tracking ref last updated at boot would
+  // report the branch as holding less than it does — the direction of error that
+  // hides stranded work.
+  await fetchBranch(ctx, branch);
+  const r = await runGit(ctx, ["rev-parse", "--verify", "--quiet", remoteRef]);
+  const head = r.code === 0 && r.stdout.trim() !== "" ? r.stdout.trim() : await branchHead(ctx, branch);
   if (!head) return undefined;
   const baseTip = (await revParse(ctx, base)) ?? (await revParse(ctx, `origin/${base}`));
   if (!baseTip) return undefined;

@@ -10,10 +10,15 @@ import type { BranchRef } from "./branch-cleanup.js";
 
 const LIVE_REF_ISSUE_RE = /^afk\/(?:([0-9]+)-[a-z0-9-]+|[^/]+\/([0-9]+)-[a-z0-9-]+)$/;
 
-function issueFromRef(branch: string): number | null {
+/** The issue number an AFK branch ref names, or null when the ref is not one.
+ * Both the deterministic `afk/<issue>-<slug>` head and the legacy
+ * `afk/<worker>/<issue>-<slug>` head resolve. */
+export function issueFromBranchRef(branch: string): number | null {
   const m = LIVE_REF_ISSUE_RE.exec(branch);
   return m ? Number(m[1] ?? m[2]) : null;
 }
+
+const issueFromRef = issueFromBranchRef;
 
 /** Minimal open-PR projection needed by attempt bootstrap. */
 export interface AttemptPullRequest {

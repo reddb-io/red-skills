@@ -13,6 +13,7 @@ import { managerCommand } from "./commands/manager.js";
 import { monitorCommand } from "./commands/monitor.js";
 import { runCommand } from "./commands/run.js";
 import { reapCommand } from "./commands/reap.js";
+import { orphanBranchesCommand } from "./commands/orphan-branches.js";
 import { redDoctorCommand } from "./commands/red-doctor.js";
 import { redactSweepCommand } from "./commands/redact-sweep.js";
 import { relabelSweepCommand } from "./commands/relabel-sweep.js";
@@ -45,6 +46,7 @@ export type CliCommand =
   | "daily-review"
   | "weekly-review"
   | "reap"
+  | "orphan-branches"
   | "red-doctor"
   | "redact-sweep"
   | "relabel-sweep"
@@ -95,6 +97,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "daily-review": {},
     "weekly-review": {},
     reap: {},
+    "orphan-branches": {},
     "red-doctor": {},
     "redact-sweep": {},
     "relabel-sweep": {},
@@ -144,7 +147,8 @@ const RUN_SURFACE_LEADING_FLAGS = new Set([
 export const CLI_USAGE = `Usage: red-skills-dev <command> [options]
 
 Commands: run (default), monitor, fleet, stop, go, manager, dashboard,
-  daily-review, weekly-review, reap, requeue, retake, review, respond, triage,
+  daily-review, weekly-review, reap, orphan-branches, requeue, retake, review,
+  respond, triage,
   red-doctor, statusline, version, …
 
 Flag-led invocations route to the run surface: --issues N, --spec N,
@@ -217,6 +221,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "daily-review") return activityReviewCommand("daily", parsed.args);
   if (parsed.command === "weekly-review") return activityReviewCommand("weekly", parsed.args);
   if (parsed.command === "reap") return reapCommand(parsed.args);
+  if (parsed.command === "orphan-branches") return orphanBranchesCommand(parsed.args);
   if (parsed.command === "red-doctor") return redDoctorCommand(parsed.args);
   if (parsed.command === "redact-sweep") return redactSweepCommand(parsed.args);
   if (parsed.command === "relabel-sweep") return relabelSweepCommand(parsed.args);

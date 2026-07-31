@@ -10,8 +10,17 @@ import { genWorkerId } from "../../core/session.js";
 import { SUPERVISOR_LANE_ENV } from "../../core/supervisor-lane.js";
 import { runBoot, type BootDeps, type BootOptions, type BootResult, type BootstrapInput } from "../../core/boot.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
+import { remoteTrackingBaseRef } from "../../core/process-issue/types.js";
 import { isRunner, type Runner } from "../../types/runner.js";
 import { zeroAttemptDispatchFailure } from "../../core/go.js";
+import {
+  formatOrphanBranchListing,
+  isPushOnlyDispatch,
+  issueFromBranchRef,
+  listOrphanBranches,
+  orphanedWorkDispatchFailure,
+  type OrphanBranch,
+} from "../../core/orphan-branch.js";
 import {
   afkPaths,
   collectBootPrecheckFacts,
@@ -27,7 +36,7 @@ import * as ghx from "../../runtime/gh.js";
 import * as fsx from "../../runtime/fs.js";
 import { migrateLegacyDevPaths } from "../../runtime/red-path-migration.js";
 import type { GhContext } from "../../runtime/gh.js";
-import { loadConfig, readValidationResourceBudget } from "../../core/config.js";
+import { getConfig, loadConfig, readValidationResourceBudget } from "../../core/config.js";
 import { resolveHooks, validateHookConfig, UnknownHookError, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
 import {
@@ -300,6 +309,24 @@ export async function runCommand(options: RunOptions): Promise<number> {
   };
   const resolvedSessionHooks = resolveHooks(sessionHooks.config, sessionHooks.resolveOptions);
 
+  // Held in a binding rather than inlined into `deps`: the same lookups the
+  // lifecycle uses to discover branches answer the exit-time orphaned-work
+  // census (#2893), and a second wiring would be a second thing to keep true.
+  const processDeps = buildProcessDeps({
+    ctx,
+    model: settings.model,
+    sandbox: settings.sandbox,
+    feedback,
+    current,
+    fallbackRunner: flags.fallbackRunner,
+    runner,
+    maxIterations: settings.maxIterations,
+    laneIdle: settings.laneIdle,
+    inlineVerifyCommand: flags.verifyCommand,
+    goVerifyRetries: flags.goVerifyRetries,
+    workerId,
+  });
+
   const deps: CastleWorkerDrainDeps<
     BootDeps,
     BootOptions,
@@ -340,20 +367,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
       }
       return result;
     },
-    processDeps: buildProcessDeps({
-      ctx,
-      model: settings.model,
-      sandbox: settings.sandbox,
-      feedback,
-      current,
-      fallbackRunner: flags.fallbackRunner,
-      runner,
-      maxIterations: settings.maxIterations,
-      laneIdle: settings.laneIdle,
-      inlineVerifyCommand: flags.verifyCommand,
-      goVerifyRetries: flags.goVerifyRetries,
-      workerId,
-    }),
+    processDeps,
     // Session-scoped lifecycle hooks (PRD #207): the castle drain owns the
     // session state machine, while dev supplies the existing hook dispatcher so
     // the configured hook surface and output stay unchanged.
@@ -526,5 +540,86 @@ export async function runCommand(options: RunOptions): Promise<number> {
     return 1;
   }
 
+  // A dispatch answers for the work it pushed (#2893). Commits sitting on a
+  // branch with no open pull request have no route to `main`, and a run that
+  // exits 0 over them is recorded as successful — so nothing re-dispatches and
+  // the branch sits on origin until a human reads `git branch -r` by hand.
+  const trunk = getConfig(config, "dev.trunk") || "main";
+  const orphans = await censusOrphanedWork({
+    lookups: processDeps.lookups,
+    fetchBase: processDeps.git.fetchBase?.bind(processDeps.git),
+    issues: summary.processed.map((p) => p.issue),
+    trunk,
+    // Against the FRESH REMOTE trunk, never the local branch (ADR 0083): a
+    // stale local `main` does not carry what already landed, so every merged
+    // branch would read as commits ahead and the check would accuse the work it
+    // just finished landing.
+    base: remoteTrackingBaseRef(ctx.remote, trunk),
+  });
+  if (orphans.length > 0) {
+    for (const line of formatOrphanBranchListing(orphans)) {
+      process.stderr.write(`[afk] orphaned work: ${line}\n`);
+    }
+  }
+  const orphanFailure = orphanedWorkDispatchFailure({
+    targeted: flags.filter?.kind === "issues",
+    pushOnly: isPushOnlyDispatch({
+      kind: dispatchIdentity.kind,
+      runMode: flags.runMode,
+      localMerge: flags.localMerge,
+    }),
+    orphans,
+  });
+  if (orphanFailure) {
+    process.stderr.write(
+      `[afk] dispatch left work with no route to ${trunk}: ${orphanFailure} — exiting 1\n`,
+    );
+    return 1;
+  }
+
   return 0;
+}
+
+/**
+ * Ask the same lookups the lifecycle uses what each processed issue's branch
+ * holds, and which of those branches no open pull request carries (#2893).
+ *
+ * Best-effort throughout: a probe that cannot answer yields an unknown commit
+ * count, which is listed but never fails the run. A run whose lookups are absent
+ * entirely (a minimal/faked wiring) censuses nothing.
+ */
+async function censusOrphanedWork(input: {
+  lookups: ProcessIssueDeps["lookups"];
+  fetchBase: ((base: string) => Promise<void>) | undefined;
+  issues: readonly number[];
+  trunk: string;
+  base: string;
+}): Promise<OrphanBranch[]> {
+  if (input.issues.length === 0) return [];
+  const { lookups } = input;
+  try {
+    // Refresh the remote trunk first: the census is only as true as the base it
+    // counts against, and a ref last fetched when the attempt started reads the
+    // work this very run landed as still ahead.
+    await input.fetchBase?.(input.trunk).catch(() => {});
+    const refs = await lookups.discoverBranches?.() ?? [];
+    const scope = new Set(input.issues);
+    const mine = refs.filter((ref) => {
+      const issue = issueFromBranchRef(ref.branch);
+      return issue !== null && scope.has(issue);
+    });
+    if (mine.length === 0) return [];
+    const branches = await Promise.all(
+      mine.map(async (ref) => ({
+        branch: ref.branch,
+        commitsAhead: await lookups.branchCommitsAhead?.(ref.branch, input.base).catch(() => undefined),
+      })),
+    );
+    // The open-PR census is per-issue in the lookup's signature but repo-wide in
+    // its implementation; one call is enough and every issue reads the same list.
+    const openPullRequests = await lookups.discoverOpenPullRequests?.(input.issues[0] as number) ?? [];
+    return listOrphanBranches({ branches, openPullRequests, issues: input.issues });
+  } catch {
+    return [];
+  }
 }
