@@ -22,10 +22,10 @@ import { dirname } from "node:path";
 import { isPidAlive, tryAcquireExclusiveLock } from "@reddb-io/shared/resident-core.js";
 import {
   redskilledServeArgv,
-  requireRedskilledEntry,
   type RedskilledEntryLookup,
   type ResolvedRedskilledEntry,
 } from "./daemon-entry.js";
+import { requireRedskilledEntryWithFetch } from "./entry-fetch.js";
 import { socketAnswers } from "./daemon.js";
 import { buildRedskilledNotRunningStop, type RedskilledDaemonStopped } from "./daemon-stop.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
@@ -183,7 +183,7 @@ async function reachRedskilledDaemon(
     // winner may already have bound, and spawning on top of it is the very
     // second daemon the lock exists to prevent.
     if (await socketAnswers(paths.socketPath)) return "already-running";
-    const spawned = spawnDaemon(paths, config);
+    const spawned = await spawnDaemon(paths, config);
     await waitForDaemon(paths, config, spawned);
     return "spawned";
   } finally {
@@ -599,12 +599,15 @@ async function waitForDaemon(
   }
 }
 
-function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): SpawnedDaemon {
+async function spawnDaemon(paths: RedskilledPaths, config: RedskilledClientConfig): Promise<SpawnedDaemon> {
   // Resolved before anything is launched: a missing bundle must be a named error
   // (ADR 0130 rule 6), never a process started from whatever the caller happens
   // to be running.
   const stated = config.serverCommand ?? (config.serverArgs != null ? process.execPath : undefined);
-  const entry = requireRedskilledEntry(
+  // A host that has never cached the bundle has no local path to resolve, so the
+  // fetch rung runs BEFORE the fail-closed raise. Local always wins: a checkout's
+  // own entry must never lose to a published one (#2961).
+  const entry = await requireRedskilledEntryWithFetch(
     { ...(stated != null ? { serverCommand: stated } : {}), serverArgs: config.serverArgs },
     config.entryLookup ?? {},
   );
