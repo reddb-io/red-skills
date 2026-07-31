@@ -171,6 +171,7 @@ describe("a project's registration outlives the session that made it", () => {
     const registered = await port.register({
       selector: "is:open label:ready-for-agent",
       argv: ["red-skills-dev", "__work"],
+      workspace_path: workspace,
       target: 2,
       renew_within_ms: 60_000,
     });
