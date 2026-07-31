@@ -109,6 +109,7 @@ import {
 } from "../triage-labels.js";
 import {
   IllegalIssueLifecycleTransitionError,
+  LaneIsolationViolationError,
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "../issue-lifecycle.js";
@@ -193,6 +194,13 @@ export async function editIssueLifecycleLabels(
     validateIssueLifecycleTransition({ edge, fromLabels, removeLabels: remove, addLabels: add });
     return await applyLifecycleLabelEdit(deps, issue, remove, add);
   } catch (err) {
+    // A lane-isolation refusal is NOT reconcilable: the best-effort park below
+    // would apply the very pairing the guard exists to refuse. Leave the labels
+    // untouched and name the edge that attempted it.
+    if (err instanceof LaneIsolationViolationError) {
+      deps.appendIterLog(`refused: #${issue} ${err.message}; labels left untouched.`);
+      return false;
+    }
     if (!(err instanceof IllegalIssueLifecycleTransitionError)) throw err;
     const shed = blockedLabelsIn([...fromLabels]).filter((l) => !add.includes(l));
     const reconciledRemove = [...new Set([...remove, ...shed])];
