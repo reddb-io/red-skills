@@ -307,9 +307,16 @@ function resolveClaude(payload: ClaudePayload): ClaudeInput | undefined {
 }
 
 /**
- * `statusline "<project-root>"` — read the Claude Code payload on stdin, resolve
- * the root, honour the opt-out, and emit ONE compact line via the pure renderer.
- * Emits nothing (and exits 0) when the per-project opt-out is set.
+ * `statusline "<project-root>" [--no-workers]` — read the Claude Code payload on
+ * stdin, resolve the root, honour the opt-out, and emit ONE compact line via the
+ * pure renderer. Emits nothing (and exits 0) when the per-project opt-out is set.
+ *
+ * **`--no-workers` renders the repo header and no Worker rows.** The daemon owns
+ * the Worker line (ADR 0130 rule 10) and serves it finished, so a host that wants
+ * both facts asks each producer for the one it owns rather than letting this
+ * command format Workers a second time (#2928). The flag is additive: absent, the
+ * command behaves exactly as it did, which keeps the Codex footer and every
+ * non-daemon host on one call.
  */
 export async function statuslineCommand(
   args: string[],
@@ -321,8 +328,11 @@ export async function statuslineCommand(
     stdout.write(`${renderStatuslineLegend()}\n`);
     return 0;
   }
+  const withoutWorkers = args.includes("--no-workers");
 
-  const rootArg = args[0];
+  // The first NON-flag word, so a caller may put `--no-workers` before the root
+  // without the flag being resolved as a directory.
+  const rootArg = args.find((arg) => !arg.startsWith("--"));
   const text = await readStdin(stdin);
   const payload = parsePayload(text);
   const root = resolveRoot(rootArg, payload, cwd);
@@ -362,7 +372,11 @@ export async function statuslineCommand(
     collectStatuslineDocs(repoCtx, base),
     collectStatuslineAfk(repoCtx, cacheTtlS).then((a) => a ?? undefined),
     collectStatuslineFleet(repoCtx),
-    collectStatuslineWorkers(repoCtx),
+    // Not merely dropped from the render: not COLLECTED. The rows this produces
+    // are the daemon's to serve, and a collector that still walked every
+    // worker's state file per tick would be paying for a second renderer's
+    // input after the second renderer was taken off the line.
+    withoutWorkers ? Promise.resolve([]) : collectStatuslineWorkers(repoCtx),
     resolveStatuslineRsp(root),
   ]);
   const fleet =
