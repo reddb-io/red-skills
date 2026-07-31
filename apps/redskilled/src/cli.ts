@@ -7,14 +7,15 @@
  * because the moment it does, it stops being servable by checkouts on different
  * bundle versions. A path it needs is a path it was given.
  */
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
 import { findUp } from "@reddb-io/shared/plugin-gate.js";
-import { declaredProjectNameInConfig } from "@reddb-io/shared/project-identity.js";
+import { declaredProjectNameInConfig, resolveProjectIdentity } from "@reddb-io/shared/project-identity.js";
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
@@ -415,16 +416,54 @@ function configHome(): string {
 }
 
 /** The nearest `.red/config.yaml`, and the project name it declares. */
+/**
+ * The calling directory's project, resolved the way its Workers were LABELLED.
+ *
+ * A declared name is only the first rung. The identity a Worker carries is
+ * produced by `resolveProjectIdentity`, which falls back to the git remote and
+ * then to the checkout's basename — so a repository that declares nothing still
+ * has a label, and the daemon is already storing it. Reading only the declared
+ * name here made the statusline ask a question in a vocabulary the daemon does
+ * not answer in: on a repo with no `name:` in its config, the local mode
+ * reported `project unknown 0w` while the daemon held three Workers stamped
+ * `owner/repo`.
+ *
+ * One fact, one resolver. Anything else is two spellings of the same project
+ * that only agree when someone remembered to declare it.
+ */
 function readProjectConfig(cwd: string): { configText?: string; name: string | null } {
   const path = findUp(cwd, ".red/config.yaml");
-  if (path == null) return { name: null };
-  let configText: string;
-  try {
-    configText = readFileSync(path, "utf8");
-  } catch {
-    return { name: null };
+  const root = path == null ? cwd : dirname(dirname(path));
+  let configText: string | undefined;
+  if (path != null) {
+    try {
+      configText = readFileSync(path, "utf8");
+    } catch {
+      configText = undefined;
+    }
   }
-  return { configText, name: declaredProjectNameInConfig(configText) ?? null };
+  const declared = configText == null ? undefined : declaredProjectNameInConfig(configText);
+  const identity = resolveProjectIdentity({
+    checkoutPath: root,
+    ...(declared == null ? {} : { declaredName: declared }),
+    ...(gitValue(root, ["rev-parse", "--git-common-dir"]) == null
+      ? {}
+      : { gitCommonDir: gitValue(root, ["rev-parse", "--git-common-dir"]) }),
+    ...(gitValue(root, ["remote", "get-url", "origin"]) == null
+      ? {}
+      : { remoteUrl: gitValue(root, ["remote", "get-url", "origin"]) }),
+  });
+  return { ...(configText == null ? {} : { configText }), name: identity.name };
+}
+
+/** One git read, or `undefined` — a directory that is not a checkout is normal. */
+function gitValue(root: string, args: readonly string[]): string | undefined {
+  try {
+    const out = execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return out === "" ? undefined : out;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
