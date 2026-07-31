@@ -39,7 +39,8 @@ export type RedskilledSessionOp =
   | "worker-stop"
   | "worker-recycle"
   | "worker-steer"
-  | "worker-heartbeat";
+  | "worker-heartbeat"
+  | "project-register";
 
 /** The three reaches. A reader of this type knows the whole model. */
 export type RedskilledReachKind = "host-read" | "project-write" | "daemon-life";
@@ -59,6 +60,11 @@ export const REDSKILLED_OP_REACH: Readonly<Record<RedskilledSessionOp, Redskille
   // cross-project publish would let one session write a line another session's
   // statusline then shows as that project's own.
   "worker-heartbeat": "project-write",
+  // A registration is a project stating what work it wants done and what to run
+  // for it, so it lands where every other statement about a project lands: inside
+  // that project. A cross-project registration would let one session commit
+  // another project's name to an argv it never chose.
+  "project-register": "project-write",
 };
 
 /** The commanding verbs, as a session names them. Each maps onto one write op. */

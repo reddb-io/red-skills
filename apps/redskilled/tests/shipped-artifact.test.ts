@@ -132,7 +132,14 @@ describe("redskilled ships as a bundled artifact", () => {
           "--idle-ms",
           "60000",
         ],
-        { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, REDSKILLED_SESSION: `test:${root}` } },
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          // The machine dir is pinned to this test's own root, like every other
+          // test here: without it the bundled daemon probes the REAL machine
+          // claim and refuses to start whenever the host already runs one —
+          // which says nothing about the artifact this check is about.
+          env: { ...process.env, REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
+        },
       );
       children.push(child);
       let stderr = "";
