@@ -118,7 +118,7 @@ describe("planCloseCascade", () => {
       { number: 20, reqs: [{ n: 9, closed: true }] },
     ];
     expect(planCloseCascade(9, deps)).toEqual([
-      { number: 20, refs: ["#9"], reqLabels: ["req:9"], comment: "🤖 /afk unblocked: all dependencies closed (#9)." },
+      { number: 20, refs: ["#9"], reqLabels: ["req:9"], comment: "🤖 /afk unblocked: all dependencies closed (#9).", lane: "agent", hitlTypes: [] },
     ]);
   });
 
@@ -139,7 +139,7 @@ describe("planCloseCascade", () => {
       { number: 30, reqs: [{ n: 9, closed: true }, { n: 8, closed: true }] },
     ];
     expect(planCloseCascade(9, deps)).toEqual([
-      { number: 30, refs: ["#8", "#9"], reqLabels: ["req:8", "req:9"], comment: "🤖 /afk unblocked: all dependencies closed (#8, #9)." },
+      { number: 30, refs: ["#8", "#9"], reqLabels: ["req:8", "req:9"], comment: "🤖 /afk unblocked: all dependencies closed (#8, #9).", lane: "agent", hitlTypes: [] },
     ]);
   });
 
@@ -207,6 +207,8 @@ describe("planUnblockSweep", () => {
         refs: ["#1", "#2"],
         reqLabels: [],
         comment: "🤖 /afk promoted to ready-for-agent: all blockers closed (#1, #2).",
+        lane: "agent",
+        hitlTypes: [],
       },
     ]);
     expect(lookup.calls).toEqual([1, 2]);
@@ -266,6 +268,8 @@ describe("planUnblockSweep", () => {
         refs: ["#101", "#102"],
         reqLabels: ["req:101", "req:102"],
         comment: "🤖 /afk unblocked: all dependencies closed (#101, #102).",
+        lane: "agent",
+        hitlTypes: [],
       },
     ]);
     // The body ref (#999) was never consulted — only the req:* deps.
@@ -292,6 +296,8 @@ describe("planUnblockSweep", () => {
         refs: ["#1"],
         reqLabels: [],
         comment: "🤖 /afk promoted to ready-for-agent: all blockers closed (#1).",
+        lane: "agent",
+        hitlTypes: [],
       },
     ]);
   });
@@ -412,6 +418,131 @@ describe("executeUnblockSweep", () => {
 
     expect(promoted).toEqual([7]);
     expect(rec.edits.map((e) => e.issue)).toEqual([7]);
+  });
+});
+
+// #2966: the sweep promoted EVERY unblocked dependent into the autonomous queue,
+// so closing a decision Ticket handed the human's own decisions to an agent. The
+// HUMAN-ONLY types are read from the repo's installed label vocabulary
+// (`afk.labels.hitl_types`) — never from a hard-coded `wayfinder:*` list.
+describe("executeUnblockSweep — HUMAN-ONLY type routing", () => {
+  const lookupFor = (states: Record<number, string | undefined>) => async (n: number) => states[n];
+  const HITL_TYPES = ["wayfinder:grilling", "wayfinder:prototype"];
+
+  function recordingGh() {
+    const edits: Array<{ issue: number; remove: string[]; add: string[] }> = [];
+    const comments: Array<{ issue: number; body: string }> = [];
+    return {
+      edits,
+      comments,
+      gh: {
+        editLabels: async (issue: number, remove: string[], add: string[]) => {
+          edits.push({ issue, remove, add });
+        },
+        comment: async (issue: number, body: string) => {
+          comments.push({ issue, body });
+        },
+      },
+    };
+  }
+
+  it("routes a dependent carrying a declared HUMAN-ONLY type to ready-for-human", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 12, labels: ["blocked:dependency", "req:8", "wayfinder:grilling"], body: "" },
+    ];
+    const rec = recordingGh();
+    const promoted = await executeUnblockSweep(
+      candidates,
+      lookupFor({ 8: "CLOSED" }),
+      rec.gh,
+      HITL_TYPES,
+    );
+
+    expect(promoted).toEqual([12]);
+    expect(rec.edits).toEqual([
+      { issue: 12, remove: ["blocked:dependency", "req:8"], add: ["ready-for-human"] },
+    ]);
+    expect(rec.comments[0]!.body).toContain("all dependencies closed (#8)");
+    expect(rec.comments[0]!.body).toContain("`ready-for-human`");
+    expect(rec.comments[0]!.body).toContain("wayfinder:grilling");
+  });
+
+  it("still routes a dependent with no HUMAN-ONLY type to ready-for-agent", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 13, labels: ["blocked:dependency", "req:8", "wayfinder:task"], body: "" },
+    ];
+    const rec = recordingGh();
+    const promoted = await executeUnblockSweep(
+      candidates,
+      lookupFor({ 8: "CLOSED" }),
+      rec.gh,
+      HITL_TYPES,
+    );
+
+    expect(promoted).toEqual([13]);
+    expect(rec.edits).toEqual([
+      { issue: 13, remove: ["blocked:dependency", "req:8"], add: ["ready-for-agent"] },
+    ]);
+    expect(rec.comments[0]!.body).toContain("`ready-for-agent`");
+  });
+
+  it("leaves a repo that declares no HUMAN-ONLY type byte-identical to before", async () => {
+    const candidates: UnblockCandidate[] = [
+      { number: 12, labels: ["blocked:dependency", "req:8", "wayfinder:grilling"], body: "" },
+    ];
+    const rec = recordingGh();
+    await executeUnblockSweep(candidates, lookupFor({ 8: "CLOSED" }), rec.gh, []);
+
+    expect(rec.edits).toEqual([
+      { issue: 12, remove: ["blocked:dependency", "req:8"], add: ["ready-for-agent"] },
+    ]);
+    expect(rec.comments).toEqual([
+      { issue: 12, body: "🤖 /afk unblocked: all dependencies closed (#8)." },
+    ]);
+  });
+
+  it("names every HUMAN-ONLY type the dependent carries", async () => {
+    const candidates: UnblockCandidate[] = [
+      {
+        number: 14,
+        labels: ["blocked:dependency", "req:8", "wayfinder:grilling", "wayfinder:prototype"],
+        body: "",
+      },
+    ];
+    const rec = recordingGh();
+    await executeUnblockSweep(candidates, lookupFor({ 8: "CLOSED" }), rec.gh, HITL_TYPES);
+
+    expect(rec.comments[0]!.body).toContain("wayfinder:grilling, wayfinder:prototype");
+  });
+
+  it("routes the legacy `## Blocked by` promotion by the same rule", async () => {
+    const candidates: UnblockCandidate[] = [
+      {
+        number: 15,
+        labels: ["blocked:dependency", "wayfinder:prototype"],
+        body: "## Blocked by\n- [x] #8\n",
+      },
+    ];
+    const rec = recordingGh();
+    await executeUnblockSweep(candidates, lookupFor({ 8: "CLOSED" }), rec.gh, HITL_TYPES);
+
+    expect(rec.edits).toEqual([
+      { issue: 15, remove: ["blocked:dependency"], add: ["ready-for-human"] },
+    ]);
+  });
+
+  it("plans the lane so a close cascade routes a HUMAN-ONLY dependent too", () => {
+    const dependents: DependentIssue[] = [
+      { number: 12, labels: ["blocked:dependency", "req:8", "wayfinder:grilling"], reqs: [{ n: 8, closed: true }] },
+      { number: 13, labels: ["blocked:dependency", "req:8"], reqs: [{ n: 8, closed: true }] },
+    ];
+    const plans = planCloseCascade(8, dependents, HITL_TYPES);
+
+    expect(plans.map((p) => [p.number, p.lane])).toEqual([
+      [12, "human"],
+      [13, "agent"],
+    ]);
+    expect(plans[0]!.hitlTypes).toEqual(["wayfinder:grilling"]);
   });
 });
 
