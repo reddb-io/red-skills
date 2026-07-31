@@ -44,6 +44,28 @@ describe("adr-editor docs contract", () => {
     expect(skill).toContain("applied here, not");
   });
 
+  it("opens with a subject interview built from the collection's real groups", async () => {
+    const skill = await readAdrEditorSkill();
+
+    expect(skill).toContain("Ask first, sweep second");
+    expect(skill).toContain("Phase 0 — Interview for the subject");
+    expect(skill).toContain("offer them as numbered choices with their record counts");
+    expect(skill).toContain("Which subject should I work on?");
+    expect(skill).toContain("one question per turn, each narrowing the last");
+    expect(skill).toContain("Skip the question when the invocation already names the subject");
+
+    // The whole-collection sweep that pushed the maintainer out of the loop is gone.
+    expect(skill).not.toContain("all ADRs by default");
+  });
+
+  it("reports the chosen subject only, with everything as an explicit choice", async () => {
+    const skill = await readAdrEditorSkill();
+
+    expect(skill).toContain("Phase 1 — Answer about the chosen subject");
+    expect(skill).toContain("never a silent default");
+    expect(skill).toContain("nothing outside it");
+  });
+
   it("keeps exactly one gate — the destructive-or-wide batch confirmation", async () => {
     const skill = await readAdrEditorSkill();
 

@@ -153,11 +153,13 @@ through `/memory:view`, `memory docs reference-graph`, and
   adopt a hand-done branch through the no-agent gate, or hand off to `/hitl`.
 - An on-fire Ticket carries the `priority:urgent` label; the `/afk` queue
   promotes it ahead of every `--spec` / `--issues` filter.
-- `/adr-editor` is the totipotent editor over the `.red/adr/` collection: list,
-  group by subject, surface inconsistencies, add, remove, rewrite, merge, split,
-  archive, renumber, and re-index all apply in-session. One confirmation gates a
-  destructive or wide batch; `/to-spec` is an offered escape hatch for genuinely
-  large batches, never a required route.
+- `/adr-editor` is the totipotent editor over the `.red/adr/` collection. It
+  opens by asking which subject to work on, offering the collection's real INDEX
+  themes and title-term clusters with counts, then reports and mutates that slice:
+  list, group by subject, surface inconsistencies, add, remove, rewrite, merge,
+  split, archive, renumber, and re-index all apply in-session. One confirmation
+  gates a destructive or wide batch; `/to-spec` is an offered escape hatch for
+  genuinely large batches, never a required route.
 - `/model-tier-policy` answers runner/model tier choices; `runner_list` and
   `runner_detect` on the `castle` MCP answer which backend a host resolves to.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding

@@ -1,13 +1,17 @@
 ---
 name: adr-editor
-description: Totipotent editor for the `.red/adr/` decision collection — list, group by subject, surface inconsistencies, add, remove, rewrite, merge, split, archive, renumber, and re-index, all applied in-session. Use when asked to review, curate, reorganise, fix, or extend the ADRs, after adding or reversing a decision, or to pay down accumulated decision debt.
+description: Totipotent editor for the `.red/adr/` decision collection — opens by asking which subject to work on, offering the collection's real INDEX themes and subject clusters, then lists, groups, surfaces inconsistencies, adds, removes, rewrites, merges, splits, archives, renumbers, and re-indexes, all applied in-session. Use when asked to review, curate, reorganise, fix, or extend the ADRs, after adding or reversing a decision, or to pay down accumulated decision debt.
 ---
 
-# ADR Editor (totipotent, in-session, one confirmation for destructive batches)
+# ADR Editor (interview-first, totipotent, one confirmation for destructive batches)
 
 **The maintainer decides; the editor executes.** Every ADR operation is available
 in this session — there is no read-only default, no judgment lane held back for
 later, and no Spec routing to pass through first.
+
+**Open by asking where it hurts.** A collection-wide sweep nobody asked for buries
+the one record the maintainer came for, so the run starts with a question and the
+question arrives with answers already in it.
 
 The `.red/adr/` collection is the repository's decision memory: `.red/adr/*.md`
 holds live guidance, `.red/adr/archive/*.md` holds retired records, and
@@ -16,12 +20,19 @@ doors to that collection, so it carries the whole verb set rather than a subset.
 
 <what-to-do>
 
-Run the loop: **scope → read the collection → report (list, groups,
-inconsistencies) → agree the operations → confirm once if the batch is
+Run the loop: **interview for the subject → read that slice → report (list,
+groups, inconsistencies) → agree the operations → confirm once if the batch is
 destructive or wide → apply in-session → verify → land**.
 
 ## Hard rules
 
+- ✅ **Ask first, sweep second.** Every run opens with the subject question; the
+  buckets, groups, and inconsistencies come after the answer. A report the
+  maintainer did not scope is noise they have to re-read the collection to use.
+- ✅ **Ask with the collection's own subjects in hand.** `groupAdrs` names the
+  INDEX themes and the title-term clusters that actually exist — offer those with
+  counts. A bare "which subject?" hands the work straight back to the maintainer,
+  which is the failure this skill exists to avoid.
 - ✅ **Execute what the maintainer asks, in this session.** Every one of the
   eleven operations — list, group, surface inconsistencies, add, remove,
   rewrite, merge, split, archive, renumber, re-index — is applied here, not
@@ -57,48 +68,75 @@ destructive or wide → apply in-session → verify → land**.
   read with `git ls-tree` / `git show` from `origin/<default-branch>`. Fall back
   to local `HEAD` when no `origin` ref exists, and say so. Mutations always apply
   to the working tree.
-- ✅ Ask one question per turn when the maintainer's intent is genuinely
-  ambiguous — the correct successor, the right split boundary, which of two
-  records survives a merge. Wait for the answer; do not stack questions.
+- ✅ Ask **one question per turn, each narrowing the last** — the subject first,
+  then only what stays genuinely ambiguous: the correct successor, the right
+  split boundary, which of two records survives a merge. Wait for each answer;
+  stacked questions turn an interview into an interrogation.
 - ❌ Do not silently propagate to the wiki or the Memory graph — propagation is
   its own request, so offer it and act only when asked.
 
-## Phase 0 — Scope the run
+## Phase 0 — Interview for the subject (before any deep read)
 
-**State the scope in one line** — all ADRs by default, or the subject filter the
-maintainer supplied. The classifier accepts exactly three subject forms:
+**Derive the choices, then ask once.** Two moves, in that order:
+
+1. **Derive** — build `AdrRecord[]`, the existing-path inventory,
+   `indexSections`, `indexNumbers`, and age facts, then call `groupAdrs` with no
+   subject filter. It returns `index-section` groups for records an INDEX theme
+   already claims and `subject-cluster` groups for the rest, clustered by shared
+   title terms, plus the `ungrouped` singletons. This cheap whole-tree
+   derivation is the only collection-wide read this phase earns — no deep read
+   of any record yet.
+2. **Ask** — one question that carries its own answers: take the group titles and
+   **offer them as numbered choices with their record counts**.
+
+> **Which subject should I work on?** 1. Execution and AFK (14) · 2. Memory
+> graph (9) · … · 8. ungrouped singletons (6) · 9. everything (131 records)
+
+**Skip the question when the invocation already names the subject** — "merge
+0034 and 0060", "the ADRs about rsp", "the Execution INDEX theme" all fix the
+slice. Echo the resolved filter in one line and go straight to Phase 1.
+
+**Classify the answer into exactly one of the three subject forms** the
+classifier accepts:
 
 - ADR numbers — `{ kind: "numbers", numbers: [...] }`;
 - text in title/path/status/body — `{ kind: "text", query: "..." }`;
 - an INDEX theme — `{ kind: "index-section", section: "..." }`.
 
+**Keep "everything" reachable as the last choice — never a silent default.** The
+maintainer picking it runs the whole collection with no filter; nobody picking it
+means nobody asked for it.
+
 A filter narrows what is reported and mutated, never the cross-record evidence
 used to classify it. Report matched numbers and any requested number the tree
-does not have.
+does not have. Done only when a subject filter — or an explicit "everything" — is
+fixed and echoed back.
 
-## Phase 1 — Read the collection and report (before proposing any operation)
+## Phase 1 — Answer about the chosen subject (only after the subject is fixed)
 
-Derive `AdrRecord[]`, the existing-path inventory, `indexSections`,
-`indexNumbers`, and age facts, then call the three read-only entry points from
-`apps/dev/src/core/adr-triage.ts`:
+**Pass the agreed subject filter to all three read-only entry points** from
+`apps/dev/src/core/adr-triage.ts`, so every number reported is one the maintainer
+asked to see:
 
 1. **`triageAdrs`** — buckets every record as `keep`, `stale-reference`,
    `missing-supersession`, `merge-candidate`, `split-candidate`, or
    `archive-candidate`, with each entry's signals and reason. This is the
    **list** operation: report counts per bucket plus the entries in scope.
-2. **`groupAdrs`** — the **group** operation. It returns `index-section` groups
-   for records an INDEX theme already claims and `subject-cluster` groups for
-   the rest, clustered by shared title terms, plus the `ungrouped` singletons.
+2. **`groupAdrs`** — the **group** operation, re-run under the filter so the
+   report shows how the chosen slice sits inside its `index-section` and
+   `subject-cluster` groups.
 3. **`detectAdrInconsistencies`** — the **surface inconsistencies** operation. It
    reports `numbering-collision`, `dangling-supersede`, `supersession-cycle`,
    `index-drift`, `missing-supersession`, `stale-path`, and `subject-overlap`
-   findings, each with its implicated numbers and one actionable line.
+   findings, each with its implicated numbers and one actionable line. Report a
+   finding that reaches outside the slice when it implicates a record inside it —
+   a dangling pointer is a fact about the pair, not about the filter.
 
-Deep-read the flagged records before proposing anything about them. Done only
-when the maintainer has seen the buckets, the groups, and the inconsistency
-list for the scope they asked for.
+Deep-read the flagged records in the slice before proposing anything about them.
+Done only when the maintainer has seen the buckets, the groups, and the
+inconsistency list for the subject they chose — and **nothing outside it**.
 
-## Phase 2 — Agree the operations
+## Phase 2 — Agree the operations (anchored on the slice just reported)
 
 **Name each operation with its exact inputs** — which ADRs, which numbers are
 minted, which are archived, which pointers are written, which INDEX bullets
@@ -155,9 +193,10 @@ into later operations on a half-applied tree.
 
 ## Phase 5 — Verify, then land
 
-**Re-run all three read-only entry points against the resulting tree** and show
-the post-apply buckets, groups, and remaining inconsistencies. Run the ADR
-governance and operation tests. Inspect the exact diff before committing.
+**Re-run all three read-only entry points against the resulting tree**, under the
+same subject filter, and show the post-apply buckets, groups, and remaining
+inconsistencies. Run the ADR governance and operation tests. Inspect the exact
+diff before committing.
 
 Land through the repo's normal flow: commit in the worktree, push the branch,
 open the PR. When the session ends, run the
@@ -181,6 +220,7 @@ never the default route.
 
 | Operation | Reuses |
 |---|---|
+| subject interview | `groupAdrs` unfiltered — its group titles are the choices |
 | list | `triageAdrs` + its subject filter and bucket report |
 | group | `groupAdrs` — INDEX sections then title-term clusters |
 | surface inconsistencies | `detectAdrInconsistencies` — seven finding kinds |
@@ -206,8 +246,15 @@ never the default route.
 
 ## Boundary examples
 
-- "Group the ADRs by theme" is a `groupAdrs` call and a report — no gate, no
-  mutation, no Spec.
+- "Review the ADRs" names no subject: derive the groups, offer them with counts,
+  and report only the one the maintainer picks. It never becomes a
+  whole-collection dump.
+- "Group the ADRs by theme" is an explicit whole-collection ask — the everything
+  choice, already made. Run `groupAdrs` unfiltered and report: no question, no
+  gate, no mutation, no Spec.
+- "Fix the rsp ADRs" already carries its subject: resolve it to
+  `{ kind: "text", query: "rsp" }`, echo the matched numbers, and skip Phase 0's
+  question entirely.
 - "0112 is wrong now" is a rewrite or a supersede, and this session does it.
   Ask which shape the maintainer wants; do not default to supersede-and-replace.
 - "Merge 0034 and 0060" runs `planMerge` + `applyComposite` after one
