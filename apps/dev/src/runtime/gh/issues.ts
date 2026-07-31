@@ -1,6 +1,8 @@
 import {
+  LABEL_READY,
   LABEL_TYPE_SPEC,
 } from "../../core/triage-labels.js";
+import { laneIsolationRefusal } from "../../core/issue-lifecycle.js";
 import type { SpecSubIssueCandidate } from "../../core/spec-subissue-reconciler.js";
 import {
   boundedMap,
@@ -23,13 +25,38 @@ export async function viewLabels(ctx: GhContext, issue: number): Promise<string[
   }
 }
 
-/** `gh issue edit --remove-label … --add-label …`; returns false on failure. */
+/**
+ * `gh issue edit --remove-label … --add-label …`; returns false on failure.
+ *
+ * This is the LAST gate before the tracker, so it owns the lane-isolation
+ * invariant for every write that never declared a lifecycle edge (#2894): a
+ * promotion to `ready-for-agent` reads the issue's REAL labels and is refused
+ * when the issue sits in an isolated lane. The pure-model guard in
+ * `validateIssueLifecycleTransition` cannot catch these, because most call
+ * sites pass only the labels they intend to shed — a `lane:go` issue's retry
+ * declares `from: [running]` and the lane never enters the model at all.
+ *
+ * The extra read costs one `gh` call and only on a promotion. A read that fails
+ * returns no labels and the write proceeds: this is a backstop for the typed
+ * edges, never their replacement.
+ */
 export async function editLabels(
   ctx: GhContext,
   issue: number,
   remove: string[],
   add: string[],
 ): Promise<boolean> {
+  if (add.includes(LABEL_READY)) {
+    const current = await viewLabels(ctx, issue);
+    // Judge the RESULTING label set, so an edit that genuinely leaves the lane
+    // (removing it in the same call) is not refused for a label it just shed.
+    const next = [...current.filter((label) => !remove.includes(label)), ...add];
+    const refusal = laneIsolationRefusal("direct label write", next);
+    if (refusal !== null) {
+      process.stderr.write(`refused: #${issue} ${refusal.message}\n`);
+      return false;
+    }
+  }
   const args = ["issue", "edit", String(issue), ...repoArgs(ctx)];
   for (const label of remove) args.push("--remove-label", label);
   for (const label of add) args.push("--add-label", label);

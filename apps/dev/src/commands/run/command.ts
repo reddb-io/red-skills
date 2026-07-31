@@ -179,9 +179,13 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const supervisorSweepsDone = process.env.RED_AFK_SWEEPS_DONE === "1";
   const skipSweeps = shouldSkipBootSweeps(flags.filter, supervisorSweepsDone);
 
-  const sessionCtx: SessionContext & { hostProfile?: HostCapabilityProfile } = {
+  const sessionCtx: SessionContext & { hostProfile?: HostCapabilityProfile; poolLabel?: string } = {
     runner,
     workerId,
+    // The pool this drain LISTED from decides which isolated lanes it may see
+    // (#2894): `/go` and scout list their own lane and see their issue, a fleet
+    // lists `ready-for-agent` and can never see one, stale label or not.
+    ...(dispatchIdentity.lane !== undefined ? { poolLabel: dispatchIdentity.lane } : {}),
     iterCap: flags.iterCap,
     once: flags.once,
     filter: flags.filter,

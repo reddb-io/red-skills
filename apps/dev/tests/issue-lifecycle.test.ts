@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   ISSUE_LIFECYCLE_TRANSITIONS,
   IllegalIssueLifecycleTransitionError,
+  LANE_ISOLATION_LABELS,
+  LaneIsolationViolationError,
   classifyIssueLifecycleState,
+  laneIsolationRefusal,
   validateIssueLifecycleTransition,
   type IssueLifecycleEdge,
 } from "../src/core/issue-lifecycle.js";
@@ -169,6 +172,77 @@ describe("issue lifecycle transition table", () => {
     expect(thrown).toBeInstanceOf(IllegalIssueLifecycleTransitionError);
     expect((thrown as Error).message).toContain('illegal issue lifecycle transition "claim"');
     expect((thrown as Error).message).toContain("no legal row");
+  });
+
+  // #2894 — `/go` and scout isolation rests on the lane label never sharing an
+  // issue with `ready-for-agent`. The lifecycle model previously knew only about
+  // parks and blocks, so a `from: "*"` promote edge could legally reach a
+  // lane-isolated issue and hand one dispatch to two pools at once.
+  describe("lane isolation (#2894)", () => {
+    it("refuses every from-* promote edge against a lane-isolated issue", () => {
+      const promoteAnywhere = ISSUE_LIFECYCLE_TRANSITIONS.filter(
+        (row) => row.from === "*" && row.to === "ready-for-agent",
+      );
+      // The edge this fixture exists for must actually be in the table — an empty
+      // list would make the loop below vacuously green.
+      expect(promoteAnywhere.map((row) => row.edge)).toContain("human-delegable");
+
+      for (const row of promoteAnywhere) {
+        for (const lane of LANE_ISOLATION_LABELS) {
+          let thrown: unknown;
+          try {
+            validateIssueLifecycleTransition({
+              edge: row.edge,
+              fromLabels: [lane, "ready-for-human"],
+              removeLabels: ["ready-for-human"],
+              addLabels: ["ready-for-agent"],
+            });
+          } catch (error) {
+            thrown = error;
+          }
+          expect(thrown).toBeInstanceOf(LaneIsolationViolationError);
+          // The refusal names the EDGE that attempted it, not just the label.
+          expect((thrown as Error).message).toContain(`"${row.edge}"`);
+          expect((thrown as Error).message).toContain(lane);
+        }
+      }
+    });
+
+    it("refuses a promote that carries the lane in the ADD set", () => {
+      expect(() =>
+        validateIssueLifecycleTransition({
+          edge: "requeue",
+          fromLabels: ["ready-for-human"],
+          removeLabels: ["ready-for-human"],
+          addLabels: ["ready-for-agent", "lane:go"],
+        }),
+      ).toThrow(LaneIsolationViolationError);
+    });
+
+    it("leaves non-promoting lane transitions and ordinary promotes alone", () => {
+      // Claiming a lane:go issue is the lane's NORMAL path — it never touches
+      // ready-for-agent, so isolation has nothing to say about it.
+      expect(
+        validateIssueLifecycleTransition({
+          edge: "claim",
+          fromLabels: ["lane:go", "ready-for-human"],
+          removeLabels: ["ready-for-human"],
+          addLabels: ["running"],
+        }).sort(),
+      ).toEqual(["lane:go", "running"]);
+
+      // A plain backlog issue promotes exactly as before.
+      expect(laneIsolationRefusal("requeue", ["ready-for-agent"])).toBeNull();
+      // The lane alone, with no promotion in sight, is clean.
+      expect(laneIsolationRefusal("requeue", ["lane:scout", "running"])).toBeNull();
+    });
+
+    it("names the origin for a write that declares no lifecycle edge", () => {
+      const refusal = laneIsolationRefusal("direct label write", ["lane:go", "ready-for-agent"]);
+      expect(refusal).toBeInstanceOf(LaneIsolationViolationError);
+      expect(refusal?.message).toContain("direct label write");
+      expect(refusal?.lane).toBe("lane:go");
+    });
   });
 
   it("rejects impossible queued or active blocked label combinations", () => {
