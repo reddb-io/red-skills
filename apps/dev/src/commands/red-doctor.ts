@@ -136,9 +136,12 @@ async function collectHostToolchainReport(root: string): Promise<HostToolchainRe
  * doctor: a machine with no daemon is the very state this check exists to
  * report, so the report must survive reading it.
  */
-async function collectRedskilledProvisionReport(): Promise<RedskilledProvisionReport> {
+async function collectRedskilledProvisionReport(root: string): Promise<RedskilledProvisionReport> {
   try {
-    return auditRedskilledProvisioning(await readRedskilledProvisionFacts());
+    // The repository is handed in because an absent home is two states, not one:
+    // this project's declared workspace target is what decides whether the
+    // absence is a defect or the ordinary shape of a `local` machine (#2958).
+    return auditRedskilledProvisioning(await readRedskilledProvisionFacts({ projectRoot: root }));
   } catch (error) {
     const evidence = error instanceof Error ? error.message : String(error);
     return {
@@ -464,7 +467,7 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     );
     // Read-only: the provisioning report probes the socket and never spawns the
     // daemon it is reporting on, which would answer its own question.
-    const redskilledReport = await collectRedskilledProvisionReport();
+    const redskilledReport = await collectRedskilledProvisionReport(ctx.root);
     process.stdout.write(
       flags.json
         ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, applied, probeFixes, hostFixes)

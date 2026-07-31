@@ -17,6 +17,7 @@ import {
   resolveWorkspaceLayout,
   workerWorkspaceDir,
   workerWorktreeDir,
+  workspaceReadsRedskilledHome,
   type WorkspaceLayoutInput,
 } from "./worker-workspace.js";
 
@@ -168,6 +169,24 @@ describe("resolveWorkspaceLayout — each preset resolves to its documented layo
     expect(resolveWorkspaceLayout({ ...BASE, slug: "", target: { kind: "preset", preset: "local" } }).workersDir).toBe(
       "/home/dev/code/red-skills/.red/tmp/workers",
     );
+  });
+});
+
+describe("workspaceReadsRedskilledHome — who actually needs the daemon's home", () => {
+  // The home is a lane root, never a daemon precondition (#2958): the daemon
+  // resolves it nowhere, so only a target rooted inside it needs it to exist.
+  it("is true only for the host preset and a custom parent under the home", () => {
+    expect(workspaceReadsRedskilledHome({ kind: "preset", preset: "host" }, "/home/dev")).toBe(true);
+    expect(workspaceReadsRedskilledHome({ kind: "custom", parentDir: "~/.red/redskilled/repositories" }, "/home/dev")).toBe(true);
+    expect(workspaceReadsRedskilledHome({ kind: "custom", parentDir: "/home/dev/.red/redskilled" }, "/home/dev")).toBe(true);
+  });
+
+  it("is false for every lane that lives elsewhere", () => {
+    expect(workspaceReadsRedskilledHome({ kind: "preset", preset: "local" }, "/home/dev")).toBe(false);
+    expect(workspaceReadsRedskilledHome({ kind: "preset", preset: "tmp" }, "/home/dev")).toBe(false);
+    expect(workspaceReadsRedskilledHome({ kind: "custom", parentDir: "/mnt/fast/workers" }, "/home/dev")).toBe(false);
+    // Boundary-aware, so a sibling that merely shares a prefix is not the home.
+    expect(workspaceReadsRedskilledHome({ kind: "custom", parentDir: "/home/dev/.red/redskilled-old" }, "/home/dev")).toBe(false);
   });
 });
 

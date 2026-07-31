@@ -176,6 +176,24 @@ export function resolveWorkspaceLayout(input: WorkspaceLayoutInput): WorkspaceLa
 }
 
 /**
+ * Whether a declared target READS the daemon's host-scoped home.
+ *
+ * The home is created by its one owner (`provisionRedskilledHome`, ADR 0130
+ * Amendment 2) and read by exactly one thing: a workspace lane rooted inside it.
+ * With the default `local` preset nothing ever reads it, which is why creating it
+ * unconditionally left operators with an empty directory and put `/red-setup` on
+ * the critical path of a daemon that never touches it (#2958).
+ *
+ * A custom parent directory counts when it lands INSIDE the home — an operator
+ * who spells the path out by hand needs it to exist no less than one who names
+ * the preset.
+ */
+export function workspaceReadsRedskilledHome(target: WorkspaceTarget, homeDir: string): boolean {
+  if (target.kind === "preset") return target.preset === "host";
+  return isWithin(expandHome(target.parentDir, homeDir), redskilledHomeDir(homeDir));
+}
+
+/**
  * One Worker's workspace: `<workersDir>/<workerId>/<ticket>` — the flat layout
  * of ADR 0103, identical in every lane, because only the PARENT changes.
  */
