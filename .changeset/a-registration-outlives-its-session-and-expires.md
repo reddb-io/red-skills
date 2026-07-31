@@ -1,0 +1,9 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+A registration now **outlives the session that made it, and lapses once nothing renews it** (#2906). Both halves are load-bearing and pull against each other: `/afk` has to keep draining after the operator closes the terminal — that was the entire reason a detached per-project process existed before ADR 0130 Amendment 3 — while a registration that never lapsed would make a closed laptop poll a repository forever. So the daemon keeps polling a registration nobody is renewing right up to its deadline, and stops at it: a lapsed project is absent from the very next queue fetch, absent from `host-state`, and no longer holds the daemon awake.
+
+The daemon gained one op, `project-renew`, a project-write like every other statement about a project — a session that could renew another project's registration could keep a drain nobody is watching running past the deadline that exists to end it. It widens the frozen contract by nothing: it names a project the daemon already keys registrations by and carries no field a client must state, because a renewal is a session saying "I am still here" rather than a second chance to restate what it wants. **A renewal never mints a record.** The selector, the argv and the target are deliberately kept nowhere else, so a lapsed registration is refused with the sentence that says to register again.
+
+`host-state` now reports, per registration, whether a session is still renewing it — `renewing` — or whether it is `running-on` after its session ended. The verdict is derived at the instant of the read and never stored, because it is a fact about silence rather than about the record: the daemon holds no connection to a session, so a closed terminal is something it learns by hearing nothing for longer than the half-life a lease states its own cadence at. An operator can now tell a drain that outlived its terminal from one being watched.

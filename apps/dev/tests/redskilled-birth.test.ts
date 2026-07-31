@@ -155,6 +155,41 @@ describe("a project's Worker is born by the daemon", () => {
   });
 });
 
+describe("a project's registration outlives the session that made it", () => {
+  it("renews while the session lives, and is refused once the record has lapsed", async () => {
+    const paths = await sessionPaths();
+    const workspace = await scratch("dev-birth-registration-");
+    let ms = Date.parse("2026-07-31T12:00:00.000Z");
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      clock: () => new Date(ms).toISOString(),
+    });
+    running.push(daemon);
+
+    const port = createRedskilledBirthPort({ root: workspace, projectLabel: "acme/widgets", paths });
+    const registered = await port.register({
+      selector: "is:open label:ready-for-agent",
+      argv: ["red-skills-dev", "__work"],
+      target: 2,
+      renew_within_ms: 60_000,
+    });
+    expect(registered.renewals).toBe(0);
+
+    // The session is still here, so it says so — and the record's deadline moves.
+    ms += 30_000;
+    const renewed = await port.renew();
+    expect(renewed.renewals).toBe(1);
+    expect(Date.parse(renewed.renew_by)).toBeGreaterThan(Date.parse(registered.renew_by));
+
+    // The session ends here. One window of silence later the record is gone, and
+    // renewing it is refused rather than quietly minting an argv nobody restated.
+    ms += 60_000;
+    await expect(port.renew()).rejects.toThrow(/acme\/widgets/);
+    expect(daemon.hostState().registrations).toEqual([]);
+  });
+});
+
 describe("the project's identity and its advice", () => {
   it("resolves a label for a checkout with no git, no remote and no declared name", async () => {
     const root = await scratch("dev-birth-label-");

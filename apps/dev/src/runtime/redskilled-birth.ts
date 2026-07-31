@@ -25,6 +25,7 @@ import {
   deregisterRedskilledProject,
   ensureRedskilledDaemon,
   registerRedskilledProject,
+  renewRedskilledProject,
   readRedskilledHostState,
   startRedskilledWorker,
   type RedskilledClientConfig,
@@ -105,6 +106,16 @@ export interface RedskilledBirthPort {
    */
   register(request: ProjectRegistrationRequest): Promise<RedskilledProjectRegistration>;
   /**
+   * Say this session is still here, so the registration keeps standing.
+   *
+   * The registration outlives this session on purpose — a drain has to survive
+   * the operator closing the terminal — and the renewal is the only reason it
+   * does not outlive it forever. A refusal throws, including the one that says
+   * the record lapsed: a session that read that as renewed would keep renewing
+   * nothing while its work sat undrained, and its next move is to register again.
+   */
+  renew(): Promise<RedskilledProjectRegistration>;
+  /**
    * Take this project's presence back. Reports whether a record stood.
    *
    * `false` is an answer, not a fault: work stops from two directions — an
@@ -175,6 +186,11 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
         config,
       );
       return registered.registration;
+    },
+
+    async renew() {
+      const renewed = await renewRedskilledProject(paths, { project_label: projectLabel }, config);
+      return renewed.registration;
     },
 
     async deregister() {
