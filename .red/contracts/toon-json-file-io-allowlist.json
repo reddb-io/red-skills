@@ -8,6 +8,12 @@
    "moveKey": "851f84311082"
   },
   {
+   "id": "apps/brain/src/auto-linker.ts#json-stringify-wire-write#5d0360c38f2b",
+   "classification": "external",
+   "reason": "The AFK headless provider reads its request as JSON on stdin; the payload crosses into a foreign CLI.",
+   "moveKey": "00e209399a32"
+  },
+  {
    "id": "apps/dev/src/commands/run.ts#json-parse-file-read#01a38c1e6f6a",
    "classification": "external",
    "reason": "Fetched plugin manifest remains JSON at the package boundary.",
@@ -26,6 +32,12 @@
    "moveKey": "24cdd7f5b667"
   },
   {
+   "id": "apps/dev/src/runtime/feedback-worktree.ts#json-parse-file-read#abf5b08523f6",
+   "classification": "external",
+   "reason": "package.json is ecosystem JSON.",
+   "moveKey": "8e5ae239b6cc"
+  },
+  {
    "id": "apps/dev/src/runtime/implementer-environment.ts#json-parse-file-read#2879d3bfb880",
    "classification": "external",
    "reason": "Claude and Codex plugin manifests are JSON by host contract.",
@@ -36,12 +48,6 @@
    "classification": "external",
    "reason": "Projected Claude and Codex plugin manifests remain JSON for host interoperability.",
    "moveKey": "11f3d6af2227"
-  },
-  {
-   "id": "apps/dev/src/runtime/feedback-worktree.ts#json-parse-file-read#abf5b08523f6",
-   "classification": "external",
-   "reason": "package.json is ecosystem JSON.",
-   "moveKey": "8e5ae239b6cc"
   },
   {
    "id": "apps/dev/src/runtime/review-gh.ts#json-stringify-file-write#d6ea528ec9b4",
@@ -128,10 +134,21 @@
    "moveKey": "f632cd5f3c50"
   },
   {
+   "id": "apps/rsp/src/overhead-budget.ts#json-parse-file-read#e1e4e966b7a7",
+   "classification": "migrate",
+   "reason": "Overhead ledger decoder accepts legacy JSON while TOON ledgers roll out; every write already emits TOON."
+  },
+  {
    "id": "apps/rsp/src/two-axis-benchmark.ts#json-parse-file-read#df5d9468826b",
    "classification": "external",
    "reason": "Benchmark baseline fixture is JSON input.",
    "moveKey": "2883fdec968a"
+  },
+  {
+   "id": "packages/cdp-driver/client.ts#json-stringify-wire-write#7032e1db6fc4",
+   "classification": "external",
+   "reason": "Chrome DevTools Protocol frames are JSON by specification.",
+   "moveKey": "cc6bf6647434"
   },
   {
    "id": "packages/red-castle/.red-castle/agent-workflows/shared/common.ts#json-stringify-file-write#8975f393e830",
@@ -162,11 +179,6 @@
    "classification": "external",
    "reason": "TOON migration accepts legacy JSON inputs.",
    "moveKey": "e57f5cae7679"
-  },
-  {
-   "id": "apps/rsp/src/overhead-budget.ts#json-parse-file-read#e1e4e966b7a7",
-   "classification": "migrate",
-   "reason": "Overhead ledger decoder accepts legacy JSON while TOON ledgers roll out; every write already emits TOON."
   }
  ]
 }
