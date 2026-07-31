@@ -6,6 +6,19 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## adr-editor (engineering) — the editor opens with a subject interview (issue #2915)
+
+- **status**: modified
+- **upstream**: —
+- **why**: Phase 0 scoped the run to "all ADRs by default", so a plain `/adr-editor` swept the whole collection and dumped buckets, groups, and inconsistencies nobody asked for. The maintainer was out of the loop exactly where their judgment is cheapest to collect.
+- **what changed**:
+  - Phase 0 is now **Interview for the subject**: derive the choices with an unfiltered `groupAdrs` call, then ask one question offering the collection's real INDEX themes, title-term clusters, and ungrouped singletons as numbered choices with record counts.
+  - Phase 1 is now **Answer about the chosen subject** — the three read-only entry points run under the agreed subject filter and the report covers the chosen slice and nothing outside it.
+  - "Everything" survives as the last explicit choice, never a silent default; a subject already named in the invocation skips the question and is echoed back instead.
+  - Two hard rules added — "Ask first, sweep second" and "Ask with the collection's own subjects in hand" — and the ambiguity rule sharpened to "one question per turn, each narrowing the last".
+  - Unchanged by design: `triageAdrs`, `groupAdrs`, and `detectAdrInconsistencies` keep identical contracts (text-only change, no planner touched); Phase 3's single destructive-or-wide confirmation stays; `/to-spec` stays an offered escape hatch.
+  - `apps/dev/tests/adr-editor-docs.test.ts` gained the interview-first assertions; `ask-red`'s route and the engineering README entry repointed; Pi packages regenerated.
+
 ## adr-editor (engineering) — the ADR skill becomes a totipotent editor (issue #2695)
 
 - **status**: renamed-from-review-adrs
