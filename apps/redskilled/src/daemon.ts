@@ -87,6 +87,7 @@ import {
   type RedskilledMachineClaimStore,
   type RedskilledMachineOwner,
 } from "./machine-scope.js";
+import type { RedskilledLaunchTemplate } from "./launch-template.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
   buildProjectRegistration,
@@ -373,7 +374,12 @@ export interface RedskilledDaemon {
    */
   renewProject(
     projectLabel: string,
-    options?: { readonly sessionProject?: string; readonly renewWithinMs?: number },
+    options?: {
+      readonly sessionProject?: string;
+      readonly renewWithinMs?: number;
+      /** What the NEXT Worker is started with; the standing launch when absent. */
+      readonly launch?: RedskilledLaunchTemplate;
+    },
   ): RedskilledProjectRenewed;
   /** The registrations this daemon holds, ordered by project label; lapsed ones swept. */
   registrations(): readonly RedskilledProjectRegistration[];
@@ -1068,7 +1074,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    */
   function renewProject(
     projectLabel: string,
-    options: { readonly sessionProject?: string; readonly renewWithinMs?: number } = {},
+    options: {
+      readonly sessionProject?: string;
+      readonly renewWithinMs?: number;
+      readonly launch?: RedskilledLaunchTemplate;
+    } = {},
   ): RedskilledProjectRenewed {
     const reach = authorize("project-renew", options.sessionProject, projectLabel);
     if (!reach.permitted) throw new Error(reach.reason);
@@ -1079,6 +1089,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const registration = renewProjectRegistration(held, {
       now,
       ...(options.renewWithinMs == null ? {} : { renew_within_ms: options.renewWithinMs }),
+      ...(options.launch == null ? {} : { launch: options.launch }),
     });
     registrations.set(registration.project_label, registration);
     armIdleTimer();
@@ -1088,7 +1099,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       reach,
       detail:
         `redskilled renewed the registration for project ${JSON.stringify(registration.project_label)}, which now ` +
-        `stands until ${registration.renew_by} after renewal ${registration.renewals}`,
+        `stands until ${registration.renew_by} after renewal ${registration.renewals}` +
+        // The revision, not the launch itself: an operator needs to know that the
+        // next Worker differs from the last, and the daemon has read nothing that
+        // would let it say how.
+        (options.launch == null ? "" : `, carrying launch revision ${registration.launch_revision} for its next Worker`),
     };
   }
 
@@ -1622,6 +1637,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           value: renewProject(request.project_label, {
             ...(request.session_project == null ? {} : { sessionProject: request.session_project }),
             ...(request.renew_within_ms == null ? {} : { renewWithinMs: request.renew_within_ms }),
+            ...(request.launch == null ? {} : { launch: request.launch }),
           }),
         };
       }
