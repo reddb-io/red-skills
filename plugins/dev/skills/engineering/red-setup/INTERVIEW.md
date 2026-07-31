@@ -164,7 +164,7 @@ The installed version must be `0.3.0`. Record the same pin in `.red/config.yaml`
 
 **Section E3 — Execution daemon (`redskilled`) — mandatory when `dev` is enabled.**
 
-> Explainer: `redskilled` is the host-scoped execution daemon (ADR 0130): exactly one singleton per machine, behind a unix socket, owning Worker processes across every project on this machine while each project's bundle keeps owning the work. It is what makes "what is this machine currently doing" answerable, and it fails closed — no daemon, no Worker. A daemon starts on first use, but three things must exist before it can: its host-scoped home, a published bundle to run, and a socket that answers.
+> Explainer: `redskilled` is the host-scoped execution daemon (ADR 0130): exactly one singleton per machine, behind a unix socket, owning Worker processes across every project on this machine while each project's bundle keeps owning the work. It is what makes "what is this machine currently doing" answerable, and it fails closed — no daemon, no Worker. A daemon starts on first use, and two things must exist before it can: a published bundle to run and a socket that answers.
 
 **The home is the daemon's, not this skill's.** `~/.red/redskilled/` is operator-scoped and lives outside every checkout, so it is *not* the `.red/` this skill has sole authority over. Its one owner is `provisionRedskilledHome` in `apps/redskilled/src/provision.ts` (ADR 0130 Amendment 1) — never `mkdir` it here, and never treat a repo's ADR 0067 authority as covering it. Setup provisions it by **calling** its owner:
 
@@ -172,10 +172,13 @@ The installed version must be `0.3.0`. Record the same pin in `.red/config.yaml`
 redskilled provision
 ```
 
-That one command creates the home owner-only (`0700`), starts the daemon through the ordinary client path, and prints the audit as TOON. **It is idempotent**: a second run creates nothing and rewrites nothing, so run it on every setup pass rather than only when something already looks wrong. Two flags matter:
+That one command starts the daemon through the ordinary client path and prints the audit as TOON. **It is idempotent**: a second run creates nothing and rewrites nothing, so run it on every setup pass rather than only when something already looks wrong. Three flags matter:
 
-- `redskilled provision --check` — the read-only half. Reports without creating the home or starting anything; this is the shape `/red-doctor` consumes.
+- `redskilled provision --check` — the read-only half. Reports without creating anything or starting anything; this is the shape `/red-doctor` consumes.
+- `redskilled provision --workspace <target>` — states the workspace target outright instead of reading this repo's config. Run it with `host` at the moment the user selects the `host` preset.
 - `redskilled provision --install-unit` — writes the optional supervising unit (below). Off unless the user asks for it.
+
+**The home is created only when a lane reads it.** The daemon never resolves the home; the only reader is a workspace lane rooted inside it (`plugins.dev.workspace.target: host`, or a custom parent under the home). On the default `local` preset the command creates nothing, reports `needed: false` with the declaration that decided it, and the machine is fully provisioned — **do not treat an absent `~/.red/redskilled/` as a defect** (#2958). Provisioning is therefore never on the critical path of "have a daemon": auto-spawn already is.
 
 Verify afterwards:
 
@@ -184,7 +187,7 @@ redskilled provision --check      # verdict: ok
 redskilled host-state             # the machine's Workers, from the daemon itself
 ```
 
-A `verdict: missing` names which of the four checks failed — `home`, `daemon-entry`, `reach`, `supervisor-unit` — and prints the exact command for each. A `daemon-entry` finding means no published bundle was found on this host; it names every path probed, and re-running `redskilled provision` after the bundle is warmed is the cure. Do not work around it by pointing the daemon at a caller's own entry — a stale caller mints a staler daemon and the skew widens (#2736, #2677).
+A `verdict: missing` names which of the four checks failed — `home`, `daemon-entry`, `reach`, `supervisor-unit` — and prints the exact command for each. A `home` finding appears only when a declared target actually reads the home; absent-and-unneeded is reported as `ok`. A `daemon-entry` finding means no published bundle was found on this host; it names every path probed, and re-running `redskilled provision` after the bundle is warmed is the cure. Do not work around it by pointing the daemon at a caller's own entry — a stale caller mints a staler daemon and the skew widens (#2736, #2677).
 
 **Optional supervising unit (default NO).** Auto-spawn already starts the daemon on first use; the user unit only adds `Restart=on-failure` over the identical binary, socket and contract (ADR 0130 rule 7). Offer it, defaulting to no, and only on a Linux host with a `systemd --user` session. On a yes:
 
