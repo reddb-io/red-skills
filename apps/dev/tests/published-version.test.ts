@@ -14,9 +14,23 @@ import {
   writePublishedVersionRecord,
 } from "../src/core/published-version.js";
 
+/**
+ * A cache dir AND an empty HOME: the installed-plugin rung reads the operator's
+ * plugin cache, so a test that left HOME alone would answer from the developer's
+ * own machine instead of its fixture.
+ */
 function cacheEnv(): { env: NodeJS.ProcessEnv; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "published-version-"));
-  return { env: { RED_SKILLS_CACHE_DIR: dir } as NodeJS.ProcessEnv, dir };
+  const home = join(dir, "home");
+  mkdirSync(home, { recursive: true });
+  return { env: { RED_SKILLS_CACHE_DIR: dir, HOME: home } as NodeJS.ProcessEnv, dir };
+}
+
+/** Install plugin `version` the way an operator upgrade leaves it on disk. */
+function installPlugin(home: string, version: string, agentHome = ".claude"): void {
+  mkdirSync(join(home, agentHome, "plugins", "cache", "red-skills", "dev", version, ".claude-plugin"), {
+    recursive: true,
+  });
 }
 
 describe("published version resolution (#2809)", () => {
@@ -132,6 +146,83 @@ describe("published version resolution (#2809)", () => {
         version: "2.87.5",
         source: "bundle-cache",
         stale: true,
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts the installed plugin as evidence in its own right (#2924)", () => {
+    const installed = resolvePublishedVersion({ installed: "3.0.4", nowMs: 1_000 });
+    expect(installed).toMatchObject({
+      version: "3.0.4",
+      source: "installed-plugin",
+      age_ms: -1,
+      stale: true,
+      reason: "installed-only",
+    });
+
+    // Above the bundle cache: an installed plugin is an operator's decision, a
+    // cached bundle only a byproduct of having once run that version.
+    expect(resolvePublishedVersion({ installed: "3.0.4", cached: "3.0.3", nowMs: 1_000 })).toMatchObject({
+      version: "3.0.4",
+      source: "installed-plugin",
+    });
+
+    // Below a live registry read and below a fresh recorded one.
+    expect(
+      resolvePublishedVersion({ fetched: "3.0.5", installed: "3.0.4", nowMs: 1_000 }),
+    ).toMatchObject({ version: "3.0.5", source: "registry" });
+    expect(
+      resolvePublishedVersion({
+        record: { version: "3.0.5", observedAtMs: 1_000 },
+        installed: "3.0.4",
+        nowMs: 1_000 + 60_000,
+      }),
+    ).toMatchObject({ version: "3.0.5", source: "recorded", stale: false });
+
+    // An aged-out record that already proved a NEWER publication keeps the
+    // answer — the installed rung adds intent, it must not walk a version back.
+    expect(
+      resolvePublishedVersion({
+        record: { version: "3.0.5", observedAtMs: 0 },
+        installed: "3.0.4",
+        nowMs: PUBLISHED_VERSION_STALE_AFTER_MS + 1,
+      }),
+    ).toMatchObject({ version: "3.0.5", source: "recorded", reason: "aged-out" });
+
+    // Nothing at all still answers unknown — never a substituted version (#2809).
+    expect(resolvePublishedVersion({ nowMs: 1_000 })).toMatchObject({ version: null, source: "unresolved" });
+  });
+
+  it("reads the operator's installed plugin instead of reporting a stale cache-only bundle (#2924)", () => {
+    const { env, dir } = cacheEnv();
+    try {
+      // The observed case: the operator updated the plugin to 3.0.4 while this
+      // host's newest cached bundle is still 3.0.3.
+      writeFileSync(join(dir, "dev-3.0.3.bundle.min.mjs"), "", "utf8");
+      for (const version of ["2.88.0", "3.0.0", "3.0.1", "3.0.3", "3.0.4"]) {
+        installPlugin(join(dir, "home"), version);
+      }
+      expect(readPublishedBundleVersion(env, 5_000)).toMatchObject({
+        version: "3.0.4",
+        source: "installed-plugin",
+        stale: true,
+        reason: "installed-only",
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("sees a plugin installed under either agent home", () => {
+    const { env, dir } = cacheEnv();
+    try {
+      installPlugin(join(dir, "home"), "3.0.1", ".claude");
+      installPlugin(join(dir, "home"), "3.0.4", ".codex");
+      expect(readPublishedBundleVersion(env, 5_000)).toMatchObject({
+        version: "3.0.4",
+        source: "installed-plugin",
       });
     } finally {
       rmSync(dir, { recursive: true, force: true });
