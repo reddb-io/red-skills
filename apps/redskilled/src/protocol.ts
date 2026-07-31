@@ -31,6 +31,13 @@
  * carries the commanding verbs — stop, recycle, steer — as data rather than as
  * three ops, so the reach rule is decided once for all of them.
  *
+ * `project-register` widens the contract by a query string and no further (ADR
+ * 0130 Amendment 3). A project contributes a registration rather than a process,
+ * and the two strings it carries — a selector and an argv — are opaque in exactly
+ * the sense a Worker's last logged line already is: stored, echoed, never read.
+ * The daemon still does not know what an Issue, a label, a Spec, a gate or a
+ * Landing is, which is what keeps this a frozen surface rather than a growing one.
+ *
  * **Every request may name the project its session belongs to.** That single
  * opaque string is what makes reach asymmetric (ADR 0130 rule 9): a session reads
  * the whole host and writes only its own project.
@@ -38,6 +45,11 @@
 import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
 import { isRedskilledAdmissionVerdict, type RedskilledAdmissionVerdict } from "./admission.js";
 import { isRedskilledWorkerView, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
+import {
+  isRedskilledProjectRegistration,
+  type RedskilledProjectRegistration,
+  type RedskilledProjectRegistrationRequest,
+} from "./project-registration.js";
 import { isRedskilledReachVerdict, type RedskilledReachVerdict, type RedskilledWorkerCommandName } from "./session-reach.js";
 import { isRedskilledStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
 import type { RedskilledStatuslineMode, RedskilledStatuslineRender } from "./statusline-render.js";
@@ -102,6 +114,7 @@ export type RedskilledRequest =
   | { id: string; op: "worker-start"; spec: RedskilledWorkerSpec; session_project?: string }
   | { id: string; op: "worker-command"; command: RedskilledWorkerCommandRequest }
   | { id: string; op: "worker-heartbeat"; heartbeat: RedskilledWorkerHeartbeatRequest }
+  | { id: string; op: "project-register"; registration: RedskilledProjectRegistrationRequest; session_project?: string }
   | { id: string; op: "shutdown" };
 
 export type RedskilledResponse =
@@ -200,6 +213,29 @@ export function isRedskilledWorkerHeartbeatAck(value: unknown): value is Redskil
     isRedskilledReachVerdict(ack.reach);
 }
 
+/**
+ * The answer to an accepted `project-register`.
+ *
+ * A refusal never arrives here — a duplicate registration and a cross-project one
+ * both come back as errors carrying their own sentence — so a caller holding this
+ * value holds a record the daemon is keeping, never a maybe.
+ */
+export interface RedskilledProjectRegistered {
+  readonly version: 1;
+  readonly registration: RedskilledProjectRegistration;
+  readonly reach: RedskilledReachVerdict;
+  readonly detail: string;
+}
+
+export function isRedskilledProjectRegistered(value: unknown): value is RedskilledProjectRegistered {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const registered = value as Record<string, unknown>;
+  return registered.version === 1 &&
+    typeof registered.detail === "string" &&
+    isRedskilledProjectRegistration(registered.registration) &&
+    isRedskilledReachVerdict(registered.reach);
+}
+
 export interface RedskilledClientOptions {
   socketPath: string;
   timeoutMs?: number;
@@ -251,6 +287,8 @@ export { isRedskilledStatuslinePayload };
 export type {
   RedskilledAdmissionVerdict,
   RedskilledHostState,
+  RedskilledProjectRegistration,
+  RedskilledProjectRegistrationRequest,
   RedskilledReachVerdict,
   RedskilledStatuslineMode,
   RedskilledStatuslinePayload,

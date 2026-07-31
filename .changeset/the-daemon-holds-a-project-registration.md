@@ -1,0 +1,9 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+The `redskilled` daemon now holds a **project registration**: a record it stores for each project that wants work done, and reports back in `host-state` (#2901). Under ADR 0130 Amendment 3 a project contributes a registration rather than a process, and this is the record and the route that writes it — nothing polls it and nothing is dispatched from it yet.
+
+**A registration carries five things, and the daemon interprets none of them.** The repository identity, already carried today as the opaque project label; an opaque **selector**, the query that names this project's work; an opaque **argv**, what to run when a Worker is born for it; a target width; and a renewal deadline, stated as a window and dated on the daemon's own clock so a client's skew cannot silently lengthen every registration on the host. The selector and the argv are opaque in exactly the sense a Worker's last logged line already is: stored, echoed, never read. Rule 3 holds — the daemon still does not know what an Issue, a label, a Spec, a gate or a Landing is, and shape is all it checks.
+
+**Registering a project twice is refused, and the refusal names the registration standing** — its instant, its target and its deadline — because the two ways a client gets there want opposite next moves: a session that should be renewing reads the deadline it has to beat, and a duplicate loop learns the other one exists. `project-register` is a project-write like every other statement about a project, so a session registers only its own. The new `registrations` block in `host-state` is checked only when present, exactly as the scope and upgrade blocks are: one daemon serves checkouts pinned to different bundle versions, so an older daemon's answer without it is complete rather than malformed.
