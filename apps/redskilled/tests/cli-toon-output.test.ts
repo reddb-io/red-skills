@@ -19,7 +19,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { encode as encodeToon } from "@reddb-io/toon";
+import { encode as encodeToon, type JsonValue } from "@reddb-io/toon";
 import { readBuildInfo } from "@reddb-io/build-info";
 
 const HOST_STATE = {
@@ -108,7 +108,7 @@ async function unitFixture() {
 
 /** The whole assertion, in one place: this is TOON and it is not JSON. */
 function expectToon(out: string, payload: unknown): void {
-  expect(out).toBe(`${encodeToon(payload)}\n`);
+  expect(out).toBe(`${encodeToon(payload as JsonValue)}\n`);
   expect(() => JSON.parse(out) as unknown).toThrow();
 }
 
@@ -118,11 +118,13 @@ describe("`redskilled host-state`", () => {
 
     expect(code).toBe(0);
     expectToon(printed, HOST_STATE);
-    // The shape a reader recognises, stated rather than left to the encoder: keys
-    // at column zero and a `workers[1]:` table head, not a brace in sight.
+    // The marks a reader recognises, stated rather than left to the encoder: an
+    // unquoted key at column zero and a tabular header, neither of which JSON can
+    // spell. `{` alone would be the wrong tell — TOON writes its field list in
+    // braces, so banning the character would fail on correct output.
     expect(printed.startsWith("version: 1\n")).toBe(true);
-    expect(printed).toContain("workers[1]");
-    expect(printed).not.toContain("{");
+    expect(printed).toContain("projects[1]{project_label,workers}:");
+    expect(printed).not.toContain('"version": 1');
   });
 });
 
@@ -174,7 +176,7 @@ describe("`redskilled unit`", () => {
     expect(out).toContain("steps[3]");
     expect(out).toContain("- step: write-unit");
     expect(out).toContain("- step: enable");
-    expect(out).not.toContain("{");
+    expect(out).not.toContain('"step": ');
   });
 
   it("prints `uninstall` as TOON", async () => {
@@ -190,7 +192,7 @@ describe("`redskilled unit`", () => {
     expect(out).toContain("installed: false");
     expect(out).toContain("- step: disable");
     expect(out).toContain("- step: remove-unit");
-    expect(out).not.toContain("{");
+    expect(out).not.toContain('"step": ');
   });
 
   it("keeps quoting the action it was given in the error it throws", async () => {
