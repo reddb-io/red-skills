@@ -19,6 +19,7 @@ import {
   type RedskilledProjectRegistration,
 } from "./project-registration.js";
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
+import type { RedskilledMajorHold } from "./self-replace.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
 /**
@@ -99,11 +100,17 @@ export interface RedskilledProjectView {
  * world. Folding the second into the first is how a stale process reports a
  * confident zero skew while every Worker halts on the version it claimed to
  * measure (#2809), so the daemon states both and compares them out loud.
+ *
+ * A third number joins them for the same reason: `published_version` is capped at
+ * the running major, so on its own it cannot distinguish a current daemon from
+ * one holding at a major boundary. `newest_published_version` is that horizon,
+ * and `major_hold` is the daemon saying out loud that not crossing it is a
+ * decision (#2926).
  */
 export interface RedskilledUpgradeState {
   /** Identical to `daemon_version`, from the same value — never re-derived. */
   readonly running_version: string;
-  /** The published version last resolved; null when it never was. */
+  /** The newest IN-MAJOR published version last resolved; null when it never was. */
   readonly published_version: string | null;
   /** 1 when the published answer could not be resolved at all. */
   readonly published_unknown: number;
@@ -113,6 +120,12 @@ export interface RedskilledUpgradeState {
   readonly replacement: "none" | "pending" | "in-progress";
   /** When the published answer was last observed; null when it never was. */
   readonly checked_at: string | null;
+  /** The newest version published across every major; null when unresolved. */
+  readonly newest_published_version: string | null;
+  /** 1 when a newer major exists and this daemon is deliberately not on it. */
+  readonly major_held: number;
+  /** The held major with its reason and the operator's step; null when none. */
+  readonly major_hold: RedskilledMajorHold | null;
 }
 
 export interface RedskilledHostState {
@@ -167,6 +180,10 @@ export interface BuildHostStateInput {
     /** Whether the observed version supersedes the running one — the daemon decides. */
     readonly newer?: boolean;
     readonly replacement?: RedskilledUpgradeState["replacement"];
+    /** The newest version resolved across every major; absent leaves it unknown. */
+    readonly newest?: string | null;
+    /** The major this daemon is holding at — the daemon decides, this echoes it. */
+    readonly majorHold?: RedskilledMajorHold | null;
   };
 }
 
@@ -206,6 +223,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
 export function buildUpgradeState(input: BuildHostStateInput): RedskilledUpgradeState {
   const running = input.daemonVersion;
   const published = input.published?.version ?? null;
+  const hold = input.published?.majorHold ?? null;
   return {
     running_version: running,
     published_version: published,
@@ -213,6 +231,9 @@ export function buildUpgradeState(input: BuildHostStateInput): RedskilledUpgrade
     newer_published: Number(input.published?.newer === true),
     replacement: input.published?.replacement ?? "none",
     checked_at: input.published?.checkedAt ?? null,
+    newest_published_version: input.published?.newest ?? null,
+    major_held: Number(hold !== null),
+    major_hold: hold,
   };
 }
 
@@ -279,5 +300,29 @@ export function isRedskilledUpgradeState(value: unknown): value is RedskilledUpg
     typeof upgrade.published_unknown === "number" &&
     typeof upgrade.newer_published === "number" &&
     (upgrade.replacement === "none" || upgrade.replacement === "pending" || upgrade.replacement === "in-progress") &&
-    (upgrade.checked_at === null || typeof upgrade.checked_at === "string");
+    (upgrade.checked_at === null || typeof upgrade.checked_at === "string") &&
+    // Checked only when present, exactly as the block itself is on the document:
+    // a daemon from a bundle that predates the major-hold report still answers
+    // completely, while a block that IS there and is the wrong shape fails closed.
+    (upgrade.newest_published_version === undefined ||
+      upgrade.newest_published_version === null ||
+      typeof upgrade.newest_published_version === "string") &&
+    (upgrade.major_held === undefined || typeof upgrade.major_held === "number") &&
+    (upgrade.major_hold === undefined ||
+      upgrade.major_hold === null ||
+      isRedskilledMajorHold(upgrade.major_hold));
+}
+
+/** True when `value` is a complete major-hold report — a client's fail-closed check. */
+export function isRedskilledMajorHold(value: unknown): value is RedskilledMajorHold {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const hold = value as Record<string, unknown>;
+  return typeof hold.version === "string" &&
+    Number.isInteger(hold.running_major) &&
+    Number.isInteger(hold.held_major) &&
+    typeof hold.reason === "string" &&
+    // The step is the whole point of the report: a hold that named no way across
+    // would be the silent hold again, wearing a field name.
+    typeof hold.action === "string" &&
+    hold.action.trim() !== "";
 }

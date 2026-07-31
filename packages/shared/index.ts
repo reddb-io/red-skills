@@ -57,6 +57,8 @@ export {
   bundleFileName,
   ensureBundle,
   fetchNewestSameMajor,
+  fetchPublishedVersionHorizon,
+  newestPublished,
   newestSameMajor,
   npmPackageSpec,
   packagedBundleName,
@@ -68,6 +70,7 @@ export {
   type BundleIO,
   type BundleFetchFailure,
   type EnsureBundleInput,
+  type PublishedVersionHorizon,
   type ResolveBundleInput,
 } from "./bundle-fetch.js";
 export {

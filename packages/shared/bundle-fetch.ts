@@ -248,6 +248,39 @@ export async function fetchNewestSameMajor(
   return newestSameMajor(parseRegistryVersions(text), installed);
 }
 
+/**
+ * The two version questions one registry read answers.
+ *
+ * They travel together because a caller that asked twice could see a release
+ * land between the reads and report a major gap that existed at no instant.
+ */
+export interface PublishedVersionHorizon {
+  /** Newest version sharing the installed major — the only in-range candidate. */
+  readonly sameMajor: string | null;
+  /** Newest version published at all, across every major. */
+  readonly newest: string | null;
+}
+
+/**
+ * Both answers, from ONE registry read: what may be adopted in range, and what
+ * exists beyond it. A consumer that must *report* a major boundary rather than
+ * cross it needs the second number, and it is not derivable from the first.
+ */
+export async function fetchPublishedVersionHorizon(
+  io: Pick<BundleIO, "fetchText">,
+  installed: string,
+  pkg: string = NPM_PACKAGE,
+): Promise<PublishedVersionHorizon> {
+  let text: string;
+  try {
+    text = await io.fetchText(registryPackageUrl(pkg));
+  } catch (err) {
+    throw classifyMaterializeError(err, pkg);
+  }
+  const versions = parseRegistryVersions(text);
+  return { sameMajor: newestSameMajor(versions, installed), newest: newestPublished(versions) };
+}
+
 /** Parse the published-version list out of registry package metadata JSON. */
 export function parseRegistryVersions(text: string): string[] {
   let parsed: unknown;
@@ -289,6 +322,24 @@ export function newestSameMajor(
   for (const v of versions) {
     if (majorOf(v) !== target) continue;
     if (best === null || compareVersion(v, best) > 0) best = v;
+  }
+  return best;
+}
+
+/**
+ * Newest STABLE version from a list, whatever its major, or null.
+ *
+ * Prereleases are skipped: they are published, but they are not a release an
+ * operator is asked to move a machine onto, and announcing `4.0.0-rc.1` as the
+ * major beyond a 3.x install would put a standing notice on every host for as
+ * long as a release candidate exists.
+ */
+export function newestPublished(versions: readonly string[]): string | null {
+  let best: string | null = null;
+  for (const v of versions) {
+    const trimmed = String(v).trim();
+    if (majorOf(trimmed) === null || /^\d+\.\d+\.\d+[-+]/.test(trimmed)) continue;
+    if (best === null || compareVersion(trimmed, best) > 0) best = trimmed;
   }
   return best;
 }

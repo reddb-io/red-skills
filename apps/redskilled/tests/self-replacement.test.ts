@@ -29,6 +29,7 @@ import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { sendRedskilledRequest } from "../src/protocol.js";
 import {
   isLocalRedskilledBuild,
+  planRedskilledMajorHold,
   planRedskilledReplacement,
   REDSKILLED_REPLACE_EXIT_CODE,
   RedskilledReplacementEntryError,
@@ -173,6 +174,113 @@ describe("the replacement decision", () => {
     });
     expect(isLocalRedskilledBuild("2.0.0-rc.1")).toBe(true);
     expect(isLocalRedskilledBuild("2.0.0")).toBe(false);
+  });
+});
+
+describe("a published major the daemon will not adopt", () => {
+  it("names the gap, says the refusal is deliberate, and names the manual step", () => {
+    const hold = planRedskilledMajorHold({ running: RUNNING_VERSION, newest: "2.0.0", supervised: false });
+
+    expect(hold).not.toBeNull();
+    expect(hold?.version).toBe("2.0.0");
+    expect(hold?.running_major).toBe(1);
+    expect(hold?.held_major).toBe(2);
+    // A refusal that is stated is a decision; one that is silent is a bug.
+    expect(hold?.reason).toContain("deliberately");
+    expect(hold?.reason).toContain("2.0.0");
+    expect(hold?.action).not.toBe("");
+  });
+
+  it("names a step whoever would revive this daemon can actually take", () => {
+    const supervised = planRedskilledMajorHold({ running: RUNNING_VERSION, newest: "2.0.0", supervised: true });
+    const alone = planRedskilledMajorHold({ running: RUNNING_VERSION, newest: "2.0.0", supervised: false });
+
+    // Under a unit the ExecStart is what has to move, so the step says so;
+    // without one, nothing revives this process and stopping it is the step.
+    expect(supervised?.action).toContain("redskilled unit install");
+    expect(supervised?.action).toContain("systemctl --user restart");
+    expect(alone?.action).toContain("stop this daemon");
+    expect(alone?.action).not.toContain("systemctl");
+  });
+
+  it("holds nothing for a daemon that is current, inside its major, or a local build", () => {
+    const base = { running: RUNNING_VERSION, supervised: false } as const;
+
+    // Genuinely current: nothing is being withheld, so nothing is reported.
+    expect(planRedskilledMajorHold({ ...base, newest: RUNNING_VERSION })).toBeNull();
+    // Inside the major the timer adopts it, so there is no hold to report.
+    expect(planRedskilledMajorHold({ ...base, newest: PUBLISHED_VERSION })).toBeNull();
+    expect(planRedskilledMajorHold({ ...base, newest: null })).toBeNull();
+    expect(planRedskilledMajorHold({ ...base, newest: "not-a-version" })).toBeNull();
+    // A source checkout is not a point on the published lane at all.
+    expect(planRedskilledMajorHold({ running: "0.0.0-dev", newest: "9.9.9", supervised: false })).toBeNull();
+  });
+
+  it("reports the gap beside the running version, and still adopts inside the major", async () => {
+    const { paths, env } = await session();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      replaceCheckMs: 0,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => ({ version: PUBLISHED_VERSION, newest: "2.0.0" }),
+      replacementIO: { env },
+    });
+    running.push(daemon);
+
+    // The major boundary changes nothing about in-major adoption.
+    expect(await daemon.observePublishedVersion()).toMatchObject({ act: "replace", to: PUBLISHED_VERSION });
+
+    const upgrade = daemon.hostState().upgrade;
+    expect(upgrade.running_version).toBe(RUNNING_VERSION);
+    expect(upgrade.published_version).toBe(PUBLISHED_VERSION);
+    expect(upgrade.newest_published_version).toBe("2.0.0");
+    expect(upgrade.major_held).toBe(1);
+    expect(upgrade.major_hold?.held_major).toBe(2);
+    expect(upgrade.major_hold?.version).toBe("2.0.0");
+    expect(upgrade.major_hold?.action).toContain("stop this daemon");
+  });
+
+  it("reports no hold at all on a daemon that is genuinely current", async () => {
+    const { paths, env } = await session();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      replaceCheckMs: 0,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => ({ version: RUNNING_VERSION, newest: RUNNING_VERSION }),
+      replacementIO: { env },
+    });
+    running.push(daemon);
+
+    expect(await daemon.observePublishedVersion()).toEqual({ act: "hold", reason: "no-newer-version" });
+
+    const upgrade = daemon.hostState().upgrade;
+    expect(upgrade.newest_published_version).toBe(RUNNING_VERSION);
+    expect(upgrade.major_held).toBe(0);
+    expect(upgrade.major_hold).toBeNull();
+  });
+
+  it("holds nothing it never resolved: an unreadable registry states no major gap", async () => {
+    const { paths, env } = await session();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      replaceCheckMs: 0,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => {
+        throw new Error("the registry is unreachable");
+      },
+      replacementIO: { env },
+    });
+    running.push(daemon);
+
+    expect(await daemon.observePublishedVersion()).toEqual({ act: "hold", reason: "published-unknown" });
+
+    const upgrade = daemon.hostState().upgrade;
+    expect(upgrade.newest_published_version).toBeNull();
+    expect(upgrade.major_held).toBe(0);
+    expect(upgrade.major_hold).toBeNull();
   });
 });
 
