@@ -1,10 +1,11 @@
 /**
- * Pins the worker partition introduced by #2345, after the Fleet's removal.
+ * Pins the worker partition introduced by #2345, after the per-project process.
  *
- * There is one supervisor lane per project now, so the question the partition
- * answers changed from "which fleet owns this worker" to "did THIS project's
- * supervisor spawn it": a worker stamped with the project's lane is reported in
- * `live_workers`, and a worker carrying any other stamp is reported in
+ * ADR 0130 Amendment 4 removed the process that used to own a slot map, so the
+ * question "is this Worker ours" is answered by the HOST — the daemon that
+ * birthed it — rather than by a pid table of our own (#2909). The failure mode
+ * that closes is attribution nobody can vouch for: a host that does not answer
+ * yields NO owned workers, and every live worker is reported in
  * `unattributed_workers` rather than silently counted as ours.
  */
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -54,7 +55,7 @@ function workerSnapshot(
   };
 }
 
-describe("project_status worker partition (#2345)", () => {
+describe("project_status worker partition — the host attributes, not us (#2345, #2909)", () => {
   const roots: string[] = [];
 
   afterEach(async () => {
@@ -62,7 +63,7 @@ describe("project_status worker partition (#2345)", () => {
     roots.length = 0;
   });
 
-  it("counts the project's own workers and sets a foreign stamp aside", async () => {
+  it("claims no worker the host did not name, and sets every one aside", async () => {
     const root = await mkdtemp(join(tmpdir(), "project-partition-"));
     roots.push(root);
 
@@ -113,9 +114,10 @@ describe("project_status worker partition (#2345)", () => {
 
     const live = status.live_workers.map((w) => w.id);
     const unattributed = status.unattributed_workers.map((w) => w.id);
-    expect(live).toContain("w_mine");
-    expect(live).not.toContain("w_foreign");
+    // No daemon answers here, so nothing is claimed: a stamp this project wrote
+    // for itself is not evidence the host ever admitted the Worker.
+    expect(live).toEqual([]);
+    expect(unattributed).toContain("w_mine");
     expect(unattributed).toContain("w_foreign");
-    expect(unattributed).not.toContain("w_mine");
   });
 });

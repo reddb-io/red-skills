@@ -16,22 +16,19 @@ import {
 import type { CastleMcpTool } from "./tool.js";
 
 const PROJECT_STATUS: ProjectStatusOutput = {
-  supervisor: {
-    pid: 42,
-    alive: true,
-    health: "healthy",
-    runner: "codex",
+  registration: {
+    held: true,
+    daemon_reachable: true,
+    project: "red-skills",
+    socket: "/run/redskilled.sock",
+    selector: "{}",
     target: 2,
-    bundle_version: "2.76.1",
-    bundle_latest: "2.76.1",
-    version_unknown: 0,
-    version_skew: 0,
-    heartbeat_age_s: 3,
-    identity_anchor: "pid-file" as const,
-    heartbeat: { age_s: 4, stale: false, stale_after_s: 300, reason: "fresh" as const },
+    renewal: "renewing" as const,
+    renew_by: "2026-07-31T05:30:00.000Z",
+    renewals: 3,
+    launch_revision: 0,
   },
   slots: { busy: 1, free: 1, parked: 0, total: 2 },
-  churn: { deaths: 0, respawns: 0, window_s: 300 },
   live_workers: [
     { id: "worker-1", pid: 43, issue: "2305", activity: "impl", origin: "afk" },
   ],

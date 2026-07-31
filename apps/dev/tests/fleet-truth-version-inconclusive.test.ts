@@ -25,7 +25,6 @@ import {
   runFleetTruthProbe,
   type FleetTruthProbeData,
 } from "../src/core/operational-probes/fleet-truth.js";
-import { stampFreshFleetHeartbeat } from "../src/runtime/supervisor-spawn.js";
 import { readFleetState } from "../src/runtime/wire/monitor.js";
 import { encodeDevSnapshotToon } from "../src/core/toon-snapshot.js";
 import { makeDeps, options, runBoot } from "./boot.helpers.js";
@@ -116,109 +115,5 @@ describe("an unknown supervisor bundle version is inconclusive, never red", () =
 
     expect(result.verdict).toBe("ok");
     expect(result.evidence).toContain("heartbeat_age=74s");
-  });
-});
-
-describe("the version stops being absent at its source", () => {
-  it("stamps the supervisor's bundle version on the watchdog respawn path", async () => {
-    const root = scratch();
-    try {
-      const statePath = join(root, "state.toon");
-
-      stampFreshFleetHeartbeat(statePath, 1_700_000_000, "claude", 3, "2.87.5");
-
-      expect(readFileSync(statePath, "utf8")).toContain("2.87.5");
-      const fleet = await readFleetState(statePath);
-      expect(fleet?.bundleVersion).toBe("2.87.5");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("defaults the stamp to the running bundle so no caller can omit it", async () => {
-    const root = scratch();
-    try {
-      const statePath = join(root, "state.toon");
-
-      stampFreshFleetHeartbeat(statePath, 1_700_000_000, "claude", 3);
-
-      const fleet = await readFleetState(statePath);
-      expect(fleet?.bundleVersion).toBeTruthy();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("gives the probe and fleet_status the same version from one snapshot", async () => {
-    const root = scratch();
-    try {
-      const pidPath = join(root, "afk-supervisor.pid");
-      const statePath = join(root, "afk-supervisor.state.toon");
-      writeFileSync(pidPath, `${LIVE_SUPERVISOR_PID}\n`, "utf8");
-      stampFreshFleetHeartbeat(statePath, 1_700_000_000, "claude", 3, "2.87.5");
-
-      const facts = await collectFleetTruthProbeInput(
-        { supervisorPidPath: pidPath, fleetStatePath: statePath },
-        {
-          nowMs: 1_700_000_060_000,
-          heartbeatStaleMs: 300_000,
-          latestBundleVersion: "2.87.5",
-          ownSupervisorPid: 777,
-          pidLive: (pid) => pid === LIVE_SUPERVISOR_PID,
-        },
-      );
-      const fleet = await readFleetState(statePath);
-
-      // The two readers of one fact must not disagree (ADR 0128).
-      expect(facts.bundleVersion).toBe(fleet?.bundleVersion);
-      const result = runFleetTruthProbe({ remoteUrls: [], fleetTruth: facts });
-      expect(result.verdict).toBe("ok");
-      expect(probeData(result).notes).toEqual([]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-});
-
-// A snapshot written by an older bundle carries no version; it must read as
-// unknown, never as a match with latest.
-describe("a legacy snapshot without bundle_version", () => {
-  it("is read as unknown by the probe", async () => {
-    const root = scratch();
-    try {
-      const pidPath = join(root, "afk-supervisor.pid");
-      const statePath = join(root, "afk-supervisor.state.toon");
-      writeFileSync(pidPath, `${LIVE_SUPERVISOR_PID}\n`, "utf8");
-      writeFileSync(
-        statePath,
-        encodeDevSnapshotToon({
-          ts: "2026-07-28T20:00:00.000Z",
-          epoch: 1_700_000_000,
-          runner: "claude",
-          ready_for_agent: 0,
-          slots: { busy: 0, free: 3, total: 3, parked: 0 },
-          spawns_this_tick: 0,
-        }),
-        "utf8",
-      );
-
-      const facts = await collectFleetTruthProbeInput(
-        { supervisorPidPath: pidPath, fleetStatePath: statePath },
-        {
-          nowMs: 1_700_000_060_000,
-          heartbeatStaleMs: 300_000,
-          latestBundleVersion: "2.87.5",
-          ownSupervisorPid: 777,
-          pidLive: (pid) => pid === LIVE_SUPERVISOR_PID,
-        },
-      );
-      const result = runFleetTruthProbe({ remoteUrls: [], fleetTruth: facts });
-
-      expect(facts.bundleVersion).toBeUndefined();
-      expect(result.verdict).toBe("ok");
-      expect(probeData(result).notes).toEqual(["version-unknown"]);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
   });
 });

@@ -407,6 +407,9 @@ function probeTextFor(id: string): string {
     "attempt-retention": `const plan = planCastleReclaim(records);`,
     "attempt-lane": `const lane = paths.castleAttempts;`,
     "attempt-contract": `const contract = "red.castle.attempt.v1";`,
+    "project-supervisor-entrypoint": `if (argv[0] === "__supervise") return superviseCommand(argv.slice(1));`,
+    "project-supervisor-spawn": `const pid = await spawnSupervisor({ root, target });`,
+    "project-supervisor-payload-key": `return { supervisor: publishSupervisorLiveness(anchor) };`,
   };
   const probe = probes[id];
   if (!probe) throw new Error(`no probe for extinct source ${id} — add one when adding an inventory entry`);
@@ -418,8 +421,94 @@ function nameProbeFor(id: string): string {
   const probes: Record<string, string> = {
     "attempt-keyed-accounting": `export function attemptUsage(slot: SlotState): AttemptBudgets { return {}; }`,
     "fleet-keyed-accounting": `export function sampleFleetPeakRss(state: SupervisorState): void {}`,
+    "project-supervisor-naming": `export async function spawnSupervisor(opts: SupervisorEntryLookup): Promise<number> { return 0; }`,
   };
   const probe = probes[id];
   if (!probe) throw new Error(`no probe for extinct name ${id} — add one when adding an inventory entry`);
   return probe;
 }
+
+/**
+ * ADR 0130 Amendment 4 removed the per-project process and every name it wore —
+ * the `__supervise` entrypoint, the `supervisor:` payload key, the launcher and
+ * the watchdog that relaunched it (#2909). Deletion is half the job; these are
+ * the other half, and they hold BOTH directions: a reader or a module carrying
+ * the name fails, and prose describing what was removed does not.
+ */
+describe("the per-project process stays removed, and prose about it does not fail (#2909)", () => {
+  const RELAUNCHER = `
+import { spawn } from "node:child_process";
+
+/** Bring the project's producer back up when its heartbeat goes stale. */
+export async function spawnSupervisorWatchdog(root: string): Promise<number> {
+  const child = spawn(process.execPath, [entry, "__supervise"], { detached: true });
+  return child.pid ?? 0;
+}
+`;
+
+  it("fails a module named for the removed process, naming the location and the route", () => {
+    const path = "apps/dev/src/runtime/supervisor-watchdog-spawn.ts";
+    const findings = collectExtinctSourceFindingsFromFiles([
+      { relativePath: path, sourceText: RELAUNCHER },
+    ]);
+    const message = formatExtinctSourceFailureMessage(
+      formatExtinctSourceViolations({ findings, baseline: [] }),
+    );
+
+    // The filename is the finding a text scan can never produce, so it is named
+    // first — at line 1, where a reader opens the file.
+    expect(findings.find((finding) => finding.kind === "module-name")).toMatchObject({
+      match: "supervisor-watchdog-spawn",
+      line: 1,
+      column: 1,
+    });
+    expect(message).toContain(path);
+    expect(message).toContain("__supervise");
+    // The route, not only the refusal: the message says what to reach for instead.
+    expect(message).toContain("redskilled-birth.ts");
+    expect(message).toContain("createRedskilledBirthPort");
+  });
+
+  it("clears once the project contributes a registration instead of a process", () => {
+    const registered = `
+import { createRedskilledBirthPort } from "./redskilled-birth.js";
+
+/** Ask the host to hold this project; the daemon polls and births the Worker. */
+export async function registerProject(root: string, argv: readonly string[]) {
+  const port = createRedskilledBirthPort({ root });
+  await port.reach();
+  return port.register({ selector: "{}", argv, workspace_path: root, target: 2 });
+}
+`;
+
+    expect(
+      collectExtinctSourceFindingsFromFiles([
+        { relativePath: "apps/dev/src/runtime/project-registration.ts", sourceText: registered },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("leaves prose describing the removal alone — a comment is documentation, not a reader", () => {
+    // Every sentence here would trip the inventory if comments counted. They are
+    // the migration's own explanation of what went, which is exactly the text a
+    // later reader needs; a ratchet that reddened it would teach the next slice
+    // to delete the reason rather than the code.
+    const documented = `
+// ADR 0130 Amendment 4 removed the per-project process: the \`__supervise\`
+// entrypoint, \`spawnSupervisor\`, the \`supervisor-watchdog-spawn\` relauncher
+// and the \`supervisor:\` key \`project_status\` answered with are all gone.
+/* The launcher used to call spawnSupervisorWatchdog after buildWatchdogIO. */
+export const PROJECT_LANE = "project";
+`;
+
+    expect(
+      collectExtinctSourceFindingsFromFiles([
+        { relativePath: "apps/dev/src/core/project-lane.ts", sourceText: documented },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("keeps the tolerance empty: this crossing shrinks the baseline, never grows it", () => {
+    expect(EXTINCT_SOURCE_BASELINE).toEqual([]);
+  });
+});

@@ -22,7 +22,7 @@ const SURFACE: ReadonlyArray<{
     name: "project_status",
     title: "Get project worker status",
     description:
-      "Return structured supervisor, slots, churn, and live-worker status for this project.",
+      "Return this project's host registration, slots, and live-worker status.",
     schema: ["fleet"],
   },
   {

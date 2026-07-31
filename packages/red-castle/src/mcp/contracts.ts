@@ -35,15 +35,6 @@ function contract(
 // fleet_status
 // ---------------------------------------------------------------------------
 
-/** Mirrors the watchdog's `SupervisorHealth` verdict. */
-const supervisorHealthSchema = z.enum(["absent", "healthy", "quiescent"]);
-
-/**
- * Staleness travels INSIDE the payload (ADR 0128 §6), so a stale read can never
- * be presented as current. `stale` is the anchor's verdict, not a threshold the
- * renderer re-derives: `orphaned` means a heartbeat with no live writer to vouch
- * for it, which is stale at any age.
- */
 export const heartbeatObservationSchema = z.object({
   /** Seconds since the last heartbeat tick; -1 when never observed. */
   age_s: z.number(),
@@ -72,64 +63,74 @@ export const publishedVersionObservationSchema = z.object({
 
 export type PublishedVersionObservationOutput = z.infer<typeof publishedVersionObservationSchema>;
 
+/**
+ * What the host holds for this project, since a project contributes a
+ * REGISTRATION rather than a process (ADR 0130 Amendment 4, #2909).
+ *
+ * `held: false` is the whole answer for a project the daemon knows nothing
+ * about, and it is a different fact from an unreachable daemon — which is why
+ * `daemon_reachable` is stated beside it rather than folded into it: a reader
+ * that could not tell them apart would send an operator to `project_start` when
+ * the real problem is a host that never answered.
+ */
+export const projectRegistrationStatusSchema = z.object({
+  held: z.boolean(),
+  daemon_reachable: z.boolean(),
+  project: z.string(),
+  socket: z.string(),
+  /** The work query this project registered; "" when it holds no registration. */
+  selector: z.string(),
+  /** How many Workers the project asked the host for; 0 when unregistered. */
+  target: z.number(),
+  /**
+   * Whether a session is still renewing the record; `unknown` when unheld.
+   *
+   * `running-on` is work nobody is watching, on a deadline it will lapse at —
+   * a different fact from `renewing`, and the reason the two are distinguishable
+   * rather than folded into one boolean.
+   */
+  renewal: z.enum(["renewing", "running-on", "unknown"]),
+  /** When the registration lapses unless renewed; "" when unheld. */
+  renew_by: z.string(),
+  renewals: z.number(),
+  /**
+   * How many times the launch has been restated (ADR 0130 Amendment 5). Separate
+   * from `renewals` because most renewals restate nothing: this is the number
+   * that moves when a runner directive lands.
+   */
+  launch_revision: z.number(),
+  /**
+   * What the last queue poll said about THIS project; absent when none has run.
+   *
+   * Absent is a different answer from a depth of zero — nobody has counted this
+   * yet — and it sends an operator to the daemon rather than to the backlog.
+   */
+  last_poll: z
+    .object({
+      at: z.string(),
+      outcome: z.string(),
+      depth: z.number().nullable(),
+      request_count: z.number(),
+      detail: z.string(),
+    })
+    .optional(),
+  /**
+   * The published-version answer WITH its own currency, from the same owner the
+   * Worker boot probe consults. Staleness travels inside the payload
+   * (ADR 0128 §6) so a cached read cannot be rendered as current (#2809).
+   */
+  published_version: publishedVersionObservationSchema.optional(),
+});
+
+export type ProjectRegistrationStatusOutput = z.infer<typeof projectRegistrationStatusSchema>;
+
 export const projectStatusOutputSchema = z.object({
-  supervisor: z.object({
-    pid: z.number(),
-    alive: z.boolean(),
-    health: supervisorHealthSchema,
-    runner: z.string(),
-    target: z.number(),
-    bundle_version: z.string(),
-    bundle_latest: z.string(),
-    /**
-     * 1 when the supervisor's bundle version was never measured. Distinct from
-     * `version_skew: 0`, which is a measured match: an absent version is
-     * inconclusive, and reporting it as no-skew is what let a missing field
-     * masquerade as a healthy one (#2752).
-     */
-    version_unknown: z.number(),
-    /**
-     * 1 when the published version could not be resolved at all. A skew verdict
-     * needs BOTH sides measured, so an unresolved published version reports
-     * unknown instead of a confident `version_skew: 0` derived from a
-     * substituted local value (#2809).
-     */
-    published_unknown: z.number().optional(),
-    /** 1 when the running supervisor's bundle differs from the published one. */
-    version_skew: z.number(),
-    /**
-     * The published-version answer WITH its own currency, from the same owner
-     * the Worker boot probe consults. Staleness travels inside the payload
-     * (ADR 0128 §6) so a cached read cannot be rendered as current (#2809).
-     */
-    published_version: publishedVersionObservationSchema.optional(),
-    /** Seconds since the supervisor's last heartbeat; -1 when never observed. */
-    heartbeat_age_s: z.number(),
-    /**
-     * Which anchor resolved the supervisor's identity: the `afk-supervisor.pid`
-     * lock, the `state.toon` heartbeat snapshot, or `none` when no live
-     * supervisor was found. Names the source so a disagreement between the two
-     * anchors is diagnosable from the report itself (#2698).
-     */
-    identity_anchor: z.enum(["pid-file", "fleet-state", "none"]),
-    /**
-     * The same anchor read that decided `alive`, published so the consumer sees
-     * the staleness rather than re-deriving it. `alive: false` always carries
-     * `stale: true`, which is what makes "absent beside a fresh heartbeat"
-     * unrepresentable rather than merely unlikely (#2704).
-     */
-    heartbeat: heartbeatObservationSchema,
-  }),
+  registration: projectRegistrationStatusSchema,
   slots: z.object({
     busy: z.number(),
     free: z.number(),
     parked: z.number(),
     total: z.number(),
-  }),
-  churn: z.object({
-    deaths: z.number(),
-    respawns: z.number(),
-    window_s: z.number(),
   }),
   live_workers: z.array(
     z.object({
@@ -141,9 +142,9 @@ export const projectStatusOutputSchema = z.object({
     }),
   ),
   /**
-   * Live workers this project's supervisor does not own — a process whose pid
-   * is absent from the supervisor's slot map, so a stale or foreign worker is
-   * never silently counted as ours.
+   * Live workers this project does not own — a Worker the host attributes to
+   * another project, or one carrying no project stamp at all, so a stale or
+   * foreign worker is never silently counted as ours.
    */
   unattributed_workers: z.array(
     z.object({
@@ -304,19 +305,6 @@ export const monitorOutputSchema = z.object({
       spawnsThisTick: z.number(),
     })
     .nullable(),
-  /**
-   * The supervisor as the single anchor resolved it (#2704). The monitor no
-   * longer infers a supervisor from the snapshot it renders; it publishes the
-   * anchor's verdict and its staleness verbatim.
-   */
-  supervisor: z
-    .object({
-      pid: z.number(),
-      alive: z.boolean(),
-      identity_anchor: z.enum(["pid-file", "fleet-state", "none"]),
-      heartbeat: heartbeatObservationSchema,
-    })
-    .optional(),
   /** GitHub queue counts read passively from the statusline TTL cache; absent
    * when no statusline run has ever written it. */
   remoteQueue: z.number().optional(),

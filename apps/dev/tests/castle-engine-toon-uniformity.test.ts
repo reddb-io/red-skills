@@ -24,10 +24,7 @@ import {
   writeStateAtomic,
   defaultState,
 } from "../src/core/state.js";
-import { fleetHeartbeatState } from "../src/commands/supervise.js";
-import { stampFreshFleetHeartbeat } from "../src/runtime/supervisor-spawn.js";
 import { writeLogLineCursors } from "../src/runtime/log-cursor.js";
-import { buildWatchdogIO } from "../src/runtime/watchdog-io.js";
 import { afkPaths } from "../src/runtime/wire.js";
 import type { FleetHeartbeat } from "../src/core/supervisor.js";
 
@@ -89,40 +86,6 @@ describe("castle-engine write-surface TOON uniformity", () => {
     // A populated AfkState never encodes to raw JSON under the TOON encoder.
     expect(() => JSON.parse(bytes)).toThrow();
     expect(decode(bytes)).toBeTruthy();
-  });
-
-  it("the supervisor state snapshot serializer emits TOON, never raw JSON", () => {
-    const bytes = fleetHeartbeatState(sampleHeartbeat());
-    expect(() => JSON.parse(bytes)).toThrow();
-    const decoded = decode(bytes) as Record<string, unknown>;
-    expect(decoded.epoch).toBe(42);
-    expect(decoded.slots).toEqual({ busy: 1, free: 1, total: 2, parked: 0 });
-    expect(decoded.slot_pids).toEqual([{ slot: 0, pid: 12345 }]);
-    expect(decoded.churn).toEqual({ deaths: 2, respawns: 2, window_s: 300 });
-  });
-
-  it("the fresh-relaunch supervisor heartbeat stamp is TOON, never raw JSON", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "castle-toon-stamp-"));
-    const path = join(dir, "state.toon");
-    stampFreshFleetHeartbeat(path, 7, "claude", 2);
-    const bytes = await readFile(path, "utf8");
-    expect(() => JSON.parse(bytes)).toThrow();
-    const decoded = decode(bytes) as Record<string, unknown>;
-    expect(decoded.epoch).toBe(7);
-    expect(decoded.slots).toEqual({ busy: 0, free: 2, total: 2, parked: 0 });
-    expect(decoded.slot_pids).toEqual([]);
-  });
-
-  it("the supervisor restart ledger is TOON, never raw JSON", async () => {
-    const root = await mkdtemp(join(tmpdir(), "castle-toon-restarts-"));
-    const io = buildWatchdogIO(root);
-    // The supervisor ensures the state-tier dir before writing; mirror that here.
-    await mkdir(dirname(afkPaths(root).supervisorRestartsPath), { recursive: true });
-    await io.writeRestartLedger!([100, 200, 300]);
-    const roundTripped = await io.readRestartLedger!();
-    expect(roundTripped).toEqual([100, 200, 300]);
-    const bytes = await readFile(afkPaths(root).supervisorRestartsPath, "utf8");
-    expectToonNotJson(bytes, [100, 200, 300]);
   });
 
   it("the monitor log-cursor snapshot is TOON, never raw JSON", async () => {

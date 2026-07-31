@@ -6,9 +6,6 @@ import {
 } from "../core/monitor.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
 import { collectMonitorInputs, afkPaths, resolveRepoContext, resolveStatuslineCacheTtl } from "../runtime/wire.js";
-import { resolveSupervisorConfig } from "../core/supervisor.js";
-import { runWatchdog } from "../core/watchdog.js";
-import { buildWatchdogIO } from "../runtime/watchdog-io.js";
 import { createFileBootBreakerStore, isBreakerOpen } from "../core/supervisor/boot-breaker.js";
 import { createEnginePaths } from "@reddb-io/red-castle/engine";
 import { join } from "node:path";
@@ -202,27 +199,12 @@ export async function monitorCommand(
     return 0;
   }
 
-  // Recovery watchdog (#407): a supervisor whose #406 heartbeat is stale past
-  // RED_AFK_SUPERVISOR_STALE_S is hard-hung (live PID, drain loop wedged), and
-  // the watchdog tears it down and relaunches a fresh fleet. That is a real
-  // side effect, so `monitor` — a read-only dashboard the operator reaches for
-  // to *observe* the fleet — must NOT run it by default (#589): an inspect must
-  // never start/stop a supervisor. It is now strictly OPT-IN, for a caller that
-  // wants the dashboard to double as the recovery tick (`monitor --watchdog`,
-  // or RED_AFK_WATCHDOG=1 for a recurring loop). Best-effort — a watchdog
-  // failure never blocks the render.
-  const watchdogRequested = args.includes("--watchdog") || process.env.RED_AFK_WATCHDOG === "1";
-  if (watchdogRequested) {
-    try {
-      const supervisorCfg = resolveSupervisorConfig();
-      await runWatchdog(buildWatchdogIO(cwd, stdout), supervisorCfg.supervisorStaleS, supervisorCfg.progressStaleS, {
-        maxRestarts: supervisorCfg.supervisorMaxRestarts,
-        windowS: supervisorCfg.supervisorRestartWindowS,
-      });
-    } catch {
-      // best-effort: recovery must never break monitoring.
-    }
-  }
+  // The recovery watchdog is GONE with the process it watched (ADR 0130
+  // Amendment 4, #2909). It existed to tear down a wedged per-project process
+  // and relaunch it; a project now contributes a registration, and the daemon
+  // that holds it owns process death — so `--watchdog` / `RED_AFK_WATCHDOG=1`
+  // have nothing left to arm and are accepted-and-ignored rather than routed to
+  // a launcher that no longer exists.
 
   const { workers, events, fleet, remoteQueue, remoteHuman, remoteQuarantine, remoteCacheAgeS } = await collectMonitorInputs(cwd);
   const now = Math.floor(Date.now() / 1000);

@@ -8,10 +8,14 @@ describe("cli parser", () => {
     expect(parseCli(["run", "--once"])).toEqual({ command: "run", args: ["--once"] });
   });
 
-  it("routes monitor and fleet subcommands without changing their args", () => {
+  it("routes the monitor subcommand without changing its args", () => {
     expect(parseCli(["monitor", "--once"])).toEqual({ command: "monitor", args: ["--once"] });
-    expect(parseCli(["fleet", "3", "--runner", "claude"])).toEqual({ command: "fleet", args: ["3", "--runner", "claude"] });
-    expect(parseCli(["fleet", "stop"])).toEqual({ command: "fleet", args: ["stop"] });
+  });
+
+  // ADR 0130 Amendment 4 removed the per-project process, and `fleet` was its
+  // launcher (#2909). A stale invocation is refused by name rather than routed.
+  it("refuses the removed fleet launcher instead of routing it", () => {
+    expect(() => parseCli(["fleet", "3", "--runner", "claude"])).toThrow(/unknown command 'fleet'/);
   });
 
   it("routes the trust-gated triage subcommand without changing its args", () => {

@@ -30,41 +30,44 @@ function nullStream(): Writable {
   return new Writable({ write(_c, _e, cb) { cb(); } });
 }
 
-type FleetStatus = "stopped" | "none" | "stale" | "timeout";
-
 function fakeIO(opts: {
-  fleetStatus?: FleetStatus;
-  fleetPid?: number;
+  deregistered?: boolean;
+  workersStopped?: string[];
+  refusal?: string;
   staleClaims?: string[];
   claimLabels?: Record<number, string[]>;
   workerPid?: number | null;
   workerLive?: boolean;
   workerKillResult?: boolean;
 } = {}): StopIO & {
-  stopFleetCalled: boolean;
+  releaseProjectCalled: boolean;
   removedDirs: string[];
   labelRestores: Array<{ issue: number; labels: string[] }>;
   workerKillCalled: boolean;
 } {
-  let stopFleetCalled = false;
+  let releaseProjectCalled = false;
   const removedDirs: string[] = [];
   const labelRestores: Array<{ issue: number; labels: string[] }> = [];
   let workerKillCalled = false;
 
   const io: StopIO & {
-    stopFleetCalled: boolean;
+    releaseProjectCalled: boolean;
     removedDirs: string[];
     labelRestores: Array<{ issue: number; labels: string[] }>;
     workerKillCalled: boolean;
   } = {
-    get stopFleetCalled() { return stopFleetCalled; },
+    get releaseProjectCalled() { return releaseProjectCalled; },
     get removedDirs() { return removedDirs; },
     get labelRestores() { return labelRestores; },
     get workerKillCalled() { return workerKillCalled; },
 
-    async stopFleet(_root, _out) {
-      stopFleetCalled = true;
-      return { status: opts.fleetStatus ?? "none", pid: opts.fleetPid };
+    async releaseProject(_root: string) {
+      releaseProjectCalled = true;
+      return {
+        deregistered: opts.deregistered ?? false,
+        workersStopped: opts.workersStopped ?? [],
+        ...(opts.refusal === undefined ? {} : { refusal: opts.refusal }),
+      };
     },
     async listStaleClaimDirs(_tmpDir) {
       return (opts.staleClaims ?? []).map((p) => {
@@ -132,49 +135,48 @@ describe("parseStopArgs", () => {
   });
 });
 
-// ---------- fleet stop path ----------
+// ---------- project stop path ----------
 
-describe("stopCommand — fleet stop", () => {
-  it("targets the supervisor from afk-supervisor.pid, not individual workers", async () => {
-    // In fleet mode stopCommand delegates entirely to io.stopFleet (which reads
-    // afk-supervisor.pid). Worker-level kill (io.killTreeAndWait) must NOT fire.
-    const io = fakeIO({ fleetStatus: "none" });
+describe("stopCommand — project stop", () => {
+  it("gives the registration back rather than killing a process of our own", async () => {
+    // Since ADR 0130 Amendment 4 there is no per-project process (#2909): the
+    // stop is a deregistration plus the host ending the Workers it named, so
+    // worker-level kill (io.killTreeAndWait) must NOT fire.
+    const io = fakeIO({ deregistered: true });
     const { stream } = capture();
     await stopCommand([], "/repo", stream, io);
 
-    expect(io.stopFleetCalled).toBe(true);
+    expect(io.releaseProjectCalled).toBe(true);
     expect(io.workerKillCalled).toBe(false);
   });
 
-  it("emits TOON with status=none when no fleet is running", async () => {
-    const io = fakeIO({ fleetStatus: "none" });
+  it("emits TOON reporting an unheld registration as an answer, not a fault", async () => {
+    const io = fakeIO({ deregistered: false });
     const { stream, text } = capture();
     const code = await stopCommand([], "/repo", stream, io);
 
     expect(code).toBe(0);
     const out = text();
     expect(out).toContain("op: stop");
-    expect(out).toContain("supervisor_status: none");
+    expect(out).toContain("deregistered: false");
     expect(out).toContain("claims_released: 0");
   });
 
-  it("emits TOON with status=stopped and supervisor_pid after clean shutdown", async () => {
-    const io = fakeIO({ fleetStatus: "stopped", fleetPid: 1234 });
+  it("emits TOON naming how many Workers the host ended for us", async () => {
+    const io = fakeIO({ deregistered: true, workersStopped: ["wAAAA", "wBBBB"] });
     const { stream, text } = capture();
     const code = await stopCommand([], "/repo", stream, io);
 
     expect(code).toBe(0);
     const out = text();
-    expect(out).toContain("op: stop");
-    expect(out).toContain("supervisor_pid: 1234");
-    expect(out).toContain("supervisor_status: stopped");
+    expect(out).toContain("deregistered: true");
+    expect(out).toContain("workers_stopped: 2");
   });
 
   it("reconciles stale claim dirs after stop and reports the count", async () => {
     const staleDirs = ["/repo/.red/tmp/claims/42", "/repo/.red/tmp/claims/77"];
     const io = fakeIO({
-      fleetStatus: "stopped",
-      fleetPid: 5678,
+      deregistered: true,
       staleClaims: staleDirs,
       claimLabels: { 42: ["running"], 77: ["running", "blocked:validation"] },
     });
@@ -189,7 +191,7 @@ describe("stopCommand — fleet stop", () => {
   });
 
   it("reconciles zero claims when none are stale", async () => {
-    const io = fakeIO({ fleetStatus: "stale", fleetPid: 9999 });
+    const io = fakeIO({ deregistered: true });
     const { stream, text } = capture();
     await stopCommand([], "/repo", stream, io);
 
@@ -197,17 +199,17 @@ describe("stopCommand — fleet stop", () => {
     expect(text()).toContain("claims_released: 0");
   });
 
-  it("returns exit code 1 and timeout status when supervisor survives SIGKILL", async () => {
-    const io = fakeIO({ fleetStatus: "timeout", fleetPid: 4321 });
+  it("returns exit code 1 and names the refusal when the host does not answer", async () => {
+    const io = fakeIO({ refusal: "redskilled daemon unreachable" });
     const { stream, text } = capture();
     const code = await stopCommand([], "/repo", stream, io);
 
     expect(code).toBe(1);
-    expect(text()).toContain("supervisor_status: timeout");
+    expect(text()).toContain("redskilled daemon unreachable");
   });
 
   it("output is valid TOON (no JSON braces)", async () => {
-    const io = fakeIO({ fleetStatus: "stopped", fleetPid: 1, staleClaims: ["/c/1"] });
+    const io = fakeIO({ deregistered: true, staleClaims: ["/c/1"] });
     const { stream, text } = capture();
     await stopCommand([], "/repo", stream, io);
 
@@ -215,7 +217,6 @@ describe("stopCommand — fleet stop", () => {
     // TOON must not contain JSON delimiters.
     expect(out).not.toContain("{");
     expect(out).not.toContain("}");
-    expect(out).not.toContain("[{");
   });
 });
 
@@ -228,7 +229,7 @@ describe("stopCommand — --worker recycle", () => {
     await stopCommand(["--worker", "wBZ43"], "/repo", stream, io);
 
     expect(io.workerKillCalled).toBe(true);
-    expect(io.stopFleetCalled).toBe(false);
+    expect(io.releaseProjectCalled).toBe(false);
   });
 
   it("emits TOON with op=stop-worker and worker_status=stopped on success", async () => {

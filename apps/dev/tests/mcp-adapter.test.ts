@@ -461,8 +461,12 @@ describe("castle MCP host adapter", () => {
   });
 });
 
-describe("project lifecycle — one producer, no registry to adopt into", () => {
-  it("re-aims a live supervisor with a directive rather than a persisted profile", async () => {
+describe("project lifecycle — a registration, never a process (#2909)", () => {
+  // ADR 0130 Amendment 4: the record lives on the host, so both a duplicate
+  // start and a re-aim are decided by the daemon. A pre-check of our own would be
+  // a second opinion racing the one authority that can see the registration — and
+  // a project-local pid file is not evidence the host holds anything.
+  it("refuses to re-aim a project the host holds no registration for", async () => {
     const cwd = await root();
     const paths = afkPaths(cwd);
     await mkdir(paths.supervisorRuntimeDir, { recursive: true });
@@ -471,26 +475,15 @@ describe("project lifecycle — one producer, no registry to adopt into", () => 
 
     await expect(
       createCastleMcpDependencies(cwd).projectResize({ target: 3, runner: "codex" }),
-    ).resolves.toMatchObject({ status: "resized", directive: "written", target: 3 });
+    ).rejects.toThrow(/registration|daemon/);
   });
 
-  it("refuses to re-aim a project whose workers are not running", async () => {
+  it("refuses the start rather than falling back to a process of its own", async () => {
     const cwd = await root();
-    await expect(
-      createCastleMcpDependencies(cwd).projectResize({ target: 3 }),
-    ).rejects.toThrow(/no running workers/);
-  });
-
-  it("refuses to start a project whose workers are already running", async () => {
-    const cwd = await root();
-    const paths = afkPaths(cwd);
-    await mkdir(paths.supervisorRuntimeDir, { recursive: true });
-    await writeFile(paths.supervisorPidPath, String(process.pid), "utf8");
-    await writeFile(paths.supervisorPidStartPath, readPidStartTime(process.pid)!, "utf8");
 
     await expect(
       createCastleMcpDependencies(cwd).projectStart({ runner: "claude", target: 1 }),
-    ).rejects.toThrow(/already running/);
+    ).rejects.toThrow(/registration rather than a process/);
   });
 });
 

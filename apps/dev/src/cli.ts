@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { fleetCommand } from "./commands/fleet.js";
 import { goCommand } from "./commands/go.js";
 import { activityReviewCommand } from "./commands/activity-review.js";
 import { afkOutputShapingCommand } from "./commands/afk-output-shaping.js";
@@ -25,8 +24,6 @@ import { respondCommand } from "./commands/respond.js";
 import { routeModelTierCommand } from "./commands/route-model-tier.js";
 import { rspInstructionsCommand } from "./commands/rsp-instructions.js";
 import { statuslineCommand, statuslineRefreshCountsCommand } from "./commands/statusline.js";
-import { superviseCommand } from "./commands/supervise.js";
-import { supervisorWatchdogCommand } from "./commands/supervisor-watchdog.js";
 import { triageCommand } from "./commands/triage.js";
 import { toonBumpCommand } from "./commands/toon-bump.js";
 import { toonMigrateCommand } from "./commands/toon-migrate.js";
@@ -36,7 +33,6 @@ import { routeCommand, UnknownCommandError, type RouterSchema } from "@reddb-io/
 export type CliCommand =
   | "run"
   | "monitor"
-  | "fleet"
   | "stop"
   | "go"
   | "manager"
@@ -65,9 +61,7 @@ export type CliCommand =
   | "inject-development-workflow"
   | "toon-bump"
   | "toon-migrate"
-  | "version"
-  | "__supervise"
-  | "__watchdog";
+  | "version";
 
 export interface ParsedCli {
   command: CliCommand;
@@ -87,7 +81,6 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
   commands: {
     run: {},
     monitor: {},
-    fleet: {},
     stop: {},
     go: {},
     manager: {},
@@ -117,8 +110,6 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "toon-bump": {},
     "toon-migrate": {},
     version: {},
-    __supervise: {},
-    __watchdog: {},
   },
   default: "run",
   keepArgvOnDefault: true,
@@ -146,7 +137,7 @@ const RUN_SURFACE_LEADING_FLAGS = new Set([
 
 export const CLI_USAGE = `Usage: red-skills-dev <command> [options]
 
-Commands: run (default), monitor, fleet, stop, go, manager, dashboard,
+Commands: run (default), monitor, stop, go, manager, dashboard,
   daily-review, weekly-review, reap, orphan-branches, requeue, retake, review,
   respond, triage,
   red-doctor, statusline, version, …
@@ -192,13 +183,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     throw error;
   }
   // `<command> --help` prints usage and exits BEFORE dispatch for every
-  // command (#2581 acceptance) — commands with richer usage (e.g. fleet) are
-  // never reached with a help flag, so their own handlers stay as docs.
+  // command (#2581 acceptance), so a command's own handler is never reached
+  // with a help flag.
   if (
     parsed.command !== "go" &&
     (parsed.args.includes("--help") || parsed.args.includes("-h"))
   ) {
-    if (parsed.command === "fleet") return fleetCommand(parsed.args);
     process.stdout.write(
       `Usage: red-skills-dev ${parsed.command} [options]\n` +
         `No detailed usage registered for this command yet; see the afk skill docs.\n`,
@@ -211,7 +201,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0;
   }
   if (parsed.command === "monitor") return monitorCommand(parsed.args);
-  if (parsed.command === "fleet") return fleetCommand(parsed.args);
   if (parsed.command === "stop") return stopCommand(parsed.args);
   if (parsed.command === "go") return goCommand(parsed.args);
   if (parsed.command === "manager") return managerCommand(parsed.args);
@@ -240,8 +229,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "inject-development-workflow") return injectDevelopmentWorkflowCommand(parsed.args);
   if (parsed.command === "toon-bump") return toonBumpCommand(parsed.args);
   if (parsed.command === "toon-migrate") return toonMigrateCommand(parsed.args);
-  if (parsed.command === "__supervise") return superviseCommand(parsed.args);
-  if (parsed.command === "__watchdog") return supervisorWatchdogCommand(parsed.args);
   return runCommand({ args: parsed.args });
 }
 

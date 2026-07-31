@@ -4,7 +4,6 @@ import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
-import { Writable } from "node:stream";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
   armPr,
@@ -16,7 +15,6 @@ import {
   readCastleHistoryRecords,
   readCastleLaneRecords,
   parseWorkSelector,
-  PROJECT_SUPERVISOR_LANE,
   RUNNER_SPECS,
   detectRunner,
   type CastleLaneRecord,
@@ -57,18 +55,13 @@ import { listWaits as listRspWaits } from "../../rsp/src/wait/registry.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { publishedVersionReport, readPublishedBundleVersion } from "./core/published-version.js";
 import { collectDashboardReport } from "./commands/dashboard.js";
-import { stopFleet, writeResizeRequest } from "./commands/fleet.js";
-import {
-  classifySupervisor,
-  resolveSupervisorConfig,
-} from "./core/supervisor.js";
 import type { HitlCandidate } from "./core/hitl-selection.js";
 import type { IssueCandidate } from "./core/session.js";
 import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
 import { matchesSelector } from "./core/session.js";
 import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import * as ghx from "./runtime/gh.js";
-import { publishedBundleArgv } from "./runtime/supervisor-entry.js";
+import { publishedBundleArgv } from "./runtime/published-entry.js";
 import {
   createRedskilledBirthPort,
   redskilledRegistrationRefusal,
@@ -76,7 +69,6 @@ import {
 import {
   publishWorkerLiveness,
   readDaemonWorkerSet,
-  readSupervisorLiveness,
   resolveWorkerLiveness,
   type DaemonWorkerSet,
 } from "./runtime/liveness-anchor.js";
@@ -88,7 +80,6 @@ import {
   collectStatuslineFleet,
   collectStatuslineRepo,
   inferGitHubRepoSlug,
-  readFleetState,
   resolveRepoContext,
 } from "./runtime/wire.js";
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
@@ -843,85 +834,60 @@ async function concretizeSelectorUser<T extends { user?: string }>(
   );
 }
 
+/**
+ * What the host holds for this project, and which Workers it is running.
+ *
+ * ADR 0130 Amendment 4 removed the per-project process, so there is no
+ * `supervisor:` left to report — the question "is this project being driven"
+ * is answered by the REGISTRATION the daemon holds and by the poll it last ran
+ * against it (#2909). A daemon that does not answer reports `daemon_reachable:
+ * false` rather than an absent registration, because "the host holds nothing"
+ * and "the host said nothing" send an operator to opposite places.
+ */
 async function projectStatus(root: string): Promise<ProjectStatusOutput> {
-  const paths = afkPaths(root);
-  const now = Math.floor(Date.now() / 1_000);
-  const config = resolveSupervisorConfig();
-  const [fleet, monitor] = await Promise.all([
-    readFleetState(paths.fleetStatePath),
+  const port = createRedskilledBirthPort({ root });
+  const [monitor, held] = await Promise.all([
     collectMonitorInputs(root),
+    port.registration().catch(() => undefined),
   ]);
-  // ONE anchor decides identity, liveness AND freshness together (ADR 0128 §5).
-  // The snapshot below is read for slots, churn and runner only — never for a
-  // second opinion on whether the supervisor is there.
-  const supervisor = await readSupervisorLiveness(paths.supervisorRuntimeDir, {
-    heartbeatEpoch: fleet?.epoch ?? null,
-    staleAfterS: config.supervisorStaleS,
-    nowS: now,
-  });
-  const pid = supervisor.alive ? supervisor.pid : null;
-  const health = classifySupervisor(
-    {
-      pid,
-      pidAlive: supervisor.alive,
-      lastHeartbeatEpoch: fleet?.epoch ?? null,
-      lastProgressEpoch: fleet?.lastProgressEpoch ?? null,
-      slotsBusy: fleet?.slotsBusy ?? 0,
-    },
-    now,
-    config.supervisorStaleS,
-    config.progressStaleS,
-  );
-  // Build a PID set for the slot-pid fallback: workers without a lane stamp
-  // (legacy or pre-stamp) are attributed to this project if their pid appears in
-  // the supervisor's slot map. Workers with a stamp for another lane go to the
-  // unattributed bucket even if their pid matches.
-  const fleetPidSet = new Set(
-    (fleet?.slotPids ?? []).map((sp) => sp.pid).filter((pid) => pid > 0),
-  );
   const allLiveWorkers = monitor.workers.filter(
     (worker) => worker.pidLive === true || worker.live,
   );
-  function attributedToThisProject(worker: (typeof allLiveWorkers)[number]): boolean {
-    const stampedLane = worker.state.fleet;
-    // Stamped workers: use the stamp as the definitive source of truth.
-    if (stampedLane !== undefined) return stampedLane === PROJECT_SUPERVISOR_LANE;
-    // Legacy/unstamped workers: fall back to the supervisor's slot-pid map.
-    return fleetPidSet.has(worker.state.pid);
-  }
+  // Attribution is the HOST's, never a pid map of our own: a Worker is ours when
+  // the daemon says its project is ours. A stamp for another project — or none
+  // at all — lands in the unattributed bucket even when the pid looks familiar.
+  const ourWorkerIds = new Set(
+    await port.workerIds().catch(() => [] as readonly string[]),
+  );
+  const attributedToThisProject = (worker: (typeof allLiveWorkers)[number]): boolean =>
+    ourWorkerIds.has(worker.state.worker_id);
   const liveWorkers = allLiveWorkers.filter(attributedToThisProject);
   const unattributedWorkers = allLiveWorkers.filter((w) => !attributedToThisProject(w));
   // The published version comes from the one owner the boot probe also consults
-  // (#2809) — never from the fleet snapshot's stamped copy, which ages with the
-  // snapshot and contradicted the path that was halting every Worker boot.
-  const version = publishedVersionReport(fleet?.bundleVersion, readPublishedBundleVersion());
+  // (#2809), so a reader replays that answer instead of deriving its own.
+  const version = publishedVersionReport("", readPublishedBundleVersion());
+  const target = held?.target ?? 0;
+  const busy = liveWorkers.length;
   return {
-    supervisor: {
-      pid: supervisor.pid,
-      alive: supervisor.alive,
-      health,
-      runner: fleet?.runner ?? "",
-      target: fleet?.target ?? fleet?.slotsTotal ?? 0,
-      bundle_version: fleet?.bundleVersion ?? "",
-      // Unknown is its own answer, distinct from `version_skew: 0` — hiding it
-      // behind an empty string is what let an unmeasured version read as a
-      // measured match (#2752). `published_version` carries the currency of the
-      // latest answer, so a cached read cannot render as current (#2809).
-      ...version,
-      heartbeat_age_s: supervisor.heartbeat.age_s,
-      identity_anchor: supervisor.anchor,
-      heartbeat: supervisor.heartbeat,
+    registration: {
+      held: held != null,
+      daemon_reachable: held !== undefined,
+      project: port.projectLabel,
+      socket: port.socketPath,
+      selector: held?.selector ?? "",
+      target,
+      renewal: held?.renewal ?? "unknown",
+      renew_by: held?.renew_by ?? "",
+      renewals: held?.renewals ?? 0,
+      launch_revision: held?.launch_revision ?? 0,
+      ...(held?.last_poll ? { last_poll: held.last_poll } : {}),
+      ...(version.published_version ? { published_version: version.published_version } : {}),
     },
     slots: {
-      busy: fleet?.slotsBusy ?? 0,
-      free: fleet?.slotsFree ?? 0,
-      parked: fleet?.slotsParked ?? 0,
-      total: fleet?.slotsTotal ?? 0,
-    },
-    churn: {
-      deaths: fleet?.churnDeaths ?? 0,
-      respawns: fleet?.churnRespawns ?? 0,
-      window_s: fleet?.churnWindowS ?? 0,
+      busy,
+      free: Math.max(0, target - busy),
+      parked: 0,
+      total: target,
     },
     live_workers: liveWorkers.map((worker) => ({
       id: worker.state.worker_id,
@@ -964,9 +930,9 @@ function encodeRegistrationSelector(selector: ProjectStartInput["selector"]): st
  * whole request; what changed is who is handed them.
  *
  * **A daemon that does not answer refuses the start** (ADR 0130 rule 6). Falling
- * back to spawning a supervisor here would put a demand producer on the machine
- * that no host admitted, no host counts and no host can stop — precisely the
- * shape the registration exists to end.
+ * back to a process of the project's own would put a demand producer on the
+ * machine that no host admitted, no host counts and no host can stop — precisely
+ * the shape the registration exists to end.
  */
 async function projectStart(root: string, rawInput: ProjectStartInput) {
   const input: ProjectStartInput = {
@@ -975,17 +941,12 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
       ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
       : {}),
   };
-  const paths = afkPaths(root);
-  const running = await readSupervisorLiveness(paths.supervisorRuntimeDir);
-  if (running.alive) {
-    throw new Error(
-      "this project's workers are already running; use project_resize to re-aim them or project_status to read them",
-    );
-  }
-
+  // A project already registered is refused by the DAEMON, which is the one
+  // party that can see the record — a pre-check of our own would be a second
+  // opinion racing the authority (ADR 0130 Amendment 4).
   const selector = encodeRegistrationSelector(input.selector);
   // What runs when a Worker is born for this project — resolved from the
-  // PUBLISHED bundle, exactly as a supervisor launch resolves it (#2808), so a
+  // PUBLISHED bundle rather than from this process's own entry (#2808), so a
   // registration made from a stale plugin cache never commits the host to an
   // older Worker than the one this project publishes.
   const argv = [
@@ -1075,10 +1036,14 @@ async function releaseProjectRegistration(root: string) {
 }
 
 /**
- * Re-aim this project's running workers. The directive carries the new width
- * and runner to the live supervisor; with no registry there is nothing to
- * persist, so a change that the supervisor cannot yet apply reads as pending
- * rather than as saved.
+ * Re-aim this project's work by RESTATING its launch, not by messaging a process.
+ *
+ * ADR 0130 Amendment 5: the launch is the one part of a registration a renewal
+ * may restate, so a runner swap rides the message a live session already sends
+ * and the daemon holds it as the launch for the NEXT Worker. The width lives in
+ * the registration itself and a renewal does not carry it, so a target change is
+ * reported as unapplied rather than silently dropped — a resize that answered
+ * "resized" while changing nothing is the failure this states out loud.
  */
 async function projectResize(root: string, rawInput: ProjectResizeInput) {
   const input: ProjectResizeInput = {
@@ -1087,27 +1052,38 @@ async function projectResize(root: string, rawInput: ProjectResizeInput) {
       ? { selector: await concretizeSelectorUser(root, rawInput.selector) }
       : {}),
   };
-  const paths = afkPaths(root);
-  const running = await readSupervisorLiveness(paths.supervisorRuntimeDir);
-  if (!running.alive) {
+  const port = createRedskilledBirthPort({ root });
+  const held = await port.registration().catch(() => undefined);
+  if (held == null) {
     throw new Error(
-      "this project has no running workers to re-aim; use project_start to start them",
+      held === undefined
+        ? redskilledRegistrationRefusal(port.socketPath, new Error("the host did not answer"))
+        : "this project holds no registration to re-aim; use project_start to register it",
     );
   }
 
-  let directive: "not-requested" | "written" = "not-requested";
-  if (input.target !== undefined || input.runner !== undefined) {
-    const state = await readFleetState(paths.fleetStatePath);
-    const target = input.target ?? state?.target ?? state?.slotsTotal;
-    if (target !== undefined) {
-      await writeResizeRequest(
-        paths.supervisorResizePath,
-        target,
-        state?.shrinkMode ?? resolveSupervisorConfig().shrinkMode,
-        input.runner,
-      );
-      directive = "written";
-    }
+  let directive: "not-requested" | "restated" = "not-requested";
+  const warnings: string[] = [];
+  if (input.runner !== undefined) {
+    // All-or-nothing, as the amendment requires: the argv is restated whole, and
+    // the env travels with it, so the next Worker is never half one tick's
+    // decision and half an older one.
+    const argv = [
+      ...publishedBundleArgv(),
+      "run",
+      "--once",
+      "--runner",
+      input.runner,
+      ...(input.selector ? ["--selector", JSON.stringify(input.selector)] : []),
+    ];
+    await port.restateLaunch({ argv, env: held.env });
+    directive = "restated";
+  }
+  if (input.target !== undefined && input.target !== held.target) {
+    warnings.push(
+      `the target ${input.target} does not travel on a renewal; this project stays registered at ` +
+        `${held.target} until it is registered again (ADR 0130 Amendment 5)`,
+    );
   }
   return {
     status: "resized",
@@ -1116,6 +1092,7 @@ async function projectResize(root: string, rawInput: ProjectResizeInput) {
     ...(input.runner !== undefined ? { runner: input.runner } : {}),
     ...(input.selector ? { selector: input.selector } : {}),
     ...(input.base !== undefined ? { base: input.base } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
@@ -1628,17 +1605,11 @@ export function createCastleMcpDependencies(
     projectStatus: () => projectStatus(root),
     projectStart: (input) => projectStart(root, input),
     projectResize: (input) => projectResize(root, input),
-    projectStop: async (input) => {
-      const silent = new Writable({
-        write(_chunk, _encoding, callback) {
-          callback();
-        },
-      });
-      const stopped = await stopFleet(root, silent, {
-        ...(input.force ? { force: true } : {}),
-      });
-      return { ...stopped, ...(await releaseProjectRegistration(root)) };
-    },
+    // Stopping is giving the registration back and asking the host to end this
+    // project's Workers. There is no process of the project's own left to kill
+    // (ADR 0130 Amendment 4), so `force` no longer selects a harder teardown —
+    // the kill is the daemon's either way.
+    projectStop: async () => ({ status: "stopped", ...(await releaseProjectRegistration(root)) }),
     logs: (input) => laneLogs(root, input),
     workerVitals: async (input) => {
       const records = await workerVitals(root, { live_only: input.live_only });

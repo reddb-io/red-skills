@@ -206,25 +206,6 @@ export async function readWatchdogLiveness(
   };
 }
 
-/**
- * The anchor's verdict in the shape every payload publishes it. One projection
- * for every consumer, so `fleet_status`, `monitor` and the CLI report cannot
- * drift into three spellings of the same fact.
- */
-export function publishSupervisorLiveness(liveness: SupervisorLiveness): {
-  pid: number;
-  alive: boolean;
-  identity_anchor: LivenessAnchorSource;
-  heartbeat: HeartbeatObservation;
-} {
-  return {
-    pid: liveness.pid,
-    alive: liveness.alive,
-    identity_anchor: liveness.anchor,
-    heartbeat: liveness.heartbeat,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // a Worker's process liveness — resolved through the daemon, never a pid file
 // ---------------------------------------------------------------------------

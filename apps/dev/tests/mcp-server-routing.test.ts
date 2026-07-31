@@ -2,37 +2,37 @@ import { describe, expect, it, vi } from "vitest";
 import { connectResidentMcp, main } from "../src/mcp-server.js";
 
 describe("dev:afk MCP entrypoint routing", () => {
-  it("delegates __supervise to the native supervisor command", async () => {
-    const supervise = vi.fn(async () => 0);
+  // ADR 0130 Amendment 4 removed the per-project process (#2909), so
+  // `__supervise` is no longer a role this bundle owns — it is refused by name
+  // like any other unroutable subcommand rather than silently starting one.
+  it("refuses the removed __supervise entrypoint by name", async () => {
     const connect = vi.fn(async () => undefined);
     const startCurator = vi.fn(async () => undefined);
-    const startMergeDriver = vi.fn(async () => undefined);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
 
     await expect(
-      main(["__supervise", "--fleet", "codex"], {
-        supervise,
+      main(["__supervise"], {
         connect,
         startCurator,
-        startMergeDriver,
+        startMergeDriver: async () => undefined,
       }),
-    ).resolves.toBe(0);
+    ).resolves.toBe(2);
 
-    expect(supervise).toHaveBeenCalledWith(["--fleet", "codex"]);
+    expect(stderr.mock.calls[0]![0]).toContain('unroutable subcommand "__supervise"');
+    stderr.mockRestore();
     expect(connect).not.toHaveBeenCalled();
     expect(startCurator).not.toHaveBeenCalled();
   });
 
   // #2918: `--help` fell into the unroutable-subcommand refusal below, so the
   // one question that asks which subcommands exist was answered by rejecting an
-  // unknown one. Usage opens no transport and starts no supervisor.
+  // unknown one. Usage opens no transport and starts nothing.
   it.each([["--help"], ["-h"], ["help"]])("answers %s with usage, touching nothing", async (arg) => {
-    const supervise = vi.fn(async () => 0);
     const connect = vi.fn(async () => undefined);
     const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
     await expect(
       main([arg], {
-        supervise,
         connect,
         startCurator: async () => undefined,
         startMergeDriver: async () => undefined,
@@ -41,7 +41,6 @@ describe("dev:afk MCP entrypoint routing", () => {
 
     expect(String(stdout.mock.calls[0]![0])).toContain("Usage: red-skills-castle-mcp");
     stdout.mockRestore();
-    expect(supervise).not.toHaveBeenCalled();
     expect(connect).not.toHaveBeenCalled();
   });
 
@@ -57,7 +56,7 @@ describe("dev:afk MCP entrypoint routing", () => {
       const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
 
       await expect(
-        main(argv, { supervise: async () => 0, connect, startCurator, startMergeDriver }),
+        main(argv, { connect, startCurator, startMergeDriver }),
       ).resolves.toBe(2);
 
       expect(connect).not.toHaveBeenCalled();
@@ -76,7 +75,6 @@ describe("dev:afk MCP entrypoint routing", () => {
 
     await expect(
       main(["__mcp-canary", "--fleet", "canary"], {
-        supervise: async () => 0,
         startCurator: async () => undefined,
         startMergeDriver: async () => undefined,
         connect,
@@ -93,7 +91,6 @@ describe("dev:afk MCP entrypoint routing", () => {
 
     await expect(
       main([], {
-        supervise: async () => 0,
         startMergeDriver: async () => {
           calls.push("merge-driver");
         },
