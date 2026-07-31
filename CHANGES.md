@@ -854,6 +854,7 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
   - made the AFK-vs-implement boundary explicit: `/implement` is interactive (human-driven, single session, `/ship` to land); `/afk` is autonomous (fleet, claim→worktree→gate→merge→close unattended)
   - replaced "commit to current branch" with the worktree → `/ship` loop
   - wired to our `/tdd`, `/review`, `/to-issues`, and GitHub Issues PRD model instead of Matt's
+  - documented the EXISTING-branch worktree form against `origin/<branch>` alongside the new-branch form, with the reason inline: the bare `git worktree add <dir> <branch>` resolves the local ref, which can trail the remote (#2936)
 
 ## resolving-merge-conflicts (engineering)
 
