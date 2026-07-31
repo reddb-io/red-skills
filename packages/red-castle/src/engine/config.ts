@@ -261,8 +261,29 @@ export function readEngineBackpressure(config: EngineConfig): string[] {
   return scalar && scalar.trim() !== "" ? [scalar] : [];
 }
 
+/**
+ * The TYPE labels this repo declares HUMAN-ONLY (`afk.labels.hitl_types`), as a
+ * YAML list or a single scalar. A dependent carrying one is promoted to the
+ * human lane instead of the executable queue (red-skills #2966). A repo that
+ * declares none gets `[]` — the reason an existing repo's promotions are
+ * unchanged by this key's arrival.
+ */
+export function readEngineHitlTypeLabels(config: EngineConfig): string[] {
+  const indexed: string[] = [];
+  for (let i = 0; ; i++) {
+    const value = config.values[`afk.labels.hitl_types.${i}`];
+    if (value === undefined) break;
+    if (value.trim() !== "") indexed.push(value.trim());
+  }
+  if (indexed.length > 0) return indexed;
+
+  const scalar = config.values["afk.labels.hitl_types"];
+  return scalar && scalar.trim() !== "" ? [scalar.trim()] : [];
+}
+
 export function readEngineLabelVocabulary(config: EngineConfig): EngineLabelVocabulary {
   return {
+    hitlTypes: readEngineHitlTypeLabels(config),
     ready: config.get("afk.labels.ready"),
     running: config.get("afk.labels.running"),
     human: config.get("afk.labels.human"),
