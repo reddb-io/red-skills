@@ -35,13 +35,15 @@ export interface ParsedMcpLaneCanaryArgs {
   target: number;
   quietDeadlineMs: number;
   teardownDeadlineMs: number;
+  demandDeadlineMs: number;
 }
 
 const USAGE = `Usage: castle-mcp __mcp-canary [options]
 
 Drives the shipped MCP lane end to end — project_start -> a registration the
-daemon holds -> no process of the project's own -> project_status -> project_stop
-— and fails loudly naming the step that went inert.
+daemon holds -> no process of the project's own -> one poll covering it -> a
+Worker the daemon birthed -> project_status -> project_stop — and fails loudly
+naming the step that went inert.
 
   --entry <path>              MCP bundle entry (default: the castle-mcp bundle
                               beside this process's own entry)
@@ -50,6 +52,8 @@ daemon holds -> no process of the project's own -> project_status -> project_sto
   --quiet-deadline-ms <n>     how long the probe watches for a process the
                               project must never have started (default: 3000)
   --teardown-deadline-ms <n>  how long project_stop may take (default: 20000)
+  --demand-deadline-ms <n>    how long the probe waits for the daemon's poll and
+                              the Worker it justifies (default: 60000)
 `;
 
 export function parseMcpLaneCanaryArgs(
@@ -63,6 +67,7 @@ export function parseMcpLaneCanaryArgs(
     target: 1,
     quietDeadlineMs: 3_000,
     teardownDeadlineMs: 20_000,
+    demandDeadlineMs: 60_000,
   };
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
@@ -87,6 +92,9 @@ export function parseMcpLaneCanaryArgs(
         break;
       case "--teardown-deadline-ms":
         parsed.teardownDeadlineMs = positiveInteger(flag, require());
+        break;
+      case "--demand-deadline-ms":
+        parsed.demandDeadlineMs = positiveInteger(flag, require());
         break;
       default:
         throw new Error(`unknown flag: ${String(flag)}`);
@@ -119,6 +127,7 @@ export async function runMcpLaneCanaryAgainstEntry(
       target: parsed.target,
       quietDeadlineMs: parsed.quietDeadlineMs,
       teardownDeadlineMs: parsed.teardownDeadlineMs,
+      demandDeadlineMs: parsed.demandDeadlineMs,
       ...(socketPath !== undefined ? { socketPath } : {}),
     });
     return { result, stderr: transport.stderr() };

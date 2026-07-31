@@ -676,6 +676,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
       workers: [...workers.values()],
       registrations: [...registrations.values()],
+      // The poll each registration was last covered by, so "why is nothing
+      // happening" is answerable from one read instead of from a log.
+      queue: lastQueue,
       published: {
         version: publishedVersion,
         checkedAt: publishedCheckedAt,

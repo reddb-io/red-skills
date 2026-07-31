@@ -5,6 +5,11 @@
 // under the workers lane holding a live `worker.pid` (ADR 0128 §5). It runs no
 // agent and touches no queue, because the lane's plumbing — not the drain — is
 // what went silently inert in #2677.
+//
+// It lives until it is ASKED to stop (#2908). Its parent is now the daemon, which
+// ends a Worker by signalling it, so a worker that watched for a per-project
+// process to disappear would exit the instant it was born — and the lane would
+// read as a birth that never happened.
 
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { initStateSync, workerStatePath } from "../../../src/core/state.js";
@@ -56,12 +61,10 @@ export async function canaryWorker(): Promise<number> {
       rmSync(pidFile, { force: true });
       resolve(code);
     };
+    // A real Worker ends when the host ends it, so the signal is the primary
+    // path; the retire file stays for a harness that wants a graceful one.
     const timer = setInterval(() => {
-      // A real worker exits when its fleet retires it. Both signals are honoured
-      // so a forced `project_stop` (supervisor pid file removed) and a graceful
-      // slot retire leave no live worker behind.
-      if (!existsSync(paths.supervisorPidPath)) finish(0);
-      else if (retireFile !== undefined && retireFile !== "" && existsSync(retireFile)) finish(0);
+      if (retireFile !== undefined && retireFile !== "" && existsSync(retireFile)) finish(0);
     }, POLL_MS);
     process.once("SIGTERM", () => finish(143));
     process.once("SIGINT", () => finish(130));

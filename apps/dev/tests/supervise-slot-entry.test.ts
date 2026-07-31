@@ -43,6 +43,7 @@ function recordingHost(): RedskilledBirthPort {
       throw new Error("no project renews a registration in a slot-argv test");
     },
     deregister: async () => false,
+    workerIds: async () => [],
     liveWorkers: async () => asked.length,
     drainEvents: async () => [],
   };

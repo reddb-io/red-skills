@@ -13,7 +13,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { decode } from "@reddb-io/toon";
-import type { CanaryWorker, McpLaneCanaryDeps } from "../core/mcp-lane-canary.js";
+import type { CanaryHostView, CanaryWorker, McpLaneCanaryDeps } from "../core/mcp-lane-canary.js";
 import { workersSegment } from "../core/worker-paths.js";
 import { afkPaths } from "./wire.js";
 
@@ -128,6 +128,54 @@ export async function resolveCanarySocketPath(
 }
 
 /**
+ * Ask the daemon itself what it holds for one project, over the session socket.
+ *
+ * The read is DIRECT rather than through an MCP tool on purpose: the lane under
+ * test is the thing that would be lying, and a probe that asked it to report on
+ * itself would stay green through exactly the failure this step exists to catch.
+ *
+ * A daemon that does not answer comes back `reachable: false` with the reason
+ * rather than throwing — "the host went away" is a finding the walk reports, not
+ * an exception that ends it.
+ */
+export async function observeRedskilledHost(
+  project: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<CanaryHostView> {
+  try {
+    const [{ readRedskilledHostState }, { resolveRedskilledPaths }] = await Promise.all([
+      import("@reddb-io/redskilled/client"),
+      import("@reddb-io/redskilled/paths"),
+    ]);
+    const state = await readRedskilledHostState(resolveRedskilledPaths({ env }));
+    const registration = state.registrations?.find((entry) => entry.project_label === project);
+    const poll = registration?.last_poll;
+    return {
+      reachable: true,
+      workers: state.workers
+        .filter((worker) => worker.project_label === project)
+        .map((worker) => ({ workerId: worker.worker_id, pid: worker.pid })),
+      poll: poll === undefined
+        ? null
+        : {
+          at: poll.at,
+          outcome: poll.outcome,
+          depth: poll.depth,
+          requestCount: poll.request_count,
+          detail: poll.detail,
+        },
+    };
+  } catch (error) {
+    return {
+      reachable: false,
+      workers: [],
+      poll: null,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
  * Open a real MCP stdio session against `target` and return the canary's deps.
  * The caller owns `close()` — a canary that leaks its server child is one more
  * inert process on the host.
@@ -160,6 +208,9 @@ export async function connectMcpLaneCanary(
       return decodeToolPayload(renderContent(result.content));
     },
     observeWorkers: () => observeWorkersOnDisk(target.cwd),
+    // The daemon is asked in the SAME environment the server under test was
+    // launched with, so the socket the walk names and the socket it reads are one.
+    observeHost: (project) => observeRedskilledHost(project, target.env ?? process.env),
     isLive: isLivePid,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),

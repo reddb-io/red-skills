@@ -12,6 +12,8 @@ import {
   MCP_LANE_CANARY_STEPS,
   renderMcpLaneCanaryToon,
   runMcpLaneCanary,
+  type CanaryHostPoll,
+  type CanaryHostWorker,
   type CanaryWorker,
   type McpLaneCanaryDeps,
 } from "../src/core/mcp-lane-canary.js";
@@ -50,6 +52,21 @@ function registered(overrides: Record<string, unknown> = {}): Record<string, unk
   };
 }
 
+/** What the daemon says it counted for this project, on a healthy host. */
+function poll(overrides: Partial<CanaryHostPoll> = {}): CanaryHostPoll {
+  return {
+    at: "2026-07-31T05:00:00.000Z",
+    outcome: "counted",
+    depth: 1,
+    requestCount: 1,
+    detail: `project ${PROJECT} has 1 item(s) matching its selector`,
+    ...overrides,
+  };
+}
+
+/** The Worker the daemon's own demand loop birthed for this project. */
+const HOST_WORKER: CanaryHostWorker = { workerId: "wCAN1", pid: WORKER_PID };
+
 interface HarnessOptions {
   tools?: readonly string[];
   create?: unknown;
@@ -61,13 +78,21 @@ interface HarnessOptions {
   livePids?: readonly number[];
   /** Pids that stop being alive once project_stop has been called. */
   diesOnStop?: readonly number[];
+  /** Host reads, consumed one per read; the last repeats. Defaults to a healthy host. */
+  hostReads?: readonly {
+    reachable?: boolean;
+    workers?: readonly CanaryHostWorker[];
+    poll?: CanaryHostPoll | null;
+    detail?: string;
+  }[];
 }
 
 function harness(options: HarnessOptions = {}) {
   let stopped = false;
   let clock = 0;
-  const observations = options.observations ?? [[]];
+  const observations = options.observations ?? [[worker()]];
   let scans = 0;
+  let hostScans = 0;
   const live = new Set(options.livePids ?? [STRAY_PID, WORKER_PID]);
   const diesOnStop = new Set(options.diesOnStop ?? [STRAY_PID, WORKER_PID]);
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
@@ -100,6 +125,18 @@ function harness(options: HarnessOptions = {}) {
       }
       throw new Error(`unexpected tool ${tool}`);
     },
+    observeHost: async () => {
+      const reads = options.hostReads ?? [{}];
+      const at = Math.min(hostScans, reads.length - 1);
+      hostScans += 1;
+      const read = reads[at] ?? {};
+      return {
+        reachable: read.reachable ?? true,
+        workers: read.workers ?? [HOST_WORKER],
+        poll: read.poll === undefined ? poll() : read.poll,
+        ...(read.detail === undefined ? {} : { detail: read.detail }),
+      };
+    },
     observeWorkers: async () => {
       const at = Math.min(scans, observations.length - 1);
       scans += 1;
@@ -122,6 +159,7 @@ const OPTIONS = {
   runner: "claude",
   pollMs: 10,
   quietDeadlineMs: 100,
+  demandDeadlineMs: 200,
 };
 
 describe("MCP lane canary — green lane", () => {
@@ -136,9 +174,10 @@ describe("MCP lane canary — green lane", () => {
     expect(result.steps.every((step) => step.verdict === "ok")).toBe(true);
     expect(result.registration?.project).toBe(PROJECT);
     expect(result.summary).toContain("green");
-    // Green means the project holds a registration and NOTHING else: no worker
-    // of its own ever appeared.
-    expect(result.workers).toHaveLength(0);
+    // Green means the project holds a registration and nothing else of its OWN:
+    // the Worker running under it is one the daemon named as its own.
+    expect(result.poll?.requestCount).toBe(1);
+    expect(result.workers.map((row) => row.pid)).toEqual([WORKER_PID]);
     // The real tool surface was driven, in lane order.
     expect(calls.map((call) => call.tool)).toEqual([
       "project_start",
@@ -188,15 +227,30 @@ describe("MCP lane canary — the registration is the whole presence (#2902)", (
     expect(byStep.get("project_stop")).toBe("ok");
   });
 
-  it("fails at no_project_process when a live worker appears under the project", async () => {
-    const { deps } = harness({ observations: [[], [worker()]] });
+  it("fails at no_project_process when a live worker the daemon does not name appears", async () => {
+    // The load-bearing distinction since the daemon started birthing Workers of
+    // its own into this same lane: parentage, not presence. A directory with a
+    // live pid the host never named is a birth nothing admitted.
+    const { deps } = harness({
+      observations: [[], [worker({ worker: "wSTRY", pid: STRAY_PID })]],
+    });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+
+    expect(result.inertStep).toBe("no_project_process");
+    expect(result.summary).toContain("wSTRY");
+    expect(result.summary).toContain("does not name");
+    expect(result.summary).toContain("unbudgeted birth");
+    expect(result.workers).toHaveLength(1);
+  });
+
+  it("accepts a live worker the daemon names as its own", async () => {
+    const { deps } = harness({ observations: [[worker()]] });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("no_project_process");
-    expect(result.summary).toContain("wCAN1");
-    expect(result.summary).toContain("unbudgeted birth");
-    expect(result.workers).toHaveLength(1);
+    expect(result.ok).toBe(true);
+    expect(result.steps.find((step) => step.step === "no_project_process")?.verdict).toBe("ok");
   });
 
   it("reads a dead worker directory as no process at all", async () => {
@@ -303,6 +357,86 @@ describe("MCP lane canary — a registration the host cannot act on", () => {
 
     expect(result.inertStep).toBe("registration_held");
     expect(result.summary).toContain("no renewal deadline");
+  });
+});
+
+describe("MCP lane canary — the daemon drives (#2907, #2908)", () => {
+  it("fails at queue_polled when no poll ever covers this project", async () => {
+    // A registration nothing counts is a project the host will never birth a
+    // Worker for — and from the project's own side it looks exactly like one
+    // that drains, which is why the canary asks the daemon instead.
+    const { deps } = harness({ hostReads: [{ poll: null, workers: [] }], observations: [[]] });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+
+    expect(result.ok).toBe(false);
+    expect(result.inertStep).toBe("queue_polled");
+    expect(result.summary).toContain("never polled a queue");
+    expect(result.summary).toContain(SOCKET);
+    const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
+    expect(byStep.get("no_project_process")).toBe("ok");
+    expect(byStep.get("worker_born")).toBe("skipped");
+    expect(byStep.get("project_stop")).toBe("ok");
+  });
+
+  it("fails at queue_polled when the poll covering it cost more than one request", async () => {
+    // ADR 0130 Amendment 3's whole claim: N projects, ONE aliased request. A
+    // depth that arrived at per-project cost is the shape the batching replaced.
+    const { deps } = harness({ hostReads: [{ poll: poll({ requestCount: 3 }) }] });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.inertStep).toBe("queue_polled");
+    expect(result.summary).toContain("cost 3 requests");
+  });
+
+  it("fails at worker_born when the daemon counted work and birthed nothing", async () => {
+    const { deps } = harness({ hostReads: [{ workers: [] }], observations: [[]] });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+
+    expect(result.inertStep).toBe("worker_born");
+    expect(result.summary).toContain("never birthed a Worker");
+    expect(result.summary).toContain("the demand loop is inert");
+  });
+
+  it("fails at worker_born when the host names a Worker that is not running", async () => {
+    // The host's answer and the machine disagreeing is worse than either being
+    // empty: a Worker the daemon counts and nothing runs holds a budget forever.
+    const { deps } = harness({
+      hostReads: [{ workers: [{ workerId: "wGONE", pid: 40_900 }] }],
+      livePids: [STRAY_PID, WORKER_PID],
+      observations: [[]],
+    });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.inertStep).toBe("worker_born");
+    expect(result.summary).toContain("wGONE");
+    expect(result.summary).toContain("no such process is running");
+  });
+
+  it("fails naming the socket when the daemon stops answering mid-walk", async () => {
+    const { deps } = harness({
+      hostReads: [{}, { reachable: false, detail: "ECONNREFUSED" }],
+    });
+
+    const result = await runMcpLaneCanary(deps, { ...OPTIONS, socketPath: SOCKET });
+
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain("stopped answering mid-walk");
+    expect(result.summary).toContain(SOCKET);
+    expect(result.summary).toContain("ECONNREFUSED");
+  });
+
+  it("reports the poll in the walk it renders", async () => {
+    const { deps } = harness();
+
+    const decoded = decode(renderMcpLaneCanaryToon(await runMcpLaneCanary(deps, OPTIONS))) as {
+      poll: { outcome: string; depth: number; request_count: number };
+    };
+
+    expect(decoded.poll).toMatchObject({ outcome: "counted", depth: 1, request_count: 1 });
   });
 });
 
