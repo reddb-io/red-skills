@@ -148,7 +148,7 @@ Dependencies are first-class **`req:N` edge labels** (one per blocker), and a de
 
 1. `gh issue list --label req:N --state open --json number,labels`.
 2. For each dependent, read its `req:*` labels and resolve each referenced issue's state (the just-closed #N is known closed; others via a cached lookup).
-3. When **every** `req:*` of a dependent is now closed: `gh issue edit --remove-label blocked:dependency --add-label ready-for-agent` + post `🤖 /afk unblocked: all dependencies closed (#…)`.
+3. When **every** `req:*` of a dependent is now closed: `gh issue edit --remove-label blocked:dependency --add-label ready-for-agent` + post `🤖 /afk unblocked: all dependencies closed (#…)`. **The lane follows the dependent's TYPE**: one carrying a label declared under `afk.labels.hitl_types` gets `ready-for-human` instead, because its blockers closing frees the *human* to act, not an agent (#2966).
 
 Best-effort: a `gh` failure here logs a `warn:` and never fails the close — the boot sweep below catches anything the cascade missed.
 
@@ -157,7 +157,7 @@ Best-effort: a `gh` failure here logs a `warn:` and never fails the close — th
 1. `gh issue list` for open `blocked:dependency` issues with `number,labels,body`.
 2. Deps come from the `req:*` labels (the source of truth); for pre-`req:N` issues with no such label, fall back to extracting `#N` refs under the literal `## Blocked by` body heading (`- [ ] #N`) only when the issue is still labelled `blocked:dependency`.
 3. Resolve each dep via `gh issue view <N> --json state`; promote only when **every** dep is `CLOSED`.
-4. On promotion: remove the holding label (`blocked:dependency`), add `ready-for-agent`, post the audit comment, and log `unblocked N issue(s): #A #B`.
+4. On promotion: remove the holding label (`blocked:dependency`), add `ready-for-agent` — or `ready-for-human` when the dependent carries a HUMAN-ONLY type (`afk.labels.hitl_types`, see [CONFIG.md](./CONFIG.md)) — post the audit comment, and log `unblocked N issue(s): #A #B`. The comment names the lane it routed to and why, so a human can tell a sweep promotion from a hand-set label.
 
 `ready-for-human` is a human gate, not dependency-wait. The boot sweep must not promote it from a legacy `## Blocked by` body parse, because a closed blocker can still encode a failed measurement or a no-go decision. `blocked:dependency` issues do not have that ambiguity: the label *means* dependency-wait, which is the whole point of separating it from `ready-for-human`.
 
