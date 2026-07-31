@@ -54,7 +54,7 @@ import type { deleteRemote, pushAttempt, GitExec } from "./remote-branch.js";
 import { type LandLock } from "./land-lock.js";
 import type { emitEnvelope, EmitEnvelopeDeps } from "./envelope-emit.js";
 import { parseCurrentBlocker } from "./blocker-state.js";
-import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, type DependentIssue } from "./boot-sweep.js";
+import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, promotionLaneNote, type DependentIssue } from "./boot-sweep.js";
 import { type RecoveryEnv } from "./recovery.js";
 import { dispose } from "./disposition.js";
 import { parkOrHuman, transitionLabels, type StateTransition } from "./state-transition.js";
@@ -195,6 +195,10 @@ export interface ReconcileDeps {
   remoteBranch: ReconcileRemoteBranchPort;
   /** The triage-label vocabulary, injected as config (castle convention). */
   labels: TriageLabelConfig;
+  /** The TYPE labels this repo declares HUMAN-ONLY (`afk.labels.hitl_types`,
+   * #2966). A close cascade routes a dependent carrying one to the human lane.
+   * Absent → none declared, and every promotion keeps the agent lane. */
+  hitlTypes?: readonly string[];
   /** git executor for merge.ts (integrateOrigin / landMerge / landPr). */
   mergeExec: MergeExec;
   /** git executor for remote-branch.ts (pushAttempt / deleteRemote). */
@@ -908,11 +912,13 @@ async function applyReconcileTransition(
   issue: number,
   labels: string[],
   transition: StateTransition,
+  hitlTypes: readonly string[] = [],
 ): Promise<boolean> {
   const result = await transitionLabels(
     (remove, add) => deps.gh.editLabels(issue, remove, add),
     labels,
     transition,
+    hitlTypes,
   );
   if (result.applied) return result.ok;
   deps.appendIterLog(
@@ -1035,15 +1041,24 @@ async function runCloseCascade(deps: ReconcileDeps, closedIssue: number): Promis
     // and lands on `ready-for-agent` in ONE proven edit (#2663). The planner
     // needs the dependent's CURRENT labels, which the listing already carried.
     const labelsOf = new Map(dependentsRaw.map((d) => [d.number, d.labels]));
-    for (const p of planCloseCascade(closedIssue, dependents)) {
+    for (const dep of dependents) dep.labels = labelsOf.get(dep.number);
+    // The dependent's own type decides the lane (#2966): a HUMAN-ONLY Ticket
+    // parks for its human rather than rejoining the autonomous queue.
+    const hitlTypes = deps.hitlTypes ?? [];
+    for (const p of planCloseCascade(closedIssue, dependents, hitlTypes)) {
       await applyReconcileTransition(
         deps,
         p.number,
         labelsOf.get(p.number) ?? [deps.labels.dependency, ...p.reqLabels],
         { kind: "promote" },
+        hitlTypes,
       );
       const reqs = p.refs.map((ref) => Number(ref.slice(1))).filter((n) => Number.isFinite(n));
-      await deps.gh.comment(p.number, await cascadeAuditCommentFor(reqs, deps.gh.issueReference));
+      await deps.gh.comment(
+        p.number,
+        (await cascadeAuditCommentFor(reqs, deps.gh.issueReference)) +
+          promotionLaneNote(p.lane, p.hitlTypes, hitlTypes),
+      );
     }
   } catch (err) {
     deps.appendIterLog(
