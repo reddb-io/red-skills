@@ -1,7 +1,7 @@
 /**
  * paths — where a `redskilled` daemon lives, and what it holds while it does.
  *
- * **ADR 0130 Amendment 2 scopes the daemon to the MACHINE**, never to a
+ * **ADR 0130 Amendment 3 scopes the daemon to the MACHINE**, never to a
  * repository and no longer to a session. Two paths carry that between them, and
  * they are not the same kind of thing:
  *

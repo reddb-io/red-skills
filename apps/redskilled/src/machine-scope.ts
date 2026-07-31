@@ -1,7 +1,7 @@
 /**
  * machine-scope — the arbiter that makes "one `redskilled` per machine" true.
  *
- * ADR 0130 Amendment 2 states the scope: one daemon per MACHINE, not per user
+ * ADR 0130 Amendment 3 states the scope: one daemon per MACHINE, not per user
  * session. On Linux the ordinary derivation already lands there — `XDG_RUNTIME_DIR`
  * is per *user*, not per login, so every terminal of one operator resolves to the
  * same `/run/user/<uid>` and to the same socket. What the runtime dir cannot

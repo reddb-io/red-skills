@@ -15,7 +15,7 @@ import { redskilledHomeDir } from "./redskilled-home.js";
  *   - `tmp`  — `/tmp/.redskilled/repositories/<slug>/workers/…`
  *   - `host` — `~/.red/redskilled/repositories/<slug>/workers/…`, under the
  *     daemon's own home, which `redskilled` owns and creates (ADR 0130
- *     Amendment 1). This module names that root, it never brings it into being.
+ *     Amendment 2). This module names that root, it never brings it into being.
  *
  * The two shared presets segment by repository under the deterministic slug from
  * `project-identity.ts`, so the whole machine lists with one directory listing.
@@ -167,7 +167,7 @@ export function resolveWorkspaceLayout(input: WorkspaceLayoutInput): WorkspaceLa
   }
 
   // The `host` root is NAMED here and created elsewhere: the home is the
-  // daemon's (ADR 0130 Amendment 1), so this layer reads `redskilledHomeDir`
+  // daemon's (ADR 0130 Amendment 2), so this layer reads `redskilledHomeDir`
   // rather than spelling the path a second time.
   const root = preset === "tmp"
     ? join(input.tmpRoot ?? DEFAULT_TMP_ROOT, ".redskilled")

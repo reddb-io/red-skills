@@ -12,7 +12,7 @@
  * and outside every checkout, so it was never covered by that authority — and it
  * cannot be, because a home only an interactive installer could create would
  * leave auto-spawn on a fresh machine failing closed with no way back. ADR 0130
- * Amendment 1 records the split: `provisionRedskilledHome` is the ONE creator,
+ * Amendment 2 records the split: `provisionRedskilledHome` is the ONE creator,
  * and setup is its most important caller.
  *
  * The audit is PURE. Facts about the host are collected by
