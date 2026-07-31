@@ -8,7 +8,7 @@ and rationale outside the hot path.
 
 The statusline data surface has two distinct client paths with different render-path constraints:
 
-**1. Command-backed host (`statusLine` in `.claude/settings.json`)** — a DIRECT collector client. The `dev bundle statusline` subcommand calls `collectStatuslineAfk`, `collectStatuslineRepo`, `collectStatuslineFleet`, `collectStatuslineDocs`, and `collectStatuslineWorkers` directly, in-process, and emits the rendered line. This path must NEVER be rewired through the MCP server — an MCP handshake per render tick is a synchronous network call in the render path, which is the exact regression ADR 0084 forbids (it blanks the statusline on slow/failed transport and burns unnecessary overhead on every 60s tick).
+**1. Command-backed host (`statusLine` in `.claude/settings.json`)** — a DIRECT collector client. The `dev bundle statusline --no-workers` subcommand calls `collectStatuslineAfk`, `collectStatuslineRepo`, `collectStatuslineFleet` and `collectStatuslineDocs` directly, in-process, and emits the repo header line. **It does not render Worker rows**: those come from `redskilled statusline`, already rendered, and the host echoes them (ADR 0130 rule 10, #2928). This path must NEVER be rewired through the MCP server — an MCP handshake per render tick is a synchronous network call in the render path, which is the exact regression ADR 0084 forbids (it blanks the statusline on slow/failed transport and burns unnecessary overhead on every 60s tick). The daemon read is a local unix socket, not a transport handshake, and its failure renders a stated absence rather than a blank line.
 
 **2. MCP `statusline_aggregate` tool** — an agent/UI surface. The `dev:afk` MCP server exposes a `statusline_aggregate` tool that calls the SAME collector cores with the SAME 180s cache discipline. Agents and UIs call this tool instead of shelling out to the command. The tool returns structured data (not a rendered line) so callers can choose their own presentation.
 
@@ -20,7 +20,7 @@ The two paths share collector cores and never duplicate them. Adding a new field
 
 Install or inspect the RedSkills statusline for this repository. The shared producer renders the project name, branch, model/context data when the host provides it, repo counters, and live AFK state. **The two hosts get two shapes (per-runner split, ADR 0003):**
 
-- **Claude Code — multi-line.** Claude Code's `statusLine` renders multiple rows, so the themed producer emits a repo-global **header line** — always shown, even with no live workers: project (branch) + version, model·effort + context, open PRs + open issues, local diff vs `origin/main`, and (Pro/Max only, when the payload exposes them) the 5-hour and weekly usage windows `5h=…% 7d=…%` — **then one line per live AFK worker**. The worker line is a **terse, colored `k=v` form** that reads as a visual sibling of the header — every token follows the header's `key=value` colour convention:
+- **Claude Code — multi-line.** Claude Code's `statusLine` renders multiple rows, so the themed producer emits a repo-global **header line** — always shown, even with no live workers: project (branch) + version, model·effort + context, open PRs + open issues, local diff vs `origin/main`, and (Pro/Max only, when the payload exposes them) the 5-hour and weekly usage windows `5h=…% 7d=…%`. **The Worker rows below it come from the daemon, not from this producer** (ADR 0130 rule 10, #2928) — see [Worker Statusline Modes And Config](#worker-statusline-modes-and-config) for what `redskilled statusline` prints. The `k=v` worker form below is the shape the `/afk monitor` dashboard and the historical Claude Code rows share, kept here as the vocabulary an agent decodes:
 
   ```
   w82UX  run=claude opus high  iss=1173  tests  00:04:41  loc=+10 -11  tks=34k  tls=11 rsn=13 txt=0
@@ -58,11 +58,13 @@ This mirrors how Codex itself organizes customization: skills define reusable wo
 {
   "statusLine": {
     "type": "command",
-    "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && [ -n \"$N\" ] && exec \"$N\" \"$b\" statusline'",
+    "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); [ -z \"$N\" ] && exit 0; b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && \"$N\" \"$b\" statusline --no-workers; r=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/redskilled*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$r\" ] && \"$N\" \"$r\" statusline 2>/dev/null'",
     "refreshInterval": 60
   }
 }
 ```
+
+**Why two producers and not one:** each prints the rows it owns and the host prints what it is handed. The dev bundle owns the **repo header** — project, branch, model/context, PR and issue counts, local diff — and is asked for it with `--no-workers`. The daemon owns the **Worker rows** (ADR 0130 rule 10) and serves them already rendered, so `redskilled statusline` is echoed verbatim. The host formats nothing, orders nothing, and truncates nothing. Before #2928 the dev bundle rendered the Worker rows too — the second renderer rule 10 exists to prevent, and the one actually on screen — while the daemon's own line went unread.
 
 **Why this shape (cached-bundle-first, not `$CLAUDE_PLUGIN_ROOT`, not `afk.mjs` directly):** the command above is cached-bundle-first by design (ADR 0084) — never alter it to fetch synchronously in the render path.
 
@@ -78,7 +80,7 @@ printf '{"workspace":{"project_dir":"%s"},"model":{"display_name":"Opus"}}' "$PW
   | <the step-4 statusLine command>
 ```
 
-It should print the themed **header line** (e.g. `» red-skills (main) v… Opus·high …`); when AFK workers are live it prints one additional row per worker below it. Under `NO_COLOR` the same command collapses to the single-line plain form `red-skills (main) · Opus·high · …`.
+It should print the themed **header line** (e.g. `» red-skills (main) v… Opus·high …`) and, below it, whatever `redskilled statusline` returned — the local project's Workers, or a stated absence when no daemon answered. Probe the two halves separately when one is missing: the header is `<bundle> statusline --no-workers`, the Worker rows are `redskilled statusline`. Under `NO_COLOR` the header collapses to the single-line plain form `red-skills (main) · Opus·high · …`.
 
 ## Claude Code Rationale
 

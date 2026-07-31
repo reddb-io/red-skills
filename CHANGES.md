@@ -15,6 +15,17 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
   - `MCP.md` and `fleet.md`: the `project_start` row now says it registers this project with the host daemon and launches no process of the project's own, instead of describing the supervisor it spawned.
   - The tool's own description follows the same wording, and `project_stop` now says it gives the registration back.
 
+## red-statusline, red-setup (engineering) — the host displays the Worker line instead of rendering it (issue #2928)
+
+- **status**: modified
+- **upstream**: —
+- **why**: ADR 0130 rule 10 moved Worker rendering onto the daemon so no agent host would grow a second renderer, and the daemon does serve a finished string. But the installed `.claude/settings.json` adapter resolved the dev bundle and formatted Workers inside it, so the retired renderer was the one actually on screen — and the daemon's own local mode answered `project unknown 0w idle` on a host holding three of that repository's Workers.
+- **what changed**:
+  - The Claude Code adapter recipe is now two producers, each printing the rows it owns: `<dev bundle> statusline --no-workers` for the repo header, then `redskilled statusline` echoed verbatim for the Worker rows. `refreshInterval` in the `/red-setup` copy corrected from 5 to 60, matching HOST-NOTES.
+  - `statusline --no-workers` added to the dev bundle's producer: additive, so the Codex footer and every non-daemon host are unchanged.
+  - `apps/redskilled/tests/statusline-host-adapter.test.ts` pins the contract by SEARCHING the shipped documents, so a fourth copy of the recipe inherits it on landing, and proves the printed line is the daemon's string byte for byte.
+  - Behind it: one authority for a directory's project label (`@reddb-io/shared/project-identity-resolve.js`), `project unknown` reserved for a directory no known project matches, a render bound that is a function of the declared taste alone, and a stated absence when no daemon answers.
+
 ## adr-editor (engineering) — the editor opens with a subject interview (issue #2915)
 
 - **status**: modified

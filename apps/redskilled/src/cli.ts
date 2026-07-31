@@ -7,15 +7,15 @@
  * because the moment it does, it stops being servable by checkouts on different
  * bundle versions. A path it needs is a path it was given.
  */
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
-import { findUp } from "@reddb-io/shared/plugin-gate.js";
-import { declaredProjectNameInConfig, resolveProjectIdentity } from "@reddb-io/shared/project-identity.js";
+import {
+  readDeclaredProjectName,
+  resolveProjectLabelForDir,
+} from "@reddb-io/shared/project-identity-resolve.js";
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
@@ -40,6 +40,7 @@ import {
   parseRedskilledStatuslineFlags,
   resolveRedskilledStatuslineOptions,
 } from "./statusline-config.js";
+import { renderRedskilledStatuslineAbsence } from "./statusline-render.js";
 import {
   installRedskilledUnit,
   planRedskilledUnit,
@@ -251,6 +252,12 @@ export async function runUnit(
  * shape, order, width or degradation, because ADR 0130 rule 10 moves rendering
  * off every host so that a second host cannot drift from the first. Config is
  * read HERE, on the client side, and only decided values cross the socket.
+ *
+ * **It always writes a line and always exits 0.** A statusline that printed
+ * nothing when the daemon was down would be indistinguishable from a machine
+ * with no Workers — the operator would read an outage as calm — so an
+ * unreachable host renders as a stated absence and the diagnosis goes to stderr,
+ * where a host's statusline plumbing does not put it on screen.
  */
 export async function runStatusline(
   args: readonly string[],
@@ -260,25 +267,39 @@ export async function runStatusline(
     readonly paths?: RedskilledPaths;
     readonly write?: (line: string) => void;
     readonly warn?: (line: string) => void;
+    /** How to reach the daemon; injected so a test can pose as a dead host. */
+    readonly client?: RedskilledClientConfig;
+    /** The clock, for the one instant no daemon supplies: an absence's own. */
+    readonly now?: () => string;
   } = {},
 ): Promise<number> {
   const write = io.write ?? ((line: string) => process.stdout.write(line));
   const warn = io.warn ?? ((line: string) => process.stderr.write(line));
 
   const parsed = parseRedskilledStatuslineFlags(args);
-  const project = readProjectConfig(io.cwd ?? process.cwd());
+  const project = readStatuslineProject(io.cwd ?? process.cwd());
   const resolved = resolveRedskilledStatuslineOptions({
-    configText: project.configText,
-    project: project.name,
+    ...(project.configText == null ? {} : { configText: project.configText }),
+    project: project.label,
     flags: parsed.flags,
   });
   for (const warning of [...resolved.warnings, ...parsed.warnings]) {
     warn(`redskilled statusline: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);
   }
 
-  const render = await readRedskilledStatuslineString(io.paths ?? resolveRedskilledPaths(), resolved.options, {
-    ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
-  });
+  let render;
+  try {
+    render = await readRedskilledStatuslineString(io.paths ?? resolveRedskilledPaths(), resolved.options, {
+      ...(io.client ?? {}),
+      ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
+    });
+  } catch (err) {
+    warn(`redskilled statusline: ${err instanceof Error ? err.message : String(err)}\n`);
+    render = renderRedskilledStatuslineAbsence({
+      options: resolved.options,
+      generated_at: (io.now ?? (() => new Date().toISOString()))(),
+    });
+  }
   // Every line the daemon rendered, in order — one write, whatever the taste.
   // With `--verbose` that is the Worker line plus a second line per Worker; the
   // host still decides nothing about shape (ADR 0130 rule 10).
@@ -415,55 +436,22 @@ function configHome(): string {
   return declared && declared !== "" ? declared : join(homedir(), ".config");
 }
 
-/** The nearest `.red/config.yaml`, and the project name it declares. */
 /**
- * The calling directory's project, resolved the way its Workers were LABELLED.
+ * The calling directory's project label, and the config that carries its taste.
  *
- * A declared name is only the first rung. The identity a Worker carries is
- * produced by `resolveProjectIdentity`, which falls back to the git remote and
- * then to the checkout's basename — so a repository that declares nothing still
- * has a label, and the daemon is already storing it. Reading only the declared
- * name here made the statusline ask a question in a vocabulary the daemon does
- * not answer in: on a repo with no `name:` in its config, the local mode
- * reported `project unknown 0w` while the daemon held three Workers stamped
- * `owner/repo`.
- *
- * One fact, one resolver. Anything else is two spellings of the same project
- * that only agree when someone remembered to declare it.
+ * **Resolved through the SAME authority that labels a Worker at birth**, which is
+ * the whole of the fix for #2928. Reading only a declared `project.name` here
+ * meant a repository that declares none — most of them — asked the daemon about
+ * `null` while every one of its Workers was filed under the label the remote
+ * gave, so the local mode reported an idle zero from a host holding three.
  */
-function readProjectConfig(cwd: string): { configText?: string; name: string | null } {
-  const path = findUp(cwd, ".red/config.yaml");
-  const root = path == null ? cwd : dirname(dirname(path));
-  let configText: string | undefined;
-  if (path != null) {
-    try {
-      configText = readFileSync(path, "utf8");
-    } catch {
-      configText = undefined;
-    }
-  }
-  const declared = configText == null ? undefined : declaredProjectNameInConfig(configText);
-  const identity = resolveProjectIdentity({
-    checkoutPath: root,
-    ...(declared == null ? {} : { declaredName: declared }),
-    ...(gitValue(root, ["rev-parse", "--git-common-dir"]) == null
-      ? {}
-      : { gitCommonDir: gitValue(root, ["rev-parse", "--git-common-dir"]) }),
-    ...(gitValue(root, ["remote", "get-url", "origin"]) == null
-      ? {}
-      : { remoteUrl: gitValue(root, ["remote", "get-url", "origin"]) }),
-  });
-  return { ...(configText == null ? {} : { configText }), name: identity.name };
-}
-
-/** One git read, or `undefined` — a directory that is not a checkout is normal. */
-function gitValue(root: string, args: readonly string[]): string | undefined {
-  try {
-    const out = execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return out === "" ? undefined : out;
-  } catch {
-    return undefined;
-  }
+function readStatuslineProject(cwd: string): { configText?: string; label: string | null } {
+  const declared = readDeclaredProjectName(cwd);
+  // No `.red/config.yaml` anywhere above is a directory outside any RedSkills
+  // project: it has no taste to read and no project to be, and guessing a label
+  // from git alone would file a stray shell under a repository it is only near.
+  if (declared.configText == null) return { label: null };
+  return { configText: declared.configText, label: resolveProjectLabelForDir(cwd) };
 }
 
 /**
