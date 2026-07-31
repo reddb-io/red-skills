@@ -52,6 +52,22 @@ describe("development workflow rules block", () => {
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("the dev command proxy blocks agent-created worktrees outside registered `.red/tmp/` lanes");
   });
 
+  // #2936: teaching only the NEW-branch form sent people to the bare
+  // `git worktree add <dir> <branch>`, which resolves the LOCAL ref — work built
+  // on a trailing tip came back from the push as `non-fast-forward` (PRs #2933,
+  // #2934). The existing-branch form and the REASON must both be in the block.
+  it("documents the existing-branch checkout against the remote ref, with the reason", () => {
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("Check out an EXISTING branch against the REMOTE ref");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("git fetch origin <branch>");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain(
+      "git worktree add .red/tmp/worktrees/manual/<slug> -B <branch> origin/<branch>",
+    );
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("Never the bare `git worktree add <dir> <branch>`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("resolves the LOCAL ref");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("can trail `origin/<branch>`");
+    expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("`non-fast-forward`");
+  });
+
   it("routes one-off work through /go and never suggests the retired /ship (ADR 0081)", () => {
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain('One-off concrete work goes through `/go "<demand>"`');
     expect(DEVELOPMENT_WORKFLOW_BLOCK).toContain("shared `.red/tmp/workers/` root");
