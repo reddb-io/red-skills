@@ -30,8 +30,15 @@ import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
-/** The three facts the lane carries. Nothing else is a host event. */
-export type RedskilledEventKind = "worker-birth" | "worker-death" | "worker-budget-kill";
+/**
+ * The four facts the lane carries. Nothing else is a host event.
+ *
+ * `daemon-stop` is the one that is not about a Worker, and it is here because
+ * its absence is what a successor otherwise has to guess at: a lane that ends
+ * mid-life reads identically whether the daemon was asked to leave or was killed,
+ * and only one of those is a fault worth reporting.
+ */
+export type RedskilledEventKind = "worker-birth" | "worker-death" | "worker-budget-kill" | "daemon-stop";
 
 /**
  * One host event, flat and total.
@@ -60,6 +67,15 @@ export interface RedskilledHostEvent {
   /** Why, for a death or a kill: an exit status, a signal, a budget verdict. */
   readonly detail: string | null;
   /**
+   * Why the daemon stopped, for a `daemon-stop`; `null` on every Worker event.
+   *
+   * Carried STRUCTURALLY beside `detail` for the same reason `exit_code` is: a
+   * successor deciding whether it is taking over from a handover or from a crash
+   * turns on this one word, and a reader that recovered it by parsing the
+   * sentence would break the day the sentence was reworded.
+   */
+  readonly reason: string | null;
+  /**
    * The Worker's exit status, when the daemon observed one.
    *
    * Carried STRUCTURALLY beside `detail` rather than only inside it: a project's
@@ -84,6 +100,24 @@ export interface RecordEventInput {
   readonly detail?: string | null;
   readonly exitCode?: number | null;
   readonly signal?: string | null;
+  readonly reason?: string | null;
+}
+
+/**
+ * One daemon leaving the session, and what it was holding when it did.
+ *
+ * The identity fields the flat shape insists on are answered about the daemon
+ * itself — its pid, the socket it was serving — rather than left blank. Only the
+ * project is empty, and truthfully so: a daemon's own life belongs to no project.
+ */
+export interface RecordDaemonStopInput {
+  readonly ts: string;
+  readonly pid: number;
+  readonly socketPath: string;
+  readonly reason: string;
+  readonly detail: string;
+  /** The signal that asked for the stop, when one did. */
+  readonly signal?: string | null;
 }
 
 /** Build one event from a Worker view. PURE. */
@@ -106,6 +140,33 @@ export function buildHostEvent(input: RecordEventInput): RedskilledHostEvent {
     detail: input.detail ?? null,
     exit_code: input.exitCode ?? null,
     signal: input.signal ?? null,
+    reason: input.reason ?? null,
+  };
+}
+
+/** The prefix a `daemon-stop` names itself with, so no reader mistakes it for a Worker. */
+export const REDSKILLED_DAEMON_EVENT_PREFIX = "daemon:";
+
+/** Build the daemon's own stop event. PURE. */
+export function buildDaemonStopEvent(input: RecordDaemonStopInput): RedskilledHostEvent {
+  return {
+    version: 1,
+    ts: input.ts,
+    event: "daemon-stop",
+    worker_id: `${REDSKILLED_DAEMON_EVENT_PREFIX}${input.pid}`,
+    project_label: "",
+    pid: input.pid,
+    workspace_path: input.socketPath,
+    log_path: null,
+    isolated: false,
+    unit: null,
+    memory_high: null,
+    memory_max: null,
+    cpu_weight: null,
+    detail: input.detail,
+    exit_code: null,
+    signal: input.signal ?? null,
+    reason: input.reason,
   };
 }
 
@@ -122,6 +183,14 @@ export interface RedskilledEventLane {
   readonly path: string;
   /** Append one event; resolves once the bytes are on the lane. */
   record(input: RecordEventInput): Promise<RedskilledHostEvent>;
+  /**
+   * Append the daemon's own stop; resolves once the bytes are on the lane.
+   *
+   * Awaited rather than fired and forgotten, because it is the last thing the
+   * daemon writes: an append still in flight when the process leaves is the very
+   * silence this event exists to break.
+   */
+  recordDaemonStop(input: RecordDaemonStopInput): Promise<RedskilledHostEvent>;
   /** Every event on the lane, oldest first, tolerating a truncated tail. */
   read(): Promise<RedskilledHostEvent[]>;
   /** Resolves once every append handed over so far has reached the lane. */
@@ -135,19 +204,21 @@ export function createRedskilledEventLane(path: string): RedskilledEventLane {
   // exactly the corruption this lane promises not to produce.
   let tail: Promise<unknown> = Promise.resolve();
 
+  async function append(event: RedskilledHostEvent): Promise<RedskilledHostEvent> {
+    const write = tail.then(async () => {
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await dropIncompleteTail(path);
+      await appendFile(path, emitter.push(toRow(event)), { encoding: "utf8", mode: 0o600 });
+    });
+    tail = write.catch(() => undefined);
+    await write;
+    return event;
+  }
+
   return {
     path,
-    async record(input) {
-      const event = buildHostEvent(input);
-      const write = tail.then(async () => {
-        await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-        await dropIncompleteTail(path);
-        await appendFile(path, emitter.push(toRow(event)), { encoding: "utf8", mode: 0o600 });
-      });
-      tail = write.catch(() => undefined);
-      await write;
-      return event;
-    },
+    record: (input) => append(buildHostEvent(input)),
+    recordDaemonStop: (input) => append(buildDaemonStopEvent(input)),
     read: () => readRedskilledEvents(path),
     flush: async () => {
       await tail;
@@ -245,10 +316,31 @@ export function parseEventLane(raw: string): RedskilledHostEvent[] {
 export function rehydrateWorkers(events: readonly RedskilledHostEvent[]): RedskilledWorkerView[] {
   const alive = new Map<string, RedskilledWorkerView>();
   for (const event of events) {
+    // A daemon's own stop retires nothing: the daemon left and every Worker it
+    // held is still running, which is exactly what the successor replays to find.
+    if (event.event === "daemon-stop") continue;
     if (event.event === "worker-birth") alive.set(event.worker_id, toWorkerView(event));
     else alive.delete(event.worker_id);
   }
   return [...alive.values()];
+}
+
+/**
+ * How the previous daemon left, read off the lane a successor replays. PURE.
+ *
+ * `null` means the lane's last daemon never said goodbye — a crash, a kill, or a
+ * lane that has simply never seen a stop. That is the whole point of the answer:
+ * the successor tells a handover from a death by whether the predecessor's own
+ * stop is the last thing on the lane, not by guessing from the Workers it finds.
+ */
+export function lastRedskilledDaemonStop(
+  events: readonly RedskilledHostEvent[],
+): RedskilledHostEvent | null {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.event === "daemon-stop") return event;
+  }
+  return null;
 }
 
 /** The Worker view an event describes. PURE. */
@@ -280,7 +372,8 @@ function isHostEventRecord(record: ToonlRecord): boolean {
   return record.version === 1 &&
     typeof record.ts === "string" &&
     typeof record.worker_id === "string" &&
-    (record.event === "worker-birth" || record.event === "worker-death" || record.event === "worker-budget-kill");
+    (record.event === "worker-birth" || record.event === "worker-death" ||
+      record.event === "worker-budget-kill" || record.event === "daemon-stop");
 }
 
 function fromRow(record: ToonlRecord): RedskilledHostEvent {
@@ -304,6 +397,10 @@ function fromRow(record: ToonlRecord): RedskilledHostEvent {
     // an old row would tell a project a crashed Worker finished its work.
     exit_code: record.exit_code == null || record.exit_code === "" ? null : Number(record.exit_code),
     signal: text(record.signal),
+    // A lane written before stops were recorded reads them as absent, never as a
+    // crash: "this daemon did not say why it left" is the honest answer for a row
+    // whose writer had no way to say anything.
+    reason: text(record.reason),
   };
 }
 

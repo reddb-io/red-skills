@@ -20,6 +20,7 @@ import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
   readRedskilledStatuslineString,
+  stopRedskilledDaemon,
   type RedskilledClientConfig,
 } from "./client.js";
 import { isResolvedRedskilledEntry } from "./daemon-entry.js";
@@ -72,9 +73,9 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   }
 
   const { command, args } = routeCommand<
-    "serve" | "host-state" | "statusline" | "unit" | "provision" | "reclaim"
+    "serve" | "stop" | "host-state" | "statusline" | "unit" | "provision" | "reclaim"
   >(argv, {
-    commands: { serve: {}, "host-state": {}, statusline: {}, unit: {}, provision: {}, reclaim: {} },
+    commands: { serve: {}, stop: {}, "host-state": {}, statusline: {}, unit: {}, provision: {}, reclaim: {} },
     default: "host-state",
   });
 
@@ -94,12 +95,16 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     // the default handler killed this process (#2917). The Workers are untouched —
     // they are init-system units, and this is a restart, not an evacuation.
     for (const signal of ["SIGTERM", "SIGINT"] as const) {
-      process.once(signal, () => void daemon.stop().catch(() => undefined));
+      // Named on the lane as a signal rather than as a request: a successor that
+      // could not tell "the operator asked" from "something signalled us" would
+      // read every kill as a planned handover (#2919).
+      process.once(signal, () => void daemon.stop({ reason: "signal", signal }).catch(() => undefined));
     }
     await daemon.closed;
     return 0;
   }
 
+  if (command === "stop") return await runStop(args);
   if (command === "statusline") return await runStatusline(args);
   if (command === "unit") return await runUnit(args);
 
@@ -109,6 +114,70 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   const state = await readRedskilledHostState(resolveRedskilledPaths());
   process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
   return 0;
+}
+
+const STOP_FLAGS = {
+  reason: { kind: "value", coerce: (raw: string) => raw },
+  "settle-timeout-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
+} as const;
+
+/**
+ * `redskilled stop [--reason "..."]` — the daemon, asked to leave.
+ *
+ * **Asking beats signalling, and the report is the whole reason.** A hand-sent
+ * `SIGTERM` ends the same process and can say nothing about what that process was
+ * holding; this prints the Workers and projects the daemon had, states that every
+ * one of them survives — Workers are init-system units, so a stop is a restart and
+ * not an evacuation — and records the intent on the host event lane so a successor
+ * can tell a handover from a crash.
+ *
+ * **A daemon that is not running is a success**, with the reason printed. The
+ * operator asked for a machine with no daemon on it and that is the machine they
+ * have; erroring would make this a command one must check the state before running.
+ */
+export async function runStop(
+  args: readonly string[],
+  io: {
+    readonly write?: (text: string) => void;
+    readonly paths?: RedskilledPaths;
+    readonly client?: RedskilledClientConfig;
+  } = {},
+): Promise<number> {
+  const write = io.write ?? ((text: string) => process.stdout.write(text));
+  const { values } = parseFlags(args, STOP_FLAGS);
+  const report = await stopRedskilledDaemon(
+    io.paths ?? resolveRedskilledPaths(),
+    {
+      ...(values.reason == null ? {} : { detail: values.reason }),
+      ...(Number.isFinite(values["settle-timeout-ms"]) ? { settleTimeoutMs: values["settle-timeout-ms"] as number } : {}),
+    },
+    io.client ?? {},
+  );
+  write(`${encodeToon({
+    running: report.running,
+    stopped: report.stopped,
+    reason: report.reason,
+    socket: report.socket_path,
+    daemon_version: report.daemon_version,
+    pid: report.pid,
+    holding: {
+      workers: report.holding.workers.length,
+      projects: [...report.holding.projects],
+    },
+    surviving: [...report.surviving],
+    workers: report.holding.workers.map((worker) => ({
+      worker_id: worker.worker_id,
+      project_label: worker.project_label,
+      pid: worker.pid,
+      unit: worker.unit,
+      isolated: worker.isolated,
+      survives: worker.survives,
+    })),
+    detail: report.detail,
+  })}\n`);
+  // The one failure an operator must not miss: a daemon that took the request and
+  // is still answering. An absent daemon is not one of them.
+  return report.running && !report.stopped ? 1 : 0;
 }
 
 /**

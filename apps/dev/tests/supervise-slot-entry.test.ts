@@ -255,6 +255,7 @@ describe("the host is the launcher", () => {
         detail: "exit code=78 signal=null",
         exit_code: 78,
         signal: null,
+      reason: null,
       },
     ];
     await proc.observeHostDeaths?.();

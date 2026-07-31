@@ -27,11 +27,13 @@ import {
   type ResolvedRedskilledEntry,
 } from "./daemon-entry.js";
 import { socketAnswers } from "./daemon.js";
+import { buildRedskilledNotRunningStop, type RedskilledDaemonStopped } from "./daemon-stop.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
 import { createRedskilledMachineClaimStore, RedskilledMachineHeldError } from "./machine-scope.js";
 import type { RedskilledPaths } from "./paths.js";
 import type { RedskilledProjectRegistrationRequest } from "./project-registration.js";
 import {
+  isRedskilledDaemonStopped,
   isRedskilledProjectRegistered,
   isRedskilledStatuslinePayload,
   isRedskilledStatuslineRender,
@@ -241,6 +243,67 @@ export async function requestRedskilled(
   }
   if (!response.ok) throw new Error(response.error);
   return response.value;
+}
+
+/**
+ * Stop the daemon on this session's socket, and report what that costs.
+ *
+ * **Never auto-spawns.** Every other client call starts a daemon that is not
+ * there, and doing that here would mean a stop first births the very process it
+ * was asked to remove — so the socket is probed directly and a silent one is a
+ * success with a stated reason (#2919).
+ *
+ * The report is read BEFORE the daemon lets go, so it states what was being held
+ * rather than what is left. The wait afterwards is what makes the answer safe to
+ * act on: an operator replacing a daemon needs `stopped: true` to mean the socket
+ * is free, not that the request was accepted.
+ */
+export async function stopRedskilledDaemon(
+  paths: RedskilledPaths,
+  options: {
+    /** The operator's words for why; recorded with the stop on the event lane. */
+    readonly detail?: string;
+    /** How long to wait for the socket to go quiet. */
+    readonly settleTimeoutMs?: number;
+  } = {},
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledDaemonStopped> {
+  if (!(await socketAnswers(paths.socketPath))) return buildRedskilledNotRunningStop(paths.socketPath);
+
+  let response;
+  try {
+    response = await sendRedskilledRequest(
+      { socketPath: paths.socketPath, timeoutMs: config.requestTimeoutMs ?? 2_000 },
+      { id: randomUUID(), op: "shutdown", ...(options.detail == null ? {} : { detail: options.detail }) },
+    );
+  } catch (err) {
+    // A daemon that answered a ping and then dropped the connection is a daemon
+    // saying nothing, which is the one thing a stop must not report as done.
+    throw new RedskilledUnreachableError(paths.socketPath, err);
+  }
+  if (!response.ok) throw new Error(response.error);
+  if (!isRedskilledDaemonStopped(response.value)) throw new Error("redskilled daemon returned a malformed stop report");
+  const report = response.value;
+
+  const settled = await waitForSilence(paths.socketPath, options.settleTimeoutMs ?? 5_000);
+  return settled
+    ? report
+    : {
+      ...report,
+      stopped: false,
+      detail: `${report.detail}; the daemon accepted the stop and is still answering on ` +
+        `${JSON.stringify(paths.socketPath)}`,
+    };
+}
+
+/** True once nothing answers on `socketPath`, within `timeoutMs`. */
+async function waitForSilence(socketPath: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (!(await socketAnswers(socketPath))) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 /** The host-wide read. A malformed answer throws — a client never guesses the shape. */

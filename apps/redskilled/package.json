@@ -7,6 +7,7 @@
     "./cli": "./src/cli.ts",
     "./client": "./src/client.ts",
     "./daemon": "./src/daemon.ts",
+    "./daemon-stop": "./src/daemon-stop.ts",
     "./demand-producer": "./src/demand-producer.ts",
     "./event-lane": "./src/event-lane.ts",
     "./host-state": "./src/host-state.ts",

@@ -373,5 +373,6 @@ function laneEvent(event: RedskilledHostEvent["event"], workerId: string): Redsk
     detail: null,
     exit_code: null,
     signal: null,
+    reason: null,
   };
 }
