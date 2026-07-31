@@ -106,10 +106,11 @@ Install and record required host binaries (Section E2):
 
 For Section E3, provision the execution daemon:
 
-1. Run `redskilled provision`. It creates the host-scoped home, starts the daemon, and prints the audit. **Never `mkdir ~/.red/redskilled/` here** — the home belongs to `redskilled` (ADR 0130 Amendment 1) and this skill's `.red/` authority is repository-scoped. Re-running is a no-op, so run it on every pass.
-2. If the verdict is not `ok`, print the per-check fix the command already named and stop rather than improvising one. A `daemon-entry` finding is a missing published bundle, cured by warming the bundle for this host and re-running — never by pointing the daemon at a caller's own entry.
-3. Only if the user accepted the optional supervising unit, run `redskilled provision --install-unit` and then tell them the `systemctl --user` commands. The installer writes the unit only when absent; per the no-clobber rule, an existing `redskilled.service` is left exactly as the operator has it.
-4. Do not write anything about the daemon into `.red/config.yaml` — the daemon reads no repository config (ADR 0130 rule 3).
+1. Run `redskilled provision --check` first and report its `presence`. On `running`, print the summary line — version, pid, socket — and skip steps 2 and 3 unless a check row is non-`ok`: the machine has already answered, and re-asking makes a working host indistinguishable from an unconfigured one. On `partial`, say which half is there before curing the other. On `absent`, continue.
+2. Run `redskilled provision`. It creates the host-scoped home, starts the daemon, and prints the audit. **Never `mkdir ~/.red/redskilled/` here** — the home belongs to `redskilled` (ADR 0130 Amendment 1) and this skill's `.red/` authority is repository-scoped. Re-running is a no-op, so run it on every pass.
+3. If the verdict is not `ok`, print the per-check fix the command already named and stop rather than improvising one. A `daemon-entry` finding is a missing published bundle, cured by warming the bundle for this host and re-running — never by pointing the daemon at a caller's own entry.
+4. Only if the user accepted the optional supervising unit, run `redskilled provision --install-unit` and then tell them the `systemctl --user` commands. The installer writes the unit only when absent; per the no-clobber rule, an existing `redskilled.service` is left exactly as the operator has it.
+5. Do not write anything about the daemon into `.red/config.yaml` — the daemon reads no repository config (ADR 0130 rule 3).
 
 If the user accepted Section H, activate the development workflow:
 

@@ -23,7 +23,8 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { REDSKILLED_HOME_MODE, redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
-import { socketAnswers } from "./daemon.js";
+import { probeRedskilledDaemon } from "./daemon.js";
+import type { RedskilledDaemonIdentity } from "./protocol.js";
 import {
   isResolvedRedskilledEntry,
   resolveRedskilledEntry,
@@ -94,6 +95,8 @@ export interface RedskilledProvisionFacts {
   readonly socketPath: string;
   /** Whether a daemon answered a ping. Probed WITHOUT spawning one. */
   readonly reachable: boolean;
+  /** Who answered, when the pong named itself. Absent is not unreachable. */
+  readonly daemon?: RedskilledDaemonIdentity | undefined;
   readonly supervisorUnit: RedskilledSupervisorUnitState;
 }
 
@@ -134,6 +137,79 @@ export function auditRedskilledProvisioning(facts: RedskilledProvisionFacts): Re
       ? "degraded"
       : "ok";
   return { verdict, rows, findings };
+}
+
+/** Three states a machine can be in when setup walks up to it. */
+export type RedskilledPresence = "running" | "partial" | "absent";
+
+export interface RedskilledPresenceReport {
+  readonly presence: RedskilledPresence;
+  /** One sentence an operator can read without knowing the check vocabulary. */
+  readonly headline: string;
+  /** The headline's supporting rows, already indented for printing under it. */
+  readonly lines: readonly string[];
+  /** Who answered, when the daemon named itself. */
+  readonly daemon?: RedskilledDaemonIdentity | undefined;
+  /**
+   * Whether setup still owes the operator the daemon interview.
+   *
+   * False ONLY when a daemon answers: everything the interview would ask has
+   * already been answered by the machine itself, and asking again is how an
+   * operator loses the ability to tell a working host from an unconfigured one.
+   */
+  readonly reinterview: boolean;
+}
+
+/**
+ * What this machine already is, in one verdict. PURE.
+ *
+ * **Reach is the live fact and it decides.** A daemon that answers is running
+ * whatever the home looks like — the home is a precondition for starting one, and
+ * a machine that is past that point is not made un-started by drift behind it.
+ * Absent reach, prior state is what separates a half-provisioned host from a bare
+ * one, and the middle state is REPORTED as the middle state: an operator told
+ * "not provisioned" about a machine that already has a home goes looking for the
+ * wrong thing, and one told "running" about a daemon that never answers goes
+ * looking for nothing at all.
+ *
+ * Silence is not a report. Every state prints its evidence, because a step that
+ * says nothing is indistinguishable from a step that did nothing.
+ */
+export function describeRedskilledPresence(facts: RedskilledProvisionFacts): RedskilledPresenceReport {
+  const home = homeRow(facts);
+  const homeLine = `  home    ${home.evidence}`;
+  const socketLine = `  socket  ${facts.socketPath}`;
+  if (facts.reachable) {
+    const named = facts.daemon == null
+      ? "version unnamed by this daemon"
+      : `${facts.daemon.version}, pid ${facts.daemon.pid}`;
+    return {
+      presence: "running",
+      headline: `redskilled detected and running — ${named}`,
+      // A drifted home rides along rather than demoting the verdict: the daemon
+      // is up AND something behind it wants narrowing, and collapsing the two
+      // would hide whichever half the operator needed.
+      lines: [socketLine, "  reach   ok", ...(home.verdict === "ok" ? [] : [homeLine])],
+      ...(facts.daemon == null ? {} : { daemon: facts.daemon }),
+      reinterview: false,
+    };
+  }
+  const lines = [homeLine, socketLine, `  reach   ${reachRow(facts).evidence}`];
+  if (facts.homePresent || isResolvedRedskilledEntry(facts.entry)) {
+    const half = facts.homePresent ? "home present" : "bundle present";
+    return {
+      presence: "partial",
+      headline: `redskilled partially provisioned — ${half}, no daemon answering on the socket`,
+      lines,
+      reinterview: true,
+    };
+  }
+  return {
+    presence: "absent",
+    headline: "redskilled not provisioned on this host — no home, no daemon",
+    lines,
+    reinterview: true,
+  };
 }
 
 function homeRow(facts: RedskilledProvisionFacts): RedskilledProvisionRow {
@@ -235,9 +311,9 @@ export async function readRedskilledProvisionFacts(
   const homeDir = options.homeDir ?? homedir();
   const paths = options.paths ?? resolveRedskilledPaths({ env });
   const homePath = redskilledHomeDir(homeDir);
-  const [homeMode, reachable] = await Promise.all([
+  const [homeMode, probe] = await Promise.all([
     modeOf(homePath),
-    socketAnswers(paths.socketPath),
+    probeRedskilledDaemon(paths.socketPath),
   ]);
   return {
     homePath,
@@ -245,7 +321,8 @@ export async function readRedskilledProvisionFacts(
     homeMode,
     entry: resolveRedskilledEntry(options.entryOverride ?? {}, { env, ...options.entryLookup }),
     socketPath: paths.socketPath,
-    reachable,
+    reachable: probe.reachable,
+    ...(probe.identity == null ? {} : { daemon: probe.identity }),
     supervisorUnit: await readSupervisorUnitState(configHomeOf(options, env, homeDir), env),
   };
 }

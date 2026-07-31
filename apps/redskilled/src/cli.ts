@@ -26,6 +26,7 @@ import {
 import { isResolvedRedskilledEntry } from "./daemon-entry.js";
 import {
   auditRedskilledProvisioning,
+  describeRedskilledPresence,
   installRedskilledUserUnit,
   provisionRedskilledHome,
   readRedskilledProvisionFacts,
@@ -122,7 +123,9 @@ with no unit is a supported configuration (ADR 0130 rule 7). Defaults to status.
   provision: `Usage: redskilled provision [--check] [--no-start] [--install-unit]
 
 Makes a machine with no prior state ready, and prints the audit. Idempotent: a
-second run creates nothing and reports the same verdicts.
+second run creates nothing and reports the same verdicts. Every run opens with a
+presence — running, partial or absent — so a machine that is already done says so
+instead of looking like a fresh install.
 
   --check         read-only; creates and starts nothing
   --no-start      provision the home without starting the daemon
@@ -503,7 +506,14 @@ export async function runProvision(
     : undefined;
 
   const report = auditRedskilledProvisioning(facts);
+  // Presence leads the output because it is the question the operator re-running
+  // setup actually has — "is this machine already done?" — and a report that
+  // opened with four check rows made them derive the answer from the evidence.
+  const presence = describeRedskilledPresence(facts);
   write(`${encodeToon({
+    presence: presence.presence,
+    summary: presence.headline,
+    ...(presence.daemon == null ? {} : { daemon: { version: presence.daemon.version, pid: presence.daemon.pid } }),
     verdict: report.verdict,
     home: home == null
       ? { path: facts.homePath, created: false, tightened: false }

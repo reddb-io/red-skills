@@ -166,6 +166,18 @@ The installed version must be `0.3.0`. Record the same pin in `.red/config.yaml`
 
 > Explainer: `redskilled` is the host-scoped execution daemon (ADR 0130): exactly one singleton per machine, behind a unix socket, owning Worker processes across every project on this machine while each project's bundle keeps owning the work. It is what makes "what is this machine currently doing" answerable, and it fails closed — no daemon, no Worker. A daemon starts on first use, but three things must exist before it can: its host-scoped home, a published bundle to run, and a socket that answers.
 
+**Ask the machine before you ask the user.** Open E3 with the read-only probe and let its `presence` decide the section:
+
+```bash
+redskilled provision --check      # presence: running | partial | absent
+```
+
+- **`presence: running`** — a daemon is up. **Report it and move on**; do not re-interview what the machine already answered. Print the `summary` line and its evidence verbatim, e.g. `redskilled detected and running — 3.0.4, pid 533336`, then the socket and the reach row. Silence is not an option: an operator running setup on a working machine wants confirmation, and a step that says nothing is indistinguishable from a step that did nothing. Re-run `redskilled provision` only if the operator asks for it, or if a check row below `presence` is non-`ok`.
+- **`presence: partial`** — half a host: the home (or the bundle) is there and no daemon answers on the socket. **Report it as exactly that** — neither "already set up" nor "nothing here" — and walk the rest of the section to close the missing half.
+- **`presence: absent`** — nothing is provisioned. Walk the full path below.
+
+`--check` observes and never provisions: it creates no home and starts no daemon, so the presence it reports is the machine you walked up to and not one the report brought into being.
+
 **The home is the daemon's, not this skill's.** `~/.red/redskilled/` is operator-scoped and lives outside every checkout, so it is *not* the `.red/` this skill has sole authority over. Its one owner is `provisionRedskilledHome` in `apps/redskilled/src/provision.ts` (ADR 0130 Amendment 1) — never `mkdir` it here, and never treat a repo's ADR 0067 authority as covering it. Setup provisions it by **calling** its owner:
 
 ```bash
@@ -180,7 +192,7 @@ That one command creates the home owner-only (`0700`), starts the daemon through
 Verify afterwards:
 
 ```bash
-redskilled provision --check      # verdict: ok
+redskilled provision --check      # presence: running, verdict: ok
 redskilled host-state             # the machine's Workers, from the daemon itself
 ```
 

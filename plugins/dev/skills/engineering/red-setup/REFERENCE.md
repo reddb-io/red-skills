@@ -33,5 +33,5 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `.red/agents/` — does this skill's prior output already exist?
 - `.red/config.yaml` — does it exist? Which plugins are already enabled (`plugins.<name>.enabled: true`)? Is the canonical `plugins.dev.lock.primary-branch` flag already set? Is `command_guard` already configured, and under which scopes (`global`, `main`, `worktree`, or legacy `deny`)?
 - `tq --version` and `.red/config.yaml` `host_binaries.tq.version` — is the required host binary present and pinned to `0.3.0`?
-- `redskilled provision --check` — is the daemon provisioned on this host, and if not, which of `home` / `daemon-entry` / `reach` is missing? (Read-only: it creates nothing and starts nothing.)
+- `redskilled provision --check` — what is this machine's `presence` (`running` / `partial` / `absent`), and when it is not `running`, which of `home` / `daemon-entry` / `reach` is missing? A `running` presence names the daemon's version, pid and socket, and Section E3 reports it instead of re-asking. (Read-only: it creates nothing and starts nothing.)
 - `AGENTS.md` and `CLAUDE.md` — does either already have a `## Development workflow` section?

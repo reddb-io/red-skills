@@ -112,7 +112,9 @@ import {
   type RedskilledUnitPidProbe,
 } from "./reattach.js";
 import {
+  isRedskilledPong,
   REDSKILLED_PROTOCOL_VERSION,
+  type RedskilledDaemonIdentity,
   type RedskilledRequest,
   type RedskilledResponse,
   type RedskilledStatuslineRenderRequest,
@@ -1765,18 +1767,46 @@ async function bindExclusive(socketPath: string): Promise<Server> {
   throw new RedskilledAlreadyRunningError(socketPath);
 }
 
-/** True when something on the other end of `socketPath` answers a ping. */
-export async function socketAnswers(socketPath: string, timeoutMs = 250): Promise<boolean> {
+/**
+ * Who is answering on `socketPath` — version and pid — or `undefined` for nobody.
+ *
+ * It is the ping and nothing more: **a probe that auto-spawned would answer its
+ * own question**, and a report of a daemon the report started tells an operator
+ * nothing about the machine they walked up to. A daemon too old to name itself
+ * still counts as reachable; the identity is what may be missing, never the
+ * reach.
+ */
+export async function probeRedskilledDaemon(
+  socketPath: string,
+  timeoutMs = 250,
+): Promise<RedskilledDaemonProbe> {
   try {
     const response = await sendLineRequest<RedskilledRequest, RedskilledResponse>(
       { socketPath, timeoutMs },
       { id: randomUUID(), op: "ping" },
       "redskilled daemon",
     );
-    return response.ok === true;
+    if (response.ok !== true) return { reachable: false };
+    // Reach and identity are separate answers on purpose: a daemon from before
+    // the pong carried a version is still up, and reporting it as absent would
+    // be the one lie this probe exists to prevent.
+    return isRedskilledPong(response.value)
+      ? { reachable: true, identity: { version: response.value.daemon_version, pid: response.value.pid } }
+      : { reachable: true };
   } catch {
-    return false;
+    return { reachable: false };
   }
+}
+
+/** What a ping learned: whether anyone is there, and who, when they said. */
+export interface RedskilledDaemonProbe {
+  readonly reachable: boolean;
+  readonly identity?: RedskilledDaemonIdentity;
+}
+
+/** True when something on the other end of `socketPath` answers a ping. */
+export async function socketAnswers(socketPath: string, timeoutMs = 250): Promise<boolean> {
+  return (await probeRedskilledDaemon(socketPath, timeoutMs)).reachable;
 }
 
 /**

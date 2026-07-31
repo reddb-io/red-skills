@@ -155,6 +155,18 @@ export type RedskilledResponse =
   | { id: string; ok: true; value: unknown }
   | { id: string; ok: false; error: string };
 
+/**
+ * A daemon named by its own ping — the version it runs and the pid running it.
+ *
+ * It is a projection of {@link RedskilledPong}, not a second source: every
+ * surface that reports "this machine has a daemon" reads the same two fields off
+ * the same answer, so a report cannot disagree with the socket it read.
+ */
+export interface RedskilledDaemonIdentity {
+  readonly version: string;
+  readonly pid: number;
+}
+
 export interface RedskilledPong {
   readonly pong: true;
   readonly protocol_version: number;
