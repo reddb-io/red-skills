@@ -383,3 +383,64 @@ daemon's complete answer read as malformed.
 must state it and for tests that pose as their own machine. It is an explicit
 statement, never a silent fallback — which is the line this record draws: a
 second daemon is either impossible or announced, and never a surprise.
+
+## Amendment 3 — the daemon owns the demand loop; a project has no process of its own
+
+Rule 2 kept a per-project runtime and named what it retained: trunk mirror
+refresh, queue depth, target resolution as a *request*, runner directives, claim
+reconciliation, lifecycle hooks. That runtime is a detached long-lived process
+per repository, and it turns out to be **a third player nobody can name.**
+
+`project_start` calls it a demand producer. `project_status` answers with the key
+`supervisor:`. Its command line is `__supervise` — the same entrypoint as the
+supervisor this ADR removed. Three names for one process is not a documentation
+problem; it is the shape telling us the thing has no place in the model that
+replaced it.
+
+**Decision: there are exactly two players. The project's MCP, alive in a user's
+session, which REGISTERS. The daemon, alive on the machine, which POLLS the
+tracker and OWNS the demand loop.** The per-project `__supervise` process is
+removed; a project contributes a registration, not a process.
+
+Three facts drove it.
+
+**1. The quota argument is the one this ADR already accepted.** Amendment 1
+established it for activity counts: GitHub quota is per token, so several
+projects polling with the same credential already share one budget and splitting
+the poller across processes saves nothing — what saves is one aliased request
+instead of N. Queue depth is the *same* fetch against the *same* token, and it is
+the larger consumer: activity moves at human speed and is polled accordingly,
+while the queue is read every tick. Leaving the bigger half outside the batch
+while the smaller half is inside it is an inconsistency, not a boundary.
+
+**2. Only the daemon can see every project at once.** That is already the stated
+reason a producer must accept a smaller grant without arguing. A component that
+must defer to the host on *how many* Workers exist, while independently deciding
+*when* to ask, is deferring on the half it can see and insisting on the half it
+cannot.
+
+**3. The loop must outlive the session, and the MCP does not.** The detached
+process exists for exactly this reason — `/afk` has to keep draining after the
+operator closes the terminal. Under a two-player model the thing that persists is
+the daemon, so the loop is the daemon's or it is nobody's.
+
+**Rule 3 survives, and the frontier moves by one item.** Registration carries an
+**opaque selector**, an **opaque argv**, and a target. The daemon matches a query
+to a result and starts a process with the argv it was handed; it still does not
+know what an Issue, a label, a Spec, a gate or a Landing *is* — exactly as
+Amendment 1 moved the frontier by a repository identity and a token and no
+further. A selector is a string it carries, never a sentence it reads.
+
+**Registration outlives its session, and expires.** A registration that died with
+its MCP would defeat the purpose; one that never expires makes a closed laptop
+poll forever. So a registration is renewed while a session lives, survives that
+session's end, and lapses after a stated interval — and **a project whose queue
+drains deregisters itself**, because an empty selector polled on a schedule is
+the cost this amendment exists to remove.
+
+**What this costs.** The naming debt is paid by deletion rather than by rename:
+`__supervise`, `project_start`'s producer and `project_status`'s `supervisor:`
+key all go, instead of converging on a fourth word for a thing that should not
+exist. The migration is the harder half — a machine carrying live per-project
+runtimes must reach the two-player model without stranding the Workers those
+runtimes are holding.
