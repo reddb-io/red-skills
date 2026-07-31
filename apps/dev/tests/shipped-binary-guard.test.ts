@@ -78,7 +78,17 @@ describe("every shipped binary in the live tree answers --version (#2878)", () =
     expect(files.size).toBeGreaterThan(200);
     expect(binaries.length).toBeGreaterThanOrEqual(10);
     expect(binaries.map((entry) => entry.name)).toEqual(
-      expect.arrayContaining(["brain", "memory", "rsp", "red-skills-dev", "red-skills-redskilled"]),
+      expect.arrayContaining([
+        "brain",
+        "memory",
+        "rsp",
+        "red-skills-dev",
+        "red-skills-redskilled",
+        // The bare alias is a binary in its own right (#2960): it inherits the
+        // bundle's answers only because the walker follows it, and naming it
+        // here is what proves the walker did.
+        "redskilled",
+      ]),
     );
   });
 

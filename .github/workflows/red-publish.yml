@@ -669,6 +669,17 @@ jobs:
           # bundle that throws on load — and "present but not executable" is the
           # failure this artifact was added to make impossible (issue #2842).
           test -x "$smoke/node_modules/.bin/red-skills-redskilled"
+          # Both published names, and they must answer IDENTICALLY: the bare
+          # `redskilled` is an ergonomic alias over the same bundle (#2960), so a
+          # divergence here means the alias grew a dispatch of its own.
+          test -x "$smoke/node_modules/.bin/redskilled"
+          prefixed_version="$(node "$pkg/bin/red-skills-redskilled.mjs" --version)"
+          bare_version="$(node "$pkg/bin/redskilled.mjs" --version)"
+          echo "redskilled --version: $bare_version"
+          if [ "$prefixed_version" != "$bare_version" ]; then
+            echo "::error::redskilled answers a different --version by name: '$prefixed_version' vs '$bare_version'"
+            exit 1
+          fi
           rsdir="$(mktemp -d)"
           REDSKILLED_SESSION="pack-smoke:$rsdir" node "$pkg/bin/red-skills-redskilled.mjs" serve \
             --socket "$rsdir/redskilled.sock" \

@@ -170,6 +170,17 @@ export function redskilledBundleCacheRoot(env: NodeJS.ProcessEnv = process.env):
 
 const VERSIONED_BUNDLE = /^([a-z0-9-]+)-(.+)\.bundle\.min\.mjs$/;
 const REDSKILLED_VERSIONED_BUNDLE = /^redskilled-(.+)\.bundle\.min\.mjs$/;
+/**
+ * Every filename that is this daemon's front door: both published bin names, and
+ * the extensionless clone launcher (#2960). Listed rather than pattern-matched
+ * so a neighbouring `redskilled-*` file cannot be mistaken for an entry.
+ */
+const REDSKILLED_SHIM_NAMES = new Set([
+  "red-skills-redskilled",
+  "red-skills-redskilled.mjs",
+  "redskilled",
+  "redskilled.mjs",
+]);
 const PLUGIN_ROOT_VARS = [
   "RED_SKILLS_DEV_PLUGIN_ROOT",
   "CLAUDE_PLUGIN_ROOT",
@@ -236,16 +247,19 @@ export function requireRedskilledEntry(
 /**
  * Does this path route `serve` itself?
  *
- * True for the redskilled bundle in any of its names, for the packaged
- * `red-skills-redskilled` shim that execs it, and for `cli.js` / `cli.ts` inside
- * a `redskilled` package (`apps/redskilled/src/cli.ts`,
- * `@reddb-io/redskilled/dist/cli.js`). Every other file — including another
- * app's bundle that merely inlined this module — is not an entry.
+ * True for the redskilled bundle in any of its names, for the shims that exec it
+ * under EITHER published name — `red-skills-redskilled` and the bare
+ * `redskilled` (#2960), including the clone launcher that carries no extension —
+ * and for `cli.js` / `cli.ts` inside a `redskilled` package
+ * (`apps/redskilled/src/cli.ts`, `@reddb-io/redskilled/dist/cli.js`). Every
+ * other file — including another app's bundle that merely inlined this module —
+ * is not an entry. The bare name is matched WHOLE: `redskilled-helper.mjs` is a
+ * different file that happens to start with the same word.
  */
 export function isRedskilledEntryPath(path: string): boolean {
   const name = basename(path);
   if (name === REDSKILLED_BUNDLE_ASSET || REDSKILLED_VERSIONED_BUNDLE.test(name)) return true;
-  if (name === "red-skills-redskilled" || name === "red-skills-redskilled.mjs") return true;
+  if (REDSKILLED_SHIM_NAMES.has(name)) return true;
   if (name !== "cli.js" && name !== "cli.mjs" && name !== "cli.ts") return false;
   return hasRedskilledPackageAncestor(resolve(path));
 }

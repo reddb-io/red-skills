@@ -1,0 +1,66 @@
+#!/usr/bin/env node
+/**
+ * redskilled — the daemon, run straight out of this checkout (issue #2960).
+ *
+ * **A clone is a working install.** The operator who reaches for this is usually
+ * mid-outage: the daemon will not start, the published bundle will not fetch, or
+ * the registry is simply unreachable from where they are standing. Needing a
+ * network round-trip to run the binary that REPORTS what is broken is the
+ * failure mode this file removes.
+ *
+ * **It resolves from its own path, never from the cwd**, so an absolute-path run
+ * from inside the broken project reaches this checkout and not that one.
+ *
+ * Two routes, in order, and each is honest about what it costs:
+ *
+ *  1. `dist/redskilled.bundle.min.mjs` — the built artifact. Dependency-free and
+ *     identical to what npm ships, so this is the offline answer proper.
+ *  2. `apps/redskilled/src/cli.ts` through the workspace's own TypeScript
+ *     runner. Needs `pnpm install` to have happened, because the daemon imports
+ *     workspace packages that only a linked `node_modules` resolves.
+ *
+ * With neither present the launcher REFUSES and names both routes rather than
+ * failing somewhere deeper with a module resolution error — the same fail-closed
+ * posture ADR 0130 rule 6 gives the daemon's own spawn.
+ *
+ * This is the clone's ergonomics, not a dispatch contract: the canonical way to
+ * run a PARTICULAR version is still `npx -y -p @reddb-io/red-skills@<version> redskilled`.
+ */
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const bundle = join(root, "dist", "redskilled.bundle.min.mjs");
+const source = join(root, "apps", "redskilled", "src", "cli.ts");
+const runner = process.platform === "win32" ? "tsx.cmd" : "tsx";
+
+const plan = resolvePlan();
+if (plan === undefined) {
+  process.stderr.write(
+    `redskilled: nothing runnable in ${root}\n` +
+      `  build the artifact (then it runs with no dependencies):  pnpm -C apps/redskilled bundle\n` +
+      `  or install the workspace and run from source:            pnpm install\n` +
+      `  or run the published binary:                             npx -y -p @reddb-io/red-skills@<version> redskilled\n`,
+  );
+  process.exit(1);
+}
+
+const result = spawnSync(plan.command, [...plan.args, ...process.argv.slice(2)], {
+  stdio: "inherit",
+});
+if (result.signal) process.kill(process.pid, result.signal);
+process.exit(result.status ?? 1);
+
+/** The first route this checkout can actually take, or undefined for none. */
+function resolvePlan() {
+  if (existsSync(bundle)) return { command: process.execPath, args: [bundle] };
+  // pnpm keeps a package's own devDependency bins beside that package; the root
+  // is checked too so a hoisted install resolves the same runner.
+  for (const dir of [join(root, "apps", "redskilled"), root]) {
+    const tsx = join(dir, "node_modules", ".bin", runner);
+    if (existsSync(tsx) && existsSync(source)) return { command: tsx, args: [source] };
+  }
+  return undefined;
+}

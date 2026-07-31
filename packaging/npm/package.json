@@ -19,6 +19,7 @@
     "red-skills-memory": "bin/red-skills-memory.mjs",
     "red-skills-brain": "bin/red-skills-brain.mjs",
     "red-skills-redskilled": "bin/red-skills-redskilled.mjs",
+    "redskilled": "bin/redskilled.mjs",
     "rsp": "bin/rsp.mjs"
   },
   "files": [

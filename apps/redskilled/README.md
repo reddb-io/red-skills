@@ -238,6 +238,35 @@ redskilled provision --install-unit   # also write the optional supervising user
   binary, socket and contract auto-spawn uses (rule 7), and an absent unit is
   reported as `ok`. An existing unit file is never rewritten.
 
+## Reaching the binary
+
+Three routes, and **which one you pick is a decision about pinning, not about
+taste**:
+
+```bash
+npx -y -p @reddb-io/red-skills@<version> redskilled host-state   # CANONICAL
+npx -y @reddb-io/red-skills@latest redskilled host-state         # alias, shorter
+./bin/redskilled host-state                                      # this clone
+```
+
+- **The version-pinned `-p` form is canonical** (ADR 0091). It is the only form
+  that states *which* installation answers: a bare name resolved off `PATH` can
+  reach a different install than the one intended, which is the defect PR #2465
+  fixed. Anything that dispatches programmatically — the self-replacement's own
+  successor lookup included — uses this form.
+- **`redskilled` is an ergonomic alias, not a second contract** (#2960). It is
+  the name an operator reaches for, so the package publishes it; `rsp` already
+  ships bare from the same `bin` map. The older `red-skills-redskilled` keeps
+  working unchanged — this added a name, it renamed nothing — and all three
+  execute the one `dist/redskilled.bundle.min.mjs`, so `--version` answers
+  identically whichever you type.
+- **`./bin/redskilled` runs out of the checkout**, resolving the repo from its
+  own path rather than the cwd. It takes the built `dist/` artifact when there is
+  one and the workspace TypeScript runner over `src/cli.ts` otherwise, and with
+  neither it refuses and names both routes. It exists because an operator
+  debugging a broken daemon should not need a working registry fetch to run the
+  binary that reports what is broken.
+
 ## Commands
 
 ```bash
