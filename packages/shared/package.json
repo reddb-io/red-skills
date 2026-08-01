@@ -25,6 +25,7 @@
     "./red-paths.js": "./red-paths.ts",
     "./redskilled-home.js": "./redskilled-home.ts",
     "./repo-root.js": "./repo-root.ts",
+    "./worker-scope.js": "./worker-scope.ts",
     "./worker-workspace.js": "./worker-workspace.ts",
     "./outcome-event.js": "./outcome-event.ts",
     "./resident-client.js": "./resident-client.ts",

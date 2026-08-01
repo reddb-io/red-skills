@@ -204,6 +204,20 @@ of it.
   the same code and records itself as a signal; the reason is a field, not a
   sentence to parse. A socket nobody answers on is a success with a stated reason:
   the operator asked for a machine with no daemon on it and that is what they have.
+- **Every Worker is born under a stated ceiling, and no knob states it.** A client
+  that declares a budget gets exactly that budget; a client that declares none is
+  not left uncapped. The daemon derives the ceiling from the accounting it already
+  keeps — the host memory ceiling shared across its Worker slots when an operator
+  declared a count, capped at the headroom the live Workers' declared budgets
+  leave — and hands it to the placement as the scope's `MemoryMax`. The derived
+  number is a wall, never memory set aside: it does not enter the admission charge,
+  so one Worker cannot spend the host's whole accounting and have the next one
+  refused. Host memory pressure then kills the Worker that earned it instead of
+  the terminal's biggest bystander, and **the Worker can name what held it**: the
+  scope, its ceiling, and — when the host could scope nothing — the degradation,
+  are handed down in the Worker's own environment (`RED_WORKER_SCOPE`,
+  `RED_WORKER_MEMORY_CEILING`, `RED_WORKER_SCOPE_DEGRADATION`) and land on the
+  death record it writes on the way out.
 - **An unisolated launch is never silent.** When the host affords no transient
   unit the Worker still starts, and the reply — and the host-state record it
   keeps for its whole life — carries a warning naming what was lost. A declared

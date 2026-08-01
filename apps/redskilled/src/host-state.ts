@@ -62,6 +62,19 @@ export interface RedskilledWorkerView {
    */
   readonly budget?: RedskilledWorkerBudget;
   /**
+   * The memory ceiling this Worker's scope carries, however it was arrived at.
+   *
+   * Distinct from `budget`, which is what the CLIENT declared and what the
+   * host-wide accounting charges: this is the wall the Worker actually runs
+   * under, derived from the accounting when the client declared nothing (#3029).
+   * Keeping them apart is what stops a derived wall from being read as memory
+   * the host set aside — the first Worker born would otherwise commit the whole
+   * machine's accounting and have every Worker after it refused.
+   */
+  readonly memory_ceiling?: string;
+  /** Where that ceiling came from, in one sentence. Present with the ceiling. */
+  readonly memory_ceiling_reason?: string;
+  /**
    * What the last sample measured this Worker's tree burning, beside its budget.
    *
    * It rides here for the same reason the budget does — a number stated once at

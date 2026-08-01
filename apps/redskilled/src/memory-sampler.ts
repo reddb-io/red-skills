@@ -132,12 +132,18 @@ export type RedskilledTreeSampler = (
  * willing to keep running. PURE.
  */
 export function resolveEnforcedBudget(
-  worker: { readonly budget?: RedskilledWorkerBudget },
+  worker: { readonly budget?: RedskilledWorkerBudget; readonly memory_ceiling?: string },
 ): { readonly name: RedskilledBudgetName; readonly declared: string; readonly bytes: number } | null {
   const budget = worker.budget ?? {};
   const candidates: ReadonlyArray<readonly [RedskilledBudgetName, string | undefined]> = [
+    // The scope's ceiling comes last and answers only for a Worker whose client
+    // declared nothing: on a host with no cgroup to hold it — no systemd, or a
+    // Mac — the derived ceiling would otherwise be a wall with nothing behind it
+    // (#3029). Where the kernel does hold it, the floor is the redundant second
+    // ceiling it has always been.
     ["MemoryMax", budget.memory_max],
     ["MemoryHigh", budget.memory_high],
+    ["MemoryMax", worker.memory_ceiling],
   ];
   for (const [name, declared] of candidates) {
     if (declared == null) continue;
@@ -169,8 +175,8 @@ export function evaluateMemoryBudgets(input: {
     if (budget == null) {
       unenforceable.push({
         worker_id: worker.worker_id,
-        reason: (worker.budget?.memory_max ?? worker.budget?.memory_high) == null
-          ? "this Worker declared no memory budget, so the sampler has no ceiling to enforce"
+        reason: (worker.budget?.memory_max ?? worker.budget?.memory_high ?? worker.memory_ceiling) == null
+          ? "this Worker declared no memory budget and the host derived no ceiling for it, so the sampler has none to enforce"
           : "this Worker's declared memory budget cannot be reduced to bytes, so the sampler has no ceiling to enforce",
       });
       continue;

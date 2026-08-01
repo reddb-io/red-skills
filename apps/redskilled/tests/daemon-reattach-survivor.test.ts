@@ -114,7 +114,14 @@ function unitBackedLaunch(state: { exitLaunchClient?: (signal: NodeJS.Signals) =
       worker,
       admission: options.admission,
       warnings: [],
-      plan: { isolated: true, backend: "transient-unit", command: "systemd-run", args: [], unit: worker.unit! },
+      plan: {
+        isolated: true,
+        backend: "transient-unit",
+        command: "systemd-run",
+        args: [],
+        unit: worker.unit!,
+        environment: {},
+      },
       child: { pid: worker.pid } as ChildProcess,
     };
   };
