@@ -8,6 +8,7 @@ import { codexMonitorAgentCommand } from "./commands/codex-monitor-agent.js";
 import { codexStatuslineCommand } from "./commands/codex-statusline.js";
 import { dashboardCommand } from "./commands/dashboard.js";
 import { injectDevelopmentWorkflowCommand } from "./commands/inject-development-workflow.js";
+import { installTypeLabelsCommand, INSTALL_TYPE_LABELS_USAGE } from "./commands/install-type-labels.js";
 import { managerCommand } from "./commands/manager.js";
 import { monitorCommand } from "./commands/monitor.js";
 import { runCommand } from "./commands/run.js";
@@ -59,6 +60,7 @@ export type CliCommand =
   | "statusline"
   | "statusline-refresh-counts"
   | "inject-development-workflow"
+  | "install-type-labels"
   | "toon-bump"
   | "toon-migrate"
   | "version";
@@ -107,6 +109,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     statusline: {},
     "statusline-refresh-counts": {},
     "inject-development-workflow": {},
+    "install-type-labels": {},
     "toon-bump": {},
     "toon-migrate": {},
     version: {},
@@ -149,6 +152,13 @@ Run \`red-skills-dev <command> --help\` for a command's own usage.
 Docs: plugins/dev/skills/engineering/afk/SKILL.md
 `;
 
+/** Per-command usage, reachable on the STATIC front-door path: a command that
+ * registers one answers `--help` from this constant, never from a lazily loaded
+ * module or a working machine. */
+const COMMAND_USAGE: Partial<Record<CliCommand, string>> = {
+  "install-type-labels": INSTALL_TYPE_LABELS_USAGE,
+};
+
 export class HelpRequested extends Error {}
 
 export function parseCli(argv: readonly string[]): ParsedCli {
@@ -190,8 +200,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     (parsed.args.includes("--help") || parsed.args.includes("-h"))
   ) {
     process.stdout.write(
-      `Usage: red-skills-dev ${parsed.command} [options]\n` +
-        `No detailed usage registered for this command yet; see the afk skill docs.\n`,
+      COMMAND_USAGE[parsed.command] ??
+        `Usage: red-skills-dev ${parsed.command} [options]\n` +
+          `No detailed usage registered for this command yet; see the afk skill docs.\n`,
     );
     return 0;
   }
@@ -227,6 +238,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "statusline") return statuslineCommand(parsed.args);
   if (parsed.command === "statusline-refresh-counts") return statuslineRefreshCountsCommand(parsed.args);
   if (parsed.command === "inject-development-workflow") return injectDevelopmentWorkflowCommand(parsed.args);
+  if (parsed.command === "install-type-labels") return installTypeLabelsCommand(parsed.args);
   if (parsed.command === "toon-bump") return toonBumpCommand(parsed.args);
   if (parsed.command === "toon-migrate") return toonMigrateCommand(parsed.args);
   return runCommand({ args: parsed.args });
