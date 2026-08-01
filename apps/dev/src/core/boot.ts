@@ -92,6 +92,7 @@ import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisite
 import { pathIsInsideTmp, removableUnknownTmpRoots } from "./tmp-janitor.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import type { WorkerProcessVerdict, WorkerReclaimPlan } from "./worker-reclaim.js";
+import type { WorkerStateRecordReclaimPlan } from "./worker-state-reclaim.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 import { readHitlTypeLabels } from "./config.js";
 import { isRefused, planTransition, type StateTransition } from "./state-transition.js";
@@ -247,6 +248,12 @@ export interface BootFs {
    * re-authorises each removal against a current answer.
    */
   workerWorkspaceLivenessVerdict?(path: string): Promise<WorkerProcessVerdict>;
+  /**
+   * The same question about the Worker a durable STATE RECORD names (#2978),
+   * asked by worker id because the record's path carries no workspace. An
+   * unwired or throwing probe spares the record, exactly like the two above.
+   */
+  workerStateRecordLivenessVerdict?(workerId: string): Promise<WorkerProcessVerdict>;
   /** Fresh owner-liveness verdict before removing a feedback worktree. */
   feedbackWorktreeLiveness?(
     path: string,
@@ -747,6 +754,10 @@ export interface BootOptions {
      * had no daemon answer to plan against, so the sweep reclaims nothing on its
      * behalf. */
     workerReclaim?: WorkerReclaimPlan;
+    /** The durable Worker STATE RECORD reclaim (#2978). Absent means the caller
+     * planned none, so the sweep removes no record — the pile is left intact
+     * rather than reclaimed on a plan nobody built. */
+    workerStateRecords?: WorkerStateRecordReclaimPlan;
   };
   /**
    * Skip every shared boot sweep (#623). When true, `runBoot` runs precheck +
@@ -837,6 +848,10 @@ export interface TmpJanitorSweepResult {
   workerWorkspaces: string[];
   /** Workspaces spared because the daemon did not call their Worker gone. */
   protectedLiveWorkspaces: string[];
+  /** Worker state records removed: gone, settled, and past the retention (#2978). */
+  workerStateRecords: string[];
+  /** Worker state records spared because the daemon did not call their Worker gone. */
+  protectedLiveWorkerStateRecords: string[];
   /** Paths a plan named outside this tmp tier: reported, never removed. */
   refusedOutsideTmp: string[];
   removals: Array<{
@@ -1052,6 +1067,8 @@ async function runTmpJanitorSweep(
     orphanTestRunners: [],
     workerWorkspaces: [],
     protectedLiveWorkspaces: [],
+    workerStateRecords: [],
+    protectedLiveWorkerStateRecords: [],
     refusedOutsideTmp: [],
     removals: [],
   };
@@ -1078,6 +1095,23 @@ async function runTmpJanitorSweep(
     await deps.fs.removeDir(path);
     result.removals.push({ path, livenessVerdict: "worker-dead" });
     result.workerWorkspaces.push(path);
+  }
+
+  // The durable Worker STATE RECORD lane (#2978). It runs beside the workspace
+  // pass because it answers to the same authority: the record of a Worker the
+  // daemon calls gone, settled past its retention, is the pile every reader was
+  // paying for. Fail CLOSED here too — an unwired or unanswerable probe keeps
+  // the record.
+  for (const verdict of sweep.workerStateRecords?.reclaim ?? []) {
+    const live = await deps.fs.workerStateRecordLivenessVerdict?.(verdict.worker_id)
+      .catch(() => "unknown" as const);
+    if (live !== "dead") {
+      result.protectedLiveWorkerStateRecords.push(verdict.path);
+      continue;
+    }
+    await deps.fs.removeDir(verdict.path);
+    result.removals.push({ path: verdict.path, livenessVerdict: "worker-dead" });
+    result.workerStateRecords.push(verdict.path);
   }
 
   const expired = [

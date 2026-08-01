@@ -42,6 +42,95 @@ function workspaceVerdict(workerId: string, path: string): WorkerArtifactVerdict
   };
 }
 
+/** One dead Worker's durable state record, condemned by the record planner. */
+function stateRecordVerdict(workerId: string) {
+  return {
+    worker_id: workerId,
+    path: `/p/.red/state/castle/workers/${workerId}`,
+    liveness: "dead" as const,
+    outcome: "terminal",
+    age_ms: 2 * 24 * 60 * 60 * 1000,
+    reclaim: true,
+    verdict: "settled-reclaimable" as const,
+    reason: "the daemon calls this Worker gone and its record is past the retention",
+  };
+}
+
+// #2978: nothing owned the durable Worker STATE RECORD, so 345 accumulated to
+// convey one live Worker. The boot sweep reclaims it on the same authority every
+// other reclaim answers to, and fails CLOSED on anything short of `dead`.
+describe("runBoot Worker state record reclaim", () => {
+  it("removes a record whose Worker the daemon calls gone", async () => {
+    const { deps, fsCalls } = makeDeps({ workerStateRecordLivenessVerdict: async () => "dead" });
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: emptyJanitorPlan(),
+          staleWorkers: { reclaim: [], spare: [] },
+          workerStateRecords: {
+            reclaim: [stateRecordVerdict("wDEAD")],
+            retain: [],
+            totals: { considered: 1, reclaim: 1, retain: 0 },
+          },
+        },
+      }),
+    );
+    expect(fsCalls.removeDir).toEqual(["/p/.red/state/castle/workers/wDEAD"]);
+    expect(result.tmpJanitor?.workerStateRecords).toEqual([
+      "/p/.red/state/castle/workers/wDEAD",
+    ]);
+    expect(result.tmpJanitor?.removals).toContainEqual({
+      path: "/p/.red/state/castle/workers/wDEAD",
+      livenessVerdict: "worker-dead",
+    });
+  });
+
+  it("keeps the record when the probe answers anything but dead", async () => {
+    const { deps, fsCalls } = makeDeps({ workerStateRecordLivenessVerdict: async () => "unknown" });
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: emptyJanitorPlan(),
+          staleWorkers: { reclaim: [], spare: [] },
+          workerStateRecords: {
+            reclaim: [stateRecordVerdict("wMAYBE")],
+            retain: [],
+            totals: { considered: 1, reclaim: 1, retain: 0 },
+          },
+        },
+      }),
+    );
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(result.tmpJanitor?.protectedLiveWorkerStateRecords).toEqual([
+      "/p/.red/state/castle/workers/wMAYBE",
+    ]);
+  });
+
+  it("keeps the record when the probe is not wired at all — fail closed", async () => {
+    const { deps, fsCalls } = makeDeps();
+    const result = await runBoot(
+      deps,
+      options({
+        tmpJanitor: {
+          plan: emptyJanitorPlan(),
+          staleWorkers: { reclaim: [], spare: [] },
+          workerStateRecords: {
+            reclaim: [stateRecordVerdict("wUNWIRED")],
+            retain: [],
+            totals: { considered: 1, reclaim: 1, retain: 0 },
+          },
+        },
+      }),
+    );
+    expect(fsCalls.removeDir).toEqual([]);
+    expect(result.tmpJanitor?.protectedLiveWorkerStateRecords).toEqual([
+      "/p/.red/state/castle/workers/wUNWIRED",
+    ]);
+  });
+});
+
 describe("runBoot tmp janitor", () => {
   it("reaps orphan test-runner groups and records an audit row", async () => {
     const { deps } = makeDeps();
@@ -109,6 +198,8 @@ describe("runBoot tmp janitor", () => {
       orphanTestRunners: [],
       workerWorkspaces: [],
       protectedLiveWorkspaces: [],
+      workerStateRecords: [],
+      protectedLiveWorkerStateRecords: [],
       refusedOutsideTmp: [],
       removals: [
         { path: "/p/.red/tmp/logs/old", livenessVerdict: "not-worker-workspace" },

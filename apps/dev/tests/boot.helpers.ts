@@ -53,6 +53,7 @@ export function makeDeps(over: Partial<{
   claimedIssues: BootDeps["lookups"]["claimedIssues"];
   workerLivenessVerdict: BootDeps["fs"]["workerLivenessVerdict"];
   workerWorkspaceLivenessVerdict: BootDeps["fs"]["workerWorkspaceLivenessVerdict"];
+  workerStateRecordLivenessVerdict: BootDeps["fs"]["workerStateRecordLivenessVerdict"];
   viewLabels: (issue: number) => Promise<string[]>;
   env: Record<string, string | undefined>;
   config: Record<string, string | undefined>;
@@ -111,6 +112,14 @@ export function makeDeps(over: Partial<{
             async workerWorkspaceLivenessVerdict(path: string) {
               calls.push(`fs.workerWorkspaceLivenessVerdict:${path}`);
               return over.workerWorkspaceLivenessVerdict!(path);
+            },
+          }
+        : {}),
+      ...(over.workerStateRecordLivenessVerdict
+        ? {
+            async workerStateRecordLivenessVerdict(workerId: string) {
+              calls.push(`fs.workerStateRecordLivenessVerdict:${workerId}`);
+              return over.workerStateRecordLivenessVerdict!(workerId);
             },
           }
         : {}),

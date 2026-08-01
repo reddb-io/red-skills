@@ -1256,7 +1256,7 @@ async function workerVitals(
       daemon_liveness: publishWorkerLiveness(resolveWorkerLiveness(hostAnswer, workerId)),
     });
   }
-  return filterWorkerVitalsLiveOnly(all, opts.live_only !== false);
+  return boundWorkerVitals(filterWorkerVitalsLiveOnly(all, opts.live_only !== false));
 }
 
 /**
@@ -1285,6 +1285,51 @@ export function filterWorkerVitalsLiveOnly<
     const at = r.alert?.at === undefined ? NaN : Date.parse(r.alert.at);
     return Number.isFinite(at) && nowMs - at <= WORKER_VITALS_ALERT_FRESH_MS;
   });
+}
+
+/**
+ * The ceiling on how many rows one `worker_vitals` answer may carry.
+ *
+ * The reclaim (#2978) is what keeps the record lane small; this is what keeps
+ * the PAYLOAD small while a pile exists at all — a surface must stay correct
+ * during the window between a Worker dying and the retention releasing its
+ * record, and on a `live_only: false` read that deliberately asks for the dead
+ * ones. Thirty-two rows is an order of magnitude above any real fleet width on
+ * one host, so a bounded answer never truncates a live fleet, and it holds the
+ * payload near the ~1KB-per-row this record shape costs instead of the 559KB
+ * that 345 corpses produced.
+ */
+export const WORKER_VITALS_MAX_RECORDS = 32;
+
+/**
+ * Bound the answer, LIVE ROWS FIRST.
+ *
+ * The ordering is the whole point, not a tidiness preference: when the pile
+ * buried the one live Worker, the first row a reader saw was a corpse whose
+ * `loc 0` read as "the worker produced nothing". Live rows sort ahead of dead
+ * ones and recent ahead of old, so the rows a bound can ever drop are the
+ * oldest dead ones — the rows whose evidence the Worker's own lane log and the
+ * castle history still carry.
+ */
+export function boundWorkerVitals<
+  T extends {
+    live?: boolean;
+    worker?: { started_at?: string; current?: { last_event_at?: string } };
+  },
+>(records: readonly T[], limit = WORKER_VITALS_MAX_RECORDS): T[] {
+  if (records.length <= limit) return [...records];
+  const recency = (record: T): number => {
+    const last = Date.parse(record.worker?.current?.last_event_at ?? "");
+    if (Number.isFinite(last)) return last;
+    const started = Date.parse(record.worker?.started_at ?? "");
+    return Number.isFinite(started) ? started : 0;
+  };
+  return [...records]
+    .sort((a, b) => {
+      if (a.live !== b.live) return a.live === true ? -1 : 1;
+      return recency(b) - recency(a);
+    })
+    .slice(0, limit);
 }
 
 function projectFields(

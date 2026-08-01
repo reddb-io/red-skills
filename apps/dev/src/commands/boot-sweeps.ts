@@ -48,7 +48,10 @@ export function formatBootSweepResult(result: BootResult): string {
     // `spared` is reported beside `local` on purpose (#2866): a reclaim that
     // only ever prints its deletions cannot be audited for what it refused.
     ` | branches remote=${bc?.remoteLiveReaped.length ?? 0} local=${bc?.localLiveReaped.length ?? 0} spared=${bc?.localSpared?.length ?? 0}` +
-    ` | tmp-janitor expired=${tj?.expiredLanes.length ?? 0} workers=${tj?.staleWorkers.length ?? 0} orphan-runners=${tj?.orphanTestRunners?.length ?? 0} unknown=${tj?.unknownTmpRoots.length ?? 0} protected=${(tj?.protectedLiveWorkers.length ?? 0) + (tj?.protectedLiveFeedback.length ?? 0)}` +
+    // `state-records` is reported beside the lanes (#2978): the record reclaim
+    // states what it removed AND what it kept, so a pile that stops shrinking is
+    // visible as a protected count rather than as silence.
+    ` | tmp-janitor expired=${tj?.expiredLanes.length ?? 0} workers=${tj?.staleWorkers.length ?? 0} state-records=${tj?.workerStateRecords?.length ?? 0} orphan-runners=${tj?.orphanTestRunners?.length ?? 0} unknown=${tj?.unknownTmpRoots.length ?? 0} protected=${(tj?.protectedLiveWorkers.length ?? 0) + (tj?.protectedLiveFeedback.length ?? 0) + (tj?.protectedLiveWorkerStateRecords?.length ?? 0)}` +
     janitorRemovalLog +
     ` | docs-sweep ${ds?.action ?? "clean"} files=${ds?.files.length ?? 0}` +
     ` | unblocked=${us?.promoted.length ?? 0}` +
