@@ -1,0 +1,9 @@
+# What never ships inside the .vsix. `out/extension.cjs` is the whole runtime:
+# esbuild has already inlined every workspace import into it, so the sources and
+# the workspace's node_modules are weight the editor would never load.
+src/
+tests/
+node_modules/
+tsconfig.json
+vitest.config.ts
+.vscodeignore
