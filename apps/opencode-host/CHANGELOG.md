@@ -1,5 +1,13 @@
 # @reddb-io/red-skills
 
+## 3.3.1
+
+### Patch Changes
+
+- 846ba9e: A HUMAN-ONLY ticket type label now ships with the declaration that makes it mean anything. `wayfinder:grilling` and `wayfinder:prototype` route decision work to a human only while `afk.labels.hitl_types` names them, so installing the label and leaving the declaration as a manual step shipped the trigger without the safety — worse than shipping neither, because the repo looked protected while every unblocked decision Ticket entered the autonomous queue. `red-skills-dev install-type-labels` is now the one installer path: it creates each type label on the tracker and merges the HUMAN-ONLY ones into `.red/config.yaml` in the same act — appending to an existing list, never overwriting or duplicating it, and writing the declaration first so a config it cannot write installs no label at all. `/red-doctor` gains check 25 for the other direction: an installed HUMAN-ONLY label with no declaration is a finding, merged under `--fix --yes` after a diff preview, with a repo that has no `.red/config.yaml` delegated to `/red-setup`.
+  - @reddb-io/shared@3.3.1
+  - @reddb-io/build-info@3.3.1
+
 ## 3.3.0
 
 ### Minor Changes
