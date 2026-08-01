@@ -154,7 +154,9 @@ describe("installTypeLabels", () => {
   }
 
   it("leaves a fresh setup declaring every HITL type it just installed", async () => {
-    const { deps, order, config } = recordingDeps(null);
+    // What /red-setup leaves behind before it provisions labels: the activated
+    // config, no declaration yet.
+    const { deps, order, config } = recordingDeps("plugins:\n  dev:\n    enabled: true\n");
 
     const receipt = await installTypeLabels(WAYFINDER_TYPE_LABELS, deps);
 
@@ -180,7 +182,7 @@ describe("installTypeLabels", () => {
   });
 
   it("re-running the installer neither duplicates the label nor the declaration", async () => {
-    const { deps, config } = recordingDeps(null);
+    const { deps, config } = recordingDeps("plugins:\n  dev:\n    enabled: true\n");
 
     await installTypeLabels(WAYFINDER_HITL_TYPE_LABELS, deps);
     const afterFirst = config();
@@ -189,6 +191,16 @@ describe("installTypeLabels", () => {
     expect(receipt.configChanged).toBe(false);
     expect(receipt.alreadyDeclared).toEqual(["wayfinder:grilling", "wayfinder:prototype"]);
     expect(config()).toBe(afterFirst);
+  });
+
+  it("refuses without an existing .red/config.yaml, which only /red-setup creates", async () => {
+    const { deps, order } = recordingDeps(null);
+
+    const receipt = await installTypeLabels(WAYFINDER_HITL_TYPE_LABELS, deps);
+
+    expect(receipt.refusal).toContain("/red-setup");
+    expect(receipt.installed).toEqual([]);
+    expect(order).toEqual([]);
   });
 
   it("installs no label when the declaration cannot be written", async () => {
