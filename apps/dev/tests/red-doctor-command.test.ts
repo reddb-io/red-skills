@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,10 +15,15 @@ const listCandidates = vi.fn(async () => [
   },
 ]);
 
+const listLabelNames = vi.fn(async () => ({
+  names: ["bug", "ready-for-agent", "wayfinder:map", "wayfinder:grilling", "wayfinder:prototype"],
+}));
+
 vi.mock("../src/runtime/gh.js", () => ({
   editBody: vi.fn(async () => true),
   listCandidates,
   listIssueStates: vi.fn(async () => new Map()),
+  listLabelNames,
   postClaimComment: vi.fn(async () => 1),
 }));
 
@@ -253,6 +258,120 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
     const toon = writes.join("");
     expect(toon).toContain("deadendAudit");
     expect(toon).toContain("claim_release");
+    stdout.mockRestore();
+  });
+});
+
+// The label half and the declaration half are one protection (#3013): a repo
+// carrying `wayfinder:*` HUMAN-ONLY labels with no `afk.labels.hitl_types`
+// entry LOOKS protected while every unblocked decision Ticket goes to the
+// autonomous queue.
+describe("redDoctorCommand — HUMAN-ONLY type declaration", () => {
+  const roots: string[] = [];
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+    roots.length = 0;
+  });
+
+  async function seedRoot(prefix: string, configText: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), prefix));
+    roots.push(root);
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), configText, "utf8");
+    return root;
+  }
+
+  it("flags an installed type label that no hitl_types entry declares, without writing", async () => {
+    const config = "plugins:\n  dev:\n    enabled: true\n";
+    const root = await seedRoot("red-doctor-hitl-types-", config);
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    const human = writes.join("");
+    expect(human).toContain("red-doctor HUMAN-ONLY type declaration");
+    expect(human).toContain("warn wayfinder:grilling");
+    expect(human).toContain("warn wayfinder:prototype");
+    expect(human).toContain("afk.labels.hitl_types");
+    // Diagnose is read-only: the config is byte-identical.
+    expect(await readFile(join(root, ".red", "config.yaml"), "utf8")).toBe(config);
+    stdout.mockRestore();
+  });
+
+  it("merges the declaration under --fix --yes, keeping the operator's own entry", async () => {
+    const root = await seedRoot(
+      "red-doctor-hitl-types-fix-",
+      [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      labels:",
+        "        hitl_types:",
+        "          - decision:grilling",
+        "",
+      ].join("\n"),
+    );
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root, "--fix", "--yes"], root)).resolves.toBe(0);
+
+    const { parseConfigYaml } = await import("../src/core/config.js");
+    const { declaredHitlTypeLabels } = await import("../src/core/hitl-type-declaration.js");
+    const after = await readFile(join(root, ".red", "config.yaml"), "utf8");
+    expect(declaredHitlTypeLabels(parseConfigYaml(after))).toEqual([
+      "decision:grilling",
+      "wayfinder:grilling",
+      "wayfinder:prototype",
+    ]);
+    expect(writes.join("")).toContain("fix hitl-type-declaration: applied");
+    stdout.mockRestore();
+  });
+
+  it("leaves the config untouched when --fix runs without approval", async () => {
+    const config = "plugins:\n  dev:\n    enabled: true\n";
+    const root = await seedRoot("red-doctor-hitl-types-unapproved-", config);
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root, "--fix"], root)).resolves.toBe(0);
+
+    expect(await readFile(join(root, ".red", "config.yaml"), "utf8")).toBe(config);
+    expect(writes.join("")).toContain("fix hitl-type-declaration: declined");
+    stdout.mockRestore();
+  });
+
+  it("reports an unreadable label list as an error rather than a clean pair", async () => {
+    const root = await seedRoot("red-doctor-hitl-types-transport-", "plugins:\n  dev:\n    enabled: true\n");
+    listLabelNames.mockResolvedValueOnce({ failure: "HTTP 403: SAML enforcement" } as never);
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    const human = writes.join("");
+    expect(human).toContain("label-list-unavailable");
+    expect(human).toContain("SAML enforcement");
     stdout.mockRestore();
   });
 });
