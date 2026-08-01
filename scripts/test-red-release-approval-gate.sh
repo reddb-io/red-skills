@@ -42,9 +42,11 @@ assert_release_job_environment() {
 }
 
 assert_release_job_environment
-assert_grep "README documents approval requirement" \
+# The approval prose moved from the README to docs/RELEASING.md when the README
+# was restructured around core-versus-complementary; the assertion follows it.
+assert_grep "release docs document approval requirement" \
   "environment.*${ENVIRONMENT_NAME}.*approval|required reviewers" \
-  "$README"
+  "docs/RELEASING.md"
 
 printf '\n%d passed, %d failed\n' "$pass_count" "$fail_count"
 [ "$fail_count" -eq 0 ]
