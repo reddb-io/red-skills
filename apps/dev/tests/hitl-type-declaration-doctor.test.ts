@@ -81,6 +81,14 @@ describe("auditHitlTypeDeclaration", () => {
     expect(report.row.evidence).toContain("no issue tracker");
   });
 
+  it("flags the pair but delegates to /red-setup when there is no config file", () => {
+    const report = auditHitlTypeDeclaration({ installedLabels: ["wayfinder:grilling"], configText: null });
+
+    expect(report.row.verdict).toBe("warn");
+    expect(report.plan).toBeNull();
+    expect(report.findings[0]?.remediation).toContain("/red-setup");
+  });
+
   it("refuses to plan an edit against a config the loader cannot parse", () => {
     const report = auditHitlTypeDeclaration({
       installedLabels: ["wayfinder:grilling"],

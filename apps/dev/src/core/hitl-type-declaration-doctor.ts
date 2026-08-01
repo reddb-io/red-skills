@@ -116,7 +116,13 @@ export function auditHitlTypeDeclaration(input: HitlTypeDeclarationAuditInput): 
     return report("ok", `${installed.length} HUMAN-ONLY type labels are declared in afk.labels.hitl_types`, [], checked);
   }
 
-  const plan = planHitlTypeDeclaration(input.configText, undeclared);
+  // A repo with no `.red/config.yaml` is still a finding — the labels are
+  // installed and nothing routes them — but not one this doctor writes: only
+  // `/red-setup` may create a repository's `.red/` (ADR 0067).
+  const plan = input.configText === null ? null : planHitlTypeDeclaration(input.configText, undeclared);
+  const remediation = plan === null
+    ? "run /red-setup to create .red/config.yaml, then re-run /red-doctor --fix"
+    : REMEDIATION;
   return report(
     "warn",
     `${undeclared.join(", ")} installed but undeclared in afk.labels.hitl_types; ` +
@@ -125,10 +131,10 @@ export function auditHitlTypeDeclaration(input: HitlTypeDeclarationAuditInput): 
       label,
       verdict: "warn" as const,
       reason: `the ${label} label exists but afk.labels.hitl_types does not name it`,
-      remediation: REMEDIATION,
+      remediation,
     })),
     checked,
-    plan.changed ? plan : null,
+    plan?.changed ? plan : null,
   );
 }
 
