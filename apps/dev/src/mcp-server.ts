@@ -37,6 +37,7 @@ import {
   createResidentJanitor,
   type ResidentJanitor,
 } from "./resident-cron.js";
+import { startResidentUnblockSweep } from "./resident-unblock.js";
 
 const buildInfo = readBuildInfo("castle");
 
@@ -250,6 +251,10 @@ export async function startResidentIssueCurator(
 export interface McpEntrypointDependencies {
   startCurator(): Promise<void>;
   startMergeDriver(): Promise<void>;
+  /** The #3014 Unblock belt: the session-reachable clearer for a dependent whose
+   * last `req:*` blocker closed. Optional so every existing caller keeps
+   * working; omitted means the belt does not run in that host. */
+  startUnblockSweep?(): Promise<void>;
   connect(): Promise<void>;
   /** The lane's own canary (#2706). Optional so every existing caller keeps
    * working; omitted means the real probe. */
@@ -281,6 +286,9 @@ export async function main(
   dependencies: McpEntrypointDependencies = {
     startCurator: startResidentIssueCurator,
     startMergeDriver: startResidentMergeDriver,
+    startUnblockSweep: async () => {
+      await startResidentUnblockSweep();
+    },
     connect: run,
   },
 ): Promise<number> {
@@ -323,6 +331,9 @@ export async function main(
   }
   await dependencies.startCurator();
   await dependencies.startMergeDriver();
+  // Started BEFORE the transport (#3014): its first pass is the session-boot
+  // clearer, and it is detached inside, so a slow tracker delays no handshake.
+  await dependencies.startUnblockSweep?.();
   await dependencies.connect();
   return 0;
 }

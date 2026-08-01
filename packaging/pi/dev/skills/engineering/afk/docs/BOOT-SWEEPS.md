@@ -72,6 +72,37 @@ has no tracked precedent on `origin/<base>`, boot halts before issue selection o
 fleet slot spawn. The halt message carries the explicit relative file list so a
 maintainer can land or remove the stranded docs deliberately.
 
+## Unblock belt: the sweep also runs OUTSIDE the boot suite (issue #3014)
+
+**A dependent whose last `req:*` blocker closed must lose `blocked:dependency`
+even on a repo where nothing but a live session is ever awake.** Three clearers
+exist, and on such a repo every one of them missed:
+
+1. **the close cascade** (`runCloseCascade`) is event-driven but reachable only
+   from a worker's terminal stage or from `reconcile()` — it fires when the
+   *agent* closes the blocker. A human closing it in the GitHub UI runs no local
+   code; the webhook delivery lands in the singleton lane, where only `rsp wait`
+   reads it;
+2. **the boot-time Unblock Sweep** *is* awake — the castle resident's janitor
+   runs the whole suite every five minutes — but it is **step 7** of a suite that
+   routinely aborts before reaching it: a failing precheck returns after step 1,
+   a red operational probe throws `BootHaltError` at step 1a, and the *Docs
+   Sweep* halts on any stranded `.red/` doc, which is the ordinary state of a
+   repo a human edits by hand;
+3. **the `unblock_sweep` MCP tool** promotes correctly, but only when somebody
+   thinks to call it.
+
+So the promote path was reachable in principle and starved in practice. The
+resident therefore runs the sweep on its **own belt**, independent of the boot
+suite: one pass detached at resident start — the session-boot clearer — and one
+per interval afterwards. The belt needs `gh` and nothing else (no probes, no
+git, no worktrees), it costs a single `gh issue list` when nothing is blocked,
+and a repo-scoped singleton keeps several stdio hosts from each sweeping the
+same tracker. A failing pass costs itself and nothing else; the next tick still
+runs. Promotion itself is unchanged — the belt, the boot suite's step 7, and the
+MCP tool all promote through the one shared core, so the lane rules (`#2966`)
+and the audit comment are identical whichever trigger fired.
+
 ## Fleet mode: the supervisor owns the boot (issue #623)
 
 The sweeps above (*Orphan Cleanup*, *Attempt Cap*, live branch cleanup, *Docs Sweep*, the *Unblock Sweep*, and the *Straggler Check*) all read and mutate **shared** `.red/tmp` / branch / `gh` state. When several workers boot at once they would race over that state — the observed failure mode was a fleet collapsing to a single live worker because peers fast-died in their boot sweeps.

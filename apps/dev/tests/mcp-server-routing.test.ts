@@ -106,6 +106,33 @@ describe("dev:afk MCP entrypoint routing", () => {
     expect(calls).toEqual(["curator", "merge-driver", "connect"]);
   });
 
+  // #3014: on a repo operated through live sessions only, the resident is the
+  // one thing awake when a human closes a dependent's last `req:*` blocker. The
+  // Unblock belt has to start with it — and before the transport, since its own
+  // first pass is detached and must not wait on the stdio handshake.
+  it("starts the unblock belt in the castle resident before opening stdio", async () => {
+    const calls: string[] = [];
+
+    await expect(
+      main([], {
+        startCurator: async () => {
+          calls.push("curator");
+        },
+        startMergeDriver: async () => {
+          calls.push("merge-driver");
+        },
+        startUnblockSweep: async () => {
+          calls.push("unblock");
+        },
+        connect: async () => {
+          calls.push("connect");
+        },
+      }),
+    ).resolves.toBe(0);
+
+    expect(calls).toEqual(["curator", "merge-driver", "unblock", "connect"]);
+  });
+
   it("awaits resident cleanup after the MCP transport closes", async () => {
     let finishStop!: () => void;
     const resident = {
