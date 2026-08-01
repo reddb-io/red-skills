@@ -81,6 +81,21 @@ export const REDSKILLED_REPLACEMENT_ENTRY_UNRESOLVED = "redskilled-replacement-e
 export const REDSKILLED_NO_REGISTRY_PROBE_ENV = "REDSKILLED_NO_REGISTRY_PROBE";
 
 /**
+ * Env var a successor is born with, marking it as one.
+ *
+ * Carried so the new process can tell "a replacement started me" from "a client
+ * started me", which is the difference between a boot check that closes the
+ * window after a publish and one that could restart a mis-resolving daemon in a
+ * tight loop. A successor born this way waits for the ordinary interval instead.
+ */
+export const REDSKILLED_BORN_BY_REPLACEMENT_ENV = "REDSKILLED_BORN_BY_REPLACEMENT";
+
+/** True when a replacement started this process, so its boot check is not owed. */
+export function isRedskilledBornByReplacement(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[REDSKILLED_BORN_BY_REPLACEMENT_ENV] === "1";
+}
+
+/**
  * What one probe resolved about the published world.
  *
  * Two numbers rather than one: `version` is the newest release this daemon may
@@ -382,7 +397,11 @@ function defaultSpawnSuccessor(env: NodeJS.ProcessEnv | undefined) {
     const child = spawn(entry.command, [...argv], {
       detached: true,
       stdio: "ignore",
-      env: { ...(env ?? process.env), REDSKILLED_DAEMON: "1" },
+      env: {
+        ...(env ?? process.env),
+        REDSKILLED_DAEMON: "1",
+        [REDSKILLED_BORN_BY_REPLACEMENT_ENV]: "1",
+      },
     });
     child.on("error", () => undefined);
     child.unref();
@@ -424,6 +443,30 @@ export async function probePublishedRedskilledVersion(
   } catch {
     return { version: cachedInMajor, newest: cachedNewest };
   }
+}
+
+/**
+ * What this host can say about the published world WITHOUT asking anybody.
+ *
+ * The same weaker evidence `probePublishedRedskilledVersion` falls back to when
+ * the registry throws, lifted out so the caller that gives up on a slow read can
+ * reach it too. A read that runs out of time and a read that fails are the same
+ * fact — nothing was resolved from the registry — and answering one of them with
+ * the cached bundle while answering the other with `null` is how a host that
+ * already HELD the newer bundle went on serving the older one (#2975).
+ *
+ * PURE apart from the directory listing.
+ */
+export function localRedskilledPublishedEvidence(
+  running: string,
+  env: NodeJS.ProcessEnv = process.env,
+  listDir?: (path: string) => readonly string[],
+): RedskilledPublishedObservation {
+  const list = listDir ?? listDirSafe;
+  return {
+    version: newestCachedRedskilledVersionInMajor(running, env, list),
+    newest: newestCachedRedskilledVersion(env, list),
+  };
 }
 
 /** The newest version this host already holds a redskilled bundle for. */
