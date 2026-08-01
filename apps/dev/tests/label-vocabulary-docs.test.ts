@@ -400,6 +400,27 @@ describe("wayfinder docs", () => {
     expect(config).toContain("never from a built-in one");
   });
 
+  // #3013: the label and the declaration are one protection with two halves.
+  // Every doc that tells a consumer to create a wayfinder TYPE label must send
+  // them through the installer that writes both, or the trigger ships without
+  // the safety and the repo only LOOKS protected.
+  it("routes type-label installation through the installer that writes both halves", async () => {
+    const skill = await readRepoFile("plugins/dev/skills/engineering/wayfinder/SKILL.md");
+    const labels = await readRepoFile("plugins/dev/skills/engineering/red-setup/triage-labels.md");
+    const interview = await readRepoFile("plugins/dev/skills/engineering/red-setup/INTERVIEW.md");
+    const config = await readRepoFile("plugins/dev/skills/engineering/afk/docs/CONFIG.md");
+
+    for (const doc of [skill, labels, interview, config]) {
+      expect(doc).toContain("install-type-labels");
+    }
+    expect(labels).toContain("ONE protection with two halves");
+    expect(skill).toContain("Never create a type label with bare `gh label create`");
+    // The doctor owns the other direction: label installed, declaration absent.
+    const doctor = await readRepoFile("plugins/dev/skills/engineering/red-doctor/SKILL.md");
+    expect(doctor).toContain("HUMAN-ONLY type declaration");
+    expect(doctor).toContain("afk.labels.hitl_types");
+  });
+
   it("pins the fidelity-restoration directives from upstream v1.1.0", async () => {
     const skill = await readRepoFile("plugins/dev/skills/engineering/wayfinder/SKILL.md");
 

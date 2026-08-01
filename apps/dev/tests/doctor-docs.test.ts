@@ -39,6 +39,22 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("never write `.red/config.yaml`");
   });
 
+  // #3013: the trigger half (the label) and the safety half (the declaration)
+  // are checked as a pair, and the pair is what --fix repairs.
+  it("checks the HUMAN-ONLY type label against its hitl_types declaration", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("HUMAN-ONLY type declaration");
+    expect(skill).toContain("afk.labels.hitl_types");
+    expect(skill).toContain("an unreadable tracker is not a clean repo");
+    expect(skill).toContain("never create the label, never write config");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("HUMAN-ONLY type declaration (check 25)");
+    expect(apply).toContain("never duplicate an entry");
+    expect(apply).toContain("only it may create a repository's `.red/`");
+  });
+
   it("flags legacy top-level dev-plugin config as a namespacing migration", async () => {
     const skill = await readDoctorSkill();
 
