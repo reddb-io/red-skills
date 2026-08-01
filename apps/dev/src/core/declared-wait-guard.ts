@@ -608,9 +608,12 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
   {
     path: "apps/dev/src/core/merge.ts",
     fn: "waitForQueuedMerge",
-    subject: "the native merge queue merging the PR, or dequeuing it without merging",
-    deadline: "`maxPolls` × `intervalMs`, default 120 × 15s = 30 minutes; ONE probe when no clock is injected",
-    escalation: "returns `pending`, leaving the PR queued for the next sweep to re-read",
+    subject:
+      "the native merge queue merging the PR, dequeuing it without merging, or the PR settling to a conflict no queue can accept",
+    deadline:
+      "`maxPolls` × `intervalMs`, default 120 × 15s = 30 minutes, shared with the post-rebase retry so the whole tail costs ONE deadline; ONE probe when no clock is injected",
+    escalation:
+      "returns `pending`, leaving the PR queued for the next sweep to re-read; a settled conflict returns `unqueueable` early (#3030) and the caller rebases ONCE, then parks the branch, the PR and the issue for a human",
     heartbeat: { sink: "onPoll" },
   },
   {
