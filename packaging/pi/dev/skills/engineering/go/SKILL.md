@@ -1,7 +1,7 @@
 ---
 name: go
 description: Middle tier of the dispatch spectrum — `/goal` → `/go` → `/afk`. Use for genuinely untracked, ad-hoc, one-off demands only; anything that is or should be a tracked issue belongs to `/afk`. Mints a disposable issue, spins a dedicated worker, and brings back a PR. Add `--scout "<question>"` for a read-only investigation that posts a report comment and mutates nothing.
-argument-hint: "\"<approved-task>\" --dod \"<definition-of-done>\" [--request \"<inner-agent-instruction>\"] [--verify \"<cmd>\"] [--tags a,b] [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [+yolo] | --scout \"<question>\" [--runner ...]"
+argument-hint: "\"<approved-task>\" --dod \"<definition-of-done>\" [--request \"<inner-agent-instruction>\"] [--verify \"<cmd>\"] [--tags a,b] [--mode no-mistakes|direct-PR|local-only] [--runner claude|codex|opencode] [--attached] [+yolo] | --scout \"<question>\" [--runner ...]"
 disable-model-invocation: true
 ---
 
@@ -79,6 +79,18 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 - **`local-only`** — land the branch by an APPROVED local fast-forward merge with **no PR opened**. For a trusted local demand the maintainer wants landed without a review PR.
 
 **`+yolo`** is an opt-in autonomy bump — pass the literal token to raise the engine's autonomy for this one dispatch. It composes with any mode.
+
+**Dispatch survives the dispatcher.** Every `/go` — standard and `--scout` — is an ORDER, never the work: the host daemon owns the worker process, so a UI stop, a session teardown, or a closed terminal kills the launcher and leaves the run alive. The command returns as soon as the host grants the worker and answers with the two handles that outlive it — the worker id and its log lane:
+
+```
+🔍 /go --scout dispatched disposable issue #4210 (origin=scout, kind=scout, lane:scout).
+   worker 8cb3eafdcbd2 (pid 41207) — detached from this session; stopping the dispatcher does not stop it.
+   watch: .red/tmp/logs/2026-08-01/dispatch-2026-08-01T20-14-02-114Z-1f0c9d2e.log
+```
+
+Follow it from those handles, never from the launcher's stdout: `worker_status`, the statusline, or the log path above. A dispatch the host refuses starts nothing and says so — it never falls back to running the engine here.
+
+**`--attached`** is the opt-out, for a foreground debug session only: it runs the engine IN this process, prints its exit code, and **dies with whatever kills the caller**. Never use it for work you intend to keep.
 
 **`--dod "<condition>"`** records the approved semantic Definition of Done on the disposable issue and in the handoff. It is confirmation sugar only; it never bypasses the required approval turn.
 
