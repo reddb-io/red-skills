@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
+import { deathLaneFileIn, installDeathRecorder } from "@reddb-io/shared/death-record.js";
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import {
   readDeclaredProjectName,
   resolveProjectLabelForDir,
@@ -304,6 +306,17 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   if (command === "serve") {
     const { values } = parseFlags(args, SERVE_FLAGS);
     const queueDiscovery = resolveServeQueueDiscovery(values);
+    // The daemon's own black box (Spec #3022, slice #3023). The event lane already
+    // carries `daemon-stop` for the stop this process CHOSE; this record carries
+    // the death it did not — a signal, an uncaught error — in the one shape every
+    // worker and launcher writes, on a lane that outlives the runtime directory
+    // the event lane lives in.
+    const deaths = installDeathRecorder({
+      lanePath: deathLaneFileIn(join(redskilledHomeDir(homedir()), "state")),
+      kind: "daemon",
+      id: `daemon:${process.pid}`,
+      phase: "serving",
+    });
     const daemon = await startRedskilledDaemon({
       paths: servePaths(values),
       idleMs: values["idle-ms"] ?? DEFAULT_REDSKILLED_IDLE_MS,
@@ -331,6 +344,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       process.once(signal, () => void daemon.stop({ reason: "signal", signal }).catch(() => undefined));
     }
     await daemon.closed;
+    deaths.phase("closed");
     return 0;
   }
 
