@@ -173,6 +173,20 @@ export interface RedskilledStatuslinePayload {
    * completely, and a consumer that finds it absent must not invent a mismatch.
    */
   readonly known_projects?: readonly string[];
+  /**
+   * Every project label this host holds a REGISTRATION for.
+   *
+   * A strict subset of `known_projects`, and separate from it on purpose: a
+   * project the host knows only because a Worker of its own is still running is
+   * known **by name**, not registered, and nothing will be born for it again. A
+   * line that could not tell the two apart rendered a lapsed registration as a
+   * calm, healthy project label — which is what #2973 turned out to be.
+   *
+   * OPTIONAL on the wire for the same reason `known_projects` is: one daemon
+   * serves checkouts pinned to different bundle versions (ADR 0130 rule 3), and a
+   * consumer that finds it absent must not invent a lapse.
+   */
+  readonly registered_projects?: readonly string[];
   readonly workers: readonly RedskilledStatuslineWorker[];
   /**
    * Each registered project's repository counts, dated on their own clock.
@@ -274,6 +288,9 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
     },
     projects: buildProjects(workers),
     known_projects: knownProjects(input.hostState),
+    registered_projects: (input.hostState.registrations ?? [])
+      .map((registration) => registration.project_label)
+      .sort((a, b) => a.localeCompare(b)),
     workers,
     repository_activity: buildActivityReport({
       activity: input.repositoryActivity ?? null,
@@ -352,6 +369,7 @@ function workerLog(log: RedskilledWorkerLogLine | undefined): RedskilledStatusli
  * either one alone answers "yes, this host knows you" — and a project it knows
  * neither way is the only kind a consumer may call unmatched.
  */
+/** Every label the host knows at all: registered, or carrying a Worker. */
 function knownProjects(hostState: RedskilledHostState): readonly string[] {
   const labels = new Set<string>();
   for (const registration of hostState.registrations ?? []) labels.add(registration.project_label);
@@ -460,6 +478,9 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     // needed to tell an idle project from an unknown one.
     (payload.known_projects === undefined ||
       (Array.isArray(payload.known_projects) && payload.known_projects.every((label) => typeof label === "string"))) &&
+    (payload.registered_projects === undefined ||
+      (Array.isArray(payload.registered_projects) &&
+        payload.registered_projects.every((label) => typeof label === "string"))) &&
     // Absent is accepted, malformed is not: a daemon older than the activity
     // poller answers a newer client's read, and rejecting its whole payload over
     // a field this consumer did not ask for would lose the Worker set — the very

@@ -83,13 +83,14 @@ export const projectRegistrationStatusSchema = z.object({
   /** How many Workers the project asked the host for; 0 when unregistered. */
   target: z.number(),
   /**
-   * Whether a session is still renewing the record; `unknown` when unheld.
+   * What is holding the record up; `unknown` when it is unheld.
    *
-   * `running-on` is work nobody is watching, on a deadline it will lapse at —
-   * a different fact from `renewing`, and the reason the two are distinguishable
-   * rather than folded into one boolean.
+   * Three states rather than a boolean, because they send an operator to three
+   * places: `renewing` is a live session, `self-renewing` is the daemon holding a
+   * registration up on the project's own open work (ADR 0130 Amendment 7), and
+   * `running-on` is work nobody is watching, on a deadline it will lapse at.
    */
-  renewal: z.enum(["renewing", "running-on", "unknown"]),
+  renewal: z.enum(["renewing", "self-renewing", "running-on", "unknown"]),
   /** When the registration lapses unless renewed; "" when unheld. */
   renew_by: z.string(),
   renewals: z.number(),

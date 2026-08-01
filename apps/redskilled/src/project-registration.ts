@@ -72,13 +72,16 @@ export const REDSKILLED_REGISTRATION_TTL_MS = 300_000;
 export const REDSKILLED_RENEWAL_CADENCE = 0.5;
 
 /**
- * Whether a session is still renewing a registration, or it is running on alone.
+ * Whether a session is still renewing a registration, what is holding it up
+ * instead, or that nothing is.
  *
- * Both states are POLLED — a drain must outlive the terminal that started it —
- * and that is exactly why they have to be distinguishable: an operator reading
- * `running-on` is reading work nobody is watching, on a deadline it will lapse at.
+ * All three states are POLLED — a drain must outlive the terminal that started
+ * it — and that is exactly why they have to be distinguishable. `self-renewing`
+ * is a registration no session has spoken for inside the cadence and the daemon
+ * is holding up on the project's own open work (Amendment 7); `running-on` is
+ * work nobody is watching, on a deadline it will actually lapse at.
  */
-export type RedskilledRenewalStatus = "renewing" | "running-on";
+export type RedskilledRenewalStatus = "renewing" | "self-renewing" | "running-on";
 
 /**
  * One project asking to be held, as it states itself.
@@ -136,6 +139,21 @@ export interface RedskilledProjectRegistration {
   readonly renewed_at: string;
   /** How many renewals the daemon has accepted; 0 for a registration never renewed. */
   readonly renewals: number;
+  /**
+   * The last instant the project's own work held this registration up.
+   *
+   * Beside `renewed_at` rather than folded into it, because the two answer
+   * different questions and an operator needs both: `renewed_at` is the last time
+   * a SESSION said "I am still here", and this is the last time the daemon saw the
+   * project still draining (Amendment 7). Absent until something sustained it —
+   * which is honest, not missing: a registration a second old has been held up by
+   * nothing yet.
+   */
+  readonly sustained_at?: string;
+  /** How many observations of open work pushed this deadline out; absent until one did. */
+  readonly sustains?: number;
+  /** Which observation last sustained it — a reason, never just a count. */
+  readonly sustained_by?: RedskilledSustainSignal;
   /**
    * How many times the launch has been restated; 0 for the one registered with.
    *
@@ -320,6 +338,122 @@ export function renewProjectRegistration(
   };
 }
 
+/**
+ * What the daemon saw holding one registration up, at one instant.
+ *
+ * Two signals rather than one, because "this project still intends to drain" is
+ * true in two shapes and only one of them is a queue: a project whose last Worker
+ * is still landing its Ticket has a drained selector and is manifestly draining.
+ */
+export type RedskilledSustainSignal = "open-work" | "live-worker";
+
+/**
+ * How one sustain read came out — a sustained registration, or the reason it was not.
+ *
+ * `drained` and `uncounted` are kept apart for the reason `queue-discovery` keeps
+ * them apart everywhere else: a queue nobody could count is not an empty one, and
+ * only the empty one is a project that has finished.
+ */
+export type RedskilledSustainVerdict = RedskilledSustainSignal | "drained" | "uncounted";
+
+/** What the daemon knows about one project's work at the instant it sustains. */
+export interface RegistrationWorkObservation {
+  /** The daemon's clock, as an instant it can parse. */
+  readonly now: string;
+  /**
+   * The last poll that covered this project; absent when none did.
+   *
+   * The outcome travels with the depth because a `null` depth means three
+   * different things, and only the counted zero is a drained queue.
+   */
+  readonly queue?: { readonly outcome: "counted" | "unreachable" | "rate-limited"; readonly depth: number | null };
+  /** How many Workers the host holds for this project right now. */
+  readonly liveWorkers?: number;
+}
+
+/** One sustain read: the record it produced, and the reason it produced it. */
+export interface SustainedRegistration {
+  readonly registration: RedskilledProjectRegistration;
+  readonly verdict: RedskilledSustainVerdict;
+  readonly detail: string;
+}
+
+/**
+ * Push a registration's deadline out for as long as the project still drains. PURE.
+ *
+ * **ADR 0130 Amendment 7: open work renews a registration, and a session does not
+ * have to.** Amendment 4 made the registration the thing that keeps a drain alive
+ * and gave it a deadline; the deadline shipped and the renewal had no owner, so
+ * every drain stopped one window after it started (#2973). The owner is the
+ * daemon, because it is the one party that outlives the session AND already holds
+ * the two facts that say a project is still draining — the depth its own poll
+ * counted, and the Workers it is itself holding.
+ *
+ * **Only an observation sustains; silence never does.** A counted, positive depth
+ * or a live Worker pushes the deadline; a counted ZERO does not, which is how a
+ * project that finished lapses on schedule and stops being polled. An outcome the
+ * poll could not count — an unreachable tracker, a spent quota — sustains nothing
+ * either, and deliberately so: that is exactly the silence a closed laptop
+ * produces, and a registration held up by silence is the forever-poll the window
+ * exists to prevent. A session that is alive renews straight through such an
+ * outage, and a project that is not can register again in one call.
+ *
+ * **The session's own clock is never touched.** `renewed_at` keeps meaning "a
+ * session was heard from", so a sustained registration still reports honestly that
+ * nobody is watching it — `self-renewing` rather than `renewing`.
+ */
+export function sustainProjectRegistration(
+  held: RedskilledProjectRegistration,
+  observation: RegistrationWorkObservation,
+): SustainedRegistration {
+  const nowMs = Date.parse(observation.now);
+  if (!Number.isFinite(nowMs)) {
+    throw new Error(`redskilled needs an instant to sustain a registration, not ${JSON.stringify(observation.now)}`);
+  }
+  const label = JSON.stringify(held.project_label);
+  const live = Math.max(0, observation.liveWorkers ?? 0);
+  const queue = observation.queue;
+  const depth = queue != null && queue.outcome === "counted" ? queue.depth : null;
+
+  const signal: RedskilledSustainSignal | null = depth != null && depth > 0
+    ? "open-work"
+    // Checked after the depth and before the drain: a project whose last Worker is
+    // still landing its work has a drained selector and is manifestly still
+    // draining, so a zero must not retire the registration out from under it.
+    : live > 0
+      ? "live-worker"
+      : null;
+
+  if (signal == null) {
+    const verdict: RedskilledSustainVerdict = depth === 0 ? "drained" : "uncounted";
+    return {
+      registration: held,
+      verdict,
+      detail: verdict === "drained"
+        ? `project ${label} has nothing queued and no Worker running, so nothing holds its registration up and it ` +
+          `lapses at ${held.renew_by}`
+        : `no poll counted project ${label}, and an uncounted queue never sustains a registration — it stands on ` +
+          `its own deadline of ${held.renew_by}`,
+    };
+  }
+
+  return {
+    registration: {
+      ...held,
+      // Dated from the observation, exactly as a renewal is: a deadline that kept
+      // counting from the registration would lapse a project that is still working.
+      renew_by: new Date(nowMs + held.renew_within_ms).toISOString(),
+      sustained_at: new Date(nowMs).toISOString(),
+      sustains: (held.sustains ?? 0) + 1,
+      sustained_by: signal,
+    },
+    verdict: signal,
+    detail: signal === "open-work"
+      ? `project ${label} has ${depth} item(s) queued, so its registration stands past its window`
+      : `project ${label} holds ${live} Worker(s), so its registration stands past its window`,
+  };
+}
+
 /** True once a registration's deadline has passed with nothing renewing it. PURE. */
 export function hasRegistrationLapsed(registration: RedskilledProjectRegistration, nowMs: number): boolean {
   const renewBy = Date.parse(registration.renew_by);
@@ -334,8 +468,9 @@ export function hasRegistrationLapsed(registration: RedskilledProjectRegistratio
  *
  * Read off silence and nothing else: the daemon has no session to ask, so the
  * question it can answer is "have I heard about this within the cadence a session
- * renews at", and the answer past that is `running-on` — still held, still polled,
- * on its way to a deadline.
+ * renews at". Past that, the verdict says which of the two things holding the
+ * record up is doing it — the project's own open work (`self-renewing`,
+ * Amendment 7) or nothing at all (`running-on`, on its way to a deadline).
  */
 export function registrationRenewalStatus(
   registration: RedskilledProjectRegistration,
@@ -344,8 +479,14 @@ export function registrationRenewalStatus(
   // The fallback is for a record from a daemon older than renewal, which dates
   // itself by the only instant it carries: the one it was registered at.
   const heardAt = Date.parse(registration.renewed_at ?? registration.registered_at);
-  if (!Number.isFinite(heardAt)) return "running-on";
-  return nowMs - heardAt <= registration.renew_within_ms * REDSKILLED_RENEWAL_CADENCE ? "renewing" : "running-on";
+  const withinCadence = (at: number): boolean =>
+    Number.isFinite(at) && nowMs - at <= registration.renew_within_ms * REDSKILLED_RENEWAL_CADENCE;
+  if (withinCadence(heardAt)) return "renewing";
+  // Judged on the same cadence the session is, because it answers the same
+  // question about the same silence: a sustain older than the cadence is a
+  // registration the last poll did not hold up, whatever an earlier one did.
+  const sustainedAt = registration.sustained_at == null ? Number.NaN : Date.parse(registration.sustained_at);
+  return withinCadence(sustainedAt) ? "self-renewing" : "running-on";
 }
 
 /** What one sweep of a registration set decided, at one instant. */
@@ -394,7 +535,15 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     (registration.renewed_at === undefined || typeof registration.renewed_at === "string") &&
     (registration.renewals === undefined || Number.isInteger(registration.renewals)) &&
     (registration.env === undefined || isLaunchEnvShape(registration.env)) &&
-    (registration.launch_revision === undefined || Number.isInteger(registration.launch_revision));
+    (registration.launch_revision === undefined || Number.isInteger(registration.launch_revision)) &&
+    // Optional for the same reason, one amendment later: a daemon older than the
+    // sustain holds no such fields, and a client that failed its records closed
+    // would refuse every registration a mixed-version host answers with.
+    (registration.sustained_at === undefined || typeof registration.sustained_at === "string") &&
+    (registration.sustains === undefined || Number.isInteger(registration.sustains)) &&
+    (registration.sustained_by === undefined ||
+      registration.sustained_by === "open-work" ||
+      registration.sustained_by === "live-worker");
 }
 
 /** True when `value` is a map of strings to strings — a launch env's whole shape. */

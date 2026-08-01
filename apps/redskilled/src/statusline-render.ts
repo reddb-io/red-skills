@@ -54,6 +54,15 @@ export type RedskilledStatuslineDetail = "workers" | "projects" | "host";
  */
 export type RedskilledStatuslineProjectMatch =
   | "matched"
+  /**
+   * The host knows this label, and holds no registration for it.
+   *
+   * A name is not a state (#2973). A project whose registration lapsed while a
+   * Worker of its own is still finishing is still *known* — the label is on the
+   * Worker — but nothing will be born for it again, so rendering it as a matched
+   * project is rendering a stopped drain as a healthy one.
+   */
+  | "name-only"
   | "unregistered"
   | "unresolved"
   /** No daemon answered, so whether this host knows the project is unknowable. */
@@ -250,6 +259,17 @@ export function renderRedskilledStatuslineAbsence(input: {
   };
 }
 
+/**
+ * The mark a known-by-name project carries, and the reason it carries one.
+ *
+ * `!` for the same reason the staleness mark has one: it is a state the operator
+ * has to act on, not a detail, and it must survive being read at a glance next to
+ * a Worker count that looks perfectly healthy. One word, because the head is the
+ * part of the line that never degrades — a sentence here would push the Workers
+ * off a narrow terminal to say something `project_status` says in full.
+ */
+export const UNREGISTERED_MARK = "!unregistered";
+
 /** The one sentence an unreachable host renders as. */
 export const REDSKILLED_STATUSLINE_ABSENCE = "redskilled unreachable — Worker state unknown";
 
@@ -325,7 +345,13 @@ function resolveProjectMatch(
 ): RedskilledStatuslineProjectMatch {
   if (options.project == null) return "unresolved";
   if (payload.known_projects == null) return "matched";
-  return payload.known_projects.includes(options.project) ? "matched" : "unregistered";
+  if (!payload.known_projects.includes(options.project)) return "unregistered";
+  // Known, and possibly known only by NAME. A daemon too old to state its
+  // registrations cannot say which, and the answer then is `matched` for the same
+  // reason it is above: a lapse invented from a missing field would put a false
+  // accusation on every line a skewed daemon serves.
+  if (payload.registered_projects == null) return "matched";
+  return payload.registered_projects.includes(options.project) ? "matched" : "name-only";
 }
 
 /**
@@ -348,6 +374,13 @@ function renderHead(
     parts.push(`${options.project} ${workers.length}w`);
     parts.push(memoryFigure(payload, options));
     if (workers.length === 0) parts.push("idle");
+  } else if (match === "name-only") {
+    // The Workers still count — they are running — but the line says out loud
+    // that the host holds no registration, and it never says `idle`: a project
+    // nothing will be born for is stopped, not resting (#2973).
+    parts.push(`${options.project} ${workers.length}w`);
+    parts.push(memoryFigure(payload, options));
+    parts.push(UNREGISTERED_MARK);
   } else {
     // NOT `0w idle`. An unmatched directory has no Worker count to report — the
     // host may be holding a dozen for a project this one failed to name — so the
