@@ -5,7 +5,10 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "privatePackages": { "version": true, "tag": false },
+  "privatePackages": {
+    "version": true,
+    "tag": false
+  },
   "fixed": [
     [
       "@reddb-io/dev",
@@ -27,6 +30,7 @@
     "@reddb-io/redskilled",
     "@reddb-io/afk-container",
     "@reddb-io/cdp-driver",
-    "@reddb-io/browser-bridge"
+    "@reddb-io/browser-bridge",
+    "vscode-redskilled"
   ]
 }
