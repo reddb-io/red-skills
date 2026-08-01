@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { computeCiScope } from "../../../scripts/ci-affected-scope.mjs";
 import {
   computeValidationScope,
   formatValidationScope,
+  gateScopes,
   isRootTrigger,
   scopeNeedsWholeSuite,
   scopesForValidationScope,
@@ -230,6 +232,163 @@ describe("computeValidationScope — cone expansion", () => {
   });
 });
 
+// ---- computeValidationScope — path classification (#2984) ----
+
+describe("computeValidationScope — the mandatory changeset never widens the cone", () => {
+  // A layout shaped like this repo: a root package plus the two packages the
+  // acceptance criteria name.
+  const layout = fakeLayout([".", "apps/dev", "apps/redskilled", "packages/shared"]);
+  const g = fakeGraph([
+    { dir: "apps/dev", dependsOn: ["packages/shared"] },
+    { dir: "apps/redskilled", dependsOn: ["packages/shared"] },
+    { dir: "packages/shared", dependsOn: [] },
+  ]);
+
+  it("a slice + its changeset scopes to the slice's cone, not the root", () => {
+    const scope = computeValidationScope(
+      ["apps/redskilled/src/x.ts", ".changeset/lucky-pandas-shave.md"],
+      layout,
+      g,
+    );
+
+    expect(scope.type).toBe("cone");
+    if (scope.type === "cone") {
+      expect(scope.packages).toEqual(["apps/redskilled"]);
+      expect(scope.triggerPackages).toEqual(["apps/redskilled"]);
+    }
+    expect(scopesForValidationScope(scope)).toEqual(["apps/redskilled"]);
+    expect(scopesForValidationScope(scope)).not.toContain(".");
+  });
+
+  it("a changeset-only branch contributes no scope at all", () => {
+    const scope = computeValidationScope([".changeset/quiet-moons-wave.md"], layout, g);
+    expect(scope.type).toBe("cone");
+    if (scope.type === "cone") {
+      expect(scope.packages).toEqual([]);
+    }
+  });
+
+  it("disposable `.red/` lanes are inert too", () => {
+    const scope = computeValidationScope(
+      ["apps/dev/src/core/x.ts", ".red/tmp/scratch/note.md", ".red/researches/r.md"],
+      layout,
+      g,
+    );
+    expect(scope.type).toBe("cone");
+    if (scope.type === "cone") {
+      expect(scope.triggerPackages).toEqual(["apps/dev"]);
+    }
+  });
+
+  it("`.red/adr/*.md` still validates its doc-contract owner (no under-validation)", () => {
+    const scope = computeValidationScope([".red/adr/0131-something.md"], layout, g);
+    expect(scope.type).toBe("cone");
+    if (scope.type === "cone") {
+      expect(scope.triggerPackages).toEqual(["apps/dev"]);
+      expect(scope.packages).toEqual(["apps/dev"]);
+    }
+  });
+
+  it("other `.red/` docs and `plugins/**` map to the same doc-contract owner", () => {
+    for (const file of [
+      ".red/contexts/dev/CONTEXT.md",
+      "plugins/dev/skills/engineering/red-setup/domain.md",
+      ".claude-plugin/marketplace.json",
+      "README.md",
+      "CLAUDE.md",
+    ]) {
+      const scope = computeValidationScope([file], layout, g);
+      expect(scope.type, file).toBe("cone");
+      if (scope.type === "cone") expect(scope.triggerPackages, file).toEqual(["apps/dev"]);
+    }
+  });
+
+  it("`.red/config.yaml` is configuration, not prose — it escalates", () => {
+    const scope = computeValidationScope([".red/config.yaml"], layout, g);
+    expect(scope.type).toBe("whole-workspace");
+    if (scope.type === "whole-workspace") expect(scope.triggerFile).toBe(".red/config.yaml");
+  });
+
+  it("an unclassifiable path escalates rather than narrowing", () => {
+    for (const file of ["scripts/ci-affected-scope.mjs", "dist/bundle.mjs", "Makefile"]) {
+      const scope = computeValidationScope([file], layout, g);
+      expect(scope.type, file).toBe("whole-workspace");
+    }
+  });
+
+  it("a docs change escalates when no doc-contract owner exists in the layout", () => {
+    // A repo without apps/dev cannot narrow a docs change honestly.
+    const bare = fakeLayout([".", "packages/shared"]);
+    const scope = computeValidationScope([".red/adr/0001-x.md"], bare, fakeGraph([]));
+    expect(scope.type).toBe("whole-workspace");
+  });
+});
+
+// ---- taxonomy parity with scripts/ci-affected-scope.mjs ----
+
+describe("classification parity — the gate and CI share one taxonomy", () => {
+  // Mirrors this repo's real shape closely enough to exercise every rule.
+  const ciGraph = [
+    { dir: "apps/dev", name: "@reddb-io/dev", dependsOn: ["packages/shared"] },
+    { dir: "apps/redskilled", name: "@reddb-io/redskilled", dependsOn: ["packages/shared"] },
+    { dir: "packages/shared", name: "@reddb-io/shared", dependsOn: [] },
+  ];
+  const layout = fakeLayout([".", ...ciGraph.map((p) => p.dir)]);
+  const gateGraph = fakeGraph(ciGraph.map(({ dir, dependsOn }) => ({ dir, dependsOn })));
+
+  const PATHS = [
+    "apps/redskilled/src/x.ts",
+    "packages/shared/src/args.ts",
+    "apps/dev/tests/feedback.test.ts",
+    ".changeset/lucky-pandas-shave.md",
+    ".red/tmp/scratch/note.md",
+    ".red/researches/report.md",
+    ".red/adr/0131-something.md",
+    ".red/contexts/dev/CONTEXT.md",
+    ".red/config.yaml",
+    "plugins/dev/skills/engineering/red-setup/domain.md",
+    ".claude-plugin/marketplace.json",
+    ".agents/plugins/marketplace.json",
+    "README.md",
+    "CHANGES.md",
+    "package.json",
+    "pnpm-lock.yaml",
+    "turbo.json",
+    ".github/workflows/red-workspace-ci.yml",
+    "scripts/ci-affected-scope.mjs",
+  ];
+
+  it.each(PATHS)("classifies %s the same way CI does", (file) => {
+    const ci = computeCiScope([file], ciGraph);
+    const gate = computeValidationScope([file], layout, gateGraph);
+
+    if (ci.mode === "whole-workspace") {
+      expect(gate.type).toBe("whole-workspace");
+      return;
+    }
+    expect(gate.type).toBe("cone");
+    if (gate.type === "cone") expect(gate.triggerPackages).toEqual(ci.triggerPackages);
+  });
+
+  it("agrees on a realistic slice diff (source + changeset + ADR)", () => {
+    const files = [
+      "apps/redskilled/src/registration.ts",
+      "apps/redskilled/tests/registration.test.ts",
+      ".changeset/lucky-pandas-shave.md",
+    ];
+    const ci = computeCiScope(files, ciGraph);
+    const gate = computeValidationScope(files, layout, gateGraph);
+
+    expect(ci.mode).toBe("cone");
+    expect(gate.type).toBe("cone");
+    if (gate.type === "cone") {
+      expect(gate.triggerPackages).toEqual(ci.triggerPackages);
+      expect(gate.packages).toEqual(ci.testPackages);
+      expect(gate.packages).toEqual(["apps/redskilled"]);
+    }
+  });
+});
+
 // ---- scopesForValidationScope ----
 
 describe("scopesForValidationScope", () => {
@@ -250,6 +409,26 @@ describe("scopesForValidationScope", () => {
   it("empty cone → []", () => {
     const scope: ValidationScope = { type: "cone", packages: [], triggerPackages: [] };
     expect(scopesForValidationScope(scope)).toEqual([]);
+  });
+});
+
+// ---- gateScopes — the graph-less gate paths (gate_run, reconcile) ----
+
+describe("gateScopes", () => {
+  const layout = fakeLayout([".", "apps/dev", "apps/redskilled"]);
+
+  it("classifies the changeset away on a graph-less gate path too", () => {
+    expect(gateScopes(layout, ["apps/redskilled/src/x.ts", ".changeset/y.md"])).toEqual([
+      "apps/redskilled",
+    ]);
+  });
+
+  it("still escalates a root change to the whole workspace", () => {
+    expect(gateScopes(layout, ["pnpm-lock.yaml", "apps/dev/src/x.ts"])).toEqual(["."]);
+  });
+
+  it("resolves trigger packages only — no dependents, having no graph to expand", () => {
+    expect(gateScopes(layout, ["apps/dev/src/x.ts"])).toEqual(["apps/dev"]);
   });
 });
 
@@ -358,6 +537,49 @@ describe("gate integration — runFeedback runs the cone", () => {
     // All pnpm calls must target the workspace root ("/wt"), never a sub-package.
     const dirs = pnpmCalls.map((a) => a[a.indexOf("-C") + 1] ?? "");
     expect(dirs.every((d) => d === "/wt")).toBe(true);
+  });
+
+  it("a branch that carries a changeset runs the cone's `pnpm -C` line, not the root's", async () => {
+    // The regression #2984 names: source + the mandatory changeset. The gate
+    // command the worker actually runs must target the slice's package.
+    const layout = fakeLayout([".", "apps/dev", "apps/redskilled", "packages/shared"]);
+    const g = fakeGraph([
+      { dir: "apps/dev", dependsOn: ["packages/shared"] },
+      { dir: "apps/redskilled", dependsOn: ["packages/shared"] },
+      { dir: "packages/shared", dependsOn: [] },
+    ]);
+    const changedFiles = ["apps/redskilled/src/x.ts", ".changeset/lucky-pandas-shave.md"];
+    const scope = computeValidationScope(changedFiles, layout, g);
+    const scopes = scopesForValidationScope(scope);
+
+    const { exec, pnpmCalls } = trackingExec();
+    const result = await runFeedback(exec, {
+      worktree: "/wt",
+      scopes,
+      layout,
+      now: () => 0,
+      validationScope: scope,
+    });
+
+    expect(result.ok).toBe(true);
+
+    // The command line the worker actually runs — what a human also reads off
+    // the envelope — targets the slice's package.
+    const commands = pnpmCalls.map((a) => a.join(" "));
+    expect(commands).toContain("pnpm -C /wt/apps/redskilled test");
+    // The whole-workspace suite is exactly what #2984 was paying for. It is gone.
+    expect(commands).not.toContain("pnpm -C /wt test");
+    for (const script of ["test", "lint", "build"]) {
+      expect(commands, script).not.toContain(`pnpm -C /wt/apps/dev ${script}`);
+    }
+    // Two repo-wide sweeps survive the narrowing on purpose: the cross-package
+    // typecheck and apps/dev's repo-invariant suite (#2762).
+    expect(commands).toContain("pnpm -C /wt typecheck");
+    expect(commands).toContain("pnpm -C /wt/apps/dev test:invariants");
+
+    const recorded = result.checks.map((c) => c.record.command).filter((c): c is string => !!c);
+    expect(recorded).toContain("pnpm -C /wt/apps/redskilled test");
+    expect(recorded).not.toContain("pnpm -C /wt test");
   });
 
   it("validationScope is undefined in result when not provided (backwards compat)", async () => {

@@ -9,8 +9,18 @@
 // Root-config changes (lockfile, workspace manifest, tsconfig, turbo.json,
 // .github/**) have global blast radius and escalate to whole-workspace mode
 // (scopes = ["."]) so they are never under-validated.
+//
+// Every changed path is classified explicitly (#2984). Mapping a path to its
+// *nearest* package was not enough: a file outside every package — `.changeset/*.md`
+// above all — walked up to the root package and returned scope ".", whose `test`
+// script is the whole workspace. Since a changeset is mandatory on every slice,
+// the cone was computed correctly and then made irrelevant, and each gate run
+// degenerated to `pnpm -C <worktree> test`. The classification here is the same
+// taxonomy CI already uses (`scripts/ci-affected-scope.mjs`), kept in lockstep by
+// `apps/dev/tests/validation-scope.test.ts`'s parity table — one taxonomy, two
+// consumers, never a third.
 
-import { type PackageLayout, relevantScopes } from "./feedback.js";
+import { nearestPackageScope, type PackageLayout } from "./feedback.js";
 
 /** A workspace package: its repo-relative dir and the dirs it directly depends on. */
 export interface WorkspacePackage {
@@ -79,8 +89,99 @@ const ROOT_TRIGGER_FILES = new Set([
   ".nvmrc",
 ]);
 
+/**
+ * Doc lanes that no suite reads — a change here contributes no scope at all.
+ * Keep this list short and provable: an entry is a promise that no test asserts
+ * the file's content. `.changeset/` is the entry that matters most, because a
+ * changeset is mandatory on every slice.
+ */
+const INERT_PREFIXES = [".changeset/", ".red/tmp/", ".red/researches/"];
+
+/**
+ * Packages whose suites assert the content of the repo's doc lanes (the
+ * `*-docs.test.ts` contracts, ADR governance, the skill/manifest audits). A docs
+ * change runs these packages' tests and nothing else — it affects no type.
+ * A repo whose layout declares none of them escalates to whole-workspace rather
+ * than under-validating.
+ */
+const DOC_CONTRACT_PACKAGES = ["apps/dev"];
+
+/** Doc lanes whose content the doc-contract packages assert. */
+const DOC_PREFIXES = [".red/"];
+
+/**
+ * Doc lanes that are ALSO inputs to generated artifacts (Codex/Gemini/Pi
+ * manifests, Pi package payloads). Same owners as the doc lanes on the gate
+ * side — CI additionally re-runs its manifest checks, which the gate does not have.
+ */
+const MANIFEST_INPUT_PREFIXES = ["plugins/", ".claude-plugin/", ".agents/", "packaging/pi/"];
+
+/** Root-level docs the suite reads (README/CLAUDE/CHANGES are asserted). */
+const ROOT_DOC_FILES = new Set(["README.md", "CLAUDE.md", "CHANGES.md", "NOTICE", "LICENSE"]);
+
+/**
+ * The verdict for one changed path.
+ * - `whole` — global blast radius, or unclassifiable. Runs the whole workspace,
+ *   because a wrongly-skipped test costs far more than a needlessly-run one.
+ * - `inert` — no suite reads it; contributes no scope.
+ * - `scoped` — contributes the named packages to the cone's trigger set.
+ */
+export type PathClass =
+  | { kind: "whole" }
+  | { kind: "inert" }
+  | { kind: "scoped"; packages: string[] };
+
 function stripDotSlash(file: string): string {
   return file.startsWith("./") ? file.slice(2) : file;
+}
+
+/** The doc-contract owners this layout actually declares. */
+function docContractPackages(layout: PackageLayout): string[] {
+  return DOC_CONTRACT_PACKAGES.filter((dir) => layout.hasPackage(dir));
+}
+
+/**
+ * Classify one changed path against the shared taxonomy. Pure: `layout` is only
+ * consulted to resolve a path's owning package (and to confirm a doc-contract
+ * owner exists), never to read the filesystem.
+ *
+ * Order matters — `.red/adr/` is checked before the inert prefixes so an ADR is
+ * never mistaken for disposable `.red/` scratch, and `.red/config.yaml` is
+ * checked before the docs discount because it is configuration the runtimes
+ * read, not prose.
+ */
+export function classifyChangedPath(file: string, layout: PackageLayout): PathClass {
+  const clean = stripDotSlash(file);
+  const docOwners = docContractPackages(layout);
+  // A docs change with no owner package in this layout cannot be narrowed
+  // honestly — run everything rather than validate nothing.
+  const docScoped = (): PathClass =>
+    docOwners.length > 0 ? { kind: "scoped", packages: docOwners } : { kind: "whole" };
+
+  // Known root-config files and `.github/**` — global blast radius, checked
+  // first so nothing below can discount them.
+  if (isRootTrigger(clean)) return { kind: "whole" };
+
+  if (clean.startsWith(".red/adr/")) return docScoped();
+  if (INERT_PREFIXES.some((p) => clean.startsWith(p))) return { kind: "inert" };
+  if (MANIFEST_INPUT_PREFIXES.some((p) => clean.startsWith(p))) return docScoped();
+  if (DOC_PREFIXES.some((p) => clean.startsWith(p))) {
+    if (clean === ".red/config.yaml") return { kind: "whole" };
+    return docScoped();
+  }
+
+  if (!clean.includes("/")) {
+    if (ROOT_DOC_FILES.has(clean)) return docScoped();
+    // Every other root file (package.json, lockfile, turbo.json, tsconfig, …)
+    // has global blast radius.
+    return { kind: "whole" };
+  }
+
+  const dir = nearestPackageScope(layout, clean);
+  if (dir !== undefined && dir !== ".") return { kind: "scoped", packages: [dir] };
+
+  // scripts/**, .github/**, dist/**, anything unrecognised: unclassifiable.
+  return { kind: "whole" };
 }
 
 /**
@@ -148,31 +249,38 @@ function expandToCone(touchedDirs: readonly string[], graph: WorkspaceGraph): st
 
 /**
  * Pure function: given changed files, a package layout, and a workspace graph,
- * compute the validation scope.
+ * compute the validation scope. Every path is classified by
+ * {@link classifyChangedPath}; the first `whole` verdict wins outright.
  *
- * - Any root-config file in `changedFiles` → `whole-workspace` (global blast
+ * - Any root-config or unclassifiable file → `whole-workspace` (global blast
  *   radius; must not under-validate).
+ * - `inert` files (`.changeset/**` above all) contribute NO scope, so the
+ *   mandatory changeset never drags the root package into the cone (#2984).
  * - All other changes → `cone` (touched packages + their transitive dependents).
  * - Empty changed-file set → `cone` with empty packages (gate runs no-package
- *   skips, matching the current `relevantScopes` fallback).
+ *   skips; the caller already terminal-fails a no-diff branch before this).
  */
 export function computeValidationScope(
   changedFiles: readonly string[],
   layout: PackageLayout,
   graph: WorkspaceGraph,
 ): ValidationScope {
-  for (const file of changedFiles) {
-    if (isRootTrigger(file)) {
-      return { type: "whole-workspace", triggerFile: stripDotSlash(file) };
-    }
-  }
-
   const coreTrigger = coreModuleTriggerFile(changedFiles);
   if (coreTrigger !== undefined) {
     return { type: "whole-workspace", triggerFile: coreTrigger };
   }
 
-  const touchedDirs = relevantScopes(layout, changedFiles);
+  const touched = new Set<string>();
+  for (const raw of changedFiles) {
+    if (raw === "") continue;
+    const file = stripDotSlash(raw);
+    const verdict = classifyChangedPath(file, layout);
+    if (verdict.kind === "whole") return { type: "whole-workspace", triggerFile: file };
+    if (verdict.kind === "inert") continue;
+    for (const pkg of verdict.packages) touched.add(pkg);
+  }
+
+  const touchedDirs = [...touched].sort();
   const coneDirs = expandToCone(touchedDirs, graph);
 
   return {
@@ -193,6 +301,18 @@ export function computeValidationScope(
 export function scopesForValidationScope(scope: ValidationScope): string[] {
   if (scope.type === "whole-workspace") return ["."];
   return scope.packages;
+}
+
+/**
+ * The classified scope list for a gate path that has no workspace graph to
+ * expand a cone with — `gate_run` and reconcile's pre-land / post-merge gates.
+ * Same taxonomy as {@link computeValidationScope}, so the mandatory changeset
+ * does not drag the root package (and with it the whole-workspace suite) into
+ * these gates either (#2984). Prefer `computeValidationScope` wherever a graph
+ * IS available: this resolves the trigger packages only, never their dependents.
+ */
+export function gateScopes(layout: PackageLayout, changedFiles: readonly string[]): string[] {
+  return scopesForValidationScope(computeValidationScope(changedFiles, layout, { packages: [] }));
 }
 
 /**

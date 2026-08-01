@@ -1,0 +1,5 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+The AFK gate no longer runs the whole workspace on every slice. Each changed file mapped to its *nearest* package, so a file outside every package — `.changeset/*.md` above all — walked up to the root, whose `test` script is the whole workspace. A changeset is mandatory on every slice, so the dependency cone was computed correctly and then made irrelevant: every gate run degenerated to `pnpm -C <worktree> test`, ~10 minutes a pass, twice or more per issue. Changed paths are now classified explicitly against the taxonomy CI already used (`scripts/ci-affected-scope.mjs`) — `.changeset/` and the disposable `.red/` lanes contribute no scope, `.red/adr/` and the other doc lanes still validate their doc-contract owners, `.red/config.yaml` and anything unclassifiable still escalate to the whole workspace. The two sibling gate paths that resolved scopes without the classifier, `gate_run` and reconcile's pre-land and post-merge gates, were leaking the same root scope and now share it.

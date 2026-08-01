@@ -102,7 +102,8 @@ import {
 } from "./core/config.js";
 import * as gitx from "./runtime/git.js";
 import { makeFeedbackWorktree } from "./runtime/feedback-worktree.js";
-import { relevantScopes, runFeedback } from "./core/feedback.js";
+import { runFeedback } from "./core/feedback.js";
+import { gateScopes } from "./core/validation-scope.js";
 import { doLanding } from "./core/landing.js";
 import { dispatchHooks, type HookExec } from "./core/hook-dispatcher.js";
 import { resolveHooks } from "./core/hook-config.js";
@@ -549,7 +550,7 @@ export function createDefaultDevAfkMcpOperations(
         const changedFiles = await gitx.changedFiles({ cwd: root }, input.branch, base);
         const result = await runFeedback(feedback.pnpm, {
           worktree: input.branch,
-          scopes: relevantScopes(feedback.layout, changedFiles),
+          scopes: gateScopes(feedback.layout, changedFiles),
           layout: feedback.layout,
           now: () => Date.now(),
           baselineWorktree: base,
