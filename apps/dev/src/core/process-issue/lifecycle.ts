@@ -20,6 +20,7 @@ import {
 } from "../branch-resume.js";
 import { assignOutputShaping, type OutputShapingConfig } from "../output-shaping.js";
 import { evaluateGoalPredicate } from "../goal-predicate.js";
+import { laneRunModeRefusal } from "../lane-run-mode.js";
 import {
   type AgentOutcome,
   type AgentEffort,
@@ -258,6 +259,15 @@ export async function processIssue(
   if (!labels.includes(laneLabel)) {
     await deps.claimLock.release(issue);
     return claimLost(issue, hooksFired);
+  }
+  // The lane label implies the run mode, enforced HERE — at the claim, the one
+  // path every entrance shares (#3026). A `lane:scout` issue picked up without
+  // `run_mode=scout` would run the full mutating pipeline against a read-only
+  // investigation, so the worker refuses before it owns anything.
+  const laneModeRefusal = laneRunModeRefusal(labels, input.runMode);
+  if (laneModeRefusal) {
+    await deps.claimLock.release(issue);
+    return claimLost(issue, hooksFired, deps, undefined, laneModeRefusal);
   }
   if (deps.claimGh) {
     const decision = await acquireClaim(
