@@ -1,0 +1,198 @@
+#
+# herdr-plugin.toml — registers red-skills with herdr.
+#
+#   herdr plugin install reddb-io/herdr-plugin-red-skills
+#   herdr plugin link .            # from a checkout, for development
+#
+# The plugin is a read client of `redskilled`, the host-scoped execution daemon
+# of reddb-io/red-skills (ADR 0130): exactly one singleton per machine, behind a
+# unix socket, owning Worker processes across every project on that machine. It
+# sends `ping`, `host-state`, `statusline-payload` and `statusline-string`, and
+# it sends nothing that changes the machine — ADR 0130 rule 9 makes reach
+# asymmetric (read the host, write the project), and a monitor belongs entirely
+# on the reading half.
+#
+# Zero dependencies and no bundling: every command is plain Node ESM run
+# straight from this checkout, so an install is a clone and nothing else.
+
+id = "reddb-io.red-skills"
+name = "RedSkills"
+version = "0.1.0"
+# `herdr plugin pane open --env KEY=VALUE` and `--placement` are the two flags
+# the panes here depend on, and 0.7.5 is the oldest herdr this plugin has been
+# run against. Declaring an older floor would be a claim nobody verified.
+min_herdr_version = "0.7.5"
+platforms = ["linux", "macos", "windows"]
+description = "Watch the redskilled host daemon from herdr: live Workers and their vitals, worker logs, the host event lane, open pull requests per project, and notifications when any of it changes."
+
+# No build, only a preflight. There is nothing to compile — the commands are
+# plain ESM — but a missing Node is worth failing the install over rather than
+# discovering it as a pane that opens and immediately closes.
+[[build]]
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'node --version >/dev/null 2>&1 || { echo "red-skills needs Node.js 20+ on PATH"; exit 1; }']
+
+[[build]]
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error "red-skills needs Node.js 20+ on PATH"; exit 1 }']
+
+# The notification watcher. herdr fires this once per enabled plugin after the
+# session is restored and its API socket is ready.
+#
+# The docs are explicit that "startup hooks are one-shot initialization
+# commands, not supervised daemons", so this hook obeys that literally: it
+# re-execs the loop as a detached child and RETURNS. Two consequences are
+# handled on our side rather than left to herdr, which supervises neither:
+#   - the child holds a single-instance lock, so a herdr restart or a second
+#     session never becomes two watchers saying the same thing twice;
+#   - the child exits when $HERDR_SOCKET_PATH disappears, because a notifier
+#     that outlived herdr would poll forever to raise notifications nobody
+#     can see.
+[[startup]]
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" watch --detach']
+
+[[startup]]
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" watch --detach']
+
+# ── panes ────────────────────────────────────────────────────────────────────
+# Every pane command runs the entry by absolute path under $HERDR_PLUGIN_ROOT: a
+# pane's cwd is the directory it was opened from, not the plugin root, and the
+# entry is not on PATH.
+
+[[panes]]
+id = "dashboard"
+title = "RedSkills"
+placement = "split"
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" dashboard']
+
+[[panes]]
+id = "dashboard-windows"
+title = "RedSkills"
+placement = "split"
+platforms = ["windows"]
+# Deliberately without -NonInteractive: this hosts a keyboard-driven TUI, and
+# -NonInteractive breaks its input.
+command = ['powershell', '-NoProfile', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" dashboard']
+
+[[panes]]
+id = "logs"
+title = "Worker log"
+placement = "split"
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" logs']
+
+[[panes]]
+id = "logs-windows"
+title = "Worker log"
+placement = "split"
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" logs']
+
+[[panes]]
+id = "events"
+title = "Host events"
+placement = "split"
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" logs --events']
+
+[[panes]]
+id = "events-windows"
+title = "Host events"
+placement = "split"
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" logs --events']
+
+# ── actions ──────────────────────────────────────────────────────────────────
+
+[[actions]]
+id = "toggle-dashboard"
+title = "RedSkills: toggle dashboard"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" pane toggle dashboard']
+
+[[actions]]
+id = "toggle-dashboard-windows"
+title = "RedSkills: toggle dashboard"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" pane toggle dashboard']
+
+[[actions]]
+id = "open-dashboard-tab"
+title = "RedSkills: dashboard in a tab"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" pane open dashboard --placement tab']
+
+[[actions]]
+id = "open-dashboard-tab-windows"
+title = "RedSkills: dashboard in a tab"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" pane open dashboard --placement tab']
+
+[[actions]]
+id = "toggle-logs"
+title = "RedSkills: toggle worker log"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" pane toggle logs']
+
+[[actions]]
+id = "toggle-logs-windows"
+title = "RedSkills: toggle worker log"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" pane toggle logs']
+
+[[actions]]
+id = "toggle-events"
+title = "RedSkills: toggle host event lane"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" pane toggle events']
+
+[[actions]]
+id = "toggle-events-windows"
+title = "RedSkills: toggle host event lane"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" pane toggle events']
+
+# One read, raised where an operator will see it without changing panes. The
+# line is the daemon's own `statusline-string`, never this plugin's rendering of
+# the payload: ADR 0130 rule 10 keeps the string a pure function of the payload
+# precisely so no surface reimplements it.
+[[actions]]
+id = "status"
+title = "RedSkills: notify host status"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" status --notify']
+
+[[actions]]
+id = "status-windows"
+title = "RedSkills: notify host status"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" status --notify']
+
+# Asked when a pane says "no host answered" and the operator does not believe
+# it. Its output lands in `herdr plugin log list --plugin reddb-io.red-skills`.
+[[actions]]
+id = "doctor"
+title = "RedSkills: doctor"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" doctor']
+
+[[actions]]
+id = "doctor-windows"
+title = "RedSkills: doctor"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" doctor']

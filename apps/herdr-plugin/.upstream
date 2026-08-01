@@ -1,0 +1,13 @@
+# The source this directory was absorbed from, at the commit it was absorbed at.
+#
+# Same marker convention as `packages/red-castle/.upstream`: this is NOT a
+# submodule, a subtree or a fork. The code below is ordinary in-repo source and
+# every change to it is an ordinary one-PR change here. The line records where
+# it came from so a reader can diff the absorption against its origin once, and
+# so an upstream advance is a decision somebody makes rather than a surprise.
+#
+# ADR 0131 records the absorption and why. The source repository is untouched by
+# it: whether it is archived is the maintainer's call, not this repo's.
+repo=https://github.com/reddb-io/herdr-plugin-red-skills
+sha=efc858158f830517187999861bb06d3f0a6e3c9a
+absorbed=2026-08-01

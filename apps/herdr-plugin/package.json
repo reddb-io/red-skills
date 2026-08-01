@@ -1,0 +1,39 @@
+{
+  "name": "@reddb-io/herdr-plugin-red-skills",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A herdr plugin that reads the redskilled host daemon: live Workers, worker logs, the host event lane, open pull requests, and notifications when any of it changes.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reddb-io/red-skills.git",
+    "directory": "apps/herdr-plugin"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "red-skills-herdr": "bin/red-skills-herdr.mjs"
+  },
+  "scripts": {
+    "test": "python3 scripts/check-manifest.py && node --test \"tests/*.test.mjs\"",
+    "check": "python3 scripts/check-manifest.py && node --test \"tests/*.test.mjs\"",
+    "smoke": "sh scripts/smoke.sh",
+    "preview": "node scripts/preview.mjs",
+    "fake-daemon": "node scripts/fake-daemon.mjs /tmp/redskilled-fake.sock",
+    "dashboard": "node bin/red-skills-herdr.mjs dashboard",
+    "doctor": "node bin/red-skills-herdr.mjs doctor"
+  },
+  "dependencies": {
+    "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/toon": "catalog:"
+  },
+  "keywords": [
+    "herdr",
+    "herdr-plugin",
+    "redskilled",
+    "red-skills",
+    "reddb-io"
+  ]
+}

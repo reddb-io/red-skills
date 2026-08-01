@@ -1,0 +1,5 @@
+# The plugin is cloned onto the machine that runs it, and `sh scripts/*.sh` and
+# the `#!/usr/bin/env node` entry both break on CRLF. Check out LF everywhere,
+# whatever the developer's platform does by default.
+* text=auto eol=lf
+*.png binary

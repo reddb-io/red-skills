@@ -6,6 +6,9 @@
   "description": "Shared runtime build metadata helpers for RedSkills bundled apps.",
   "license": "Apache-2.0",
   "exports": {
-    ".": "./index.ts"
+    ".": {
+      "types": "./index.d.mts",
+      "default": "./index.mjs"
+    }
   }
 }
