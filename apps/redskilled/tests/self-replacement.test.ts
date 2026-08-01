@@ -14,7 +14,10 @@
 //   3. the swap is a RESTART, not an evacuation: the live Worker survives it and
 //      the new process re-adopts it;
 //   4. the daemon never reports a version it is not running — the published
-//      answer travels beside the running one, never inside it.
+//      answer travels beside the running one, never inside it;
+//   5. the check is REACHABLE — a quiet host's daemon leaves at its idle window,
+//      long before the check interval, so the boundary it leaves through is where
+//      it asks (#2968).
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -28,6 +31,7 @@ import type { RedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { sendRedskilledRequest } from "../src/protocol.js";
 import {
+  DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
   isLocalRedskilledBuild,
   planRedskilledMajorHold,
   planRedskilledReplacement,
@@ -475,5 +479,166 @@ describe("an unsupervised daemon replaces itself", () => {
 
     expect(daemon.reattached().map((view) => view.worker_id)).toEqual(["w-lane"]);
     expect(daemon.hostState().budget_accounting.worker_count).toBe(1);
+  });
+});
+
+// The idle window is five minutes and the check interval is fifteen, so a daemon
+// on a quiet host exits three times over before its first tick: shipped as it
+// was, self-replacement could not fire there once (#2968). The cure is a check at
+// the boundary the idle exit creates — the instant when nothing is waiting on
+// this socket and the alternative on the table was going away entirely.
+describe("the idle boundary, the only check a quiet host ever reaches", () => {
+  it("replaces itself on the way out, on an interval that would never have fired", async () => {
+    const { paths, env, publishedBundle } = await session();
+    const spawns: string[][] = [];
+    let probes = 0;
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 20,
+      // The SHIPPED interval, orders of magnitude past this idle window: whatever
+      // replaces this daemon was decided at the boundary, by nothing else.
+      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => {
+        probes += 1;
+        return PUBLISHED_VERSION;
+      },
+      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+    });
+    running.push(daemon);
+
+    await daemon.closed;
+    expect(await until(async () => spawns.length > 0, 5_000)).toBe(true);
+
+    // One read, at the boundary, and the successor runs the published version.
+    expect(probes).toBe(1);
+    expect(spawns[0]).toContain(publishedBundle);
+    expect(daemon.hostState().upgrade.replacement).toBe("in-progress");
+    // It let go first, so the successor can take the session.
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+  });
+
+  it("exits as it always did when it is current, having asked exactly once", async () => {
+    const { paths, env } = await session();
+    const spawns: string[] = [];
+    let probes = 0;
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 20,
+      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => {
+        probes += 1;
+        return RUNNING_VERSION;
+      },
+      replacementIO: { env, spawnSuccessor: (entry) => spawns.push(entry.command) },
+    });
+    running.push(daemon);
+
+    await daemon.closed;
+
+    // The read is spent once, on the way out — never per tick.
+    expect(probes).toBe(1);
+    expect(spawns).toEqual([]);
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+  });
+
+  it("asks nothing at all on a local build, which no release supersedes", async () => {
+    const { paths, env } = await session();
+    let probes = 0;
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 20,
+      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+      daemonVersion: "0.0.0-dev",
+      publishedVersion: async () => {
+        probes += 1;
+        return "9.9.9";
+      },
+      replacementIO: { env },
+    });
+    running.push(daemon);
+
+    await daemon.closed;
+
+    // A source checkout is not a point on the published lane, so the read would
+    // decide nothing and is not spent.
+    expect(probes).toBe(0);
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+  });
+
+  it("spends no read while Workers hold it — the boundary is an exit, not a tick", async () => {
+    const { paths, env } = await session();
+    let probes = 0;
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 20,
+      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+      daemonVersion: RUNNING_VERSION,
+      liveness: () => true,
+      publishedVersion: async () => {
+        probes += 1;
+        return RUNNING_VERSION;
+      },
+      replacementIO: { env },
+    });
+    running.push(daemon);
+    daemon.trackWorker({
+      worker_id: "w-holder",
+      project_label: "acme/widgets",
+      pid: process.pid,
+      started_at: "2026-07-30T00:00:00.000Z",
+      workspace_path: "/tmp/workspace",
+      isolated: false,
+      warnings: [],
+    });
+
+    expect(daemon.evaluateIdle()).toBe("held-by-workers");
+    await new Promise((r) => setTimeout(r, 120));
+
+    expect(probes).toBe(0);
+    expect(await socketAnswers(paths.socketPath)).toBe(true);
+  });
+
+  it("loses the upgrade and not the exit when the published bundle is unreachable", async () => {
+    const { paths } = await session();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 20,
+      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => "3.0.0",
+      // No cache, no dispatch: the successor cannot be found at all.
+      replacementIO: {
+        env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty"), RED_SKILLS_NO_PINNED_DISPATCH: "1" },
+      },
+    });
+    running.push(daemon);
+
+    // The daemon was leaving either way; the failed handover does not strand it.
+    await daemon.closed;
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+  });
+
+  it("leaves on time when the registry never answers, rather than hanging on the read", async () => {
+    const { paths, env } = await session();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 20,
+      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+      publishedProbeTimeoutMs: 50,
+      daemonVersion: RUNNING_VERSION,
+      // A read that resolves never — the shipped one has no timeout of its own.
+      publishedVersion: () => new Promise(() => undefined),
+      replacementIO: { env },
+    });
+    running.push(daemon);
+
+    await daemon.closed;
+
+    // Unresolved stays unresolved: an unanswered read is never a match.
+    expect(daemon.hostState().upgrade.published_unknown).toBe(1);
+    expect(daemon.hostState().upgrade.running_version).toBe(RUNNING_VERSION);
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
   });
 });

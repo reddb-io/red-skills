@@ -58,7 +58,20 @@ import { REDSKILLED_SUPERVISED_ENV } from "./supervision.js";
  */
 export const REDSKILLED_REPLACE_EXIT_CODE = 75;
 
-/** How long the daemon waits between published-version checks. */
+/**
+ * How long the daemon waits between published-version checks.
+ *
+ * **This is the BUSY daemon's check, and it is deliberately longer than the idle
+ * window** (`DEFAULT_REDSKILLED_IDLE_MS`, five minutes, in `daemon.ts`). A probe
+ * costs a read of a registry every project on the host shares, so paying it every
+ * few minutes on a quiet machine buys nothing — but a daemon that leaves at five
+ * minutes reaches a fifteen-minute timer never, and shipped alone this interval
+ * made self-replacement unreachable on exactly the hosts where nobody would
+ * notice (#2968). The two numbers are coupled by `leaveIdleSession` in
+ * `daemon.ts`, which asks once at the idle boundary, and not by their ratio:
+ * whoever moves either one changes how often a LIVE daemon looks, never whether
+ * an idle one looks at all.
+ */
 export const DEFAULT_REDSKILLED_REPLACE_CHECK_MS = 900_000;
 
 /** The named diagnostic a replacement emits when the new bundle is unreachable. */
