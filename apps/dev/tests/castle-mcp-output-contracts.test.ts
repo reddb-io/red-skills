@@ -23,8 +23,12 @@ import {
  */
 
 const roots: string[] = [];
+let runtimeDirBefore: string | undefined;
 
 afterEach(async () => {
+  if (runtimeDirBefore === undefined) delete process.env.XDG_RUNTIME_DIR;
+  else process.env.XDG_RUNTIME_DIR = runtimeDirBefore;
+  runtimeDirBefore = undefined;
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -33,6 +37,15 @@ afterEach(async () => {
 async function fixtureRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "dev-afk-contracts-"));
   roots.push(root);
+  // The fixture states "no daemon answers", so it has to OWN the runtime
+  // directory the socket is resolved in (#2884's rule, applied to a contract
+  // test): resolved from the ambient environment, this asserted the operator's
+  // machine had no daemon running, and went red on every machine where the lane
+  // actually worked.
+  runtimeDirBefore = process.env.XDG_RUNTIME_DIR;
+  const runtimeDir = join(root, "runtime");
+  await mkdir(runtimeDir, { recursive: true });
+  process.env.XDG_RUNTIME_DIR = runtimeDir;
   await writeWorkerAttempt(root, "wHU5U", 2335);
   await writeFleetState(root);
   return root;

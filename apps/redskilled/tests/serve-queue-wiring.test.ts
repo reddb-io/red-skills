@@ -20,16 +20,25 @@ describe("`redskilled serve` arms the queue poller", () => {
     expect(armed?.transport).toBeTypeOf("function");
   });
 
-  it("leaves the poller unarmed when no token names a credential", () => {
-    expect(resolveServeQueueDiscovery({}, {})).toBeUndefined();
-    expect(resolveServeQueueDiscovery({}, { [REDSKILLED_HOST_TOKEN_ENV]: "   " })).toBeUndefined();
+  it("leaves the poller unarmed when no credential names a tracker at all", () => {
+    // Unarmed is a registration carrying only its reason, never `undefined`:
+    // the daemon has to be able to REPORT an unconfigured poll (#2974), and it
+    // cannot report what it was never handed. The stored login is asked for
+    // explicitly here so the verdict is this host's contract, not this machine's.
+    expect(resolveServeQueueDiscovery({}, {}, () => null).transport).toBeUndefined();
+    expect(resolveServeQueueDiscovery({}, {}, () => null).unconfiguredReason).toContain(
+      REDSKILLED_HOST_TOKEN_ENV,
+    );
+    expect(
+      resolveServeQueueDiscovery({}, { [REDSKILLED_HOST_TOKEN_ENV]: "   " }, () => null).transport,
+    ).toBeUndefined();
   });
 
   it("falls back to the tracker's own token variables", () => {
     // One token per host by construction: quota is per credential, so the point
     // of batching is lost the moment a second one appears.
-    expect(resolveServeQueueDiscovery({}, { GITHUB_TOKEN: "t" })).toBeDefined();
-    expect(resolveServeQueueDiscovery({}, { GH_TOKEN: "t" })).toBeDefined();
+    expect(resolveServeQueueDiscovery({}, { GITHUB_TOKEN: "t" }, () => null).transport).toBeTypeOf("function");
+    expect(resolveServeQueueDiscovery({}, { GH_TOKEN: "t" }, () => null).transport).toBeTypeOf("function");
   });
 
   it("carries the window a caller stated, and states none when it did not", () => {

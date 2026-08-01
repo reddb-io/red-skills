@@ -10,7 +10,7 @@
 // spawned to reach it.
 
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import type { SpawnOptions } from "node:child_process";
+import { execFileSync, type SpawnOptions } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -76,7 +76,14 @@ async function sessionPaths(): Promise<RedskilledPaths> {
   });
 }
 
-/** A checkout with the plugin enabled — the project the MCP speaks for. */
+/**
+ * A checkout with the plugin enabled — the project the MCP speaks for.
+ *
+ * A real checkout with a real `origin`, because a registration names the TRACKER
+ * its queue lives in (#2974): the daemon polls the query it is handed, so a
+ * project that stated no repository would hand the host a question about every
+ * repository the token can see.
+ */
 async function project(): Promise<string> {
   const root = await scratch("dev-register-project-");
   await mkdir(join(root, ".red"), { recursive: true });
@@ -85,6 +92,11 @@ async function project(): Promise<string> {
     "plugins:\n  dev:\n    enabled: true\n",
     "utf8",
   );
+  execFileSync("git", ["init", "-q"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/widgets.git"], {
+    cwd: root,
+    stdio: "ignore",
+  });
   return root;
 }
 
@@ -134,8 +146,15 @@ describe("starting work registers the project", () => {
     // strings, because the daemon never read either of them.
     expect(held.selector).toBe(started.selector);
     expect(held.argv).toEqual(started.argv);
-    expect(held.selector).toContain("2902");
-    expect(held.selector).toContain("go");
+    // The selector the HOST holds is a tracker query, because the host hands it
+    // to the tracker (#2974): the repository it counts in, the executable queue
+    // it counts, and every facet a query can carry. The issue-number facet is
+    // not one of them — search cannot filter on it — so it travels in the argv
+    // to the Worker, which is the reader that can act on it.
+    expect(held.selector).toBe(
+      'repo:acme/widgets is:issue is:open label:"ready-for-agent" label:"lane:go"',
+    );
+    expect(started.warnings).toEqual([expect.stringContaining("issues")]);
     // The argv is what runs when a Worker is born for this project, so it carries
     // the runner the operator chose and the same selector the registration does.
     expect(held.argv).toContain("--runner");

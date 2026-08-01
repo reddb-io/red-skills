@@ -119,6 +119,11 @@ import {
   planLocalBranchCleanup,
 } from "./core/branch-cleanup.js";
 import { planBranchReclaim } from "./core/branch-reclaim.js";
+import {
+  buildRegistrationQuery,
+  registrationQueryUnexpressedFacets,
+} from "./core/registration-query.js";
+import { resolveRepoSlugForDir } from "@reddb-io/shared/project-identity-resolve.js";
 import { executeUnblockSweep } from "./core/boot-sweep.js";
 import { collectReapInputs } from "./runtime/wire/reap.js";
 import { collectActivityReview } from "./commands/activity-review.js";
@@ -924,14 +929,35 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
 /**
  * The one string this project hands the daemon as its work query.
  *
- * The same JSON the launch argv already carried, so the registration and the
- * argv state the selector once rather than twice — two encodings of one query is
- * how a registered project and the Worker born for it start drifting. An absent
- * selector encodes as the empty object: "all this project's ready work" is a
- * query, and a registration that named no work at all would be refused.
+ * **A tracker query, because the daemon hands it to the tracker.** It used to be
+ * this project's own JSON selector shape — one encoding for two readers, which
+ * looked like the frugal choice and was the defect: the daemon carries the
+ * string verbatim (ADR 0130 rule 3), so it asked GitHub to search for `{}`, got
+ * an answer about nothing, and every registered project sat at a depth that
+ * birthed no Worker (#2974). The JSON still travels, in the argv, to the one
+ * reader that can read it — the Worker.
  */
-function encodeRegistrationSelector(selector: ProjectStartInput["selector"]): string {
-  return JSON.stringify(selector ?? {});
+function encodeRegistrationSelector(repo: string, selector: ProjectStartInput["selector"]): string {
+  return buildRegistrationQuery({ repo, selector });
+}
+
+/** What the operator is told about a start that could not carry everything. */
+function startWarnings(input: ProjectStartInput, unexpressed: readonly string[]): string[] {
+  const warnings: string[] = [];
+  if (input.base !== undefined) {
+    warnings.push(
+      `the base branch ${JSON.stringify(input.base)} does not travel in a registration yet; ` +
+        `a Worker born from it will use this project's configured trunk`,
+    );
+  }
+  if (unexpressed.length > 0) {
+    warnings.push(
+      `the ${unexpressed.join(" and ")} facet(s) cannot be expressed as a tracker query, so the host counts this ` +
+        `project's queue without them and may see more work than the selector matches; the Worker still narrows to ` +
+        `the selector it is launched with`,
+    );
+  }
+  return warnings;
 }
 
 /**
@@ -978,7 +1004,29 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
       readopt: async (workerId) => (await port.workerIds()).includes(workerId),
     },
   }).catch(() => undefined);
-  const selector = encodeRegistrationSelector(input.selector);
+  // A host that does not answer is the FIRST refusal, ahead of anything this
+  // project could get wrong about itself: an operator whose daemon is down must
+  // be told that, not told about their remote (ADR 0130 rule 6).
+  try {
+    await port.reach();
+  } catch (err) {
+    throw new Error(redskilledRegistrationRefusal(port.socketPath, err));
+  }
+  // Which tracker this project's queue lives in — resolved HERE, because the
+  // daemon may not learn what a checkout is (rule 3) and a query without a
+  // `repo:` term counts every repository the host token can see. From the
+  // `origin` remote rather than the tracker CLI: starting work must not wait on
+  // a network call, and a checkout with no remote has no queue to register for.
+  const repo = resolveRepoSlugForDir(root);
+  if (repo == null) {
+    throw new Error(
+      `this checkout has no \`origin\` remote, so there is no tracker to count its queue in: the host polls the ` +
+        `query a registration hands it, and a project that names no repository would either count nothing or ` +
+        `count every repository the host token can see`,
+    );
+  }
+  const selector = encodeRegistrationSelector(repo, input.selector);
+  const warnings = startWarnings(input, registrationQueryUnexpressedFacets(input.selector));
   // What runs when a Worker is born for this project — resolved from the
   // PUBLISHED bundle rather than from this process's own entry (#2808), so a
   // registration made from a stale plugin cache never commits the host to an
@@ -994,7 +1042,6 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
 
   let registered;
   try {
-    await port.reach();
     // Where a Worker runs, stated rather than derived: the daemon owns the demand
     // loop (ADR 0130 Amendment 4), so it births the Worker itself, and a host that
     // had to work out a working directory would have to know what a checkout looks
@@ -1017,15 +1064,10 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
     ...(input.base !== undefined ? { base: input.base } : {}),
     // Stated, never swallowed: the frozen contract carries no environment, and a
     // trunk override travels to a Worker in one. Naming it here keeps a dropped
-    // override visible to the operator who asked for it.
-    ...(input.base !== undefined
-      ? {
-          warnings: [
-            `the base branch ${JSON.stringify(input.base)} does not travel in a registration yet; ` +
-              `a Worker born from it will use this project's configured trunk`,
-          ],
-        }
-      : {}),
+    // override visible to the operator who asked for it. The unexpressed facets
+    // ride the same list, so a host depth wider than the selector's real pool is
+    // an answer the operator already has rather than a contradiction they find.
+    ...(warnings.length > 0 ? { warnings } : {}),
   };
 }
 
