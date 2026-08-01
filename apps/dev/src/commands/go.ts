@@ -8,6 +8,17 @@
 // auto-closes on merge (the engine's PR body carries `Closes #N`). Works with
 // or without a fleet running — it is a self-sufficient front door.
 //
+// **Dispatch survives the dispatcher (#3027).** The engine used to run
+// IN-PROCESS, so `/go` and `/go --scout` were the work rather than the order:
+// a UI stop, a session teardown or a closed terminal killed the launcher and
+// took the investigation with it — observed 2026-08-01, two scout dispatches
+// dead with no record anywhere. So the default asks the host daemon for the
+// Worker (the same birth port the MCP dispatch uses, ADR 0130), which owns a
+// process this command is not the parent of, and the answer returns
+// immediately naming the worker id and the log lane to watch it in. `--attached`
+// opts back into the in-process run for a foreground debug session, and states
+// what it costs.
+//
 // The classification + escalation logic lives in core/go.ts (pure, injected
 // IO); this command supplies the real gh + engine effects.
 
@@ -27,6 +38,10 @@ import * as ghx from "../runtime/gh.js";
 import type { GhContext } from "../runtime/gh.js";
 import { execTool } from "../runtime/exec.js";
 import { createGitHubTrackerAdapter } from "@reddb-io/red-castle/engine";
+import {
+  requestWorkerBirth,
+  type DispatchedWorkerBirth,
+} from "../runtime/mcp-worker-birth.js";
 
 interface ParsedGoArgs {
   demand: string;
@@ -34,10 +49,73 @@ interface ParsedGoArgs {
   mode: GoMode;
   yolo: boolean;
   scout?: boolean;
+  attached: boolean;
   dod?: string;
   verifyCommand?: string;
   request?: string;
   tags?: string[];
+}
+
+/** Every effect one `/go` dispatch performs, so the dispatch DECISIONS — detach
+ * or attach, what the answer names — are testable without gh, a daemon, or a
+ * Worker. A real run injects nothing. */
+export interface GoRuntime {
+  ensureLabel(name: string): Promise<void>;
+  createGoIssue(spec: DisposableIssueSpec): Promise<number>;
+  createScoutIssue(spec: ScoutIssueSpec): Promise<number>;
+  /** Ask the host for a Worker it owns; the caller is not its parent, so the
+   * caller's death is not the Worker's (ADR 0130, #3027). */
+  birthWorker(args: readonly string[]): Promise<DispatchedWorkerBirth>;
+  /** Run the engine in THIS process — reached only through `--attached`. */
+  runEngineAttached(args: string[]): Promise<number>;
+  /** Whether a validation harness is configured, for the minted issue's DoD. */
+  hasHarness: boolean;
+  write(text: string): void;
+}
+
+/** The real effects: gh for the issue, the host daemon for the Worker. */
+async function createDefaultGoRuntime(cwd: string): Promise<GoRuntime> {
+  const ctx = await resolveRepoContext(cwd);
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const tracker = createGitHubTrackerAdapter({
+    repo: ctx.repo,
+    gh: async (args: readonly string[]) => {
+      const result = await execTool("gh", args, { cwd: ctx.root });
+      if (result.code !== 0) {
+        throw new Error((result.stderr || result.stdout || `gh exited ${result.code}`).trim());
+      }
+      return result.stdout;
+    },
+  });
+  const configuredBackpressure = readBackpressure(
+    loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }),
+  );
+  return {
+    ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
+    createGoIssue: (spec) => tracker.createIssue!(spec),
+    createScoutIssue: (spec) => ghx.createIssue(ghCtx, spec),
+    birthWorker: (args) => requestWorkerBirth(ctx.root, args),
+    runEngineAttached: (args) => runCommand({ args, cwd }),
+    hasHarness: configuredBackpressure.length > 0,
+    write: (text) => process.stdout.write(text),
+  };
+}
+
+/** The lines a detached dispatch answers with: what was born, and where to
+ * watch it WITHOUT this process. A dispatch that only said "dispatched" left an
+ * operator with nothing to follow once the launcher was gone (#3027). */
+export function detachedDispatchAnswer(
+  headline: string,
+  granted: DispatchedWorkerBirth,
+): string {
+  return [
+    headline,
+    `   worker ${granted.worker_id} (pid ${granted.pid}) — detached from this session; ` +
+      `stopping the dispatcher does not stop it.`,
+    `   watch: ${granted.log}`,
+    ...granted.warnings.map((warning) => `   ⚠ ${warning}`),
+    "",
+  ].join("\n");
 }
 
 /** Parse `/go` args: the demand is every non-flag token joined; `--runner X`
@@ -55,6 +133,7 @@ export function parseGoArgs(
   let mode: GoMode = DEFAULT_GO_MODE;
   let yolo = false;
   let scout = false;
+  let attached = false;
   let dod: string | undefined;
   let verifyCommand: string | undefined;
   let request: string | undefined;
@@ -89,6 +168,8 @@ export function parseGoArgs(
     }
     if (!sawDoubleDash && arg === "+yolo") { yolo = true; continue; }
     if (!sawDoubleDash && arg === "--scout") { scout = true; continue; }
+    // The opt-out, never the default: an attached run dies with its launcher.
+    if (!sawDoubleDash && arg === "--attached") { attached = true; continue; }
     if (!sawDoubleDash && arg === "--dod") {
       dod = args[++i];
       if (dod === undefined) throw new Error("--dod requires a value");
@@ -132,17 +213,21 @@ export function parseGoArgs(
     // demand still works via the `--` separator (`/go -- --literal`).
     if (!sawDoubleDash && arg.startsWith("-")) {
       throw new Error(
-        `unknown flag ${JSON.stringify(arg)}: expected --runner, --request, --mode, --scout, or +yolo. ` +
+        `unknown flag ${JSON.stringify(arg)}: expected --runner, --request, --mode, --scout, --attached, or +yolo. ` +
           `Also accepted for standard /go: --dod, --verify, and --tags. ` +
           `Pass a literal dashed demand after a "--" separator.`,
       );
     }
     positional.push(arg);
   }
-  return { demand: positional.join(" ").trim(), runner, mode, yolo, scout, dod, verifyCommand, request, tags };
+  return { demand: positional.join(" ").trim(), runner, mode, yolo, scout, attached, dod, verifyCommand, request, tags };
 }
 
-export async function goCommand(args: string[], cwd = process.cwd()): Promise<number> {
+export async function goCommand(
+  args: string[],
+  cwd = process.cwd(),
+  runtimeOverride?: GoRuntime,
+): Promise<number> {
   let parsed: ParsedGoArgs;
   try {
     parsed = parseGoArgs(args);
@@ -159,9 +244,17 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
     return 1;
   }
 
-  const ctx = await resolveRepoContext(cwd);
-  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
-  const configuredBackpressure = readBackpressure(loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }));
+  const runtime = runtimeOverride ?? (await createDefaultGoRuntime(cwd));
+
+  // Detached is the default and attached is the exception, so the branch is
+  // written once here: `runEngine` either hands the work to the host and
+  // returns, or runs it in this process and waits for it.
+  let granted: DispatchedWorkerBirth | undefined;
+  const runEngine = async (engineArgs: string[]): Promise<number> => {
+    if (parsed.attached) return runtime.runEngineAttached(engineArgs);
+    granted = await runtime.birthWorker(engineArgs);
+    return 0;
+  };
 
   if (parsed.scout) {
     // Scout mode: read-only investigation, no commits / branch / PR / merge.
@@ -171,18 +264,22 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
     try {
       const result = await dispatchScout(
         {
-          ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
-          createIssue: (spec: ScoutIssueSpec) => ghx.createIssue(ghCtx, spec),
-          runEngine: (engineArgs) => runCommand({ args: engineArgs, cwd }),
+          ensureLabel: (name) => runtime.ensureLabel(name),
+          createIssue: (spec: ScoutIssueSpec) => runtime.createScoutIssue(spec),
+          runEngine,
         },
         parsed.demand,
         { runner: parsed.runner },
       );
-      process.stdout.write(
+      const headline =
         `🔍 /go --scout dispatched disposable issue #${result.issue} ` +
-          `(origin=scout, kind=scout, lane:scout). engine exit ${result.engineExit}.\n`,
-      );
-      return result.engineExit;
+        `(origin=scout, kind=scout, lane:scout).`;
+      if (granted === undefined) {
+        runtime.write(`${headline} attached: engine exit ${result.engineExit}.\n`);
+        return result.engineExit;
+      }
+      runtime.write(detachedDispatchAnswer(headline, granted));
+      return 0;
     } catch (error) {
       console.error(`✗ /go --scout dispatch failed: ${error instanceof Error ? error.message : String(error)}`);
       return 1;
@@ -190,22 +287,11 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
   }
 
   try {
-    const tracker = createGitHubTrackerAdapter({
-      repo: ctx.repo,
-      gh: async (args: readonly string[]) => {
-        const result = await execTool("gh", args, { cwd: ctx.root });
-        if (result.code !== 0) {
-          throw new Error((result.stderr || result.stdout || `gh exited ${result.code}`).trim());
-        }
-        return result.stdout;
-      },
-    });
     const result = await dispatchGo(
       {
-        ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
-        createIssue: (spec: DisposableIssueSpec) => tracker.createIssue!(spec),
-        // Reuse the full AFK engine in-process for exactly the minted issue.
-        runEngine: (engineArgs) => runCommand({ args: engineArgs, cwd }),
+        ensureLabel: (name) => runtime.ensureLabel(name),
+        createIssue: (spec: DisposableIssueSpec) => runtime.createGoIssue(spec),
+        runEngine,
       },
       parsed.demand,
       {
@@ -217,15 +303,18 @@ export async function goCommand(args: string[], cwd = process.cwd()): Promise<nu
         verifyCommand: parsed.verifyCommand,
         request: parsed.request,
         tags: parsed.tags,
-        hasHarness: configuredBackpressure.length > 0,
+        hasHarness: runtime.hasHarness,
       } satisfies { runner?: string; mode: GoMode; yolo: boolean } & GoDodSpec,
     );
-    process.stdout.write(
+    const headline =
       `🚀 /go dispatched disposable issue #${result.issue} ` +
-        `(origin=go, kind=go, lane:go, mode=${parsed.mode}${parsed.yolo ? ", +yolo" : ""}). ` +
-        `engine exit ${result.engineExit}.\n`,
-    );
-    return result.engineExit;
+      `(origin=go, kind=go, lane:go, mode=${parsed.mode}${parsed.yolo ? ", +yolo" : ""}).`;
+    if (granted === undefined) {
+      runtime.write(`${headline} attached: engine exit ${result.engineExit}.\n`);
+      return result.engineExit;
+    }
+    runtime.write(detachedDispatchAnswer(headline, granted));
+    return 0;
   } catch (error) {
     console.error(`✗ /go dispatch failed: ${error instanceof Error ? error.message : String(error)}`);
     return 1;
