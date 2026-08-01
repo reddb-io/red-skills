@@ -279,6 +279,13 @@ export interface HarnessOptions {
   /** CI-aware merge (#812). When set, register the `ciAwait` port and drive the
    * `gh pr view` verdict the unlocked landing polls before admin-merging. */
   ciAware?: "merge" | "ci-failed" | "ci-pending" | "conflict" | "skipped";
+  /**
+   * Model an ENQUEUE rather than a synchronous merge (#2986). Absent → the
+   * merge confirmation's first probe already reports a MERGED pull request.
+   * `merged` resolves on the second poll; `pending` stays queued for the whole
+   * (test-sized) budget; `rejected` models the merge group handing the PR back.
+   */
+  queueOutcome?: "merged" | "rejected" | "pending";
   /** Exit code for the final `gh pr merge` command. Defaults to 0. */
   prMergeCode?: number;
   /** Spec cascade rebase (#1007): remote afk/* branches returned by
@@ -344,6 +351,7 @@ export function harness(opts: HarnessOptions = {}): {
   // Whether a pull request exists for the attempt branch. Landing opens one when
   // no Re-seed minted a draft first; both go through `gh pr create`.
   let prOpen = false;
+  let queuePolls = 0;
   let pnpmCalls = 0;
   let changedFilesCalls = 0;
 
@@ -554,6 +562,37 @@ export function harness(opts: HarnessOptions = {}): {
       if (j.includes("api repos/o/r/branches/main/protection/required_status_checks/contexts")) {
         return { code: 0, stdout: JSON.stringify(["ci"]), stderr: "" };
       }
+      // #2986 post-enqueue merge confirmation. The queue accepts the PR on the
+      // first poll and resolves on the second, so a landing that skipped the
+      // wait cannot pass by accident.
+      if (j.includes("pr view") && j.includes("autoMergeRequest")) {
+        queuePolls += 1;
+        const accepted = { state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: { enabledAt: "t" } };
+        // Unset → the forge merged on the spot and the very first confirmation
+        // says so. A test that opts in models the ENQUEUE: accepted first, then
+        // its outcome, so the landing has something to actually wait through.
+        const outcome = opts.queueOutcome;
+        if (outcome !== undefined && (queuePolls === 1 || outcome === "pending")) {
+          return { code: 0, stdout: JSON.stringify(accepted), stderr: "" };
+        }
+        if (outcome === "rejected") {
+          return {
+            code: 0,
+            stdout: JSON.stringify({ state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: null }),
+            stderr: "",
+          };
+        }
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            state: "MERGED",
+            mergedAt: "2026-08-01T00:00:00Z",
+            mergeCommit: { oid: "forge-merge-sha" },
+            autoMergeRequest: null,
+          }),
+          stderr: "",
+        };
+      }
       if (j.includes("pr view") && j.includes("--json mergeCommit")) {
         return { code: 0, stdout: "forge-merge-sha\n", stderr: "" };
       }
@@ -709,6 +748,8 @@ export function harness(opts: HarnessOptions = {}): {
     reviewGate: opts.reviewGate,
     reviewGateLabel: "ready-for-review",
     ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
+    // #2986: always injected so no queue landing under test reaches a real timer.
+    mergeQueueWait: { sleep: async () => {}, maxPolls: 3 },
     fallbackRunner: opts.fallbackRunner ?? false,
     conflictResolver: opts.conflictResolve
       ? async (prompt) => {

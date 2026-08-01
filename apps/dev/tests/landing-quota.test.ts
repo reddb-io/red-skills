@@ -37,9 +37,19 @@ function buildFakeExec(prMergeResponses: ExecOutput[]): {
       const resp = prMergeResponses[mergeIdx++] ?? { code: 0, stdout: "", stderr: "" };
       return resp;
     }
-    // gh pr view (mergeCommit sha resolution after successful merge)
-    if (cmd === "gh" && args.includes("view") && j.includes("mergeCommit")) {
-      return { code: 0, stdout: "deadbeef\n", stderr: "" };
+    // gh pr view — the #2986 merge confirmation, answered by a forge that
+    // merged the PR on the spot once the quota window closed.
+    if (cmd === "gh" && args.includes("view") && j.includes("mergedAt")) {
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          state: "MERGED",
+          mergedAt: "2026-08-01T00:00:00Z",
+          mergeCommit: { oid: "deadbeef" },
+          autoMergeRequest: null,
+        }),
+        stderr: "",
+      };
     }
     // git update-ref (fleet trunk mirror promotion)
     if (cmd === "git" && args.includes("update-ref")) {

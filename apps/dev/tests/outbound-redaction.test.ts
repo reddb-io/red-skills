@@ -172,6 +172,10 @@ describe("GitHub outbound write seams", () => {
       n: 1365,
       title: LEAK_TEXT,
       mergeQueue: true,
+      // #2986: the enqueue is followed by a merge-confirmation wait. This test is
+      // about the scrubbed PR create, so the wait is given a no-op clock and one
+      // poll instead of a live timer.
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 1 },
     });
 
     const create = calls.find((args) => args.includes("create"));

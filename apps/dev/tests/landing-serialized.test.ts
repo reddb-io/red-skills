@@ -139,6 +139,9 @@ describe("doLanding — serialized landing (#1337)", () => {
     expect(r).toEqual({
       ok: true,
       locked: false,
+      // #2986: the merge commit the QUEUE produced, read back once the PR itself
+      // reported `merged: true` — not assumed from `--auto` exiting 0.
+      mergeSha: "abc1234",
       postMergeValidation: {
         path: "local-rerun",
         reason: "PR #42 CI evidence was absent or unusable; local post-merge validation fallback ran.",
@@ -185,5 +188,51 @@ describe("doLanding — serialized landing (#1337)", () => {
     expect(acquires).toBe(1);
     // Plain admin-merge, never enqueued.
     expect(joined(h.mergeCalls).some((c) => c.includes("--auto"))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The enqueue is not the merge (#2986). `gh pr merge --auto` exits 0 the moment
+// the PR joins the queue; the merge group's CI then runs for minutes and may
+// hand the PR back. The landing used to read that exit 0 as "landed" and let its
+// caller close the issue, strip its labels and delete the remote branch — so a
+// rejected merge group left a closed issue whose code never reached the base.
+// Every result below is what gates those steps: only `ok: true` unlocks them.
+// ---------------------------------------------------------------------------
+describe("doLanding — a queued merge is not a completed one (#2986)", () => {
+  it("holds the landing (never ok) while the queued PR still reports merged=false", async () => {
+    const h = harness({ locked: false, openPr: true, nativeMergeQueue: true, queueOutcome: "pending" });
+
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    // ci-pending → the caller parks blocked:ci and keeps the issue and branch.
+    expect(r).toEqual({ ok: false, reason: "ci-pending", locked: false, prNumber: 42 });
+    // The post_merge hook is part of the close/cleanup tail — it must not fire.
+    expect(h.firedHooks).not.toContain("post_merge");
+    // It really did poll the PR rather than trusting the merge command's exit.
+    expect(joined(h.mergeCalls).filter((c) => c.includes("autoMergeRequest")).length).toBeGreaterThan(1);
+  });
+
+  it("parks a merge-queue rejection with the observed reason, issue and branch intact", async () => {
+    const h = harness({ locked: false, openPr: true, nativeMergeQueue: true, queueOutcome: "rejected" });
+
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r.ok).toBe(false);
+    // pr-merge-failed → prLandingBlocked(ci-failed): blocked:ci, issue open.
+    expect(r.ok === false && r.reason).toBe("pr-merge-failed");
+    expect(r.ok === false && r.message).toContain("dequeued PR #42");
+    expect(h.firedHooks).not.toContain("post_merge");
+    // The branch stays on origin — nothing here deletes it.
+    expect(joined(h.mergeCalls).some((c) => c.includes("push origin --delete"))).toBe(false);
+  });
+
+  it("completes only once the PR itself reports merged=true", async () => {
+    const h = harness({ locked: false, openPr: true, nativeMergeQueue: true, queueOutcome: "merged" });
+
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(r).toEqual({ ok: true, locked: false, mergeSha: "abc1234" });
+    expect(h.firedHooks).toContain("post_merge");
   });
 });

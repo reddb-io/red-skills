@@ -38,6 +38,7 @@ import {
   type CiGreenEvidence,
   type Exec as MergeExec,
   type LandingWaitPollEvent,
+  type MergeQueueWaitInput,
   type WaitForReviewInput,
 } from "./merge.js";
 import { resolveLandSerialization, type LandLock } from "./land-lock.js";
@@ -119,6 +120,13 @@ export interface LandingDeps {
    * immediately. Ignored on the locked path, which never opens a PR.
    */
   ciAwait?: CiAwaitInput;
+  /**
+   * Budget for the post-enqueue merge confirmation on a native-merge-queue base
+   * (#2986). Absent → merge.ts defaults with a real timer. The sleep/probe
+   * settings of {@link LandingDeps.ciAwait} are reused when this is absent, so a
+   * caller that already injected a test clock does not get a live one here.
+   */
+  mergeQueueWait?: MergeQueueWaitInput;
   /**
    * Slot-release point for PR landings (#2427). Absent/`merge` preserves the
    * synchronous landing. `ci` and `none` return a deferred tail to the caller.
@@ -572,6 +580,9 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       // Native merge queue (#1337): enqueue rather than merge on the spot, letting
       // the forge serialize + rebase + revalidate every entry onto the current tip.
       mergeQueue: input.nativeMergeQueue === true,
+      // #2986: the enqueue is not the merge. This budget owns the hold between
+      // `--auto` exiting 0 and the forge reporting `merged: true`.
+      mergeQueueWait: decorateMergeQueueWait(deps, input),
       // Untouchable primary (ADR 0083 / 0108): landPr promotes the fleet mirror,
       // not a local primary branch. `locked` is observability only.
       locked: input.locked,
@@ -606,6 +617,23 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       }
       if (result.reason === "ci-failed") return { ok: false, reason: "ci-failed", locked: input.locked, prNumber: result.prNumber };
       if (result.reason === "ci-pending") return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: result.prNumber };
+      // #2986: the merge queue handed the PR back. Nothing merged, so route it to
+      // the `blocked:ci` park that keeps the issue open and the branch on origin —
+      // never to a success the close/cleanup steps would act on.
+      if (result.reason === "queue-rejected") {
+        return {
+          ok: false,
+          reason: "pr-merge-failed",
+          locked: input.locked,
+          prNumber: result.prNumber,
+          message: result.queueDetail ?? "the merge queue rejected the pull request; nothing was merged",
+        };
+      }
+      // Still queued when the confirmation budget ran out: the merge may yet land,
+      // so this is `ci-pending` (hold the open PR), not a failure of the work.
+      if (result.reason === "queue-pending") {
+        return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: result.prNumber };
+      }
       if (result.reason === "pr-resolved-abort") {
         return { ok: false, reason: "pr-resolved-abort", locked: input.locked, prNumber: result.prNumber };
       }
@@ -961,6 +989,32 @@ function decorateReviewWait(deps: LandingDeps, input: LandingInput): WaitForRevi
     onPoll: async (event) => {
       await deps.waitForReview?.onPoll?.(event);
       await emitLandingWaitHeartbeat(deps, input, event);
+    },
+  };
+}
+
+/**
+ * Confirmation budget for a queued merge (#2986). Only the queue path calls it,
+ * so it is built unconditionally: the clock and probe bound come from `ciAwait`
+ * when one is wired (a test clock stays a test clock), the poll budget is the
+ * queue's own, and every poll narrates through the same landing heartbeat the CI
+ * wait uses — a wait nobody can see is how a 10-minute hold reads as a hang.
+ */
+function decorateMergeQueueWait(deps: LandingDeps, input: LandingInput): MergeQueueWaitInput {
+  const configured = deps.mergeQueueWait;
+  const sleep = configured?.sleep ?? deps.ciAwait?.sleep;
+  const probeTimeoutMs = configured?.probeTimeoutMs ?? deps.ciAwait?.probeTimeoutMs;
+  return {
+    ...(sleep ? { sleep } : {}),
+    ...(probeTimeoutMs ? { probeTimeoutMs } : {}),
+    ...(configured?.maxPolls !== undefined ? { maxPolls: configured.maxPolls } : {}),
+    ...(configured?.intervalMs !== undefined ? { intervalMs: configured.intervalMs } : {}),
+    onPoll: async (event) => {
+      await configured?.onPoll?.(event);
+      // The FIRST probe is the confirmation itself — a synchronous merge answers
+      // it immediately and never waited for anything. Narrate a wait only once
+      // there is one, so the phase trail of an ordinary landing is unchanged.
+      if (event.attempt > 1) await emitLandingWaitHeartbeat(deps, input, event);
     },
   };
 }

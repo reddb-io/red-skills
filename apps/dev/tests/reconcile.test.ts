@@ -208,6 +208,20 @@ function harness(opts: HarnessOptions = {}): {
       if (argv.includes("pr") && argv.includes("list")) {
         return { code: 0, stdout: "42\n", stderr: "" };
       }
+      // #2986 merge confirmation: this forge merges on the spot, so the probe
+      // that follows the merge command reports a MERGED pull request.
+      if (j.includes("--json state,mergedAt")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            state: "MERGED",
+            mergedAt: "2026-08-01T00:00:00Z",
+            mergeCommit: { oid: "abc1234" },
+            autoMergeRequest: null,
+          }),
+          stderr: "",
+        };
+      }
       if (j.includes("pr view") && j.includes("mergeStateStatus")) {
         const map = {
           merge: { mergeStateStatus: "CLEAN", mergeable: "MERGEABLE", baseRefOid: "0r1g1nsha", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] },

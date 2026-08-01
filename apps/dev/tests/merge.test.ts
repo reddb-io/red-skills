@@ -14,8 +14,10 @@ import {
   diagnoseMergeRejection,
   parseUnmergedPaths,
   parseMergeStateView,
+  parseQueuedPrView,
   waitForMergeReady,
   waitForMergeReadyWithEvidence,
+  waitForQueuedMerge,
   type Exec,
   type ExecResult,
 } from "../src/core/merge.js";
@@ -37,10 +39,25 @@ function fakeExec(
         return { code: 0, stdout: "", stderr: "", ...rule.result };
       }
     }
+    // #2986: the default forge merges synchronously — the merge-confirmation
+    // probe therefore reports a MERGED pull request. A test that models an
+    // enqueue overrides this with its own rule.
+    if (argv.join(" ").includes("--json state,mergedAt")) {
+      return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
+    }
     return { code: 0, stdout: "", stderr: "" };
   };
   return { exec, calls };
 }
+
+/** `gh pr view --json state,mergedAt,mergeCommit,autoMergeRequest` for a PR the
+ * forge merged on the spot (#2986). `mergeCommit.oid` is the SHA landPr reports. */
+const MERGED_PR_VIEW = JSON.stringify({
+  state: "MERGED",
+  mergedAt: "2026-08-01T00:00:00Z",
+  mergeCommit: { oid: "forge-merge-sha" },
+  autoMergeRequest: null,
+});
 
 const joined = (calls: string[][]): string[] => calls.map((c) => c.join(" "));
 
@@ -189,6 +206,7 @@ describe("landPr (unlocked path)", () => {
     const exec: Exec = async (argv) => {
       const cmd = argv.join(" ");
       if (cmd.includes("pr create")) prMade = true;
+      if (cmd.includes("--json state,mergedAt")) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       if (cmd.includes("pr list")) {
         return { code: 0, stdout: prMade ? "77\n" : "\n", stderr: "" };
       }
@@ -361,6 +379,7 @@ describe("openReviewPr (review-gate handoff, #749)", () => {
       recorded.push(argv);
       const cmd = argv.join(" ");
       if (cmd.includes("pr create")) prMade = true;
+      if (cmd.includes("--json state,mergedAt")) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       if (cmd.includes("pr list")) return { code: 0, stdout: prMade ? "88\n" : "\n", stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     };
@@ -506,6 +525,7 @@ describe("landPr wait_for_review wiring", () => {
       calls.push(argv);
       const cmd = argv.join(" ");
       if (cmd.includes("pr list")) return { code: 0, stdout: "77\n", stderr: "" };
+      if (cmd.includes("--json state,mergedAt")) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       if (cmd.includes("pr checks")) {
         checksPolled = true;
         return { code: 0, stdout: JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]), stderr: "" };
@@ -874,9 +894,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     const exec: Exec = async (argv) => {
       const cmd = argv.join(" ");
       if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
-      if (cmd.includes("pr view 42 --json mergeCommit --jq .mergeCommit.oid")) {
-        return { code: 0, stdout: "forge-merge-sha\n", stderr: "" };
-      }
+      if (cmd.includes("--json state,mergedAt")) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       return { code: 0, stdout: "", stderr: "" };
     };
 
@@ -901,6 +919,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       calls.push(argv);
       const cmd = argv.join(" ");
       if (cmd.includes("pr list")) return { code: 0, stdout: "77\n", stderr: "" };
+      if (cmd.includes("--json state,mergedAt")) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       if (cmd.includes("pr view")) {
         viewed = true;
         return { code: 0, stdout: JSON.stringify({ mergeStateStatus: "CLEAN", statusCheckRollup: [] }), stderr: "" };
@@ -969,6 +988,7 @@ describe("landPr CI-aware wiring (#812)", () => {
         const cmd = argv.join(" ");
         if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
         if (cmd.includes("required_status_checks/contexts")) return { code: 0, stdout: protectionContexts, stderr: "" };
+        if (cmd.includes("--json state,mergedAt")) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
         if (cmd.includes("pr view")) {
           // checks not created yet: BLOCKED + MERGEABLE + an empty rollup
           return {
@@ -998,6 +1018,7 @@ describe("landPr CI-aware wiring (#812)", () => {
         const cmd = argv.join(" ");
         if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
         if (cmd.includes("required_status_checks/contexts")) return { code: 0, stdout: protectionContexts, stderr: "" };
+        if (cmd.includes("--json state,mergedAt")) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
         if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
           polls += 1;
           const stdout = polls === 1
@@ -1059,6 +1080,7 @@ describe("landPr CI-aware wiring (#812)", () => {
         calls.push(argv);
         const cmd = argv.join(" ");
         if (cmd.includes("pr list")) return { code: 0, stdout: "5\n", stderr: "" };
+        if (cmd.includes("--json state,mergedAt")) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
         if (cmd.includes("pr view") && cmd.includes("mergeStateStatus")) {
           // CLEAN at the readiness poll, BEHIND once the base moves under the
           // merge, CLEAN again after the branch is updated. Green throughout.
@@ -1579,5 +1601,182 @@ describe("describeRebaseConflict / parseUnmergedPaths (#2864)", () => {
     expect(summary).toContain("in 12 file(s): f0.ts");
     expect(summary).toContain("f9.ts, and 2 more");
     expect(summary).not.toContain("f10.ts,");
+  });
+});
+
+// #2986 — `gh pr merge --auto` exits 0 on ENQUEUE, not on merge. Reading that
+// exit code as "landed" let the caller close the issue and delete the branch
+// while the merge group's CI was still running.
+describe("waitForQueuedMerge (#2986)", () => {
+  const queueExec = (views: string[]): { exec: Exec; calls: string[][] } => {
+    const calls: string[][] = [];
+    let i = 0;
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const stdout = views[Math.min(i, views.length - 1)] ?? "";
+      i += 1;
+      return { code: 0, stdout, stderr: "" };
+    };
+    return { exec, calls };
+  };
+
+  const queued = JSON.stringify({
+    merged: false,
+    state: "OPEN",
+    mergeCommit: null,
+    autoMergeRequest: { enabledAt: "t" },
+  });
+
+  it("holds while the PR is queued and returns the merge commit once it merges", async () => {
+    const { exec, calls } = queueExec([
+      queued,
+      queued,
+      JSON.stringify({ merged: true, state: "MERGED", mergeCommit: { oid: "queuesha" }, autoMergeRequest: null }),
+    ]);
+    const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 5 });
+    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha" });
+    expect(calls).toHaveLength(3);
+    expect(calls[0]!.join(" ")).toContain("pr view 42 --json state,mergedAt,mergeCommit,autoMergeRequest");
+  });
+
+  it("reports a dequeue once the accepted auto-merge request disappears", async () => {
+    const { exec } = queueExec([
+      queued,
+      JSON.stringify({ merged: false, state: "OPEN", mergeCommit: null, autoMergeRequest: null }),
+    ]);
+    const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 5 });
+    expect(r.outcome).toBe("rejected");
+    expect(r.detail).toContain("dequeued PR #42");
+  });
+
+  it("does NOT read the enqueue's own registration lag as a rejection", async () => {
+    // The auto-merge request is not visible on the first poll; the PR then
+    // merges. A wait that trusted the first absent request would park a landing
+    // that was about to succeed.
+    const { exec } = queueExec([
+      JSON.stringify({ merged: false, state: "OPEN", mergeCommit: null, autoMergeRequest: null }),
+      queued,
+      JSON.stringify({ merged: true, state: "MERGED", mergeCommit: { oid: "queuesha" }, autoMergeRequest: null }),
+    ]);
+    const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 5 });
+    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha" });
+  });
+
+  it("reports a PR the queue closed without merging as rejected", async () => {
+    const { exec } = queueExec([
+      JSON.stringify({ merged: false, state: "CLOSED", mergeCommit: null, autoMergeRequest: null }),
+    ]);
+    const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 5 });
+    expect(r.outcome).toBe("rejected");
+    expect(r.detail).toContain("CLOSED without merging");
+  });
+
+  it("returns pending — never merged — when the budget runs out", async () => {
+    const { exec, calls } = queueExec([queued]);
+    const polls: number[] = [];
+    const r = await waitForQueuedMerge(exec, "o/r", 42, {
+      sleep: async () => {},
+      maxPolls: 3,
+      onPoll: (event) => {
+        polls.push(event.attempt);
+      },
+    });
+    expect(r).toEqual({ outcome: "pending" });
+    expect(calls).toHaveLength(3);
+    expect(polls).toEqual([1, 2, 3]);
+  });
+
+  it("keeps polling through an unreadable probe instead of inventing a verdict", async () => {
+    const { exec } = queueExec([
+      "not json",
+      JSON.stringify({ merged: true, state: "MERGED", mergeCommit: { oid: "queuesha" }, autoMergeRequest: null }),
+    ]);
+    const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 5 });
+    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha" });
+  });
+
+  it("parses a merged view and tolerates a broken payload", () => {
+    expect(parseQueuedPrView(JSON.stringify({ merged: true, state: "MERGED", mergeCommit: { oid: "s" } }))).toEqual({
+      merged: true,
+      state: "MERGED",
+      mergeSha: "s",
+      autoMerge: false,
+      observed: true,
+    });
+    expect(parseQueuedPrView("{oops").observed).toBe(false);
+    expect(parseQueuedPrView("").observed).toBe(false);
+  });
+});
+
+describe("landPr on a merge-queue base (#2986)", () => {
+  const queuedView = JSON.stringify({
+    merged: false,
+    state: "OPEN",
+    mergeCommit: null,
+    autoMergeRequest: { enabledAt: "t" },
+  });
+
+  const execFor = (views: string[]): { exec: Exec; calls: string[][] } => {
+    const calls: string[][] = [];
+    let i = 0;
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
+      if (cmd.includes("autoMergeRequest")) {
+        const stdout = views[Math.min(i, views.length - 1)] ?? "";
+        i += 1;
+        return { code: 0, stdout, stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    return { exec, calls };
+  };
+
+  const base = {
+    repo: "o/r",
+    gitRepo: "/repo",
+    remote: "origin",
+    branch: "afk/wX/9-x",
+    target: "main",
+    n: 9,
+    title: "t",
+    mergeQueue: true,
+  };
+
+  it("does NOT report ok while the queued PR still reports merged=false", async () => {
+    const { exec, calls } = execFor([queuedView]);
+    const r = await landPr(exec, {
+      ...base,
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 2 },
+    });
+    expect(r).toEqual({ ok: false, prNumber: 42, reason: "queue-pending" });
+    expect(calls.some((c) => c.join(" ").includes("pr merge 42 --merge --auto"))).toBe(true);
+  });
+
+  it("reports ok with the queue's merge commit once the PR reports merged=true", async () => {
+    const { exec } = execFor([
+      queuedView,
+      JSON.stringify({ merged: true, state: "MERGED", mergeCommit: { oid: "queuesha" }, autoMergeRequest: null }),
+    ]);
+    const r = await landPr(exec, {
+      ...base,
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 4 },
+    });
+    expect(r).toEqual({ ok: true, prNumber: 42, mergeSha: "queuesha" });
+  });
+
+  it("reports queue-rejected when the merge group hands the PR back", async () => {
+    const { exec } = execFor([
+      queuedView,
+      JSON.stringify({ merged: false, state: "OPEN", mergeCommit: null, autoMergeRequest: null }),
+    ]);
+    const r = await landPr(exec, {
+      ...base,
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 4 },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("queue-rejected");
+    expect(r.queueDetail).toContain("dequeued PR #42");
   });
 });

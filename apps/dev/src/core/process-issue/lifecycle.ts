@@ -1558,6 +1558,7 @@ export async function processIssue(
       maxAgentConflictResolveAttempts: deps.maxAgentConflictResolveAttempts,
       waitForReview: deps.waitForReview,
       ciAwait: deps.ciAwait,
+      mergeQueueWait: deps.mergeQueueWait,
       landingWait: deps.landingWait,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,

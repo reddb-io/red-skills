@@ -588,8 +588,19 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     const h = harness({ locked: false, openPr: true });
     const mergeExec = h.deps.mergeExec;
     h.deps.mergeExec = async (argv) => {
-      if (argv.join(" ").includes("pr view 42 --json mergeCommit --jq .mergeCommit.oid")) {
-        return { code: 0, stdout: "forge-merge-sha\n", stderr: "" };
+      // #2986: the SHA now comes from the merge CONFIRMATION — the same probe
+      // that proves the PR actually merged, not a separate optimistic read.
+      if (argv.join(" ").includes("--json state,mergedAt")) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            state: "MERGED",
+            mergedAt: "2026-08-01T00:00:00Z",
+            mergeCommit: { oid: "forge-merge-sha" },
+            autoMergeRequest: null,
+          }),
+          stderr: "",
+        };
       }
       return await mergeExec(argv);
     };

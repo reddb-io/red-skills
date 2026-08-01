@@ -14,7 +14,7 @@ import * as fsx from "../../runtime/fs.js";
 import type { GhContext } from "../../runtime/gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, readPostWorkerFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds } from "../../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readPostWorkerFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds, resolveMergeQueueTimeoutSeconds } from "../../core/config.js";
 import {
   makeExtractAdversarialReview,
   resolveAdversarialReviewConfig,
@@ -72,6 +72,9 @@ import {
 } from "./state.js";
 
 const LANDING_GH_PROBE_TIMEOUT_MS = 60_000;
+/** Poll spacing for the queued-merge confirmation (#2986). A merge group takes
+ * minutes, so a tighter interval would only spend GitHub quota. */
+const MERGE_QUEUE_POLL_INTERVAL_MS = 15_000;
 
 export function parseSlot(val: string | undefined): number | undefined {
   if (val === undefined) return undefined;
@@ -413,6 +416,18 @@ export function buildProcessDeps({
     worktreeLaunchesPr,
     landLock,
     nativeMergeQueue,
+    // #2986: `gh pr merge --auto` exits 0 on ENQUEUE. This is the budget the
+    // landing holds for while the forge builds the merge group and runs its CI —
+    // nothing closes the issue or deletes the branch until the PR says merged.
+    mergeQueueWait: {
+      sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+      intervalMs: MERGE_QUEUE_POLL_INTERVAL_MS,
+      maxPolls: Math.max(
+        1,
+        Math.ceil(resolveMergeQueueTimeoutSeconds(process.env) / (MERGE_QUEUE_POLL_INTERVAL_MS / 1000)),
+      ),
+      probeTimeoutMs: LANDING_GH_PROBE_TIMEOUT_MS,
+    },
     reviewGate,
     reviewGateLabel: LABEL_READY_FOR_REVIEW,
     // One-shot merge-conflict resolver (merge_resolve_conflict): re-enter the
