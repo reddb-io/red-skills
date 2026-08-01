@@ -343,15 +343,31 @@ function resolveProjectMatch(
   payload: RedskilledStatuslinePayload,
   options: RedskilledStatuslineOptions,
 ): RedskilledStatuslineProjectMatch {
-  if (options.project == null) return "unresolved";
+  return resolveStatuslineProjectMatch(payload, options.project);
+}
+
+/**
+ * The same verdict, for a renderer that is not the statusline. PURE.
+ *
+ * Exported so the dashboard reaches it by CALLING it rather than by restating
+ * it: two renderers with two copies of this ladder is exactly how one surface
+ * comes to accuse a project the other calls healthy. It takes the project alone
+ * rather than a whole options record, so a caller with different budgets — a
+ * table has row counts, a line has widths — can still ask.
+ */
+export function resolveStatuslineProjectMatch(
+  payload: RedskilledStatuslinePayload,
+  project: string | null,
+): RedskilledStatuslineProjectMatch {
+  if (project == null) return "unresolved";
   if (payload.known_projects == null) return "matched";
-  if (!payload.known_projects.includes(options.project)) return "unregistered";
+  if (!payload.known_projects.includes(project)) return "unregistered";
   // Known, and possibly known only by NAME. A daemon too old to state its
   // registrations cannot say which, and the answer then is `matched` for the same
   // reason it is above: a lapse invented from a missing field would put a false
   // accusation on every line a skewed daemon serves.
   if (payload.registered_projects == null) return "matched";
-  return payload.registered_projects.includes(options.project) ? "matched" : "name-only";
+  return payload.registered_projects.includes(project) ? "matched" : "name-only";
 }
 
 /**

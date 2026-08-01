@@ -127,7 +127,7 @@ import {
   registrationQueryUnexpressedFacets,
 } from "./core/registration-query.js";
 import { resolveRepoSlugForDir } from "@reddb-io/shared/project-identity-resolve.js";
-import { executeUnblockSweep } from "./core/boot-sweep.js";
+import { runRepoUnblockPass } from "./runtime/unblock-pass.js";
 import { collectReapInputs } from "./runtime/wire/reap.js";
 import { collectActivityReview } from "./commands/activity-review.js";
 import { executeTriage } from "./commands/triage.js";
@@ -440,26 +440,13 @@ export function createDefaultDevAfkMcpOperations(
       };
     },
     async unblockSweep() {
-      const context = await resolveRepoContext(root);
-      const gh = { cwd: context.root, repo: context.repo };
-      const candidates = await ghx.listUnblockCandidates(gh);
-      // The lane comes from THIS repo's installed vocabulary (#2966), so a
-      // HUMAN-ONLY dependent parks for its human instead of joining the queue.
-      const hitlTypes = readHitlTypeLabels(
-        loadConfig(afkPaths(root).configPath, { warn: () => undefined }),
-      );
-      const promoted = await executeUnblockSweep(
-        candidates,
-        async (issue) => ((await ghx.issueClosed(gh, issue)) ? "CLOSED" : "OPEN"),
-        {
-          editLabels: async (issue, remove, add) => {
-            await ghx.editLabels(gh, issue, remove, add);
-          },
-          comment: (issue, body) => ghx.comment(gh, issue, body),
-          issueReference: (issue) => ghx.issueReference(gh, issue),
-        },
-        hitlTypes,
-      );
+      // One pass, one implementation (#3014): the tool, the resident's Unblock
+      // belt, and the boot suite's step 7 promote through the same core, so an
+      // operator invoking this by hand gets exactly what the belt does on its
+      // own schedule. The lane comes from THIS repo's installed vocabulary
+      // (#2966), so a HUMAN-ONLY dependent parks for its human instead of
+      // joining the queue.
+      const promoted = await runRepoUnblockPass(root);
       return { promoted };
     },
     async gateRun(input) {

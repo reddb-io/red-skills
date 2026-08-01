@@ -35,6 +35,7 @@ A herdr plugin that reads the redskilled host daemon: Workers, logs, open pull
 requests, and the notifications behind them. It reads and never writes.
 
 Commands:
+  board                the statusline as a table: header plus one row per Worker
   dashboard            the live pane: host, Workers, projects, pull requests
   logs                 tail one Worker's log, or the host event lane
   status               print the daemon's own status line
@@ -54,7 +55,8 @@ Options:
   --verbose            show each Worker's last published line
   --json               machine-readable output, where a command has one
   --notify             also raise the answer as a herdr notification
-  --once               one poll, then exit (watch)
+  --once               one poll, then exit (watch, board)
+  --max-width <n>      the width budget the daemon renders to (board)
   --detach             start the watcher as a detached child, then return
   --placement <p>      overlay | split | tab | zoomed (pane)
   --direction <d>      right | down (pane)
@@ -133,6 +135,10 @@ async function main(argv) {
   const config = await loadConfig();
 
   switch (command ?? "dashboard") {
+    case "board": {
+      const { runBoard } = await import("../src/commands/board.mjs");
+      return await runBoard({ config, flags });
+    }
     case "dashboard": {
       const { runDashboard } = await import("../src/commands/dashboard.mjs");
       await runDashboard({ config, flags });

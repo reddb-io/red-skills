@@ -287,6 +287,55 @@ function value(op) {
         generated_at: current.generated_at,
       };
     }
+    case "statusline-dashboard": {
+      const current = payload();
+      const header =
+        `» ${"reddb-io/red-skills"} v0.4.1-fake · ` +
+        `wrk=${current.host.worker_count}/${current.host.worker_count} · ` +
+        `mem=${(current.host.observed_rss_bytes / 1024 ** 3).toFixed(1)}G · ` +
+        `prs=${world.pullRequests["reddb-io/red-skills"]}`;
+      const rows = current.workers.map((worker) => ({
+        worker_id: worker.worker_id,
+        project_label: worker.project_label,
+        mine: false,
+        cells: {},
+        line: `${worker.worker_id}  run=fake  org=afk  hb=?`,
+      }));
+      return {
+        version: 1,
+        generated_at: current.generated_at,
+        mode: "global",
+        project: null,
+        columns: ["wid", "run", "org", "iss", "bar", "phase", "elapsed", "hb", "loc", "tks", "tls", "rsn", "txt"],
+        header: {
+          repo: "reddb-io/red-skills",
+          project: null,
+          project_match: "unresolved",
+          version: "0.4.1-fake",
+          model: null,
+          windows: {
+            memory_used_fraction: null,
+            memory_used_bytes: current.host.observed_rss_bytes,
+            memory_ceiling_bytes: current.host.ceiling.memory_bytes,
+            worker_count: current.host.worker_count,
+            worker_ceiling: current.host.ceiling.worker_count,
+          },
+          counts: {
+            open_pull_requests: world.pullRequests["reddb-io/red-skills"],
+            recently_closed: null,
+            open_issues: null,
+            stale: false,
+          },
+          stale: false,
+          age_ms: 0,
+          line: header,
+        },
+        rows,
+        lines: [header, ...rows.map((row) => row.line)],
+        hidden_row_count: 0,
+        stale: false,
+      };
+    }
     default:
       return null;
   }

@@ -17,6 +17,14 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
   - `afk/docs/CONFIG.md`: the `hitl_types` block names the installer instead of reading as a hand-written step.
   - `red-doctor/SKILL.md` + `APPLY.md`: new check 25 — an installed HUMAN-ONLY type label with no declaration is a finding, merged under `--fix --yes` after a diff preview; a repo with no `.red/config.yaml` is delegated to `/red-setup`.
 
+## afk (engineering) — the Unblock Sweep gets its own belt, outside the boot suite (issue #3014)
+
+- **status**: modified
+- **upstream**: —
+- **why**: On a repo operated through live sessions only, a dependent kept `blocked:dependency` after a human closed its last `req:*` blocker. The close cascade fires only when the *agent* closes the blocker; the boot-time Unblock Sweep is awake in the resident janitor but is step 7 of a suite that aborts before it on a failing precheck, a red operational probe, or a stranded `.red/` doc. The promote path was reachable in principle and starved in practice.
+- **what changed**:
+  - `docs/BOOT-SWEEPS.md`: a new *Unblock belt* section naming each clearer that was expected, why each could not fire, and the belt that replaces the dependency on the boot suite.
+
 ## afk (engineering) — `project_start` registers the project instead of launching it (issue #2902)
 
 - **status**: modified

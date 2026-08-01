@@ -200,3 +200,89 @@ export function snapshot(overrides = {}) {
     ...overrides,
   };
 }
+
+/**
+ * A dashboard shaped exactly as `statusline-dashboard` sends it.
+ *
+ * Written against `apps/redskilled/src/dashboard-render.ts`. Every cell here is
+ * already finished — which is the point: a surface test that had to compute a
+ * cell to assert it would be testing the very re-derivation this document
+ * exists to remove.
+ */
+export function dashboard(overrides = {}) {
+  const header = {
+    repo: "reddb-io/red-skills",
+    project: "reddb-io/red-skills",
+    project_match: "matched",
+    version: "0.4.1",
+    model: "claude·opus·high",
+    windows: {
+      memory_used_fraction: 0.375,
+      memory_used_bytes: 3 * 1024 ** 3,
+      memory_ceiling_bytes: 8 * 1024 ** 3,
+      worker_count: 2,
+      worker_ceiling: 6,
+    },
+    counts: { open_pull_requests: 3, recently_closed: 7, open_issues: 24, stale: false },
+    stale: false,
+    age_ms: 5_000,
+    line: "» reddb-io/red-skills v0.4.1 · claude·opus·high · wrk=2/2 · slots=2/6 · mem=3G/8G 38% · prs=3 · cpr=7 · iss=24",
+  };
+  const rows = [
+    {
+      worker_id: "w-busy",
+      project_label: "reddb-io/red-skills",
+      mine: true,
+      cells: {
+        wid: "w-busy",
+        run: "run=claude opus high",
+        org: "org=afk",
+        iss: "iss=3012",
+        bar: "██▶░░░",
+        phase: "coding·impl",
+        elapsed: "1h0m",
+        hb: "hb=3s",
+        loc: "loc=+142 -36",
+        tks: "tks=45k",
+        tls: "tls=12",
+        rsn: "rsn=4",
+        txt: "txt=9",
+      },
+      line: "w-busy  run=claude opus high  org=afk  iss=3012  ██▶░░░  coding·impl  1h0m  hb=3s  loc=+142 -36  tks=45k  tls=12  rsn=4  txt=9",
+    },
+    {
+      worker_id: "w-idle",
+      project_label: "acme/widgets",
+      mine: false,
+      cells: {
+        wid: "w-idle",
+        run: "",
+        org: "",
+        iss: "",
+        bar: "",
+        phase: "",
+        elapsed: "12m0s",
+        hb: "hb=?",
+        loc: "",
+        tks: "",
+        tls: "",
+        rsn: "",
+        txt: "",
+      },
+      line: "w-idle                                        12m0s  hb=?",
+    },
+  ];
+  return {
+    version: 1,
+    generated_at: "2026-07-31T12:00:00.000Z",
+    mode: "global",
+    project: "reddb-io/red-skills",
+    columns: ["wid", "run", "org", "iss", "bar", "phase", "elapsed", "hb", "loc", "tks", "tls", "rsn", "txt"],
+    header,
+    rows,
+    lines: [header.line, ...rows.map((row) => row.line)],
+    hidden_row_count: 0,
+    stale: false,
+    ...overrides,
+  };
+}

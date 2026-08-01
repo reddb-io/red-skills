@@ -1,13 +1,15 @@
 # vscode-extension-red-skills
 
 A VSCode extension that connects to the `redskilled` host daemon (ADR 0130) and
-surfaces its state inside the editor: the live Workers with their vitals, a
+surfaces its state inside the editor: a status-bar statusline, a dashboard panel
+carrying the same header and Worker rows, the live Workers with their vitals, a
 per-Worker log panel, the host event lane, the open pull requests of every
 registered project, and a notification whenever any of it changes.
 
 **It reads and never writes.** ADR 0130 rule 9 makes reach asymmetric — a session
 reads the whole host and writes only its own project — so the extension sends
-`ping`, `host-state` and `statusline-payload`, and nothing else. It also never
+`ping`, `host-state`, `statusline-payload` and `statusline-dashboard`, and
+nothing else. It also never
 starts the daemon: `redskilled provision` and the dev bundle own auto-spawn, and
 a tree view restoring with a window must not be what births a machine-wide
 singleton. An absent daemon is reported as absent.
@@ -20,6 +22,15 @@ singleton. An absent daemon is reported as absent.
 | **Host events** | the TOONL event lane beside the socket | What *happened* — births, deaths with their exit status, budget kills, the daemon's own stop |
 | **Pull requests** | `statusline-payload` | Each registered project's open PR and issue counts, as the host polled them |
 | **Worker log** | the Worker's own `log_path` | The tail of one Worker's log, following it as it grows |
+| **Status bar** | `statusline-dashboard` | The daemon's own header line: repo, version, model, slots, memory, prs/cpr/iss |
+| **Dashboard panel** | `statusline-dashboard` | The same header plus one row per Worker — runner/model/effort, origin, issue, the pipeline bar, phase·step, elapsed, heartbeat, loc, tokens, tools, reasoning, text |
+
+**THE DAEMON AGGREGATES AND RENDERS; SURFACES PRINT.** The header line and every
+Worker row arrive finished from `statusline-dashboard`; nothing here recomputes a
+cell. ADR 0130 rule 10 keeps that answer a pure function of the payload precisely
+so no surface reimplements it — an editor panel and a herdr pane each doing their
+own Worker math would be two dashboards lying in two different ways about the
+same instant.
 
 The socket answers "what is running NOW" and the lane answers "what happened".
 Both are read every tick, because a view holding only one of them can always be
@@ -94,6 +105,7 @@ src/
 ├── config.ts             the settings block, read into plain values
 ├── model/
 │   ├── snapshot.ts       one read of everything, as a total answer
+│   ├── dashboard-view.ts what the status bar says and the panel shows
 │   ├── nodes.ts          what the three trees show, as plain values
 │   ├── log-follow.ts     which lines of a re-read tail are new
 │   └── format.ts         the handful of numbers a row shows
@@ -105,7 +117,7 @@ src/
 ├── watch/
 │   ├── signals.ts        what changed, as things worth interrupting for
 │   └── watcher.ts        the poll loop, with the editor kept outside
-├── views/                TreeDataProvider and the log output channel
+├── views/                TreeDataProvider, the log channel, the status bar, the dashboard panel
 └── packaging/vsix.ts     the installable archive
 ```
 

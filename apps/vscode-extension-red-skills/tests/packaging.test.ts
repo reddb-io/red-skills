@@ -73,7 +73,7 @@ describe("the extension manifest", () => {
     expect(manifest.main).toBe("./out/extension.cjs");
   });
 
-  it("contributes the three views and the four read-only commands", async () => {
+  it("contributes the three views and the five read-only commands", async () => {
     const manifest = JSON.parse(await readFile(join(EXTENSION_ROOT, "package.json"), "utf8")) as {
       contributes: { views: Record<string, { id: string }[]>; commands: { command: string }[] };
     };
@@ -87,6 +87,7 @@ describe("the extension manifest", () => {
       "redskilled.copyWorkerId",
       "redskilled.refresh",
       "redskilled.revealWorkspace",
+      "redskilled.showDashboard",
       "redskilled.showWorkerLog",
     ]);
   });

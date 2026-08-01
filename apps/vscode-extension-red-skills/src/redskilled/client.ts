@@ -1,8 +1,9 @@
 /**
  * client — the extension's READ half of the `redskilled` wire.
  *
- * **Read-only, and deliberately.** It sends `ping`, `host-state` and
- * `statusline-payload`, and it never sends `worker-start`, `worker-command`,
+ * **Read-only, and deliberately.** It sends `ping`, `host-state`,
+ * `statusline-payload` and `statusline-dashboard`, and it never sends
+ * `worker-start`, `worker-command`,
  * `project-register` or `shutdown`. ADR 0130 rule 9 makes reach asymmetric — a
  * session reads the whole host and writes only its own project — and an editor
  * panel has no business on the writing half: a view that could stop another
@@ -25,13 +26,15 @@
  */
 import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
 import type {
+  RedskilledDashboard,
+  RedskilledDashboardRenderRequest,
   RedskilledHostState,
   RedskilledPong,
   RedskilledRequest,
   RedskilledResponse,
   RedskilledStatuslinePayload,
 } from "@reddb-io/redskilled/protocol";
-import { isRedskilledStatuslinePayload } from "@reddb-io/redskilled/protocol";
+import { isRedskilledDashboard, isRedskilledStatuslinePayload } from "@reddb-io/redskilled/protocol";
 import { isRedskilledHostState } from "@reddb-io/redskilled/host-state";
 
 /** Raised when nothing answered — never confused with "the host is idle". */
@@ -61,6 +64,19 @@ export interface RedskilledReadClient {
   ping(): Promise<RedskilledPong>;
   hostState(): Promise<RedskilledHostState>;
   statuslinePayload(sessionProject?: string): Promise<RedskilledStatuslinePayload>;
+  /**
+   * The dashboard: the same read again, already laid out as a table.
+   *
+   * The extension PRINTS what comes back and computes no cell of it. The daemon
+   * is the only process holding the Worker set across projects, so a panel doing
+   * its own Worker math would be a second authority on a question one document
+   * already answers — and an editor panel and a terminal pane would describe two
+   * different machines (ADR 0130 rule 10).
+   */
+  dashboard(
+    sessionProject?: string,
+    render?: RedskilledDashboardRenderRequest,
+  ): Promise<RedskilledDashboard>;
 }
 
 export interface CreateReadClientOptions {
@@ -127,6 +143,21 @@ export function createRedskilledReadClient(options: CreateReadClientOptions): Re
         throw new RedskilledRefusedError(
           "the daemon answered statusline-payload with a shape this view cannot read",
           "statusline-payload",
+        );
+      }
+      return value;
+    },
+    async dashboard(sessionProject?: string, render?: RedskilledDashboardRenderRequest) {
+      const value = await call({
+        id: nextRequestId("statusline-dashboard"),
+        op: "statusline-dashboard",
+        ...(sessionProject ? { session_project: sessionProject } : {}),
+        ...(render ? { dashboard: render } : {}),
+      });
+      if (!isRedskilledDashboard(value)) {
+        throw new RedskilledRefusedError(
+          "the daemon answered statusline-dashboard with a shape this view cannot read",
+          "statusline-dashboard",
         );
       }
       return value;
