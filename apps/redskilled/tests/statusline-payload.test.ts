@@ -270,6 +270,8 @@ function hostStateOf(workers: readonly RedskilledWorkerView[]) {
       newer_published: 0,
       replacement: "none" as const,
       checked_at: null,
+      checks: 0,
+      hold_reason: null,
       newest_published_version: null,
       major_held: 0,
       major_hold: null,
