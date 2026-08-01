@@ -10,6 +10,7 @@
  * holding only one of the two can always be asked a question it cannot answer.
  */
 import type {
+  RedskilledDashboard,
   RedskilledHostState,
   RedskilledStatuslinePayload,
 } from "@reddb-io/redskilled/protocol";
@@ -35,6 +36,15 @@ export interface HostSnapshot {
    * usable frame instead of an outage.
    */
   readonly hostState: RedskilledHostState | null;
+  /**
+   * The dashboard the daemon rendered for this frame, or `null`.
+   *
+   * Read beside the payload rather than derived from it: THE DAEMON AGGREGATES
+   * AND RENDERS; SURFACES PRINT. Null does NOT imply unreachable — a daemon too
+   * old to serve the op still yields a usable frame for the trees, and the
+   * dashboard panel says so rather than drawing a table nobody rendered.
+   */
+  readonly dashboard: RedskilledDashboard | null;
   readonly lane: EventLaneRead;
   readonly error: SnapshotFailure | null;
   readonly readAt: string;
@@ -45,6 +55,8 @@ export interface ReadSnapshotOptions {
   readonly eventLanePath: string;
   readonly source: string;
   readonly sessionProject?: string;
+  /** The size the panel has, stated on the request so the daemon renders to it. */
+  readonly dashboardRender?: { readonly maxWidth?: number; readonly maxRows?: number };
   readonly now?: () => string;
 }
 
@@ -61,9 +73,20 @@ export async function readHostSnapshot(options: ReadSnapshotOptions): Promise<Ho
   const lane = await readEventLane(options.eventLanePath).catch(() => EMPTY_LANE(options.eventLanePath));
 
   try {
-    const [payload, hostState] = await Promise.all([
+    const [payload, hostState, dashboard] = await Promise.all([
       options.client.statuslinePayload(options.sessionProject),
       options.client.hostState().catch(() => null),
+      options.client
+        .dashboard(options.sessionProject, {
+          mode: options.sessionProject ? "local" : "global",
+          ...(options.sessionProject ? { project: options.sessionProject } : {}),
+          ...(options.dashboardRender?.maxWidth == null ? {} : { max_width: options.dashboardRender.maxWidth }),
+          ...(options.dashboardRender?.maxRows == null ? {} : { max_rows: options.dashboardRender.maxRows }),
+        })
+        // Best-effort beside the payload, for the reason `host-state` is: a
+        // daemon that serves one and refuses the other still yields a usable
+        // frame instead of an outage.
+        .catch(() => null),
     ]);
     return {
       reachable: true,
@@ -71,6 +94,7 @@ export async function readHostSnapshot(options: ReadSnapshotOptions): Promise<Ho
       source: options.source,
       payload,
       hostState,
+      dashboard,
       lane,
       error: null,
       readAt: now(),
@@ -82,6 +106,7 @@ export async function readHostSnapshot(options: ReadSnapshotOptions): Promise<Ho
       source: options.source,
       payload: null,
       hostState: null,
+      dashboard: null,
       lane,
       error: {
         name: error instanceof Error ? error.name : "Error",
