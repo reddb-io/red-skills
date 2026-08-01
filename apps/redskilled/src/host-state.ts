@@ -172,6 +172,27 @@ export interface RedskilledRegistrationPoll {
   readonly detail: string;
 }
 
+/**
+ * One registration this daemon dropped, and why it dropped it.
+ *
+ * A lapse is otherwise reported as an absence, and an absence is indistinguishable
+ * from a project that never registered — which is exactly how a drain that stopped
+ * on its own renders as a host that is simply idle (#2973). Stated as a record
+ * with an instant and a reason, it is a fact a reader can act on.
+ */
+export interface RedskilledRegistrationLapse {
+  readonly project_label: string;
+  /** When the daemon noticed — a lapse is observed at a read, never at a timer. */
+  readonly at: string;
+  /** The deadline the record actually stood on. */
+  readonly renew_by: string;
+  /** How many renewals a session had sent before it went quiet. */
+  readonly renewals: number;
+  /** How many times the project's own work had held it up (Amendment 7). */
+  readonly sustains: number;
+  readonly detail: string;
+}
+
 export interface RedskilledHostState {
   readonly version: 1;
   readonly protocol_version: number;
@@ -200,6 +221,14 @@ export interface RedskilledHostState {
    * registered nothing — collapsing them would make each one unsayable.
    */
   readonly registrations?: readonly RedskilledRegistrationView[];
+  /**
+   * The registrations this daemon dropped, oldest first; absent when it dropped none.
+   *
+   * Beside `registrations` because it answers the question that set cannot: a
+   * project is missing from it either because it never registered or because its
+   * registration lapsed, and only one of those is a drain that stopped.
+   */
+  readonly lapsed_registrations?: readonly RedskilledRegistrationLapse[];
   /** What the daemon has promised the machine, derived from `workers`. */
   readonly budget_accounting: RedskilledBudgetAccounting;
   /** Running version against published version, and what is being done about it. */
@@ -217,6 +246,8 @@ export interface BuildHostStateInput {
   readonly workers?: readonly RedskilledWorkerView[];
   /** The registrations the daemon holds; absent is a host with none, not an error. */
   readonly registrations?: readonly RedskilledProjectRegistration[];
+  /** The ones it dropped, in the order it dropped them; absent when none lapsed. */
+  readonly lapses?: readonly RedskilledRegistrationLapse[];
   /**
    * The last queue poll, as the poller left it; absent when none has run.
    *
@@ -268,6 +299,10 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     // Ordered by the one field the daemon is allowed to read. A document ordered
     // by anything a selector says would be the daemon having read one.
     registrations: buildRegistrationViews(input),
+    // Absent rather than empty: a host that has dropped nothing has no lapse
+    // block at all, so a reader never has to tell an empty list from a daemon too
+    // old to keep one.
+    ...(input.lapses == null || input.lapses.length === 0 ? {} : { lapsed_registrations: [...input.lapses] }),
     budget_accounting: buildBudgetAccounting(workers),
     upgrade: buildUpgradeState(input),
   };

@@ -69,6 +69,25 @@ function worker(overrides: Partial<RedskilledWorkerView> = {}): RedskilledWorker
 
 const MB = 1024 * 1024;
 
+/** The registration a project draining on this host would be holding. */
+function registration(project_label: string) {
+  return {
+    version: 1 as const,
+    project_label,
+    selector: "opaque",
+    argv: ["opaque"],
+    workspace_path: "/tmp/opaque",
+    env: {},
+    target: 1,
+    registered_at: "2026-07-29T00:00:00.000Z",
+    renew_within_ms: 300_000,
+    renew_by: "2026-07-29T01:05:00.000Z",
+    renewed_at: "2026-07-29T00:00:00.000Z",
+    renewals: 0,
+    launch_revision: 0,
+  };
+}
+
 function payloadOf(
   workers: readonly RedskilledWorkerView[],
   rss: Record<string, number> = {},
@@ -82,6 +101,10 @@ function payloadOf(
       pid: 99,
       startedAt: "2026-07-29T00:00:00.000Z",
       workers,
+      // Every Worker's project is a REGISTERED one here: these tests describe a
+      // healthy project's line, and a host holding a Worker for a project it has
+      // no registration for is the lapse case, which has a test of its own.
+      registrations: [...new Set(workers.map((entry) => entry.project_label))].map(registration),
     }),
     ceiling: UNBOUNDED_HOST_CEILING,
     rss,

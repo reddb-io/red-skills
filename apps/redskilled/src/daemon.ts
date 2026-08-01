@@ -68,7 +68,12 @@ import {
   type RedskilledDaemonStopped,
   type RedskilledStopReason,
 } from "./daemon-stop.js";
-import { buildHostState, type RedskilledHostState, type RedskilledWorkerView } from "./host-state.js";
+import {
+  buildHostState,
+  type RedskilledHostState,
+  type RedskilledRegistrationLapse,
+  type RedskilledWorkerView,
+} from "./host-state.js";
 import {
   evaluateMemoryBudgets,
   sampleWorkerTrees,
@@ -93,6 +98,7 @@ import {
   buildProjectRegistration,
   renewProjectRegistration,
   RedskilledProjectUnregisteredError,
+  sustainProjectRegistration,
   sweepLapsedRegistrations,
   type RedskilledProjectRegistration,
   type RedskilledProjectRegistrationRequest,
@@ -212,6 +218,15 @@ export const DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS = 10_000;
  * are running — the cost does not move with the Worker count.
  */
 export const DEFAULT_REDSKILLED_SAMPLE_MS = 15_000;
+
+/**
+ * How many lapsed registrations the daemon keeps where a reader can see them.
+ *
+ * A tail, not a history: the question a lapse block answers is "did my drain stop,
+ * and when", which is asked about the last few — and an unbounded list on a
+ * long-lived host is a leak wearing the shape of an audit trail.
+ */
+export const REDSKILLED_LAPSE_MEMORY = 16;
 
 /** Raised when another daemon already serves this user session. */
 export class RedskilledAlreadyRunningError extends Error {
@@ -672,6 +687,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // host-wide because the ceiling that produced it is — a refusal aimed at one
   // project would let the next one walk into the same wall.
   let lastDemand: RedskilledDemandTick | null = null;
+  // The registrations this daemon dropped, newest last. Kept because a lapse is
+  // otherwise only an absence, and an absence is what let a stopped drain read as
+  // a healthy one (#2973).
+  const lapses: RedskilledRegistrationLapse[] = [];
   let demandBackoffUntilMs: number | null = null;
   let demandTicking = false;
   let idleTimer: NodeJS.Timeout | undefined;
@@ -700,16 +719,85 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * this process awake to enforce a deadline whose whole purpose is to let it
    * sleep. A registration therefore stops being polled, stops being reported and
    * stops holding the daemon alive at the same instant — the first read past it.
+   *
+   * **The read is also where a registration is held up.** Amendment 7 gave the
+   * renewal an owner, and the owner is this process: every read sustains what the
+   * project's own work speaks for before deciding what lapsed, so the two halves
+   * are one decision made from one set of facts at one instant.
    */
-  function expireLapsedRegistrations(nowMs: number): readonly RedskilledProjectRegistration[] {
+  function expireLapsedRegistrations(now: string): readonly RedskilledProjectRegistration[] {
+    // Sustained BEFORE the sweep, at this same instant: the renewal and the lapse
+    // are one decision seen from two sides (Amendment 7), and a sweep that ran on
+    // facts an earlier timer left behind would drop a project whose work the
+    // daemon can see right now.
+    sustainRegistrations(now);
+    const nowMs = Date.parse(now);
     const swept = sweepLapsedRegistrations(registrations.values(), nowMs);
-    for (const lapsed of swept.lapsed) registrations.delete(lapsed.project_label);
+    for (const lapsed of swept.lapsed) {
+      registrations.delete(lapsed.project_label);
+      rememberLapse(lapsed, nowMs);
+    }
     return swept.lapsed;
+  }
+
+  /**
+   * Keep a lapse where a reader can find it, because an absence explains nothing.
+   *
+   * A registration that lapses simply stops being in the set, and every surface
+   * then renders the project as one this host never heard of — which is how "my
+   * drain stopped" reads as "nothing is wrong" (#2973). The record is what turns
+   * the absence into a stated fact with an instant and a reason on it. Bounded on
+   * purpose: this is the tail an operator asks about, not a history.
+   */
+  function rememberLapse(registration: RedskilledProjectRegistration, nowMs: number): void {
+    const at = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : registration.renew_by;
+    lapses.push({
+      project_label: registration.project_label,
+      at,
+      renew_by: registration.renew_by,
+      renewals: registration.renewals,
+      sustains: registration.sustains ?? 0,
+      detail:
+        `redskilled dropped the registration for project ${JSON.stringify(registration.project_label)}: it stood ` +
+        `until ${registration.renew_by} and nothing renewed it — no session spoke for it, and no poll found it ` +
+        `work or a Worker to hold it up`,
+    });
+    if (lapses.length > REDSKILLED_LAPSE_MEMORY) lapses.splice(0, lapses.length - REDSKILLED_LAPSE_MEMORY);
+  }
+
+  /**
+   * Hold every registration up that the project's own work still speaks for.
+   *
+   * ADR 0130 Amendment 7: the renewal's owner is this process. It runs off the
+   * facts the daemon already holds at the instant it holds them — the depth its
+   * last poll counted and the Workers it is itself running — so a drain survives
+   * the terminal that started it without one message from a session, and a project
+   * with neither still lapses at its deadline. Nothing here reads a selector: the
+   * decision is made from one integer per project (ADR 0130 rule 3).
+   */
+  function sustainRegistrations(now: string): void {
+    if (registrations.size === 0) return;
+    const nowMs = Date.parse(now);
+    if (!Number.isFinite(nowMs)) return;
+    const live: Record<string, number> = {};
+    for (const worker of workers.values()) {
+      live[worker.project_label] = (live[worker.project_label] ?? 0) + 1;
+    }
+    const polled = new Map((lastQueue?.projects ?? []).map((project) => [project.project_label, project]));
+    for (const held of [...registrations.values()]) {
+      const poll = polled.get(held.project_label);
+      const sustained = sustainProjectRegistration(held, {
+        now,
+        ...(poll == null ? {} : { queue: { outcome: poll.outcome, depth: poll.depth } }),
+        liveWorkers: live[held.project_label] ?? 0,
+      });
+      if (sustained.registration !== held) registrations.set(held.project_label, sustained.registration);
+    }
   }
 
   function hostState(): RedskilledHostState {
     const now = clock();
-    expireLapsedRegistrations(Date.parse(now));
+    expireLapsedRegistrations(now);
     return buildHostState({
       now,
       daemonVersion,
@@ -720,6 +808,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
       workers: [...workers.values()],
       registrations: [...registrations.values()],
+      // The ones that stopped, beside the ones that stand: a project missing from
+      // the set is either one that never registered or one whose drain ended, and
+      // only the second is something an operator has to act on.
+      lapses,
       // The poll each registration was last covered by, so "why is nothing
       // happening" is answerable from one read instead of from a log.
       queue: lastQueue,
@@ -789,7 +881,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const now = clock();
     // Swept before the set is snapshotted, so a lapsed project is absent from the
     // very poll that would otherwise have asked the tracker about it again.
-    expireLapsedRegistrations(Date.parse(now));
+    expireLapsedRegistrations(now);
     const projects = [...registrations.values()]
       .map((registration) => ({ project_label: registration.project_label, selector: registration.selector }))
       // By label, like every other list the daemon reports: the order a client
@@ -802,6 +894,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now,
       ...(queueRegistration?.batchSize == null ? {} : { batchSize: queueRegistration.batchSize }),
     });
+    // The depth this poll just counted is the renewal a project with open work
+    // gets (Amendment 7), applied here rather than at the next read so a deadline
+    // is never judged against a poll the daemon had already superseded.
+    sustainRegistrations(clock());
     return lastQueue;
   }
 
@@ -1084,7 +1180,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const now = clock();
     // Swept first, so a project whose last session died is refused nothing: the
     // record it would collide with is one no session has renewed past its deadline.
-    expireLapsedRegistrations(Date.parse(now));
+    expireLapsedRegistrations(now);
     const registration = buildProjectRegistration(request, {
       now,
       held: registrations.get(request.project_label),
@@ -1124,7 +1220,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const reach = authorize("project-renew", options.sessionProject, projectLabel);
     if (!reach.permitted) throw new Error(reach.reason);
     const now = clock();
-    expireLapsedRegistrations(Date.parse(now));
+    expireLapsedRegistrations(now);
     const held = registrations.get(projectLabel);
     if (held == null) throw new RedskilledProjectUnregisteredError(projectLabel);
     const registration = renewProjectRegistration(held, {
@@ -1517,7 +1613,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // host must still be awake to poll for. The deadline is what keeps this from
     // being "awake forever" — a registration nobody renews lapses in the sweep
     // above, and the very next tick finds nothing holding anything.
-    expireLapsedRegistrations(Date.parse(clock()));
+    expireLapsedRegistrations(clock());
     if (registrations.size > 0) {
       armIdleTimer();
       return "held-by-registrations";
