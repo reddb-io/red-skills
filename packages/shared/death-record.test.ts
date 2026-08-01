@@ -26,10 +26,17 @@ import {
 function poseHost(pid = 4242): DeathRecorderHost & {
   deliver(event: string, arg?: unknown): void;
   listenerCount(event: string): number;
+  reraised: string[];
 } {
   const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
   return {
     pid,
+    reraised: [],
+    kill(target, signal) {
+      expect(target).toBe(pid);
+      this.reraised.push(signal);
+      return true;
+    },
     on(event, listener) {
       listeners.set(event, [...(listeners.get(event) ?? []), listener]);
       return this;
@@ -168,6 +175,31 @@ describe("death-record", () => {
       voluntary_ctx_switches: 6,
       involuntary_ctx_switches: 7,
     });
+  });
+
+  it("hands a signal it alone traps back to the default disposition", () => {
+    const host = poseHost();
+    installed = installDeathRecorder({ lanePath, kind: "daemon", id: "d", host });
+
+    host.deliver("SIGHUP");
+
+    // Recorded, then re-raised with no listener left: the process dies of SIGHUP
+    // exactly as it did before anything watched for it.
+    expect(readProcessDeathLane(lanePath)[0]).toMatchObject({ signal: "SIGHUP" });
+    expect(host.reraised).toEqual(["SIGHUP"]);
+    expect(host.listenerCount("SIGHUP")).toBe(0);
+  });
+
+  it("leaves a signal another handler owns to that handler", () => {
+    const host = poseHost();
+    host.on("SIGTERM", () => undefined);
+    installed = installDeathRecorder({ lanePath, kind: "daemon", id: "d", host });
+
+    host.deliver("SIGTERM");
+
+    expect(readProcessDeathLane(lanePath)[0]).toMatchObject({ signal: "SIGTERM" });
+    expect(host.reraised).toEqual([]);
+    expect(host.listenerCount("SIGTERM")).toBe(2);
   });
 
   it("records an uncaught exception with its description", () => {
