@@ -14,9 +14,9 @@ import {
   buildValidationRecord,
   formatValidationLine,
   isInfraFeedbackFailure,
-  relevantScopes,
   runFeedback,
 } from "./feedback.js";
+import { gateScopes } from "./validation-scope.js";
 import { emitEnvelope } from "./envelope-emit.js";
 import { deleteRemote, pushAttempt } from "./remote-branch.js";
 import { DEFAULT_TRIAGE_LABELS } from "./triage-labels.js";
@@ -42,7 +42,7 @@ export const HOST_RECONCILE_PORTS: HostReconcilePorts = {
   landing: { doLanding },
   feedback: {
     runFeedback,
-    relevantScopes,
+    gateScopes,
     isInfraFeedbackFailure,
     buildValidationRecord,
     formatValidationLine,

@@ -40,7 +40,6 @@
 import type {
   buildValidationRecord,
   formatValidationLine,
-  relevantScopes,
   runFeedback,
   isInfraFeedbackFailure,
   Exec as PnpmExec,
@@ -48,6 +47,7 @@ import type {
   PackageLayout,
   RunFeedbackResult,
 } from "./feedback.js";
+import type { gateScopes } from "./validation-scope.js";
 import type { doLanding, LandingFailureReason, LandingPostMergeValidation } from "./landing.js";
 import { type CiAwaitInput, type ConflictResolver, type Exec as MergeExec, type WaitForReviewInput } from "./merge.js";
 import type { deleteRemote, pushAttempt, GitExec } from "./remote-branch.js";
@@ -137,10 +137,13 @@ export interface ReconcileLandingPort {
 
 /** The feedback-gate port: `runFeedback` plus the four helpers reconcile reads
  * around it (scope resolution, the infra-root classifier, and the two
- * validation-record formatters used by the post-merge sidecar line). */
+ * validation-record formatters used by the post-merge sidecar line).
+ * Scope resolution is `gateScopes`, NOT the raw nearest-package `relevantScopes`:
+ * mapping a changed file to its nearest package sends the mandatory changeset to
+ * the root, whose `test` script is the whole workspace (#2984). */
 export interface ReconcileFeedbackPort {
   runFeedback: typeof runFeedback;
-  relevantScopes: typeof relevantScopes;
+  gateScopes: typeof gateScopes;
   isInfraFeedbackFailure: typeof isInfraFeedbackFailure;
   buildValidationRecord: typeof buildValidationRecord;
   formatValidationLine: typeof formatValidationLine;
@@ -518,7 +521,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     // Mirrors the DONE path.
     feedback = await deps.feedback.runFeedback(deps.pnpm, {
       worktree: branch,
-      scopes: deps.feedback.relevantScopes(deps.layout, changedFiles),
+      scopes: deps.feedback.gateScopes(deps.layout, changedFiles),
       layout: deps.layout,
       now: deps.nowEpoch,
       baselineWorktree: input.base,
@@ -577,7 +580,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       postMergeGate: async (mergedTreeDir) => {
         const mergedFeedback = await deps.feedback.runFeedback(deps.pnpm, {
           worktree: mergedTreeDir,
-          scopes: deps.feedback.relevantScopes(deps.layout, changedFiles),
+          scopes: deps.feedback.gateScopes(deps.layout, changedFiles),
           layout: deps.layout,
           now: deps.nowEpoch,
           baselineWorktree: input.base,
