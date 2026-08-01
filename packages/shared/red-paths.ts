@@ -180,6 +180,42 @@ export function branchLockFile(root: string): string {
 }
 
 /**
+ * The death-record lane's segment and file name, spelled ONCE.
+ *
+ * Every dying process — a worker in a checkout, the host daemon in its own home
+ * — writes the same shape to a lane with this name, so one reader answers "why
+ * did it die" wherever it is asked. The two builders below differ only in which
+ * state root they hang it under; the name itself never forks.
+ */
+export const DEATH_LANE_DIR = "deaths";
+export const DEATH_LANE_FILE = "deaths.toonl";
+
+/**
+ * The death-record lane directory under an ARBITRARY durable state root.
+ *
+ * Takes the state root rather than a repo root because the daemon's durable home
+ * (`~/.red/redskilled/`) is not a checkout and has no `.red/state` beneath it.
+ */
+export function deathLaneDirIn(stateRoot: string): string {
+  return join(normalizeRoot(stateRoot), DEATH_LANE_DIR);
+}
+
+/** The death-record lane file under an arbitrary durable state root. */
+export function deathLaneFileIn(stateRoot: string): string {
+  return join(deathLaneDirIn(stateRoot), DEATH_LANE_FILE);
+}
+
+/** Process death-record lane for a checkout: `.red/state/deaths`. */
+export function deathsStateDir(root: string): string {
+  return deathLaneDirIn(stateDir(root));
+}
+
+/** The checkout's death-record lane file: `.red/state/deaths/deaths.toonl`. */
+export function deathLaneFile(root: string): string {
+  return deathLaneFileIn(stateDir(root));
+}
+
+/**
  * The shared RedDB store, relative to a repo root. ADR 0098 moves it to the
  * durable state tier, superseding ADR 0095's `.red/red.rdb` root location and
  * the red-setup write contract's temporary `.red/tmp/red-skills.rdb`.

@@ -57,6 +57,7 @@ import {
   fileSafetyLogger,
   safetyLogPath,
 } from "../../core/process-safety.js";
+import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
 import { dirname, join } from "node:path";
 import { workerIdentity } from "../../core/host-identity.js";
 import { initStateSync, readPidStartTime, updateState, workerStatePath, writeIdentitySync } from "../../core/state.js";
@@ -160,6 +161,17 @@ export async function runCommand(options: RunOptions): Promise<number> {
       fileSafetyLogger(safetyLogPath(paths.tmpDir, workerId)),
       { workerId, pid: process.pid },
     );
+    // The black box beside the diagnostic log (Spec #3022, slice #3023): the same
+    // deaths, in the one TOONL shape a launcher and the host daemon also write, on
+    // the durable state lane a reader consults later. The text log stays what it
+    // is — a per-worker narrative — while THIS record is what makes "why did it
+    // die" answerable across every process class from one decoder.
+    installDeathRecorder({
+      lanePath: deathLaneFile(ctx.root),
+      kind: "worker",
+      id: workerId,
+      phase: "boot",
+    });
   }
 
   // Supervisor-dispatched reconcile worker: bypass the normal boot+session and
