@@ -205,6 +205,37 @@ export function deathLaneFileIn(stateRoot: string): string {
   return join(deathLaneDirIn(stateRoot), DEATH_LANE_FILE);
 }
 
+/**
+ * Where a living process leaves its ANCHOR, and where the reaper writes verdicts.
+ *
+ * The anchor lane sits beside the death lane rather than inside another tree
+ * because the two are read together and mean nothing apart: an anchor with no
+ * record is the absent-but-expected death the boot reaper attributes, and that
+ * join is only cheap when one directory holds both halves.
+ */
+export const DEATH_PRESENCE_DIR = "live";
+export const DEATH_ATTRIBUTION_FILE = "attributions.toonl";
+
+/** The presence-anchor directory under an arbitrary durable state root. */
+export function deathPresenceDirIn(stateRoot: string): string {
+  return join(deathLaneDirIn(stateRoot), DEATH_PRESENCE_DIR);
+}
+
+/** The reaper's attribution lane under an arbitrary durable state root. */
+export function deathAttributionFileIn(stateRoot: string): string {
+  return join(deathLaneDirIn(stateRoot), DEATH_ATTRIBUTION_FILE);
+}
+
+/** The checkout's presence-anchor directory: `.red/state/deaths/live`. */
+export function deathPresenceDir(root: string): string {
+  return deathPresenceDirIn(stateDir(root));
+}
+
+/** The checkout's attribution lane: `.red/state/deaths/attributions.toonl`. */
+export function deathAttributionFile(root: string): string {
+  return deathAttributionFileIn(stateDir(root));
+}
+
 /** Process death-record lane for a checkout: `.red/state/deaths`. */
 export function deathsStateDir(root: string): string {
   return deathLaneDirIn(stateDir(root));

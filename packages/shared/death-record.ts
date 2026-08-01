@@ -28,8 +28,15 @@
  * break.
  */
 import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import {
+  buildProcessPresence,
+  clearProcessPresence,
+  writeProcessPresence,
+  type ProcessPresence,
+} from "./death-presence.js";
+import { DEATH_PRESENCE_DIR } from "./red-paths.js";
 
 export { DEATH_LANE_DIR, DEATH_LANE_FILE, deathLaneDirIn, deathLaneFile, deathLaneFileIn, deathsStateDir } from "./red-paths.js";
 
@@ -337,6 +344,17 @@ export interface InstallDeathRecorderOptions {
   readonly clock?: () => string;
   /** Register as the process-wide recorder `markDeathPhase` speaks to. Default true. */
   readonly setActive?: boolean;
+  /**
+   * Where the presence anchor goes; `null` leaves none.
+   *
+   * Defaults to the `live/` directory beside the lane, so every writer that
+   * already installs a recorder becomes attributable at the next boot without
+   * restating anything. Only a caller that knows its process is un-reapable —
+   * a test, a one-shot in someone else's tree — passes `null`.
+   */
+  readonly presenceDir?: string | null;
+  /** The `/proc`-shaped root the anchor reads its boot id and cgroup from. */
+  readonly procRoot?: string;
 }
 
 export interface DeathRecorder {
@@ -403,6 +421,24 @@ export function installDeathRecorder(options: InstallDeathRecorderOptions): Deat
   let phase = options.phase ?? DEATH_PHASE_UNSTARTED;
   let written: ProcessDeathRecord | null = null;
 
+  // The anchor for the death this process may NOT get to narrate (slice #3028):
+  // a SIGKILL fires no handler here, so the only thing that will speak for it is
+  // this file plus whatever the host remembers. Written before any work begins,
+  // refreshed on every phase, removed the instant a real record lands.
+  const presenceDir =
+    options.presenceDir === undefined
+      ? join(dirname(options.lanePath), DEATH_PRESENCE_DIR)
+      : options.presenceDir;
+  let anchor: ProcessPresence | null = null;
+  const anchorNow = (): void => {
+    if (presenceDir === null) return;
+    anchor = buildProcessPresence(
+      { kind: options.kind, id: options.id, last_phase: phase, pid },
+      { procRoot: options.procRoot },
+    );
+    writeProcessPresence(presenceDir, anchor);
+  };
+
   const record = (facts: Omit<ProcessDeathFacts, "ts" | "kind" | "id" | "pid" | "last_phase">): void => {
     if (written) return;
     try {
@@ -418,6 +454,10 @@ export function installDeathRecorder(options: InstallDeathRecorderOptions): Deat
       // Best effort by contract: a lane that cannot be written must never turn a
       // death being reported into a second, louder death.
     }
+    // The anchor goes even when the append failed: it stands for a death nobody
+    // narrated, and this one was narrated — attributing it from evidence later
+    // would invent a cause for an exit we watched happen.
+    if (presenceDir !== null && anchor !== null) clearProcessPresence(presenceDir, anchor);
   };
 
   const handlers: DeathRecorder["handlers"] = {
@@ -463,16 +503,24 @@ export function installDeathRecorder(options: InstallDeathRecorderOptions): Deat
     lanePath: options.lanePath,
     phase(name) {
       phase = name;
+      // A phase the anchor never learned is the phase a frozen host dies in, so
+      // the refresh is the point: an attribution that can only ever say "startup"
+      // answers when it died and not where.
+      if (!written) anchorNow();
     },
     currentPhase: () => phase,
     written: () => written,
     uninstall() {
       for (const [event, listener] of listeners) host.off(event, listener);
+      // A process that detached the handlers is no longer promising to narrate
+      // its own death, so leaving its anchor would strand a permanent mystery.
+      if (presenceDir !== null && anchor !== null) clearProcessPresence(presenceDir, anchor);
       if (activeRecorder === recorder) activeRecorder = null;
     },
     handlers,
   };
   if (options.setActive !== false) activeRecorder = recorder;
+  anchorNow();
   return recorder;
 }
 
