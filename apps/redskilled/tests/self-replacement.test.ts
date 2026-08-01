@@ -15,9 +15,13 @@
 //      the new process re-adopts it;
 //   4. the daemon never reports a version it is not running — the published
 //      answer travels beside the running one, never inside it;
-//   5. the check is REACHABLE — a quiet host's daemon leaves at its idle window,
-//      long before the check interval, so the boundary it leaves through is where
-//      it asks (#2968).
+//   5. the check is REACHABLE from BOTH sides — a quiet host's daemon leaves at
+//      its idle window, long before the check interval, so the boundary it leaves
+//      through is where it asks (#2968); and a daemon holding a registration
+//      never reaches that boundary at all, so its looks are the boot one and the
+//      interval, both of which must fire and be seen to have fired (#2975);
+//   6. the daemon SAYS which happened — `checks` beside `hold_reason`, so "the
+//      timer never fired" is never again investigated as "it fired and held".
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -33,6 +37,7 @@ import { sendRedskilledRequest } from "../src/protocol.js";
 import {
   DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
   isLocalRedskilledBuild,
+  localRedskilledPublishedEvidence,
   planRedskilledMajorHold,
   planRedskilledReplacement,
   REDSKILLED_REPLACE_EXIT_CODE,
@@ -266,7 +271,7 @@ describe("a published major the daemon will not adopt", () => {
   });
 
   it("holds nothing it never resolved: an unreadable registry states no major gap", async () => {
-    const { paths, env } = await session();
+    const { paths } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
       idleMs: 60_000,
@@ -275,7 +280,9 @@ describe("a published major the daemon will not adopt", () => {
       publishedVersion: async () => {
         throw new Error("the registry is unreachable");
       },
-      replacementIO: { env },
+      // A host holding no bundle either: an unreadable registry is then the whole
+      // answer, rather than the cached evidence a read that resolves nothing gets.
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
     });
     running.push(daemon);
 
@@ -355,7 +362,7 @@ describe("a daemon that has observed a newer published version", () => {
   });
 
   it("reports an unresolvable published answer as unknown, never as a match", async () => {
-    const { paths, env } = await session();
+    const { paths } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
       idleMs: 60_000,
@@ -364,7 +371,9 @@ describe("a daemon that has observed a newer published version", () => {
       publishedVersion: async () => {
         throw new Error("the registry is unreachable");
       },
-      replacementIO: { env },
+      // Nothing cached either: unresolvable here means from anywhere, which is
+      // the only state that must never be reported as a match.
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
     });
     running.push(daemon);
 
@@ -621,7 +630,7 @@ describe("the idle boundary, the only check a quiet host ever reaches", () => {
   });
 
   it("leaves on time when the registry never answers, rather than hanging on the read", async () => {
-    const { paths, env } = await session();
+    const { paths } = await session();
     const daemon = await startRedskilledDaemon({
       paths,
       idleMs: 20,
@@ -630,7 +639,9 @@ describe("the idle boundary, the only check a quiet host ever reaches", () => {
       daemonVersion: RUNNING_VERSION,
       // A read that resolves never — the shipped one has no timeout of its own.
       publishedVersion: () => new Promise(() => undefined),
-      replacementIO: { env },
+      // And a host that holds no bundle either, so the read running out of time
+      // is genuinely the whole answer rather than the cache being consulted.
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
     });
     running.push(daemon);
 
@@ -640,5 +651,269 @@ describe("the idle boundary, the only check a quiet host ever reaches", () => {
     expect(daemon.hostState().upgrade.published_unknown).toBe(1);
     expect(daemon.hostState().upgrade.running_version).toBe(RUNNING_VERSION);
     expect(await socketAnswers(paths.socketPath)).toBe(false);
+  });
+});
+
+// The other half of the same reachability question, and the half that matters
+// more: a daemon holding a registration NEVER goes idle — the registration is
+// what keeps it alive, by design (ADR 0130 Amendment 4) — so the boundary check
+// #2968 added is unreachable on exactly the hosts with work to do. Its looks are
+// the boot one and the interval, and both have to fire, replace, and be seen to
+// have fired: a daemon reporting no published version says the same thing whether
+// its check held or never ran, and that ambiguity is what #2975 was diagnosed
+// through by hand.
+describe("the working daemon, which reaches no idle boundary at all", () => {
+  /** A standing registration, which is what makes the idle path unreachable. */
+  function hold(daemon: RedskilledDaemon, workspace: string): void {
+    daemon.registerProject({
+      project_label: "acme/widgets",
+      selector: "is:open label:ready",
+      argv: ["run", "the", "worker"],
+      workspace_path: workspace,
+      target: 1,
+    });
+  }
+
+  it("adopts a newer version on the interval, with the registration still standing", async () => {
+    const { paths, env, publishedBundle } = await session();
+    const spawns: string[][] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      // Orders of magnitude past the interval: whatever fires here is not an idle
+      // exit, and the boot look is off so it is not that either.
+      idleMs: 600_000,
+      replaceCheckMs: 25,
+      replaceBootCheckMs: 0,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => PUBLISHED_VERSION,
+      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+    });
+    running.push(daemon);
+    hold(daemon, paths.runtimeDir);
+
+    // The registration holds it awake, which is the whole reason the idle check
+    // cannot be what upgrades this daemon.
+    expect(daemon.evaluateIdle()).toBe("held-by-registrations");
+    expect(await until(async () => spawns.length > 0, 5_000)).toBe(true);
+
+    expect(spawns[0]).toContain(publishedBundle);
+    expect(daemon.hostState().upgrade.replacement).toBe("in-progress");
+    expect(daemon.hostState().upgrade.checks).toBeGreaterThan(0);
+    // It let go of the session first, exactly as the idle route does.
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+  });
+
+  it("takes its first look shortly after boot, not one whole interval later", async () => {
+    const { paths, env, publishedBundle } = await session();
+    const spawns: string[][] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 600_000,
+      // The SHIPPED interval, which cannot fire inside this test: the look that
+      // does is the boot one, and without it this daemon would serve a published
+      // release past for fifteen minutes with `checks: 0`.
+      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+      replaceBootCheckMs: 25,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => PUBLISHED_VERSION,
+      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+    });
+    running.push(daemon);
+    hold(daemon, paths.runtimeDir);
+
+    expect(await until(async () => spawns.length > 0, 5_000)).toBe(true);
+    expect(spawns[0]).toContain(publishedBundle);
+  });
+
+  it("owes a successor no boot look, so a mis-resolving one cannot spin", async () => {
+    const { paths, env } = await session();
+    let probes = 0;
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 600_000,
+      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+      replaceBootCheckMs: 20,
+      // Born BY a replacement seconds ago: the version question was just asked.
+      bornByReplacement: true,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => {
+        probes += 1;
+        return PUBLISHED_VERSION;
+      },
+      replacementIO: { env },
+    });
+    running.push(daemon);
+    hold(daemon, paths.runtimeDir);
+    await new Promise((r) => setTimeout(r, 120));
+
+    // It waits for the ordinary interval like any other tick.
+    expect(probes).toBe(0);
+    expect(daemon.hostState().upgrade.checks).toBe(0);
+    expect(await socketAnswers(paths.socketPath)).toBe(true);
+  });
+
+  it("carries its live Worker through the interval route untouched", async () => {
+    const { paths, env } = await session();
+    const worker = longLivedWorker("w-busy-survivor");
+    const spawns: string[][] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 600_000,
+      replaceCheckMs: 25,
+      replaceBootCheckMs: 0,
+      daemonVersion: RUNNING_VERSION,
+      liveness: (view) => alive(view.pid),
+      publishedVersion: async () => PUBLISHED_VERSION,
+      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+    });
+    running.push(daemon);
+    daemon.trackWorker(worker);
+    hold(daemon, paths.runtimeDir);
+
+    expect(await until(async () => spawns.length > 0, 5_000)).toBe(true);
+
+    // A replacement is a restart, not an evacuation — on this route as well.
+    expect(alive(worker.pid)).toBe(true);
+  });
+
+  it("never replaces a local build on this route either, and spends no read", async () => {
+    const { paths, env } = await session();
+    const spawns: string[] = [];
+    let probes = 0;
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 600_000,
+      replaceCheckMs: 25,
+      replaceBootCheckMs: 15,
+      daemonVersion: "0.0.0-dev",
+      publishedVersion: async () => {
+        probes += 1;
+        return "9.9.9";
+      },
+      replacementIO: { env, spawnSuccessor: (entry) => spawns.push(entry.command) },
+    });
+    running.push(daemon);
+    hold(daemon, paths.runtimeDir);
+    await new Promise((r) => setTimeout(r, 150));
+
+    // No release supersedes a source checkout, so the read is never spent — and
+    // the developer's own daemon is never taken away mid-session.
+    expect(probes).toBe(0);
+    expect(spawns).toEqual([]);
+    const upgrade = daemon.hostState().upgrade;
+    // But the look DID fire, and says so: this is a decision, not a silence.
+    expect(upgrade.checks).toBeGreaterThan(0);
+    expect(upgrade.hold_reason).toBe("local-build");
+    expect(await socketAnswers(paths.socketPath)).toBe(true);
+  });
+});
+
+// The surface the whole investigation went without: a daemon reporting
+// `published_version: null` said the same thing whether its check had fired and
+// resolved nothing or had never fired at all, and those are different defects
+// with different cures (#2975).
+describe("a check that held and a check that never fired", () => {
+  it("tells them apart from the daemon's own answer", async () => {
+    const { paths, env } = await session();
+    const silent = await startRedskilledDaemon({
+      paths,
+      idleMs: 600_000,
+      // Armed, and nowhere near due: this daemon has never looked.
+      replaceCheckMs: DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
+      replaceBootCheckMs: 0,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => RUNNING_VERSION,
+      replacementIO: { env },
+    });
+    running.push(silent);
+
+    const never = silent.hostState().upgrade;
+    expect(never.checks).toBe(0);
+    expect(never.checked_at).toBeNull();
+    expect(never.hold_reason).toBeNull();
+    // The field that used to be the only evidence, reading identically either way.
+    expect(never.published_unknown).toBe(1);
+
+    // The same daemon, one look later: the mechanism is alive and it decided.
+    await silent.observePublishedVersion();
+    const held = silent.hostState().upgrade;
+    expect(held.checks).toBe(1);
+    expect(held.checked_at).not.toBeNull();
+    expect(held.hold_reason).toBe("no-newer-version");
+  });
+
+  it("names an unreachable registry as the reason, rather than leaving it to be guessed", async () => {
+    const { paths } = await session();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 600_000,
+      replaceCheckMs: 0,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: async () => {
+        throw new Error("the registry is unreachable");
+      },
+      // Nothing cached either, so nothing is resolvable from anywhere.
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
+    });
+    running.push(daemon);
+
+    await daemon.observePublishedVersion();
+
+    const upgrade = daemon.hostState().upgrade;
+    expect(upgrade.checks).toBe(1);
+    expect(upgrade.hold_reason).toBe("published-unknown");
+  });
+});
+
+// A read that runs out of time and a read that throws are the same fact — the
+// registry resolved nothing — and the shipped probe already answers the second
+// from the bundle cache. Answering the first with `null` instead is how a host
+// that HELD the newer bundle went on serving the older one (#2975).
+describe("a read the registry never answers", () => {
+  it("falls back to the bundle this host already holds", async () => {
+    const { paths, env, publishedBundle } = await session();
+    const spawns: string[][] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 600_000,
+      replaceCheckMs: 0,
+      publishedProbeTimeoutMs: 20,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: () => new Promise(() => undefined),
+      replacementIO: { env, spawnSuccessor: (entry, argv) => spawns.push([entry.command, ...argv]) },
+    });
+    running.push(daemon);
+
+    expect(await daemon.checkForReplacement()).toMatchObject({ act: "replace", to: PUBLISHED_VERSION });
+    expect(spawns[0]).toContain(publishedBundle);
+  });
+
+  it("stays unknown when the host holds nothing either", async () => {
+    const { paths } = await session();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 600_000,
+      replaceCheckMs: 0,
+      publishedProbeTimeoutMs: 20,
+      daemonVersion: RUNNING_VERSION,
+      publishedVersion: () => new Promise(() => undefined),
+      replacementIO: { env: { RED_SKILLS_CACHE_DIR: join(paths.runtimeDir, "empty") } },
+    });
+    running.push(daemon);
+
+    expect(await daemon.observePublishedVersion()).toEqual({ act: "hold", reason: "published-unknown" });
+    expect(daemon.hostState().upgrade.published_unknown).toBe(1);
+  });
+
+  it("reads the host alone as the same weaker evidence the throw path uses", async () => {
+    const { cacheDir, env } = await session();
+    await writeFile(join(cacheDir, "redskilled-2.0.0.bundle.min.mjs"), "", { mode: 0o755 });
+
+    const evidence = localRedskilledPublishedEvidence(RUNNING_VERSION, env);
+
+    // Capped at the running major for adoption, and honest about the horizon:
+    // an unreachable registry must never be the reason a major is crossed.
+    expect(evidence.version).toBe(PUBLISHED_VERSION);
+    expect(evidence.newest).toBe("2.0.0");
   });
 });
