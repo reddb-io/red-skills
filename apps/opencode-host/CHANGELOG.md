@@ -1,5 +1,19 @@
 # @reddb-io/red-skills
 
+## 3.1.1
+
+### Patch Changes
+
+- d3b3bfc: An unblocked dependent carrying a **HUMAN-ONLY type** is now promoted to `ready-for-human` instead of the autonomous queue (#2966). The unblock sweep and the close cascade read exactly two things about a dependent — its `blocked:dependency` label and its `req:*` edges — and promoted every all-blockers-closed one to `ready-for-agent`. Nothing looked at what kind of Ticket it was, so closing two decision tickets handed four human decisions to agents, and an operator reading `queue_status` saw a healthy queue. On a decision-shaped map most dependents of a decision ticket are themselves decisions: this fired on the normal path, and would fire again on every resolution after.
+
+  The lane now follows the dependent's own type. `afk.labels.hitl_types` declares which type labels this repo treats as human-only, and **the names come from that list, never from a built-in one** — a repo whose decision tickets are called something else declares its own and inherits the same protection. The routing lives in the transition planner's `promote`, so every promote path inherits it at once: the boot and periodic unblock sweeps, the event-driven close cascade, the reconcile lane, and the castle's own tracker cascade. The `req:*` edges are consumed either way — the dependency wait genuinely ended; what the blockers closing means is that the _human_ may now act, not that an agent may act for them.
+
+  The promotion is no longer silent either: the audit comment names the lane it routed to and the type that chose it, so a human can tell a sweep promotion from a hand-set label. A repo that declares no HUMAN-ONLY type is unchanged down to the comment text.
+
+- f749bb4: The `redskilled` daemon now asks whether it is superseded on its way out, so self-replacement can fire on a quiet host. Two constants disagreed: the daemon idle-exits at five minutes and checked for a newer version at fifteen, so a Worker-free daemon left three times over before the timer's first tick and the upgrade path shipped unable to run anywhere except on a machine busy for a quarter of an hour straight. The failure hid itself — a daemon born after a release reports the right version without ever having upgraded — while every release published under a running host cost a hand-written pinned dispatch. The idle exit is now the check a quiet host reaches: one registry read at the boundary, skipped entirely on a local build, and a replacement there is a restart the live Workers do not notice. The interval stays what it always was, the busy daemon's check, and both declarations now state the relationship rather than encoding it. The published-version read also gained a deadline, because an exit that waits on a registry must be able to stop waiting.
+  - @reddb-io/shared@3.1.1
+  - @reddb-io/build-info@3.1.1
+
 ## 3.1.0
 
 ### Minor Changes
