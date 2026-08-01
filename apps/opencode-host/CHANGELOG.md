@@ -1,5 +1,18 @@
 # @reddb-io/red-skills
 
+## 3.2.0
+
+### Minor Changes
+
+- 19ddc42: The v3 daemon lane goes from wired-but-disconnected to working end to end, and every surface that reported on it now tells the truth. The daemon's demand loop closes: a registration supplies the queue transport it registered with, open work sustains the registration instead of lapsing one window after it started, the busy-daemon upgrade check actually fires, and `worker_dispatch` asks the daemon for the birth instead of spawning around it. The observability lies died with it: `worker_vitals` answers with the living rather than 344 aged corpses, worker state records are reclaimed on a cadence, and the orchestrator can no longer hang silently in a disabled review stage. The landing earned the merge-queue era: enqueueing is not merging, so close and cleanup wait for the queue's confirmed merge instead of racing it. Worker gates scope to the dependency cone even when the mandatory changeset used to drag every run to the whole-workspace suite, the apps/dev suite pins a per-pid daemon sandbox so a live operator daemon no longer poisons validation, and WSL2 is proven by posing the host — which surfaced and fixed a socket path four bytes too long.
+
+### Patch Changes
+
+- 3612b42: An orchestrator hang after a post-DONE correction round is no longer silent. The gate's two host-wide file locks — the `validation-gate` semaphore (60-minute wait budget) and the feedback baseline worktree (10 minutes) — polled every 500ms with no child process, no socket and no write, so a worker blocked behind another worker's gate sat 30+ minutes in `ep_poll` reading `live=true` on every surface. Each wait now announces itself: the lock reports its holder, the holder's age, its own age and the budget left, throttled to one line every 30s, and it announces the end of the wait too, so a "blocked" banner can never outlive its block. `worker_vitals` gained the classifier for the shape the liveness lane cannot see — alive, orchestrator-owned phase, no child, silent for ten minutes — as an `orchestrator-wedged` alert (or `orchestrator-blocked` when the wait named itself). And a deactivated review stage is now a true no-op: the Re-seed budget no longer holds a round in reserve for a stage that will never draw it, which used to refuse the last correction round with `reservation` while the ceiling still had room.
+- cd9b09c: WSL2 is proven rather than assumed: a test poses the host — no `XDG_RUNTIME_DIR`, no `systemd-run` on the PATH the probe reads, no `--user` session, a relocated `TMPDIR` — and a real Worker is born on it, unisolated, carrying the warning that names what was lost, with the RSS sampling floor still terminating it over budget off a synthetic `/proc`. Posing the host found the one thing reading the code did not: the `tmpdir()` socket fallback carried no `sun_path` check of its own, so a `TMPDIR` longer than 54 bytes produced a 168-byte socket path and `bind` would have answered `ENAMETOOLONG` — an outage that reads like anything but a path four bytes too long, and one that surfaces only on someone else's machine. `runtimeSocketDir` now falls back once more to `/tmp` when `tmpdir()` will not fit, and the supported version boundary is stated where an operator meets it: WSL2 yes, WSL1 no, because the memory floor walks the Worker's tree through a `/proc` WSL1 does not have.
+  - @reddb-io/shared@3.2.0
+  - @reddb-io/build-info@3.2.0
+
 ## 3.1.2
 
 ### Patch Changes

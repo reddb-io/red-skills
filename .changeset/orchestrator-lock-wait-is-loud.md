@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-An orchestrator hang after a post-DONE correction round is no longer silent. The gate's two host-wide file locks — the `validation-gate` semaphore (60-minute wait budget) and the feedback baseline worktree (10 minutes) — polled every 500ms with no child process, no socket and no write, so a worker blocked behind another worker's gate sat 30+ minutes in `ep_poll` reading `live=true` on every surface. Each wait now announces itself: the lock reports its holder, the holder's age, its own age and the budget left, throttled to one line every 30s, and it announces the end of the wait too, so a "blocked" banner can never outlive its block. `worker_vitals` gained the classifier for the shape the liveness lane cannot see — alive, orchestrator-owned phase, no child, silent for ten minutes — as an `orchestrator-wedged` alert (or `orchestrator-blocked` when the wait named itself). And a deactivated review stage is now a true no-op: the Re-seed budget no longer holds a round in reserve for a stage that will never draw it, which used to refuse the last correction round with `reservation` while the ceiling still had room.
