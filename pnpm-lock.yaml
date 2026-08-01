@@ -152,9 +152,6 @@ importers:
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      vscode-jsonrpc:
-        specifier: ^8.2.0
-        version: 8.2.1
       vscode-languageserver-protocol:
         specifier: ^3.17.5
         version: 3.18.2
@@ -396,9 +393,6 @@ importers:
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
-      '@reddb-io/toon':
-        specifier: 'catalog:'
-        version: 0.3.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -466,12 +460,6 @@ importers:
       '@effect/platform-node':
         specifier: ^0.105.0
         version: 0.105.0(@effect/cluster@0.57.0(@effect/platform@0.95.0(effect@3.22.0))(@effect/rpc@0.74.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/sql@0.50.0(@effect/experimental@0.59.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/workflow@0.17.0(@effect/experimental@0.59.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(@effect/rpc@0.74.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(@effect/rpc@0.74.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/sql@0.50.0(@effect/experimental@0.59.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(effect@3.22.0)
-      '@effect/printer':
-        specifier: ^0.48.0
-        version: 0.48.0(@effect/typeclass@0.39.0(effect@3.22.0))(effect@3.22.0)
-      '@effect/printer-ansi':
-        specifier: ^0.48.0
-        version: 0.48.0(@effect/typeclass@0.39.0(effect@3.22.0))(effect@3.22.0)
       '@reddb-io/toon':
         specifier: ^0.3.0
         version: 0.3.0
@@ -2885,10 +2873,6 @@ packages:
       jsdom:
         optional: true
 
-  vscode-jsonrpc@8.2.1:
-    resolution: {integrity: sha512-kdjOSJ2lLIn7r1rtrMbbNCHjyMPfRnowdKjBQ+mGq6NAW5QY2bEZC/khaC5OR8svbbjvLEaIXkOq45e2X9BIbQ==}
-    engines: {node: '>=14.0.0'}
-
   vscode-jsonrpc@9.0.1:
     resolution: {integrity: sha512-rfuA6T75H6m5EkbhtEPzre9pT0HPcDI2MMy4+nPFIBks5J8JBAUHD4tRYSgaBOijIEC7SRkC1kKyXTLqbmh9jw==}
     engines: {node: '>=14.0.0'}
@@ -5121,8 +5105,6 @@ snapshots:
       - terser
       - tsx
       - yaml
-
-  vscode-jsonrpc@8.2.1: {}
 
   vscode-jsonrpc@9.0.1: {}
 

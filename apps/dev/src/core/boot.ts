@@ -159,8 +159,6 @@ export interface PrecheckFacts {
   queueVisibility?: OperationalProbeContext["queueVisibility"];
   /** Optional boot-time focal-branch probe, sharing the same lock/pin/trunk resolver as the precheck. */
   focalBranch?: OperationalProbeContext["focalBranch"];
-  /** Optional config namespacing probe facts for red-doctor and boot visibility. */
-  configNamespacing?: OperationalProbeContext["configNamespacing"];
   /** Optional config coherence probe facts for red-doctor and boot visibility. */
   configCoherence?: OperationalProbeContext["configCoherence"];
   /** Optional fleet truth probe facts for red-doctor and boot visibility. */

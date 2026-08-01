@@ -377,11 +377,6 @@ export async function collectPrecheckFacts(
       ...baseFreshnessDivergence,
       guard: baseFreshnessGuard,
     },
-    configNamespacing: {
-      rootDevKeys: configAudit.rootAccessorCollisions
-        .filter((collision) => collision.key.startsWith("dev."))
-        .map((collision) => collision.key),
-    },
     configCoherence: {
       path: configPath,
       displayPath: ".red/config.yaml",
