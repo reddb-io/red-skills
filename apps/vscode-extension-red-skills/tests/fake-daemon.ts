@@ -25,11 +25,13 @@ import {
   type RedskilledEventLane,
 } from "@reddb-io/redskilled/event-lane";
 import type { RedskilledRequest, RedskilledResponse } from "@reddb-io/redskilled/protocol";
-import { hostState, statuslinePayload } from "./fixtures.js";
+import { dashboard, hostState, statuslinePayload } from "./fixtures.js";
 
 export interface FakeDaemonOptions {
   /** What `statusline-payload` answers; re-read on every request. */
   readonly payload?: () => unknown;
+  /** What `statusline-dashboard` answers; re-read on every request. */
+  readonly dashboard?: () => unknown;
   /** What `host-state` answers; `null` refuses the op. */
   readonly hostState?: () => unknown | null;
   /** Ops named here are refused with the daemon's own error shape. */
@@ -77,6 +79,8 @@ export async function startFakeDaemon(options: FakeDaemonOptions = {}): Promise<
       }
       case "statusline-payload":
         return { id: request.id, ok: true, value: options.payload ? options.payload() : statuslinePayload() };
+      case "statusline-dashboard":
+        return { id: request.id, ok: true, value: options.dashboard ? options.dashboard() : dashboard() };
       default:
         return { id: request.id, ok: false, error: `this fake daemon does not serve ${request.op}` };
     }

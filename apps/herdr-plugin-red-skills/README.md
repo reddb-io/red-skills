@@ -96,6 +96,7 @@ exactly what was there.
 | Action | What it does |
 | --- | --- |
 | `RedSkills: toggle dashboard` | the live pane, split beside the current one |
+| `RedSkills: toggle statusline board` | the statusline as a table: header plus one row per Worker |
 | `RedSkills: dashboard in a tab` | the same pane, in a tab of its own |
 | `RedSkills: toggle worker log` | tail the newest Worker's log |
 | `RedSkills: toggle host event lane` | birth, death and budget-kill, as they land |
@@ -119,7 +120,7 @@ Bind whichever you reach for; the rest live in herdr's action menu.
 | `?` | help |
 
 In a log view: `q` back, `f` follow/pause, `j`/`k` scroll, `g`/`G` top/end,
-`r` refresh.
+`r` refresh. In the board: `q` close, `r` re-read, `g` local/global.
 
 ### From a shell
 
@@ -130,6 +131,8 @@ node bin/red-skills-herdr.mjs doctor          # why this plugin sees what it see
 node bin/red-skills-herdr.mjs status          # the daemon's own status line
 node bin/red-skills-herdr.mjs status --json   # the line, the payload, and the socket
 node bin/red-skills-herdr.mjs dashboard       # the pane, in this terminal
+node bin/red-skills-herdr.mjs board           # the statusline as a table, live
+node bin/red-skills-herdr.mjs board --once    # the same table, printed and gone
 node bin/red-skills-herdr.mjs logs --worker w-2f91a
 node bin/red-skills-herdr.mjs logs --events
 node bin/red-skills-herdr.mjs watch --once    # one poll, printing what it would notify
@@ -192,6 +195,7 @@ Four ops, and no others:
 | `host-state` | registrations, scope, upgrade state |
 | `statusline-payload` | Workers, vitals, budgets, projects, repository activity |
 | `statusline-string` | the notification and `status` line, rendered by the daemon |
+| `statusline-dashboard` | the `board` pane: header and Worker rows, rendered by the daemon |
 
 Some properties this plugin holds itself to, because the daemon holds itself to
 them:
@@ -208,9 +212,12 @@ them:
 - **Staleness is rendered, never re-derived.** The payload dates itself and this
   pane prints the age it was handed, so it cannot disagree with the statusline
   beside it about the same instant.
-- **The status line is the daemon's.** ADR 0130 rule 10 keeps the string a pure
-  function of the payload precisely so no surface reimplements it; this plugin
-  asks for it rather than drawing its own.
+- **The status line is the daemon's, and so is the board.** ADR 0130 rule 10
+  keeps both a pure function of the payload precisely so no surface reimplements
+  them; this plugin asks for them rather than drawing its own. THE DAEMON
+  AGGREGATES AND RENDERS; SURFACES PRINT — a herdr pane and an editor panel each
+  doing their own Worker math would be two dashboards lying in two different ways
+  about the same instant.
 - **The event lane reader is tolerant.** The lane is written by a daemon version
   this plugin does not ship with, so it sniffs JSON, decodes TOONL segments, and
   keeps a line it cannot decode as raw text rather than dropping it.
@@ -258,7 +265,7 @@ width.
 bin/red-skills-herdr.mjs  the single entrypoint; --help and --version answer offline
 src/redskilled/           the daemon: socket derivation, wire, client, event lane, log tail
 src/ui/                   ansi widths, formatters, the screen loop, the three views
-src/commands/             dashboard, logs, status, watch, pane, doctor
+src/commands/             board, dashboard, logs, status, watch, pane, doctor
 src/watch/signals.mjs     what changed between two reads, as things worth interrupting for
 herdr-plugin.toml         panes, actions, the startup hook, and their Windows twins
 .upstream                 the repository this directory was absorbed from, and at which commit

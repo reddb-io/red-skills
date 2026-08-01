@@ -304,10 +304,12 @@ describe("the statusline config block", () => {
 });
 
 describe("one renderer, machine-wide", () => {
-  // Sources that may legitimately touch the payload: the renderer itself, the
-  // daemon that serves both surfaces, the wire contract, the client, and tests.
+  // Sources that may legitimately touch the payload: the renderers themselves —
+  // the line and the table are both the DAEMON's, which is the whole point — the
+  // daemon that serves them, the wire contract, the client, and tests.
   const PAYLOAD_CONSUMERS = new Set([
     "apps/redskilled/src/statusline-render.ts",
+    "apps/redskilled/src/dashboard-render.ts",
     "apps/redskilled/src/statusline-payload.ts",
     "apps/redskilled/src/daemon.ts",
     "apps/redskilled/src/protocol.ts",

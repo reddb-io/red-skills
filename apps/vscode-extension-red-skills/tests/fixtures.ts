@@ -6,6 +6,7 @@
  * suite test a shape that no longer exists.
  */
 import type {
+  RedskilledDashboard,
   RedskilledHostState,
   RedskilledStatuslinePayload,
 } from "@reddb-io/redskilled/protocol";
@@ -209,4 +210,68 @@ export function hostState(overrides: HostStateOverrides = {}): RedskilledHostSta
       major_hold: null,
     },
   } as RedskilledHostState;
+}
+
+/**
+ * A dashboard shaped exactly as `statusline-dashboard` sends it.
+ *
+ * Every cell here is already finished — which is the point: a surface test that
+ * had to compute a cell to assert it would be testing the very re-derivation
+ * this document exists to remove.
+ */
+export function dashboard(overrides: Record<string, unknown> = {}): RedskilledDashboard {
+  const header = {
+    repo: "reddb-io/red-skills",
+    project: "reddb-io/red-skills",
+    project_match: "matched",
+    version: "0.4.1",
+    model: "claude·opus·high",
+    windows: {
+      memory_used_fraction: 0.375,
+      memory_used_bytes: 3 * 1024 ** 3,
+      memory_ceiling_bytes: 8 * 1024 ** 3,
+      worker_count: 2,
+      worker_ceiling: 6,
+    },
+    counts: { open_pull_requests: 3, recently_closed: 7, open_issues: 24, stale: false },
+    stale: false,
+    age_ms: 5_000,
+    line: "» reddb-io/red-skills v0.4.1 · claude·opus·high · wrk=1/1 · slots=1/6 · mem=3G/8G 38% · prs=3 · cpr=7 · iss=24",
+  };
+  const rows = [
+    {
+      worker_id: "wA1B2",
+      project_label: "reddb-io/red-skills",
+      mine: true,
+      cells: {
+        wid: "wA1B2",
+        run: "run=claude opus high",
+        org: "org=afk",
+        iss: "iss=3012",
+        bar: "██▶░░░",
+        phase: "coding·impl",
+        elapsed: "1h0m",
+        hb: "hb=3s",
+        loc: "loc=+142 -36",
+        tks: "tks=45k",
+        tls: "tls=12",
+        rsn: "rsn=4",
+        txt: "txt=9",
+      },
+      line: "wA1B2  run=claude opus high  org=afk  iss=3012  ██▶░░░  coding·impl  1h0m  hb=3s  loc=+142 -36  tks=45k  tls=12  rsn=4  txt=9",
+    },
+  ];
+  return {
+    version: 1,
+    generated_at: FIXED_NOW,
+    mode: "local",
+    project: "reddb-io/red-skills",
+    columns: ["wid", "run", "org", "iss", "bar", "phase", "elapsed", "hb", "loc", "tks", "tls", "rsn", "txt"],
+    header,
+    rows,
+    lines: [header.line, ...rows.map((row) => row.line)],
+    hidden_row_count: 0,
+    stale: false,
+    ...overrides,
+  } as unknown as RedskilledDashboard;
 }

@@ -7,10 +7,10 @@
 # The plugin is a read client of `redskilled`, the host-scoped execution daemon
 # of reddb-io/red-skills (ADR 0130): exactly one singleton per machine, behind a
 # unix socket, owning Worker processes across every project on that machine. It
-# sends `ping`, `host-state`, `statusline-payload` and `statusline-string`, and
-# it sends nothing that changes the machine — ADR 0130 rule 9 makes reach
-# asymmetric (read the host, write the project), and a monitor belongs entirely
-# on the reading half.
+# sends `ping`, `host-state`, `statusline-payload`, `statusline-string` and
+# `statusline-dashboard`, and it sends nothing that changes the machine — ADR
+# 0130 rule 9 makes reach asymmetric (read the host, write the project), and a
+# monitor belongs entirely on the reading half.
 #
 # Zero dependencies and no bundling: every command is plain Node ESM run
 # straight from this checkout, so an install is a clone and nothing else.
@@ -77,6 +77,23 @@ platforms = ["windows"]
 # -NonInteractive breaks its input.
 command = ['powershell', '-NoProfile', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" dashboard']
 
+# The statusline with a pane's height: the daemon's own header line and one row
+# per Worker, printed exactly as it renders them. Nothing here recomputes a cell.
+[[panes]]
+id = "board"
+title = "RedSkills board"
+placement = "split"
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" board']
+
+[[panes]]
+id = "board-windows"
+title = "RedSkills board"
+placement = "split"
+platforms = ["windows"]
+# Deliberately without -NonInteractive: this hosts a keyboard-driven TUI.
+command = ['powershell', '-NoProfile', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" board']
+
 [[panes]]
 id = "logs"
 title = "Worker log"
@@ -134,6 +151,20 @@ title = "RedSkills: dashboard in a tab"
 contexts = ["global", "workspace", "tab", "pane"]
 platforms = ["windows"]
 command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" pane open dashboard --placement tab']
+
+[[actions]]
+id = "toggle-board"
+title = "RedSkills: toggle statusline board"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["linux", "macos"]
+command = ['sh', '-c', 'exec node "$HERDR_PLUGIN_ROOT/bin/red-skills-herdr.mjs" pane toggle board']
+
+[[actions]]
+id = "toggle-board-windows"
+title = "RedSkills: toggle statusline board"
+contexts = ["global", "workspace", "tab", "pane"]
+platforms = ["windows"]
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', '& node "$env:HERDR_PLUGIN_ROOT\bin\red-skills-herdr.mjs" pane toggle board']
 
 [[actions]]
 id = "toggle-logs"

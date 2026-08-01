@@ -122,6 +122,7 @@ import {
   type RedskilledRequest,
   type RedskilledResponse,
   type RedskilledStatuslineRenderRequest,
+  type RedskilledDashboardRenderRequest,
   type RedskilledWorkerCommandRequest,
   type RedskilledProjectDeregistered,
   type RedskilledProjectRegistered,
@@ -152,6 +153,12 @@ import {
   renderRedskilledStatusline,
   type RedskilledStatuslineRender,
 } from "./statusline-render.js";
+import {
+  REDSKILLED_DASHBOARD_DEFAULTS,
+  renderRedskilledDashboard,
+  type RedskilledDashboard,
+} from "./dashboard-render.js";
+import { coerceWorkerDisplay, type RedskilledWorkerDisplayRecord } from "./worker-display.js";
 import {
   launchWorker,
   type LaunchWorkerOptions,
@@ -718,6 +725,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // a live progress note, and a durable copy would be a third authority on a
   // Worker's story next to the tracker and git (ADR 0130).
   const logLines = new Map<string, RedskilledWorkerLogLine>();
+  // What each project says a surface should SHOW about its Workers, by Worker id.
+  // In memory beside the log lines and for the same reason: a display record is a
+  // live progress note, and a durable copy would outlive the Worker it describes.
+  const displays = new Map<string, RedskilledWorkerDisplayRecord>();
   // What each project asked the host to hold for it, by project label. In memory,
   // like the log lines and for the same reason: a registration is a live statement
   // a session renews, and a durable copy would outlive the thing it describes. The
@@ -912,6 +923,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       rss: lastReading,
       sampledAt: lastSampledAt,
       logLines: Object.fromEntries(logLines),
+      displays: Object.fromEntries(displays),
       now: clock(),
       reattachedWorkerIds: [...reattached],
       repositoryActivity: lastActivity,
@@ -1092,6 +1104,25 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /**
+   * The same payload, given the vertical dimension a pane has and a line has not.
+   *
+   * THE DAEMON AGGREGATES AND RENDERS; SURFACES PRINT. A herdr pane and an editor
+   * panel that each did their own Worker math would be two dashboards lying in
+   * two different ways about one instant — which is the drift ADR 0130 rule 10
+   * settled for the statusline and this settles for the table. As with the line,
+   * the request carries taste the client already resolved, because a daemon that
+   * looked up a config would have to know what a `.red/config.yaml` is.
+   */
+  function statuslineDashboard(render?: RedskilledDashboardRenderRequest): RedskilledDashboard {
+    return renderRedskilledDashboard(statuslinePayload(), {
+      mode: render?.mode ?? REDSKILLED_DASHBOARD_DEFAULTS.mode,
+      project: render?.project ?? REDSKILLED_DASHBOARD_DEFAULTS.project,
+      maxWidth: render?.max_width ?? REDSKILLED_DASHBOARD_DEFAULTS.maxWidth,
+      maxRows: render?.max_rows ?? REDSKILLED_DASHBOARD_DEFAULTS.maxRows,
+    });
+  }
+
+  /**
    * Decide whether a session may do this, before any mechanism runs.
    *
    * Reach is checked FIRST and against the target's project, so a cross-project
@@ -1141,6 +1172,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     workers.delete(workerId);
     reattached.delete(workerId);
     logLines.delete(workerId);
+    displays.delete(workerId);
   }
 
   /**
@@ -1171,6 +1203,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     }
     const publishedAt = clock();
     logLines.set(request.worker_id, { line: request.last_log_line, published_at: publishedAt, source: "heartbeat" });
+    // Shape-checked and stored, exactly as the line above it is. A record whose
+    // fields the daemon cannot recognise degrades field by field rather than
+    // failing the heartbeat: a project shipping a newer bundle than its neighbour
+    // is the ordinary state of a host-scoped daemon (ADR 0130 rule 3).
+    const display = request.display === undefined ? null : coerceWorkerDisplay(request.display);
+    if (display != null) displays.set(request.worker_id, { display, published_at: publishedAt });
     return {
       version: 1,
       worker_id: request.worker_id,
@@ -1952,6 +1990,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         // two surfaces are the same answer twice and never two answers.
         return { id: request.id, ok: true, value: statuslineString(request.render) };
       }
+      if (request.op === "statusline-dashboard") {
+        // The third of the statusline family, and the same host read again: one
+        // call of a pure function on the payload the first op returns, so a pane
+        // and a line are the same answer twice and never two answers.
+        return { id: request.id, ok: true, value: statuslineDashboard(request.dashboard) };
+      }
       if (request.op === "worker-heartbeat") {
         return { id: request.id, ok: true, value: publishWorkerHeartbeat(request.heartbeat) };
       }
@@ -2042,6 +2086,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       const removed = workers.delete(workerId);
       reattached.delete(workerId);
       logLines.delete(workerId);
+      displays.delete(workerId);
       if (worker) record("worker-death", worker, "released by the daemon");
       armIdleTimer();
       return removed;

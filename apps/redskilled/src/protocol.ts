@@ -23,9 +23,17 @@
  * string because the alternative is every agent host reimplementing the line —
  * which is the drift the pair of ops exists to prevent (ADR 0130 rule 10). The
  * daemon renders it from the very payload the other op returns, so the two can
- * disagree only if a pure function is impure. `worker-heartbeat` widens it by one
- * more string, in the one direction the daemon has no other way to learn: the
- * Worker's own last logged line. It is stored and echoed, never parsed — transport
+ * disagree only if a pure function is impure. `statusline-dashboard` is the third
+ * of that family and widens the contract by no new FACT at all: it is the same
+ * payload rendered with a vertical dimension, for the surfaces that have one — a
+ * herdr pane and an editor panel. It is here rather than in each surface for the
+ * reason `statusline-string` is: two surfaces doing their own Worker math are two
+ * dashboards that lie in two different ways about one instant. `worker-heartbeat`
+ * widens it by one more string, in the one direction the daemon has no other way
+ * to learn: the Worker's own last logged line — and, since #3012, by one opaque
+ * DISPLAY RECORD beside it. That record is stored and laid out, never read: the
+ * pipeline bar is drawn from two integers a project published, so the daemon
+ * reaches statusline parity without ever learning what a phase is. It is stored and echoed, never parsed — transport
  * is not semantics — which is what keeps the verbose statusline one read and keeps
  * the daemon ignorant of where a project's logs live. `worker-command`
  * carries the commanding verbs — stop, recycle, steer — as data rather than as
@@ -74,6 +82,8 @@ import {
 import { isRedskilledReachVerdict, type RedskilledReachVerdict, type RedskilledWorkerCommandName } from "./session-reach.js";
 import { isRedskilledStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
 import type { RedskilledStatuslineMode, RedskilledStatuslineRender } from "./statusline-render.js";
+import { isRedskilledDashboard, type RedskilledDashboard } from "./dashboard-render.js";
+import type { RedskilledWorkerDisplay } from "./worker-display.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
 
 /** The wire version. A daemon states it; a client that cannot read it must not proceed. */
@@ -124,7 +134,31 @@ export interface RedskilledStatuslineRenderRequest {
 export interface RedskilledWorkerHeartbeatRequest {
   readonly worker_id: string;
   readonly last_log_line: string;
+  /**
+   * What a surface should SHOW about this Worker, as its project says it.
+   *
+   * Opaque in exactly the sense `last_log_line` is: the daemon shape-checks the
+   * record, stores it and lays it out, and nothing in this process ever asks what
+   * a phase, an origin or an issue number MEANS. It is the frozen contract's one
+   * concession to dashboard parity — a project that published nothing simply has
+   * a row of absences, which is the honest render, not a broken one.
+   */
+  readonly display?: RedskilledWorkerDisplay;
   readonly session_project?: string;
+}
+
+/**
+ * How one dashboard read wants to be rendered.
+ *
+ * Taste already settled by the client, exactly as
+ * {@link RedskilledStatuslineRenderRequest} carries it: `max_rows` is a table's
+ * version of `max_workers`, because a pane has a height where a line has none.
+ */
+export interface RedskilledDashboardRenderRequest {
+  readonly mode?: RedskilledStatuslineMode;
+  readonly project?: string | null;
+  readonly max_width?: number;
+  readonly max_rows?: number;
 }
 
 export type RedskilledRequest =
@@ -132,6 +166,7 @@ export type RedskilledRequest =
   | { id: string; op: "host-state" }
   | { id: string; op: "statusline-payload"; session_project?: string }
   | { id: string; op: "statusline-string"; session_project?: string; render?: RedskilledStatuslineRenderRequest }
+  | { id: string; op: "statusline-dashboard"; session_project?: string; dashboard?: RedskilledDashboardRenderRequest }
   | { id: string; op: "worker-start"; spec: RedskilledWorkerSpec; session_project?: string }
   | { id: string; op: "worker-command"; command: RedskilledWorkerCommandRequest }
   | { id: string; op: "worker-heartbeat"; heartbeat: RedskilledWorkerHeartbeatRequest }
@@ -373,6 +408,15 @@ export function isRedskilledStatuslineRender(value: unknown): value is Redskille
 export { isRedskilledStatuslinePayload };
 
 /**
+ * True when `value` is a dashboard — re-exported so a client checks one surface.
+ *
+ * Beside the payload guard for the reason that one is here: a surface that
+ * speaks this wire reads every shape it trusts off one module, and a second
+ * import path is how one consumer comes to trust a shape another rejects.
+ */
+export { isRedskilledDashboard };
+
+/**
  * The answer to `shutdown`: what the daemon holds, and what survives it.
  *
  * Re-exported here for the same reason the payload guard is — a client that
@@ -394,6 +438,8 @@ export type {
   RedskilledStatuslineMode,
   RedskilledStatuslinePayload,
   RedskilledStatuslineRender,
+  RedskilledDashboard,
+  RedskilledWorkerDisplay,
   RedskilledWorkerCommandName,
   RedskilledWorkerView,
   RedskilledWorkerSpec,

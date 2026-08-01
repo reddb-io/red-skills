@@ -2,7 +2,8 @@
  * client — one TOON-framed request over the daemon's unix socket.
  *
  * This plugin is a READ client and nothing else. It sends `ping`, `host-state`,
- * `statusline-payload` and `statusline-string`, and it never sends `worker-start`,
+ * `statusline-payload`, `statusline-string` and `statusline-dashboard`, and it
+ * never sends `worker-start`,
  * `worker-command`, `project-register` or `shutdown`. ADR 0130 rule 9 makes reach
  * asymmetric — read the host, write the project — and a dashboard has no business
  * on the writing half: a viewer that could stop another project's Worker would be
@@ -125,6 +126,20 @@ export function createRedskilledClient({ socketPath, timeoutMs = 2_000 }) {
       call("statusline-string", {
         ...(sessionProject ? { session_project: sessionProject } : {}),
         ...(render ? { render } : {}),
+      }),
+    /**
+     * The dashboard: the same read again, already laid out as a table.
+     *
+     * This plugin PRINTS what comes back and computes no cell of it. The daemon
+     * is the only process holding the Worker set across projects, so a pane that
+     * did its own Worker math would be the second authority ADR 0130 rule 10
+     * keeps the statusline pair pure to avoid — and two dashboards would lie in
+     * two different ways about the same instant.
+     */
+    statuslineDashboard: (sessionProject, dashboard) =>
+      call("statusline-dashboard", {
+        ...(sessionProject ? { session_project: sessionProject } : {}),
+        ...(dashboard ? { dashboard } : {}),
       }),
   };
 }
