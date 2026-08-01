@@ -32,7 +32,8 @@ red-skills/                         ← repo root + marketplace
 │   ├── brain/                      ← `brain` runtime implementation
 │   ├── code-nav/                   ← code navigation runtime implementation
 │   ├── redskilled/                 ← host-scoped execution daemon: exactly one singleton per machine behind a unix socket (ADR 0130)
-│   └── opencode-host/              ← opencode-host adapter: emits opencode.json from .red/config.yaml (ADR 0075; Slice 1 = provider block)
+│   ├── opencode-host/              ← opencode-host adapter: emits opencode.json from .red/config.yaml (ADR 0075; Slice 1 = provider block)
+│   └── herdr-plugin/               ← vendored herdr plugin that READS `redskilled` (ADR 0131); `.upstream` records the absorbed SHA
 ├── packages/                       ← code shared by multiple runtimes
 │   ├── shared/                     ← CLI args, bundle-fetch, entrypoint (ADR 0034)
 │   ├── build-info/                 ← shared build metadata helpers
