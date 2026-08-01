@@ -254,6 +254,12 @@ jobs:
         if: contains(fromJSON(env.PACKAGES), 'apps/afk-container')
         run: pnpm -C apps/afk-container test
 
+      # The extension's suite binds a real unix socket per test file (the fake
+      # daemon), so it needs a runner and not only a typecheck.
+      - name: Test apps/vscode-redskilled
+        if: contains(fromJSON(env.PACKAGES), 'apps/vscode-redskilled')
+        run: pnpm -C apps/vscode-redskilled test
+
       - name: Report narrowed scope
         if: env.RUN_ANY != 'true'
         run: echo "No package is in the affected cone (scope ${{ needs.scope.outputs.mode }}) — no suite to run."
