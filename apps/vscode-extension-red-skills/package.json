@@ -65,6 +65,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "redskilled.showDashboard",
+        "title": "redskilled: Show the dashboard",
+        "icon": "$(dashboard)"
+      },
+      {
         "command": "redskilled.showWorkerLog",
         "title": "redskilled: Show this Worker's log"
       },
@@ -79,6 +84,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "redskilled.showDashboard",
+          "when": "view == redskilled.workers",
+          "group": "navigation"
+        },
         {
           "command": "redskilled.refresh",
           "when": "view == redskilled.workers",
