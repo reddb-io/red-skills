@@ -80,28 +80,24 @@ jobs:
           # for manual approval. The PAT identity makes required checks start.
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
 
-      # No pending changesets means the Version Packages PR has already merged
-      # (or there was nothing to release). Cut the tag only when the version in
-      # the tree is genuinely new.
+      # The cut reads the version and the pending changesets out of the BUMP
+      # COMMIT the push event named, never out of the checkout: a merge racing
+      # onto main between the Version Packages PR merge and this run rewrites
+      # `.changeset/`, which made the bump look un-merged and swallowed two tags
+      # in silence (2026-08-01). Gating the step on the live
+      # `hasChangesets` output reintroduces exactly that race, so the script —
+      # not the `if:` — owns the decision, and every skip prints its reason.
       - name: Cut the release tag
         id: cut
-        if: steps.changesets.outputs.hasChangesets == 'false'
+        env:
+          BUMP_SHA: ${{ github.sha }}
+        run: scripts/release-cut-tag.sh
+
+      - name: Dispatch red-publish
+        if: steps.cut.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          tag="v${version}"
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "${tag} already tagged — nothing to cut"
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -a "$tag" -m "Release $tag"
-          git push origin "$tag"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "::notice::cut ${tag}; dispatching red-publish"
-          # See the header: a GITHUB_TOKEN tag push cannot trigger `on: push:
-          # tags`, so start the publish workflow explicitly.
-          gh workflow run red-publish.yml --ref main -f tag="$tag"
+          TAG: ${{ steps.cut.outputs.tag }}
+        # See the header: a GITHUB_TOKEN tag push cannot trigger `on: push:
+        # tags`, so start the publish workflow explicitly.
+        run: gh workflow run red-publish.yml --ref main -f tag="$TAG"
