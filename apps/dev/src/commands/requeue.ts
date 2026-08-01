@@ -45,7 +45,7 @@ import { pathExists, removeDir } from "../runtime/fs.js";
 import { afkPaths, editLabelsWithStatuslineCache, resolveRepoSlug, statuslineCountCachePath } from "../runtime/wire.js";
 import { branchLockPath, isLocked, readLockedBranch } from "../runtime/lock.js";
 import { resolveBase } from "../core/base-resolver.js";
-import { getConfig, loadConfig, readValidationResourceBudget } from "../core/config.js";
+import { getConfig, loadConfig, readHitlTypeLabels, readValidationResourceBudget } from "../core/config.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import type { GhContext } from "../runtime/gh.js";
@@ -403,6 +403,7 @@ async function runAdoptLanding(
 
     const reconcileDeps: ReconcileDeps = {
       ...HOST_RECONCILE_PORTS,
+      hitlTypes: readHitlTypeLabels(config),
       gh: {
         editLabels: async (n, remove, add) => {
           return editLabelsWithStatuslineCache(

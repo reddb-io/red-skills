@@ -985,6 +985,36 @@ export function readBackpressure(values: ConfigValues): string[] {
 }
 
 /**
+ * Read the TYPE labels this repo's installed vocabulary declares HUMAN-ONLY
+ * (`afk.labels.hitl_types`, #2966). A Ticket carrying one resolves only through
+ * a live exchange with a human, so an unblock sweep or close cascade routes it
+ * to `ready-for-human` instead of the executable queue. The list form
+ *
+ *   afk:
+ *     labels:
+ *       hitl_types:
+ *         - wayfinder:grilling
+ *         - wayfinder:prototype
+ *
+ * materialises as the indexed keys `afk.labels.hitl_types.0`, … which this reads
+ * back in order until the first gap; the namespaced `plugins.dev.*` location
+ * folds down in {@link loadConfig} (ADR 0042). A single-line scalar is accepted
+ * as a one-label list. Absent/empty → `[]`, and a repo that declares none keeps
+ * the pre-#2966 behaviour exactly — every promotion goes to the agent lane.
+ */
+export function readHitlTypeLabels(values: Record<string, string | undefined>): string[] {
+  const indexed: string[] = [];
+  for (let i = 0; ; i++) {
+    const v = values[`afk.labels.hitl_types.${i}`];
+    if (v === undefined) break;
+    if (v.trim() !== "") indexed.push(v.trim());
+  }
+  if (indexed.length > 0) return indexed;
+  const scalar = values["afk.labels.hitl_types"];
+  return scalar && scalar.trim() !== "" ? [scalar.trim()] : [];
+}
+
+/**
  * Read the operator-declared post-attempt-format command list
  * (`afk.post_attempt_format`), in declaration order (#1015). The list form
  *

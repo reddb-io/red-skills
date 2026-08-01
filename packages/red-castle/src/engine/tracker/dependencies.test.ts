@@ -186,6 +186,37 @@ describe("tracker unblock sweep", () => {
       },
     ]);
   });
+
+  it("routes a dependent carrying a declared HUMAN-ONLY type to the human lane", async () => {
+    const tracker = fakeTracker({
+      issues: new Map([
+        [7, { body: "", labels: [], closed: true }],
+        [
+          20,
+          {
+            body: "",
+            labels: ["wait:dependency", "depends-on:7", "wayfinder:grilling"],
+            closed: false,
+          },
+        ],
+      ]),
+      labelIndex: new Map([["wait:dependency", [20]]]),
+    });
+
+    await expect(
+      executeUnblockSweep({
+        tracker,
+        labels: { ...labels, hitlTypes: ["wayfinder:grilling"] },
+      }),
+    ).resolves.toEqual([20]);
+    expect(tracker.edits).toEqual([
+      {
+        issue: 20,
+        remove: ["wait:dependency", "depends-on:7"],
+        add: ["queue:human"],
+      },
+    ]);
+  });
 });
 
 // The promotion WRITE moved to planTransition in #2666. These rows pin the

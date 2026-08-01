@@ -74,6 +74,8 @@ The answer isn't part of the body — it's recorded on resolution (see [Work thr
 
 Every ticket is either **HITL** — human in the loop, worked *with* a human who speaks for themselves — or **AFK**, driven by the agent alone. A HITL ticket only resolves through that live exchange; the agent never stands in for the human's side of it (a grilling agent that answers its own questions has broken this).
 
+**Declare the HITL types to the tracker, or the dependency machinery will queue them for an agent.** On a decision-shaped map most dependents of a decision ticket are themselves grilling or prototype, so every resolution would push human decisions into the autonomous lane (#2966). List them once in `.red/config.yaml` under `plugins.dev.afk.labels.hitl_types` — `wayfinder:grilling` and `wayfinder:prototype` for this skill's vocabulary — and an unblocked HITL child parks `ready-for-human` instead. See [triage-labels.md](../red-setup/triage-labels.md) *HUMAN-ONLY types*.
+
 - **Research** (AFK): Reading documentation, third-party APIs, or local resources like knowledge bases to surface a fact a decision waits on. Resolved by a `/research` **subagent**. Use when knowledge outside the current working directory is required.
 - **Prototype** (HITL): Raise the fidelity of the discussion by making a cheap, rough, concrete artifact to react to — an outline, a rough take, a stub, or UI/logic code via the /prototype skill. Links the prototype as an asset. Use when "how should it look" or "how should it behave" is the key question.
 - **Grilling** (HITL): Conversation via the /start skills, one question at a time. The default case.

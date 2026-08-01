@@ -12,6 +12,7 @@ import {
   MalformedConfigError,
   parseConfigYaml,
   readBackpressure,
+  readHitlTypeLabels,
   readValidationResourceBudget,
   downgradeAfkModelTier,
   resolveTier,
@@ -799,6 +800,24 @@ describe("config — block sequences (afk.backpressure, #430)", () => {
   it("readBackpressure returns [] when absent (the gate is a no-op)", () => {
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => "afk:\n  default_runner: codex\n" });
     expect(readBackpressure(values)).toEqual([]);
+  });
+
+  it("readHitlTypeLabels reads the declared HUMAN-ONLY types in order", () => {
+    const text =
+      "plugins:\n  dev:\n    afk:\n      labels:\n        hitl_types:\n          - wayfinder:grilling\n          - wayfinder:prototype\n";
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
+    expect(readHitlTypeLabels(values)).toEqual(["wayfinder:grilling", "wayfinder:prototype"]);
+  });
+
+  it("readHitlTypeLabels accepts a single-line scalar as a one-label list", () => {
+    const text = "afk:\n  labels:\n    hitl_types: wayfinder:grilling\n";
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
+    expect(readHitlTypeLabels(values)).toEqual(["wayfinder:grilling"]);
+  });
+
+  it("readHitlTypeLabels returns [] when the repo declares no HUMAN-ONLY type", () => {
+    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => "afk:\n  default_runner: codex\n" });
+    expect(readHitlTypeLabels(values)).toEqual([]);
   });
 });
 
