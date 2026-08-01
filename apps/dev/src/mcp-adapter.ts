@@ -1,9 +1,8 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { logsDir, waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
   armPr,
@@ -62,6 +61,8 @@ import { matchesSelector } from "./core/session.js";
 import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import * as ghx from "./runtime/gh.js";
 import { publishedBundleArgv } from "./runtime/published-entry.js";
+import { requestWorkerBirth, type DispatchedWorkerBirth } from "./runtime/mcp-worker-birth.js";
+import { launchDetachedRspWait } from "./runtime/rsp-wait-launch.js";
 import {
   createRedskilledBirthPort,
   redskilledRegistrationRefusal,
@@ -178,7 +179,15 @@ export interface DevAfkMcpOperations {
 }
 
 export interface DevAfkMcpRuntime {
-  launchRun(root: string, args: readonly string[]): Promise<{ pid: number; log?: string }>;
+  /**
+   * Ask the HOST for one Worker, and refuse when it does not answer.
+   *
+   * Named for the request rather than for a launch because there is no launch
+   * here any more (#2976): `worker_dispatch` used to spawn the Worker itself, so
+   * a dispatched Worker was counted by no budget, absent from the host event
+   * lane and reported by no surface — the exact shape ADR 0130 rule 6 forbids.
+   */
+  birthWorker(root: string, args: readonly string[]): Promise<DispatchedWorkerBirth>;
   /** Spawn rsp wait detached; returns the child PID. */
   launchRspWait(args: readonly string[], cwd: string): Promise<number>;
   ensureLabel(root: string, name: string): Promise<void>;
@@ -195,103 +204,14 @@ function dispatchArgs(input: DispatchOperationInput): string[] {
   return args;
 }
 
-/** Where a detached worker's boot stdout/stderr is persisted, in the disposable
- * logs lane (ADR 0098). A worker that dies before it writes its own state used
- * to leave nothing but `worker.pid` — three silent spawn deaths in a row with
- * zero evidence anywhere (#2385, #2376). The dispatch keeps the bytes. */
-export function dispatchLogPath(root: string, stampIso: string): string {
-  const safe = stampIso.replace(/[:.]/g, "-");
-  return join(logsDir(root, stampIso.slice(0, 10)), `dispatch-${safe}.log`);
-}
+// The dispatch surface starts nothing itself: `dispatchLogPath` and the birth
+// request live in `runtime/mcp-worker-birth.ts`, and the rsp-wait spawn — which
+// is not a Worker — lives in `runtime/rsp-wait-launch.ts`. Both are re-exported
+// here because this module is a declared `host-owns-birth` site (#2976), and
+// that ratchet reads whether a MODULE can create a process at all.
+export { dispatchLogPath } from "./runtime/mcp-worker-birth.js";
+export { resolveRspCliBundle } from "./runtime/rsp-wait-launch.js";
 
-async function launchDetachedRun(
-  root: string,
-  args: readonly string[],
-): Promise<{ pid: number; log?: string }> {
-  const mcpBundle = process.argv[1];
-  if (!mcpBundle) {
-    throw new Error("cannot dispatch worker: MCP bundle path is missing");
-  }
-  const bundle = resolveDevCliBundle(mcpBundle);
-  if (!existsSync(bundle)) {
-    throw new Error("cannot dispatch worker: sibling dev bundle is missing");
-  }
-  // Capture boot stdout+stderr to a discoverable file. Best-effort: if the log
-  // cannot be opened, the dispatch still runs (with the old blind stdio) rather
-  // than failing over an observability concern.
-  const logFile = dispatchLogPath(root, `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`);
-  let fd: number | undefined;
-  try {
-    mkdirSync(dirname(logFile), { recursive: true });
-    fd = openSync(logFile, "a");
-  } catch {
-    fd = undefined;
-  }
-  try {
-    const child = spawn(process.execPath, [bundle, "run", ...args], {
-      cwd: root,
-      env: process.env,
-      detached: true,
-      stdio: fd === undefined ? "ignore" : ["ignore", fd, fd],
-    });
-    const pid = child.pid;
-    if (!pid) throw new Error("cannot dispatch worker: spawn returned no pid");
-    child.unref();
-    return { pid, log: fd === undefined ? undefined : logFile };
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
-
-export function resolveDevCliBundle(mcpBundle: string): string {
-  const file = basename(mcpBundle);
-  if (file === "castle-mcp.bundle.min.mjs") {
-    return join(dirname(mcpBundle), "dev.bundle.min.mjs");
-  }
-  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "dev-"));
-  }
-  throw new Error(
-    `cannot dispatch worker: unrecognized MCP bundle name ${JSON.stringify(file)}`,
-  );
-}
-
-export function resolveRspCliBundle(mcpBundle: string): string {
-  const file = basename(mcpBundle);
-  if (file === "castle-mcp.bundle.min.mjs") {
-    return join(dirname(mcpBundle), "rsp.bundle.min.mjs");
-  }
-  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "rsp-"));
-  }
-  throw new Error(
-    `cannot spawn rsp wait: unrecognized MCP bundle name ${JSON.stringify(file)}`,
-  );
-}
-
-async function launchDetachedRspWait(
-  args: readonly string[],
-  cwd: string,
-): Promise<number> {
-  const mcpBundle = process.argv[1];
-  if (!mcpBundle) {
-    throw new Error("cannot spawn rsp wait: MCP bundle path is missing");
-  }
-  const bundle = resolveRspCliBundle(mcpBundle);
-  if (!existsSync(bundle)) {
-    throw new Error("cannot spawn rsp wait: sibling rsp bundle is missing");
-  }
-  const child = spawn(process.execPath, [bundle, ...args], {
-    cwd,
-    env: process.env,
-    detached: true,
-    stdio: "ignore",
-  });
-  const pid = child.pid;
-  if (!pid) throw new Error("cannot spawn rsp wait: spawn returned no pid");
-  child.unref();
-  return pid;
-}
 
 function buildWaitArgs(
   kind: WaitStartInput["kind"],
@@ -316,7 +236,7 @@ function buildWaitArgs(
 }
 
 const defaultMcpRuntime: DevAfkMcpRuntime = {
-  launchRun: launchDetachedRun,
+  birthWorker: (root, args) => requestWorkerBirth(root, args),
   launchRspWait: launchDetachedRspWait,
   async ensureLabel(root, name) {
     const context = await resolveRepoContext(root);
@@ -383,20 +303,24 @@ export function createDefaultDevAfkMcpOperations(
         "--once",
         ...dispatchArgs(input),
       ];
-      const launch = await runtime.launchRun(cwd, args);
+      const granted = await runtime.birthWorker(cwd, args);
       return {
         kind: "afk",
         issue: input.issue,
-        worker_pid: launch.pid,
+        // The host's id for this Worker, so the surface that dispatched it and
+        // the surface that reports it name the same thing (#2976).
+        worker_id: granted.worker_id,
+        worker_pid: granted.pid,
         // Post-mortem handle for a worker that dies before writing its own
         // state (#2385): its boot stdout/stderr lands here.
-        worker_log: launch.log,
+        worker_log: granted.log,
+        admission: granted.admission,
+        ...(granted.warnings.length > 0 ? { warnings: [...granted.warnings] } : {}),
         status: "dispatched",
       };
     },
     async dispatchDemand(cwd, input) {
-      let workerPid: number | undefined;
-      let workerLog: string | undefined;
+      let granted: DispatchedWorkerBirth | undefined;
       const configuredBackpressure = readBackpressure(
         loadConfig(afkPaths(cwd).configPath, { warn: () => undefined }),
       );
@@ -405,9 +329,7 @@ export function createDefaultDevAfkMcpOperations(
           ensureLabel: (name) => runtime.ensureLabel(cwd, name),
           createIssue: (spec) => runtime.createIssue(cwd, spec),
           runEngine: async (args) => {
-            const launch = await runtime.launchRun(cwd, args);
-            workerPid = launch.pid;
-            workerLog = launch.log;
+            granted = await runtime.birthWorker(cwd, args);
             return 0;
           },
         },
@@ -420,44 +342,47 @@ export function createDefaultDevAfkMcpOperations(
           hasHarness: configuredBackpressure.length > 0,
         },
       );
-      if (workerPid === undefined) {
-        throw new Error("cannot dispatch demand: worker was not spawned");
+      if (granted === undefined) {
+        throw new Error("cannot dispatch demand: the host granted no Worker");
       }
       return {
         kind: "go",
         demand: input.demand,
         issue: result.issue,
-        worker_pid: workerPid,
-        worker_log: workerLog,
+        worker_id: granted.worker_id,
+        worker_pid: granted.pid,
+        worker_log: granted.log,
+        admission: granted.admission,
+        ...(granted.warnings.length > 0 ? { warnings: [...granted.warnings] } : {}),
         status: "dispatched",
       };
     },
     async dispatchScout(cwd, input) {
-      let workerPid: number | undefined;
-      let workerLog: string | undefined;
+      let granted: DispatchedWorkerBirth | undefined;
       const result = await dispatchScoutCore(
         {
           ensureLabel: (name) => runtime.ensureLabel(cwd, name),
           createIssue: (spec) => runtime.createIssue(cwd, spec),
           runEngine: async (args) => {
-            const launch = await runtime.launchRun(cwd, args);
-            workerPid = launch.pid;
-            workerLog = launch.log;
+            granted = await runtime.birthWorker(cwd, args);
             return 0;
           },
         },
         input.demand,
         { runner: input.runner },
       );
-      if (workerPid === undefined) {
-        throw new Error("cannot dispatch scout: worker was not spawned");
+      if (granted === undefined) {
+        throw new Error("cannot dispatch scout: the host granted no Worker");
       }
       return {
         kind: "scout",
         demand: input.demand,
         issue: result.issue,
-        worker_pid: workerPid,
-        worker_log: workerLog,
+        worker_id: granted.worker_id,
+        worker_pid: granted.pid,
+        worker_log: granted.log,
+        admission: granted.admission,
+        ...(granted.warnings.length > 0 ? { warnings: [...granted.warnings] } : {}),
         status: "dispatched",
       };
     },

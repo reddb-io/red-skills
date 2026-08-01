@@ -17,10 +17,10 @@ import {
   createDefaultDevAfkMcpOperations,
   createCastleMcpDependencies,
   dispatchLogPath,
-  resolveDevCliBundle,
   resolveRspCliBundle,
   type DevAfkMcpOperations,
 } from "../src/mcp-adapter.js";
+import type { DispatchedWorkerBirth } from "../src/runtime/mcp-worker-birth.js";
 import { dispatchInput } from "../../../packages/red-castle/src/mcp/worker.js";
 import type { HookExec } from "../src/core/hook-dispatcher.js";
 import { readPidStartTime } from "../src/core/state.js";
@@ -39,17 +39,22 @@ async function root(): Promise<string> {
   return value;
 }
 
+/** A Worker the host granted, as the birth request reports it (#2976). */
+function granted(pid: number): DispatchedWorkerBirth {
+  return {
+    worker_id: "wHOST",
+    pid,
+    log: join("/repo", ".red", "tmp", "logs", "2026-08-01", "dispatch-test.log"),
+    warnings: [],
+    admission: "within the host ceiling",
+  };
+}
+
 describe("castle MCP host adapter", () => {
-  it("resolves the sibling dev CLI bundle from local and cached MCP assets", () => {
-    expect(
-      resolveDevCliBundle(join("dist", "castle-mcp.bundle.min.mjs")),
-    ).toBe(join("dist", "dev.bundle.min.mjs"));
-    expect(
-      resolveDevCliBundle(
-        join("cache", "castle-mcp-2.76.1.bundle.min.mjs"),
-      ),
-    ).toBe(join("cache", "dev-2.76.1.bundle.min.mjs"));
-  });
+  // The sibling dev-bundle resolution a dispatch needs now lives on the
+  // published-entry path (`resolveDevScriptPath`, covered by its own suite): the
+  // adapter's copy existed only to hand a bundle to its own `spawn`, and since
+  // #2976 the daemon is the one that runs it.
 
   // Three consecutive dispatches died silently leaving only `worker.pid` — the
   // spawn discarded stdout/stderr, so a boot death left zero evidence (#2385).
@@ -210,14 +215,14 @@ describe("castle MCP host adapter", () => {
     );
   });
 
-  it("detaches MCP dispatches without writing progress to stdout", async () => {
+  it("dispatches through the host birth request without writing progress to stdout", async () => {
     const cwd = await root();
-    const launchRun = vi.fn(async (_cwd: string, _args: string[]) => ({ pid: 73 }));
+    const birthWorker = vi.fn(async (_cwd: string, _args: readonly string[]) => granted(73));
     const createIssue = vi.fn(async (_title: string, _opts: { labels: string[]; body: string }) => 2308);
     const ensureLabel = vi.fn(async () => undefined);
     const stdout = vi.spyOn(process.stdout, "write");
     const operations = createDefaultDevAfkMcpOperations(cwd, {
-      launchRun,
+      birthWorker,
       createIssue,
       ensureLabel,
     });
@@ -228,7 +233,11 @@ describe("castle MCP host adapter", () => {
       ).resolves.toMatchObject({
         kind: "afk",
         issue: 2306,
+        worker_id: "wHOST",
         worker_pid: 73,
+        // The host's verdict travels back: a dispatch nothing judged is the
+        // defect #2976 closed, so the reply says which ceiling admitted it.
+        admission: "within the host ceiling",
         status: "dispatched",
       });
       await expect(
@@ -241,6 +250,7 @@ describe("castle MCP host adapter", () => {
         kind: "go",
         demand: "--repair release",
         issue: 2308,
+        worker_id: "wHOST",
         worker_pid: 73,
         status: "dispatched",
       });
@@ -248,7 +258,7 @@ describe("castle MCP host adapter", () => {
       stdout.mockRestore();
     }
 
-    expect(launchRun).toHaveBeenNthCalledWith(
+    expect(birthWorker).toHaveBeenNthCalledWith(
       1,
       cwd,
       ["--issues", "2306", "--once", "--runner", "codex"],
@@ -257,18 +267,32 @@ describe("castle MCP host adapter", () => {
       labels: ["lane:go"],
     });
     expect(createIssue.mock.calls[0]?.[1].body).toContain("--repair release");
-    expect(launchRun.mock.calls[1]?.[1]).not.toContain("--repair release");
+    expect(birthWorker.mock.calls[1]?.[1]).not.toContain("--repair release");
     expect(stdout).not.toHaveBeenCalled();
+  });
+
+  it("reports a refused dispatch rather than a pid, when the host does not answer", async () => {
+    // Fail closed (ADR 0130 rule 6): the operator learns nothing was started and
+    // which repair is theirs — the alternative is a `dispatched` that lied.
+    const cwd = await root();
+    const birthWorker = vi.fn(async () => {
+      throw new Error("no Worker was started: the redskilled daemon did not answer on /run/rs.sock");
+    });
+    const operations = createDefaultDevAfkMcpOperations(cwd, { birthWorker });
+
+    await expect(
+      operations.dispatchIssue(cwd, { issue: 2306, runner: "codex" }),
+    ).rejects.toThrow(/the redskilled daemon did not answer/);
   });
 
   it("pins scout dispatch argv/engine wiring: lane:scout label, origin/run-mode flags, no mutation", async () => {
     const cwd = await root();
-    const launchRun = vi.fn(async (_cwd: string, _args: string[]) => ({ pid: 91 }));
+    const birthWorker = vi.fn(async (_cwd: string, _args: readonly string[]) => granted(91));
     const createIssue = vi.fn(async (_root: string, _spec: { title: string; body: string; labels: string[] }) => 2346);
     const ensureLabel = vi.fn(async () => undefined);
     const stdout = vi.spyOn(process.stdout, "write");
     const operations = createDefaultDevAfkMcpOperations(cwd, {
-      launchRun,
+      birthWorker,
       createIssue,
       ensureLabel,
     });
@@ -292,7 +316,7 @@ describe("castle MCP host adapter", () => {
 
     expect(ensureLabel).toHaveBeenCalledWith(cwd, "lane:scout");
     expect(createIssue.mock.calls[0]?.[1]).toMatchObject({ labels: ["lane:scout"] });
-    const engineArgs = launchRun.mock.calls[0]?.[1] as string[];
+    const engineArgs = birthWorker.mock.calls[0]?.[1] as string[];
     expect(engineArgs).toContain("--origin");
     expect(engineArgs[engineArgs.indexOf("--origin") + 1]).toBe("scout");
     expect(engineArgs).toContain("--run-mode");

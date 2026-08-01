@@ -89,6 +89,20 @@ export const HOST_OWNED_BIRTH_SITES: readonly HostOwnedBirthSite[] = [
     what: "the budget-gated Worker spawn",
     replacement: "the same birth port; the budget decides WHETHER to ask, never how to launch",
   },
+  {
+    // #2976. The site the cutover never crossed, and the reason a declared list
+    // is not the same thing as a covered surface: `worker_dispatch` held its own
+    // `spawn` for every MCP dispatch — issue, demand and scout — so three
+    // Workers ran while `host-state` reported `workers: 0`, nothing reached the
+    // event lane and nothing was counted. The ratchet read clean throughout,
+    // because a ratchet only watches what it was told about.
+    path: "apps/dev/src/mcp-adapter.ts",
+    what: "the `worker_dispatch` births — `dispatchIssue`, `dispatchDemand` and `dispatchScout`",
+    replacement:
+      "`runtime/mcp-worker-birth.ts` — `requestWorkerBirth(...)` over the same birth port," +
+      " which refuses when no daemon answers instead of spawning (the rsp-wait spawn, which is" +
+      " not a Worker, moved to `runtime/rsp-wait-launch.ts`)",
+  },
 ];
 
 /**

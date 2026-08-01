@@ -34,6 +34,12 @@ describe("the per-project runtime holds no way to birth a Worker", () => {
     expect(HOST_OWNED_BIRTH_SITES.map((site) => site.path)).toContain(
       "apps/dev/src/commands/supervise.ts",
     );
+    // The MCP dispatch surface (#2976). It birthed Workers with the ratchet in
+    // force, because it was never declared — an undeclared site is not a site
+    // the guard judged safe, it is a site the guard never looked at.
+    expect(HOST_OWNED_BIRTH_SITES.map((site) => site.path)).toContain(
+      "apps/dev/src/mcp-adapter.ts",
+    );
     for (const site of HOST_OWNED_BIRTH_SITES) {
       expect(site.what.trim()).not.toBe("");
       expect(site.replacement.trim()).not.toBe("");
@@ -53,6 +59,25 @@ describe("the ratchet can go red", () => {
     expect(findings[0]!.match).toBe("spawn(");
     expect(formatHostOwnedBirthFailure(findings)).toContain("apps/dev/src/commands/supervise.ts:1");
     expect(formatHostOwnedBirthFailure(findings)).toContain("the birth port");
+  });
+
+  it("catches the dispatch spawn #2976 shipped, on the MCP site now that it is declared", () => {
+    // The exact code that was live on 3.1.1, against the site that now covers
+    // it: the fixture proves the ratchet would have gone red on the real defect
+    // rather than only on a synthetic one.
+    const mcpSite = HOST_OWNED_BIRTH_SITES.find(
+      (site) => site.path === "apps/dev/src/mcp-adapter.ts",
+    );
+    expect(mcpSite).toBeDefined();
+    const findings = collectHostOwnedBirthFindings(
+      "/repo",
+      [mcpSite!],
+      () => 'const child = spawn(process.execPath, [bundle, "run", ...args], { detached: true });\n',
+    );
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.match).toBe("spawn(");
+    expect(formatHostOwnedBirthFailure(findings)).toContain("requestWorkerBirth");
   });
 
   it("catches an import of child_process, even with no call beside it", () => {
