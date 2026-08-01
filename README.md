@@ -26,9 +26,9 @@ the pieces teams need when agents are doing real engineering work: issue
 automation, isolated worktrees, autonomous execution, governed Memory, Brain,
 MCP servers, release bundles, status signals, and guardrails.
 
-Since v3 there is one more piece, and it is the one that changed the shape of
-everything else: a **host-scoped daemon** that owns every agent process on the
-machine. Read [The v3 Model](#the-v3-model) first — the rest of this document
+One piece shapes everything else: a **host-scoped daemon** that owns every
+agent process on the machine. Read
+[The Execution Model](#the-execution-model) first — the rest of this document
 assumes it.
 
 Attribution is preserved in [NOTICE](./NOTICE).
@@ -41,7 +41,7 @@ Attribution is preserved in [NOTICE](./NOTICE).
 
 **Core**
 
-- [The v3 Model](#the-v3-model) — the host-scoped `redskilled` daemon
+- [The Execution Model](#the-execution-model) — the host-scoped `redskilled` daemon
 - [The Loop](#the-loop) — issue to reviewed PR
 - [What Ships](#what-ships) — the `dev`, `memory`, and `brain` plugins
 
@@ -80,7 +80,7 @@ useful, independently installable, and never load-bearing for the loop itself.
 | Piece | What it is | Where |
 | --- | --- | --- |
 | `dev`, `memory`, `brain` | The three marketplace plugins. Dev moves work, Memory improves agent execution, Brain preserves human-facing knowledge. | [What Ships](#what-ships) |
-| `redskilled` | The host-scoped execution daemon. It owns the processes that do the work. | [The v3 Model](#the-v3-model) |
+| `redskilled` | The host-scoped execution daemon. It owns the processes that do the work. | [The Execution Model](#the-execution-model) |
 | The issue-to-PR loop | GitHub Issues as the work queue, isolated worktrees, gates, and review-gated landing. | [The Loop](#the-loop) |
 
 **Complementary — remove any of these and the loop still runs, more slowly or
@@ -103,9 +103,9 @@ agent work happens in disposable worktrees while the primary checkout's branch
 stays under human control. Both are enforced as ratchets, not conventions; see
 [TOON And TOONL](#toon-and-toonl) and [Configuration](#configuration).
 
-## The v3 Model
+## The Execution Model
 
-Before v3, every checkout ran its own execution plane. Each one sized itself
+Without a shared host, every checkout ran its own execution plane. Each one sized itself
 against the machine independently, so N repositories draining work at once spent
 the same host budget N times and nothing on the machine knew the total.
 [ADR 0130](./.red/adr/0130-redskilled-host-scoped-execution-daemon.md) replaced
