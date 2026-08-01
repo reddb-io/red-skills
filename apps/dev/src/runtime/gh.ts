@@ -7,6 +7,7 @@ export { listCandidates, listHitlCandidates, listIssueStates } from "./gh/candid
 export { resolveViewerLogin, resolveSelectorUser } from "./gh/viewer.js";
 export {
   viewLabels,
+  listLabelNames,
   editLabels,
   comment,
   editComment,
