@@ -545,6 +545,71 @@ wiped state tier costs a re-run, never a second migration's worth of moves.
 behind is named with its reason, including moves the host refused: an operator's
 next step depends on knowing which Worker the host did *not* take.
 
+## Amendment 7 — open work renews a registration, and the daemon owns the renewal (#2973)
+
+Amendment 4 made the registration the thing that keeps a drain alive, and gave it
+a deadline. **The deadline shipped and the renewal did not.** `project-renew`
+existed on the daemon, was authorized, and was called by nothing: the string
+appeared zero times under `apps/dev/src`. A project registered at 22:19 with a
+`renew_by` of 22:26 was gone by 22:5x, and the host reported `registrations: 0,
+workers: 0` — every drain stopping on its own, silently, within one window.
+
+Both halves are load-bearing and pull against each other: expiry alone stops
+every drain, renewal alone makes a closed laptop poll forever. Shipping one
+without the other left the daemon strictly worse than the per-project process it
+replaced, which at least kept running.
+
+**Decision: a registration is renewed by the project's own OPEN WORK, and the
+renewal's owner is the daemon.** Each read of the registration set sustains, at
+that same instant, every registration the daemon can see work for — a counted,
+positive queue depth from its own poll, or a Worker it is itself holding for that
+project — and then lapses whatever is left. The renewal and the lapse are one
+decision made from one set of facts, so a project can never be dropped on a fact
+some earlier timer left behind.
+
+**Only an observation sustains; silence never does.** A counted **zero** does not
+sustain, which is how a project that has finished lapses on schedule and stops
+being polled — the deregister-on-drained rule of Amendment 4, arrived at by the
+lease rather than by a second mechanism. An outcome no poll could count — an
+unreachable tracker, a spent quota — sustains nothing either, and deliberately
+so: that is exactly the silence a closed laptop produces, and a registration held
+up by silence is the forever-poll the window exists to prevent. A live session
+renews straight through such an outage, and a project that has none can register
+again in one call.
+
+**A live Worker sustains too, even against a drained selector.** A project whose
+last Worker is still landing its Ticket reads as a queue of zero and is manifestly
+still draining; retiring the registration out from under it would strand the very
+work the deadline is meant to protect.
+
+**The session's own clock is untouched.** `renewed_at` keeps meaning "a session
+was heard from", so the three states stay distinguishable and are reported as
+such: `renewing` (a live session), `self-renewing` (nobody is watching, and the
+daemon is holding this up on the project's own work), `running-on` (nothing is
+holding it up, and it will lapse at its deadline).
+
+**The two options rejected, and why.**
+
+*The MCP session renews on a timer while it is alive.* The obvious shape, and it
+matches "a registration outlives its session" only until the session ends — so a
+drain would still die with the terminal, which is the promise Amendment 4 made and
+this would break. It also puts the renewal on the one player that is *not* there
+when it matters.
+
+*Renewal as an explicit operator act with a long window.* Simplest and least
+surprising, and it leaves the operator holding a timer for a system whose whole
+purpose is to run while nobody is watching. A missed renewal would be an operator
+error rather than a fact about the work.
+
+**And a lapse is now a stated fact.** A registration that lapsed used simply to
+stop being in the set, and every surface then rendered the project as one the host
+had never heard of — which is how a stopped drain read as a calm, healthy line.
+The daemon keeps a bounded tail of lapses with the instant and the reason, and
+`known_projects` is split: a label the host knows because a Worker carries it is
+**known by name**, not registered. A statusline that resolved a project from a git
+remote and printed `reddb-io/red-skills 0w` over a host holding nothing was
+reporting a name as if it were a state.
+
 ## Recovering from a bad two-player migration
 
 The way back, for an operator whose machine the migration left confusing. Every
