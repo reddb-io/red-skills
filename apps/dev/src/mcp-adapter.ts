@@ -1288,7 +1288,35 @@ async function workerVitals(
       daemon_liveness: publishWorkerLiveness(resolveWorkerLiveness(hostAnswer, workerId)),
     });
   }
-  return opts.live_only !== false ? all.filter((r) => r.live === true || r.alert !== undefined) : all;
+  return filterWorkerVitalsLiveOnly(all, opts.live_only !== false);
+}
+
+/**
+ * How long a dead worker's alert keeps it on the DEFAULT (live) read.
+ *
+ * An alert is a page: a boot death must surface on the very next read, or a
+ * fast-dying worker is invisible (the case the session-error lane exists for).
+ * But a page ages — past this window it has either been acted on or superseded
+ * by a respawn, and keeping it on the live read is how 344 corpses buried the
+ * one live worker under 559KB of payload. `live_only: false` still returns
+ * every record, however old.
+ */
+export const WORKER_VITALS_ALERT_FRESH_MS = 30 * 60 * 1000;
+
+/**
+ * `live_only` means live — plus deaths fresh enough to still be a page.
+ * The unconditional alert arm let every stalled corpse through forever,
+ * because nothing reclaims the records (#2978).
+ */
+export function filterWorkerVitalsLiveOnly<
+  T extends { live?: boolean; alert?: { at?: string } | undefined },
+>(records: readonly T[], liveOnly: boolean, nowMs = Date.now()): T[] {
+  if (!liveOnly) return [...records];
+  return records.filter((r) => {
+    if (r.live === true) return true;
+    const at = r.alert?.at === undefined ? NaN : Date.parse(r.alert.at);
+    return Number.isFinite(at) && nowMs - at <= WORKER_VITALS_ALERT_FRESH_MS;
+  });
 }
 
 function projectFields(
