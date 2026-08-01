@@ -71,6 +71,13 @@ export const REDSKILLED_REPLACE_EXIT_CODE = 75;
  * `daemon.ts`, which asks once at the idle boundary, and not by their ratio:
  * whoever moves either one changes how often a LIVE daemon looks, never whether
  * an idle one looks at all.
+ *
+ * **It is not the only look a live daemon gets, and must not be made to carry
+ * that alone.** A daemon holding a registration never reaches the idle boundary
+ * — the registration is what keeps it alive — so on those hosts this interval
+ * and the boot look (`DEFAULT_REDSKILLED_REPLACE_BOOT_CHECK_MS`) are the whole
+ * upgrade path, and a first look one interval after start left the opening
+ * fifteen minutes blind (#2975).
  */
 export const DEFAULT_REDSKILLED_REPLACE_CHECK_MS = 900_000;
 
