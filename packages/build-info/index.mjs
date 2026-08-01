@@ -5,7 +5,7 @@
  * used to be `index.ts`, which every bundled app compiled and no plain-ESM binary
  * could load: Node refuses to strip types from a file under `node_modules`, and a
  * workspace link IS under `node_modules`. That left a binary shipped as `.mjs` —
- * `apps/herdr-plugin` is the first — with no way to reach the one function the
+ * `apps/herdr-plugin-red-skills` is the first — with no way to reach the one function the
  * shipped-binary invariant asks it to call. The implementation carries no types
  * worth compiling, so it moved to the extension both consumers can read.
  *

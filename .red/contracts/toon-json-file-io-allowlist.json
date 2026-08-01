@@ -145,7 +145,7 @@
    "moveKey": "2883fdec968a"
   },
   {
-   "id": "apps/vscode-redskilled/src/package-vsix.ts#json-parse-file-read#523457660e7a",
+   "id": "apps/vscode-extension-red-skills/src/package-vsix.ts#json-parse-file-read#523457660e7a",
    "classification": "external",
    "reason": "The VSCode extension manifest is package.json; the editor and the .vsix format own that shape.",
    "moveKey": "6f14a5d8a8ad"

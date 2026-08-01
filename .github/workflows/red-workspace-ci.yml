@@ -257,15 +257,15 @@ jobs:
       # The vendored herdr plugin (ADR 0131). Its `test` script is the manifest
       # check and the `node --test` suite in that order, so the manifest a pane
       # is opened from is validated by the same command as the code behind it.
-      - name: Test apps/herdr-plugin
-        if: contains(fromJSON(env.PACKAGES), 'apps/herdr-plugin')
-        run: pnpm -C apps/herdr-plugin test
+      - name: Test apps/herdr-plugin-red-skills
+        if: contains(fromJSON(env.PACKAGES), 'apps/herdr-plugin-red-skills')
+        run: pnpm -C apps/herdr-plugin-red-skills test
 
       # The extension's suite binds a real unix socket per test file (the fake
       # daemon), so it needs a runner and not only a typecheck.
-      - name: Test apps/vscode-redskilled
-        if: contains(fromJSON(env.PACKAGES), 'apps/vscode-redskilled')
-        run: pnpm -C apps/vscode-redskilled test
+      - name: Test apps/vscode-extension-red-skills
+        if: contains(fromJSON(env.PACKAGES), 'apps/vscode-extension-red-skills')
+        run: pnpm -C apps/vscode-extension-red-skills test
 
       - name: Report narrowed scope
         if: env.RUN_ANY != 'true'

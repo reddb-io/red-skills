@@ -1,5 +1,5 @@
 {
-  "name": "vscode-redskilled",
+  "name": "vscode-extension-red-skills",
   "displayName": "RedSkills — redskilled",
   "description": "Surfaces the redskilled host daemon inside VSCode: live Workers with vitals, per-Worker logs, the host event lane, open pull requests, and a notification whenever any of it changes.",
   "version": "0.1.0",
@@ -182,6 +182,6 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/reddb-io/red-skills.git",
-    "directory": "apps/vscode-redskilled"
+    "directory": "apps/vscode-extension-red-skills"
   }
 }

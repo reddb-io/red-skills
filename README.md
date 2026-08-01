@@ -89,8 +89,8 @@ less visibly.**
 | Piece | What it is | Where |
 | --- | --- | --- |
 | [`rsp`](./apps/rsp/README.md) | Token-efficient terminal wrappers over a reversible elision store, plus `rsp wait`. | [Token-Efficient Terminal Work](#token-efficient-terminal-work) |
-| [`herdr-plugin`](./apps/herdr-plugin/README.md) | A [herdr](https://herdr.dev) plugin pane reading the daemon: Workers, logs, events, PRs. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
-| [`vscode-redskilled`](./apps/vscode-redskilled/README.md) | A VSCode extension reading the same daemon from inside the editor. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
+| [`herdr-plugin`](./apps/herdr-plugin-red-skills/README.md) | A [herdr](https://herdr.dev) plugin pane reading the daemon: Workers, logs, events, PRs. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
+| [`vscode-extension-red-skills`](./apps/vscode-extension-red-skills/README.md) | A VSCode extension reading the same daemon from inside the editor. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
 | The statusline | The daemon's own one-line answer, rendered by the daemon and printed by the host. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
 | The Actions lane | One autonomous attempt per issue, from GitHub Actions, without a local daemon. | [GitHub Actions Lane](#github-actions-lane) |
 | [`afk-container`](./apps/afk-container/README.md) | The same drain in a stateless Docker image. | [Container Lane](#container-lane) |
@@ -372,7 +372,21 @@ Start with [plugins/brain/README.md](./plugins/brain/README.md).
 
 ## Install
 
-Recommended for normal installs and upgrades:
+The fastest route on Claude Code is the plugin marketplace, straight from the
+session:
+
+```
+/plugin marketplace add reddb-io/red-skills
+/plugin install dev@red-skills
+/plugin install memory@red-skills
+/plugin install brain@red-skills
+```
+
+Codex and Gemini have the same marketplace flow through their own CLIs — the
+exact commands live in [docs/INSTALL.md](./docs/INSTALL.md).
+
+For every other host, and for machine-wide installs and upgrades, use the
+universal installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash
@@ -515,7 +529,7 @@ proves the two agree.
 
 ### herdr plugin
 
-[`apps/herdr-plugin/`](./apps/herdr-plugin/README.md) is a
+[`apps/herdr-plugin-red-skills/`](./apps/herdr-plugin-red-skills/README.md) is a
 [herdr](https://herdr.dev) plugin, vendored into this repo by
 [ADR 0131](./.red/adr/0131-herdr-plugin-is-vendored-in-this-repo.md). It answers
 the daemon's question in one pane:
@@ -533,7 +547,7 @@ the daemon's question in one pane:
 
 ```bash
 pnpm install                    # from the repo root, once
-herdr plugin link apps/herdr-plugin
+herdr plugin link apps/herdr-plugin-red-skills
 ```
 
 It holds itself to the daemon's own rules. **It reads and never writes** —
@@ -546,7 +560,7 @@ Why it lives here: it read `redskilled` from its own repository, so a contract
 change here silently aged the client there — the wire became TOON and the plugin
 still wrote a line of JSON, kept working only because the daemon answers in the
 dialect it was addressed in. The repo-wide invariants stopped at the repo
-boundary too. Absorbed at `apps/herdr-plugin/` on the ADR 0124 precedent — a real
+boundary too. Absorbed at `apps/herdr-plugin-red-skills/` on the ADR 0124 precedent — a real
 directory, an `.upstream` marker recording the absorbed commit, every later
 change an ordinary one-PR change here — its `check-manifest.py` and `node --test`
 suite now run under the shared gate. Its bin is `red-skills-herdr`, because
@@ -563,7 +577,7 @@ node bin/red-skills-herdr.mjs logs --events
 
 ### VSCode extension
 
-[`apps/vscode-redskilled/`](./apps/vscode-redskilled/README.md) is the same
+[`apps/vscode-extension-red-skills/`](./apps/vscode-extension-red-skills/README.md) is the same
 reader inside the editor. It contributes three tree views and a log channel:
 
 | View | Reads | Answers |
@@ -589,9 +603,9 @@ and `redskilled.notifications.workerBirth` is off by default.
 The `.vsix` is **never published** — build and install it from the checkout:
 
 ```bash
-pnpm -C apps/vscode-redskilled build      # typecheck + bundle out/extension.cjs
-pnpm -C apps/vscode-redskilled package    # write dist/reddb-io.vscode-redskilled-<version>.vsix
-code --install-extension apps/vscode-redskilled/dist/reddb-io.vscode-redskilled-0.1.0.vsix
+pnpm -C apps/vscode-extension-red-skills build      # typecheck + bundle out/extension.cjs
+pnpm -C apps/vscode-extension-red-skills package    # write dist/reddb-io.vscode-extension-red-skills-<version>.vsix
+code --install-extension apps/vscode-extension-red-skills/dist/reddb-io.vscode-extension-red-skills-0.1.0.vsix
 ```
 
 ### Statusline
@@ -805,8 +819,8 @@ House rules:
 | [`plugins/brain`](./plugins/brain) | Plugin definition and skills for Brain. Runtime source lives in `apps/brain`. |
 | [`plugins/internal`](./plugins/internal) | Maintainer-only plugin definition and skills for operating this repository. |
 | [`apps/redskilled`](./apps/redskilled) | The host-scoped execution daemon (ADR 0130): socket, lease, wire contract, placement, birth, event lane, statusline, provisioning, reclaim. |
-| [`apps/herdr-plugin`](./apps/herdr-plugin) | Vendored herdr plugin that reads the daemon (ADR 0131): Workers, logs, event lane, pull requests, notifications. `.upstream` records the absorbed commit. |
-| [`apps/vscode-redskilled`](./apps/vscode-redskilled) | VSCode extension that reads the daemon from inside the editor: Workers, host events, pull requests, per-Worker log channel, transition notifications. |
+| [`apps/herdr-plugin-red-skills`](./apps/herdr-plugin-red-skills) | Vendored herdr plugin that reads the daemon (ADR 0131): Workers, logs, event lane, pull requests, notifications. `.upstream` records the absorbed commit. |
+| [`apps/vscode-extension-red-skills`](./apps/vscode-extension-red-skills) | VSCode extension that reads the daemon from inside the editor: Workers, host events, pull requests, per-Worker log channel, transition notifications. |
 | [`apps/rsp`](./apps/rsp) | Token-efficient terminal wrappers, the elision store and resident, the interception hook and proxy, `rsp wait`, and the rsp MCP server. |
 | [`apps/dev`](./apps/dev) | Issue pipeline, execution, landing, dashboard, triage, runner, release/channel, repo invariants, and workflow runtime code. |
 | [`apps/memory`](./apps/memory) | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics. |

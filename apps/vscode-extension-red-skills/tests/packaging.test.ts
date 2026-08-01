@@ -30,7 +30,7 @@ describe("the .vsix archive", () => {
   it("escapes the manifest, so a description with an ampersand still parses", () => {
     const xml = renderVsixManifest({
       publisher: "reddb-io",
-      name: "vscode-redskilled",
+      name: "vscode-extension-red-skills",
       version: "0.1.0",
       displayName: "RedSkills & redskilled",
       description: 'Workers, logs & "events"',
@@ -38,7 +38,7 @@ describe("the .vsix archive", () => {
       categories: ["Other"],
     });
 
-    expect(xml).toContain('Id="vscode-redskilled"');
+    expect(xml).toContain('Id="vscode-extension-red-skills"');
     expect(xml).toContain('Publisher="reddb-io"');
     expect(xml).toContain("RedSkills &amp; redskilled");
     expect(xml).toContain("&quot;events&quot;");
