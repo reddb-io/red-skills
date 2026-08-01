@@ -1292,18 +1292,31 @@ async function workerVitals(
 }
 
 /**
- * `live_only` means live. The old `|| alert !== undefined` arm meant "also show
- * what needs attention", but every dead worker carries a stalled alert and
- * nothing ever reclaims the records — so 344 corpses rode through the LIVE
- * filter and buried the one live worker under 559KB of payload. A dead worker
- * with an alert is exactly what `live_only: false` is for; an alert that
- * matters on a LIVE read is one attached to a worker that is still active.
+ * How long a dead worker's alert keeps it on the DEFAULT (live) read.
+ *
+ * An alert is a page: a boot death must surface on the very next read, or a
+ * fast-dying worker is invisible (the case the session-error lane exists for).
+ * But a page ages — past this window it has either been acted on or superseded
+ * by a respawn, and keeping it on the live read is how 344 corpses buried the
+ * one live worker under 559KB of payload. `live_only: false` still returns
+ * every record, however old.
+ */
+export const WORKER_VITALS_ALERT_FRESH_MS = 30 * 60 * 1000;
+
+/**
+ * `live_only` means live — plus deaths fresh enough to still be a page.
+ * The unconditional alert arm let every stalled corpse through forever,
+ * because nothing reclaims the records (#2978).
  */
 export function filterWorkerVitalsLiveOnly<
-  T extends { live?: boolean; active?: boolean; alert?: unknown },
->(records: readonly T[], liveOnly: boolean): T[] {
+  T extends { live?: boolean; alert?: { at?: string } | undefined },
+>(records: readonly T[], liveOnly: boolean, nowMs = Date.now()): T[] {
   if (!liveOnly) return [...records];
-  return records.filter((r) => r.live === true || (r.alert !== undefined && r.active === true));
+  return records.filter((r) => {
+    if (r.live === true) return true;
+    const at = r.alert?.at === undefined ? NaN : Date.parse(r.alert.at);
+    return Number.isFinite(at) && nowMs - at <= WORKER_VITALS_ALERT_FRESH_MS;
+  });
 }
 
 function projectFields(
