@@ -19,6 +19,7 @@ function snapshotOf(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
     source: "derived from XDG_RUNTIME_DIR",
     payload: statuslinePayload(),
     hostState: hostState(),
+    dashboard: null,
     lane: { path: "/tmp/rsk/lane.toonl", exists: true, truncated: false, events: [] },
     error: null,
     readAt: "2026-08-01T10:00:00.000Z",
