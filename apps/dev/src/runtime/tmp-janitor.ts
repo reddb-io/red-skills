@@ -24,6 +24,14 @@ import {
   type WorkerProcessVerdict,
   type WorkerReclaimPlan,
 } from "../core/worker-reclaim.js";
+import {
+  planWorkerStateRecordReclaim,
+  type WorkerStateRecordReclaimPlan,
+} from "../core/worker-state-reclaim.js";
+import {
+  applyWorkerStateRecordReclaim,
+  collectWorkerStateRecordEntries,
+} from "./worker-state-reclaim.js";
 import { decodeDevSnapshotSniff } from "../core/toon-snapshot.js";
 import { allWorkersRoots, parseReapableWorkerPath } from "../core/worker-paths.js";
 import { execTool } from "./exec.js";
@@ -103,6 +111,15 @@ export interface TmpJanitorReport {
    * it, never widen it.
    */
   workerReclaim: WorkerReclaimPlan;
+  /**
+   * The durable Worker STATE RECORD lane, `.red/state/castle/workers/` (#2978).
+   *
+   * It sits OUTSIDE this tmp tier on purpose — the record is durable state, not
+   * scratch — and it is swept here because this is the pass that already holds
+   * the daemon read every reclaim decision is made against. Nothing else owned
+   * the record, which is how 345 of them accumulated to convey one live Worker.
+   */
+  workerStateRecords: WorkerStateRecordReclaimPlan;
   staleWorkers: ReturnType<typeof planWorkerDirJanitor>;
   /** Supervisor fleet dirs partitioned by pid liveness. Live dirs are spared;
    * dead dirs are eligible for removal. */
@@ -134,6 +151,10 @@ export interface TmpJanitorApplyResult {
   workerWorkspaces: string[];
   /** Workspaces spared because the daemon did not call their Worker gone. */
   protectedLiveWorkspaces: string[];
+  /** Worker state records removed: gone, settled, and past the retention (#2978). */
+  workerStateRecords: string[];
+  /** Worker state records spared because the daemon did not call their Worker gone. */
+  protectedLiveWorkerStateRecords: string[];
   /** Paths a plan named outside this tmp tier: reported, never removed. */
   refusedOutsideTmp: string[];
   /** Every destructive action, including the liveness verdict authorising it. */
@@ -497,6 +518,16 @@ export interface TmpJanitorSources {
   daemon?: DaemonWorkerSetReader;
 }
 
+/**
+ * The repo root a `.red/tmp` dir belongs to. The tmp tier is always
+ * `<root>/.red/tmp` (ADR 0098), so the durable state lane this sweep also
+ * reclaims is reachable from the one path the janitor is already given —
+ * no second parameter that a caller could point somewhere else.
+ */
+function repoRootFromTmpDir(tmpDir: string): string {
+  return resolve(tmpDir, "..", "..");
+}
+
 export async function collectTmpJanitorReport(
   tmpDir: string,
   nowS: number,
@@ -513,6 +544,13 @@ export async function collectTmpJanitorReport(
     nowIso: new Date(nowS * 1000).toISOString(),
     observedPaths: workerArtifacts.observedPaths,
   });
+  const workerStateRecords = planWorkerStateRecordReclaim(
+    await collectWorkerStateRecordEntries(repoRootFromTmpDir(tmpDir), {
+      nowMs: nowS * 1000,
+      ...(sources.daemon === undefined ? {} : { daemon: sources.daemon }),
+    }),
+    { nowMs: nowS * 1000 },
+  );
   const [tmpRootNames, tmpRootEntries, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers, orphanFeedbackData, supervisorEntries] =
     await Promise.all([
       listNames(tmpDir),
@@ -543,6 +581,7 @@ export async function collectTmpJanitorReport(
       tmpRootNames,
     }),
     workerReclaim,
+    workerStateRecords,
     staleWorkers: planWorkerDirJanitor(workers),
     staleSupervisors: planSupervisorLaneJanitor(supervisorEntries),
     orphanFeedback,
@@ -585,6 +624,8 @@ export async function applyTmpJanitorReport(
     orphanTestRunners: [],
     workerWorkspaces: [],
     protectedLiveWorkspaces: [],
+    workerStateRecords: [],
+    protectedLiveWorkerStateRecords: [],
     refusedOutsideTmp: [],
     removals: [],
   };
@@ -632,6 +673,23 @@ export async function applyTmpJanitorReport(
     await rm(path, { recursive: true, force: true });
     result.removals.push({ path, livenessVerdict: "worker-dead" });
     result.workerWorkspaces.push(path);
+  }
+
+  // The durable Worker state records. Their own gate applies — the lane sits
+  // outside this tmp tier — and their own apply-time daemon re-read authorises
+  // each removal, exactly as the workspace pass above does (#2978).
+  {
+    const applied = await applyWorkerStateRecordReclaim(
+      repoRootFromTmpDir(tmpDir),
+      report.workerStateRecords,
+      options.daemon === undefined ? {} : { daemon: options.daemon },
+    );
+    result.workerStateRecords.push(...applied.removed);
+    result.protectedLiveWorkerStateRecords.push(...applied.protectedLive);
+    result.refusedOutsideTmp.push(...applied.refusedOutsideStateRoot);
+    for (const path of applied.removed) {
+      result.removals.push({ path, livenessVerdict: "worker-dead" });
+    }
   }
 
   for (const worker of report.staleWorkers.reclaim) {
