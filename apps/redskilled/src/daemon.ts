@@ -160,7 +160,9 @@ import {
   completeRedskilledReplacement,
   DEFAULT_REDSKILLED_REPLACE_CHECK_MS,
   isLocalRedskilledBuild,
+  isRedskilledBornByReplacement,
   isRedskilledSupervised,
+  localRedskilledPublishedEvidence,
   planRedskilledMajorHold,
   planRedskilledReplacement,
   prepareRedskilledReplacement,
@@ -170,6 +172,7 @@ import {
   type RedskilledPublishedObservation,
   type RedskilledPublishedVersionProbe,
   type RedskilledReplacementDecision,
+  type RedskilledReplacementHoldReason,
   type RedskilledReplacementIO,
 } from "./self-replace.js";
 import {
@@ -200,9 +203,28 @@ export const DEFAULT_REDSKILLED_IDLE_MS = 300_000;
  * timeout of its own, and the idle exit now waits on one — a registry that
  * accepts the connection and never answers would otherwise strand a daemon that
  * had already decided to leave, holding the session for a host that wanted none.
- * A read that runs out of time is UNKNOWN, which is the answer that holds.
+ * A read that runs out of time resolves to whatever this host can say WITHOUT
+ * the registry — the cached bundle — and to UNKNOWN when it can say nothing.
  */
 export const DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * How long after starting a daemon takes its FIRST published-version look.
+ *
+ * **The busy daemon's blind spot, and the one the idle exit cannot cover.** A
+ * daemon that only ever looks on the interval spends its first fifteen minutes
+ * unable to know anything at all, and a daemon holding a registration never
+ * reaches the idle boundary that would have asked — so a release published into
+ * that window is served past for a whole interval, with `checks: 0` looking
+ * exactly like a timer that is broken (#2975). One look shortly after boot makes
+ * the daemon's own answer say which.
+ *
+ * Deliberately a minute rather than instant: a successor that mis-resolves its
+ * own version would otherwise restart itself as fast as it could boot. A
+ * replacement's own child skips this look entirely
+ * (`REDSKILLED_BORN_BY_REPLACEMENT_ENV`) and waits for the ordinary interval.
+ */
+export const DEFAULT_REDSKILLED_REPLACE_BOOT_CHECK_MS = 60_000;
 
 /**
  * Default window between memory samples.
@@ -285,6 +307,18 @@ export interface RedskilledDaemonOptions {
    * deadline would have to spend it.
    */
   readonly publishedProbeTimeoutMs?: number;
+  /**
+   * What this host can say about the published world without asking anybody.
+   *
+   * Consulted only when the read itself resolved nothing, so it never competes
+   * with the registry — it is what keeps a slow registry from erasing the
+   * evidence a host already holds.
+   */
+  readonly localPublishedEvidence?: (running: string) => RedskilledPublishedObservation | null;
+  /** How long after start the first published look happens; 0 or below is never. */
+  readonly replaceBootCheckMs?: number;
+  /** True when a replacement started this process, which is owed no boot look. */
+  readonly bornByReplacement?: boolean;
   /** True when a unit will revive this process, so replacing means exiting. */
   readonly supervised?: boolean;
   /** How the successor is found and started; the real handover by default. */
@@ -622,6 +656,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
   const replaceCheckMs = options.replaceCheckMs ?? DEFAULT_REDSKILLED_REPLACE_CHECK_MS;
   const publishedProbeTimeoutMs = options.publishedProbeTimeoutMs ?? DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS;
+  const localEvidence = options.localPublishedEvidence ??
+    ((running: string) => localRedskilledPublishedEvidence(running, options.replacementIO?.env ?? process.env));
+  const bornByReplacement = options.bornByReplacement ?? isRedskilledBornByReplacement();
+  const replaceBootCheckMs = options.replaceBootCheckMs ?? DEFAULT_REDSKILLED_REPLACE_BOOT_CHECK_MS;
   const supervised = options.supervised ?? isRedskilledSupervised();
   const replacementIO = options.replacementIO ?? {};
   const activityRegistration = options.repositoryActivity;
@@ -654,6 +692,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let publishedVersion: string | null = null;
   let publishedCheckedAt: string | null = null;
   let publishedIsNewer = false;
+  // How many looks have COMPLETED, and what the last one concluded. Counted
+  // because "the check never fired" and "it fired and held" are different
+  // defects that report the same null published version (#2975).
+  let publishedChecks = 0;
+  let publishedHoldReason: RedskilledReplacementHoldReason | null = null;
   let replacementState: "none" | "pending" | "in-progress" = "none";
   // The world's newest version whatever its major, and the hold it implies. Kept
   // beside the in-major answer because that one is capped by construction: on its
@@ -678,6 +721,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let sampleTimer: NodeJS.Timeout | undefined;
   let demandTimer: NodeJS.Timeout | undefined;
   let replaceTimer: NodeJS.Timeout | undefined;
+  let replaceBootTimer: NodeJS.Timeout | undefined;
   let activityTimer: NodeJS.Timeout | undefined;
   let queueTimer: NodeJS.Timeout | undefined;
   let stopping = false;
@@ -730,6 +774,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         replacement: replacementState,
         newest: publishedNewest,
         majorHold,
+        checks: publishedChecks,
+        holdReason: publishedHoldReason,
       },
     });
   }
@@ -1358,19 +1404,24 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * held daemon becomes indistinguishable from a current one (#2926).
    */
   /**
-   * One read of the published world, bounded — a throw and a silence both answer
-   * `null`.
+   * One read of the published world, bounded — a throw and a silence both fall
+   * back to what this host already holds.
    *
-   * The two failures are the same fact: nothing was resolved. Distinguishing them
-   * would only tempt a caller into treating a slow registry as evidence, and the
-   * deadline exists because the idle exit WAITS on this answer — an unbounded read
-   * would hold a daemon that had already decided to leave.
+   * The two failures are the same fact: the registry resolved nothing. They are
+   * answered the same way for exactly that reason — the shipped probe already
+   * consults the bundle cache when the read THROWS, and a deadline that answered
+   * `null` instead left a host holding the newer bundle serving the older one
+   * (#2975). The deadline itself stays, because the idle exit WAITS on this
+   * answer and an unbounded read would hold a daemon that had decided to leave.
+   *
+   * Local evidence never competes with the registry: it is consulted only when
+   * the read resolved nothing at all.
    */
   async function askWhatIsPublished(): Promise<string | null | RedskilledPublishedObservation> {
     try {
       if (publishedProbeTimeoutMs <= 0) return await publishedProbe(daemonVersion);
       return await new Promise((resolve) => {
-        const deadline = setTimeout(() => resolve(null), publishedProbeTimeoutMs);
+        const deadline = setTimeout(() => resolve(withoutTheRegistry()), publishedProbeTimeoutMs);
         deadline.unref();
         publishedProbe(daemonVersion).then(
           (answer) => {
@@ -1379,16 +1430,35 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           },
           () => {
             clearTimeout(deadline);
-            resolve(null);
+            resolve(withoutTheRegistry());
           },
         );
       });
+    } catch {
+      return withoutTheRegistry();
+    }
+  }
+
+  /** What the host can say alone; a lookup that itself fails says nothing. */
+  function withoutTheRegistry(): RedskilledPublishedObservation | null {
+    try {
+      return localEvidence(daemonVersion);
     } catch {
       return null;
     }
   }
 
   async function observePublishedVersion(): Promise<RedskilledReplacementDecision> {
+    // A local build is decided BEFORE the read, on every route rather than at the
+    // idle boundary alone: no release supersedes a source checkout, so the read
+    // could only spend a shared registry quota to be told what is already known.
+    // The look still COUNTS — it fired, and it concluded something.
+    if (isLocalRedskilledBuild(daemonVersion)) {
+      publishedChecks += 1;
+      publishedCheckedAt = clock();
+      publishedHoldReason = "local-build";
+      return { act: "hold", reason: "local-build" };
+    }
     const observation = readPublishedObservation(await askWhatIsPublished());
     const observed = observation.version;
     publishedVersion = observed;
@@ -1397,6 +1467,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     majorHold = planRedskilledMajorHold({ running: daemonVersion, newest: publishedNewest, supervised });
     const decision = planRedskilledReplacement({ running: daemonVersion, published: observed, supervised });
     publishedIsNewer = decision.act === "replace";
+    publishedChecks += 1;
+    publishedHoldReason = decision.act === "hold" ? decision.reason : null;
     // An in-progress handover is never talked back down: the socket and the lease
     // are already going, and a later "hold" would only mislabel what is happening.
     if (replacementState !== "in-progress") replacementState = decision.act === "replace" ? "pending" : "none";
@@ -1427,8 +1499,28 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     return decision;
   }
 
+  /**
+   * Arm the two looks a WORKING daemon gets: one shortly after boot, then the
+   * interval.
+   *
+   * The interval alone leaves a daemon unable to know anything for its first
+   * fifteen minutes, and a daemon holding a registration never reaches the idle
+   * boundary that would have asked — so a release published into that window is
+   * served past, and the daemon's own answer cannot say whether the check held or
+   * had simply never run (#2975). The boot look is what closes both.
+   *
+   * A successor is owed no boot look: it was started BY a replacement seconds
+   * ago, and a mis-resolving one would otherwise restart itself as fast as it
+   * could boot. It waits for the interval like any other tick.
+   */
   function armReplaceTimer(): void {
     if (stopping || replaceTimer != null || replaceCheckMs <= 0) return;
+    if (!bornByReplacement && replaceBootCheckMs > 0) {
+      replaceBootTimer = setTimeout(() => {
+        void checkForReplacement().catch(() => undefined);
+      }, replaceBootCheckMs);
+      replaceBootTimer.unref();
+    }
     replaceTimer = setInterval(() => {
       void checkForReplacement().catch(() => undefined);
     }, replaceCheckMs);
@@ -1616,6 +1708,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (idleTimer) clearTimeout(idleTimer);
     if (sampleTimer) clearInterval(sampleTimer);
     if (replaceTimer) clearInterval(replaceTimer);
+    if (replaceBootTimer) clearTimeout(replaceBootTimer);
     if (activityTimer) clearInterval(activityTimer);
     if (queueTimer) clearInterval(queueTimer);
     if (demandTimer) clearInterval(demandTimer);
