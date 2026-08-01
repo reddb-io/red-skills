@@ -350,6 +350,102 @@ async function listNativeSubIssuesBatch(ctx: GhContext, specs: readonly number[]
   return out;
 }
 
+/** One open Ticket's two dependency surfaces, as the pure ADR 0094 audit eats them. */
+export interface DependencyEdgeTicketRow {
+  readonly number: number;
+  readonly labels: string[];
+  readonly nativeBlockedBy: number[];
+}
+
+export interface DependencyEdgeTicketScan {
+  readonly tickets: DependencyEdgeTicketRow[];
+  /**
+   * Tickets whose native blocked-by edges were NOT read, because the per-Ticket
+   * REST budget ran out. Reported rather than dropped: a comparison that
+   * silently skipped half the queue reads as a clean repo (no silent caps).
+   */
+  readonly unread: number[];
+}
+
+/**
+ * The per-Ticket REST call budget for one dependency-edge scan. The blocked_by
+ * endpoint has no list form, so the read is one GET per open Ticket; the budget
+ * keeps a doctor run bounded on a large backlog and the overflow is REPORTED.
+ */
+export const DEPENDENCY_EDGE_REST_BUDGET = 150;
+
+async function listNativeBlockedBy(ctx: GhContext, ticket: number): Promise<number[]> {
+  const r = await runGh(ctx, [
+    "api",
+    "--paginate",
+    apiPath(ctx, `issues/${ticket}/dependencies/blocked_by`),
+    "--jq",
+    ".[] | {number}",
+  ]);
+  if (r.code !== 0) throw new Error(`gh: failed to list native blocked-by for #${ticket} (code ${r.code})`);
+  return parseNumberJsonLines(r.stdout);
+}
+
+/**
+ * Read both ADR 0094 dependency surfaces for every open non-Spec Ticket: the
+ * `req:N` labels from one issue-list call, and the native blocked-by edges from
+ * the per-Ticket dependencies endpoint. Read-only GETs only — this never
+ * creates, deletes, or edits an edge or a label.
+ *
+ * Parent Specs are excluded here rather than in the pure audit so the expensive
+ * per-Ticket read is never spent on an issue the audit would skip anyway.
+ */
+export async function listDependencyEdgeTickets(
+  ctx: GhContext,
+  restBudget = DEPENDENCY_EDGE_REST_BUDGET,
+): Promise<DependencyEdgeTicketScan> {
+  const r = await runGh(ctx, [
+    "issue",
+    "list",
+    ...repoArgs(ctx),
+    "--state",
+    "open",
+    "--limit",
+    "500",
+    "--json",
+    "number,labels",
+  ]);
+  if (r.code !== 0) return { tickets: [], unread: [] };
+
+  const open = parseIssueRows(r.stdout)
+    .map((row) => ({
+      number: Number(row.number ?? 0),
+      labels: Array.isArray(row.labels) ? row.labels.map((l) => String(l.name ?? "")) : [],
+    }))
+    .filter((row) => Number.isInteger(row.number) && row.number > 0)
+    .filter((row) => !row.labels.includes(LABEL_TYPE_SPEC))
+    .sort((a, b) => a.number - b.number);
+
+  const budgeted = open.slice(0, Math.max(0, restBudget));
+  const unread = open.slice(budgeted.length).map((row) => row.number);
+  const native = await boundedMap(budgeted, GITHUB_REST_CONCURRENCY, async (row) => {
+    try {
+      return await listNativeBlockedBy(ctx, row.number);
+    } catch {
+      // A single unreadable Ticket must not fail the whole scan; it is reported
+      // as unread so the doctor never presents a partial compare as complete.
+      return null;
+    }
+  });
+
+  const tickets: DependencyEdgeTicketRow[] = [];
+  budgeted.forEach((row, index) => {
+    const blockedBy = native[index];
+    if (blockedBy === null || blockedBy === undefined) {
+      unread.push(row.number);
+      return;
+    }
+    tickets.push({ number: row.number, labels: row.labels, nativeBlockedBy: blockedBy });
+  });
+  unread.sort((a, b) => a - b);
+  return { tickets, unread };
+}
+
 /** List Specs for the sub-issue reconciler: open Specs plus recently closed
  * Specs, with both surfaces injected into the pure reconciler. */
 export async function listSpecSubIssueCandidates(
