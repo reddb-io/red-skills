@@ -1288,7 +1288,22 @@ async function workerVitals(
       daemon_liveness: publishWorkerLiveness(resolveWorkerLiveness(hostAnswer, workerId)),
     });
   }
-  return opts.live_only !== false ? all.filter((r) => r.live === true || r.alert !== undefined) : all;
+  return filterWorkerVitalsLiveOnly(all, opts.live_only !== false);
+}
+
+/**
+ * `live_only` means live. The old `|| alert !== undefined` arm meant "also show
+ * what needs attention", but every dead worker carries a stalled alert and
+ * nothing ever reclaims the records — so 344 corpses rode through the LIVE
+ * filter and buried the one live worker under 559KB of payload. A dead worker
+ * with an alert is exactly what `live_only: false` is for; an alert that
+ * matters on a LIVE read is one attached to a worker that is still active.
+ */
+export function filterWorkerVitalsLiveOnly<
+  T extends { live?: boolean; active?: boolean; alert?: unknown },
+>(records: readonly T[], liveOnly: boolean): T[] {
+  if (!liveOnly) return [...records];
+  return records.filter((r) => r.live === true || (r.alert !== undefined && r.active === true));
 }
 
 function projectFields(
