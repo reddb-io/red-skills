@@ -8,5 +8,6 @@ export {
   type LandLockOptions,
   type LandLockRecord,
   type LandLockRelease,
+  type LandLockWaitInfo,
   type LandSerialization,
 } from "@reddb-io/red-castle/engine";

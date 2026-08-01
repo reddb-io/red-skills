@@ -1167,6 +1167,54 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
 });
 
 
+describe("processIssue — a DEACTIVATED review stage is a no-op (#2985)", () => {
+  it("carries a post-DONE correction round straight to landing with no review await", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      // Round 1's gate fails, the Re-seed round's gate passes — the exact shape
+      // that parked worker wAX3A in `validating` forever.
+      feedbackResults: [false, true],
+      reseedGateBudget: 1,
+      locked: false,
+      worktreeDiff: "diff --git a/packages/x/src/a.ts b/packages/x/src/a.ts\n+const x = 1;\n",
+      adversarialReview: { enabled: false, maxIterations: 2, reviewerCount: 1, quorum: "any" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.closed).toEqual([9]);
+    // Nothing about the deactivated stage ran: no diff read, no reviewer
+    // spawned, no verdict published — and, above all, nothing awaited.
+    expect(trace.worktreeDiffCalls).toEqual([]);
+    expect(trace.adversarialReviewContexts).toEqual([]);
+    expect(trace.adversarialReviews).toEqual([]);
+    // The correction round really happened; this is not a green-first-pass.
+    expect(trace.iterLogs.some((l) => l.includes("correction retry 1/"))).toBe(true);
+  });
+
+  it("spends the round the review would have reserved instead of parking on it", async () => {
+    // The operator bought FOUR gate corrections, which is the whole `/afk`
+    // ceiling. With review deactivated its reserved round is dead capacity: the
+    // fourth correction used to be refused with `reservation` while the ceiling
+    // still had room, parking a branch one green round short.
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false, false, false, false, true],
+      reseedGateBudget: 4,
+      locked: false,
+      adversarialReview: { enabled: false, maxIterations: 1, reviewerCount: 1, quorum: "any" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(5);
+    expect(trace.iterLogs.some((l) => l.includes("correction retry 4/4"))).toBe(true);
+    expect(trace.adversarialReviewContexts).toEqual([]);
+  });
+});
+
 describe("processIssue — review is the gate fold's third stage (#2730)", () => {
   it("default-off path lands without running the reviewer", async () => {
     const { deps, input, trace } = harness({

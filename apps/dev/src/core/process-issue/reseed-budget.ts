@@ -95,14 +95,41 @@ export interface ResolveReseedBudgetInput {
   readonly laneLabel?: string;
   /** The `/go` dispatch mode; `no-mistakes` widens the ceiling. */
   readonly runMode?: string;
+  /**
+   * Is the fold's review stage ACTIVATED (`afk.review.enabled`)? Default `true`
+   * — every existing caller resolved the review-bearing ruler.
+   */
+  readonly reviewEnabled?: boolean;
+}
+
+/**
+ * Strip the review's share AND its reservation from a profile. A DISABLED stage
+ * must be a no-op, and a reservation is not one: the reserved round sits inside
+ * the ceiling, invisible to every other cause, waiting for a stage that will
+ * never ask for it (#2985). Under `/afk`'s ruler that silently converted the
+ * last round of a 4-round ceiling into dead capacity — a tier escalation after
+ * three gate corrections was refused with `reservation` while the ceiling still
+ * had room.
+ */
+export function withoutReviewReservation(budget: ReseedBudget): ReseedBudget {
+  return {
+    ...budget,
+    subCaps: { ...budget.subCaps, review: 0 },
+    reserved: { ...budget.reserved, review: 0 },
+  };
 }
 
 /** Resolve the lane's Re-seed budget. Anything that is not the `/go` lane is
  * `/afk`'s ruler, including the scout and manual dispatches, because they run
  * the same unattended pipeline. */
 export function resolveReseedBudget(input: ResolveReseedBudgetInput): ReseedBudget {
-  if (input.laneLabel !== LABEL_GO_LANE) return AFK_RESEED_BUDGET;
-  return input.runMode === "no-mistakes" ? GO_NO_MISTAKES_RESEED_BUDGET : GO_RESEED_BUDGET;
+  const lane =
+    input.laneLabel !== LABEL_GO_LANE
+      ? AFK_RESEED_BUDGET
+      : input.runMode === "no-mistakes"
+        ? GO_NO_MISTAKES_RESEED_BUDGET
+        : GO_RESEED_BUDGET;
+  return input.reviewEnabled === false ? withoutReviewReservation(lane) : lane;
 }
 
 /** What asked for a Re-seed round. A closed vocabulary of four: a gate stage

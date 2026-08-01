@@ -105,6 +105,44 @@ describe("Re-seed budget — the review reservation", () => {
   });
 });
 
+describe("Re-seed budget — a DEACTIVATED review stage reserves nothing (#2985)", () => {
+  it("drops both the review sub-cap and its reservation", () => {
+    const budget = resolveReseedBudget({ reviewEnabled: false });
+
+    expect(budget.lane).toBe("/afk");
+    expect(budget.ceiling).toBe(AFK_RESEED_BUDGET.ceiling);
+    expect(budget.subCaps.review).toBe(0);
+    expect(budget.reserved.review).toBe(0);
+    // The other causes' shares are untouched: deactivating review must not
+    // quietly re-tune the gate's budget.
+    expect(budget.subCaps.gate).toBe(AFK_RESEED_BUDGET.subCaps.gate);
+    expect(budget.subCaps.tier).toBe(AFK_RESEED_BUDGET.subCaps.tier);
+  });
+
+  it("hands the freed round to a post-DONE tier escalation instead of holding it for a stage that never runs", () => {
+    const gateChurn = spend("gate", "gate", "gate");
+    // With review ACTIVATED the last round of the ceiling is held for it.
+    expect(reseedDraw(AFK_RESEED_BUDGET, "tier", gateChurn).refusal).toBe("reservation");
+    // Deactivated, the same correction round is drawable — a disabled stage is
+    // a no-op, never a withheld round.
+    const disabled = resolveReseedBudget({ reviewEnabled: false });
+    expect(reseedDraw(disabled, "tier", gateChurn).allowed).toBe(true);
+  });
+
+  it("refuses the review cause outright rather than leaving it half-funded", () => {
+    const disabled = resolveReseedBudget({ reviewEnabled: false });
+    expect(reseedDraw(disabled, "review", {}).allowed).toBe(false);
+    expect(reseedDraw(disabled, "review", {}).refusal).toBe("sub-cap");
+    expect(reseedBudgetDefects(disabled)).toEqual([]);
+  });
+
+  it("keeps the review-bearing ruler for every caller that does not say otherwise", () => {
+    expect(resolveReseedBudget({})).toBe(AFK_RESEED_BUDGET);
+    expect(resolveReseedBudget({ reviewEnabled: true })).toBe(AFK_RESEED_BUDGET);
+    expect(resolveReseedBudget({ laneLabel: LABEL_GO_LANE, reviewEnabled: false }).reserved.review).toBe(0);
+  });
+});
+
 describe("Re-seed budget — the ceiling binds the sub-caps", () => {
   it("stops the sub-caps drawing more rounds than the ceiling, whatever the mix", () => {
     for (const budget of [AFK_RESEED_BUDGET, GO_RESEED_BUDGET, GO_NO_MISTAKES_RESEED_BUDGET]) {

@@ -185,3 +185,70 @@ describe("castle file land-lock", () => {
     expect(h.elapsed()).toBe(10);
   });
 });
+
+describe("land lock — a wait names itself (#2985)", () => {
+  const LOCK = "/tmp/afk-land.lock";
+
+  it("says nothing when the lock is uncontended", async () => {
+    const h = harness();
+    const seen: unknown[] = [];
+
+    const release = await createFileLandLock(h.deps, {
+      path: LOCK,
+      holder: "wAAAA",
+      pid: 100,
+      onWait: (info) => seen.push(info),
+    }).acquire();
+
+    expect(release).not.toBeNull();
+    expect(seen).toEqual([]);
+  });
+
+  it("reports the holder, the wait's age and the budget left on every poll", async () => {
+    const h = harness();
+    await createFileLandLock(h.deps, { path: LOCK, holder: "wAAAA", pid: 100 }).acquire();
+    const waits: Array<Record<string, unknown>> = [];
+
+    const release = await createFileLandLock(h.deps, {
+      path: LOCK,
+      holder: "wBBBB",
+      pid: 200,
+      pollMs: 10,
+      waitTimeoutMs: 30,
+      onWait: (info) => waits.push({ ...info }),
+    }).acquire();
+
+    // 30ms budget at a 10ms poll: three announced waits, then the give-up.
+    expect(release).toBeNull();
+    expect(waits).toHaveLength(3);
+    expect(waits[0]).toMatchObject({
+      path: LOCK,
+      holder: "wBBBB",
+      heldBy: "wAAAA",
+      heldByPid: 100,
+      waitedMs: 0,
+      remainingMs: 30,
+      attempt: 1,
+    });
+    expect(waits[2]).toMatchObject({ waitedMs: 20, remainingMs: 10, attempt: 3 });
+  });
+
+  it("swallows a throwing sink — observability may never cost the lock", async () => {
+    const h = harness();
+    await createFileLandLock(h.deps, { path: LOCK, holder: "wAAAA", pid: 100 }).acquire();
+
+    const release = await createFileLandLock(h.deps, {
+      path: LOCK,
+      holder: "wBBBB",
+      pid: 200,
+      pollMs: 5,
+      waitTimeoutMs: 10,
+      onWait: () => {
+        throw new Error("sink exploded");
+      },
+    }).acquire();
+
+    expect(release).toBeNull();
+    expect(h.elapsed()).toBe(10);
+  });
+});

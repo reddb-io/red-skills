@@ -649,12 +649,32 @@ export async function processIssue(
   const afkGateCap = resolveReseedGateBudget(deps);
   const isGoLane = input.laneLabel === LABEL_GO_LANE;
   const reseedLane: "/go" | "/afk" = isGoLane ? "/go" : "/afk";
+  /**
+   * Is the fold's review stage ACTIVATED for this Worker? Decided ONCE, from
+   * everything that can switch it off — the operator's `enabled` flag, a missing
+   * reviewer/publisher port, a `/go` direct-PR dispatch, or no worktree-diff
+   * reader — because a disabled stage has to be a no-op on EVERY surface it
+   * touches, not just at its own call site (#2985). It gates two things: whether
+   * `runReviewStage` runs at all, and whether the Re-seed budget reserves the
+   * round it would have drawn.
+   */
+  const reviewStageActivated =
+    deps.adversarialReview?.enabled === true &&
+    deps.extractAdversarialReview !== undefined &&
+    deps.postAdversarialReview !== undefined &&
+    deps.lookups.worktreeDiff !== undefined &&
+    // /go direct-PR skips review; /go no-mistakes and /afk run it.
+    (!isGoLane || isPrePrPipelineActive(input.runMode, input.laneLabel));
   // ONE budget for every Re-seed this Worker may spend (ADR 0129): the lane
   // supplies the ceiling and the review's reservation, the operator's configured
   // counter supplies only the gate's share. A tier escalation therefore draws
   // its own round instead of muting gate correction outright.
   const reseedBudget = withGateSubCap(
-    resolveReseedBudget({ laneLabel: input.laneLabel, runMode: input.runMode }),
+    resolveReseedBudget({
+      laneLabel: input.laneLabel,
+      runMode: input.runMode,
+      reviewEnabled: reviewStageActivated,
+    }),
     isGoLane ? goVerifyRetryCap : afkGateCap,
   );
   let reseedSpend: ReseedSpend = {};
@@ -934,14 +954,14 @@ export async function processIssue(
    * budget and the review's own round would never fire.
    */
   const runReviewStage = async (): Promise<ReviewStageResult> => {
-    const config = deps.adversarialReview;
-    if (!config?.enabled || !deps.extractAdversarialReview || !deps.postAdversarialReview) {
-      return skippedReviewStage;
-    }
-    // /go direct-PR skips review; /go no-mistakes and /afk run it.
-    if (isGoLane && !isPrePrPipelineActive(input.runMode, input.laneLabel)) return skippedReviewStage;
-    const readWorktreeDiff = deps.lookups.worktreeDiff;
-    if (!readWorktreeDiff) return skippedReviewStage;
+    // ONE predicate, resolved at Worker start (see `reviewStageActivated`): a
+    // deactivated stage returns the SKIPPED outcome without reading a diff,
+    // spawning a reviewer, or awaiting anything.
+    if (!reviewStageActivated) return skippedReviewStage;
+    const config = deps.adversarialReview!;
+    const readWorktreeDiff = deps.lookups.worktreeDiff!;
+    const extractReview = deps.extractAdversarialReview!;
+    const postReview = deps.postAdversarialReview!;
     let findings: AdversarialReviewFindings;
     let decision: AdversarialReviewDecision;
     let diff: string;
@@ -971,7 +991,7 @@ export async function processIssue(
       const reviews: AdversarialReviewFindings[] = [];
       for (let i = 0; i < config.reviewerCount; i++) {
         reviews.push(
-          await deps.extractAdversarialReview({
+          await extractReview({
             context,
             runner: reviewer.runner,
             model: reviewer.model,
@@ -982,7 +1002,7 @@ export async function processIssue(
       }
       findings = aggregateAdversarialReviewFindings(reviews, config.quorum);
       decision = decideAdversarialReview(findings);
-      await deps.postAdversarialReview({
+      await postReview({
         issue: input.issue,
         findings,
         body: renderAdversarialReviewComment(findings, decision),

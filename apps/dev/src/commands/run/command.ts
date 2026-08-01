@@ -263,18 +263,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // the `afk.feedback.rebase_on_base` flag is on; undefined → no rebase
   // (default behaviour unchanged).
   const config = loadConfig(paths.configPath, { warn: () => undefined });
-  const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
-    rebaseOnto: settings.feedbackRebaseBase,
-    resourceBudget: readValidationResourceBudget(config),
-  });
-
-  // Wire the boot reconcile runner only when this boot actually owns sweeps.
-  if (!skipSweeps) {
-    bootDeps = { ...bootDeps, reconcileRunner: makeBootReconcileRunner(ctx, paths, workerId, runner, feedback) };
-  }
 
   // Per-issue mutable attempt context the process deps' envelope/iter-log close
-  // over; buildProcessInput resets it before each processIssue call.
+  // over; buildProcessInput resets it before each processIssue call. Built
+  // BEFORE the feedback manager so the gate's lock-wait sink can reach the live
+  // attempt dir and the worker event lane (#2985).
   const current: CurrentAttempt = { attemptDir: "" };
   const castleBridge = createCastleWorkerLaneBridge({
     redRoot: join(ctx.root, ".red"),
@@ -282,6 +275,49 @@ export async function runCommand(options: RunOptions): Promise<number> {
     attemptDir: () => current.attemptDir,
     supervisorLane: process.env[SUPERVISOR_LANE_ENV] || undefined,
   });
+
+  // Feedback worktree manager — checks out the worker branch for the gate.
+  // AFK runner improvement (Pattern 2): `feedbackRebaseBase` is set only when
+  // the `afk.feedback.rebase_on_base` flag is on; undefined → no rebase
+  // (default behaviour unchanged).
+  const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
+    rebaseOnto: settings.feedbackRebaseBase,
+    resourceBudget: readValidationResourceBudget(config),
+    // A host-wide lock wait is the gate's only silent stall: no child, no
+    // socket, no write, and `live=true` on every surface for as long as an hour
+    // (#2985). Say it out loud on all three lanes the operator reads.
+    onLockWait: (notice) => {
+      const waiting = notice.state === "waiting";
+      if (current.attemptDir !== "") {
+        void fsx.appendLine(join(current.attemptDir, "afk.log"), notice.message);
+        void updateState(workerStatePath(current.attemptDir), {
+          // The terminal notice RETIRES the banner. A blocked marker that
+          // outlives its block is the same observability lie in reverse.
+          "current.blocked_on": waiting ? `lock:${notice.lock}` : "",
+          "current.blocked_detail": waiting ? notice.message : "",
+          "current.blocked_for_s": waiting ? String(Math.floor(notice.waitedMs / 1000)) : "",
+          "current.last_event_at": new Date().toISOString(),
+        }).catch(() => {});
+      }
+      void castleBridge
+        .record("worker.lock_wait", {
+          lock: notice.lock,
+          state: notice.state,
+          path: notice.path,
+          held_by: notice.heldBy ?? "",
+          held_by_pid: notice.heldByPid ?? 0,
+          held_for_s: Math.floor((notice.heldForMs ?? 0) / 1000),
+          waited_s: Math.floor(notice.waitedMs / 1000),
+          remaining_s: Math.floor(notice.remainingMs / 1000),
+        })
+        .catch(() => {});
+    },
+  });
+
+  // Wire the boot reconcile runner only when this boot actually owns sweeps.
+  if (!skipSweeps) {
+    bootDeps = { ...bootDeps, reconcileRunner: makeBootReconcileRunner(ctx, paths, workerId, runner, feedback) };
+  }
 
   // --request/-r special block, threaded into the handoff the agent reads.
   const requestBlock = specialUserRequestBlock(flags.request);
