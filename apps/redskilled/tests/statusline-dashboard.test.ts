@@ -279,7 +279,14 @@ describe("the published display record is stored and never interpreted", () => {
 describe("the daemon serves the dashboard it renders", () => {
   it("answers statusline-dashboard with the same document a direct render produces", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, daemonVersion: "0.1.0", idleExitMs: 0 });
+    const daemon = await startRedskilledDaemon({
+      paths,
+      daemonVersion: "0.1.0",
+      idleMs: 60_000,
+      sampleMs: 0,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      stopWorker: () => true,
+    });
     running.push(daemon);
 
     const dashboard = await readRedskilledDashboard(paths, { mode: "global" });
@@ -292,7 +299,14 @@ describe("the daemon serves the dashboard it renders", () => {
 
   it("reports no such Worker rather than storing a display record for one it does not hold", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, daemonVersion: "0.1.0", idleExitMs: 0 });
+    const daemon = await startRedskilledDaemon({
+      paths,
+      daemonVersion: "0.1.0",
+      idleMs: 60_000,
+      sampleMs: 0,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      stopWorker: () => true,
+    });
     running.push(daemon);
 
     const ack = await publishRedskilledWorkerLogLine(paths, {
