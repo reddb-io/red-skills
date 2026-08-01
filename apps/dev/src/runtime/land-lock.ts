@@ -10,7 +10,12 @@
 import { open, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { createFileLandLock, type LandLock, type LandLockFs } from "../core/land-lock.js";
+import {
+  createFileLandLock,
+  type LandLock,
+  type LandLockFs,
+  type LandLockWaitInfo,
+} from "../core/land-lock.js";
 
 /** Standard land-lock path for an AFK tmp dir (`.red/tmp/afk-land.lock`). */
 export function landLockPath(tmpDir: string): string {
@@ -71,7 +76,12 @@ function isHolderAlive(pid: number): boolean {
 export function createPathLock(
   path: string,
   holder: string,
-  options: { waitTimeoutMs?: number; pollMs?: number; staleAfterMs?: number } = {},
+  options: {
+    waitTimeoutMs?: number;
+    pollMs?: number;
+    staleAfterMs?: number;
+    onWait?: (info: LandLockWaitInfo) => void;
+  } = {},
   pid: number = process.pid,
 ): LandLock {
   return createFileLandLock(

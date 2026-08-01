@@ -60,6 +60,7 @@ import type { IssueCandidate } from "./core/session.js";
 import { listCandidates, listHitlCandidates } from "./runtime/gh.js";
 import { matchesSelector } from "./core/session.js";
 import { resolveHitlDecision } from "./core/hitl-resolve.js";
+import { detectWedgedOrchestrator } from "./core/wedged-orchestrator.js";
 import * as ghx from "./runtime/gh.js";
 import { publishedBundleArgv } from "./runtime/published-entry.js";
 import {
@@ -1226,7 +1227,19 @@ async function workerVitals(
       });
     }
   }));
+  const nowIso = new Date().toISOString();
   const all = records.map(({ state, ...record }) => {
+    // The post-DONE hang the liveness lane cannot see (#2985): alive, no child,
+    // orchestrator-owned phase, silent for minutes. A session-error alert is a
+    // harder fact and always wins; this fills the gap where there is none.
+    const wedged = detectWedgedOrchestrator({
+      live: record.live,
+      phase: state.current.phase,
+      laneAgeMs: record.livenessVerdict?.laneAgeMs,
+      liveDescendants: record.livenessVerdict?.liveDescendants,
+      blockedOn: state.current.blocked_on,
+      blockedDetail: state.current.blocked_detail,
+    });
     return {
     worker: {
       id: state.worker_id,
@@ -1266,7 +1279,9 @@ async function workerVitals(
     renderable_live: record.renderableLive,
     liveness: record.liveness,
     liveness_verdict: record.livenessVerdict,
-    alert: alerts.get(state.worker_id),
+    alert:
+      alerts.get(state.worker_id) ??
+      (wedged ? { type: wedged.type, at: nowIso, message: wedged.message } : undefined),
     // The record's own live flag can only WITHHOLD a death claim (see the
     // anchor): it never becomes an `alive` verdict of its own, so this payload
     // stays one anchor deep while refusing to call a visibly running Worker gone.
