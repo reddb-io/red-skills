@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { SpawnOptions } from "node:child_process";
 import type { JsonObject } from "@reddb-io/toon";
 import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import { waitsDir } from "@reddb-io/shared/red-paths.js";
@@ -25,12 +26,35 @@ import { dispatchInput } from "../../../packages/red-castle/src/mcp/worker.js";
 import type { HookExec } from "../src/core/hook-dispatcher.js";
 import { readPidStartTime } from "../src/core/state.js";
 
+// Every process this suite starts, RECORDED — never replaced. The project
+// lifecycle's contract is that a refusal starts nothing, and a refusal that
+// quietly launched a producer of its own would still read as a rejected promise.
+// The call passes straight through to the real `spawn`, so the launches other
+// cases in this file depend on keep behaving exactly as they did.
+const spawned = vi.hoisted(() => [] as { command: string; args: readonly string[] }[]);
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    spawn: (command: string, args: readonly string[], options: SpawnOptions) => {
+      spawned.push({ command, args });
+      return (actual.spawn as unknown as (
+        command: string,
+        args: readonly string[],
+        options: SpawnOptions,
+      ) => ReturnType<typeof actual.spawn>)(command, args, options);
+    },
+  };
+});
+
 const roots: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
+  spawned.length = 0;
 });
 
 async function root(): Promise<string> {
@@ -485,6 +509,11 @@ describe("castle MCP host adapter", () => {
   });
 });
 
+// The host these cases speak to is the SANDBOX's, pinned by the suite's setup
+// file (#2981): both assert what happens when no daemon answers, and resolved
+// from the ambient environment that is an assertion about the developer's
+// machine — on a host running a daemon the start reached it and was registered,
+// so the refusal went red on untouched code.
 describe("project lifecycle — a registration, never a process (#2909)", () => {
   // ADR 0130 Amendment 4: the record lives on the host, so both a duplicate
   // start and a re-aim are decided by the daemon. A pre-check of our own would be
@@ -499,21 +528,29 @@ describe("project lifecycle — a registration, never a process (#2909)", () => 
 
     await expect(
       createCastleMcpDependencies(cwd).projectResize({ target: 3, runner: "codex" }),
-    ).rejects.toThrow(/registration|daemon/);
+    ).rejects.toThrow(/registration rather than a process/);
+
+    // Asking the host is allowed to start the HOST (ADR 0130 rule 7, and the
+    // sandbox pins that executable at a path that cannot run). What a re-aim may
+    // never start is a producer of this project's own.
+    expect(spawned.map((launch) => launch.command)).toEqual([process.env.REDSKILLED_BIN]);
   });
 
   it("refuses the start rather than falling back to a process of its own", async () => {
-    // A bare scratch directory: no daemon of its own and no `origin`. Either
-    // refusal is the contract — what is never allowed is a process started
-    // locally to make up for what the start could not do. The daemon-down
-    // refusal names the socket, and `mcp-project-registration` pins that one
-    // against an isolated host; this one pins that a checkout with no tracker
-    // to count is refused rather than registered with a query about everything.
+    // The daemon is down, so the start ends there: the refusal names the socket
+    // and the fact that a project contributes a registration rather than a
+    // process. What is never allowed is a process started locally to make up for
+    // what the start could not do.
     const cwd = await root();
 
     await expect(
       createCastleMcpDependencies(cwd).projectStart({ runner: "claude", target: 1 }),
-    ).rejects.toThrow(/registration rather than a process|no `origin` remote/);
+    ).rejects.toThrow(/registration rather than a process/);
+
+    // Fail closed (ADR 0130 rule 6). The one launch this path may attempt is the
+    // host daemon's own auto-start (rule 7), which the sandbox pins at a path
+    // that cannot run — and nothing else was started to compensate.
+    expect(spawned.map((launch) => launch.command)).toEqual([process.env.REDSKILLED_BIN]);
   });
 });
 
