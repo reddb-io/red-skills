@@ -157,6 +157,10 @@ export interface DeathRecorderHost {
   readonly pid: number;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   off(event: string, listener: (...args: unknown[]) => void): unknown;
+  /** How many listeners an event has — how the recorder knows it is alone. */
+  listenerCount?(event: string): number;
+  /** Re-delivers a signal, so a default disposition can do what it would have. */
+  kill?(pid: number, signal: string): unknown;
   uptime(): number;
   memoryUsage(): { rss: number };
   resourceUsage(): {
@@ -326,6 +330,8 @@ export interface InstallDeathRecorderOptions {
   readonly id: string;
   /** The phase the process starts in; defaults to {@link DEATH_PHASE_UNSTARTED}. */
   readonly phase?: string;
+  /** Which signals to trap; defaults to {@link TRAPPED_DEATH_SIGNALS}. */
+  readonly signals?: readonly string[];
   readonly host?: DeathRecorderHost;
   readonly io?: DeathLaneIo;
   readonly clock?: () => string;
@@ -381,9 +387,13 @@ export function markDeathPhase(phase: string): void {
  * record contradicting the first. The specific paths (signal, uncaught) therefore
  * latch, and `exit` writes only when nothing has yet.
  *
- * **The handlers OBSERVE; they never act.** None of them exits the process, and
- * none of them swallows anything: a recorder that changed the death would be
- * masking the bug it exists to explain.
+ * **The handlers OBSERVE; they never act — and never PREVENT.** Attaching a
+ * listener to a signal is itself an action in Node: it displaces the default
+ * disposition, so a bare `on("SIGHUP", …)` would quietly make SIGHUP survivable
+ * for a process that used to die of it. When the recorder finds it is the ONLY
+ * listener for a signal, it therefore detaches and re-raises, letting the default
+ * do exactly what it would have done. Where another handler already owns the
+ * signal, the recorder stays out of the way and lets that handler decide.
  */
 export function installDeathRecorder(options: InstallDeathRecorderOptions): DeathRecorder {
   const host = options.host ?? (process as unknown as DeathRecorderHost);
@@ -425,10 +435,24 @@ export function installDeathRecorder(options: InstallDeathRecorderOptions): Deat
     },
   };
 
+  const signals = options.signals ?? TRAPPED_DEATH_SIGNALS;
   const listeners: Array<[string, (...args: unknown[]) => void]> = [
-    ...TRAPPED_DEATH_SIGNALS.map(
-      (signal) => [signal, () => handlers.signal(signal)] as [string, (...args: unknown[]) => void],
-    ),
+    ...signals.map((signal) => {
+      const listener = (): void => {
+        handlers.signal(signal);
+        // Alone on this signal means the default disposition was displaced by
+        // this very listener. Hand it back rather than swallow the death.
+        if (host.listenerCount?.(signal) !== 1 || !host.kill) return;
+        host.off(signal, listener);
+        try {
+          host.kill(pid, signal);
+        } catch {
+          // A host that refuses the re-raise keeps the record; the death it was
+          // about to have is not this module's to force a second way.
+        }
+      };
+      return [signal, listener] as [string, (...args: unknown[]) => void];
+    }),
     ["uncaughtException", (...args) => handlers.uncaughtException(args[0])],
     ["unhandledRejection", (...args) => handlers.unhandledRejection(args[0])],
     ["exit", (...args) => handlers.exit(typeof args[0] === "number" ? args[0] : null)],
