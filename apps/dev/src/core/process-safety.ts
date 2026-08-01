@@ -40,6 +40,7 @@
 
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { markDeathPhase } from "@reddb-io/shared/death-record.js";
 
 /** The injectable logger the safety handlers use. Production: writes to a
  * file via appendFileSync; tests: an in-memory array. */
@@ -150,6 +151,11 @@ export function setActiveClaimFinalizer(finalizer: ActiveClaimFinalizer | null):
 export function markProcessSafetyStep(step: string): void {
   activeLastStep = step;
   activeStepWriter?.(step);
+  // One announcement, both records. The death record's `last_phase` is only worth
+  // reading if it is the phase the process was ACTUALLY in, and the call sites
+  // that already say where they are are these — asking them to announce twice is
+  // how the second record drifts into naming a phase nobody is in any more.
+  markDeathPhase(step);
 }
 
 function runActiveClaimFinalizer(): void {
