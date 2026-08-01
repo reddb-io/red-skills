@@ -34,6 +34,7 @@ import type { RedskilledLaunchTemplate } from "./launch-template.js";
 import type { RedskilledPaths } from "./paths.js";
 import type { RedskilledProjectRegistrationRequest } from "./project-registration.js";
 import {
+  isRedskilledDashboard,
   isRedskilledProjectDeregistered,
   isRedskilledDaemonStopped,
   isRedskilledProjectRegistered,
@@ -51,12 +52,17 @@ import {
   type RedskilledStatuslinePayload,
   type RedskilledStatuslineRender,
   type RedskilledStatuslineRenderRequest,
+  type RedskilledDashboard,
+  type RedskilledDashboardRenderRequest,
+  type RedskilledWorkerDisplay,
   type RedskilledWorkerCommandRequest,
   type RedskilledWorkerCommandResult,
   type RedskilledWorkerHeartbeatAck,
   type RedskilledWorkerStarted,
 } from "./protocol.js";
 import type { RedskilledStatuslineOptions } from "./statusline-render.js";
+import type { RedskilledDashboardOptions } from "./dashboard-render.js";
+import { clampPublishedWorkerDisplay } from "./worker-display.js";
 import { clampPublishedLogLine } from "./worker-log.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
 
@@ -369,6 +375,43 @@ export async function readRedskilledStatuslineString(
   return value;
 }
 
+/**
+ * The dashboard: the same read again, rendered as a table.
+ *
+ * A surface with a vertical dimension — a terminal pane, an editor panel — calls
+ * this and PRINTS what comes back. It never re-derives a cell: the header, the
+ * rows and the pipeline bars are computed once, in the one process that holds the
+ * Worker set across projects, so a pane and the statusline beside it cannot
+ * describe two different machines (ADR 0130 rule 10).
+ */
+export async function readRedskilledDashboard(
+  paths: RedskilledPaths,
+  options: Partial<RedskilledDashboardOptions> | undefined = undefined,
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledDashboard> {
+  const value = await requestRedskilled(
+    paths,
+    {
+      op: "statusline-dashboard",
+      ...(config.sessionProject != null ? { session_project: config.sessionProject } : {}),
+      ...(options == null ? {} : { dashboard: dashboardRequest(options) }),
+    },
+    config,
+  );
+  if (!isRedskilledDashboard(value)) throw new Error("redskilled daemon returned a malformed dashboard");
+  return value;
+}
+
+/** The wire shape of decided dashboard options. PURE. */
+function dashboardRequest(options: Partial<RedskilledDashboardOptions>): RedskilledDashboardRenderRequest {
+  return {
+    ...(options.mode == null ? {} : { mode: options.mode }),
+    ...(options.project === undefined ? {} : { project: options.project }),
+    ...(options.maxWidth == null ? {} : { max_width: options.maxWidth }),
+    ...(options.maxRows == null ? {} : { max_rows: options.maxRows }),
+  };
+}
+
 /** The wire shape of decided render options. PURE. */
 function renderRequest(options: RedskilledStatuslineOptions): RedskilledStatuslineRenderRequest {
   return {
@@ -394,7 +437,13 @@ function renderRequest(options: RedskilledStatuslineOptions): RedskilledStatusli
  */
 export async function publishRedskilledWorkerLogLine(
   paths: RedskilledPaths,
-  heartbeat: { readonly worker_id: string; readonly line: string; readonly session_project?: string },
+  heartbeat: {
+    readonly worker_id: string;
+    readonly line: string;
+    /** What a surface should SHOW about this Worker; omitted publishes nothing. */
+    readonly display?: RedskilledWorkerDisplay;
+    readonly session_project?: string;
+  },
   config: RedskilledClientConfig = {},
 ): Promise<RedskilledWorkerHeartbeatAck> {
   const sessionProject = heartbeat.session_project ?? config.sessionProject;
@@ -405,6 +454,7 @@ export async function publishRedskilledWorkerLogLine(
       heartbeat: {
         worker_id: heartbeat.worker_id,
         last_log_line: clampPublishedLogLine(heartbeat.line),
+        ...(heartbeat.display == null ? {} : { display: clampPublishedWorkerDisplay(heartbeat.display) }),
         ...(sessionProject == null ? {} : { session_project: sessionProject }),
       },
     },
