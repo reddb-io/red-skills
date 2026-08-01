@@ -171,6 +171,8 @@ plugins:
           - wayfinder:prototype
 ```
 
+**Do not hand-write this block for a label you are installing — the two are one protection with two halves** (issue #3013). `red-skills-dev install-type-labels <label…>` creates the type labels on the tracker and merges the HUMAN-ONLY ones into this list in the same act (appending, never overwriting or duplicating), and `/red-doctor` check 25 flags a repo that carries such a label with no entry here. Hand-editing is still fine for a rename or a type whose label already exists.
+
 The audit comment then names the lane and the type that chose it, so an operator reading the Ticket can tell a sweep promotion from a hand-set label. **The names come from this list, never from a built-in one** — a repo whose decision tickets are called something else declares its own and inherits the same protection. An absent or empty list is today's behaviour exactly: every unblocked dependent reaches `ready-for-agent`, with the pre-existing comment text unchanged. A single-line scalar is accepted as a one-label list, and the namespaced `plugins.dev.afk.labels.hitl_types` location folds down like every other key (ADR 0042).
 
 ### Merge-gate policy
