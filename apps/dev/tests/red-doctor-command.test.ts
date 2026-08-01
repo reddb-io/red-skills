@@ -19,9 +19,17 @@ const listLabelNames = vi.fn(async () => ({
   names: ["bug", "ready-for-agent", "wayfinder:map", "wayfinder:grilling", "wayfinder:prototype"],
 }));
 
+// A repo whose `req:N` labels and native blocked-by edges disagree in one
+// direction, so the wired ADR 0094 audit (check 15) has something to report.
+const listDependencyEdgeTickets = vi.fn(async () => ({
+  tickets: [{ number: 2501, labels: ["req:2400"], nativeBlockedBy: [] }],
+  unread: [],
+}));
+
 vi.mock("../src/runtime/gh.js", () => ({
   editBody: vi.fn(async () => true),
   listCandidates,
+  listDependencyEdgeTickets,
   listIssueStates: vi.fn(async () => new Map()),
   listLabelNames,
   postClaimComment: vi.fn(async () => 1),
@@ -258,6 +266,111 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
     const toon = writes.join("");
     expect(toon).toContain("deadendAudit");
     expect(toon).toContain("claim_release");
+    stdout.mockRestore();
+  });
+});
+
+// Seven classifiers the SKILL.md names were documented, unit-tested, and
+// imported by nothing (#3034), so the doctor reported clean on dimensions it
+// never examined. These pose the defects END-TO-END, through the command.
+describe("redDoctorCommand — wired classifier checks", () => {
+  const roots: string[] = [];
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+    roots.length = 0;
+  });
+
+  async function seedDefectiveRepo(): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), "red-doctor-classifiers-"));
+    roots.push(root);
+    await mkdir(join(root, ".red", "tmp", "mystery-lane"), { recursive: true });
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "posed", scripts: {} }), "utf8");
+    await writeFile(
+      join(root, ".red", "config.yaml"),
+      [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      backpressure:",
+        "        - pnpm run gone",
+        "      hooks:",
+        "        pre_wrktree: echo typo",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(join(root, ".red", "tmp", "loose.txt"), "", "utf8");
+    return root;
+  }
+
+  it("prints each newly wired check's documented finding in the human scorecard", async () => {
+    const root = await seedDefectiveRepo();
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    const human = writes.join("");
+    expect(human).toContain("red-doctor AFK hook / backpressure static validation");
+    expect(human).toContain('error pnpm run gone: package.json has no script "gone"');
+    expect(human).toContain("unknown hook name 'pre_wrktree'");
+    expect(human).toContain("red-doctor per-plugin runtime distribution");
+    expect(human).toContain("red-doctor required host binaries");
+    expect(human).toContain("red-doctor native blocked-by vs req:N divergence");
+    expect(human).toContain("#2501 has req:2400 label but no native blocked-by #2400 edge");
+    expect(human).toContain("red-doctor ask-red router coverage sync");
+    expect(human).toContain("red-doctor .red lifecycle taxonomy");
+    expect(human).toContain("warn loose-tmp-file .red/tmp/loose.txt");
+    expect(human).toContain("warn unknown-tmp-lane .red/tmp/mystery-lane");
+    expect(human).toContain("red-doctor unlanded .red docs");
+    stdout.mockRestore();
+  });
+
+  it("renders the same wired checks in the --json (TOON) form", async () => {
+    const root = await seedDefectiveRepo();
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root, "--json"], root)).resolves.toBe(0);
+
+    const toon = writes.join("");
+    for (const section of [
+      "afkHooks",
+      "pluginRuntime",
+      "hostBinaries",
+      "dependencyEdges",
+      "askRedRouter",
+      "redTaxonomy",
+      "unlandedDocs",
+    ]) {
+      expect(toon).toContain(section);
+    }
+    expect(toon).toContain("req-label-without-native");
+    expect(toon).toContain("unknown-tmp-lane");
+    stdout.mockRestore();
+  });
+
+  it("stays read-only: the posed repo's config and tmp lane survive the pass", async () => {
+    const root = await seedDefectiveRepo();
+    const before = await readFile(join(root, ".red", "config.yaml"), "utf8");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    expect(await readFile(join(root, ".red", "config.yaml"), "utf8")).toBe(before);
+    expect(await readFile(join(root, ".red", "tmp", "loose.txt"), "utf8")).toBe("");
     stdout.mockRestore();
   });
 });

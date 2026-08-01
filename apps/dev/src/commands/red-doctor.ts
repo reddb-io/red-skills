@@ -36,6 +36,10 @@ import {
   type HitlTypeDeclarationFixReceipt,
   type HitlTypeDeclarationReport,
 } from "../core/hitl-type-declaration-doctor.js";
+import {
+  collectDoctorClassifierReports,
+  type DoctorClassifierReports,
+} from "../runtime/doctor-classifiers.js";
 import { collectDeadendAuditReport } from "../runtime/deadend-audit-report.js";
 import { emptyDeadendReport, type DeadendAuditReport } from "../core/deadend-audit.js";
 import { LABEL_READY } from "../core/triage-labels.js";
@@ -158,6 +162,85 @@ async function collectRedskilledProvisionReport(root: string): Promise<Redskille
   }
 }
 
+/**
+ * The scorecard sections for the checks whose classifiers live under `core/` and
+ * are injected-facts-only (checks 12, 13, 15, 17, 18, 19, 21). Rendered from one
+ * collected report so a check that could not gather its facts prints a named
+ * note instead of a silently clean section.
+ */
+function renderClassifierSections(classifiers: DoctorClassifierReports): string[] {
+  const {
+    hooks,
+    hookPoints,
+    runtime,
+    runtimeUnresolved,
+    hostBinaries,
+    dependencyEdges,
+    dependencyEdgesUnread,
+    askRedRouter,
+    redTaxonomy,
+    unlandedDocs,
+    notes,
+  } = classifiers;
+  return [
+    "",
+    "red-doctor AFK hook / backpressure static validation",
+    `declared hook points: ${hookPoints.length}`,
+    ...hookPoints.map((point) => `  ${point.hook} exit=${point.exit} commands=${point.commands}`),
+    `backpressure commands: ${hooks.backpressure.length}`,
+    ...hooks.backpressure.map((finding) => `  ${finding.verdict} ${finding.command}: ${finding.reason}`),
+    `hook commands: ${hooks.hooks.length}`,
+    ...hooks.hooks.map((entry) => `  ${entry.finding.verdict} ${entry.hook} ${entry.finding.command}: ${entry.finding.reason}`),
+    `unknown hook names: ${hooks.unknownHooks.length}`,
+    ...hooks.unknownHooks.map((name) => `  unknown hook name '${name}'`),
+    "",
+    "red-doctor per-plugin runtime distribution",
+    ...runtime.rows.map((row) => `  ${row.verdict} ${row.plugin} enabled=${row.enabled} state=${row.state}`),
+    `runtime findings: ${runtime.findings.length}`,
+    ...runtime.findings.map((finding) => `  ${finding.verdict} ${finding.plugin} ${finding.kind}: ${finding.reason}`),
+    ...runtime.findings.map((finding) => `  fix: ${finding.remediation}`),
+    ...(runtimeUnresolved.length > 0 ? [`unaudited plugins: ${runtimeUnresolved.join(" ")}`] : []),
+    "",
+    "red-doctor required host binaries",
+    ...hostBinaries.rows.map(
+      (row) => `  ${row.verdict === "ok" ? "✅" : "❌"} ${row.binary} catalog=${row.catalog} config=${row.recorded} observed=${row.observed}`,
+    ),
+    `host binary findings: ${hostBinaries.findings.length}`,
+    ...hostBinaries.findings.map((finding) => `  ${finding.kind}: ${finding.reason}`),
+    ...hostBinaries.findings.map((finding) => `  fix: ${finding.remediation}`),
+    "",
+    "red-doctor native blocked-by vs req:N divergence",
+    `tickets compared: ${dependencyEdges.rows.length}`,
+    `dependency edge findings: ${dependencyEdges.findings.length}`,
+    ...dependencyEdges.findings.map((finding) => `  ${finding.verdict} ${finding.kind}: ${finding.reason}`),
+    ...dependencyEdges.findings.map((finding) => `  fix: ${finding.remediation}`),
+    // Never a silent cap: a compare that skipped Tickets says which ones.
+    `tickets unread: ${dependencyEdgesUnread.length}`,
+    ...(dependencyEdgesUnread.length > 0 ? [`  unread: ${dependencyEdgesUnread.join(" ")}`] : []),
+    "",
+    "red-doctor ask-red router coverage sync",
+    `router-covered skills: ${askRedRouter.rows.filter((row) => row.inRouter).length}`,
+    `router findings: ${askRedRouter.findings.length}`,
+    ...askRedRouter.findings.map((finding) => `  ${finding.verdict} ${finding.kind}: ${finding.reason}`),
+    ...askRedRouter.findings.map((finding) => `  fix: ${finding.remediation}`),
+    "",
+    "red-doctor .red lifecycle taxonomy",
+    `taxonomy findings: ${redTaxonomy.findings.length}`,
+    ...redTaxonomy.findings.map((finding) => `  ${finding.verdict} ${finding.kind} ${finding.path}: ${finding.reason}`),
+    ...redTaxonomy.findings.map((finding) => `  target: ${finding.target}`),
+    "",
+    "red-doctor unlanded .red docs",
+    `verdict: ${unlandedDocs.row.verdict}`,
+    `evidence: ${unlandedDocs.row.evidence}`,
+    `unlanded docs findings: ${unlandedDocs.findings.length}`,
+    ...unlandedDocs.findings.map((finding) => `  ${finding.verdict} ${finding.kind}: ${finding.reason}`),
+    ...unlandedDocs.findings.map((finding) => `  fix: ${finding.remediation}`),
+    ...(notes.length > 0
+      ? ["", "red-doctor classifier notes", ...notes.map((note) => `  ${note}`)]
+      : []),
+  ];
+}
+
 function renderHuman(
   root: string,
   probeReport: OperationalProbeReport,
@@ -168,6 +251,7 @@ function renderHuman(
   deadendReport: DeadendAuditReport,
   redskilledReport: RedskilledProvisionReport,
   hitlTypeReport: HitlTypeDeclarationReport,
+  classifiers: DoctorClassifierReports,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
@@ -247,6 +331,7 @@ function renderHuman(
     ...deadendReport.classes.flatMap((cls) =>
       cls.findings.map((finding) => `  ${finding.deadendClass} ${finding.subject} → cure: ${finding.cure} (${finding.detail})`),
     ),
+    ...renderClassifierSections(classifiers),
   ];
   if (applied) {
     lines.push(
@@ -276,6 +361,7 @@ function renderToon(
   deadendReport: DeadendAuditReport,
   redskilledReport: RedskilledProvisionReport,
   hitlTypeReport: HitlTypeDeclarationReport,
+  classifiers: DoctorClassifierReports,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
@@ -400,6 +486,106 @@ function renderToon(
         remediation: finding.remediation,
       })),
     },
+    afkHooks: {
+      points: classifiers.hookPoints.map((point) => ({
+        hook: point.hook,
+        exit: point.exit,
+        commands: point.commands,
+      })),
+      backpressure: classifiers.hooks.backpressure.map((finding) => ({
+        command: finding.command,
+        verdict: finding.verdict,
+        reason: finding.reason,
+      })),
+      hookCommands: classifiers.hooks.hooks.map((entry) => ({
+        hook: entry.hook,
+        command: entry.finding.command,
+        verdict: entry.finding.verdict,
+        reason: entry.finding.reason,
+      })),
+      unknownHooks: classifiers.hooks.unknownHooks,
+    },
+    pluginRuntime: {
+      plugins: classifiers.runtime.rows.map((row) => ({
+        plugin: row.plugin,
+        enabled: row.enabled,
+        state: row.state,
+        verdict: row.verdict,
+      })),
+      findings: classifiers.runtime.findings.map((finding) => ({
+        plugin: finding.plugin,
+        kind: finding.kind,
+        verdict: finding.verdict,
+        remediation: finding.remediation,
+      })),
+      unaudited: classifiers.runtimeUnresolved,
+    },
+    hostBinaries: {
+      binaries: classifiers.hostBinaries.rows.map((row) => ({
+        binary: row.binary,
+        catalog: row.catalog,
+        recorded: row.recorded,
+        observed: row.observed,
+        verdict: row.verdict,
+      })),
+      findings: classifiers.hostBinaries.findings.map((finding) => ({
+        binary: finding.binary,
+        kind: finding.kind,
+        verdict: finding.verdict,
+        remediation: finding.remediation,
+      })),
+    },
+    dependencyEdges: {
+      tickets: classifiers.dependencyEdges.rows.map((row) => ({
+        ticket: row.ticket,
+        reqLabels: row.reqLabels,
+        nativeBlockedBy: row.nativeBlockedBy,
+        verdict: row.verdict,
+      })),
+      findings: classifiers.dependencyEdges.findings.map((finding) => ({
+        ticket: finding.ticket,
+        blocker: finding.blocker,
+        kind: finding.kind,
+        verdict: finding.verdict,
+      })),
+      unread: classifiers.dependencyEdgesUnread,
+    },
+    askRedRouter: {
+      skills: classifiers.askRedRouter.rows.map((row) => ({
+        skill: row.skill,
+        inRegisteredSet: row.inRegisteredSet,
+        inRouter: row.inRouter,
+        verdict: row.verdict,
+      })),
+      findings: classifiers.askRedRouter.findings.map((finding) => ({
+        skill: finding.skill,
+        kind: finding.kind,
+        verdict: finding.verdict,
+      })),
+    },
+    redTaxonomy: {
+      findings: classifiers.redTaxonomy.findings.map((finding) => ({
+        path: finding.path,
+        kind: finding.kind,
+        verdict: finding.verdict,
+        target: finding.target,
+      })),
+    },
+    unlandedDocs: {
+      scorecard: {
+        check: classifiers.unlandedDocs.row.check,
+        verdict: classifiers.unlandedDocs.row.verdict,
+        evidence: classifiers.unlandedDocs.row.evidence,
+        fixHome: classifiers.unlandedDocs.row.fixHome,
+      },
+      findings: classifiers.unlandedDocs.findings.map((finding) => ({
+        kind: finding.kind,
+        verdict: finding.verdict,
+        base: finding.base,
+        files: finding.files,
+      })),
+    },
+    classifierNotes: classifiers.notes,
     appliedTmpJanitor: applied
       ? {
           expiredLanes: applied.expiredLanes.map((path) => rel(root, path)),
@@ -517,6 +703,12 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     // Read-only: the provisioning report probes the socket and never spawns the
     // daemon it is reporting on, which would answer its own question.
     const redskilledReport = await collectRedskilledProvisionReport(ctx.root);
+    // The pure classifiers the SKILL.md names for checks 12, 13, 15, 17, 18, 19
+    // and 21. They are injected-facts-only, so the doctor is the surface that
+    // reads the repo, the bundle cache and the tracker for them; before this
+    // wiring existed the command imported none of them and reported clean on
+    // seven dimensions it never examined (#3034).
+    const classifiers = await collectDoctorClassifierReports(ctx);
     // The declaration merge is the one config write this doctor performs, and
     // it is gated like every other confirmed repair: preview the diff, then
     // write only with explicit approval.
@@ -534,8 +726,8 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     );
     process.stdout.write(
       flags.json
-        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined)
-        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined),
+        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined)
+        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined),
     );
     return 0;
   } catch (error) {

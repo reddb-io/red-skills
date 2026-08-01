@@ -7,6 +7,8 @@ const runtimeDir = join(process.cwd(), "src", "runtime");
 const EXPECTED_GH_EXPORTS = [
   "CandidateListDiagnostics",
   "CommentTrustResolver",
+  "DependencyEdgeTicketRow",
+  "DependencyEdgeTicketScan",
   "GhContext",
   "IssueStateRow",
   "StatuslineQueueCounts",
@@ -45,6 +47,7 @@ const EXPECTED_GH_EXPORTS = [
   "listByLabel",
   "listCandidates",
   "listClaimComments",
+  "listDependencyEdgeTickets",
   "listHitlCandidates",
   "listIssueStates",
   "listLabelNames",
