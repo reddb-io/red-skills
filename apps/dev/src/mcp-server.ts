@@ -3,6 +3,7 @@ import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { encode, type JsonValue } from "@reddb-io/toon";
+import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createCastleMcpTools } from "@reddb-io/red-castle/mcp-server";
@@ -117,6 +118,16 @@ export async function connectResidentMcp(
 
 async function run(): Promise<void> {
   const root = process.cwd();
+  // The launcher's own black box (Spec #3022, slice #3023). The resident is where
+  // work is ASKED for, so a resident that vanished mid-session used to take the
+  // reason with it; it now writes the same record a worker and the host daemon
+  // write, to the same lane, on every trap-able exit.
+  const deaths = installDeathRecorder({
+    lanePath: deathLaneFile(root),
+    kind: "launcher",
+    id: `castle-mcp:${process.pid}`,
+    phase: "connecting",
+  });
   const server = createCastleMcpServer();
   const close = () => {
     void server.close();
@@ -124,6 +135,7 @@ async function run(): Promise<void> {
   process.once("SIGINT", close);
   process.once("SIGTERM", close);
   try {
+    deaths.phase("serving");
     let sharedBootSweeps: (() => Promise<void>) | undefined;
     await connectResidentMcp({
       server,
@@ -144,6 +156,7 @@ async function run(): Promise<void> {
       }),
     });
   } finally {
+    deaths.phase("closing");
     process.removeListener("SIGINT", close);
     process.removeListener("SIGTERM", close);
   }
