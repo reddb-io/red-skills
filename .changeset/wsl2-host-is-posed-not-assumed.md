@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-WSL2 is proven rather than assumed: a test poses the host — no `XDG_RUNTIME_DIR`, no `systemd-run` on the PATH the probe reads, no `--user` session, a relocated `TMPDIR` — and a real Worker is born on it, unisolated, carrying the warning that names what was lost, with the RSS sampling floor still terminating it over budget off a synthetic `/proc`. Posing the host found the one thing reading the code did not: the `tmpdir()` socket fallback carried no `sun_path` check of its own, so a `TMPDIR` longer than 54 bytes produced a 168-byte socket path and `bind` would have answered `ENAMETOOLONG` — an outage that reads like anything but a path four bytes too long, and one that surfaces only on someone else's machine. `runtimeSocketDir` now falls back once more to `/tmp` when `tmpdir()` will not fit, and the supported version boundary is stated where an operator meets it: WSL2 yes, WSL1 no, because the memory floor walks the Worker's tree through a `/proc` WSL1 does not have.
