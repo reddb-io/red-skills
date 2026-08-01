@@ -10,6 +10,7 @@
     "./args.js": "./args.ts",
     "./bundle-fetch.js": "./bundle-fetch.ts",
     "./channel.js": "./channel.ts",
+    "./death-record.js": "./death-record.ts",
     "./entrypoint-cli.js": "./entrypoint-cli.ts",
     "./github-batch.js": "./github-batch.ts",
     "./github-quota.js": "./github-quota.ts",
