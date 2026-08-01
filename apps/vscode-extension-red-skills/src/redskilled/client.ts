@@ -20,7 +20,7 @@
  * reads JSON is remembered. That is why nothing here calls `JSON.parse` on a
  * frame — the daemon's wire has been TOONL since #2947/#2948.
  *
- * TODO(#2997): once `apps/herdr-plugin/` lands, lift this client and
+ * TODO(#2997): once `apps/herdr-plugin-red-skills/` lands, lift this client and
  * `event-lane.ts` into one shared read module instead of a second local copy.
  */
 import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
@@ -72,7 +72,7 @@ let sequence = 0;
 
 function nextRequestId(op: string): string {
   sequence += 1;
-  return `vscode-redskilled:${op}:${process.pid}:${sequence}`;
+  return `vscode-extension-red-skills:${op}:${process.pid}:${sequence}`;
 }
 
 /** The read surface, bound to one socket. */

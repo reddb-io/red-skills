@@ -28,7 +28,7 @@ node_modules/
 # Per-plugin build outputs — shipped as GitHub Release assets, fetched dynamically (ADR 0034)
 dist/
 
-# VSCode extension bundle — rebuilt by `pnpm -C apps/vscode-redskilled build`,
+# VSCode extension bundle — rebuilt by `pnpm -C apps/vscode-extension-red-skills build`,
 # packed into the gitignored dist/*.vsix, never committed.
 apps/*/out/
 

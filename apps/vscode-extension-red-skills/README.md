@@ -1,4 +1,4 @@
-# vscode-redskilled
+# vscode-extension-red-skills
 
 A VSCode extension that connects to the `redskilled` host daemon (ADR 0130) and
 surfaces its state inside the editor: the live Workers with their vitals, a
@@ -56,9 +56,9 @@ answers.
 ## Building and installing
 
 ```sh
-pnpm -C apps/vscode-redskilled build      # typecheck + bundle out/extension.cjs
-pnpm -C apps/vscode-redskilled package    # write dist/reddb-io.vscode-redskilled-<version>.vsix
-code --install-extension dist/reddb-io.vscode-redskilled-0.1.0.vsix
+pnpm -C apps/vscode-extension-red-skills build      # typecheck + bundle out/extension.cjs
+pnpm -C apps/vscode-extension-red-skills package    # write dist/reddb-io.vscode-extension-red-skills-<version>.vsix
+code --install-extension dist/reddb-io.vscode-extension-red-skills-0.1.0.vsix
 ```
 
 The `.vsix` is **never published**. It is built by `src/packaging/vsix.ts` rather
@@ -71,7 +71,7 @@ bytes.
 ## Tests
 
 ```sh
-pnpm -C apps/vscode-redskilled test
+pnpm -C apps/vscode-extension-red-skills test
 ```
 
 The suite runs against a **fake daemon**: a real unix socket in a temporary
@@ -119,5 +119,5 @@ pane. Where that plugin mirrors the daemon's modules because it is installed
 outside this workspace, this extension **imports** them, so it cannot drift into a
 private idea of what a socket path or a lane row is.
 
-<!-- TODO(#2997): when apps/herdr-plugin/ lands, lift the read client and the
+<!-- TODO(#2997): when apps/herdr-plugin-red-skills/ lands, lift the read client and the
      lane reader into one shared module instead of a second local copy. -->

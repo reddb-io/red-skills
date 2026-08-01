@@ -46,14 +46,14 @@ It answers, in one pane, the question the daemon exists to make answerable:
 
 ## Install
 
-The plugin lives at `apps/herdr-plugin/` in the
+The plugin lives at `apps/herdr-plugin-red-skills/` in the
 [reddb-io/red-skills](https://github.com/reddb-io/red-skills) monorepo (ADR
 0131). Install it by linking that directory from a checkout with its workspace
 installed:
 
 ```bash
 pnpm install                             # from the repo root, once
-herdr plugin link apps/herdr-plugin
+herdr plugin link apps/herdr-plugin-red-skills
 ```
 
 Nothing durable is kept in the plugin root, so replacing it loses nothing:
@@ -236,7 +236,7 @@ lane did not say how it ended — rather than inventing a clean exit.
 
 ## Development
 
-`pnpm -C apps/herdr-plugin test` is what the shared gate runs: the manifest
+`pnpm -C apps/herdr-plugin-red-skills test` is what the shared gate runs: the manifest
 check and the suite, in that order. Each half also runs on its own.
 
 ```bash

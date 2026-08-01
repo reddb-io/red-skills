@@ -31,6 +31,6 @@
     "@reddb-io/afk-container",
     "@reddb-io/cdp-driver",
     "@reddb-io/browser-bridge",
-    "vscode-redskilled"
+    "vscode-extension-red-skills"
   ]
 }

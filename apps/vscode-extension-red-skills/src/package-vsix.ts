@@ -1,7 +1,7 @@
 /**
  * package-vsix — collect the shipped files and write the installable archive.
  *
- * Run through `pnpm -C apps/vscode-redskilled package`, which builds `out/`
+ * Run through `pnpm -C apps/vscode-extension-red-skills package`, which builds `out/`
  * first. It writes to the repo's gitignored `dist/` and **never publishes**: the
  * marketplace is not a destination this repo has, and a script that could push
  * there is one an accident can run.
