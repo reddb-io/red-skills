@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/code-nav-mcp",
-  "version": "3.3.1",
+  "version": "3.3.2",
   "private": true,
   "description": "LSP-backed code navigation as an MCP server: symbol-level goto-definition, find-references, document/workspace symbols and hover for code agents.",
   "license": "Apache-2.0",
