@@ -208,6 +208,19 @@ of it.
   unit the Worker still starts, and the reply — and the host-state record it
   keeps for its whole life — carries a warning naming what was lost. A declared
   budget that cannot be enforced says so as its own warning.
+- **WSL2 is supported; WSL1 is not.** WSL2 is a Linux host missing the two things
+  the Linux path prefers, and each has a stated degradation rather than a
+  failure: with no `XDG_RUNTIME_DIR` the socket lands under `tmpdir()` and the
+  session is scoped `uid:<n>`, and with no `systemd-run` and no `--user` session
+  the Worker is born **unisolated**, carrying the warning that names what was
+  lost. The memory ceiling is then the daemon's own RSS sampling floor and
+  nothing else, which is why that floor is uniform across backends. **A
+  memory-pressure kill on such a host lands on the whole session**, not on one
+  Worker — plan the host budget accordingly. WSL1 is excluded because the floor
+  walks the Worker's process tree through `/proc`, which WSL2 has and WSL1 does
+  not: there the ceiling would silently have nothing to read. A long `TMPDIR` —
+  WSL and some distros relocate it — falls back once more to `/tmp` so the socket
+  path stays inside the kernel's 108-byte `sun_path` limit.
 
 ## Provisioning
 

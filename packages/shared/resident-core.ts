@@ -222,20 +222,41 @@ export interface RuntimeSocketDirOptions {
 }
 
 /**
+ * The POSIX temp root every Unix has, used only when `tmpdir()` will not fit.
+ *
+ * Not a preference — a last resort. `TMPDIR` is the operator's answer and is
+ * honoured first; this exists because a relocated one can be long enough that no
+ * socket under it fits `sun_path`, and a shorter root that binds beats a
+ * respectful one that cannot.
+ */
+export const FALLBACK_TMP_ROOT = "/tmp";
+
+/**
  * The runtime directory for a scope's socket, preferring `XDG_RUNTIME_DIR`.
  *
- * The `XDG_RUNTIME_DIR` candidate is used only when the resulting socket path
- * still fits `sun_path`; otherwise the shorter `tmpdir()` form wins, because a
- * path the kernel refuses to bind is not an option, it is an outage.
+ * Each candidate is used only when the resulting socket path still fits
+ * `sun_path`, because a path the kernel refuses to bind is not an option, it is
+ * an outage — and one that surfaces as `ENAMETOOLONG` from `bind`, which reads
+ * like anything but a path too long by four bytes. `XDG_RUNTIME_DIR` first (the
+ * OS's own per-user answer), then `tmpdir()` for a host that has no session to
+ * have made one, then `/tmp` for the host whose `TMPDIR` is itself too long —
+ * WSL2 and the distros that relocate it are where that last case lives.
  */
 export function runtimeSocketDir(options: RuntimeSocketDirOptions): string {
   const env = options.env ?? process.env;
   const hash = createHash("sha256").update(options.key).digest("hex").slice(0, 20);
+  const fits = (dir: string): boolean =>
+    join(dir, options.socketFileName).length < UNIX_SOCKET_PATH_LIMIT;
   const xdg = env.XDG_RUNTIME_DIR;
   if (xdg) {
     const candidate = join(xdg, "red-skills", hash);
-    if (join(candidate, options.socketFileName).length < UNIX_SOCKET_PATH_LIMIT) return candidate;
+    if (fits(candidate)) return candidate;
   }
   const uid = options.uid ?? (typeof process.getuid === "function" ? process.getuid() : "nouid");
-  return join(tmpdir(), `red-skills-${uid}`, hash);
+  const leaf = join(`red-skills-${uid}`, hash);
+  const candidate = join(tmpdir(), leaf);
+  if (fits(candidate) || process.platform === "win32") return candidate;
+  // Windows is excluded above rather than falling through: it has no `/tmp`, and
+  // its named pipes are not bound by `sun_path` in the first place.
+  return join(FALLBACK_TMP_ROOT, leaf);
 }
