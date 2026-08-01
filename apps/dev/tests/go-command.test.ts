@@ -9,6 +9,8 @@ describe("parseGoArgs", () => {
       mode: "direct-PR",
       yolo: false,
       scout: false,
+      // Detached by default: `/go` is the order, never the work (#3027).
+      attached: false,
       dod: undefined,
       verifyCommand: undefined,
       request: undefined,

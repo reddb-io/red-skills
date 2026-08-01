@@ -2891,3 +2891,10 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **upstream**: —
 - **why**: several humans run fleets against ONE shared `ready-for-agent` pool; without territory scoping any fleet grabs any ticket (a backend-tuned fleet doing frontend work badly). New `tag:<value>` label family + author filter partition the pool without binding issues to users.
 - **what changed**: `/afk` gained `--tags a,b` (selector `tags` facet — AND over `tag:<v>` labels, untagged issues excluded from tag-scoped fleets) and `--user login|@me` (issue author facet, `@me` resolved to a concrete login at dispatch/persist time); `/go` gained `--tags` stamping the labels on the minted `lane:go` issue (auto-created when missing); `/to-spec` and `/to-tickets` gained `--tags` with Spec→Ticket inheritance and on-demand `gh label create`; `/start` records `--tags` as a session decision for the downstream Spec; `triage-labels.md` documents the `tag:<value>` auxiliary family; fleet selectors (`fleet.md`, MCP `fleet_*`/`queue_status`) carry the new `tags`/`user` facets.
+
+## go (engineering) — dispatch survives the dispatcher
+
+- **status**: modified
+- **upstream**: —
+- **why**: issue #3027 (Spec #3022 pillar 5) — `/go` and `/go --scout` ran the engine IN-PROCESS, so the command was the work rather than the order: a UI stop, a session teardown, or a closed terminal killed the launcher and took the run with it (two scout dispatches died that way on 2026-08-01, leaving no record anywhere).
+- **what changed**: `apps/dev/src/commands/go.ts` now asks the host daemon for the worker by default (the same `requestWorkerBirth` birth port the MCP dispatch uses, ADR 0130) and returns immediately, answering with the worker id and the log lane that outlive the launcher; effects moved behind an injectable `GoRuntime`; `--attached` is the documented opt-out for a foreground debug run; `plugins/dev/skills/engineering/go/SKILL.md` documents the detached default, the answer's handles, and what `--attached` costs.
