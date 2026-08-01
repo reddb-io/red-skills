@@ -414,18 +414,24 @@ export async function ensureRunnerErrorLabel(ctx: GhContext): Promise<void> {
 
 /** Idempotently create an arbitrary label (best-effort), generalising
  * ensureRunnerErrorLabel for the typed `blocked:<reason>` observability layer. A
- * label that already exists exits non-zero and is swallowed by the caller. */
-export async function ensureLabel(ctx: GhContext, name: string): Promise<void> {
-  await runGh(ctx, 
+ * label that already exists exits non-zero and is swallowed by the caller.
+ * `presentation` overrides the blocked-reason colour/description for callers
+ * installing a different family (e.g. ticket TYPE labels). */
+export async function ensureLabel(
+  ctx: GhContext,
+  name: string,
+  presentation: { color?: string; description?: string } = {},
+): Promise<void> {
+  await runGh(ctx,
     [
       "label",
       "create",
       name,
       ...repoArgs(ctx),
       "--color",
-      "5319E7",
+      presentation.color ?? "5319E7",
       "--description",
-      "AFK terminal-failure reason (observability)",
+      presentation.description ?? "AFK terminal-failure reason (observability)",
     ],
   );
 }
