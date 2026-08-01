@@ -33,6 +33,76 @@ assumes it.
 
 Attribution is preserved in [NOTICE](./NOTICE).
 
+## Contents
+
+**Start here**
+
+- [Core And Complementary](#core-and-complementary) — the one distinction the rest of this document obeys
+
+**Core**
+
+- [The v3 Model](#the-v3-model) — the host-scoped `redskilled` daemon
+- [The Loop](#the-loop) — issue to reviewed PR
+- [What Ships](#what-ships) — the `dev`, `memory`, and `brain` plugins
+
+**Installing and using it**
+
+- [Install](#install) — the universal installer
+- [Quick Start](#quick-start) — bootstrap a repo and move work
+- [Host Support](#host-support) — which agent host gets which surface
+
+**Complementary**
+
+- [Surfaces Over The Daemon](#surfaces-over-the-daemon) — herdr, VSCode, the statusline
+- [Token-Efficient Terminal Work](#token-efficient-terminal-work) — `rsp`
+- [GitHub Actions Lane](#github-actions-lane) — one autonomous attempt in CI
+- [Container Lane](#container-lane) — AFK in a stateless Docker image
+
+**Reference**
+
+- [TOON And TOONL](#toon-and-toonl) — the serialization mandate and the repo-wide invariants
+- [Configuration](#configuration) — `.red/config.yaml`
+- [Repo Layout](#repo-layout) — what lives where
+- [Skill Map](#skill-map) — every shipped skill
+- [Development In This Repo](#development-in-this-repo) — building and testing RedSkills itself
+- [License](#license)
+
+## Core And Complementary
+
+RedSkills has a **core** and a **complementary layer**, and telling them apart is
+the fastest way to read this repository. The core is what makes an agent move
+work: the plugins that teach it, the daemon that runs it, and the issue-to-PR
+loop that governs it. Everything else is an **accelerator over that core** —
+useful, independently installable, and never load-bearing for the loop itself.
+
+**Core — remove any of these and work stops moving.**
+
+| Piece | What it is | Where |
+| --- | --- | --- |
+| `dev`, `memory`, `brain` | The three marketplace plugins. Dev moves work, Memory improves agent execution, Brain preserves human-facing knowledge. | [What Ships](#what-ships) |
+| `redskilled` | The host-scoped execution daemon. It owns the processes that do the work. | [The v3 Model](#the-v3-model) |
+| The issue-to-PR loop | GitHub Issues as the work queue, isolated worktrees, gates, and review-gated landing. | [The Loop](#the-loop) |
+
+**Complementary — remove any of these and the loop still runs, more slowly or
+less visibly.**
+
+| Piece | What it is | Where |
+| --- | --- | --- |
+| [`rsp`](./apps/rsp/README.md) | Token-efficient terminal wrappers over a reversible elision store, plus `rsp wait`. | [Token-Efficient Terminal Work](#token-efficient-terminal-work) |
+| [`herdr-plugin`](./apps/herdr-plugin/README.md) | A [herdr](https://herdr.dev) plugin pane reading the daemon: Workers, logs, events, PRs. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
+| [`vscode-redskilled`](./apps/vscode-redskilled/README.md) | A VSCode extension reading the same daemon from inside the editor. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
+| The statusline | The daemon's own one-line answer, rendered by the daemon and printed by the host. | [Surfaces Over The Daemon](#surfaces-over-the-daemon) |
+| The Actions lane | One autonomous attempt per issue, from GitHub Actions, without a local daemon. | [GitHub Actions Lane](#github-actions-lane) |
+| [`afk-container`](./apps/afk-container/README.md) | The same drain in a stateless Docker image. | [Container Lane](#container-lane) |
+| [`code-nav`](./apps/code-nav/README.md) | The LSP-backed `navigator` MCP server used by `dev` for codebase orientation. | [Repo Layout](#repo-layout) |
+| [`red-browser`](./apps/red-browser) | Browser CLI and CDP driver for ground-truth verification of live apps. | [Repo Layout](#repo-layout) |
+
+Two properties are neither core nor complementary — they are **house rules the
+whole repo obeys**: structured data is TOON everywhere (files *and* wires), and
+agent work happens in disposable worktrees while the primary checkout's branch
+stays under human control. Both are enforced as ratchets, not conventions; see
+[TOON And TOONL](#toon-and-toonl) and [Configuration](#configuration).
+
 ## The v3 Model
 
 Before v3, every checkout ran its own execution plane. Each one sized itself
@@ -109,11 +179,6 @@ primitive rather than the print-and-exit command layer and returns TOON, so one
 core answers both transports; mutating tools carry a `MUTATING:` prefix and are
 announced before use.
 
-The statusline is the same discipline in miniature: the daemon renders the
-string from the very payload the structured op returns, and a test proves the two
-agree — so **no agent host renders anything.** It runs `redskilled statusline`
-and prints what comes back.
-
 ### Provisioning
 
 A daemon starts on first use, so the floor is auto-spawn and supervision is
@@ -138,9 +203,174 @@ it reports on.
 
 Full detail: [apps/redskilled](./apps/redskilled/README.md).
 
-## Install
+## The Loop
 
-### Universal Installer
+**Issue to PR is the product.** RedSkills treats GitHub Issues as the work queue,
+not a side note. `/triage`, `/to-spec`, `/to-tickets`, `/afk`, `/go`, `/hitl`, and
+`/retake` all speak the same issue-state vocabulary, and **agents work in
+disposable worktrees** so the primary checkout stays under human branch control.
+
+```text
+Plan -> Spec -> sliced issues -> ready-for-agent -> isolated worktree
+  -> validation -> PR -> review/checks -> merge -> Memory evidence
+```
+
+The issue lifecycle is intentionally boring:
+
+```text
+needs-triage -> /triage -> ready-for-agent -> /afk -> PR/merge -> closed
+                                |
+                                +---- blocked/spec/validation/etc.
+                                      -> ready-for-human -> /hitl or /retake
+```
+
+Important states:
+
+| State | Meaning |
+| --- | --- |
+| `ready-for-agent` | The only issue state autonomous drainage consumes. |
+| `running` | Timeline state while a Worker owns the issue. Live state is the daemon's. |
+| `ready-for-human` | A human decision is needed before delegation is safe. |
+| `blocked:dependency` | Waits on `req:N` labels and should not page a human. |
+| `blocked:validation` / `blocked:spec` | Can be requeued only after retry guidance is already decided. |
+| `blocked:ci` | The branch is pushed and the pull request is real, but the queue handed it back. |
+
+### Landing in the merge-queue era
+
+**The merge command exiting 0 is not the merge.** Under a merge queue — the
+forge's own, or `--auto` — exit 0 means *enqueued*, so landing ends by asking the
+pull request itself and treats only `state: MERGED` as landed. A queue that hands
+the PR back parks `blocked:ci` with the issue open and the branch on origin;
+nothing closes, relabels, deletes, or cascades before that confirmation.
+
+CI is queue-aware on the other side of the same seam: a merge queue tests each
+candidate on a temporary `gh-readonly-queue/*` branch and reports through the
+`merge_group` event, so
+[`red-workspace-ci.yml`](./.github/workflows/red-workspace-ci.yml) subscribes to
+it. Without that trigger the required checks never report for a queued entry and
+the queue accepts pull requests and then holds them forever.
+
+## What Ships
+
+Three plugins install from one marketplace. **One source tree, several hosts:**
+Claude Code, Codex, Gemini CLI, OpenCode, Pi, GitHub Actions, MCP servers, and
+the herdr dashboard are generated from or read the same plugin definitions and
+runtime apps.
+
+| Plugin | Job | Use it when |
+| --- | --- | --- |
+| [`dev`](./plugins/dev/.claude-plugin/plugin.json) | Engineering workflow: issue triage, autonomous execution, worktree safety, review-gated landing, process dashboards, runner policy, and codebase orientation. | You want an agent to plan, execute, review, or ship code work. |
+| [`memory`](./plugins/memory/README.md) | Governed operational memory: decisions, validations, reasoning attempts, stale-claim checks, context packs, and skill telemetry evidence. | You want agents to stop repeating old mistakes after context resets. |
+| [`brain`](./plugins/brain/README.md) | Project-local knowledge: typed artifacts, personal/project facts, sources, graph connections, search, cited answers, and dashboards. | You want durable knowledge the human may ask about later. |
+
+Maintainer-only plugin:
+
+| Plugin | Job | Use it when |
+| --- | --- | --- |
+| [`internal`](./plugins/internal/README.md) | Maintainer-only skills for operating this repository. Installable through the normal marketplace flow, but active only when `plugins.internal.enabled: true` is present. | You maintain `red-skills` itself. |
+
+### Dev
+
+<img src="docs/plugin-dev.svg" alt="dev plugin - issue pipeline, autonomous execution, landing, and codebase orientation" width="100%" />
+
+`dev` owns the engineering workflow: issue pipeline, autonomous execution,
+interactive landing, process visibility, setup/adoption checks, codebase
+orientation, and three MCP servers — [`castle`](./plugins/dev/skills/engineering/afk/MCP.md),
+[`navigator`](./apps/code-nav/README.md), and [`rsp`](./apps/rsp/README.md).
+
+Core responsibilities:
+
+- Bootstrap RedSkills with [`red-setup`](./plugins/dev/skills/engineering/red-setup/SKILL.md).
+- Maintain issue state with [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`to-spec`](./plugins/dev/skills/engineering/to-spec/SKILL.md), and [`to-tickets`](./plugins/dev/skills/engineering/to-tickets/SKILL.md).
+- Execute delegable work with [`afk`](./plugins/dev/skills/engineering/afk/SKILL.md), or dispatch one concrete demand with [`go`](./plugins/dev/skills/engineering/go/SKILL.md).
+- Land a hand-worked branch with [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md) (the retired `ship` migrated there — ADR 0081).
+- Resolve human gates with [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) or safe retries with [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md).
+
+Dev guard rails:
+
+- When `plugins.dev.enabled: true`, the dev PreToolUse proxy enforces the
+  worktree boundary for agent shell commands: `git worktree add` must target a
+  registered lane under `.red/tmp/`, and branch-moving commands in the primary checkout
+  (`git switch`, `git checkout <branch>`, `git checkout -b`, `git switch -c`,
+  `gh pr checkout`) are blocked. Create branches through
+  `git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> ...` instead.
+- `plugins.dev.lock.primary-branch` remains the explicit branch-lock workflow
+  flag that setup writes for compatibility and base-pinning integrations.
+- The dev shell-command guard is controlled by `command_guard` in
+  `.red/config.yaml`. It runs from the agent `PreToolUse` hook, stays inert
+  unless `plugins.dev.enabled: true`, and blocks matching shell commands before
+  execution. These repo-defined rules are **additional** to the built-in
+  `.red/tmp` worktree boundary above. `global` rules apply everywhere, `main`
+  rules apply in the primary session scope (not specifically the Git branch
+  named `main`), and `worktree` rules apply in `/afk` and `/go` worktrees
+  under `.red/tmp/`. Deny rules
+  support `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`,
+  `exact:<literal>`, and `glob:<pattern>`. Bare entries with `*`, `?`, or `[`
+  are Bash globs; other bare entries match the exact command, a command prefix,
+  or a command suffix at a shell-command boundary. `command_guard.deny` remains
+  a legacy alias for `command_guard.global`.
+
+Example policy, not a default:
+
+```yaml
+command_guard:
+  global:
+    - "rm -Rf /*"
+    - "git stash"
+    - sudo
+    - 'regex:(^|[;&|[:space:]])curl[[:space:]].*\|[[:space:]]*sh'
+  main:
+    - "git rebase"
+    - "git checkout -b"
+  worktree:
+    - "git clean"
+
+plugins:
+  dev:
+    enabled: true
+```
+
+### Memory
+
+<img src="docs/plugin-memory.svg" alt="memory plugin - governed evidence that makes the next agent safer and faster" width="100%" />
+
+`memory` is governed operational memory for code agents. **Memory is evidence,
+not vibes.** It stores work evidence that can make future agents safer and
+faster: decisions, root causes, validation evidence, reasoning attempts,
+stale-claim checks, readiness, handoffs, and skill telemetry evidence — so a
+future agent can verify an old claim before acting on it.
+
+Memory modes:
+
+| Mode | Storage | Best for |
+| --- | --- | --- |
+| `markdown-only` | Plain notes under `.red/memory/notes/`. | Low-risk rollout with explicit store/recall only. |
+| `graph` | Project-local RedDB store at `.red/memory/graph.rdb`. | Governed recall, provenance, supersession, readiness, context packs, Workbench, MCP/HTTP, and Skill telemetry. |
+
+Memory is not the Personal-fact store. Personal facts belong in Brain, not Memory.
+Broad human-facing project knowledge belongs in Brain too.
+
+Start with [plugins/memory/README.md](./plugins/memory/README.md).
+
+### Brain
+
+<img src="docs/plugin-brain.svg" alt="brain plugin - project-local knowledge, cited synthesis, and a local dashboard" width="100%" />
+
+`brain` is a project-local knowledge repository under `.red/brain/*`. It stores
+typed artifacts and graph connections for later search and cited synthesis.
+
+Use Brain for:
+
+- Personal facts, durable preferences, identity context, and relationship notes.
+- Project notes, decisions, ideas, questions, sources, bookmarks, and meeting
+  residue.
+- `brain think` cited answers with confidence and missing-evidence signals.
+- `brain dashboard` local summaries and KPI-style views.
+- Optional outbound channel actions through the Brain channel bridge.
+
+Start with [plugins/brain/README.md](./plugins/brain/README.md).
+
+## Install
 
 Recommended for normal installs and upgrades:
 
@@ -194,389 +424,10 @@ manifests. Then run `/red-setup` in a project from Claude Code or
 OpenCode, or `$dev:red-setup` in Codex when the client exposes
 namespace-qualified skills.
 
-### Manual: Claude Code
-
-```text
-/plugin marketplace add reddb-io/red-skills
-/plugin install dev@red-skills
-/plugin install memory@red-skills
-/plugin install brain@red-skills
-```
-
-Common `dev` commands become native slash commands:
-
-```text
-/red-setup
-/triage
-/afk --once
-/go "one concrete demand"
-/dashboard
-```
-
-Memory and Brain skills are plugin skills:
-
-```text
-$init
-$store Decision: cache TTL is 300 seconds because upstream rate limits.
-$recall cache TTL
-$capture Remember this project decision...
-$think What do we know about the billing migration?
-```
-
-Upgrade or remove:
-
-```text
-/plugin marketplace update red-skills
-/plugin uninstall brain@red-skills
-/plugin uninstall memory@red-skills
-/plugin uninstall dev@red-skills
-/plugin marketplace remove red-skills
-```
-
-### Manual: Codex CLI
-
-```bash
-codex plugin marketplace add reddb-io/red-skills
-codex plugin marketplace upgrade red-skills
-codex plugin add dev@red-skills
-codex plugin add memory@red-skills
-codex plugin add brain@red-skills
-codex plugin marketplace remove red-skills
-```
-
-Codex invokes skills with `$<skill>`. Some clients expose plugin skills with
-the plugin namespace; use that form when it appears in the skills list:
-
-```text
-$dev:red-setup
-$dev:triage
-$dev:afk --once
-$dev:retake #123
-$memory:init
-$memory:recall cache TTL
-$brain:capture Save this project note...
-```
-
-Codex currently supports built-in footer items through `tui.status_line`, not a
-command-backed statusline. Use `$dev:afk monitor` when the client exposes
-namespace-qualified skills, or `$afk monitor` when it exposes unqualified skill
-names.
-
-### Manual: Gemini CLI
-
-Gemini CLI support requires installing from a local path or using the native marketplace setup script when released. For local setups, run from a checkout:
-
-```bash
-gemini plugin install ./plugins/dev
-gemini plugin install ./plugins/memory
-gemini plugin install ./plugins/brain
-```
-
-Or you can use the global marketplace flow if registered:
-
-```bash
-gemini plugin marketplace add reddb-io/red-skills
-gemini plugin install dev@red-skills
-gemini plugin install memory@red-skills
-gemini plugin install brain@red-skills
-```
-
-Gemini invokes skills natively and requires loading skills ahead of tool calls (see `activate_skill`). Common commands:
-
-```text
-/red-setup
-/triage
-/afk --once
-```
-
-### Codex Manifest Maintenance
-
-Codex manifests are generated artifacts. Do not hand-edit
-`.agents/plugins/marketplace.json` or `plugins/*/.codex-plugin/plugin.json`.
-Change the Claude-side marketplace/plugin manifests or plugin tree, then run:
-
-```bash
-pnpm codex:manifests
-pnpm gemini:manifests
-```
-
-CI runs `pnpm codex:manifests:check` and `pnpm gemini:manifests:check` and fails when committed Codex or Gemini manifests
-drift from the generator output.
-
-### Pi Manifest Maintenance
-
-Pi ships two generated artifacts that must stay in sync with the Claude-side
-plugin tree:
-
-- `plugins/<name>/package.json` — the local-path install surface (ADR 0075-era
-  shape; consumed by `pi install <path>`).
-- `packaging/pi/<name>/package.json` plus `packaging/pi/<name>/skills/` — the
-  npm publish surface (ADR 0110; consumed by `pi install npm:@reddb-io/red-skills-<plugin>`).
-
-Both are generated. Do not hand-edit either. Change the Claude-side plugin
-manifest or the plugin tree, then run:
-
-```bash
-pnpm pi:manifests        # regenerates plugins/<name>/package.json
-pnpm pi:packages:build   # stages packaging/pi/<name>/ from plugins/<name>/
-```
-
-CI runs both `pnpm pi:manifests:check` and `pnpm pi:packages:check` and fails
-when either committed artifact drifts. The release pipeline runs the build
-step before publishing, so a manual regeneration is only required when working
-on Pi support itself.
-
-### Manual: OpenCode
-
-OpenCode support is generated from the same plugin source tree as Claude Code
-and Codex. The installer writes skills, plugin modules, MCP config, provider
-config, and TUI attention config for OpenCode. The universal installer above is
-preferred for normal user-scoped installs; use the direct script when developing
-or when installing/removing a checkout in a specific project.
-
-```bash
-git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
-cd ~/code/red-skills
-
-# user-scoped install into ~/.config/opencode
-scripts/install-opencode.sh --global
-
-# user-scoped uninstall from ~/.config/opencode
-scripts/install-opencode.sh --uninstall --global
-
-# project-local install into the current repo
-scripts/install-opencode.sh
-
-# project-local uninstall from the current repo
-scripts/install-opencode.sh --uninstall
-
-# inspect without writing
-scripts/install-opencode.sh /path/to/project --dry-run
-```
-
-Then run OpenCode in any configured project:
-
-```bash
-opencode .
-```
-
-Use `/connect` inside OpenCode or export one of `OPENAI_API_KEY`,
-`MINIMAX_API_KEY`, or `OPENROUTER_API_KEY`. Generated config never stores auth
-secrets. Details live in [apps/opencode-host](./apps/opencode-host/README.md).
-
-### Manual: Pi
-
-RedSkills ships one Pi package per published plugin on npm under the
-`@reddb-io` scope. The packages are generated from the same Claude-side
-manifests the other hosts consume, so the same skill buckets (`engineering`,
-`knowledge`, `productivity`, `misc`, `core`) Claude Code and Codex already
-expose are what Pi discovers.
-
-The natural install is the same one-liner Pi documents for every npm package:
-
-```bash
-pi install npm:@reddb-io/red-skills-dev
-pi install npm:@reddb-io/red-skills-memory
-pi install npm:@reddb-io/red-skills-brain
-# (optional) maintainer-only — gated by plugins.internal.enabled: true
-pi install npm:@reddb-io/red-skills-internal
-```
-
-Updates follow the rest of the release train: `pi update --all` resolves the
-latest matching version from the npm registry and the new skills reload on the
-next session start.
-
-For repo-scoped installs that ship with the project (so teammates pick up the
-same RedSkills surface on first launch), use the bundled installer:
-
-```bash
-# user-scoped install into ~/.pi/agent/settings.json (npm: surface)
-scripts/install-pi.sh
-
-# project-scoped install into <repo>/.pi/settings.json
-scripts/install-pi.sh --project /path/to/your-project
-
-# pin a specific published version (e.g. before a tagged release)
-RED_SKILLS_PI_VERSION=3.1.2 scripts/install-pi.sh
-
-# dev path: install from a local checkout (in-repo workflow)
-scripts/install-pi.sh --source-dir /path/to/red-skills-checkout
-
-# user-scoped uninstall
-scripts/install-pi.sh --uninstall
-
-# dry-run + inspect
-scripts/install-pi.sh --project . --dry-run
-```
-
-`scripts/install-pi.sh` writes `~/.pi/agent/redskills-install-manifest.json` (or
-`<project>/.pi/redskills-install-manifest.json` for `--project`) recording each
-`npm:` spec it registered, so a subsequent `--uninstall` cleanly tears down
-exactly that surface. The `--source-dir` form records local-path specs in the
-same manifest under a separate `source` discriminator.
-
-Known limitations versus the other hosts:
-
-- Pi does not run lifecycle hooks, so the Codex/Claude `SessionStart`/`Stop`
-  hooks (the rsp interception bridge, red-fetch, command-guard, branch-lock,
-  statusline wiring) are not active in Pi. Skills that depend on those hooks
-  lose telemetry but stay navigable; agent runners and `navigator` MCP servers
-  are unaffected.
-- Two plugins (`memory` and `brain`) ship a skill with the same `name: view`.
-  Pi warns on duplicate skill names and keeps the first one registered, so
-  install `memory` or `brain` last depending on which `view` you want as the
-  primary entry point.
-- Pi does not advertise the plugin display metadata Codex uses; the npm
-  `description` field is the only user-visible summary in `pi list`.
-- The `internal` package is gated by `plugins.internal.enabled: true`
-  (ADR 0067) the same way the Claude and Codex marketplaces expose it. The npm
-  package is public; the gate is what keeps it inactive in non-maintainer
-  repos.
-
-After installing, restart any open Pi session so the new skills reload.
-`scripts/install-pi.sh --help` documents the user/project scope split, the
-`--source-dir` dev path, and the `--uninstall` flow.
-
-### No Marketplace
-
-Older agents, local hacking, or Gemini-style skill loading can install from a
-checkout:
-
-```bash
-npx skills@latest add reddb-io/red-skills
-```
-
-For local symlinks:
-
-```bash
-git clone git@github.com:reddb-io/red-skills.git ~/code/red-skills
-cd ~/code/red-skills
-./scripts/link-skills.sh
-```
-
-Marketplace installs auto-update. `npx skills` and manual symlinks do not.
-
-### Verify Runners
-
-Before a release, or after upgrading Claude Code/Codex, run:
-
-```bash
-./scripts/doctor-runners.sh
-```
-
-It checks plugin metadata, shell syntax, runner flags used by `/afk`, Codex
-marketplace registration in a temporary home, and manual skill-link installs.
-
----
-
-## What Makes It Different
-
-**Issue to PR is the product.** RedSkills treats GitHub Issues as the work
-queue, not a side note. `/triage`, `/to-spec`, `/to-tickets`, `/afk`, `/go`,
-`/hitl`, and `/retake` all speak the same issue-state vocabulary.
-
-**The machine is the budget, not the checkout.** One `redskilled` daemon admits
-and places every Worker on the host, so ten repositories draining at once spend
-one budget with one accounting — and a launch that cannot reach it refuses
-rather than falling back.
-
-**Agents work in disposable worktrees.** Autonomous execution and interactive
-landing keep the primary checkout under human branch control. Work is prepared,
-validated, committed, pushed, reviewed, and merged through explicit gates.
-
-**Memory is evidence, not vibes.** The Memory plugin stores decisions, root
-causes, validation records, reasoning attempts, supersession, freshness, and
-readiness signals so future agents can verify old claims before acting.
-
-**Brain is for human-facing knowledge.** Brain captures project notes, personal
-facts, sources, questions, bookmarks, typed artifacts, and cited synthesis under
-`.red/brain/*`.
-
-**Structured data is TOON, everywhere.** Files and wires alike, enforced as a
-repo-wide ratchet rather than a convention — see [TOON And TOONL](#toon-and-toonl).
-
-**Terminal output is elided, not truncated.** `rsp` wraps the noisy commands and
-mints a reversible handle for what it left out — see
-[Token-Efficient Terminal Work](#token-efficient-terminal-work).
-
-**One source tree, several hosts.** Claude Code, Codex, Gemini CLI, OpenCode, Pi,
-GitHub Actions, MCP servers, and the herdr dashboard are generated from or read
-the same plugin definitions and runtime apps.
-
----
-
-## The Loop
-
-```text
-Plan -> Spec -> sliced issues -> ready-for-agent -> isolated worktree
-  -> validation -> PR -> review/checks -> merge -> Memory evidence
-```
-
-The issue lifecycle is intentionally boring:
-
-```text
-needs-triage -> /triage -> ready-for-agent -> /afk -> PR/merge -> closed
-                                |
-                                +---- blocked/spec/validation/etc.
-                                      -> ready-for-human -> /hitl or /retake
-```
-
-Important states:
-
-| State | Meaning |
-| --- | --- |
-| `ready-for-agent` | The only issue state autonomous drainage consumes. |
-| `running` | Timeline state while a Worker owns the issue. Live state is the daemon's. |
-| `ready-for-human` | A human decision is needed before delegation is safe. |
-| `blocked:dependency` | Waits on `req:N` labels and should not page a human. |
-| `blocked:validation` / `blocked:spec` | Can be requeued only after retry guidance is already decided. |
-| `blocked:ci` | The branch is pushed and the pull request is real, but the queue handed it back. |
-
-### Landing in the merge-queue era
-
-**The merge command exiting 0 is not the merge.** Under a merge queue — the
-forge's own, or `--auto` — exit 0 means *enqueued*, so landing ends by asking the
-pull request itself and treats only `state: MERGED` as landed. A queue that hands
-the PR back parks `blocked:ci` with the issue open and the branch on origin;
-nothing closes, relabels, deletes, or cascades before that confirmation.
-
-CI is queue-aware on the other side of the same seam: a merge queue tests each
-candidate on a temporary `gh-readonly-queue/*` branch and reports through the
-`merge_group` event, so
-[`red-workspace-ci.yml`](./.github/workflows/red-workspace-ci.yml) subscribes to
-it. Without that trigger the required checks never report for a queued entry and
-the queue accepts pull requests and then holds them forever.
-
-## What Ships
-
-| Plugin | Job | Use it when |
-| --- | --- | --- |
-| [`dev`](./plugins/dev/.claude-plugin/plugin.json) | Engineering workflow: issue triage, autonomous execution, worktree safety, review-gated landing, process dashboards, runner policy, and codebase orientation. | You want an agent to plan, execute, review, or ship code work. |
-| [`memory`](./plugins/memory/README.md) | Governed operational memory: decisions, validations, reasoning attempts, stale-claim checks, context packs, and skill telemetry evidence. | You want agents to stop repeating old mistakes after context resets. |
-| [`brain`](./plugins/brain/README.md) | Project-local knowledge: typed artifacts, personal/project facts, sources, graph connections, search, cited answers, and dashboards. | You want durable knowledge the human may ask about later. |
-
-Maintainer-only plugin:
-
-| Plugin | Job | Use it when |
-| --- | --- | --- |
-| [`internal`](./plugins/internal/README.md) | Maintainer-only skills for operating this repository. Installable through the normal marketplace flow, but active only when `plugins.internal.enabled: true` is present. | You maintain `red-skills` itself. |
-
-Runtime surfaces that ship beside the plugins:
-
-| Surface | Job |
-| --- | --- |
-| [`redskilled`](./apps/redskilled/README.md) | The host-scoped execution daemon. One per machine; owns Worker birth, death, limits, placement, the host event lane, and the statusline. |
-| [`rsp`](./apps/rsp/README.md) | Token-efficient terminal wrappers over a reversible elision store, plus `rsp wait`, the standard waiting primitive. |
-| [`herdr-plugin`](./apps/herdr-plugin/README.md) | A [herdr](https://herdr.dev) plugin that reads the daemon: live Workers, logs, the event lane, pull requests, and notifications. |
-| [`code-nav`](./apps/code-nav/README.md) | The LSP-backed `navigator` MCP server used by `dev`. |
-| [`red-browser`](./apps/red-browser) | Browser CLI and CDP driver for ground-truth verification of live apps. |
-
-The short version:
-
-- **Dev moves work.**
-- **The daemon owns the processes that do it.**
-- **Memory improves agent execution.**
-- **Brain preserves human-facing knowledge.**
+**Installing a single host by hand, or from a checkout?** The per-host manual
+walkthroughs (Claude Code, Codex CLI, Gemini CLI, OpenCode, Pi), the no-marketplace
+symlink path, the generated-manifest maintenance commands, and the runner doctor
+live in [docs/INSTALL.md](./docs/INSTALL.md).
 
 ## Quick Start
 
@@ -651,117 +502,16 @@ knowledge the human wants preserved, searched, and cited later.
 | Gemini CLI | Marketplace plugins, skills, hooks, MCP servers | Fully natively supported via generated manifests. |
 | OpenCode | Generated `.opencode/skills`, plugin modules, MCP config, provider config, TUI attention config | Installed through `scripts/install-opencode.sh`. |
 | Pi | One npm-published package per plugin (`@reddb-io/red-skills-<plugin>` on npm, staged under `packaging/pi/<name>/`) carrying the shared skill buckets | Installed through `pi install npm:@reddb-io/red-skills-<plugin>`, or via `scripts/install-pi.sh` for repo-scoped installs and the `--source-dir` dev path. |
-| herdr | A vendored plugin pane over the `redskilled` daemon | Read-only: `herdr plugin link apps/herdr-plugin`. |
-| GitHub Actions | Reusable attempt workflow and composable action | Runs one autonomous attempt per issue in adopter repos. |
-
-## Plugin Boundaries
-
-### Dev
-
-<img src="docs/plugin-dev.svg" alt="dev plugin - issue pipeline, autonomous execution, landing, and codebase orientation" width="100%" />
-
-`dev` owns the engineering workflow: issue pipeline, autonomous execution,
-interactive landing, process visibility, setup/adoption checks, codebase
-orientation, and three MCP servers — [`castle`](./plugins/dev/skills/engineering/afk/MCP.md),
-[`navigator`](./apps/code-nav/README.md), and [`rsp`](./apps/rsp/README.md).
-
-Core responsibilities:
-
-- Bootstrap RedSkills with [`red-setup`](./plugins/dev/skills/engineering/red-setup/SKILL.md).
-- Maintain issue state with [`triage`](./plugins/dev/skills/engineering/triage/SKILL.md), [`to-spec`](./plugins/dev/skills/engineering/to-spec/SKILL.md), and [`to-tickets`](./plugins/dev/skills/engineering/to-tickets/SKILL.md).
-- Execute delegable work with [`afk`](./plugins/dev/skills/engineering/afk/SKILL.md), or dispatch one concrete demand with [`go`](./plugins/dev/skills/engineering/go/SKILL.md).
-- Land a hand-worked branch with [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md) (the retired `ship` migrated there — ADR 0081).
-- Resolve human gates with [`hitl`](./plugins/dev/skills/engineering/hitl/SKILL.md) or safe retries with [`retake`](./plugins/dev/skills/engineering/retake/SKILL.md).
-
-Dev guard rails:
-
-- When `plugins.dev.enabled: true`, the dev PreToolUse proxy enforces the
-  worktree boundary for agent shell commands: `git worktree add` must target a
-  registered lane under `.red/tmp/`, and branch-moving commands in the primary checkout
-  (`git switch`, `git checkout <branch>`, `git checkout -b`, `git switch -c`,
-  `gh pr checkout`) are blocked. Create branches through
-  `git worktree add .red/tmp/worktrees/manual/<slug> -b <branch> ...` instead.
-- `plugins.dev.lock.primary-branch` remains the explicit branch-lock workflow
-  flag that setup writes for compatibility and base-pinning integrations.
-- The dev shell-command guard is controlled by `command_guard` in
-  `.red/config.yaml`. It runs from the agent `PreToolUse` hook, stays inert
-  unless `plugins.dev.enabled: true`, and blocks matching shell commands before
-  execution. These repo-defined rules are **additional** to the built-in
-  `.red/tmp` worktree boundary above. `global` rules apply everywhere, `main`
-  rules apply in the primary session scope (not specifically the Git branch
-  named `main`), and `worktree` rules apply in `/afk` and `/go` worktrees
-  under `.red/tmp/`. Deny rules
-  support `regex:<pattern>`, `prefix:<literal>`, `suffix:<literal>`,
-  `exact:<literal>`, and `glob:<pattern>`. Bare entries with `*`, `?`, or `[`
-  are Bash globs; other bare entries match the exact command, a command prefix,
-  or a command suffix at a shell-command boundary. `command_guard.deny` remains
-  a legacy alias for `command_guard.global`.
-
-Example policy, not a default:
-
-```yaml
-command_guard:
-  global:
-    - "rm -Rf /*"
-    - "git stash"
-    - sudo
-    - 'regex:(^|[;&|[:space:]])curl[[:space:]].*\|[[:space:]]*sh'
-  main:
-    - "git rebase"
-    - "git checkout -b"
-  worktree:
-    - "git clean"
-
-plugins:
-  dev:
-    enabled: true
-```
-
-### Memory
-
-<img src="docs/plugin-memory.svg" alt="memory plugin - governed evidence that makes the next agent safer and faster" width="100%" />
-
-`memory` is governed operational memory for code agents. It stores work
-evidence that can make future agents safer and faster: decisions, root causes,
-validation evidence, reasoning attempts, stale-claim checks, readiness,
-handoffs, and skill telemetry evidence.
-
-Memory modes:
-
-| Mode | Storage | Best for |
-| --- | --- | --- |
-| `markdown-only` | Plain notes under `.red/memory/notes/`. | Low-risk rollout with explicit store/recall only. |
-| `graph` | Project-local RedDB store at `.red/memory/graph.rdb`. | Governed recall, provenance, supersession, readiness, context packs, Workbench, MCP/HTTP, and Skill telemetry. |
-
-Memory is not the Personal-fact store. Personal facts belong in Brain, not Memory.
-Broad human-facing project knowledge belongs in Brain too.
-
-Start with [plugins/memory/README.md](./plugins/memory/README.md).
-
-### Brain
-
-<img src="docs/plugin-brain.svg" alt="brain plugin - project-local knowledge, cited synthesis, and a local dashboard" width="100%" />
-
-`brain` is a project-local knowledge repository under `.red/brain/*`. It stores
-typed artifacts and graph connections for later search and cited synthesis.
-
-Use Brain for:
-
-- Personal facts, durable preferences, identity context, and relationship notes.
-- Project notes, decisions, ideas, questions, sources, bookmarks, and meeting
-  residue.
-- `brain think` cited answers with confidence and missing-evidence signals.
-- `brain dashboard` local summaries and KPI-style views.
-- Optional outbound channel actions through the Brain channel bridge.
-
-Start with [plugins/brain/README.md](./plugins/brain/README.md).
+| GitHub Actions | Reusable attempt workflow and composable action | Runs one autonomous attempt per issue in adopter repos — see [GitHub Actions Lane](#github-actions-lane). |
 
 ## Surfaces Over The Daemon
 
 Because the daemon answers one question — *what is this machine currently
 doing* — every surface over it is a **reader**, and the readers stay honest by
 construction: the payload dates itself, so staleness is rendered rather than
-re-derived, and an absence is never a zero.
+re-derived, and an absence is never a zero. **No agent host renders anything:**
+the daemon renders from the very payload the structured op returns, and a test
+proves the two agree.
 
 ### herdr plugin
 
@@ -811,6 +561,39 @@ node bin/red-skills-herdr.mjs dashboard  # the pane, in this terminal
 node bin/red-skills-herdr.mjs logs --events
 ```
 
+### VSCode extension
+
+[`apps/vscode-redskilled/`](./apps/vscode-redskilled/README.md) is the same
+reader inside the editor. It contributes three tree views and a log channel:
+
+| View | Reads | Answers |
+| --- | --- | --- |
+| **Workers** | `statusline-payload` | What is running now — RSS against the declared ceiling, uptime, isolation, the last line each Worker logged. |
+| **Host events** | the TOONL event lane beside the socket | What *happened* — births, deaths with their exit status, budget kills, the daemon's own stop. |
+| **Pull requests** | `statusline-payload` | Each registered project's open PR and issue counts, as the host polled them. |
+| **Worker log** | the Worker's own `log_path` | The tail of one Worker's log, followed as it grows. |
+
+The socket answers "what is running NOW" and the lane answers "what happened",
+and both are read every tick: a Worker that vanished between two reads tells you
+it is gone, and only the lane tells you whether it exited 0, was killed over its
+ceiling, or took a signal.
+
+It obeys the same two refusals as the herdr plugin — **it sends only `ping`,
+`host-state` and `statusline-payload`**, and it **never starts the daemon**,
+because a tree view restoring with a window must not be what births a
+machine-wide singleton. An absent daemon is reported as absent, with the socket
+path and the rule that produced it in the tooltip. Notifications fire on a
+*transition*, never a state; the first read of a session is deliberately silent,
+and `redskilled.notifications.workerBirth` is off by default.
+
+The `.vsix` is **never published** — build and install it from the checkout:
+
+```bash
+pnpm -C apps/vscode-redskilled build      # typecheck + bundle out/extension.cjs
+pnpm -C apps/vscode-redskilled package    # write dist/reddb-io.vscode-redskilled-<version>.vsix
+code --install-extension apps/vscode-redskilled/dist/reddb-io.vscode-redskilled-0.1.0.vsix
+```
+
 ### Statusline
 
 `redskilled statusline` is the agent-host surface. The default mode is the local
@@ -826,6 +609,7 @@ total, with the loss stated rather than left to be detected by re-parsing.
 `rsp` ([`apps/rsp/`](./apps/rsp/README.md), ADR 0095) wraps the noisy development
 commands and keeps their full output in a **reversible elision store**, so an
 agent reads a compact summary and can recover the original bytes on demand.
+**Terminal output is elided, not truncated.**
 
 ```bash
 rsp git status          rsp gh pr view        rsp vitest run
@@ -860,39 +644,6 @@ Exit codes are the verdict: `0` success, `1` failure, `2` timeout or
 indeterminate. Every wait emits an `rsp.wait.result` envelope, sealed to disk
 *before* any wake, so a signaled process always reads a complete result.
 
-## TOON And TOONL
-
-RedSkills serializes structured data as [TOON](https://github.com/reddb-io/toon),
-and append streams as **TOONL** — segment headers declare a schema once, rows
-follow positionally, and a crash-truncated open tail is valid ("unverified",
-never corrupt). Snapshots are TOON; append streams are TOONL (ADR 0097, extending
-ADR 0089). Prose is never serialized.
-
-The mandate has **two dimensions**, and the second one is the one that bit us:
-
-- **On a file.** A `*.toon` file is written with the TOON encoder, never
-  `JSON.stringify`. The decoder sniffs JSON-or-TOON and accepts both, so a
-  JSON-written `.toon` looks correct locally and is wrong by policy.
-- **On a wire.** A `JSON.stringify` handed to a socket write, or a `JSON.parse`
-  of a framed payload read off one, fails the same way a JSON file write does.
-  The guard was originally named for its own limit, which is why the daemon's
-  whole request/response wire was JSON while every file it wrote was already TOON.
-
-Both are enforced as a **repo-wide ratchet** that runs in every gate run, however
-narrow the cone: new JSON I/O under `apps/` or `packages/` must be fixed or
-classified in `.red/contracts/toon-json-file-io-allowlist.json`, and the failure
-names the offending path, the encoder that replaces it, and the allowlist. Two
-things stay green by design: quoting a value inside an error message (legibility,
-not a payload) and a site reached only behind an explicit `--json` flag (the
-mandate governs the default).
-
-The other repo-wide invariants run beside it — `invariants:host-owns-birth` (only
-the daemon births a Worker), `invariants:extinct-nouns` (ADR 0130's removed
-concepts stay removed, including modules merely *named* for one), and
-`invariants:shipped-binaries` (every shipped binary answers `--version` and
-`--help` without a working machine). The declared list lives in
-[`apps/dev/src/core/repo-invariants.ts`](./apps/dev/src/core/repo-invariants.ts).
-
 ## GitHub Actions Lane
 
 The Actions lane runs one autonomous attempt per issue from GitHub Actions. It is
@@ -926,45 +677,54 @@ Workflow naming convention:
 
 Full guide: [Actions lane](./plugins/dev/skills/engineering/afk/actions-lane.md).
 
-## Repo Layout
+## Container Lane
 
-| Path | Purpose |
-| --- | --- |
-| [`plugins/dev`](./plugins/dev) | Plugin definition, skills, hooks, scripts, MCP config, and docs for engineering workflow. |
-| [`plugins/memory`](./plugins/memory) | Plugin definition and skills for governed operational memory. Runtime source lives in `apps/memory`. |
-| [`plugins/brain`](./plugins/brain) | Plugin definition and skills for Brain. Runtime source lives in `apps/brain`. |
-| [`plugins/internal`](./plugins/internal) | Maintainer-only plugin definition and skills for operating this repository. |
-| [`apps/redskilled`](./apps/redskilled) | The host-scoped execution daemon (ADR 0130): socket, lease, wire contract, placement, birth, event lane, statusline, provisioning, reclaim. |
-| [`apps/herdr-plugin`](./apps/herdr-plugin) | Vendored herdr plugin that reads the daemon (ADR 0131): Workers, logs, event lane, pull requests, notifications. `.upstream` records the absorbed commit. |
-| [`apps/rsp`](./apps/rsp) | Token-efficient terminal wrappers, the elision store and resident, the interception hook and proxy, `rsp wait`, and the rsp MCP server. |
-| [`apps/dev`](./apps/dev) | Issue pipeline, execution, landing, dashboard, triage, runner, release/channel, repo invariants, and workflow runtime code. |
-| [`apps/memory`](./apps/memory) | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics. |
-| [`apps/brain`](./apps/brain) | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic. |
-| [`apps/code-nav`](./apps/code-nav) | LSP-backed `navigator` MCP server used by the `dev` plugin. |
-| [`apps/opencode-host`](./apps/opencode-host) | Adapter that emits OpenCode config, skills, hooks, MCP passthrough, and statusline/toast integration. |
-| [`apps/red-browser`](./apps/red-browser) | Browser CLI: opens a local annotation bridge for HTML artifacts, long-polls human feedback, and enforces the layout-audit gate. |
-| [`packages/shared`](./packages/shared) | Shared runtime helpers: plugin gate, bundle fetching, args, logging, channels, the resident core and wire, and the daemon-home namer. |
-| [`packages/browser-bridge`](./packages/browser-bridge) | Local CLI-to-browser annotation bridge: injects an annotation SDK into HTML artifacts and long-polls for human feedback and layout-audit results. |
-| [`packages/cdp-driver`](./packages/cdp-driver) | CDP-based live-app driver for `red-browser`: connects to Chrome via DevTools Protocol, captures a11y-tree snapshots, and streams console/network events. |
-| [`packages/build-info`](./packages/build-info) | Shared runtime build metadata helpers consumed by bundled apps and by plain-ESM binaries. |
-| [`packages/red-castle`](./packages/red-castle) | Execution substrate vendored in-repo (`@reddb-io/red-castle`): worktree isolation, agent spawning, and signal detection. |
-| [`packaging/npm`](./packaging/npm) | The publishable `@reddb-io/red-skills` npm package (outside the pnpm workspace): built bundles plus the shipped bin shims. The client transport (ADR 0091). |
-| [`.red`](./.red) | RedSkills' own project configuration: context map, glossaries, ADRs, contracts, issue-tracker docs, and agent rules. |
-| [`.github/workflows`](./.github/workflows) | Release, CI, upstream watch, issue automation, PR review, and reusable attempt workflows. |
+[`apps/afk-container/`](./apps/afk-container/README.md) is the same drain in a
+self-sufficient Docker image: it picks a runner, picks the queue head, clones the
+target repo into a temp directory, and hands the issue to
+`red-skills-dev run --issues <N> --runner <R> --once` — the same engine path the
+local daemon and the Actions lane drive. Claim comment, heartbeat, validation
+gate and pull request all come from that engine; the container reimplements
+nothing.
 
-Installed plugin trees are definitions and launchers. Runtime bundles are built
-from `apps/*` and shipped inside the [`@reddb-io/red-skills`](./packaging/npm)
-npm package (ADR 0091) — one tarball carrying the `dev`, `memory`, `brain`,
-`redskilled`, `code-nav`, `castle-mcp`, and `rsp` bundles plus their bin shims
-(`red-skills-dev`, `red-skills-memory`, `red-skills-brain`,
-`red-skills-redskilled`, `red-skills-castle-mcp`, `red-skills-code-nav`, `rsp`).
-Session-start launchers resolve the version-pinned package via npm, cache-first,
-and integrity is npm's own tarball shasum — no GitHub-release download and no
-client-side signature step. The canonical dispatch form is
-`npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand>`; a bare
-shim invocation resolves against whatever else is installed. The Memory/Brain
-native `red` engine binary is the one per-platform artifact that cannot ride in
-the tarball; those plugins resolve it separately at runtime.
+It is **stateless by construction**: no volume, no daemon, no cache to preserve.
+All durable state is on GitHub — the issue with its labels and its
+claim/heartbeat/park comments, plus the run branch and pull request the engine
+pushes. The clone lives in a temp directory and is deleted when the run ends, on
+any path, so the container can be killed at any moment.
+
+## TOON And TOONL
+
+RedSkills serializes structured data as [TOON](https://github.com/reddb-io/toon),
+and append streams as **TOONL** — segment headers declare a schema once, rows
+follow positionally, and a crash-truncated open tail is valid ("unverified",
+never corrupt). Snapshots are TOON; append streams are TOONL (ADR 0097, extending
+ADR 0089). Prose is never serialized.
+
+The mandate has **two dimensions**, and the second one is the one that bit us:
+
+- **On a file.** A `*.toon` file is written with the TOON encoder, never
+  `JSON.stringify`. The decoder sniffs JSON-or-TOON and accepts both, so a
+  JSON-written `.toon` looks correct locally and is wrong by policy.
+- **On a wire.** A `JSON.stringify` handed to a socket write, or a `JSON.parse`
+  of a framed payload read off one, fails the same way a JSON file write does.
+  The guard was originally named for its own limit, which is why the daemon's
+  whole request/response wire was JSON while every file it wrote was already TOON.
+
+Both are enforced as a **repo-wide ratchet** that runs in every gate run, however
+narrow the cone: new JSON I/O under `apps/` or `packages/` must be fixed or
+classified in `.red/contracts/toon-json-file-io-allowlist.json`, and the failure
+names the offending path, the encoder that replaces it, and the allowlist. Two
+things stay green by design: quoting a value inside an error message (legibility,
+not a payload) and a site reached only behind an explicit `--json` flag (the
+mandate governs the default).
+
+The other repo-wide invariants run beside it — `invariants:host-owns-birth` (only
+the daemon births a Worker), `invariants:extinct-nouns` (ADR 0130's removed
+concepts stay removed, including modules merely *named* for one), and
+`invariants:shipped-binaries` (every shipped binary answers `--version` and
+`--help` without a working machine). The declared list lives in
+[`apps/dev/src/core/repo-invariants.ts`](./apps/dev/src/core/repo-invariants.ts).
 
 ## Configuration
 
@@ -1036,6 +796,49 @@ House rules:
 - Do task work in isolated worktrees; the primary checkout's branch is for the
   human to control.
 
+## Repo Layout
+
+| Path | Purpose |
+| --- | --- |
+| [`plugins/dev`](./plugins/dev) | Plugin definition, skills, hooks, scripts, MCP config, and docs for engineering workflow. |
+| [`plugins/memory`](./plugins/memory) | Plugin definition and skills for governed operational memory. Runtime source lives in `apps/memory`. |
+| [`plugins/brain`](./plugins/brain) | Plugin definition and skills for Brain. Runtime source lives in `apps/brain`. |
+| [`plugins/internal`](./plugins/internal) | Maintainer-only plugin definition and skills for operating this repository. |
+| [`apps/redskilled`](./apps/redskilled) | The host-scoped execution daemon (ADR 0130): socket, lease, wire contract, placement, birth, event lane, statusline, provisioning, reclaim. |
+| [`apps/herdr-plugin`](./apps/herdr-plugin) | Vendored herdr plugin that reads the daemon (ADR 0131): Workers, logs, event lane, pull requests, notifications. `.upstream` records the absorbed commit. |
+| [`apps/vscode-redskilled`](./apps/vscode-redskilled) | VSCode extension that reads the daemon from inside the editor: Workers, host events, pull requests, per-Worker log channel, transition notifications. |
+| [`apps/rsp`](./apps/rsp) | Token-efficient terminal wrappers, the elision store and resident, the interception hook and proxy, `rsp wait`, and the rsp MCP server. |
+| [`apps/dev`](./apps/dev) | Issue pipeline, execution, landing, dashboard, triage, runner, release/channel, repo invariants, and workflow runtime code. |
+| [`apps/memory`](./apps/memory) | Memory CLI, graph operations, Workbench, MCP/HTTP surfaces, evals, and diagnostics. |
+| [`apps/brain`](./apps/brain) | Brain CLI, store, MCP server, dashboard, channel bridge, and artifact logic. |
+| [`apps/code-nav`](./apps/code-nav) | LSP-backed `navigator` MCP server used by the `dev` plugin. |
+| [`apps/opencode-host`](./apps/opencode-host) | Adapter that emits OpenCode config, skills, hooks, MCP passthrough, and statusline/toast integration. |
+| [`apps/red-browser`](./apps/red-browser) | Browser CLI: opens a local annotation bridge for HTML artifacts, long-polls human feedback, and enforces the layout-audit gate. |
+| [`apps/afk-container`](./apps/afk-container) | Stateless Docker image that drains `ready-for-agent` issues one ephemeral run at a time through the existing engine. |
+| [`packages/shared`](./packages/shared) | Shared runtime helpers: plugin gate, bundle fetching, args, logging, channels, the resident core and wire, and the daemon-home namer. |
+| [`packages/browser-bridge`](./packages/browser-bridge) | Local CLI-to-browser annotation bridge: injects an annotation SDK into HTML artifacts and long-polls for human feedback and layout-audit results. |
+| [`packages/cdp-driver`](./packages/cdp-driver) | CDP-based live-app driver for `red-browser`: connects to Chrome via DevTools Protocol, captures a11y-tree snapshots, and streams console/network events. |
+| [`packages/build-info`](./packages/build-info) | Shared runtime build metadata helpers consumed by bundled apps and by plain-ESM binaries. |
+| [`packages/red-castle`](./packages/red-castle) | Execution substrate vendored in-repo (`@reddb-io/red-castle`): worktree isolation, agent spawning, and signal detection. |
+| [`packaging/npm`](./packaging/npm) | The publishable `@reddb-io/red-skills` npm package (outside the pnpm workspace): built bundles plus the shipped bin shims. The client transport (ADR 0091). |
+| [`docs`](./docs) | The hero and section artwork, the [install walkthroughs](./docs/INSTALL.md), and the [release flow](./docs/RELEASING.md). |
+| [`.red`](./.red) | RedSkills' own project configuration: context map, glossaries, ADRs, contracts, issue-tracker docs, and agent rules. |
+| [`.github/workflows`](./.github/workflows) | Release, CI, upstream watch, issue automation, PR review, and reusable attempt workflows. |
+
+Installed plugin trees are definitions and launchers. Runtime bundles are built
+from `apps/*` and shipped inside the [`@reddb-io/red-skills`](./packaging/npm)
+npm package (ADR 0091) — one tarball carrying the `dev`, `memory`, `brain`,
+`redskilled`, `code-nav`, `castle-mcp`, and `rsp` bundles plus their bin shims
+(`red-skills-dev`, `red-skills-memory`, `red-skills-brain`,
+`red-skills-redskilled`, `red-skills-castle-mcp`, `red-skills-code-nav`, `rsp`).
+Session-start launchers resolve the version-pinned package via npm, cache-first,
+and integrity is npm's own tarball shasum — no GitHub-release download and no
+client-side signature step. The canonical dispatch form is
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand>`; a bare
+shim invocation resolves against whatever else is installed. The Memory/Brain
+native `red` engine binary is the one per-platform artifact that cannot ride in
+the tarball; those plugins resolve it separately at runtime.
+
 ## Skill Map
 
 This is a map, not a replacement for the skill files. Open the linked
@@ -1084,52 +887,9 @@ only the work inside it shrinks, and an unclassifiable change escalates to the
 whole workspace. The repo-wide invariants run regardless of how narrow the cone
 is — that is what `pnpm -C apps/dev test:invariants` is for.
 
-### Releasing
-
-Releases run on [changesets](https://github.com/changesets/changesets) in two
-halves (ADR 0121). **Nothing pushes a commit to `main`** — the version bump is a
-reviewed PR like any other.
-
-1. **Land your change with a changeset.** Run `pnpm changeset`, pick
-   `patch`/`minor`/`major`, describe the change in one consumer-facing line, and
-   commit the generated file under `.changeset/`. A change that ships without
-   one accumulates no bump and never releases.
-2. **[red-release.yml](./.github/workflows/red-release.yml) maintains the Version
-   Packages PR.** On every push to `main` it collects the pending changesets and
-   opens/updates a `chore(release): version packages` PR. That PR runs
-   `pnpm release:version` — `changeset version` plus
-   [`scripts/sync-version.mjs`](./scripts/sync-version.mjs), the single writer
-   (ADR 0040) that carries the version into the root `package.json`, the Claude
-   and Codex plugin manifests, and the Pi manifests. `pnpm version:sync:check`
-   fails CI if any of them drifts.
-3. **Merging that PR cuts the tag.** `main` now has no pending changesets and a
-   version no tag points at, so `red-release.yml` tags `vX.Y.Z`.
-4. **[red-publish.yml](./.github/workflows/red-publish.yml) publishes the tag.**
-   It builds the bundles, stages them into the `@reddb-io/red-skills` npm
-   package, runs the real packaged client against the packed tarball as a
-   producer/consumer contract check, `npm publish`es, smokes the published
-   package from the registry, cuts the GitHub Release with the assets, and moves
-   the matching major tag such as `v3` so reusable workflows pinned to `@v3`
-   keep advancing.
-
-The `publish` job runs in the GitHub environment named `red-release`. Repository
-settings must keep that environment protected with required reviewers, because
-approval is the gate before the job publishes release assets or moves the major
-tag. Once an approved reviewer approves the environment deployment, the publish
-continues without any extra manual step.
-
-Publishing defers while any open issue carries the `running` label (a drain is
-mid-iteration); an hourly schedule retries the newest tag that has no GitHub
-Release yet, and every stage is idempotent so the retry resumes rather than
-conflicts.
-
-A shipped daemon keeps itself current without any of this: it resolves the
-published version on its own tick, finds a successor running exactly that
-version, hands over the socket and the lease, and lets the successor re-adopt
-every Worker off the event lane. A **major boundary is held and the hold is said
-out loud** — `upgrade.major_held` and `upgrade.major_hold` name the newest
-release and the manual step that crosses it — because a breaking change must not
-arrive on a machine that is holding Workers just because a timer noticed it.
+Cutting a release is a maintainer flow of its own: `pnpm changeset`, the Version
+Packages PR, the tag, and the publish workflow are documented in
+[docs/RELEASING.md](./docs/RELEASING.md).
 
 ## License
 
