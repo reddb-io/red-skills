@@ -1762,6 +1762,8 @@ describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
       // A gate sub-cap far above the lane ceiling: the ceiling is what binds,
       // and the review's reserved round stays unreachable to gate and tier.
       reseedGateBudget: 9,
+      adversarialReview: { enabled: true, maxIterations: 1, reviewerCount: 1, quorum: "any" },
+      adversarialFindings: { summary: "Clean.", findings: [] },
     });
 
     const result = await processIssue(deps, input);
@@ -1771,6 +1773,24 @@ describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
     expect(reseeds(trace)).toHaveLength(3);
     expect(reseeds(trace).map((e) => e.payload?.round)).toEqual([1, 2, 3]);
     expect(trace.runAgentCalls).toHaveLength(4);
+  });
+
+  it("frees the review's reserved round to the other causes when the stage is deactivated (#2985)", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackResults: [false, false, false, false, false, false],
+      classifyIssue: async () => "simple",
+      reseedGateBudget: 9,
+      // No `adversarialReview` — the fold's third stage never runs, so holding
+      // a round for it converts the last of the ceiling into dead capacity.
+      });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(reseeds(trace)).toHaveLength(4);
+    expect(reseeds(trace).map((e) => e.payload?.round)).toEqual([1, 2, 3, 4]);
+    expect(trace.runAgentCalls).toHaveLength(5);
   });
 
   it("names the cause on every emitted Re-seed event", async () => {

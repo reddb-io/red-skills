@@ -107,6 +107,15 @@ export const AfkCurrentSchema = z.object({
    * the existing `output_tokens` heartbeat counter for the report surface. */
   output_shaping_variant: z.string().default(""),
   output_shaping_enabled: z.boolean().default(false),
+  /** What the ORCHESTRATOR is blocked on, when it is blocked on something that
+   * spawns no child and writes nothing — today the two host-wide gate locks
+   * (#2985). Empty means "not blocked". Without it a worker waiting up to an
+   * hour on `validation-gate.lock` was indistinguishable from a healthy one:
+   * `live=true`, no child, no write, and nothing anywhere naming the wait.
+   * `blocked_for_s` is the wait's own age, distinct from `silent_for_s`. */
+  blocked_on: z.string().default(""),
+  blocked_detail: z.string().default(""),
+  blocked_for_s: z.union([z.number(), z.string()]).optional().default(""),
   /** Implementer projection measurements consumed by the throughput dashboard. */
   implementer_runner_startup_before_ms: z.number().default(0),
   implementer_runner_startup_after_ms: z.number().default(0),

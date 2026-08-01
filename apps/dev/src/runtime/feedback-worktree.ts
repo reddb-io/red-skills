@@ -57,6 +57,7 @@ import type { PostWorkerFormatExec } from "../core/post-worker-format.js";
 import { execTool, pnpm as runPnpm, type ExecOptions, type ExecOutput } from "./exec.js";
 import * as gitx from "./git.js";
 import { createPathLock } from "./land-lock.js";
+import type { LandLockWaitInfo } from "../core/land-lock.js";
 
 /**
  * Is `token` an ALREADY-MATERIALISED checkout rather than a branch name (#2339)?
@@ -188,13 +189,43 @@ export interface FeedbackWorktreeIO {
    * Optional: an injected IO without it (every test fake) serializes only
    * in-process, which is all a single-process fixture needs.
    */
-  lock?(dest: string): Promise<(() => Promise<void>) | null>;
+  lock?(dest: string, onWait?: LockWaitSink): Promise<(() => Promise<void>) | null>;
   /**
    * Host-wide capacity-one semaphore for validation commands. Every live worker
    * and no-agent reconcile manager binds the same `.red/state` lock.
    */
-  gateLock?(root: string): Promise<(() => Promise<void>) | null>;
+  gateLock?(root: string, onWait?: LockWaitSink): Promise<(() => Promise<void>) | null>;
 }
+
+/**
+ * What the orchestrator is BLOCKED ON, named. The two host-wide locks here are
+ * the gate's only unbounded-looking waits, and both used to poll in complete
+ * silence — no child, no socket, no write — which read on every surface as a
+ * healthy `live=true` worker doing nothing for half an hour (#2985).
+ */
+export interface LockWaitNotice {
+  /** `validation-gate` (host-wide capacity-one) or `feedback-worktree`. */
+  lock: "validation-gate" | "feedback-worktree";
+  /**
+   * Where the wait stands. A `waiting` notice is only ever followed by exactly
+   * one terminal notice, so a reader that latches "blocked" on the first always
+   * gets the un-latch — a stall banner that outlives its stall is its own lie.
+   */
+  state: "waiting" | "acquired" | "timed-out";
+  /** The contended path. */
+  path: string;
+  /** Who holds it right now, when the lock record could be read. */
+  heldBy?: string;
+  heldByPid?: number;
+  heldForMs?: number;
+  /** How long this waiter has waited, and how much budget is left. */
+  waitedMs: number;
+  remainingMs: number;
+  /** One line naming the wait, ready for the iteration log. */
+  message: string;
+}
+
+export type LockWaitSink = (notice: LockWaitNotice) => void;
 
 /**
  * How long a landing revalidation waits for the baseline worktree before giving
@@ -214,6 +245,115 @@ const GATE_LOCK_STALE_MS = 24 * 60 * 60_000;
  * lockfile drift costs three installs, not one per check in the cycle.
  */
 const MAX_SETUP_ATTEMPTS = 3;
+
+/**
+ * How often a still-blocked waiter re-announces itself. The first poll speaks
+ * IMMEDIATELY — a wait nobody hears about for 30s is still a wait nobody can
+ * see at second 1 — and every later notice is spaced so a 60-minute gate-lock
+ * wait costs ~120 log lines rather than ~7200.
+ */
+export const LOCK_WAIT_NOTICE_INTERVAL_MS = 30_000;
+
+/** `754321` → `12m34s`. Coarse on purpose: the reader wants an order of
+ * magnitude, not a stopwatch. */
+export function formatWaitDuration(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}m${String(seconds).padStart(2, "0")}s`;
+}
+
+/**
+ * Render ONE wait observation as the notice the iteration log carries. It names
+ * the lock, the holder, how long the holder has had it, how long we have
+ * waited, and when we give up — everything a reader needs to tell "contended,
+ * making progress" from "wedged behind a corpse" without attaching a debugger.
+ */
+export function renderLockWaitNotice(
+  lock: LockWaitNotice["lock"],
+  info: LandLockWaitInfo,
+): LockWaitNotice {
+  const held =
+    info.heldBy === undefined
+      ? "held by an unreadable lock record"
+      : `held by \`${info.heldBy}\`` +
+        (info.heldByPid === undefined ? "" : ` (pid ${info.heldByPid})`) +
+        (info.heldForMs === undefined ? "" : ` for ${formatWaitDuration(info.heldForMs)}`);
+  return {
+    lock,
+    state: "waiting",
+    path: info.path,
+    ...(info.heldBy === undefined ? {} : { heldBy: info.heldBy }),
+    ...(info.heldByPid === undefined ? {} : { heldByPid: info.heldByPid }),
+    ...(info.heldForMs === undefined ? {} : { heldForMs: info.heldForMs }),
+    waitedMs: info.waitedMs,
+    remainingMs: info.remainingMs,
+    message:
+      `⏳ /afk gate: blocked on the host-wide \`${lock}\` lock (\`${info.path}\`), ${held} — ` +
+      `waited ${formatWaitDuration(info.waitedMs)}, giving up in ${formatWaitDuration(info.remainingMs)}.`,
+  };
+}
+
+/** The reporter behind one `acquire()`: a throttled per-poll sink plus the ONE
+ * terminal notice that retires whatever the waiting notices latched. */
+export interface LockWaitReporter {
+  onWait: (info: LandLockWaitInfo) => void;
+  /** Emit the terminal notice — only when a wait was actually announced. */
+  finish(acquired: boolean): void;
+}
+
+/**
+ * Adapt the lock's per-poll `onWait` to the caller's sink, throttled to
+ * {@link LOCK_WAIT_NOTICE_INTERVAL_MS}. Returns `undefined` when there is no
+ * sink, so the lock skips the work entirely.
+ */
+export function lockWaitReporter(
+  lock: LockWaitNotice["lock"],
+  sink: LockWaitSink | undefined,
+): LockWaitReporter | undefined {
+  if (!sink) return undefined;
+  let lastAnnouncedMs = -Infinity;
+  let announced = false;
+  let lastWaitedMs = 0;
+  let path = "";
+  return {
+    onWait(info) {
+      lastWaitedMs = info.waitedMs;
+      path = info.path;
+      if (info.attempt !== 1 && info.waitedMs - lastAnnouncedMs < LOCK_WAIT_NOTICE_INTERVAL_MS) return;
+      lastAnnouncedMs = info.waitedMs;
+      announced = true;
+      sink(renderLockWaitNotice(lock, info));
+    },
+    finish(acquired) {
+      // An UNCONTENDED acquire said nothing and so has nothing to retire.
+      if (!announced) return;
+      const waited = formatWaitDuration(lastWaitedMs);
+      sink({
+        lock,
+        state: acquired ? "acquired" : "timed-out",
+        path,
+        waitedMs: lastWaitedMs,
+        remainingMs: 0,
+        message: acquired
+          ? `✅ /afk gate: took the host-wide \`${lock}\` lock after waiting ${waited}.`
+          : `⛔ /afk gate: gave up on the host-wide \`${lock}\` lock after ${waited}; validation blocked.`,
+      });
+    },
+  };
+}
+
+/** Acquire through a reporter so both the wait and its end are announced. */
+async function acquireAnnounced(
+  lock: LockWaitNotice["lock"],
+  sink: LockWaitSink | undefined,
+  build: (onWait?: (info: LandLockWaitInfo) => void) => Promise<(() => Promise<void>) | null>,
+): Promise<(() => Promise<void>) | null> {
+  const reporter = lockWaitReporter(lock, sink);
+  const release = await build(reporter ? (info) => reporter.onWait(info) : undefined);
+  reporter?.finish(release !== null);
+  return release;
+}
 
 const defaultIO: FeedbackWorktreeIO = {
   worktreeAdd: gitx.worktreeAdd,
@@ -244,29 +384,31 @@ const defaultIO: FeedbackWorktreeIO = {
   },
   pnpm: runPnpm,
   exec: execTool,
-  lock: async (dest) => {
+  lock: async (dest, onWait) => {
     // The lock file sits BESIDE the worktree, not inside it — `git worktree
     // add` refuses a non-empty destination, so a lock file within `dest` would
     // block the very operation it guards.
     await mkdir(dirname(dest), { recursive: true });
-    return createPathLock(`${dest}.lock`, `feedback-worktree:${dest}`, {
-      waitTimeoutMs: WORKTREE_LOCK_WAIT_MS,
-      staleAfterMs: WORKTREE_LOCK_STALE_MS,
-      pollMs: 500,
-    }).acquire();
+    return acquireAnnounced("feedback-worktree", onWait, (report) =>
+      createPathLock(`${dest}.lock`, `feedback-worktree:${dest}`, {
+        waitTimeoutMs: WORKTREE_LOCK_WAIT_MS,
+        staleAfterMs: WORKTREE_LOCK_STALE_MS,
+        pollMs: 500,
+        ...(report ? { onWait: report } : {}),
+      }).acquire(),
+    );
   },
-  gateLock: async (root) => {
+  gateLock: async (root, onWait) => {
     const stateDir = join(root, ".red", "state");
     await mkdir(stateDir, { recursive: true });
-    return createPathLock(
-      join(stateDir, "validation-gate.lock"),
-      `validation-gate:${process.pid}`,
-      {
+    return acquireAnnounced("validation-gate", onWait, (report) =>
+      createPathLock(join(stateDir, "validation-gate.lock"), `validation-gate:${process.pid}`, {
         waitTimeoutMs: GATE_LOCK_WAIT_MS,
         staleAfterMs: GATE_LOCK_STALE_MS,
         pollMs: 500,
-      },
-    ).acquire();
+        ...(report ? { onWait: report } : {}),
+      }).acquire(),
+    );
   },
 };
 
@@ -322,6 +464,14 @@ export interface FeedbackWorktreeOptions {
   rebaseOnto?: string;
   /** Resource budget applied to validation subprocesses (#1758). */
   resourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
+  /**
+   * Where a BLOCKED wait announces itself (#2985). Both host-wide locks here
+   * can hold a worker for tens of minutes with no child process and no write,
+   * which every liveness surface reads as a healthy worker; the sink is how the
+   * wait reaches the iteration log, the worker event lane, and the vitals.
+   * Absent → the locks skip the reporting entirely (unchanged behaviour).
+   */
+  onLockWait?: LockWaitSink;
 }
 
 /**
@@ -340,6 +490,7 @@ export function makeFeedbackWorktree(
   const cacheEnabled = options.cacheEnabled !== false; // default: ON
   const rebaseOnto = options.rebaseOnto; // default: undefined (OFF)
   const resourceBudget = options.resourceBudget ?? {};
+  const onLockWait = options.onLockWait;
   const gitCtx: gitx.GitContext = { cwd: root };
   // branch -> resolved checkout path, or null when setup failed (block all runs).
   const resolved = new Map<string, string | null>();
@@ -389,7 +540,7 @@ export function makeFeedbackWorktree(
     run: () => Promise<ExecOutput>,
   ): Promise<ExecOutput> {
     if (!io.gateLock) return run();
-    const release = await io.gateLock(root);
+    const release = await io.gateLock(root, onLockWait);
     if (release === null) {
       return {
         code: 1,
@@ -468,7 +619,7 @@ export function makeFeedbackWorktree(
     // to a clean re-materialise — under the host-wide lock (#2437), because a
     // worktree path is a singleton and two processes materialising it at once
     // corrupt each other's setup.
-    const release = io.lock ? await io.lock(dest) : null;
+    const release = io.lock ? await io.lock(dest, onLockWait) : null;
     if (io.lock && release === null) {
       // Timed out waiting for the holder. This is CONTENTION, not corruption:
       // report it as a retryable setup failure so the next validation call

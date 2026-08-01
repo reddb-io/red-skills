@@ -1025,3 +1025,64 @@ describe("makeFeedbackWorktree setup failure names its cause (#2964)", () => {
     expect(latched.stderr).toContain("worktree add failed");
   });
 });
+
+describe("the gate's lock waits reach the caller's sink (#2985)", () => {
+  it("hands `onLockWait` to BOTH host-wide locks", async () => {
+    const reached: Array<{ lock: string; sinkWired: boolean }> = [];
+    const sink = (): void => {};
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => ({ ok: true, stderr: "" }),
+      worktreeRemove: async () => {},
+      pnpm: async () => ({ code: 0, stdout: "", stderr: "" }),
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+      lock: async (_dest, onWait) => {
+        reached.push({ lock: "feedback-worktree", sinkWired: onWait === sink });
+        return async () => {};
+      },
+      gateLock: async (_root, onWait) => {
+        reached.push({ lock: "validation-gate", sinkWired: onWait === sink });
+        return async () => {};
+      },
+    };
+
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+      onLockWait: sink,
+    });
+    await fb.pnpm(["pnpm", "-C", "afk/wAAAA/1-x", "test"]);
+
+    expect(reached.map((r) => r.lock).sort()).toEqual(["feedback-worktree", "validation-gate"]);
+    // A sink that reaches only one lock leaves the other silent — which is the
+    // whole defect, half-fixed.
+    expect(reached.every((r) => r.sinkWired)).toBe(true);
+  });
+
+  it("leaves both locks unreported when no sink is wired (unchanged behaviour)", async () => {
+    const seen: Array<unknown> = [];
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => ({ ok: true, stderr: "" }),
+      worktreeRemove: async () => {},
+      pnpm: async () => ({ code: 0, stdout: "", stderr: "" }),
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+      lock: async (_dest, onWait) => {
+        seen.push(onWait);
+        return async () => {};
+      },
+      gateLock: async (_root, onWait) => {
+        seen.push(onWait);
+        return async () => {};
+      },
+    };
+
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });
+    await fb.pnpm(["pnpm", "-C", "afk/wAAAA/1-x", "test"]);
+
+    expect(seen).toEqual([undefined, undefined]);
+  });
+});
