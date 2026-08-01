@@ -19,6 +19,8 @@ import { readHostSnapshot, type HostSnapshot } from "./model/snapshot.js";
 import { createRedskilledReadClient } from "./redskilled/client.js";
 import { resolveExtensionPaths } from "./redskilled/paths.js";
 import { RedskilledTreeProvider } from "./views/tree.js";
+import { RedskilledDashboardPanel } from "./views/dashboard-panel.js";
+import { RedskilledStatusBar } from "./views/status-bar.js";
 import { WorkerLogPanel } from "./views/log-panel.js";
 import { createWatcher } from "./watch/watcher.js";
 import type { Signal } from "./watch/signals.js";
@@ -33,6 +35,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const events = new RedskilledTreeProvider(buildEventsTree);
   const pullRequests = new RedskilledTreeProvider(buildPullRequestsTree);
   const logPanel = new WorkerLogPanel();
+  // The statusline and its table, both fed by the aggregate the DAEMON renders.
+  // Neither recomputes a cell: a panel doing its own Worker math would describe a
+  // different machine than the herdr pane beside it (ADR 0130 rule 10).
+  const statusBar = new RedskilledStatusBar();
+  const dashboardPanel = new RedskilledDashboardPanel();
 
   const watcher = createWatcher({
     read: async (): Promise<HostSnapshot> =>
@@ -47,6 +54,8 @@ export function activate(context: vscode.ExtensionContext): void {
       workers.update(snapshot);
       events.update(snapshot);
       pullRequests.update(snapshot);
+      statusBar.update(snapshot);
+      dashboardPanel.update(snapshot);
       const following = logPanel.following();
       if (following !== null) void logPanel.refresh(following);
     },
@@ -76,11 +85,20 @@ export function activate(context: vscode.ExtensionContext): void {
     events,
     pullRequests,
     logPanel,
+    statusBar,
+    dashboardPanel,
     new vscode.Disposable(() => {
       disposed = true;
       if (timer) clearTimeout(timer);
     }),
     vscode.commands.registerCommand("redskilled.refresh", () => watcher.tick()),
+    vscode.commands.registerCommand("redskilled.showDashboard", async () => {
+      dashboardPanel.show();
+      // Opened, then read: the panel draws the last frame immediately and the
+      // fresh one a moment later, rather than showing an empty body until the
+      // poll interval comes round.
+      await watcher.tick();
+    }),
     vscode.commands.registerCommand("redskilled.showWorkerLog", async (node?: ViewNode) => {
       if (!node?.workerId) return;
       await logPanel.show(node.workerId, node.logPath ?? null);
