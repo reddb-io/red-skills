@@ -180,6 +180,21 @@ describe("starting work registers the project", () => {
     // Fail closed (ADR 0130 rule 6): a refused registration falls back to nothing.
     expect(spawn.mock.calls.filter((call) => (call[1] ?? []).includes("__supervise"))).toEqual([]);
   });
+
+  it("refuses a checkout with no `origin`, rather than registering a query about everything", async () => {
+    // The second refusal, against a daemon that DOES answer, so the reason is
+    // the checkout rather than the host. It lived as an alternation in the
+    // adapter suite's daemon-down case until #2981 pinned that host: which of
+    // the two refusals fired there depended on whether the developer's machine
+    // ran a daemon, which is no way to pin either of them.
+    await liveHost();
+    const root = await scratch("dev-register-untracked-");
+    execFileSync("git", ["init", "-q"], { cwd: root, stdio: "ignore" });
+
+    await expect(
+      createCastleMcpDependencies(root).projectStart({ runner: "claude", target: 1 }),
+    ).rejects.toThrow(/no `origin` remote/);
+  });
 });
 
 describe("stopping work deregisters the project", () => {
