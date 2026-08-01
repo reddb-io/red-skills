@@ -333,7 +333,20 @@ export async function installTypeLabels(
 ): Promise<TypeLabelInstallReceipt> {
   const requested = [...new Set(labels.map((label) => label.trim()).filter((label) => label !== ""))];
   const hitlTypes = hitlTypeLabelsAmong(requested);
-  const plan = planHitlTypeDeclaration(await deps.readConfig(), hitlTypes);
+  const configText = await deps.readConfig();
+  if (configText === null) {
+    // `/red-setup` is the only thing authorized to create a repository's `.red/`
+    // (ADR 0067). Without the file there is nowhere to write the safety half, so
+    // the trigger half is not installed either.
+    return {
+      installed: [],
+      declared: [],
+      alreadyDeclared: [],
+      configChanged: false,
+      refusal: ".red/config.yaml does not exist; run /red-setup to create it, then re-run the installer",
+    };
+  }
+  const plan = planHitlTypeDeclaration(configText, hitlTypes);
   if (plan.refusal) {
     return { installed: [], declared: [], alreadyDeclared: plan.alreadyDeclared, configChanged: false, refusal: plan.refusal };
   }
