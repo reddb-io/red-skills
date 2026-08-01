@@ -22,7 +22,7 @@ import {
 } from "./project-registration.js";
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
 import type { RedskilledQueueDiscovery, RedskilledQueueOutcome } from "./queue-discovery.js";
-import type { RedskilledMajorHold } from "./self-replace.js";
+import type { RedskilledMajorHold, RedskilledReplacementHoldReason } from "./self-replace.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
 /**
@@ -123,6 +123,25 @@ export interface RedskilledUpgradeState {
   readonly replacement: "none" | "pending" | "in-progress";
   /** When the published answer was last observed; null when it never was. */
   readonly checked_at: string | null;
+  /**
+   * How many published reads this daemon has COMPLETED — zero means never.
+   *
+   * The number that tells a stale daemon's two diseases apart. A daemon holding
+   * a registration reports the same `published_version: null` whether its check
+   * has fired and resolved nothing or has never fired at all, and those are
+   * different defects with different cures — a whole investigation went to
+   * distinguishing them by hand (#2975). `checks: 0` is "the check never ran";
+   * `checks: 2` beside a `hold_reason` is "it ran and decided".
+   */
+  readonly checks: number;
+  /**
+   * Why the last check did not replace; null when it decided to, or never ran.
+   *
+   * Paired with `checks` on purpose: the count says the mechanism is alive and
+   * this says what it concluded, so "the registry is unreachable from this host"
+   * is never again read as "the timer is broken".
+   */
+  readonly hold_reason: RedskilledReplacementHoldReason | null;
   /** The newest version published across every major; null when unresolved. */
   readonly newest_published_version: string | null;
   /** 1 when a newer major exists and this daemon is deliberately not on it. */
@@ -244,6 +263,10 @@ export interface BuildHostStateInput {
     readonly newest?: string | null;
     /** The major this daemon is holding at — the daemon decides, this echoes it. */
     readonly majorHold?: RedskilledMajorHold | null;
+    /** How many reads have COMPLETED; absent is none, which is what never-ran reports. */
+    readonly checks?: number;
+    /** The last hold's reason; absent leaves it null, as a replace and a never-ran do. */
+    readonly holdReason?: RedskilledReplacementHoldReason | null;
   };
 }
 
@@ -324,6 +347,8 @@ export function buildUpgradeState(input: BuildHostStateInput): RedskilledUpgrade
     newer_published: Number(input.published?.newer === true),
     replacement: input.published?.replacement ?? "none",
     checked_at: input.published?.checkedAt ?? null,
+    checks: input.published?.checks ?? 0,
+    hold_reason: input.published?.holdReason ?? null,
     newest_published_version: input.published?.newest ?? null,
     major_held: Number(hold !== null),
     major_hold: hold,
@@ -401,6 +426,10 @@ export function isRedskilledUpgradeState(value: unknown): value is RedskilledUpg
       upgrade.newest_published_version === null ||
       typeof upgrade.newest_published_version === "string") &&
     (upgrade.major_held === undefined || typeof upgrade.major_held === "number") &&
+    (upgrade.checks === undefined || typeof upgrade.checks === "number") &&
+    (upgrade.hold_reason === undefined ||
+      upgrade.hold_reason === null ||
+      typeof upgrade.hold_reason === "string") &&
     (upgrade.major_hold === undefined ||
       upgrade.major_hold === null ||
       isRedskilledMajorHold(upgrade.major_hold));
