@@ -30,6 +30,7 @@ import {
   type RedskilledActivityReport,
   type RedskilledRepositoryActivity,
 } from "./repository-activity.js";
+import type { RedskilledWorkerDisplay, RedskilledWorkerDisplayRecord } from "./worker-display.js";
 import type { RedskilledWorkerLogLine } from "./worker-log.js";
 
 /**
@@ -103,6 +104,24 @@ export interface RedskilledStatuslineWorker {
   readonly vitals: RedskilledStatuslineVitals;
   readonly budget: RedskilledStatuslineWorkerBudget;
   readonly log: RedskilledStatuslineWorkerLog;
+  /**
+   * What this Worker's project says a surface should SHOW about it.
+   *
+   * It rides on the payload for the same reason `log` does: the dashboard is ONE
+   * read, and a surface that had to ask each project for its own Worker rows
+   * would cross a project boundary per render and become a second authority on a
+   * question this document already answers.
+   *
+   * `null` — never a record of zeros — for a Worker whose project publishes none,
+   * because "nothing was published" and "it has done nothing" are opposite facts
+   * about a busy Worker. OPTIONAL on the wire for the reason `known_projects` is:
+   * one daemon serves checkouts pinned to different bundle versions (ADR 0130
+   * rule 3), and a consumer finding it absent must render an unpublished row, not
+   * reject the Worker set.
+   */
+  readonly display?: RedskilledWorkerDisplay | null;
+  /** When the display record landed; `null` when none has. */
+  readonly display_published_at?: string | null;
 }
 
 /** One project's share of the machine. */
@@ -214,6 +233,14 @@ export interface BuildStatuslinePayloadInput {
    * the heartbeats, and this document stays a pure function of its inputs.
    */
   readonly logLines?: Readonly<Record<string, RedskilledWorkerLogLine>>;
+  /**
+   * The display record each Worker's project published, by Worker id.
+   *
+   * Passed in for the same reason the log lines are: the records belong to the
+   * daemon that received the heartbeats, and this document stays a pure function
+   * of its inputs.
+   */
+  readonly displays?: Readonly<Record<string, RedskilledWorkerDisplayRecord>>;
   readonly now: string;
   /** Workers this daemon adopted at start rather than birthing itself, by id. */
   readonly reattachedWorkerIds?: readonly string[];
@@ -246,6 +273,7 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       sampleFresh,
       nowMs,
       log: input.logLines?.[worker.worker_id],
+      display: input.displays?.[worker.worker_id],
       state: reattached.has(worker.worker_id) ? "reattached" : "running",
     })
   );
@@ -310,6 +338,8 @@ function buildWorker(
     readonly nowMs: number | null;
     /** What this Worker published, when it has published anything. */
     readonly log?: RedskilledWorkerLogLine;
+    /** What this Worker's project says a surface should show about it. */
+    readonly display?: RedskilledWorkerDisplayRecord;
     readonly state: RedskilledWorkerState;
   },
 ): RedskilledStatuslineWorker {
@@ -345,6 +375,8 @@ function buildWorker(
       enforceable: enforced != null,
     },
     log: workerLog(ctx.log),
+    display: ctx.display?.display ?? null,
+    display_published_at: ctx.display?.published_at ?? null,
   };
 }
 
