@@ -157,6 +157,22 @@ afk:
 
 **This is how maintainers tell an inner agent the exact gate it must satisfy — without ad-hoc `-r` retry guidance.** When `afk.backpressure` is set, every inner-agent handoff carries a `<merge-gate>` section listing the configured commands verbatim, and the agent's exit-protocol completion contract instructs it to run and pass those commands *before* emitting `<promise>DONE</promise>` (issue #849). The contract distinguishes two kinds of check: the **touched-package confidence checks** the agent runs while developing (the package's own `test`/`typecheck`/`lint`/`build`) versus the **binding merge gate** the orchestrator enforces after DONE (these backpressure commands plus `drift-guard`). So for repos with a broader gate than any single touched package — `cargo fmt --all -- --check`, a workspace-wide `cargo clippy`, an integration smoke — declare it once under `afk.backpressure` and the agent sees and satisfies it on the first attempt instead of bouncing as `blocked:validation`. On an automatic re-queue, the prior failure's summary remains visible through `<prev-failure-context>`, so the next agent can target the real blocker. The agent is told **not** to re-run an unbounded full repository suite after its final commit; the listed gate commands are the contract.
 
+### HUMAN-ONLY ticket types
+
+`afk.labels.hitl_types` is the list of TYPE labels this repo declares human-only. **A dependent carrying one is promoted to `ready-for-human`, never into the autonomous queue** (issue #2966): its blockers closing means the *human* may now act, not that an agent may act for them. Both promote paths honour it — the boot/periodic unblock sweep and the event-driven close cascade — and the `req:*` edges are consumed either way, so the dependency wait genuinely ends; only the lane differs.
+
+```yaml
+plugins:
+  dev:
+    afk:
+      labels:
+        hitl_types:
+          - wayfinder:grilling
+          - wayfinder:prototype
+```
+
+The audit comment then names the lane and the type that chose it, so an operator reading the Ticket can tell a sweep promotion from a hand-set label. **The names come from this list, never from a built-in one** — a repo whose decision tickets are called something else declares its own and inherits the same protection. An absent or empty list is today's behaviour exactly: every unblocked dependent reaches `ready-for-agent`, with the pre-existing comment text unchanged. A single-line scalar is accepted as a one-label list, and the namespaced `plugins.dev.afk.labels.hitl_types` location folds down like every other key (ADR 0042).
+
 ### Merge-gate policy
 
 The unlocked admin-merge (`gh pr merge --admin --merge`, ADR 0030) **ignores advisory review checks by default** — this is intentional, not an oversight. The binding gates on a landing are:
