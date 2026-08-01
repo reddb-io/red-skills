@@ -8,6 +8,11 @@
 // keeps the sweeps once the thing that used to call them is gone.
 import { dirname, join } from "node:path";
 import {
+  formatDeathAttributions,
+  runBootDeathReaper,
+} from "@reddb-io/shared/death-attribution.js";
+import { stateDir } from "@reddb-io/shared/red-paths.js";
+import {
   afkPaths,
   collectBootPrecheckFacts,
   collectBootOptions,
@@ -79,6 +84,11 @@ export function buildProjectBootSweeps(
   const ctx: RepoContext = { root, repo, remote: "origin" };
   const paths = afkPaths(root);
   return async (): Promise<void> => {
+    // FIRST, and before anything that can fail on the network (#3028): the
+    // deaths from the last boot are attributed while the evidence is freshest,
+    // and a precheck failure below must not be what buries them. Local files
+    // only, so it costs nothing and cannot throw.
+    log(formatDeathAttributions(runBootDeathReaper({ stateRoot: stateDir(root) })));
     const nowS = Math.floor(Date.now() / 1000);
     const facts = await collectBootPrecheckFacts(ctx, { log });
     const bootstrap: BootstrapInput = {
