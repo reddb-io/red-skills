@@ -1123,6 +1123,13 @@ export interface LandPrInput {
    */
   mergeQueue?: boolean;
   /**
+   * Budget for the merge confirmation every landing ends with (#2986). Absent →
+   * {@link waitForQueuedMerge}'s defaults, and with no injected clock a single
+   * probe — enough to answer a synchronous merge, never enough to claim a queued
+   * one landed.
+   */
+  mergeQueueWait?: MergeQueueWaitInput;
+  /**
    * Final PR-path validation hook. Called after the PR exists and CI-aware merge
    * has observed its current readiness, but before `gh pr merge`. Callers use it
    * to either trust fresh green CI or run their local fallback gate.
@@ -1147,7 +1154,11 @@ export type LandPrFailReason =
   | "ci-failed"
   | "ci-pending"
   | "before-merge-failed"
-  | "merge-failed";
+  | "merge-failed"
+  /** The merge queue took the PR and then kicked it back out (#2986). */
+  | "queue-rejected"
+  /** The PR was still queued when the confirmation budget ran out (#2986). */
+  | "queue-pending";
 
 export interface LandPrResult {
   ok: boolean;
@@ -1163,6 +1174,8 @@ export interface LandPrResult {
    * line describing it, read back from the PR (#2807). The caller records this
    * verbatim instead of guessing at branch protection. */
   mergeFailure?: MergeRejectionDiagnosis;
+  /** Set on `reason: "queue-rejected"` — what the queue was observed doing (#2986). */
+  queueDetail?: string;
   /** Remaining landing tail when `releaseAt` stopped before the merge. */
   deferred?: {
     prNumber: number;
@@ -1173,6 +1186,166 @@ export interface LandPrResult {
      */
     run(ciAlreadyGreen?: boolean): Promise<LandPrResult>;
   };
+}
+
+// ---------- merge confirmation (#2986) ----------
+//
+// A merge command exits 0 when the PR is ENQUEUED, not when it is merged: the
+// forge still has to build the merge group and run its CI, which takes minutes.
+// That is true of `gh pr merge --auto` on a base AFK knows carries a queue, and
+// equally true of a plain `gh pr merge` against a repository whose merge queue
+// AFK was never told about — which is how #2986 was observed. Reading either
+// exit 0 as "landed" closed the issue, stripped its labels and deleted the
+// remote branch while `pulls/N` still said `merged=false`; a merge group that
+// then fails kicks the PR back out, leaving a closed issue whose code never
+// reached the base. So EVERY merge ends with the PR itself being asked.
+
+/** Budget + injected clock for {@link waitForQueuedMerge}. */
+export interface MergeQueueWaitInput {
+  /**
+   * Injected sleep between polls. ABSENT → the confirmation asks once and never
+   * waits: without a clock there is nothing to wait on, and a caller with no
+   * clock still gets the honest answer rather than an assumed merge.
+   */
+  sleep?: Sleep;
+  /** Best-effort liveness callback fired before each bounded probe. */
+  onPoll?: (event: LandingWaitPollEvent) => void | Promise<void>;
+  /** Max poll attempts before the wait gives up (→ `queue-pending`). Default 120. */
+  maxPolls?: number;
+  /** Delay between polls, in ms. Default 15000. */
+  intervalMs?: number;
+  /** Max time for one GitHub probe before treating that poll as still queued. */
+  probeTimeoutMs?: number;
+}
+
+/**
+ * How a queued PR left the merge queue.
+ *   - `merged`   — the forge reports the PR MERGED; the landing may close/clean up.
+ *   - `rejected` — the queue gave the PR back (closed unmerged, or the auto-merge
+ *                  request it accepted is gone while the PR is still open). Terminal.
+ *   - `pending`  — still queued when the budget ran out. NOT a merge.
+ */
+export type QueuedMergeOutcome = "merged" | "rejected" | "pending";
+
+export interface QueuedMergeResult {
+  outcome: QueuedMergeOutcome;
+  /** Forge-reported merge commit, on `merged`. */
+  mergeSha?: string;
+  /** One line naming what was observed, for the terminal record on `rejected`. */
+  detail?: string;
+}
+
+interface QueuedPrView {
+  merged: boolean;
+  state: string;
+  mergeSha?: string;
+  /** Whether the PR still carries the auto-merge request the enqueue created. */
+  autoMerge: boolean;
+  /** False when the probe failed or its payload was unparseable. */
+  observed: boolean;
+}
+
+/** Parse `gh pr view --json state,mergedAt,mergeCommit,autoMergeRequest`. Tolerant:
+ * an unreadable payload yields `observed: false` so the caller polls again rather
+ * than inventing a verdict from a failed probe. */
+export function parseQueuedPrView(stdout: string): QueuedPrView {
+  const absent: QueuedPrView = { merged: false, state: "", autoMerge: false, observed: false };
+  const text = stdout.trim();
+  if (text === "") return absent;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) return absent;
+    const row = parsed as {
+      state?: unknown;
+      mergedAt?: unknown;
+      mergeCommit?: unknown;
+      autoMergeRequest?: unknown;
+    };
+    const mergeCommit = row.mergeCommit;
+    const oid =
+      typeof mergeCommit === "object" && mergeCommit !== null
+        ? (mergeCommit as { oid?: unknown }).oid
+        : undefined;
+    const state = typeof row.state === "string" ? row.state.trim().toUpperCase() : "";
+    // `gh pr view` has no `merged` boolean — `state: MERGED` and a non-null
+    // `mergedAt` are the two forms the forge reports the completed merge in.
+    return {
+      merged: state === "MERGED" || (typeof row.mergedAt === "string" && row.mergedAt.trim() !== ""),
+      state,
+      ...(typeof oid === "string" && oid !== "" ? { mergeSha: oid } : {}),
+      autoMerge: typeof row.autoMergeRequest === "object" && row.autoMergeRequest !== null,
+      observed: true,
+    };
+  } catch {
+    return absent;
+  }
+}
+
+/**
+ * Ask a pull request whether it merged, and keep asking while it is queued —
+ * until the forge reports it merged, hands it back, or the budget runs out
+ * (#2986). Only `merged` may unlock the landing's close/cleanup steps. A
+ * synchronous merge settles this on the first probe.
+ *
+ * The dequeue signal is the auto-merge request DISAPPEARING from a still-open PR:
+ * that is what the forge does when the merge group fails its CI. It is only
+ * trusted once this wait has actually SEEN the request present, because `gh pr
+ * merge --auto` and the field's appearance are not simultaneous — an
+ * unseen-then-absent request is the enqueue still registering, not a rejection.
+ */
+export async function waitForQueuedMerge(
+  exec: Exec,
+  repo: string,
+  prNumber: number,
+  input: MergeQueueWaitInput = {},
+): Promise<QueuedMergeResult> {
+  const maxPolls = input.maxPolls ?? 120;
+  const intervalMs = input.intervalMs ?? 15_000;
+  // No clock injected → one probe, no waiting (see MergeQueueWaitInput.sleep).
+  const maxPollsWithClock = input.sleep ? maxPolls : 1;
+  const sleep = input.sleep ?? (async () => {});
+  let everQueued = false;
+
+  for (let attempt = 0; attempt < maxPollsWithClock; attempt++) {
+    await input.onPoll?.({
+      kind: "merge",
+      prNumber,
+      attempt: attempt + 1,
+      maxPolls: maxPollsWithClock,
+      intervalMs,
+      ...(input.probeTimeoutMs ? { probeTimeoutMs: input.probeTimeoutMs } : {}),
+    });
+    const res = await boundedProbe(
+      () =>
+        exec([
+          "gh", "-R", repo, "pr", "view", String(prNumber),
+          "--json", "state,mergedAt,mergeCommit,autoMergeRequest",
+        ]),
+      input.probeTimeoutMs,
+    );
+    const view = res.code === 0 ? parseQueuedPrView(res.stdout) : parseQueuedPrView("");
+    if (view.observed) {
+      if (view.merged) {
+        return { outcome: "merged", ...(view.mergeSha ? { mergeSha: view.mergeSha } : {}) };
+      }
+      if (view.state === "CLOSED") {
+        return {
+          outcome: "rejected",
+          detail: `PR #${prNumber} left the merge queue CLOSED without merging`,
+        };
+      }
+      if (view.autoMerge) {
+        everQueued = true;
+      } else if (everQueued) {
+        return {
+          outcome: "rejected",
+          detail: `the merge queue dequeued PR #${prNumber} without merging it (its auto-merge request is gone and the PR is still open)`,
+        };
+      }
+    }
+    if (attempt + 1 < maxPollsWithClock) await sleep(intervalMs);
+  }
+  return { outcome: "pending" };
 }
 
 const PR_BODY_PREFIX = "Automated AFK landing for #";
@@ -1541,14 +1714,24 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     });
     if (rejected) return rejected;
 
-    if (mergeQueue) return { ok: true, prNumber };
-
-    const mergedCommit = await exec([
-      "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeCommit", "--jq", ".mergeCommit.oid",
-    ]);
-    const mergeSha = mergedCommit.code === 0 ? mergedCommit.stdout.trim() : "";
+    // 4. #2986: the merge command exited 0 — ASK THE PR whether that meant
+    // merged. A synchronous merge answers on the first probe and this costs one
+    // `gh pr view`; an enqueue (with `--auto`, or against a repository whose
+    // merge queue AFK was never told about) answers `merged=false` and is held
+    // here until the forge finishes or hands the PR back. Only `merged` returns
+    // `ok`, because `ok` is what unlocks the caller's close/cleanup steps.
+    const confirmed = await waitForQueuedMerge(exec, repo, prNumber, input.mergeQueueWait ?? {});
+    if (confirmed.outcome === "rejected") {
+      return { ok: false, prNumber, reason: "queue-rejected", queueDetail: confirmed.detail };
+    }
+    if (confirmed.outcome === "pending") return { ok: false, prNumber, reason: "queue-pending" };
     await promoteFleetTrunkMirror(exec, { gitRepo, remote, target });
-    return { ok: true, prNumber, ...(mergeSha ? { mergeSha } : {}), ...(ciEvidence ? { ciEvidence } : {}) };
+    return {
+      ok: true,
+      prNumber,
+      ...(confirmed.mergeSha ? { mergeSha: confirmed.mergeSha } : {}),
+      ...(ciEvidence ? { ciEvidence } : {}),
+    };
   };
 
   const waitThenMerge = async (ciAlreadyGreen = false): Promise<LandPrResult> => {

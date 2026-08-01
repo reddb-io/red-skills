@@ -50,6 +50,7 @@ import {
   type ConflictResolver,
   type WaitForReviewInput,
   type CiAwaitInput,
+  type MergeQueueWaitInput,
 } from "../merge.js";
 import type { LandLock } from "../land-lock.js";
 import {
@@ -324,6 +325,8 @@ export interface ProcessIssueDeps {
   removeRebaseWorktree?(dir: string): Promise<void>;
   waitForReview?: WaitForReviewInput;
   ciAwait?: CiAwaitInput;
+  /** Budget for the post-enqueue merge confirmation on a merge-queue base (#2986). */
+  mergeQueueWait?: MergeQueueWaitInput;
   /** Slot-release boundary across the PR landing tail (#2427). */
   landingWait?: "merge" | "ci" | "none";
   /**

@@ -668,7 +668,10 @@ describe("Spec cascade rebase after DONE landing", () => {
     }
   });
 
-  it("does not cascade before a native merge queue has produced a merge SHA", async () => {
+  // #2986: a PR that is merely QUEUED has produced no merge SHA and no merge.
+  // Nothing downstream of the landing may run — not the cascade, and above all
+  // not the close/cleanup steps that a rejected merge group would strand.
+  it("does not close, clean up or cascade while the queued PR still reports merged=false", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -677,13 +680,54 @@ describe("Spec cascade rebase after DONE landing", () => {
         "spec:42": [{ number: 20, labels: ["spec:42", "ready-for-agent"] }],
       },
       siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
+      queueOutcome: "pending",
+    });
+    deps.nativeMergeQueue = true;
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("ci-pending");
+    expect(trace.closed).not.toContain(9);
+    expect(trace.deletedRemote).toEqual([]);
+    expect(trace.cascadeRebaseAttempts).toEqual([]);
+  });
+
+  it("parks blocked:ci with the issue and the branch intact when the merge queue rejects the PR", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent"],
+      queueOutcome: "rejected",
+    });
+    deps.nativeMergeQueue = true;
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("ci-failed");
+    expect(trace.closed).not.toContain(9);
+    expect(trace.deletedRemote).toEqual([]);
+    expect(trace.comments.some((c) => c.issue === 9 && c.body.includes("dequeued PR #42"))).toBe(true);
+  });
+
+  it("closes and cascades only once the queued PR reports merged=true", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      labels: ["ready-for-agent", "spec:42"],
+      dependentsByLabel: {
+        "spec:42": [{ number: 20, labels: ["spec:42", "ready-for-agent"] }],
+      },
+      siblingBranches: ["afk/wBBBB/20-fix-sibling-a"],
+      queueOutcome: "merged",
     });
     deps.nativeMergeQueue = true;
 
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
-    expect(trace.cascadeRebaseAttempts).toEqual([]);
+    expect(result.mergeSha).toBe("forge-merge-sha");
+    expect(trace.closed).toContain(9);
+    expect(trace.cascadeRebaseAttempts).toEqual(["afk/wBBBB/20-fix-sibling-a"]);
   });
 
   it("skips a sibling branch whose worker is still alive", async () => {

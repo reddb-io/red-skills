@@ -103,7 +103,7 @@ The repo's configured focal branch — the default base every AFK **Worktree** f
 _Avoid_: main (as a hardcoded assumption), default branch, primary branch
 
 **Landing**:
-How a completed **Worker**'s branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031, write target moved to the remote by ADR 0083): a locked branch is integrated on `origin/<locked-branch>` for human promotion by pull (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the worker history (`landPr`). Never writes to the **Primary checkout**. Owns the push → integrate → land → post-merge sequence as one operation.
+How a completed **Worker**'s branch is integrated into its base, toggled by the **Branch lock** (ADR 0030/0031, write target moved to the remote by ADR 0083): a locked branch is integrated on `origin/<locked-branch>` for human promotion by pull (`landMerge`, with a one-shot self-resolve of merge conflicts), an unlocked branch lands via an admin-merged PR carrying the worker history (`landPr`). Never writes to the **Primary checkout**. Owns the push → integrate → land → confirm → post-merge sequence as one operation. **The merge command exiting 0 is not the merge** (#2986): under a merge queue — the forge's own, or `--auto` — exit 0 means ENQUEUED, so the landing ends by asking the pull request itself and treats only `state: MERGED` as landed. A queue that hands the PR back parks `blocked:ci` with the issue open and the branch on origin; nothing closes, relabels, deletes or cascades before the confirmation.
 _Avoid_: merge, merge-back, integrate (these are sub-steps of Landing, not the operation)
 
 **Baseline comparison**:

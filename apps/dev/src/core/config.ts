@@ -1075,3 +1075,21 @@ export function resolveCiTimeoutSeconds(env: NodeJS.ProcessEnv = process.env): n
   const n = Number.parseInt(raw, 10);
   return Number.isInteger(n) && n > 0 ? n : DEFAULT_MERGE_CI_TIMEOUT_S;
 }
+
+/** Default wait for a QUEUED merge to complete, in seconds (#2986) — 45 minutes.
+ * The merge queue re-runs the whole required suite on its own merge group, and
+ * queues behind other entries while doing it, so this is deliberately longer
+ * than {@link DEFAULT_MERGE_CI_TIMEOUT_S}: a wait that expires early parks a
+ * landing that was about to succeed. */
+export const DEFAULT_MERGE_QUEUE_TIMEOUT_S = 2700;
+
+/**
+ * Resolve the queued-merge confirmation budget (#2986) from
+ * `RED_AFK_MERGE_QUEUE_TIMEOUT_S`. A non-positive / unparseable value falls back
+ * to {@link DEFAULT_MERGE_QUEUE_TIMEOUT_S}.
+ */
+export function resolveMergeQueueTimeoutSeconds(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.RED_AFK_MERGE_QUEUE_TIMEOUT_S ?? "").trim();
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : DEFAULT_MERGE_QUEUE_TIMEOUT_S;
+}

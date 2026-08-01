@@ -133,6 +133,14 @@ export interface Opts {
   landLock?: LandLock;
   /** Native merge queue (#1337): set `input.nativeMergeQueue`. */
   nativeMergeQueue?: boolean;
+  /**
+   * Model an ENQUEUE rather than a synchronous merge (#2986). Absent → the
+   * confirmation's first probe already reports a MERGED pull request.
+   *   - `merged`   → queued first, then merged.
+   *   - `rejected` → queued first, then the auto-merge request disappears.
+   *   - `pending`  → still queued for the whole (test-sized) budget.
+   */
+  queueOutcome?: "merged" | "rejected" | "pending";
   /** Explicit PR-resolved callback abort used by adversarial correction before merge. */
   onPrResolvedAbort?: boolean;
   /**
@@ -168,6 +176,7 @@ export function harness(opts: Opts = {}): Harness {
   const landingEvents: { phase: string; detail: Record<string, unknown> }[] = [];
   let mergeResolved = false;
   let prCreated = false;
+  let queuePolls = 0;
 
   const deps: LandingDeps = {
     mergeExec: async (argv): Promise<ExecResult> => {
@@ -265,6 +274,37 @@ export function harness(opts: Opts = {}): Harness {
       if (j.includes("pr checks")) {
         return { code: 0, stdout: JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]), stderr: "" };
       }
+      // #2986 post-enqueue merge confirmation. The queue accepts the PR on the
+      // first poll (auto-merge request present, not yet merged) and resolves on
+      // the second, so a landing that skipped the wait cannot pass by accident.
+      if (j.includes("pr view") && j.includes("autoMergeRequest")) {
+        queuePolls += 1;
+        const accepted = { state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: { enabledAt: "t" } };
+        // Unset → the forge merged on the spot and the very first confirmation
+        // says so. A test that opts in models the ENQUEUE: accepted first, then
+        // its outcome, so the landing has something to actually wait through.
+        const outcome = opts.queueOutcome;
+        if (outcome !== undefined && (queuePolls === 1 || outcome === "pending")) {
+          return { code: 0, stdout: JSON.stringify(accepted), stderr: "" };
+        }
+        if (outcome === "rejected") {
+          return {
+            code: 0,
+            stdout: JSON.stringify({ state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: null }),
+            stderr: "",
+          };
+        }
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            state: "MERGED",
+            mergedAt: "2026-08-01T00:00:00Z",
+            mergeCommit: { oid: "abc1234" },
+            autoMergeRequest: null,
+          }),
+          stderr: "",
+        };
+      }
       if (j.includes("pr view") && j.includes("mergeCommit")) {
         // #2261: doLanding reads the landed commit SHA via
         // `gh pr view <n> --json mergeCommit --jq .mergeCommit.oid`. Return the
@@ -315,6 +355,8 @@ export function harness(opts: Opts = {}): Harness {
       : undefined,
     waitForReview: opts.waitForReview ? { check: "CodeRabbit", sleep: async () => {} } : undefined,
     ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
+    // #2986: always injected so no queue landing under test can reach a real timer.
+    mergeQueueWait: { sleep: async () => {}, maxPolls: 3 },
     makeLandingWorktree: async () => (opts.noWorktree ? null : WT),
     removeLandingWorktree: async (dir) => {
       removedWorktrees.push(dir);

@@ -99,6 +99,9 @@ interface E2EState {
    * scenario (a different worker landing the SAME line first). */
   mainlineCommitSha?: string;
   prNumber?: number;
+  /** origin/main after the scripted `gh pr merge` really landed — the SHA the
+   * #2986 merge confirmation reports back as the merge commit. */
+  mergedTipSha?: string;
   prViewCalls: number;
   /** Every git/gh argv the merge + remote executors ran, for flow assertions. */
   execLog: string[][];
@@ -178,6 +181,28 @@ async function setup(opts: {
       state.prNumber = 101;
       return { code: 0, stdout: "", stderr: "" };
     }
+    if (sub === "view" && argv.some((a) => a.includes("mergedAt"))) {
+      // #2986 merge confirmation. This forge merges synchronously, so the probe
+      // reports MERGED exactly when the scripted `pr merge` actually landed —
+      // and reports an unmerged, still-open PR when it did not.
+      if (!state.mergedTipSha) {
+        return {
+          code: 0,
+          stdout: JSON.stringify({ state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: null }),
+          stderr: "",
+        };
+      }
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          state: "MERGED",
+          mergedAt: "2026-08-01T00:00:00Z",
+          mergeCommit: { oid: state.mergedTipSha },
+          autoMergeRequest: null,
+        }),
+        stderr: "",
+      };
+    }
     if (sub === "view") {
       // The reader now fetches `mergeStateStatus,mergeable,statusCheckRollup` and
       // gates primarily on `mergeable` (#2085): CONFLICTING→conflict, UNKNOWN→pending
@@ -213,6 +238,7 @@ async function setup(opts: {
         return { code: 1, stdout: "", stderr: "refusing to merge a conflicting branch" };
       }
       const ff = await gitAt(originDir, ["update-ref", "refs/heads/main", `refs/heads/${state.workerBranchRef}`]);
+      if (ff.code === 0) state.mergedTipSha = await revParse(originDir, "refs/heads/main");
       return { code: ff.code, stdout: "", stderr: ff.stderr };
     }
     return { code: 0, stdout: "", stderr: "" };
