@@ -254,6 +254,13 @@ jobs:
         if: contains(fromJSON(env.PACKAGES), 'apps/afk-container')
         run: pnpm -C apps/afk-container test
 
+      # The vendored herdr plugin (ADR 0131). Its `test` script is the manifest
+      # check and the `node --test` suite in that order, so the manifest a pane
+      # is opened from is validated by the same command as the code behind it.
+      - name: Test apps/herdr-plugin
+        if: contains(fromJSON(env.PACKAGES), 'apps/herdr-plugin')
+        run: pnpm -C apps/herdr-plugin test
+
       - name: Report narrowed scope
         if: env.RUN_ANY != 'true'
         run: echo "No package is in the affected cone (scope ${{ needs.scope.outputs.mode }}) — no suite to run."
