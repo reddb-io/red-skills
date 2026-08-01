@@ -26,6 +26,28 @@ export async function viewLabels(ctx: GhContext, issue: number): Promise<string[
 }
 
 /**
+ * Every label name the tracker carries (`gh label list --json name`).
+ *
+ * Returns the failure rather than an empty list: "this repo has no labels" and
+ * "the listing failed" are opposite answers, and a doctor that read a 403 as
+ * "no labels installed" would report a repo clean precisely when it cannot see
+ * it (#3013).
+ */
+export async function listLabelNames(
+  ctx: GhContext,
+): Promise<{ names: string[] } | { failure: string }> {
+  const r = await runGh(ctx, ["label", "list", ...repoArgs(ctx), "--limit", "1000", "--json", "name"]);
+  if (r.code !== 0) return { failure: (r.stderr || r.stdout || `gh label list exited ${r.code}`).trim() };
+  try {
+    const parsed = JSON.parse(r.stdout || "[]") as Array<{ name?: unknown }>;
+    if (!Array.isArray(parsed)) return { failure: "gh label list returned a non-list payload" };
+    return { names: parsed.map((row) => String(row.name ?? "")).filter((name) => name !== "") };
+  } catch (error) {
+    return { failure: `gh label list payload unreadable: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/**
  * `gh issue edit --remove-label … --add-label …`; returns false on failure.
  *
  * This is the LAST gate before the tracker, so it owns the lane-isolation
