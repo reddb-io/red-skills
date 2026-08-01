@@ -98,7 +98,12 @@ describe("MCP lane canary over the real transport", () => {
       const registration = result.registration!;
       expect(registration.project).not.toBe("");
       expect(registration.renewBy).not.toBe("");
-      expect(registration.selector).toBe("{}");
+      // A query the TRACKER can answer, not the project's own selector shape:
+      // the daemon hands this string over verbatim, so `{}` was a question about
+      // nothing that counted nothing and birthed nothing (#2974).
+      expect(registration.selector).toBe(
+        'repo:acme/canary is:issue is:open label:"ready-for-agent"',
+      );
       expect(registration.argv).toContain("run");
       expect(registration.argv.join(" ")).toContain("--runner claude");
       // The daemon really asked the tracker, in one aliased request, and really

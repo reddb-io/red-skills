@@ -142,6 +142,7 @@ import {
 import {
   DEFAULT_REDSKILLED_QUEUE_MS,
   fetchQueueDiscovery,
+  unconfiguredQueueDiscovery,
   type RedskilledQueueDiscovery,
   type RedskilledQueueTransport,
 } from "./queue-discovery.js";
@@ -376,6 +377,16 @@ export interface RedskilledDaemonOptions {
  * transport already holds the credential, and the daemon needs the *identity*
  * only to refuse a project that declares a different one (ADR 0130 Amendment 1).
  */
+/**
+ * What a daemon nobody armed says about its own polling — the fallback sentence.
+ *
+ * Named rather than inlined so the one surface that reports it and the tests that
+ * pin it read the same string: this is the answer to "a valid registration, a
+ * target of two and no Worker", and an operator meets it on the host state.
+ */
+export const REDSKILLED_QUEUE_UNCONFIGURED_REASON =
+  "no tracker transport was given to this daemon, so no queue depth was ever asked for";
+
 export interface RedskilledActivityRegistration {
   readonly projects: readonly RedskilledProjectRepository[];
   readonly hostTokenRef: string;
@@ -394,6 +405,15 @@ export interface RedskilledActivityRegistration {
  * list. The selectors come from the registrations; this block is only the reach.
  */
 export interface RedskilledQueueRegistration {
+  /**
+   * Why this daemon polls no tracker, in the words of whoever would have armed it.
+   *
+   * Carried rather than derived because the daemon cannot know what was looked
+   * for: the CLI knows it searched the host token variables and found none, and
+   * that sentence is the whole of what an operator needs. Absent, the daemon
+   * still names the absence with {@link REDSKILLED_QUEUE_UNCONFIGURED_REASON}.
+   */
+  readonly unconfiguredReason?: string;
   /**
    * How the query reaches the tracker; the activity transport when absent.
    *
@@ -681,6 +701,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const activityMs = activityRegistration?.intervalMs ?? DEFAULT_REDSKILLED_ACTIVITY_MS;
   const queueRegistration = options.queueDiscovery;
   const queueTransport = queueRegistration?.transport ?? activityRegistration?.transport;
+  // What a poll says when it cannot run. Stated by the caller that knows WHY —
+  // the CLI knows which credential it looked for — and given a sentence of its
+  // own here so a daemon nobody told still names the missing thing rather than
+  // reporting a bare absence.
+  const queueUnconfiguredReason = queueRegistration?.unconfiguredReason ??
+    REDSKILLED_QUEUE_UNCONFIGURED_REASON;
   const queueMs = queueRegistration?.intervalMs ?? DEFAULT_REDSKILLED_QUEUE_MS;
   const demandMs = options.demandMs ?? DEFAULT_REDSKILLED_DEMAND_MS;
   const demandBackoffMs = options.demandBackoffMs ?? REDSKILLED_DEMAND_BACKOFF_MS;
@@ -923,7 +949,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * integer per opaque selector and knows nothing about what the selector says.
    */
   async function pollQueueDiscovery(): Promise<RedskilledQueueDiscovery | null> {
-    if (queueTransport == null) return null;
     const now = clock();
     // Swept before the set is snapshotted, so a lapsed project is absent from the
     // very poll that would otherwise have asked the tracker about it again.
@@ -934,6 +959,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // happened to register in is not a fact about the host.
       .sort((left, right) => left.project_label.localeCompare(right.project_label));
     if (projects.length === 0) return null;
+    // A host that cannot ask SAYS SO, on every registration it holds (#2974).
+    // Returning here without a document is what let a machine with a valid
+    // registration, a stated target and a full queue report itself healthy and
+    // birth nothing: the absence read exactly like "nobody has counted yet".
+    if (queueTransport == null) {
+      lastQueue = unconfiguredQueueDiscovery(projects, now, queueUnconfiguredReason);
+      return lastQueue;
+    }
     lastQueue = await fetchQueueDiscovery({
       projects,
       transport: queueTransport,
@@ -1655,10 +1688,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * arrive by registration rather than at start, so a timer that waited for a
    * non-empty set would never start on a daemon that outlives every session — and
    * a poll with nothing registered costs no request at all.
+   *
+   * **Armed without a transport too**, for the same reason the unconfigured
+   * document exists: a host that cannot ask has to keep saying so on whatever is
+   * registered NOW, and a timer that stood down would leave the one machine that
+   * needs the sentence the one machine that never prints it. It costs no request.
    */
   function armQueueTimer(): void {
     if (stopping || queueTimer != null) return;
-    if (queueTransport == null || queueMs <= 0) return;
+    if (queueMs <= 0) return;
     queueTimer = setInterval(() => {
       void pollQueueDiscovery().catch(() => undefined);
     }, queueMs);

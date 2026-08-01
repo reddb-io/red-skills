@@ -49,6 +49,7 @@ import {
   requireLaunchEnv,
   type RedskilledLaunchTemplate,
 } from "./launch-template.js";
+import type { RedskilledQueueOutcome } from "./queue-discovery.js";
 
 /**
  * Default window a registration survives without renewal.
@@ -363,10 +364,13 @@ export interface RegistrationWorkObservation {
   /**
    * The last poll that covered this project; absent when none did.
    *
-   * The outcome travels with the depth because a `null` depth means three
-   * different things, and only the counted zero is a drained queue.
+   * The outcome travels with the depth because a `null` depth means several
+   * different things, and only the counted zero is a drained queue. The union
+   * is the poll's own (`RedskilledQueueOutcome`): every uncounted outcome —
+   * unreachable, rate-limited, unconfigured — sustains nothing, exactly like
+   * the silence a closed laptop produces.
    */
-  readonly queue?: { readonly outcome: "counted" | "unreachable" | "rate-limited"; readonly depth: number | null };
+  readonly queue?: { readonly outcome: RedskilledQueueOutcome; readonly depth: number | null };
   /** How many Workers the host holds for this project right now. */
   readonly liveWorkers?: number;
 }

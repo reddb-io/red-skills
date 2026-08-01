@@ -479,11 +479,17 @@ describe("project lifecycle — a registration, never a process (#2909)", () => 
   });
 
   it("refuses the start rather than falling back to a process of its own", async () => {
+    // A bare scratch directory: no daemon of its own and no `origin`. Either
+    // refusal is the contract — what is never allowed is a process started
+    // locally to make up for what the start could not do. The daemon-down
+    // refusal names the socket, and `mcp-project-registration` pins that one
+    // against an isolated host; this one pins that a checkout with no tracker
+    // to count is refused rather than registered with a query about everything.
     const cwd = await root();
 
     await expect(
       createCastleMcpDependencies(cwd).projectStart({ runner: "claude", target: 1 }),
-    ).rejects.toThrow(/registration rather than a process/);
+    ).rejects.toThrow(/registration rather than a process|no `origin` remote/);
   });
 });
 

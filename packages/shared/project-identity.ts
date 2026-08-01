@@ -102,8 +102,13 @@ export function resolveProjectIdentity(input: ProjectIdentityInput): ProjectIden
 /** `owner/repo` from a remote URL, in every spelling git accepts: scp-style
  * (`git@host:owner/repo.git`), `https://`, and `ssh://` with an optional port.
  * Nested groups keep the last two segments, which is the pair that identifies
- * the repository to a human. */
-function remoteName(remoteUrl: string | undefined): { name: string; source: ProjectNameSource } | undefined {
+ * the repository to a human.
+ *
+ * Exported because the label is not the only thing this pair answers: a project
+ * registering with the host states which TRACKER holds its queue, and a second
+ * parser for the same URL would be a second answer to "which repository is this"
+ * — the drift #2928 was about, in a new place. PURE. */
+export function repoSlugFromRemoteUrl(remoteUrl: string | undefined): string | undefined {
   const raw = (remoteUrl ?? "").trim();
   if (raw === "") return undefined;
 
@@ -119,8 +124,12 @@ function remoteName(remoteUrl: string | undefined): { name: string; source: Proj
     .filter((segment) => segment !== "");
   if (segments.length === 0) return undefined;
 
-  const name = segments.slice(-2).join("/");
-  return { name, source: "remote" };
+  return segments.slice(-2).join("/");
+}
+
+function remoteName(remoteUrl: string | undefined): { name: string; source: ProjectNameSource } | undefined {
+  const name = repoSlugFromRemoteUrl(remoteUrl);
+  return name === undefined ? undefined : { name, source: "remote" };
 }
 
 /** The basename fallback. Prefer the MAIN checkout's directory name (the parent

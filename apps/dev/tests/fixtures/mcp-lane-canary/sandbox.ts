@@ -23,7 +23,7 @@
 // the lane derives the same runtime dir, and it is a temp dir cleanup removes.
 
 import { build } from "esbuild";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -172,6 +172,16 @@ export async function createCanarySandbox(
   await mkdir(dist, { recursive: true });
   await mkdir(join(root, ".red"), { recursive: true });
   await writeFile(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\n", "utf8");
+  // A real checkout with a real `origin`, because a registration names the
+  // TRACKER its queue lives in (#2974): the query the daemon polls with is built
+  // from this remote, so a sandbox without one is a project the host could never
+  // count — which is exactly the failure the canary exists to catch, not one it
+  // should stage.
+  execFileSync("git", ["init", "-q"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/canary.git"], {
+    cwd: root,
+    stdio: "ignore",
+  });
   const mcpEntry = join(dist, "castle-mcp.bundle.min.mjs");
   await copyFile(built.mcp, mcpEntry);
   await copyFile(built.dev[variant], join(dist, "dev.bundle.min.mjs"));

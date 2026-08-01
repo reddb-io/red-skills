@@ -7,6 +7,7 @@
  * because the moment it does, it stops being servable by checkouts on different
  * bundle versions. A path it needs is a path it was given.
  */
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { encode as encodeToon } from "@reddb-io/toon";
@@ -183,24 +184,85 @@ const SERVE_FLAGS = {
 export const REDSKILLED_HOST_TOKEN_ENV = "REDSKILLED_HOST_TOKEN";
 
 /**
- * Arm the queue poller, or say nothing and leave it unarmed.
+ * The credential this host polls with, and where it was found.
+ *
+ * Two sources, in one order: the environment the daemon was spawned with, then
+ * the tracker CLI's own stored login. The second exists because the daemon is
+ * auto-spawned (ADR 0130 rule 7) from whatever session first needed it, and a
+ * developer authenticated with `gh auth login` has no token in that environment
+ * at all — so the whole poll went unarmed on exactly the machines that had a
+ * working credential the whole time (#2974).
+ */
+export interface RedskilledHostToken {
+  readonly token: string;
+  /** Which source produced it — carried for the report, never for logic. */
+  readonly source: "env" | "tracker-cli";
+}
+
+/** How the tracker CLI is asked for its stored token; injected for tests. */
+export type RedskilledTrackerTokenReader = () => string | null;
+
+/** `gh auth token` — the stored login, read once at start and never logged. */
+function readTrackerCliToken(): string | null {
+  try {
+    // Short and bounded: a `gh` that hangs must not hold the daemon's start.
+    const out = execFileSync("gh", ["auth", "token"], {
+      encoding: "utf8",
+      timeout: 5_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const token = out.trim();
+    return token === "" ? null : token;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveRedskilledHostToken(
+  env: NodeJS.ProcessEnv = process.env,
+  readTrackerToken: RedskilledTrackerTokenReader = readTrackerCliToken,
+): RedskilledHostToken | null {
+  const fromEnv = (env[REDSKILLED_HOST_TOKEN_ENV] ?? env.GITHUB_TOKEN ?? env.GH_TOKEN ?? "").trim();
+  if (fromEnv !== "") return { token: fromEnv, source: "env" };
+  const fromCli = (readTrackerToken() ?? "").trim();
+  if (fromCli !== "") return { token: fromCli, source: "tracker-cli" };
+  return null;
+}
+
+/**
+ * Arm the queue poller, or hand the daemon the sentence that says why not.
  *
  * **No token, no poller** — and no invented depth either. A daemon that cannot
  * reach the tracker holds registrations it never counts, which reads as
  * `queue-unknown` at every demand tick; that is the honest state, and it is
  * distinguishable from a drained queue, which is the distinction the whole
  * Amendment turns on.
+ *
+ * **An unarmed poller is still a registration**, carrying only its reason. It
+ * used to be `undefined`, which left the daemon with nothing to report and every
+ * surface downstream showing the silence of a host that had simply not counted
+ * yet — a registration, a target and no Worker, with nothing anywhere saying why.
  */
 export function resolveServeQueueDiscovery(
   values: { readonly "queue-endpoint"?: string; readonly "queue-ms"?: number },
   env: NodeJS.ProcessEnv = process.env,
-): RedskilledQueueRegistration | undefined {
-  const token = (env[REDSKILLED_HOST_TOKEN_ENV] ?? env.GITHUB_TOKEN ?? env.GH_TOKEN ?? "").trim();
-  if (token === "") return undefined;
+  readTrackerToken: RedskilledTrackerTokenReader = readTrackerCliToken,
+): RedskilledQueueRegistration {
+  const interval = values["queue-ms"] == null ? {} : { intervalMs: values["queue-ms"] };
+  const host = resolveRedskilledHostToken(env, readTrackerToken);
+  if (host == null) {
+    return {
+      ...interval,
+      unconfiguredReason:
+        `no credential names a tracker for this host: ${REDSKILLED_HOST_TOKEN_ENV}, GITHUB_TOKEN and GH_TOKEN are ` +
+        `all unset in the daemon's environment and \`gh auth token\` returned nothing — so no queue depth is asked ` +
+        `for, and no depth is invented either`,
+    };
+  }
   const endpoint = values["queue-endpoint"] ?? env.GITHUB_GRAPHQL_URL;
   return {
-    transport: createGitHubActivityTransport({ token, ...(endpoint ? { endpoint } : {}) }),
-    ...(values["queue-ms"] == null ? {} : { intervalMs: values["queue-ms"] }),
+    ...interval,
+    transport: createGitHubActivityTransport({ token: host.token, ...(endpoint ? { endpoint } : {}) }),
   };
 }
 
@@ -252,8 +314,9 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       // The two halves of the loop ADR 0130 Amendment 4 moved in here: what the
       // tracker says exists, and how often this host decides what it can afford.
       // Absent flags take the modules' own windows; an absent token leaves the
-      // poller unarmed rather than counting a queue it never reached.
-      ...(queueDiscovery == null ? {} : { queueDiscovery }),
+      // poller unarmed — carrying the reason, so an unconfigured poll is
+      // REPORTED on every registration instead of passing for a drained queue.
+      queueDiscovery,
       ...(values["demand-ms"] == null ? {} : { demandMs: values["demand-ms"] }),
     });
     // A signalled daemon LETS GO rather than being cut off: the stop path flushes

@@ -61,8 +61,16 @@ export interface RedskilledProjectSelector {
   readonly selector: string;
 }
 
-/** How one project's queue read came out. */
-export type RedskilledQueueOutcome = "counted" | "unreachable" | "rate-limited";
+/**
+ * How one project's queue read came out.
+ *
+ * `unconfigured` is the fourth because a daemon with no transport used to answer
+ * with nothing at all (#2974): the poll returned before it asked, every tick,
+ * and a reader saw the same silence a host with nothing registered shows. "No
+ * credential names a tracker" is a fact about the HOST, and it is the one an
+ * operator staring at a valid registration and zero Workers needs first.
+ */
+export type RedskilledQueueOutcome = "counted" | "unreachable" | "rate-limited" | "unconfigured";
 
 export interface RedskilledProjectQueue {
   readonly project_label: string;
@@ -211,6 +219,41 @@ export function emptyQueueDiscovery(fetchedAt: string): RedskilledQueueDiscovery
     batch_size: REDSKILLED_QUEUE_BATCH_SIZE,
     rate_limit: { remaining: null, reset_at: null, exhausted: false },
     projects: [],
+  };
+}
+
+/**
+ * The document a host that cannot ask has: every project, and why none was asked.
+ *
+ * A poll nobody could run is REPORTED rather than skipped. The alternative is the
+ * defect this exists to end: a daemon with no transport returned a bare `null`,
+ * which every surface downstream renders exactly like a host that has counted
+ * nothing yet — so a registration standing beside an empty machine looked healthy
+ * and produced nothing. No depth is invented for it; `null` per project keeps a
+ * silent host distinguishable from a drained one, which is the same line the
+ * rate-limited and unreachable outcomes hold. PURE.
+ */
+export function unconfiguredQueueDiscovery(
+  projects: readonly RedskilledProjectSelector[],
+  fetchedAt: string,
+  reason: string,
+): RedskilledQueueDiscovery {
+  return {
+    version: 1,
+    fetched_at: fetchedAt,
+    // No request left this host, and the cost states so — an unconfigured poll
+    // that claimed a request would put a fetch that never happened in the budget.
+    request_count: 0,
+    project_count: projects.length,
+    batch_size: REDSKILLED_QUEUE_BATCH_SIZE,
+    rate_limit: { remaining: null, reset_at: null, exhausted: false },
+    projects: projects.map((project) => ({
+      project_label: project.project_label,
+      outcome: "unconfigured",
+      depth: null,
+      detail:
+        `project ${JSON.stringify(project.project_label)} was not counted because this host polls no tracker: ${reason}`,
+    })),
   };
 }
 

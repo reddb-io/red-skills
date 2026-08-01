@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { findUp } from "./plugin-gate.js";
 import {
   declaredProjectNameInConfig,
+  repoSlugFromRemoteUrl,
   resolveProjectIdentity,
   type ProjectIdentity,
 } from "./project-identity.js";
@@ -63,6 +64,19 @@ export function resolveProjectIdentityForDir(dir: string): ProjectIdentity {
     ...(remoteUrl !== undefined ? { remoteUrl } : {}),
     ...(declared.name !== undefined ? { declaredName: declared.name } : {}),
   });
+}
+
+/**
+ * The `owner/repo` this checkout's work is tracked in, or nothing.
+ *
+ * Read from the `origin` remote rather than from the tracker CLI: a registration
+ * happens on the path that starts work, so it must not depend on a network call
+ * or on a CLI being installed — and the CLI's own answer comes from this remote
+ * anyway. A checkout with no remote gets `undefined`, which is a fact its caller
+ * has to act on: a project with no tracker has no queue anyone can count.
+ */
+export function resolveRepoSlugForDir(dir: string): string | undefined {
+  return repoSlugFromRemoteUrl(gitOutput(dir, ["remote", "get-url", "origin"]));
 }
 
 /**
