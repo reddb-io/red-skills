@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { encode as encodeToon } from "@reddb-io/toon";
 import { afkPaths, collectPrecheckFacts, resolveRepoContext } from "../runtime/wire.js";
-import { editBody, listCandidates, listIssueStates, postClaimComment, type GhContext } from "../runtime/gh.js";
+import { editBody, listCandidates, listIssueStates, listLabelNames, postClaimComment, type GhContext } from "../runtime/gh.js";
 import { applyTmpJanitorReport, collectTmpJanitorReport, type TmpJanitorApplyResult, type TmpJanitorReport } from "../runtime/tmp-janitor.js";
 import { branchLockPath, clearBranchLock, writeBranchLock } from "../runtime/lock.js";
 import {
@@ -30,6 +30,12 @@ import {
 } from "@reddb-io/redskilled/provision";
 import { getConfig, loadConfig } from "../core/config.js";
 import { auditExecutableAcceptanceCriteria, type ExecutableAcceptanceDoctorReport } from "../core/executable-acceptance-doctor.js";
+import {
+  applyHitlTypeDeclarationFix,
+  auditHitlTypeDeclaration,
+  type HitlTypeDeclarationFixReceipt,
+  type HitlTypeDeclarationReport,
+} from "../core/hitl-type-declaration-doctor.js";
 import { collectDeadendAuditReport } from "../runtime/deadend-audit-report.js";
 import { emptyDeadendReport, type DeadendAuditReport } from "../core/deadend-audit.js";
 import { LABEL_READY } from "../core/triage-labels.js";
@@ -161,9 +167,11 @@ function renderHuman(
   hostReport: HostToolchainReport,
   deadendReport: DeadendAuditReport,
   redskilledReport: RedskilledProvisionReport,
+  hitlTypeReport: HitlTypeDeclarationReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
+  hitlTypeFix?: HitlTypeDeclarationFixReceipt,
 ): string {
   const expired = flattenExpired(report).map((path) => rel(root, path));
   const workers = report.staleWorkers.reclaim.map((entry) => rel(root, entry.path));
@@ -225,6 +233,15 @@ function renderHuman(
     ...redskilledReport.rows.map((row) => `  ${row.verdict === "ok" ? "✅" : "❌"} ${row.check}: ${row.evidence}`),
     ...redskilledReport.findings.map((finding) => `  fix: ${finding.fix}`),
     "",
+    "red-doctor HUMAN-ONLY type declaration",
+    `installed HUMAN-ONLY type labels: ${hitlTypeReport.checked.installedTypeLabels}`,
+    `declared hitl_types: ${hitlTypeReport.checked.declaredTypes}`,
+    `verdict: ${hitlTypeReport.row.verdict}`,
+    `evidence: ${hitlTypeReport.row.evidence}`,
+    ...hitlTypeReport.findings.map((finding) => `  ${finding.verdict} ${finding.label || "(repo)"}: ${finding.reason}`),
+    ...hitlTypeReport.findings.map((finding) => `  fix: ${finding.remediation}`),
+    ...(hitlTypeFix ? [`  fix hitl-type-declaration: ${hitlTypeFix.status} (${hitlTypeFix.evidence})`] : []),
+    "",
     "red-doctor deadend audit",
     `deadends: ${deadendReport.total}`,
     ...deadendReport.classes.flatMap((cls) =>
@@ -258,9 +275,11 @@ function renderToon(
   hostReport: HostToolchainReport,
   deadendReport: DeadendAuditReport,
   redskilledReport: RedskilledProvisionReport,
+  hitlTypeReport: HitlTypeDeclarationReport,
   applied?: TmpJanitorApplyResult,
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
+  hitlTypeFix?: HitlTypeDeclarationFixReceipt,
 ): string {
   return encodeToon({
     hostToolchain: {
@@ -336,6 +355,23 @@ function renderToon(
         fix: finding.fix,
       })),
     },
+    hitlTypeDeclaration: {
+      scorecard: {
+        check: hitlTypeReport.row.check,
+        verdict: hitlTypeReport.row.verdict,
+        evidence: hitlTypeReport.row.evidence,
+        fixHome: hitlTypeReport.row.fixHome,
+      },
+      installedTypeLabels: hitlTypeReport.checked.installedTypeLabels,
+      declaredTypes: hitlTypeReport.checked.declaredTypes,
+      findings: hitlTypeReport.findings.map((finding) => ({
+        label: finding.label,
+        verdict: finding.verdict,
+        reason: finding.reason,
+        remediation: finding.remediation,
+      })),
+      appliedFix: hitlTypeFix ? { status: hitlTypeFix.status, evidence: hitlTypeFix.evidence } : null,
+    },
     deadendAudit: {
       total: deadendReport.total,
       classes: deadendReport.classes.map((cls) => ({
@@ -399,6 +435,19 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     });
     const executableAcceptanceReport = auditExecutableAcceptanceCriteria(executableCandidates, {
       transportFailures: executableAcceptanceTransportFailures,
+    });
+    // The label half and the `afk.labels.hitl_types` half are one protection
+    // (#3013), so both are read from the same doctor pass: the tracker's real
+    // labels, and the config text as written (not as folded by the loader).
+    const configPath = join(ctx.root, ".red", "config.yaml");
+    const configText = await readOptional(configPath);
+    const trackerLabels = ctx.repo
+      ? await listLabelNames({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext)
+      : null;
+    const hitlTypeReport = auditHitlTypeDeclaration({
+      installedLabels: trackerLabels && "names" in trackerLabels ? trackerLabels.names : null,
+      configText: configText ?? null,
+      transportFailures: trackerLabels && "failure" in trackerLabels ? [trackerLabels.failure] : [],
     });
     const issueStates = ctx.repo
       ? await listIssueStates({ cwd: ctx.root, repo: ctx.repo } satisfies GhContext)
@@ -468,10 +517,25 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     // Read-only: the provisioning report probes the socket and never spawns the
     // daemon it is reporting on, which would answer its own question.
     const redskilledReport = await collectRedskilledProvisionReport(ctx.root);
+    // The declaration merge is the one config write this doctor performs, and
+    // it is gated like every other confirmed repair: preview the diff, then
+    // write only with explicit approval.
+    const hitlTypeFix = await applyHitlTypeDeclarationFix(
+      hitlTypeReport,
+      { fix: flags.fix, approved: flags.yes },
+      {
+        writeConfig: async (text) => {
+          await writeFile(configPath, text, "utf8");
+        },
+        showDiffPreview: async (diff) => {
+          process.stdout.write(`diff preview:\n${diff}`);
+        },
+      },
+    );
     process.stdout.write(
       flags.json
-        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, applied, probeFixes, hostFixes)
-        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, applied, probeFixes, hostFixes),
+        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined)
+        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined),
     );
     return 0;
   } catch (error) {

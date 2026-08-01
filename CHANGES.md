@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## wayfinder, red-setup, red-doctor (engineering) — the type label ships with its HUMAN-ONLY declaration (issue #3013)
+
+- **status**: modified
+- **upstream**: `66898f6` (upstream `wayfinder`)
+- **why**: The `wayfinder:grilling` / `wayfinder:prototype` label and the `afk.labels.hitl_types` declaration are one protection with two halves (#2966). Installing the labels and leaving the declaration as a manual step ships the trigger without the safety — worse than shipping neither, because the repo LOOKS protected while every unblocked decision Ticket enters the autonomous queue.
+- **what changed**:
+  - `wayfinder/SKILL.md`: the HITL-type paragraph now routes label creation through `red-skills-dev install-type-labels`, which writes both halves, and forbids bare `gh label create` for a type label.
+  - `red-setup/triage-labels.md` and `red-setup/INTERVIEW.md`: type-label provisioning goes through the same installer; the *HUMAN-ONLY types* section states the pair rule and the doctor check that enforces it.
+  - `afk/docs/CONFIG.md`: the `hitl_types` block names the installer instead of reading as a hand-written step.
+  - `red-doctor/SKILL.md` + `APPLY.md`: new check 25 — an installed HUMAN-ONLY type label with no declaration is a finding, merged under `--fix --yes` after a diff preview; a repo with no `.red/config.yaml` is delegated to `/red-setup`.
+
 ## afk (engineering) — the Unblock Sweep gets its own belt, outside the boot suite (issue #3014)
 
 - **status**: modified

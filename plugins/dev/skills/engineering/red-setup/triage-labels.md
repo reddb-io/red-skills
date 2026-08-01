@@ -117,6 +117,15 @@ plugins:
 
 When the last `req:N` blocker of a dependent carrying one of these labels closes, the unblock sweep and the close cascade promote it to **`ready-for-human`** (edges consumed, `blocked:dependency` shed) rather than `ready-for-agent`, and the audit comment names the lane and the type that chose it. **Declare your own repo's names here — the routing reads this list, never a built-in `wayfinder:*` list**, so a repo whose decision tickets are called something else inherits the same protection. A repo that declares none behaves exactly as before: every unblocked dependent goes to `ready-for-agent`.
 
+**The label and the declaration are ONE protection with two halves — install them in one act, never one without the other** (issue #3013). A repo carrying `wayfinder:grilling` with no matching `hitl_types` entry LOOKS protected while every unblocked decision Ticket goes into the autonomous queue, which is worse than carrying neither half. So type labels are installed with the installer, not with bare `gh label create`:
+
+```bash
+red-skills-dev install-type-labels                                   # the shipped /wayfinder vocabulary
+red-skills-dev install-type-labels decision:grilling decision:sketch  # a repo's own names
+```
+
+It creates each label on the tracker **and** merges the HUMAN-ONLY ones into `plugins.dev.afk.labels.hitl_types` — appending to an existing list, never overwriting or duplicating it — writing the declaration first, so a config it cannot write installs no label at all. `/red-doctor` checks the pair: an installed HUMAN-ONLY type label with no declaration is a finding, and `--fix --yes` merges the missing entry after a diff preview.
+
 ### `quarantine`
 An issue-local safety hold for mechanically detected queue incoherence (ADR 0122). The probe removes `ready-for-agent`, adds `quarantine`, and appends its diagnosis to the issue body; healthy sibling issues continue through the same boot. The castle resident curator periodically re-runs the coherence check. It removes `quarantine` and restores `ready-for-agent` when the defect dissolves, or replaces `quarantine` with `ready-for-human` after three failed re-checks so `/hitl` owns the judgment. The per-issue heal ledger uses the same hold instead of applying a third heal within 24 hours.
 

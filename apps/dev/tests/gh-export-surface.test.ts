@@ -47,6 +47,7 @@ const EXPECTED_GH_EXPORTS = [
   "listClaimComments",
   "listHitlCandidates",
   "listIssueStates",
+  "listLabelNames",
   "listOpenPullRequests",
   "listParkedMechanicalCandidates",
   "listSpecSubIssueCandidates",

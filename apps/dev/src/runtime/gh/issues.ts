@@ -26,6 +26,28 @@ export async function viewLabels(ctx: GhContext, issue: number): Promise<string[
 }
 
 /**
+ * Every label name the tracker carries (`gh label list --json name`).
+ *
+ * Returns the failure rather than an empty list: "this repo has no labels" and
+ * "the listing failed" are opposite answers, and a doctor that read a 403 as
+ * "no labels installed" would report a repo clean precisely when it cannot see
+ * it (#3013).
+ */
+export async function listLabelNames(
+  ctx: GhContext,
+): Promise<{ names: string[] } | { failure: string }> {
+  const r = await runGh(ctx, ["label", "list", ...repoArgs(ctx), "--limit", "1000", "--json", "name"]);
+  if (r.code !== 0) return { failure: (r.stderr || r.stdout || `gh label list exited ${r.code}`).trim() };
+  try {
+    const parsed = JSON.parse(r.stdout || "[]") as Array<{ name?: unknown }>;
+    if (!Array.isArray(parsed)) return { failure: "gh label list returned a non-list payload" };
+    return { names: parsed.map((row) => String(row.name ?? "")).filter((name) => name !== "") };
+  } catch (error) {
+    return { failure: `gh label list payload unreadable: ${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/**
  * `gh issue edit --remove-label … --add-label …`; returns false on failure.
  *
  * This is the LAST gate before the tracker, so it owns the lane-isolation
@@ -392,18 +414,24 @@ export async function ensureRunnerErrorLabel(ctx: GhContext): Promise<void> {
 
 /** Idempotently create an arbitrary label (best-effort), generalising
  * ensureRunnerErrorLabel for the typed `blocked:<reason>` observability layer. A
- * label that already exists exits non-zero and is swallowed by the caller. */
-export async function ensureLabel(ctx: GhContext, name: string): Promise<void> {
-  await runGh(ctx, 
+ * label that already exists exits non-zero and is swallowed by the caller.
+ * `presentation` overrides the blocked-reason colour/description for callers
+ * installing a different family (e.g. ticket TYPE labels). */
+export async function ensureLabel(
+  ctx: GhContext,
+  name: string,
+  presentation: { color?: string; description?: string } = {},
+): Promise<void> {
+  await runGh(ctx,
     [
       "label",
       "create",
       name,
       ...repoArgs(ctx),
       "--color",
-      "5319E7",
+      presentation.color ?? "5319E7",
       "--description",
-      "AFK terminal-failure reason (observability)",
+      presentation.description ?? "AFK terminal-failure reason (observability)",
     ],
   );
 }
