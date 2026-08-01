@@ -1,0 +1,5 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+The landing's merge confirmation now ends on a pull request the queue can never accept. "Is it merged yet?" is a question a CONFLICTING PR answers `no` forever, and a worker was observed polling one until its whole budget drained, because the confirmation asked only about the merge and never about mergeability. The probe now reads the PR's settled conflict state in the same `gh pr view` it already paid for, and a settled `CONFLICTING` verdict ends the wait immediately instead of after thirty minutes of asking — `mergeable: UNKNOWN` still keeps polling, so a mid-computation `DIRTY` is never mistaken for a verdict. On that terminal read the landing attempts the ONE repair it owns: rebase the worker branch onto the base as it stands NOW, in the rebase worktree it already provisioned, then give the merge exactly one more round on what is LEFT of the declared budget. So the whole tail costs one deadline, not two. A conflict that survives its rebase is a human's: the flow parks with the existing card, naming the conflicting PR, and leaves the branch, the pull request and the issue intact.

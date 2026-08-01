@@ -179,7 +179,10 @@ function harness(opts: HarnessOptions = {}): {
         if (j.includes("pr merge") && !branchUpdated) {
           return { code: 1, stdout: "", stderr: "Base branch was modified. Review and try the merge again." };
         }
-        if (j.includes("pr view") && j.includes("mergeStateStatus")) {
+        // The READINESS probe only: since #3030 the merge confirmation also asks
+        // for `mergeStateStatus`, and answering it with a payload carrying no
+        // `state` would read the completed merge as an unmerged PR.
+        if (j.includes("pr view") && j.includes("statusCheckRollup")) {
           return {
             code: 0,
             stdout: JSON.stringify({

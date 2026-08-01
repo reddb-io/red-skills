@@ -1180,7 +1180,10 @@ describe("landPr CI-aware wiring (#812)", () => {
       repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
     });
     expect(r.ok).toBe(true);
-    expect(joined(calls).some((c) => c.includes("mergeStateStatus"))).toBe(false);
+    // The readiness poll is what stays absent. The merge confirmation's own probe
+    // reads `mergeStateStatus` unconditionally since #3030 — that is one `gh pr
+    // view` asking whether the merge happened, not a CI wait.
+    expect(joined(calls).some((c) => c.includes("statusCheckRollup"))).toBe(false);
     expect(joined(calls).some((c) => c.includes("pr merge 42 --merge"))).toBe(true);
   });
 });
@@ -1634,9 +1637,11 @@ describe("waitForQueuedMerge (#2986)", () => {
       JSON.stringify({ merged: true, state: "MERGED", mergeCommit: { oid: "queuesha" }, autoMergeRequest: null }),
     ]);
     const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 5 });
-    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha" });
+    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha", polls: 3 });
     expect(calls).toHaveLength(3);
-    expect(calls[0]!.join(" ")).toContain("pr view 42 --json state,mergedAt,mergeCommit,autoMergeRequest");
+    expect(calls[0]!.join(" ")).toContain(
+      "pr view 42 --json state,mergedAt,mergeCommit,autoMergeRequest,mergeStateStatus,mergeable",
+    );
   });
 
   it("reports a dequeue once the accepted auto-merge request disappears", async () => {
@@ -1659,7 +1664,7 @@ describe("waitForQueuedMerge (#2986)", () => {
       JSON.stringify({ merged: true, state: "MERGED", mergeCommit: { oid: "queuesha" }, autoMergeRequest: null }),
     ]);
     const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 5 });
-    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha" });
+    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha", polls: 3 });
   });
 
   it("reports a PR the queue closed without merging as rejected", async () => {
@@ -1681,7 +1686,7 @@ describe("waitForQueuedMerge (#2986)", () => {
         polls.push(event.attempt);
       },
     });
-    expect(r).toEqual({ outcome: "pending" });
+    expect(r).toEqual({ outcome: "pending", polls: 3 });
     expect(calls).toHaveLength(3);
     expect(polls).toEqual([1, 2, 3]);
   });
@@ -1692,7 +1697,7 @@ describe("waitForQueuedMerge (#2986)", () => {
       JSON.stringify({ merged: true, state: "MERGED", mergeCommit: { oid: "queuesha" }, autoMergeRequest: null }),
     ]);
     const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 5 });
-    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha" });
+    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha", polls: 2 });
   });
 
   it("parses a merged view and tolerates a broken payload", () => {
@@ -1701,6 +1706,7 @@ describe("waitForQueuedMerge (#2986)", () => {
       state: "MERGED",
       mergeSha: "s",
       autoMerge: false,
+      conflicted: false,
       observed: true,
     });
     expect(parseQueuedPrView("{oops").observed).toBe(false);
@@ -1778,5 +1784,181 @@ describe("landPr on a merge-queue base (#2986)", () => {
     expect(r.ok).toBe(false);
     expect(r.reason).toBe("queue-rejected");
     expect(r.queueDetail).toContain("dequeued PR #42");
+  });
+});
+
+// #3030 — a PR the queue can never accept is not a PR that is still queued. A
+// worker was observed polling a CONFLICTING pull request until its whole budget
+// drained, because the confirmation asked only "merged yet?" and a dirty PR
+// answers "no" forever. The terminal condition: detect it, rebase ONCE, and park.
+describe("the merge confirmation on a dirty PR (#3030)", () => {
+  const dirty = JSON.stringify({
+    merged: false,
+    state: "OPEN",
+    mergeCommit: null,
+    autoMergeRequest: { enabledAt: "t" },
+    mergeStateStatus: "DIRTY",
+    mergeable: "CONFLICTING",
+  });
+  const queued = JSON.stringify({
+    merged: false,
+    state: "OPEN",
+    mergeCommit: null,
+    autoMergeRequest: { enabledAt: "t" },
+    mergeStateStatus: "BLOCKED",
+    mergeable: "MERGEABLE",
+  });
+  const merged = JSON.stringify({
+    merged: true,
+    state: "MERGED",
+    mergeCommit: { oid: "queuesha" },
+    autoMergeRequest: null,
+    mergeStateStatus: "CLEAN",
+    mergeable: "MERGEABLE",
+  });
+
+  const viewExec = (views: string[]): { exec: Exec; calls: string[][] } => {
+    const calls: string[][] = [];
+    let i = 0;
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const stdout = views[Math.min(i, views.length - 1)] ?? "";
+      i += 1;
+      return { code: 0, stdout, stderr: "" };
+    };
+    return { exec, calls };
+  };
+
+  it("stops on the first settled CONFLICTING read instead of draining the budget", async () => {
+    const { exec, calls } = viewExec([queued, dirty]);
+    const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 60 });
+    expect(r.outcome).toBe("unqueueable");
+    expect(r.detail).toContain("PR #42");
+    expect(r.polls).toBe(2);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("keeps polling while mergeability is still UNKNOWN — a computing read is not a conflict", async () => {
+    const { exec } = viewExec([
+      JSON.stringify({
+        merged: false,
+        state: "OPEN",
+        mergeCommit: null,
+        autoMergeRequest: { enabledAt: "t" },
+        mergeStateStatus: "DIRTY",
+        mergeable: "UNKNOWN",
+      }),
+      merged,
+    ]);
+    const r = await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 5 });
+    expect(r.outcome).toBe("merged");
+  });
+
+  const landExec = (opts: {
+    views: string[];
+    onMerge?: () => void;
+  }): { exec: Exec; calls: string[][] } => {
+    const calls: string[][] = [];
+    let i = 0;
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
+      if (cmd.includes("pr merge")) {
+        opts.onMerge?.();
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (cmd.includes("autoMergeRequest")) {
+        const stdout = opts.views[Math.min(i, opts.views.length - 1)] ?? "";
+        i += 1;
+        return { code: 0, stdout, stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    return { exec, calls };
+  };
+
+  const base = {
+    repo: "o/r",
+    gitRepo: "/repo",
+    remote: "origin",
+    branch: "afk/wX/9-x",
+    target: "main",
+    n: 9,
+    title: "t",
+    mergeQueue: true,
+  };
+
+  it("attempts ONE rebase and completes the merge when the rebase clears the conflict", async () => {
+    // dirty → (rebase) → queued → merged.
+    const { exec } = landExec({ views: [dirty, queued, merged] });
+    let rebases = 0;
+    const r = await landPr(exec, {
+      ...base,
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 6 },
+      rebaseOntoBase: async () => {
+        rebases += 1;
+        return true;
+      },
+    });
+    expect(rebases).toBe(1);
+    expect(r.ok).toBe(true);
+    expect(r.mergeSha).toBe("queuesha");
+  });
+
+  it("parks as a conflict — branch and issue intact — when the one rebase does not clear it", async () => {
+    const { exec } = landExec({ views: [dirty] });
+    let rebases = 0;
+    const r = await landPr(exec, {
+      ...base,
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 6 },
+      rebaseOntoBase: async () => {
+        rebases += 1;
+        return true;
+      },
+    });
+    expect(rebases).toBe(1);
+    expect(r.ok).toBe(false);
+    expect(r.prNumber).toBe(42);
+    expect(r.reason).toBe("conflict");
+    expect(r.queueDetail).toContain("conflicts with its base");
+  });
+
+  it("parks without a second try when the rebase itself refuses", async () => {
+    const { exec } = landExec({ views: [dirty] });
+    let rebases = 0;
+    const r = await landPr(exec, {
+      ...base,
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 6 },
+      rebaseOntoBase: async () => {
+        rebases += 1;
+        return false;
+      },
+    });
+    expect(rebases).toBe(1);
+    expect(r.reason).toBe("conflict");
+  });
+
+  it("parks straight away when no rebase hook is wired", async () => {
+    const { exec } = landExec({ views: [dirty] });
+    const r = await landPr(exec, {
+      ...base,
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 6 },
+    });
+    expect(r.reason).toBe("conflict");
+  });
+
+  it("bounds the WHOLE tail by the declared budget — the retry inherits what is left", async () => {
+    // The first confirmation burns 2 of 5 polls before reading the conflict; the
+    // post-rebase confirmation may spend the remaining 3 and no more, so a dirty
+    // PR can never buy itself a second full deadline.
+    const { exec, calls } = landExec({ views: [queued, dirty, queued] });
+    const r = await landPr(exec, {
+      ...base,
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 5 },
+      rebaseOntoBase: async () => true,
+    });
+    expect(r.reason).toBe("queue-pending");
+    expect(calls.filter((c) => c.join(" ").includes("autoMergeRequest"))).toHaveLength(5);
   });
 });
