@@ -122,7 +122,7 @@ guidance is the maintainer's answer. It performs the whole transition
 atomically: archives the active `## Current blocker` into `## Resolved
 blockers`, posts the guidance as the auditable Directive comment, removes
 `ready-for-human` and every stale `blocked:*` label, adds `ready-for-agent`.
-CLI fallback: `red-skills-dev requeue N --guidance "..."`.
+CLI fallback: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev requeue N --guidance "..."`.
 
 If delegable-manual-landing (see Step 4 for what this mode is and why AFK must
 not auto-merge it): run the same `requeue` tool, then add the `landing:manual`

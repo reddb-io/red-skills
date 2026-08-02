@@ -26,8 +26,8 @@ command-not-found.
 
 The valid dev CLI subcommands for these skills are explicit: `run`, `fleet`,
 `monitor`, `dashboard`, `daily-review`, `weekly-review`, `retake`, and
-`requeue`. There is no `red-skills-dev afk` subcommand; `/afk` maps to
-`red-skills-dev run` or to the bare run flags documented by the AFK skill.
+`requeue`. There is no `afk` subcommand on the dev CLI; `/afk` maps to the
+`run` subcommand or to the bare run flags documented by the AFK skill.
 
 The skill-specific subcommand always rides the canonical form:
 
