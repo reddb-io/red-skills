@@ -15,6 +15,7 @@ import { makeHookResolveOptions } from "../src/runtime/hooks.js";
 import type { GhContext } from "../src/runtime/gh.js";
 import type { GitContext } from "../src/runtime/git.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
+import { restIssueBody } from "./support/gh-rest-fixtures.js";
 
 /**
  * Per-context port-builder units (#2667). `buildProcessDeps` used to assemble
@@ -54,8 +55,11 @@ function gitContext(exec: ExecFn, root = "/repo"): GitContext {
 
 describe("buildGhPort", () => {
   it("binds every issue closure to the one gh context", async () => {
+    // The label read is a single-object read, so it routes to REST (#3094).
     const { exec, trace } = makeFakeExec((_cmd, joined) =>
-      joined.includes("--json labels") ? JSON.stringify({ labels: [{ name: "running" }] }) : "",
+      /\bapi repos\/[^ ]+\/issues\/\d+$/.test(joined)
+        ? JSON.stringify(restIssueBody({ labels: ["running"] }))
+        : "",
     );
     const gh = buildGhPort(ghContext(exec));
 
