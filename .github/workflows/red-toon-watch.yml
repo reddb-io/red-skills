@@ -102,6 +102,9 @@ jobs:
           set -euo pipefail
           pnpm -C apps/dev dev toon-bump "$TARGET_VERSION"
           pnpm install --lockfile-only
+          # The pi skill mirrors restate the derived pin sites, so `pi:packages:check` reddens on
+          # any bump that does not regenerate them.
+          pnpm pi:packages:build
           if git diff --quiet; then
             echo "::notice::toon-bump reported newer $TARGET_VERSION but left no diff; stopping without PR."
             exit 0
@@ -124,7 +127,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$TOON_BUMP_BRANCH"
-          git add -- pnpm-workspace.yaml pnpm-lock.yaml .github/workflows/red-workspace-ci.yml .github/workflows/red-rsp-benchmark-ci.yml plugins/dev/skills/engineering/red-setup/INTERVIEW.md plugins/dev/skills/engineering/red-setup/REFERENCE.md plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md plugins/dev/skills/engineering/red-setup/config-template.yaml plugins/dev/skills/engineering/red-doctor/SKILL.md
+          git add -- pnpm-workspace.yaml pnpm-lock.yaml apps/dev/src/core/host-toolchain-doctor.ts .github/workflows/red-workspace-ci.yml .github/workflows/red-rsp-benchmark-ci.yml plugins/dev/skills/engineering/red-setup/INTERVIEW.md plugins/dev/skills/engineering/red-setup/REFERENCE.md plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md plugins/dev/skills/engineering/red-setup/config-template.yaml plugins/dev/skills/engineering/red-doctor/SKILL.md packaging/pi
           git commit -m "chore: bump toon to $TRIGGER_TAG"
           git push --force-with-lease origin "$TOON_BUMP_BRANCH"
 
