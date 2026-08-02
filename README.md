@@ -545,6 +545,16 @@ the daemon's question in one pane:
   was killed over budget, the daemon went away or came back, a project's open PR
   count rose, an upgrade is waiting.
 
+Installing it needs neither this checkout nor `pnpm` — herdr downloads the plugin
+directory, and its build hook fetches the release's single-file bundle over the
+entry:
+
+```bash
+herdr plugin install reddb-io/red-skills/apps/herdr-plugin-red-skills
+```
+
+Linking is the contributor path, where the panes show the tree you are editing:
+
 ```bash
 pnpm install                    # from the repo root, once
 herdr plugin link apps/herdr-plugin-red-skills
@@ -600,12 +610,21 @@ path and the rule that produced it in the tooltip. Notifications fire on a
 *transition*, never a state; the first read of a session is deliberately silent,
 and `redskilled.notifications.workerBirth` is off by default.
 
-The `.vsix` is **never published** — build and install it from the checkout:
+The `.vsix` reaches **no marketplace**, and every GitHub Release carries it —
+download the asset and install it, with no checkout and no build:
+
+```bash
+gh release download --repo reddb-io/red-skills --pattern 'vscode-extension-red-skills-*.vsix'
+code --install-extension vscode-extension-red-skills-*.vsix     # VS Code
+codium --install-extension vscode-extension-red-skills-*.vsix   # VSCodium
+```
+
+Building it is the contributor path:
 
 ```bash
 pnpm -C apps/vscode-extension-red-skills build      # typecheck + bundle out/extension.cjs
-pnpm -C apps/vscode-extension-red-skills package    # write dist/reddb-io.vscode-extension-red-skills-<version>.vsix
-code --install-extension apps/vscode-extension-red-skills/dist/reddb-io.vscode-extension-red-skills-0.1.0.vsix
+pnpm -C apps/vscode-extension-red-skills package    # write dist/vscode-extension-red-skills-<version>.vsix
+code --install-extension apps/vscode-extension-red-skills/dist/vscode-extension-red-skills-0.1.0.vsix
 ```
 
 ### Statusline
