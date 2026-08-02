@@ -18,11 +18,12 @@
 // already wired through `quotaBackoff` applies rather than a generic failure
 // path; this module never retries on its own.
 
+import { githubSurfaceFor, type GithubApiSurface } from "@reddb-io/github";
 import { execTool, type ExecFn, type ExecOutput } from "../exec.js";
 import { isGhRateLimited, withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./quota.js";
 
 /** Which GitHub API answered (or failed to answer) the read. */
-export type GhReadSurface = "graphql" | "rest";
+export type GhReadSurface = GithubApiSurface;
 
 /**
  * Why the read produced no usable payload. `quota` is the only TRANSIENT class:
@@ -105,24 +106,29 @@ export function isGhQuotaExhausted(failure: unknown): boolean {
 }
 
 /**
- * Which API a `gh` argv reads from. `gh api graphql` and every `--json` listing
- * (`gh issue list`, `gh pr list`, `gh issue view`) are GraphQL; any other
- * `gh api` path is REST.
+ * Which API a `gh` argv reads from — now a ROUTER rather than a label.
+ *
+ * The decision itself belongs to `@reddb-io/github`, which the daemon and the
+ * castle import too: one table, because two implementations of one routing rule
+ * drift. This function is the read boundary's door to it, kept exported because
+ * consumers name it, and it RAISES on an operation nobody classified. The old
+ * body defaulted everything that was not `gh api <path>` to GraphQL, which is
+ * how every single-object poll ended up drawing the node-point pool while the
+ * request pool sat idle (ADR 0132 decision 4, #3094).
  */
 export function ghReadSurface(args: readonly string[]): GhReadSurface {
-  if (args[0] === "api") return args[1] === "graphql" ? "graphql" : "rest";
-  return "graphql";
+  return githubSurfaceFor(args);
 }
 
 function failureFrom(
-  args: readonly string[],
+  surface: GhReadSurface,
   out: ExecOutput,
   message: string,
   classification?: GhReadFailureClass,
 ): GhReadFailure {
   const resolved = classification ?? (isGhRateLimited(out) ? "quota" : "transport");
   return {
-    surface: ghReadSurface(args),
+    surface,
     classification: resolved,
     transient: resolved === "quota",
     code: out.code,
@@ -150,15 +156,15 @@ function dispatch(
   return ctx.quotaBackoff ? withGhQuotaBackoff(fn, ctx.quotaBackoff) : fn();
 }
 
-function parseRows<T>(args: readonly string[], out: ExecOutput): GhReadResult<T> {
+function parseRows<T>(surface: GhReadSurface, out: ExecOutput): GhReadResult<T> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(out.stdout.trim() === "" ? "[]" : out.stdout);
   } catch {
-    return readFailed(failureFrom(args, out, "gh read returned malformed JSON", "malformed"));
+    return readFailed(failureFrom(surface, out, "gh read returned malformed JSON", "malformed"));
   }
   if (!Array.isArray(parsed)) {
-    return readFailed(failureFrom(args, out, "gh read returned a non-array payload", "malformed"));
+    return readFailed(failureFrom(surface, out, "gh read returned a non-array payload", "malformed"));
   }
   return { outcome: "rows", rows: parsed as T[] };
 }
@@ -174,9 +180,12 @@ export async function tryReadGhJsonRows<T>(
   args: readonly string[],
   options?: GhReadOptions,
 ): Promise<GhReadResult<T>> {
+  // The route is resolved BEFORE the call: an unclassified operation must raise
+  // where a human can still name it, not while a failure record is being built.
+  const surface = ghReadSurface(args);
   const out = await dispatch(ctx, args, options);
-  if (out.code !== 0) return readFailed(failureFrom(args, out, "gh read failed"));
-  return parseRows<T>(args, out);
+  if (out.code !== 0) return readFailed(failureFrom(surface, out, "gh read failed"));
+  return parseRows<T>(surface, out);
 }
 
 /**
@@ -216,17 +225,18 @@ export async function tryReadGhGraphql(
   args: readonly string[],
   options?: GhReadOptions,
 ): Promise<GhReadRecordResult> {
+  const surface = ghReadSurface(args);
   const out = await dispatch(ctx, args, options);
-  if (out.code !== 0) return readFailed(failureFrom(args, out, "gh graphql read failed"));
+  if (out.code !== 0) return readFailed(failureFrom(surface, out, "gh graphql read failed"));
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(out.stdout.trim() === "" ? "{}" : out.stdout);
   } catch {
-    return readFailed(failureFrom(args, out, "gh graphql read returned malformed JSON", "malformed"));
+    return readFailed(failureFrom(surface, out, "gh graphql read returned malformed JSON", "malformed"));
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return readFailed(failureFrom(args, out, "gh graphql read returned a non-object payload", "malformed"));
+    return readFailed(failureFrom(surface, out, "gh graphql read returned a non-object payload", "malformed"));
   }
 
   const payload = parsed as { data?: unknown; errors?: unknown };
@@ -235,10 +245,10 @@ export async function tryReadGhGraphql(
     // Classify against the SAME rate-limit classifier the exit-code path uses,
     // so a RATE_LIMITED payload lands on the quota path either way.
     const classified: ExecOutput = { code: 1, stdout: out.stdout, stderr: text };
-    return readFailed(failureFrom(args, classified, `gh graphql read returned errors: ${text}`));
+    return readFailed(failureFrom(surface, classified, `gh graphql read returned errors: ${text}`));
   }
   if (!payload.data || typeof payload.data !== "object" || Array.isArray(payload.data)) {
-    return readFailed(failureFrom(args, out, "gh graphql read returned no data block", "malformed"));
+    return readFailed(failureFrom(surface, out, "gh graphql read returned no data block", "malformed"));
   }
   return { outcome: "record", record: payload.data as Record<string, unknown> };
 }
