@@ -40,6 +40,12 @@ import {
   collectDoctorClassifierReports,
   type DoctorClassifierReports,
 } from "../runtime/doctor-classifiers.js";
+import {
+  applyMarketplaceSourceFixes,
+  RED_SKILLS_MARKETPLACE_REPO,
+  type MarketplaceSourceFixReceipt,
+  type MarketplaceSourceVerdict,
+} from "../core/marketplace-source-doctor.js";
 import { collectDeadendAuditReport } from "../runtime/deadend-audit-report.js";
 import { emptyDeadendReport, type DeadendAuditReport } from "../core/deadend-audit.js";
 import { LABEL_READY } from "../core/triage-labels.js";
@@ -162,19 +168,29 @@ async function collectRedskilledProvisionReport(root: string): Promise<Redskille
   }
 }
 
+const MARKETPLACE_VERDICT_ICON: Record<MarketplaceSourceVerdict, string> = {
+  ok: "✅",
+  warn: "⚠️",
+  error: "❌",
+};
+
 /**
  * The scorecard sections for the checks whose classifiers live under `core/` and
- * are injected-facts-only (checks 12, 13, 15, 17, 18, 19, 21). Rendered from one
+ * are injected-facts-only (checks 12, 13, 15, 17, 18, 19, 21, 26). Rendered from one
  * collected report so a check that could not gather its facts prints a named
  * note instead of a silently clean section.
  */
-function renderClassifierSections(classifiers: DoctorClassifierReports): string[] {
+function renderClassifierSections(
+  classifiers: DoctorClassifierReports,
+  marketplaceFixes: readonly MarketplaceSourceFixReceipt[] = [],
+): string[] {
   const {
     hooks,
     hookPoints,
     runtime,
     runtimeUnresolved,
     hostBinaries,
+    marketplaceSources,
     dependencyEdges,
     dependencyEdgesUnread,
     askRedRouter,
@@ -208,6 +224,15 @@ function renderClassifierSections(classifiers: DoctorClassifierReports): string[
     `host binary findings: ${hostBinaries.findings.length}`,
     ...hostBinaries.findings.map((finding) => `  ${finding.kind}: ${finding.reason}`),
     ...hostBinaries.findings.map((finding) => `  fix: ${finding.remediation}`),
+    "",
+    "red-doctor marketplace registration source",
+    ...marketplaceSources.rows.map(
+      (row) => `  ${MARKETPLACE_VERDICT_ICON[row.verdict]} ${row.host} ${row.marketplace} source=${row.source} (${row.detail})`,
+    ),
+    `marketplace findings: ${marketplaceSources.findings.length}`,
+    ...marketplaceSources.findings.map((finding) => `  ${finding.kind}: ${finding.reason}`),
+    ...marketplaceSources.findings.map((finding) => `  fix: ${finding.remediation}`),
+    ...marketplaceFixes.map((fix) => `  fix ${fix.host}: ${fix.status} (${fix.reason})`),
     "",
     "red-doctor native blocked-by vs req:N divergence",
     `tickets compared: ${dependencyEdges.rows.length}`,
@@ -256,6 +281,7 @@ function renderHuman(
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
   hitlTypeFix?: HitlTypeDeclarationFixReceipt,
+  marketplaceFixes: readonly MarketplaceSourceFixReceipt[] = [],
 ): string {
   const expired = flattenExpired(report).map((path) => rel(root, path));
   const workers = report.staleWorkers.reclaim.map((entry) => rel(root, entry.path));
@@ -331,7 +357,7 @@ function renderHuman(
     ...deadendReport.classes.flatMap((cls) =>
       cls.findings.map((finding) => `  ${finding.deadendClass} ${finding.subject} → cure: ${finding.cure} (${finding.detail})`),
     ),
-    ...renderClassifierSections(classifiers),
+    ...renderClassifierSections(classifiers, marketplaceFixes),
   ];
   if (applied) {
     lines.push(
@@ -366,6 +392,7 @@ function renderToon(
   probeFixes: readonly OperationalProbeFixResult[] = [],
   hostFixes: readonly HostToolchainFixReceipt[] = [],
   hitlTypeFix?: HitlTypeDeclarationFixReceipt,
+  marketplaceFixes: readonly MarketplaceSourceFixReceipt[] = [],
 ): string {
   return encodeToon({
     hostToolchain: {
@@ -533,6 +560,28 @@ function renderToon(
         kind: finding.kind,
         verdict: finding.verdict,
         remediation: finding.remediation,
+      })),
+    },
+    marketplaceSources: {
+      marketplaces: classifiers.marketplaceSources.rows.map((row) => ({
+        host: row.host,
+        marketplace: row.marketplace,
+        source: row.source,
+        detail: row.detail,
+        verdict: row.verdict,
+      })),
+      findings: classifiers.marketplaceSources.findings.map((finding) => ({
+        host: finding.host,
+        marketplace: finding.marketplace,
+        kind: finding.kind,
+        verdict: finding.verdict,
+        remediation: finding.remediation,
+      })),
+      appliedFixes: marketplaceFixes.map((fix) => ({
+        host: fix.host,
+        marketplace: fix.marketplace,
+        status: fix.status,
+        reason: fix.reason,
       })),
     },
     dependencyEdges: {
@@ -703,12 +752,30 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     // Read-only: the provisioning report probes the socket and never spawns the
     // daemon it is reporting on, which would answer its own question.
     const redskilledReport = await collectRedskilledProvisionReport(ctx.root);
-    // The pure classifiers the SKILL.md names for checks 12, 13, 15, 17, 18, 19
+    // The pure classifiers the SKILL.md names for checks 12, 13, 15, 17, 18, 19, 26
     // and 21. They are injected-facts-only, so the doctor is the surface that
     // reads the repo, the bundle cache and the tracker for them; before this
     // wiring existed the command imported none of them and reported clean on
     // seven dimensions it never examined (#3034).
     const classifiers = await collectDoctorClassifierReports(ctx);
+    // Repointing a frozen marketplace re-registers it on the host CLI, so it is
+    // confirmed like every other hard-to-reverse repair. Remove-then-add is the
+    // whole fix: the CLI keeps no editable source field.
+    const marketplaceFixes = await applyMarketplaceSourceFixes(
+      classifiers.marketplaceSources,
+      { fix: flags.fix, approved: flags.yes },
+      {
+        repoint: async (host, marketplace) => {
+          const removed = await execTool(host, ["plugin", "marketplace", "remove", marketplace], {
+            cwd: ctx.root,
+          });
+          if (removed.code !== 0) return removed;
+          return execTool(host, ["plugin", "marketplace", "add", RED_SKILLS_MARKETPLACE_REPO], {
+            cwd: ctx.root,
+          });
+        },
+      },
+    );
     // The declaration merge is the one config write this doctor performs, and
     // it is gated like every other confirmed repair: preview the diff, then
     // write only with explicit approval.
@@ -726,8 +793,8 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     );
     process.stdout.write(
       flags.json
-        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined)
-        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined),
+        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined, marketplaceFixes)
+        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined, marketplaceFixes),
     );
     return 0;
   } catch (error) {
