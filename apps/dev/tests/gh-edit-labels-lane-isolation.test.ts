@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { editLabels, type GhContext } from "../src/runtime/gh.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
+import { readsIssue, restIssueBody } from "./support/gh-rest-fixtures.js";
 
 /**
  * Lane isolation at the LAST gate (#2894). `/go` is sold as safe to run beside
@@ -11,14 +12,15 @@ import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
  * pure model. This port reads the issue's REAL labels and refuses there.
  */
 
-/** A gh fake answering `issue view --json labels` with `labels`, and recording
- * every `issue edit` it is asked to perform. */
+/** A gh fake answering the REST read of one issue with `labels`, and recording
+ * every `issue edit` it is asked to perform. The label read routes to REST
+ * (#3094): one issue by number is a single-object read. */
 function ghWith(labels: string[]): { ctx: GhContext; edits: string[][] } {
   const edits: string[][] = [];
   const exec: ExecFn = (_bin, args) => {
     let out: ExecOutput = { code: 0, stdout: "", stderr: "" };
-    if (args[0] === "issue" && args[1] === "view") {
-      out = { code: 0, stdout: JSON.stringify({ labels: labels.map((name) => ({ name })) }), stderr: "" };
+    if (readsIssue(args)) {
+      out = { code: 0, stdout: JSON.stringify(restIssueBody({ labels })), stderr: "" };
     } else if (args[0] === "issue" && args[1] === "edit") {
       edits.push([...args]);
     }
