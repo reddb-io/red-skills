@@ -161,6 +161,30 @@ describe("the frame is read from the daemon, not derived from the payload", () =
     expect(snapshot.dashboard?.rows[0]?.cells.bar).toBe("██▶░░░");
   });
 
+  it("shows why a process died, and the engine that answered, from the daemon's own frame", async () => {
+    const daemon = await fake();
+    const snapshot = await readHostSnapshot({
+      client: createRedskilledReadClient({ socketPath: daemon.socketPath }),
+      eventLanePath: daemon.eventLanePath,
+      source: "the test pinned it",
+      sessionProject: "reddb-io/red-skills",
+    });
+
+    // The bar: the count and the class, because "why did it die" must survive
+    // being read at a glance beside a Worker count that looks perfectly healthy.
+    const bar = statusBarView(snapshot);
+    expect(bar.text).toContain("†1 oomd");
+    expect(bar.text).toContain("v0.4.1");
+
+    // The panel: the receipt the bar has no room for — and not one character of
+    // it computed here.
+    const html = renderDashboardHtml(snapshot);
+    expect(html).toContain("worker:w-gone");
+    expect(html).toContain("oomd/high");
+    expect(html).toContain("signal=SIGKILL");
+    expect(html).toContain("systemd-oomd killed");
+  });
+
   it("keeps the trees usable when a daemon refuses the op", async () => {
     const daemon = await fake({ refuse: ["statusline-dashboard"] });
     const snapshot = await readHostSnapshot({

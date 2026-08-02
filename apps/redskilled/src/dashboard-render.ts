@@ -27,10 +27,14 @@
  * it does not, because a plausible zero is worse than a missing column.
  */
 import type {
+  RedskilledStatuslineDeaths,
+  RedskilledStatuslineEngine,
   RedskilledStatuslinePayload,
   RedskilledStatuslineWorker,
 } from "./statusline-payload.js";
 import {
+  DEATH_MARK as DASHBOARD_DEATH_MARK,
+  ENGINE_BEHIND_MARK as DASHBOARD_ENGINE_BEHIND_MARK,
   formatBytes,
   resolveStatuslineProjectMatch,
   type RedskilledStatuslineMode,
@@ -103,6 +107,16 @@ export interface RedskilledDashboardHeader {
   readonly project_match: RedskilledStatuslineProjectMatch;
   /** The daemon's version — the one version this process can honestly state. */
   readonly version: string;
+  /**
+   * Which engine answered and whether it is current; `null` on an older daemon.
+   *
+   * Beside `version` rather than replacing it: `version` is what a surface prints
+   * with no interpretation, and this is the comparison behind the `⇡`. A `null`
+   * here is "this daemon predates the block", never "it is up to date".
+   */
+  readonly engine: RedskilledStatuslineEngine | null;
+  /** What this host could not explain; `null` when nothing has reaped. */
+  readonly deaths: RedskilledStatuslineDeaths | null;
   /** `runner model effort`, from the first Worker that published one; else `null`. */
   readonly model: string | null;
   readonly windows: RedskilledDashboardWindows;
@@ -192,6 +206,11 @@ export function renderRedskilledDashboard(
   if (hidden > 0) {
     lines.push(clamp(`… ${hidden} more Worker(s) — the row budget is short, not the host`, options.maxWidth));
   }
+  // BELOW the Workers, because a death is the answer to a question asked after
+  // the table has been read: the header already carries the count and the class,
+  // and these lines are the receipt behind it — one per verdict, naming what died
+  // and the evidence the verdict rests on.
+  lines.push(...deathLines(payload, options));
 
   return {
     version: 1,
@@ -304,7 +323,16 @@ function buildHeader(
   const model = firstPublishedModel(selected);
   const repo = activity?.repository ?? options.project;
 
-  const parts: string[] = [`» ${repo ?? "host"} v${payload.daemon.daemon_version}`];
+  const engine = payload.engine ?? null;
+  const version = engine?.running_version ?? payload.daemon.daemon_version;
+  const deaths = payload.deaths ?? null;
+
+  // The version carries its own currency mark rather than a separate token: a
+  // surface reading `v3.1.0` on its own cannot tell a current daemon from one
+  // three releases behind, and that is the whole of "is my engine current".
+  const parts: string[] = [
+    `» ${repo ?? "host"} v${version}${engine != null && engine.current === false ? DASHBOARD_ENGINE_BEHIND_MARK : ""}`,
+  ];
   if (match === "unregistered") parts.push("!unregistered");
   if (match === "name-only") parts.push("!lapsed");
   if (model != null) parts.push(model);
@@ -317,6 +345,12 @@ function buildHeader(
   if (counts.recently_closed != null) parts.push(`cpr=${counts.recently_closed}`);
   if (counts.open_issues != null) parts.push(`iss=${counts.open_issues}`);
   if (counts.stale) parts.push("!counts stale");
+  // Beside the counts rather than under the table, because a death is a fact
+  // about the machine and not about one project's Workers — and the header is
+  // the whole of what a status bar shows.
+  if (deaths != null && deaths.count > 0 && deaths.latest != null) {
+    parts.push(`${DASHBOARD_DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`);
+  }
   if (payload.staleness.stale) {
     const age = payload.staleness.age_ms;
     parts.push(age == null ? "!unmeasured" : `!stale ${Math.round(age / 1000)}s`);
@@ -326,7 +360,9 @@ function buildHeader(
     repo,
     project: options.project,
     project_match: match,
-    version: payload.daemon.daemon_version,
+    version,
+    engine,
+    deaths,
     model,
     windows,
     counts,
@@ -334,6 +370,40 @@ function buildHeader(
     age_ms: payload.staleness.age_ms,
     line: clamp(parts.join(" · "), options.maxWidth),
   };
+}
+
+/**
+ * One line per posed death — the receipt behind the header's count. PURE.
+ *
+ * Each line names WHAT died, WHO ended it, HOW SURE the reaper is and the fact
+ * the verdict rests on, because those four are the whole of "why did it die" and
+ * a reader who has to open a lane to get them is a reader who does not. The
+ * confidence travels with the class and is never dropped: `oomd/low` and
+ * `oomd/high` send an operator to different places.
+ *
+ * Nothing is drawn when the block is absent or empty — a dashboard that printed
+ * `deaths 0` would spend a row telling a healthy machine it is healthy.
+ */
+function deathLines(
+  payload: RedskilledStatuslinePayload,
+  options: RedskilledDashboardOptions,
+): readonly string[] {
+  const deaths = payload.deaths;
+  if (deaths == null || deaths.count <= 0) return [];
+  const lines = deaths.recent.map((death) =>
+    clamp(
+      `${DASHBOARD_DEATH_MARK} ${death.kind} ${death.id} pid=${death.pid}` +
+        ` ${death.sender_class}/${death.confidence} phase=${death.last_phase}` +
+        (death.signal == null ? "" : ` signal=${death.signal}`) +
+        (death.evidence == null ? "" : ` — ${death.evidence}`),
+      options.maxWidth,
+    ),
+  );
+  const hidden = deaths.count - deaths.recent.length;
+  if (hidden > 0) {
+    lines.push(clamp(`… ${hidden} more posed death(s) — the lane holds them all`, options.maxWidth));
+  }
+  return lines;
 }
 
 /** `mem=1.2G/8G 15%`, or the observed figure alone when nothing caps it. PURE. */

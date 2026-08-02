@@ -185,15 +185,16 @@ describe("the verbose statusline", () => {
 
     const render = renderRedskilledStatusline(
       payload,
-      // Wide enough for the Worker entry, far too narrow for the published line:
-      // the second line answers to the same clamp as the first.
-      options({ project: "acme/widgets", verbose: true, maxWidth: 34 }),
+      // Wide enough for the Worker entry — head, engine version and all — far too
+      // narrow for the published line: the second line answers to the same clamp
+      // as the first.
+      options({ project: "acme/widgets", verbose: true, maxWidth: 41 }),
     );
 
     expect(render.lines).toHaveLength(2);
     for (const line of render.lines) {
       expect(line).not.toContain("\n");
-      expect([...line].length).toBeLessThanOrEqual(34);
+      expect([...line].length).toBeLessThanOrEqual(41);
     }
     // Collapsed, not re-interpreted: the words survive in the order published.
     expect(render.lines[1]).toContain("first second");

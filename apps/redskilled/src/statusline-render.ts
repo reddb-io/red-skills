@@ -270,6 +270,18 @@ export function renderRedskilledStatuslineAbsence(input: {
  */
 export const UNREGISTERED_MARK = "!unregistered";
 
+/** What a daemon that is not the current one appends to its version. */
+export const ENGINE_BEHIND_MARK = "⇡";
+
+/**
+ * What a posed death is marked with — a dagger, and never a word.
+ *
+ * The head is the part of the line that never degrades, so a death has to fit
+ * beside a Worker count on a narrow terminal; the class that follows is the
+ * reason, and the lane holds the receipt.
+ */
+export const DEATH_MARK = "†";
+
 /** The one sentence an unreachable host renders as. */
 export const REDSKILLED_STATUSLINE_ABSENCE = "redskilled unreachable — Worker state unknown";
 
@@ -403,8 +415,47 @@ function renderHead(
     // head states the mismatch instead of an aggregate that reads as calm.
     parts.push(unmatchedHead(options.project, match));
   }
+  parts.push(engineMark(payload));
+  const death = deathMark(payload);
+  if (death != null) parts.push(death);
   if (payload.staleness.stale) parts.push(stalenessMark(payload));
   return parts.join(" ");
+}
+
+/**
+ * Which engine answered, and whether it is the current one. PURE.
+ *
+ * In the head rather than the degradable tail, because "what version is
+ * answering" is the first fact a skew investigation needs and the last one an
+ * operator thinks to ask for — a version reachable only from a wider terminal is
+ * one nobody reads. The `⇡` is appended, never substituted: a held or behind
+ * daemon still states the version it is actually running, since the number a
+ * report quotes has to be the one answering the read.
+ */
+function engineMark(payload: RedskilledStatuslinePayload): string {
+  const engine = payload.engine;
+  const version = engine?.running_version ?? payload.daemon.daemon_version;
+  if (engine == null || engine.current !== false) return `v${version}`;
+  return `v${version}${ENGINE_BEHIND_MARK}`;
+}
+
+/**
+ * What this host could not explain, in the smallest honest token. PURE.
+ *
+ * The class rides with the count because `†1` alone sends the operator to a lane
+ * to learn the one thing they came for, and the classes differ in what they cost:
+ * `oomd` is a machine to resize and `user-signal` is somebody's Ctrl-C. Only the
+ * newest verdict's class is named — a head has no room for a census, and
+ * `deaths.count` says how many more are behind it.
+ *
+ * An ABSENT block prints nothing, and so does a reaping that attributed nothing:
+ * `†0` would be a badge for the healthy case, which is how a mark stops being
+ * read at all.
+ */
+function deathMark(payload: RedskilledStatuslinePayload): string | null {
+  const deaths = payload.deaths;
+  if (deaths == null || deaths.count <= 0 || deaths.latest == null) return null;
+  return `${DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`;
 }
 
 /**

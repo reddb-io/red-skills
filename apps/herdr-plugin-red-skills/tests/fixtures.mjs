@@ -135,6 +135,59 @@ export function statuslinePayload(overrides = {}) {
       ],
       reason: "fetched 30000ms ago, within the 120000ms window",
     },
+    // A death this host could not explain, posed by the boot reaper and reduced
+    // to what a surface prints. It carries the awkward part on purpose: the
+    // verdict names a Worker no longer in the Worker set, which is exactly the
+    // reader that has no table to be found in.
+    deaths: {
+      count: 2,
+      recent: [
+        {
+          kind: "worker",
+          id: "worker:w-gone",
+          pid: 5150,
+          ts: "2026-07-31T09:02:00.000Z",
+          last_seen: "2026-07-31T08:58:00.000Z",
+          last_phase: "coding",
+          sender_class: "oomd",
+          confidence: "high",
+          signal: "SIGKILL",
+          evidence: "systemd-oomd killed red-worker-red-skills-w-gone.service",
+        },
+        {
+          kind: "launcher",
+          id: "launcher:1701",
+          pid: 1701,
+          ts: "2026-07-31T09:01:00.000Z",
+          last_seen: "2026-07-31T08:50:00.000Z",
+          last_phase: "booting",
+          sender_class: "unknown",
+          confidence: "none",
+          signal: null,
+          evidence: null,
+        },
+      ],
+      latest: {
+        kind: "worker",
+        id: "worker:w-gone",
+        pid: 5150,
+        ts: "2026-07-31T09:02:00.000Z",
+        last_seen: "2026-07-31T08:58:00.000Z",
+        last_phase: "coding",
+        sender_class: "oomd",
+        confidence: "high",
+        signal: "SIGKILL",
+        evidence: "systemd-oomd killed red-worker-red-skills-w-gone.service",
+      },
+      reaped_at: "2026-07-31T09:02:00.000Z",
+    },
+    engine: {
+      running_version: "0.4.1",
+      published_version: "0.4.1",
+      newer_published: false,
+      major_held: false,
+      current: true,
+    },
     ...overrides,
   };
 }
