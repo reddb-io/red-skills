@@ -1,10 +1,20 @@
 import { existsSync, readFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, parse } from "node:path";
 import yaml from "js-yaml";
 
 const TOON_PACKAGE_NAME = "@reddb-io/toon";
 const SEMVER = /^\d+\.\d+\.\d+$/;
+
+/** pnpm rewrites this specifier from the catalog at install and publish time. */
+const CATALOG_SPECIFIER = "catalog:";
+
+const DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "peerDependencies",
+  "optionalDependencies",
+] as const;
 
 export interface CatalogToonVersion {
   readonly packageName: typeof TOON_PACKAGE_NAME;
@@ -128,6 +138,7 @@ export const TOON_PIN_SITES: readonly ToonPinSite[] = [
 
 interface WorkspaceCatalog {
   readonly catalog?: Record<string, unknown>;
+  readonly packages?: readonly string[];
 }
 
 export function findWorkspaceRoot(start = process.cwd()): string {
@@ -167,6 +178,50 @@ export async function readToonPinSite(root: string, site: ToonPinSite): Promise<
     throw new Error(`toon pin site ${site.name} did not match ${site.path}`);
   }
   return match[1];
+}
+
+/**
+ * Every workspace package defers its toon version to the catalog (ADR 0097: "No RedSkills surface
+ * owns an independent `tq` or `@reddb-io/toon` version"). A literal specifier is drift even when it
+ * looks current, because a caret range on a `0.x` line is minor-locked and silently stops tracking
+ * the catalog the first time the catalog crosses a minor.
+ */
+export async function collectToonSpecifierDrift(root: string): Promise<string[]> {
+  const failures: string[] = [];
+  for (const dir of await workspacePackageDirs(root)) {
+    const manifestPath = join(dir, "package.json");
+    if (!existsSync(join(root, manifestPath))) continue;
+
+    const manifest = JSON.parse(await readFile(join(root, manifestPath), "utf8")) as Record<string, unknown>;
+    for (const field of DEPENDENCY_FIELDS) {
+      const deps = manifest[field];
+      if (typeof deps !== "object" || deps === null) continue;
+      const specifier = (deps as Record<string, unknown>)[TOON_PACKAGE_NAME];
+      if (specifier === undefined) continue;
+      if (specifier !== CATALOG_SPECIFIER) {
+        failures.push(`${manifestPath} (${field}): expected ${CATALOG_SPECIFIER}, found ${String(specifier)}`);
+      }
+    }
+  }
+  return failures.sort();
+}
+
+/** Resolves the single-level `apps/*`-style globs pnpm workspaces use here. */
+async function workspacePackageDirs(root: string): Promise<string[]> {
+  const doc = yaml.load(await readFile(join(root, "pnpm-workspace.yaml"), "utf8")) as WorkspaceCatalog | null;
+  const dirs: string[] = [];
+  for (const glob of doc?.packages ?? []) {
+    if (!glob.endsWith("/*")) {
+      dirs.push(glob);
+      continue;
+    }
+    const parent = glob.slice(0, -2);
+    const entries = await readdir(join(root, parent), { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isDirectory()) dirs.push(`${parent}/${entry.name}`);
+    }
+  }
+  return dirs.sort();
 }
 
 export async function collectToonPinDrift(root: string, version: CatalogToonVersion): Promise<string[]> {
