@@ -10,8 +10,8 @@ catalogs:
       specifier: ^1.0.0
       version: 1.29.0
     '@reddb-io/toon':
-      specifier: 0.3.0
-      version: 0.3.0
+      specifier: 0.13.0
+      version: 0.13.0
     '@types/node':
       specifier: ^22.0.0
       version: 22.20.1
@@ -61,7 +61,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.13.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -120,7 +120,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.13.0
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -194,7 +194,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.13.0
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -225,7 +225,7 @@ importers:
         version: link:../../packages/build-info
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.13.0
     devDependencies:
       esbuild:
         specifier: 'catalog:'
@@ -247,7 +247,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.13.0
       fast-glob:
         specifier: ^3.3.2
         version: 3.3.3
@@ -334,7 +334,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.13.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -368,7 +368,7 @@ importers:
         version: link:../../packages/shared
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.13.0
       js-tiktoken:
         specifier: ^1.0.21
         version: 1.0.21
@@ -421,7 +421,7 @@ importers:
     dependencies:
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.13.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -465,8 +465,8 @@ importers:
         specifier: ^0.105.0
         version: 0.105.0(@effect/cluster@0.57.0(@effect/platform@0.95.0(effect@3.22.0))(@effect/rpc@0.74.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/sql@0.50.0(@effect/experimental@0.59.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/workflow@0.17.0(@effect/experimental@0.59.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(@effect/rpc@0.74.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(@effect/rpc@0.74.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/sql@0.50.0(@effect/experimental@0.59.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(effect@3.22.0)
       '@reddb-io/toon':
-        specifier: ^0.3.0
-        version: 0.3.0
+        specifier: 'catalog:'
+        version: 0.13.0
       '@standard-schema/spec':
         specifier: ^1.0.0
         version: 1.1.0
@@ -503,7 +503,7 @@ importers:
     dependencies:
       '@reddb-io/toon':
         specifier: 'catalog:'
-        version: 0.3.0
+        version: 0.13.0
       cli-args-parser:
         specifier: ^1.0.6
         version: 1.0.6
@@ -1446,8 +1446,8 @@ packages:
     resolution: {integrity: sha512-aPXh8WeP5SSu17SBU8e2kOgZMuKnrTW/qYviD3zu7LLoAP5cOP6rDRl7C/6LreixHepNc+vwkyVILfK0RTJtLQ==}
     engines: {node: '>=18'}
 
-  '@reddb-io/toon@0.3.0':
-    resolution: {integrity: sha512-GfxCo7ZZ599EZFo0AlDViXx8+560cos4v1mkCQ63oriGgd+5uSYu9q/Oe4dxeBoCoJxmPU2kXAS+px7LB8BkFA==}
+  '@reddb-io/toon@0.13.0':
+    resolution: {integrity: sha512-MvJ4slczdd0V6CgDVsSGxbEkTc0Pz0ahTMOAHxPJtRyGikcyQhdm63itPCYxmmKTUCygy3QHqEyGGXv1ujMjzg==}
     engines: {node: '>=18'}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
@@ -3638,7 +3638,7 @@ snapshots:
 
   '@reddb-io/sdk@1.23.1': {}
 
-  '@reddb-io/toon@0.3.0': {}
+  '@reddb-io/toon@0.13.0': {}
 
   '@rollup/rollup-android-arm-eabi@4.62.2':
     optional: true
