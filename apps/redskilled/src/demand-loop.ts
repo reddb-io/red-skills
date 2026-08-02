@@ -29,9 +29,24 @@
  * is recorded as an ordinary outcome carrying the host's own words, never as an
  * error, because the host is the party that knows.
  *
+ * **A project that cannot keep a Worker alive stops being asked.** A refusal is
+ * the host saying no; a Worker that is born and dies seconds later is the host
+ * saying yes to something that cannot run. The second shape has no natural end:
+ * the target is unmet, so the loop asks again, and a boot that fails
+ * deterministically — a probe that refuses, a precondition that will not become
+ * true by waiting — fails identically on the first attempt and the hundredth.
+ * Measured before this existed: 108 births and 108 deaths in one hour for one
+ * project, average lifetime 13 seconds, each birth spending GitHub quota that is
+ * per token and therefore shared with every other project on the machine. The
+ * breaker is per project because the fault is: a looping project must not hold
+ * back a healthy neighbour, and a host-wide backoff would make it do exactly
+ * that.
+ *
  * **Rule 3 survives.** A selector and an argv are carried and handed back; not
  * one branch here turns on what either of them says. The planner reads a depth,
- * a target and a count of live Workers — three integers — and nothing else.
+ * a target, a count of live Workers and a streak of short-lived deaths — four
+ * integers — and nothing else. It never learns WHY a Worker died; a lifetime in
+ * milliseconds is not a reason, and the daemon is not owed one.
  *
  * PURE.
  */
@@ -47,6 +62,34 @@ export const REDSKILLED_DEMAND_BACKOFF_MS = 30_000;
 
 /** Default window between demand ticks — the queue's cadence, by construction. */
 export const DEFAULT_REDSKILLED_DEMAND_MS = 15_000;
+
+/**
+ * A Worker dead sooner than this never reached its work; its birth was spent.
+ *
+ * Generous on purpose. A Worker that claims an issue, opens a worktree and
+ * starts an agent is minutes old before it does anything; one that dies inside
+ * this window died in boot, and boot failures are the deterministic kind.
+ */
+export const REDSKILLED_SHORT_LIFE_MS = 60_000;
+
+/**
+ * How many short lives in a row stop a project from being asked again.
+ *
+ * Three rather than one: a single early death can be a genuine transient (a
+ * lock briefly held, a fetch that timed out), and refusing to retry it would
+ * turn a blip into an outage. Three in a row is not a blip.
+ */
+export const REDSKILLED_SHORT_LIFE_STREAK = 3;
+
+/**
+ * How long a halted project waits before one Worker is allowed through.
+ *
+ * The halt expires rather than latching, because the cause is usually outside
+ * this process and gets fixed there — a tree committed, a binary installed —
+ * with nothing to tell the daemon it happened. One birth after the window is
+ * the probe; if it dies short too, the streak re-arms the halt immediately.
+ */
+export const REDSKILLED_BIRTH_HALT_MS = 600_000;
 
 /** One registered project, as the loop reads it: three integers and two opaque values. */
 export interface RedskilledDemandProject {
@@ -66,7 +109,9 @@ export type RedskilledDemandOutcome =
   | "at-target"
   | "queue-drained"
   | "queue-unknown"
-  | "backing-off";
+  | "backing-off"
+  /** This project's Workers keep dying in boot, so it is not asked again yet. */
+  | "birth-halted";
 
 export interface RedskilledDemandIntent {
   readonly project_label: string;
@@ -104,6 +149,12 @@ export interface PlanHostDemandInput {
   readonly nowMs: number;
   /** When the host's last refusal stops holding the loop back; absent when none does. */
   readonly backoffUntilMs?: number | null;
+  /**
+   * Per project, when its birth halt expires — a project absent from this map
+   * is not halted. Keyed by label so one looping project never holds back a
+   * healthy one, which a host-wide backoff would.
+   */
+  readonly birthHaltUntilMs?: Readonly<Record<string, number>>;
 }
 
 /**
@@ -138,6 +189,25 @@ export function planHostDemand(input: PlanHostDemandInput): RedskilledDemandPlan
         detail:
           `the host refused a Worker, so no project is asked for one again before ` +
           `${new Date(backoffUntilMs!).toISOString()}`,
+      });
+      continue;
+    }
+    // Checked before the depth, and deliberately: a halted project is not asked
+    // for a Worker whether or not anyone has counted its queue, and reporting
+    // "nobody counted yet" for a project whose Workers are dying in boot names
+    // the wrong problem to whoever reads it.
+    const haltUntilMs = input.birthHaltUntilMs?.[project.project_label];
+    if (haltUntilMs != null && input.nowMs < haltUntilMs) {
+      intents.push({
+        ...base,
+        outcome: "birth-halted",
+        wanted: 0,
+        detail:
+          `project ${JSON.stringify(project.project_label)} lost ` +
+          `${REDSKILLED_SHORT_LIFE_STREAK} Workers in a row inside ` +
+          `${REDSKILLED_SHORT_LIFE_MS}ms of birth, so it is not asked for another before ` +
+          `${new Date(haltUntilMs).toISOString()} — a Worker that cannot survive boot will not ` +
+          `survive the next one either, and every birth spends host quota shared with every project`,
       });
       continue;
     }
@@ -255,4 +325,63 @@ export function isRedskilledDemandTick(value: unknown): value is RedskilledDeman
     (tick.refusal === null || typeof tick.refusal === "string") &&
     (tick.retry_after === null || typeof tick.retry_after === "string") &&
     Array.isArray(tick.projects);
+}
+
+/**
+ * One project's record of Workers that died before they could work.
+ *
+ * The streak, not a rate: a project that loses one Worker an hour is not
+ * looping, and a rate would eventually smear a tight loop into an average that
+ * looks survivable. Consecutive is the property that distinguishes "boot cannot
+ * succeed here" from "one Worker had bad luck".
+ */
+export interface RedskilledBirthHealth {
+  /** Consecutive Workers that died inside {@link REDSKILLED_SHORT_LIFE_MS}. */
+  readonly shortLifeStreak: number;
+  /** When this project may be asked for a Worker again; `null` when it may now. */
+  readonly haltUntilMs: number | null;
+}
+
+/** A project with no history — never halted, no streak. */
+export const EMPTY_BIRTH_HEALTH: RedskilledBirthHealth = { shortLifeStreak: 0, haltUntilMs: null };
+
+/**
+ * Fold one Worker's death into its project's birth health. PURE.
+ *
+ * **A long life clears the streak outright rather than decrementing it.** The
+ * question the streak answers is "can a Worker boot here right now", and one
+ * that did is a complete answer — carrying forward failures from before a
+ * working boot would halt a project that has already recovered.
+ *
+ * The halt is armed on the death that completes the streak and re-armed by
+ * every short death after it, so a project probed after the window and still
+ * broken goes quiet again immediately instead of leaking one birth per window
+ * forever.
+ */
+export function foldWorkerDeath(
+  health: RedskilledBirthHealth,
+  lifetimeMs: number,
+  nowMs: number,
+): RedskilledBirthHealth {
+  if (lifetimeMs >= REDSKILLED_SHORT_LIFE_MS) return EMPTY_BIRTH_HEALTH;
+  const shortLifeStreak = health.shortLifeStreak + 1;
+  if (shortLifeStreak < REDSKILLED_SHORT_LIFE_STREAK) return { shortLifeStreak, haltUntilMs: null };
+  return { shortLifeStreak, haltUntilMs: nowMs + REDSKILLED_BIRTH_HALT_MS };
+}
+
+/**
+ * The halt map `planHostDemand` reads, from a health record per project. PURE.
+ *
+ * An expired halt is dropped rather than kept as a past instant, so the planner
+ * compares against present halts only and a stale entry can never read as one.
+ */
+export function birthHaltMap(
+  health: Readonly<Record<string, RedskilledBirthHealth>>,
+  nowMs: number,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [label, record] of Object.entries(health)) {
+    if (record.haltUntilMs != null && nowMs < record.haltUntilMs) out[label] = record.haltUntilMs;
+  }
+  return out;
 }

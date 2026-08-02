@@ -61,6 +61,11 @@ import {
   DEFAULT_REDSKILLED_DEMAND_MS,
   emptyDemandTick,
   planHostDemand,
+  birthHaltMap,
+  foldWorkerDeath,
+  EMPTY_BIRTH_HEALTH,
+  REDSKILLED_SHORT_LIFE_MS,
+  type RedskilledBirthHealth,
   REDSKILLED_DEMAND_BACKOFF_MS,
   type RedskilledDemandGrant,
   type RedskilledDemandTick,
@@ -834,6 +839,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // a healthy one (#2973).
   const lapses: RedskilledRegistrationLapse[] = [];
   let demandBackoffUntilMs: number | null = null;
+  // Per project, its record of Workers that died before they could work. In
+  // memory rather than durable on purpose: it answers "can a Worker boot here
+  // right now", and a fresh daemon has no business inheriting a verdict about a
+  // machine it has not tried yet.
+  const birthHealth: Record<string, RedskilledBirthHealth> = {};
   let demandTicking = false;
   let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
@@ -1161,6 +1171,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         live,
         nowMs: Number.isFinite(nowMs) ? nowMs : 0,
         backoffUntilMs: demandBackoffUntilMs,
+        birthHaltUntilMs: birthHaltMap(birthHealth, Number.isFinite(nowMs) ? nowMs : 0),
       });
 
       const granted: RedskilledDemandGrant[] = [];
@@ -1379,6 +1390,32 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     forgetWorker(worker.worker_id);
     record("worker-death", worker, ended, { exitCode: code, signal });
     armIdleTimer();
+  }
+
+  /**
+   * Fold one death into its project's birth health.
+   *
+   * An unreadable lifetime is treated as long, never as short: the breaker
+   * exists to stop a loop it can prove, and halting a project on a clock it
+   * could not parse would be the same silent overreach in the other direction.
+   */
+  function foldBirthHealth(projectLabel: string, lifetimeMs: number): void {
+    if (!Number.isFinite(lifetimeMs) || lifetimeMs < 0) {
+      birthHealth[projectLabel] = EMPTY_BIRTH_HEALTH;
+      return;
+    }
+    const before = birthHealth[projectLabel] ?? EMPTY_BIRTH_HEALTH;
+    const after = foldWorkerDeath(before, lifetimeMs, Date.parse(clock()));
+    birthHealth[projectLabel] = after;
+    if (after.haltUntilMs != null && before.haltUntilMs == null) {
+      // Said once, when the breaker opens rather than on every death after it:
+      // a loop that logs per cycle is the second thing filling a disk.
+      process.stderr.write(
+        `redskilled: project ${JSON.stringify(projectLabel)} lost ${after.shortLifeStreak} Workers in a row ` +
+          `inside ${REDSKILLED_SHORT_LIFE_MS}ms of birth; not asking for another until ` +
+          `${new Date(after.haltUntilMs).toISOString()}\n`,
+      );
+    }
   }
 
   /** Ask the host about one Worker; an unanswerable probe is not a confirmation. */
@@ -1611,6 +1648,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // describe the same ending at two different times.
     if (event === "worker-death" || event === "worker-budget-kill") {
       markWorkerOutcome({ worker_id: worker.worker_id, ts, outcome: event });
+      // Every death reaches here, which is why the breaker folds here rather
+      // than at the five call sites that end a Worker. What it reads is a
+      // lifetime, never a cause: the daemon is not owed a reason (rule 3), and
+      // a Worker dead in seconds is spent whatever the reason was.
+      foldBirthHealth(worker.project_label, Date.parse(ts) - Date.parse(worker.started_at));
     }
     void eventLane
       .record({
