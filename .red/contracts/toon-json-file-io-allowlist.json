@@ -32,10 +32,14 @@
    "moveKey": "24cdd7f5b667"
   },
   {
-   "id": "apps/dev/src/core/toon-version.ts#json-parse-file-read#155234ba4b8b",
+   "id": "apps/dev/src/core/version-train-guard.ts#json-parse-file-read#4432a2350e97",
    "classification": "external",
-   "reason": "package.json is ecosystem JSON.",
-   "moveKey": "fb5939f4f4c6"
+   "reason": "package.json is ecosystem JSON; the version-train guard reads the manifests npm, pnpm and every host own."
+  },
+  {
+   "id": "apps/dev/src/core/version-train-guard.ts#json-parse-file-read#871affe5c62e",
+   "classification": "external",
+   "reason": "`.changeset/config.json` is the changesets tool's own format; the guard reads the fixed/ignore lists it publishes."
   },
   {
    "id": "apps/dev/src/runtime/feedback-worktree.ts#json-parse-file-read#abf5b08523f6",
