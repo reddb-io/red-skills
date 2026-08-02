@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BRANCH_TIP, RWT, WT, doLanding, harness, joined, type Harness } from "./landing.test-support.js";
+import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 
 const DEV_SRC = join(import.meta.dirname, "..", "src");
 
@@ -590,15 +591,17 @@ describe("doLanding — landing mode decoupled from the lock (lock × flag matri
     h.deps.mergeExec = async (argv) => {
       // #2986: the SHA now comes from the merge CONFIRMATION — the same probe
       // that proves the PR actually merged, not a separate optimistic read.
-      if (argv.join(" ").includes("--json state,mergedAt")) {
+      if (readsPull(argv)) {
         return {
           code: 0,
-          stdout: JSON.stringify({
-            state: "MERGED",
-            mergedAt: "2026-08-01T00:00:00Z",
-            mergeCommit: { oid: "forge-merge-sha" },
-            autoMergeRequest: null,
-          }),
+          stdout: JSON.stringify(
+            restPullBody({
+              state: "MERGED",
+              mergedAt: "2026-08-01T00:00:00Z",
+              mergeCommitOid: "forge-merge-sha",
+              autoMerge: false,
+            }),
+          ),
           stderr: "",
         };
       }
