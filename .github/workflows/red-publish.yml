@@ -596,6 +596,42 @@ jobs:
           set -euo pipefail
           pnpm bundle
 
+      # The two companion surfaces that read the daemon are installed by hand
+      # rather than resolved by a launcher, so a release is the ONLY place they
+      # can come from (issue #3060). Both were complete in source and absent from
+      # every release: the extension shipped no `.vsix` at all, and the herdr
+      # plugin could only be installed by `pnpm install`-ing this whole workspace
+      # first — which is not a thing a machine with no checkout can do.
+      #
+      # The herdr plugin bundles like every other app here: one esbuild file with
+      # `@reddb-io/toon` and `@reddb-io/build-info` inlined. Its install-time
+      # build hook downloads this asset and writes it over its own entry, so the
+      # asset name is a contract, checked by apps/herdr-plugin-red-skills/tests.
+      - name: Build herdr plugin bundle
+        if: steps.target.outputs.publish == 'true'
+        working-directory: apps/herdr-plugin-red-skills
+        env:
+          RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
+          RED_BUILD_GIT_SHA: ${{ steps.target.outputs.sha }}
+          RED_BUILD_TIME: ${{ steps.target.outputs.built_at }}
+        run: |
+          set -euo pipefail
+          pnpm bundle
+
+      # The `.vsix` is built by the extension's own packager (an OPC zip, not
+      # `@vscode/vsce`) and stamped with the release version, because an editor
+      # keys "already installed" off the manifest inside the archive: a second
+      # release carrying the extension's static 0.1.0 would be a download nothing
+      # installs. It is attached to the Release and pushed to no marketplace.
+      - name: Package the VS Code extension .vsix
+        if: steps.target.outputs.publish == 'true'
+        working-directory: apps/vscode-extension-red-skills
+        env:
+          RED_BUILD_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          set -euo pipefail
+          pnpm package
+
       # ADR 0091: npm is the ONLY client transport. Stage the built bundles into
       # the packaging/npm package, pnpm pack it, then run the REAL client resolver
       # (the packaged bin) against the packed tarball as a producer/consumer
@@ -805,9 +841,12 @@ jobs:
         env:
           RED_RELEASE_VERSION: ${{ steps.target.outputs.tag }}
           RED_RELEASE_GIT_SHA: ${{ steps.target.outputs.sha }}
+          VERSION: ${{ steps.target.outputs.version }}
         run: |
           set -euo pipefail
           node scripts/release-manifest.mjs \
+            "dist/vscode-extension-red-skills-${VERSION}.vsix" \
+            dist/herdr-plugin-red-skills.bundle.min.mjs \
             dist/dev.bundle.min.mjs \
             dist/dev.manifest.json \
             dist/code-nav.bundle.min.mjs \
@@ -841,7 +880,12 @@ jobs:
           # are kept as an INERT backup artifact the client never reads. No
           # sigstore signatures are uploaded (client signature verification
           # removed).
+          # Two of these are not an inert backup: the `.vsix` and the herdr
+          # bundle are the ONLY way either companion surface is installed on a
+          # machine without this monorepo (issue #3060).
           assets=(
+            "dist/vscode-extension-red-skills-${NEXT#v}.vsix"
+            dist/herdr-plugin-red-skills.bundle.min.mjs
             dist/dev.bundle.min.mjs
             dist/dev.manifest.json
             dist/code-nav.bundle.min.mjs
