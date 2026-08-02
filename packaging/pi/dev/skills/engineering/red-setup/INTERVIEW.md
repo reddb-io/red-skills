@@ -151,7 +151,7 @@ If `command -v` cannot find it, add `${XDG_BIN_HOME:-$HOME/.local/bin}` to the s
 Install the pinned `tq` through the toon repo's checksum-verified installer:
 
 ```bash
-TQ_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.3.0/install.sh | sh
+TQ_VERSION=v0.13.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.13.0/install.sh | sh
 ```
 
 Then verify:
@@ -160,7 +160,7 @@ Then verify:
 tq --version
 ```
 
-The installed version must be `0.3.0`. Record the same pin in `.red/config.yaml` under `host_binaries.tq.version` so `/red-doctor` can red-flag absence or drift and print the same canonical installer fix. Do not document or offer a jq fallback.
+The installed version must be `0.13.0`. Record the same pin in `.red/config.yaml` under `host_binaries.tq.version` so `/red-doctor` can red-flag absence or drift and print the same canonical installer fix. Do not document or offer a jq fallback.
 
 **Section E3 — Execution daemon (`redskilled`) — mandatory when `dev` is enabled.**
 
