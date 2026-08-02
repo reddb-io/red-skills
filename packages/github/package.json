@@ -1,0 +1,13 @@
+{
+  "name": "@reddb-io/github",
+  "version": "3.3.9",
+  "private": true,
+  "type": "module",
+  "description": "The single owner of the GitHub API-surface decision (ADR 0132 decision 4): which API answers a call, decided by cardinality, plus the REST realization of a single-object read.",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./index.ts",
+    "./surface.js": "./surface.ts",
+    "./rest-plan.js": "./rest-plan.ts"
+  }
+}
