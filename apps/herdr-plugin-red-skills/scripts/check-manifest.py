@@ -72,10 +72,10 @@ for section in ("panes", "actions", "startup", "build"):
 # points at a renamed file opens and closes again with nothing to read, which is
 # the failure this check exists to make loud at development time rather than at
 # session-restore time.
-for section in ("panes", "actions", "startup"):
+for section in ("panes", "actions", "startup", "build"):
     for entry in manifest.get(section, []):
         joined = " ".join(entry["command"])
-        # `startup` entries carry no id; the section names them well enough.
+        # `startup` and `build` entries carry no id; the section names them well enough.
         who = entry.get("id", section)
         for match in re.finditer(r"HERDR_PLUGIN_ROOT[/\\]([\w./\\-]+\.mjs)", joined):
             named = match.group(1).replace("\\", "/")
