@@ -58,13 +58,15 @@ This mirrors how Codex itself organizes customization: skills define reusable wo
 {
   "statusLine": {
     "type": "command",
-    "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); [ -z \"$N\" ] && exit 0; b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && \"$N\" \"$b\" statusline --no-workers; r=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/redskilled*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$r\" ] && \"$N\" \"$r\" statusline 2>/dev/null'",
+    "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); [ -z \"$N\" ] && exit 0; b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && \"$N\" \"$b\" statusline --no-workers; r=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/redskilled*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$r\" ] && \"$N\" \"$r\" statusline 2>/dev/null; exit 0'",
     "refreshInterval": 60
   }
 }
 ```
 
 **Why two producers and not one:** each prints the rows it owns and the host prints what it is handed. The dev bundle owns the **repo header** — project, branch, model/context, PR and issue counts, local diff — and is asked for it with `--no-workers`. The daemon owns the **Worker rows** (ADR 0130 rule 10) and serves them already rendered, so its `statusline` output is echoed verbatim. The host formats nothing, orders nothing, and truncates nothing. Before #2928 the dev bundle rendered the Worker rows too — the second renderer rule 10 exists to prevent, and the one actually on screen — while the daemon's own line went unread.
+
+**Why it ends in `; exit 0`:** the header is the required half, the Worker rows are best-effort, and a missing daemon is never a failure of the line. Without the explicit success the command's last statement is the bare test `[ -n "$r" ] && …`, so on a host with no cached daemon bundle `$r` is empty, the test fails, and its status becomes the exit status of the whole `sh -c` — a status producer that rendered its header correctly and still reported failure (#3073). The daemon half is already best-effort in its stderr (`2>/dev/null`); the exit status says the same thing. **Keep this command byte-identical to the copy in the `/red-setup` interview** — `apps/dev/tests/statusline-command-doc.test.ts` fails when the two drift, or when either one can still exit non-zero.
 
 **Why this shape (cached-bundle-first, not `$CLAUDE_PLUGIN_ROOT`, not `afk.mjs` directly):** the command above is cached-bundle-first by design (ADR 0084) — never alter it to fetch synchronously in the render path.
 
@@ -80,7 +82,7 @@ printf '{"workspace":{"project_dir":"%s"},"model":{"display_name":"Opus"}}' "$PW
   | <the step-4 statusLine command>
 ```
 
-It should print the themed **header line** (e.g. `» red-skills (main) v… Opus·high …`) and, below it, whatever the daemon's `statusline` command returned — the local project's Workers, or a stated absence when no daemon answered. Probe the two halves separately when one is missing: the header is `<bundle> statusline --no-workers`, the Worker rows are the daemon's own `statusline`. Under `NO_COLOR` the header collapses to the single-line plain form `red-skills (main) · Opus·high · …`.
+It should print the themed **header line** (e.g. `» red-skills (main) v… Opus·high …`) and, below it, whatever the daemon's `statusline` command returned — the local project's Workers, or a stated absence when no daemon answered. It must also **exit 0** — check `echo $?` — including on a host where no daemon bundle is cached yet. Probe the two halves separately when one is missing: the header is `<bundle> statusline --no-workers`, the Worker rows are the daemon's own `statusline`. Under `NO_COLOR` the header collapses to the single-line plain form `red-skills (main) · Opus·high · …`.
 
 ## Claude Code Rationale
 
