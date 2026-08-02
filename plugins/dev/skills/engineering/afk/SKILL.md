@@ -60,8 +60,8 @@ RED_AFK_RUNNER=<claude|codex|opencode> npx -y -p @reddb-io/red-skills@<version> 
 the orchestrator unchanged. The AFK queue-drain subcommand is `run`; valid
 top-level dev CLI subcommands include `run`, `monitor`, `fleet`, `dashboard`,
 `daily-review`, `weekly-review`, `retake`, `requeue`, and `reap`. A bare
-`--issues 42` is forwarded to the same run surface. There is no
-`red-skills-dev afk` subcommand. Runtime details and the full operations
+`--issues 42` is forwarded to the same run surface. There is no `afk`
+subcommand on the dev CLI. Runtime details and the full operations
 contract live in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 
 ## When To Use
