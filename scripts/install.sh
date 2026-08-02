@@ -10,6 +10,13 @@
 #   - Codex CLI: marketplace + plugins
 #   - OpenCode: generated plugin/skill/MCP/statusline surface
 #
+# The Claude and Codex marketplaces are registered from the GitHub source
+# (reddb-io/red-skills), not from the downloaded snapshot: `plugin marketplace
+# update` re-reads whatever source was registered, so a directory registration
+# freezes the machine at its install-day version. `--local-marketplace` opts
+# into the directory form for offline and dev installs; re-running the installer
+# on a machine that already carries a directory registration replaces it.
+#
 # It also supports --uninstall for the same host set. OpenCode uninstall is
 # conservative: manifest-recorded files are removed, generated modules/configs
 # are removed when they still match RedSkills output, and unrelated user files
@@ -25,6 +32,12 @@ CLAUDE_SCOPE="${RED_SKILLS_CLAUDE_SCOPE:-user}"
 PI_SCOPE="${RED_SKILLS_PI_SCOPE:-user}"
 PI_PROJECT_DIR=""
 SOURCE_DIR="${RED_SKILLS_SOURCE_DIR:-}"
+# Where the host CLIs register the marketplace FROM. `github` is the only shape
+# that can ever update: `plugin marketplace update` re-reads the registered
+# source, so a `local` registration re-reads the install-day snapshot under
+# ~/.red-skills/versions/<tag> forever and freezes the machine at that version.
+# `local` stays available for offline and dev installs that want exactly that.
+MARKETPLACE_SOURCE="${RED_SKILLS_MARKETPLACE_SOURCE:-github}"
 ACTION="${RED_SKILLS_ACTION:-install}"
 FORCE="${RED_SKILLS_FORCE:-false}"
 PURGE="${RED_SKILLS_PURGE:-false}"
@@ -50,6 +63,10 @@ Options:
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
   --pi-scope <s>        Pi install scope: user or project (default: user)
   --source-dir <dir>    Use an existing red-skills checkout instead of downloading
+  --local-marketplace   Register the Claude/Codex marketplace from the local
+                        source directory instead of the GitHub source. Offline
+                        and dev installs only: a directory-sourced marketplace
+                        can never see a release published after install day.
   --uninstall           Remove RedSkills from detected/specified CLIs
   --force               Reinstall plugins where the host supports removal
   --purge               With --uninstall, also remove the RedSkills source cache
@@ -62,7 +79,8 @@ Environment:
   RED_SKILLS_VERSION, RED_SKILLS_INSTALL_ROOT, RED_SKILLS_ONLY,
   RED_SKILLS_CLAUDE_SCOPE, RED_SKILLS_PI_SCOPE, RED_SKILLS_SOURCE_DIR,
   RED_SKILLS_ACTION, RED_SKILLS_FORCE, RED_SKILLS_PURGE, RED_SKILLS_REFRESH,
-  RED_SKILLS_OPENCODE_COPY, GITHUB_TOKEN.
+  RED_SKILLS_OPENCODE_COPY, RED_SKILLS_MARKETPLACE_SOURCE (github|local),
+  RED_SKILLS_REPO, GITHUB_TOKEN.
 EOF
 }
 
@@ -275,17 +293,101 @@ prepare_source() {
   log "current source -> $dest"
 }
 
+# The reference a host CLI registers the marketplace from. The GitHub source is
+# what makes `plugin marketplace update` pull origin and see future releases;
+# the local source dir is the frozen-snapshot fallback.
+marketplace_ref() {
+  if [[ "$MARKETPLACE_SOURCE" == "local" ]]; then
+    printf '%s\n' "$SOURCE_DIR"
+  else
+    printf '%s\n' "$REPO"
+  fi
+}
+
+# The source kind this install wants, in the vocabulary the host CLIs print.
+desired_marketplace_kind() {
+  if [[ "$MARKETPLACE_SOURCE" == "local" ]]; then
+    printf 'directory\n'
+  else
+    printf 'github\n'
+  fi
+}
+
+# Read one marketplace's registered source kind from a `plugin marketplace list`
+# transcript on stdin. The rendered shape is an entry line followed by an
+# indented `Source: <Kind> (<detail>)` line:
+#
+#   Configured marketplaces:
+#
+#     ❯ red-skills
+#       Source: Directory (/home/…/.red-skills/current)
+#
+# Prints the lowercased kind (`github`, `directory`, `git`), `absent` when the
+# marketplace is not registered, or `unknown` when a source line cannot be read.
+marketplace_source_kind() {
+  local name="$1"
+  awk -v name="$name" '
+    {
+      line = $0
+      sub(/^[[:space:]]*[^[:alnum:]_.\/-]*[[:space:]]*/, "", line)
+      sub(/[[:space:]]+$/, "", line)
+      if (line == "") next
+      if (line ~ /^Source:/) {
+        if (!found) next
+        kind = line
+        sub(/^Source:[[:space:]]*/, "", kind)
+        sub(/[^[:alnum:]].*$/, "", kind)
+        print tolower(kind)
+        printed = 1
+        exit
+      }
+      found = (line == name)
+    }
+    END { if (!printed) print (found ? "unknown" : "absent") }
+  '
+}
+
+# What the host CLI currently has registered for red-skills. A CLI that cannot
+# answer reports `unknown`, which never triggers a re-registration: replacing a
+# registration we could not read would discard whatever the operator configured.
+host_marketplace_kind() {
+  local cli="$1" listed
+  if ! listed="$("$cli" plugin marketplace list 2>/dev/null)"; then
+    printf 'unknown\n'
+    return 0
+  fi
+  printf '%s\n' "$listed" | marketplace_source_kind red-skills
+}
+
+# Heal a registration whose source cannot reach future releases. A machine
+# installed before this change carries a Directory source, so `marketplace
+# update` re-reads its install-day snapshot forever; re-running the installer
+# removes that registration and re-adds it from the GitHub source.
+heal_marketplace_source() {
+  local cli="$1" current desired
+  desired="$(desired_marketplace_kind)"
+  current="$(host_marketplace_kind "$cli")"
+  case "$current" in
+    absent|unknown|"$desired") return 0 ;;
+  esac
+  warn "$cli red-skills marketplace is $current-sourced but this install wants $desired; re-registering from $(marketplace_ref)"
+  try_run "$cli" plugin marketplace remove red-skills || true
+}
+
 install_claude() {
   if ! command -v claude >/dev/null 2>&1; then
     warn "claude not found; skipping Claude Code"
     return 0
   fi
 
-  log "installing Claude Code marketplace/plugins from $SOURCE_DIR"
-  if ! try_run claude plugin marketplace add --scope "$CLAUDE_SCOPE" "$SOURCE_DIR"; then
+  local ref
+  ref="$(marketplace_ref)"
+  log "installing Claude Code marketplace/plugins from $ref"
+  heal_marketplace_source claude
+  if ! try_run claude plugin marketplace add --scope "$CLAUDE_SCOPE" "$ref"; then
     warn "Claude marketplace add failed; replacing existing red-skills marketplace source"
     try_run claude plugin marketplace remove red-skills || true
-    try_run claude plugin marketplace add --scope "$CLAUDE_SCOPE" "$SOURCE_DIR" || die "Claude marketplace add failed"
+    try_run claude plugin marketplace add --scope "$CLAUDE_SCOPE" "$ref" || die "Claude marketplace add failed"
   fi
   try_run claude plugin marketplace update red-skills || warn "Claude marketplace update failed; continuing"
 
@@ -307,11 +409,14 @@ install_codex() {
     return 0
   fi
 
-  log "installing Codex marketplace/plugins from $SOURCE_DIR"
-  if ! try_run codex plugin marketplace add "$SOURCE_DIR"; then
+  local ref
+  ref="$(marketplace_ref)"
+  log "installing Codex marketplace/plugins from $ref"
+  heal_marketplace_source codex
+  if ! try_run codex plugin marketplace add "$ref"; then
     warn "Codex marketplace add failed; replacing existing red-skills marketplace source"
     try_run codex plugin marketplace remove red-skills || true
-    try_run codex plugin marketplace add "$SOURCE_DIR" || die "Codex marketplace add failed"
+    try_run codex plugin marketplace add "$ref" || die "Codex marketplace add failed"
   fi
   try_run codex plugin marketplace upgrade red-skills || warn "Codex marketplace upgrade failed; continuing"
 
@@ -643,6 +748,15 @@ while [[ $# -gt 0 ]]; do
       SOURCE_DIR="$2"
       shift 2
       ;;
+    --local-marketplace)
+      MARKETPLACE_SOURCE="local"
+      shift
+      ;;
+    --marketplace-source)
+      [[ $# -ge 2 ]] || die "$1 requires a value"
+      MARKETPLACE_SOURCE="$2"
+      shift 2
+      ;;
     --uninstall)
       ACTION="uninstall"
       shift
@@ -685,6 +799,11 @@ esac
 case "$PI_SCOPE" in
   user|project) ;;
   *) die "--pi-scope must be user or project" ;;
+esac
+
+case "$MARKETPLACE_SOURCE" in
+  github|local) ;;
+  *) die "--marketplace-source must be github or local" ;;
 esac
 
 case "$ACTION" in
