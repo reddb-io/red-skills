@@ -15,6 +15,7 @@
 // runner serves it and what its prompt says never enter here (rule 2), and
 // neither does the spawn — the daemon owns birth, this only asks for it.
 
+import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
 import {
   resolveProjectIdentityForDir,
   resolveProjectLabelForDir,
@@ -301,7 +302,8 @@ export function redskilledRegistrationRefusal(socketPath: string, cause: unknown
     `this project was not registered: the redskilled daemon did not answer on ${socketPath}. ` +
     `Since ADR 0130 Amendment 4 a project contributes a registration rather than a process, so a project ` +
     `that cannot reach the daemon starts nothing rather than launching a demand producer no host admitted, ` +
-    `counts or can stop. Run \`redskilled provision\` (or \`/red-setup\`) to install it, then retry. (${detail})`
+    `counts or can stop. Run \`${canonicalInvocation("red-skills-redskilled", ["provision"])}\` ` +
+    `(or \`/red-setup\`) to install it, then retry. (${detail})`
   );
 }
 
@@ -310,7 +312,8 @@ export function redskilledUnreachableAdvice(socketPath: string, cause: unknown):
   return (
     `no Worker was started: the redskilled daemon did not answer on ${socketPath}. ` +
     `Since ADR 0130 the daemon owns every birth, so a project that cannot reach it starts nothing ` +
-    `rather than spawning an unbudgeted Worker of its own. Run \`redskilled provision\` (or ` +
-    `\`/red-setup\`) to install it, then retry. (${detail})`
+    `rather than spawning an unbudgeted Worker of its own. Run ` +
+    `\`${canonicalInvocation("red-skills-redskilled", ["provision"])}\` (or \`/red-setup\`) to install it, ` +
+    `then retry. (${detail})`
   );
 }
