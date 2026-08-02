@@ -162,6 +162,12 @@ import {
 } from "./dashboard-render.js";
 import { coerceWorkerDisplay, type RedskilledWorkerDisplayRecord } from "./worker-display.js";
 import {
+  deriveRedskilledLiveMetrics,
+  pruneRedskilledMetricHistory,
+  type RedskilledWorkerMetricObservation,
+  type RedskilledWorkerOutcomeMark,
+} from "./live-metrics.js";
+import {
   launchWorker,
   type LaunchWorkerOptions,
   type LaunchedWorker,
@@ -741,6 +747,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // In memory beside the log lines and for the same reason: a display record is a
   // live progress note, and a durable copy would outlive the Worker it describes.
   const displays = new Map<string, RedskilledWorkerDisplayRecord>();
+  // What the daemon has SEEN, kept only as long as a window can ask about it.
+  // The displays map holds the latest record per Worker and nothing else, so a
+  // rate — which is a difference between two instants — has no ingredient there;
+  // these two lanes are that ingredient. In memory beside the displays and for
+  // the same reason: they are live progress notes, and a durable copy would be a
+  // third authority on a Worker's story (ADR 0130). The outcome marks are the one
+  // exception that is already durable — they mirror the host event lane, which is
+  // replayed into them at boot.
+  let observations: RedskilledWorkerMetricObservation[] = [];
+  let outcomeMarks: RedskilledWorkerOutcomeMark[] = [];
   // What each project asked the host to hold for it, by project label. In memory,
   // like the log lines and for the same reason: a registration is a live statement
   // a session renews, and a durable copy would outlive the thing it describes. The
@@ -940,7 +956,39 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       reattachedWorkerIds: [...reattached],
       repositoryActivity: lastActivity,
       ...(options.deaths === undefined ? {} : { deaths: options.deaths }),
+      // Derived here, once, for every surface: the observation history belongs
+      // to this process, so a statusline dividing its own counters would be a
+      // second authority on a number that has one answer.
+      metrics: deriveRedskilledLiveMetrics({ observations, outcomes: outcomeMarks, now: clock() }),
     });
+  }
+
+  /**
+   * Keep one heartbeat's counters, so a later read can take a difference.
+   *
+   * The display map holds only the latest record per Worker, which is enough to
+   * PRINT a count and can never yield a rate — a rate is the distance between two
+   * instants, and the map keeps one. The history is bounded by age and by count
+   * on every append, because an unbounded one is a leak measured in days.
+   */
+  function observeWorkerCounters(published: RedskilledWorkerDisplayRecord, workerId: string): void {
+    observations = pruneRedskilledMetricHistory(
+      [...observations, {
+        worker_id: workerId,
+        observed_at: published.published_at,
+        tokens: published.display.tokens,
+        tools: published.display.tools,
+        runner: published.display.runner,
+        model: published.display.model,
+      }],
+      (observation) => observation.observed_at,
+      { now: clock() },
+    );
+  }
+
+  /** Keep one Worker's ending, so the outcome rate rests on the same facts the lane does. */
+  function markWorkerOutcome(mark: RedskilledWorkerOutcomeMark): void {
+    outcomeMarks = pruneRedskilledMetricHistory([...outcomeMarks, mark], (entry) => entry.ts, { now: clock() });
   }
 
   /**
@@ -1221,7 +1269,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // failing the heartbeat: a project shipping a newer bundle than its neighbour
     // is the ordinary state of a host-scoped daemon (ADR 0130 rule 3).
     const display = request.display === undefined ? null : coerceWorkerDisplay(request.display);
-    if (display != null) displays.set(request.worker_id, { display, published_at: publishedAt });
+    if (display != null) {
+      const stored = { display, published_at: publishedAt };
+      displays.set(request.worker_id, stored);
+      // Kept as well as stored: the map answers "what is it doing now" and the
+      // history answers "how fast", and one cannot be recovered from the other.
+      observeWorkerCounters(stored, request.worker_id);
+    }
     return {
       version: 1,
       worker_id: request.worker_id,
@@ -1488,11 +1542,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // being authoritative when it let go of the session, and the next daemon
     // re-derives every one of them by asking the host directly.
     if (stopping) return;
+    const ts = clock();
+    // The same instant the lane records, so the outcome rate and the lane never
+    // describe the same ending at two different times.
+    if (event === "worker-death" || event === "worker-budget-kill") {
+      markWorkerOutcome({ worker_id: worker.worker_id, ts, outcome: event });
+    }
     void eventLane
       .record({
         event,
         worker,
-        ts: clock(),
+        ts,
         detail,
         ...(exit.exitCode !== undefined ? { exitCode: exit.exitCode } : {}),
         ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
@@ -1928,7 +1988,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // Rehydrate BEFORE the socket starts answering: a client that read host state
   // in the window between binding and replay would be told this session holds
   // nothing, and would then birth a second Worker for work already running.
-  const replayed = rehydrateWorkers(await eventLane.read().catch(() => []));
+  const laneEvents = await eventLane.read().catch(() => []);
+  // The outcomes a predecessor recorded are this host's history too: a daemon
+  // that restarted mid-day and reported an empty 24h window would tell an
+  // operator the machine finished nothing, when what happened is that the
+  // process holding the count was replaced.
+  outcomeMarks = pruneRedskilledMetricHistory(
+    laneEvents
+      .filter((event) => event.event === "worker-death" || event.event === "worker-budget-kill")
+      .map((event) => ({ worker_id: event.worker_id, ts: event.ts, outcome: event.event })),
+    (mark) => mark.ts,
+    { now: clock() },
+  );
+  const replayed = rehydrateWorkers(laneEvents);
   const reattachment = await reattachWorkers(replayed, liveness);
   for (const worker of reattachment.alive) {
     // Named, never dropped: a Worker whose owning project the lane no longer
