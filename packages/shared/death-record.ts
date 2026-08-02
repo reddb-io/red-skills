@@ -30,6 +30,7 @@
 import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { UNSCOPED_PROCESS, readWorkerScopeFacts, type WorkerScopeFacts } from "./worker-scope.js";
 import {
   buildProcessPresence,
   clearProcessPresence,
@@ -39,6 +40,10 @@ import {
 import { DEATH_PRESENCE_DIR } from "./red-paths.js";
 
 export { DEATH_LANE_DIR, DEATH_LANE_FILE, deathLaneDirIn, deathLaneFile, deathLaneFileIn, deathsStateDir } from "./red-paths.js";
+// The placement vocabulary travels with the record that carries it, so a reader
+// of a death imports one module rather than learning that the scope facts live
+// somewhere else.
+export { UNSCOPED_PROCESS, readWorkerScopeFacts, type WorkerScopeFacts } from "./worker-scope.js";
 
 /** The record shape's version; bumped only when a field's meaning changes. */
 export const PROCESS_DEATH_RECORD_VERSION = 1;
@@ -98,7 +103,7 @@ export interface ProcessResourceSample {
  * values, and a reader that recovered them by parsing a sentence would break the
  * day the sentence was reworded.
  */
-export interface ProcessDeathRecord extends ProcessResourceSample {
+export interface ProcessDeathRecord extends ProcessResourceSample, WorkerScopeFacts {
   readonly version: number;
   readonly ts: string;
   readonly kind: ProcessDeathKind;
@@ -114,6 +119,12 @@ export interface ProcessDeathRecord extends ProcessResourceSample {
   readonly last_phase: string;
   /** Free text for the path that has more to say (an error message, a stack). */
   readonly detail: string | null;
+  // `scope`, `memory_ceiling` and `scope_degradation` arrive with
+  // {@link WorkerScopeFacts}: WHERE the process was contained and under what
+  // ceiling, so a host-pressure kill is attributable to the process that earned
+  // it rather than to whatever the machine happened to shoot (#3029). A host
+  // that could not place the process says so in `scope_degradation` — the
+  // downgrade is on the record, never inferred from an absent scope.
 }
 
 /** The phase a recorder reports until the process announces its first one. */
@@ -130,6 +141,8 @@ export interface ProcessDeathFacts {
   readonly signal?: string | null;
   readonly exit_code?: number | null;
   readonly detail?: string | null;
+  /** Where the host placed this process; {@link UNSCOPED_PROCESS} when nowhere. */
+  readonly scope?: WorkerScopeFacts;
 }
 
 /** Assemble one record from facts plus a resource sample. PURE. */
@@ -137,7 +150,9 @@ export function buildProcessDeathRecord(
   facts: ProcessDeathFacts,
   sample: ProcessResourceSample,
 ): ProcessDeathRecord {
+  const scope = facts.scope ?? UNSCOPED_PROCESS;
   return {
+    ...scope,
     version: PROCESS_DEATH_RECORD_VERSION,
     ts: facts.ts,
     kind: facts.kind,
@@ -296,6 +311,13 @@ function toDeathRecord(row: ToonlRecord): ProcessDeathRecord {
     exit_code: row.exit_code == null ? null : num(row.exit_code),
     last_phase: String(row.last_phase),
     detail: row.detail == null ? null : String(row.detail),
+    // Absent reads as `null` rather than as a decode failure: a lane written
+    // before the placement facts joined the record is still a lane of readable
+    // deaths, and a reader that rejected it would lose the older history to a
+    // field that was never going to be there.
+    scope: row.scope == null ? null : String(row.scope),
+    memory_ceiling: row.memory_ceiling == null ? null : String(row.memory_ceiling),
+    scope_degradation: row.scope_degradation == null ? null : String(row.scope_degradation),
     uptime_s: num(row.uptime_s),
     rss_kb: num(row.rss_kb),
     max_rss_kb: num(row.max_rss_kb),
@@ -344,6 +366,15 @@ export interface InstallDeathRecorderOptions {
   readonly clock?: () => string;
   /** Register as the process-wide recorder `markDeathPhase` speaks to. Default true. */
   readonly setActive?: boolean;
+  /**
+   * Where the host placed this process. Defaults to what the environment says.
+   *
+   * Read from the environment rather than passed by every caller, because the
+   * process that has to state its scope is the one that never chose it: the host
+   * decides the placement and hands it down at birth (`worker-scope.ts`), so a
+   * call site that had to remember to forward it is a call site that will forget.
+   */
+  readonly scope?: WorkerScopeFacts;
   /**
    * Where the presence anchor goes; `null` leaves none.
    *
@@ -418,6 +449,7 @@ export function installDeathRecorder(options: InstallDeathRecorderOptions): Deat
   const io = options.io ?? nodeDeathLaneIo;
   const clock = options.clock ?? (() => new Date().toISOString());
   const pid = host.pid;
+  const scope = options.scope ?? readWorkerScopeFacts(process.env);
   let phase = options.phase ?? DEATH_PHASE_UNSTARTED;
   let written: ProcessDeathRecord | null = null;
 
@@ -445,7 +477,7 @@ export function installDeathRecorder(options: InstallDeathRecorderOptions): Deat
       written = appendProcessDeathRecord(
         options.lanePath,
         buildProcessDeathRecord(
-          { ts: clock(), kind: options.kind, id: options.id, pid, last_phase: phase, ...facts },
+          { ts: clock(), kind: options.kind, id: options.id, pid, last_phase: phase, scope, ...facts },
           sampleProcessResources(host),
         ),
         io,

@@ -201,6 +201,85 @@ export function evaluateWorkerAdmission(input: EvaluateWorkerAdmissionInput): Re
 }
 
 /**
+ * The ceiling one Worker's own scope carries, and where it came from.
+ *
+ * `memory_max` is `null` when the host has no accounting to derive one from —
+ * an answer, never an omission, and `reason` says which host fact produced it.
+ */
+export interface RedskilledScopeCeiling {
+  /** The scope's `MemoryMax`, in the host's own notation; `null` for none. */
+  readonly memory_max: string | null;
+  /** A whole sentence naming where this ceiling came from. */
+  readonly reason: string;
+}
+
+/**
+ * The ceiling one Worker's scope is born with — derived, never configured.
+ *
+ * **No new knob.** A per-Worker ceiling nobody sets is a per-Worker ceiling
+ * nobody has, so it is derived from the accounting the host already keeps: the
+ * host ceiling it admits against, divided by the Worker slots it admits when an
+ * operator declared a count, and otherwise capped at the headroom left after the
+ * live Workers' declared budgets. A Worker past that number is, by the host's own
+ * arithmetic, taking more than the machine ever promised Workers — so the kernel
+ * kills IT rather than whatever bystander the host's memory pressure finds first.
+ *
+ * **A declared budget is never overridden.** A client that stated its own ceiling
+ * has already answered this question, and a host that silently narrowed it would
+ * be enforcing a limit the client could not read back from what it asked for.
+ *
+ * The derived ceiling deliberately does NOT enter the admission charge: it is the
+ * wall a Worker may not pass, never memory set aside for it, and counting it as
+ * committed would let the first Worker born spend the whole host's accounting and
+ * have every Worker after it refused. PURE.
+ */
+export function deriveWorkerScopeCeiling(input: {
+  readonly ceiling: RedskilledHostCeiling;
+  /** Every Worker the daemon is holding right now, across every project. */
+  readonly workers: readonly RedskilledWorkerView[];
+  /** The budget the request declared, if any. */
+  readonly budget?: RedskilledWorkerBudget;
+}): RedskilledScopeCeiling {
+  const declared = input.budget?.memory_max ?? input.budget?.memory_high;
+  if (declared != null) {
+    return {
+      memory_max: declared,
+      reason: `the client declared this Worker's memory ceiling (${declared}), so the host derived none`,
+    };
+  }
+  if (input.ceiling.memory_bytes == null) {
+    return {
+      memory_max: null,
+      reason:
+        "this host admits Workers against no memory ceiling, so there is no accounting to derive a per-Worker ceiling from; " +
+        "the daemon's RSS sampling floor is the only remaining ceiling",
+    };
+  }
+
+  const consumption = measureHostConsumption(input.workers);
+  const headroom = input.ceiling.memory_bytes - consumption.memory_bytes;
+  const slots = input.ceiling.worker_count;
+  const share = slots == null ? headroom : Math.floor(input.ceiling.memory_bytes / slots);
+  const bytes = Math.min(headroom, share);
+  if (bytes <= 0) {
+    return {
+      memory_max: null,
+      reason:
+        `this host's memory ceiling of ${input.ceiling.memory_bytes} bytes is already fully committed to ` +
+        `${consumption.worker_count} Worker(s), so no positive per-Worker ceiling can be derived; ` +
+        "the daemon's RSS sampling floor is the only remaining ceiling",
+    };
+  }
+  const from = slots == null
+    ? `the headroom under this host's memory ceiling of ${input.ceiling.memory_bytes} bytes`
+    : `this host's memory ceiling of ${input.ceiling.memory_bytes} bytes shared across its ${slots} Worker slot(s)`;
+  return {
+    memory_max: String(bytes),
+    reason: `derived from ${from} (ceiling source: ${input.ceiling.source})`,
+  };
+}
+
+/**
  * The ceiling this host admits against.
  *
  * An operator's declaration wins; absent one, the ceiling is a share of the

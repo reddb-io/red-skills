@@ -105,6 +105,15 @@ export interface LaunchWorkerOptions {
   /** The host-wide verdict admitting this birth. Required: no verdict, no Worker. */
   readonly admission: RedskilledAdmissionVerdict;
   readonly probes?: WorkerPlacementProbes;
+  /**
+   * The ceiling the host derived for this Worker (`deriveWorkerScopeCeiling`).
+   *
+   * A launch input rather than something read here, because the number comes out
+   * of the host-wide accounting and only the daemon holds the live Worker set it
+   * is derived from. Absent, the Worker is born under whatever the client
+   * declared — which for a client that declared nothing is no ceiling at all.
+   */
+  readonly memoryCeiling?: { readonly memory_max: string | null; readonly reason: string };
   readonly enabled?: boolean;
   readonly env?: NodeJS.ProcessEnv;
   readonly clock?: () => string;
@@ -194,6 +203,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     command: spec.command,
     args: spec.args,
     budget: spec.budget,
+    ...(options.memoryCeiling != null ? { memoryCeiling: options.memoryCeiling } : {}),
     target: spec.placement,
     env: spec.env,
     enabled: options.enabled ?? placementEnabled(env),
@@ -209,9 +219,15 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     ...(plan.cwd != null ? { cwd: plan.cwd } : {}),
     detached: true,
     stdio: logFd === null ? "ignore" : ["ignore", logFd, logFd],
-    // The Worker's own env goes through `--setenv` when isolated; unisolated it
-    // has to be merged here, or the downgrade would silently change behaviour.
-    env: plan.isolated ? { ...env } : { ...env, ...(spec.env ?? {}) },
+    // The Worker's own env goes through `--setenv` under the transient unit;
+    // every other backend has to merge it here, or the downgrade would silently
+    // change behaviour. The backend decides, not `isolated`: a Job Object is
+    // isolated and still spawns through a plain `spawn`, so keying on isolation
+    // would drop a Windows Worker's environment — including the placement facts
+    // its own death record is written from.
+    env: plan.backend === "transient-unit"
+      ? { ...env }
+      : { ...env, ...(spec.env ?? {}), ...plan.environment },
   });
   // The child holds its own copy from here on; a descriptor left open in the
   // daemon would keep the file alive for the daemon's lifetime, not the Worker's.
@@ -257,6 +273,16 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     isolated,
     ...(plan.unit != null ? { unit: plan.unit } : {}),
     ...(spec.budget != null ? { budget: spec.budget } : {}),
+    // Carried for the Worker's whole life, beside the budget and for the same
+    // reason: a ceiling stated once at launch is a ceiling no later reader —
+    // the sampling floor included — can ask for.
+    ...(plan.memoryCeiling != null
+      ? {
+          memory_ceiling: plan.memoryCeiling,
+          memory_ceiling_reason: options.memoryCeiling?.reason
+            ?? "this Worker's ceiling is the budget its client declared",
+        }
+      : {}),
     warnings,
   };
   return { worker, admission, warnings, plan, child, ...(placed?.job != null ? { job: placed.job } : {}) };

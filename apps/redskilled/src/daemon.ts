@@ -45,6 +45,7 @@ import { dirname } from "node:path";
 import type { DeathAttribution } from "@reddb-io/shared/death-attribution.js";
 import { isPidAlive, sendLineRequest, serveWireSocket } from "@reddb-io/shared/resident-core.js";
 import {
+  deriveWorkerScopeCeiling,
   evaluateWorkerAdmission,
   resolveHostCeiling,
   type RedskilledAdmissionVerdict,
@@ -1437,9 +1438,21 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * a launch the daemon forgot to track would be an untracked budget.
    */
   function startWorker(spec: RedskilledWorkerSpec): LaunchedWorker {
+    // The ceiling is the host's to state, not the client's to remember: it comes
+    // out of the same accounting admission was judged against, so every Worker is
+    // born inside a scope with a stated wall and a host-pressure kill lands on
+    // the Worker that earned it rather than on the terminal's biggest bystander
+    // (#3029). Derived from the live Worker set at THIS instant, exactly as the
+    // admission verdict is.
+    const memoryCeiling = deriveWorkerScopeCeiling({
+      ceiling,
+      workers: [...workers.values()],
+      budget: spec.budget,
+    });
     const launched = launch({
       spec,
       admission: admit(spec),
+      memoryCeiling,
       clock,
       onExit: (workerId, code, signal) => {
         const worker = workers.get(workerId);

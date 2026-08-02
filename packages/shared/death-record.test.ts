@@ -13,11 +13,13 @@ import {
   deathLaneFileIn,
   installDeathRecorder,
   markDeathPhase,
+  UNSCOPED_PROCESS,
   readProcessDeathLane,
   sampleProcessResources,
   type DeathRecorder,
   type DeathRecorderHost,
 } from "./death-record.js";
+import { WORKER_SCOPE_CEILING_ENV, WORKER_SCOPE_ENV } from "./worker-scope.js";
 
 /**
  * A posed process: it delivers signals and exits the way the kernel would, so a
@@ -99,6 +101,82 @@ describe("death-record", () => {
     });
   });
 
+  it("names the scope that contained the worker and the ceiling it carried", () => {
+    const host = poseHost(9002);
+    installed = installDeathRecorder({
+      lanePath,
+      kind: "worker",
+      id: "wSCOPE",
+      host,
+      scope: {
+        scope: "red-worker-red-skills-wscope.service",
+        memory_ceiling: "4294967296",
+        scope_degradation: null,
+      },
+    });
+
+    host.deliver("SIGTERM");
+
+    expect(readProcessDeathLane(lanePath)[0]).toMatchObject({
+      id: "wSCOPE",
+      scope: "red-worker-red-skills-wscope.service",
+      memory_ceiling: "4294967296",
+      scope_degradation: null,
+    });
+  });
+
+  it("reads its scope from the environment the host handed it at birth", () => {
+    // The path a real Worker takes: the host stated the placement at birth and
+    // the process never chose it, so no call site has to remember to forward it.
+    process.env[WORKER_SCOPE_ENV] = "red-worker-red-skills-wenv.service";
+    process.env[WORKER_SCOPE_CEILING_ENV] = "4294967296";
+    try {
+      const host = poseHost(9004);
+      installed = installDeathRecorder({ lanePath, kind: "worker", id: "wENV", host });
+      host.deliver("SIGTERM");
+    } finally {
+      delete process.env[WORKER_SCOPE_ENV];
+      delete process.env[WORKER_SCOPE_CEILING_ENV];
+    }
+
+    expect(readProcessDeathLane(lanePath)[0]).toMatchObject({
+      id: "wENV",
+      scope: "red-worker-red-skills-wenv.service",
+      memory_ceiling: "4294967296",
+    });
+  });
+
+  it("names the degradation when the host could not scope the worker at all", () => {
+    const host = poseHost(9003);
+    installed = installDeathRecorder({
+      lanePath,
+      kind: "worker",
+      id: "wBARE",
+      host,
+      scope: {
+        scope: null,
+        memory_ceiling: null,
+        scope_degradation: "transient-unit placement unavailable: systemd-run is not on PATH",
+      },
+    });
+
+    host.deliver("exit", 0);
+
+    const [record] = readProcessDeathLane(lanePath);
+    expect(record?.scope).toBeNull();
+    expect(record?.scope_degradation).toContain("systemd-run is not on PATH");
+  });
+
+  it("reads a lane written before the scope facts existed as unscoped, not as broken", () => {
+    const legacy =
+      "[]{version,ts,kind,id,pid,exit_path,signal,exit_code,last_phase,detail,uptime_s,rss_kb,max_rss_kb," +
+      "user_cpu_us,system_cpu_us,minor_page_faults,major_page_faults,voluntary_ctx_switches,involuntary_ctx_switches}:\n" +
+      "1,2026-08-01T20:00:00.000Z,worker,wOLD,4242,exit,null,0,boot,null,12,512,333,111,222,4,5,6,7\n";
+
+    const [record] = decodeProcessDeathRecords(legacy);
+    expect(record).toMatchObject({ id: "wOLD", exit_path: "exit", scope: null, memory_ceiling: null });
+  });
+
   it("distinguishes a clean exit from a killed one", () => {
     const clean = poseHost();
     const cleanLane = join(dir, "clean.toonl");
@@ -147,6 +225,10 @@ describe("death-record", () => {
       id: "daemon:4242",
       host,
       clock: () => "2026-08-01T20:00:00.000Z",
+      // Stated rather than inherited: this suite itself runs inside a Worker
+      // whose own scope is in the environment, and a record that read it would
+      // pin the machine that happened to run the test.
+      scope: UNSCOPED_PROCESS,
     });
     host.deliver("SIGINT");
 
@@ -165,6 +247,9 @@ describe("death-record", () => {
       exit_code: null,
       last_phase: DEATH_PHASE_UNSTARTED,
       detail: null,
+      scope: null,
+      memory_ceiling: null,
+      scope_degradation: null,
       uptime_s: 12,
       rss_kb: 512,
       max_rss_kb: 333,

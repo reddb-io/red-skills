@@ -19,6 +19,7 @@
  */
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import { workerScopeEnvironment } from "@reddb-io/shared/worker-scope.js";
 import {
   jobObjectsUnavailable,
   loadJobObjectBinding,
@@ -148,6 +149,24 @@ export interface WorkerPlacementPlan {
   readonly warning?: string;
   /** Set when a budget was declared that this placement cannot enforce. */
   readonly budgetWarning?: string;
+  /**
+   * The memory ceiling this placement actually applies, in the host's notation.
+   *
+   * Stated even when the placement could not enforce it itself: the sampling
+   * floor holds the same number one layer down, and a reader that had to tell
+   * "no ceiling" from "a ceiling the kernel is not holding" by which backend ran
+   * would be re-deriving a fact the plan already knows.
+   */
+  readonly memoryCeiling?: string;
+  /**
+   * What the Worker is told about its own placement — the scope, its ceiling and
+   * the degradation when there is no scope (`@reddb-io/shared/worker-scope`).
+   *
+   * It rides on the plan rather than being assembled at spawn because only the
+   * plan knows the unit's name and which backend really ran; a Worker that could
+   * not name what contained it writes a death record nothing can attribute.
+   */
+  readonly environment: Readonly<Record<string, string>>;
 }
 
 /**
@@ -255,6 +274,14 @@ export interface PlanWorkerPlacementOptions {
   readonly command: string;
   readonly args?: readonly string[];
   readonly budget?: RedskilledWorkerBudget;
+  /**
+   * The ceiling the HOST derived for this Worker when the client declared none
+   * (`deriveWorkerScopeCeiling`), with the sentence saying where it came from.
+   *
+   * Structural rather than imported from `admission`, so the accounting decides
+   * the number and the placement only carries it.
+   */
+  readonly memoryCeiling?: { readonly memory_max: string | null; readonly reason: string };
   readonly target?: RedskilledPlacementTarget;
   readonly probes: WorkerPlacementProbes;
   /** False when the env kill-switch declined isolation host-wide. */
@@ -285,7 +312,18 @@ export interface PlanWorkerPlacementOptions {
  */
 export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPlacementPlan {
   const args = [...(opts.args ?? [])];
-  const budget = opts.budget ?? {};
+  // The ceiling the host derived stands in for a `MemoryMax` the client did not
+  // declare, so every Worker is born under a stated ceiling rather than under
+  // whichever bystander the machine's memory pressure decides to shoot (#3029).
+  // A declared budget is never narrowed: `deriveWorkerScopeCeiling` already
+  // returns what the client asked for when it asked for anything.
+  const budget: RedskilledWorkerBudget = {
+    ...(opts.budget ?? {}),
+    ...(opts.budget?.memory_max == null && opts.memoryCeiling?.memory_max != null
+      ? { memory_max: opts.memoryCeiling.memory_max }
+      : {}),
+  };
+  const ceilingValue = budget.memory_max ?? budget.memory_high ?? null;
   const declaredBudget = budget.memory_high != null || budget.memory_max != null || budget.cpu_weight != null;
   const target = opts.target ?? { isolation: "transient-unit" as const };
 
@@ -296,6 +334,15 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     args,
     cwd: opts.workspacePath,
     warning,
+    ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
+    // The Worker still learns its ceiling here, and learns WHY it has no scope:
+    // an unscoped death that named neither would be the silent degradation this
+    // whole module refuses.
+    environment: workerScopeEnvironment({
+      scope: null,
+      memory_ceiling: ceilingValue,
+      scope_degradation: warning,
+    }),
     ...(declaredBudget
       ? { budgetWarning: "a budget was declared but this placement cannot enforce it: the daemon's RSS sampling is the only remaining floor" }
       : {}),
@@ -307,8 +354,10 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
   if (opts.enabled === false) {
     return unisolated(`worker isolation disabled by ${REDSKILLED_PLACEMENT_ENV}: the Worker is charged to the daemon's own resource group`);
   }
-  if (opts.probes.platform === "win32") return planJobObjectPlacement(opts, args, declaredBudget, unisolated);
-  if (opts.probes.platform === "darwin") return planPosixLimitsPlacement(opts, args, unisolated);
+  if (opts.probes.platform === "win32") {
+    return planJobObjectPlacement(opts, args, budget, ceilingValue, declaredBudget, unisolated);
+  }
+  if (opts.probes.platform === "darwin") return planPosixLimitsPlacement(opts, args, budget, ceilingValue, unisolated);
   if (opts.probes.platform !== "linux") {
     return unisolated(`transient-unit placement is the Linux backend (platform=${opts.probes.platform}): the Worker is charged to the daemon's own resource group`);
   }
@@ -339,7 +388,16 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
   if (budget.memory_high != null) unitArgs.push(`--property=MemoryHigh=${budget.memory_high}`);
   if (budget.memory_max != null) unitArgs.push(`--property=MemoryMax=${budget.memory_max}`);
   if (budget.cpu_weight != null) unitArgs.push(`--property=CPUWeight=${budget.cpu_weight}`);
-  for (const [key, value] of Object.entries(opts.env ?? {})) unitArgs.push(`--setenv=${key}=${value}`);
+  // The Worker's own placement joins its environment, so the process that dies
+  // inside this unit can name the unit that held it and the ceiling it carried.
+  const environment = workerScopeEnvironment({
+    scope: unit,
+    memory_ceiling: ceilingValue,
+    scope_degradation: null,
+  });
+  for (const [key, value] of Object.entries({ ...(opts.env ?? {}), ...environment })) {
+    unitArgs.push(`--setenv=${key}=${value}`);
+  }
 
   const unenforced = unenforcedPosixBudgetFields(opts.budget);
   return {
@@ -348,6 +406,8 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     unit,
     command: opts.probes.systemdRun,
     args: [...unitArgs, "--", opts.command, ...args],
+    ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
+    environment,
     ...(unenforced != null ? { budgetWarning: unenforced } : {}),
   };
 }
@@ -367,6 +427,8 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
 function planPosixLimitsPlacement(
   opts: PlanWorkerPlacementOptions,
   args: readonly string[],
+  effectiveBudget: RedskilledWorkerBudget,
+  ceilingValue: string | null,
   unisolated: (warning: string) => WorkerPlacementPlan,
 ): WorkerPlacementPlan {
   const reach = opts.probes.posix;
@@ -377,9 +439,9 @@ function planPosixLimitsPlacement(
     );
   }
 
-  const limits = planPosixLimits(opts.budget, { canRenice: reach.nice != null });
-  const budget = opts.budget ?? {};
-  const declaredMemory = budget.memory_high != null || budget.memory_max != null;
+  const limits = planPosixLimits(effectiveBudget, { canRenice: reach.nice != null });
+  const declaredMemory = effectiveBudget.memory_high != null || effectiveBudget.memory_max != null;
+  const warning = describePosixPlacement(limits);
   return {
     isolated: false,
     backend: "posix-limits",
@@ -387,7 +449,15 @@ function planPosixLimitsPlacement(
     args: posixLimitsShellArgv({ limits, nice: reach.nice, command: opts.command, args }),
     cwd: opts.workspacePath,
     posix: limits,
-    warning: describePosixPlacement(limits),
+    warning,
+    ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
+    // No scope: macOS has no resource group to name, so the Worker is told its
+    // ceiling and told, in the same breath, that nothing but the floor holds it.
+    environment: workerScopeEnvironment({
+      scope: null,
+      memory_ceiling: ceilingValue,
+      scope_degradation: warning,
+    }),
     // Named for the same reason the Windows note is: the budget still holds, it
     // just holds one layer down, and nobody should have to discover that from
     // the absence of a limit.
@@ -417,6 +487,8 @@ function planPosixLimitsPlacement(
 function planJobObjectPlacement(
   opts: PlanWorkerPlacementOptions,
   args: readonly string[],
+  effectiveBudget: RedskilledWorkerBudget,
+  ceilingValue: string | null,
   declaredBudget: boolean,
   unisolated: (warning: string) => WorkerPlacementPlan,
 ): WorkerPlacementPlan {
@@ -427,7 +499,7 @@ function planJobObjectPlacement(
         "and the daemon's RSS sampling floor is the only remaining ceiling",
     );
   }
-  const limits = planJobLimits(opts.budget);
+  const limits = planJobLimits(effectiveBudget);
   const name = workerJobObjectName(opts.projectLabel, opts.workerId, opts.target?.unit_prefix);
   return {
     isolated: true,
@@ -436,6 +508,14 @@ function planJobObjectPlacement(
     args: [...args],
     cwd: opts.workspacePath,
     job: { name, limits },
+    ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
+    // The job IS the scope on Windows, so the Worker names it exactly as a Linux
+    // Worker names its unit — one vocabulary, whichever kernel drew the wall.
+    environment: workerScopeEnvironment({
+      scope: name,
+      memory_ceiling: ceilingValue,
+      scope_degradation: null,
+    }),
     // A budget the job could not carry is named here for the same reason an
     // unisolated launch is: the floor still holds it, and nobody should have to
     // discover that from the absence of a limit.
