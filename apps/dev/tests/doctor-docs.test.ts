@@ -1,8 +1,10 @@
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
+const DOCTOR_COMMAND = join(ROOT, "apps/dev/src/commands/red-doctor.ts");
 
 async function readDoctorSkill(): Promise<string> {
   return readFile(join(ROOT, "plugins/dev/skills/engineering/red-doctor/SKILL.md"), "utf8");
@@ -14,6 +16,94 @@ async function readDoctorSkill(): Promise<string> {
 async function readDoctorApply(): Promise<string> {
   return readFile(join(ROOT, "plugins/dev/skills/engineering/red-doctor/APPLY.md"), "utf8");
 }
+
+/**
+ * Resolve one import specifier to a repo file, or null when it leaves the
+ * source tree (node builtins, published packages, generated assets).
+ */
+function resolveImport(fromFile: string, specifier: string): string | null {
+  const candidate = (path: string): string | null => (existsSync(path) ? path : null);
+  if (specifier.startsWith(".")) {
+    return candidate(resolve(dirname(fromFile), specifier).replace(/\.js$/, ".ts"));
+  }
+  for (const [prefix, base] of [
+    ["@reddb-io/redskilled/", "apps/redskilled/src"],
+    ["@reddb-io/shared/", "packages/shared"],
+  ] as const) {
+    if (specifier.startsWith(prefix)) {
+      return candidate(join(ROOT, base, `${specifier.slice(prefix.length).replace(/\.js$/, "")}.ts`));
+    }
+  }
+  return null;
+}
+
+/**
+ * Every source file reachable from the doctor command by static import,
+ * including the dynamic `import("…")` forms the command uses to defer IO.
+ *
+ * This is the difference between a check that EXISTS and a check that RUNS: a
+ * SKILL.md that names a classifier, plus a unit test that proves the classifier
+ * works, still leaves the doctor reporting clean on a dimension it never
+ * examines if nothing imports it (#3034).
+ */
+function reachableFromDoctorCommand(): Set<string> {
+  const seen = new Set<string>();
+  const stack = [DOCTOR_COMMAND];
+  while (stack.length > 0) {
+    const file = stack.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const source = readFileSync(file, "utf8");
+    const specifiers = [
+      ...source.matchAll(/(?:^|\n)\s*(?:import|export)[\s\S]*?from\s+["']([^"']+)["']/g),
+      ...source.matchAll(/import\(\s*["']([^"']+)["']\s*\)/g),
+    ].map((match) => match[1]!);
+    for (const specifier of specifiers) {
+      const target = resolveImport(file, specifier);
+      if (target) stack.push(target);
+    }
+  }
+  return new Set([...seen].map((file) => relative(ROOT, file)));
+}
+
+/** Module paths and bare `*.ts` filenames the SKILL.md names as a check's backing. */
+function classifiersNamedBySkill(skill: string): string[] {
+  const named = new Set<string>();
+  for (const match of skill.matchAll(/apps\/[a-z-]+\/src\/[A-Za-z0-9/_-]+\.ts/g)) {
+    named.add(match[0]);
+  }
+  // A bare filename (`hook-registry.ts`) is a `core/` module by convention.
+  for (const match of skill.matchAll(/`([a-z0-9][a-z0-9-]*\.ts)`/g)) {
+    named.add(`apps/dev/src/core/${match[1]}`);
+  }
+  return [...named].sort();
+}
+
+describe("doctor classifier reachability", () => {
+  it("names at least the classifiers this contract was written for", async () => {
+    const named = classifiersNamedBySkill(await readDoctorSkill());
+
+    // Guards the extractor itself: a regex that matched nothing would make the
+    // reachability assertion below vacuously green.
+    expect(named).toEqual(expect.arrayContaining([
+      "apps/dev/src/core/ask-red-router-doctor.ts",
+      "apps/dev/src/core/dependency-edge-doctor.ts",
+      "apps/dev/src/core/hook-doctor.ts",
+      "apps/dev/src/core/hook-registry.ts",
+      "apps/dev/src/core/host-binary-doctor.ts",
+      "apps/dev/src/core/red-taxonomy-doctor.ts",
+      "apps/dev/src/core/runtime-doctor.ts",
+      "apps/dev/src/core/unlanded-docs-doctor.ts",
+    ]));
+  });
+
+  it("reaches every classifier the SKILL.md names from the doctor command", async () => {
+    const named = classifiersNamedBySkill(await readDoctorSkill());
+    const reachable = reachableFromDoctorCommand();
+
+    expect(named.filter((module) => existsSync(join(ROOT, module)) && !reachable.has(module))).toEqual([]);
+  });
+});
 
 describe("doctor docs contract", () => {
   it("checks Development-workflow adoption read-only with red-setup as the fix-home", async () => {

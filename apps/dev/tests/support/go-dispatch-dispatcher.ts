@@ -33,6 +33,17 @@ const runtime: GoRuntime = {
     throw new Error("the default dispatch must not run the engine in the dispatcher");
   },
   hasHarness: false,
+  // The engine floor is not what this dispatcher exercises, and a real registry
+  // read here would make a survival test depend on the network (#3031).
+  checkEngineFloor: async () => ({
+    decision: "proceed",
+    code: "disabled",
+    policy: "off",
+    engine_version: null,
+    published_version: null,
+    published_source: null,
+    message: "",
+  }),
   write: (text) => process.stdout.write(text),
 };
 

@@ -44,10 +44,15 @@ export function renderHeader(snapshot, { columns, now }) {
   const badge = staleness.stale
     ? style.brightYellow("● stale")
     : style.brightGreen("● live");
+  // The payload's engine block first, the host-state's upgrade only where the
+  // block is absent: one read answers "is my engine current" now, and the second
+  // read stays only so a daemon older than the block still renders (ADR 0130
+  // rule 3).
+  const engine = snapshot.payload.engine ?? null;
   const upgrade = snapshot.hostState?.upgrade;
 
   const left =
-    ` ${style.bold(style.brightRed("redskilled"))} ${style.white(daemon.daemon_version)}` +
+    ` ${style.bold(style.brightRed("redskilled"))} ${style.white(engine?.running_version ?? daemon.daemon_version)}` +
     ` ${style.gray("·")} pid ${daemon.pid}` +
     ` ${style.gray("·")} up ${duration(Date.parse(now) - Date.parse(daemon.started_at))}` +
     ` ${style.gray("·")} proto ${daemon.protocol_version}`;
@@ -74,16 +79,55 @@ export function renderHeader(snapshot, { columns, now }) {
         columns,
       ),
     );
-  } else if (upgrade?.newer_published) {
+  } else if (upgrade?.newer_published || engine?.newer_published) {
+    const running = upgrade?.running_version ?? engine?.running_version ?? daemon.daemon_version;
+    const published = upgrade?.published_version ?? engine?.published_version ?? "?";
     lines.push(
       truncate(
-        ` ${style.brightYellow("⇡ upgrade pending")} ${upgrade.running_version} → ${upgrade.published_version}` +
-          ` ${style.gray(`(${upgrade.replacement})`)}`,
+        ` ${style.brightYellow("⇡ upgrade pending")} ${running} → ${published}` +
+          (upgrade?.replacement ? ` ${style.gray(`(${upgrade.replacement})`)}` : ""),
         columns,
       ),
     );
   }
 
+  lines.push(...renderDeaths(snapshot.payload.deaths, { columns }));
+
+  return lines;
+}
+
+/**
+ * What this host could not explain, in the header where it is seen. PURE.
+ *
+ * In the HEADER rather than a section of its own, because a death is the answer
+ * to "why is this machine not doing what I left it doing" — the first question an
+ * operator opens this pane with, and one a table of live Workers cannot answer.
+ * Each line names who ended it, how sure the reaper is and the fact the verdict
+ * rests on; the lane holds the rest.
+ *
+ * An absent block and an empty one both draw nothing. A reaping that found
+ * nothing has nothing to report, and a daemon too old to reap must not be
+ * rendered as a machine where nothing died.
+ */
+export function renderDeaths(deaths, { columns }) {
+  if (deaths == null || !(deaths.count > 0)) return [];
+  const lines = [];
+  for (const death of deaths.recent ?? []) {
+    lines.push(
+      truncate(
+        ` ${style.brightRed("†")} ${style.white(`${death.kind} ${death.id}`)}` +
+          ` ${style.gray("·")} ${style.brightYellow(death.sender_class)}/${death.confidence}` +
+          ` ${style.gray("· phase")} ${death.last_phase}` +
+          (death.signal ? ` ${style.gray("· signal")} ${death.signal}` : "") +
+          (death.evidence ? ` ${style.gray("·")} ${style.gray(death.evidence)}` : ""),
+        columns,
+      ),
+    );
+  }
+  const hidden = deaths.count - lines.length;
+  if (hidden > 0) {
+    lines.push(truncate(` ${style.gray(`† ${hidden} more posed death(s) — the lane holds them all`)}`, columns));
+  }
   return lines;
 }
 

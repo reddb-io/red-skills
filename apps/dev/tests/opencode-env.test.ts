@@ -3,7 +3,7 @@ import {
   OPENCODE_AUTH_ENV_PRECEDENCE,
   openCodeAuthEnv,
   resolveOpenCodeAuth,
-} from "../src/core/opencode-env.js";
+} from "@reddb-io/red-castle/engine";
 
 describe("OPENCODE_AUTH_ENV_PRECEDENCE", () => {
   it("lists OPENAI before MINIMAX before OPENROUTER (ADR 0059 amendment)", () => {

@@ -583,6 +583,25 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       // #2986: the enqueue is not the merge. This budget owns the hold between
       // `--auto` exiting 0 and the forge reporting `merged: true`.
       mergeQueueWait: decorateMergeQueueWait(deps, input),
+      // #3030: the confirmation's ONE repair for a PR the queue can never accept.
+      // The pre-merge rebase worktree is already provisioned and already on this
+      // branch, so the repair is the same integration step run once more against
+      // the base as it stands NOW — the base moved under the branch while CI ran,
+      // which is how a landing arrives at a conflicted PR in the first place.
+      rebaseOntoBase: async () => {
+        await deps.landingPhase?.("gate", { step: "rebase", status: "start" });
+        const rebased = await preMergeRebase(deps.mergeExec, {
+          repo: prepared.dir,
+          remote: input.remote,
+          base: input.base,
+          branch: input.branch,
+          resolveMechanical: deps.resolveMechanicalConflict,
+          resolveAgent: deps.resolveAgentConflict,
+          maxAgentResolveAttempts: deps.maxAgentConflictResolveAttempts,
+        });
+        await deps.landingPhase?.("gate", { step: "rebase", status: "done" });
+        return rebased.ok;
+      },
       // Untouchable primary (ADR 0083 / 0108): landPr promotes the fleet mirror,
       // not a local primary branch. `locked` is observability only.
       locked: input.locked,
@@ -649,7 +668,17 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
         }
         return { ok: false, reason: "post-merge-gate", locked: input.locked, prNumber: result.prNumber };
       }
-      if (result.reason === "conflict") return { ok: false, reason: "pr-conflict", locked: input.locked, prNumber: result.prNumber };
+      // #3030: a conflict the confirmation detected carries what it observed, so
+      // the human card names the conflicting PR instead of a bare park.
+      if (result.reason === "conflict") {
+        return {
+          ok: false,
+          reason: "pr-conflict",
+          locked: input.locked,
+          prNumber: result.prNumber,
+          ...(result.queueDetail ? { message: result.queueDetail } : {}),
+        };
+      }
       if (result.reason === "merge-failed" && result.prNumber !== undefined) {
         return {
           ok: false,

@@ -1130,6 +1130,15 @@ export interface LandPrInput {
    */
   mergeQueueWait?: MergeQueueWaitInput;
   /**
+   * The ONE repair the confirmation is allowed to attempt on a PR the queue can
+   * never accept (#3030): rebase the worker branch onto the live base and
+   * force-push it, returning true only when the branch actually moved. Called at
+   * most once per landing — a conflict that survives its rebase is a human's, and
+   * a second round would just be the eternal poll wearing a different shape.
+   * Absent (the default) → a conflicted PR parks immediately.
+   */
+  rebaseOntoBase?: () => Promise<boolean>;
+  /**
    * Final PR-path validation hook. Called after the PR exists and CI-aware merge
    * has observed its current readiness, but before `gh pr merge`. Callers use it
    * to either trust fresh green CI or run their local fallback gate.
@@ -1220,12 +1229,14 @@ export interface MergeQueueWaitInput {
 
 /**
  * How a queued PR left the merge queue.
- *   - `merged`   — the forge reports the PR MERGED; the landing may close/clean up.
- *   - `rejected` — the queue gave the PR back (closed unmerged, or the auto-merge
- *                  request it accepted is gone while the PR is still open). Terminal.
- *   - `pending`  — still queued when the budget ran out. NOT a merge.
+ *   - `merged`      — the forge reports the PR MERGED; the landing may close/clean up.
+ *   - `rejected`    — the queue gave the PR back (closed unmerged, or the auto-merge
+ *                     request it accepted is gone while the PR is still open). Terminal.
+ *   - `unqueueable` — the PR is settled CONFLICTING: no queue will ever accept it, so
+ *                     asking again is the eternal poll #3030 observed. Terminal.
+ *   - `pending`     — still queued when the budget ran out. NOT a merge.
  */
-export type QueuedMergeOutcome = "merged" | "rejected" | "pending";
+export type QueuedMergeOutcome = "merged" | "rejected" | "unqueueable" | "pending";
 
 export interface QueuedMergeResult {
   outcome: QueuedMergeOutcome;
@@ -1233,6 +1244,12 @@ export interface QueuedMergeResult {
   mergeSha?: string;
   /** One line naming what was observed, for the terminal record on `rejected`. */
   detail?: string;
+  /**
+   * Probes actually spent (#3030). The caller's repair round subtracts these from
+   * the declared budget, so ONE deadline bounds the whole tail rather than each
+   * confirmation buying a fresh one.
+   */
+  polls: number;
 }
 
 interface QueuedPrView {
@@ -1241,15 +1258,28 @@ interface QueuedPrView {
   mergeSha?: string;
   /** Whether the PR still carries the auto-merge request the enqueue created. */
   autoMerge: boolean;
+  /**
+   * A SETTLED conflict — `mergeable: CONFLICTING`, or a `DIRTY` state read from a
+   * payload with no `mergeable` field at all. `mergeable: UNKNOWN` is deliberately
+   * not one: the forge is still computing mergeability, and a mid-computation
+   * `DIRTY` is the #2084 phantom conflict, not a verdict.
+   */
+  conflicted: boolean;
   /** False when the probe failed or its payload was unparseable. */
   observed: boolean;
 }
 
-/** Parse `gh pr view --json state,mergedAt,mergeCommit,autoMergeRequest`. Tolerant:
- * an unreadable payload yields `observed: false` so the caller polls again rather
- * than inventing a verdict from a failed probe. */
+/** Parse `gh pr view --json state,mergedAt,mergeCommit,autoMergeRequest,mergeStateStatus,mergeable`.
+ * Tolerant: an unreadable payload yields `observed: false` so the caller polls again
+ * rather than inventing a verdict from a failed probe. */
 export function parseQueuedPrView(stdout: string): QueuedPrView {
-  const absent: QueuedPrView = { merged: false, state: "", autoMerge: false, observed: false };
+  const absent: QueuedPrView = {
+    merged: false,
+    state: "",
+    autoMerge: false,
+    conflicted: false,
+    observed: false,
+  };
   const text = stdout.trim();
   if (text === "") return absent;
   try {
@@ -1260,6 +1290,8 @@ export function parseQueuedPrView(stdout: string): QueuedPrView {
       mergedAt?: unknown;
       mergeCommit?: unknown;
       autoMergeRequest?: unknown;
+      mergeStateStatus?: unknown;
+      mergeable?: unknown;
     };
     const mergeCommit = row.mergeCommit;
     const oid =
@@ -1267,6 +1299,9 @@ export function parseQueuedPrView(stdout: string): QueuedPrView {
         ? (mergeCommit as { oid?: unknown }).oid
         : undefined;
     const state = typeof row.state === "string" ? row.state.trim().toUpperCase() : "";
+    const mergeable = typeof row.mergeable === "string" ? row.mergeable.trim().toUpperCase() : "";
+    const mergeStateStatus =
+      typeof row.mergeStateStatus === "string" ? row.mergeStateStatus.trim().toUpperCase() : "";
     // `gh pr view` has no `merged` boolean — `state: MERGED` and a non-null
     // `mergedAt` are the two forms the forge reports the completed merge in.
     return {
@@ -1274,6 +1309,10 @@ export function parseQueuedPrView(stdout: string): QueuedPrView {
       state,
       ...(typeof oid === "string" && oid !== "" ? { mergeSha: oid } : {}),
       autoMerge: typeof row.autoMergeRequest === "object" && row.autoMergeRequest !== null,
+      // Same settled-vs-computing authority `classifyMergeState` applies: only a
+      // CONFLICTING verdict is terminal, and a bare DIRTY counts only when the
+      // payload carried no `mergeable` field to settle it either way.
+      conflicted: mergeable === "CONFLICTING" || (mergeable === "" && mergeStateStatus === "DIRTY"),
       observed: true,
     };
   } catch {
@@ -1292,6 +1331,12 @@ export function parseQueuedPrView(stdout: string): QueuedPrView {
  * trusted once this wait has actually SEEN the request present, because `gh pr
  * merge --auto` and the field's appearance are not simultaneous — an
  * unseen-then-absent request is the enqueue still registering, not a rejection.
+ *
+ * A SETTLED CONFLICT ENDS THE WAIT (#3030). "Is it merged yet?" is a question a
+ * CONFLICTING pull request answers `no` forever, and a worker was observed asking
+ * it until the whole budget drained. A conflicted PR is not slow, it is
+ * unacceptable to any queue, so it returns `unqueueable` on the first settled read
+ * and the caller decides whether one rebase can make it queueable again.
  */
 export async function waitForQueuedMerge(
   exec: Exec,
@@ -1319,19 +1364,28 @@ export async function waitForQueuedMerge(
       () =>
         exec([
           "gh", "-R", repo, "pr", "view", String(prNumber),
-          "--json", "state,mergedAt,mergeCommit,autoMergeRequest",
+          "--json", "state,mergedAt,mergeCommit,autoMergeRequest,mergeStateStatus,mergeable",
         ]),
       input.probeTimeoutMs,
     );
+    const polls = attempt + 1;
     const view = res.code === 0 ? parseQueuedPrView(res.stdout) : parseQueuedPrView("");
     if (view.observed) {
       if (view.merged) {
-        return { outcome: "merged", ...(view.mergeSha ? { mergeSha: view.mergeSha } : {}) };
+        return { outcome: "merged", ...(view.mergeSha ? { mergeSha: view.mergeSha } : {}), polls };
       }
       if (view.state === "CLOSED") {
         return {
           outcome: "rejected",
           detail: `PR #${prNumber} left the merge queue CLOSED without merging`,
+          polls,
+        };
+      }
+      if (view.conflicted) {
+        return {
+          outcome: "unqueueable",
+          detail: `PR #${prNumber} conflicts with its base — no merge queue can accept it, so the confirmation stopped asking after ${polls} probe(s)`,
+          polls,
         };
       }
       if (view.autoMerge) {
@@ -1340,12 +1394,13 @@ export async function waitForQueuedMerge(
         return {
           outcome: "rejected",
           detail: `the merge queue dequeued PR #${prNumber} without merging it (its auto-merge request is gone and the PR is still open)`,
+          polls,
         };
       }
     }
     if (attempt + 1 < maxPollsWithClock) await sleep(intervalMs);
   }
-  return { outcome: "pending" };
+  return { outcome: "pending", polls: maxPollsWithClock };
 }
 
 const PR_BODY_PREFIX = "Automated AFK landing for #";
@@ -1720,7 +1775,28 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     // merge queue AFK was never told about) answers `merged=false` and is held
     // here until the forge finishes or hands the PR back. Only `merged` returns
     // `ok`, because `ok` is what unlocks the caller's close/cleanup steps.
-    const confirmed = await waitForQueuedMerge(exec, repo, prNumber, input.mergeQueueWait ?? {});
+    const waitInput = input.mergeQueueWait ?? {};
+    let confirmed = await waitForQueuedMerge(exec, repo, prNumber, waitInput);
+
+    // 4b. #3030: the PR conflicts, so no amount of asking will make it merge. Try
+    // the one repair a landing owns — rebase the branch onto the live base — and
+    // give the merge exactly one more round, on what is LEFT of the declared
+    // budget. Anything but a merge after that parks with the branch, the PR and
+    // the issue intact for the human card.
+    if (confirmed.outcome === "unqueueable") {
+      const detail = confirmed.detail;
+      if (!(await input.rebaseOntoBase?.())) {
+        return { ok: false, prNumber, reason: "conflict" };
+      }
+      const merged = await exec(mergeArgs);
+      if (merged.code !== 0) return { ok: false, prNumber, reason: "conflict" };
+      const remaining = Math.max(1, (waitInput.maxPolls ?? 120) - confirmed.polls);
+      confirmed = await waitForQueuedMerge(exec, repo, prNumber, { ...waitInput, maxPolls: remaining });
+      if (confirmed.outcome === "unqueueable") {
+        return { ok: false, prNumber, reason: "conflict", queueDetail: confirmed.detail ?? detail };
+      }
+    }
+
     if (confirmed.outcome === "rejected") {
       return { ok: false, prNumber, reason: "queue-rejected", queueDetail: confirmed.detail };
     }

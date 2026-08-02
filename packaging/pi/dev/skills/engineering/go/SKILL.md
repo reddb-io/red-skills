@@ -90,6 +90,8 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 
 Follow it from those handles, never from the launcher's stdout: `worker_status`, the statusline, or the log path above. A dispatch the host refuses starts nothing and says so — it never falls back to running the engine here.
 
+**Dispatch refuses a superseded engine.** Before anything is minted or born, the engine the dispatch would actually run is compared against the published dist-tag. Under the default `warn` policy a superseded engine dispatches loudly, naming both versions and the span of fixes it forfeits; set `plugins.dev.dispatch.engine_floor: refuse` to make it a hard stop that mints nothing, or `off` to silence it. A registry the host cannot reach always degrades to a warning and proceeds — offline dispatch must not die — and a source checkout or prerelease is never floored. `RED_DEV_ENGINE_FLOOR=warn|refuse|off` overrides the file for one run.
+
 **`--attached`** is the opt-out, for a foreground debug session only: it runs the engine IN this process, prints its exit code, and **dies with whatever kills the caller**. Never use it for work you intend to keep.
 
 **`--dod "<condition>"`** records the approved semantic Definition of Done on the disposable issue and in the handoff. It is confirmation sugar only; it never bypasses the required approval turn.

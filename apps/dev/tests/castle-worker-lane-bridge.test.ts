@@ -10,8 +10,8 @@ import {
   readCastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { parseLivenessRecords } from "@reddb-io/red-castle";
-import { initStateSync } from "./state.js";
-import { createCastleWorkerLaneBridge } from "./castle-worker-lane-bridge.js";
+import { initStateSync } from "../src/core/state.js";
+import { createCastleWorkerLaneBridge } from "../src/core/castle-worker-lane-bridge.js";
 
 describe("createCastleWorkerLaneBridge", () => {
   it("writes worker lifecycle, liveness, and state snapshot as honest TOON lanes", async () => {

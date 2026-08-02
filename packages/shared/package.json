@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/shared",
-  "version": "3.3.2",
+  "version": "3.3.4",
   "private": true,
   "type": "module",
   "description": "Code shared across RedSkills runtime apps (ADR 0034): CLI arg parsing over cli-args-parser, and the dynamic plugin-bundle fetch.",
@@ -10,6 +10,8 @@
     "./args.js": "./args.ts",
     "./bundle-fetch.js": "./bundle-fetch.ts",
     "./channel.js": "./channel.ts",
+    "./death-attribution.js": "./death-attribution.ts",
+    "./death-presence.js": "./death-presence.ts",
     "./death-record.js": "./death-record.ts",
     "./entrypoint-cli.js": "./entrypoint-cli.ts",
     "./github-batch.js": "./github-batch.ts",

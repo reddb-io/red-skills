@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { afkStateDir, legacyAfkStateDir, stateDir, statuslineStateDir, tmpDir } from "@reddb-io/shared/red-paths.js";
 import { readCastleHistoryRecords } from "@reddb-io/red-castle/engine";
-import { migrateLegacyDevPaths } from "./red-path-migration.js";
+import { migrateLegacyDevPaths } from "../src/runtime/red-path-migration.js";
 
 const roots: string[] = [];
 

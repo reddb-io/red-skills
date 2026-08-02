@@ -31,6 +31,13 @@
  *    daemon it is asserting the absence of. Pinned to a path that does not
  *    exist: the spawn fails immediately, by name, without a network fetch.
  *
+ * 5. `RED_DEV_ENGINE_FLOOR` — the dispatch engine floor (#3031). Its default
+ *    policy makes every dispatch surface read the npm dist-tag, so an unpinned
+ *    suite would put a NETWORK call behind `dispatchIssue` and let the
+ *    operator's registry decide a unit test. Pinned `off`: a suite that means to
+ *    exercise the floor states its own policy explicitly, which is the same
+ *    "own the absence" rule the four pins above hold.
+ *
  * Every pin is an environment variable rather than an injected parameter,
  * because the leak is in the DEFAULT derivation — a test that had to remember to
  * inject is a test that can forget.
@@ -64,6 +71,7 @@ export function pinIsolatedRedskilledHost(env: NodeJS.ProcessEnv = process.env):
   // Named for what it is, so the failure a spawn reports reads as the pin rather
   // than as a broken installation.
   env.REDSKILLED_BIN = join(root, "no-daemon-in-this-sandbox");
+  env.RED_DEV_ENGINE_FLOOR = "off";
   for (const variable of PLUGIN_ROOT_ENV) delete env[variable];
   mkdirSync(env.XDG_RUNTIME_DIR, { recursive: true });
   mkdirSync(env.REDSKILLED_MACHINE_DIR, { recursive: true });

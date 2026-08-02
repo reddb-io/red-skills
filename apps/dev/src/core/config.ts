@@ -270,6 +270,16 @@ export const CONFIG_DEFAULTS = {
   // and never rolls back the primary landing. Set "false" to opt out.
   "afk.landing.cascade_rebase": "true",
   "dev.lock.primary-branch": "false",
+  // What a superseded engine costs a dispatch (#3031). At dispatch time the
+  // resolved engine's build-info is compared against the published dist-tag:
+  // `warn` (default) dispatches loudly, naming both versions and the span of
+  // fixes it forfeits; `refuse` makes it a hard stop; `off` silences the check.
+  // The default is a warning because the class this closes is SILENCE — three
+  // forensic recoveries on 2026-08-01 were all fix-merged-but-old-engine — while
+  // refusing by default would ground every host that is merely one release
+  // behind. An unreachable registry always degrades to a warning regardless of
+  // policy: offline dispatch must not die. See core/engine-floor.ts.
+  "dev.dispatch.engine_floor": "warn",
   // External-PR request surface for `/triage` (issue #1298). Off by default:
   // when unset/false, triage discovery and routing are issue-only. Enabling the
   // surface only lets `/triage` inspect external PR metadata/diffs as untrusted

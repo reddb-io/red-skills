@@ -14,6 +14,7 @@ import { encode as encodeToon } from "@reddb-io/toon";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { parseFlags, routeCommand } from "@reddb-io/shared/args.js";
 import { deathLaneFileIn, installDeathRecorder } from "@reddb-io/shared/death-record.js";
+import { formatDeathAttributions, runBootDeathReaper } from "@reddb-io/shared/death-attribution.js";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import {
   readDeclaredProjectName,
@@ -311,8 +312,15 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     // the death it did not — a signal, an uncaught error — in the one shape every
     // worker and launcher writes, on a lane that outlives the runtime directory
     // the event lane lives in.
+    const hostStateRoot = join(redskilledHomeDir(homedir()), "state");
+    // Before this daemon anchors itself, it speaks for whatever the last one
+    // could not (slice #3028). The host singleton is the only process guaranteed
+    // to boot after a machine freeze, so an un-trap-able death on this lane has
+    // nowhere else to be attributed. Local files only; it never throws.
+    const reaped = runBootDeathReaper({ stateRoot: hostStateRoot });
+    process.stderr.write(`${formatDeathAttributions(reaped)}\n`);
     const deaths = installDeathRecorder({
-      lanePath: deathLaneFileIn(join(redskilledHomeDir(homedir()), "state")),
+      lanePath: deathLaneFileIn(hostStateRoot),
       kind: "daemon",
       id: `daemon:${process.pid}`,
       phase: "serving",
@@ -324,6 +332,11 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       // baked into this build rather than a placeholder, because "what version is
       // answering" is the first fact a skew investigation needs.
       daemonVersion: values["daemon-version"] ?? readBuildInfo("redskilled").version,
+      // The verdicts reach the statusline and both dashboards from here, because
+      // this is the only moment they exist in memory: the reaper clears the
+      // anchors it read, so a surface asking later would find a lane it would
+      // have to re-derive them from (Spec #3022, slice #3032).
+      deaths: reaped.attributions,
       // The two halves of the loop ADR 0130 Amendment 4 moved in here: what the
       // tracker says exists, and how often this host decides what it can afford.
       // Absent flags take the modules' own windows; an absent token leaves the

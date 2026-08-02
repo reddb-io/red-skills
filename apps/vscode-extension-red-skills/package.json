@@ -178,8 +178,7 @@
   },
   "dependencies": {
     "@reddb-io/redskilled": "workspace:*",
-    "@reddb-io/shared": "workspace:*",
-    "@reddb-io/toon": "catalog:"
+    "@reddb-io/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

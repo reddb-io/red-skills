@@ -90,7 +90,7 @@ export const EXTINCT_SOURCES: readonly ExtinctSource[] = [
     noun: "fleet",
     what: "the fleet name — the `--fleet` flag, its `RED_AFK_FLEET` env and the lane it selected",
     replacement:
-      "the single project lane; a stale argv is answered by `refuseRemovedFleetFlag` / `refuseFleetNaming`, never silently rescoped",
+      "the single project lane; a stale argv is answered by `refuseFleetNaming`, never silently rescoped",
     pattern: /\bfleet-name(?:\.js)?\b|\b(?:FLEET_NAME_ENV|parseFleetFlag|resolveFleetFromArgs)\b|["']RED_AFK_FLEET["']/,
   },
   {

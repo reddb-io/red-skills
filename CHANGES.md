@@ -2898,3 +2898,10 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **upstream**: —
 - **why**: issue #3027 (Spec #3022 pillar 5) — `/go` and `/go --scout` ran the engine IN-PROCESS, so the command was the work rather than the order: a UI stop, a session teardown, or a closed terminal killed the launcher and took the run with it (two scout dispatches died that way on 2026-08-01, leaving no record anywhere).
 - **what changed**: `apps/dev/src/commands/go.ts` now asks the host daemon for the worker by default (the same `requestWorkerBirth` birth port the MCP dispatch uses, ADR 0130) and returns immediately, answering with the worker id and the log lane that outlive the launcher; effects moved behind an injectable `GoRuntime`; `--attached` is the documented opt-out for a foreground debug run; `plugins/dev/skills/engineering/go/SKILL.md` documents the detached default, the answer's handles, and what `--attached` costs.
+
+## go (engineering) — dispatch refuses a superseded engine
+
+- **status**: modified
+- **upstream**: —
+- **why**: issue #3031 (Spec #3022) — all three forensic recoveries on 2026-08-01 were fix-merged-but-old-engine-running. The version skew was measurable the whole time, but nothing asked at the one moment it decides what runs, so a merged fix could keep not running with no surface saying so.
+- **what changed**: new `apps/dev/src/core/engine-floor.ts` (pure verdict) and `apps/dev/src/runtime/engine-floor-check.ts` (the one reading every dispatch surface takes) compare the engine a dispatch would RUN against the published dist-tag before anything is minted or born; `/go`, `/go --scout`, and the MCP `worker_dispatch` shapes all carry it; the declared policy is `plugins.dev.dispatch.engine_floor` (`warn` default / `refuse` / `off`) with a `RED_DEV_ENGINE_FLOOR` override; an unreachable registry and unverified (non-registry) evidence always degrade to a warning so offline dispatch never dies; `plugins/dev/skills/engineering/go/SKILL.md` and the `/red-setup` config template document the policy.

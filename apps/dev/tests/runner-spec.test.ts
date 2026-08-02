@@ -9,7 +9,7 @@ import {
 } from "../src/core/runner-spec.js";
 import type { AgentRunner } from "../src/core/execution.js";
 import { runners, type Runner } from "../src/types/runner.js";
-import { MINIMAX_M3_MODEL } from "../src/core/minimax-env.js";
+import { MINIMAX_M3_MODEL } from "@reddb-io/red-castle/engine";
 
 describe("toAgentRunner — project the orchestrator Runner onto the provider set", () => {
   // The single source of truth for the coercion that process-issue.ts and
