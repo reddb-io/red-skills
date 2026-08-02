@@ -177,9 +177,22 @@ export async function collectBootPrecheckFacts(
   return collectPrecheckFacts(ctx, options);
 }
 
+export interface CollectHostPrerequisiteOptions {
+  /** The environment whose PATH the lookup searches. Defaults to this process's. */
+  readonly env?: NodeJS.ProcessEnv;
+  /** The node the engine runs on. An input only so a test can pose a host. */
+  readonly execPath?: string;
+  /** Does this absolute path exist? Injected for the same reason. */
+  readonly exists?: (path: string) => boolean;
+}
+
 export async function collectHostPrerequisiteProbeInput(
   exec: ExecFn = execTool,
+  options: CollectHostPrerequisiteOptions = {},
 ): Promise<HostPrerequisiteProbeInput> {
+  const env = options.env ?? process.env;
+  const execPath = options.execPath ?? process.execPath;
+  const exists = options.exists ?? existsSync;
   const availability = await Promise.all(
     HOST_PREREQUISITE_COMMANDS.map(async (command) => {
       const result = await exec("sh", ["-c", 'command -v "$1" >/dev/null 2>&1', "host-prereq", command]);
@@ -190,13 +203,22 @@ export async function collectHostPrerequisiteProbeInput(
     (typeof HOST_PREREQUISITE_COMMANDS)[number],
     boolean
   >;
-  if (!commands.bash) return { commands };
+  // node is resolved from the engine's own interpreter when PATH does not carry
+  // it (#3064). Probing a sanitized PATH for node while holding the absolute
+  // path of the node this very process runs on is self-inflicted breakage, and
+  // it reds out the whole version-manager class of hosts (mise, nvm, asdf,
+  // volta) — i.e. most developer machines.
+  if (!commands.node && execPath.trim() !== "" && exists(execPath)) commands.node = true;
+  const searchedPath = env.PATH ?? "";
+  const facts = { searchedPath, engineNodePath: execPath } as const;
+  if (!commands.bash) return { commands, ...facts };
 
   try {
     const result = await exec("bash", ["--version"]);
-    if (result.code === 0) return { commands, bashVersion: result.stdout };
+    if (result.code === 0) return { commands, ...facts, bashVersion: result.stdout };
     return {
       commands,
+      ...facts,
       bashVersion: result.stdout,
       bashVersionExitCode: result.code,
       bashVersionError: result.stderr.trim() || undefined,
@@ -204,6 +226,7 @@ export async function collectHostPrerequisiteProbeInput(
   } catch (error) {
     return {
       commands,
+      ...facts,
       bashVersionError: error instanceof Error ? error.message : String(error),
     };
   }

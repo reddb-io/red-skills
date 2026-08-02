@@ -172,7 +172,11 @@ describe("the daemon accepts the workspace path as given", () => {
     expect(launched.worker.workspace_path).toBe("/definitely/not/a/checkout");
     expect(spawns).toHaveLength(1);
     expect(spawns[0]!.args).toContain("--working-directory=/definitely/not/a/checkout");
-    expect(spawns[0]!.args.join(" ")).not.toMatch(/\.git|\.red|package\.json|worktree/);
+    // The inherited PATH is excluded from the marker sweep: it is the DAEMON's
+    // own environment handed down (#3064), so whatever a developer's shell put
+    // on it says nothing about what the daemon read from the client's path.
+    const derived = spawns[0]!.args.filter((arg) => !arg.startsWith("--setenv=PATH="));
+    expect(derived.join(" ")).not.toMatch(/\.git|\.red|package\.json|worktree/);
   });
 
   it("derives nothing from the host either: probes are all it reads", () => {

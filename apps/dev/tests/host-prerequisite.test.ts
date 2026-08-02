@@ -44,7 +44,13 @@ describe("AFK host prerequisite boot probe", () => {
       return { code: tool === "jq" ? 127 : 0, stdout: "", stderr: "" };
     };
 
-    await expect(collectHostPrerequisiteProbeInput(exec)).resolves.toEqual({
+    await expect(
+      collectHostPrerequisiteProbeInput(exec, {
+        env: { PATH: "/usr/bin:/bin" },
+        execPath: "/opt/node/bin/node",
+        exists: () => true,
+      }),
+    ).resolves.toEqual({
       commands: {
         bash: true,
         git: true,
@@ -54,6 +60,8 @@ describe("AFK host prerequisite boot probe", () => {
         timeout: true,
         ps: true,
       },
+      searchedPath: "/usr/bin:/bin",
+      engineNodePath: "/opt/node/bin/node",
       bashVersion: "GNU bash, version 5.2.15(1)-release\n",
     });
     expect(calls).toEqual([
@@ -101,6 +109,7 @@ describe("AFK host prerequisite boot probe", () => {
                 timeout: true,
                 ps: true,
               },
+              searchedPath: "/usr/bin:/bin",
               bashVersion: "GNU bash, version 5.2.15(1)-release",
             },
           }),
@@ -110,7 +119,7 @@ describe("AFK host prerequisite boot probe", () => {
       phase: "host-prereq",
       probe: {
         id: "afk.host-prerequisites",
-        evidence: "missing required host tools: jq",
+        evidence: "missing required host tools: jq (searched PATH: /usr/bin, /bin)",
         canonicalFix: expect.stringMatching(/command -v jq$/),
       },
     });
@@ -278,4 +287,78 @@ describe("each missing host tool produces a named halt with its fix string", () 
       expect(result.canonicalFix).toContain(`command -v ${tool}`);
     });
   }
+});
+
+describe("the engine's own node is the node the probe resolves (#3064)", () => {
+  const versionManagerHost = {
+    // The operator's node lives ONLY under the version manager's install root,
+    // which the Worker's sanitized PATH does not carry.
+    env: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+    execPath: "/home/posed/.local/share/mise/installs/node/lts/bin/node",
+  };
+  const pathOnlyExec: ExecFn = async (command, args) => {
+    if (command === "bash") return { code: 0, stdout: "GNU bash, version 5.2.15(1)-release\n", stderr: "" };
+    return { code: args[3] === "node" ? 127 : 0, stdout: "", stderr: "" };
+  };
+
+  it("boots green when node exists only outside the sanitized PATH", async () => {
+    const input = await collectHostPrerequisiteProbeInput(pathOnlyExec, {
+      ...versionManagerHost,
+      exists: (path) => path === versionManagerHost.execPath,
+    });
+
+    expect(input.commands.node).toBe(true);
+    expect(runHostPrerequisiteProbe({ remoteUrls: [], hostPrerequisites: input })).toMatchObject({
+      verdict: "ok",
+      evidence: "all required host tools are available",
+    });
+  });
+
+  it("still fails when the engine's own interpreter is gone too, naming where it looked", async () => {
+    const input = await collectHostPrerequisiteProbeInput(pathOnlyExec, {
+      ...versionManagerHost,
+      exists: () => false,
+    });
+
+    const result = runHostPrerequisiteProbe({ remoteUrls: [], hostPrerequisites: input });
+    expect(result.verdict).toBe("red");
+    expect(result.evidence).toContain("missing required host tools: node");
+    expect(result.evidence).toContain("searched PATH: /usr/local/bin, /usr/bin, /bin");
+    expect(result.evidence).toContain(versionManagerHost.execPath);
+    expect(result.data).toMatchObject({
+      missing: ["node"],
+      searchedDirectories: ["/usr/local/bin", "/usr/bin", "/bin"],
+      engineNodePath: versionManagerHost.execPath,
+    });
+  });
+
+  it("names the searched directories for a tool that is genuinely missing", () => {
+    const result = runHostPrerequisiteProbe({
+      remoteUrls: [],
+      hostPrerequisites: {
+        commands: { bash: true, git: true, jq: false, gh: true, node: true, timeout: true, ps: true },
+        searchedPath: "/usr/bin:/bin",
+        engineNodePath: "/opt/node/bin/node",
+        bashVersion: "GNU bash, version 5.2.15(1)-release",
+      },
+    });
+
+    expect(result.verdict).toBe("red");
+    expect(result.evidence).toBe("missing required host tools: jq (searched PATH: /usr/bin, /bin)");
+    // jq is not node: the engine's interpreter is no fallback for it.
+    expect(result.evidence).not.toContain("/opt/node/bin/node");
+  });
+
+  it("says the PATH was empty rather than naming nothing", () => {
+    const result = runHostPrerequisiteProbe({
+      remoteUrls: [],
+      hostPrerequisites: {
+        commands: { bash: true, git: true, jq: true, gh: true, node: false, timeout: true, ps: true },
+        searchedPath: "",
+        bashVersion: "GNU bash, version 5.2.15(1)-release",
+      },
+    });
+
+    expect(result.evidence).toContain("PATH was empty");
+  });
 });

@@ -13,6 +13,7 @@
     "./death-attribution.js": "./death-attribution.ts",
     "./death-presence.js": "./death-presence.ts",
     "./death-record.js": "./death-record.ts",
+    "./engine-node.js": "./engine-node.ts",
     "./entrypoint-cli.js": "./entrypoint-cli.ts",
     "./github-batch.js": "./github-batch.ts",
     "./github-quota.js": "./github-quota.ts",

@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { HelpRequested, main, parseCli } from "../src/cli.js";
 import { UnknownCommandError } from "@reddb-io/shared/args.js";
@@ -65,6 +66,25 @@ describe("top-level help and unknown flags never boot a worker (#2581)", () => {
   it("the documented run-surface flags still route to the run default", () => {
     expect(parseCli(["--issues", "42"])).toEqual({ command: "run", args: ["--issues", "42"] });
     expect(parseCli(["--spec", "7"])).toEqual({ command: "run", args: ["--spec", "7"] });
+  });
+
+  // #3064: the engine hands its own node to every child it spawns — the agent
+  // CLI, git hooks, `sh -c command -v node`. Probing a sanitized PATH for a node
+  // this process is demonstrably running on breaks the whole version-manager
+  // class of hosts (mise, nvm, asdf, volta).
+  it("main puts the engine's own node on PATH before anything can spawn a child", async () => {
+    const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    const original = process.env.PATH;
+    process.env.PATH = "/usr/local/bin:/usr/bin:/bin";
+    try {
+      await expect(main(["--help"])).resolves.toBe(0);
+      expect(process.env.PATH!.split(":")[0]).toBe(dirname(process.execPath));
+      expect(process.env.PATH).toContain("/usr/local/bin:/usr/bin:/bin");
+    } finally {
+      if (original === undefined) delete process.env.PATH;
+      else process.env.PATH = original;
+      write.mockRestore();
+    }
   });
 
   it("<command> --help exits 0 without dispatching the command", async () => {

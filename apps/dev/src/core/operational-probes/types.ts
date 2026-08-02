@@ -25,6 +25,10 @@ export type HostPrerequisiteCommand = "bash" | "git" | "jq" | "gh" | "node" | "t
 
 export interface HostPrerequisiteProbeInput {
   readonly commands: Readonly<Record<HostPrerequisiteCommand, boolean>>;
+  /** The PATH the availability lookup searched, so a red verdict names WHERE it looked (#3064). */
+  readonly searchedPath?: string;
+  /** The node the engine itself runs on (`process.execPath`) — node's expected fallback (#3064). */
+  readonly engineNodePath?: string;
   readonly bashVersion?: string;
   readonly bashVersionExitCode?: number;
   readonly bashVersionError?: string;
