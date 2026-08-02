@@ -46,7 +46,7 @@
 
 import { accessSync, constants, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import {
   buildFeedbackSubprocessEnv,
   type Exec as PnpmExec,
@@ -770,12 +770,17 @@ export function makeFeedbackWorktree(
       if (base === null) {
         return { code: 1, stdout: "", stderr: setupFailureMessage(branch) };
       }
-      const rewritten = scope === "." ? base : join(base, scope);
+      const rewritten = resolve(scope === "." ? base : join(base, scope));
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
       const r = await runValidationCommand(
         () => io.pnpm(["-C", rewritten, ...rest], { cwd: root, env }),
       );
-      return { code: r.code, stdout: r.stdout, stderr: r.stderr };
+      // Report the ABSOLUTE directory the command really ran in (#3041). The
+      // gate composed its record against the BRANCH token it posed; without
+      // this the record reads `pnpm -C afk/<n>-<slug>/apps/dev …`, which looks
+      // like a relative path that resolves nowhere and is indistinguishable
+      // from a command that never ran.
+      return { code: r.code, stdout: r.stdout, stderr: r.stderr, commandDir: rewritten };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
     const r = await runValidationCommand(() => io.pnpm(head, { cwd: root, env }));

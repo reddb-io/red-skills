@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { workerIdentity } from "../../core/host-identity.js";
 import { type CastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { runLinkedSubagent } from "./linked-subagent.js";
+import { realDirectoryProbe } from "../../core/validation-command.js";
 
 function parseSlot(val: string | undefined): number | undefined {
   if (val === undefined) return undefined;
@@ -217,6 +218,9 @@ export function makeBootReconcileRunner(
       mergeExec: gitx.mergeExec(gitCtx),
       remoteGit: gitx.gitExec(gitCtx),
       pnpm: feedback.pnpm,
+      // Proof that a declared validation worktree exists (#3041) — without it
+      // the gate would report a missing directory as the branch's red verdict.
+      dirExists: realDirectoryProbe,
       layout: feedback.layout,
       // Isolated landing worktree for the LOCKED reconcile-land (#572): the merge
       // /push/rollback runs in a throwaway detached worktree, never the primary.

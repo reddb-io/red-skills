@@ -210,6 +210,12 @@ export interface ReconcileDeps {
   pnpm: PnpmExec;
   /** Package layout probe for feedback scope resolution. */
   layout: PackageLayout;
+  /**
+   * Directory probe proving a declared validation worktree exists (#3041).
+   * Absent → the gate resolves its target but never refuses; it cannot claim a
+   * directory is gone without having looked.
+   */
+  dirExists?: (dir: string) => boolean;
   /** One-shot inner-agent merge-conflict resolver for the DIRECT land (optional). */
   conflictResolver?: ConflictResolver;
   /**
@@ -580,6 +586,10 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       postMergeGate: async (mergedTreeDir) => {
         const mergedFeedback = await deps.feedback.runFeedback(deps.pnpm, {
           worktree: mergedTreeDir,
+          // A provisioned DIRECTORY, not a branch token (#3041) — a missing one
+          // is an infrastructure error, never a red validation verdict.
+          worktreeKind: "checkout",
+          ...(deps.dirExists === undefined ? {} : { dirExists: deps.dirExists }),
           scopes: deps.feedback.gateScopes(deps.layout, changedFiles),
           layout: deps.layout,
           now: deps.nowEpoch,

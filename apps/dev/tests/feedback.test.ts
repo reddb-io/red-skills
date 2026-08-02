@@ -202,7 +202,10 @@ describe("runFeedback", () => {
     expect(result.ok).toBe(false);
     const test = result.checks.find((ch) => ch.name === "test:plugins/memory");
     expect(test?.status).toBe("failed");
-    expect(test?.record.summary).toBe("boom failed here");
+    // The fake clock advances 5ms per read, so this failure is sub-second and
+    // carries the #3041 suspect-infra prefix — the captured output survives it.
+    expect(test?.record.summary).toContain("boom failed here");
+    expect(test?.record.suspectInfra).toBe(true);
   });
 
   it("produces the exact red.afk.validation.v1 sidecar record shape", async () => {
@@ -236,6 +239,105 @@ describe("runFeedback", () => {
     expect(test?.record).toEqual(expected);
     // Sidecar line is the compact JSON of the record, schema-first.
     expect(result.sidecar).toContain(JSON.stringify(expected));
+  });
+
+  it("refuses a DECLARED checkout whose directory is gone, as infra, running nothing (#3041)", async () => {
+    const layout = fakeLayout({
+      packages: ["apps/dev"],
+      scripts: { "apps/dev": ["test", "typecheck"] },
+    });
+    const { exec, calls } = fakeExec();
+    const result = await runFeedback(exec, {
+      worktree: "afk/3027-dispatch-survives-the-dispatcher-workers",
+      worktreeKind: "checkout",
+      root: "/repo",
+      dirExists: () => false,
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(),
+    });
+
+    expect(result.ok).toBe(false);
+    // Not one command was composed, let alone run — an unrunnable gate judged
+    // nothing, so it may not spend a re-seed round or park the branch.
+    expect(calls).toEqual([]);
+    expect(result.checks.map((ch) => ch.name)).toEqual(["validation:worktree-missing"]);
+    // The routing that matters: INFRA, so the lifecycle takes the bounded
+    // recovery path instead of `blocked:validation`.
+    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(result.checks[0]?.record.summary).toContain(
+      "validation worktree directory is missing",
+    );
+  });
+
+  it("records the ABSOLUTE directory the executor ran in, not the branch token (#3041)", async () => {
+    const layout = fakeLayout({
+      packages: ["apps/dev"],
+      scripts: { "apps/dev": ["typecheck"] },
+    });
+    // The AFK executor materialises the branch and reports back where it ran.
+    const exec: Exec = async () => ({
+      code: 0,
+      stdout: "",
+      stderr: "",
+      commandDir: "/repo/.red/tmp/feedback/afk-3027-dispatch/apps/dev",
+    });
+    const result = await runFeedback(exec, {
+      worktree: "afk/3027-dispatch",
+      worktreeKind: "branch",
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(),
+    });
+
+    const check = result.checks.find((ch) => ch.name === "typecheck:apps/dev");
+    expect(check?.record.command).toBe(
+      "pnpm -C /repo/.red/tmp/feedback/afk-3027-dispatch/apps/dev typecheck",
+    );
+  });
+
+  it("flags a sub-second suite failure as suspect-infra in the record (#3041)", async () => {
+    const layout = fakeLayout({
+      packages: ["apps/dev"],
+      scripts: { "apps/dev": ["typecheck"] },
+    });
+    const { exec } = fakeExec([
+      { match: (a) => a.includes("typecheck"), result: { code: 1, stdout: "", stderr: "" } },
+    ]);
+    const result = await runFeedback(exec, {
+      worktree: "afk/3027-dispatch",
+      worktreeKind: "branch",
+      scopes: ["apps/dev"],
+      layout,
+      // 1ms — the #3027 signature: a verdict reported before pnpm could start.
+      now: fakeClock(1),
+    });
+
+    const check = result.checks.find((ch) => ch.name === "typecheck:apps/dev");
+    expect(check?.record.durationMs).toBe(1);
+    expect(check?.record.suspectInfra).toBe(true);
+    expect(check?.record.summary).toContain("suspect-infra");
+  });
+
+  it("leaves a plausibly-timed failure unflagged (#3041)", async () => {
+    const layout = fakeLayout({
+      packages: ["apps/dev"],
+      scripts: { "apps/dev": ["typecheck"] },
+    });
+    const { exec } = fakeExec([
+      { match: (a) => a.includes("typecheck"), result: { code: 1, stdout: "3 errors\n" } },
+    ]);
+    const result = await runFeedback(exec, {
+      worktree: "afk/3027-dispatch",
+      worktreeKind: "branch",
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(9000),
+    });
+
+    const check = result.checks.find((ch) => ch.name === "typecheck:apps/dev");
+    expect(check?.record.suspectInfra).toBeUndefined();
+    expect(check?.record.summary).toBe("3 errors");
   });
 
   it("emits per-script no-package skips when the repo has no package", async () => {
