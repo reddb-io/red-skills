@@ -20,6 +20,12 @@
  *
  * PURE: the host state, the ceiling, the reading and both instants are inputs.
  */
+import type {
+  AttributionConfidence,
+  DeathAttribution,
+  DeathSenderClass,
+} from "@reddb-io/shared/death-attribution.js";
+import type { ProcessDeathKind } from "@reddb-io/shared/death-record.js";
 import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHostConsumption } from "./admission.js";
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
 import type { RedskilledHostState, RedskilledWorkerView } from "./host-state.js";
@@ -171,6 +177,83 @@ export interface RedskilledStatuslineDaemon {
   readonly session_key_hash: string;
 }
 
+/**
+ * One posed death, reduced to what a surface prints.
+ *
+ * The lane's verdict carries its whole receipt — every source consulted, every
+ * line of evidence — and none of that fits a statusline. What survives here is
+ * the answer to "why did it die": who ended it, how sure the reaper is, and the
+ * one piece of evidence the verdict rests on. The receipt stays on the lane, and
+ * `id` is the handle that reaches it.
+ */
+export interface RedskilledStatuslineDeath {
+  readonly kind: ProcessDeathKind;
+  readonly id: string;
+  readonly pid: number;
+  /** When the reaper concluded — NOT when the process died, which nobody saw. */
+  readonly ts: string;
+  /** The last moment the dead process is known to have lived. */
+  readonly last_seen: string;
+  readonly last_phase: string;
+  readonly sender_class: DeathSenderClass;
+  readonly confidence: AttributionConfidence;
+  /** The signal, when a source NAMED one; never inferred from the class alone. */
+  readonly signal: string | null;
+  /** The first fact the verdict rests on; `null` exactly when the class is unknown. */
+  readonly evidence: string | null;
+}
+
+/**
+ * What this host could not explain, as of the last reaping.
+ *
+ * `count` is stated beside `recent` rather than left to a consumer's `.length`,
+ * because the list is capped: a statusline that printed `†2` from a truncated
+ * array would under-report a machine that killed a dozen processes, and "how many
+ * died" is the number that decides whether an operator looks further.
+ *
+ * An empty block is a REAPING THAT FOUND NOTHING and is never the same fact as an
+ * absent one, which is a daemon that never reaped — the distinction #3028 exists
+ * to keep, carried the one hop to the surfaces.
+ */
+export interface RedskilledStatuslineDeaths {
+  readonly count: number;
+  /** The newest verdicts first, capped — `count` is the whole number. */
+  readonly recent: readonly RedskilledStatuslineDeath[];
+  /** The newest verdict, or `null` when the reaping attributed nothing. */
+  readonly latest: RedskilledStatuslineDeath | null;
+  /** When the reaper concluded; `null` when it attributed nothing. */
+  readonly reaped_at: string | null;
+}
+
+/**
+ * Which engine is answering, and whether it is the current one.
+ *
+ * Two versions, never one: `running` is the code answering this read and
+ * `published` is a resolved observation about the world, and folding them is how
+ * a stale process reports a confident zero skew (#2809). `current` is stated
+ * rather than left to a string compare, because an unresolved published answer is
+ * NOT "up to date" — it is unknown, and `null` says so.
+ *
+ * It rides on the payload rather than staying on `host-state` because the
+ * statusline reads exactly one document (ADR 0130 rule 10): a header that had to
+ * fetch a second one to name its own version would be a second read per render,
+ * which is how the herdr pane came to make two.
+ */
+export interface RedskilledStatuslineEngine {
+  readonly running_version: string;
+  /** The newest IN-MAJOR published version last resolved; `null` when unresolved. */
+  readonly published_version: string | null;
+  /** True when a newer version was resolved and this daemon is not it. */
+  readonly newer_published: boolean;
+  /** True when a newer MAJOR exists and this daemon deliberately holds behind it. */
+  readonly major_held: boolean;
+  /** True/false when the published answer is known; `null` when it never resolved. */
+  readonly current: boolean | null;
+}
+
+/** How many verdicts a payload carries before the rest are counted instead. */
+export const REDSKILLED_RECENT_DEATH_LIMIT = 4;
+
 export interface RedskilledStatuslinePayload {
   readonly version: 1;
   readonly generated_at: string;
@@ -217,6 +300,27 @@ export interface RedskilledStatuslinePayload {
    * interval, and one number ageing does not make the other one old.
    */
   readonly repository_activity: RedskilledActivityReport;
+  /**
+   * What this host could not explain, so every surface can answer "why did it die".
+   *
+   * Here rather than fetched per surface for the reason the activity counts are:
+   * the verdicts belong to the process that reaped them, and three surfaces each
+   * reading the lane themselves would be three readers of one file, drifting the
+   * moment one of them cached.
+   *
+   * OPTIONAL on the wire (ADR 0130 rule 3): a daemon older than the reaper answers
+   * completely without it, and a consumer that finds it absent must not render a
+   * calm zero — nothing reaped is not the same fact as nothing died.
+   */
+  readonly deaths?: RedskilledStatuslineDeaths;
+  /**
+   * Which engine answered and whether it is current.
+   *
+   * OPTIONAL on the wire for the same reason: a daemon that predates this field
+   * still states its own version under `daemon.daemon_version`, and a consumer
+   * that finds the block absent must not read it as "up to date".
+   */
+  readonly engine?: RedskilledStatuslineEngine;
 }
 
 export interface BuildStatuslinePayloadInput {
@@ -254,6 +358,17 @@ export interface BuildStatuslinePayloadInput {
    */
   readonly repositoryActivity?: RedskilledRepositoryActivity | null;
   readonly activityStalenessMs?: number;
+  /**
+   * The verdicts this host's boot reaper posed, or absent when it never reaped.
+   *
+   * Passed in for the same reason the log lines are: the lane belongs to the
+   * process that read it, and this document stays a pure function of its inputs.
+   * An empty array is a reaping that found nothing — a real answer — and absent is
+   * a reaper that never ran; the two must not collapse.
+   */
+  readonly deaths?: readonly DeathAttribution[];
+  /** How many verdicts the payload lists before the rest are counted instead. */
+  readonly recentDeathLimit?: number;
 }
 
 /** The payload document. PURE — every aggregate is derived from the Worker set. */
@@ -325,6 +440,64 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       now: input.now,
       stalenessMs: input.activityStalenessMs,
     }),
+    ...(input.deaths === undefined
+      ? {}
+      : { deaths: buildDeaths(input.deaths, input.recentDeathLimit ?? REDSKILLED_RECENT_DEATH_LIMIT) }),
+    engine: buildEngine(input.hostState),
+  };
+}
+
+/** The death block a surface prints, newest verdict first. PURE. */
+function buildDeaths(
+  attributions: readonly DeathAttribution[],
+  limit: number,
+): RedskilledStatuslineDeaths {
+  const ordered = [...attributions].sort((a, b) => (instant(b.ts) ?? 0) - (instant(a.ts) ?? 0));
+  const recent = ordered.slice(0, Math.max(0, Math.floor(limit))).map(
+    (attribution): RedskilledStatuslineDeath => ({
+      kind: attribution.kind,
+      id: attribution.id,
+      pid: attribution.pid,
+      ts: attribution.ts,
+      last_seen: attribution.last_seen,
+      last_phase: attribution.last_phase,
+      sender_class: attribution.sender_class,
+      confidence: attribution.confidence,
+      signal: attribution.signal,
+      evidence: attribution.evidence[0] ?? null,
+    }),
+  );
+  return {
+    count: ordered.length,
+    recent,
+    latest: recent[0] ?? null,
+    reaped_at: recent[0]?.ts ?? null,
+  };
+}
+
+/**
+ * The engine block, from the version state the daemon already holds. PURE.
+ *
+ * Never re-resolved here: the published answer is a probe this process spent a
+ * request on, and a second derivation would be a second authority on the one
+ * question the block exists to settle.
+ */
+function buildEngine(hostState: RedskilledHostState): RedskilledStatuslineEngine {
+  const upgrade = hostState.upgrade as RedskilledHostState["upgrade"] | undefined;
+  const running = upgrade?.running_version ?? hostState.daemon_version;
+  const published = upgrade?.published_version ?? null;
+  const newest = upgrade?.newest_published_version ?? null;
+  const newer = (upgrade?.newer_published ?? 0) > 0;
+  const majorHeld = (upgrade?.major_held ?? 0) > 0;
+  return {
+    running_version: running,
+    published_version: published,
+    newer_published: newer,
+    major_held: majorHeld,
+    // Unknown stays unknown: with nothing resolved in either horizon there is no
+    // comparison to report, and `false` here would read as "behind" while `true`
+    // would read as "current" — both inventions.
+    current: published == null && newest == null ? null : !newer && !majorHeld,
   };
 }
 
@@ -517,5 +690,24 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     // poller answers a newer client's read, and rejecting its whole payload over
     // a field this consumer did not ask for would lose the Worker set — the very
     // version skew one host-scoped daemon exists to stop managing (ADR 0130).
-    (payload.repository_activity === undefined || isRedskilledActivityReport(payload.repository_activity));
+    (payload.repository_activity === undefined || isRedskilledActivityReport(payload.repository_activity)) &&
+    // Absent is accepted for the reason the two project lists are: a daemon that
+    // predates the reaper, or the engine block, answers completely without them,
+    // and rejecting the whole payload would lose the Worker set over a field this
+    // consumer only needed for a badge (ADR 0130 rule 3).
+    (payload.deaths === undefined || isStatuslineDeaths(payload.deaths)) &&
+    (payload.engine === undefined || isStatuslineEngine(payload.engine));
+}
+
+function isStatuslineDeaths(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const deaths = value as Record<string, unknown>;
+  return Number.isInteger(deaths.count) && Array.isArray(deaths.recent);
+}
+
+function isStatuslineEngine(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const engine = value as Record<string, unknown>;
+  return typeof engine.running_version === "string" &&
+    (engine.published_version === null || typeof engine.published_version === "string");
 }

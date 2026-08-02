@@ -317,9 +317,8 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     // could not (slice #3028). The host singleton is the only process guaranteed
     // to boot after a machine freeze, so an un-trap-able death on this lane has
     // nowhere else to be attributed. Local files only; it never throws.
-    process.stderr.write(
-      `${formatDeathAttributions(runBootDeathReaper({ stateRoot: hostStateRoot }))}\n`,
-    );
+    const reaped = runBootDeathReaper({ stateRoot: hostStateRoot });
+    process.stderr.write(`${formatDeathAttributions(reaped)}\n`);
     const deaths = installDeathRecorder({
       lanePath: deathLaneFileIn(hostStateRoot),
       kind: "daemon",
@@ -333,6 +332,11 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       // baked into this build rather than a placeholder, because "what version is
       // answering" is the first fact a skew investigation needs.
       daemonVersion: values["daemon-version"] ?? readBuildInfo("redskilled").version,
+      // The verdicts reach the statusline and both dashboards from here, because
+      // this is the only moment they exist in memory: the reaper clears the
+      // anchors it read, so a surface asking later would find a lane it would
+      // have to re-derive them from (Spec #3022, slice #3032).
+      deaths: reaped.attributions,
       // The two halves of the loop ADR 0130 Amendment 4 moved in here: what the
       // tracker says exists, and how often this host decides what it can afford.
       // Absent flags take the modules' own windows; an absent token leaves the

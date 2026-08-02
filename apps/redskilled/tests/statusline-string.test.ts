@@ -206,7 +206,11 @@ describe("the rendered statusline", () => {
       options({ mode: "global", maxWorkers: 3, maxProjects: 6, maxWidth: 40 }),
     );
     expect(hostOnly.detail).toBe("host");
-    expect(hostOnly.line).toBe("host 6w/6p 1.5G");
+    // The engine version rides in the head at every detail level: "what version
+    // is answering" is the first fact a skew investigation needs, and a version
+    // that only survived on a wide terminal would be absent exactly when the line
+    // has degraded — which is when something is already wrong.
+    expect(hostOnly.line).toBe("host 6w/6p 1.5G v0.1.0");
     expect([...hostOnly.line].length).toBeLessThanOrEqual(40);
   });
 
@@ -243,7 +247,7 @@ describe("the rendered statusline", () => {
     const render = renderRedskilledStatusline(idle, options({ project: "acme/widgets" }));
     expect(render.stale).toBe(false);
     expect(render.project_match).toBe("matched");
-    expect(render.line).toBe("acme/widgets 0w 0B idle");
+    expect(render.line).toBe("acme/widgets 0w 0B idle v0.1.0");
   });
 });
 

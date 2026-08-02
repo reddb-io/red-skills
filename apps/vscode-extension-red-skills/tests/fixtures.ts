@@ -166,8 +166,38 @@ export function statuslinePayload(overrides: PayloadOverrides = {}): RedskilledS
           },
       ],
     },
+    // What this host could not explain, posed by the boot reaper and reduced to
+    // what a surface prints (#3028 → #3032). The verdict names a process that is
+    // in no Worker row, which is the whole reason it has to ride on the header.
+    deaths: {
+      count: 1,
+      recent: [CANNED_DEATH],
+      latest: CANNED_DEATH,
+      reaped_at: CANNED_DEATH.ts,
+    },
+    engine: {
+      running_version: "0.4.1",
+      published_version: "0.4.1",
+      newer_published: false,
+      major_held: false,
+      current: true,
+    },
   } as RedskilledStatuslinePayload;
 }
+
+/** The one posed death every surface in this suite is handed. */
+export const CANNED_DEATH = {
+  kind: "worker",
+  id: "worker:w-gone",
+  pid: 5150,
+  ts: "2026-08-01T09:02:00.000Z",
+  last_seen: "2026-08-01T08:58:00.000Z",
+  last_phase: "coding",
+  sender_class: "oomd",
+  confidence: "high",
+  signal: "SIGKILL",
+  evidence: "systemd-oomd killed red-worker-red-skills-w-gone.service",
+} as const;
 
 export interface HostStateOverrides {
   readonly pid?: number;
@@ -234,10 +264,20 @@ export function dashboard(overrides: Record<string, unknown> = {}): RedskilledDa
       worker_ceiling: 6,
     },
     counts: { open_pull_requests: 3, recently_closed: 7, open_issues: 24, stale: false },
+    engine: {
+      running_version: "0.4.1",
+      published_version: "0.4.1",
+      newer_published: false,
+      major_held: false,
+      current: true,
+    },
+    deaths: { count: 1, recent: [CANNED_DEATH], latest: CANNED_DEATH, reaped_at: CANNED_DEATH.ts },
     stale: false,
     age_ms: 5_000,
-    line: "» reddb-io/red-skills v0.4.1 · claude·opus·high · wrk=1/1 · slots=1/6 · mem=3G/8G 38% · prs=3 · cpr=7 · iss=24",
+    line: "» reddb-io/red-skills v0.4.1 · claude·opus·high · wrk=1/1 · slots=1/6 · mem=3G/8G 38% · prs=3 · cpr=7 · iss=24 · †1 oomd",
   };
+  const deathLine =
+    "† worker worker:w-gone pid=5150 oomd/high phase=coding signal=SIGKILL — systemd-oomd killed red-worker-red-skills-w-gone.service";
   const rows = [
     {
       worker_id: "wA1B2",
@@ -269,7 +309,7 @@ export function dashboard(overrides: Record<string, unknown> = {}): RedskilledDa
     columns: ["wid", "run", "org", "iss", "bar", "phase", "elapsed", "hb", "loc", "tks", "tls", "rsn", "txt"],
     header,
     rows,
-    lines: [header.line, ...rows.map((row) => row.line)],
+    lines: [header.line, ...rows.map((row) => row.line), deathLine],
     hidden_row_count: 0,
     stale: false,
     ...overrides,

@@ -42,6 +42,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
+import type { DeathAttribution } from "@reddb-io/shared/death-attribution.js";
 import { isPidAlive, sendLineRequest, serveWireSocket } from "@reddb-io/shared/resident-core.js";
 import {
   evaluateWorkerAdmission,
@@ -273,6 +274,16 @@ export class RedskilledAlreadyRunningError extends Error {
 export interface RedskilledDaemonOptions {
   readonly paths: RedskilledPaths;
   readonly daemonVersion?: string;
+  /**
+   * The verdicts this host's boot reaper posed, carried into every surface.
+   *
+   * Passed in rather than read here because the reaper runs BEFORE this daemon
+   * anchors itself (slice #3028) — by the time the socket is listening the
+   * anchors are already cleared, so the one process that saw them has to hand
+   * them over. Absent leaves the payload's block absent, which is a daemon that
+   * never reaped and not a machine where nothing died.
+   */
+  readonly deaths?: readonly DeathAttribution[];
   readonly idleMs?: number;
   /** The host-wide ceiling admission is decided against; the host's own by default. */
   readonly ceiling?: RedskilledHostCeiling;
@@ -927,6 +938,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now: clock(),
       reattachedWorkerIds: [...reattached],
       repositoryActivity: lastActivity,
+      ...(options.deaths === undefined ? {} : { deaths: options.deaths }),
     });
   }
 

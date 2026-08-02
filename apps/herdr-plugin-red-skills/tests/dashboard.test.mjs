@@ -170,6 +170,43 @@ test("a held major is reported rather than passing for current", () => {
   assert.match(rendered, /re-point the unit/);
 });
 
+test("a posed death is drawn with its attribution, so the pane answers why it died", () => {
+  const rendered = text(renderDashboard({ snapshot: snapshot(), state: state(), size: SIZE }));
+  assert.match(rendered, /worker worker:w-gone/);
+  assert.match(rendered, /oomd\/high/);
+  assert.match(rendered, /phase coding/);
+  assert.match(rendered, /signal SIGKILL/);
+  assert.match(rendered, /systemd-oomd killed/);
+});
+
+test("an honest ignorance is drawn as one, never dressed up as a cause", () => {
+  const rendered = text(renderDashboard({ snapshot: snapshot(), state: state(), size: SIZE }));
+  assert.match(rendered, /launcher launcher:1701/);
+  assert.match(rendered, /unknown\/none/);
+});
+
+test("a machine where nothing died spends no line saying so", () => {
+  const quiet = snapshot();
+  quiet.payload.deaths = { count: 0, recent: [], latest: null, reaped_at: null };
+  const rendered = text(renderDashboard({ snapshot: quiet, state: state(), size: SIZE }));
+  assert.ok(!/†/.test(rendered), "an empty reaping must not render a badge");
+});
+
+test("the engine version comes from the payload, so one read answers it", () => {
+  const skewed = snapshot();
+  skewed.hostState = null;
+  skewed.payload.engine = {
+    running_version: "0.4.1",
+    published_version: "0.5.0",
+    newer_published: true,
+    major_held: false,
+    current: false,
+  };
+  const rendered = text(renderDashboard({ snapshot: skewed, state: state(), size: SIZE }));
+  assert.match(rendered, /redskilled 0\.4\.1/);
+  assert.match(rendered, /upgrade pending 0\.4\.1 → 0\.5\.0/);
+});
+
 test("a stale payload renders the daemon's own reason", () => {
   const stale = snapshot();
   stale.payload.staleness = { ...stale.payload.staleness, stale: true, reason: "this answer is stale: 91000ms old" };
