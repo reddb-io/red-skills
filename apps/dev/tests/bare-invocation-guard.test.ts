@@ -9,6 +9,7 @@ import {
   scanSweptDocuments,
   sweptDocuments,
 } from "../src/core/bare-invocation-guard.js";
+import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
 
 const REPO_ROOT = join(import.meta.dirname, "..", "..", "..");
 
@@ -104,6 +105,12 @@ describe("bare shipped-binary invocation guard (#3071)", () => {
 
   it("leaves rsp out of the swept binaries — it is repo-local by design", () => {
     expect(SHIPPED_BINARIES.some((binary) => binary.name === "rsp")).toBe(false);
+  });
+
+  it("runs in every gate run — the swept surfaces span the whole repo", () => {
+    const names = REPO_INVARIANT_SUITES.map((suite) => suite.name);
+
+    expect(names).toContain("invariants:bare-invocations");
   });
 
   it("no swept surface offers a bare shipped-binary command", () => {
