@@ -19,6 +19,7 @@ import {
   isRedskilledStatuslinePayload,
   REDSKILLED_STALENESS_MS,
 } from "../src/statusline-payload.js";
+import { deriveRedskilledLiveMetrics } from "../src/live-metrics.js";
 import { evaluateSessionReach, REDSKILLED_OP_REACH } from "../src/session-reach.js";
 
 const running: RedskilledDaemon[] = [];
@@ -161,6 +162,44 @@ describe("the statusline payload", () => {
     expect(payload.projects).toEqual([]);
     expect(payload.staleness.stale).toBe(false);
     expect(payload.host.observed_rss_bytes).toBe(0);
+  });
+
+  it("carries the derived metrics block, and validates with or without it", () => {
+    const now = "2026-07-29T12:00:00.000Z";
+    const metrics = deriveRedskilledLiveMetrics({
+      now,
+      observations: [
+        { worker_id: "w-1", observed_at: "2026-07-29T11:50:00.000Z", tokens: 0, tools: 0, runner: "claude", model: "opus" },
+        { worker_id: "w-1", observed_at: "2026-07-29T12:00:00.000Z", tokens: 6_000, tools: 20, runner: "claude", model: "opus" },
+      ],
+      outcomes: [{ worker_id: "w-0", ts: "2026-07-29T11:30:00.000Z", outcome: "worker-death" }],
+    });
+    const payload = buildStatuslinePayload({
+      hostState: hostStateOf([worker()]),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      rss: { "w-1": 128 },
+      sampledAt: now,
+      now,
+      metrics,
+    });
+
+    expect(isRedskilledStatuslinePayload(payload)).toBe(true);
+    expect(payload.metrics?.hour.tokens_per_min.value).toBe(600);
+    expect(payload.metrics?.hour.tools_per_min.value).toBe(2);
+    expect(payload.metrics?.hour.issues_per_hour.value).toBe(1);
+    expect(payload.metrics?.hour.runner_share.shares).toEqual([{ key: "claude", worker_count: 1, share: 1 }]);
+
+    // A daemon that derives none still answers completely: a consumer must not
+    // reject the Worker set over a block it only wanted a rate from.
+    const without = buildStatuslinePayload({
+      hostState: hostStateOf([worker()]),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      rss: {},
+      sampledAt: null,
+      now,
+    });
+    expect(without.metrics).toBeUndefined();
+    expect(isRedskilledStatuslinePayload(without)).toBe(true);
   });
 
   it("permits a session to read another project's state", async () => {
