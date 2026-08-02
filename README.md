@@ -159,8 +159,8 @@ Three properties follow, and they are the ones worth trusting:
   `invariants:host-owns-birth`.
 - **A restart costs none of it.** Workers are init-system units, so the daemon
   re-attaches by unit name and rehydrates identity and budget from its own
-  append-only TOONL event lane. A stop is a restart, not an evacuation, and
-  `redskilled stop` prints exactly what survives it.
+  append-only TOONL event lane. A stop is a restart, not an evacuation, and the
+  daemon's `stop` command prints exactly what survives it.
 - **Reach is asymmetric.** A session reads *every* project's Workers — diagnosing
   contention from wherever you happen to be is the problem the daemon exists to
   solve — and writes only its own. A refusal never distinguishes "no such Worker"
@@ -186,11 +186,16 @@ optional. One command establishes both halves and prints the audit; it is what
 `/red-setup` runs:
 
 ```bash
-redskilled provision                  # start the daemon, print the audit
-redskilled provision --check          # the read-only half — creates nothing, starts nothing
-redskilled provision --install-unit   # also write the optional supervising user unit
-redskilled statusline global          # every project's Workers, each showing its owner
-redskilled stop                       # stop the daemon; print what survives it
+# The npm direct-run form is canonical (ADR 0091): it pins the version and works
+# on every host. An installed `redskilled` shim on PATH is a warm-cache
+# optimization, never a requirement.
+RS="npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled"
+
+$RS provision                  # start the daemon, print the audit
+$RS provision --check          # the read-only half — creates nothing, starts nothing
+$RS provision --install-unit   # also write the optional supervising user unit
+$RS statusline global          # every project's Workers, each showing its owner
+$RS stop                       # stop the daemon; print what survives it
 ```
 
 The operator-scoped home `~/.red/redskilled/` has exactly one creator —
@@ -474,8 +479,9 @@ It creates and wires the RedSkills operating surface:
 - `AGENTS.md` / `CLAUDE.md` blocks for agent skills and the development
   workflow.
 - RedSkills workflows such as `red-issues-needs-triage.yml`.
-- A reachable `redskilled` daemon, by calling `redskilled provision` (Section E3)
-  and offering the optional supervising user unit.
+- A reachable `redskilled` daemon, by calling
+  `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision`
+  (Section E3) and offering the optional supervising user unit.
 - Optional statusline wiring and primary-checkout branch guardrails.
 
 Re-run `/red-setup` when adoption drifts. Run `/red-doctor` to inspect drift
@@ -640,8 +646,10 @@ code --install-extension apps/vscode-extension-red-skills/dist/vscode-extension-
 
 ### Statusline
 
-`redskilled statusline` is the agent-host surface. The default mode is the local
-project; `global` is the whole machine, naming the owner of each Worker.
+The daemon's `statusline` command is the agent-host surface — run as
+`npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled statusline`. The
+default mode is the local project; `global` is the whole machine, naming the
+owner of each Worker.
 `--verbose` adds each Worker's last logged line — published on its heartbeat as
 an opaque string the daemon stores and returns without parsing, so the whole
 global verbose view is still one read and opens no project's files. A crowded
@@ -726,7 +734,8 @@ Full guide: [Actions lane](./plugins/dev/skills/engineering/afk/actions-lane.md)
 [`apps/afk-container/`](./apps/afk-container/README.md) is the same drain in a
 self-sufficient Docker image: it picks a runner, picks the queue head, clones the
 target repo into a temp directory, and hands the issue to
-`red-skills-dev run --issues <N> --runner <R> --once` — the same engine path the
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev run --issues <N> --runner <R> --once`
+— the same engine path the
 local daemon and the Actions lane drive. Claim comment, heartbeat, validation
 gate and pull request all come from that engine; the container reimplements
 nothing.
