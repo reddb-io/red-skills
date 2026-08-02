@@ -27,6 +27,12 @@ import {
 } from "./daemon-entry.js";
 import { requireRedskilledEntryWithFetch } from "./entry-fetch.js";
 import { socketAnswers } from "./daemon.js";
+import {
+  describeRedskilledPresence,
+  redskilledPresenceAdvice,
+  type RedskilledPresence,
+} from "./daemon-presence.js";
+import { readRedskilledLeaseFile } from "./session-lease.js";
 import { buildRedskilledNotRunningStop, type RedskilledDaemonStopped } from "./daemon-stop.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
 import { createRedskilledMachineClaimStore, RedskilledMachineHeldError } from "./machine-scope.js";
@@ -91,6 +97,19 @@ export {
   type RedskilledMachineRefusal,
 } from "./machine-scope.js";
 
+// Presence travels with the reach for the same reason: the surface that catches
+// an unreachable daemon is the surface that must tell an operator which of the
+// three silences it was, and it should not need a second import path to read it.
+export {
+  describeRedskilledPresence,
+  formatUptime,
+  isRedskilledPresence,
+  redskilledPresenceAdvice,
+  type RedskilledPresence,
+  type RedskilledPresenceHolder,
+  type RedskilledPresenceKind,
+} from "./daemon-presence.js";
+
 /** How long a client waits for a daemon — its own or the race winner's — to answer. */
 export const DEFAULT_REDSKILLED_READY_TIMEOUT_MS = 10_000;
 
@@ -106,14 +125,59 @@ export class RedskilledUnreachableError extends Error {
   constructor(
     readonly socketPath: string,
     override readonly cause: unknown,
+    /**
+     * Which of the three silences this was, when it could be established.
+     *
+     * Carried on the error rather than left to each surface to re-derive: a
+     * consumer that re-probed would be asking a second time, a second later, and
+     * could print an answer the failure it is reporting never had (#3092).
+     */
+    readonly presence?: RedskilledPresence,
   ) {
     super(
       `redskilled daemon is unreachable on ${JSON.stringify(socketPath)}, so no Worker was started: ${
         cause instanceof Error ? cause.message : String(cause)
-      }`,
+      }${presence != null && presence.kind === "held-unresponsive" ? `. ${redskilledPresenceAdvice(presence)}` : ""}`,
     );
     this.name = "RedskilledUnreachableError";
   }
+}
+
+/**
+ * Raised when the daemon IS there — a live pid holds this socket's lease — and
+ * still did not answer.
+ *
+ * A subclass rather than a sibling, so every consumer that already fails closed
+ * on {@link RedskilledUnreachableError} keeps doing so, while a surface that
+ * renders operator advice can tell the two apart and stop telling an operator to
+ * install a daemon that is running (#3092).
+ */
+export class RedskilledDaemonHeldError extends RedskilledUnreachableError {
+  constructor(socketPath: string, override readonly presence: RedskilledPresence, cause: unknown) {
+    super(socketPath, cause, presence);
+    this.name = "RedskilledDaemonHeldError";
+  }
+}
+
+/**
+ * Ask what is actually on this socket: answering, held-but-silent, or absent.
+ *
+ * The one probe every surface shares. It reads the socket and the lease and hands
+ * both to the pure classifier, so "which of the three states is this?" has one
+ * answer on the machine rather than one per caller.
+ */
+export async function probeRedskilledPresence(
+  paths: RedskilledPaths,
+  options: { readonly answers?: boolean } = {},
+): Promise<RedskilledPresence> {
+  const answers = options.answers ?? (await socketAnswers(paths.socketPath));
+  const lease = await readRedskilledLeaseFile(paths.leasePath).catch(() => undefined);
+  return describeRedskilledPresence({
+    socketPath: paths.socketPath,
+    answers,
+    lease,
+    holderAlive: lease != null && isPidAlive(lease.pid),
+  });
 }
 
 export interface RedskilledClientConfig {
@@ -161,7 +225,12 @@ export async function ensureRedskilledDaemon(
     // OTHER way this ends without a live socket becomes ONE named state, so a
     // caller can never read "no host answered" as "the host answered nothing".
     if (err instanceof RedskilledMachineHeldError) throw err;
-    throw err instanceof RedskilledUnreachableError ? err : new RedskilledUnreachableError(paths.socketPath, err);
+    if (err instanceof RedskilledUnreachableError) throw err;
+    // The presence is read HERE, once, on the way out: a failure that carries no
+    // account of what is on the socket is the failure that told an operator to
+    // provision a daemon serving five hours of work (#3092).
+    const presence = await probeRedskilledPresence(paths).catch(() => undefined);
+    throw new RedskilledUnreachableError(paths.socketPath, err, presence);
   }
 }
 
@@ -176,6 +245,14 @@ async function reachRedskilledDaemon(
   // already has a daemon somewhere this session cannot see (ADR 0130 Amendment 3).
   // Spawning first and refusing afterwards would still have been two daemons.
   await refuseWhenMachineIsHeld(paths);
+
+  // And ask the socket's own lease before spawning too. A live pid holding THIS
+  // socket is a daemon that exists, so the spawn about to happen would be refused
+  // by the singleton guard — correctly — and its `exit 1` would then be reported
+  // as "the daemon did not start" (#3092). Waiting is what a client owes a daemon
+  // that is booting; naming the holder is what it owes one that is wedged.
+  const held = await waitOutTheLeaseHolder(paths, config);
+  if (held != null) return held;
 
   const lock = await tryAcquireExclusiveLock(paths.lockPath);
   if (!lock) {
@@ -196,6 +273,47 @@ async function reachRedskilledDaemon(
     await lock.close();
     await rm(paths.lockPath, { force: true });
   }
+}
+
+/**
+ * Wait for the daemon the lease already names, instead of spawning a rival.
+ *
+ * Returns `"joined"` when the holder started answering inside the ready window,
+ * `null` when there is no live holder (so the ordinary spawn should proceed), and
+ * THROWS {@link RedskilledDaemonHeldError} when a live pid holds this socket and
+ * never answered — which is a daemon to inspect or stop, not one to install.
+ *
+ * A lease is written before the socket is bound, so a holder that is merely mid-
+ * boot is the common case and waiting for it is exactly right; the throw is what
+ * an operator gets only after the same window the spawn path would have used.
+ */
+async function waitOutTheLeaseHolder(
+  paths: RedskilledPaths,
+  config: RedskilledClientConfig,
+): Promise<"joined" | null> {
+  const presence = await probeRedskilledPresence(paths, { answers: false }).catch(() => undefined);
+  if (presence == null || presence.kind !== "held-unresponsive") return null;
+
+  const timeoutMs = config.readyTimeoutMs ?? DEFAULT_REDSKILLED_READY_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (await socketAnswers(paths.socketPath)) return "joined";
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  // Re-read rather than reusing the opening snapshot: a holder that exited during
+  // the wait leaves a stale record, and reporting a dead pid as the live owner is
+  // the same class of lie in the other direction.
+  const settled = await probeRedskilledPresence(paths).catch(() => undefined);
+  if (settled == null || settled.kind !== "held-unresponsive") return null;
+  throw new RedskilledDaemonHeldError(
+    paths.socketPath,
+    settled,
+    new Error(
+      `it did not answer a ping within ${timeoutMs}ms, and no second daemon was spawned because pid ` +
+        `${settled.holder?.pid ?? "unknown"} still holds this socket`,
+    ),
+  );
 }
 
 /**
@@ -250,7 +368,12 @@ export async function requestRedskilled(
   } catch (err) {
     // A socket that answered a ping and then died mid-request is still the host
     // saying nothing; only an `ok: false` answer is the host refusing something.
-    throw new RedskilledUnreachableError(paths.socketPath, err);
+    // Which of the three silences it became is read now, while it is true.
+    throw new RedskilledUnreachableError(
+      paths.socketPath,
+      err,
+      await probeRedskilledPresence(paths).catch(() => undefined),
+    );
   }
   if (!response.ok) throw new Error(response.error);
   return response.value;
