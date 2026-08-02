@@ -10,7 +10,8 @@ registered project, and a notification whenever any of it changes.
 reads the whole host and writes only its own project — so the extension sends
 `ping`, `host-state`, `statusline-payload` and `statusline-dashboard`, and
 nothing else. It also never
-starts the daemon: `redskilled provision` and the dev bundle own auto-spawn, and
+starts the daemon: `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision`
+and the dev bundle own auto-spawn, and
 a tree view restoring with a window must not be what births a machine-wide
 singleton. An absent daemon is reported as absent.
 

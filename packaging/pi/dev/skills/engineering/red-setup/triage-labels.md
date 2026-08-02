@@ -120,8 +120,10 @@ When the last `req:N` blocker of a dependent carrying one of these labels closes
 **The label and the declaration are ONE protection with two halves — install them in one act, never one without the other** (issue #3013). A repo carrying `wayfinder:grilling` with no matching `hitl_types` entry LOOKS protected while every unblocked decision Ticket goes into the autonomous queue, which is worse than carrying neither half. So type labels are installed with the installer, not with bare `gh label create`:
 
 ```bash
-red-skills-dev install-type-labels                                   # the shipped /wayfinder vocabulary
-red-skills-dev install-type-labels decision:grilling decision:sketch  # a repo's own names
+RSD="npx -y -p @reddb-io/red-skills@<version> red-skills-dev"
+
+$RSD install-type-labels                                   # the shipped /wayfinder vocabulary
+$RSD install-type-labels decision:grilling decision:sketch  # a repo's own names
 ```
 
 It creates each label on the tracker **and** merges the HUMAN-ONLY ones into `plugins.dev.afk.labels.hitl_types` — appending to an existing list, never overwriting or duplicating it — writing the declaration first, so a config it cannot write installs no label at all. `/red-doctor` checks the pair: an installed HUMAN-ONLY type label with no declaration is a finding, and `--fix --yes` merges the missing entry after a diff preview.

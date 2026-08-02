@@ -26,7 +26,7 @@ disable-model-invocation: true
 
 ## 3. Codex
 
-1. Inspect the active `~/.codex/config.toml` footer preference with `red-skills-dev codex-statusline`.
+1. Inspect the active `~/.codex/config.toml` footer preference with `npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-statusline`.
 2. **Preserve host preference** — if `tui.status_line` is already custom, leave it alone unless the user explicitly asks to fix or replace it.
 3. **Apply the adapter recipe only on request** — read [HOST-NOTES.md](HOST-NOTES.md#codex-adapter-recipe), then run the explicit fixer or write the recommended global footer. Treat this as host-global config, not repo state.
 4. **Report AFK visibility honestly** — Codex gets native footer widgets plus `/afk monitor`; it cannot inject the shared command-backed producer into the footer yet.
@@ -37,7 +37,7 @@ disable-model-invocation: true
 
 ## 5. Report The Worker Modes
 
-**Never render the Worker line yourself.** The daemon serves it finished — `redskilled statusline` prints the local project's Workers, `redskilled statusline global` prints every project's and names the owner of each, and `--verbose` adds one second line per Worker carrying the last line that Worker logged. A host that formatted its own line would be the second renderer that drifts from the first (ADR 0130 rule 10).
+**Never render the Worker line yourself.** The daemon serves it finished — `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled statusline` prints the local project's Workers, the same command with `global` prints every project's and names the owner of each, and `--verbose` adds one second line per Worker carrying the last line that Worker logged. A host that formatted its own line would be the second renderer that drifts from the first (ADR 0130 rule 10).
 
 **State the mode and the declared defaults, do not guess them.** Read `plugins.dev.statusline.*` from `.red/config.yaml` and report what it declares; the keys are in [HOST-NOTES.md](HOST-NOTES.md#worker-statusline-modes-and-config).
 

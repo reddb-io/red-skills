@@ -8,7 +8,7 @@ Show the user a draft of:
 - The contents of `.red/agents/issue-tracker.md`, `.red/agents/triage-labels.md`, `.red/agents/domain.md`
 - The Section H development-workflow changes: `plugins.dev.lock.primary-branch: true` plus the canonical `## Development workflow` block for `AGENTS.md` and `CLAUDE.md`
 - The Section E2 required-host-binary record: `host_binaries.tq.version: 0.3.0`
-- The Section E3 daemon provisioning: the `redskilled provision` run, and — only if the user asked for it — the text of the optional `redskilled.service` user unit
+- The Section E3 daemon provisioning: the `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision` run, and — only if the user asked for it — the text of the optional `redskilled.service` user unit
 - The Section G1 command-guard changes if the user accepted them: the exact `command_guard` block or scoped entries that will be written to `.red/config.yaml`
 
 Let them edit before writing.
@@ -82,7 +82,7 @@ and the `rsp` opt-in block:
    If `.red/.gitignore` already **exists**, apply the **gitignore-append exception**: append whichever of the three patterns (`tmp/`, `state/`, `researches/`) is missing, and never rewrite or reorder existing lines. Keep tracked `.red` content (`config.yaml`, `contexts/`, `adr/`, `agents/`, `contracts/`, `hooks/`) committable — only local state and generated research reports are ignored. Do **not** `git add` `.red/.gitignore` (step 5 — the user controls when `.red/` lands in git).
 5. **Backpressure pre-fill offer (only on a fresh scaffold).** Read the repo-root (or primary package) `package.json`; if it declares `test` and/or `lint` scripts, surface them and ask whether to pre-fill `afk.backpressure` with the matching `npm run <script>` (or `pnpm run <script>`) lines, uncommented. On explicit yes, replace the commented `backpressure:` placeholder with the confirmed list; otherwise leave it commented. Skip silently when no such scripts exist. This step never runs when `.red/config.yaml` already existed (step 1 wins).
 6. **Command guard write (only when Section G1 was explicitly accepted).** Update `.red/config.yaml` with the confirmed `command_guard` policy. If the file is fresh, replace the commented placeholder with the confirmed block. If the file already existed, merge only the accepted `command_guard.global`, `command_guard.main`, and/or `command_guard.worktree` entries, appending without duplicates and preserving unrelated content. If a legacy `command_guard.deny` block exists, leave it intact unless the user explicitly approved migrating it to `global`.
-7. **Mandatory post-write config check.** Load the just-written `.red/config.yaml` through the real dev config loader before setup can finish. From a source checkout, run `pnpm --filter @reddb-io/dev dev red-doctor` from the target repo root; from an installed plugin, run `red-skills-dev red-doctor`. If the loader prints an off-contract-spelling warning such as root-level `dev.*` or bare `afk.*`, treat the check as red: fix `.red/config.yaml` back to the template spelling, re-run the same command, and only continue when the warning is gone.
+7. **Mandatory post-write config check.** Load the just-written `.red/config.yaml` through the real dev config loader before setup can finish. From a source checkout, run `pnpm --filter @reddb-io/dev dev red-doctor` from the target repo root; from an installed plugin, run `npx -y -p @reddb-io/red-skills@<version> red-skills-dev red-doctor`. If the loader prints an off-contract-spelling warning such as root-level `dev.*` or bare `afk.*`, treat the check as red: fix `.red/config.yaml` back to the template spelling, re-run the same command, and only continue when the warning is gone.
 8. Do **not** `git add` or commit `.red/config.yaml` or `.red/.gitignore` — the user controls when they land in git.
 
 Install and record required host binaries (Section E2):
@@ -106,9 +106,9 @@ Install and record required host binaries (Section E2):
 
 For Section E3, provision the execution daemon:
 
-1. Run `redskilled provision`. It creates the host-scoped home, starts the daemon, and prints the audit. **Never `mkdir ~/.red/redskilled/` here** — the home belongs to `redskilled` (ADR 0130 Amendment 1) and this skill's `.red/` authority is repository-scoped. Re-running is a no-op, so run it on every pass.
+1. Run `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision` — the canonical npm direct-run form (ADR 0091), which works on a host that has never seen this daemon. It creates the host-scoped home, starts the daemon, and prints the audit. **Never `mkdir ~/.red/redskilled/` here** — the home belongs to `redskilled` (ADR 0130 Amendment 1) and this skill's `.red/` authority is repository-scoped. Re-running is a no-op, so run it on every pass.
 2. If the verdict is not `ok`, print the per-check fix the command already named and stop rather than improvising one. A `daemon-entry` finding is a missing published bundle, cured by warming the bundle for this host and re-running — never by pointing the daemon at a caller's own entry.
-3. Only if the user accepted the optional supervising unit, run `redskilled provision --install-unit` and then tell them the `systemctl --user` commands. The installer writes the unit only when absent; per the no-clobber rule, an existing `redskilled.service` is left exactly as the operator has it.
+3. Only if the user accepted the optional supervising unit, run `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --install-unit` and then tell them the `systemctl --user` commands. The installer writes the unit only when absent; per the no-clobber rule, an existing `redskilled.service` is left exactly as the operator has it.
 4. Do not write anything about the daemon into `.red/config.yaml` — the daemon reads no repository config (ADR 0130 rule 3).
 
 If the user accepted Section H, activate the development workflow:

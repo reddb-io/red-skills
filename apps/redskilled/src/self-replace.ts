@@ -40,6 +40,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
 import { fetchPublishedVersionHorizon } from "@reddb-io/shared/bundle-fetch.js";
 import { compareSemver, parseSemver } from "@reddb-io/shared/self-update.js";
 import {
@@ -202,7 +203,8 @@ export function planRedskilledMajorHold(input: PlanRedskilledMajorHoldInput): Re
 function majorHoldAction(heldMajor: number, supervised: boolean): string {
   const install = `install the ${heldMajor}.x bundle (update this machine's plugin pin), then `;
   return supervised
-    ? `${install}re-point the unit and restart it: redskilled unit install && systemctl --user restart redskilled.service`
+    ? `${install}re-point the unit and restart it: ${canonicalInvocation("red-skills-redskilled", ["unit", "install"])}` +
+      " && systemctl --user restart redskilled.service"
     : `${install}stop this daemon — the next client start resolves the newly installed bundle`;
 }
 

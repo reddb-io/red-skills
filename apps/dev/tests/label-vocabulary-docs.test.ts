@@ -214,7 +214,9 @@ describe("red-setup docs", () => {
 
     expect(skill).toContain("**Section E1 — Runtime launcher");
     expect(skill).toContain("stable command, not a global fake plugin-root variable");
-    expect(skill).toContain("red-skills-dev go");
+    expect(skill).toContain(
+      "warm-cache optimization over the canonical `npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand>` form",
+    );
     expect(skill).toContain("Do not export `CLAUDE_PLUGIN_ROOT` or `CODEX_PLUGIN_ROOT` globally");
     expect(script).toContain("RED_SKILLS_DEV_PLUGIN_ROOT");
     expect(script).toContain("rsp_target=");

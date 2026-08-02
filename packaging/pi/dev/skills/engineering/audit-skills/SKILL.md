@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 **Run the read-only auditor and read the scorecard back — never edit a skill from here.** The audit reports; it has no `--fix`, no git, no gh, no backlog seam by construction.
 
-Run: `red-skills-dev audit-skills [--mechanical-only] [--json|--human]`
+Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev audit-skills [--mechanical-only] [--json|--human]`
 
 Dev-checkout equivalent: `node plugins/dev/skills/engineering/afk/bin/afk.mjs audit-skills [--mechanical-only]`
 

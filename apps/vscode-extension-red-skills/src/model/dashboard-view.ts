@@ -13,6 +13,7 @@
  * test that never opens a window. `views/status-bar.ts` and
  * `views/dashboard-panel.ts` hold the `vscode` imports and nothing else.
  */
+import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
 import type { RedskilledDashboard } from "@reddb-io/redskilled/protocol";
 import type { HostSnapshot } from "./snapshot.js";
 
@@ -113,7 +114,8 @@ function dashboardBody(snapshot: HostSnapshot): string {
       "</p>",
       '<p class="absence">',
       escapeHtml(
-        "An empty host must mean an idle machine, never a failed lookup — so this panel refuses to draw a table it did not read. Bring one up with `redskilled provision`.",
+        "An empty host must mean an idle machine, never a failed lookup — so this panel refuses to draw a table it did not read. " +
+          `Bring one up with \`${canonicalInvocation("red-skills-redskilled", ["provision"])}\`.`,
       ),
       "</p>",
     ].join("\n");

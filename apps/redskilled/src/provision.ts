@@ -38,10 +38,19 @@ import {
   type RedskilledEntryResolution,
 } from "./daemon-entry.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
+import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
 
-/** The canonical fix, in one string, so every surface prints the same sentence. */
+/**
+ * The canonical fix, in one string, so every surface prints the same sentence.
+ *
+ * The direct form is spelled as the ADR 0091 npm direct-run invocation rather
+ * than a bare `redskilled`, because this line is printed exactly when the host
+ * has no working daemon — and therefore no reason to have a shim for one on
+ * PATH. A hint that names its own precondition is the #2961 dead end (#3071).
+ */
 export const REDSKILLED_PROVISION_FIX =
-  "run `/red-setup` (Section E3 — execution daemon), or `redskilled provision` directly";
+  "run `/red-setup` (Section E3 — execution daemon), or " +
+  `\`${canonicalInvocation("red-skills-redskilled", ["provision"])}\` directly`;
 
 /** What a provisioning run did to the home. `created` and `tightened` are never both true. */
 export interface RedskilledHomeReceipt {
@@ -266,7 +275,9 @@ function entryRow(facts: RedskilledProvisionFacts): RedskilledProvisionRow {
     check: "daemon-entry",
     verdict: "missing",
     evidence: `no published redskilled bundle; probed ${facts.entry.searched.join(", ") || "nothing"}`,
-    fix: "install or warm the RedSkills bundle for this host, then re-run `redskilled provision`",
+    fix:
+      "install or warm the RedSkills bundle for this host, then re-run " +
+      `\`${canonicalInvocation("red-skills-redskilled", ["provision"])}\``,
   };
 }
 

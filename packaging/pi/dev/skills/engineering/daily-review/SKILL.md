@@ -21,8 +21,8 @@ shim and output-format rules):
 
 | Period flag | Subcommand |
 | --- | --- |
-| `--period day` (default) | `red-skills-dev daily-review [--json]` |
-| `--period week` | `red-skills-dev weekly-review [--json]` |
+| `--period day` (default) | `npx -y -p @reddb-io/red-skills@<version> red-skills-dev daily-review [--json]` |
+| `--period week` | `npx -y -p @reddb-io/red-skills@<version> red-skills-dev weekly-review [--json]` |
 
 Dev-checkout equivalent:
 

@@ -16,6 +16,7 @@ import type {
 import type { RedskilledStatuslineWorker } from "@reddb-io/redskilled/statusline-payload";
 import type { RedskilledHostEvent } from "../redskilled/event-lane.js";
 import type { HostSnapshot } from "./snapshot.js";
+import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
 import { formatBytes, formatClock, formatDuration, formatPercent, formatRate } from "./format.js";
 
 /** What a row means, so the provider picks an icon and a context value from ONE word. */
@@ -67,7 +68,7 @@ export function unreachableNode(snapshot: HostSnapshot, idPrefix: string): ViewN
       snapshot.error?.message ?? "no host answered",
       `socket: ${snapshot.socketPath}`,
       `source: ${snapshot.source}`,
-      "This view never starts the daemon; `redskilled provision` and the dev bundle own that.",
+      `This view never starts the daemon; \`${canonicalInvocation("red-skills-redskilled", ["provision"])}\` and the dev bundle own that.`,
     ].join("\n"),
   });
 }

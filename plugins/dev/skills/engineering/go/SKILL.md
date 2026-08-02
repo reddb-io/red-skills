@@ -182,6 +182,6 @@ The validation gate splits findings two ways:
 
 ## Name choice: `/go` not `/run`
 
-**`/run` was the first candidate but was rejected** because the dev CLI already uses `run` as its main subcommand (`red-skills-dev run …` is the AFK queue-drain entrypoint). A second `run` skill would create an ambiguous surface: agents that type `/run` intending ad-hoc dispatch would instead invoke the queue drain, or vice versa. `/go` is unambiguous — it names the tier and carries no collision risk with any existing `dev` subcommand or skill.
+**`/run` was the first candidate but was rejected** because the dev CLI already uses `run` as its main subcommand (the `run` subcommand is the AFK queue-drain entrypoint). A second `run` skill would create an ambiguous surface: agents that type `/run` intending ad-hoc dispatch would instead invoke the queue drain, or vice versa. `/go` is unambiguous — it names the tier and carries no collision risk with any existing `dev` subcommand or skill.
 
 </supporting-info>

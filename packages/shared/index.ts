@@ -21,6 +21,11 @@ export {
   type RouterSchema,
 } from "./args.js";
 export * from "./log.js";
+export {
+  CANONICAL_VERSION_PLACEHOLDER,
+  canonicalInvocation,
+  type ShippedBinary,
+} from "./canonical-invocation.js";
 export * from "./github-webhook.js";
 export {
   CANARY_TAG,

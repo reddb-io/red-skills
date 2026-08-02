@@ -93,7 +93,7 @@ You also need a `redskilled` daemon. This plugin never starts one; bring one up
 the way red-skills does:
 
 ```bash
-redskilled provision
+npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision
 ```
 
 ### Trying it without one
@@ -165,7 +165,8 @@ node bin/red-skills-herdr.mjs watch --once    # one poll, printing what it would
 ## Configuration
 
 `herdr plugin config-dir reddb-io.red-skills` prints the directory; the file is
-`config.toon` in it. `red-skills-herdr init-config` writes the defaults out once
+`config.toon` in it. `npx -y -p @reddb-io/red-skills@<version> red-skills-herdr init-config`
+writes the defaults out once
 so there is something to edit. A malformed file is named on stderr and ignored —
 this runs a pane that opens on session restore, and a plugin that refused to
 start over a stray comma is the harder failure to diagnose.

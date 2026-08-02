@@ -116,7 +116,8 @@ structured output.
 
 ### `--apply` — safe local setup only
 
-`red-skills-dev retake 123 --apply` runs only the safe local `git` operations
+`npx -y -p @reddb-io/red-skills@<version> red-skills-dev retake 123 --apply` runs only the safe local `git`
+operations
 the diagnosis selected: create a missing manual worktree under
 `.red/tmp/worktrees/manual/<slug>`, recreate it from a matching branch, or fetch
 a PR head branch into a fresh worktree. It then prints the next `cd`, `requeue`,
