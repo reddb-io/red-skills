@@ -19,6 +19,12 @@
 // opts back into the in-process run for a foreground debug session, and states
 // what it costs.
 //
+// **Dispatch refuses a superseded engine (#3031).** Before anything is minted
+// or born, the engine this dispatch would RUN is compared against the published
+// dist-tag, and a superseded one refuses or warns loudly per the declared
+// policy — because a fix that merged and never ran is the class all three
+// forensic recoveries on 2026-08-01 turned out to be.
+//
 // The classification + escalation logic lives in core/go.ts (pure, injected
 // IO); this command supplies the real gh + engine effects.
 
@@ -42,6 +48,8 @@ import {
   requestWorkerBirth,
   type DispatchedWorkerBirth,
 } from "../runtime/mcp-worker-birth.js";
+import { checkDispatchEngineFloor } from "../runtime/engine-floor-check.js";
+import type { EngineFloorVerdict } from "../core/engine-floor.js";
 
 interface ParsedGoArgs {
   demand: string;
@@ -68,6 +76,10 @@ export interface GoRuntime {
   birthWorker(args: readonly string[]): Promise<DispatchedWorkerBirth>;
   /** Run the engine in THIS process — reached only through `--attached`. */
   runEngineAttached(args: string[]): Promise<number>;
+  /** Judge the engine this dispatch would run against the published dist-tag
+   * (#3031), so a superseded engine is refused or named rather than silently
+   * forfeiting the fixes already merged for it. */
+  checkEngineFloor(): Promise<EngineFloorVerdict>;
   /** Whether a validation harness is configured, for the minted issue's DoD. */
   hasHarness: boolean;
   write(text: string): void;
@@ -96,6 +108,7 @@ async function createDefaultGoRuntime(cwd: string): Promise<GoRuntime> {
     createScoutIssue: (spec) => ghx.createIssue(ghCtx, spec),
     birthWorker: (args) => requestWorkerBirth(ctx.root, args),
     runEngineAttached: (args) => runCommand({ args, cwd }),
+    checkEngineFloor: () => checkDispatchEngineFloor(ctx.root),
     hasHarness: configuredBackpressure.length > 0,
     write: (text) => process.stdout.write(text),
   };
@@ -245,6 +258,17 @@ export async function goCommand(
   }
 
   const runtime = runtimeOverride ?? (await createDefaultGoRuntime(cwd));
+
+  // The engine floor runs BEFORE anything is minted (#3031). A refusal that
+  // arrived after the disposable issue existed would leave a junk `lane:go`
+  // ticket behind for a dispatch that never happened, and both `/go` and
+  // `/go --scout` inherit the check here rather than each restating it.
+  const floor = await runtime.checkEngineFloor();
+  if (floor.decision === "refuse") {
+    console.error(floor.message);
+    return 1;
+  }
+  if (floor.decision === "warn") runtime.write(`${floor.message}\n`);
 
   // Detached is the default and attached is the exception, so the branch is
   // written once here: `runEngine` either hands the work to the host and

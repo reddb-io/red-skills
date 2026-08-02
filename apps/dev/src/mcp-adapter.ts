@@ -63,6 +63,8 @@ import { detectWedgedOrchestrator } from "./core/wedged-orchestrator.js";
 import * as ghx from "./runtime/gh.js";
 import { publishedBundleArgv } from "./runtime/published-entry.js";
 import { requestWorkerBirth, type DispatchedWorkerBirth } from "./runtime/mcp-worker-birth.js";
+import { checkDispatchEngineFloor } from "./runtime/engine-floor-check.js";
+import type { EngineFloorVerdict } from "./core/engine-floor.js";
 import { launchDetachedRspWait } from "./runtime/rsp-wait-launch.js";
 import {
   createRedskilledBirthPort,
@@ -190,6 +192,13 @@ export interface DevAfkMcpRuntime {
    * lane and reported by no surface — the exact shape ADR 0130 rule 6 forbids.
    */
   birthWorker(root: string, args: readonly string[]): Promise<DispatchedWorkerBirth>;
+  /**
+   * Judge the engine a dispatch would run against the published dist-tag
+   * (#3031). Every `worker_dispatch` shape asks before it mints or births, so a
+   * superseded engine is refused or NAMED rather than quietly forfeiting the
+   * fixes that already landed for it.
+   */
+  checkEngineFloor(root: string): Promise<EngineFloorVerdict>;
   /** Spawn rsp wait detached; returns the child PID. */
   launchRspWait(args: readonly string[], cwd: string): Promise<number>;
   ensureLabel(root: string, name: string): Promise<void>;
@@ -239,6 +248,7 @@ function buildWaitArgs(
 
 const defaultMcpRuntime: DevAfkMcpRuntime = {
   birthWorker: (root, args) => requestWorkerBirth(root, args),
+  checkEngineFloor: (root) => checkDispatchEngineFloor(root),
   launchRspWait: launchDetachedRspWait,
   async ensureLabel(root, name) {
     const context = await resolveRepoContext(root);
@@ -297,8 +307,20 @@ export function createDefaultDevAfkMcpOperations(
   overrides: Partial<DevAfkMcpRuntime> = {},
 ): DevAfkMcpOperations {
   const runtime: DevAfkMcpRuntime = { ...defaultMcpRuntime, ...overrides };
+  /**
+   * The engine floor, applied once for every dispatch shape (#3031). A refusal
+   * throws BEFORE any issue is minted or any Worker asked for, so a refused
+   * dispatch leaves nothing behind; a warning travels back in the payload's
+   * `warnings`, where the operator-facing surfaces already render it.
+   */
+  const engineFloorWarnings = async (cwd: string): Promise<string[]> => {
+    const verdict = await runtime.checkEngineFloor(cwd);
+    if (verdict.decision === "refuse") throw new Error(verdict.message);
+    return verdict.decision === "warn" ? [verdict.message] : [];
+  };
   return {
     async dispatchIssue(cwd, input) {
+      const floorWarnings = await engineFloorWarnings(cwd);
       const args = [
         "--issues",
         String(input.issue),
@@ -317,11 +339,14 @@ export function createDefaultDevAfkMcpOperations(
         // state (#2385): its boot stdout/stderr lands here.
         worker_log: granted.log,
         admission: granted.admission,
-        ...(granted.warnings.length > 0 ? { warnings: [...granted.warnings] } : {}),
+        ...(floorWarnings.length + granted.warnings.length > 0
+          ? { warnings: [...floorWarnings, ...granted.warnings] }
+          : {}),
         status: "dispatched",
       };
     },
     async dispatchDemand(cwd, input) {
+      const floorWarnings = await engineFloorWarnings(cwd);
       let granted: DispatchedWorkerBirth | undefined;
       const configuredBackpressure = readBackpressure(
         loadConfig(afkPaths(cwd).configPath, { warn: () => undefined }),
@@ -355,11 +380,14 @@ export function createDefaultDevAfkMcpOperations(
         worker_pid: granted.pid,
         worker_log: granted.log,
         admission: granted.admission,
-        ...(granted.warnings.length > 0 ? { warnings: [...granted.warnings] } : {}),
+        ...(floorWarnings.length + granted.warnings.length > 0
+          ? { warnings: [...floorWarnings, ...granted.warnings] }
+          : {}),
         status: "dispatched",
       };
     },
     async dispatchScout(cwd, input) {
+      const floorWarnings = await engineFloorWarnings(cwd);
       let granted: DispatchedWorkerBirth | undefined;
       const result = await dispatchScoutCore(
         {
@@ -384,7 +412,9 @@ export function createDefaultDevAfkMcpOperations(
         worker_pid: granted.pid,
         worker_log: granted.log,
         admission: granted.admission,
-        ...(granted.warnings.length > 0 ? { warnings: [...granted.warnings] } : {}),
+        ...(floorWarnings.length + granted.warnings.length > 0
+          ? { warnings: [...floorWarnings, ...granted.warnings] }
+          : {}),
         status: "dispatched",
       };
     },
