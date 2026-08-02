@@ -46,6 +46,11 @@ import {
   type MarketplaceSourceFixReceipt,
   type MarketplaceSourceVerdict,
 } from "../core/marketplace-source-doctor.js";
+import {
+  MCP_SESSION_FLAG,
+  parseSessionMcpServers,
+  type McpLoadVerdict,
+} from "../core/mcp-load-doctor.js";
 import { collectDeadendAuditReport } from "../runtime/deadend-audit-report.js";
 import { emptyDeadendReport, type DeadendAuditReport } from "../core/deadend-audit.js";
 import { LABEL_READY } from "../core/triage-labels.js";
@@ -58,14 +63,36 @@ interface RedDoctorFlags {
   json: boolean;
   yes: boolean;
   root: string;
+  /** Check 27's session half; `null` when the caller stated nothing. */
+  sessionMcpServers: readonly string[] | null;
 }
 
 function parseFlags(args: readonly string[], cwd: string): RedDoctorFlags {
-  const flags: RedDoctorFlags = { fix: false, json: false, yes: false, root: cwd };
+  const flags: RedDoctorFlags = {
+    fix: false,
+    json: false,
+    yes: false,
+    root: cwd,
+    sessionMcpServers: null,
+  };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     if (arg === "--fix") {
       flags.fix = true;
+      continue;
+    }
+    // The honest seam for check 27: this process cannot introspect its host's
+    // loaded MCP servers, so the invoking agent states them. An empty value is
+    // a statement ("I see none"), not an omission — hence the `undefined` test
+    // rather than a falsy one.
+    if (arg === MCP_SESSION_FLAG) {
+      const value = args[++i];
+      if (value === undefined) throw new Error(`${MCP_SESSION_FLAG} requires a value`);
+      flags.sessionMcpServers = parseSessionMcpServers(value);
+      continue;
+    }
+    if (arg.startsWith(`${MCP_SESSION_FLAG}=`)) {
+      flags.sessionMcpServers = parseSessionMcpServers(arg.slice(MCP_SESSION_FLAG.length + 1));
       continue;
     }
     if (arg === "--json") {
@@ -174,9 +201,15 @@ const MARKETPLACE_VERDICT_ICON: Record<MarketplaceSourceVerdict, string> = {
   error: "❌",
 };
 
+const MCP_LOAD_VERDICT_ICON: Record<McpLoadVerdict, string> = {
+  ok: "✅",
+  warn: "⚠️",
+  error: "❌",
+};
+
 /**
  * The scorecard sections for the checks whose classifiers live under `core/` and
- * are injected-facts-only (checks 12, 13, 15, 17, 18, 19, 21, 26). Rendered from one
+ * are injected-facts-only (checks 12, 13, 15, 17, 18, 19, 21, 26, 27). Rendered from one
  * collected report so a check that could not gather its facts prints a named
  * note instead of a silently clean section.
  */
@@ -191,6 +224,7 @@ function renderClassifierSections(
     runtimeUnresolved,
     hostBinaries,
     marketplaceSources,
+    mcpLoad,
     dependencyEdges,
     dependencyEdgesUnread,
     askRedRouter,
@@ -233,6 +267,16 @@ function renderClassifierSections(
     ...marketplaceSources.findings.map((finding) => `  ${finding.kind}: ${finding.reason}`),
     ...marketplaceSources.findings.map((finding) => `  fix: ${finding.remediation}`),
     ...marketplaceFixes.map((fix) => `  fix ${fix.host}: ${fix.status} (${fix.reason})`),
+    "",
+    "red-doctor declared MCP servers loaded in this session",
+    ...mcpLoad.rows.map(
+      (row) =>
+        `  ${MCP_LOAD_VERDICT_ICON[row.verdict]} ${row.plugin} declared=${row.declared.join(",") || "—"} ` +
+        `loaded=${row.loaded.join(",") || "—"} missing=${row.missing.join(",") || "—"}`,
+    ),
+    `mcp load findings: ${mcpLoad.findings.length}`,
+    ...mcpLoad.findings.map((finding) => `  ${finding.verdict} ${finding.kind}: ${finding.reason}`),
+    ...mcpLoad.findings.map((finding) => `  fix: ${finding.remediation}`),
     "",
     "red-doctor native blocked-by vs req:N divergence",
     `tickets compared: ${dependencyEdges.rows.length}`,
@@ -584,6 +628,23 @@ function renderToon(
         reason: fix.reason,
       })),
     },
+    mcpLoad: {
+      plugins: classifiers.mcpLoad.rows.map((row) => ({
+        plugin: row.plugin,
+        declared: row.declared.join(" "),
+        loaded: row.loaded.join(" "),
+        missing: row.missing.join(" "),
+        source: row.source,
+        verdict: row.verdict,
+      })),
+      findings: classifiers.mcpLoad.findings.map((finding) => ({
+        plugin: finding.plugin,
+        kind: finding.kind,
+        verdict: finding.verdict,
+        missing: finding.missing.join(" "),
+        remediation: finding.remediation,
+      })),
+    },
     dependencyEdges: {
       tickets: classifiers.dependencyEdges.rows.map((row) => ({
         ticket: row.ticket,
@@ -752,12 +813,14 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     // Read-only: the provisioning report probes the socket and never spawns the
     // daemon it is reporting on, which would answer its own question.
     const redskilledReport = await collectRedskilledProvisionReport(ctx.root);
-    // The pure classifiers the SKILL.md names for checks 12, 13, 15, 17, 18, 19, 26
-    // and 21. They are injected-facts-only, so the doctor is the surface that
+    // The pure classifiers the SKILL.md names for checks 12, 13, 15, 17, 18, 19, 26,
+    // 27 and 21. They are injected-facts-only, so the doctor is the surface that
     // reads the repo, the bundle cache and the tracker for them; before this
     // wiring existed the command imported none of them and reported clean on
     // seven dimensions it never examined (#3034).
-    const classifiers = await collectDoctorClassifierReports(ctx);
+    const classifiers = await collectDoctorClassifierReports(ctx, {
+      sessionMcpServers: flags.sessionMcpServers,
+    });
     // Repointing a frozen marketplace re-registers it on the host CLI, so it is
     // confirmed like every other hard-to-reverse repair. Remove-then-add is the
     // whole fix: the CLI keeps no editable source field.

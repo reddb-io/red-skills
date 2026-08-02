@@ -108,6 +108,32 @@ describe("castle MCP client docs contract", () => {
     }
   });
 
+  // #3062: a plugin installed mid-session has its MCP declaration written and
+  // its servers never started. An agent that falls straight to the CLI treats a
+  // load-lifecycle gap as an outage and re-derives a one-line cure forensically.
+  it("makes /reload-plugins the FIRST step of the MCP-unreachable path", async () => {
+    const paths = [
+      `${AFK}/SKILL.md`,
+      `${AFK}/MCP.md`,
+      "plugins/dev/skills/engineering/go/SKILL.md",
+    ];
+
+    for (const path of paths) {
+      // Prose wraps, so the assertions read the doc with its line breaks
+      // collapsed — a sentence split across two lines is the same sentence.
+      const doc = (await readRepoFile(path)).replace(/\s+/g, " ");
+      expect(doc, `${path} should name the reload cure`).toContain("/reload-plugins");
+      expect(doc, `${path} should name the mid-session install`).toContain("installed or updated in THIS session");
+
+      // Order is the contract: the reload question must precede the CLI
+      // fallback, or the fallback hides the gap it should have caught.
+      const reloadAt = doc.indexOf("/reload-plugins");
+      const fallbackAt = doc.indexOf("Only once the reload is ruled out");
+      expect(fallbackAt, `${path} should gate the fallback behind the reload check`).toBeGreaterThan(-1);
+      expect(reloadAt, `${path} should ask about reload before falling back`).toBeLessThan(fallbackAt);
+    }
+  });
+
   it("keeps the ask-red router pointing at the castle MCP", async () => {
     const askRed = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
 

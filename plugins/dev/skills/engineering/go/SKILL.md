@@ -47,9 +47,15 @@ prefixing, and the mutation-mode contract are in
 valid only with `demand` — the schema enforces the `/go`-versus-`/afk` boundary
 that the hard rules below state in prose.
 
-**When the MCP is unreachable, name that and fall back to the CLI form below.**
-It is the same engine over the same cores; the fallback changes transport, not
-behavior.
+**When the MCP is unreachable, first ask whether the plugin was installed or
+updated in THIS session — if so, run `/reload-plugins` (or start a new session)
+before falling back.** MCP servers register at plugin load, so a mid-session
+install writes the declaration and starts no process: valid files on disk, zero
+tools in the session. That is a load-lifecycle gap, not an outage.
+
+**Only once the reload is ruled out: name the unreachability and fall back to
+the CLI form below.** It is the same engine over the same cores; the fallback
+changes transport, not behavior.
 
 **Run the bundle — do not read its source.** This SKILL.md is the contract; the `dev` bundle's `go` command is a build artifact.
 

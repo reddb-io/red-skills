@@ -154,6 +154,17 @@ Script content for each signal type (all open with `#!/usr/bin/env bash` + `set 
     -d "{\"text\":\"AFK merged issue #${RED_AFK_ISSUE:-?} on ${RED_AFK_REPO:-repo}\"}"
   ```
 
+## Verify the session sees the plugin
+
+**Run this before the recap, every pass: enabling a plugin is not loading it.** A host CLI registers MCP servers **at plugin load**, so a plugin installed or updated in THIS session has its `.mcp.json` written and its server processes never started — every file valid on disk, zero tools in the session (#3062).
+
+1. **Ask the session, not the disk.** For each plugin just enabled, look for the MCP tools it declares in `plugins/<name>/.mcp.json` (`dev` declares `navigator`, `castle`, `rsp`). Hosts prefix them, so the identifiers to look for are `mcp__<slug>__<tool>` (for example `mcp__plugin_dev_castle__project_status`). Resolve them with a tool search; do not infer presence from the manifest you just read.
+2. **Report one of two verdicts, never a bare success.**
+    - **`installed and loaded`** — the session sees at least one tool from every enabled plugin's declared servers. Say so and continue to the recap.
+    - **`installed, reload needed`** — the session sees none of a plugin's declared MCP tools. Say that verbatim and name the cure: **run `/reload-plugins`, or start a new session**. Name which plugin, and which servers are missing.
+3. **Never perform the reload yourself, and never "fix" it on disk.** The declaration is already correct; only the load is missing. Do not edit `.mcp.json`, re-register the marketplace, or start a server process by hand — those change a file that is not broken and leave the real gap in place.
+4. **Corroborate with the doctor when asked.** `/red-doctor --session-mcp "<what this session sees, or none>"` runs the same audit as check 27 and prints the same cure. It is a read-only second opinion, not a substitute for saying the verdict here.
+
 ## Done
 
-Tell the user the setup is complete, which plugins are now enabled here (and that all other directories stay inert until they run this skill there too), and which engineering skills will now read from these files. If they enabled **memory** or **brain**, point them at the next step — `/memory:init` to pick a storage mode, or the brain setup — since enabling only authorizes the plugin to run; its own init configures it. Mention they can edit `.red/agents/*.md` directly later, and that one-off concrete work should be dispatched with `/go` (backlog via `/afk`, parked issues via `/retake`). Re-run this skill to enable or disable a plugin, switch issue trackers, or restart from scratch.
+Tell the user the setup is complete, the session verdict from *Verify the session sees the plugin* (`installed and loaded`, or `installed, reload needed` plus `/reload-plugins`), which plugins are now enabled here (and that all other directories stay inert until they run this skill there too), and which engineering skills will now read from these files. If they enabled **memory** or **brain**, point them at the next step — `/memory:init` to pick a storage mode, or the brain setup — since enabling only authorizes the plugin to run; its own init configures it. Mention they can edit `.red/agents/*.md` directly later, and that one-off concrete work should be dispatched with `/go` (backlog via `/afk`, parked issues via `/retake`). Re-run this skill to enable or disable a plugin, switch issue trackers, or restart from scratch.

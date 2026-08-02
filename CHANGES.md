@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## red-doctor, afk, go, red-setup (engineering) — a mid-session install is loud, not silent (issue #3062)
+
+- **status**: modified
+- **upstream**: `66898f6` (reddb.io original skills)
+- **why**: A host CLI registers MCP servers **at plugin load**, so the dev plugin installed mid-session left `.mcp.json`, the manifests and the launchers all valid on disk with zero castle/navigator/rsp tools in the session. Every surface of ours stayed silent, so the agent forensically re-derived a one-line cure and the friction read as "the marketplace does not load our MCPs right".
+- **what changed**:
+  - `red-doctor/SKILL.md`: new check 27 — declared servers the session sees none of are `declared-unloaded` (❌), a partial load is `partially-loaded` (⚠️), and an unstated session is `session-unobserved` (⚠️), never a clean ✅. The seam is stated: the session half is injected with `--session-mcp`, because a CLI process cannot introspect its host.
+  - `red-doctor/APPLY.md`: the cure belongs to the host session — `--fix` never restarts the session it was invoked from, and never "heals" a declaration that is already correct.
+  - `afk/SKILL.md`, `afk/MCP.md`, `go/SKILL.md`: `/reload-plugins` becomes the FIRST step of the MCP-unreachable path, so a load-lifecycle gap stops being treated as an outage and the CLI fallback stops hiding it.
+  - `red-setup/SKILL.md` + `WRITE-CONTRACT.md`: the pass verifies the session before recapping and reports `installed and loaded` or `installed, reload needed`, instead of ending on success while the session is blind.
+
 ## red-doctor (engineering) — a marketplace can only update from the source it was registered with (issue #3059)
 
 - **status**: modified
