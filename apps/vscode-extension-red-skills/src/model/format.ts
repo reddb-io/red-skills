@@ -32,6 +32,28 @@ export function formatDuration(ms: number | null | undefined): string {
   return `${Math.floor(hours / 24)}d${hours % 24}h`;
 }
 
+/**
+ * A rate at panel resolution — `1.2k`, `8.4`, `0.2`; `—` for absent.
+ *
+ * The first decimal is kept below ten because rounding it away turns a real
+ * `0.4 issues/hour` into a `0` no reader can tell from an idle machine, which is
+ * the one confusion every absence rule in these views exists to prevent.
+ */
+export function formatRate(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  if (value <= 0) return "0";
+  if (value >= 1000) {
+    const scaled = value >= 1e6 ? value / 1e6 : value / 1e3;
+    return `${trimZero((Math.round(scaled * 10) / 10).toFixed(1))}${value >= 1e6 ? "M" : "k"}`;
+  }
+  if (value >= 10) return String(Math.round(value));
+  return trimZero((Math.round(value * 10) / 10).toFixed(1));
+}
+
+function trimZero(text: string): string {
+  return text.endsWith(".0") ? text.slice(0, -2) : text;
+}
+
 /** A 0..1 fraction as whole percent; `—` for absent. */
 export function formatPercent(fraction: number | null | undefined): string {
   if (fraction == null || !Number.isFinite(fraction)) return "—";

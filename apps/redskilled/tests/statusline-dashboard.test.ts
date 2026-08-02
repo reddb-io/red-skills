@@ -20,6 +20,7 @@ import {
 import { buildHostState, type RedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { isRedskilledDashboard } from "../src/protocol.js";
+import type { RedskilledStatuslineMetrics } from "../src/live-metrics.js";
 import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "../src/statusline-payload.js";
 import {
   REDSKILLED_WORKER_DISPLAY_ABSENT,
@@ -89,11 +90,83 @@ function display(overrides: Partial<RedskilledWorkerDisplay> = {}): RedskilledWo
   };
 }
 
+/**
+ * The canned metrics block both surfaces are handed, in the daemon's own shape.
+ *
+ * The hour finished no issue, so `issues_per_hour` is ABSENT rather than zero —
+ * which is what makes it worth pinning here: the header must leave the figure
+ * out entirely rather than print a rate nobody measured.
+ */
+function metricsOf(): RedskilledStatuslineMetrics {
+  return {
+    generated_at: "2026-07-29T01:00:05.000Z",
+    hour: {
+      window: "hour",
+      window_ms: 3_600_000,
+      from: "2026-07-29T00:00:05.000Z",
+      to: "2026-07-29T01:00:05.000Z",
+      tokens_per_min: { value: 1240, absent_reason: null, samples: 18 },
+      tools_per_min: { value: 8.4, absent_reason: null, samples: 18 },
+      issues_per_hour: { value: null, absent_reason: "no Worker outcome was recorded in the last 1h", samples: 0 },
+      runner_share: {
+        dimension: "runner",
+        attributed_workers: 3,
+        unattributed_workers: 0,
+        shares: [
+          { key: "claude", worker_count: 2, share: 2 / 3 },
+          { key: "codex", worker_count: 1, share: 1 / 3 },
+        ],
+        absent_reason: null,
+      },
+      model_share: {
+        dimension: "model",
+        attributed_workers: 0,
+        unattributed_workers: 3,
+        shares: [],
+        absent_reason: "no Worker published a model in the last 1h",
+      },
+      unavailable: ["worker-outcomes"],
+    },
+    day: {
+      window: "day",
+      window_ms: 86_400_000,
+      from: "2026-07-28T01:00:05.000Z",
+      to: "2026-07-29T01:00:05.000Z",
+      tokens_per_min: { value: 820, absent_reason: null, samples: 214 },
+      tools_per_min: { value: 5.1, absent_reason: null, samples: 214 },
+      issues_per_hour: { value: 4 / 24, absent_reason: null, samples: 4 },
+      runner_share: {
+        dimension: "runner",
+        attributed_workers: 5,
+        unattributed_workers: 0,
+        shares: [
+          { key: "claude", worker_count: 3, share: 0.6 },
+          { key: "codex", worker_count: 2, share: 0.4 },
+        ],
+        absent_reason: null,
+      },
+      model_share: {
+        dimension: "model",
+        attributed_workers: 2,
+        unattributed_workers: 3,
+        shares: [
+          { key: "opus", worker_count: 1, share: 0.5 },
+          { key: "sonnet", worker_count: 1, share: 0.5 },
+        ],
+        absent_reason: null,
+      },
+      unavailable: [],
+    },
+  };
+}
+
 function payloadOf(
   workers: readonly RedskilledWorkerView[],
   displays: Record<string, RedskilledWorkerDisplay> = {},
+  metrics?: RedskilledStatuslineMetrics,
 ): RedskilledStatuslinePayload {
   return buildStatuslinePayload({
+    metrics,
     hostState: buildHostState({
       daemonVersion: "0.1.0",
       machineIdHash: "mach",
@@ -231,6 +304,56 @@ describe("an unpublished field is an absence, never a zero", () => {
     ).rows[0]!.cells;
     expect(cells.tks).toBe("tks=0");
     expect(cells.loc).toBe("loc=0");
+  });
+});
+
+describe("the header carries the rates the daemon derived", () => {
+  it("puts the hour's rates and the leading runner share in the one line a status bar shows", () => {
+    const dashboard = renderRedskilledDashboard(
+      payloadOf([worker()], { "w-1": display() }, metricsOf()),
+      LOCAL,
+    );
+
+    expect(dashboard.header.line).toContain("tk/m=1.2k");
+    expect(dashboard.header.line).toContain("tl/m=8.4");
+    expect(dashboard.header.line).toContain("claude=67%");
+    // The whole block travels beside the line, so a surface with room draws both
+    // windows and both dimensions without a second read.
+    expect(dashboard.header.metrics?.day.model_share.shares.map((share) => share.key)).toEqual(["opus", "sonnet"]);
+  });
+
+  it("leaves an underived rate out of the line rather than printing it as zero", () => {
+    const dashboard = renderRedskilledDashboard(
+      payloadOf([worker()], { "w-1": display() }, metricsOf()),
+      LOCAL,
+    );
+
+    expect(dashboard.header.line).not.toContain("iss/h");
+    expect(dashboard.header.line).not.toContain("iss/h=0");
+    expect(dashboard.header.metrics?.hour.issues_per_hour.value).toBeNull();
+    expect(dashboard.header.metrics?.hour.issues_per_hour.absent_reason).toContain("no Worker outcome");
+  });
+
+  it("drops the rates whole when the line will not hold them, keeping every other part", () => {
+    const narrow = renderRedskilledDashboard(
+      payloadOf([worker()], { "w-1": display() }, metricsOf()),
+      { ...LOCAL, maxWidth: 96 },
+    );
+
+    expect(narrow.header.line.length).toBeLessThanOrEqual(96);
+    expect(narrow.header.line).not.toContain("tk/m");
+    expect(narrow.header.line).toContain("wrk=1/1");
+    // Dropped from the LINE, never from the answer: the block a surface reads
+    // structurally does not shrink because a status bar is narrow.
+    expect(narrow.header.metrics).not.toBeNull();
+  });
+
+  it("says nothing at all about rates on a daemon that derives none", () => {
+    const dashboard = renderRedskilledDashboard(payloadOf([worker()], { "w-1": display() }), LOCAL);
+
+    expect(dashboard.header.metrics).toBeNull();
+    expect(dashboard.header.line).not.toContain("tk/m");
+    expect(dashboard.header.line).not.toContain("0%");
   });
 });
 

@@ -78,6 +78,8 @@ function iconFor(node: ViewNode): vscode.ThemeIcon {
       return new vscode.ThemeIcon("server");
     case "event":
       return new vscode.ThemeIcon("history");
+    case "metric":
+      return new vscode.ThemeIcon("pulse");
     case "repository":
       return new vscode.ThemeIcon("git-pull-request");
     case "absence":

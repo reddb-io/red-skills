@@ -16,7 +16,7 @@
  * PURE: every input is passed in, so a frame can be asserted without a daemon.
  */
 import { displayWidth, padEnd, padStart, style, truncate } from "./ansi.mjs";
-import { ago, bytes, count, duration, meter, oneLine, percent } from "./format.mjs";
+import { ago, bytes, count, duration, meter, oneLine, percent, rate } from "./format.mjs";
 
 const SELECTED = "▸";
 
@@ -173,6 +173,103 @@ export function renderHost(payload, { columns }) {
     lines.push(truncate(`        ${style.yellow(`⚠ ${parts.join(" · ")}`)} ${style.gray("— charged to the daemon, not to a unit")}`, columns));
   }
 
+  return lines;
+}
+
+/** The window labels, in the order the section draws them. */
+const METRIC_WINDOWS = [
+  ["hour", "1h"],
+  ["day", "24h"],
+];
+
+/**
+ * How fast this machine is going, in the daemon's own arithmetic. PURE.
+ *
+ * **Nothing here is divided by this pane.** The rates and the shares arrive
+ * derived from the one process holding the Worker set across projects; a pane
+ * that kept its own counters would be a second authority on a question with one
+ * answer, and the editor panel beside it would eventually print a different
+ * number for the same instant (ADR 0130 rule 10).
+ *
+ * **An absence draws a dash and says why, never a zero.** `0 tokens/min` is a
+ * machine that spent nothing; a window nothing published into is a machine
+ * nobody measured, and an operator reading the first for the second stops
+ * looking exactly when they should start.
+ */
+export function renderMetrics(payload, { columns }) {
+  const metrics = payload.metrics ?? null;
+  const lines = [rule("METRICS", columns)];
+
+  if (metrics == null) {
+    lines.push(
+      truncate(` ${style.gray("this daemon derives no metrics — the block is absent, and an absent block is not an idle machine")}`, columns),
+    );
+    return lines;
+  }
+
+  lines.push(
+    style.gray(
+      truncate(
+        `   ${padEnd("window", 6)} ${padStart("tokens/min", 11)} ${padStart("tools/min", 10)} ${padStart("issues/hr", 10)}  unavailable`,
+        columns,
+      ),
+    ),
+  );
+
+  for (const [key, label] of METRIC_WINDOWS) {
+    const window = metrics[key];
+    if (window == null) continue;
+    const unavailable = (window.unavailable ?? []).length > 0
+      ? style.yellow((window.unavailable ?? []).join(" · "))
+      : style.gray("—");
+    lines.push(
+      truncate(
+        `   ${padEnd(label, 6)} ${padStart(rateCell(window.tokens_per_min), 11)}` +
+          ` ${padStart(rateCell(window.tools_per_min), 10)} ${padStart(rateCell(window.issues_per_hour), 10)}  ${unavailable}`,
+        columns,
+      ),
+    );
+    lines.push(...shareLines(window, label, { columns }));
+  }
+
+  return lines;
+}
+
+/** One rate, or the dash that stands for "nobody measured it". PURE. */
+function rateCell(metric) {
+  if (metric == null || metric.value == null) return style.gray("—");
+  return style.bold(rate(metric.value));
+}
+
+/** How one window's Workers divide, by runner and by model. PURE. */
+function shareLines(window, label, { columns }) {
+  const lines = [];
+  for (const shares of [window.runner_share, window.model_share]) {
+    if (shares == null) continue;
+    const name = padEnd(shares.dimension, 6);
+    const list = shares.shares ?? [];
+    if (list.length === 0) {
+      // The reason and not merely an empty row: "no Worker ran" and "the Workers
+      // that ran published no model" send an operator to different places.
+      lines.push(
+        truncate(
+          `   ${padEnd("", 6)} ${style.gray(name)} ${style.gray(shares.absent_reason ?? `no ${shares.dimension} was attributed in the last ${label}`)}`,
+          columns,
+        ),
+      );
+      continue;
+    }
+    const drawn = list
+      .map((share) => `${style.white(share.key)} ${percent(share.share)} ${style.gray(`(${share.worker_count})`)}`)
+      .join(style.gray(" · "));
+    // The unattributed are counted beside the list rather than dropped from it:
+    // a share list that quietly excluded them would report 100% of a machine
+    // while describing half of it.
+    const rest = shares.unattributed_workers > 0
+      ? ` ${style.gray(`· ${shares.unattributed_workers} unattributed`)}`
+      : "";
+    lines.push(truncate(`   ${padEnd("", 6)} ${style.gray(name)} ${drawn}${rest}`, columns));
+  }
   return lines;
 }
 
@@ -465,6 +562,10 @@ export function renderDashboard({ snapshot, state, size, localProject, now = new
   const payload = snapshot.payload;
   lines.push(rule(null, columns));
   lines.push(...renderHost(payload, { columns }));
+  // Above the tables, because the rates are what the host section is for — how
+  // much of this machine is in use, and how fast it is spending it — and they
+  // cost a fixed handful of rows the budget below can therefore count.
+  lines.push(...renderMetrics(payload, { columns }));
 
   // Budget the remaining rows across the three tables rather than letting the
   // first one eat the pane: an operator opening this for the PR counts must not

@@ -71,6 +71,29 @@ export function count(value) {
   return value == null || !Number.isFinite(value) ? "—" : String(value);
 }
 
+/**
+ * A rate at pane resolution — `1.2k`, `8.4`, `0.2`; `—` when unmeasured. PURE.
+ *
+ * The first decimal is kept below ten because rounding it away turns a real
+ * `0.4 issues/hour` into a `0` no reader can tell from an idle machine, which is
+ * the one confusion every absence rule in this pane exists to prevent.
+ */
+export function rate(value) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  if (value <= 0) return "0";
+  if (value >= 1000) {
+    const scaled = value >= 1e6 ? value / 1e6 : value / 1e3;
+    const suffix = value >= 1e6 ? "M" : "k";
+    return `${trim((Math.round(scaled * 10) / 10).toFixed(1))}${suffix}`;
+  }
+  if (value >= 10) return String(Math.round(value));
+  return trim((Math.round(value * 10) / 10).toFixed(1));
+}
+
+function trim(text) {
+  return text.endsWith(".0") ? text.slice(0, -2) : text;
+}
+
 /** One line of text with its newlines and control characters flattened. PURE. */
 export function oneLine(text) {
   if (typeof text !== "string") return "";

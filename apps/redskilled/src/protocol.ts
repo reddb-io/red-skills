@@ -80,6 +80,14 @@ import {
   type RedskilledProjectRegistrationRequest,
 } from "./project-registration.js";
 import { isRedskilledReachVerdict, type RedskilledReachVerdict, type RedskilledWorkerCommandName } from "./session-reach.js";
+import type {
+  RedskilledMetricsWindow,
+  RedskilledMetricValue,
+  RedskilledMetricWindowName,
+  RedskilledStatuslineMetrics,
+  RedskilledUsageShare,
+  RedskilledUsageShares,
+} from "./live-metrics.js";
 import { isRedskilledStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
 import type { RedskilledStatuslineMode, RedskilledStatuslineRender } from "./statusline-render.js";
 import { isRedskilledDashboard, type RedskilledDashboard } from "./dashboard-render.js";
@@ -438,6 +446,16 @@ export type {
   RedskilledStatuslineMode,
   RedskilledStatuslinePayload,
   RedskilledStatuslineRender,
+  // The metrics block travels ON the payload, so its shapes are read off the
+  // same surface the payload is: a consumer that had to reach into a second
+  // module for the rates would be one import away from trusting a block the
+  // payload guard never checked.
+  RedskilledStatuslineMetrics,
+  RedskilledMetricsWindow,
+  RedskilledMetricWindowName,
+  RedskilledMetricValue,
+  RedskilledUsageShare,
+  RedskilledUsageShares,
   RedskilledDashboard,
   RedskilledWorkerDisplay,
   RedskilledWorkerCommandName,
