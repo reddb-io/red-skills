@@ -431,7 +431,18 @@ curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/inst
 
 # uninstall and remove the ~/.red-skills release cache
 curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --uninstall --purge
+
+# offline/dev: register the marketplace from the downloaded snapshot instead of
+# GitHub. That machine then stays on that snapshot until you re-run the installer.
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v3/scripts/install.sh | bash -s -- --local-marketplace
 ```
+
+The Claude and Codex marketplaces are registered from the GitHub source, so
+`/plugin marketplace update red-skills` pulls origin and sees every future
+release — no re-install needed. Re-running the one-liner on a machine that still
+carries an older directory-sourced registration replaces it; `/red-doctor`
+reports the registered source and `--fix` repoints it. See
+[How Updates Reach a Machine](./docs/INSTALL.md#how-updates-reach-a-machine).
 
 After installing, restart any already-open CLI sessions so they reload plugin
 manifests. Then run `/red-setup` in a project from Claude Code or

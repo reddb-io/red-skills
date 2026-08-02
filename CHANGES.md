@@ -6,6 +6,15 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## red-doctor (engineering) — a marketplace can only update from the source it was registered with (issue #3059)
+
+- **status**: modified
+- **upstream**: `66898f6` (reddb.io original skill)
+- **why**: The installer registered the Claude/Codex marketplace from the downloaded snapshot directory, so `plugin marketplace update` re-read an unchanging directory forever — two machines sat frozen at v3.3.0 and v3.3.2 while npm published 3.3.6, each "update" succeeding while advancing nothing.
+- **what changed**:
+  - `red-doctor/SKILL.md`: new check 26 — a Directory-sourced `red-skills` marketplace is a finding (frozen at the installer snapshot), an unreadable registration is a warn, and an uninstalled host is never flagged.
+  - `red-doctor/APPLY.md`: the repoint row — `remove` then `add reddb-io/red-skills`, confirmed per host, and never applied to a source that could not be read.
+
 ## wayfinder, red-setup, red-doctor (engineering) — the type label ships with its HUMAN-ONLY declaration (issue #3013)
 
 - **status**: modified

@@ -124,6 +124,12 @@ jobs:
       - name: Test marketplace manifest validator
         run: scripts/test-validate-marketplace-manifests.sh
 
+      # #3059: the installer's marketplace source decides whether a machine can
+      # ever update. A directory registration re-reads the install-day snapshot
+      # forever, so this pins the GitHub source and the frozen-machine heal.
+      - name: Test installer marketplace source contract
+        run: scripts/test-install-marketplace-source.sh
+
       - name: Test CI affected-scope contract
         run: scripts/test-ci-affected-scope.sh
 

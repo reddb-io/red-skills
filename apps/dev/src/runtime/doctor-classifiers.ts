@@ -14,6 +14,14 @@ import {
 } from "../core/hook-doctor.js";
 import { auditRuntimes, type PluginRuntimeFacts, type RuntimeReport } from "../core/runtime-doctor.js";
 import { auditHostBinaries, type HostBinaryReport } from "../core/host-binary-doctor.js";
+import {
+  auditMarketplaceSources,
+  parseMarketplaceSource,
+  RED_SKILLS_MARKETPLACE,
+  type MarketplaceHost,
+  type MarketplaceSourceFacts,
+  type MarketplaceSourceReport,
+} from "../core/marketplace-source-doctor.js";
 import { readCatalogToonVersion } from "../core/toon-version.js";
 import { auditDependencyEdges, type DependencyEdgeReport } from "../core/dependency-edge-doctor.js";
 import {
@@ -32,7 +40,7 @@ import { listDependencyEdgeTickets, type GhContext } from "./gh.js";
 
 /**
  * doctor-classifiers.ts — the fact-collection half of the `/red-doctor` checks
- * whose classifiers are pure and IO-free (checks 12, 13, 15, 17, 18, 19, 21).
+ * whose classifiers are pure and IO-free (checks 12, 13, 15, 17, 18, 19, 21, 26).
  *
  * Every classifier under `core/` is injected-facts-only by design, so SOMETHING
  * has to read the repo, the host cache and the tracker and hand it the facts.
@@ -46,6 +54,14 @@ import { listDependencyEdgeTickets, type GhContext } from "./gh.js";
  * an unreadable `.red/` tells its operator less than one that says which half it
  * could not read.
  */
+
+/**
+ * The host CLIs whose marketplace registration the installer writes, so a frozen
+ * Directory source is this repo's own defect to heal. Gemini registers through
+ * the documented manual flow only (docs/INSTALL.md), which already points at the
+ * GitHub source, so it is not probed here.
+ */
+const MARKETPLACE_HOSTS: readonly MarketplaceHost[] = ["claude", "codex"];
 
 /** The plugins the ADR 0084 control-plane contract covers, in scorecard order. */
 const AUDITED_PLUGINS = ["dev", "memory", "brain"] as const;
@@ -70,6 +86,8 @@ export interface DoctorClassifierReports {
   readonly runtimeUnresolved: string[];
   /** Check 18 — required host binaries against the catalog pin. */
   readonly hostBinaries: HostBinaryReport;
+  /** Check 26 — marketplace registration source per host CLI. */
+  readonly marketplaceSources: MarketplaceSourceReport;
   /** Check 15 — native blocked-by vs `req:N` divergence. */
   readonly dependencyEdges: DependencyEdgeReport;
   /** Open Tickets whose native edges were not read (budget or transport). */
@@ -360,6 +378,8 @@ export interface DoctorClassifierOptions {
   readonly listDependencyEdges?: typeof listDependencyEdgeTickets;
   /** Injected for tests; defaults to observing `tq --version` on this host. */
   readonly readToolVersion?: (tool: string) => Promise<string | undefined>;
+  /** Injected for tests; defaults to listing each host CLI's marketplaces. */
+  readonly readMarketplaceList?: (host: MarketplaceHost) => Promise<MarketplaceListProbe>;
 }
 
 /**
@@ -417,6 +437,28 @@ export async function collectDoctorClassifierReports(
     notes.push(`host binary pin audit skipped: ${message(error)}`);
   }
 
+  let marketplaceSources: MarketplaceSourceReport = { findings: [], rows: [] };
+  try {
+    const readList = options.readMarketplaceList ?? readHostMarketplaceList;
+    const facts: MarketplaceSourceFacts[] = [];
+    for (const host of MARKETPLACE_HOSTS) {
+      const probe = await readList(host);
+      const parsed = parseMarketplaceSource(probe.output, RED_SKILLS_MARKETPLACE);
+      facts.push({
+        host,
+        // A CLI that is not installed registered nothing, so it can freeze
+        // nothing; that is an ordinary machine, never a finding.
+        hostPresent: probe.present,
+        marketplace: RED_SKILLS_MARKETPLACE,
+        kind: parsed.kind,
+        ...(parsed.detail ? { detail: parsed.detail } : {}),
+      });
+    }
+    marketplaceSources = auditMarketplaceSources(facts);
+  } catch (error) {
+    notes.push(`marketplace source audit unavailable: ${message(error)}`);
+  }
+
   let dependencyEdges: DependencyEdgeReport = { findings: [], rows: [] };
   let dependencyEdgesUnread: number[] = [];
   if (ctx.repo) {
@@ -470,6 +512,7 @@ export async function collectDoctorClassifierReports(
     runtime,
     runtimeUnresolved,
     hostBinaries,
+    marketplaceSources,
     dependencyEdges,
     dependencyEdgesUnread,
     askRedRouter,
@@ -477,6 +520,28 @@ export async function collectDoctorClassifierReports(
     unlandedDocs,
     notes,
   };
+}
+
+/** What one host CLI answered when asked to list its marketplaces. */
+export interface MarketplaceListProbe {
+  /** False only when the CLI itself is not installed on this machine. */
+  readonly present: boolean;
+  /** The transcript; absent when the CLI could not answer. */
+  readonly output?: string;
+}
+
+/**
+ * List one host CLI's marketplaces. Read-only: it never adds, removes, or
+ * updates a registration — repointing is the gated `--fix` lane's job.
+ */
+async function readHostMarketplaceList(host: MarketplaceHost): Promise<MarketplaceListProbe> {
+  const { execTool } = await import("./exec.js");
+  const result = await execTool(host, ["plugin", "marketplace", "list"], { timeoutMs: 20_000 });
+  // 127 is the spawn failure `execTool` reports for a binary that does not
+  // resolve — an uninstalled host, not an unreadable one.
+  if (result.code === 127) return { present: false };
+  if (result.code !== 0) return { present: true };
+  return { present: true, output: result.stdout };
 }
 
 /** Observe an installed host binary's version. Never installs or upgrades it. */

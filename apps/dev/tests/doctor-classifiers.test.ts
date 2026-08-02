@@ -31,11 +31,15 @@ async function write(root: string, relative: string, contents: string): Promise<
   await writeFile(path, contents, "utf8");
 }
 
-/** Never let a posed repo reach the tracker, the network, or this host's `tq`. */
+/**
+ * Never let a posed repo reach the tracker, the network, this host's `tq`, or
+ * this host's installed agent CLIs.
+ */
 const OFFLINE: DoctorClassifierOptions = {
   collectDocsSweep: async (_ctx, base) => ({ base, files: [], originReachable: true }),
   listDependencyEdges: async () => ({ tickets: [], unread: [] }),
   readToolVersion: async () => undefined,
+  readMarketplaceList: async () => ({ present: false }),
 };
 
 function repoContext(root: string, repo = ""): RepoContext {
@@ -227,6 +231,49 @@ describe("check 18 — required host binary pins", () => {
 
     expect(reports.hostBinaries.rows).toEqual([]);
     expect(reports.notes.some((note) => note.startsWith("host binary pin audit skipped:"))).toBe(true);
+  });
+});
+
+describe("check 26 — marketplace registration source", () => {
+  it("flags the Directory-sourced red-skills marketplace the installer used to write", async () => {
+    const root = await poseRoot("doctor-marketplace-");
+
+    const reports = await collectDoctorClassifierReports(repoContext(root), {
+      ...OFFLINE,
+      readMarketplaceList: async (host) =>
+        host === "claude"
+          ? {
+              present: true,
+              output: "Configured marketplaces:\n\n  ❯ red-skills\n    Source: Directory (/home/user/.red-skills/current)\n",
+            }
+          : { present: false },
+    });
+
+    expect(reports.marketplaceSources.findings).toHaveLength(1);
+    const finding = reports.marketplaceSources.findings[0]!;
+    expect(finding.host).toBe("claude");
+    expect(finding.kind).toBe("frozen-directory-source");
+    expect(finding.remediation).toBe(
+      "claude plugin marketplace remove red-skills && claude plugin marketplace add reddb-io/red-skills",
+    );
+  });
+
+  it("passes a GitHub-sourced registration and an uninstalled host clean", async () => {
+    const root = await poseRoot("doctor-marketplace-healthy-");
+
+    const reports = await collectDoctorClassifierReports(repoContext(root), {
+      ...OFFLINE,
+      readMarketplaceList: async (host) =>
+        host === "claude"
+          ? {
+              present: true,
+              output: "Configured marketplaces:\n\n  ❯ red-skills\n    Source: GitHub (reddb-io/red-skills)\n",
+            }
+          : { present: false },
+    });
+
+    expect(reports.marketplaceSources.findings).toEqual([]);
+    expect(reports.marketplaceSources.rows.map((row) => row.verdict)).toEqual(["ok", "ok"]);
   });
 });
 
