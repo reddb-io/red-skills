@@ -19,7 +19,7 @@ CLI — same engine, same cores (see
 [`_report-runtime/WRAPPER.md`](./../_report-runtime/WRAPPER.md) for the Run
 shim and output-format rules):
 
-Run: `red-skills-dev dashboard [--period 30d] [--json]`
+Run: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev dashboard [--period 30d] [--json]`
 
 Dev-checkout equivalent: `node plugins/dev/skills/engineering/afk/bin/afk.mjs dashboard [--period 30d] [--json]`
 
