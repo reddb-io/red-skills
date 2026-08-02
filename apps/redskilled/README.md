@@ -133,7 +133,7 @@ of it.
   two answers. The daemon renders the string from the very payload the other op
   returns, and a test proves the daemon's line equals `renderRedskilledStatusline`
   over the payload read beside it — so **no agent host renders anything**: it runs
-  `redskilled statusline` and prints what comes back.
+  the daemon's `statusline` command and prints what comes back.
 - **The default mode is the local project; `global` is the whole machine.** The
   common case is one operator in one repository, so the quiet default lists only
   that project's Workers. `global` lists every project's and names the owner of
@@ -164,8 +164,8 @@ of it.
   what a `.red/config.yaml` is — so only decided values cross the socket. A
   malformed value is named on stderr and ignored, never fatal: this line renders
   on every turn, and a blank statusline is the harder failure to diagnose.
-- **Supervision is optional; auto-spawn is the floor.** `redskilled unit install`
-  writes a user unit whose `ExecStart` is the very argv a client spawn builds —
+- **Supervision is optional; auto-spawn is the floor.** The `unit install`
+  command writes a user unit whose `ExecStart` is the very argv a client spawn builds —
   one builder, so a flag cannot reach one start path and miss the other — plus
   `Restart=on-failure`, which is what revives a daemon that died *without a
   client having to want work first*. A host that never installs it is a supported
@@ -196,7 +196,7 @@ of it.
   left with no surface to ask (#2926). A daemon that is genuinely current, one
   merely behind inside its major, and one whose probe resolved nothing all report
   no hold at all.
-- **Stop is asked for, never signalled.** `redskilled stop` reports the Workers
+- **Stop is asked for, never signalled.** The `stop` command reports the Workers
   and projects the daemon is holding, states that every one of them survives —
   they are init-system units, so a stop is a restart and not an evacuation — and
   writes the intent to the event lane BEFORE the operator is told, so a successor
@@ -243,10 +243,15 @@ bundle to run and a socket that answers — and one command establishes both,
 prints the audit, and is what `/red-setup` (Section E3) runs:
 
 ```bash
-redskilled provision                  # start the daemon, print the audit
-redskilled provision --check          # the read-only half — creates nothing, starts nothing
-redskilled provision --workspace host # a lane under the home: provision the home too
-redskilled provision --install-unit   # also write the optional supervising user unit
+# The npm direct-run form is canonical (ADR 0091): it pins the version and works
+# on every host, including the one that has never seen this daemon. An installed
+# `redskilled` shim on PATH is a warm-cache optimization, never a requirement.
+RS="npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled"
+
+$RS provision                  # start the daemon, print the audit
+$RS provision --check          # the read-only half — creates nothing, starts nothing
+$RS provision --workspace host # a lane under the home: provision the home too
+$RS provision --install-unit   # also write the optional supervising user unit
 ```
 
 - **The home is NOT a precondition for a daemon.** The daemon binds its socket
@@ -285,36 +290,42 @@ pnpm -C apps/redskilled typecheck
 pnpm -C apps/redskilled serve       # run the daemon on this session's socket
 ```
 
+Every operator command below rides the same canonical prefix (ADR 0091):
+
 ```bash
-redskilled stop                             # stop the daemon; print what survives it
-redskilled stop --reason "moving to 3.0.3"  # the words ride onto the event lane
+RS="npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled"
 ```
 
 ```bash
-redskilled statusline                       # this project's Workers
-redskilled statusline global                # every project's, each showing its owner
-redskilled statusline --max-width 60        # a flag overrides the declared default
-redskilled statusline global --verbose      # each Worker plus the last line it logged
-redskilled statusline --no-verbose          # one read without the second lines
+$RS stop                             # stop the daemon; print what survives it
+$RS stop --reason "moving to 3.0.3"  # the words ride onto the event lane
 ```
 
 ```bash
-redskilled unit status                      # is a supervisor installed? (absent is fine)
-redskilled unit install                     # write the user unit and enable it now
-redskilled unit uninstall                   # remove it; auto-spawn stays the floor
+$RS statusline                       # this project's Workers
+$RS statusline global                # every project's, each showing its owner
+$RS statusline --max-width 60        # a flag overrides the declared default
+$RS statusline global --verbose      # each Worker plus the last line it logged
+$RS statusline --no-verbose          # one read without the second lines
 ```
 
 ```bash
-redskilled reclaim --dry-run                # what a sweep would take, and why
-redskilled reclaim                          # remove the runtime dirs whose owner is gone
-redskilled reclaim --grace-ms 60000         # how old a lease-less dir must be to count
+$RS unit status                      # is a supervisor installed? (absent is fine)
+$RS unit install                     # write the user unit and enable it now
+$RS unit uninstall                   # remove it; auto-spawn stays the floor
+```
+
+```bash
+$RS reclaim --dry-run                # what a sweep would take, and why
+$RS reclaim                          # remove the runtime dirs whose owner is gone
+$RS reclaim --grace-ms 60000         # how old a lease-less dir must be to count
 ```
 
 ## Reclaiming dead sessions
 
 A daemon that crashes leaves its runtime directory behind: a socket nothing
 listens on, a lease naming a pid that died, an event lane nobody will rehydrate.
-`redskilled reclaim` sweeps both runtime parents — the `XDG_RUNTIME_DIR` one and
+The `reclaim` command sweeps both runtime parents — the `XDG_RUNTIME_DIR` one and
 the `tmpdir()` fallback — and reports every directory it looked at.
 
 - **The lease decides, not the directory.** A dead pid in a lease is proof the
