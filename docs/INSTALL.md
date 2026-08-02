@@ -7,6 +7,7 @@ walkthrough** for the cases the installer does not cover: developing against a
 checkout, installing into a single host by hand, or maintaining the generated
 manifests.
 
+- [How Updates Reach a Machine](#how-updates-reach-a-machine)
 - [Manual: Claude Code](#manual-claude-code)
 - [Manual: Codex CLI](#manual-codex-cli)
 - [Manual: Gemini CLI](#manual-gemini-cli)
@@ -16,6 +17,41 @@ manifests.
 - [Manual: Pi](#manual-pi)
 - [No Marketplace](#no-marketplace)
 - [Verify Runners](#verify-runners)
+
+## How Updates Reach a Machine
+
+**A marketplace updates from the source it was registered with — register the
+GitHub source and the CLI updates itself.** `/plugin marketplace update
+red-skills` re-reads whatever source the registration names:
+
+| Registered source | What `marketplace update` re-reads | Can it see a new release? |
+|---|---|---|
+| `reddb-io/red-skills` (GitHub) | the repository, pulled from origin | yes — every future release |
+| a local directory | that directory, unchanged | no — frozen at whatever it holds |
+
+The universal installer registers the **GitHub** source, so `/plugin marketplace
+update red-skills` followed by `/plugin update <plugin>` advances a machine to
+the latest published version with no re-install. The local-directory form stays
+available for offline and dev installs through `--local-marketplace`
+(`RED_SKILLS_MARKETPLACE_SOURCE=local`); it pins the machine to the snapshot the
+installer downloaded, which is the point of it.
+
+Machines installed before this model shipped carry a directory-sourced
+registration and are frozen at their install-day version. Two cures, either one
+is enough:
+
+```bash
+# re-run the one-liner: it detects the Directory source and re-registers it
+curl -fsSL https://raw.githubusercontent.com/reddb-io/red-skills/v1/scripts/install.sh | bash
+
+# or repoint by hand
+claude plugin marketplace remove red-skills
+claude plugin marketplace add reddb-io/red-skills
+```
+
+To check a machine without changing it, `/red-doctor` reports the registered
+source per host CLI and flags a Directory-sourced `red-skills` marketplace;
+`/red-doctor --fix` repoints it after confirmation.
 
 ## Manual: Claude Code
 
@@ -87,7 +123,10 @@ names.
 
 ## Manual: Gemini CLI
 
-Gemini CLI support requires installing from a local path or using the native marketplace setup script when released. For local setups, run from a checkout:
+Gemini CLI support requires installing from a local path or using the native
+marketplace setup script when released. A local-path install is a snapshot: it
+sees new releases only when you re-run it against an updated checkout. For local
+setups, run from a checkout:
 
 ```bash
 gemini plugin install ./plugins/dev
@@ -95,7 +134,9 @@ gemini plugin install ./plugins/memory
 gemini plugin install ./plugins/brain
 ```
 
-Or you can use the global marketplace flow if registered:
+Or use the global marketplace flow, which registers the GitHub source and so
+picks up every future release (see
+[How Updates Reach a Machine](#how-updates-reach-a-machine)):
 
 ```bash
 gemini plugin marketplace add reddb-io/red-skills
@@ -277,7 +318,9 @@ cd ~/code/red-skills
 ./scripts/link-skills.sh
 ```
 
-Marketplace installs auto-update. `npx skills` and manual symlinks do not.
+Marketplace installs auto-update when the marketplace is registered from the
+GitHub source ([How Updates Reach a Machine](#how-updates-reach-a-machine)).
+`npx skills` and manual symlinks do not.
 
 ## Verify Runners
 
