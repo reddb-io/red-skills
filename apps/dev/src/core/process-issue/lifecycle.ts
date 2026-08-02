@@ -1373,6 +1373,10 @@ export async function processIssue(
     }
     const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
       worktree: workerBranch,
+      // A branch NAME, not a directory (#3041): `deps.pnpm` materialises it and
+      // reports back the absolute checkout it ran in. Declaring the kind keeps
+      // the gate from ever reading the branch token as a missing directory.
+      worktreeKind: "branch",
       scopes: feedbackScopes,
       layout: deps.layout,
       now: deps.nowEpoch,
@@ -1603,6 +1607,12 @@ export async function processIssue(
       postMergeGate: async (mergedTreeDir) => {
         const mergedFeedback = await runFeedback(deps.pnpm, {
           worktree: mergedTreeDir,
+          // The landing worktree is a DIRECTORY the caller just provisioned
+          // (#3041). Declaring it means a vanished one refuses the gate as an
+          // infrastructure error instead of composing commands against a path
+          // that resolves nowhere and calling the result the branch's verdict.
+          worktreeKind: "checkout",
+          ...(deps.dirExists === undefined ? {} : { dirExists: deps.dirExists }),
           scopes: landingFeedbackScopes,
           layout: deps.layout,
           now: deps.nowEpoch,

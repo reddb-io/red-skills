@@ -279,6 +279,13 @@ export interface ProcessIssueDeps {
   remoteGit: GitExec;
   pnpm: PnpmExec;
   validationResourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
+  /**
+   * Directory probe the gate uses to PROVE a declared validation worktree
+   * exists (#3041). Wired to the real filesystem in production; absent in a
+   * fixture, which is why an unprobed gate resolves its target but never
+   * refuses — a gate that cannot look at the disk claims nothing about it.
+   */
+  dirExists?: (dir: string) => boolean;
   layout: PackageLayout;
   graph?: WorkspaceGraph;
   backpressure?: BackpressureExec;

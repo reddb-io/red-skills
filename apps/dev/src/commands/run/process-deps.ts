@@ -64,6 +64,7 @@ import { buildFsPort } from "./ports/fs.js";
 import { buildHooks } from "./ports/hooks.js";
 import { buildEnvelopePort } from "./ports/envelope.js";
 import { buildLookups } from "./ports/lookups.js";
+import { realDirectoryProbe } from "../../core/validation-command.js";
 import {
   castleWorktreeUnder,
   decodeLocMemoSnapshot,
@@ -298,6 +299,10 @@ export function buildProcessDeps({
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
     validationResourceBudget: readValidationResourceBudget(config),
+    // The gate's proof that a declared validation worktree is really there
+    // (#3041): a landing worktree that vanished refuses as an infrastructure
+    // error instead of composing commands against a path that resolves nowhere.
+    dirExists: realDirectoryProbe,
     layout: feedback.layout,
     // Backpressure gate (#430, PRD #429): operator-declared `afk.backpressure`
     // shell commands run against the same worker-branch checkout after feedback.

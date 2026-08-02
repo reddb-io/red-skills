@@ -32,12 +32,33 @@ import {
 
 import { pendingInvariantRuns } from "./repo-invariants.js";
 import { type ValidationScope } from "./validation-scope.js";
+import {
+  composeValidationCommand,
+  isSuspectInfraFailure,
+  recordedValidationCommand,
+  resolveValidationTarget,
+  suspectInfraSummary,
+  targetMissingSummary,
+  VALIDATION_TARGET_MISSING_MARKER,
+  type ValidationTarget,
+  type ValidationTargetKind,
+} from "./validation-command.js";
 
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
   code: number;
   stdout: string;
   stderr: string;
+  /**
+   * The ABSOLUTE directory the command actually ran in, when the executor
+   * rewrote the `-C` token (#3041). The AFK gate is posed with a branch NAME;
+   * the feedback-worktree executor materialises it and runs the command in a
+   * real checkout, and only the executor knows that path. Reporting it back is
+   * what lets the record name a directory a reader can `ls` instead of the
+   * branch token that made the #3027 verdict unreadable. Absent → no rewrite
+   * happened and the composed command stands.
+   */
+  commandDir?: string;
 }
 
 export interface FeedbackExecOptions {
@@ -186,6 +207,13 @@ export interface ValidationRecord {
   exitCode?: number;
   durationMs?: number;
   summary?: string;
+  /**
+   * Set only on a failure that exited too fast to have run (#3041). A suite
+   * command that reports a verdict in under a second reported nothing; the flag
+   * says so in the record rather than leaving the operator to notice the
+   * millisecond count, which is how the #3027 phantom survived a whole park.
+   */
+  suspectInfra?: true;
 }
 
 /**
@@ -327,6 +355,7 @@ export function buildValidationRecord(input: {
   exitCode?: number;
   durationMs?: number;
   summary?: string;
+  suspectInfra?: boolean;
 }): ValidationRecord {
   const record: ValidationRecord = {
     schema: VALIDATION_SCHEMA,
@@ -337,7 +366,34 @@ export function buildValidationRecord(input: {
   if (input.exitCode !== undefined && Number.isFinite(input.exitCode)) record.exitCode = Math.trunc(input.exitCode);
   if (input.durationMs !== undefined) record.durationMs = input.durationMs;
   if (input.summary !== undefined && input.summary !== "") record.summary = input.summary;
+  if (input.suspectInfra === true) record.suspectInfra = true;
   return record;
+}
+
+/**
+ * Build the record for ONE executed validation command, applying the #3041
+ * honesty rules in one place: the recorded command names the directory the
+ * executor really ran in, and a sub-second failure is flagged `suspectInfra`
+ * with the evidence spelled into its summary.
+ */
+function buildRanRecord(input: {
+  name: string;
+  status: ValidationStatus;
+  command: string;
+  exitCode: number;
+  durationMs: number;
+  summary: string;
+}): ValidationRecord {
+  const suspect = isSuspectInfraFailure({ status: input.status, durationMs: input.durationMs });
+  const summary = suspect
+    ? suspectInfraSummary({
+        command: input.command,
+        exitCode: input.exitCode,
+        durationMs: input.durationMs,
+        summary: input.summary,
+      })
+    : input.summary;
+  return buildValidationRecord({ ...input, summary, suspectInfra: suspect });
 }
 
 /** Serialize a record to its single compact JSONL line (no trailing newline). */
@@ -406,7 +462,11 @@ export function isInfraValidationFailure(checks: readonly ClassifiableCheck[]): 
     if (
       summary.includes("feedback worktree setup failed") ||
       summary.includes("feedback worktree submodule init failed") ||
-      summary.includes("feedback worktree install failed")
+      summary.includes("feedback worktree install failed") ||
+      // A command the gate could not even pose — its worktree directory does not
+      // exist (#3041). An unrunnable command judged nothing, so it is an
+      // infrastructure error and never the branch's red verdict.
+      summary.includes(VALIDATION_TARGET_MISSING_MARKER)
     ) {
       return true;
     }
@@ -528,6 +588,19 @@ export interface FeedbackCheck {
 export interface RunFeedbackInput {
   /** Worktree root passed through to the `pnpm -C` directory arg. */
   worktree: string;
+  /**
+   * What {@link RunFeedbackInput.worktree} IS (#3041). `checkout` declares it a
+   * directory — it is resolved to an absolute path and a MISSING one refuses
+   * the whole gate as an infrastructure error. `branch` declares it a branch
+   * name the executor materialises. Omitted → auto-detect, which can only
+   * downgrade to `branch`: absent a declaration the gate has no grounds to call
+   * a token a missing directory.
+   */
+  worktreeKind?: ValidationTargetKind;
+  /** The checkout a relative worktree token anchors to. Defaults to the cwd. */
+  root?: string;
+  /** Injected directory probe for the target resolution. Defaults to `statSync`. */
+  dirExists?: (dir: string) => boolean;
   /** Resolved relevant scopes (from {@link relevantScopes}); empty for no-package. */
   scopes: readonly string[];
   /** Package layout, for the per-scope `hasScript` probe. */
@@ -803,6 +876,33 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     sidecar.push(formatValidationLine(check.record));
   };
 
+  // Resolve the target BEFORE composing anything (#3041). A declared checkout
+  // whose directory is gone refuses here: the gate would otherwise compose a
+  // command against a path that resolves nowhere, exit non-zero in about a
+  // millisecond, and hand that back as the branch's validation verdict.
+  const target: ValidationTarget = resolveValidationTarget(worktree, {
+    root: input.root ?? process.cwd(),
+    ...(input.worktreeKind === undefined ? {} : { kind: input.worktreeKind }),
+    ...(input.dirExists === undefined ? {} : { isDirectory: input.dirExists }),
+  });
+  if (target.missing) {
+    const name = "validation:worktree-missing";
+    const record = buildValidationRecord({
+      name,
+      status: "failed",
+      summary: targetMissingSummary(target),
+    });
+    push({ name, script: "test", label: "worktree", scope: "", status: "failed", record });
+    return {
+      ok: false,
+      checks,
+      sidecar,
+      baselineInconclusive: [],
+      quarantined: [],
+      ...(validationScope === undefined ? {} : { validationScope }),
+    };
+  }
+
   // Quarantine validation: a missing issue ref is a loud gate failure (never
   // a silent skip). Surface it as a failed sidecar record so the envelope shows
   // the misconfiguration clearly.
@@ -871,20 +971,15 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         }
       }
 
-      const dir = scopeDir(worktree, scope);
-      const baseArgs = ["pnpm", "-C", dir, script];
-      const args = excludeArgs.length > 0 ? [...baseArgs, "--", ...excludeArgs] : baseArgs;
-      const command =
-        excludeArgs.length > 0
-          ? `pnpm -C ${dir} ${script} -- ${excludeArgs.join(" ")}`
-          : `pnpm -C ${dir} ${script}`;
+      const composed = composeValidationCommand({ target, scope, script, extraArgs: excludeArgs });
       const start = now();
-      const result = await exec(args, { env: subprocessEnv });
+      const result = await exec(composed.args, { env: subprocessEnv });
       const durationMs = now() - start;
       const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
       if (status === "failed") failed = true;
+      const command = recordedValidationCommand(composed, script, excludeArgs, result.commandDir);
       const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
-      const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
+      const record = buildRanRecord({ name, status, command, exitCode: result.code, durationMs, summary });
       push({ name, script, label, scope, status, record });
     }
   }
@@ -901,15 +996,15 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     const name = "typecheck:workspace";
     const label = "workspace";
     const scope = ".";
-    const dir = scopeDir(worktree, ".");
-    const command = `pnpm -C ${dir} typecheck`;
+    const composed = composeValidationCommand({ target, scope: ".", script: "typecheck" });
     const start = now();
-    const result = await exec(["pnpm", "-C", dir, "typecheck"], { env: subprocessEnv });
+    const result = await exec(composed.args, { env: subprocessEnv });
     const durationMs = now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
+    const command = recordedValidationCommand(composed, "typecheck", [], result.commandDir);
     const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
-    const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
+    const record = buildRanRecord({ name, status, command, exitCode: result.code, durationMs, summary });
     push({ name, script: "typecheck", label, scope, status, record });
   }
 
@@ -936,13 +1031,13 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       }
       continue;
     }
-    const dir = scopeDir(worktree, run.scope);
-    const command = `pnpm -C ${dir} ${run.script}`;
+    const composed = composeValidationCommand({ target, scope: run.scope, script: run.script });
     const start = now();
-    const result = await exec(["pnpm", "-C", dir, run.script], { env: subprocessEnv });
+    const result = await exec(composed.args, { env: subprocessEnv });
     const durationMs = now() - start;
     const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
     if (status === "failed") failed = true;
+    const command = recordedValidationCommand(composed, run.script, [], result.commandDir);
     const output = joinCommandOutput(result.stdout, result.stderr);
     // One execution, one record per invariant it carries: the park names the
     // constraint a human must satisfy, not only the script that reported it.
@@ -951,7 +1046,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         status === "failed"
           ? `repo-wide invariant — ${suite.why}: ${outputSummary(status, output)}`.slice(0, 1000)
           : outputSummary(status, output);
-      const record = buildValidationRecord({
+      const record = buildRanRecord({
         name: suite.name,
         status,
         command,
