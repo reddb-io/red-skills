@@ -436,6 +436,10 @@ _Avoid_: code review (the advisory human-facing clarity pass), gate (machine val
 An ADR moved to `.red/adr/archive/` (via history-preserving `git mv`) once its decision reaches a terminal state — superseded by a newer ADR, deprecated, or fully shipped and inert. The original Decision is never rewritten: ADRs are immutable records, and only status, `Related`/`superseded-by` links, and stale-path prose are edited in place. Merge and split are supersede-and-replace — new ADRs carry the current decision while the originals are archived with a successor pointer, never combined or divided in place. Every archived number stays documented in the ADR **INDEX**, and a governance guard fails CI if any ADR number disappears or an archived ADR loses its successor pointer: archiving never deletes history.
 _Avoid_: deleted ADR, rewritten decision, superseded (the status/pointer, not the physical relocation)
 
+**Shared render**:
+ADR 0130 rule 10's no-drift guarantee delivered as ONE renderer implementation rather than ONE rendered string. The **redskilled** daemon serves the payload; a render module outside it draws that payload at parameterized densities — a one-line statusline, a host panel, a full dashboard — so the statusline, the herdr plugin, the VS Code extension and the terminal dashboard cannot diverge while still differing in density. A single rendered string cannot serve a line and a TUI at once, which is the constraint that moved layout out of the daemon; keeping it out also keeps rule 3 intact, because a process forbidden to know what a phase is must not be drawing a phase bar. Modularized so each surface composes only the parts it shows.
+_Avoid_: statusline string (the artifact, not the owner), daemon-rendered dashboard, "the daemon renders" (true only of the degraded one-liner)
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**.
