@@ -12,8 +12,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { startRedskilledDaemon, type RedskilledDaemon } from "@reddb-io/redskilled/daemon";
 import { resolveRedskilledPaths, type RedskilledPaths } from "@reddb-io/redskilled/paths";
+import { describeRedskilledPresence, RedskilledUnreachableError } from "@reddb-io/redskilled/client";
 import {
   createRedskilledBirthPort,
+  redskilledRegistrationRefusal,
   redskilledUnreachableAdvice,
   resolveProjectLabel,
 } from "../src/runtime/redskilled-birth.js";
@@ -202,5 +204,42 @@ describe("the project's identity and its advice", () => {
     expect(advice).toContain("/run/user/1/redskilled.sock");
     expect(advice).toContain("redskilled provision");
     expect(advice).toContain("boom");
+  });
+
+  it("never advises provisioning a daemon a live pid is already holding", () => {
+    // #3092: the reach established that pid 900870 holds the socket and did not
+    // answer. Telling an operator to install one sends them to reinstall what is
+    // already serving — the sentence that cost three rounds of ps/ss to see past.
+    const socketPath = "/run/user/1/redskilled.sock";
+    const presence = describeRedskilledPresence({
+      socketPath,
+      answers: false,
+      lease: {
+        version: 1,
+        pid: 900_870,
+        start_time: "2026-08-02T17:04:25.362Z",
+        session_key_hash: "aaa",
+        machine_id_hash: "bbb",
+        socket_path: socketPath,
+        acquired_at: "2026-08-02T17:04:25.362Z",
+        renewed_at: "2026-08-02T17:04:25.362Z",
+      },
+      holderAlive: true,
+      now: "2026-08-02T21:47:51.362Z",
+    });
+    const advice = redskilledUnreachableAdvice(
+      socketPath,
+      new RedskilledUnreachableError(socketPath, new Error("no answer"), presence),
+    );
+
+    expect(advice).toContain("900870");
+    expect(advice).toContain("Do not provision");
+    expect(advice).not.toContain("redskilled provision");
+    // The same discrimination on the registration refusal, which is a sibling
+    // sentence rather than a reuse of this one.
+    expect(redskilledRegistrationRefusal(
+      socketPath,
+      new RedskilledUnreachableError(socketPath, new Error("no answer"), presence),
+    )).toContain("Do not provision");
   });
 });
