@@ -1,5 +1,12 @@
 # @reddb-io/code-nav-mcp
 
+## 3.3.5
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.5
+- @reddb-io/build-info@3.3.5
+
 ## 3.3.4
 
 ### Patch Changes
