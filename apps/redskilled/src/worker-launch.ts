@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
+import { pathWithEngineNode } from "@reddb-io/shared/engine-node.js";
 import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledJobObjectHandle } from "./job-object.js";
@@ -116,6 +117,12 @@ export interface LaunchWorkerOptions {
   readonly memoryCeiling?: { readonly memory_max: string | null; readonly reason: string };
   readonly enabled?: boolean;
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * The node the daemon itself runs on, handed down to the Worker (#3064).
+   * Defaults to this process's `execPath`; an input only so a test can pose a
+   * version-manager host without one being installed.
+   */
+  readonly execPath?: string;
   readonly clock?: () => string;
   readonly workerId?: string;
   readonly spawnFn?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
@@ -196,6 +203,16 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   // open it degrades to a silent Worker rather than a refused launch: a log is
   // evidence, and losing evidence must never cost the work.
   const logFd = options.openLog === false ? null : openWorkerLog(spec.log_path);
+  // The daemon hands its own node down instead of hoping the Worker's PATH
+  // holds one (#3064). Under a transient unit the Worker's PATH is the init
+  // system's canonical `/usr/bin`-shaped one, so on a version-manager host
+  // (mise, nvm, asdf, volta) every system tool resolves and node alone goes
+  // missing — while the daemon deciding that is itself running on the node it
+  // failed to pass on. `process.execPath` is that answer, already held.
+  const workerEnv: Record<string, string> = {
+    ...(spec.env ?? {}),
+    PATH: pathWithEngineNode(spec.env?.PATH ?? env.PATH, options.execPath ?? process.execPath),
+  };
   const plan = planWorkerPlacement({
     workerId,
     projectLabel: spec.project_label,
@@ -205,7 +222,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     budget: spec.budget,
     ...(options.memoryCeiling != null ? { memoryCeiling: options.memoryCeiling } : {}),
     target: spec.placement,
-    env: spec.env,
+    env: workerEnv,
     enabled: options.enabled ?? placementEnabled(env),
     probes,
     pipeOutput: logFd !== null,
@@ -227,7 +244,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     // its own death record is written from.
     env: plan.backend === "transient-unit"
       ? { ...env }
-      : { ...env, ...(spec.env ?? {}), ...plan.environment },
+      : { ...env, ...workerEnv, ...plan.environment },
   });
   // The child holds its own copy from here on; a descriptor left open in the
   // daemon would keep the file alive for the daemon's lifetime, not the Worker's.

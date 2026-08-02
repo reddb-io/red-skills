@@ -30,6 +30,7 @@ import { toonBumpCommand } from "./commands/toon-bump.js";
 import { toonMigrateCommand } from "./commands/toon-migrate.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { routeCommand, UnknownCommandError, type RouterSchema } from "@reddb-io/shared/args.js";
+import { adoptEngineNodeOnPath } from "@reddb-io/shared/engine-node.js";
 
 export type CliCommand =
   | "run"
@@ -177,6 +178,13 @@ export function parseCli(argv: readonly string[]): ParsedCli {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
+  // The engine's own node joins its PATH before anything spawns a child (#3064).
+  // A Worker is born into a sanitized, system-shaped PATH, so on a
+  // version-manager host (mise, nvm, asdf, volta) `command -v node` finds
+  // nothing while this very process runs on the node it could not find. Pure env
+  // mutation: no fs, no socket, no config — safe on the `--version`/`--help`
+  // front-door path.
+  adoptEngineNodeOnPath();
   let parsed: ParsedCli;
   try {
     parsed = parseCli(argv);

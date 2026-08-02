@@ -91,6 +91,7 @@ export {
   type RedBinaryRuntime,
   type RedRuntimeIO,
 } from "./red-runtime.js";
+export * from "./engine-node.js";
 export * from "./red-paths.js";
 export * from "./repo-root.js";
 export * from "./outcome-event.js";

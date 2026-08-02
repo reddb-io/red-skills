@@ -1,3 +1,4 @@
+import { describeSearchedPath, splitSearchPath } from "@reddb-io/shared/engine-node.js";
 import type {
   HostPrerequisiteCommand,
   OperationalProbe,
@@ -50,13 +51,26 @@ export function runHostPrerequisiteProbe(context: OperationalProbeContext): Oper
   const missing = HOST_PREREQUISITE_COMMANDS.filter((command) => !input.commands[command]);
   if (missing.length > 0) {
     const names = missing.join(", ");
+    // A missing tool names WHERE the lookup looked, because "missing: node" on a
+    // host that has node reads as a lie until someone reconstructs the sanitized
+    // PATH by hand (#3064). Node earns one sentence more: the engine printing
+    // this is itself running on a node whose absolute path it holds.
+    const where = describeSearchedPath(input.searchedPath);
+    const engineNote =
+      missing.includes("node") && (input.engineNodePath ?? "").trim() !== ""
+        ? `; the engine's own node (${input.engineNodePath}) is the expected fallback and did not resolve either`
+        : "";
     return {
       id: HOST_PREREQUISITE_PROBE_ID,
       name: HOST_PREREQUISITE_PROBE_NAME,
       verdict: "red",
-      evidence: `missing required host tools: ${names}`,
+      evidence: `missing required host tools: ${names} (${where})${engineNote}`,
       canonicalFix: `Install missing host prerequisites: ${names}. Verify after installation: command -v ${missing.join(" ")}`,
-      data: { missing },
+      data: {
+        missing,
+        searchedDirectories: splitSearchPath(input.searchedPath),
+        ...(input.engineNodePath != null ? { engineNodePath: input.engineNodePath } : {}),
+      },
     };
   }
 
