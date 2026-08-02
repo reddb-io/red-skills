@@ -16,6 +16,16 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
   - The surrounding prose in both docs states the intent: the header is the required half, the Worker rows are best-effort, and a missing daemon is never a failure of the line. `HOST-NOTES.md` step 5 adds `exit 0` to what the verification must observe.
   - New guard `apps/dev/tests/statusline-command-doc.test.ts` over `apps/dev/src/core/statusline-command-doc.ts`, registered as the repo-wide invariant `invariants:statusline-command` so a docs-only cone still runs it. It sweeps both hand-maintained copies and both generated `packaging/pi/` mirrors, fails on any byte of drift or any copy that can still exit non-zero, and executes the published command against a fake HOME holding a dev bundle and no daemon bundle — asserting the header prints and the status is 0.
 
+## red-setup, red-doctor (engineering) — the toon/tq pin moves to 0.13.0 and cannot rot again (issue #3072)
+
+- **status**: modified
+- **upstream**: `66898f6` (reddb.io original skills)
+- **why**: The catalog said `0.3.0` while upstream `reddb-io/toon` was at `0.13.0` and operator hosts already ran `tq 0.13.0` — so `/red-doctor`'s pairwise drift check indicted the host when the stale side was our own pin. Ten minor versions of rot with nothing to make a sound.
+- **what changed**:
+  - Every derived site moves with the catalog to `0.13.0`: the `TQ_VERSION` install steps and installer URLs in `red-setup/INTERVIEW.md`, `REFERENCE.md`, `WRITE-CONTRACT.md` and `config-template.yaml`, the `host_binaries.tq.version` pin and the remediation line in `red-doctor/SKILL.md`, plus the regenerated `packaging/pi/` mirrors.
+  - `label-vocabulary-docs.test.ts` now derives the expected pin from the catalog instead of restating it — a second literal is a second thing that ages.
+  - The exact-pin decision is unchanged (ADR 0097): `tq` reads what the bundled encoder writes with no jq fallback, so a range would let the reader drift from the writer. The fix is freshness, not flexibility.
+
 ## every dev skill that names a binary (engineering) — a hint names a command that runs (issue #3071)
 
 - **status**: modified
