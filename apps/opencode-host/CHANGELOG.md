@@ -1,5 +1,14 @@
 # @reddb-io/red-skills
 
+## 3.3.8
+
+### Patch Changes
+
+- bea1c6f: A registered project now drains with no session alive behind it, on a host whose daemon could not resolve a tracker credential when it was born. The daemon is auto-spawned by whatever session first touches its socket and then outlives every one of them, but the credential it polls the tracker with was resolved once, at start, in that session's environment — so a daemon spawned where no token was set and no tracker CLI could be reached polled nothing for the whole life of the process. Every registration made afterwards, by sessions that did hold a credential, went uncounted; an uncounted queue sustains no registration, so each one lapsed one window later and the daemon idled out under it, while the host reported free slots and a standing record the entire time. The lookup is now handed to the daemon beside its result and re-asked before each poll for as long as the poller holds no transport — never once it does — and the reason a poll could not run is replaced by the attempt that failed rather than kept from the first one, so `project_status` names what is missing now. The unattended chain is pinned end to end against a posed tracker: a registration, no session, and a Worker on the machine put there by the daemon's own clock, with the sustain and the idle exit both following the reported poll outcome.
+- 1394638: The herdr pane and the VSCode extension now print the metrics block the daemon derives, off the same aggregate they already read for Workers and death attributions — no surface divides a counter of its own. The pane gains a METRICS section drawing tokens/min, tools/min and issues/hour for both rolling windows, with the runner and model shares under each and the unattributed Workers counted beside them. The extension nests the same two windows under its host row, one row per rate and one per share dimension. The dashboard header — which is the whole of what a VSCode status bar shows — gains a compact `tk/m` / `tl/m` / leading-runner summary of the hour, dropped whole rather than truncated when the line will not hold it, because a header clamped mid-figure reads as a smaller number than the one measured. Every absence stays an absence on both surfaces: a rate the daemon could not derive draws a dash and the stated reason rather than a zero, a share list nothing attributed says why it is empty, a window names the source that had nothing to answer with, and a daemon carrying no metrics block at all says so instead of reporting an idle machine.
+  - @reddb-io/shared@3.3.8
+  - @reddb-io/build-info@3.3.8
+
 ## 3.3.7
 
 ### Patch Changes
