@@ -252,7 +252,11 @@ describe("activity review", () => {
     expect(first).toEqual({ available: true, input: 7, output: 11, total: null, sourceRecords: 1 });
     const cacheRaw = await readFile(join(root, ".activity-review-token-cursors.json"), "utf8");
     expect(cacheRaw.trimStart().startsWith("{")).toBe(false);
-    expect(Object.values(decode(cacheRaw) as Record<string, unknown>)[0]).toMatchObject({
+    // The per-file map sits under one envelope key so `rows` never lands a level below the document
+    // root, where toon 0.13.0 reads it as the cyclic-array wire's meta key (issue #3072).
+    const decoded = decode(cacheRaw) as Record<string, unknown>;
+    expect(Object.keys(decoded)).toEqual(["files"]);
+    expect(Object.values(decoded.files as Record<string, unknown>)[0]).toMatchObject({
       rows: [{ input: 7, output: 11, total: 0 }],
     });
 
