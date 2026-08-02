@@ -19,7 +19,7 @@
 
 id = "reddb-io.red-skills"
 name = "RedSkills"
-version = "0.1.0"
+version = "3.3.9"
 # `herdr plugin pane open --env KEY=VALUE` and `--placement` are the two flags
 # the panes here depend on, and 0.7.5 is the oldest herdr this plugin has been
 # run against. Declaring an older floor would be a claim nobody verified.
