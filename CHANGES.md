@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## every dev skill that names a binary (engineering) — a hint names a command that runs (issue #3071)
+
+- **status**: modified
+- **upstream**: `66898f6` (reddb.io original skills)
+- **why**: Our binaries are not on an operator's PATH, and where a shim exists it may be a stale pin — yet a dozen SKILL.md files, the root README and the app READMEs offered `redskilled provision` and `red-skills-dev …` bare, as if a shim were a given. Worse, the runtime hints did: the birth refusal, the registration refusal and the provisioning audit each told a stuck operator to run `redskilled provision` at exactly the moment that binary provably was not resolvable — the #2961 dead-end shape, an instruction pointing at its own precondition.
+- **what changed**:
+  - Every swept surface now gives ADR 0091's canonical `npx -y -p @reddb-io/red-skills@<version> <binary>` form: root README, `apps/*/README.md`, and the `afk`, `go`, `manager`, `retake`, `triage`, `hitl`, `curate`, `dashboard`, `daily-review`, `audit-skills`, `wayfinder`, `red-setup`, `red-doctor` and `red-statusline` skills. A command catalog binds the prefix once (`RS="npx …"`) rather than repeating it per line.
+  - `_report-runtime/WRAPPER.md` and `afk/SKILL.md`: the "there is no `afk` subcommand" contract keeps its meaning and loses its bare-command spelling.
+  - `red-setup/INTERVIEW.md`: the runtime shim is stated as a **warm-cache optimization over** the canonical form, never as the way in.
+  - Code-emitted hints route through one namer, `canonicalInvocation` (`packages/shared/canonical-invocation.ts`) — the birth and registration refusals, the provisioning and daemon-entry fixes, the daemon's major-hold action, and the VS Code extension's absent-daemon tooltip and empty-state panel.
+  - New guard `apps/dev/tests/bare-invocation-guard.test.ts`, registered as the repo-wide invariant `invariants:bare-invocations` so a cone-scoped gate still runs it. Its discrimination is "binary token followed by another token": naming a binary is prose, a line somebody pastes is not. `rsp` is out by design, contributor docs reach `pnpm`/`node`, and `CHANGELOG.md` is a record rather than an instruction.
+
 ## red-doctor, afk, go, red-setup (engineering) — a mid-session install is loud, not silent (issue #3062)
 
 - **status**: modified
