@@ -1,5 +1,13 @@
 # @reddb-io/dev
 
+## 3.3.9
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.9
+- @reddb-io/build-info@3.3.9
+- @reddb-io/redskilled@0.1.0
+
 ## 3.3.8
 
 ### Patch Changes
