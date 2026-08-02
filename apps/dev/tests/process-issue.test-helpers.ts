@@ -16,6 +16,7 @@ import type { AttemptProgressInfo } from "../src/core/execution.js";
 import { installProcessSafety, noopSafetyLogger } from "../src/core/process-safety.js";
 import type { AdversarialReviewFindings } from "../src/core/adversarial-review.js";
 import type { LandLock } from "../src/core/land-lock.js";
+import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 
 export {
   SCOUT_EXIT_PROTOCOL,
@@ -565,9 +566,10 @@ export function harness(opts: HarnessOptions = {}): {
       // #2986 post-enqueue merge confirmation. The queue accepts the PR on the
       // first poll and resolves on the second, so a landing that skipped the
       // wait cannot pass by accident.
-      if (j.includes("pr view") && j.includes("autoMergeRequest")) {
+      // The confirmation reads one pull request by number → REST (#3094).
+      if (readsPull(argv)) {
         queuePolls += 1;
-        const accepted = { state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: { enabledAt: "t" } };
+        const accepted = restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: true });
         // Unset → the forge merged on the spot and the very first confirmation
         // says so. A test that opts in models the ENQUEUE: accepted first, then
         // its outcome, so the landing has something to actually wait through.
@@ -578,18 +580,22 @@ export function harness(opts: HarnessOptions = {}): {
         if (outcome === "rejected") {
           return {
             code: 0,
-            stdout: JSON.stringify({ state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: null }),
+            stdout: JSON.stringify(
+              restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: false }),
+            ),
             stderr: "",
           };
         }
         return {
           code: 0,
-          stdout: JSON.stringify({
-            state: "MERGED",
-            mergedAt: "2026-08-01T00:00:00Z",
-            mergeCommit: { oid: "forge-merge-sha" },
-            autoMergeRequest: null,
-          }),
+          stdout: JSON.stringify(
+            restPullBody({
+              state: "MERGED",
+              mergedAt: "2026-08-01T00:00:00Z",
+              mergeCommitOid: "forge-merge-sha",
+              autoMerge: false,
+            }),
+          ),
           stderr: "",
         };
       }
