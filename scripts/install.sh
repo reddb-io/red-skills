@@ -57,7 +57,9 @@ Installs RedSkills into every detected supported CLI:
               ~/.pi/agent/settings.json (or .pi/settings.json with --project)
 
 Options:
-  --version <tag>       Install a specific release tag (default: latest release)
+  --version <tag>       Install a specific release tag (default: latest release).
+                        Pins the downloaded source cache, not the marketplace;
+                        combine with --local-marketplace to pin Claude/Codex too.
   --install-root <dir>  Install source cache here (default: ~/.red-skills)
   --only <list>         Comma list: claude,codex,opencode,pi (default: auto-detect)
   --claude-scope <s>    Claude install scope: user, project, or local (default: user)
