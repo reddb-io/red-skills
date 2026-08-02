@@ -9,6 +9,7 @@
     ".": "./index.ts",
     "./args.js": "./args.ts",
     "./bundle-fetch.js": "./bundle-fetch.ts",
+    "./canonical-invocation.js": "./canonical-invocation.ts",
     "./channel.js": "./channel.ts",
     "./death-attribution.js": "./death-attribution.ts",
     "./death-presence.js": "./death-presence.ts",
