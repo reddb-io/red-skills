@@ -31,8 +31,34 @@
  * nothing open" are three different facts about a project and only the last of
  * them is a zero.
  *
+ * **The surface is not this module's to pick.** Which GitHub API answers a call
+ * is owned by `@reddb-io/github`, which the castle imports too (ADR 0132
+ * decision 4): one table, because two implementations of one routing rule drift.
+ * This poll is a multi-repository aggregate, and cardinality sends a
+ * multi-repository aggregate to GraphQL — so the endpoint below is DERIVED from
+ * the route rather than hardcoded next to it. Note the third budget: an aliased
+ * query makes cost flat in the number of projects by REQUEST count and not by
+ * node POINTS, and the aliased `search` fields draw the Search pool (30/min)
+ * rather than either.
+ *
  * PURE, apart from `fetchRepositoryActivity`, whose transport is injected.
  */
+
+import { githubSurfaceFor, type GithubApiSurface } from "@reddb-io/github";
+
+/**
+ * The gh argv this poll is equivalent to. It exists so the surface below is a
+ * lookup in the shared table rather than a second opinion about it.
+ */
+export const REDSKILLED_ACTIVITY_ARGV: readonly string[] = ["api", "graphql"];
+
+/** Which API answers the activity poll, per the shared routing table. */
+export const REDSKILLED_ACTIVITY_SURFACE: GithubApiSurface = githubSurfaceFor(REDSKILLED_ACTIVITY_ARGV);
+
+/** The GitHub endpoint for a surface. A REST route would not address `/graphql`. */
+export function githubEndpointFor(surface: GithubApiSurface, origin = "https://api.github.com"): string {
+  return surface === "graphql" ? `${origin}/graphql` : origin;
+}
 
 /** How many repositories one aliased query may span. */
 export const REDSKILLED_ACTIVITY_BATCH_SIZE = 100;
@@ -447,7 +473,7 @@ export function createGitHubActivityTransport(options: {
   readonly endpoint?: string;
   readonly fetchImpl?: typeof fetch;
 }): RedskilledActivityTransport {
-  const endpoint = options.endpoint ?? "https://api.github.com/graphql";
+  const endpoint = options.endpoint ?? githubEndpointFor(REDSKILLED_ACTIVITY_SURFACE);
   const call = options.fetchImpl ?? fetch;
   return async (query: string): Promise<unknown> => {
     const response = await call(endpoint, {
