@@ -20,6 +20,15 @@ plugins:
   #                               # (Section H of /red-setup sets this)
   #     branch: my-branch         # static base lock: AFK bases/merges here (ADR 0031);
   #                               # the runtime /branch-lock overrides it per session
+  #   dispatch:
+  #     engine_floor: warn        # what a SUPERSEDED engine costs a dispatch.
+  #                               # At dispatch time the engine that would run is
+  #                               # compared against the published dist-tag:
+  #                               # `warn` (default) dispatches loudly naming both
+  #                               # versions, `refuse` is a hard stop that mints
+  #                               # nothing, `off` silences the check. An
+  #                               # unreachable registry always degrades to a
+  #                               # warning — offline dispatch must not die.
   #   triage:
   #     external_pr_surface:
   #       enabled: false          # default OFF. When true, /triage may list/read

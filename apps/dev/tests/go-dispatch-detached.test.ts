@@ -15,6 +15,7 @@ import { startRedskilledDaemon, type RedskilledDaemon } from "@reddb-io/redskill
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
 import { goCommand, type GoRuntime } from "../src/commands/go.js";
 import type { DispatchedWorkerBirth } from "../src/runtime/mcp-worker-birth.js";
+import type { EngineFloorVerdict } from "../src/core/engine-floor.js";
 
 const running: RedskilledDaemon[] = [];
 const roots: string[] = [];
@@ -56,6 +57,17 @@ const GRANTED: DispatchedWorkerBirth = {
   admission: "admitted: 1 of 3 workers",
 };
 
+/** A current engine, so the detachment suite tests detachment (#3031). */
+const PROCEED: EngineFloorVerdict = {
+  decision: "proceed",
+  code: "current",
+  policy: "warn",
+  engine_version: "3.3.2",
+  published_version: "3.3.2",
+  published_source: "registry",
+  message: "",
+};
+
 interface RecordedRuntime {
   runtime: GoRuntime;
   born: string[][];
@@ -80,6 +92,7 @@ function recordingRuntime(overrides: Partial<GoRuntime> = {}): RecordedRuntime {
       return 7;
     },
     hasHarness: false,
+    checkEngineFloor: async () => PROCEED,
     write: (text) => output.push(text),
     ...overrides,
   };
