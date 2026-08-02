@@ -447,10 +447,41 @@ export interface RedskilledQueueRegistration {
    * counts each cadence, above all.
    */
   readonly transport?: RedskilledQueueTransport;
+  /**
+   * How an unarmed daemon tries again, asked before each poll while it holds no
+   * transport — never once it does.
+   *
+   * **A credential resolved once at start is a credential resolved in someone
+   * else's environment** (#3056). The daemon is auto-spawned by whatever session
+   * first touched the socket (ADR 0130 rule 7) and then outlives every one of
+   * them, so a spawn from a session with no token in its environment and no
+   * tracker CLI on its `PATH` left the poller unarmed for the whole life of the
+   * process — and every registration made afterwards, by sessions that DID hold a
+   * credential, lapsed uncounted one window later while the host reported itself
+   * healthy. Re-asking costs nothing on an armed host and is the difference
+   * between a drain and a silence on an unarmed one.
+   *
+   * **Asked on the poll's own window, so it must be bounded by whoever supplies
+   * it**: this runs inside the daemon, and a credential lookup that hangs holds
+   * the process that owns every Worker on the machine.
+   */
+  readonly armTransport?: () => RedskilledQueueArming;
   /** Window between fetches; 0 or below leaves the poller unarmed. */
   readonly intervalMs?: number;
   /** How many selectors one request may span; the module's bound when absent. */
   readonly batchSize?: number;
+}
+
+/**
+ * One attempt at arming the queue poller: the transport, or why there is none.
+ *
+ * Exactly one of the two is present, and the reason is produced by the SAME
+ * attempt that failed rather than by an earlier one — a host whose credential
+ * disappeared and a host that never had one owe an operator different sentences.
+ */
+export interface RedskilledQueueArming {
+  readonly transport?: RedskilledQueueTransport;
+  readonly unconfiguredReason?: string;
 }
 
 export interface RedskilledDaemon {
@@ -725,12 +756,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const activityRegistration = options.repositoryActivity;
   const activityMs = activityRegistration?.intervalMs ?? DEFAULT_REDSKILLED_ACTIVITY_MS;
   const queueRegistration = options.queueDiscovery;
-  const queueTransport = queueRegistration?.transport ?? activityRegistration?.transport;
+  // Not `const`: an unarmed poller asks again before every poll, so the daemon
+  // that was spawned from a session without a credential still counts once one
+  // exists (#3056).
+  let queueTransport = queueRegistration?.transport ?? activityRegistration?.transport;
   // What a poll says when it cannot run. Stated by the caller that knows WHY —
   // the CLI knows which credential it looked for — and given a sentence of its
   // own here so a daemon nobody told still names the missing thing rather than
   // reporting a bare absence.
-  const queueUnconfiguredReason = queueRegistration?.unconfiguredReason ??
+  let queueUnconfiguredReason = queueRegistration?.unconfiguredReason ??
     REDSKILLED_QUEUE_UNCONFIGURED_REASON;
   const queueMs = queueRegistration?.intervalMs ?? DEFAULT_REDSKILLED_QUEUE_MS;
   const demandMs = options.demandMs ?? DEFAULT_REDSKILLED_DEMAND_MS;
@@ -1012,6 +1046,31 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /**
+   * Try to arm the poller, once per poll, for as long as it is unarmed.
+   *
+   * **The attempt is the only thing that knows why it failed**, so its reason
+   * replaces the one an earlier attempt left behind — an operator reading
+   * `last_poll` sees why THIS poll could not ask rather than why the daemon's
+   * first one could not. A thrower is treated as an attempt that found nothing:
+   * the credential lookup shells out, and a host whose tracker CLI hangs or dies
+   * must keep polling nothing rather than losing the poll loop to an exception.
+   */
+  function armQueueTransport(): void {
+    if (queueTransport != null || queueRegistration?.armTransport == null) return;
+    try {
+      const armed = queueRegistration.armTransport();
+      if (armed.transport != null) {
+        queueTransport = armed.transport;
+        return;
+      }
+      if (armed.unconfiguredReason != null) queueUnconfiguredReason = armed.unconfiguredReason;
+    } catch (err) {
+      queueUnconfiguredReason =
+        `this host could not resolve a tracker credential: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+
+  /**
    * One interval's queue fetch: ONE request, however many projects are registered.
    *
    * The registration set is snapshotted before the request leaves and never
@@ -1032,6 +1091,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // happened to register in is not a fact about the host.
       .sort((left, right) => left.project_label.localeCompare(right.project_label));
     if (projects.length === 0) return null;
+    // Asked again while unarmed, and never once armed: the credential is resolved
+    // in the environment of whichever session happened to auto-spawn this daemon,
+    // and that session is gone (#3056). A host that could not arm at start is
+    // re-asked here rather than staying blind for the life of the process.
+    armQueueTransport();
     // A host that cannot ask SAYS SO, on every registration it holds (#2974).
     // Returning here without a document is what let a machine with a valid
     // registration, a stated target and a full queue report itself healthy and

@@ -39,6 +39,7 @@ import {
 import {
   DEFAULT_REDSKILLED_IDLE_MS,
   startRedskilledDaemon,
+  type RedskilledQueueArming,
   type RedskilledQueueRegistration,
 } from "./daemon.js";
 import { createGitHubActivityTransport } from "./repository-activity.js";
@@ -205,7 +206,13 @@ export interface RedskilledHostToken {
 /** How the tracker CLI is asked for its stored token; injected for tests. */
 export type RedskilledTrackerTokenReader = () => string | null;
 
-/** `gh auth token` — the stored login, read once at start and never logged. */
+/**
+ * `gh auth token` — the stored login, never logged.
+ *
+ * Read at start and again on each poll the daemon makes while it holds no
+ * transport (#3056): a login that happened after this daemon was spawned is the
+ * ordinary case on a host whose daemon outlives every session that touches it.
+ */
 function readTrackerCliToken(): string | null {
   try {
     // Short and bounded: a `gh` that hangs must not hold the daemon's start.
@@ -245,6 +252,11 @@ export function resolveRedskilledHostToken(
  * used to be `undefined`, which left the daemon with nothing to report and every
  * surface downstream showing the silence of a host that had simply not counted
  * yet — a registration, a target and no Worker, with nothing anywhere saying why.
+ *
+ * **An unarmed poller is not a permanent one.** The lookup itself is handed over
+ * beside its result, so a daemon that could not arm in the environment of the
+ * session that auto-spawned it asks again on its own window rather than polling
+ * nothing for the life of the process (#3056).
  */
 export function resolveServeQueueDiscovery(
   values: { readonly "queue-endpoint"?: string; readonly "queue-ms"?: number },
@@ -252,10 +264,32 @@ export function resolveServeQueueDiscovery(
   readTrackerToken: RedskilledTrackerTokenReader = readTrackerCliToken,
 ): RedskilledQueueRegistration {
   const interval = values["queue-ms"] == null ? {} : { intervalMs: values["queue-ms"] };
+  return {
+    ...interval,
+    ...armRedskilledQueueTransport(values, env, readTrackerToken),
+    // The same lookup, handed over so the daemon can repeat it. A credential
+    // resolved once at start is resolved in the environment of whichever session
+    // auto-spawned this daemon — and that session exits, while the daemon stays
+    // (#3056). The daemon asks again only while it holds no transport.
+    armTransport: () => armRedskilledQueueTransport(values, env, readTrackerToken),
+  };
+}
+
+/**
+ * One attempt at the credential, in the words of the thing that looked for it.
+ *
+ * The sentence names what was searched rather than reporting a bare absence,
+ * because "a registration, a target of two and no Worker" is answered by knowing
+ * WHICH credential was missing — and the daemon cannot know what this looked for.
+ */
+export function armRedskilledQueueTransport(
+  values: { readonly "queue-endpoint"?: string },
+  env: NodeJS.ProcessEnv = process.env,
+  readTrackerToken: RedskilledTrackerTokenReader = readTrackerCliToken,
+): RedskilledQueueArming {
   const host = resolveRedskilledHostToken(env, readTrackerToken);
   if (host == null) {
     return {
-      ...interval,
       unconfiguredReason:
         `no credential names a tracker for this host: ${REDSKILLED_HOST_TOKEN_ENV}, GITHUB_TOKEN and GH_TOKEN are ` +
         `all unset in the daemon's environment and \`gh auth token\` returned nothing — so no queue depth is asked ` +
@@ -263,10 +297,7 @@ export function resolveServeQueueDiscovery(
     };
   }
   const endpoint = values["queue-endpoint"] ?? env.GITHUB_GRAPHQL_URL;
-  return {
-    ...interval,
-    transport: createGitHubActivityTransport({ token: host.token, ...(endpoint ? { endpoint } : {}) }),
-  };
+  return { transport: createGitHubActivityTransport({ token: host.token, ...(endpoint ? { endpoint } : {}) }) };
 }
 
 export async function runRedskilledCli(argv: readonly string[]): Promise<number> {
