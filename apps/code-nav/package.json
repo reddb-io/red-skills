@@ -16,7 +16,6 @@
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "catalog:",
-    "vscode-jsonrpc": "^8.2.0",
     "vscode-languageserver-protocol": "^3.17.5",
     "zod": "catalog:"
   },

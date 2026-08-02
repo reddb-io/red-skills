@@ -4,7 +4,7 @@ import {
   MINIMAX_ANTHROPIC_BASE_URL,
   MINIMAX_M3_MODEL,
   resolveMiniMaxClaudeEnv,
-} from "../src/core/minimax-env.js";
+} from "@reddb-io/red-castle/engine";
 
 describe("resolveMiniMaxClaudeEnv", () => {
   it("maps MINIMAX_API_KEY to the two Anthropic inner-spawn vars", () => {

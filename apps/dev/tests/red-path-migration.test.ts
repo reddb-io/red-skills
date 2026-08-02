@@ -3,7 +3,7 @@ import {
   migrationActionFor,
   planDevDurablePathMigration,
   supervisorLogMigration,
-} from "./red-path-migration.js";
+} from "../src/core/red-path-migration.js";
 
 const ROOT = "/repo";
 

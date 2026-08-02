@@ -12,7 +12,6 @@ export interface OperationalProbeContext {
   readonly allowHttpsRemote?: boolean;
   readonly queueVisibility?: QueueVisibilityProbeInput;
   readonly focalBranch?: FocalBranchProbeInput;
-  readonly configNamespacing?: ConfigNamespacingProbeInput;
   readonly configCoherence?: ConfigCoherenceProbeInput;
   readonly fleetTruth?: FleetTruthProbeInput;
   readonly bundleCoherence?: BundleCoherenceProbeInput;
@@ -29,10 +28,6 @@ export interface HostPrerequisiteProbeInput {
   readonly bashVersion?: string;
   readonly bashVersionExitCode?: number;
   readonly bashVersionError?: string;
-}
-
-export interface ConfigNamespacingProbeInput {
-  readonly rootDevKeys: readonly string[];
 }
 
 export interface ConfigCoherenceProbeInput {
