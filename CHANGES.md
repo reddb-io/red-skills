@@ -6,6 +6,16 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## red-statusline, red-setup (engineering) — the documented statusline exits on the truth (issue #3073)
+
+- **status**: modified
+- **upstream**: `66898f6` (reddb.io original skills)
+- **why**: The documented Claude Code `statusLine` command's last statement was the bare test `[ -n "$r" ] && "$N" "$r" statusline 2>/dev/null`. On a host with no cached `redskilled` bundle — currently every host — `$r` is empty, the test fails, and because it is the final statement its status becomes the exit status of the whole `sh -c`: the header rendered to stdout and the command still reported failure. `/red-setup` writes that exact string into every repo it touches, so the defect shipped once per project and each operator re-derived the same fix by hand. Two hand-maintained copies of one string, with no guard, is also two chances to fix one and leave the other.
+- **what changed**:
+  - Both copies now terminate in `; exit 0`. The daemon half was already best-effort in its stderr (`2>/dev/null`); the exit status now says the same thing.
+  - The surrounding prose in both docs states the intent: the header is the required half, the Worker rows are best-effort, and a missing daemon is never a failure of the line. `HOST-NOTES.md` step 5 adds `exit 0` to what the verification must observe.
+  - New guard `apps/dev/tests/statusline-command-doc.test.ts` over `apps/dev/src/core/statusline-command-doc.ts`, registered as the repo-wide invariant `invariants:statusline-command` so a docs-only cone still runs it. It sweeps both hand-maintained copies and both generated `packaging/pi/` mirrors, fails on any byte of drift or any copy that can still exit non-zero, and executes the published command against a fake HOME holding a dev bundle and no daemon bundle — asserting the header prints and the status is 0.
+
 ## every dev skill that names a binary (engineering) — a hint names a command that runs (issue #3071)
 
 - **status**: modified
