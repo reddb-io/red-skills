@@ -8,6 +8,7 @@ import { makeFeedbackWorktree } from "../src/runtime/feedback-worktree.js";
 import { deleteLocalBranch } from "../src/runtime/git.js";
 import type { RepoContext } from "../src/runtime/wire.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
+import { readsIssue, restIssueBody } from "./support/gh-rest-fixtures.js";
 
 /**
  * Wiring integration test (architecture-review candidate #2 — the "wiring test
@@ -51,17 +52,20 @@ function makeFakeExec(repoRoot: string): { exec: ExecFn; trace: TraceEntry[] } {
     const joined = a.join(" ");
 
     if (cmd === "gh") {
-      // claim pre-check: gh issue view N --json labels
-      if (joined.includes("issue view") && joined.includes("--json labels")) {
-        return Promise.resolve(ok(JSON.stringify({ labels: [{ name: "ready-for-agent" }] })));
+      // claim pre-check and the url handoff are single-object reads, so they
+      // address REST (#3094); the comments handoff has no single-request REST
+      // projection and keeps gh's own command by declared field gap.
+      if (readsIssue(a)) {
+        return Promise.resolve(
+          ok(
+            JSON.stringify(
+              restIssueBody({ labels: ["ready-for-agent"], url: "https://github.com/acme/widgets/issues/42" }),
+            ),
+          ),
+        );
       }
-      // handoff: gh issue view N --json comments
       if (joined.includes("issue view") && joined.includes("--json comments")) {
         return Promise.resolve(ok(JSON.stringify({ comments: [] })));
-      }
-      // handoff: gh issue view N --json url
-      if (joined.includes("issue view") && joined.includes("--json url")) {
-        return Promise.resolve(ok(JSON.stringify({ url: `https://github.com/${"acme/widgets"}/issues/42` })));
       }
       // close-cascade dependent lookup: gh issue list --label req:42 ...
       if (joined.includes("issue list") && joined.includes("req:42")) {
@@ -332,14 +336,14 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     // Every closure ran from the primary checkout (ctx.root). A no-op or
     // wrong-cwd binding would surface here.
     expect(trace).toEqual([
-      { cmd: "gh", args: ["issue", "view", "42", "--repo", "acme/widgets", "--json", "labels"], cwd: root },
+      { cmd: "gh", args: ["api", "repos/acme/widgets/issues/42"], cwd: root },
       {
         cmd: "gh",
         args: ["issue", "edit", "42", "--repo", "acme/widgets", "--remove-label", "ready-for-agent", "--add-label", "running"],
         cwd: root,
       },
       { cmd: "gh", args: ["issue", "view", "42", "--repo", "acme/widgets", "--json", "comments"], cwd: root },
-      { cmd: "gh", args: ["issue", "view", "42", "--repo", "acme/widgets", "--json", "url"], cwd: root },
+      { cmd: "gh", args: ["api", "repos/acme/widgets/issues/42"], cwd: root },
       { cmd: "git", args: ["fetch", "origin", "main"], cwd: root },
       { cmd: "git", args: ["-C", root, "push", "origin", `${branch}:refs/heads/${branch}`], cwd: root },
       { cmd: "git", args: ["-C", root, "merge", "--ff-only", "origin/main"], cwd: root },
