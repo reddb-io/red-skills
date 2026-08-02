@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { TOON_PIN_SITES } from "../src/core/toon-version.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 
@@ -55,5 +56,23 @@ describe("red-toon-watch workflow contract", () => {
     expect(pr).toContain("Toon release notes");
     expect(pr).toContain("SANITIZED_NOTES");
     expect(pr).not.toContain("peter-evans/create-pull-request");
+  });
+
+  it("stages every registered pin site, so no bumped file is left out of the commit", async () => {
+    const pr = stepBody(await readWorkflow(), "Open or update rolling PR");
+    const staged = /git add -- (.+)/.exec(pr)?.[1]?.split(/\s+/) ?? [];
+
+    // An explicit path list silently drops a site the moment one is registered without it, and the
+    // bumped-but-unstaged file reads as "already correct" to the very guard meant to catch drift.
+    for (const site of new Set(TOON_PIN_SITES.map((site) => site.path))) {
+      expect(staged, `red-toon-watch never stages ${site}`).toContain(site);
+    }
+    expect(staged).toContain("pnpm-workspace.yaml");
+    expect(staged).toContain("pnpm-lock.yaml");
+  });
+
+  it("regenerates the pi skill mirrors that restate the pin", async () => {
+    expect(stepBody(await readWorkflow(), "Run toon bump")).toContain("pnpm pi:packages:build");
+    expect(stepBody(await readWorkflow(), "Open or update rolling PR")).toContain("packaging/pi");
   });
 });
