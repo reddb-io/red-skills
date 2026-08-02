@@ -414,6 +414,35 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("confirm each");
   });
 
+  // #3062: MCP servers register at plugin load, so a mid-session install writes
+  // the declaration and starts nothing. The doctor must say so, in the cure's
+  // own words, instead of leaving the operator to re-derive it forensically.
+  it("flags declared-but-unloaded MCP servers with the reload cure and an honest seam", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Declared-but-unloaded MCP servers");
+    expect(skill).toContain("registers MCP servers **at plugin load**");
+    expect(skill).toContain("declared-unloaded");
+    expect(skill).toContain("partially-loaded");
+    expect(skill).toContain("session-unobserved");
+    // The cure, verbatim.
+    expect(skill).toContain("restart the session, or run `/reload-plugins`");
+    // The seam is stated, not implied.
+    expect(skill).toContain("The seam, stated honestly");
+    expect(skill).toContain("--session-mcp");
+    expect(skill).toContain("Omitting the flag is never read as a clean session");
+    expect(skill).toContain("apps/dev/src/core/mcp-load-doctor.ts");
+    expect(skill).toContain("auditMcpLoad");
+    expect(skill).toContain("never restart a host, never reload plugins");
+    expect(skill).toContain("declared-but-unloaded MCP servers (check 27)");
+    expect(skill).toContain("`→ host session reload`");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Declared-but-unloaded MCP servers (check 27)");
+    expect(apply).toContain("would kill its own caller");
+    expect(apply).toContain("only the load is missing");
+  });
+
   it("documents the operational probe families, fix authority, and fleet boot refusal", async () => {
     const skill = await readDoctorSkill();
 

@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
 import { readBuildInfo } from "@reddb-io/build-info";
@@ -22,6 +23,11 @@ import {
   type MarketplaceSourceFacts,
   type MarketplaceSourceReport,
 } from "../core/marketplace-source-doctor.js";
+import {
+  auditMcpLoad,
+  type McpLoadFacts,
+  type McpLoadReport,
+} from "../core/mcp-load-doctor.js";
 import { readCatalogToonVersion } from "../core/toon-version.js";
 import { auditDependencyEdges, type DependencyEdgeReport } from "../core/dependency-edge-doctor.js";
 import {
@@ -40,7 +46,7 @@ import { listDependencyEdgeTickets, type GhContext } from "./gh.js";
 
 /**
  * doctor-classifiers.ts — the fact-collection half of the `/red-doctor` checks
- * whose classifiers are pure and IO-free (checks 12, 13, 15, 17, 18, 19, 21, 26).
+ * whose classifiers are pure and IO-free (checks 12, 13, 15, 17, 18, 19, 21, 26, 27).
  *
  * Every classifier under `core/` is injected-facts-only by design, so SOMETHING
  * has to read the repo, the host cache and the tracker and hand it the facts.
@@ -88,6 +94,8 @@ export interface DoctorClassifierReports {
   readonly hostBinaries: HostBinaryReport;
   /** Check 26 — marketplace registration source per host CLI. */
   readonly marketplaceSources: MarketplaceSourceReport;
+  /** Check 27 — declared MCP servers that never loaded in this session. */
+  readonly mcpLoad: McpLoadReport;
   /** Check 15 — native blocked-by vs `req:N` divergence. */
   readonly dependencyEdges: DependencyEdgeReport;
   /** Open Tickets whose native edges were not read (budget or transport). */
@@ -303,6 +311,81 @@ function collectRuntimeReport(
   return { report: auditRuntimes(facts), unresolved };
 }
 
+// ---------- check 27: declared-but-unloaded MCP servers ----------
+
+/** The marketplace slug a host CLI checks a RedSkills install out under. */
+const MARKETPLACE_CHECKOUT = "reddb-io-red-skills";
+
+/**
+ * Where one plugin's `.mcp.json` can be read from, most-specific first.
+ *
+ * The doctor runs in three shapes and the declaration lives somewhere different
+ * in each: a source checkout has it in-repo, a plugin-hosted run is handed its
+ * own root, and an adopter repo has only the host CLI's marketplace checkout.
+ * A plugin whose declaration resolves nowhere is skipped with a note — an
+ * adopter repo that does not carry our plugin files is ordinary, not a defect.
+ */
+function mcpDeclarationCandidates(root: string, plugin: string): string[] {
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT ?? process.env.CODEX_PLUGIN_ROOT;
+  return [
+    join(root, "plugins", plugin, ".mcp.json"),
+    ...(pluginRoot ? [join(pluginRoot, "..", plugin, ".mcp.json")] : []),
+    join(homedir(), ".claude", "plugins", "marketplaces", MARKETPLACE_CHECKOUT, "plugins", plugin, ".mcp.json"),
+  ];
+}
+
+/** The server names one `.mcp.json` declares, or undefined when unreadable. */
+function readDeclaredMcpServers(path: string): string[] | undefined {
+  const text = readOptionalText(path);
+  if (!text) return undefined;
+  try {
+    // `.mcp.json` is host-owned JSON by contract, like the plugin manifests
+    // above: it is read here, never written.
+    const servers = (JSON.parse(text) as { mcpServers?: unknown }).mcpServers;
+    if (!servers || typeof servers !== "object") return [];
+    return Object.keys(servers as Record<string, unknown>);
+  } catch {
+    return undefined;
+  }
+}
+
+function collectMcpLoadReport(
+  root: string,
+  configText: string | undefined,
+  sessionServers: readonly string[] | null,
+  notes: string[],
+): McpLoadReport {
+  const facts: McpLoadFacts[] = [];
+
+  for (const plugin of AUDITED_PLUGINS) {
+    // A disabled plugin is inert by design (the ADR 0067 gate), so its servers
+    // are absent on purpose and reporting them would teach operators to ignore
+    // this row.
+    if (!configText || !pluginEnabledInConfig(configText, plugin)) continue;
+
+    const declarationPath = mcpDeclarationCandidates(root, plugin).find((candidate) =>
+      existsSync(candidate),
+    );
+    if (!declarationPath) {
+      notes.push(`mcp load audit skipped for ${plugin}: no .mcp.json resolved on this host`);
+      continue;
+    }
+    const declared = readDeclaredMcpServers(declarationPath);
+    if (!declared) {
+      notes.push(`mcp load audit skipped for ${plugin}: ${declarationPath} did not parse`);
+      continue;
+    }
+    facts.push({
+      plugin,
+      declared,
+      declarationSource: declarationPath,
+      sessionServers,
+    });
+  }
+
+  return auditMcpLoad(facts);
+}
+
 // ---------- check 17: ask-red router coverage sync ----------
 
 function readRegisteredDevSkills(root: string): string[] | undefined {
@@ -380,6 +463,12 @@ export interface DoctorClassifierOptions {
   readonly readToolVersion?: (tool: string) => Promise<string | undefined>;
   /** Injected for tests; defaults to listing each host CLI's marketplaces. */
   readonly readMarketplaceList?: (host: MarketplaceHost) => Promise<MarketplaceListProbe>;
+  /**
+   * The MCP servers the invoking session sees (check 27). `null` — the default —
+   * means nobody told this run, which the audit reports as unobserved rather
+   * than assuming a clean session.
+   */
+  readonly sessionMcpServers?: readonly string[] | null;
 }
 
 /**
@@ -459,6 +548,13 @@ export async function collectDoctorClassifierReports(
     notes.push(`marketplace source audit unavailable: ${message(error)}`);
   }
 
+  let mcpLoad: McpLoadReport = { findings: [], rows: [] };
+  try {
+    mcpLoad = collectMcpLoadReport(ctx.root, configText, options.sessionMcpServers ?? null, notes);
+  } catch (error) {
+    notes.push(`mcp load audit unavailable: ${message(error)}`);
+  }
+
   let dependencyEdges: DependencyEdgeReport = { findings: [], rows: [] };
   let dependencyEdgesUnread: number[] = [];
   if (ctx.repo) {
@@ -513,6 +609,7 @@ export async function collectDoctorClassifierReports(
     runtimeUnresolved,
     hostBinaries,
     marketplaceSources,
+    mcpLoad,
     dependencyEdges,
     dependencyEdgesUnread,
     askRedRouter,

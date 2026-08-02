@@ -30,7 +30,8 @@ This is a prompt-driven skill, not a deterministic script. Explore, present what
 3. **Confirm before writing.** Show the draft agent-skills block, generated agent docs, development-workflow changes, and any accepted command-guard policy before editing. See [WRITE-CONTRACT.md](./WRITE-CONTRACT.md#confirm-and-edit).
 4. **Write under the no-clobber contract.** Never overwrite, rewrite, or reorder existing user-owned content except for the explicit surgical merges named in [WRITE-CONTRACT.md](./WRITE-CONTRACT.md#write). Use the existing-file selection rules, seed docs, workflow copy rules, plugin-activation merge, development-workflow injector, statusline wiring, and hook-script registration exactly as documented there.
 5. **Sweep existing issues only after setup.** If open issues exist, group label backfill candidates and ask for one batch approval before editing labels. See [ISSUE-SWEEP.md](./ISSUE-SWEEP.md).
-6. **Finish with the setup recap.** Tell the user which plugins are enabled here, remind them that other directories stay inert until setup runs there too, point memory/brain users at their next init step, and route one-off concrete work through `/go`, backlog work through `/afk`, and parked issues through `/retake`.
+6. **Verify the session before recapping — installed is not loaded.** Check whether this session actually sees the enabled plugins' MCP tools, and report `installed and loaded` or `installed, reload needed` explicitly. See [WRITE-CONTRACT.md](./WRITE-CONTRACT.md#verify-the-session-sees-the-plugin).
+7. **Finish with the setup recap.** Tell the user which plugins are enabled here, carry the session verdict from step 6 into it, remind them that other directories stay inert until setup runs there too, point memory/brain users at their next init step, and route one-off concrete work through `/go`, backlog work through `/afk`, and parked issues through `/retake`.
 
 ## Hard Rules
 
@@ -42,6 +43,7 @@ This is a prompt-driven skill, not a deterministic script. Explore, present what
 - **Do not add generated setup files for the user.** In particular, do not `git add` `.red/config.yaml`, `.red/.gitignore`, or hook files written by this setup.
 - **Workflow install is opt-in by lane.** Install only the workflows the user picked; standalone copy-installables keep their `red-*` filename, while reusable callers use `rs-*`.
 - **Command guards are offer-only.** The built-in dev worktree invariant comes from `plugins.dev.enabled: true`; do not write example `command_guard` rules unless the user explicitly accepts them.
+- **Never end on success while the session is blind.** A plugin enabled here is not a plugin loaded here: a host registers MCP servers at plugin load, so an install or update in THIS session leaves valid files on disk and zero tools in the session. Ending the recap on `✅ enabled` while the agent cannot call a single tool is what turns a one-line cure into a forensic investigation — say `installed, reload needed` and name `/reload-plugins`.
 - **ask-red maintenance rule.** Skill add, rename, removal, or flow changes require re-checking `../ask-red/SKILL.md` and updating its Coverage Inventory/routes. A progressive-disclosure-only extraction of this skill is not such a change; no router update is expected after re-checking.
 
 </what-to-do>

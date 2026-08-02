@@ -488,3 +488,87 @@ describe("redDoctorCommand — HUMAN-ONLY type declaration", () => {
     stdout.mockRestore();
   });
 });
+
+// #3062: a plugin installed mid-session has its `.mcp.json` on disk and its
+// server processes never started, and every surface of ours used to stay
+// silent — so the agent forensically re-derived a one-line cure.
+describe("redDoctorCommand — declared-but-unloaded MCP servers", () => {
+  const roots: string[] = [];
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+    roots.length = 0;
+  });
+
+  async function seedPluginRepo(prefix: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), prefix));
+    roots.push(root);
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\n", "utf8");
+    await mkdir(join(root, "plugins", "dev"), { recursive: true });
+    await writeFile(
+      join(root, "plugins", "dev", ".mcp.json"),
+      JSON.stringify({ mcpServers: { navigator: {}, castle: {}, rsp: {} } }),
+      "utf8",
+    );
+    return root;
+  }
+
+  async function runDoctor(root: string, args: readonly string[]): Promise<string> {
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root, ...args], root)).resolves.toBe(0);
+
+    stdout.mockRestore();
+    return writes.join("");
+  }
+
+  it("flags a session that sees none of the declared servers, naming the reload cure", async () => {
+    const root = await seedPluginRepo("red-doctor-mcp-load-none-");
+
+    const human = await runDoctor(root, ["--session-mcp", "none"]);
+
+    expect(human).toContain("red-doctor declared MCP servers loaded in this session");
+    expect(human).toContain("❌ dev declared=navigator,castle,rsp");
+    expect(human).toContain("error declared-unloaded");
+    expect(human).toContain("installed or updated mid-session");
+    expect(human).toContain("fix: restart the session, or run /reload-plugins");
+  });
+
+  it("passes clean when the session names the host-prefixed tools of every server", async () => {
+    const root = await seedPluginRepo("red-doctor-mcp-load-ok-");
+
+    const human = await runDoctor(root, [
+      "--session-mcp",
+      "mcp__plugin_dev_navigator__hover,mcp__plugin_dev_castle__project_status,mcp__plugin_dev_rsp__rsp_status",
+    ]);
+
+    expect(human).toContain("✅ dev declared=navigator,castle,rsp");
+    expect(human).toContain("mcp load findings: 0");
+  });
+
+  // A run that was never told what the session sees is not a clean one.
+  it("warns and names the flag when nobody stated the session", async () => {
+    const root = await seedPluginRepo("red-doctor-mcp-load-unobserved-");
+
+    const human = await runDoctor(root, []);
+
+    expect(human).toContain("warn session-unobserved");
+    expect(human).toContain("fix: re-run with --session-mcp");
+  });
+
+  it("renders the same check in the --json (TOON) form", async () => {
+    const root = await seedPluginRepo("red-doctor-mcp-load-json-");
+
+    const toon = await runDoctor(root, ["--json", "--session-mcp", ""]);
+
+    expect(toon).toContain("mcpLoad");
+    expect(toon).toContain("declared-unloaded");
+  });
+});

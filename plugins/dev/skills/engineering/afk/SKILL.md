@@ -31,8 +31,16 @@ The usual shape of a drain:
 5. `gate_run` → `land_branch` when a worker branch needs validation and landing
    outside the normal in-worker path.
 
-**When the MCP is unreachable, name that and fall back to the `red-skills-dev`
-CLI** — the same engine over the same cores, so the fallback changes transport,
+**When the MCP is unreachable, first ask whether the plugin was installed or
+updated in THIS session — if so, run `/reload-plugins` (or start a new session)
+before falling back.** MCP servers register at plugin load, so a mid-session
+install writes the declaration and starts no process: `.mcp.json`, the manifests
+and the launchers are all valid on disk while the session sees zero tools. That
+is a load-lifecycle gap, not an outage, and the CLI fallback would hide it.
+
+**Only once the reload is ruled out: name the unreachability and fall back to
+the `red-skills-dev` CLI** — the same engine over the same cores, so the
+fallback changes transport,
 not behavior. The invoking LLM is responsible for setting `RED_AFK_RUNNER` to
 its own host runner (`codex` from Codex, `claude` from Claude Code). Resolve the
 runtime through the shared contract in

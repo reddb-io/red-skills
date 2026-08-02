@@ -21,9 +21,21 @@ Tables and prose here always use the bare name.
 Every tool returns TOON, never prose: one structured document per call, encoded
 by the server. Read the fields; do not re-parse rendered text.
 
-**When the MCP is not reachable, say so and fall back to the `red-skills-dev`
-CLI — never hand-roll the operation.** The CLI is the same engine behind the
-same cores, so the fallback is a transport change, not a behavior change.
+**First step when the MCP is not reachable: was the plugin installed or updated
+in THIS session? Then run `/reload-plugins`, or start a new session.** A host
+registers MCP servers **at plugin load** — Claude Code even says so
+(`✓ Installed dev. Run /reload-plugins to apply.`) — so a mid-session install
+writes the declaration and starts no process. `.mcp.json`, the manifests and the
+launchers all read valid on disk while the session sees zero tools, which is a
+load-lifecycle gap wearing the exact shape of an outage. `/red-doctor` names the
+same cure from its check 27 when it is told what the session sees
+(`--session-mcp`).
+
+**Only once the reload is ruled out: say the MCP is unreachable and fall back to
+the `red-skills-dev` CLI — never hand-roll the operation.** The CLI is the same
+engine behind the same cores, so the fallback is a transport change, not a
+behavior change. Falling back FIRST is what turns a one-line cure into a
+forensic investigation.
 Resolve the runtime through [`../_report-runtime/WRAPPER.md`](../_report-runtime/WRAPPER.md):
 the canonical ADR 0091 npm direct-run form
 `npx -y -p @reddb-io/red-skills@<version> red-skills-dev …`, which works on
