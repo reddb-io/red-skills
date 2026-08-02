@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/dev",
-  "version": "3.3.11",
+  "version": "3.3.9",
   "private": true,
   "description": "RedSkills dev plugin implementation — the AFK TypeScript runtime (typed CLI, state-machine modules, sandcastle execution) under apps/dev. Built to dist/dev.bundle.min.mjs (ADR 0034, relocated by ADR 0060).",
   "license": "Apache-2.0",
@@ -14,13 +14,12 @@
     "bundle:entrypoint": "esbuild ../../packages/shared/entrypoint-cli.ts --bundle --minify --platform=node --format=esm --target=node22 --define:__ENTRYPOINT_ROLE__='\"run:dev\"' --outfile=../../plugins/dev/skills/engineering/afk/bin/afk.mjs --banner:js=\"import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);\"",
     "build": "pnpm run bundle && pnpm run bundle:mcp && pnpm run bundle:red-fetch && pnpm run bundle:entrypoint",
     "test": "NODE_OPTIONS=--max-old-space-size=3072 vitest run",
-    "test:invariants": "NODE_OPTIONS=--max-old-space-size=3072 vitest run tests/toon-json-guard.test.ts tests/extinct-source-guard.test.ts tests/shipped-primitive-guard.test.ts tests/host-owns-birth-guard.test.ts tests/shipped-binary-guard.test.ts tests/declared-wait-guard.test.ts tests/lane-run-mode-guard.test.ts tests/bare-invocation-guard.test.ts tests/statusline-command-doc.test.ts tests/toon-version-contract.test.ts tests/asked-balance-guard.test.ts",
+    "test:invariants": "NODE_OPTIONS=--max-old-space-size=3072 vitest run tests/toon-json-guard.test.ts tests/extinct-source-guard.test.ts tests/shipped-primitive-guard.test.ts tests/host-owns-birth-guard.test.ts tests/shipped-binary-guard.test.ts tests/declared-wait-guard.test.ts tests/lane-run-mode-guard.test.ts tests/bare-invocation-guard.test.ts tests/version-train-guard.test.ts",
     "test:canary": "NODE_OPTIONS=--max-old-space-size=3072 vitest run tests/mcp-lane-canary.test.ts tests/mcp-lane-canary-e2e.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "catalog:",
     "@reddb-io/build-info": "workspace:*",
-    "@reddb-io/github": "workspace:*",
     "@reddb-io/red-castle": "workspace:*",
     "@reddb-io/redskilled": "workspace:*",
     "@reddb-io/shared": "workspace:*",
