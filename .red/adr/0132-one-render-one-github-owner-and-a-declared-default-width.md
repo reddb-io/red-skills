@@ -44,3 +44,26 @@ Underneath all three sits a pattern this repo has now hit five times: **a mechan
 - `packages/github` couples the daemon to a package the castle also imports. Rule 3's skew-dissolving property was bought by having no shared code at all; this spends a little of it deliberately, on a module carrying GitHub API shape rather than castle semantics.
 - The ADR 0130 decision that the daemon fetches every project's counts in one aliased query is **decided and unbuilt** — the herdr dashboard still reports "the daemon polls no repository". Decisions 4 and 5 assume it lands.
 - Five one-sided wirings are now known (#3079, #3081, #3092 and the two above). Each shipped because an exported symbol with no callers reads exactly like a symbol that is simply unused. Tests that fail when a publisher loses its last caller are cheap and belong with each fix.
+
+## Amendment 1 — the daemon executes every GitHub call; the Worker keeps git
+
+Decision 4 chose a shared `packages/github` imported by both the daemon and the castle: one routing table, two callers. The alternative considered and rejected at the time was that the castle stop calling GitHub at all and reach it through the daemon. **That alternative is now the decision.**
+
+What changed is not the argument but the scope of the ask. Decision 5 had already put the quota ledger on the daemon, and a ledger that counts only its own holder's calls is the same per-process blindness it was created to end — the castle calling GitHub directly meant the ledger was born incomplete, exactly as per-process RSS sampling misses a cgroup's real total (#3080). One owner of the token that is not the only caller of the API is half an owner.
+
+**The daemon executes; the project decides and interprets.** That line is what keeps rule 3 intact, and it is the same line ADR 0130 already drew for the selector — *"the query that names this project's work. Carried, never read."* The project hands over a query, a target, a body of text; the daemon performs the call and returns bytes. It learns no label vocabulary, no selector semantics, no envelope format, no notion of what a Spec is. Those differ per bundle version, and a daemon that knew them would reintroduce the skew rule 3 dissolves.
+
+| | Daemon | Project / Worker |
+| --- | --- | --- |
+| Token, cache, quota ledger, circuit breaker | ✅ | — |
+| **Executing** the call, returning bytes | ✅ | — |
+| Choosing WHICH issue to fetch | — | ✅ |
+| **Composing** a comment's text | — | ✅ |
+| Interpreting a label, a selector, an envelope | — | ✅ |
+| `git` commit and push | — | ✅ |
+
+**git stays with the Worker, and the GitHub API moves to the daemon.** The split is not arbitrary: `git` runs over SSH and spends no API quota, so the resource that must be owned host-wide is exactly the resource that moves. A Worker still commits, branches and pushes its own work.
+
+`packages/github` survives with a smaller job. It is no longer a table two processes consult; it is the daemon's own routing, and the castle's side becomes a client of the socket. Decision 4's cardinality principle is unchanged — it decides which API the daemon reaches for.
+
+**The cost, stated so it is not discovered later: fail-closed now covers reading.** ADR 0130 rule 6 means no daemon, no Worker; after this it also means no daemon, no issue read. A Worker that could previously answer "what does this ticket say" from its own `gh` call now cannot. That is a real widening of the unavailability surface, accepted because a token nobody accounts for is what spent three hours of this machine's quota in one afternoon.
