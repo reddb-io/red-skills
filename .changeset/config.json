@@ -17,6 +17,7 @@
       "@reddb-io/code-nav-mcp",
       "@reddb-io/benchmark-memory",
       "@reddb-io/benchmark-code-understanding",
+      "@reddb-io/github",
       "@reddb-io/shared",
       "@reddb-io/build-info",
       "@reddb-io/red-skills"
