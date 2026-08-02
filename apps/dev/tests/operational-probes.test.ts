@@ -734,8 +734,35 @@ describe("operational probe registry", () => {
       expect(fixes).toContainEqual({
         probeId: "afk.base-freshness",
         status: "noop",
-        evidence: "guard refused: condition failed: clean-tree (1 dirty path(s))",
+        evidence: "guard refused: condition failed: clean-tree (1 dirty path(s): scratch.txt)",
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("applies the base-freshness fix when the only dirt is /red-setup's own output (#3106)", async () => {
+    const { root, repo } = await makeBaseFreshnessRepo();
+    try {
+      // Exactly the state `/red-setup` leaves behind: files it wrote and is
+      // forbidden to `git add`. Before #3106 this bricked every fresh repo.
+      await mkdir(join(repo, ".red"), { recursive: true });
+      await writeFile(join(repo, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\n", "utf8");
+      await writeFile(join(repo, ".red", ".gitignore"), "tmp/\nstate/\n", "utf8");
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        fastForwardLocalBase: async ({ remote, target }) =>
+          fastForwardLocalTarget(realExec(), { gitRepo: repo, remote, target }),
+      });
+
+      expect(fixes).toContainEqual({
+        probeId: "afk.base-freshness",
+        status: "applied",
+        evidence: "fast-forwarded main to origin/main",
+      });
+      expect(git(repo, "rev-parse", "main").trim()).toBe(git(repo, "rev-parse", "origin/main").trim());
     } finally {
       await rm(root, { recursive: true, force: true });
     }

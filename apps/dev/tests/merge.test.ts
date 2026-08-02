@@ -357,6 +357,46 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
     expect(c.some((x) => x.includes("fetch"))).toBe(false);
   });
 
+  it("names the dirty paths in the refusal instead of only counting them (#3106)", async () => {
+    const { exec } = fakeExec([
+      onTarget,
+      { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: " M apps/dev/src/x.ts\n?? notes.md\n" } },
+    ]);
+    const result = await fastForwardLocalTarget(exec, base);
+    expect(result.action).toBe("noop");
+    expect(result.evidence).toContain("apps/dev/src/x.ts");
+    expect(result.evidence).toContain("notes.md");
+  });
+
+  it("fast-forwards over dirt /red-setup itself wrote — else every fresh repo is bricked (#3106)", async () => {
+    const { exec, calls } = fakeExec([
+      onTarget,
+      {
+        match: (a) => a.join(" ").includes("status --porcelain"),
+        result: { stdout: " M .red/config.yaml\n?? .red/.gitignore\n?? .red/hooks/pre_merge/red-test.sh\n" },
+      },
+    ]);
+    const result = await fastForwardLocalTarget(exec, base);
+    expect(result.action).toBe("fast-forward");
+    expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(true);
+  });
+
+  it("still refuses when setup-owned dirt sits beside the operator's own WIP (#3106)", async () => {
+    const { exec, calls } = fakeExec([
+      onTarget,
+      {
+        match: (a) => a.join(" ").includes("status --porcelain"),
+        result: { stdout: " M .red/config.yaml\n M apps/dev/src/x.ts\n" },
+      },
+    ]);
+    const result = await fastForwardLocalTarget(exec, base);
+    expect(result.action).toBe("noop");
+    expect(result.failedCondition).toBe("clean-tree");
+    // The refusal says which half our own tooling authored.
+    expect(result.evidence).toContain("/red-setup");
+    expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
+  });
+
   it("no-ops when local <target> is ahead/diverged (not a strict ancestor)", async () => {
     const { exec, calls } = fakeExec([
       onTarget,
