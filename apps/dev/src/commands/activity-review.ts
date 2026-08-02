@@ -279,6 +279,16 @@ interface TokenFileCache {
 
 type TokenSummaryCache = Record<string, TokenFileCache>;
 
+/**
+ * The per-file map is nested under one envelope key rather than written at the document root.
+ * toon 0.13.0 reserves `order`, `discriminator` and `rows` as the cyclic-array wire's meta keys and
+ * tests for them **one level below the root**, so a root-level map of `{cursor, rows}` entries
+ * decodes as a malformed cyclic section — `invalid cyclic array wire` — in both the bundled encoder's
+ * own decoder and pinned `tq`. The envelope pushes our field names to depth two, where they are
+ * ordinary keys again. Do not flatten this back (issue #3072).
+ */
+const TOKEN_CACHE_ENVELOPE_KEY = "files";
+
 function tokenCachePath(workersRoot: string): string {
   return join(workersRoot, ".activity-review-token-cursors.json");
 }
@@ -336,8 +346,10 @@ async function readTokenSummaryCache(path: string): Promise<TokenSummaryCache> {
   try {
     const parsed = decodeDevSnapshotSniff(await readFile(path, "utf8")) as Record<string, unknown>;
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const envelope = parsed[TOKEN_CACHE_ENVELOPE_KEY];
+    if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) return {};
     const out: TokenSummaryCache = {};
-    for (const [file, value] of Object.entries(parsed)) {
+    for (const [file, value] of Object.entries(envelope as Record<string, unknown>)) {
       const cache = validTokenFileCache(value);
       if (cache !== null) out[file] = cache;
     }
@@ -348,7 +360,8 @@ async function readTokenSummaryCache(path: string): Promise<TokenSummaryCache> {
 }
 
 async function writeTokenSummaryCache(path: string, cache: TokenSummaryCache): Promise<void> {
-  await writeFile(path, encodeDevSnapshotToon(cache as unknown as Parameters<typeof encodeDevSnapshotToon>[0]), "utf8");
+  const document = { [TOKEN_CACHE_ENVELOPE_KEY]: cache };
+  await writeFile(path, encodeDevSnapshotToon(document as unknown as Parameters<typeof encodeDevSnapshotToon>[0]), "utf8");
 }
 
 async function listRetainedLogFiles(workersRoot: string): Promise<string[]> {
