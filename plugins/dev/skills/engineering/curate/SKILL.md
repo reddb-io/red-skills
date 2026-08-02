@@ -86,20 +86,24 @@ If the user passes `--restore` with no name, ask for one and re-issue.
 ### Invocation cheat sheet
 
 ```
+# The npm direct-run form is canonical (ADR 0091): it pins the version and works
+# on every host. An installed `memory` shim on PATH is a warm-cache optimization.
+MEM="npx -y -p @reddb-io/red-skills@<version> red-skills-memory"
+
 # Boot check (always first)
-memory curate check
+$MEM curate check
 
 # List candidates grouped by category as JSON
-memory curate list
+$MEM curate list
 
 # Non-interactive: file a single ready-for-human Issue (never mutates a Skill file)
-memory curate background
+$MEM curate background
 
 # Archive one approved candidate (category flows into the manifest)
-memory curate archive --candidate '{"name":"foo","source_kind":"project","path":"/abs/.../SKILL.md","reason":"no skill activity for 90d (threshold 60d)","category":"stale"}'
+$MEM curate archive --candidate '{"name":"foo","source_kind":"project","path":"/abs/.../SKILL.md","reason":"no skill activity for 90d (threshold 60d)","category":"stale"}'
 
 # Restore one archived skill
-memory curate restore foo
+$MEM curate restore foo
 ```
 
 The workflow ships inside the `memory` CLI. `memory curate skills` remains report-only; `memory curate check|list|background|archive|restore` are the `/curate` workflow commands.
