@@ -13,6 +13,7 @@ import {
   statusBarView,
   STATUS_BAR_ABSENCE,
 } from "../src/model/dashboard-view.js";
+import { buildWorkersTree } from "../src/model/nodes.js";
 import { readHostSnapshot, type HostSnapshot } from "../src/model/snapshot.js";
 import { createRedskilledReadClient } from "../src/redskilled/client.js";
 import { startFakeDaemon, type FakeDaemon } from "./fake-daemon.js";
@@ -183,6 +184,74 @@ describe("the frame is read from the daemon, not derived from the payload", () =
     expect(html).toContain("oomd/high");
     expect(html).toContain("signal=SIGKILL");
     expect(html).toContain("systemd-oomd killed");
+  });
+
+  it("carries the daemon's rates and shares into the bar and into the trees", async () => {
+    const daemon = await fake();
+    const snapshot = await readHostSnapshot({
+      client: createRedskilledReadClient({ socketPath: daemon.socketPath }),
+      eventLanePath: daemon.eventLanePath,
+      source: "the test pinned it",
+      sessionProject: "reddb-io/red-skills",
+    });
+
+    // The bar: whatever fits the one line, and no figure the daemon did not
+    // derive — the hour finished no issue, so no `iss/h` reaches the bar at all.
+    const bar = statusBarView(snapshot);
+    expect(bar.text).toContain("tk/m=1.2k");
+    expect(bar.text).toContain("claude=67%");
+    expect(bar.text).not.toContain("iss/h");
+
+    // The tree: the whole block, both windows and both dimensions, off the same
+    // aggregate the Worker rows are read from.
+    const rates = buildWorkersTree(snapshot)[0]!.children;
+    expect(rates.map((row) => row.label)).toEqual(["rates · last hour", "rates · last 24 hours"]);
+    const hour = rates[0]!.children;
+    expect(hour.find((row) => row.label === "tokens/min")?.description).toBe("1.2k · 18 samples");
+    expect(hour.find((row) => row.label === "runner share")?.description).toBe("claude 67% (2) · codex 33% (1)");
+    expect(rates[1]!.children.find((row) => row.label === "model share")?.description).toBe(
+      "opus 50% (1) · sonnet 50% (1) · 3 unattributed",
+    );
+  });
+
+  it("draws a rate the daemon could not derive as an absence, never as a zero", async () => {
+    const daemon = await fake();
+    const snapshot = await readHostSnapshot({
+      client: createRedskilledReadClient({ socketPath: daemon.socketPath }),
+      eventLanePath: daemon.eventLanePath,
+      source: "the test pinned it",
+    });
+
+    const hour = buildWorkersTree(snapshot)[0]!.children[0]!.children;
+    const issues = hour.find((row) => row.label === "issues/hour")!;
+    expect(issues.description).toBe("— no Worker outcome was recorded in the last 1h");
+    expect(issues.description).not.toContain("0");
+
+    const models = hour.find((row) => row.label === "model share")!;
+    expect(models.description).toContain("no Worker published a model in the last 1h");
+    expect(models.description).not.toContain("0%");
+
+    // The source that had nothing to answer with is named, because "the sampler
+    // is down" and "the machine is quiet" produce the same dash above.
+    const unavailable = hour.find((row) => row.label === "unavailable")!;
+    expect(unavailable.description).toBe("worker-outcomes");
+    expect(unavailable.tone).toBe("warning");
+  });
+
+  it("says a daemon deriving no metrics has none, rather than reporting an idle machine", async () => {
+    const daemon = await fake({
+      payload: () => ({ ...statuslinePayload(), metrics: undefined }),
+    });
+    const snapshot = await readHostSnapshot({
+      client: createRedskilledReadClient({ socketPath: daemon.socketPath }),
+      eventLanePath: daemon.eventLanePath,
+      source: "the test pinned it",
+    });
+
+    const rows = buildWorkersTree(snapshot)[0]!.children;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBe("absence");
+    expect(rows[0]!.label).toBe("no metrics on this daemon");
   });
 
   it("keeps the trees usable when a daemon refuses the op", async () => {

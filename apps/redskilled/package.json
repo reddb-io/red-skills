@@ -14,6 +14,7 @@
     "./event-lane": "./src/event-lane.ts",
     "./host-state": "./src/host-state.ts",
     "./launch-template": "./src/launch-template.ts",
+    "./live-metrics": "./src/live-metrics.ts",
     "./paths": "./src/paths.ts",
     "./project-breaker": "./src/project-breaker.ts",
     "./project-registration": "./src/project-registration.ts",

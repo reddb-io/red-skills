@@ -14,6 +14,8 @@ import test from "node:test";
 
 import { createRedskilledClient, readRedskilledSnapshot, RedskilledRequestError, RedskilledUnreachableError } from "../src/redskilled/client.mjs";
 import { decodeFrame, encodeFrame, takeFrame } from "../src/redskilled/wire.mjs";
+import { stripAnsi } from "../src/ui/ansi.mjs";
+import { renderDashboard } from "../src/ui/dashboard.mjs";
 import { hostState, statuslinePayload } from "./fixtures.mjs";
 
 async function withDaemon(handler, run) {
@@ -65,6 +67,32 @@ test("a read carries the ops the daemon publishes, and unwraps ok:true", async (
       const payloadRequest = seen.find((request) => request.op === "statusline-payload");
       assert.equal(payloadRequest.session_project, "reddb-io/red-skills");
       assert.ok(typeof payloadRequest.id === "string" && payloadRequest.id.length > 0, "every request carries its own id");
+    },
+  );
+});
+
+test("the rates a daemon serves reach the pane, and an absence reaches it as one", async () => {
+  await withDaemon(
+    (request) => ({ id: request.id, ok: true, value: request.op === "host-state" ? hostState() : statuslinePayload() }),
+    async ({ socketPath }) => {
+      const client = createRedskilledClient({ socketPath });
+      const snapshot = await readRedskilledSnapshot(client);
+      const rendered = renderDashboard({
+        snapshot,
+        state: { view: "overview", mode: "global", verbose: false, selected: 0, message: null },
+        size: { columns: 120, rows: 40 },
+        now: "2026-07-31T12:00:00.000Z",
+      })
+        .map(stripAnsi)
+        .join("\n");
+
+      assert.match(rendered, /1h\s+1\.2k\s+8\.4/, "the daemon's rates arrive derived and are printed as sent");
+      assert.match(rendered, /claude 67% \(2\)/, "and so do the shares");
+      assert.match(rendered, /no Worker outcome was recorded in the last 1h|—/, "an absence stays an absence over the wire");
+      assert.ok(
+        !/issues\/hr\s+0\b/.test(rendered),
+        "a rate the daemon did not derive must never reach the pane as a zero",
+      );
     },
   );
 });

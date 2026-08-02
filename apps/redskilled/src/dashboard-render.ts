@@ -26,6 +26,7 @@
  * own — the memory ceiling and the Worker slots — and says nothing about the ones
  * it does not, because a plausible zero is worse than a missing column.
  */
+import type { RedskilledMetricsWindow, RedskilledStatuslineMetrics } from "./live-metrics.js";
 import type {
   RedskilledStatuslineDeaths,
   RedskilledStatuslineEngine,
@@ -117,6 +118,15 @@ export interface RedskilledDashboardHeader {
   readonly engine: RedskilledStatuslineEngine | null;
   /** What this host could not explain; `null` when nothing has reaped. */
   readonly deaths: RedskilledStatuslineDeaths | null;
+  /**
+   * The rates the daemon derived; `null` on a daemon that derives none.
+   *
+   * Carried in full beside the line even though only a few figures fit in it: a
+   * surface reading the structure gets both windows and both share dimensions,
+   * and a surface printing the line gets whatever the width allowed. `null` here
+   * is "this daemon has no metrics block", never "this machine did nothing".
+   */
+  readonly metrics: RedskilledStatuslineMetrics | null;
   /** `runner model effort`, from the first Worker that published one; else `null`. */
   readonly model: string | null;
   readonly windows: RedskilledDashboardWindows;
@@ -326,6 +336,7 @@ function buildHeader(
   const engine = payload.engine ?? null;
   const version = engine?.running_version ?? payload.daemon.daemon_version;
   const deaths = payload.deaths ?? null;
+  const metrics = payload.metrics ?? null;
 
   // The version carries its own currency mark rather than a separate token: a
   // surface reading `v3.1.0` on its own cannot tell a current daemon from one
@@ -345,6 +356,12 @@ function buildHeader(
   if (counts.recently_closed != null) parts.push(`cpr=${counts.recently_closed}`);
   if (counts.open_issues != null) parts.push(`iss=${counts.open_issues}`);
   if (counts.stale) parts.push("!counts stale");
+  // The rates go here, where a status bar still reads them, and they are the
+  // FIRST thing dropped when the line does not fit — see below. Everything
+  // before them answers "is this machine healthy"; the rates answer "how fast is
+  // it going", which is the question that can wait for the table.
+  const rates = metrics == null ? null : compactRates(metrics.hour);
+  if (rates != null) parts.push(rates);
   // Beside the counts rather than under the table, because a death is a fact
   // about the machine and not about one project's Workers — and the header is
   // the whole of what a status bar shows.
@@ -356,6 +373,15 @@ function buildHeader(
     parts.push(age == null ? "!unmeasured" : `!stale ${Math.round(age / 1000)}s`);
   }
 
+  // The rates are optional in the literal sense: a header clamped mid-figure
+  // reads as a smaller number than the one measured (`tk/m=1.2` for 1.2k), so
+  // they are dropped whole rather than truncated. Every other part survived a
+  // narrow pane before this one existed and still does.
+  const full = parts.join(" · ");
+  const line = rates != null && width(full) > options.maxWidth
+    ? parts.filter((part) => part !== rates).join(" · ")
+    : full;
+
   return {
     repo,
     project: options.project,
@@ -363,13 +389,40 @@ function buildHeader(
     version,
     engine,
     deaths,
+    metrics,
     model,
     windows,
     counts,
     stale: payload.staleness.stale,
     age_ms: payload.staleness.age_ms,
-    line: clamp(parts.join(" · "), options.maxWidth),
+    line: clamp(line, options.maxWidth),
   };
+}
+
+/**
+ * The rates a one-line budget can carry: `tk/m=1.2k tl/m=8 iss/h=3`. PURE.
+ *
+ * The HOUR window and not the day, because a header is read to learn what the
+ * machine is doing NOW, and a 24h average is the figure least able to answer
+ * that. The day window rides on the structure beside the line for the surfaces
+ * with room to draw both.
+ *
+ * **A figure the daemon could not derive is left out, never printed as zero.**
+ * `tk/m=0` is a machine that spent nothing, and a window with no heartbeat in it
+ * is a machine nobody measured; a header with no room to explain the difference
+ * must not assert the wrong one. A window that derived nothing at all yields
+ * `null` here and costs the line no characters.
+ */
+export function compactRates(window: RedskilledMetricsWindow): string | null {
+  const parts: string[] = [];
+  if (window.tokens_per_min.value != null) parts.push(`tk/m=${formatRate(window.tokens_per_min.value)}`);
+  if (window.tools_per_min.value != null) parts.push(`tl/m=${formatRate(window.tools_per_min.value)}`);
+  if (window.issues_per_hour.value != null) parts.push(`iss/h=${formatRate(window.issues_per_hour.value)}`);
+  // One share and not the list: the leader is what a glance takes from a
+  // distribution, and the rest need a column the header does not have.
+  const leader = window.runner_share.shares[0];
+  if (leader != null) parts.push(`${leader.key}=${Math.round(leader.share * 100)}%`);
+  return parts.length === 0 ? null : parts.join(" ");
 }
 
 /**
@@ -453,6 +506,23 @@ export function formatCount(value: number): string {
   if (value >= 1e6) return scale(value / 1e6, "M");
   if (value >= 1e3) return scale(value / 1e3, "k");
   return String(Math.round(value));
+}
+
+/**
+ * A rate at dashboard resolution, keeping the digit that survives rounding. PURE.
+ *
+ * `formatCount` rounds a small figure to a whole number, which turns a real
+ * `0.4 issues/hour` into a `0` indistinguishable from an idle machine — the one
+ * confusion every surface here exists to prevent. Below ten the first decimal is
+ * kept; above it the count formatting takes over, because nobody reads the tenth
+ * of a thousand tokens per minute.
+ */
+export function formatRate(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  if (value >= 10) return formatCount(value);
+  if (value <= 0) return "0";
+  const text = (Math.round(value * 10) / 10).toFixed(1);
+  return text.endsWith(".0") ? text.slice(0, -2) : text;
 }
 
 /** An elapsed span in the two most significant units; `—` when unstated. PURE. */

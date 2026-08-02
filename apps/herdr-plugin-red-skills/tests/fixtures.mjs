@@ -188,6 +188,86 @@ export function statuslinePayload(overrides = {}) {
       major_held: false,
       current: true,
     },
+    metrics: metrics(),
+    ...overrides,
+  };
+}
+
+/**
+ * The rates the daemon derived, as `deriveRedskilledLiveMetrics` shapes them.
+ *
+ * The SAME canned block the VSCode suite is handed
+ * (`apps/vscode-extension-red-skills/tests/fixtures.ts`), so the two surfaces are
+ * proved against one aggregate rather than two hand-tuned ones that could drift
+ * apart and each look right.
+ *
+ * It carries the awkward cases on purpose, and they are the ones a real host
+ * produces: the last hour finished no issue, so `issues_per_hour` is ABSENT
+ * rather than zero; the Workers running in that hour published no model, so the
+ * hour's model share is absent while the day's — which sees the Workers that ran
+ * earlier — is not; and both dimensions count their unattributed Workers instead
+ * of dropping them.
+ */
+export function metrics(overrides = {}) {
+  return {
+    generated_at: "2026-07-31T12:00:00.000Z",
+    hour: {
+      window: "hour",
+      window_ms: 3_600_000,
+      from: "2026-07-31T11:00:00.000Z",
+      to: "2026-07-31T12:00:00.000Z",
+      tokens_per_min: { value: 1240, absent_reason: null, samples: 18 },
+      tools_per_min: { value: 8.4, absent_reason: null, samples: 18 },
+      issues_per_hour: { value: null, absent_reason: "no Worker outcome was recorded in the last 1h", samples: 0 },
+      runner_share: {
+        dimension: "runner",
+        attributed_workers: 3,
+        unattributed_workers: 0,
+        shares: [
+          { key: "claude", worker_count: 2, share: 2 / 3 },
+          { key: "codex", worker_count: 1, share: 1 / 3 },
+        ],
+        absent_reason: null,
+      },
+      model_share: {
+        dimension: "model",
+        attributed_workers: 0,
+        unattributed_workers: 3,
+        shares: [],
+        absent_reason: "no Worker published a model in the last 1h",
+      },
+      unavailable: ["worker-outcomes"],
+    },
+    day: {
+      window: "day",
+      window_ms: 86_400_000,
+      from: "2026-07-30T12:00:00.000Z",
+      to: "2026-07-31T12:00:00.000Z",
+      tokens_per_min: { value: 820, absent_reason: null, samples: 214 },
+      tools_per_min: { value: 5.1, absent_reason: null, samples: 214 },
+      issues_per_hour: { value: 4 / 24, absent_reason: null, samples: 4 },
+      runner_share: {
+        dimension: "runner",
+        attributed_workers: 5,
+        unattributed_workers: 0,
+        shares: [
+          { key: "claude", worker_count: 3, share: 0.6 },
+          { key: "codex", worker_count: 2, share: 0.4 },
+        ],
+        absent_reason: null,
+      },
+      model_share: {
+        dimension: "model",
+        attributed_workers: 2,
+        unattributed_workers: 3,
+        shares: [
+          { key: "opus", worker_count: 1, share: 0.5 },
+          { key: "sonnet", worker_count: 1, share: 0.5 },
+        ],
+        absent_reason: null,
+      },
+      unavailable: [],
+    },
     ...overrides,
   };
 }

@@ -7,10 +7,16 @@
  * what an unreachable host looks like — is answered by a pure function a test can
  * call. PURE.
  */
+import type {
+  RedskilledMetricsWindow,
+  RedskilledMetricValue,
+  RedskilledStatuslineMetrics,
+  RedskilledUsageShares,
+} from "@reddb-io/redskilled/protocol";
 import type { RedskilledStatuslineWorker } from "@reddb-io/redskilled/statusline-payload";
 import type { RedskilledHostEvent } from "../redskilled/event-lane.js";
 import type { HostSnapshot } from "./snapshot.js";
-import { formatBytes, formatClock, formatDuration, formatPercent } from "./format.js";
+import { formatBytes, formatClock, formatDuration, formatPercent, formatRate } from "./format.js";
 
 /** What a row means, so the provider picks an icon and a context value from ONE word. */
 export type NodeKind =
@@ -19,6 +25,7 @@ export type NodeKind =
   | "worker"
   | "detail"
   | "event"
+  | "metric"
   | "repository";
 
 /** How a row reads at a glance: ordinary, worth noticing, or wrong. */
@@ -95,6 +102,10 @@ export function buildWorkersTree(snapshot: HostSnapshot): readonly ViewNode[] {
       payload.staleness.reason,
       `read at ${formatClock(snapshot.readAt)}`,
     ].join("\n"),
+    // Under the host row rather than beside it: a rate is a fact about the whole
+    // machine, and the row it hangs from is the one that already says how much of
+    // the machine is in use.
+    children: buildMetricsNodes(payload.metrics),
   });
 
   const workerRows = [...payload.workers]
@@ -115,6 +126,132 @@ export function buildWorkersTree(snapshot: HostSnapshot): readonly ViewNode[] {
   }
 
   return [hostRow, ...workerRows];
+}
+
+const WINDOW_LABEL: Record<string, string> = {
+  hour: "last hour",
+  day: "last 24 hours",
+};
+
+/**
+ * How fast this machine is going, one row per rolling window. PURE.
+ *
+ * **Nothing here is divided by this extension.** The rates and the shares arrive
+ * derived from the daemon, the one process holding the Worker set across
+ * projects; a panel computing its own would be the second authority the
+ * statusline pair exists to prevent (ADR 0130 rule 10).
+ *
+ * **An absence is a row that says so.** A daemon too old to carry the block gets
+ * one honest line, and a window nothing published into shows a dash and the
+ * reason — because `0 tokens/min` is a machine that spent nothing, and a
+ * panel that printed it for "nobody measured" would report a stalled host as a
+ * calm one.
+ */
+export function buildMetricsNodes(
+  metrics: RedskilledStatuslineMetrics | null | undefined,
+): readonly ViewNode[] {
+  if (metrics == null) {
+    return [
+      node({
+        id: "workers:metrics:absent",
+        kind: "absence",
+        label: "no metrics on this daemon",
+        description: "the block is absent",
+        tooltip:
+          "This daemon serves no metrics block. That is a daemon without the rates, not a machine that did nothing — so nothing is drawn for it.",
+      }),
+    ];
+  }
+  return [metricsWindowNode(metrics.hour), metricsWindowNode(metrics.day)];
+}
+
+/** One window: its rates and both share dimensions, nested under it. PURE. */
+function metricsWindowNode(window: RedskilledMetricsWindow): ViewNode {
+  const label = WINDOW_LABEL[window.window] ?? window.window;
+  const children: ViewNode[] = [
+    metricNode(window, "tokens-per-min", "tokens/min", window.tokens_per_min),
+    metricNode(window, "tools-per-min", "tools/min", window.tools_per_min),
+    metricNode(window, "issues-per-hour", "issues/hour", window.issues_per_hour),
+    shareNode(window, window.runner_share),
+    shareNode(window, window.model_share),
+  ];
+
+  // The sources that had nothing to answer with, named. "The sampler is down"
+  // and "the machine is quiet" produce identical dashes above, and only one of
+  // them is a fault.
+  if (window.unavailable.length > 0) {
+    children.push(
+      node({
+        id: `workers:metrics:${window.window}:unavailable`,
+        kind: "metric",
+        label: "unavailable",
+        description: window.unavailable.join(" · "),
+        tone: "warning",
+        tooltip: `These sources carried nothing for this window:\n${window.unavailable.join("\n")}`,
+      }),
+    );
+  }
+
+  const summary = [window.tokens_per_min, window.tools_per_min]
+    .map((metric) => (metric.value == null ? null : formatRate(metric.value)))
+    .filter((text): text is string => text !== null);
+
+  return node({
+    id: `workers:metrics:${window.window}`,
+    kind: "metric",
+    label: `rates · ${label}`,
+    description: summary.length === 2
+      ? `${summary[0]} tokens/min · ${summary[1]} tools/min`
+      : "nothing measured in this window",
+    tooltip: [`${label} · ${window.from} → ${window.to}`, "derived by the daemon, never by this panel"].join("\n"),
+    children,
+  });
+}
+
+/** One rate, or the dash and the reason there is none. PURE. */
+function metricNode(
+  window: RedskilledMetricsWindow,
+  key: string,
+  label: string,
+  metric: RedskilledMetricValue,
+): ViewNode {
+  const measured = metric.value != null;
+  return node({
+    id: `workers:metrics:${window.window}:${key}`,
+    kind: "metric",
+    label,
+    description: measured
+      ? `${formatRate(metric.value!)} · ${metric.samples} sample${metric.samples === 1 ? "" : "s"}`
+      : `— ${metric.absent_reason ?? "nothing measured it"}`,
+    tooltip: measured
+      ? `${label}: ${metric.value}\nresting on ${metric.samples} fact(s) inside this window`
+      : `${label}: not measured\n${metric.absent_reason ?? "nothing measured it"}`,
+  });
+}
+
+/** How this window's Workers divide over one dimension. PURE. */
+function shareNode(window: RedskilledMetricsWindow, shares: RedskilledUsageShares): ViewNode {
+  // The unattributed are counted beside the list rather than dropped from it: a
+  // share list that quietly excluded them would report 100% of a machine while
+  // describing half of it.
+  const rest = shares.unattributed_workers > 0 ? ` · ${shares.unattributed_workers} unattributed` : "";
+  const drawn = shares.shares
+    .map((share) => `${share.key} ${formatPercent(share.share)} (${share.worker_count})`)
+    .join(" · ");
+  return node({
+    id: `workers:metrics:${window.window}:${shares.dimension}-share`,
+    kind: "metric",
+    label: `${shares.dimension} share`,
+    description: shares.shares.length > 0
+      ? `${drawn}${rest}`
+      : `— ${shares.absent_reason ?? "nothing was attributed"}${rest}`,
+    tooltip: [
+      `${shares.dimension} share`,
+      `${shares.attributed_workers} attributed · ${shares.unattributed_workers} unattributed`,
+      ...shares.shares.map((share) => `${share.key}: ${share.worker_count} Worker(s), ${formatPercent(share.share)}`),
+      shares.absent_reason ?? "",
+    ].filter((line) => line !== "").join("\n"),
+  });
 }
 
 /** One Worker row, with its vitals nested underneath. PURE. */

@@ -6,6 +6,7 @@ import {
   renderActivity,
   renderDashboard,
   renderHost,
+  renderMetrics,
   renderProjects,
   renderWorkerRow,
   renderWorkers,
@@ -97,6 +98,33 @@ test("a table that does not fit says how much it dropped", () => {
   const payload = statuslinePayload();
   const rendered = text(renderWorkers(payload, { columns: 120, selected: 0, verbose: false, localProject: null, budgetRows: 1 }));
   assert.match(rendered, /1 more Worker\(s\)/);
+});
+
+test("the metrics section draws the daemon's rates and shares, per window", () => {
+  const rendered = text(renderMetrics(statuslinePayload(), SIZE));
+  assert.match(rendered, /METRICS/);
+  assert.match(rendered, /1h\s+1\.2k\s+8\.4/, "the hour's rates come from the daemon, rounded for the pane");
+  assert.match(rendered, /24h\s+820\s+5\.1\s+0\.2/, "and the day's beside them");
+  assert.match(rendered, /runner\s+claude 67% \(2\) · codex 33% \(1\)/);
+  assert.match(rendered, /model\s+opus 50% \(1\) · sonnet 50% \(1\)/);
+  assert.match(rendered, /3 unattributed/, "a Worker nobody attributed is counted, never dropped");
+});
+
+test("a window that measured nothing draws a dash and the reason, never a zero", () => {
+  const rendered = text(renderMetrics(statuslinePayload(), SIZE));
+  const hour = rendered.split("\n").find((line) => /^\s+1h\s/.test(line));
+  assert.match(hour, /—/, "the hour finished no issue, so its rate is a dash");
+  assert.ok(!/\s0\s*$/.test(hour), "an absence must not be rendered as a zero");
+  assert.match(rendered, /no Worker published a model in the last 1h/);
+  assert.match(rendered, /worker-outcomes/, "the source that had nothing to answer with is named");
+});
+
+test("a daemon carrying no metrics block says so instead of drawing zeros", () => {
+  const payload = statuslinePayload();
+  delete payload.metrics;
+  const rendered = text(renderMetrics(payload, SIZE));
+  assert.match(rendered, /derives no metrics/);
+  assert.ok(!/tokens\/min/.test(rendered), "an absent block draws no table at all");
 });
 
 test("a project with a registration and no Worker is still a project", () => {
