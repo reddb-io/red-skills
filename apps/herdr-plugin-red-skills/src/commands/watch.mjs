@@ -28,7 +28,20 @@ import { detectSignals, snapshotState, throttle } from "../watch/signals.mjs";
 const LOCK_FILE = "watch.lock";
 const STATE_FILE = "watch-state.toon";
 
-const ENTRY = fileURLToPath(new URL("../../bin/red-skills-herdr.mjs", import.meta.url));
+/**
+ * The file `--detach` re-executes, which is whichever entry is RUNNING.
+ *
+ * `process.argv[1]` answers that in both layouts this plugin has: the checkout's
+ * `bin/red-skills-herdr.mjs`, and the single-file bundle an install materializes
+ * over it (issue #3060). Deriving it from this module's own URL was right for
+ * only the first — bundled, this module IS the entry, and `../../bin/…` resolves
+ * to a path outside the plugin root, so the detached child never started.
+ */
+export function watcherEntry(argv = process.argv) {
+  const running = argv[1];
+  if (typeof running === "string" && running.endsWith(".mjs") && existsSync(running)) return running;
+  return fileURLToPath(new URL("../../bin/red-skills-herdr.mjs", import.meta.url));
+}
 
 function alive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -114,7 +127,7 @@ export async function runWatch({ config, flags = {} }) {
   if (flags.detach) {
     // The hook must return; the loop must not. Re-exec detached, and hand the
     // child a stdio that cannot keep herdr's own pipes open.
-    const child = spawn(process.execPath, [ENTRY, "watch"], {
+    const child = spawn(process.execPath, [watcherEntry(), "watch"], {
       detached: true,
       stdio: "ignore",
       env: process.env,

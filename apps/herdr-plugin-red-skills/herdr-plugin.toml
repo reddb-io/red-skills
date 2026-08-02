@@ -1,8 +1,8 @@
 #
 # herdr-plugin.toml — registers red-skills with herdr.
 #
-#   herdr plugin install reddb-io/herdr-plugin-red-skills
-#   herdr plugin link .            # from a checkout, for development
+#   herdr plugin install reddb-io/red-skills/apps/herdr-plugin-red-skills
+#   herdr plugin link apps/herdr-plugin-red-skills   # from a checkout, for development
 #
 # The plugin is a read client of `redskilled`, the host-scoped execution daemon
 # of reddb-io/red-skills (ADR 0130): exactly one singleton per machine, behind a
@@ -12,8 +12,10 @@
 # 0130 rule 9 makes reach asymmetric (read the host, write the project), and a
 # monitor belongs entirely on the reading half.
 #
-# Zero dependencies and no bundling: every command is plain Node ESM run
-# straight from this checkout, so an install is a clone and nothing else.
+# From a checkout every command is plain Node ESM run straight from the tree. An
+# INSTALL gets this directory and nothing above it, so its two workspace links
+# resolve to nothing — which is why the build hook materializes the released
+# single-file bundle over the entry (issue #3060, scripts/materialize-entrypoint.mjs).
 
 id = "reddb-io.red-skills"
 name = "RedSkills"
@@ -25,16 +27,23 @@ min_herdr_version = "0.7.5"
 platforms = ["linux", "macos", "windows"]
 description = "Watch the redskilled host daemon from herdr: live Workers and their vitals, worker logs, the host event lane, open pull requests per project, and notifications when any of it changes."
 
-# No build, only a preflight. There is nothing to compile — the commands are
-# plain ESM — but a missing Node is worth failing the install over rather than
-# discovering it as a pane that opens and immediately closes.
+# A preflight and a materialization, in that order and for the same reason: both
+# are things worth failing the INSTALL over rather than discovering later as a
+# pane that opens and immediately closes.
+#
+#   1. Node has to be on PATH; every command here is a Node program.
+#   2. The entry has to be runnable from this directory. In a checkout it already
+#      is and step 2 does nothing. In an install it is not — the workspace links
+#      it imports are not downloaded with it — so the hook fetches the release's
+#      single-file bundle and writes it over `bin/red-skills-herdr.mjs`, the path
+#      every pane, action and startup entry below already names.
 [[build]]
 platforms = ["linux", "macos"]
-command = ['sh', '-c', 'node --version >/dev/null 2>&1 || { echo "red-skills needs Node.js 20+ on PATH"; exit 1; }']
+command = ['sh', '-c', 'node --version >/dev/null 2>&1 || { echo "red-skills needs Node.js 20+ on PATH"; exit 1; }; exec node "$HERDR_PLUGIN_ROOT/scripts/materialize-entrypoint.mjs"']
 
 [[build]]
 platforms = ["windows"]
-command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error "red-skills needs Node.js 20+ on PATH"; exit 1 }']
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error "red-skills needs Node.js 20+ on PATH"; exit 1 }; & node "$env:HERDR_PLUGIN_ROOT\scripts\materialize-entrypoint.mjs"; exit $LASTEXITCODE']
 
 # The notification watcher. herdr fires this once per enabled plugin after the
 # session is restored and its API socket is ready.

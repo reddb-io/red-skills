@@ -64,18 +64,51 @@ The socket path is reported in the "not answering" tooltip along with the rule
 that produced it, because that is the question asked precisely when nothing
 answers.
 
-## Building and installing
+## Installing
+
+**Download the `.vsix` from a release and install it.** No checkout, no `pnpm`,
+no build:
+
+```sh
+gh release download --repo reddb-io/red-skills --pattern 'vscode-extension-red-skills-*.vsix'
+
+code --install-extension vscode-extension-red-skills-*.vsix     # VS Code
+codium --install-extension vscode-extension-red-skills-*.vsix   # VSCodium
+```
+
+Without `gh`, the same file over plain HTTP — the redirect on `/releases/latest`
+names the version, which is the one thing a download URL cannot guess:
+
+```sh
+version=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+  https://github.com/reddb-io/red-skills/releases/latest | sed 's#.*/v##')
+curl -fsSLO "https://github.com/reddb-io/red-skills/releases/download/v${version}/vscode-extension-red-skills-${version}.vsix"
+code --install-extension "vscode-extension-red-skills-${version}.vsix"
+```
+
+The archive is attached to **every** GitHub Release and stamped with that
+release's version, so the next one installs over this one instead of being
+refused as already installed.
+
+### Building it yourself
+
+The contributor path, for a change you are making rather than a version you want:
 
 ```sh
 pnpm -C apps/vscode-extension-red-skills build      # typecheck + bundle out/extension.cjs
-pnpm -C apps/vscode-extension-red-skills package    # write dist/reddb-io.vscode-extension-red-skills-<version>.vsix
-code --install-extension dist/reddb-io.vscode-extension-red-skills-0.1.0.vsix
+pnpm -C apps/vscode-extension-red-skills package    # write dist/vscode-extension-red-skills-<version>.vsix
+code --install-extension dist/vscode-extension-red-skills-0.1.0.vsix
 ```
 
-The `.vsix` is **never published**. It is built by `src/packaging/vsix.ts` rather
-than by `@vscode/vsce`: the archive is a well-specified OPC zip, and the
-alternative was 290 packages and 130 MB in every CI install of this workspace to
-produce a package nothing pushes anywhere. The build is deterministic — a fixed
+The `.vsix` reaches **no marketplace** — that is not a destination this repo has,
+and a script that could push there is one an accident can run. It was for a while
+attached to nothing either, which made a clone of the monorepo the only way to
+install a finished extension; the maintainer reversed that in issue #3060, and
+`red-publish` now packages the archive and attaches it to the Release.
+
+It is built by `src/packaging/vsix.ts` rather than by `@vscode/vsce`: the archive
+is a well-specified OPC zip, and the alternative was 290 packages and 130 MB in
+every CI install of this workspace. The build is deterministic — a fixed
 timestamp and a declared file list — so two builds of one tree produce identical
 bytes.
 

@@ -48,22 +48,46 @@ It answers, in one pane, the question the daemon exists to make answerable:
 
 The plugin lives at `apps/herdr-plugin-red-skills/` in the
 [reddb-io/red-skills](https://github.com/reddb-io/red-skills) monorepo (ADR
-0131). Install it by linking that directory from a checkout with its workspace
-installed:
+0131). **Installing it needs neither that checkout nor `pnpm`:**
+
+```bash
+herdr plugin install reddb-io/red-skills/apps/herdr-plugin-red-skills
+```
+
+herdr downloads this directory alone, and its install-time build hook fetches
+`herdr-plugin-red-skills.bundle.min.mjs` from the latest GitHub Release — one
+esbuild file with both workspace dependencies inlined — and writes it over
+`bin/red-skills-herdr.mjs`, the entry every pane and action already names. That
+hook is the whole of the install: nothing is compiled, and nothing is resolved
+from a registry.
+
+Fetching it by hand does the same thing, which is worth knowing on a machine
+that has no outbound access at install time:
+
+```bash
+curl -fsSL -o bin/red-skills-herdr.mjs \
+  https://github.com/reddb-io/red-skills/releases/latest/download/herdr-plugin-red-skills.bundle.min.mjs
+```
+
+Requirements: **herdr 0.7.5+** and **Node.js 20+ on PATH**.
+
+Nothing durable is kept in the plugin root, so replacing it loses nothing:
+config and state live in `HERDR_PLUGIN_CONFIG_DIR` and `HERDR_PLUGIN_STATE_DIR`.
+
+### From a checkout
+
+The contributor path, for a change you are making rather than a version you want.
+Linking runs the source tree itself, so an edit is what the panes show:
 
 ```bash
 pnpm install                             # from the repo root, once
 herdr plugin link apps/herdr-plugin-red-skills
 ```
 
-Nothing durable is kept in the plugin root, so replacing it loses nothing:
-config and state live in `HERDR_PLUGIN_CONFIG_DIR` and `HERDR_PLUGIN_STATE_DIR`.
-
-Requirements: **herdr 0.7.5+** and **Node.js 20+ on PATH**. There is no build —
-every command is plain Node ESM run straight from the checkout. Two workspace
-dependencies are resolved by `pnpm install` and nothing else: `@reddb-io/toon`,
-which is the format the daemon wire and this plugin's own files are written in,
-and `@reddb-io/build-info`, which is where `--version` reads its answer.
+A linked plugin materializes nothing — the build hook sees the two workspace
+dependencies resolve and leaves the source entry alone. Those two are
+`@reddb-io/toon`, the format the daemon wire and this plugin's own files are
+written in, and `@reddb-io/build-info`, where `--version` reads its answer.
 
 You also need a `redskilled` daemon. This plugin never starts one; bring one up
 the way red-skills does:
@@ -263,6 +287,7 @@ width.
 
 ```
 bin/red-skills-herdr.mjs  the single entrypoint; --help and --version answer offline
+scripts/materialize-entrypoint.mjs  the build hook: an install replaces that entry with the released bundle
 src/redskilled/           the daemon: socket derivation, wire, client, event lane, log tail
 src/ui/                   ansi widths, formatters, the screen loop, the three views
 src/commands/             board, dashboard, logs, status, watch, pane, doctor

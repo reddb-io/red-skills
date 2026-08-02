@@ -19,6 +19,8 @@
   "scripts": {
     "test": "python3 scripts/check-manifest.py && node --test \"tests/*.test.mjs\"",
     "check": "python3 scripts/check-manifest.py && node --test \"tests/*.test.mjs\"",
+    "bundle": "node ../../scripts/bundle-app.mjs --entry bin/red-skills-herdr.mjs --outfile ../../dist/herdr-plugin-red-skills.bundle.min.mjs --asset herdr-plugin-red-skills.bundle.min.mjs --minify",
+    "build": "pnpm run bundle",
     "smoke": "sh scripts/smoke.sh",
     "preview": "node scripts/preview.mjs",
     "fake-daemon": "node scripts/fake-daemon.mjs /tmp/redskilled-fake.sock",
@@ -28,6 +30,9 @@
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/toon": "catalog:"
+  },
+  "devDependencies": {
+    "esbuild": "catalog:"
   },
   "keywords": [
     "herdr",
