@@ -392,6 +392,28 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("redskilled provision");
   });
 
+  // #3059: the source a marketplace was registered from is what decides whether
+  // `marketplace update` can ever advance the machine.
+  it("audits the marketplace registration source read-only with a gated repoint", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Marketplace registration source");
+    expect(skill).toContain("re-reads **whatever source the marketplace was registered from**");
+    expect(skill).toContain("frozen-directory-source");
+    expect(skill).toContain("source-unknown");
+    expect(skill).toContain("an uninstalled host registered nothing, so it can freeze nothing");
+    expect(skill).toContain("apps/dev/src/core/marketplace-source-doctor.ts");
+    expect(skill).toContain("auditMarketplaceSources");
+    expect(skill).toContain("never add, remove, or update a registration");
+    expect(skill).toContain("Directory-sourced `red-skills` marketplace (check 26)");
+
+    const apply = await readDoctorApply();
+    expect(apply).toContain("Marketplace registration source (check 26)");
+    expect(apply).toContain("plugin marketplace add reddb-io/red-skills");
+    expect(apply).toContain("Never repoint a `source-unknown` finding");
+    expect(apply).toContain("confirm each");
+  });
+
   it("documents the operational probe families, fix authority, and fleet boot refusal", async () => {
     const skill = await readDoctorSkill();
 
