@@ -14,7 +14,7 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src", "tests", "../../packages/shared/**/*.ts", "../../apps/rsp/src/**/*.ts"],
+  "include": ["src", "tests", "../../packages/shared/**/*.ts", "../../packages/github/**/*.ts", "../../apps/rsp/src/**/*.ts"],
   "comment-exclude": "Shared source is typechecked here (dev imports it); shared *.test.ts run under vitest and resolve their own deps, so they are not compiled by dev's tsc.",
-  "exclude": ["../../packages/shared/**/*.test.ts"]
+  "exclude": ["../../packages/shared/**/*.test.ts", "../../packages/github/**/*.test.ts"]
 }
