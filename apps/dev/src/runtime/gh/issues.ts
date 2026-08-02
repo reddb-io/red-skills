@@ -13,16 +13,12 @@ import {
 } from "@reddb-io/shared/github-batch.js";
 import { scrubOutbound } from "../outbound-redaction.js";
 import { repoArgs, runGh, type GhContext } from "./common.js";
+import { readSingleObject } from "./single-object.js";
 
 export async function viewLabels(ctx: GhContext, issue: number): Promise<string[]> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "labels"]);
-  if (r.code !== 0) return [];
-  try {
-    const parsed = JSON.parse(r.stdout) as { labels?: Array<{ name?: string }> };
-    return Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [];
-  } catch {
-    return [];
-  }
+  const read = await readSingleObject(ctx, "issue", issue, ["labels"]);
+  const parsed = (read.row ?? {}) as { labels?: Array<{ name?: string }> };
+  return Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [];
 }
 
 /**
@@ -577,13 +573,10 @@ export type IssueBodyReadResult =
 /** `gh issue view --json body` → raw body. Distinguishes an empty body from a
  * failed/unparseable read so readiness lint never mutates on unknown content. */
 export async function readIssueBody(ctx: GhContext, issue: number): Promise<IssueBodyReadResult> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "body"]);
-  if (r.code !== 0) return { ok: false, reason: `failed to read issue body (gh exit ${r.code})` };
-  try {
-    return { ok: true, body: String((JSON.parse(r.stdout) as { body?: string }).body ?? "") };
-  } catch {
-    return { ok: false, reason: "failed to parse issue body JSON" };
-  }
+  const read = await readSingleObject(ctx, "issue", issue, ["body"]);
+  if (read.out.code !== 0) return { ok: false, reason: `failed to read issue body (gh exit ${read.out.code})` };
+  if (!read.row) return { ok: false, reason: "failed to parse issue body JSON" };
+  return { ok: true, body: String((read.row as { body?: string }).body ?? "") };
 }
 
 /** `gh issue view --json body` → raw body, or undefined when absent/unreadable.
@@ -595,13 +588,8 @@ export async function issueBody(ctx: GhContext, issue: number): Promise<string |
 
 /** `gh issue view --json url` → the resolved issue url. */
 export async function issueUrl(ctx: GhContext, issue: number): Promise<string> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "url"]);
-  if (r.code !== 0) return "";
-  try {
-    return String((JSON.parse(r.stdout) as { url?: string }).url ?? "");
-  } catch {
-    return "";
-  }
+  const read = await readSingleObject(ctx, "issue", issue, ["url"]);
+  return String(((read.row ?? {}) as { url?: string }).url ?? "");
 }
 
 /** `gh issue view --json number,title,url` for human-facing issue references. */
@@ -609,16 +597,12 @@ export async function issueReference(
   ctx: GhContext,
   issue: number,
 ): Promise<{ number: number; title?: string; url?: string } | undefined> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "number,title,url"]);
-  if (r.code !== 0) return undefined;
-  try {
-    const parsed = JSON.parse(r.stdout) as { number?: number; title?: string; url?: string };
-    return {
-      number: Number(parsed.number ?? issue),
-      title: String(parsed.title ?? ""),
-      url: String(parsed.url ?? ""),
-    };
-  } catch {
-    return undefined;
-  }
+  const read = await readSingleObject(ctx, "issue", issue, ["number", "title", "url"]);
+  if (!read.row) return undefined;
+  const parsed = read.row as { number?: number; title?: string; url?: string };
+  return {
+    number: Number(parsed.number ?? issue),
+    title: String(parsed.title ?? ""),
+    url: String(parsed.url ?? ""),
+  };
 }
