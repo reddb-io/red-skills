@@ -29,6 +29,7 @@ import type { ProcessDeathKind } from "@reddb-io/shared/death-record.js";
 import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHostConsumption } from "./admission.js";
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
 import type { RedskilledHostState, RedskilledWorkerView } from "./host-state.js";
+import { isRedskilledStatuslineMetrics, type RedskilledStatuslineMetrics } from "./live-metrics.js";
 import { resolveEnforcedBudget, type RedskilledBudgetName, type RedskilledRssReading } from "./memory-sampler.js";
 import {
   buildActivityReport,
@@ -321,6 +322,19 @@ export interface RedskilledStatuslinePayload {
    * that finds the block absent must not read it as "up to date".
    */
   readonly engine?: RedskilledStatuslineEngine;
+  /**
+   * The rates this daemon derived from the facts it alone holds.
+   *
+   * Here rather than computed per surface for the reason the activity counts and
+   * the death verdicts are: a rate has one answer, and three surfaces each
+   * dividing their own counters would print three of them for the same instant.
+   *
+   * OPTIONAL on the wire (ADR 0130 rule 3): a daemon that predates the metrics
+   * answers completely without them, and a consumer that finds the block absent
+   * must render nothing rather than a calm zero — a machine nobody measured is
+   * not an idle one.
+   */
+  readonly metrics?: RedskilledStatuslineMetrics;
 }
 
 export interface BuildStatuslinePayloadInput {
@@ -369,6 +383,14 @@ export interface BuildStatuslinePayloadInput {
   readonly deaths?: readonly DeathAttribution[];
   /** How many verdicts the payload lists before the rest are counted instead. */
   readonly recentDeathLimit?: number;
+  /**
+   * The rates the daemon derived, or absent when it derived none.
+   *
+   * Derived by the caller and passed in, for the same reason the log lines are:
+   * the observation history belongs to the daemon that received the heartbeats,
+   * and this document stays a pure function of its inputs.
+   */
+  readonly metrics?: RedskilledStatuslineMetrics;
 }
 
 /** The payload document. PURE — every aggregate is derived from the Worker set. */
@@ -444,6 +466,9 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       ? {}
       : { deaths: buildDeaths(input.deaths, input.recentDeathLimit ?? REDSKILLED_RECENT_DEATH_LIMIT) }),
     engine: buildEngine(input.hostState),
+    // Echoed, never recomputed: the rates rest on a history only the daemon
+    // holds, and a second derivation here would be a second authority on them.
+    ...(input.metrics === undefined ? {} : { metrics: input.metrics }),
   };
 }
 
@@ -696,7 +721,8 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     // and rejecting the whole payload would lose the Worker set over a field this
     // consumer only needed for a badge (ADR 0130 rule 3).
     (payload.deaths === undefined || isStatuslineDeaths(payload.deaths)) &&
-    (payload.engine === undefined || isStatuslineEngine(payload.engine));
+    (payload.engine === undefined || isStatuslineEngine(payload.engine)) &&
+    (payload.metrics === undefined || isRedskilledStatuslineMetrics(payload.metrics));
 }
 
 function isStatuslineDeaths(value: unknown): boolean {
