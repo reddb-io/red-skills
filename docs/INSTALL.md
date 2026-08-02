@@ -36,6 +36,12 @@ available for offline and dev installs through `--local-marketplace`
 (`RED_SKILLS_MARKETPLACE_SOURCE=local`); it pins the machine to the snapshot the
 installer downloaded, which is the point of it.
 
+`--version <tag>` pins the downloaded source cache (what the OpenCode and Pi
+surfaces install from), not the marketplace: a GitHub-sourced marketplace always
+tracks the repository. Pin the Claude/Codex plugins to a specific release by
+combining `--version <tag>` with `--local-marketplace`, which registers exactly
+that snapshot.
+
 Machines installed before this model shipped carry a directory-sourced
 registration and are frozen at their install-day version. Two cures, either one
 is enough:
