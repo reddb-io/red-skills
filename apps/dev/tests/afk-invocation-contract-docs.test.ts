@@ -16,7 +16,9 @@ describe("AFK invocation contract docs (#1946)", () => {
     expect(skill).toContain("canonical\nform is the ADR 0091 npm direct-run");
     expect(skill).toContain("npx -y -p @reddb-io/red-skills@<version> red-skills-dev");
     expect(skill).toContain("The AFK queue-drain subcommand is `run`");
-    expect(skill).toContain("There is no\n`red-skills-dev afk` subcommand");
+    // #3071 moved the prose off the bare binary: naming a binary is fine, a
+    // copy-pasteable bare command is not, and `red-skills-dev afk` read as one.
+    expect(skill).toContain("There is no `afk`\nsubcommand on the dev CLI");
   });
 
   it("shared report-runtime wrapper owns the binary precedence and missing-shim action", async () => {
@@ -26,7 +28,7 @@ describe("AFK invocation contract docs (#1946)", () => {
     expect(wrapper).toContain("warm-cache\noptimization");
     expect(wrapper).toContain("npx -y -p @reddb-io/red-skills@<version> red-skills-dev <subcommand> [args]");
     expect(wrapper).toContain("fall through to the npx form silently");
-    expect(wrapper).toContain("There is no `red-skills-dev afk` subcommand");
+    expect(wrapper).toContain("There is no `afk` subcommand on the dev CLI");
   });
 
   it("sibling skills route through the same shared runtime contract", async () => {
