@@ -1902,6 +1902,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   /** Forget an older absence when a newer registration transition supersedes it. */
   function removeRegistrationHistory(projectLabel: string): void {
+    recoverableRegistrations.delete(projectLabel);
     for (let index = lapses.length - 1; index >= 0; index -= 1) {
       if (lapses[index]!.project_label === projectLabel) lapses.splice(index, 1);
     }
