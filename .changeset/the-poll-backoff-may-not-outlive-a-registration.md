@@ -1,0 +1,5 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+The queue poll's maximum backoff is now bounded below the registration TTL, closing a regression this repo introduced one release earlier. `sustainRegistrations` runs INSIDE the queue poll, so the poll is the only thing holding a registration up — and the adaptive cadence added alongside the asked-balance work set the maximum backoff to `300_000ms`, exactly `REDSKILLED_REGISTRATION_TTL_MS`. One slow cycle therefore retired a healthy project: observed three times in a single session, once with a full queue and a Worker of that same project reported LANDING in the very payload that answered `held: false`. The bound is now a third of the TTL, which leaves room for two missed polls before anything lapses, and a test pins the relationship in both directions — it fails if the backoff creeps back up to the TTL, and it fails if a reset instant an hour away produces a sleep long enough to lose a project. Nothing objected before because the two numbers lived in different modules and neither knew the other existed.

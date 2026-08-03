@@ -35,8 +35,10 @@ describe("queue poll cadence", () => {
   });
 
   it("waits for the reset once exhausted — no answer can change until then", () => {
-    const resetAt = new Date(Date.parse(AT) + 120_000).toISOString();
-    expect(poll(discovery({ exhausted: true, reset_at: resetAt }))).toBe(121_000);
+    // A reset inside the bound is waited for exactly; one beyond it is clamped,
+    // because the poll is what sustains a registration and may not outlive one.
+    const resetAt = new Date(Date.parse(AT) + 60_000).toISOString();
+    expect(poll(discovery({ exhausted: true, reset_at: resetAt }))).toBe(61_000);
   });
 
   it("clamps an absurd reset instant rather than sleeping forever", () => {
