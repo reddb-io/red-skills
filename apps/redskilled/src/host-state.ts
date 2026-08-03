@@ -246,6 +246,8 @@ export interface RedskilledRegistrationPoll {
  */
 export interface RedskilledRegistrationLapse {
   readonly project_label: string;
+  /** When the registration began; absent on records from older daemons. */
+  readonly registered_at?: string;
   /** When the daemon noticed — a lapse is observed at a read, never at a timer. */
   readonly at: string;
   /** The deadline the record actually stood on. */
@@ -255,6 +257,20 @@ export interface RedskilledRegistrationLapse {
   /** How many times the project's own work had held it up (Amendment 7). */
   readonly sustains: number;
   readonly detail: string;
+}
+
+/** One registration an operator deliberately released. */
+export interface RedskilledRegistrationStop {
+  readonly project_label: string;
+  readonly registered_at: string;
+  readonly at: string;
+  readonly detail: string;
+}
+
+/** One registration known to remain on a live daemon beyond this socket. */
+export interface RedskilledOrphanedRegistration {
+  readonly project_label: string;
+  readonly registered_at?: string;
 }
 
 export interface RedskilledHostState {
@@ -295,6 +311,10 @@ export interface RedskilledHostState {
    * registration lapsed, and only one of those is a drain that stopped.
    */
   readonly lapsed_registrations?: readonly RedskilledRegistrationLapse[];
+  /** Registrations deliberately released through `project_stop`, oldest first. */
+  readonly stopped_registrations?: readonly RedskilledRegistrationStop[];
+  /** Registrations held by another live daemon which this socket cannot reach. */
+  readonly orphaned_registrations?: readonly RedskilledOrphanedRegistration[];
   /** What the daemon has promised the machine, derived from `workers`. */
   readonly budget_accounting: RedskilledBudgetAccounting;
   /** Running version against published version, and what is being done about it. */
@@ -324,6 +344,10 @@ export interface BuildHostStateInput {
   readonly registrations?: readonly RedskilledProjectRegistration[];
   /** The ones it dropped, in the order it dropped them; absent when none lapsed. */
   readonly lapses?: readonly RedskilledRegistrationLapse[];
+  /** Deliberate registration releases, oldest first. */
+  readonly stops?: readonly RedskilledRegistrationStop[];
+  /** Registrations proved to remain behind another live daemon. */
+  readonly orphanedRegistrations?: readonly RedskilledOrphanedRegistration[];
   /**
    * The last queue poll, as the poller left it; absent when none has run.
    *
@@ -384,6 +408,10 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     // block at all, so a reader never has to tell an empty list from a daemon too
     // old to keep one.
     ...(input.lapses == null || input.lapses.length === 0 ? {} : { lapsed_registrations: [...input.lapses] }),
+    ...(input.stops == null || input.stops.length === 0 ? {} : { stopped_registrations: [...input.stops] }),
+    ...(input.orphanedRegistrations == null || input.orphanedRegistrations.length === 0
+      ? {}
+      : { orphaned_registrations: [...input.orphanedRegistrations] }),
     budget_accounting: buildBudgetAccounting(workers, {
       hostCeilingBytes: input.ceiling?.memory_bytes ?? input.hostCeilingBytes ?? null,
     }),
@@ -498,11 +526,45 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     // while a block that IS there and is the wrong shape still fails closed.
     (state.registrations === undefined ||
       (Array.isArray(state.registrations) && state.registrations.every(isRedskilledProjectRegistration))) &&
+    (state.lapsed_registrations === undefined ||
+      (Array.isArray(state.lapsed_registrations) && state.lapsed_registrations.every(isRegistrationLapse))) &&
+    (state.stopped_registrations === undefined ||
+      (Array.isArray(state.stopped_registrations) && state.stopped_registrations.every(isRegistrationStop))) &&
+    (state.orphaned_registrations === undefined ||
+      (Array.isArray(state.orphaned_registrations) && state.orphaned_registrations.every(isOrphanedRegistration))) &&
     // Checked only when present. One daemon serves checkouts pinned to different
     // bundle versions (ADR 0130 rule 3), so a field this bundle added must not
     // make an older daemon's complete answer read as malformed — while a field
     // that IS there and is the wrong shape still fails closed.
     (state.upgrade === undefined || isRedskilledUpgradeState(state.upgrade));
+}
+
+function isRegistrationLapse(value: unknown): value is RedskilledRegistrationLapse {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.project_label === "string" &&
+    (record.registered_at === undefined || typeof record.registered_at === "string") &&
+    typeof record.at === "string" &&
+    typeof record.renew_by === "string" &&
+    Number.isInteger(record.renewals) &&
+    Number.isInteger(record.sustains) &&
+    typeof record.detail === "string";
+}
+
+function isRegistrationStop(value: unknown): value is RedskilledRegistrationStop {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.project_label === "string" &&
+    typeof record.registered_at === "string" &&
+    typeof record.at === "string" &&
+    typeof record.detail === "string";
+}
+
+function isOrphanedRegistration(value: unknown): value is RedskilledOrphanedRegistration {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.project_label === "string" &&
+    (record.registered_at === undefined || typeof record.registered_at === "string");
 }
 
 function isHostCeiling(value: unknown): value is RedskilledHostCeiling {
