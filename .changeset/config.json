@@ -20,18 +20,18 @@
       "@reddb-io/github",
       "@reddb-io/shared",
       "@reddb-io/build-info",
-      "@reddb-io/red-skills"
+      "@reddb-io/red-skills",
+      "@reddb-io/red-castle",
+      "@reddb-io/red-browser",
+      "@reddb-io/rsp",
+      "@reddb-io/redskilled",
+      "@reddb-io/afk-container",
+      "@reddb-io/cdp-driver",
+      "@reddb-io/browser-bridge",
+      "@reddb-io/herdr-plugin-red-skills",
+      "vscode-extension-red-skills"
     ]
   ],
   "linked": [],
-  "ignore": [
-    "@reddb-io/red-castle",
-    "@reddb-io/red-browser",
-    "@reddb-io/rsp",
-    "@reddb-io/redskilled",
-    "@reddb-io/afk-container",
-    "@reddb-io/cdp-driver",
-    "@reddb-io/browser-bridge",
-    "vscode-extension-red-skills"
-  ]
+  "ignore": []
 }

@@ -1,196 +1,206 @@
 {
- "version": 1,
- "entries": [
-  {
-   "id": "apps/benchmark-code-understanding/src/runner.ts#json-stringify-file-write#1a95f6559ad4",
-   "classification": "external",
-   "reason": "MCP runtime config is JSON for MCP client interoperability.",
-   "moveKey": "851f84311082"
-  },
-  {
-   "id": "apps/brain/src/auto-linker.ts#json-stringify-wire-write#5d0360c38f2b",
-   "classification": "external",
-   "reason": "The AFK headless provider reads its request as JSON on stdin; the payload crosses into a foreign CLI.",
-   "moveKey": "00e209399a32"
-  },
-  {
-   "id": "apps/dev/src/commands/run.ts#json-parse-file-read#01a38c1e6f6a",
-   "classification": "external",
-   "reason": "Fetched plugin manifest remains JSON at the package boundary.",
-   "moveKey": "f632cd5f3c50"
-  },
-  {
-   "id": "apps/dev/src/commands/run/process-deps.ts#json-stringify-file-write#ec8edaa977ea",
-   "classification": "external",
-   "reason": "Temporary Brain CLI handoff payload is an interop export (filename dropped the retired attempt ordinal, ADR 0103).",
-   "moveKey": "43ebe01bed0b"
-  },
-  {
-   "id": "apps/dev/src/core/toon-json-guard.ts#json-parse-file-read#0f36cd7ce70f",
-   "classification": "external",
-   "reason": "Checked-in guard allowlist is JSON by contract.",
-   "moveKey": "24cdd7f5b667"
-  },
-  {
-   "id": "apps/dev/src/core/toon-version.ts#json-parse-file-read#155234ba4b8b",
-   "classification": "external",
-   "reason": "package.json is ecosystem JSON.",
-   "moveKey": "fb5939f4f4c6"
-  },
-  {
-   "id": "apps/dev/src/runtime/feedback-worktree.ts#json-parse-file-read#abf5b08523f6",
-   "classification": "external",
-   "reason": "package.json is ecosystem JSON.",
-   "moveKey": "8e5ae239b6cc"
-  },
-  {
-   "id": "apps/dev/src/runtime/implementer-environment.ts#json-parse-file-read#2879d3bfb880",
-   "classification": "external",
-   "reason": "Claude and Codex plugin manifests are JSON by host contract.",
-   "moveKey": "f632cd5f3c50"
-  },
-  {
-   "id": "apps/dev/src/runtime/implementer-environment.ts#json-stringify-file-write#ea0a59dd5189",
-   "classification": "external",
-   "reason": "Projected Claude and Codex plugin manifests remain JSON for host interoperability.",
-   "moveKey": "11f3d6af2227"
-  },
-  {
-   "id": "apps/dev/src/runtime/review-gh.ts#json-stringify-file-write#d6ea528ec9b4",
-   "classification": "external",
-   "reason": "GitHub review API --input payload is JSON.",
-   "moveKey": "7b2a2a976be4"
-  },
-  {
-   "id": "apps/memory/src/bench-eval/loaders.ts#json-parse-file-read#66b9c0159970",
-   "classification": "external",
-   "reason": "External JSON I/O relocated by a behavior-preserving file-split; re-seeded (see #2104 splits).",
-   "moveKey": "24cdd7f5b667"
-  },
-  {
-   "id": "apps/memory/src/bench-latency.ts#json-parse-file-read#c2af8acfa0f2",
-   "classification": "external",
-   "reason": "Benchmark workload fixture is JSON input.",
-   "moveKey": "24cdd7f5b667"
-  },
-  {
-   "id": "apps/memory/src/bench-mistake-avoided.ts#json-parse-file-read#e71d9417acbf",
-   "classification": "external",
-   "reason": "Benchmark scenario fixture is JSON input.",
-   "moveKey": "24cdd7f5b667"
-  },
-  {
-   "id": "apps/memory/src/bench-recall.ts#json-parse-file-read#cd9ba4816a71",
-   "classification": "external",
-   "reason": "Benchmark query fixtures are JSON inputs.",
-   "moveKey": "24cdd7f5b667"
-  },
-  {
-   "id": "apps/memory/src/export.ts#json-stringify-file-write#f2d8c9d8ed18",
-   "classification": "external",
-   "reason": "Memory export command deliberately emits JSON.",
-   "moveKey": "08dcc3510d92"
-  },
-  {
-   "id": "apps/memory/src/extract-dev-artifact.ts#json-parse-file-read#5fb73f71086b",
-   "classification": "external",
-   "reason": "package.json script extraction reads ecosystem JSON.",
-   "moveKey": "efb06d615282"
-  },
-  {
-   "id": "apps/memory/src/hook-coverage.ts#json-parse-file-read#1277b6df964e",
-   "classification": "external",
-   "reason": "Coverage manifest is a deliberate JSON report input.",
-   "moveKey": "2883fdec968a"
-  },
-  {
-   "id": "apps/memory/src/hook-coverage.ts#json-parse-file-read#4f72ffcb65b4",
-   "classification": "external",
-   "reason": "Plugin manifest files are JSON by host contract.",
-   "moveKey": "f632cd5f3c50"
-  },
-  {
-   "id": "apps/memory/src/import-ams.ts#json-parse-file-read#84cfe0136522",
-   "classification": "external",
-   "reason": "AMS import accepts external JSON dump format.",
-   "moveKey": "24cdd7f5b667"
-  },
-  {
-   "id": "apps/opencode-host/src/emit.ts#json-stringify-file-write#9bc9165f331e",
-   "classification": "external",
-   "reason": "opencode.json is an OpenCode host manifest.",
-   "moveKey": "9826ffa6ebea"
-  },
-  {
-   "id": "apps/opencode-host/src/generate.ts#json-stringify-file-write#daef2b897070",
-   "classification": "external",
-   "reason": "Generated OpenCode manifest is JSON by host contract.",
-   "moveKey": "36a1f03fd30c"
-  },
-  {
-   "id": "apps/opencode-host/src/hooks-to-events.ts#json-parse-file-read#75c187c88bc1",
-   "classification": "external",
-   "reason": "OpenCode hook config is external JSON.",
-   "moveKey": "302cda051801"
-  },
-  {
-   "id": "apps/opencode-host/src/mcp-passthrough.ts#json-parse-file-read#399ed3f05e9d",
-   "classification": "external",
-   "reason": ".mcp.json is MCP ecosystem JSON.",
-   "moveKey": "f632cd5f3c50"
-  },
-  {
-   "id": "apps/rsp/src/overhead-budget.ts#json-parse-file-read#e1e4e966b7a7",
-   "classification": "migrate",
-   "reason": "Overhead ledger decoder accepts legacy JSON while TOON ledgers roll out; every write already emits TOON."
-  },
-  {
-   "id": "apps/rsp/src/two-axis-benchmark.ts#json-parse-file-read#df5d9468826b",
-   "classification": "external",
-   "reason": "Benchmark baseline fixture is JSON input.",
-   "moveKey": "2883fdec968a"
-  },
-  {
-   "id": "apps/vscode-extension-red-skills/src/package-vsix.ts#json-parse-file-read#523457660e7a",
-   "classification": "external",
-   "reason": "The VSCode extension manifest is package.json; the editor and the .vsix format own that shape.",
-   "moveKey": "6f14a5d8a8ad"
-  },
-  {
-   "id": "packages/cdp-driver/client.ts#json-stringify-wire-write#7032e1db6fc4",
-   "classification": "external",
-   "reason": "Chrome DevTools Protocol frames are JSON by specification.",
-   "moveKey": "cc6bf6647434"
-  },
-  {
-   "id": "packages/red-castle/.red-castle/agent-workflows/shared/common.ts#json-stringify-file-write#8975f393e830",
-   "classification": "external",
-   "reason": "Castle workflow helper writes JSON interop artifacts.",
-   "moveKey": "1afaf3436c0a"
-  },
-  {
-   "id": "packages/red-castle/src/WorktreeLock.ts#json-parse-file-read#231944fa112d",
-   "classification": "external",
-   "reason": "Vendored upstream red-castle; its WorktreeLock JSON format is owned by upstream and kept JSON to avoid divergence on cherry-pick sync.",
-   "moveKey": "24cdd7f5b667"
-  },
-  {
-   "id": "packages/red-castle/tsup.config.ts#json-parse-file-read#3ec8644e7f1e",
-   "classification": "external",
-   "reason": "package.json is ecosystem JSON.",
-   "moveKey": "76cb79829ea3"
-  },
-  {
-   "id": "packages/shared/entrypoint-cli.ts#json-parse-file-read#19e906dc0db9",
-   "classification": "external",
-   "reason": "Plugin manifest files are JSON by host contract.",
-   "moveKey": "2b7c758cd51a"
-  },
-  {
-   "id": "packages/shared/toon-migration.ts#json-parse-file-read#5c446b349f65",
-   "classification": "external",
-   "reason": "TOON migration accepts legacy JSON inputs.",
-   "moveKey": "e57f5cae7679"
-  }
- ]
+  "version": 1,
+  "entries": [
+    {
+      "id": "apps/benchmark-code-understanding/src/runner.ts#json-stringify-file-write#1a95f6559ad4",
+      "classification": "external",
+      "reason": "MCP runtime config is JSON for MCP client interoperability.",
+      "moveKey": "851f84311082"
+    },
+    {
+      "id": "apps/brain/src/auto-linker.ts#json-stringify-wire-write#5d0360c38f2b",
+      "classification": "external",
+      "reason": "The AFK headless provider reads its request as JSON on stdin; the payload crosses into a foreign CLI.",
+      "moveKey": "00e209399a32"
+    },
+    {
+      "id": "apps/dev/src/commands/run.ts#json-parse-file-read#01a38c1e6f6a",
+      "classification": "external",
+      "reason": "Fetched plugin manifest remains JSON at the package boundary.",
+      "moveKey": "f632cd5f3c50"
+    },
+    {
+      "id": "apps/dev/src/commands/run/process-deps.ts#json-stringify-file-write#ec8edaa977ea",
+      "classification": "external",
+      "reason": "Temporary Brain CLI handoff payload is an interop export (filename dropped the retired attempt ordinal, ADR 0103).",
+      "moveKey": "43ebe01bed0b"
+    },
+    {
+      "id": "apps/dev/src/core/toon-json-guard.ts#json-parse-file-read#0f36cd7ce70f",
+      "classification": "external",
+      "reason": "Checked-in guard allowlist is JSON by contract.",
+      "moveKey": "24cdd7f5b667"
+    },
+    {
+      "id": "apps/dev/src/core/toon-version.ts#json-parse-file-read#155234ba4b8b",
+      "classification": "external",
+      "reason": "package.json is ecosystem JSON.",
+      "moveKey": "fb5939f4f4c6"
+    },
+    {
+      "id": "apps/dev/src/core/version-train-guard.ts#json-parse-file-read#4432a2350e97",
+      "classification": "external",
+      "reason": "package.json is ecosystem JSON; the version-train guard reads the manifests npm, pnpm and every host own."
+    },
+    {
+      "id": "apps/dev/src/core/version-train-guard.ts#json-parse-file-read#871affe5c62e",
+      "classification": "external",
+      "reason": "`.changeset/config.json` is the changesets tool's own format; the guard reads the fixed/ignore lists it publishes."
+    },
+    {
+      "id": "apps/dev/src/runtime/feedback-worktree.ts#json-parse-file-read#abf5b08523f6",
+      "classification": "external",
+      "reason": "package.json is ecosystem JSON.",
+      "moveKey": "8e5ae239b6cc"
+    },
+    {
+      "id": "apps/dev/src/runtime/implementer-environment.ts#json-parse-file-read#2879d3bfb880",
+      "classification": "external",
+      "reason": "Claude and Codex plugin manifests are JSON by host contract.",
+      "moveKey": "f632cd5f3c50"
+    },
+    {
+      "id": "apps/dev/src/runtime/implementer-environment.ts#json-stringify-file-write#ea0a59dd5189",
+      "classification": "external",
+      "reason": "Projected Claude and Codex plugin manifests remain JSON for host interoperability.",
+      "moveKey": "11f3d6af2227"
+    },
+    {
+      "id": "apps/dev/src/runtime/review-gh.ts#json-stringify-file-write#d6ea528ec9b4",
+      "classification": "external",
+      "reason": "GitHub review API --input payload is JSON.",
+      "moveKey": "7b2a2a976be4"
+    },
+    {
+      "id": "apps/memory/src/bench-eval/loaders.ts#json-parse-file-read#66b9c0159970",
+      "classification": "external",
+      "reason": "External JSON I/O relocated by a behavior-preserving file-split; re-seeded (see #2104 splits).",
+      "moveKey": "24cdd7f5b667"
+    },
+    {
+      "id": "apps/memory/src/bench-latency.ts#json-parse-file-read#c2af8acfa0f2",
+      "classification": "external",
+      "reason": "Benchmark workload fixture is JSON input.",
+      "moveKey": "24cdd7f5b667"
+    },
+    {
+      "id": "apps/memory/src/bench-mistake-avoided.ts#json-parse-file-read#e71d9417acbf",
+      "classification": "external",
+      "reason": "Benchmark scenario fixture is JSON input.",
+      "moveKey": "24cdd7f5b667"
+    },
+    {
+      "id": "apps/memory/src/bench-recall.ts#json-parse-file-read#cd9ba4816a71",
+      "classification": "external",
+      "reason": "Benchmark query fixtures are JSON inputs.",
+      "moveKey": "24cdd7f5b667"
+    },
+    {
+      "id": "apps/memory/src/export.ts#json-stringify-file-write#f2d8c9d8ed18",
+      "classification": "external",
+      "reason": "Memory export command deliberately emits JSON.",
+      "moveKey": "08dcc3510d92"
+    },
+    {
+      "id": "apps/memory/src/extract-dev-artifact.ts#json-parse-file-read#5fb73f71086b",
+      "classification": "external",
+      "reason": "package.json script extraction reads ecosystem JSON.",
+      "moveKey": "efb06d615282"
+    },
+    {
+      "id": "apps/memory/src/hook-coverage.ts#json-parse-file-read#1277b6df964e",
+      "classification": "external",
+      "reason": "Coverage manifest is a deliberate JSON report input.",
+      "moveKey": "2883fdec968a"
+    },
+    {
+      "id": "apps/memory/src/hook-coverage.ts#json-parse-file-read#4f72ffcb65b4",
+      "classification": "external",
+      "reason": "Plugin manifest files are JSON by host contract.",
+      "moveKey": "f632cd5f3c50"
+    },
+    {
+      "id": "apps/memory/src/import-ams.ts#json-parse-file-read#84cfe0136522",
+      "classification": "external",
+      "reason": "AMS import accepts external JSON dump format.",
+      "moveKey": "24cdd7f5b667"
+    },
+    {
+      "id": "apps/opencode-host/src/emit.ts#json-stringify-file-write#9bc9165f331e",
+      "classification": "external",
+      "reason": "opencode.json is an OpenCode host manifest.",
+      "moveKey": "9826ffa6ebea"
+    },
+    {
+      "id": "apps/opencode-host/src/generate.ts#json-stringify-file-write#daef2b897070",
+      "classification": "external",
+      "reason": "Generated OpenCode manifest is JSON by host contract.",
+      "moveKey": "36a1f03fd30c"
+    },
+    {
+      "id": "apps/opencode-host/src/hooks-to-events.ts#json-parse-file-read#75c187c88bc1",
+      "classification": "external",
+      "reason": "OpenCode hook config is external JSON.",
+      "moveKey": "302cda051801"
+    },
+    {
+      "id": "apps/opencode-host/src/mcp-passthrough.ts#json-parse-file-read#399ed3f05e9d",
+      "classification": "external",
+      "reason": ".mcp.json is MCP ecosystem JSON.",
+      "moveKey": "f632cd5f3c50"
+    },
+    {
+      "id": "apps/rsp/src/overhead-budget.ts#json-parse-file-read#e1e4e966b7a7",
+      "classification": "migrate",
+      "reason": "Overhead ledger decoder accepts legacy JSON while TOON ledgers roll out; every write already emits TOON."
+    },
+    {
+      "id": "apps/rsp/src/two-axis-benchmark.ts#json-parse-file-read#df5d9468826b",
+      "classification": "external",
+      "reason": "Benchmark baseline fixture is JSON input.",
+      "moveKey": "2883fdec968a"
+    },
+    {
+      "id": "apps/vscode-extension-red-skills/src/package-vsix.ts#json-parse-file-read#523457660e7a",
+      "classification": "external",
+      "reason": "The VSCode extension manifest is package.json; the editor and the .vsix format own that shape.",
+      "moveKey": "6f14a5d8a8ad"
+    },
+    {
+      "id": "packages/cdp-driver/client.ts#json-stringify-wire-write#7032e1db6fc4",
+      "classification": "external",
+      "reason": "Chrome DevTools Protocol frames are JSON by specification.",
+      "moveKey": "cc6bf6647434"
+    },
+    {
+      "id": "packages/red-castle/.red-castle/agent-workflows/shared/common.ts#json-stringify-file-write#8975f393e830",
+      "classification": "external",
+      "reason": "Castle workflow helper writes JSON interop artifacts.",
+      "moveKey": "1afaf3436c0a"
+    },
+    {
+      "id": "packages/red-castle/src/WorktreeLock.ts#json-parse-file-read#231944fa112d",
+      "classification": "external",
+      "reason": "Vendored upstream red-castle; its WorktreeLock JSON format is owned by upstream and kept JSON to avoid divergence on cherry-pick sync.",
+      "moveKey": "24cdd7f5b667"
+    },
+    {
+      "id": "packages/red-castle/tsup.config.ts#json-parse-file-read#3ec8644e7f1e",
+      "classification": "external",
+      "reason": "package.json is ecosystem JSON.",
+      "moveKey": "76cb79829ea3"
+    },
+    {
+      "id": "packages/shared/entrypoint-cli.ts#json-parse-file-read#19e906dc0db9",
+      "classification": "external",
+      "reason": "Plugin manifest files are JSON by host contract.",
+      "moveKey": "2b7c758cd51a"
+    },
+    {
+      "id": "packages/shared/toon-migration.ts#json-parse-file-read#5c446b349f65",
+      "classification": "external",
+      "reason": "TOON migration accepts legacy JSON inputs.",
+      "moveKey": "e57f5cae7679"
+    }
+  ]
 }
