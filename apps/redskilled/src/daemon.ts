@@ -40,7 +40,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
-import { createServer, type Server, type Socket } from "node:net";
+import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import type { DeathAttribution } from "@reddb-io/shared/death-attribution.js";
 import { isPidAlive, sendLineRequest, serveWireSocket } from "@reddb-io/shared/resident-core.js";
@@ -815,7 +815,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   let server: Server;
   try {
-    server = await bindExclusive(paths.socketPath);
+    // The two records that already name this socket's holder. Consulted only to
+    // REFUSE — an absent, stale or unreadable record decides nothing and falls
+    // through to the bind, which is the arbiter it always was.
+    server = await bindExclusive(paths.socketPath, async () => {
+      const [lease, claim] = await Promise.all([
+        leaseStore.read().catch(() => undefined),
+        machineClaimStore.read().catch(() => undefined),
+      ]);
+      if (lease != null && lease.pid !== owner.pid && isPidAlive(lease.pid)) return true;
+      return claim != null && claim.socket_path === paths.socketPath &&
+        claim.pid !== machineOwner.pid && isPidAlive(claim.pid);
+    });
   } catch (err) {
     await leaseStore.release(owner).catch(() => undefined);
     await machineClaimStore.release(machineOwner).catch(() => undefined);
@@ -2547,13 +2558,77 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 }
 
 /**
- * Bind the socket, refusing to steal one another daemon is answering on.
+ * What a socket path is, to the one caller allowed to delete it.
+ *
+ * `owned` and `unowned` are the two the ambiguity is between; `unknown` is the
+ * third answer a probe owes when it resolved neither, and it exists so that a
+ * failure to decide can never be spelled as a decision.
+ */
+export type RedskilledSocketOwnership = "owned" | "unowned" | "unknown";
+
+/**
+ * Who owns a socket path, asked of the KERNEL rather than of a clock.
+ *
+ * A `connect()` that SUCCEEDS proves a listener is bound to the path — that is
+ * the whole of what ownership means here, and it is true whether the owner
+ * replies in a millisecond, in a minute, or never. A `connect()` REFUSED
+ * (`ECONNREFUSED`, `ENOENT`) proves the opposite just as cheaply: the inode is
+ * there and nothing is listening behind it, which is exactly the debris a crash
+ * leaves. Anything else resolved nothing and says so.
+ *
+ * **This is deliberately not `socketAnswers`.** A ping asks whether the owner is
+ * HEALTHY, and health is not title: a daemon busy on a long request, or hung in
+ * a shutdown drain, fails a ping while owning its socket completely. Reading
+ * that `false` as an absent owner is how a live daemon's socket got unlinked out
+ * from under it — 1166 daemon births in one day, four of them serving at once
+ * (#3186). Health is still worth asking; it is just not what licenses a delete.
+ */
+export async function probeSocketOwnership(
+  socketPath: string,
+  timeoutMs = 250,
+): Promise<RedskilledSocketOwnership> {
+  return await new Promise<RedskilledSocketOwnership>((resolve) => {
+    const probe = connect(socketPath);
+    let settled = false;
+    const settle = (ownership: RedskilledSocketOwnership): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      probe.destroy();
+      resolve(ownership);
+    };
+    // A local unix connect resolves at kernel speed, so the timeout is a
+    // backstop rather than the mechanism. It resolves `unknown` — never
+    // `unowned` — because a slow answer is the case this whole function exists
+    // to stop reading as an absent one.
+    const timer = setTimeout(() => settle("unknown"), timeoutMs);
+    timer.unref?.();
+    probe.once("connect", () => settle("owned"));
+    probe.once("error", (error: NodeJS.ErrnoException) => {
+      settle(error.code === "ECONNREFUSED" || error.code === "ENOENT" ? "unowned" : "unknown");
+    });
+  });
+}
+
+/**
+ * Bind the socket, refusing to steal one another daemon is bound to.
  *
  * `EADDRINUSE` is ambiguous — a live peer and a socket file a crash left behind
- * look identical on disk — so it is resolved by *asking*: a path that answers a
- * ping has an owner, and a path that does not is debris to unlink and retry.
+ * look identical on disk — so it is resolved by *asking the kernel*: a path a
+ * `connect()` reaches has an owner, and only a path that refuses the connection
+ * is debris to unlink and retry. An unresolved probe keeps the path, because the
+ * cost of the two mistakes is not symmetric: refusing to start loses one daemon
+ * that says why, and unlinking a live socket loses every client that came after
+ * it, silently, while the daemon it orphaned goes on believing it is the one.
+ *
+ * `ownerRecorded` is the second belt. The lease and the machine claim already
+ * name the pid that holds this path, and a probe is not owed the last word over
+ * two records that name a live process.
  */
-async function bindExclusive(socketPath: string): Promise<Server> {
+async function bindExclusive(
+  socketPath: string,
+  ownerRecorded?: () => Promise<boolean>,
+): Promise<Server> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const server = createServer();
     try {
@@ -2568,7 +2643,10 @@ async function bindExclusive(socketPath: string): Promise<Server> {
     } catch (err) {
       server.close();
       if ((err as NodeJS.ErrnoException).code !== "EADDRINUSE") throw err;
-      if (await socketAnswers(socketPath)) throw new RedskilledAlreadyRunningError(socketPath);
+      if ((await probeSocketOwnership(socketPath)) !== "unowned") {
+        throw new RedskilledAlreadyRunningError(socketPath);
+      }
+      if (await ownerRecorded?.()) throw new RedskilledAlreadyRunningError(socketPath);
       await rm(socketPath, { force: true });
     }
   }
