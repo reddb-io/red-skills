@@ -71,13 +71,21 @@ export interface BundleIO {
   sha256(bytes: Uint8Array): string;
   /** Read-only registry GET (self-update version discovery only). */
   fetchText(url: string): Promise<string>;
+  /**
+   * Move a cache entry aside. Optional because it exists for ONE job — retiring
+   * the unversioned entry a past empty-version fetch left behind (#3153) — and a
+   * caller that cannot rename should still be able to fetch.
+   */
+  rename?(from: string, to: string): Promise<void>;
 }
 
 export type BundleFetchFailure =
   | "npm-unavailable"
   | "package-missing"
   | "bundle-missing"
-  | "network";
+  | "network"
+  /** The version handed in cannot key a cache entry (empty, blank, not semver). */
+  | "invalid-version";
 
 /** Typed, diagnosable failure — never a bare throw. */
 export class BundleFetchError extends Error {
@@ -91,6 +99,40 @@ export class BundleFetchError extends Error {
   }
 }
 
+/** A version string may key a cache entry only if it is one — `x.y.z[-pre]`. */
+const CACHEABLE_VERSION = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$/;
+
+/**
+ * Can this string key a cache entry?
+ *
+ * **A version is a cache key, and a key that can be empty collides across every
+ * release.** Callers that spell "absent" as `""` (#3153) get a filename with a
+ * hole in it rather than an error, so the question is asked here and answered
+ * once.
+ */
+export function isCacheableVersion(version: string | null | undefined): boolean {
+  return typeof version === "string" && CACHEABLE_VERSION.test(version.trim());
+}
+
+/**
+ * The name an empty version used to mint: `<plugin>-.bundle.min.mjs`.
+ *
+ * Nothing writes it any more, but it is still exported because hosts already
+ * hold one and it must be RECOGNISED to be retired — a fix that only stops new
+ * ones repairs no machine that already has it.
+ */
+export function unversionedBundleFileName(plugin: string): string {
+  return `${plugin}-.bundle.min.mjs`;
+}
+
+/**
+ * Suffix appended when retiring an unversioned entry. Chosen so the retired
+ * name no longer matches the `<plugin>*.bundle.min.mjs` glob the statusline
+ * render command uses (ADR 0130 rule 10) — a quarantine that stays inside the
+ * glob is not a quarantine.
+ */
+export const RETIRED_BUNDLE_SUFFIX = ".unversioned";
+
 /**
  * Canonical cache filename for a plugin bundle.
  *
@@ -98,14 +140,26 @@ export class BundleFetchError extends Error {
  * `canary` keys by the channel literal (`<plugin>-canary.bundle.min.mjs`) since
  * the dist-tag floats; {@link ensureBundle} refreshes that cache entry on every
  * canary resolution so the file follows npm's current dist-tag pointer.
+ *
+ * **A version that cannot key a cache entry is an error, not a filename.** The
+ * refusal lives here, where the name is minted, rather than at each caller,
+ * because the next caller will spell absent its own way.
  */
 export function bundleFileName(
   plugin: string,
   version: string,
   channel: ReleaseChannel = "stable",
 ): string {
-  const key = channel === "canary" ? "canary" : version;
-  return `${plugin}-${key}.bundle.min.mjs`;
+  if (channel === "canary") return `${plugin}-canary.bundle.min.mjs`;
+  if (!isCacheableVersion(version)) {
+    throw new BundleFetchError(
+      "invalid-version",
+      `refusing to key the ${plugin} bundle cache on ${JSON.stringify(version ?? "")}: ` +
+        `it would mint ${unversionedBundleFileName(plugin)}, a name no resolver prefers and ` +
+        "one whose mere existence satisfies the cache-first test forever (#3153)",
+    );
+  }
+  return `${plugin}-${version.trim()}.bundle.min.mjs`;
 }
 
 /** The local cache path a bundle resolves to (no IO). */
@@ -187,6 +241,8 @@ export function registryPackageUrl(pkg: string = NPM_PACKAGE): string {
  *   - `package-missing` — npm could not resolve the pinned package/version
  *   - `bundle-missing`  — the package resolved but has no bundle for `plugin`
  *   - `network`         — registry/materialisation network failure
+ *   - `invalid-version` — the version cannot key a cache entry, raised BEFORE
+ *     any npm invocation or write, so nothing lands under a holed name
  */
 export async function ensureBundle(
   io: BundleIO,
@@ -233,7 +289,34 @@ export async function ensureBundle(
         : resolveBundle({ plugin: bundlePlugin, version, cacheDir, channel });
     await io.writeFile(bundleDest, await io.readFile(src));
   }
+  await retireUnversionedEntries(io, cacheDir, [plugin, ...companionPlugins]);
   return dest;
+}
+
+/**
+ * Move any `<plugin>-.bundle.min.mjs` aside now that a versioned one landed.
+ *
+ * Both hosts in #3153 were already holding one, so preventing new ones repairs
+ * neither. Best-effort by design: the fetch that just succeeded is the outcome
+ * the caller asked for, and a cache directory that refuses a rename must not
+ * turn a successful fetch into a failure.
+ */
+async function retireUnversionedEntries(
+  io: BundleIO,
+  cacheDir: string,
+  plugins: readonly string[],
+): Promise<void> {
+  if (!io.rename) return;
+  for (const plugin of plugins) {
+    const stale = joinPath(cacheDir, unversionedBundleFileName(plugin));
+    try {
+      if (!(await io.exists(stale))) continue;
+      await io.rename(stale, `${stale}${RETIRED_BUNDLE_SUFFIX}`);
+    } catch {
+      // Nothing to escalate: the versioned entry is already on disk and it is
+      // the one every resolver and glob now prefers.
+    }
+  }
 }
 
 async function allExist(io: Pick<BundleIO, "exists">, paths: readonly string[]): Promise<boolean> {

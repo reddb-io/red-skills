@@ -11,6 +11,7 @@ import {
   ensureBundle,
   fetchNewestSameMajor,
   fetchPublishedVersionHorizon,
+  isCacheableVersion,
   newestPublished,
   newestSameMajor,
   npmPackageSpec,
@@ -20,6 +21,8 @@ import {
   registryDistTagVersion,
   registryPackageUrl,
   resolveBundle,
+  RETIRED_BUNDLE_SUFFIX,
+  unversionedBundleFileName,
 } from "./bundle-fetch.js";
 
 const PLUGIN = "dev";
@@ -55,6 +58,7 @@ function makeIO(opts: {
   const materializes: string[] = [];
   const writes: string[] = [];
   const fetches: string[] = [];
+  const renames: string[] = [];
 
   const io: BundleIO = {
     async materialize(spec, stagingDir) {
@@ -89,8 +93,15 @@ function makeIO(opts: {
       if (body === undefined) throw new Error(`GET ${url} -> 404`);
       return body;
     },
+    async rename(from, to) {
+      const bytes = files[from];
+      if (bytes === undefined) throw new Error(`ENOENT ${from}`);
+      files[to] = bytes;
+      delete files[from];
+      renames.push(`${from} -> ${to}`);
+    },
   };
-  return { io, files, materializes, writes, fetches };
+  return { io, files, materializes, writes, fetches, renames };
 }
 
 /** The dev warm path's companion bundles as a fake package's `dist/` entries. */
@@ -151,6 +162,109 @@ describe("cache filename", () => {
   it("treats rsp and redskilled as companions of the dev warm path", () => {
     expect(companionBundlePlugins("dev")).toEqual(["rsp", "redskilled"]);
     expect(companionBundlePlugins("memory")).toEqual([]);
+  });
+
+  // A version is a cache key, and a key that can be empty collides across every
+  // release. `redskilled-.bundle.min.mjs` is what one such key minted, and the
+  // file's mere existence then satisfied the cache-first test forever (#3153).
+  it("refuses a version that cannot key a cache entry, rather than minting a name", () => {
+    for (const bad of ["", "   ", "latest", "v1.140.0", "1.140"]) {
+      expect(() => bundleFileName(PLUGIN, bad)).toThrow(BundleFetchError);
+      expect(() => bundleFileName(PLUGIN, bad)).toThrow(/dev-\.bundle\.min\.mjs/);
+      expect(() => resolveBundle({ plugin: PLUGIN, version: bad, cacheDir: CACHE })).toThrow(
+        BundleFetchError,
+      );
+    }
+    expect(isCacheableVersion(VERSION)).toBe(true);
+    expect(isCacheableVersion("2.0.0-rc.1")).toBe(true);
+    expect(isCacheableVersion("")).toBe(false);
+  });
+
+  it("keys canary by the channel, so an absent version is irrelevant there", () => {
+    // Canary never reads the version: refusing one it does not use would break
+    // the floating dist-tag lane for a key it never spells.
+    expect(bundleFileName(PLUGIN, "", "canary")).toBe("dev-canary.bundle.min.mjs");
+  });
+
+  it("names the entry it must recognise to retire", () => {
+    expect(unversionedBundleFileName("redskilled")).toBe("redskilled-.bundle.min.mjs");
+    // The retired name must fall OUT of the `<plugin>*.bundle.min.mjs` glob the
+    // statusline render command uses (ADR 0130 rule 10).
+    expect(
+      `${unversionedBundleFileName("redskilled")}${RETIRED_BUNDLE_SUFFIX}`.endsWith(".bundle.min.mjs"),
+    ).toBe(false);
+  });
+});
+
+describe("ensureBundle never writes an unversioned cache entry (#3153)", () => {
+  it("throws on an empty version and writes NOTHING — no bundle, no staging dir", async () => {
+    const { io, files, materializes, writes } = makeIO({
+      packageBundles: { [`${NPM_PACKAGE}@`]: { [PLUGIN]: bundleBytesFor("") } },
+    });
+    await expect(
+      ensureBundle(io, { plugin: PLUGIN, version: "", cacheDir: CACHE }),
+    ).rejects.toMatchObject({ name: "BundleFetchError", kind: "invalid-version" });
+
+    // The refusal lands BEFORE npm, so no `.staging-dev-` directory either.
+    expect(materializes).toEqual([]);
+    expect(writes).toEqual([]);
+    expect(Object.keys(files)).toEqual([]);
+  });
+
+  it("still fetches on a cache holding ONLY the unversioned entry", async () => {
+    // The latch: `allExist(io, [])` is true, so once `<plugin>-.bundle.min.mjs`
+    // existed the cache-first rung returned early on every version, forever.
+    const spec = npmPackageSpec(VERSION);
+    const poisoned = `${CACHE}/${unversionedBundleFileName(PLUGIN)}`;
+    const { io, files, materializes, renames } = makeIO({
+      files: { [poisoned]: enc("// written by the empty-version fetch") },
+      packageBundles: { [spec]: { [PLUGIN]: bundleBytesFor(VERSION), ...packagedCompanions() } },
+    });
+
+    const path = await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+
+    expect(materializes).toEqual([spec]);
+    expect(path).toBe(resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE }));
+    // Moved aside, not inherited: a host already in this state must recover on
+    // its next boot without hand-editing the cache.
+    expect(renames).toEqual([`${poisoned} -> ${poisoned}${RETIRED_BUNDLE_SUFFIX}`]);
+    expect(files[poisoned]).toBeUndefined();
+    expect(files[`${poisoned}${RETIRED_BUNDLE_SUFFIX}`]).toBeDefined();
+  });
+
+  it("retires a companion's unversioned entry too", async () => {
+    const spec = npmPackageSpec(VERSION);
+    const dest = resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+    const poisoned = `${CACHE}/${unversionedBundleFileName("redskilled")}`;
+    const { io, files } = makeIO({
+      files: { [poisoned]: enc("// the daemon bundle that pinned the host") },
+      packageBundles: { [spec]: { [PLUGIN]: bundleBytesFor(VERSION), ...packagedCompanions() } },
+    });
+
+    await ensureBundle(io, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE });
+
+    // The one the statusline glob was picking up is gone, and the versioned one
+    // it should have had is beside the dev bundle, on the same version.
+    expect(files[poisoned]).toBeUndefined();
+    expect(files[dest]).toBeDefined();
+    expect(files[resolveBundle({ plugin: "redskilled", version: VERSION, cacheDir: CACHE })]).toBeDefined();
+  });
+
+  it("succeeds even when the cache refuses the rename", async () => {
+    const spec = npmPackageSpec(VERSION);
+    const poisoned = `${CACHE}/${unversionedBundleFileName(PLUGIN)}`;
+    const { io, files } = makeIO({
+      files: { [poisoned]: enc("// stuck") },
+      packageBundles: { [spec]: { [PLUGIN]: bundleBytesFor(VERSION), ...packagedCompanions() } },
+    });
+    const readOnly: BundleIO = { ...io, async rename() { throw new Error("EPERM"); } };
+
+    // Retiring is best-effort: the versioned bundle is the outcome the caller
+    // asked for, and a read-only cache dir must not turn that into a failure.
+    await expect(
+      ensureBundle(readOnly, { plugin: PLUGIN, version: VERSION, cacheDir: CACHE }),
+    ).resolves.toBe(resolveBundle({ plugin: PLUGIN, version: VERSION, cacheDir: CACHE }));
+    expect(files[poisoned]).toBeDefined();
   });
 });
 

@@ -39,6 +39,7 @@ import {
   NPM_PACKAGE,
   bundleFileName,
   ensureBundle,
+  isCacheableVersion,
   resolveBundle,
 } from "./bundle-fetch.js";
 import { type ReleaseChannel, channelReleaseRef, resolveChannel } from "./channel.js";
@@ -116,6 +117,9 @@ const realIO: BundleIO = {
     const res = await fetch(url, { redirect: "follow" });
     if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`);
     return await res.text();
+  },
+  async rename(from, to) {
+    await rename(from, to);
   },
 };
 
@@ -266,7 +270,7 @@ function cachedBundlePath(
   cacheDir: string,
   channel: ReleaseChannel,
 ): string | null {
-  if (!version && channel !== "canary") return null;
+  if (!isCacheableVersion(version) && channel !== "canary") return null;
   const p = resolveBundle({ plugin, version, cacheDir, channel });
   return existsSync(p) ? p : null;
 }
@@ -348,7 +352,7 @@ async function runMode(plan: RunPlan): Promise<never> {
 
   if (!bundle) {
     const want =
-      version || channel === "canary"
+      isCacheableVersion(version) || channel === "canary"
         ? bundleFileName(plugin, version, channel)
         : `${plugin}-<version>.bundle.min.mjs`;
     process.stderr.write(
@@ -407,7 +411,12 @@ async function fetchMode(plan: FetchPlan): Promise<never> {
     process.exit(0);
   }
   const channel = resolveLauncherChannel(process.env, readProjectConfig());
-  const expected = resolveBundle({ plugin, version, cacheDir, channel });
+  // A version that cannot key a cache entry has no expected path to name, and
+  // asking for one now would throw before the fetch reported why (#3153).
+  const expected =
+    isCacheableVersion(version) || channel === "canary"
+      ? resolveBundle({ plugin, version, cacheDir, channel })
+      : `${cacheDir}/${plugin}-<version>.bundle.min.mjs`;
   try {
     const path = await ensureBundle(realIO, { plugin, version, repo: plan.repo, cacheDir, channel });
     process.stdout.write(`entrypoint: bundle ready at ${path} (${channel})\n`);
