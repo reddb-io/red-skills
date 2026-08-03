@@ -263,6 +263,18 @@ export const DEFAULT_REDSKILLED_REPLACE_BOOT_CHECK_MS = 60_000;
 export const DEFAULT_REDSKILLED_SAMPLE_MS = 15_000;
 
 /**
+ * Default window between lease renewals.
+ *
+ * A lease whose `renewed_at` never moves is worse than one without the field: it
+ * reads as a five-hour-stale record on a daemon that has been serving for five
+ * hours, and it invites exactly the freshness check that would then be
+ * permanently wrong about a healthy host (#3092). Renewal is a one-file rewrite,
+ * so the window is chosen for how quickly a reader should be able to tell a live
+ * holder from an abandoned record, not for cost.
+ */
+export const DEFAULT_REDSKILLED_LEASE_RENEW_MS = 30_000;
+
+/**
  * How many lapsed registrations the daemon keeps where a reader can see them.
  *
  * A tail, not a history: the question a lapse block answers is "did my drain stop,
@@ -327,6 +339,8 @@ export interface RedskilledDaemonOptions {
   readonly treeSampler?: RedskilledTreeSampler;
   /** Window between memory samples; 0 or below leaves the sampler unarmed. */
   readonly sampleMs?: number;
+  /** Window between lease renewals; 0 or below leaves the renewer unarmed. */
+  readonly leaseRenewMs?: number;
   /**
    * How the daemon recovers a Worker's last logged line after a restart.
    *
@@ -570,6 +584,15 @@ export interface RedskilledDaemon {
    */
   sampleMemoryBudgets(): Promise<readonly RedskilledBudgetTermination[]>;
   /**
+   * Advance the lease's `renewed_at`, once.
+   *
+   * Exposed for the same reason the memory sample is: the timer drives it in
+   * production and a test drives it directly. `null` means the renewal did not
+   * happen — the lease is gone or belongs to someone else — which is a fact to
+   * read, never a reason for a serving daemon to fall over.
+   */
+  renewLease(): Promise<RedskilledLease | null>;
+  /**
    * Store one Worker's last logged line, exactly as it was published.
    *
    * The daemon widens by one string and learns nothing: it does not parse the
@@ -749,6 +772,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const treeSampler = options.treeSampler ?? sampleWorkerTrees;
   const readLogTail = options.readLogTail ?? readLastLogLine;
   const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
+  const leaseRenewMs = options.leaseRenewMs ?? DEFAULT_REDSKILLED_LEASE_RENEW_MS;
   const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
   const replaceCheckMs = options.replaceCheckMs ?? DEFAULT_REDSKILLED_REPLACE_CHECK_MS;
   const publishedProbeTimeoutMs = options.publishedProbeTimeoutMs ?? DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS;
@@ -847,6 +871,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let demandTicking = false;
   let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
+  let leaseTimer: NodeJS.Timeout | undefined;
   let demandTimer: NodeJS.Timeout | undefined;
   let replaceTimer: NodeJS.Timeout | undefined;
   let replaceBootTimer: NodeJS.Timeout | undefined;
@@ -1885,6 +1910,27 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     replaceTimer.unref();
   }
 
+  /**
+   * Say the lease is still ours, on its own window.
+   *
+   * `renew()` shipped with the lease and had ZERO callers, so `renewed_at` was a
+   * field that only ever equalled `acquired_at` — a record that looked stale on a
+   * daemon in perfect health (#3092). A failure costs the renewal and never the
+   * daemon: a lease another owner has taken is a fact to report, not a reason for
+   * a serving process to fall over.
+   */
+  async function renewLease(): Promise<RedskilledLease | null> {
+    return await leaseStore.renew(owner).catch(() => null);
+  }
+
+  function armLeaseTimer(): void {
+    if (stopping || leaseTimer != null || leaseRenewMs <= 0) return;
+    leaseTimer = setInterval(() => {
+      void renewLease();
+    }, leaseRenewMs);
+    leaseTimer.unref();
+  }
+
   function armSampleTimer(): void {
     if (stopping || sampleTimer != null || sampleMs <= 0) return;
     sampleTimer = setInterval(() => {
@@ -2070,6 +2116,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     stopping = true;
     if (idleTimer) clearTimeout(idleTimer);
     if (sampleTimer) clearInterval(sampleTimer);
+    if (leaseTimer) clearInterval(leaseTimer);
     if (replaceTimer) clearInterval(replaceTimer);
     if (replaceBootTimer) clearTimeout(replaceBootTimer);
     if (activityTimer) clearInterval(activityTimer);
@@ -2255,6 +2302,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   armIdleTimer();
   armSampleTimer();
+  armLeaseTimer();
   armReplaceTimer();
   armActivityTimer();
   armQueueTimer();
@@ -2270,6 +2318,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     ceiling: () => ceiling,
     killWorkerOverBudget,
     sampleMemoryBudgets,
+    renewLease,
     pollRepositoryActivity,
     pollQueueDiscovery,
     queueDiscovery: () => lastQueue,

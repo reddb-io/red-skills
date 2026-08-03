@@ -28,6 +28,8 @@ import {
   registerRedskilledProject,
   renewRedskilledProject,
   readRedskilledHostState,
+  redskilledPresenceAdvice,
+  RedskilledUnreachableError,
   startRedskilledWorker,
   type RedskilledClientConfig,
 } from "@reddb-io/redskilled/client";
@@ -44,7 +46,7 @@ import type { RedskilledLaunchTemplate } from "@reddb-io/redskilled/launch-templ
 // Re-exported so a consumer of this port imports the host's vocabulary from the
 // one module that owns the project's reach into it — a second import path for
 // the same names is how two spellings of one boundary start.
-export { RedskilledUnreachableError } from "@reddb-io/redskilled/client";
+export { RedskilledDaemonHeldError, RedskilledUnreachableError } from "@reddb-io/redskilled/client";
 export type { RedskilledWorkerStarted } from "@reddb-io/redskilled/protocol";
 export type {
   RedskilledHostEvent,
@@ -302,8 +304,7 @@ export function redskilledRegistrationRefusal(socketPath: string, cause: unknown
     `this project was not registered: the redskilled daemon did not answer on ${socketPath}. ` +
     `Since ADR 0130 Amendment 4 a project contributes a registration rather than a process, so a project ` +
     `that cannot reach the daemon starts nothing rather than launching a demand producer no host admitted, ` +
-    `counts or can stop. Run \`${canonicalInvocation("red-skills-redskilled", ["provision"])}\` ` +
-    `(or \`/red-setup\`) to install it, then retry. (${detail})`
+    `counts or can stop. ${repairFor(cause)} (${detail})`
   );
 }
 
@@ -312,8 +313,24 @@ export function redskilledUnreachableAdvice(socketPath: string, cause: unknown):
   return (
     `no Worker was started: the redskilled daemon did not answer on ${socketPath}. ` +
     `Since ADR 0130 the daemon owns every birth, so a project that cannot reach it starts nothing ` +
-    `rather than spawning an unbudgeted Worker of its own. Run ` +
-    `\`${canonicalInvocation("red-skills-redskilled", ["provision"])}\` (or \`/red-setup\`) to install it, ` +
-    `then retry. (${detail})`
+    `rather than spawning an unbudgeted Worker of its own. ${repairFor(cause)} (${detail})`
+  );
+}
+
+/**
+ * The repair the observed silence actually takes.
+ *
+ * **Never advise provisioning a daemon that is running** (#3092). When the reach
+ * established that a live pid holds the socket, the operator's next action is on
+ * THAT process — the presence carries its pid, its uptime and its socket — and
+ * telling them to install one instead sends them to reinstall what is already
+ * serving. Only a silence with no live holder is an absence.
+ */
+function repairFor(cause: unknown): string {
+  const presence = cause instanceof RedskilledUnreachableError ? cause.presence : undefined;
+  if (presence != null && presence.kind === "held-unresponsive") return redskilledPresenceAdvice(presence);
+  return (
+    `Run \`${canonicalInvocation("red-skills-redskilled", ["provision"])}\` (or \`/red-setup\`) to install it, ` +
+    `then retry.`
   );
 }
