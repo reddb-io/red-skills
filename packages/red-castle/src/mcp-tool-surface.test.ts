@@ -48,6 +48,34 @@ const SURFACE: ReadonlyArray<{
     schema: ["force", "fleet"],
   },
   {
+    name: "host_state",
+    title: "Read daemon host state",
+    description:
+      "Return every project and Worker the redskilled daemon holds on this machine.",
+    schema: [],
+  },
+  {
+    name: "host_dashboard",
+    title: "Read daemon host dashboard",
+    description:
+      "Return the structured global dashboard for every project's Workers on this machine.",
+    schema: [],
+  },
+  {
+    name: "host_provision_check",
+    title: "Check daemon host provisioning",
+    description:
+      "Read whether this machine is ready to run redskilled and what is missing; creates and starts nothing.",
+    schema: [],
+  },
+  {
+    name: "host_unit_status",
+    title: "Read daemon unit status",
+    description:
+      "Return whether the optional redskilled supervisor unit is installed, enabled, and active.",
+    schema: [],
+  },
+  {
     name: "logs",
     title: "Read Castle logs",
     description:
