@@ -58,7 +58,7 @@ This mirrors how Codex itself organizes customization: skills define reusable wo
 {
   "statusLine": {
     "type": "command",
-    "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); [ -z \"$N\" ] && exit 0; b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && \"$N\" \"$b\" statusline --no-workers; r=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/redskilled*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$r\" ] && \"$N\" \"$r\" statusline 2>/dev/null; exit 0'",
+    "command": "sh -c 'N=$(command -v node 2>/dev/null || ls -1 /usr/local/bin/node /opt/homebrew/bin/node /usr/bin/node \"$HOME\"/.volta/bin/node \"$HOME\"/.asdf/shims/node \"$HOME\"/.nodenv/shims/node \"$HOME\"/.nvm/versions/node/*/bin/node \"$HOME\"/.local/share/fnm/node-versions/*/installation/bin/node \"$HOME\"/.fnm/node-versions/*/installation/bin/node 2>/dev/null | sort -V | tail -1); [ -z \"$N\" ] && exit 0; b=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/dev-*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); [ -z \"$b\" ] && b=$(ls -1 \"$HOME\"/.claude/plugins/cache/red-skills/dev/*/skills/engineering/afk/bin/afk.mjs 2>/dev/null | sort -V | tail -1); [ -n \"$b\" ] && \"$N\" \"$b\" statusline --no-workers; r=$(ls -1 \"$HOME\"/.cache/red-skills/bundles/redskilled*.bundle.min.mjs 2>/dev/null | sort -V | tail -1); if [ -n \"$r\" ]; then \"$N\" \"$r\" statusline 2>/dev/null; else echo \"redskilled unreachable — Worker state unknown\"; fi; exit 0'",
     "refreshInterval": 60
   }
 }
@@ -67,6 +67,16 @@ This mirrors how Codex itself organizes customization: skills define reusable wo
 **Why two producers and not one:** each prints the rows it owns and the host prints what it is handed. The dev bundle owns the **repo header** — project, branch, model/context, PR and issue counts, local diff — and is asked for it with `--no-workers`. The daemon owns the **Worker rows** (ADR 0130 rule 10) and serves them already rendered, so its `statusline` output is echoed verbatim. The host formats nothing, orders nothing, and truncates nothing. Before #2928 the dev bundle rendered the Worker rows too — the second renderer rule 10 exists to prevent, and the one actually on screen — while the daemon's own line went unread.
 
 **Why it ends in `; exit 0`:** the header is the required half, the Worker rows are best-effort, and a missing daemon is never a failure of the line. Without the explicit success the command's last statement is the bare test `[ -n "$r" ] && …`, so on a host with no cached daemon bundle `$r` is empty, the test fails, and its status becomes the exit status of the whole `sh -c` — a status producer that rendered its header correctly and still reported failure (#3073). The daemon half is already best-effort in its stderr (`2>/dev/null`); the exit status says the same thing. **Keep this command byte-identical to the copy in the `/red-setup` interview** — `apps/dev/tests/statusline-command-doc.test.ts` fails when the two drift, or when either one can still exit non-zero.
+
+**Why the daemon glob resolves anything at all:** the `redskilled` bundle is warmed into `~/.cache/red-skills/bundles/` as a **companion of the `dev` warm path**, so it lands beside `dev-*` and `rsp-*` from the same npm materialization the `SessionStart` hook already performs. Nothing invokes `red-fetch.mjs redskilled <version>` by name, and until #3074 nothing warmed it either: the only copy on an `npx`-provisioned host lived inside the npx cache, `$r` was empty on every machine, and the daemon that owns the Worker rows was never contacted. The pairing is guarded — `apps/dev/tests/statusline-command-doc.test.ts` warms a host through the real `ensureBundle` and fails if this glob stops resolving what provisioning writes.
+
+**Why the `else` branch prints a sentence:** an unresolved daemon bundle means this machine has no Worker renderer, and a blank region below the header is indistinguishable from a machine with no Workers — the operator reads an outage as calm. So the host states the absence in the daemon's own words:
+
+```text
+redskilled unreachable — Worker state unknown
+```
+
+That is the same sentence the daemon's own `statusline` command prints when the socket does not answer, so the operator reads one absence however deep the failure is. It is **not** the host rendering a Worker row: ADR 0130 rule 10 still holds, and there is no Worker here to render.
 
 **Why this shape (cached-bundle-first, not `$CLAUDE_PLUGIN_ROOT`, not `afk.mjs` directly):** the command above is cached-bundle-first by design (ADR 0084) — never alter it to fetch synchronously in the render path.
 
