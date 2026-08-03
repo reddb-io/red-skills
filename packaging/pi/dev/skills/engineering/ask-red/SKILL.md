@@ -56,6 +56,10 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   where no plugin is installed. `/dashboard` stays the route for this
   repository's queue health; `/red-statusline` owns the one-line form and
   documents both in its host notes.
+- **"What is this machine's Worker ceiling?"** -> the daemon's `host-state` command for
+  the resolved value and its origin. To declare or change it, route through
+  `/red-setup` Section E3 and the daemon-owned `~/.red/config.yaml`; a repository
+  `.red/config.yaml` cannot set machine policy.
 - **Operating the castle itself** -> the `castle` MCP, not a shell command.
   Fleet lifecycle, worker dispatch, runners and live steer, gate, landing,
   claim, worktrees, hygiene, and observability are all tools on one canonical
@@ -163,8 +167,9 @@ through `/memory:view`, `memory docs reference-graph`, and
   `/red-setup` (Section E3) provisions `redskilled` by running `redskilled
   provision`, and `/red-doctor` (check 24) reports whether the host is
   provisioned. The daemon's home `~/.red/redskilled/` belongs to `redskilled`
-  itself (ADR 0130 Amendment 2), never to `/red-setup`, whose `.red/` authority
-  is repository-scoped.
+  itself (ADR 0130 Amendment 2), as does the host policy file
+  `~/.red/config.yaml`; `/red-setup` calls the daemon's provisioner rather than
+  writing either one, because its own `.red/` authority is repository-scoped.
 - TOON/TOONL operational reader changes are documentation-maintenance work:
   `/red-setup` owns the pinned `tq` host binary, `/red-doctor` verifies it, and
   `/afk` plus `/daily-review` own the lane-reading examples.

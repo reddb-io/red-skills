@@ -254,9 +254,10 @@ $RS provision --workspace host # a lane under the home: provision the home too
 $RS provision --install-unit   # also write the optional supervising user unit
 ```
 
-- **The home is NOT a precondition for a daemon.** The daemon binds its socket
+- **The state home is NOT a precondition for a daemon.** The daemon binds its socket
   and writes its lease and event lane under the session runtime dir; it resolves
-  `~/.red/redskilled/` nowhere. Exactly one thing reads the home: a workspace
+  `~/.red/redskilled/` nowhere. It does read host policy from the sibling
+  `~/.red/config.yaml`. Exactly one thing reads the state home: a workspace
   lane rooted inside it (`plugins.dev.workspace.target: host`, or a custom parent
   under the home). So the home is created **when a declared target reads it** and
   never otherwise — creating it unconditionally left most machines with an empty
@@ -271,7 +272,9 @@ $RS provision --install-unit   # also write the optional supervising user unit
   nothing about *who* calls it.
 - **Idempotent by construction.** An existing home is kept with everything in
   it, and the only thing a second run can change is a permission bit that
-  drifted wider than owner-only — a repair, not a rewrite.
+  drifted wider than owner-only — a repair, not a rewrite. Provisioning creates
+  the initial `~/.red/config.yaml` template when absent and never overwrites an
+  operator's existing file.
 - **The audit is pure, and the doctor consumes it.** `/red-doctor` renders the
   same four checks (`home`, `daemon-entry`, `reach`, `supervisor-unit`) from
   `auditRedskilledProvisioning` over injected facts, probing the socket
@@ -281,6 +284,27 @@ $RS provision --install-unit   # also write the optional supervising user unit
 - **The optional unit is optional.** It adds `Restart=on-failure` over the same
   binary, socket and contract auto-spawn uses (rule 7), and an absent unit is
   reported as `ok`. An existing unit file is never rewritten.
+
+### Host-wide daemon policy
+
+Machine limits belong only in the operator's home config; the same keys in a
+repository `.red/config.yaml` are warned about and ignored:
+
+```yaml
+plugins:
+  dev:
+    redskilled:
+      worker_ceiling: 6
+      memory_ceiling: 8G
+      idle_ms: 300000
+```
+
+Resolution is `serve` flag > environment > home config > derived default.
+The ceiling flags are `--worker-ceiling` and `--memory-ceiling`; their environment
+counterparts are `REDSKILLED_WORKER_CEILING` and `REDSKILLED_MEMORY_CEILING`.
+`REDSKILLED_IDLE_MS` follows the same precedence for idle time. `host-state`
+reports the resolved `ceiling` and the `memory_source` / `worker_source` that won,
+so a restart or an auto-spawn from another project remains directly auditable.
 
 ## Commands
 

@@ -60,7 +60,20 @@ export interface RedskilledHomeReceipt {
   /** True when this run narrowed an existing home back to owner-only. */
   readonly tightened: boolean;
   readonly mode: number;
+  /** The host configuration this authority owns beside the daemon home. */
+  readonly configPath: string;
+  /** True only when this run created the initial, operator-editable template. */
+  readonly configCreated: boolean;
 }
+
+const HOST_CONFIG_TEMPLATE = `# Host-scoped redskilled policy. This file is never read from a repository.
+plugins:
+  dev:
+    redskilled:
+      # worker_ceiling: 6
+      # memory_ceiling: 8G
+      # idle_ms: 300000
+`;
 
 /**
  * Create the daemon's host-scoped home, owner-only. **The only creator.**
@@ -74,20 +87,39 @@ export async function provisionRedskilledHome(
   homeDir: string = homedir(),
 ): Promise<RedskilledHomeReceipt> {
   const path = redskilledHomeDir(homeDir);
+  const configPath = join(dirname(path), "config.yaml");
   const existing = await modeOf(path);
+  let created = false;
+  let tightened = false;
   if (existing === undefined) {
     await mkdir(path, { recursive: true, mode: REDSKILLED_HOME_MODE });
     // `mkdir` masks the requested mode with the process umask, so the bits are
     // stated again rather than hoped for: a home this call left group-readable
     // would be reported as drift by the very audit below.
     await chmod(path, REDSKILLED_HOME_MODE);
-    return { path, created: true, tightened: false, mode: REDSKILLED_HOME_MODE };
+    created = true;
+  } else if (existing !== REDSKILLED_HOME_MODE) {
+    await chmod(path, REDSKILLED_HOME_MODE);
+    tightened = true;
   }
-  if (existing === REDSKILLED_HOME_MODE) {
-    return { path, created: false, tightened: false, mode: existing };
+
+  // `wx` is the ownership boundary: provisioning may establish the file, but
+  // once an operator has one it is never rewritten, even by a concurrent run.
+  let configCreated = false;
+  try {
+    await writeFile(configPath, HOST_CONFIG_TEMPLATE, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    configCreated = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
-  await chmod(path, REDSKILLED_HOME_MODE);
-  return { path, created: false, tightened: true, mode: REDSKILLED_HOME_MODE };
+  return {
+    path,
+    created,
+    tightened,
+    mode: REDSKILLED_HOME_MODE,
+    configPath,
+    configCreated,
+  };
 }
 
 /**

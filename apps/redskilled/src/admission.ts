@@ -50,6 +50,9 @@ export const DEFAULT_INTERACTIVE_RESERVATION = 1;
  */
 export const DEFAULT_HOST_MEMORY_CEILING_FRACTION = 0.7;
 
+/** The operator-facing origin of one resolved host setting. */
+export type RedskilledHostSettingSource = "flag" | "environment" | "home-config" | "derived-default";
+
 /** The ceiling the host is admitted against. `null` on a dimension means unbounded. */
 export interface RedskilledHostCeiling {
   /** Total declared Worker memory this host may commit, in bytes. */
@@ -60,6 +63,21 @@ export interface RedskilledHostCeiling {
   readonly interactive_reservation?: number;
   /** `declared` when an operator stated it, `host-fraction` when derived. */
   readonly source: "declared" | "host-fraction";
+  /** How the memory dimension was resolved. Present on daemon-resolved ceilings. */
+  readonly memory_source?: RedskilledHostSettingSource;
+  /** How the Worker-count dimension was resolved. Present on daemon-resolved ceilings. */
+  readonly worker_source?: RedskilledHostSettingSource;
+}
+
+export interface RedskilledHostCeilingOptions {
+  readonly flags?: {
+    readonly memoryCeiling?: string;
+    readonly workerCeiling?: string;
+  };
+  readonly config?: {
+    readonly memoryCeiling?: string;
+    readonly workerCeiling?: string;
+  };
 }
 
 /** No ceiling at all — an operator's explicit opt-out, and the tests' baseline. */
@@ -335,14 +353,37 @@ export function deriveWorkerScopeCeiling(input: {
 export function resolveHostCeiling(
   env: NodeJS.ProcessEnv = process.env,
   totalMemoryBytes: number = totalmem(),
+  options: RedskilledHostCeilingOptions = {},
 ): RedskilledHostCeiling {
-  const declaredMemory = (env[REDSKILLED_MEMORY_CEILING_ENV] ?? "").trim();
-  const declaredWorkers = (env[REDSKILLED_WORKER_CEILING_ENV] ?? "").trim();
+  const memoryDeclaration = selectDeclaration(
+    options.flags?.memoryCeiling,
+    env[REDSKILLED_MEMORY_CEILING_ENV],
+    options.config?.memoryCeiling,
+  );
+  const workerDeclaration = selectDeclaration(
+    options.flags?.workerCeiling,
+    env[REDSKILLED_WORKER_CEILING_ENV],
+    options.config?.workerCeiling,
+  );
+  const declaredMemory = memoryDeclaration?.value ?? "";
+  const declaredWorkers = workerDeclaration?.value ?? "";
   const declaredReservation = (env[REDSKILLED_INTERACTIVE_RESERVATION_ENV] ?? "").trim();
   const workerCount = parseCountCeiling(declaredWorkers);
   const interactiveReservation = declaredReservation === ""
     ? DEFAULT_INTERACTIVE_RESERVATION
     : parseReservationCount(declaredReservation);
+  let workerSource = workerDeclaration?.source ?? "derived-default";
+
+  if (declaredWorkers !== "" && workerCount === null && !isUnbounded(declaredWorkers)) {
+    // Same rule for every declaration source: an ignored Worker ceiling is an
+    // unbounded host wearing a number the operator thinks they set.
+    warn(
+      `redskilled: ${describeDeclaration(workerDeclaration!)} ${REDSKILLED_WORKER_CEILING_ENV}=` +
+        `${JSON.stringify(declaredWorkers)} is not a positive integer; this host admits an unbounded number of ` +
+        `Workers instead.`,
+    );
+    workerSource = "derived-default";
+  }
 
   if (declaredMemory !== "") {
     const memory = parseMemoryCeiling(declaredMemory, totalMemoryBytes);
@@ -352,6 +393,8 @@ export function resolveHostCeiling(
         worker_count: workerCount,
         interactive_reservation: interactiveReservation ?? DEFAULT_INTERACTIVE_RESERVATION,
         source: "declared",
+        memory_source: memoryDeclaration!.source,
+        worker_source: workerSource,
       };
     }
     // Named rather than obeyed in silence. A malformed ceiling is a limit the
@@ -360,18 +403,10 @@ export function resolveHostCeiling(
     // what they asked for, so the daemon admits Workers past the line they
     // meant to draw. Loud and continue: a bad env var must not stop the host.
     warn(
-      `redskilled: ${REDSKILLED_MEMORY_CEILING_ENV}=${JSON.stringify(declaredMemory)} is not a memory ceiling ` +
+      `redskilled: ${describeDeclaration(memoryDeclaration!)} ${REDSKILLED_MEMORY_CEILING_ENV}=` +
+        `${JSON.stringify(declaredMemory)} is not a memory ceiling ` +
         `this host can read; using ${DEFAULT_HOST_MEMORY_CEILING_FRACTION * 100}% of host memory instead. ` +
-        `Accepted forms: systemd bytes (\`8G\`), a percentage (\`50%\`), or \`infinity\`.`,
-    );
-  }
-  if (declaredWorkers !== "" && workerCount === null && !isUnbounded(declaredWorkers)) {
-    // Same rule for the count: `parseCountCeiling` discards a non-integer or a
-    // non-positive value just as quietly, and an ignored worker ceiling is an
-    // unbounded host wearing a number the operator thinks they set.
-    warn(
-      `redskilled: ${REDSKILLED_WORKER_CEILING_ENV}=${JSON.stringify(declaredWorkers)} is not a positive ` +
-        `integer; this host admits an unbounded number of Workers instead.`,
+      `Accepted forms: systemd bytes (\`8G\`), a percentage (\`50%\`), or \`infinity\`.`,
     );
   }
   if (declaredReservation !== "" && interactiveReservation === undefined) {
@@ -384,6 +419,8 @@ export function resolveHostCeiling(
     memory_bytes: Math.floor(totalMemoryBytes * DEFAULT_HOST_MEMORY_CEILING_FRACTION),
     worker_count: workerCount,
     interactive_reservation: interactiveReservation ?? DEFAULT_INTERACTIVE_RESERVATION,
+    memory_source: "derived-default",
+    worker_source: workerSource,
     // **The source describes the MEMORY ceiling, and reaching here means it was
     // derived.** It used to be read off `declaredWorkers`, so declaring only a
     // WORKER ceiling labelled a derived memory ceiling `declared` — and that
@@ -392,6 +429,24 @@ export function resolveHostCeiling(
     // number they never stated.
     source: "host-fraction",
   };
+}
+
+function selectDeclaration(
+  flag: string | undefined,
+  environment: string | undefined,
+  config: string | undefined,
+): { readonly value: string; readonly source: RedskilledHostSettingSource } | undefined {
+  if (flag?.trim()) return { value: flag.trim(), source: "flag" };
+  if (environment?.trim()) return { value: environment.trim(), source: "environment" };
+  if (config?.trim()) return { value: config.trim(), source: "home-config" };
+  return undefined;
+}
+
+function describeDeclaration(declaration: { readonly source: RedskilledHostSettingSource }): string {
+  if (declaration.source === "flag") return "serve flag";
+  if (declaration.source === "environment") return "environment";
+  if (declaration.source === "home-config") return "home config";
+  return "derived default";
 }
 
 /** `infinity` and its synonyms — a real declaration of "no ceiling". */

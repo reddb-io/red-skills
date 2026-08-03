@@ -107,6 +107,25 @@ describe("config — activation gate (ADR 0116)", () => {
   });
 });
 
+describe("config — host-scoped redskilled policy", () => {
+  it("warns and discards machine limits found in a project file", () => {
+    const warnings: string[] = [];
+    const text = [
+      "plugins:",
+      "  dev:",
+      "    enabled: true",
+      "    redskilled:",
+      "      worker_ceiling: 99",
+      "",
+    ].join("\n");
+    const values = loadConfig("/repo/.red/config.yaml", { read: () => text, warn: (message) => warnings.push(message) });
+
+    expect(values["dev.redskilled.worker_ceiling"]).toBeUndefined();
+    expect(warnings.join("\n")).toContain("host-scoped");
+    expect(warnings.join("\n")).toContain("~/.red/config.yaml");
+  });
+});
+
 describe("config — retired-key tombstone (ADR 0117)", () => {
   const RETIRED = "plugins:\n  dev:\n    enabled: true\n    afk:\n      attempt_timeout: 99\n";
 

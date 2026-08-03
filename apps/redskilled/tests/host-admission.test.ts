@@ -286,7 +286,14 @@ describe("the verdict is decided over live process state", () => {
 describe("the ceiling a host admits against", () => {
   it("takes an operator's declaration over the derived share", () => {
     expect(resolveHostCeiling({ REDSKILLED_MEMORY_CEILING: "6G", REDSKILLED_WORKER_CEILING: "4" }, 16 * GIB))
-      .toEqual({ memory_bytes: 6 * GIB, worker_count: 4, interactive_reservation: 1, source: "declared" });
+      .toEqual({
+        memory_bytes: 6 * GIB,
+        worker_count: 4,
+        interactive_reservation: 1,
+        source: "declared",
+        memory_source: "environment",
+        worker_source: "environment",
+      });
   });
 
   it("reads a percentage of the host, and `infinity` as no ceiling at all", () => {

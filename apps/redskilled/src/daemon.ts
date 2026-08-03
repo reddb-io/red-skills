@@ -1165,6 +1165,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       sessionKeyHash: paths.sessionKeyHash,
       pid: owner.pid,
       startedAt,
+      ceiling,
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
       workers: [...workers.values()],
       registrations: [...registrations.values()],
