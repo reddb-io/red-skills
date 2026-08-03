@@ -23,6 +23,10 @@ import {
 } from "../src/core/config.js";
 import { PROJECT_NAME_CONFIG_KEY } from "@reddb-io/shared/project-identity.js";
 import {
+  DEFAULT_FLEET_WIDTH_CONFIG,
+  FLEET_WIDTH_CONFIG_KEY,
+} from "@reddb-io/shared/default-fleet-width.js";
+import {
   aggregateAdversarialReviewFindings,
   decideAdversarialReview,
   resolveAdversarialReviewer,
@@ -197,7 +201,7 @@ describe("config", () => {
       warn: (m) => warnings.push(m),
     });
     expect(getConfig(values, "afk.default_runner")).toBe("claude");
-    expect(getConfig(values, "afk.fleet.target")).toBe("2");
+    expect(getConfig(values, FLEET_WIDTH_CONFIG_KEY)).toBe(DEFAULT_FLEET_WIDTH_CONFIG);
     expect(getConfig(values, "afk.hooks.defaults.cargo")).toBe("true");
     expect(getConfig(values, "afk.hooks.defaults.gradle")).toBe("true");
     expect(getConfig(values, "dev.lock.primary-branch")).toBe("false");
@@ -208,7 +212,7 @@ describe("config", () => {
     const path = await writeConfig(`afk:\n  default_runner: codex\n`);
     const values = loadConfig(path, { ignoreActivationGate: true });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
-    expect(getConfig(values, "afk.fleet.target")).toBe("2");
+    expect(getConfig(values, FLEET_WIDTH_CONFIG_KEY)).toBe(DEFAULT_FLEET_WIDTH_CONFIG);
     expect(getConfig(values, "afk.hooks.defaults.cargo")).toBe("true");
     expect(getConfig(values, "afk.hooks.defaults.gradle")).toBe("true");
   });
@@ -217,7 +221,7 @@ describe("config", () => {
     const warnings: string[] = [];
     const path = await writeConfig(`zzz: foo\nafk:\n  default_runner: codex\n`);
     const values = loadConfig(path, { ignoreActivationGate: true, warn: (m) => warnings.push(m) });
-    expect(getConfig(values, "afk.fleet.target")).toBe("2");
+    expect(getConfig(values, FLEET_WIDTH_CONFIG_KEY)).toBe(DEFAULT_FLEET_WIDTH_CONFIG);
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
     expect(getConfig(values, "zzz")).toBe("foo");
     expect(warnings).toHaveLength(0);
@@ -228,7 +232,7 @@ describe("config", () => {
     const path = await writeConfig(`afk:\n  default_runner: codex\n  unknown_thing: 42\n`);
     const values = loadConfig(path, { ignoreActivationGate: true, warn: (m) => warnings.push(m) });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
-    expect(getConfig(values, "afk.fleet.target")).toBe("2");
+    expect(getConfig(values, FLEET_WIDTH_CONFIG_KEY)).toBe(DEFAULT_FLEET_WIDTH_CONFIG);
     expect(warnings).toHaveLength(0);
   });
 
@@ -237,7 +241,7 @@ describe("config", () => {
     const path = await writeConfig(`afk:\n  default_runner: "codex\n`);
     const values = loadConfig(path, { ignoreActivationGate: true, warn: (m) => warnings.push(m) });
     expect(getConfig(values, "afk.default_runner")).toBe("claude");
-    expect(getConfig(values, "afk.fleet.target")).toBe("2");
+    expect(getConfig(values, FLEET_WIDTH_CONFIG_KEY)).toBe(DEFAULT_FLEET_WIDTH_CONFIG);
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("config.yaml");
   });
@@ -494,7 +498,7 @@ describe("config", () => {
     const values = loadConfig(path, { ignoreActivationGate: true });
     expect(getConfig(values, "afk.hooks.defaults.cargo")).toBe("false");
     expect(getConfig(values, "afk.hooks.defaults.gradle")).toBe("true");
-    expect(getConfig(values, "afk.fleet.target")).toBe("2");
+    expect(getConfig(values, FLEET_WIDTH_CONFIG_KEY)).toBe(DEFAULT_FLEET_WIDTH_CONFIG);
   });
 
   it("integer values round-trip as strings", async () => {

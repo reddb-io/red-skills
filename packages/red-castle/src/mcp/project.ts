@@ -16,6 +16,7 @@ import { z } from "zod/v3";
 import { refuseFleetNaming } from "../engine/extinct-nouns.js";
 import { projectStatusContract, type ProjectStatusOutput } from "./contracts.js";
 import type { CastleMcpTool } from "./tool.js";
+import { DEFAULT_FLEET_WIDTH } from "@reddb-io/shared/default-fleet-width.js";
 
 export interface WorkSelectorInput {
   spec?: number;
@@ -102,7 +103,7 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
         "Registers rather than launches: the project contributes a record, never a process of its own.",
       inputSchema: {
         runner: z.string().min(1),
-        target: z.number().int().min(0).default(2),
+        target: z.number().int().min(0).default(DEFAULT_FLEET_WIDTH),
         selector: z.object(workSelectorShape).optional(),
         config: workConfig.optional(),
         base: z.string().min(1).optional(),

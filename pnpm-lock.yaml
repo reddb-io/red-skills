@@ -484,6 +484,9 @@ importers:
       '@reddb-io/github':
         specifier: workspace:*
         version: link:../github
+      '@reddb-io/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@reddb-io/toon':
         specifier: 'catalog:'
         version: 0.13.0
