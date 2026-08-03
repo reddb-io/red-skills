@@ -475,6 +475,17 @@ describe("monitor — compact dashboard", () => {
     );
   });
 
+  it("states the interactive reservation whenever it reports slots", () => {
+    const line = renderFleetLine(baseFleet({ interactiveReservation: 1 }), 1780138815);
+    expect(line).toContain("slots busy:0 free:2 parked:0 reserve:1 interactive");
+
+    const toon = renderCompactDashboardToon([], fixtureEvents, 1780138815, {
+      ...baseFleet(),
+      interactiveReservation: 1,
+    });
+    expect(toon).toContain("slots_interactive_reservation: 1");
+  });
+
   it("marks busy fleet state degraded when no active worker corroborates it", () => {
     const out = renderCompactDashboard(
       [],

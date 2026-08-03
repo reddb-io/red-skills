@@ -29,6 +29,7 @@ import {
   registerRedskilledProject,
   renewRedskilledProject,
   readRedskilledHostState,
+  readRedskilledStatuslinePayload,
   redskilledPresenceAdvice,
   RedskilledRequestRefusedError,
   RedskilledUnreachableError,
@@ -211,6 +212,8 @@ export interface RedskilledBirthPort {
    * process that knows when the birth happened.
    */
   workerBirths(): Promise<Readonly<Record<string, string>>>;
+  /** Extra host capacity reserved above the ordinary Worker ceiling. */
+  interactiveReservation(): Promise<number>;
   /**
    * Host events appended since the last drain, narrowed to this project.
    *
@@ -355,6 +358,15 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
 
     async workerBirths() {
       return Object.fromEntries((await readProjectWorkers()).map((w) => [w.worker_id, w.started_at]));
+    },
+
+    async interactiveReservation() {
+      const payload = await readRedskilledStatuslinePayload(paths, config, {
+        logs: false,
+        vitals: false,
+        display: false,
+      });
+      return payload.host.ceiling.interactive_reservation ?? 0;
     },
 
     async drainEvents() {

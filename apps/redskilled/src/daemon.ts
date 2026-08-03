@@ -1884,6 +1884,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       workers: [...workers.values()],
       budget: spec.budget,
       projectLabel: spec.project_label,
+      ...(spec.reservation == null ? {} : { reservation: spec.reservation }),
     });
   }
 

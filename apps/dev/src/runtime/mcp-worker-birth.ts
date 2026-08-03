@@ -62,6 +62,8 @@ export interface WorkerBirthOptions {
   readonly entry?: readonly string[];
   /** The stamp naming the log file; defaults to now plus a short uniquifier. */
   readonly stamp?: string;
+  /** Host capacity claimed by `/go` and `/go --scout`; ordinary AFK omits it. */
+  readonly reservation?: "interactive";
 }
 
 /**
@@ -102,6 +104,7 @@ export async function requestWorkerBirth(
       log_path: log,
       command,
       args: [...head, "run", ...args],
+      ...(options.reservation == null ? {} : { reservation: options.reservation }),
     });
   } catch (err) {
     // Named, and it starts nothing: an operator reading this needs to know that

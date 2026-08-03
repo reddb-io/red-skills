@@ -83,7 +83,7 @@ const PAYLOAD: StatuslineAggregate = {
       reason: "",
       launch_revision: 1,
     },
-    slots: { busy: 2, free: 1, parked: 1, total: 4 },
+    slots: { busy: 2, free: 1, parked: 1, total: 4, interactive_reservation: 1 },
     live_workers: [
       { id: "wTST1", pid: 4243, issue: "2344", activity: "editing", origin: "afk" },
     ],

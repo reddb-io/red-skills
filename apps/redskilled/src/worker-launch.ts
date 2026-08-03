@@ -56,6 +56,8 @@ export interface RedskilledWorkerSpec {
   readonly env?: Readonly<Record<string, string>>;
   readonly placement?: RedskilledPlacementTarget;
   readonly budget?: RedskilledWorkerBudget;
+  /** Opaque claim on host capacity held for a human-attached dispatch. */
+  readonly reservation?: "interactive";
 }
 
 /** Raised when a spec is not launchable. Fail closed: no Worker, and a reason. */

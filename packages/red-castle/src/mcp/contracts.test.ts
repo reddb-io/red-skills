@@ -30,7 +30,7 @@ const PROJECT_STATUS: ProjectStatusOutput = {
     reason: "",
     launch_revision: 0,
   },
-  slots: { busy: 1, free: 1, parked: 0, total: 2 },
+  slots: { busy: 1, free: 1, parked: 0, total: 2, interactive_reservation: 1 },
   live_workers: [
     { id: "worker-1", pid: 43, issue: "2305", activity: "impl", origin: "afk" },
   ],
@@ -55,6 +55,10 @@ function tool(output: unknown): CastleMcpTool {
 }
 
 describe("observability output contracts", () => {
+  it("carries the interactive reservation beside every slot count", () => {
+    expect(projectStatusOutputSchema.parse(PROJECT_STATUS).slots.interactive_reservation).toBe(1);
+  });
+
   it("declares a versioned contract on every observability tool", () => {
     const tools = createCastleMcpTools({} as CastleMcpDependencies);
     const contracted = [

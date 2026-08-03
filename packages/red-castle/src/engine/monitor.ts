@@ -276,6 +276,8 @@ export interface FleetState {
   slotsFree: number;
   slotsTotal: number;
   slotsParked: number;
+  /** Capacity above the target held for human-attached dispatches. */
+  interactiveReservation?: number;
   spawnsThisTick: number;
   trunkFreshness?: FleetTrunkFreshness;
   churnDeaths?: number;
@@ -330,10 +332,13 @@ export function renderFleetLine(fleet: FleetState, now: number, degraded = false
     ? `  churn deaths:${churnDeaths} respawns:${churnRespawns}/${Math.max(1, Math.floor(fleet.churnWindowS ?? 1))}s`
     : "";
   const trunk = fleet.trunkFreshness ? `  trunk:${fleet.trunkFreshness.status}` : "";
+  const reservation = fleet.interactiveReservation == null
+    ? ""
+    : ` reserve:${fleet.interactiveReservation} interactive`;
   return (
     `fleet [${status}] last ticked ${formatElapsed(age)} ago` +
     `  ready:${fleet.readyForAgent}` +
-    `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree} parked:${fleet.slotsParked}` +
+    `  slots busy:${fleet.slotsBusy} free:${fleet.slotsFree} parked:${fleet.slotsParked}${reservation}` +
     `  spawns:${fleet.spawnsThisTick}` +
     trunk +
     churn +
@@ -712,6 +717,9 @@ export function renderCompactDashboardToon(
       slots_busy: fleet.slotsBusy,
       slots_free: fleet.slotsFree,
       slots_parked: fleet.slotsParked,
+      ...(fleet.interactiveReservation == null
+        ? {}
+        : { slots_interactive_reservation: fleet.interactiveReservation }),
       spawns: fleet.spawnsThisTick,
       trunk_freshness_status: fleet.trunkFreshness?.status ?? "",
       trunk_freshness_refreshed_at: fleet.trunkFreshness

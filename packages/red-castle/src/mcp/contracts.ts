@@ -136,6 +136,8 @@ export const projectStatusOutputSchema = z.object({
     free: z.number(),
     parked: z.number(),
     total: z.number(),
+    /** Capacity above `total`, reserved for human-attached `/go` and scout work. */
+    interactive_reservation: z.number(),
   }),
   live_workers: z.array(
     z.object({
@@ -317,6 +319,7 @@ export const monitorOutputSchema = z.object({
       slotsFree: z.number(),
       slotsTotal: z.number(),
       slotsParked: z.number(),
+      interactiveReservation: z.number(),
       spawnsThisTick: z.number(),
     })
     .nullable(),

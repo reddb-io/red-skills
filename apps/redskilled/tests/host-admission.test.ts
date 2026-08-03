@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  REDSKILLED_INTERACTIVE_RESERVATION_ENV,
   evaluateWorkerAdmission,
   measureHostConsumption,
   resolveHostCeiling,
@@ -244,6 +245,33 @@ describe("the verdict is decided over live process state", () => {
     expect(verdict.projected_worker_count).toBe(3);
   });
 
+  it("admits interactive work immediately into the bounded reservation above a saturated ceiling", () => {
+    const ceiling: RedskilledHostCeiling = {
+      memory_bytes: null,
+      worker_count: 3,
+      interactive_reservation: 1,
+      source: "declared",
+    };
+    const saturated = [workerView("a"), workerView("b"), workerView("c")];
+
+    const autonomous = evaluateWorkerAdmission({ ceiling, workers: saturated });
+    const interactive = evaluateWorkerAdmission({
+      ceiling,
+      workers: saturated,
+      reservation: "interactive",
+    });
+    const reservationFull = evaluateWorkerAdmission({
+      ceiling,
+      workers: [...saturated, workerView("go")],
+      reservation: "interactive",
+    });
+
+    expect(autonomous.verdict).toBe("refused-over-worker-ceiling");
+    expect(interactive.verdict).toBe("admitted-interactive-reservation");
+    expect(interactive.reason).toContain("reserved interactive slot 1/1");
+    expect(reservationFull.verdict).toBe("refused-over-interactive-reservation");
+  });
+
   it("admits everything under an unbounded ceiling — the operator's explicit opt-out", () => {
     const verdict = evaluateWorkerAdmission({
       ceiling: UNBOUNDED_HOST_CEILING,
@@ -258,7 +286,7 @@ describe("the verdict is decided over live process state", () => {
 describe("the ceiling a host admits against", () => {
   it("takes an operator's declaration over the derived share", () => {
     expect(resolveHostCeiling({ REDSKILLED_MEMORY_CEILING: "6G", REDSKILLED_WORKER_CEILING: "4" }, 16 * GIB))
-      .toEqual({ memory_bytes: 6 * GIB, worker_count: 4, source: "declared" });
+      .toEqual({ memory_bytes: 6 * GIB, worker_count: 4, interactive_reservation: 1, source: "declared" });
   });
 
   it("reads a percentage of the host, and `infinity` as no ceiling at all", () => {
@@ -272,5 +300,11 @@ describe("the ceiling a host admits against", () => {
     expect(ceiling.source).toBe("host-fraction");
     expect(ceiling.memory_bytes).toBeLessThan(16 * GIB);
     expect(ceiling.memory_bytes).toBeGreaterThan(0);
+    expect(ceiling.interactive_reservation).toBe(1);
+  });
+
+  it("lets the host configure a small interactive reservation", () => {
+    expect(resolveHostCeiling({ [REDSKILLED_INTERACTIVE_RESERVATION_ENV]: "2" }, 16 * GIB)
+      .interactive_reservation).toBe(2);
   });
 });
