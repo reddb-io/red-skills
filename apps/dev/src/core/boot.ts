@@ -79,6 +79,7 @@ import {
   formatOperationalProbeFinding,
   LABEL_BODY_COHERENCE_PROBE_ID,
   QUEUE_VISIBILITY_PROBE_ID,
+  reconcileBaseFreshnessEvidence,
   runOperationalProbes,
   type BaseFreshnessProbeData,
   type FleetTruthProbeData,
@@ -415,11 +416,17 @@ function shortSha(sha: string | undefined): string {
   return sha ? sha.slice(0, 12) : "unknown";
 }
 
+/**
+ * Try the boot-owned trunk fast-forward. Returns the finding to REPORT when it
+ * did not apply: a fast-forward the guard approved and the merge then declined
+ * must not leave the `guard=passed` evidence standing (#3155) — the halt every
+ * entrance formats from it would name a healthy guard beside a bricked boot.
+ */
 async function tryBootAutoApplyBaseFreshness(
   deps: BootDeps,
   finding: OperationalProbeReport["findings"][number],
-): Promise<boolean> {
-  if (finding.id !== BASE_FRESHNESS_PROBE_ID) return false;
+): Promise<{ applied: boolean; finding: OperationalProbeReport["findings"][number] }> {
+  if (finding.id !== BASE_FRESHNESS_PROBE_ID) return { applied: false, finding };
   const data = finding.data as Partial<BaseFreshnessProbeData> | undefined;
   if (
     data?.finding !== "local-trunk-behind-origin" ||
@@ -428,16 +435,18 @@ async function tryBootAutoApplyBaseFreshness(
     !data.trunk ||
     !deps.fastForwardLocalBase
   ) {
-    return false;
+    return { applied: false, finding };
   }
 
   const result = await deps.fastForwardLocalBase({ remote: data.remote, target: data.trunk });
-  if (result.action !== "fast-forward") return false;
+  if (result.action !== "fast-forward") {
+    return { applied: false, finding: reconcileBaseFreshnessEvidence(finding, result.evidence) };
+  }
 
   deps.log?.(
     `boot operational probe auto-fix applied: ${finding.id} before=${shortSha(data.localSha)} after=${shortSha(data.remoteSha)}; ${result.evidence}`,
   );
-  return true;
+  return { applied: true, finding };
 }
 
 /**
@@ -967,14 +976,15 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   }
   const redProbe = redFindings[0];
   if (redProbe) {
-    const applied = await tryBootAutoApplyBaseFreshness(deps, redProbe);
-    if (!applied) {
+    const attempt = await tryBootAutoApplyBaseFreshness(deps, redProbe);
+    if (!attempt.applied) {
+      const reported = attempt.finding;
       // Worker sessions (skipSweeps) branch from origin/main, so local-main-behind-origin
       // does not affect their branch base. The guarded FF dep is absent on this path; when
       // the guard passes, or only refuses because the primary has uncommitted WIP, downgrade
       // to a non-fatal finding instead of halting the session.
-      const workerSessionExempt = options.skipSweeps === true && isWorkerExemptBaseFreshnessFinding(redProbe);
-      if (!workerSessionExempt) throw new BootHaltError("operational-probe", redProbe);
+      const workerSessionExempt = options.skipSweeps === true && isWorkerExemptBaseFreshnessFinding(reported);
+      if (!workerSessionExempt) throw new BootHaltError("operational-probe", reported);
     }
     const nextRedProbe = redFindings[1];
     if (nextRedProbe) throw new BootHaltError("operational-probe", nextRedProbe);
