@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## red-setup, red-doctor (engineering) — setup leaves the tree dirty by contract, so it says so (issue #3106)
+
+- **status**: modified
+- **upstream**: `66898f6` (reddb.io original skills)
+- **why**: Two individually-correct rules bricked every fresh repository. `/red-setup` writes `.red/config.yaml`, `.red/.gitignore` and `.red/hooks/**` and is forbidden to `git add` them, so it ends by leaving the tree dirty by design; the trunk-freshness guard refuses to fast-forward a dirty primary, because pending WIP is sacred (#1019). Nothing closed the loop and nothing said one was open: setup reported success, and the failure surfaced later as Workers dying at boot with `clean-tree (3 dirty path(s))` — a message about git ancestry that never mentioned setup, named no path, and sent the reader to git history for a state our own tooling authored.
+- **what changed**:
+  - `red-setup/SKILL.md` + `WRITE-CONTRACT.md`: a new hot-path step before the recap names every file this run wrote, marks it uncommitted, says what stays open, offers the exact `git commit`, and treats a deliberate "no" as a complete answer. The hard rule keeps its prohibition and loses its silence: not adding the files is right, saying nothing about them is the unclosed cycle.
+  - New `apps/dev/src/core/setup-owned-dirt.ts` — one owner for "which dirty paths did setup write", read by both the guard and the doctor so the two can never drift into different lists.
+  - `apps/dev/src/core/merge.ts`: the clean-tree condition tolerates dirt confined to the paths setup owns — a named class, not a widened rule, and `merge --ff-only` still refuses on its own if the incoming commits would clobber one of them. Every refusal now names the offending paths and flags the ones `/red-setup` wrote.
+  - `red-doctor/SKILL.md`: new check 28 — a repo still holding uncommitted `/red-setup` output is a `⚠️` naming the paths, reported and never cured, because landing `.red/` in git is the operator's decision.
+
 ## red-statusline, red-setup (engineering) — the documented statusline exits on the truth (issue #3073)
 
 - **status**: modified

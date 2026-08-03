@@ -40,6 +40,11 @@ import {
   type RedTaxonomyReport,
 } from "../core/red-taxonomy-doctor.js";
 import { auditUnlandedDocs, type UnlandedDocsDoctorReport } from "../core/unlanded-docs-doctor.js";
+import {
+  auditSetupOwnedDirt,
+  classifyDirtyTree,
+  type SetupOwnedDirtReport,
+} from "../core/setup-owned-dirt.js";
 import { collectDocsSweepInput } from "./wire/docs.js";
 import type { RepoContext } from "./wire/paths.js";
 import { listDependencyEdgeTickets, type GhContext } from "./gh.js";
@@ -106,6 +111,8 @@ export interface DoctorClassifierReports {
   readonly redTaxonomy: RedTaxonomyReport;
   /** Check 21 — unlanded `.red/` docs. */
   readonly unlandedDocs: UnlandedDocsDoctorReport;
+  /** Check 28 — `/red-setup` output still sitting uncommitted in the tree (#3106). */
+  readonly setupOwnedDirt: SetupOwnedDirtReport;
   /** One line per degraded collection; empty when every check had its facts. */
   readonly notes: string[];
 }
@@ -463,6 +470,8 @@ export interface DoctorClassifierOptions {
   readonly readToolVersion?: (tool: string) => Promise<string | undefined>;
   /** Injected for tests; defaults to listing each host CLI's marketplaces. */
   readonly readMarketplaceList?: (host: MarketplaceHost) => Promise<MarketplaceListProbe>;
+  /** Injected for tests; defaults to this repo's own `git status --porcelain`. */
+  readonly readPorcelainStatus?: (ctx: RepoContext) => Promise<string>;
   /**
    * The MCP servers the invoking session sees (check 27). `null` — the default —
    * means nobody told this run, which the audit reports as unobserved rather
@@ -602,6 +611,19 @@ export async function collectDoctorClassifierReports(
     notes.push(`unlanded .red docs audit unavailable: ${message(error)}`);
   }
 
+  // A tree still holding `/red-setup`'s own uncommitted writes is the state that
+  // used to brick a fresh repo at first boot (#3106). The guard tolerates it now,
+  // so this is a warn the operator can close with one commit — but it is said out
+  // loud here rather than discovered in a dead Worker's error log.
+  let setupOwnedDirt = auditSetupOwnedDirt(classifyDirtyTree(""));
+  try {
+    setupOwnedDirt = auditSetupOwnedDirt(
+      classifyDirtyTree(await (options.readPorcelainStatus ?? readPorcelainStatus)(ctx)),
+    );
+  } catch (error) {
+    notes.push(`uncommitted /red-setup output audit unavailable: ${message(error)}`);
+  }
+
   return {
     hooks,
     hookPoints,
@@ -615,8 +637,21 @@ export async function collectDoctorClassifierReports(
     askRedRouter,
     redTaxonomy,
     unlandedDocs,
+    setupOwnedDirt,
     notes,
   };
+}
+
+/**
+ * Read this repo's working-tree dirt. Read-only: the doctor reports the state,
+ * it never stages or commits on the operator's behalf — that decision is theirs,
+ * which is the whole reason `/red-setup` leaves the files uncommitted.
+ */
+async function readPorcelainStatus(ctx: RepoContext): Promise<string> {
+  const { execTool } = await import("./exec.js");
+  const result = await execTool("git", ["status", "--porcelain"], { cwd: ctx.root });
+  if (result.code !== 0) throw new Error(`git status --porcelain exited ${result.code}`);
+  return result.stdout;
 }
 
 /** What one host CLI answered when asked to list its marketplaces. */

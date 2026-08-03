@@ -40,6 +40,7 @@ const OFFLINE: DoctorClassifierOptions = {
   listDependencyEdges: async () => ({ tickets: [], unread: [] }),
   readToolVersion: async () => undefined,
   readMarketplaceList: async () => ({ present: false }),
+  readPorcelainStatus: async () => "",
 };
 
 function repoContext(root: string, repo = ""): RepoContext {
@@ -471,5 +472,55 @@ describe("check 21 — unlanded .red docs", () => {
 
     expect(reports.unlandedDocs.row.verdict).toBe("ok");
     expect(reports.notes).toContain("unlanded .red docs audit unavailable: git fetch refused");
+  });
+});
+
+describe("check 28 — uncommitted /red-setup output (#3106)", () => {
+  it("warns with the paths setup wrote and never committed", async () => {
+    const root = await poseRoot("doctor-setup-dirt-");
+    await write(root, ".red/config.yaml", "plugins:\n  dev:\n    enabled: true\n");
+
+    const reports = await collectDoctorClassifierReports(repoContext(root), {
+      ...OFFLINE,
+      readPorcelainStatus: async () => " M .red/config.yaml\n?? .red/.gitignore\n M apps/dev/src/x.ts\n",
+    });
+
+    expect(reports.setupOwnedDirt.row.check).toBe("setup-owned-dirt");
+    expect(reports.setupOwnedDirt.row.verdict).toBe("warn");
+    expect(reports.setupOwnedDirt.row.evidence).toContain(".red/config.yaml");
+    expect(reports.setupOwnedDirt.row.evidence).toContain(".red/.gitignore");
+    // The operator's own WIP is not this check's business.
+    expect(reports.setupOwnedDirt.row.evidence).not.toContain("apps/dev/src/x.ts");
+    expect(reports.setupOwnedDirt.findings.map((finding) => finding.kind)).toEqual([
+      "uncommitted-setup-files",
+    ]);
+  });
+
+  it("is ok when nothing setup wrote is pending", async () => {
+    const root = await poseRoot("doctor-setup-dirt-clean-");
+    await write(root, ".red/config.yaml", "plugins:\n  dev:\n    enabled: true\n");
+
+    const reports = await collectDoctorClassifierReports(repoContext(root), {
+      ...OFFLINE,
+      readPorcelainStatus: async () => " M apps/dev/src/x.ts\n",
+    });
+
+    expect(reports.setupOwnedDirt.row.verdict).toBe("ok");
+    expect(reports.setupOwnedDirt.findings).toEqual([]);
+  });
+
+  it("degrades to a named note when git status cannot be read", async () => {
+    const root = await poseRoot("doctor-setup-dirt-degraded-");
+    await write(root, ".red/config.yaml", "plugins:\n  dev:\n    enabled: true\n");
+
+    const reports = await collectDoctorClassifierReports(repoContext(root), {
+      ...OFFLINE,
+      readPorcelainStatus: async () => {
+        throw new Error("not a git repository");
+      },
+    });
+
+    expect(reports.setupOwnedDirt.row.verdict).toBe("ok");
+    expect(reports.notes).toContain("uncommitted /red-setup output audit unavailable: not a git repository");
   });
 });
