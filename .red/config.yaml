@@ -8,6 +8,20 @@ plugins:
     lock:
       primary-branch: true       # primary-checkout branch-switch guard
     afk:
+      # Maintainer decision 2026-08-03: codex is this repo's executor.
+      #
+      # The `models.codex.*` table below only says WHICH MODEL codex uses once
+      # codex runs — it never SELECTS the runner. That is why a fully-populated
+      # codex model table still drained the whole backlog on claude: the table
+      # was right and nothing was reading it, because nothing chose codex.
+      #
+      # Two things still beat this key, and both beat it silently:
+      #   - `RED_AFK_RUNNER` in the environment, and an explicit `--runner`;
+      #   - a `project_start` that NAMES a runner, which pins the registration
+      #     for its whole life. A dispatcher passing `runner: claude` wins over
+      #     this file every time, so changing this line alone does not move a
+      #     registration that is already standing.
+      default_runner: codex
       models:
         # Maintainer decision 2026-07-28: the claude runner is pinned to Opus 5
         # on EVERY tier — validate included — so the local fleet never falls back
