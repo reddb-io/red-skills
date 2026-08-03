@@ -1,5 +1,7 @@
 # @reddb-io/browser-bridge
 
+## 3.3.21
+
 ## 3.3.20
 
 ## 3.3.19
