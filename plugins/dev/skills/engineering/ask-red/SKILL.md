@@ -138,7 +138,9 @@ through `/memory:view`, `memory docs reference-graph`, and
 
 - `/red-doctor` checks RedSkills adoption drift, including whether this router still
   covers the registered skill set, reports/fixes ADR 0098 tmp janitor hygiene, and
-  runs the shared operational probe registry that fleet boot also consumes. The host toolchain
+  runs the shared operational probe registry that fleet boot also consumes. It also
+  reports a project registration that lapsed while executable work remains queued;
+  recovery belongs to the daemon's AFK runtime belt. The host toolchain
   drift routes here too: it checks `gh >= 2.47.0` and pinned `tq` read-only, while
   `/red-doctor --fix` gates the user-level asdf upgrade and canonical tq installer.
 - `/red-gains` reports whether rsp is paying for itself: latency, throughput,

@@ -67,8 +67,8 @@ export type PublishedVersionObservationOutput = z.infer<typeof publishedVersionO
  * What the host holds for this project, since a project contributes a
  * REGISTRATION rather than a process (ADR 0130 Amendment 4, #2909).
  *
- * `held: false` is the whole answer for a project the daemon knows nothing
- * about, and it is a different fact from an unreachable daemon — which is why
+ * `held: false` carries the latest lapse detail when the daemon recorded one,
+ * and it is a different fact from an unreachable daemon — which is why
  * `daemon_reachable` is stated beside it rather than folded into it: a reader
  * that could not tell them apart would send an operator to `project_start` when
  * the real problem is a host that never answered.
@@ -94,6 +94,10 @@ export const projectRegistrationStatusSchema = z.object({
   /** When the registration lapses unless renewed; "" when unheld. */
   renew_by: z.string(),
   renewals: z.number(),
+  /** When the latest registration lapse was observed; "" when none is known. */
+  lapsed_at: z.string(),
+  /** Why registration is absent; "" while a current registration is held. */
+  reason: z.string(),
   /**
    * How many times the launch has been restated (ADR 0130 Amendment 5). Separate
    * from `renewals` because most renewals restate nothing: this is the number

@@ -40,7 +40,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
-import { createServer, type Server, type Socket } from "node:net";
+import { connect, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import type { DeathAttribution } from "@reddb-io/shared/death-attribution.js";
 import { isPidAlive, sendLineRequest, serveWireSocket } from "@reddb-io/shared/resident-core.js";
@@ -158,6 +158,7 @@ import {
 import {
   DEFAULT_REDSKILLED_QUEUE_MS,
   fetchQueueDiscovery,
+  nextQueuePollMs,
   unconfiguredQueueDiscovery,
   type RedskilledQueueDiscovery,
   type RedskilledQueueTransport,
@@ -287,6 +288,16 @@ export const DEFAULT_REDSKILLED_SAMPLE_MS = 15_000;
 export const DEFAULT_REDSKILLED_LEASE_RENEW_MS = 30_000;
 
 /**
+ * How often the daemon re-evaluates registration liveness.
+ *
+ * Registration liveness has its own belt: tracker cost may change the queue
+ * cadence, but it may never stop the lease mechanism from firing. One minute is
+ * comfortably inside the five-minute registration TTL and the repo's cache-warm
+ * cadence band.
+ */
+export const DEFAULT_REDSKILLED_REGISTRATION_SUSTAIN_MS = 60_000;
+
+/**
  * How many lapsed registrations the daemon keeps where a reader can see them.
  *
  * A tail, not a history: the question a lapse block answers is "did my drain stop,
@@ -294,6 +305,34 @@ export const DEFAULT_REDSKILLED_LEASE_RENEW_MS = 30_000;
  * long-lived host is a leak wearing the shape of an audit trail.
  */
 export const REDSKILLED_LAPSE_MEMORY = 16;
+
+/** Project one durable host event into the loss shape every renderer consumes. */
+function observedWorkerDeath(event: RedskilledHostEvent): DeathAttribution | null {
+  if (event.event !== "worker-death" && event.event !== "worker-budget-kill") return null;
+  const hostEndedWorker = event.event === "worker-budget-kill";
+  const observation = event.detail ??
+    `redskilled observed exit code=${event.exit_code ?? "null"} signal=${event.signal ?? "null"}`;
+  return {
+    version: 1,
+    ts: event.ts,
+    kind: "worker",
+    id: event.worker_id,
+    pid: event.pid,
+    // The daemon observed the loss at this instant; an early Worker published no
+    // finer heartbeat or phase, and inventing either would be worse than saying so.
+    last_seen: event.ts,
+    last_phase: "unreported",
+    sender_class: hostEndedWorker ? "teardown" : "unknown",
+    confidence: hostEndedWorker ? "high" : "none",
+    signal: event.signal,
+    host_boot_changed: false,
+    // A budget kill is the daemon's own act and therefore evidence. A spontaneous
+    // exit has an observation but no known sender; keep that receipt under
+    // `checked` so `unknown` remains honest rather than becoming a guessed cause.
+    evidence: hostEndedWorker ? [observation] : [],
+    checked: [`redskilled host event: ${observation}`],
+  };
+}
 
 /** Raised when another daemon already serves this user session. */
 export class RedskilledAlreadyRunningError extends Error {
@@ -360,6 +399,8 @@ export interface RedskilledDaemonOptions {
   readonly sampleMs?: number;
   /** Window between lease renewals; 0 or below leaves the renewer unarmed. */
   readonly leaseRenewMs?: number;
+  /** Window between registration sustain passes; 0 or below leaves the belt unarmed. */
+  readonly registrationSustainMs?: number;
   /**
    * How the daemon recovers a Worker's last logged line after a restart.
    *
@@ -815,7 +856,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   let server: Server;
   try {
-    server = await bindExclusive(paths.socketPath);
+    // The two records that already name this socket's holder. Consulted only to
+    // REFUSE — an absent, stale or unreadable record decides nothing and falls
+    // through to the bind, which is the arbiter it always was.
+    server = await bindExclusive(paths.socketPath, async () => {
+      const [lease, claim] = await Promise.all([
+        leaseStore.read().catch(() => undefined),
+        machineClaimStore.read().catch(() => undefined),
+      ]);
+      if (lease != null && lease.pid !== owner.pid && isPidAlive(lease.pid)) return true;
+      return claim != null && claim.socket_path === paths.socketPath &&
+        claim.pid !== machineOwner.pid && isPidAlive(claim.pid);
+    });
   } catch (err) {
     await leaseStore.release(owner).catch(() => undefined);
     await machineClaimStore.release(machineOwner).catch(() => undefined);
@@ -837,6 +889,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const readLogTail = options.readLogTail ?? readLastLogLine;
   const sampleMs = options.sampleMs ?? DEFAULT_REDSKILLED_SAMPLE_MS;
   const leaseRenewMs = options.leaseRenewMs ?? DEFAULT_REDSKILLED_LEASE_RENEW_MS;
+  const registrationSustainMs = options.registrationSustainMs ?? DEFAULT_REDSKILLED_REGISTRATION_SUSTAIN_MS;
   const publishedProbe = options.publishedVersion ?? ((running: string) => probePublishedRedskilledVersion(running));
   const replaceCheckMs = options.replaceCheckMs ?? DEFAULT_REDSKILLED_REPLACE_CHECK_MS;
   const publishedProbeTimeoutMs = options.publishedProbeTimeoutMs ?? DEFAULT_REDSKILLED_PUBLISHED_PROBE_TIMEOUT_MS;
@@ -885,11 +938,23 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // replayed into them at boot.
   let observations: RedskilledWorkerMetricObservation[] = [];
   let outcomeMarks: RedskilledWorkerOutcomeMark[] = [];
+  // Boot attributions and deaths this daemon observed share one surface feed.
+  // The latter stay durable through the host event lane and are replayed below;
+  // keeping a second on-disk death record would create two authorities for the
+  // same Worker exit. `undefined` remains until either source has answered,
+  // because a daemon that never reaped and never observed a death must not render
+  // a calm zero in place of an absent instrument.
+  let deathAttributions: DeathAttribution[] | undefined =
+    options.deaths === undefined ? undefined : [...options.deaths];
   // What each project asked the host to hold for it, by project label. In memory,
   // like the log lines and for the same reason: a registration is a live statement
   // a session renews, and a durable copy would outlive the thing it describes. The
   // slice that polls it owns keeping the daemon alive while one stands.
   const registrations = new Map<string, RedskilledProjectRegistration>();
+  // A lapsed record is retained for one more window so the next queue poll can
+  // prove that work still exists and restore it without a person restating the
+  // selector and launch. Bounded: a drained or one-window-old record is dropped.
+  const recoverableRegistrations = new Map<string, RedskilledProjectRegistration>();
   const activeSockets = new Set<Socket>();
   // The last thing the sampler measured, kept so a read is dated rather than
   // dating itself: staleness belongs to the daemon that took the measurement.
@@ -942,6 +1007,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let idleTimer: NodeJS.Timeout | undefined;
   let sampleTimer: NodeJS.Timeout | undefined;
   let leaseTimer: NodeJS.Timeout | undefined;
+  let registrationTimer: NodeJS.Timeout | undefined;
   let demandTimer: NodeJS.Timeout | undefined;
   let replaceTimer: NodeJS.Timeout | undefined;
   let replaceBootTimer: NodeJS.Timeout | undefined;
@@ -966,11 +1032,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   /**
    * Drop every registration whose deadline has passed, and say which those were.
    *
-   * Called from each surface that reads the set rather than from a timer of its
-   * own: a lapse is only ever observable at a read, and a timer would have to keep
-   * this process awake to enforce a deadline whose whole purpose is to let it
-   * sleep. A registration therefore stops being polled, stops being reported and
-   * stops holding the daemon alive at the same instant — the first read past it.
+   * Called from the independent registration belt and from each surface that
+   * reads the set. A registration therefore stops being polled, stops being
+   * reported and stops holding the daemon alive at one authoritative sweep,
+   * without depending on the queue poller's adaptive cadence.
    *
    * **The read is also where a registration is held up.** Amendment 7 gave the
    * renewal an owner, and the owner is this process: every read sustains what the
@@ -987,6 +1052,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const swept = sweepLapsedRegistrations(registrations.values(), nowMs);
     for (const lapsed of swept.lapsed) {
       registrations.delete(lapsed.project_label);
+      const lastObserved = lastQueue?.projects.find((project) => project.project_label === lapsed.project_label);
+      const hasLiveWorker = [...workers.values()].some((worker) => worker.project_label === lapsed.project_label);
+      // Only a project the daemon has already observed draining earns a recovery
+      // poll. A never-counted or counted-empty registration still stops polling
+      // at its deadline, keeping the bounded-intent contract intact.
+      if ((lastObserved?.outcome === "counted" && (lastObserved.depth ?? 0) > 0) || hasLiveWorker) {
+        recoverableRegistrations.set(lapsed.project_label, lapsed);
+      }
       rememberLapse(lapsed, nowMs);
     }
     return swept.lapsed;
@@ -1035,15 +1108,49 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     for (const worker of workers.values()) {
       live[worker.project_label] = (live[worker.project_label] ?? 0) + 1;
     }
+    const pollAt = lastQueue == null ? Number.NaN : Date.parse(lastQueue.fetched_at);
     const polled = new Map((lastQueue?.projects ?? []).map((project) => [project.project_label, project]));
     for (const held of [...registrations.values()]) {
-      const poll = polled.get(held.project_label);
+      // A read is not a new observation. Reusing a positive depth forever would
+      // let status reads keep a closed project alive; one registration window is
+      // the most an observed queue may speak for without another poll.
+      const pollFresh = Number.isFinite(pollAt) && nowMs - pollAt <= held.renew_within_ms;
+      const poll = pollFresh ? polled.get(held.project_label) : undefined;
       const sustained = sustainProjectRegistration(held, {
         now,
         ...(poll == null ? {} : { queue: { outcome: poll.outcome, depth: poll.depth } }),
         liveWorkers: live[held.project_label] ?? 0,
       });
       if (sustained.registration !== held) registrations.set(held.project_label, sustained.registration);
+    }
+  }
+
+  /** Restore a just-lapsed project when a fresh poll proves its queue is non-empty. */
+  function recoverRegistrations(now: string): void {
+    if (recoverableRegistrations.size === 0 || lastQueue == null) return;
+    const nowMs = Date.parse(now);
+    if (!Number.isFinite(nowMs)) return;
+    const polled = new Map(lastQueue.projects.map((project) => [project.project_label, project]));
+    for (const [label, lapsed] of [...recoverableRegistrations]) {
+      // Recovery is a belt, not immortal intent. After one original window there
+      // is no live statement left to restore, so the extra polling stops.
+      if (nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms) {
+        recoverableRegistrations.delete(label);
+        continue;
+      }
+      const poll = polled.get(label);
+      if (poll == null) continue;
+      const recovered = sustainProjectRegistration(lapsed, {
+        now,
+        queue: { outcome: poll.outcome, depth: poll.depth },
+        liveWorkers: [...workers.values()].filter((worker) => worker.project_label === label).length,
+      });
+      if (recovered.verdict === "open-work" || recovered.verdict === "live-worker") {
+        registrations.set(label, recovered.registration);
+        recoverableRegistrations.delete(label);
+      } else if (recovered.verdict === "drained") {
+        recoverableRegistrations.delete(label);
+      }
     }
   }
 
@@ -1099,7 +1206,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       reattachedWorkerIds: [...reattached],
       repositoryActivity: lastActivity,
       githubBalance: lastBalance,
-      ...(options.deaths === undefined ? {} : { deaths: options.deaths }),
+      ...(deathAttributions === undefined ? {} : { deaths: deathAttributions }),
       // Derived here, once, for every surface: the observation history belongs
       // to this process, so a statusline dividing its own counters would be a
       // second authority on a number that has one answer.
@@ -1243,7 +1350,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // Swept before the set is snapshotted, so a lapsed project is absent from the
     // very poll that would otherwise have asked the tracker about it again.
     expireLapsedRegistrations(now);
-    const projects = [...registrations.values()]
+    const nowMs = Date.parse(now);
+    for (const [label, lapsed] of [...recoverableRegistrations]) {
+      if (Number.isFinite(nowMs) && nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms) {
+        recoverableRegistrations.delete(label);
+      }
+    }
+    const candidates = new Map<string, RedskilledProjectRegistration>([
+      ...recoverableRegistrations,
+      ...registrations,
+    ]);
+    const projects = [...candidates.values()]
       .map((registration) => ({ project_label: registration.project_label, selector: registration.selector }))
       // By label, like every other list the daemon reports: the order a client
       // happened to register in is not a fact about the host.
@@ -1271,7 +1388,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // The depth this poll just counted is the renewal a project with open work
     // gets (Amendment 7), applied here rather than at the next read so a deadline
     // is never judged against a poll the daemon had already superseded.
-    sustainRegistrations(clock());
+    const observedAt = clock();
+    recoverRegistrations(observedAt);
+    sustainRegistrations(observedAt);
     return lastQueue;
   }
 
@@ -1833,6 +1952,25 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // describe the same ending at two different times.
     if (event === "worker-death" || event === "worker-budget-kill") {
       markWorkerOutcome({ worker_id: worker.worker_id, ts, outcome: event });
+      rememberObservedDeath({
+        version: 1,
+        ts,
+        event,
+        worker_id: worker.worker_id,
+        project_label: worker.project_label,
+        pid: worker.pid,
+        workspace_path: worker.workspace_path,
+        log_path: worker.log_path ?? null,
+        isolated: worker.isolated,
+        unit: worker.unit ?? null,
+        memory_high: worker.budget?.memory_high ?? null,
+        memory_max: worker.budget?.memory_max ?? null,
+        cpu_weight: worker.budget?.cpu_weight ?? null,
+        detail,
+        reason: null,
+        exit_code: exit.exitCode ?? null,
+        signal: exit.signal ?? null,
+      });
       // Every death reaches here, which is why the breaker folds here rather
       // than at the five call sites that end a Worker. What it reads is a
       // lifetime, never a cause: the daemon is not owed a reason (rule 3), and
@@ -1849,6 +1987,22 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
       })
       .catch(() => undefined);
+  }
+
+  /** Put one host-observed loss on every surface, newest observation winning. */
+  function rememberObservedDeath(event: RedskilledHostEvent): void {
+    const attribution = observedWorkerDeath(event);
+    if (attribution == null) return;
+    const merged = [
+      attribution,
+      ...(deathAttributions ?? []).filter(
+        (existing) => existing.kind !== attribution.kind || existing.id !== attribution.id,
+      ),
+    ].sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
+    // The badge describes the same rolling day as the daemon's outcome feed,
+    // rather than turning an append-only lane's lifetime total into current
+    // health. The generic pruner also caps an unreadable clock safely.
+    deathAttributions = pruneRedskilledMetricHistory(merged, (death) => death.ts, { now: clock() });
   }
 
   /**
@@ -2108,6 +2262,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     leaseTimer.unref();
   }
 
+  function armRegistrationTimer(): void {
+    if (stopping || registrationTimer != null || registrationSustainMs <= 0) return;
+    registrationTimer = setInterval(() => {
+      // One independent cadence owns both sides of the decision: renew what a
+      // fresh observation still speaks for, then make every lapse visible.
+      expireLapsedRegistrations(clock());
+    }, registrationSustainMs);
+    registrationTimer.unref();
+  }
+
   function armSampleTimer(): void {
     if (stopping || sampleTimer != null || sampleMs <= 0) return;
     sampleTimer = setInterval(() => {
@@ -2149,10 +2313,20 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   function armQueueTimer(): void {
     if (stopping || queueTimer != null) return;
     if (queueMs <= 0) return;
-    queueTimer = setInterval(() => {
-      void pollQueueDiscovery().catch(() => undefined);
-    }, queueMs);
-    queueTimer.unref();
+    const schedule = (delayMs: number): void => {
+      queueTimer = setTimeout(() => {
+        queueTimer = undefined;
+        void pollQueueDiscovery()
+          .catch(() => undefined)
+          .finally(() => {
+            if (stopping) return;
+            const nowMs = Date.parse(clock());
+            schedule(nextQueuePollMs(lastQueue, queueMs, Number.isFinite(nowMs) ? nowMs : Date.now()));
+          });
+      }, delayMs);
+      queueTimer.unref();
+    };
+    schedule(queueMs);
   }
 
   /**
@@ -2294,11 +2468,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (idleTimer) clearTimeout(idleTimer);
     if (sampleTimer) clearInterval(sampleTimer);
     if (leaseTimer) clearInterval(leaseTimer);
+    if (registrationTimer) clearInterval(registrationTimer);
     if (replaceTimer) clearInterval(replaceTimer);
     if (replaceBootTimer) clearTimeout(replaceBootTimer);
     if (activityTimer) clearInterval(activityTimer);
     if (balanceTimer) clearTimeout(balanceTimer);
-    if (queueTimer) clearInterval(queueTimer);
+    if (queueTimer) clearTimeout(queueTimer);
     if (demandTimer) clearInterval(demandTimer);
     // Every event already handed over reaches the lane before the daemon lets go
     // of the session: a birth still in flight would leave the next daemon with a
@@ -2320,6 +2495,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // in the window between binding and replay would be told this session holds
   // nothing, and would then birth a second Worker for work already running.
   const laneEvents = await eventLane.read().catch(() => []);
+  // A successor must render yesterday's loss too. The event lane is the durable
+  // host witness, so replaying it here restores the exact feed a live exit updates
+  // above without asking a project artifact that an early Worker never created.
+  for (const event of laneEvents) rememberObservedDeath(event);
   // The outcomes a predecessor recorded are this host's history too: a daemon
   // that restarted mid-day and reported an empty 24h window would tell an
   // operator the machine finished nothing, when what happened is that the
@@ -2488,6 +2667,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   armIdleTimer();
   armSampleTimer();
   armLeaseTimer();
+  armRegistrationTimer();
   armReplaceTimer();
   armActivityTimer();
   armBalanceTimer();
@@ -2547,13 +2727,77 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 }
 
 /**
- * Bind the socket, refusing to steal one another daemon is answering on.
+ * What a socket path is, to the one caller allowed to delete it.
+ *
+ * `owned` and `unowned` are the two the ambiguity is between; `unknown` is the
+ * third answer a probe owes when it resolved neither, and it exists so that a
+ * failure to decide can never be spelled as a decision.
+ */
+export type RedskilledSocketOwnership = "owned" | "unowned" | "unknown";
+
+/**
+ * Who owns a socket path, asked of the KERNEL rather than of a clock.
+ *
+ * A `connect()` that SUCCEEDS proves a listener is bound to the path — that is
+ * the whole of what ownership means here, and it is true whether the owner
+ * replies in a millisecond, in a minute, or never. A `connect()` REFUSED
+ * (`ECONNREFUSED`, `ENOENT`) proves the opposite just as cheaply: the inode is
+ * there and nothing is listening behind it, which is exactly the debris a crash
+ * leaves. Anything else resolved nothing and says so.
+ *
+ * **This is deliberately not `socketAnswers`.** A ping asks whether the owner is
+ * HEALTHY, and health is not title: a daemon busy on a long request, or hung in
+ * a shutdown drain, fails a ping while owning its socket completely. Reading
+ * that `false` as an absent owner is how a live daemon's socket got unlinked out
+ * from under it — 1166 daemon births in one day, four of them serving at once
+ * (#3186). Health is still worth asking; it is just not what licenses a delete.
+ */
+export async function probeSocketOwnership(
+  socketPath: string,
+  timeoutMs = 250,
+): Promise<RedskilledSocketOwnership> {
+  return await new Promise<RedskilledSocketOwnership>((resolve) => {
+    const probe = connect(socketPath);
+    let settled = false;
+    const settle = (ownership: RedskilledSocketOwnership): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      probe.destroy();
+      resolve(ownership);
+    };
+    // A local unix connect resolves at kernel speed, so the timeout is a
+    // backstop rather than the mechanism. It resolves `unknown` — never
+    // `unowned` — because a slow answer is the case this whole function exists
+    // to stop reading as an absent one.
+    const timer = setTimeout(() => settle("unknown"), timeoutMs);
+    timer.unref?.();
+    probe.once("connect", () => settle("owned"));
+    probe.once("error", (error: NodeJS.ErrnoException) => {
+      settle(error.code === "ECONNREFUSED" || error.code === "ENOENT" ? "unowned" : "unknown");
+    });
+  });
+}
+
+/**
+ * Bind the socket, refusing to steal one another daemon is bound to.
  *
  * `EADDRINUSE` is ambiguous — a live peer and a socket file a crash left behind
- * look identical on disk — so it is resolved by *asking*: a path that answers a
- * ping has an owner, and a path that does not is debris to unlink and retry.
+ * look identical on disk — so it is resolved by *asking the kernel*: a path a
+ * `connect()` reaches has an owner, and only a path that refuses the connection
+ * is debris to unlink and retry. An unresolved probe keeps the path, because the
+ * cost of the two mistakes is not symmetric: refusing to start loses one daemon
+ * that says why, and unlinking a live socket loses every client that came after
+ * it, silently, while the daemon it orphaned goes on believing it is the one.
+ *
+ * `ownerRecorded` is the second belt. The lease and the machine claim already
+ * name the pid that holds this path, and a probe is not owed the last word over
+ * two records that name a live process.
  */
-async function bindExclusive(socketPath: string): Promise<Server> {
+async function bindExclusive(
+  socketPath: string,
+  ownerRecorded?: () => Promise<boolean>,
+): Promise<Server> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const server = createServer();
     try {
@@ -2568,7 +2812,10 @@ async function bindExclusive(socketPath: string): Promise<Server> {
     } catch (err) {
       server.close();
       if ((err as NodeJS.ErrnoException).code !== "EADDRINUSE") throw err;
-      if (await socketAnswers(socketPath)) throw new RedskilledAlreadyRunningError(socketPath);
+      if ((await probeSocketOwnership(socketPath)) !== "unowned") {
+        throw new RedskilledAlreadyRunningError(socketPath);
+      }
+      if (await ownerRecorded?.()) throw new RedskilledAlreadyRunningError(socketPath);
       await rm(socketPath, { force: true });
     }
   }

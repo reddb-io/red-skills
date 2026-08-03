@@ -195,6 +195,30 @@ describe("starting work registers the project", () => {
       createCastleMcpDependencies(root).projectStart({ runner: "claude", target: 1 }),
     ).rejects.toThrow(/no `origin` remote/);
   });
+
+  it("reports when and why this project's registration lapsed", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+    daemon.registerProject({
+      project_label: "acme/widgets",
+      selector: 'repo:acme/widgets is:issue is:open label:"ready-for-agent"',
+      argv: ["red-skills-dev", "run", "--once"],
+      workspace_path: root,
+      target: 1,
+      renew_within_ms: 20,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // Observe the deadline on the daemon before asking the project surface.
+    expect(daemon.hostState().registrations).toEqual([]);
+
+    const status = await createCastleMcpDependencies(root).projectStatus();
+    expect(status.registration).toMatchObject({
+      held: false,
+      daemon_reachable: true,
+      lapsed_at: expect.stringMatching(/^2026-|^20\d\d-/),
+      reason: expect.stringContaining("nothing renewed it"),
+    });
+  });
 });
 
 describe("stopping work deregisters the project", () => {

@@ -312,7 +312,7 @@ describe("the renewal arithmetic itself", () => {
     expect(renewed.renewed_at).toBe(at);
     expect(renewed.renew_by).toBe(new Date(Date.parse(at) + WINDOW_MS).toISOString());
     // Everything about the work is carried over untouched.
-    expect({ ...renewed, renewed_at: "", renew_by: "", renewals: 0 }).toEqual({
+    expect({ ...renewed, renewed_at: "", renew_by: "", renewals: 0, session_renewals: 0 }).toEqual({
       ...held,
       renewed_at: "",
       renew_by: "",

@@ -25,7 +25,14 @@
  * it does not, because a plausible zero is worse than a missing column.
  */
 import { clamp, formatBytes, formatCount, formatDuration, formatRate, pad, width } from "./format.js";
-import { BUDGET_BAND_MARK, BUDGET_SPENT_MARK, DEATH_MARK, ENGINE_BEHIND_MARK } from "./marks.js";
+import {
+  BUDGET_BAND_MARK,
+  BUDGET_SPENT_MARK,
+  DEATH_MARK,
+  ENGINE_BEHIND_MARK,
+  LAPSED_MARK,
+  UNREGISTERED_MARK,
+} from "./marks.js";
 import {
   REDSKILLED_RENDER_DISPLAY_ABSENT,
   type RedskilledRenderDeaths,
@@ -355,8 +362,8 @@ function buildHeader(
   const parts: string[] = [
     `» ${repo ?? "host"} v${version}${engine != null && engine.current === false ? ENGINE_BEHIND_MARK : ""}`,
   ];
-  if (match === "unregistered") parts.push("!unregistered");
-  if (match === "name-only") parts.push("!lapsed");
+  if (match === "unregistered" || match === "name-only") parts.push(UNREGISTERED_MARK);
+  if (match === "lapsed") parts.push(LAPSED_MARK);
   if (model != null) parts.push(model);
   parts.push(`wrk=${selected.length}/${payload.host.worker_count}`);
   parts.push(

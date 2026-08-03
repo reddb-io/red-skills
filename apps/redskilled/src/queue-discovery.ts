@@ -518,15 +518,15 @@ export function nextQueuePollMs(
 /**
  * Never sleep the poller longer than this, whatever a reset instant claims.
  *
- * **Bounded BELOW the registration TTL, not chosen freely.**
- * `sustainRegistrations` runs inside the queue poll, so the poll is the only
- * thing holding a registration up — and a backoff as long as the TTL lets a
- * project expire in the gap before the next poll could sustain it.
+ * **Bounded BELOW the registration TTL, not chosen freely.** Registration
+ * sustainment has its own cadence, but open-work evidence still comes from this
+ * poll. A backoff as long as the TTL makes that evidence stale before the next
+ * poll can refresh it and removes the recovery proof for an accidental lapse.
  *
  * That is what #3133 actually was. The adaptive cadence introduced in #3121
  * landed at 300_000ms, exactly `REDSKILLED_REGISTRATION_TTL_MS`, so one slow
  * cycle retired a healthy project with a full queue and a Worker still landing.
- * A third of the TTL leaves room for two missed polls before anything lapses.
+ * A third of the TTL leaves room for two missed polls before evidence goes stale.
  *
  * Kept as a literal with the arithmetic shown rather than importing the TTL:
  * this module is PURE and imports nothing, and a cross-import for one number

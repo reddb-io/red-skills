@@ -855,10 +855,12 @@ async function concretizeSelectorUser<T extends { user?: string }>(
  */
 async function projectStatus(root: string): Promise<ProjectStatusOutput> {
   const port = createRedskilledBirthPort({ root });
-  const [monitor, held] = await Promise.all([
+  const [monitor, registrationState] = await Promise.all([
     collectMonitorInputs(root),
-    port.registration().catch(() => undefined),
+    port.registrationState().catch(() => undefined),
   ]);
+  const held = registrationState?.held;
+  const lapse = registrationState?.lapse;
   const allLiveWorkers = monitor.workers.filter(
     (worker) => worker.pidLive === true || worker.live,
   );
@@ -893,7 +895,7 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
   return {
     registration: {
       held: held != null,
-      daemon_reachable: held !== undefined,
+      daemon_reachable: registrationState !== undefined,
       project: port.projectLabel,
       socket: port.socketPath,
       selector: held?.selector ?? "",
@@ -901,6 +903,14 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
       renewal: held?.renewal ?? "unknown",
       renew_by: held?.renew_by ?? "",
       renewals: held?.renewals ?? 0,
+      lapsed_at: held == null ? (lapse?.at ?? "") : "",
+      reason:
+        held != null
+          ? ""
+          : lapse?.detail ??
+            (registrationState === undefined
+              ? "the redskilled daemon did not answer, so registration state is unknown"
+              : "the host holds no registration for this project and recorded no lapse"),
       launch_revision: held?.launch_revision ?? 0,
       ...(held?.last_poll ? { last_poll: held.last_poll } : {}),
       ...(version.published_version ? { published_version: version.published_version } : {}),
