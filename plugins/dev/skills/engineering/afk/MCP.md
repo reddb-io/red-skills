@@ -67,6 +67,20 @@ re-aimed by `project_resize`.
 | `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
 | `project_stop` | mutating | Give this project's registration back and stop what it still holds; pass `force: true` to hard-stop only its attributed workers. |
 
+### Host daemon diagnostics
+
+These reads describe the machine-wide `redskilled` daemon, not only the current
+project. They expose the daemon commands that already own these answers. No
+host-scoped mutation is available here: provisioning and reclaim remain operator
+commands, while the provisioning tool is the read-only `--check` half.
+
+| Tool | Mode | What it does |
+| --- | --- | --- |
+| `host_state` | read | Return every project and Worker the daemon holds on this machine. |
+| `host_dashboard` | read | Return the structured global dashboard across every project. |
+| `host_provision_check` | read | Audit whether the machine is ready and name missing prerequisites; creates and starts nothing. |
+| `host_unit_status` | read | Report whether the optional daemon supervisor unit is installed, enabled, and active. |
+
 `selector` scopes what the producer drains — `{spec, lane, label, issues, tags,
 user}`. Graceful stop leaves in-flight detached workers to finish; force never
 kills workers stamped for another lane or unstamped standalone workers. Passing
