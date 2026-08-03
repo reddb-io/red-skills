@@ -59,6 +59,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          # This job force-pushes the moving `vX` major ref, so it needs a push
+          # identity like any other pushing workflow. A bot-authored tag push also
+          # starts no workflow — the anti-recursion guard this repo already works
+          # around with an explicit `gh workflow run` dispatch — so a consumer that
+          # ever keys off `vX` would silently never fire.
+          token: ${{ secrets.RELEASE_PAT }}
           fetch-depth: 0
           fetch-tags: true
 
