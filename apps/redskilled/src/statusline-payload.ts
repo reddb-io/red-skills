@@ -308,6 +308,18 @@ export interface RedskilledStatuslinePayload {
    * consumer that finds it absent must not invent a lapse.
    */
   readonly registered_projects?: readonly string[];
+  /**
+   * Recent registration lapses, with the daemon's timestamp and reason.
+   *
+   * A label in `known_projects` says only that the host has heard the name. This
+   * block lets the shared renderer say `lapsed` rather than the less actionable
+   * `unregistered`, and lets a re-registration outrank an older lapse record.
+   */
+  readonly lapsed_projects?: readonly {
+    readonly project_label: string;
+    readonly at: string;
+    readonly reason: string;
+  }[];
   readonly workers: readonly RedskilledStatuslineWorker[];
   /**
    * Each registered project's repository counts, dated on their own clock.
@@ -581,6 +593,11 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
     registered_projects: (input.hostState.registrations ?? [])
       .map((registration) => registration.project_label)
       .sort((a, b) => a.localeCompare(b)),
+    lapsed_projects: (input.hostState.lapsed_registrations ?? []).map((lapse) => ({
+      project_label: lapse.project_label,
+      at: lapse.at,
+      reason: lapse.detail,
+    })),
     workers,
     github_balance: buildGithubBalanceReport({
       balance: input.githubBalance ?? null,
@@ -735,6 +752,7 @@ function knownProjects(hostState: RedskilledHostState): readonly string[] {
   const labels = new Set<string>();
   for (const registration of hostState.registrations ?? []) labels.add(registration.project_label);
   for (const project of hostState.projects) labels.add(project.project_label);
+  for (const lapse of hostState.lapsed_registrations ?? []) labels.add(lapse.project_label);
   return [...labels].sort((a, b) => a.localeCompare(b));
 }
 
@@ -842,6 +860,8 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     (payload.registered_projects === undefined ||
       (Array.isArray(payload.registered_projects) &&
         payload.registered_projects.every((label) => typeof label === "string"))) &&
+    (payload.lapsed_projects === undefined ||
+      (Array.isArray(payload.lapsed_projects) && payload.lapsed_projects.every(isStatuslineLapse))) &&
     // Absent is accepted, malformed is not: a daemon older than the activity
     // poller answers a newer client's read, and rejecting its whole payload over
     // a field this consumer did not ask for would lose the Worker set — the very
@@ -858,6 +878,14 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     (payload.deaths === undefined || isStatuslineDeaths(payload.deaths)) &&
     (payload.engine === undefined || isStatuslineEngine(payload.engine)) &&
     (payload.metrics === undefined || isRedskilledStatuslineMetrics(payload.metrics));
+}
+
+function isStatuslineLapse(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const lapse = value as Record<string, unknown>;
+  return typeof lapse.project_label === "string" &&
+    typeof lapse.at === "string" &&
+    typeof lapse.reason === "string";
 }
 
 function isStatuslineDeaths(value: unknown): boolean {

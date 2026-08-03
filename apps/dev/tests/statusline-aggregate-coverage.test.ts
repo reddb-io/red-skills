@@ -79,6 +79,8 @@ const PAYLOAD: StatuslineAggregate = {
       renewal: "renewing",
       renew_by: "2026-07-31T05:30:00.000Z",
       renewals: 3,
+      lapsed_at: "",
+      reason: "",
       launch_revision: 1,
     },
     slots: { busy: 2, free: 1, parked: 1, total: 4 },

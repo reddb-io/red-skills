@@ -151,8 +151,17 @@ export interface RedskilledProjectRegistration {
    * has not happened yet would report every new registration as abandoned.
    */
   readonly renewed_at: string;
-  /** How many renewals the daemon has accepted; 0 for a registration never renewed. */
+  /**
+   * How many times the deadline moved after registration, whatever moved it.
+   *
+   * This is the end-to-end liveness counter an operator reads. A self-renewing
+   * registration with `renewals: 0` claimed that its deadline moved while the
+   * only counter for that event did not, making a live path indistinguishable
+   * from one that never fired (#3180).
+   */
   readonly renewals: number;
+  /** How many of those renewals came from a session message rather than observed work. */
+  readonly session_renewals?: number;
   /**
    * The last instant the project's own work held this registration up.
    *
@@ -172,9 +181,9 @@ export interface RedskilledProjectRegistration {
    * How many times the launch has been restated; 0 for the one registered with.
    *
    * Separate from `renewals` because most renewals restate nothing, and the two
-   * questions an operator asks are different: `renewals` answers "is a session
-   * still here", while this answers "is the Worker born next the one this project
-   * last asked for" — the number that moves when a runner directive lands.
+   * questions an operator asks are different: `renewals` answers "is the
+   * deadline moving", while this answers "is the Worker born next the one this
+   * project last asked for" — the number that moves when a runner directive lands.
    */
   readonly launch_revision: number;
 }
@@ -265,6 +274,7 @@ export function buildProjectRegistration(
     renew_by: new Date(nowMs + renewWithinMs).toISOString(),
     renewed_at: new Date(nowMs).toISOString(),
     renewals: 0,
+    session_renewals: 0,
     launch_revision: 0,
   };
 }
@@ -360,6 +370,9 @@ export function renewProjectRegistration(
     // time, which is the one thing renewing is for.
     renew_by: new Date(nowMs + renewWithinMs).toISOString(),
     renewals: held.renewals + 1,
+    // Old daemons carried only `renewals`, whose meaning was session-only. Read
+    // that count forward once, then keep the two counters separate.
+    session_renewals: (held.session_renewals ?? held.renewals) + 1,
   };
 }
 
@@ -474,6 +487,10 @@ export function sustainProjectRegistration(
       sustained_at: new Date(nowMs).toISOString(),
       sustains: (held.sustains ?? 0) + 1,
       sustained_by: signal,
+      // A sustain is a renewal: it moved the deadline. Keeping only `sustains`
+      // made the headline counter permanently zero on a self-renewing drain.
+      renewals: held.renewals + 1,
+      session_renewals: held.session_renewals ?? held.renewals,
     },
     verdict: signal,
     detail: signal === "open-work"
@@ -562,6 +579,7 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     // a field that IS there and is the wrong shape still fails closed.
     (registration.renewed_at === undefined || typeof registration.renewed_at === "string") &&
     (registration.renewals === undefined || Number.isInteger(registration.renewals)) &&
+    (registration.session_renewals === undefined || Number.isInteger(registration.session_renewals)) &&
     (registration.env === undefined || isLaunchEnvShape(registration.env)) &&
     (registration.log_path === undefined || typeof registration.log_path === "string") &&
     (registration.launch_revision === undefined || Number.isInteger(registration.launch_revision)) &&

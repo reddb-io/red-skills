@@ -57,6 +57,39 @@ import { LABEL_READY } from "../core/triage-labels.js";
 import { fastForwardLocalTarget } from "../core/merge.js";
 import { execTool } from "../runtime/exec.js";
 import * as gitx from "../runtime/git.js";
+import { createRedskilledBirthPort } from "../runtime/redskilled-birth.js";
+
+interface RegistrationLivenessReport {
+  readonly verdict: "ok" | "error" | "unknown";
+  readonly ready: number;
+  readonly lapsedAt: string;
+  readonly reason: string;
+}
+
+async function collectRegistrationLiveness(
+  root: string,
+  ready: number,
+): Promise<RegistrationLivenessReport> {
+  try {
+    const state = await createRedskilledBirthPort({ root }).registrationState();
+    if (state.held == null && state.lapse != null && ready > 0) {
+      return {
+        verdict: "error",
+        ready,
+        lapsedAt: state.lapse.at,
+        reason: state.lapse.detail,
+      };
+    }
+    return { verdict: "ok", ready, lapsedAt: "", reason: "" };
+  } catch (error) {
+    return {
+      verdict: "unknown",
+      ready,
+      lapsedAt: "",
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
 
 interface RedDoctorFlags {
   fix: boolean;
@@ -339,6 +372,7 @@ function renderHuman(
   hostReport: HostToolchainReport,
   deadendReport: DeadendAuditReport,
   redskilledReport: RedskilledProvisionReport,
+  registrationLiveness: RegistrationLivenessReport,
   hitlTypeReport: HitlTypeDeclarationReport,
   classifiers: DoctorClassifierReports,
   applied?: TmpJanitorApplyResult,
@@ -407,6 +441,16 @@ function renderHuman(
     ...redskilledReport.rows.map((row) => `  ${row.verdict === "ok" ? "✅" : "❌"} ${row.check}: ${row.evidence}`),
     ...redskilledReport.findings.map((finding) => `  fix: ${finding.fix}`),
     "",
+    "red-doctor project registration",
+    ...(registrationLiveness.verdict === "error"
+      ? [
+          `  ❌ lapsed-with-work: lapsed at ${registrationLiveness.lapsedAt}; ${registrationLiveness.reason}`,
+          `  ready-for-agent queue contains ${registrationLiveness.ready} item(s)`,
+        ]
+      : [
+          `  ${registrationLiveness.verdict === "ok" ? "✅" : "?"} ${registrationLiveness.verdict}: ${registrationLiveness.reason || "no lapsed registration with queued work"}`,
+        ]),
+    "",
     "red-doctor HUMAN-ONLY type declaration",
     `installed HUMAN-ONLY type labels: ${hitlTypeReport.checked.installedTypeLabels}`,
     `declared hitl_types: ${hitlTypeReport.checked.declaredTypes}`,
@@ -450,6 +494,7 @@ function renderToon(
   hostReport: HostToolchainReport,
   deadendReport: DeadendAuditReport,
   redskilledReport: RedskilledProvisionReport,
+  registrationLiveness: RegistrationLivenessReport,
   hitlTypeReport: HitlTypeDeclarationReport,
   classifiers: DoctorClassifierReports,
   applied?: TmpJanitorApplyResult,
@@ -531,6 +576,12 @@ function renderToon(
         verdict: finding.verdict,
         fix: finding.fix,
       })),
+    },
+    projectRegistration: {
+      verdict: registrationLiveness.verdict,
+      ready: registrationLiveness.ready,
+      lapsedAt: registrationLiveness.lapsedAt,
+      reason: registrationLiveness.reason,
     },
     hitlTypeDeclaration: {
       scorecard: {
@@ -765,6 +816,10 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     const executableAcceptanceReport = auditExecutableAcceptanceCriteria(executableCandidates, {
       transportFailures: executableAcceptanceTransportFailures,
     });
+    const registrationLiveness = await collectRegistrationLiveness(
+      ctx.root,
+      executableCandidates.length,
+    );
     // The label half and the `afk.labels.hitl_types` half are one protection
     // (#3013), so both are read from the same doctor pass: the tracker's real
     // labels, and the config text as written (not as folded by the loader).
@@ -889,8 +944,8 @@ export async function redDoctorCommand(args: readonly string[], cwd = process.cw
     );
     process.stdout.write(
       flags.json
-        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined, marketplaceFixes)
-        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined, marketplaceFixes),
+        ? renderToon(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, registrationLiveness, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined, marketplaceFixes)
+        : renderHuman(ctx.root, probeReport, castleReport, executableAcceptanceReport, report, hostReport, deadendReport, redskilledReport, registrationLiveness, hitlTypeReport, classifiers, applied, probeFixes, hostFixes, flags.fix ? hitlTypeFix : undefined, marketplaceFixes),
     );
     return 0;
   } catch (error) {

@@ -249,7 +249,7 @@ export interface RedskilledRegistrationLapse {
   readonly at: string;
   /** The deadline the record actually stood on. */
   readonly renew_by: string;
-  /** How many renewals a session had sent before it went quiet. */
+  /** How many deadline renewals occurred before the registration lapsed. */
   readonly renewals: number;
   /** How many times the project's own work had held it up (Amendment 7). */
   readonly sustains: number;

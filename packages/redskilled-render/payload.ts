@@ -312,6 +312,11 @@ export interface RedskilledRenderPayload {
   readonly workers: readonly RedskilledRenderWorker[];
   readonly known_projects?: readonly string[];
   readonly registered_projects?: readonly string[];
+  readonly lapsed_projects?: readonly {
+    readonly project_label: string;
+    readonly at: string;
+    readonly reason: string;
+  }[];
   readonly repository_activity?: RedskilledRenderActivity;
   readonly github_balance?: RedskilledRenderBalance;
   readonly deaths?: RedskilledRenderDeaths;

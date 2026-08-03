@@ -26,6 +26,8 @@ const PROJECT_STATUS: ProjectStatusOutput = {
     renewal: "renewing" as const,
     renew_by: "2026-07-31T05:30:00.000Z",
     renewals: 3,
+    lapsed_at: "",
+    reason: "",
     launch_revision: 0,
   },
   slots: { busy: 1, free: 1, parked: 0, total: 2 },

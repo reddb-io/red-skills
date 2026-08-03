@@ -18,6 +18,9 @@
  */
 export const UNREGISTERED_MARK = "!unregistered";
 
+/** What a project with a recorded registration expiry carries. */
+export const LAPSED_MARK = "!lapsed";
+
 /** What a daemon that is not the current one appends to its version. */
 export const ENGINE_BEHIND_MARK = "⇡";
 

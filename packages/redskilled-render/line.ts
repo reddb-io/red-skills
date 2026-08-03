@@ -36,6 +36,7 @@ import {
   BUDGET_SPENT_MARK,
   DEATH_MARK,
   ENGINE_BEHIND_MARK,
+  LAPSED_MARK,
   LOG_LINE_MARK,
   REDSKILLED_RENDER_ABSENCE,
   UNREGISTERED_MARK,
@@ -283,13 +284,13 @@ function renderHead(
     parts.push(`${options.project} ${workers.length}w`);
     parts.push(memoryFigure(payload, options));
     if (workers.length === 0) parts.push("idle");
-  } else if (match === "name-only") {
+  } else if (match === "name-only" || match === "lapsed") {
     // The Workers still count — they are running — but the line says out loud
     // that the host holds no registration, and it never says `idle`: a project
     // nothing will be born for is stopped, not resting (#2973).
     parts.push(`${options.project} ${workers.length}w`);
     parts.push(memoryFigure(payload, options));
-    parts.push(UNREGISTERED_MARK);
+    parts.push(match === "lapsed" ? LAPSED_MARK : UNREGISTERED_MARK);
   } else {
     // NOT `0w idle`. An unmatched directory has no Worker count to report — the
     // host may be holding a dozen for a project this one failed to name — so the
