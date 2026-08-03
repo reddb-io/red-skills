@@ -6,6 +6,17 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## red-statusline, red-setup (engineering) — the statusline actually contacts the daemon (issue #3074)
+
+- **status**: modified
+- **upstream**: `66898f6` (reddb.io original skills)
+- **why**: The documented Claude Code `statusLine` globbed `~/.cache/red-skills/bundles/redskilled*.bundle.min.mjs` for the daemon that owns the Worker rows, and **nothing ever wrote a `redskilled` bundle there**. On a host provisioned through `npx` that directory holds `dev-*`, `code-nav-*` and `rsp-*` and the only daemon copy on the machine sits inside the npx cache, so `$r` was empty on every host, the daemon was never contacted, and the operator read a blank region below the header as "this machine has no Workers" — exactly the silence the docs' stated-absence promise exists to prevent. ADR 0130 rule 10 made the daemon the sole renderer of the Worker line; on this path it was asked nothing.
+- **what changed**:
+  - `packages/shared/bundle-fetch.ts`: `redskilled` joins `rsp` as a **companion of the `dev` warm path**, so the daemon bundle lands beside its siblings from the same npm materialization the `SessionStart` hook already performs. Provisioning moved, not the render path — the statusline stays cached-first with no network and no resolution work (ADR 0084).
+  - Both copies of the command gain an `else` branch that prints the daemon's own absence sentence when no bundle resolves at all. That is not the host rendering a Worker row (rule 10 holds, and there is no Worker to render); it is the host reporting that this machine carries no Worker renderer.
+  - The prose in both docs states where the daemon bundle comes from and why the `else` branch exists.
+  - `apps/dev/src/core/statusline-command-doc.ts` grows two rules: every published glob must resolve what the warm path writes (`statuslineBundleGlobs` / `statuslineGlobResolves`, held against `bundleFileName`, not against a literal), and every copy must state the absence. The suite provisions a fake HOME through the **real** `ensureBundle` and runs the published command against it, so the test fails the moment provisioning stops satisfying the render command — the arrangement that was wrong in a shipped release with nothing going red.
+
 ## red-setup, red-doctor (engineering) — setup leaves the tree dirty by contract, so it says so (issue #3106)
 
 - **status**: modified

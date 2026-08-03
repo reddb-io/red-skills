@@ -16,7 +16,17 @@
 // writes this exact string into every repo it touches, so the defect shipped
 // once per project and every operator re-derived the same fix by hand.
 //
-// Two rules, and the second is why this module exists at all:
+// **The second defect, same command (issue #3074).** The daemon half globbed
+// `~/.cache/red-skills/bundles/redskilled*.bundle.min.mjs`, and nothing wrote a
+// `redskilled` bundle there: on a host provisioned through `npx` the only copy
+// on the machine lived inside the npx cache. `$r` was empty on EVERY host, the
+// daemon was never contacted, and the operator read a blank region below the
+// header as "this machine has no Workers". The fix has two halves and this
+// module guards the render one: provisioning warms the daemon bundle beside its
+// siblings (`companionBundlePlugins` in `packages/shared/bundle-fetch.ts`), and
+// the command STATES the absence when it still resolves nothing.
+//
+// Four rules, and the last two are what #3074 added:
 //
 //  1. THE COMMAND ENDS IN AN EXPLICIT SUCCESS. It terminates with
 //     {@link STATUSLINE_COMMAND_TERMINATOR} so the exit status states what the
@@ -26,6 +36,16 @@
 //     canonical skill docs and mirrored into the generated `packaging/pi/` tree.
 //     Four copies with no guard is four chances to fix one and leave three; the
 //     sweep compares them byte-for-byte so the next edit cannot half-land.
+//  3. EVERY GLOB RESOLVES WHAT PROVISIONING WRITES. The command names cache
+//     files by pattern, and a pattern is only correct relative to the filename
+//     the warm path mints. {@link statuslineBundleGlobs} lifts the patterns out
+//     so a test can hold them against `bundleFileName(plugin, version)` rather
+//     than against a human's memory of it.
+//  4. AN UNRESOLVED DAEMON SAYS SO. When no bundle answers the glob the command
+//     prints {@link STATUSLINE_COMMAND_ABSENCE} itself. This is not the host
+//     rendering a Worker row — ADR 0130 rule 10 still holds, and there is no
+//     Worker here to render. It is the host reporting that no renderer exists on
+//     this machine, because a blank region and a quiet machine look identical.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -38,6 +58,19 @@ import { join } from "node:path";
  * line's verdict to fail on.
  */
 export const STATUSLINE_COMMAND_TERMINATOR = "; exit 0";
+
+/**
+ * The sentence the command prints when no daemon bundle answers its glob.
+ *
+ * It is a COPY of `REDSKILLED_STATUSLINE_ABSENCE`, kept here as a literal so
+ * this module stays free of the daemon package it describes; the test pins the
+ * two together, so the shell branch and the daemon's own render can never say
+ * the absence in two different sentences.
+ */
+export const STATUSLINE_COMMAND_ABSENCE = "redskilled unreachable — Worker state unknown";
+
+/** The bundle cache directory every published glob hangs off. */
+const BUNDLE_CACHE_SEGMENT = "/.cache/red-skills/bundles/";
 
 /**
  * Every doc surface that publishes the command verbatim.
@@ -129,6 +162,69 @@ export function describeStatuslineDrift(sites: readonly StatuslineCommandSite[])
     "Every copy must be byte-identical — edit one and the rest, or regenerate the packaging/pi mirrors with `pnpm pi:packages:build`.",
     ...drifted.map((site) => `  ${site.path}:${site.line}`),
   ].join("\n");
+}
+
+/** The copies that never state the absence when no daemon bundle resolves. PURE. */
+export function statuslineCommandsMissingAbsence(
+  sites: readonly StatuslineCommandSite[],
+  sentence: string = STATUSLINE_COMMAND_ABSENCE,
+): StatuslineCommandSite[] {
+  return sites.filter((site) => !site.body.includes(sentence));
+}
+
+/** A failure message naming every copy that renders the absence as nothing. */
+export function describeStatuslineAbsence(
+  sites: readonly StatuslineCommandSite[],
+  sentence: string = STATUSLINE_COMMAND_ABSENCE,
+): string {
+  const silent = statuslineCommandsMissingAbsence(sites, sentence);
+  if (silent.length === 0) return "";
+  return [
+    `${silent.length} statusLine command cop${silent.length === 1 ? "y" : "ies"} do not print \`${sentence}\` when no daemon bundle resolves.`,
+    "A blank region below the header is indistinguishable from a machine with no Workers — the operator reads an outage as calm (#3074).",
+    ...silent.map((site) => `  ${site.path}:${site.line}`),
+  ].join("\n");
+}
+
+/**
+ * Every bundle-cache filename PATTERN the command globs, in the order it globs
+ * them (`dev-*.bundle.min.mjs`, `redskilled*.bundle.min.mjs`, …). PURE.
+ *
+ * Takes the shell text so a caller may pass the published body escaped or
+ * resolved: the cache paths carry no JSON escape, so both spellings read alike.
+ */
+export function statuslineBundleGlobs(body: string): string[] {
+  const globs: string[] = [];
+  // A glob ends where the shell word does: whitespace or a metacharacter. `\S+`
+  // would swallow the `);` that closes a `$(ls …)` and report a pattern the
+  // shell never expands.
+  const pattern = new RegExp(`${BUNDLE_CACHE_SEGMENT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\s;)|&"']+)`, "g");
+  for (const match of body.matchAll(pattern)) {
+    const glob = match[1];
+    if (glob) globs.push(glob);
+  }
+  return globs;
+}
+
+/**
+ * Does any published glob resolve `fileName`? PURE.
+ *
+ * The question the render command actually asks of provisioning: the warm path
+ * mints `<plugin>-<version>.bundle.min.mjs`, and a glob that does not match it
+ * is the whole of #3074 — a command that looked in the right directory for a
+ * name nothing writes.
+ */
+export function statuslineGlobResolves(body: string, fileName: string): boolean {
+  return statuslineBundleGlobs(body).some((glob) => globMatches(glob, fileName));
+}
+
+/** Shell `*` (never crossing a `/`) against one basename. PURE. */
+function globMatches(glob: string, name: string): boolean {
+  const source = glob
+    .split("*")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[^/]*");
+  return new RegExp(`^${source}$`).test(name);
 }
 
 /** A failure message naming every copy that can still exit non-zero. */
