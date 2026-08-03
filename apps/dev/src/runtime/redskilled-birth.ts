@@ -25,7 +25,7 @@ import {
   commandRedskilledWorker,
   deregisterRedskilledProject,
   ensureRedskilledDaemon,
-  readRedskilledDashboard,
+  readRedskilledDashboardRender,
   registerRedskilledProject,
   renewRedskilledProject,
   readRedskilledHostState,
@@ -278,7 +278,7 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
     },
 
     async hostDashboard() {
-      return await readRedskilledDashboard(paths, { mode: "global" }, config);
+      return await readRedskilledDashboardRender(paths, { mode: "global" }, config);
     },
 
     async provisionCheck() {
