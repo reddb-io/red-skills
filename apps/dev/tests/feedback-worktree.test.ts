@@ -1086,3 +1086,71 @@ describe("the gate's lock waits reach the caller's sink (#2985)", () => {
     expect(seen).toEqual([undefined, undefined]);
   });
 });
+
+describe("the gate child declares what the Worker awaits (#3182)", () => {
+  it("publishes each child pid, safe command subject, start, deadline, escalation, and completion", async () => {
+    const notices: Array<Record<string, unknown>> = [];
+    let nextPid = 7000;
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => ({ ok: true, stderr: "" }),
+      worktreeRemove: async () => {},
+      pnpm: async (_args, opts) => {
+        opts.onSpawn?.(++nextPid);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      exec: async (_cmd, _args, opts) => {
+        opts.onSpawn?.(++nextPid);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+    };
+    const fb = makeFeedbackWorktree("/repo", "/repo/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+      nowIso: () => "2026-08-03T18:00:00.000Z",
+      onGateWait: (notice: Record<string, unknown>) => notices.push(notice),
+    } as never);
+
+    await fb.pnpm(["pnpm", "-C", "afk/wAAAA/3182-x", "test"]);
+
+    expect(notices).toEqual([
+      {
+        state: "waiting",
+        kind: "gate",
+        subject: "pnpm install",
+        pid: 7001,
+        startedAt: "2026-08-03T18:00:00.000Z",
+        deadline: "process exit",
+        escalation: "fail the validation stage",
+      },
+      {
+        state: "completed",
+        kind: "gate",
+        subject: "pnpm install",
+        pid: 7001,
+        startedAt: "2026-08-03T18:00:00.000Z",
+        deadline: "process exit",
+        escalation: "fail the validation stage",
+      },
+      {
+        state: "waiting",
+        kind: "gate",
+        subject: "pnpm test",
+        pid: 7002,
+        startedAt: "2026-08-03T18:00:00.000Z",
+        deadline: "process exit",
+        escalation: "fail the validation stage",
+      },
+      {
+        state: "completed",
+        kind: "gate",
+        subject: "pnpm test",
+        pid: 7002,
+        startedAt: "2026-08-03T18:00:00.000Z",
+        deadline: "process exit",
+        escalation: "fail the validation stage",
+      },
+    ]);
+  });
+});

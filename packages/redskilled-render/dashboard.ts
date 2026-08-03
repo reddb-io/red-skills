@@ -267,7 +267,7 @@ function workerCells(
     // certainly not a figure this module could have extrapolated off the bar
     // beside it. The absence is the honest answer and it is legible as one.
     eta: display.eta == null ? "" : `eta=${formatDuration(display.eta * 1000)}`,
-    hb: `hb=${display.heartbeat ?? "?"}`,
+    hb: declaredWaitCell(display, generatedAt) ?? `hb=${display.heartbeat ?? "?"}`,
     loc: formatSignedPair(display.added, display.removed),
     tks: display.tokens == null ? "" : `tks=${formatCount(display.tokens)}`,
     ctx: display.context == null ? "" : `ctx=${formatCount(display.context)}`,
@@ -275,6 +275,23 @@ function workerCells(
     rsn: display.reasoning == null ? "" : `rsn=${display.reasoning}`,
     txt: display.text == null ? "" : `txt=${display.text}`,
   };
+}
+
+/** The wait's own clock replaces the stale agent heartbeat while a child is
+ * declared. pid is part of the validity gate even though the compact cell does
+ * not print it: a subject without a concrete child is not an explained wait. */
+function declaredWaitCell(display: RedskilledRenderWorkerDisplay, generatedAt: string): string | null {
+  if (
+    display.wait_kind == null ||
+    display.wait_subject == null ||
+    display.wait_pid == null ||
+    display.wait_pid <= 0 ||
+    display.wait_started_at == null
+  ) return null;
+  const started = Date.parse(display.wait_started_at);
+  const now = Date.parse(generatedAt);
+  if (!Number.isFinite(started) || !Number.isFinite(now)) return null;
+  return `${display.wait_kind}=${display.wait_subject} ${formatDuration(Math.max(0, now - started))}`;
 }
 
 /**

@@ -168,6 +168,12 @@ export interface CompactCurrent {
   text_chunk_count?: number;
   reasoning_events?: number;
   waiting_count?: number;
+  /** A child-process wait declared by the Worker. The wait's own start instant
+   * replaces agent-lane freshness as the liveness clock while it is present. */
+  wait_kind?: string;
+  wait_subject?: string;
+  wait_pid?: number;
+  wait_started_at?: string;
 }
 
 /** The subset of afk.state.toon the compact line reads. */
@@ -377,7 +383,8 @@ function elapsedSeconds(state: CompactState, now: number): number {
  * truth (ADR 0083 §3). Fallback chain for older test stubs without the verdict:
  * `liveness` → `live` / `pidLive`.
  */
-export function compactWorkerTag(worker: CompactWorker): "live" | "quiet" | "stale" {
+export function compactWorkerTag(worker: CompactWorker): "live" | "wait" | "quiet" | "stale" {
+  if (declaredWaitDisplay(worker.state.current, 0, false) !== null) return "wait";
   if (worker.livenessVerdict !== undefined) {
     const s = worker.livenessVerdict.status;
     if (s === "alive") {
@@ -434,6 +441,29 @@ export interface WorkerFields {
   tools: number;
   reasoning: number;
   text: number;
+  /** Fully rendered declared wait (`gate=pnpm test 3m12s`), or null. Its age is
+   * anchored to the child start rather than to the last agent stream event. */
+  wait: string | null;
+}
+
+function waitAge(startedAt: string, now: number): string | null {
+  const started = Math.floor(Date.parse(startedAt) / 1000);
+  if (Number.isNaN(started)) return null;
+  const total = Math.max(0, Math.floor(now - started));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes}m${total % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h${minutes % 60}m`;
+}
+
+function declaredWaitDisplay(current: CompactCurrent, now: number, includeAge = true): string | null {
+  const subject = current.wait_subject?.trim();
+  if (!subject || !current.wait_pid || current.wait_pid <= 0 || !current.wait_started_at) return null;
+  const kind = current.wait_kind?.trim() || "wait";
+  if (!includeAge) return `${kind}=${subject}`;
+  const age = waitAge(current.wait_started_at, now);
+  return age === null ? null : `${kind}=${subject} ${age}`;
 }
 
 /** Extract the shared {@link WorkerFields} from a compact worker record. */
@@ -458,6 +488,7 @@ export function workerFields(worker: CompactWorker, now: number): WorkerFields {
     tools: state.current.tools_called_count ?? 0,
     reasoning: state.current.reasoning_events ?? 0,
     text: state.current.text_chunk_count ?? 0,
+    wait: declaredWaitDisplay(state.current, now),
   };
 }
 
@@ -496,13 +527,14 @@ export function renderWorkerCompactLine(worker: CompactWorker, now: number): str
     worker.logLines !== undefined
       ? `  log:${worker.logLines}${worker.logNewLines !== undefined ? `(+${worker.logNewLines})` : ""}`
       : "";
+  const waitFrag = declaredWaitDisplay(state.current, now);
 
   let cur: string;
   if (!isNoIssue(state.current.number)) {
     const title = state.current.title.slice(0, TITLE_MAX);
     const elapsed = formatElapsed(elapsedSeconds(state, now));
     const tierFrag = state.current.model_tier ? ` tier:${state.current.model_tier}` : "";
-    cur = `  #${state.current.number} ${title}  activity:${state.current.activity}${tierFrag}  ${elapsed}${diff}${costFrag}${vitalsFrag}${logFrag}`;
+    cur = `  #${state.current.number} ${title}  activity:${state.current.activity}${tierFrag}  ${elapsed}${waitFrag === null ? "" : `  ${waitFrag}`}${diff}${costFrag}${vitalsFrag}${logFrag}`;
   } else {
     cur = `  idle${diff}${logFrag}`;
   }

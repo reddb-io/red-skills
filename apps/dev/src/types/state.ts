@@ -124,6 +124,17 @@ export const AfkCurrentSchema = z.object({
   blocked_on: z.string().default(""),
   blocked_detail: z.string().default(""),
   blocked_for_s: z.union([z.number(), z.string()]).optional().default(""),
+  /** A child-process wait declared by the Worker that spawned it. Unlike the
+   * agent-stream heartbeat, this clock advances honestly while the orchestrator
+   * is blocked in `await child`: subject says what, pid says which process, and
+   * started_at is the wait's own age anchor. Deadline + escalation reuse the
+   * engine's declared-wait vocabulary so the wait is never merely descriptive. */
+  wait_kind: z.string().default(""),
+  wait_subject: z.string().default(""),
+  wait_pid: z.number().default(0),
+  wait_started_at: z.string().default(""),
+  wait_deadline: z.string().default(""),
+  wait_escalation: z.string().default(""),
   /** Implementer projection measurements consumed by the throughput dashboard. */
   implementer_runner_startup_before_ms: z.number().default(0),
   implementer_runner_startup_after_ms: z.number().default(0),

@@ -208,6 +208,26 @@ describe("the dashboard carries the statusline's own fields", () => {
     expect(cells.txt).toBe("txt=9");
   });
 
+  it("renders a declared gate child from its own start instead of a stale heartbeat (#3182)", () => {
+    const dashboard = renderRedskilledDashboard(
+      payloadOf([worker()], {
+        "w-1": display({
+          heartbeat: "~7m+",
+          wait_kind: "gate",
+          wait_subject: "pnpm test",
+          wait_pid: 9001,
+          wait_started_at: "2026-07-29T01:00:02.000Z",
+          wait_deadline: "process exit",
+          wait_escalation: "fail the validation stage",
+        }),
+      }),
+      LOCAL,
+    );
+
+    expect(dashboard.rows[0]!.cells.hb).toBe("gate=pnpm test 3s");
+    expect(dashboard.rows[0]!.line).not.toContain("hb=~7m+");
+  });
+
   it("names every column the statusline's per-worker line prints", () => {
     expect([...REDSKILLED_DASHBOARD_COLUMNS]).toEqual([
       "wid",

@@ -227,6 +227,21 @@ export interface LockWaitNotice {
 
 export type LockWaitSink = (notice: LockWaitNotice) => void;
 
+/** One child process the gate is currently awaiting. Subject, deadline and
+ * escalation deliberately match the declared-wait vocabulary; pid + start are
+ * the process facts only the spawning Worker can publish. */
+export interface GateWaitNotice {
+  state: "waiting" | "completed";
+  kind: "gate";
+  subject: string;
+  pid: number;
+  startedAt: string;
+  deadline: string;
+  escalation: string;
+}
+
+export type GateWaitSink = (notice: GateWaitNotice) => void;
+
 /**
  * How long a landing revalidation waits for the baseline worktree before giving
  * up. The holder keeps the lock only for `worktree add` + `pnpm install` +
@@ -472,6 +487,10 @@ export interface FeedbackWorktreeOptions {
    * Absent → the locks skip the reporting entirely (unchanged behaviour).
    */
   onLockWait?: LockWaitSink;
+  /** Where a spawned validation child declares itself and its retirement. */
+  onGateWait?: GateWaitSink;
+  /** Clock for the child wait's own age anchor. */
+  nowIso?: () => string;
 }
 
 /**
@@ -491,6 +510,8 @@ export function makeFeedbackWorktree(
   const rebaseOnto = options.rebaseOnto; // default: undefined (OFF)
   const resourceBudget = options.resourceBudget ?? {};
   const onLockWait = options.onLockWait;
+  const onGateWait = options.onGateWait;
+  const nowIso = options.nowIso ?? (() => new Date().toISOString());
   const gitCtx: gitx.GitContext = { cwd: root };
   // branch -> resolved checkout path, or null when setup failed (block all runs).
   const resolved = new Map<string, string | null>();
@@ -517,6 +538,36 @@ export function makeFeedbackWorktree(
   // `noteSetupFailure`) precisely because the latched calls are the ones a
   // reader sees in the record.
   const setupFailureReason = new Map<string, string>();
+
+  async function runGateChild(
+    subject: string,
+    run: (onSpawn: (pid: number) => void) => Promise<ExecOutput>,
+  ): Promise<ExecOutput> {
+    let active: Omit<GateWaitNotice, "state"> | null = null;
+    const publish = (notice: GateWaitNotice): void => {
+      try {
+        onGateWait?.(notice);
+      } catch {
+        // Observability cannot change the gate verdict.
+      }
+    };
+    try {
+      return await run((pid) => {
+        active = {
+          kind: "gate",
+          subject,
+          pid,
+          startedAt: nowIso(),
+          deadline: "process exit",
+          escalation: "fail the validation stage",
+        };
+        publish({ state: "waiting", ...active });
+      });
+    } finally {
+      const completed = active as Omit<GateWaitNotice, "state"> | null;
+      if (completed !== null) publish({ state: "completed", ...completed });
+    }
+  }
 
   /** Cap a captured stderr so one cause line stays a summary, not a log dump. */
   function briefly(detail: string): string {
@@ -691,7 +742,9 @@ export function makeFeedbackWorktree(
     // `tsc/vite/svelte-kit: not found` — a FALSE validation failure that parks
     // otherwise-green work as blocked:validation (#458). Install before any
     // check can run.
-    const ins = await io.pnpm(["install", "--frozen-lockfile"], { cwd: dest });
+    const ins = await runGateChild("pnpm install", (onSpawn) =>
+      io.pnpm(["install", "--frozen-lockfile"], { cwd: dest, onSpawn })
+    );
     if (ins.code !== 0) {
       // Lockfile drift on the branch, or a transient registry error. Remove the
       // partial checkout eagerly and block — continuing would silently validate
@@ -772,8 +825,10 @@ export function makeFeedbackWorktree(
       }
       const rewritten = resolve(scope === "." ? base : join(base, scope));
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
-      const r = await runValidationCommand(
-        () => io.pnpm(["-C", rewritten, ...rest], { cwd: root, env }),
+      const r = await runValidationCommand(() =>
+        runGateChild(`pnpm ${rest[0] ?? "validation"}`, (onSpawn) =>
+          io.pnpm(["-C", rewritten, ...rest], { cwd: root, env, onSpawn })
+        )
       );
       // Report the ABSOLUTE directory the command really ran in (#3041). The
       // gate composed its record against the BRANCH token it posed; without
@@ -783,7 +838,11 @@ export function makeFeedbackWorktree(
       return { code: r.code, stdout: r.stdout, stderr: r.stderr, commandDir: rewritten };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
-    const r = await runValidationCommand(() => io.pnpm(head, { cwd: root, env }));
+    const r = await runValidationCommand(() =>
+      runGateChild(`pnpm ${head[0] ?? "validation"}`, (onSpawn) =>
+        io.pnpm(head, { cwd: root, env, onSpawn })
+      )
+    );
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
 
@@ -801,8 +860,10 @@ export function makeFeedbackWorktree(
       return { code: 1, stdout: "", stderr: setupFailureMessage(cwd) };
     }
     const env = buildFeedbackSubprocessEnv(process.env, resourceBudget);
-    const r = await runValidationCommand(
-      () => io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env }),
+    const r = await runValidationCommand(() =>
+      runGateChild("sh backpressure", (onSpawn) =>
+        io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env, onSpawn })
+      )
     );
     return { code: r.code, stdout: r.stdout, stderr: r.stderr };
   };
