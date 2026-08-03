@@ -268,6 +268,84 @@ describe("runBoot precheck short-circuit", () => {
     expect(calls).toEqual([]);
   });
 
+  /**
+   * #3155 — a Worker dying on trunk freshness reported `claim-lost` on the
+   * targeted-dispatch entrance and `session-error` on the queue-drain one, and
+   * neither message mentioned the trunk, the merge or the file. Both entrances
+   * format the halt from this one finding, so the cause must be IN it: the
+   * trunk, how far behind it is, and the path blocking the fast-forward.
+   */
+  describe("a trunk-freshness halt names the trunk and the blocking path (#3155)", () => {
+    const behindBase = {
+      trunk: "main",
+      remote: "origin",
+      localSha: "1111111111111111111111111111111111111111",
+      remoteSha: "2222222222222222222222222222222222222222",
+      ahead: 0,
+      behind: 18,
+      remoteReachable: true,
+    };
+    const collisionEvidence =
+      "condition failed: dirt-collision (1 locally-modified /red-setup file(s) also changed by origin/main: .red/config.yaml) — commit or stash them, then the fast-forward can land";
+
+    async function haltMessage(over: Parameters<typeof makeDeps>[0], guard: Record<string, unknown>): Promise<string> {
+      const { deps } = makeDeps(over);
+      try {
+        await runBoot(
+          deps,
+          options({
+            operationalProbes: {
+              remoteUrls: [],
+              baseFreshness: { ...behindBase, guard: guard as never },
+            },
+          }),
+        );
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+      throw new Error("boot did not halt");
+    }
+
+    it("names both when the guard refuses the collision up front", async () => {
+      const message = await haltMessage({ fastForwardLocalBase: vi.fn() }, {
+        guard: "refused",
+        target: "main",
+        remote: "origin",
+        currentBranch: "main",
+        failed: "dirt-collision",
+        failedCondition: "dirt-collision",
+        evidence: collisionEvidence,
+      });
+      expect(message).toContain("local main is 18 commit(s) behind origin/main");
+      expect(message).toContain(".red/config.yaml");
+    });
+
+    it("names both when the guard passed and the fast-forward then declined", async () => {
+      const message = await haltMessage(
+        {
+          fastForwardLocalBase: vi.fn(async () => ({
+            action: "noop" as const,
+            guard: "refused" as const,
+            target: "main",
+            remote: "origin",
+            evidence: collisionEvidence,
+          })),
+        },
+        {
+          guard: "passed",
+          target: "main",
+          remote: "origin",
+          currentBranch: "main",
+          evidence: "guard passed: on-trunk clean-tree ancestor (main -> origin/main)",
+        },
+      );
+      expect(message).toContain("local main is 18 commit(s) behind origin/main");
+      expect(message).toContain(".red/config.yaml");
+      // The stale passing verdict must not survive a repair that errored out.
+      expect(message).not.toContain("guard=passed");
+    });
+  });
+
   it("refuses boot on discarded config fallback, naming the config coherence probe", async () => {
     const { deps, calls } = makeDeps();
     await expect(
