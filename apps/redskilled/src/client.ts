@@ -179,7 +179,7 @@ export class RedskilledDaemonHeldError extends RedskilledUnreachableError {
  *
  * This is deliberately distinct from {@link RedskilledUnreachableError}: both
  * leave the requested operation unapplied, but only the latter is transport
- * silence. Surfaces use the distinction to preserve the daemon's explanation
+ * silence. Surfaces use the distinction to keep the daemon's explanation
  * instead of routing an answered refusal to installation advice (#3158).
  */
 export class RedskilledRequestRefusedError extends Error {
