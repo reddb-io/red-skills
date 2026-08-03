@@ -1,5 +1,12 @@
 # @reddb-io/brain
 
+## 3.3.21
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.21
+- @reddb-io/build-info@3.3.21
+
 ## 3.3.20
 
 ### Patch Changes

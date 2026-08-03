@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/dev",
-  "version": "3.3.20",
+  "version": "3.3.21",
   "private": true,
   "description": "RedSkills dev plugin implementation — the AFK TypeScript runtime (typed CLI, state-machine modules, sandcastle execution) under apps/dev. Built to dist/dev.bundle.min.mjs (ADR 0034, relocated by ADR 0060).",
   "license": "Apache-2.0",
