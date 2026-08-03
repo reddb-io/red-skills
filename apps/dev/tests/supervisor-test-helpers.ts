@@ -7,7 +7,6 @@ import {
   buildDiscardEnvelope,
   buildReaperEnvelope,
   buildWallClockCapEnvelope,
-  adoptPersistedSlotPids,
   decideCrashReconcile,
   dispatchReconcileIfPossible,
   reconcileDeadWorkerClaim,
@@ -18,9 +17,7 @@ import {
   resolveReapContest,
   recordDeath,
   resolveSupervisorConfig,
-  runSupervisor,
   sweepParkedSlot,
-  superviseTick,
   validateStallThresholds,
   validateSupervisorStaleThreshold,
   validateSupervisorProgressThreshold,
@@ -51,7 +48,6 @@ export {
   buildDiscardEnvelope,
   buildReaperEnvelope,
   buildWallClockCapEnvelope,
-  adoptPersistedSlotPids,
   decideCrashReconcile,
   dispatchReconcileIfPossible,
   reconcileDeadWorkerClaim,
@@ -62,9 +58,7 @@ export {
   resolveReapContest,
   recordDeath,
   resolveSupervisorConfig,
-  runSupervisor,
   sweepParkedSlot,
-  superviseTick,
   validateStallThresholds,
   validateSupervisorStaleThreshold,
   validateSupervisorProgressThreshold,
@@ -146,7 +140,6 @@ export function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
     progressStaleS: 900,
     halfOpenBaseS: 60,
     halfOpenCapS: 3600,
-    unblockSweepIntervalS: 60,
     trunkFreshnessIntervalS: 60,
     supervisorMaxRestarts: 5,
     supervisorRestartWindowS: 300,
@@ -194,7 +187,6 @@ export interface FakeIo {
   crashedClaimState: ReturnType<typeof vi.fn>;
   emitFleetHeartbeat: ReturnType<typeof vi.fn>;
   repairFleetHeartbeat: ReturnType<typeof vi.fn>;
-  unblockSweep: ReturnType<typeof vi.fn>;
   refreshTrunkMirror: ReturnType<typeof vi.fn>;
   fleetCostUsd: ReturnType<typeof vi.fn>;
   resizeRequest: ReturnType<typeof vi.fn>;
@@ -203,7 +195,6 @@ export interface FakeIo {
   findAttemptPullRequest: ReturnType<typeof vi.fn>;
   configureRunner: ReturnType<typeof vi.fn>;
   emitSupervisorEvent: ReturnType<typeof vi.fn>;
-  bootSweeps: ReturnType<typeof vi.fn>;
   logLines: string[];
   now: ReturnType<typeof vi.fn>;
 }
@@ -223,13 +214,8 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     // Default: the resident measures no memory (an unsampled fleet), so the
     // attempt record simply omits peak RSS.
     sampleTreeRssMb: vi.fn((_pids: readonly number[]) => new Map<number, number>()),
-    // Resolve on a macrotask (not immediately): runSupervisor wraps each tick in
-    // guardedTick, which RACES the tick against `sleep(ceiling)`. An
-    // immediately-resolving sleep makes the ceiling win every race, so the real
-    // `{stopped:true}` is discarded and the `for(;;)` loop spins forever (→ OOM,
-    // #446). A `setTimeout(…, 0)` resolves after the tick's microtasks, so the
-    // tick wins and `stopped` propagates — matching production, where `sleep` is a
-    // real timer that never beats a sub-second tick.
+    // Resolve on a macrotask so guardedTick can race work against the injected
+    // ceiling without an immediately-resolving sleep winning prematurely.
     sleep: vi.fn((_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 0))),
     // Default: exit code unknown (null) → treated as non-clean → circuit-breaker path.
     lastExitCode: vi.fn((_slot: number) => null as number | null),
@@ -250,7 +236,6 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     crashedClaimState: vi.fn(async () => ({ ghOk: true, stillRunning: false, envelopePosted: false })),
     emitFleetHeartbeat: vi.fn(async () => {}),
     repairFleetHeartbeat: vi.fn(async () => ({ stateWritten: true })),
-    unblockSweep: vi.fn(async (): Promise<number[]> => []),
     refreshTrunkMirror: vi.fn(async () => ({
       status: "refreshed",
       remoteRef: "origin/main",
@@ -264,7 +249,6 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     findAttemptPullRequest: vi.fn(async (_issue: number) => null as number | null),
     configureRunner: vi.fn(async () => {}),
     emitSupervisorEvent: vi.fn(async () => {}),
-    bootSweeps: vi.fn(async () => {}),
     logLines: [],
     now: vi.fn(() => NOW),
     ...(over as Partial<FakeIo>),
@@ -305,14 +289,12 @@ export function makeDeps(over: Partial<Record<keyof FakeIo, unknown>> = {}): {
     },
     emitFleetHeartbeat: io.emitFleetHeartbeat,
     repairFleetHeartbeat: io.repairFleetHeartbeat,
-    unblockSweep: io.unblockSweep,
     refreshTrunkMirror: io.refreshTrunkMirror,
     attemptBranchHead: io.attemptBranchHead,
     publishAttemptBranch: io.publishAttemptBranch,
     configureRunner: io.configureRunner,
     resizeRequest: io.resizeRequest,
     emitSupervisorEvent: io.emitSupervisorEvent,
-    bootSweeps: io.bootSweeps,
   };
   return { deps, io };
 }
@@ -403,10 +385,6 @@ export function crashInfo(over: Partial<IterDirInfo> = {}): IterDirInfo {
 
 
 
-
-
-
-// ---------- runSupervisor end-to-end shape ----------
 
 
 

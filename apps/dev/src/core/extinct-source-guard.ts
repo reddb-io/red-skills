@@ -248,6 +248,22 @@ export const EXTINCT_NAMES: readonly ExtinctName[] = [
     // the process itself, so it outlives it.
     pattern: /supervis(?:e|or)[^A-Za-z]?(?:command|entry|spawn|watchdog|launch|relaunch|process)|(?:spawn|launch|relaunch)[^A-Za-z]?supervisor/i,
   },
+  {
+    id: "project-supervisor-tick",
+    noun: "supervisor",
+    what: "the per-project tick that birthed Workers and repeated project-side maintenance",
+    replacement:
+      "the `redskilled` daemon for Worker birth and the castle resident's independent belts for recurring maintenance",
+    pattern: /\bsuperviseTick\b/,
+  },
+  {
+    id: "project-supervisor-loop",
+    noun: "supervisor",
+    what: "the per-project process loop that repeatedly drove the supervisor tick",
+    replacement:
+      "project registration through `runtime/redskilled-birth.ts`; the `redskilled` daemon owns the host-scoped execution loop",
+    pattern: /\brunSupervisor\b/,
+  },
 ];
 
 /** What made a location a finding — a source being read, or a name being carried. */

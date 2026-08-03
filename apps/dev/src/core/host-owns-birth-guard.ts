@@ -72,7 +72,8 @@ export const HOST_OWNED_BIRTH_SITES: readonly HostOwnedBirthSite[] = [
     path: "apps/dev/src/core/supervisor/tick.ts",
     what: "the tick's respawn, half-open probe and idle un-park births",
     replacement:
-      "the same birth port, reached through `deps.proc.spawnSlot`; the tick states demand and never creates a process",
+      "the host-scoped `redskilled` daemon; the per-project tick was removed with the supervisor loop",
+    removed: true,
   },
   {
     path: "apps/dev/src/core/supervisor/resize.ts",
