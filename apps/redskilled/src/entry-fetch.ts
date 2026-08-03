@@ -25,10 +25,18 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync, readdirSync } from "node:fs";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { ensureBundle, NPM_PACKAGE, type BundleIO } from "@reddb-io/shared/bundle-fetch.js";
+import {
+  ensureBundle,
+  isCacheableVersion,
+  newestPublished,
+  NPM_PACKAGE,
+  parseRegistryVersions,
+  registryPackageUrl,
+  type BundleIO,
+} from "@reddb-io/shared/bundle-fetch.js";
 import {
   isResolvedRedskilledEntry,
   resolveRedskilledEntry,
@@ -75,6 +83,9 @@ const npmBundleIO: BundleIO = {
     if (!res.ok) throw new Error(`GET ${url} -> ${res.status}`);
     return await res.text();
   },
+  async rename(from, to) {
+    await rename(from, to);
+  },
 };
 
 /** The plugin name the published bundle is filed under. */
@@ -83,9 +94,14 @@ export const REDSKILLED_BUNDLE_PLUGIN = "redskilled";
 export interface RedskilledEntryFetchIO {
   /** Injected so the fetch is provable without a registry. */
   readonly bundleIO?: BundleIO;
-  /** Which published version to materialise. Absent = the newest stable. */
+  /**
+   * Which published version to materialise. Absent = resolved by
+   * {@link resolveRedskilledFetchVersion}, never carried through as `""`.
+   */
   readonly version?: string;
   readonly env?: NodeJS.ProcessEnv;
+  /** Cache-directory listing, injected so version resolution needs no real fs. */
+  readonly listCacheDir?: (path: string) => readonly string[];
 }
 
 /** Where bundles are cached, matching the resolver's own candidate root. */
@@ -93,6 +109,69 @@ export function redskilledBundleCacheDir(env: NodeJS.ProcessEnv = process.env): 
   if (env.RED_SKILLS_CACHE_DIR) return env.RED_SKILLS_CACHE_DIR;
   const xdg = env.XDG_CACHE_HOME || join(env.HOME || homedir(), ".cache");
   return join(xdg, "red-skills", "bundles");
+}
+
+/** `<plugin>-<version>.bundle.min.mjs` in the shared cache, for any plugin. */
+const CACHED_BUNDLE = /^([a-z0-9-]+)-(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?)\.bundle\.min\.mjs$/;
+
+/**
+ * The version this host should materialise, or `null` when it cannot be told.
+ *
+ * **Absent was spelled `""` and nothing resolved it** (#3153): the empty string
+ * travelled all the way to the filename, minted `redskilled-.bundle.min.mjs`,
+ * and that entry then satisfied the cache-first test on every later boot. So
+ * absent is answered here, and `null` refuses the fetch rather than inventing a
+ * key.
+ *
+ * The cache is asked BEFORE the registry, and deliberately: the daemon bundle
+ * has to match the `dev` bundle beside it — they are cut from one npm package —
+ * and reading the neighbour needs no network on a host that may have none.
+ */
+export async function resolveRedskilledFetchVersion(
+  io: RedskilledEntryFetchIO,
+  cacheDir: string,
+): Promise<string | null> {
+  if (isCacheableVersion(io.version)) return io.version!.trim();
+
+  const listDir = io.listCacheDir ?? listCacheDirSafe;
+  const beside = newestCachedVersion(listDir(cacheDir), "dev");
+  if (beside) return beside;
+
+  try {
+    const bundleIO = io.bundleIO ?? npmBundleIO;
+    const text = await bundleIO.fetchText(registryPackageUrl());
+    return newestPublished(parseRegistryVersions(text));
+  } catch {
+    // Offline, or a registry that refused. Unknown is not a version: the caller
+    // keeps the resolver's own account of where it looked.
+    return null;
+  }
+}
+
+/** Newest cached version for `plugin` in a directory listing, or `null`. */
+function newestCachedVersion(names: readonly string[], plugin: string): string | null {
+  let best: string | null = null;
+  for (const name of names) {
+    const matched = CACHED_BUNDLE.exec(name);
+    if (!matched || matched[1] !== plugin) continue;
+    const version = matched[2]!;
+    if (best === null || compareVersion(version, best) > 0) best = version;
+  }
+  return best;
+}
+
+function compareVersion(a: string, b: string): number {
+  const pa = /^(\d+)\.(\d+)\.(\d+)/.exec(a)!;
+  const pb = /^(\d+)\.(\d+)\.(\d+)/.exec(b)!;
+  return Number(pa[1]) - Number(pb[1]) || Number(pa[2]) - Number(pb[2]) || Number(pa[3]) - Number(pb[3]);
+}
+
+function listCacheDirSafe(path: string): readonly string[] {
+  try {
+    return readdirSync(path);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -109,11 +188,16 @@ export async function ensureRedskilledEntry(
   if (isResolvedRedskilledEntry(local)) return local;
 
   const env = io.env ?? lookup.env ?? process.env;
+  const cacheDir = redskilledBundleCacheDir(env);
+  const version = await resolveRedskilledFetchVersion(io, cacheDir);
+  // No version is no fetch. Materialising under a made-up key is what latched
+  // this host shut in the first place (#3153).
+  if (version === null) return local;
   try {
     await ensureBundle(io.bundleIO ?? npmBundleIO, {
       plugin: REDSKILLED_BUNDLE_PLUGIN,
-      version: io.version ?? "",
-      cacheDir: redskilledBundleCacheDir(env),
+      version,
+      cacheDir,
     });
   } catch {
     // A fetch that cannot run leaves the original unresolved answer intact: the

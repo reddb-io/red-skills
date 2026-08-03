@@ -54,6 +54,12 @@ import {
   type PluginVersionFacts,
   type PluginVersionReport,
 } from "../core/plugin-version-doctor.js";
+import {
+  judgeWarmPath,
+  readWarmPathFacts,
+  type WarmPathFacts,
+  type WarmPathReport,
+} from "../core/warm-path-doctor.js";
 
 /**
  * doctor-classifiers.ts — the fact-collection half of the `/red-doctor` checks
@@ -106,6 +112,8 @@ export interface DoctorClassifierReports {
   /** Check 26 — marketplace registration source per host CLI. */
   readonly marketplaceSources: MarketplaceSourceReport;
   readonly pluginVersion: PluginVersionReport;
+  /** Check 28 — does the INSTALLED fetcher know every companion it must warm? */
+  readonly warmPath: WarmPathReport;
   /** Check 27 — declared MCP servers that never loaded in this session. */
   readonly mcpLoad: McpLoadReport;
   /** Check 15 — native blocked-by vs `req:N` divergence. */
@@ -486,6 +494,8 @@ export interface DoctorClassifierOptions {
    */
   /** Injected so a test needs no plugin cache and no registry. */
   readonly readPluginVersions?: () => Promise<PluginVersionFacts>;
+  /** Injected so a test needs no installed plugin on disk. */
+  readonly readWarmPath?: () => Promise<WarmPathFacts>;
   readonly sessionMcpServers?: readonly string[] | null;
 }
 
@@ -578,6 +588,17 @@ export async function collectDoctorClassifierReports(
     notes.push(`plugin version probe unavailable: ${message(error)}`);
   }
 
+  // The narrower question the version number does not answer: the warm path is
+  // the INSTALLED plugin's fetcher, so a companion added after that vintage is
+  // warmed by nothing here — and a missing `redskilled` bundle births no Worker
+  // at all (#3153).
+  let warmPath: WarmPathReport = judgeWarmPath({ fetcherVersion: null, companions: [] });
+  try {
+    warmPath = judgeWarmPath(await (options.readWarmPath ?? readWarmPathFacts)());
+  } catch (error) {
+    notes.push(`warm path probe unavailable: ${message(error)}`);
+  }
+
   let mcpLoad: McpLoadReport = { findings: [], rows: [] };
   try {
     mcpLoad = collectMcpLoadReport(ctx.root, configText, options.sessionMcpServers ?? null, notes);
@@ -653,6 +674,7 @@ export async function collectDoctorClassifierReports(
     hostBinaries,
     marketplaceSources,
     pluginVersion,
+    warmPath,
     mcpLoad,
     dependencyEdges,
     dependencyEdgesUnread,
