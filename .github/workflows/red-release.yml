@@ -71,13 +71,25 @@ jobs:
         id: changesets
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d
         with:
+          # THE INPUT, not the env var. A GITHUB_TOKEN-authored push leaves
+          # `pull_request` runs parked in `action_required` — GitHub's
+          # anti-recursion guard — so the release PR sits BLOCKED on required
+          # checks that never start. The PAT identity is what makes them start.
+          #
+          # This action's `github-token` input defaults to `${{ github.token }}`,
+          # so setting only `env.GITHUB_TOKEN` left the PAT present, valid and
+          # UNUSED: the step logged both `github-token: ***` and `GITHUB_TOKEN:
+          # ***`, authenticated with the first, and pushed as `github-actions[bot]`.
+          # Fifteen runs parked across three commits on 2026-08-03 that way, and
+          # publishing stopped for over half an hour with every check green.
+          github-token: ${{ secrets.RELEASE_PAT }}
           version: pnpm release:version
           commit: "chore(release): version packages"
           title: "chore(release): version packages"
           setupGitUser: true
         env:
-          # A GITHUB_TOKEN-authored PR leaves pull_request workflow runs waiting
-          # for manual approval. The PAT identity makes required checks start.
+          # Kept for the action's own `changeset` subprocesses, which read the
+          # environment rather than the input.
           GITHUB_TOKEN: ${{ secrets.RELEASE_PAT }}
 
       # The cut reads the version and the pending changesets out of the BUMP
