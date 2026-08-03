@@ -1,6 +1,7 @@
 # @reddb-io/github
 
-The single owner of the GitHub API-surface decision (ADR 0132 decision 4).
+The one budget-aware GitHub client (ADR 0132 decision 4, as superseded by
+Amendment 2).
 
 ## Why it exists
 
@@ -58,9 +59,70 @@ A field with no single-request REST equivalent is **named, not approximated**:
 third request). Those come back as `{outcome: "unavailable"}` with the blocking
 fields, and the caller keeps its GraphQL call.
 
+## The balance is asked, never counted
+
+The design this replaced was a ledger the daemon **accumulates**: every caller
+reports its calls, the daemon totals them. That ledger would have been born
+blind. The daemon is host-scoped by construction while a GitHub quota is per
+**token**, therefore cross-host — an operator running four machines on one token
+would have had four daemons each reporting a quarter of the truth.
+
+`GET /rate_limit` answers for the whole token across every machine and costs
+nothing: measured, six consecutive calls moved `core` by exactly zero.
+`fetchGithubBalance` asks it; `GithubBalance.origin` is the single literal
+`"asked"`, so a counting path cannot construct one without declaring an origin
+that does not exist. The ratchet that refuses the accumulator itself lives in
+`apps/dev/src/core/asked-balance-guard.ts` and runs in every gate run.
+
+**Free of *primary* quota only.** GitHub's secondary limits on request rate and
+concurrency apply to `/rate_limit` like any other endpoint, so the cadence stays
+a cadence — `GITHUB_BALANCE_MIN_CADENCE_MS` is the floor, and that ceiling was
+deliberately not probed.
+
+## Cadence is a function of the balance
+
+Because asking is free, `githubBalanceCadenceMs` derives the window rather than
+fixing it: rare above half, tightening as the balance falls, continuous once
+spent — when the only event that still matters is the reset. A fixed cadence has
+to choose between being slow at the edge and wasting polls in the middle; an
+adaptive one does not choose. **One poller, the daemon's, never a check before
+each call**: that would double the request count and put a synchronous round trip
+in every hot path.
+
+The curve is driven by the TIGHTEST pool, not by an average. The measurement that
+produced this module — 2200 GraphQL points spent while `core` sat at `5000/5000`
+— is exactly the shape an average would have called healthy.
+
+## A reserved band, so degradation is graduated
+
+`GITHUB_RESERVED_FRACTION` of each pool is held for work that must not fail.
+`admitGithubCall` refuses a `convenience` call once the balance enters the band
+and admits an `essential` one until the pool has nothing left at all, where
+GitHub would refuse it anyway. Criticality is stated by the CALLER, never tabled
+here: `issue comment` is a finished Worker's closing comment on one call and an
+optional progress note on the next.
+
+So semi-offline stops being a mode discovered through a 403 and becomes a posture
+entered at a threshold an operator can see. `buildGithubBalanceReport` is what
+they see it on.
+
+## A cache that carries its own age
+
+`createGithubCache` keeps counts, bodies and states, and every read comes back
+with `age_ms` and an outcome. A stale entry is **labelled, never dropped** — that
+is the point: there is nothing to fall back to unless something was kept, and a
+cache that evicted on expiry would be empty exactly when the band starts refusing
+the reads that would refill it.
+
 ## Consumers
 
-`apps/dev` (the read boundary and the migrated single-object reads),
-`apps/redskilled` (the daemon's multi-repository activity query) and
-`packages/red-castle` (the tracker adapter) all import this package. One table,
-because two implementations of one routing rule drift.
+`apps/dev` (the read boundary, the migrated single-object reads and the reserved
+band in `runtime/gh/band.ts`), `apps/redskilled` (the daemon's multi-repository
+activity query and its one balance poller) and `packages/red-castle` (the tracker
+adapter) all import this package. One table, because two implementations of one
+routing rule drift — and one balance, because two would be two fictions.
+
+An aliased multi-repository query is flat in **requests** and not in **points**:
+the GraphQL pool is metered by nodes returned, so the daemon's activity query
+asks GitHub what it charged (`rateLimit { cost }`) rather than letting one number
+pass for the other.
