@@ -22,6 +22,7 @@
     "./reclaim": "./src/reclaim.ts",
     "./provision": "./src/provision.ts",
     "./statusline-payload": "./src/statusline-payload.ts",
+    "./supervision": "./src/supervision.ts",
     "./worker-display": "./src/worker-display.ts",
     "./worker-launch": "./src/worker-launch.ts"
   },
