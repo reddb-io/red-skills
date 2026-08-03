@@ -164,6 +164,49 @@ describe("the statusline payload", () => {
     expect(payload.host.observed_rss_bytes).toBe(0);
   });
 
+  it("carries each absent registration history without collapsing it", () => {
+    const historical = {
+      ...hostStateOf([]),
+      lapsed_registrations: [{
+        project_label: "acme/lapsed",
+        registered_at: "2026-08-03T17:25:30.000Z",
+        at: "2026-08-03T17:36:15.000Z",
+        renew_by: "2026-08-03T17:36:15.000Z",
+        renewals: 2,
+        sustains: 0,
+        detail: "nothing renewed it",
+      }],
+      stopped_registrations: [{
+        project_label: "acme/stopped",
+        registered_at: "2026-08-03T17:25:30.000Z",
+        at: "2026-08-03T17:41:02.000Z",
+        detail: "released by project_stop",
+      }],
+      orphaned_registrations: [{ project_label: "acme/orphaned" }],
+    };
+    const answer = buildStatuslinePayload({
+      hostState: historical,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      rss: {},
+      sampledAt: null,
+      now: "2026-08-03T17:42:00.000Z",
+    });
+
+    expect(answer.known_projects).toEqual(["acme/lapsed", "acme/orphaned", "acme/stopped"]);
+    expect(answer.lapsed_projects).toEqual([{
+      project_label: "acme/lapsed",
+      registered_at: "2026-08-03T17:25:30.000Z",
+      at: "2026-08-03T17:36:15.000Z",
+      reason: "nothing renewed it",
+    }]);
+    expect(answer.stopped_projects).toEqual([{
+      project_label: "acme/stopped",
+      at: "2026-08-03T17:41:02.000Z",
+    }]);
+    expect(answer.orphaned_projects).toEqual(["acme/orphaned"]);
+    expect(isRedskilledStatuslinePayload(answer)).toBe(true);
+  });
+
   it("carries the derived metrics block, and validates with or without it", () => {
     const now = "2026-07-29T12:00:00.000Z";
     const metrics = deriveRedskilledLiveMetrics({
