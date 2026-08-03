@@ -306,6 +306,34 @@ export const DEFAULT_REDSKILLED_REGISTRATION_SUSTAIN_MS = 60_000;
  */
 export const REDSKILLED_LAPSE_MEMORY = 16;
 
+/** Project one durable host event into the loss shape every renderer consumes. */
+function observedWorkerDeath(event: RedskilledHostEvent): DeathAttribution | null {
+  if (event.event !== "worker-death" && event.event !== "worker-budget-kill") return null;
+  const hostEndedWorker = event.event === "worker-budget-kill";
+  const observation = event.detail ??
+    `redskilled observed exit code=${event.exit_code ?? "null"} signal=${event.signal ?? "null"}`;
+  return {
+    version: 1,
+    ts: event.ts,
+    kind: "worker",
+    id: event.worker_id,
+    pid: event.pid,
+    // The daemon observed the loss at this instant; an early Worker published no
+    // finer heartbeat or phase, and inventing either would be worse than saying so.
+    last_seen: event.ts,
+    last_phase: "unreported",
+    sender_class: hostEndedWorker ? "teardown" : "unknown",
+    confidence: hostEndedWorker ? "high" : "none",
+    signal: event.signal,
+    host_boot_changed: false,
+    // A budget kill is the daemon's own act and therefore evidence. A spontaneous
+    // exit has an observation but no known sender; keep that receipt under
+    // `checked` so `unknown` remains honest rather than becoming a guessed cause.
+    evidence: hostEndedWorker ? [observation] : [],
+    checked: [`redskilled host event: ${observation}`],
+  };
+}
+
 /** Raised when another daemon already serves this user session. */
 export class RedskilledAlreadyRunningError extends Error {
   constructor(
@@ -910,6 +938,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // replayed into them at boot.
   let observations: RedskilledWorkerMetricObservation[] = [];
   let outcomeMarks: RedskilledWorkerOutcomeMark[] = [];
+  // Boot attributions and deaths this daemon observed share one surface feed.
+  // The latter stay durable through the host event lane and are replayed below;
+  // keeping a second on-disk death record would create two authorities for the
+  // same Worker exit. `undefined` remains until either source has answered,
+  // because a daemon that never reaped and never observed a death must not render
+  // a calm zero in place of an absent instrument.
+  let deathAttributions: DeathAttribution[] | undefined =
+    options.deaths === undefined ? undefined : [...options.deaths];
   // What each project asked the host to hold for it, by project label. In memory,
   // like the log lines and for the same reason: a registration is a live statement
   // a session renews, and a durable copy would outlive the thing it describes. The
@@ -1170,7 +1206,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       reattachedWorkerIds: [...reattached],
       repositoryActivity: lastActivity,
       githubBalance: lastBalance,
-      ...(options.deaths === undefined ? {} : { deaths: options.deaths }),
+      ...(deathAttributions === undefined ? {} : { deaths: deathAttributions }),
       // Derived here, once, for every surface: the observation history belongs
       // to this process, so a statusline dividing its own counters would be a
       // second authority on a number that has one answer.
@@ -1916,6 +1952,25 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // describe the same ending at two different times.
     if (event === "worker-death" || event === "worker-budget-kill") {
       markWorkerOutcome({ worker_id: worker.worker_id, ts, outcome: event });
+      rememberObservedDeath({
+        version: 1,
+        ts,
+        event,
+        worker_id: worker.worker_id,
+        project_label: worker.project_label,
+        pid: worker.pid,
+        workspace_path: worker.workspace_path,
+        log_path: worker.log_path ?? null,
+        isolated: worker.isolated,
+        unit: worker.unit ?? null,
+        memory_high: worker.budget?.memory_high ?? null,
+        memory_max: worker.budget?.memory_max ?? null,
+        cpu_weight: worker.budget?.cpu_weight ?? null,
+        detail,
+        reason: null,
+        exit_code: exit.exitCode ?? null,
+        signal: exit.signal ?? null,
+      });
       // Every death reaches here, which is why the breaker folds here rather
       // than at the five call sites that end a Worker. What it reads is a
       // lifetime, never a cause: the daemon is not owed a reason (rule 3), and
@@ -1932,6 +1987,22 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
       })
       .catch(() => undefined);
+  }
+
+  /** Put one host-observed loss on every surface, newest observation winning. */
+  function rememberObservedDeath(event: RedskilledHostEvent): void {
+    const attribution = observedWorkerDeath(event);
+    if (attribution == null) return;
+    const merged = [
+      attribution,
+      ...(deathAttributions ?? []).filter(
+        (existing) => existing.kind !== attribution.kind || existing.id !== attribution.id,
+      ),
+    ].sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
+    // The badge describes the same rolling day as the daemon's outcome feed,
+    // rather than turning an append-only lane's lifetime total into current
+    // health. The generic pruner also caps an unreadable clock safely.
+    deathAttributions = pruneRedskilledMetricHistory(merged, (death) => death.ts, { now: clock() });
   }
 
   /**
@@ -2424,6 +2495,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // in the window between binding and replay would be told this session holds
   // nothing, and would then birth a second Worker for work already running.
   const laneEvents = await eventLane.read().catch(() => []);
+  // A successor must render yesterday's loss too. The event lane is the durable
+  // host witness, so replaying it here restores the exact feed a live exit updates
+  // above without asking a project artifact that an early Worker never created.
+  for (const event of laneEvents) rememberObservedDeath(event);
   // The outcomes a predecessor recorded are this host's history too: a daemon
   // that restarted mid-day and reported an empty 24h window would tell an
   // operator the machine finished nothing, when what happened is that the
