@@ -1808,6 +1808,10 @@ export function createCastleMcpDependencies(
     // (ADR 0130 Amendment 4), so `force` no longer selects a harder teardown —
     // the kill is the daemon's either way.
     projectStop: async () => ({ status: "stopped", ...(await releaseProjectRegistration(root)) }),
+    hostState: () => createRedskilledBirthPort({ root }).hostState(),
+    hostDashboard: () => createRedskilledBirthPort({ root }).hostDashboard(),
+    hostProvisionCheck: () => createRedskilledBirthPort({ root }).provisionCheck(),
+    hostUnitStatus: () => createRedskilledBirthPort({ root }).unitStatus(),
     logs: (input) => laneLogs(root, input),
     workerVitals: async (input) => {
       const records = await workerVitals(root, { live_only: input.live_only });
