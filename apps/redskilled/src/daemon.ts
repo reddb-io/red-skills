@@ -166,6 +166,7 @@ import {
 import {
   buildStatuslinePayload,
   withholdStatuslineExtras,
+  type RedskilledDeathObservation,
   type RedskilledStatuslinePayload,
 } from "./statusline-payload.js";
 import {
@@ -308,11 +309,20 @@ export const DEFAULT_REDSKILLED_REGISTRATION_SUSTAIN_MS = 60_000;
 export const REDSKILLED_LAPSE_MEMORY = 16;
 
 /** Project one durable host event into the loss shape every renderer consumes. */
-function observedWorkerDeath(event: RedskilledHostEvent): DeathAttribution | null {
+function observedWorkerDeath(
+  event: RedskilledHostEvent,
+  context: { readonly startedAt?: string; readonly refusal?: string } = {},
+): RedskilledDeathObservation | null {
   if (event.event !== "worker-death" && event.event !== "worker-budget-kill") return null;
   const hostEndedWorker = event.event === "worker-budget-kill";
-  const observation = event.detail ??
+  const bootRefused = !hostEndedWorker && context.refusal != null;
+  const observation = context.refusal ?? event.detail ??
     `redskilled observed exit code=${event.exit_code ?? "null"} signal=${event.signal ?? "null"}`;
+  const startedAt = context.startedAt == null ? null : Date.parse(context.startedAt);
+  const endedAt = Date.parse(event.ts);
+  const uptimeS = startedAt != null && Number.isFinite(startedAt) && Number.isFinite(endedAt)
+    ? Math.max(0, endedAt - startedAt) / 1_000
+    : undefined;
   return {
     version: 1,
     ts: event.ts,
@@ -322,17 +332,26 @@ function observedWorkerDeath(event: RedskilledHostEvent): DeathAttribution | nul
     // The daemon observed the loss at this instant; an early Worker published no
     // finer heartbeat or phase, and inventing either would be worse than saying so.
     last_seen: event.ts,
-    last_phase: "unreported",
-    sender_class: hostEndedWorker ? "teardown" : "unknown",
-    confidence: hostEndedWorker ? "high" : "none",
+    last_phase: bootRefused ? "boot-refused" : "unreported",
+    sender_class: hostEndedWorker ? "teardown" : bootRefused ? "boot-refused" : "unknown",
+    confidence: hostEndedWorker || bootRefused ? "high" : "none",
     signal: event.signal,
     host_boot_changed: false,
     // A budget kill is the daemon's own act and therefore evidence. A spontaneous
     // exit has an observation but no known sender; keep that receipt under
     // `checked` so `unknown` remains honest rather than becoming a guessed cause.
-    evidence: hostEndedWorker ? [observation] : [],
-    checked: [`redskilled host event: ${observation}`],
+    evidence: hostEndedWorker || bootRefused ? [observation] : [],
+    checked: bootRefused ? ["Worker log tail"] : [`redskilled host event: ${observation}`],
+    project_label: event.project_label,
+    ...(uptimeS === undefined ? {} : { uptime_s: uptimeS }),
+    detail: context.refusal ?? event.detail,
   };
+}
+
+/** The explicit boot-guard refusal from one bounded log-tail read, if present. PURE. */
+function bootRefusalFromLog(line: string | null): string | null {
+  const refusal = line?.match(/\bsession-error:\s*(.+)$/)?.[1]?.trim();
+  return refusal == null || refusal === "" ? null : refusal;
 }
 
 /** Raised when another daemon already serves this user session. */
@@ -945,7 +964,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // same Worker exit. `undefined` remains until either source has answered,
   // because a daemon that never reaped and never observed a death must not render
   // a calm zero in place of an absent instrument.
-  let deathAttributions: DeathAttribution[] | undefined =
+  let deathAttributions: RedskilledDeathObservation[] | undefined =
     options.deaths === undefined ? undefined : [...options.deaths];
   // What each project asked the host to hold for it, by project label. In memory,
   // like the log lines and for the same reason: a registration is a live statement
@@ -1693,8 +1712,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       );
       return;
     }
+    const refusal = worker.log_path == null
+      ? null
+      : bootRefusalFromLog(await readLogTail(worker.log_path).catch(() => null));
     forgetWorker(worker.worker_id);
-    record("worker-death", worker, ended, { exitCode: code, signal });
+    record("worker-death", worker, refusal == null ? ended : `session-error: ${refusal}`, {
+      exitCode: code,
+      signal,
+      refusal,
+    });
     armIdleTimer();
   }
 
@@ -1945,7 +1971,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     detail: string | null,
     // The exit facts a project's policy turns on, when the daemon witnessed
     // them. Absent for every event that is not an observed process exit.
-    exit: { readonly exitCode?: number | null; readonly signal?: NodeJS.Signals | null } = {},
+    exit: {
+      readonly exitCode?: number | null;
+      readonly signal?: NodeJS.Signals | null;
+      readonly refusal?: string | null;
+    } = {},
   ): void {
     // A stopped daemon writes nothing. Its beliefs about who is alive stopped
     // being authoritative when it let go of the session, and the next daemon
@@ -1974,7 +2004,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         reason: null,
         exit_code: exit.exitCode ?? null,
         signal: exit.signal ?? null,
-      });
+      }, { startedAt: worker.started_at, ...(exit.refusal == null ? {} : { refusal: exit.refusal }) });
       // Every death reaches here, which is why the breaker folds here rather
       // than at the five call sites that end a Worker. What it reads is a
       // lifetime, never a cause: the daemon is not owed a reason (rule 3), and
@@ -1994,13 +2024,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /** Put one host-observed loss on every surface, newest observation winning. */
-  function rememberObservedDeath(event: RedskilledHostEvent): void {
-    const attribution = observedWorkerDeath(event);
+  function rememberObservedDeath(
+    event: RedskilledHostEvent,
+    context: { readonly startedAt?: string; readonly refusal?: string } = {},
+  ): void {
+    const attribution = observedWorkerDeath(event, context);
     if (attribution == null) return;
     const merged = [
       attribution,
       ...(deathAttributions ?? []).filter(
-        (existing) => existing.kind !== attribution.kind || existing.id !== attribution.id,
+        (existing) =>
+          existing.kind !== attribution.kind || existing.id !== attribution.id || existing.ts !== attribution.ts,
       ),
     ].sort((left, right) => Date.parse(left.ts) - Date.parse(right.ts));
     // The badge describes the same rolling day as the daemon's outcome feed,
@@ -2502,7 +2536,21 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // A successor must render yesterday's loss too. The event lane is the durable
   // host witness, so replaying it here restores the exact feed a live exit updates
   // above without asking a project artifact that an early Worker never created.
-  for (const event of laneEvents) rememberObservedDeath(event);
+  const birthInstants = new Map<string, string>();
+  for (const event of laneEvents) {
+    if (event.event === "worker-birth") {
+      birthInstants.set(event.worker_id, event.ts);
+      continue;
+    }
+    const refusal = bootRefusalFromLog(event.detail);
+    rememberObservedDeath(event, {
+      ...(birthInstants.get(event.worker_id) == null ? {} : { startedAt: birthInstants.get(event.worker_id)! }),
+      ...(refusal == null ? {} : { refusal }),
+    });
+    if (event.event === "worker-death" || event.event === "worker-budget-kill") {
+      birthInstants.delete(event.worker_id);
+    }
+  }
   // The outcomes a predecessor recorded are this host's history too: a daemon
   // that restarted mid-day and reported an empty 24h window would tell an
   // operator the machine finished nothing, when what happened is that the
