@@ -421,7 +421,10 @@ export function createDefaultDevAfkMcpOperations(
       };
     },
     async stopWorker(cwd, input) {
-      const result = await executeStopWorker(input.worker, afkPaths(cwd).tmpDir);
+      // The checkout travels with the stop so a record with no process is
+      // RELEASED rather than reported as `none` (#3123): the host is the only
+      // thing holding the slot, and this verb is the only one that can free it.
+      const result = await executeStopWorker(input.worker, afkPaths(cwd).tmpDir, undefined, cwd);
       return { ...result, recycle: input.recycle };
     },
     requeue: (input) => runtime.executeRequeue(root, input),
@@ -828,9 +831,14 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
   // assigned rather than minting its own (#3081). A predicate that matches
   // nothing across a non-empty Worker set is that wire broken, and it is
   // reported rather than rendered as an idle project.
+  // ONE host read for both the ids and their birth instants: the dates are what
+  // tell a newborn holding its slot apart from a record outliving its Worker
+  // (#3123), and asking twice would date them to two different answers.
+  const hostBirths = await port.workerBirths().catch(() => null);
   const attribution = attributeProjectWorkers({
     workers: allLiveWorkers,
-    hostWorkerIds: await port.workerIds().catch(() => null),
+    hostWorkerIds: hostBirths == null ? null : Object.keys(hostBirths),
+    ...(hostBirths == null ? {} : { hostWorkerBirths: hostBirths }),
   });
   const liveWorkers = attribution.live;
   const unattributedWorkers = attribution.unattributed;

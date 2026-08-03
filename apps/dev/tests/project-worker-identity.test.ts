@@ -173,6 +173,44 @@ describe("attributing live Workers to this project", () => {
     expect(attribution.busy).toBe(0);
   });
 
+  // #3123: the host said `1w`, `project_status` said none, and neither said the
+  // two disagreed. That silence is what let a record outlive its Worker for two
+  // hours while a queue of eight went undrained.
+  it("reports a host count this checkout can see no trace of", () => {
+    const attribution = attributeProjectWorkers({
+      workers: [],
+      hostWorkerIds: ["71982926-abf"],
+      hostWorkerBirths: { "71982926-abf": "2026-08-03T01:52:04.000Z" },
+      nowMs: Date.parse("2026-08-03T03:52:04.000Z"),
+    });
+
+    expect(attribution.live).toEqual([]);
+    expect(attribution.busy).toBe(1);
+    expect(attribution.warnings).toHaveLength(1);
+    expect(attribution.warnings[0]).toContain("71982926-abf");
+    expect(attribution.warnings[0]).toContain("disagree");
+  });
+
+  it("stays quiet through the newborn window, where the host is simply ahead", () => {
+    // The canary's own shape: a Worker born a second ago holds its slot before it
+    // has written any project-side state, and calling that a phantom would put a
+    // false alarm on every single birth.
+    const attribution = attributeProjectWorkers({
+      workers: [],
+      hostWorkerIds: ["fresh-1"],
+      hostWorkerBirths: { "fresh-1": "2026-08-03T03:52:03.000Z" },
+      nowMs: Date.parse("2026-08-03T03:52:04.000Z"),
+    });
+
+    expect(attribution.warnings).toEqual([]);
+    expect(attribution.busy).toBe(1);
+  });
+
+  it("says nothing when the host's Workers cannot be dated at all", () => {
+    // No evidence is not evidence of a phantom.
+    expect(attributeProjectWorkers({ workers: [], hostWorkerIds: ["undated"] }).warnings).toEqual([]);
+  });
+
   it("stays quiet when there is genuinely nothing running", () => {
     expect(attributeProjectWorkers({ workers: [], hostWorkerIds: [] })).toEqual({
       live: [],

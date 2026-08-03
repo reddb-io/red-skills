@@ -17,9 +17,16 @@
  */
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { isPidAlive, tryAcquireExclusiveLock } from "@reddb-io/shared/resident-core.js";
+import {
+  acquireSpawnLock,
+  describeSpawnLockHolder,
+  isPidAlive,
+  releaseSpawnLock,
+  type SpawnLockHeld,
+  type SpawnLockReaping,
+} from "@reddb-io/shared/resident-core.js";
 import {
   redskilledServeArgv,
   type RedskilledEntryLookup,
@@ -208,6 +215,15 @@ export interface RedskilledClientConfig {
    * in the config is how a client stays inside its own repository by default.
    */
   readonly sessionProject?: string;
+  /**
+   * How long a spawn lock is believed before this client reaps it.
+   *
+   * Injected so a test can age a lock without waiting a minute; a real caller
+   * passes nothing and gets `DEFAULT_SPAWN_LOCK_MAX_AGE_MS`.
+   */
+  readonly spawnLockMaxAgeMs?: number;
+  /** Where a reaping is reported; stderr when nothing else is stated. */
+  readonly onSpawnLockReaped?: (reaping: SpawnLockReaping) => void;
 }
 
 /**
@@ -259,11 +275,16 @@ async function reachRedskilledDaemon(
   const held = await waitOutTheLeaseHolder(paths, config);
   if (held != null) return held;
 
-  const lock = await tryAcquireExclusiveLock(paths.lockPath);
-  if (!lock) {
+  const lock = await acquireSpawnLock(paths.lockPath, {
+    ...(config.spawnLockMaxAgeMs == null ? {} : { maxAgeMs: config.spawnLockMaxAgeMs }),
+    onReap: config.onSpawnLockReaped ?? reportSpawnLockReaping,
+  });
+  if (!lock.acquired) {
     // Lost the spawn race. The winner is starting the very daemon we wanted, so
-    // waiting for it is the whole job — restarting one would be the bug.
-    await waitForDaemon(paths, config);
+    // waiting for it is the whole job — restarting one would be the bug. What is
+    // new is the gate travelling with the wait: if the winner never appears, the
+    // failure names the lock rather than blaming a daemon that was never asked.
+    await waitForDaemon(paths, config, undefined, lock);
     return "joined";
   }
   try {
@@ -275,9 +296,23 @@ async function reachRedskilledDaemon(
     await waitForDaemon(paths, config, spawned);
     return "spawned";
   } finally {
-    await lock.close();
-    await rm(paths.lockPath, { force: true });
+    await releaseSpawnLock(lock);
   }
+}
+
+/**
+ * Say out loud that a lock was reaped — the default, overridable per client.
+ *
+ * A reaping that left no trace would be indistinguishable from the lock never
+ * having existed, and the one moment an operator needs this line is when the
+ * guess was wrong and two daemons raced.
+ */
+function reportSpawnLockReaping(reaping: SpawnLockReaping): void {
+  process.stderr.write(
+    `redskilled: reaped the spawn lock ${JSON.stringify(reaping.lockPath)} (${reaping.reason}, ` +
+      `${Math.round(reaping.ageMs / 1_000)}s old, holder ${reaping.holder == null ? "unnamed" : `pid ${reaping.holder.pid}`}) ` +
+      "and went on to spawn\n",
+  );
 }
 
 /**
@@ -794,6 +829,15 @@ async function waitForDaemon(
   paths: RedskilledPaths,
   config: RedskilledClientConfig,
   spawned?: SpawnedDaemon,
+  /**
+   * The gate that stopped this client spawning, when one did.
+   *
+   * Carried into the wait rather than re-read at the timeout, because a lock
+   * released a moment before the deadline would leave the failure describing a
+   * gate that is no longer there — and the sentence owed is about the gate that
+   * refused, not the state afterwards.
+   */
+  heldBy?: SpawnLockHeld,
 ): Promise<void> {
   const deadline = Date.now() + (config.readyTimeoutMs ?? DEFAULT_REDSKILLED_READY_TIMEOUT_MS);
   for (;;) {
@@ -805,6 +849,15 @@ async function waitForDaemon(
       );
     }
     if (Date.now() >= deadline) {
+      // A spawn this client never attempted must not be reported as one that
+      // failed: "the daemon did not start" sends an operator to inspect a daemon
+      // that is healthy, which is #3092's misattribution through another door.
+      if (heldBy != null) {
+        throw new Error(
+          `no redskilled daemon answered on ${JSON.stringify(paths.socketPath)} within the ready window, and ` +
+            `${describeSpawnLockHolder(heldBy)}`,
+        );
+      }
       const from = spawned
         ? ` from ${JSON.stringify(spawned.entry.entry ?? spawned.entry.command)} (resolved as ${spawned.entry.source})${
             spawned.exit ? `, which ${spawned.exit}` : ""

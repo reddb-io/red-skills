@@ -118,6 +118,7 @@ import {
   maySweepMachine,
   nameUnownedProject,
   reattachWorkers,
+  REDSKILLED_LIVENESS_GRACE_MS,
   stopWorker,
   type RedskilledLivenessProbe,
   type RedskilledStopProbe,
@@ -335,6 +336,13 @@ export interface RedskilledDaemonOptions {
   readonly eventLane?: RedskilledEventLane;
   /** How the daemon asks whether a re-attached Worker is still running. */
   readonly liveness?: RedskilledLivenessProbe;
+  /**
+   * How long a newborn Worker is exempt from the liveness sweep.
+   *
+   * Injected so a test can prove the sweep without waiting out the grace; a real
+   * daemon takes {@link REDSKILLED_LIVENESS_GRACE_MS}.
+   */
+  readonly livenessGraceMs?: number;
   /** How the daemon stops a Worker it is reclaiming a budget from. */
   readonly stopWorker?: RedskilledStopProbe;
   /**
@@ -687,8 +695,8 @@ export interface RedskilledDaemon {
   driveDemand(): Promise<RedskilledDemandTick>;
   /** The last demand tick; `null` before the first one ran. */
   demand(): RedskilledDemandTick | null;
-  /** Re-probe every re-attached Worker, retiring the ones the host no longer confirms. */
-  sweepReattached(): Promise<readonly RedskilledWorkerView[]>;
+  /** Re-probe every held Worker, retiring the ones the host no longer confirms. */
+  sweepWorkerLiveness(): Promise<readonly RedskilledWorkerView[]>;
   /** The Workers this daemon adopted at start rather than birthing itself. */
   reattached(): readonly RedskilledWorkerView[];
   /** Resolves once every event handed to the lane has reached disk. */
@@ -817,6 +825,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const startedAt = clock();
   const eventLane = options.eventLane ?? createRedskilledEventLane(paths.eventLanePath);
   const liveness = options.liveness ?? detectWorkerLiveness;
+  const livenessGraceMs = options.livenessGraceMs ?? REDSKILLED_LIVENESS_GRACE_MS;
   const stopProbe = options.stopWorker ?? stopWorker;
   const unitInventory = options.unitInventory ??
     (() =>
@@ -1290,6 +1299,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (demandTicking) return lastDemand ?? emptyDemandTick(at);
     demandTicking = true;
     try {
+      // Swept BEFORE the live count is taken (#3123). A record whose Worker is
+      // gone occupies a slot the planner then declines to fill, so a queue with
+      // work sits undrained beside a machine that is entirely free — and the
+      // idle timer, five minutes away, is not the cadence a birth decision runs at.
+      await sweepWorkerLiveness().catch(() => undefined);
       const live: Record<string, number> = {};
       for (const worker of workers.values()) {
         live[worker.project_label] = (live[worker.project_label] ?? 0) + 1;
@@ -1838,13 +1852,30 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /**
-   * Ask the host about every re-attached Worker, and retire the ones it no
-   * longer confirms. Returns the Workers that were retired.
+   * Ask the host about EVERY Worker it holds, and retire the ones it no longer
+   * confirms. Returns the Workers that were retired.
+   *
+   * **Every record, not just the re-attached ones (#3123).** The narrow sweep
+   * trusted a child handle to deliver each birth's death, and a record whose
+   * launch client died without one — its pid reclaimed, its unit gone — then held
+   * a slot for two hours with no verb able to release it: the daemon's statusline
+   * said `1w` while the project's own read said none, and the machine refused to
+   * birth anything at `target: 1`. Two hours is not a race.
+   *
+   * The grace window is what keeps that from becoming the opposite bug: a Worker
+   * born a moment ago has not necessarily reached the init system, so probing it
+   * would reap a Worker mid-birth. Younger than {@link REDSKILLED_LIVENESS_GRACE_MS}
+   * is left to the child handle, which is authoritative for exactly that window.
    */
-  async function sweepReattached(): Promise<readonly RedskilledWorkerView[]> {
-    const adopted = [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null);
-    if (adopted.length === 0) return [];
-    const { dead } = await reattachWorkers(adopted, liveness);
+  async function sweepWorkerLiveness(): Promise<readonly RedskilledWorkerView[]> {
+    const nowMs = Date.parse(clock());
+    const held = [...workers.values()].filter((worker) => {
+      if (reattached.has(worker.worker_id)) return true;
+      const bornMs = Date.parse(worker.started_at);
+      return !Number.isFinite(bornMs) || nowMs - bornMs >= livenessGraceMs;
+    });
+    if (held.length === 0) return [];
+    const { dead } = await reattachWorkers(held, liveness);
     for (const worker of dead) {
       forgetWorker(worker.worker_id);
       record("worker-death", worker, "the host no longer confirms this Worker");
@@ -2145,7 +2176,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     idleTimer = setTimeout(() => {
       // Sweep before deciding: a daemon that exited on a stale belief in a
       // re-attached Worker would hold this session's socket for nothing.
-      void sweepReattached()
+      void sweepWorkerLiveness()
         .catch(() => undefined)
         .then(() => evaluateIdle());
     }, idleMs);
@@ -2481,7 +2512,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     queueDiscovery: () => lastQueue,
     driveDemand,
     demand: () => lastDemand,
-    sweepReattached,
+    sweepWorkerLiveness,
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
     flushEvents: () => eventLane.flush(),

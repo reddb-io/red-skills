@@ -168,6 +168,14 @@ export interface RedskilledBirthPort {
    */
   workerIds(): Promise<readonly string[]>;
   /**
+   * WHEN the host says each of those Workers was born, by id.
+   *
+   * The dates the host holds, never dates inferred here: a reader that wants to
+   * tell a newborn from a record outliving its Worker (#3123) must ask the one
+   * process that knows when the birth happened.
+   */
+  workerBirths(): Promise<Readonly<Record<string, string>>>;
+  /**
    * Host events appended since the last drain, narrowed to this project.
    *
    * The lane is the daemon's record of birth, death and budget-kill, so a death
@@ -203,12 +211,13 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
   let drained = 0;
 
   /** This project's Workers, as the host names them. One read, two callers. */
-  const readProjectWorkerIds = async (): Promise<readonly string[]> => {
+  const readProjectWorkers = async () => {
     const state = await readRedskilledHostState(paths, config);
-    return state.workers
-      .filter((worker) => worker.project_label === projectLabel)
-      .map((worker) => worker.worker_id);
+    return state.workers.filter((worker) => worker.project_label === projectLabel);
   };
+
+  const readProjectWorkerIds = async (): Promise<readonly string[]> =>
+    (await readProjectWorkers()).map((worker) => worker.worker_id);
 
   return {
     projectLabel,
@@ -268,6 +277,10 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
 
     async workerIds() {
       return await readProjectWorkerIds();
+    },
+
+    async workerBirths() {
+      return Object.fromEntries((await readProjectWorkers()).map((w) => [w.worker_id, w.started_at]));
     },
 
     async drainEvents() {
