@@ -221,6 +221,15 @@ export interface RedskilledRenderDeaths {
   readonly recent: readonly RedskilledRenderDeath[];
   readonly latest: RedskilledRenderDeath | null;
   readonly reaped_at: string | null;
+  readonly boot_loop?: RedskilledRenderBootLoop;
+}
+
+/** A repeated same-project refusal that ended before any Worker reached work. */
+export interface RedskilledRenderBootLoop {
+  readonly project_label: string;
+  readonly count: number;
+  readonly span_ms: number;
+  readonly latest_refusal: string;
 }
 
 /** Which engine is answering, and whether it is the current one. */

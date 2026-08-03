@@ -69,6 +69,26 @@ function attribution(overrides: Partial<DeathAttribution> = {}): DeathAttributio
   };
 }
 
+/** One host-observed boot refusal, carrying the grouping facts the renderer needs. */
+function bootRefusal(id: string, ts: string): DeathAttribution {
+  return {
+    ...attribution({
+      id,
+      ts,
+      last_seen: ts,
+      last_phase: "boot-refused",
+      sender_class: "boot-refused" as DeathAttribution["sender_class"],
+      confidence: "high",
+      signal: null,
+      evidence: ["trunk freshness: dirt-collision (.red/config.yaml)"],
+      checked: ["Worker log tail"],
+    }),
+    project_label: "acme/widgets",
+    uptime_s: 1,
+    detail: "trunk freshness: dirt-collision (.red/config.yaml)",
+  } as unknown as DeathAttribution;
+}
+
 function payloadWith(
   deaths: readonly DeathAttribution[] | undefined,
   published?: { version: string | null; newer?: boolean; newest?: string | null },
@@ -168,6 +188,30 @@ describe("the statusline head answers both questions", () => {
       project: "acme/widgets",
     });
     expect(render.line).not.toContain("†");
+  });
+
+  it("names a repeated boot refusal as a loop, with its span and repair clue", () => {
+    const payload = payloadWith([
+      bootRefusal("worker:w-9", "2026-07-29T00:04:00.000Z"),
+      bootRefusal("worker:w-9", "2026-07-29T00:02:00.000Z"),
+      bootRefusal("worker:w-9", "2026-07-29T00:00:00.000Z"),
+    ]);
+    const render = renderRedskilledStatusline(payload, {
+      ...REDSKILLED_STATUSLINE_DEFAULTS,
+      project: "acme/widgets",
+    });
+
+    expect(render.line).toContain("†3 boot-refused ×3 in 4m");
+    expect(render.line).toContain("trunk freshness: dirt-collision (.red/config.yaml)");
+
+    const dashboard = renderRedskilledDashboard(payload, {
+      mode: "local",
+      project: "acme/widgets",
+      maxWidth: 200,
+      maxRows: 16,
+    });
+    expect(dashboard.header.line).toContain("†3 boot-refused ×3 in 4m");
+    expect(dashboard.header.line).toContain("trunk freshness: dirt-collision (.red/config.yaml)");
   });
 });
 
