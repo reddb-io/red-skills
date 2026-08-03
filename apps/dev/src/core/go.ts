@@ -325,11 +325,16 @@ export const NO_ATTEMPT_OUTCOMES: readonly string[] = ["claim-lost", "hook-abort
  */
 export function zeroAttemptDispatchFailure(
   targeted: boolean,
-  processed: readonly { issue: number; outcome: string }[],
+  processed: readonly { issue: number; outcome: string; reason?: string }[],
 ): string | null {
   if (!targeted) return null;
   if (processed.length === 0) return "no targeted issue was selected or processed";
   const attempted = processed.filter((p) => !NO_ATTEMPT_OUTCOMES.includes(p.outcome));
   if (attempted.length > 0) return null;
-  return `no attempt ran (${processed.map((p) => `#${p.issue}: ${p.outcome}`).join(", ")})`;
+  // The outcome NAMES the withdrawal; the reason explains it (#3156). A verdict
+  // that printed only `claim-lost` sent an operator to the claim arbitration for
+  // an answer the withdrawal already held — and to a log the sweep had deleted.
+  return `no attempt ran (${processed
+    .map((p) => `#${p.issue}: ${p.outcome}${p.reason ? ` — ${p.reason}` : ""}`)
+    .join(", ")})`;
 }

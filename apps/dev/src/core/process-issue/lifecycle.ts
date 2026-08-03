@@ -251,14 +251,22 @@ export async function processIssue(
   const fireHook = async (name: HookName, context: string): Promise<boolean> => {
     return !(await fireHookCtx(name, context)).aborted;
   };
+  /** Withdraw from the issue, naming the cause. Every exit routes through here
+   * so no withdrawal is anonymous: the sweep deletes this worker's workspace on
+   * a claim-lost, so the account has to reach the durable lane (#3156). */
+  const withdraw = (reason: string, decision?: ClaimDecision): Promise<ProcessIssueResult> =>
+    claimLost(issue, hooksFired, deps, decision, reason, {
+      workerId: input.workerId,
+      runner: input.runner,
+    });
   if (!(await deps.claimLock.acquire(issue))) {
-    return claimLost(issue, hooksFired);
+    return withdraw("the host-local claim lock is already held by another worker on this machine");
   }
   const laneLabel = input.laneLabel ?? LABEL_READY;
   const labels = await deps.gh.viewLabels(issue);
   if (!labels.includes(laneLabel)) {
     await deps.claimLock.release(issue);
-    return claimLost(issue, hooksFired);
+    return withdraw(`the issue no longer carries its lane label \`${laneLabel}\``);
   }
   // The lane label implies the run mode, enforced HERE — at the claim, the one
   // path every entrance shares (#3026). A `lane:scout` issue picked up without
@@ -267,7 +275,7 @@ export async function processIssue(
   const laneModeRefusal = laneRunModeRefusal(labels, input.runMode);
   if (laneModeRefusal) {
     await deps.claimLock.release(issue);
-    return claimLost(issue, hooksFired, deps, undefined, laneModeRefusal);
+    return withdraw(laneModeRefusal);
   }
   if (deps.claimGh) {
     // **A Worker that cannot WRITE its claim declines the issue** (#3095, ADR
@@ -289,17 +297,13 @@ export async function processIssue(
     } catch (err) {
       await deps.claimLock.release(issue);
       const reason = err instanceof Error ? err.message : String(err);
-      return claimLost(
-        issue,
-        hooksFired,
-        deps,
-        undefined,
+      return withdraw(
         `the claim could not be written, so this issue is declined rather than worked on a host-local lock: ${reason}`,
       );
     }
     if (decision.verdict === "lost") {
       await deps.claimLock.release(issue);
-      return claimLost(issue, hooksFired, deps, decision);
+      return withdraw("another worker holds the claim", decision);
     }
     ownsCommentClaim = true;
     setActiveClaimFinalizer(async () => {
@@ -309,7 +313,7 @@ export async function processIssue(
     });
   } else if (labels.includes(LABEL_RUNNING)) {
     await deps.claimLock.release(issue);
-    return claimLost(issue, hooksFired, deps, undefined, "running label already present");
+    return withdraw("the `running` label is already present on the issue");
   }
   const activeBlocker = parseCurrentBlocker(input.body);
   if (activeBlocker && !MECHANICAL_BLOCKER_KINDS.has(activeBlocker.kind)) {
@@ -387,7 +391,9 @@ export async function processIssue(
         `🤖 /afk trust gate refused #${issue} [${describeTrustPosture(trustPolicy)}]: ${verdict.reason} — not claimed; no worktree/handoff materialised.`,
       );
       await releaseClaim();
-      return claimLost(issue, hooksFired, deps, undefined, verdict.reason);
+      return withdraw(
+        `the trust gate refused the issue [${describeTrustPosture(trustPolicy)}]: ${verdict.reason ?? "no rationale reported"}`,
+      );
     }
   }
   const sandboxDecision = await resolveUntrustedAuthorSandbox(deps, trustPolicy, provenance);
@@ -405,7 +411,7 @@ export async function processIssue(
   const promoted = await editIssueLifecycleLabels(deps, issue, labels, claimRemoveLabels, [LABEL_RUNNING], "claim");
   if (!promoted && !deps.claimGh) {
     await releaseClaim();
-    return claimLost(issue, hooksFired);
+    return withdraw("the `running` label could not be projected onto the issue");
   }
   deps.recordWorkerEvent?.("worker.claimed", { title: input.title });
   const slug = slugifyRef(input.title);
@@ -413,7 +419,7 @@ export async function processIssue(
   if (branch === null) {
     await editIssueLifecycleLabels(deps, issue, [LABEL_RUNNING], [LABEL_RUNNING], [LABEL_READY], "retry");
     await releaseClaim();
-    return claimLost(issue, hooksFired);
+    return withdraw(`no valid branch name could be built from the issue title ${JSON.stringify(input.title)}`);
   }
   const base = await resolveBase(input.baseInput, deps.lookups.base);
   const trunk = (deps.lookups.base.configTrunk ?? "").trim() || "main";
