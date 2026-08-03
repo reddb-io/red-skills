@@ -1,11 +1,20 @@
-import { Effect, Layer, Ref } from "effect";
+import {
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Layer,
+  Ref,
+  TestClock,
+  TestContext,
+} from "effect";
 import { exec } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { type DisplayEntry, SilentDisplay } from "./Display.js";
+import { Display, type DisplayEntry, SilentDisplay } from "./Display.js";
 import { type SandboxService } from "./SandboxFactory.js";
 import { makeLocalSandbox } from "./testSandbox.js";
 import { ExecError, SyncError } from "./errors.js";
@@ -64,6 +73,29 @@ const testDisplayLayer = SilentDisplay.layer(
   Ref.unsafeMake<ReadonlyArray<DisplayEntry>>([]),
 );
 
+const taskGateDisplayLayer = (
+  blockedTitle: string,
+  entered: Deferred.Deferred<void>,
+  release: Deferred.Deferred<void>,
+) =>
+  Layer.succeed(Display, {
+    intro: () => Effect.void,
+    status: () => Effect.void,
+    spinner: (_message, effect) => effect,
+    summary: () => Effect.void,
+    taskLog: (title, effect) =>
+      Effect.gen(function* () {
+        if (title === blockedTitle) {
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(release);
+        }
+        return yield* effect(() => {});
+      }),
+    text: () => Effect.void,
+    textChunk: () => Effect.void,
+    toolCall: () => Effect.void,
+  });
+
 const setup = async () => {
   const hostDir = await mkdtemp(join(tmpdir(), "host-"));
   const sandboxDir = await mkdtemp(join(tmpdir(), "sandbox-"));
@@ -94,7 +126,6 @@ describe("withSandboxLifecycle (worktree mode)", () => {
     const sandbox = makeLocalSandbox(worktreeDir);
     return { hostDir, worktreeDir, sandbox };
   };
-
 
   it("hostSharedGitConfig skips every git config --global setup write (#2494)", async () => {
     const { hostDir, worktreeDir } = await setupWorktree();
@@ -1382,56 +1413,93 @@ describe("withSandboxLifecycle (worktree mode)", () => {
   it("respects a commitCollectionMs timeout override", async () => {
     const { hostDir, worktreeDir, sandbox } = await setupWorktree();
 
-    // A 1ms budget cannot outrun spawning the `git rev-list` process, so
-    // commit collection should time out under the override (default is 30s).
     const result = Effect.runPromise(
-      withSandboxLifecycle(
-        {
-          hostRepoDir: hostDir,
-          sandboxRepoDir: worktreeDir,
-          branch: "sandcastle/test",
-          timeouts: { commitCollectionMs: 1 },
-        },
-        sandbox,
-        () => Effect.succeed("ok"),
-      ).pipe(Effect.provide(testDisplayLayer)),
+      Effect.gen(function* () {
+        const collectionEntered = yield* Deferred.make<void>();
+        const releaseCollection = yield* Deferred.make<void>();
+        const fiber = yield* Effect.fork(
+          withSandboxLifecycle(
+            {
+              hostRepoDir: hostDir,
+              sandboxRepoDir: worktreeDir,
+              branch: "sandcastle/test",
+              timeouts: { commitCollectionMs: 0 },
+            },
+            sandbox,
+            () => Effect.succeed("ok"),
+          ).pipe(
+            Effect.provide(
+              taskGateDisplayLayer(
+                "Collecting commits",
+                collectionEntered,
+                releaseCollection,
+              ),
+            ),
+          ),
+        );
+
+        yield* Deferred.await(collectionEntered);
+        yield* Deferred.succeed(releaseCollection, undefined);
+        yield* Effect.yieldNow();
+        yield* TestClock.adjust(Duration.zero);
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(TestContext.TestContext)),
     );
 
     await expect(result).rejects.toThrow(
-      /Commit collection timed out after 1ms/,
+      /Commit collection timed out after 0ms/,
     );
   });
 
   it("respects a mergeToHostMs timeout override", async () => {
     const { hostDir, worktreeDir, sandbox } = await setupWorktree();
 
-    // Merge-to-head path (no explicit branch) with a real commit, so the
-    // host-side merge runs and times out under the 1ms override (default 30s).
     const result = Effect.runPromise(
-      withSandboxLifecycle(
-        {
-          hostRepoDir: hostDir,
-          sandboxRepoDir: worktreeDir,
-          timeouts: { mergeToHostMs: 1 },
-        },
-        sandbox,
-        (ctx) =>
-          Effect.gen(function* () {
-            yield* ctx.sandbox.exec('git config user.email "test@test.com"', {
-              cwd: ctx.sandboxRepoDir,
-            });
-            yield* ctx.sandbox.exec('git config user.name "Test"', {
-              cwd: ctx.sandboxRepoDir,
-            });
-            yield* ctx.sandbox.exec(
-              'sh -c "echo wt > wt.txt && git add wt.txt && git commit -m \\"wt commit\\""',
-              { cwd: ctx.sandboxRepoDir },
-            );
-          }),
-      ).pipe(Effect.provide(testDisplayLayer)),
+      Effect.gen(function* () {
+        const mergeEntered = yield* Deferred.make<void>();
+        const releaseMerge = yield* Deferred.make<void>();
+        const fiber = yield* Effect.fork(
+          withSandboxLifecycle(
+            {
+              hostRepoDir: hostDir,
+              sandboxRepoDir: worktreeDir,
+              timeouts: { mergeToHostMs: 0 },
+            },
+            sandbox,
+            (ctx) =>
+              Effect.gen(function* () {
+                yield* ctx.sandbox.exec(
+                  'git config user.email "test@test.com"',
+                  { cwd: ctx.sandboxRepoDir },
+                );
+                yield* ctx.sandbox.exec('git config user.name "Test"', {
+                  cwd: ctx.sandboxRepoDir,
+                });
+                yield* ctx.sandbox.exec(
+                  'sh -c "echo wt > wt.txt && git add wt.txt && git commit -m \\"wt commit\\""',
+                  { cwd: ctx.sandboxRepoDir },
+                );
+              }),
+          ).pipe(
+            Effect.provide(
+              taskGateDisplayLayer(
+                "Merging to main",
+                mergeEntered,
+                releaseMerge,
+              ),
+            ),
+          ),
+        );
+
+        yield* Deferred.await(mergeEntered);
+        yield* Deferred.succeed(releaseMerge, undefined);
+        yield* Effect.yieldNow();
+        yield* TestClock.adjust(Duration.zero);
+        return yield* Fiber.join(fiber);
+      }).pipe(Effect.provide(TestContext.TestContext)),
     );
 
-    await expect(result).rejects.toThrow(/timed out after 1ms/);
+    await expect(result).rejects.toThrow(/timed out after 0ms/);
   });
 
   it("fails after exhausting retries on a persistent transient failure", async () => {
