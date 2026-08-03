@@ -1,5 +1,12 @@
 # @ai-hero/sandcastle
 
+## 3.3.18
+
+### Patch Changes
+
+- @reddb-io/github@3.3.18
+- @reddb-io/shared@3.3.18
+
 ## 3.3.17
 
 ### Patch Changes
