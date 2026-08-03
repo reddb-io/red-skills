@@ -24,7 +24,17 @@
  * own — the memory ceiling and the Worker slots — and says nothing about the ones
  * it does not, because a plausible zero is worse than a missing column.
  */
-import { clamp, formatBytes, formatCount, formatDuration, formatRate, pad, shortModel, width } from "./format.js";
+import {
+  clamp,
+  flattenPublishedLine,
+  formatBytes,
+  formatCount,
+  formatDuration,
+  formatRate,
+  pad,
+  shortModel,
+  width,
+} from "./format.js";
 import {
   BUDGET_BAND_MARK,
   BUDGET_SPENT_MARK,
@@ -398,7 +408,12 @@ function buildHeader(
   // about the machine and not about one project's Workers — and the header is
   // the whole of what a status bar shows.
   if (deaths != null && deaths.count > 0 && deaths.latest != null) {
-    parts.push(`${DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`);
+    const loop = deaths.boot_loop;
+    const refusal = flattenPublishedLine(loop?.latest_refusal);
+    parts.push(loop == null
+      ? `${DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`
+      : `${DEATH_MARK}${deaths.count} boot-refused ×${loop.count} in ${compactLoopSpan(loop.span_ms)}` +
+        (refusal == null ? "" : ` — ${refusal}`));
   }
   if (payload.staleness.stale) {
     const age = payload.staleness.age_ms;
@@ -429,6 +444,14 @@ function buildHeader(
     age_ms: payload.staleness.age_ms,
     line: clamp(line, options.maxWidth),
   };
+}
+
+/** A loop span without zero-valued trailing units (`4m`, not `4m0s`). PURE. */
+function compactLoopSpan(spanMs: number): string {
+  return formatDuration(spanMs)
+    .replace(/m0s$/, "m")
+    .replace(/h0m$/, "h")
+    .replace(/d0h$/, "d");
 }
 
 /**
