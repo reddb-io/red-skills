@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-`redskilled dashboard` renders the host view a terminal can read — the same screen the herdr plugin and the VS Code extension draw, at the density a terminal wants. It is a density argument to the shared render rather than a second renderer: ADR 0132 decision 1 moved layout out of the daemon precisely so four surfaces could differ in HEIGHT without differing in content, and a command that drew its own would be the drift that decision exists to prevent. It reuses the statusline's flag parse, so `global` and `--max-width` mean here exactly what they mean there — two spellings of one scope is how a second vocabulary starts — and it keeps the statusline's promise to always write something and always exit `0`, because a dashboard that printed nothing is indistinguishable from a host with no Workers, and an operator reaching for it is usually already trying to find out why something is quiet. The name is `redskilled dashboard` rather than `dashboard`, which already names the project/DORA view that `/afk dashboard`, `daily-review` and `weekly-review` all depend on.
