@@ -171,6 +171,7 @@ describe("the daemon writes its own facts into a registration's log path", () =>
     expect(tick.granted).toHaveLength(1);
     const spec = launched[0]!.spec;
     const workerId = tick.granted[0]!.worker_id;
+    expect(workerId).toMatch(/^h[A-Z0-9]{4}$/);
     expect(spec.log_path).toBe(`${workspace}/.red/tmp/logs/worker-${workerId}.log`);
     // The record the surfaces read carries it too — the whole point of stating it.
     expect(daemon.hostState().workers[0]!.log_path).toBe(spec.log_path);
