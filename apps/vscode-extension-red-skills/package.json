@@ -178,6 +178,7 @@
   },
   "dependencies": {
     "@reddb-io/redskilled": "workspace:*",
+    "@reddb-io/redskilled-render": "workspace:*",
     "@reddb-io/shared": "workspace:*"
   },
   "devDependencies": {

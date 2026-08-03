@@ -25,7 +25,7 @@ import {
   REDSKILLED_STATUSLINE_DEFAULTS,
   renderRedskilledStatusline,
   type RedskilledStatuslineOptions,
-} from "../src/statusline-render.js";
+} from "@reddb-io/redskilled-render";
 import type { RedskilledStatuslinePayload } from "../src/statusline-payload.js";
 import { buildStatuslinePayload } from "../src/statusline-payload.js";
 

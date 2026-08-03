@@ -7,7 +7,6 @@
     "./cli": "./src/cli.ts",
     "./client": "./src/client.ts",
     "./daemon": "./src/daemon.ts",
-    "./dashboard-render": "./src/dashboard-render.ts",
     "./daemon-stop": "./src/daemon-stop.ts",
     "./demand-loop": "./src/demand-loop.ts",
     "./demand-producer": "./src/demand-producer.ts",
@@ -23,7 +22,6 @@
     "./reclaim": "./src/reclaim.ts",
     "./provision": "./src/provision.ts",
     "./statusline-payload": "./src/statusline-payload.ts",
-    "./statusline-render": "./src/statusline-render.ts",
     "./worker-display": "./src/worker-display.ts",
     "./worker-launch": "./src/worker-launch.ts"
   },
@@ -40,6 +38,7 @@
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/github": "workspace:*",
+    "@reddb-io/redskilled-render": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:"
   },

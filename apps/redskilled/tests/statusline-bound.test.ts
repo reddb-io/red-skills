@@ -22,14 +22,14 @@ import { buildHostState, type RedskilledWorkerView } from "../src/host-state.js"
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "../src/statusline-payload.js";
 import {
-  REDSKILLED_STATUSLINE_ABSENCE,
+  REDSKILLED_RENDER_ABSENCE,
   REDSKILLED_STATUSLINE_DEFAULTS,
   redskilledStatuslineBound,
   redskilledStatuslineCharacters,
   renderRedskilledStatusline,
   renderRedskilledStatuslineAbsence,
   type RedskilledStatuslineOptions,
-} from "../src/statusline-render.js";
+} from "@reddb-io/redskilled-render";
 import type { RedskilledWorkerLogLine } from "../src/worker-log.js";
 
 const running: RedskilledDaemon[] = [];
@@ -160,8 +160,8 @@ describe("a host that did not answer", () => {
       generated_at: "2026-07-29T01:00:05.000Z",
     });
 
-    expect(render.line).toBe(REDSKILLED_STATUSLINE_ABSENCE);
-    expect(render.lines).toEqual([REDSKILLED_STATUSLINE_ABSENCE]);
+    expect(render.line).toBe(REDSKILLED_RENDER_ABSENCE);
+    expect(render.lines).toEqual([REDSKILLED_RENDER_ABSENCE]);
     expect(render.line.trim()).not.toBe("");
     // Neither a fresh answer nor a project verdict: nobody was there to give one.
     expect(render.stale).toBe(true);
@@ -187,7 +187,7 @@ describe("a host that did not answer", () => {
     });
 
     expect(code).toBe(0);
-    expect(written).toEqual([`${REDSKILLED_STATUSLINE_ABSENCE}\n`]);
+    expect(written).toEqual([`${REDSKILLED_RENDER_ABSENCE}\n`]);
     // The diagnosis is not lost — it goes where a statusline does not show it.
     expect(warned.join("")).toContain("redskilled statusline:");
   });

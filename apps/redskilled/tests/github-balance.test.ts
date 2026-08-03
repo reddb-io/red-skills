@@ -11,8 +11,8 @@ import { GITHUB_RATE_LIMIT_PATH, createGithubBalanceTransport } from "@reddb-io/
 import { afterEach, describe, expect, it } from "vitest";
 
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
-import { renderRedskilledDashboard } from "../src/dashboard-render.js";
-import { renderRedskilledStatusline } from "../src/statusline-render.js";
+import { renderRedskilledDashboard } from "@reddb-io/redskilled-render";
+import { renderRedskilledStatusline } from "@reddb-io/redskilled-render";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { isRedskilledStatuslinePayload } from "../src/statusline-payload.js";

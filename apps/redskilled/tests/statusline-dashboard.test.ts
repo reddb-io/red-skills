@@ -16,7 +16,7 @@ import {
   REDSKILLED_DASHBOARD_DEFAULTS,
   progressBar,
   renderRedskilledDashboard,
-} from "../src/dashboard-render.js";
+} from "@reddb-io/redskilled-render";
 import { buildHostState, type RedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { isRedskilledDashboard } from "../src/protocol.js";

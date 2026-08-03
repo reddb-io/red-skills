@@ -161,17 +161,21 @@ import {
   type RedskilledQueueDiscovery,
   type RedskilledQueueTransport,
 } from "./queue-discovery.js";
-import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
+import {
+  buildStatuslinePayload,
+  withholdStatuslineExtras,
+  type RedskilledStatuslinePayload,
+} from "./statusline-payload.js";
 import {
   REDSKILLED_STATUSLINE_DEFAULTS,
   renderRedskilledStatusline,
   type RedskilledStatuslineRender,
-} from "./statusline-render.js";
+} from "@reddb-io/redskilled-render";
 import {
   REDSKILLED_DASHBOARD_DEFAULTS,
   renderRedskilledDashboard,
   type RedskilledDashboard,
-} from "./dashboard-render.js";
+} from "@reddb-io/redskilled-render";
 import { coerceWorkerDisplay, type RedskilledWorkerDisplayRecord } from "./worker-display.js";
 import {
   deriveRedskilledLiveMetrics,
@@ -1378,13 +1382,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /**
-   * The rendered line, from that same payload and from nothing else.
+   * The rendered line, for a client that cannot draw one itself.
+   *
+   * **The layout is no longer this process's** (ADR 0132 decision 1): this calls
+   * `@reddb-io/redskilled-render`, the one implementation every surface shares,
+   * on the payload the other op returns. The op survives the move because a
+   * plugin pinned to an older bundle still asks for it (ADR 0130 rule 3), and a
+   * daemon that answered "render it yourself" would blank that plugin's pane.
    *
    * The request carries taste already settled by the client — mode, project and
    * the count budgets — because a daemon that resolved a config would have to
-   * know what a `.red/config.yaml` is, and ADR 0130 rule 3 keeps repository
-   * layout out of this process entirely. An absent field takes the shared
-   * default, so a bare read still renders.
+   * know what a `.red/config.yaml` is, and rule 3 keeps repository layout out of
+   * this process entirely. An absent field takes the shared default, so a bare
+   * read still renders.
    */
   function statuslineString(render?: RedskilledStatuslineRenderRequest): RedskilledStatuslineRender {
     return renderRedskilledStatusline(statuslinePayload(), {
@@ -1401,12 +1411,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   /**
    * The same payload, given the vertical dimension a pane has and a line has not.
    *
-   * THE DAEMON AGGREGATES AND RENDERS; SURFACES PRINT. A herdr pane and an editor
+   * **THE DAEMON COMPOSES; THE RENDER MODULE DRAWS.** A herdr pane and an editor
    * panel that each did their own Worker math would be two dashboards lying in
-   * two different ways about one instant — which is the drift ADR 0130 rule 10
-   * settled for the statusline and this settles for the table. As with the line,
-   * the request carries taste the client already resolved, because a daemon that
-   * looked up a config would have to know what a `.red/config.yaml` is.
+   * two different ways about one instant, and what stops that is now shared code
+   * rather than a shared string: this is one call of
+   * `@reddb-io/redskilled-render`, which every other surface also calls. As with
+   * the line, the request carries taste the client already resolved, because a
+   * daemon that looked up a config would have to know what a `.red/config.yaml`
+   * is.
    */
   function statuslineDashboard(render?: RedskilledDashboardRenderRequest): RedskilledDashboard {
     return renderRedskilledDashboard(statuslinePayload(), {
@@ -2367,7 +2379,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         // A host read, permitted from any project: seeing the machine is the
         // requirement, and a session that could not would diagnose contention
         // by leaving the session it is in.
-        return { id: request.id, ok: true, value: statuslinePayload() };
+        //
+        // The SKELETON — Workers, projects and budget — is served whatever the
+        // request says, because rule 9 already entitles a session to the whole
+        // machine and withholding it would buy only a second round trip (ADR
+        // 0132 decision 2). What scales with Worker count travels on request,
+        // and a request that names no extras is a client pinned to a bundle
+        // that predates them: it asked for everything by saying nothing.
+        return { id: request.id, ok: true, value: withholdStatuslineExtras(statuslinePayload(), request.extras) };
       }
       if (request.op === "statusline-string") {
         // The same host read, already rendered. The daemon renders it from the

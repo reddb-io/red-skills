@@ -26,15 +26,14 @@
  */
 import { sendLineRequest } from "@reddb-io/shared/resident-core.js";
 import type {
-  RedskilledDashboard,
-  RedskilledDashboardRenderRequest,
   RedskilledHostState,
   RedskilledPong,
   RedskilledRequest,
   RedskilledResponse,
   RedskilledStatuslinePayload,
 } from "@reddb-io/redskilled/protocol";
-import { isRedskilledDashboard, isRedskilledStatuslinePayload } from "@reddb-io/redskilled/protocol";
+import { isRedskilledStatuslinePayload } from "@reddb-io/redskilled/protocol";
+import type { RedskilledStatuslineExtrasRequest } from "@reddb-io/redskilled/statusline-payload";
 import { isRedskilledHostState } from "@reddb-io/redskilled/host-state";
 
 /** Raised when nothing answered — never confused with "the host is idle". */
@@ -63,20 +62,23 @@ export interface RedskilledReadClient {
   readonly socketPath: string;
   ping(): Promise<RedskilledPong>;
   hostState(): Promise<RedskilledHostState>;
-  statuslinePayload(sessionProject?: string): Promise<RedskilledStatuslinePayload>;
   /**
-   * The dashboard: the same read again, already laid out as a table.
+   * The whole machine in one read, and the only read a frame makes.
    *
-   * The extension PRINTS what comes back and computes no cell of it. The daemon
-   * is the only process holding the Worker set across projects, so a panel doing
-   * its own Worker math would be a second authority on a question one document
-   * already answers — and an editor panel and a terminal pane would describe two
-   * different machines (ADR 0130 rule 10).
+   * **The table is drawn from THIS document, in this process, by the shared
+   * render module** (ADR 0132 decisions 1 and 9). It used to be a second socket
+   * call to `statusline-dashboard`, which bought a round trip per frame to
+   * receive text this extension could compute itself from bytes it already held.
+   * What keeps the panel from drifting away from a terminal pane is no longer a
+   * shared string but shared code: both call `renderRedskilledDashboard`.
+   *
+   * `extras` names the count-scaling blocks this frame needs — the panel wants
+   * the display records, and a health check wants none of them.
    */
-  dashboard(
+  statuslinePayload(
     sessionProject?: string,
-    render?: RedskilledDashboardRenderRequest,
-  ): Promise<RedskilledDashboard>;
+    extras?: RedskilledStatuslineExtrasRequest,
+  ): Promise<RedskilledStatuslinePayload>;
 }
 
 export interface CreateReadClientOptions {
@@ -133,31 +135,17 @@ export function createRedskilledReadClient(options: CreateReadClientOptions): Re
       }
       return value;
     },
-    async statuslinePayload(sessionProject?: string) {
+    async statuslinePayload(sessionProject?: string, extras?: RedskilledStatuslineExtrasRequest) {
       const value = await call({
         id: nextRequestId("statusline-payload"),
         op: "statusline-payload",
         ...(sessionProject ? { session_project: sessionProject } : {}),
+        ...(extras ? { extras } : {}),
       });
       if (!isRedskilledStatuslinePayload(value)) {
         throw new RedskilledRefusedError(
           "the daemon answered statusline-payload with a shape this view cannot read",
           "statusline-payload",
-        );
-      }
-      return value;
-    },
-    async dashboard(sessionProject?: string, render?: RedskilledDashboardRenderRequest) {
-      const value = await call({
-        id: nextRequestId("statusline-dashboard"),
-        op: "statusline-dashboard",
-        ...(sessionProject ? { session_project: sessionProject } : {}),
-        ...(render ? { dashboard: render } : {}),
-      });
-      if (!isRedskilledDashboard(value)) {
-        throw new RedskilledRefusedError(
-          "the daemon answered statusline-dashboard with a shape this view cannot read",
-          "statusline-dashboard",
         );
       }
       return value;

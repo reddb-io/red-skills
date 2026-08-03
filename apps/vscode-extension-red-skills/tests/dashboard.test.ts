@@ -1,9 +1,10 @@
 /**
- * The dashboard is the one view whose correctness is NOT this extension's to
- * prove. Every cell arrives finished from `statusline-dashboard`, so what these
- * assert is the only thing a surface can get wrong: that it shows what it was
- * handed, that it re-derives nothing, that a state change in the daemon reaches
- * both surfaces, and that an absence is drawn as an absence.
+ * The dashboard is drawn HERE, by the one render module every surface shares
+ * (ADR 0132 decisions 1 and 9) — this extension owns no layout of its own. So
+ * what these assert is the only thing a surface can get wrong: that it shows
+ * what the shared render handed it, that it re-derives no cell, that a state
+ * change in the daemon reaches both surfaces, and that an absence is drawn as an
+ * absence.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -18,6 +19,36 @@ import { readHostSnapshot, type HostSnapshot } from "../src/model/snapshot.js";
 import { createRedskilledReadClient } from "../src/redskilled/client.js";
 import { startFakeDaemon, type FakeDaemon } from "./fake-daemon.js";
 import { dashboard, hostState, statuslinePayload } from "./fixtures.js";
+
+/** The same payload with a published display record, so the row has cells. */
+function withDisplay(payload: ReturnType<typeof statuslinePayload>): ReturnType<typeof statuslinePayload> {
+  return {
+    ...payload,
+    workers: payload.workers.map((entry) => ({
+      ...entry,
+      display: {
+        runner: "claude",
+        model: "opus",
+        effort: "high",
+        origin: "afk",
+        issue: "3096",
+        phase: "coding",
+        step: null,
+        phase_index: 2,
+        phase_total: 6,
+        failed: false,
+        heartbeat: "3s",
+        added: null,
+        removed: null,
+        tokens: null,
+        tools: null,
+        reasoning: null,
+        text: null,
+      },
+      display_published_at: payload.generated_at,
+    })),
+  };
+}
 
 const daemons: FakeDaemon[] = [];
 
@@ -143,9 +174,9 @@ describe("the dashboard panel shows the rows the daemon rendered", () => {
   });
 });
 
-describe("the frame is read from the daemon, not derived from the payload", () => {
-  it("asks statusline-dashboard beside the payload and states the size it has", async () => {
-    const daemon = await fake();
+describe("the frame is drawn here, from the one document the daemon composed", () => {
+  it("draws the table from the payload it already read, at the size the panel has", async () => {
+    const daemon = await fake({ payload: () => withDisplay(statuslinePayload()) });
     const snapshot = await readHostSnapshot({
       client: createRedskilledReadClient({ socketPath: daemon.socketPath }),
       eventLanePath: daemon.eventLanePath,
@@ -155,10 +186,13 @@ describe("the frame is read from the daemon, not derived from the payload", () =
     });
 
     expect(snapshot.reachable).toBe(true);
-    expect(daemon.served.get("statusline-dashboard")).toBe(1);
+    // ONE read, and no second round trip for text this process can compute from
+    // bytes it already holds (ADR 0132 decisions 1 and 9).
+    expect(daemon.served.get("statusline-payload")).toBe(1);
+    expect(daemon.served.has("statusline-dashboard")).toBe(false);
     expect(snapshot.dashboard?.header.line).toContain("» reddb-io/red-skills");
-    // The rows are the daemon's own, verbatim: nothing in this extension built
-    // one, so a field the daemon stops rendering vanishes here too.
+    // The cells come from the shared render module, so a terminal pane standing
+    // in the same directory draws this row character for character.
     expect(snapshot.dashboard?.rows[0]?.cells.bar).toBe("██▶░░░");
   });
 
@@ -254,8 +288,8 @@ describe("the frame is read from the daemon, not derived from the payload", () =
     expect(rows[0]!.label).toBe("no metrics on this daemon");
   });
 
-  it("keeps the trees usable when a daemon refuses the op", async () => {
-    const daemon = await fake({ refuse: ["statusline-dashboard"] });
+  it("keeps the frame usable when a daemon refuses the read beside the payload", async () => {
+    const daemon = await fake({ refuse: ["host-state"] });
     const snapshot = await readHostSnapshot({
       client: createRedskilledReadClient({ socketPath: daemon.socketPath }),
       eventLanePath: daemon.eventLanePath,
@@ -264,12 +298,17 @@ describe("the frame is read from the daemon, not derived from the payload", () =
 
     expect(snapshot.reachable).toBe(true);
     expect(snapshot.payload).not.toBeNull();
-    expect(snapshot.dashboard).toBeNull();
+    expect(snapshot.hostState).toBeNull();
+    // The table survives a refused `host-state`, because it is drawn from the
+    // payload and from nothing else — there is no second op to lose.
+    expect(snapshot.dashboard).not.toBeNull();
   });
 
-  it("reflects a state change in the daemon without local re-derivation", async () => {
+  it("reflects a state change in the daemon on the next payload it reads", async () => {
     let stale = false;
-    const daemon = await fake({ dashboard: () => dashboard({ stale, rows: stale ? [] : dashboard().rows }) });
+    const daemon = await fake({
+      payload: () => statuslinePayload({ stale, ...(stale ? { workers: [] } : {}) }),
+    });
     const client = createRedskilledReadClient({ socketPath: daemon.socketPath });
     const read = async (): Promise<HostSnapshot> =>
       await readHostSnapshot({ client, eventLanePath: daemon.eventLanePath, source: "the test pinned it" });

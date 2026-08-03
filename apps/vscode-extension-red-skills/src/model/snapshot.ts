@@ -9,11 +9,12 @@
  * what is running now and the lane says how the last thing ended, and a view
  * holding only one of the two can always be asked a question it cannot answer.
  */
-import type {
-  RedskilledDashboard,
-  RedskilledHostState,
-  RedskilledStatuslinePayload,
-} from "@reddb-io/redskilled/protocol";
+import type { RedskilledHostState, RedskilledStatuslinePayload } from "@reddb-io/redskilled/protocol";
+import {
+  renderRedskilledDashboard,
+  REDSKILLED_DASHBOARD_DEFAULTS,
+  type RedskilledDashboard,
+} from "@reddb-io/redskilled-render";
 import type { RedskilledReadClient } from "../redskilled/client.js";
 import { readEventLane, type EventLaneRead } from "../redskilled/event-lane.js";
 
@@ -37,12 +38,13 @@ export interface HostSnapshot {
    */
   readonly hostState: RedskilledHostState | null;
   /**
-   * The dashboard the daemon rendered for this frame, or `null`.
+   * The table for this frame, drawn HERE from the payload beside it.
    *
-   * Read beside the payload rather than derived from it: THE DAEMON AGGREGATES
-   * AND RENDERS; SURFACES PRINT. Null does NOT imply unreachable — a daemon too
-   * old to serve the op still yields a usable frame for the trees, and the
-   * dashboard panel says so rather than drawing a table nobody rendered.
+   * **One read, one render** (ADR 0132 decisions 1 and 9): it used to be a second
+   * socket call, which spent a round trip per frame to receive text this process
+   * could compute from bytes it already held. It is `null` exactly when the
+   * payload is — an unreachable daemon — and never because a daemon was too old
+   * to lay a table out, because no daemon lays one out any more.
    */
   readonly dashboard: RedskilledDashboard | null;
   readonly lane: EventLaneRead;
@@ -55,7 +57,7 @@ export interface ReadSnapshotOptions {
   readonly eventLanePath: string;
   readonly source: string;
   readonly sessionProject?: string;
-  /** The size the panel has, stated on the request so the daemon renders to it. */
+  /** The size the panel has; the render is clamped to it on this side. */
   readonly dashboardRender?: { readonly maxWidth?: number; readonly maxRows?: number };
   readonly now?: () => string;
 }
@@ -73,21 +75,20 @@ export async function readHostSnapshot(options: ReadSnapshotOptions): Promise<Ho
   const lane = await readEventLane(options.eventLanePath).catch(() => EMPTY_LANE(options.eventLanePath));
 
   try {
-    const [payload, hostState, dashboard] = await Promise.all([
-      options.client.statuslinePayload(options.sessionProject),
+    const [payload, hostState] = await Promise.all([
+      // The panel draws every published field, so this frame asks for all three
+      // count-scaling extras; a reader that wanted only the totals would name
+      // fewer and the daemon would serve the skeleton alone.
+      options.client.statuslinePayload(options.sessionProject, { vitals: true, display: true, logs: true }),
       options.client.hostState().catch(() => null),
-      options.client
-        .dashboard(options.sessionProject, {
-          mode: options.sessionProject ? "local" : "global",
-          ...(options.sessionProject ? { project: options.sessionProject } : {}),
-          ...(options.dashboardRender?.maxWidth == null ? {} : { max_width: options.dashboardRender.maxWidth }),
-          ...(options.dashboardRender?.maxRows == null ? {} : { max_rows: options.dashboardRender.maxRows }),
-        })
-        // Best-effort beside the payload, for the reason `host-state` is: a
-        // daemon that serves one and refuses the other still yields a usable
-        // frame instead of an outage.
-        .catch(() => null),
     ]);
+    const dashboard = renderRedskilledDashboard(payload, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      mode: options.sessionProject ? "local" : "global",
+      project: options.sessionProject ?? null,
+      ...(options.dashboardRender?.maxWidth == null ? {} : { maxWidth: options.dashboardRender.maxWidth }),
+      ...(options.dashboardRender?.maxRows == null ? {} : { maxRows: options.dashboardRender.maxRows }),
+    });
     return {
       reachable: true,
       socketPath: options.client.socketPath,

@@ -26,7 +26,7 @@ import {
   renderRedskilledStatusline,
   REDSKILLED_STATUSLINE_DEFAULTS,
   type RedskilledStatuslineOptions,
-} from "../src/statusline-render.js";
+} from "@reddb-io/redskilled-render";
 import type { LaunchedWorker, LaunchWorkerOptions } from "../src/worker-launch.js";
 
 const T0 = "2026-07-31T12:00:00.000Z";

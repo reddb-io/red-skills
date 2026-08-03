@@ -2,11 +2,11 @@
  * board — the statusline as a pane, and as a one-shot print.
  *
  * The whole document comes from the daemon's `statusline-dashboard` op, never
- * from this plugin's own reading of the payload. ADR 0130 rule 10 keeps that
- * answer a pure function of the payload precisely so no surface reimplements it,
- * and a pane that drew its own Worker rows would be the drift the op exists to
- * prevent — the same reason `status` prints `statusline-string` rather than
- * rendering a line of its own.
+ * from this plugin's own reading of the payload. Behind that op is
+ * `@reddb-io/redskilled-render`, the ONE layout every surface shares (ADR 0132
+ * decision 1), so a pane that drew its own Worker rows would be a second
+ * implementation of a module that already exists — the same reason `status`
+ * prints `statusline-string` rather than rendering a line of its own.
  *
  * **What travels over the socket is taste already decided here.** Mode, width and
  * the row budget are resolved from config and flags before the read, because the

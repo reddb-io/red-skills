@@ -1,0 +1,31 @@
+{
+  "name": "@reddb-io/redskilled-render",
+  "version": "3.3.12",
+  "private": true,
+  "type": "module",
+  "description": "One render implementation outside the daemon (ADR 0132 decision 1): a stateless, transport-free function from one decoded redskilled payload to one drawn surface, at parameterized densities — statusline line, host panel, full dashboard.",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./index.ts",
+    "./dashboard.js": "./dashboard.ts",
+    "./decode.js": "./decode.ts",
+    "./format.js": "./format.ts",
+    "./line.js": "./line.ts",
+    "./marks.js": "./marks.ts",
+    "./panel.js": "./panel.ts",
+    "./payload.js": "./payload.ts",
+    "./select.js": "./select.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@reddb-io/toon": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

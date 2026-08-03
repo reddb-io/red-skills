@@ -66,8 +66,13 @@ import {
   type RedskilledWorkerHeartbeatAck,
   type RedskilledWorkerStarted,
 } from "./protocol.js";
-import type { RedskilledStatuslineOptions } from "./statusline-render.js";
-import type { RedskilledDashboardOptions } from "./dashboard-render.js";
+import {
+  REDSKILLED_STATUSLINE_DEFAULTS,
+  renderRedskilledStatusline,
+  type RedskilledDashboardOptions,
+  type RedskilledStatuslineOptions,
+} from "@reddb-io/redskilled-render";
+import type { RedskilledStatuslineExtrasRequest } from "./statusline-payload.js";
 import { clampPublishedWorkerDisplay } from "./worker-display.js";
 import { clampPublishedLogLine } from "./worker-log.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
@@ -461,14 +466,53 @@ export async function readRedskilledHostState(
 export async function readRedskilledStatuslinePayload(
   paths: RedskilledPaths,
   config: RedskilledClientConfig = {},
+  /**
+   * Which count-scaling extras this reader needs; every one of them when absent.
+   *
+   * Absent is the compatibility spelling and the honest one: a caller that says
+   * nothing gets the whole document, exactly as every bundle pinned before ADR
+   * 0132 decision 2 does. A caller that knows its density — a one-line statusline
+   * needs no log lines — states it and pays for less.
+   */
+  extras?: RedskilledStatuslineExtrasRequest,
 ): Promise<RedskilledStatuslinePayload> {
   const value = await requestRedskilled(
     paths,
-    { op: "statusline-payload", ...(config.sessionProject != null ? { session_project: config.sessionProject } : {}) },
+    {
+      op: "statusline-payload",
+      ...(config.sessionProject != null ? { session_project: config.sessionProject } : {}),
+      ...(extras == null ? {} : { extras }),
+    },
     config,
   );
   if (!isRedskilledStatuslinePayload(value)) throw new Error("redskilled daemon returned a malformed statusline payload");
   return value;
+}
+
+/**
+ * The statusline, read from the socket and drawn HERE. PURE after the read.
+ *
+ * **The command-backed host keeps the socket and passes through the shared
+ * render** (ADR 0132 decision 9). A `statusLine` entry is a shell command, not an
+ * MCP client, so routing this tick through a server would mean a handshake per
+ * tick and a blank line whenever the server is not up — the hardest failure mode
+ * in this system to diagnose. What keeps this surface from drifting away from the
+ * MCP one is no longer a shared string but shared code: both call
+ * `renderRedskilledStatusline` on the payload the daemon composed.
+ *
+ * The log lines are asked for only in `verbose`, which is the one density that
+ * draws them; every other read pays for the skeleton and the vitals alone.
+ */
+export async function readRedskilledStatuslineRender(
+  paths: RedskilledPaths,
+  options: RedskilledStatuslineOptions = REDSKILLED_STATUSLINE_DEFAULTS,
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledStatuslineRender> {
+  const payload = await readRedskilledStatuslinePayload(paths, config, {
+    vitals: true,
+    logs: options.verbose,
+  });
+  return renderRedskilledStatusline(payload, options);
 }
 
 /**

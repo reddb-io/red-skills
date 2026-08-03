@@ -29,7 +29,7 @@ import {
   REDSKILLED_STATUSLINE_DEFAULTS,
   renderRedskilledStatusline,
   type RedskilledStatuslineOptions,
-} from "../src/statusline-render.js";
+} from "@reddb-io/redskilled-render";
 import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "../src/statusline-payload.js";
 import type { RedskilledWorkerLogLine } from "../src/worker-log.js";
 
@@ -329,8 +329,10 @@ describe("the line the Worker publishes", () => {
 
     // The renderer could not open a foreign project's log even if it wanted to:
     // it is a pure function of the payload and reaches no filesystem at all.
-    const source = readFileSync(join(import.meta.dirname, "..", "src", "statusline-render.ts"), "utf8");
-    expect(source).not.toMatch(/from "node:fs/);
+    const renderRoot = join(import.meta.dirname, "..", "..", "..", "packages", "redskilled-render");
+    for (const module of ["line.ts", "panel.ts", "dashboard.ts", "select.ts", "format.ts"]) {
+      expect(readFileSync(join(renderRoot, module), "utf8")).not.toMatch(/from "node:/);
+    }
   });
 });
 

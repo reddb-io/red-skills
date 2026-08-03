@@ -27,8 +27,8 @@ vi.mock("../src/client.js", async (importActual) => {
       reached.push("readRedskilledHostState");
       return { workers: [] };
     },
-    readRedskilledStatuslineString: async () => {
-      reached.push("readRedskilledStatuslineString");
+    readRedskilledStatuslineRender: async () => {
+      reached.push("readRedskilledStatuslineRender");
       return { lines: ["…"] };
     },
   };
