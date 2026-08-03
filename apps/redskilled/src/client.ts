@@ -549,6 +549,11 @@ export async function readRedskilledStatuslineRender(
   const payload = await readRedskilledStatuslinePayload(paths, config, {
     vitals: true,
     logs: options.verbose,
+    // Asked for, or the line renders a UUID and an age. The daemon holds a
+    // display record per Worker and hands it over only when a reader names the
+    // extra — so runner, model, effort, phase, the progress bar and the issue
+    // were built, published, stored, and never requested (#3144).
+    display: true,
   });
   return renderRedskilledStatusline(payload, options);
 }
@@ -571,7 +576,13 @@ export async function readRedskilledDashboardRender(
   options: Partial<RedskilledDashboardOptions> = {},
   config: RedskilledClientConfig = {},
 ): Promise<RedskilledDashboardRender> {
-  const payload = await readRedskilledStatuslinePayload(paths, config, { vitals: true, logs: true });
+  // All three extras: a dashboard is the density that draws every one of them,
+  // and the display is what makes a row a Worker rather than an identifier.
+  const payload = await readRedskilledStatuslinePayload(paths, config, {
+    vitals: true,
+    logs: true,
+    display: true,
+  });
   return renderRedskilledDashboard(payload, { ...REDSKILLED_DASHBOARD_DEFAULTS, ...options });
 }
 
