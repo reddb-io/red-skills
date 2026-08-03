@@ -245,6 +245,29 @@ describe("redskilled project registration", () => {
 });
 
 describe("redskilled project deregistration", () => {
+  it("retains a deliberate stop as the project's latest registration history", async () => {
+    let now = "2026-08-03T17:25:30.000Z";
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({ paths, clock: () => now });
+    running.push(daemon);
+
+    daemon.registerProject(request());
+    now = "2026-08-03T17:41:02.000Z";
+    daemon.deregisterProject("acme/widgets", "acme/widgets");
+
+    expect(daemon.hostState().stopped_registrations).toEqual([{
+      project_label: "acme/widgets",
+      registered_at: "2026-08-03T17:25:30.000Z",
+      at: now,
+      detail: "redskilled released the registration for project \"acme/widgets\"",
+    }]);
+    expect(daemon.statuslinePayload()).toMatchObject({
+      known_projects: ["acme/widgets"],
+      stopped_projects: [{ project_label: "acme/widgets", at: now }],
+    });
+    expect(() => daemon.renewProject("acme/widgets")).toThrow(/was stopped at 2026-08-03T17:41:02\.000Z/);
+  });
+
   it("releases the registration a project stops, and holds the others", async () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({ paths });
