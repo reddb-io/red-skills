@@ -26,7 +26,7 @@ export type RedskilledStatuslineDetail = "workers" | "projects" | "host";
 /**
  * Whether the calling directory's project is one this host knows.
  *
- * Three states rather than a boolean, because the two failures need different
+ * Several states rather than a boolean, because the failures need different
  * sentences: a directory that resolved to no project at all has nothing to look
  * up, while one that resolved to `acme/widgets` and found no such project on the
  * host has a name to put in front of the operator. Collapsing either into
@@ -43,6 +43,8 @@ export type RedskilledStatuslineProjectMatch =
    * project is rendering a stopped drain as a healthy one.
    */
   | "name-only"
+  /** The daemon recorded when and why this project's registration lapsed. */
+  | "lapsed"
   | "unregistered"
   | "unresolved"
   /** No daemon answered, so whether this host knows the project is unknowable. */
@@ -93,7 +95,11 @@ export function resolveStatuslineProjectMatch(
   // reason it is above: a lapse invented from a missing field would put a false
   // accusation on every line a skewed daemon serves.
   if (payload.registered_projects == null) return "matched";
-  return payload.registered_projects.includes(project) ? "matched" : "name-only";
+  if (payload.registered_projects.includes(project)) return "matched";
+  if (payload.lapsed_projects?.some((lapse) => lapse.project_label === project) === true) {
+    return "lapsed";
+  }
+  return "name-only";
 }
 
 /**

@@ -610,6 +610,38 @@ The daemon keeps a bounded tail of lapses with the instant and the reason, and
 remote and printed `reddb-io/red-skills 0w` over a host holding nothing was
 reporting a name as if it were a state.
 
+## Amendment 8 — registration liveness is an independent, observable belt (#3180)
+
+Amendment 7 coupled sustainment to queue discovery. That made a lease whose TTL
+protects the drain depend on a poll whose cadence protects GitHub quota: changing
+one subsystem's backoff could silently stop the other. It also left `renewals` at
+zero while work-driven sustains repeatedly moved `renew_by`, so the field meant
+to prove liveness denied that liveness.
+
+**Decision: registration sustainment and expiry run on their own 60-second belt,
+comfortably below the five-minute TTL.** Queue discovery remains adaptive and
+supplies the work observation, but its maximum backoff stays below the TTL and a
+positive observation is usable for at most one registration window. Thus a poll
+cannot keep a project alive forever, and a quota-oriented backoff cannot disable
+the lease mechanism.
+
+**Every deadline move increments `renewals`.** `session_renewals` separately
+counts explicit session messages, while `renewals` is the end-to-end operator
+counter for both session and work-driven deadline movement. `renewed_at` still
+means a session was heard from, preserving Amendment 7's `renewing`,
+`self-renewing`, and `running-on` distinction.
+
+**A recent active lapse is recoverable for one window.** When a registration
+lapses after the daemon had counted positive work or still holds one of its
+Workers, the next fresh positive queue observation re-registers the held record
+without an operator. Never-counted, counted-empty, and window-old intent is not
+recovered: recovery is a bounded belt, not immortal registration.
+
+**Silence is no longer an idle rendering.** Host state carries the bounded lapse
+record through the shared render, `project_status` publishes its timestamp and
+reason, and `/red-doctor` reports `lapsed-with-work` when executable queue items
+remain. A current registration always outranks an older lapse record.
+
 ## Recovering from a bad two-player migration
 
 The way back, for an operator whose machine the migration left confusing. Every

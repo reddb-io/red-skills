@@ -304,7 +304,7 @@ describe("the daemon polls the queue of whatever is registered", () => {
   it("keeps the queue and activity cadences apart, each ticking on its own window", async () => {
     // Only the intervals are faked: the daemon's start still does real I/O, and
     // a fake clock over all of it would stall the bind rather than the timers.
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
     let queueCalls = 0;
     let activityCalls = 0;
     const daemon = await startRedskilledDaemon({
@@ -341,5 +341,30 @@ describe("the daemon polls the queue of whatever is registered", () => {
     // Ten fast windows against one slow one: two cadences, not one.
     expect(queueCalls).toBe(10);
     expect(activityCalls).toBe(2);
+  });
+
+  it("uses the balance-derived backoff instead of continuing on a fixed interval", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout"] });
+    let queueCalls = 0;
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      queueDiscovery: {
+        intervalMs: 100,
+        transport: async () => {
+          queueCalls += 1;
+          return answer([3], { remaining: 100, resetAt: null });
+        },
+      },
+    });
+    running.push(daemon);
+    daemon.registerProject(registration(0));
+
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    // The first answer asks the scheduler for a 30s low-balance cadence. A fixed
+    // 100ms interval would have made ten calls in this same window.
+    expect(queueCalls).toBe(1);
   });
 });

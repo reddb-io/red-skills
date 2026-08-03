@@ -40,7 +40,10 @@ import type {
 } from "@reddb-io/redskilled/project-registration";
 import type { RedskilledWorkerSpec } from "@reddb-io/redskilled/worker-launch";
 import { readRedskilledEvents, type RedskilledHostEvent } from "@reddb-io/redskilled/event-lane";
-import type { RedskilledRegistrationView } from "@reddb-io/redskilled/host-state";
+import type {
+  RedskilledRegistrationLapse,
+  RedskilledRegistrationView,
+} from "@reddb-io/redskilled/host-state";
 import type { RedskilledLaunchTemplate } from "@reddb-io/redskilled/launch-template";
 
 // Re-exported so a consumer of this port imports the host's vocabulary from the
@@ -92,6 +95,12 @@ export interface GrantedWorkerBirth {
   readonly warnings: readonly string[];
   /** The host's own sentence about the ceiling that admitted this birth. */
   readonly admission: string;
+}
+
+/** The daemon's complete answer about this project's registration. */
+export interface ProjectRegistrationState {
+  readonly held: RedskilledRegistrationView | null;
+  readonly lapse: RedskilledRegistrationLapse | null;
 }
 
 /**
@@ -156,6 +165,8 @@ export interface RedskilledBirthPort {
    * all, which is the distinction a reader needs to know where to look next.
    */
   registration(): Promise<RedskilledRegistrationView | null>;
+  /** The current record and latest lapse, read from one host-state snapshot. */
+  registrationState(): Promise<ProjectRegistrationState>;
   /** How many Workers this project holds on the host, as the host counts them. */
   liveWorkers(): Promise<number>;
   /**
@@ -219,6 +230,17 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
   const readProjectWorkerIds = async (): Promise<readonly string[]> =>
     (await readProjectWorkers()).map((worker) => worker.worker_id);
 
+  const readProjectRegistrationState = async (): Promise<ProjectRegistrationState> => {
+    const state = await readRedskilledHostState(paths, config);
+    return {
+      held: (state.registrations ?? []).find((held) => held.project_label === projectLabel) ?? null,
+      lapse:
+        [...(state.lapsed_registrations ?? [])]
+          .reverse()
+          .find((lapse) => lapse.project_label === projectLabel) ?? null,
+    };
+  };
+
   return {
     projectLabel,
     socketPath: paths.socketPath,
@@ -267,8 +289,11 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
     },
 
     async registration() {
-      const state = await readRedskilledHostState(paths, config);
-      return (state.registrations ?? []).find((held) => held.project_label === projectLabel) ?? null;
+      return (await readProjectRegistrationState()).held;
+    },
+
+    async registrationState() {
+      return await readProjectRegistrationState();
     },
 
     async liveWorkers() {

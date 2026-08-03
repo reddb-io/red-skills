@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ProjectRegistrationState } from "../src/runtime/redskilled-birth.js";
 
 const listCandidates = vi.fn(async () => [
   {
@@ -17,6 +18,16 @@ const listCandidates = vi.fn(async () => [
 
 const listLabelNames = vi.fn(async () => ({
   names: ["bug", "ready-for-agent", "wayfinder:map", "wayfinder:grilling", "wayfinder:prototype"],
+}));
+
+const projectRegistrationState = vi.fn<() => Promise<ProjectRegistrationState>>(async () => ({
+  held: null,
+  lapse: null,
+}));
+
+vi.mock("../src/runtime/redskilled-birth.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/runtime/redskilled-birth.js")>()),
+  createRedskilledBirthPort: () => ({ registrationState: projectRegistrationState }),
 }));
 
 // A repo whose `req:N` labels and native blocked-by edges disagree in one
@@ -176,6 +187,37 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
     expect(human).toContain("red-doctor deadend audit");
     expect(human).toContain("deadends: 1");
     expect(human).toContain("dangling_claim #100 → cure: claim_release");
+    stdout.mockRestore();
+  });
+
+  it("finds a lapsed registration while the executable queue is non-empty", async () => {
+    projectRegistrationState.mockResolvedValueOnce({
+      held: null,
+      lapse: {
+        project_label: "acme/widgets",
+        at: "2026-08-03T17:20:00.000Z",
+        renew_by: "2026-08-03T17:19:59.000Z",
+        renewals: 0,
+        sustains: 0,
+        detail: "nothing renewed it while ready-for-agent work remained",
+      },
+    });
+    const root = await mkdtemp(join(tmpdir(), "red-doctor-registration-lapse-"));
+    roots.push(root);
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    const output = writes.join("");
+    expect(output).toContain("red-doctor project registration");
+    expect(output).toContain("❌ lapsed-with-work");
+    expect(output).toContain("2026-08-03T17:20:00.000Z");
+    expect(output).toContain("ready-for-agent queue contains 1 item(s)");
     stdout.mockRestore();
   });
 

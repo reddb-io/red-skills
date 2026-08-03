@@ -133,10 +133,13 @@ describe("sustainProjectRegistration — what holds a lease up", () => {
     expect(sustained.registration.sustains).toBe(1);
     expect(sustained.registration.sustained_by).toBe("open-work");
     expect(sustained.registration.sustained_at).toBe(at);
+    // `renewals` is the end-to-end counter: the deadline moved, so the counter
+    // moves. `session_renewals` keeps the narrower diagnostic fact below.
+    expect(sustained.registration.renewals).toBe(1);
+    expect(sustained.registration.session_renewals).toBe(0);
     // The SESSION's clock is untouched: a sustained registration is still one
     // nobody is watching, and folding the two would delete that fact.
     expect(sustained.registration.renewed_at).toBe(T0);
-    expect(sustained.registration.renewals).toBe(0);
   });
 
   it("leaves a drained project on its own deadline, which is how it lapses", () => {
@@ -216,7 +219,8 @@ describe("a registration outlives its window while the project still drains", ()
     expect(Date.parse(clock.now())).toBeGreaterThan(Date.parse(registered.renew_by));
     const standing = daemon.hostState().registrations![0]!;
     expect(standing.project_label).toBe("acme/widgets");
-    expect(standing.renewals).toBe(0);
+    expect(standing.renewals).toBeGreaterThanOrEqual(6);
+    expect(standing.session_renewals).toBe(0);
     expect(standing.sustains).toBeGreaterThanOrEqual(6);
     expect(standing.renewal).toBe("self-renewing");
   });
@@ -248,6 +252,29 @@ describe("a registration outlives its window while the project still drains", ()
     expect(tick.granted).toHaveLength(1);
     expect(daemon.workerCount()).toBe(1);
     expect(launched[0]!.spec.workspace_path).toBe(workspace);
+  });
+
+  it("sustains on its own cadence when the queue poll pauses", async () => {
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      registrationSustainMs: 20,
+      launch: recordingLaunch([]),
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([4]) },
+    });
+    running.push(daemon);
+
+    daemon.registerProject(request({ renew_within_ms: 120 }));
+    await daemon.pollQueueDiscovery();
+    // No second queue poll. The registration's belt consumes the last fresh
+    // observation on its own cadence and keeps the record past its first TTL.
+    await new Promise((resolve) => setTimeout(resolve, 160));
+
+    const standing = daemon.hostState().registrations![0]!;
+    expect(standing.renewals).toBeGreaterThanOrEqual(4);
+    expect(standing.renewal).toBe("self-renewing");
   });
 });
 
@@ -283,6 +310,50 @@ describe("a project that no longer intends to drain lapses, and says so", () => 
     expect(lapse.sustains).toBe(0);
     expect(lapse.detail).toMatch(/nothing renewed it/);
     expect(Date.parse(lapse.at)).toBe(Date.parse(clock.now()));
+  });
+
+  it("shows the lapse while it is stopped, then re-registers when the next poll still finds work", async () => {
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      registrationSustainMs: 0,
+      launch: recordingLaunch([]),
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([3]) },
+    });
+    running.push(daemon);
+
+    daemon.registerProject(request({ renew_within_ms: 30 }));
+    // The host first observed this project actively draining. That positive fact
+    // is what entitles one bounded recovery poll after a scheduling lapse.
+    await daemon.pollQueueDiscovery();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const lapsed = daemon.hostState();
+    expect(lapsed.registrations).toEqual([]);
+
+    const render = renderRedskilledStatusline(
+      buildStatuslinePayload({
+        hostState: lapsed,
+        ceiling: UNBOUNDED_HOST_CEILING,
+        rss: {},
+        sampledAt: null,
+        now: new Date().toISOString(),
+      }),
+      {
+        ...REDSKILLED_STATUSLINE_DEFAULTS,
+        project: "acme/widgets",
+      },
+    );
+    expect(render.project_match).toBe("lapsed");
+    expect(render.line).toContain("!lapsed");
+    expect(render.line).not.toContain("idle");
+
+    const polled = await daemon.pollQueueDiscovery();
+    expect(polled?.projects[0]?.depth).toBe(3);
+    const recovered = daemon.hostState().registrations![0]!;
+    expect(recovered.project_label).toBe("acme/widgets");
+    expect(recovered.renewals).toBeGreaterThan(0);
   });
 
   it("stops being polled once it has lapsed, so an empty selector costs no request", async () => {
