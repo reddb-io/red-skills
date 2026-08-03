@@ -515,8 +515,25 @@ export function nextQueuePollMs(
   return baseMs;
 }
 
-/** Never sleep the poller longer than this, whatever a reset instant claims. */
-export const REDSKILLED_QUEUE_MAX_BACKOFF_MS = 300_000;
+/**
+ * Never sleep the poller longer than this, whatever a reset instant claims.
+ *
+ * **Bounded BELOW the registration TTL, not chosen freely.**
+ * `sustainRegistrations` runs inside the queue poll, so the poll is the only
+ * thing holding a registration up — and a backoff as long as the TTL lets a
+ * project expire in the gap before the next poll could sustain it.
+ *
+ * That is what #3133 actually was. The adaptive cadence introduced in #3121
+ * landed at 300_000ms, exactly `REDSKILLED_REGISTRATION_TTL_MS`, so one slow
+ * cycle retired a healthy project with a full queue and a Worker still landing.
+ * A third of the TTL leaves room for two missed polls before anything lapses.
+ *
+ * Kept as a literal with the arithmetic shown rather than importing the TTL:
+ * this module is PURE and imports nothing, and a cross-import for one number
+ * would trade that for a constant that must not drift anyway — which is what
+ * the guard below is for.
+ */
+export const REDSKILLED_QUEUE_MAX_BACKOFF_MS = 100_000;
 
 /** At or under this many requests left, poll at the slowest ordinary cadence. */
 export const REDSKILLED_QUEUE_TIGHT_REMAINING = 250;
