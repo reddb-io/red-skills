@@ -1,7 +1,7 @@
 import type { TickResult } from "./result.js";
 
 function continueResult(): TickResult {
-  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], unblocked: [], retiredSlots: [], runnerChanged: false, stopped: false, queueDepth: 0, abandoned: true };
+  return { respawned: [], deaths: [], parked: [], idleParked: [], halfOpened: [], reaped: [], crashReconciled: [], reconciledSlots: [], retiredSlots: [], runnerChanged: false, stopped: false, queueDepth: 0, abandoned: true };
 }
 
 /**

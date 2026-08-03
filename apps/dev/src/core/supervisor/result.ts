@@ -18,10 +18,6 @@ export interface TickResult {
   crashReconciled: number[];
   /** Slots into which a reconcile worker was dispatched this tick. */
   reconciledSlots: number[];
-  /** Issues the periodic dependency Unblock Sweep promoted to ready-for-agent
-   * this tick (#844). Empty when the sweep was throttled, unwired, found nothing
-   * to promote, or failed (best-effort). */
-  unblocked: number[];
   /** Latest continuous trunk freshness tick outcome, when the seam is wired. */
   trunkFreshness?: TrunkFreshnessOutcome;
   /** Slots removed from the runtime fleet by elastic shrink this tick. */

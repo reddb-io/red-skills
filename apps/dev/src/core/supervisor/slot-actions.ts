@@ -128,8 +128,8 @@ export async function handleDeadSlot(
 
 /**
  * dispatchReconcileIfPossible — attempt to dispatch ONE reconcile worker into
- * the first free slot (ADR 0055, #562). Called at the end of every superviseTick,
- * after normal lifecycle handling (respawn / stall / reap). Returns the slot
+ * the first free slot (ADR 0055, #562). Called after normal lifecycle handling
+ * (respawn / stall / reap). Returns the slot
  * index of the dispatched worker, or null when no dispatch occurred.
  *
  * A "free slot" is one that is not parked and has no live pid — typically freed

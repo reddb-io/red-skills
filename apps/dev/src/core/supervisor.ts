@@ -73,12 +73,6 @@ export {
   handleDeadSlot,
   terminateAll,
 } from "./supervisor/slot-actions.js";
-export { superviseTick } from "./supervisor/tick.js";
-export {
-  adoptPersistedSlotPids,
-  runSupervisor,
-  type SupervisorAdoptionResult,
-} from "./supervisor/runtime.js";
 export { guardedTick } from "./supervisor/guarded-tick.js";
 export {
   workerUsage,

@@ -6,26 +6,14 @@
 // successful boot resets the run; the boot probe refuses to proceed while the
 // breaker is open.
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   BOOT_BREAKER_DEFAULT_THRESHOLD,
   bootDeathSignature,
   isBreakerOpen,
   recordBootDeath,
-  type BootBreakerLedger,
-  type BootBreakerStore,
 } from "../src/core/supervisor/boot-breaker.js";
-import {
-  runSupervisor,
-  initSupervisorState,
-  SUPERVISOR_DEFAULTS,
-  type SupervisorConfig,
-  type SupervisorDeps,
-} from "../src/core/supervisor.js";
 import { BootHaltError } from "../src/core/boot.js";
-import { renderFleetBlock } from "../src/core/statusline.js";
-import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
-import type { LivenessVerdict } from "@reddb-io/red-castle";
 
 const NOW = 1_000_000;
 
@@ -37,22 +25,6 @@ function probeHalt(evidence: string): BootHaltError {
     evidence,
     canonicalFix: "release the ghost claim",
   });
-}
-
-function memoryStore(initial: BootBreakerLedger | null = null): {
-  store: BootBreakerStore;
-  current: () => BootBreakerLedger | null;
-} {
-  let ledger = initial;
-  return {
-    store: {
-      read: async () => ledger,
-      write: async (next) => {
-        ledger = next;
-      },
-    },
-    current: () => ledger,
-  };
 }
 
 describe("recordBootDeath — pure consecutive-signature breaker", () => {
@@ -90,92 +62,5 @@ describe("recordBootDeath — pure consecutive-signature breaker", () => {
     const other = bootDeathSignature(probeHalt("#2174 held by dead marker wPB6V"));
     expect(one).toBe(two);
     expect(one).not.toBe(other);
-  });
-});
-
-// ---------- runSupervisor integration ----------
-
-function makeDeps(bootSweeps: () => Promise<void>, breaker: SupervisorDeps["bootBreaker"]): {
-  deps: SupervisorDeps;
-  spawnSlot: ReturnType<typeof vi.fn>;
-  log: ReturnType<typeof vi.fn>;
-  events: Array<{ kind: string; payload?: Record<string, unknown> }>;
-} {
-  const spawnSlot = vi.fn(async () => ({ pid: 2001, spawnEpoch: NOW }));
-  const log = vi.fn();
-  const events: Array<{ kind: string; payload?: Record<string, unknown> }> = [];
-  const deps: SupervisorDeps = {
-    proc: {
-      spawnSlot,
-      isAlive: vi.fn(() => true),
-      killTree: vi.fn(async () => {}),
-      inspectTree: vi.fn((): readonly ProcessSnapshotEntry[] => []),
-      sleep: vi.fn((_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 0))),
-      lastExitCode: vi.fn(() => null as number | null),
-    },
-    fs: {
-      workerLivenessVerdict: vi.fn((): LivenessVerdict | null => null),
-      resolveIterDir: vi.fn(() => null),
-      teardownIterDir: vi.fn(async () => {}),
-      parkedSlotWork: vi.fn(() => ({ workers: [], supervisorLogPath: ".red/tmp/afk-supervisor.log" })),
-      removeDir: vi.fn(async () => {}),
-    },
-    gh: {
-      comment: vi.fn(async () => {}),
-      editLabels: vi.fn(async () => {}),
-      ensureRunnerErrorLabel: vi.fn(async () => {}),
-      ensureLabel: vi.fn(async () => {}),
-      readyQueueDepth: vi.fn(async () => 0),
-    },
-    now: vi.fn(() => NOW),
-    log,
-    bootSweeps: vi.fn(bootSweeps),
-    emitSupervisorEvent: vi.fn((record) => {
-      events.push(record as { kind: string; payload?: Record<string, unknown> });
-    }),
-    bootBreaker: breaker,
-  };
-  return { deps, spawnSlot, log, events };
-}
-
-function config(over: Partial<SupervisorConfig> = {}): SupervisorConfig {
-  return { ...SUPERVISOR_DEFAULTS, ...over };
-}
-
-describe("runSupervisor — boot breaker wiring (#2527)", () => {
-  it("three seeded identical boot deaths: no spawn, healer invoked once, alert emitted", async () => {
-    const { store, current } = memoryStore();
-    const heal = vi.fn(async () => "curator sweep ran");
-    const halt = () => Promise.reject(probeHalt("#2521 held by dead marker w8DI1"));
-
-    for (let boot = 0; boot < 3; boot += 1) {
-      const { deps, spawnSlot, log, events } = makeDeps(halt, { store, heal });
-      await runSupervisor(initSupervisorState(2), deps, config({ target: 2 }), () => true);
-      expect(spawnSlot).not.toHaveBeenCalled();
-      if (boot < 2) {
-        expect(heal).not.toHaveBeenCalled();
-      } else {
-        expect(heal).toHaveBeenCalledTimes(1);
-        expect(log.mock.calls.some(([line]) => String(line).includes("boot breaker TRIPPED"))).toBe(true);
-        const breakerEvents = events.filter((e) => e.kind === "supervisor.breaker");
-        expect(breakerEvents).toHaveLength(1);
-        expect(breakerEvents[0]!.payload).toMatchObject({
-          status: "tripped",
-          count: 3,
-          heal_outcome: "curator sweep ran",
-        });
-      }
-    }
-    expect(isBreakerOpen(current())).toBe(true);
-  });
-
-  it("one successful boot resets the breaker ledger", async () => {
-    const seeded = recordBootDeath(null, "sig-A", NOW).ledger;
-    const { store, current } = memoryStore(seeded);
-    const { deps } = makeDeps(async () => {}, { store });
-
-    await runSupervisor(initSupervisorState(1), deps, config({ target: 1 }), () => true);
-
-    expect(current()).toBeNull();
   });
 });

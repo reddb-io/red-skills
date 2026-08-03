@@ -24,7 +24,9 @@ import {
 import {
   REDSKILLED_STATUSLINE_DEFAULTS,
   renderRedskilledStatusline,
+  stripAnsi,
   type RedskilledStatuslineOptions,
+  width,
 } from "@reddb-io/redskilled-render";
 import type { RedskilledStatuslinePayload } from "../src/statusline-payload.js";
 import { buildStatuslinePayload } from "../src/statusline-payload.js";
@@ -167,9 +169,9 @@ describe("the rendered statusline", () => {
 
     expect(render.mode).toBe("local");
     expect(render.line).toContain("acme/widgets 1w");
-    expect(render.line).toContain("w-1 512M/1G");
-    expect(render.line).not.toContain("w-2");
-    expect(render.line).not.toContain("acme/gadgets");
+    expect(stripAnsi(render.lines[1]!)).toContain("w-1");
+    expect(render.lines.join("\n")).not.toContain("w-2");
+    expect(render.lines.join("\n")).not.toContain("acme/gadgets");
   });
 
   it("lists every project's Workers in `global`, each showing its owner", () => {
@@ -182,8 +184,8 @@ describe("the rendered statusline", () => {
 
     expect(render.detail).toBe("workers");
     expect(render.line).toContain("host 2w/2p");
-    expect(render.line).toContain("acme/widgets:w-1 512M/1G");
-    expect(render.line).toContain("acme/gadgets:w-2 128M/512M");
+    expect(stripAnsi(render.lines[1]!)).toContain("acme/widgets:w-1");
+    expect(stripAnsi(render.lines[2]!)).toContain("acme/gadgets:w-2");
   });
 
   it("degrades a crowded global view to an aggregate and never overflows the line", () => {
@@ -224,16 +226,16 @@ describe("the rendered statusline", () => {
           payload,
           options({ mode, project: workers[0].project_label, maxWidth, maxProjects: 9, maxWorkers: 9 }),
         );
-        expect([...render.line].length).toBeLessThanOrEqual(maxWidth);
+        for (const line of render.lines) expect(width(line)).toBeLessThanOrEqual(maxWidth);
       }
     }
   });
 
-  it("says a Worker is unmeasured rather than showing it as idle", () => {
+  it("still names a Worker whose optional measurements are absent", () => {
     const payload = payloadOf([worker()], {});
     const render = renderRedskilledStatusline(payload, options({ project: "acme/widgets" }));
-    expect(render.line).toContain("w-1 ?");
-    expect(render.line).not.toContain("w-1 0B");
+    expect(stripAnsi(render.lines[1]!)).toContain("w-1");
+    expect(stripAnsi(render.lines[1]!)).toContain("hb=?");
   });
 
   it("marks a stale answer, and calls an idle host neither stale nor busy", () => {
@@ -384,7 +386,7 @@ describe("the host's whole job", () => {
     // The config declared `global`; the host passed no flag and still gets it,
     // and the owning project rides on the Worker.
     expect(written[0]).toContain("host 1w/1p");
-    expect(written[0]).toContain("acme/widgets:w-1 512M/1G");
+    expect(stripAnsi(written[0])).toContain("acme/widgets:w-1");
     expect(written[0].endsWith("\n")).toBe(true);
   });
 

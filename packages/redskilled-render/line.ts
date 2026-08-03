@@ -1,5 +1,5 @@
 /**
- * line — the statusline density: one row, and nothing behind it.
+ * line — the statusline density: one head, then one row per Worker.
  *
  * **The string is a pure function of the payload.** That purity is the whole
  * mitigation for having four surfaces at all (ADR 0132 decision 1): a renderer
@@ -24,13 +24,18 @@
  * logged nothing gets no second line at all — a blank one would be a render
  * defect wearing the shape of information.
  *
- * **A crowded machine degrades to an aggregate rather than overflowing.** The
- * statusline answers "who is using this machine and how much"; it is not the
- * dashboard. When the Workers do not fit, the line drops to one entry per
- * project, and when the projects do not fit it drops to the host total — losing
- * detail on purpose, never losing the line.
+ * **Width degrades cells, never Workers.** A selected Worker keeps its row at
+ * every terminal width; cells leave from the right until the row fits. Count
+ * budgets may still choose a project or host aggregate, but width alone never
+ * erases the identities the operator came here to see.
  */
-import { clamp, flattenPublishedLine, formatBytes, width } from "./format.js";
+import {
+  REDSKILLED_DASHBOARD_COLUMNS,
+  workerCells,
+  type RedskilledDashboardCells,
+  type RedskilledDashboardColumn,
+} from "./dashboard.js";
+import { clamp, flattenPublishedLine, formatBytes, pad, width } from "./format.js";
 import {
   BUDGET_BAND_MARK,
   BUDGET_SPENT_MARK,
@@ -41,6 +46,7 @@ import {
   REDSKILLED_RENDER_ABSENCE,
   UNREGISTERED_MARK,
 } from "./marks.js";
+import { BAR_AHEAD, BAR_CURRENT, BAR_DONE, BOLD, KEY, NOBG, NOBOLD, RED, RESET, SOFT, VAL } from "./palette.js";
 import type {
   RedskilledRenderPayload,
   RedskilledRenderProject,
@@ -119,12 +125,11 @@ export const REDSKILLED_STATUSLINE_DEFAULTS: RedskilledStatuslineOptions = {
 };
 
 /**
- * The finished statusline. PURE — payload and options in, one line out.
+ * The finished statusline. PURE — payload and options in, printable rows out.
  *
- * The line is built at the richest detail the budgets allow and then re-built
- * one step poorer for as long as it does not fit. Rebuilding rather than
- * trimming is deliberate: a trimmed line ends mid-fact, and a half-printed
- * memory figure is worse than an honest aggregate.
+ * Count budgets choose the detail. At Worker detail the head and every Worker
+ * get their own row; a narrow width removes whole cells from the right instead
+ * of replacing all Workers with an aggregate.
  */
 export function renderRedskilledStatusline(
   payload: RedskilledRenderPayload,
@@ -147,18 +152,27 @@ export function renderRedskilledStatusline(
     line: head,
   };
   for (const detail of ladder) {
-    const line = compose(head, body(detail, options, workers, projects), options.separator);
+    const line = detail === "workers"
+      ? head
+      : compose(head, projectBody(detail, projects), options.separator);
     chosen = { detail, line };
-    if (width(line) <= options.maxWidth) break;
+    // Worker rows have their own width ladder below. Aggregate detail retains
+    // the old all-or-nothing rule so a project figure is never cut in half.
+    if (detail === "workers" || width(line) <= options.maxWidth) break;
   }
   // Even the host aggregate can outgrow a very narrow line; a clamp is the last
   // resort and never the normal path, so it keeps the ellipsis visible.
   const line = clamp(chosen.line, options.maxWidth);
-  // Second lines belong to Worker entries, so they exist only while the line is
-  // still listing Workers: annotating an aggregate would attach a Worker's log to
-  // a row that names a project.
-  const extra = options.verbose && chosen.detail === "workers"
-    ? workerLogLines(workers, options)
+  const table = chosen.detail === "workers"
+    ? renderWorkerRows(workers, options, payload.generated_at)
+    : { lines: [] as readonly string[], degraded: false };
+  // A verbose line follows the Worker row it annotates. An aggregate gets no
+  // Worker log because there is no attributable row for that log to belong to.
+  const workerLines = chosen.detail === "workers"
+    ? workers.flatMap((worker, index) => {
+        const logged = options.verbose ? workerLogLine(worker, options) : null;
+        return logged == null ? [table.lines[index]!] : [table.lines[index]!, logged];
+      })
     : [];
   // Degradation is measured against the richest detail this payload COULD have
   // shown, not against the richest one the budgets allowed: a line that dropped
@@ -169,13 +183,13 @@ export function renderRedskilledStatusline(
   return {
     version: 1,
     line,
-    lines: [line, ...extra],
+    lines: [line, ...workerLines],
     verbose: options.verbose,
     mode: options.mode,
     project: options.project,
     project_match: match,
     detail: chosen.detail,
-    degraded: chosen.detail !== richest || line !== chosen.line,
+    degraded: chosen.detail !== richest || line !== chosen.line || table.degraded,
     stale: payload.staleness.stale,
     generated_at: payload.generated_at,
   };
@@ -191,7 +205,7 @@ export function renderRedskilledStatusline(
  * #2928 found in that path was sized by the host instead.
  */
 export interface RedskilledStatuslineBound {
-  /** The head, plus at most one second line per listed Worker. */
+  /** The head, one row per listed Worker, plus optional log rows. */
   readonly max_lines: number;
   readonly max_line_width: number;
   /** Every rendered line together, separators included. */
@@ -202,10 +216,10 @@ export interface RedskilledStatuslineBound {
 export function redskilledStatuslineBound(
   options: RedskilledStatuslineOptions = REDSKILLED_STATUSLINE_DEFAULTS,
 ): RedskilledStatuslineBound {
-  // A second line exists only while the line still lists Workers, and the line
-  // lists Workers only while there are no more of them than the budget allows —
-  // so the Worker budget bounds the row count, whatever the host holds.
-  const maxLines = options.verbose ? 1 + Math.max(0, options.maxWorkers) : 1;
+  // Worker detail exists only while there are no more Workers than the count
+  // budget, so that budget bounds both table rows and optional log rows.
+  const workerLines = Math.max(0, options.maxWorkers) * (options.verbose ? 2 : 1);
+  const maxLines = 1 + workerLines;
   const maxWidth = Math.max(0, options.maxWidth);
   return {
     max_lines: maxLines,
@@ -253,13 +267,10 @@ export function renderRedskilledStatuslineAbsence(input: {
   };
 }
 
-function body(
+function projectBody(
   detail: RedskilledStatuslineDetail,
-  options: RedskilledStatuslineOptions,
-  workers: readonly RedskilledRenderWorker[],
   projects: readonly RedskilledRenderProject[],
 ): readonly string[] {
-  if (detail === "workers") return workers.map((worker) => renderWorker(worker, options));
   if (detail === "projects") return projects.map(renderProject);
   return [];
 }
@@ -404,23 +415,71 @@ function stalenessMark(payload: RedskilledRenderPayload): string {
 }
 
 /**
- * One Worker. In `global`, the owning project rides on the entry itself.
- *
- * A separate "these belong to acme/widgets" grouping was rejected: the line has
- * no vertical dimension to group in, so the owner has to travel with the Worker
- * or it is not shown at all.
+ * One coloured, aligned Worker row. The values come from the dashboard's cell
+ * composer; this density owns only colour and width.
  */
-function renderWorker(worker: RedskilledRenderWorker, options: RedskilledStatuslineOptions): string {
-  const name = workerName(worker, options.mode);
-  const used = worker.vitals.rss_bytes;
-  // An unmeasured Worker says so. A zero here would read as an idle Worker, and
-  // "nothing measured it" and "it is using nothing" are opposite facts.
-  const usage = used == null
-    ? "?"
-    : worker.budget.bytes == null
-      ? formatBytes(used)
-      : `${formatBytes(used)}/${formatBytes(worker.budget.bytes)}`;
-  return `${name} ${usage}`;
+function renderWorker(
+  cells: RedskilledDashboardCells,
+  widths: Record<RedskilledDashboardColumn, number>,
+  columns: readonly RedskilledDashboardColumn[],
+  maxWidth: number,
+): string {
+  const parts = columns.map((column) => colourWorkerCell(column, pad(cells[column], widths[column])));
+  return clamp(`${NOBG}${SOFT}${parts.join("  ")}${RESET}`, maxWidth);
+}
+
+function renderWorkerRows(
+  workers: readonly RedskilledRenderWorker[],
+  options: RedskilledStatuslineOptions,
+  generatedAt: string,
+): { readonly lines: readonly string[]; readonly degraded: boolean } {
+  const rows = workers.map((worker) => workerCells(worker, options, generatedAt));
+  const populated = REDSKILLED_DASHBOARD_COLUMNS.filter((column) =>
+    rows.some((row) => width(row[column]) > 0));
+  const columns = [...populated];
+  let widths = workerWidths(rows, columns);
+  while (columns.length > 1 && workerRowWidth(widths, columns) > options.maxWidth) {
+    columns.pop();
+    widths = workerWidths(rows, columns);
+  }
+  return {
+    lines: rows.map((row) => renderWorker(row, widths, columns, options.maxWidth)),
+    degraded: columns.length < populated.length || workerRowWidth(widths, columns) > options.maxWidth,
+  };
+}
+
+function workerWidths(
+  rows: readonly RedskilledDashboardCells[],
+  columns: readonly RedskilledDashboardColumn[],
+): Record<RedskilledDashboardColumn, number> {
+  const widths = Object.fromEntries(
+    REDSKILLED_DASHBOARD_COLUMNS.map((column) => [column, 0]),
+  ) as Record<RedskilledDashboardColumn, number>;
+  for (const row of rows) {
+    for (const column of columns) widths[column] = Math.max(widths[column], width(row[column]));
+  }
+  return widths;
+}
+
+function workerRowWidth(
+  widths: Record<RedskilledDashboardColumn, number>,
+  columns: readonly RedskilledDashboardColumn[],
+): number {
+  return columns.reduce((total, column) => total + widths[column], 0) + Math.max(0, columns.length - 1) * 2;
+}
+
+function colourWorkerCell(column: RedskilledDashboardColumn, raw: string): string {
+  if (column === "wid") return `${BOLD}${raw}${NOBOLD}`;
+  if (column === "bar") {
+    return raw
+      .replace(/█+/g, (done) => `${BAR_DONE}${done}`)
+      .replace("▶", `${BAR_CURRENT}▶`)
+      .replace("✗", `${RED}✗`)
+      .replace(/░+/g, (ahead) => `${BAR_AHEAD}${ahead}`) + SOFT;
+  }
+  const equals = raw.indexOf("=");
+  if (equals > 0) return `${KEY}${raw.slice(0, equals + 1)}${VAL}${raw.slice(equals + 1)}${SOFT}`;
+  return raw;
 }
 
 /**
@@ -430,17 +489,13 @@ function renderWorker(worker: RedskilledRenderWorker, options: RedskilledStatusl
  * under a first line whose entries may have been reordered or clamped away, and
  * an unlabelled log line would belong to whichever Worker the reader guessed.
  */
-function workerLogLines(
-  workers: readonly RedskilledRenderWorker[],
+function workerLogLine(
+  worker: RedskilledRenderWorker,
   options: RedskilledStatuslineOptions,
-): readonly string[] {
-  const lines: string[] = [];
-  for (const worker of workers) {
-    const logged = flattenPublishedLine(worker.log.last_line);
-    if (logged == null) continue;
-    lines.push(clamp(`  ${LOG_LINE_MARK} ${workerName(worker, options.mode)}: ${logged}`, options.maxWidth));
-  }
-  return lines;
+): string | null {
+  const logged = flattenPublishedLine(worker.log.last_line);
+  if (logged == null) return null;
+  return clamp(`  ${LOG_LINE_MARK} ${workerName(worker, options.mode)}: ${logged}`, options.maxWidth);
 }
 
 /** How one Worker is named at any density: owner-qualified in `global`. PURE. */

@@ -11,14 +11,14 @@
       "command": "sh",
       "args": [
         "-c",
-        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; for launcher in \"$root/hooks/castle-mcp.sh\" \"$PWD/plugins/dev/hooks/castle-mcp.sh\"; do if [ -f \"$launcher\" ]; then exec bash \"$launcher\"; fi; done; printf 'castle: could not locate castle MCP launcher\\n' >&2; exit 1"
+        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; for launcher in \"$root/hooks/castle-mcp.sh\" \"$PWD/plugins/dev/hooks/castle-mcp.sh\" \"$HOME/.codex/.tmp/marketplaces/red-skills/plugins/dev/hooks/castle-mcp.sh\"; do if [ -f \"$launcher\" ]; then exec bash \"$launcher\"; fi; done; printf 'castle: could not locate castle MCP launcher\\n' >&2; exit 1"
       ]
     },
     "rsp": {
       "command": "sh",
       "args": [
         "-c",
-        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if command -v rsp >/dev/null 2>&1; then exec rsp mcp; fi; for bundle in \"$PWD/dist/rsp.bundle.min.mjs\" \"$root/dist/rsp.bundle.min.mjs\"; do if [ -f \"$bundle\" ]; then exec node \"$bundle\" mcp; fi; done; printf 'rsp: could not locate rsp MCP launcher\\n' >&2; exit 1"
+        "root=\"${CODEX_PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-}}\"; if command -v rsp >/dev/null 2>&1; then exec rsp mcp; fi; for bundle in \"$PWD/dist/rsp.bundle.min.mjs\" \"$root/dist/rsp.bundle.min.mjs\" \"$HOME/.codex/.tmp/marketplaces/red-skills/packaging/npm/bin/rsp.mjs\"; do if [ -f \"$bundle\" ]; then exec node \"$bundle\" mcp; fi; done; printf 'rsp: could not locate rsp MCP launcher\\n' >&2; exit 1"
       ]
     }
   }

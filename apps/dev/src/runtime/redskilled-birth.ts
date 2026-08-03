@@ -30,6 +30,7 @@ import {
   renewRedskilledProject,
   readRedskilledHostState,
   redskilledPresenceAdvice,
+  RedskilledRequestRefusedError,
   RedskilledUnreachableError,
   startRedskilledWorker,
   type RedskilledClientConfig,
@@ -380,11 +381,18 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
  *
  * A sibling of {@link redskilledUnreachableAdvice} rather than a reuse of it,
  * because the two refusals leave different states behind: that one says no Worker
- * was born, this one says the project has no presence at all. Both name the
- * socket, because "start the daemon" and "fix the client that stopped asking it"
- * are still the two repairs, and the socket is what tells them apart.
+ * was born, this one says the project has no presence at all. Transport silence
+ * names the socket and its reach repair; an answered application refusal preserves
+ * the daemon's reason and never routes the operator to provisioning (#3158).
  */
 export function redskilledRegistrationRefusal(socketPath: string, cause: unknown): string {
+  if (cause instanceof RedskilledRequestRefusedError) {
+    const deadline = standingRegistrationDeadline(cause.refusal);
+    return deadline == null
+      ? `this project was not registered because the redskilled daemon refused it: ${cause.refusal}`
+      : `this project was not registered: ${cause.refusal}; wait for the standing registration to lapse at ` +
+          `${deadline}, or stop the existing registration before retrying.`;
+  }
   const detail = cause instanceof Error ? cause.message : String(cause);
   return (
     `this project was not registered: the redskilled daemon did not answer on ${socketPath}. ` +
@@ -392,6 +400,11 @@ export function redskilledRegistrationRefusal(socketPath: string, cause: unknown
     `that cannot reach the daemon starts nothing rather than launching a demand producer no host admitted, ` +
     `counts or can stop. ${repairFor(cause)} (${detail})`
   );
+}
+
+/** The deadline carried by the daemon's canonical duplicate-registration refusal. */
+function standingRegistrationDeadline(refusal: string): string | undefined {
+  return / standing until (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z):/.exec(refusal)?.[1];
 }
 
 export function redskilledUnreachableAdvice(socketPath: string, cause: unknown): string {
