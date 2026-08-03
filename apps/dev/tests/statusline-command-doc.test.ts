@@ -309,7 +309,7 @@ describe(`one producer until ${STATUSLINE_DELEGATION_ISSUE} (#3166)`, () => {
     const message = describeStatuslineDelegation(muted);
 
     expect(STATUSLINE_DELEGATION_ISSUE).toBe("#3151");
-    expect(message).toContain("interim");
+    expect(message).toContain("INTERIM");
     expect(message).toContain("a.md:1");
   });
 });
