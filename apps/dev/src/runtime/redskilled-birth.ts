@@ -25,6 +25,7 @@ import {
   commandRedskilledWorker,
   deregisterRedskilledProject,
   ensureRedskilledDaemon,
+  readRedskilledDashboard,
   registerRedskilledProject,
   renewRedskilledProject,
   readRedskilledHostState,
@@ -33,7 +34,17 @@ import {
   startRedskilledWorker,
   type RedskilledClientConfig,
 } from "@reddb-io/redskilled/client";
+import {
+  auditRedskilledProvisioning,
+  readRedskilledProvisionFacts,
+  type RedskilledProvisionReport,
+} from "@reddb-io/redskilled/provision";
 import { resolveRedskilledPaths, type RedskilledPaths } from "@reddb-io/redskilled/paths";
+import {
+  readRedskilledUnitStatus,
+  type RedskilledUnitStatus,
+} from "@reddb-io/redskilled/supervision";
+import type { RedskilledDashboard } from "@reddb-io/redskilled-render";
 import type {
   RedskilledProjectRegistration,
   RedskilledProjectRegistrationRequest,
@@ -41,6 +52,7 @@ import type {
 import type { RedskilledWorkerSpec } from "@reddb-io/redskilled/worker-launch";
 import { readRedskilledEvents, type RedskilledHostEvent } from "@reddb-io/redskilled/event-lane";
 import type {
+  RedskilledHostState,
   RedskilledRegistrationLapse,
   RedskilledRegistrationView,
 } from "@reddb-io/redskilled/host-state";
@@ -53,6 +65,10 @@ export { RedskilledDaemonHeldError, RedskilledUnreachableError } from "@reddb-io
 export type { RedskilledWorkerStarted } from "@reddb-io/redskilled/protocol";
 export type {
   RedskilledHostEvent,
+  RedskilledHostState,
+  RedskilledDashboard,
+  RedskilledProvisionReport,
+  RedskilledUnitStatus,
   RedskilledWorkerSpec,
   RedskilledProjectRegistration,
   RedskilledRegistrationView,
@@ -115,6 +131,14 @@ export interface RedskilledBirthPort {
   readonly socketPath: string;
   /** Prove the daemon answers, starting it when it is not yet running. */
   reach(): Promise<void>;
+  /** Read every project and Worker the daemon holds on this machine. */
+  hostState(): Promise<RedskilledHostState>;
+  /** Read the daemon's structured global dashboard, never this project's slice. */
+  hostDashboard(): Promise<RedskilledDashboard>;
+  /** Audit host provisioning without creating a home, bundle, daemon, or unit. */
+  provisionCheck(): Promise<RedskilledProvisionReport>;
+  /** Read whether the optional host supervisor unit is installed and running. */
+  unitStatus(): Promise<RedskilledUnitStatus>;
   /** Ask for one Worker. A refusal throws; the project never spawns instead. */
   start(spec: RedskilledWorkerSpec): Promise<GrantedWorkerBirth>;
   /**
@@ -247,6 +271,30 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
 
     async reach() {
       await ensureRedskilledDaemon(paths, config);
+    },
+
+    async hostState() {
+      return await readRedskilledHostState(paths, config);
+    },
+
+    async hostDashboard() {
+      return await readRedskilledDashboard(paths, { mode: "global" }, config);
+    },
+
+    async provisionCheck() {
+      const facts = await readRedskilledProvisionFacts({
+        paths,
+        projectRoot: options.root,
+        ...(config.env == null ? {} : { env: config.env }),
+        ...(config.serverCommand == null
+          ? {}
+          : { entryOverride: { serverCommand: config.serverCommand, serverArgs: config.serverArgs } }),
+      });
+      return auditRedskilledProvisioning(facts);
+    },
+
+    async unitStatus() {
+      return readRedskilledUnitStatus(config.env == null ? {} : { env: config.env });
     },
 
     async start(spec) {
