@@ -19,6 +19,17 @@ describe("execTool", () => {
     expect(r.stdout).toBe("first\nsecond\n");
   });
 
+  it("publishes the spawned child pid before waiting for its exit (#3182)", async () => {
+    const spawned: number[] = [];
+    const running = execTool("sh", ["-c", "sleep 0.1"], {
+      onSpawn: (pid: number) => spawned.push(pid),
+    } as never);
+
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]).toBeGreaterThan(0);
+    await expect(running).resolves.toMatchObject({ code: 0 });
+  });
+
   it("resolves a missing binary as 127 instead of rejecting", async () => {
     const r = await execTool("definitely-no-such-binary-xyz", []);
     expect(r.code).toBe(127);

@@ -64,6 +64,12 @@ export interface RedskilledRenderWorkerDisplay {
   readonly phase_total: number | null;
   readonly failed: boolean;
   readonly heartbeat: string | null;
+  readonly wait_kind: string | null;
+  readonly wait_subject: string | null;
+  readonly wait_pid: number | null;
+  readonly wait_started_at: string | null;
+  readonly wait_deadline: string | null;
+  readonly wait_escalation: string | null;
   /** When the work started, ISO-8601. `elapsed` is derived from it, never published. */
   readonly started_at: string | null;
   /** Input-side tokens on the last turn — the context window's occupancy. */
@@ -91,6 +97,12 @@ export const REDSKILLED_RENDER_DISPLAY_ABSENT: RedskilledRenderWorkerDisplay = {
   phase_total: null,
   failed: false,
   heartbeat: null,
+  wait_kind: null,
+  wait_subject: null,
+  wait_pid: null,
+  wait_started_at: null,
+  wait_deadline: null,
+  wait_escalation: null,
   started_at: null,
   context: null,
   eta: null,

@@ -65,6 +65,11 @@ export interface ExecOptions {
    * The normal captured stdout remains unchanged. Callback failures are
    * swallowed so observability cannot affect command execution. */
   onStdoutLine?: (line: string) => void;
+  /** Called synchronously as soon as the OS assigns the child pid. A caller
+   * blocked on this command can publish an explained wait before it awaits the
+   * exit. Callback failures are observability failures and never affect the
+   * child. */
+  onSpawn?: (pid: number) => void;
 }
 
 /**
@@ -127,6 +132,13 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
       detached: process.platform !== "win32",
       stdio: [opts.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    if (child.pid !== undefined && opts.onSpawn !== undefined) {
+      try {
+        opts.onSpawn(child.pid);
+      } catch {
+        // Declared-wait publication must never change command execution.
+      }
+    }
     let stdout = "";
     let stderr = "";
     let stdoutBytes = 0;

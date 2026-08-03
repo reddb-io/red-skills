@@ -57,6 +57,15 @@ export interface RedskilledWorkerDisplay {
   readonly failed: boolean;
   /** Proof-of-life as the project spells it (`3s`, `~11m+`, `!4m`). */
   readonly heartbeat: string | null;
+  /** A declared child-process wait. These fields are opaque project vocabulary:
+   * the daemon stores them and renderers show them without interpreting the
+   * command. `wait_started_at`, rather than the agent heartbeat, owns its age. */
+  readonly wait_kind: string | null;
+  readonly wait_subject: string | null;
+  readonly wait_pid: number | null;
+  readonly wait_started_at: string | null;
+  readonly wait_deadline: string | null;
+  readonly wait_escalation: string | null;
   /**
    * When this Worker started the work it is on, ISO-8601, as its project stamped it.
    *
@@ -127,6 +136,12 @@ export const REDSKILLED_WORKER_DISPLAY_ABSENT: RedskilledWorkerDisplay = {
   phase_total: null,
   failed: false,
   heartbeat: null,
+  wait_kind: null,
+  wait_subject: null,
+  wait_pid: null,
+  wait_started_at: null,
+  wait_deadline: null,
+  wait_escalation: null,
   started_at: null,
   context: null,
   eta: null,
@@ -147,11 +162,17 @@ const TEXT_FIELDS = [
   "phase",
   "step",
   "heartbeat",
+  "wait_kind",
+  "wait_subject",
+  "wait_started_at",
+  "wait_deadline",
+  "wait_escalation",
   "started_at",
 ] as const;
 const COUNT_FIELDS = [
   "phase_index",
   "phase_total",
+  "wait_pid",
   "context",
   "eta",
   "added",

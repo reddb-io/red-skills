@@ -98,6 +98,12 @@ export function workerDisplayFromState(state: AfkState, context: WorkerDisplayCo
     phase_total: position < 0 ? null : AFK_PHASE_ORDER.length,
     failed: phase === "blocked" || state.failed > 0,
     heartbeat: heartbeat(state, context.nowMs),
+    wait_kind: text(current.wait_kind),
+    wait_subject: text(current.wait_subject),
+    wait_pid: measured(current.wait_pid),
+    wait_started_at: text(current.wait_started_at),
+    wait_deadline: text(current.wait_deadline),
+    wait_escalation: text(current.wait_escalation),
     // The WORK's start, not the process's: a Worker that finished one issue and
     // took another is one process and two spans, and the host can only see the
     // first. The render subtracts this from the payload's own `generated_at`.

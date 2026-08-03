@@ -152,6 +152,13 @@ function heartbeatDisplay(worker: CompactWorker): string {
   return `~${age}${verdict.liveDescendants === true ? "+" : ""}`;
 }
 
+/** A declared child wait owns the liveness cell while it is active. Showing the
+ * stale agent heartbeat beside a healthy gate child is the false alarm this
+ * cell exists to prevent; unexplained silence still keeps the alarming `hb=`. */
+function proofOfLifeCell(worker: CompactWorker, fields: ReturnType<typeof workerFields>): string {
+  return fields.wait ?? `hb=${heartbeatDisplay(worker)}`;
+}
+
 // ---------- identity zone (wine background) ----------
 
 /** `» bold-project dim-(branch) dim-vX`. Branch truncated like the plain renderer. */
@@ -334,7 +341,7 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
     lifecycle: f.issue === null ? "" : lifecycleBar(f.phase, failed),
     phase: f.issue === null ? "" : progressCell(f.phase, f.activity),
     elapsed: f.elapsed,
-    heartbeat: `hb=${heartbeatDisplay(worker)}`,
+    heartbeat: proofOfLifeCell(worker, f),
     loc: noAgent ? "" : `loc=${formatDiff(f.added, f.removed)}`,
     tks: noAgent ? "" : `tks=${tokenDisplay(f)}`,
     tls: noAgent ? "" : `tls=${String(f.tools)}`,
@@ -409,7 +416,9 @@ export function renderWorkerLine(worker: CompactWorker, now: number, preset: Sta
       if (progress) parts.push(progress);
     }
     parts.push(f.elapsed);
-    parts.push(kv("hb", heartbeatDisplay(worker)));
+    const pulse = proofOfLifeCell(worker, f);
+    const eq = pulse.indexOf("=");
+    parts.push(eq > 0 ? kv(pulse.slice(0, eq), pulse.slice(eq + 1)) : pulse);
     return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
   }
   const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
@@ -437,7 +446,9 @@ export function renderWorkerLine(worker: CompactWorker, now: number, preset: Sta
     if (progress) parts.push(progress);
   }
   parts.push(f.elapsed);
-  parts.push(kv("hb", heartbeatDisplay(worker)));
+  const pulse = proofOfLifeCell(worker, f);
+  const eq = pulse.indexOf("=");
+  parts.push(eq > 0 ? kv(pulse.slice(0, eq), pulse.slice(eq + 1)) : pulse);
   if (landing || (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin))) {
     return `${NOBG}${SOFT}${parts.join("  ")}${RESET}`;
   }

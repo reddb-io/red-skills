@@ -490,6 +490,44 @@ describe("collectMonitorInputs", () => {
     }
   });
 
+  it("statusline worker rows carry the declared gate child facts (#3182)", async () => {
+    const root = scratch();
+    try {
+      const startedAt = new Date(Date.now() - 300_000).toISOString();
+      const attemptDir = writeRenderableAttempt(root, "wGATE", 3182, startedAt);
+      writeFileSync(join(attemptDir, "afk.state.toon"), JSON.stringify({
+        worker_id: "wGATE",
+        pid: process.pid,
+        runner: "codex",
+        started_at: startedAt,
+        current: {
+          number: 3182,
+          title: "gate wait",
+          phase: "validating",
+          activity: "review",
+          started_at: startedAt,
+          wait_kind: "gate",
+          wait_subject: "pnpm test",
+          wait_pid: 9001,
+          wait_started_at: startedAt,
+          wait_deadline: "process exit",
+          wait_escalation: "fail the validation stage",
+        },
+      }));
+
+      const workers = await collectStatuslineWorkers({ root, repo: "reddb-io/red-skills", remote: "origin" });
+
+      expect(workers[0]!.state.current).toMatchObject({
+        wait_kind: "gate",
+        wait_subject: "pnpm test",
+        wait_pid: 9001,
+        wait_started_at: startedAt,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reads the supervisor fleet state file for monitor rendering", async () => {
     const root = scratch();
     try {

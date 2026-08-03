@@ -331,6 +331,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     supervisorLane: process.env[SUPERVISOR_LANE_ENV] || undefined,
     ...(publishHostLogLine == null ? {} : { publishHostLogLine }),
   });
+  let gateWaitPublication: Promise<void> = Promise.resolve();
 
   // Feedback worktree manager — checks out the worker branch for the gate.
   // AFK runner improvement (Pattern 2): `feedbackRebaseBase` is set only when
@@ -367,6 +368,35 @@ export async function runCommand(options: RunOptions): Promise<number> {
           remaining_s: Math.floor(notice.remainingMs / 1000),
         })
         .catch(() => {});
+    },
+    onGateWait: (notice) => {
+      const waiting = notice.state === "waiting";
+      if (current.attemptDir !== "") {
+        const line = waiting
+          ? `⏳ /afk gate: waiting on ${notice.subject} (pid ${notice.pid}).`
+          : `✅ /afk gate: ${notice.subject} exited (pid ${notice.pid}).`;
+        gateWaitPublication = gateWaitPublication.then(async () => {
+          await fsx.appendLine(join(current.attemptDir, "afk.log"), line);
+          await updateState(workerStatePath(current.attemptDir), {
+            "current.wait_kind": waiting ? notice.kind : "",
+            "current.wait_subject": waiting ? notice.subject : "",
+            "current.wait_pid": waiting ? notice.pid : 0,
+            "current.wait_started_at": waiting ? notice.startedAt : "",
+            "current.wait_deadline": waiting ? notice.deadline : "",
+            "current.wait_escalation": waiting ? notice.escalation : "",
+            "current.last_event_at": new Date().toISOString(),
+          });
+          await castleBridge.record("worker.gate_wait", {
+            state: notice.state,
+            kind: notice.kind,
+            subject: notice.subject,
+            pid: notice.pid,
+            started_at: notice.startedAt,
+            deadline: notice.deadline,
+            escalation: notice.escalation,
+          });
+        }).catch(() => {});
+      }
     },
   });
 

@@ -38,6 +38,14 @@ function withDisplay(payload: ReturnType<typeof statuslinePayload>): ReturnType<
         phase_total: 6,
         failed: false,
         heartbeat: "3s",
+        // A Worker that is not waiting on anything: the absence this whole slice
+        // exists to tell apart from a Worker that went quiet.
+        wait_kind: null,
+        wait_subject: null,
+        wait_pid: null,
+        wait_started_at: null,
+        wait_deadline: null,
+        wait_escalation: null,
         started_at: null,
         context: null,
         eta: null,
