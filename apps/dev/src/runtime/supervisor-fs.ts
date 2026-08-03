@@ -61,9 +61,14 @@ function slotLogReadPaths(tmpDir: string, slot: number, logDir?: string): string
 }
 
 /**
- * Parse each unique worker ID (`wXXXX`) from a slot log's boot-stamp lines,
- * first-seen order preserved. Mirrors parse_worker_ids_from_log's awk over
- * `[afk] worker: wXXXX` lines. A missing / unreadable file → [].
+ * Parse each unique worker ID from a slot log's boot-stamp lines, first-seen
+ * order preserved. Mirrors parse_worker_ids_from_log's awk over
+ * `[afk] worker: <id>` lines. A missing / unreadable file → [].
+ *
+ * The id grammar is the worker-directory grammar (`[A-Za-z0-9_-]+`), not the
+ * minted `wXXXX` shape: a Worker born through the daemon ADOPTS the id the host
+ * assigned it (#3081), and a pattern that only matched a minted id would drop
+ * every daemon-born Worker out of the parked-slot sweep.
  */
 export function parseWorkerIdsFromLog(path: string): string[] {
   let text: string;
@@ -75,7 +80,7 @@ export function parseWorkerIdsFromLog(path: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const line of text.split("\n")) {
-    const m = line.match(/^\[afk\] worker: (w[A-Z0-9]+)$/);
+    const m = line.match(/^\[afk\] worker: ([A-Za-z0-9_-]+)$/);
     if (!m) continue;
     const wid = m[1]!;
     if (!seen.has(wid)) {

@@ -55,6 +55,38 @@ export function genWorkerId(rand: () => number, exists: (id: string) => boolean 
   }
 }
 
+/**
+ * The id this Worker answers to — ADOPTED when the host assigned one. PURE.
+ *
+ * **One Worker, one id** (#3081). A Worker born through the daemon is handed its
+ * identity in `RED_AFK_WORKER_ID`: the host recorded that exact string on its
+ * event lane, keyed its budget and its unit by it, and told every one of its
+ * surfaces about it before this process existed. Minting a second id here would
+ * leave the host and the work naming one Worker differently, and there is no
+ * later join that recovers from that — which is precisely what happened while
+ * the launch env never reached the process: `project_status` compared daemon
+ * UUIDs against project `wXXXX` handles, matched nothing, and rendered a busy
+ * fleet as an empty one.
+ *
+ * **There is deliberately no collision fallback on the assigned id.** A probe
+ * that regenerated on collision is an id generator that runs after the host has
+ * already named the Worker, which is the defect rather than a safety net: the
+ * assigned string is a fact, not a preference. Only a `run` invoked directly —
+ * no daemon, no assignment — mints, and that is what keeps the standalone lane
+ * working.
+ *
+ * @param assigned the value of `RED_AFK_WORKER_ID`; empty/absent when unassigned.
+ * @param exists true when `.red/tmp/workers/{id}/` is already taken.
+ */
+export function resolveWorkerId(
+  assigned: string | undefined,
+  exists: (id: string) => boolean = () => false,
+  rand: () => number = Math.random,
+): string {
+  const handed = (assigned ?? "").trim();
+  return handed !== "" ? handed : genWorkerId(rand, exists);
+}
+
 // ---------- issue selection (pure) ----------
 
 /** One candidate from `gh issue list --json number,title,labels,body,author`.

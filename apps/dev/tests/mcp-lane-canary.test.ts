@@ -113,9 +113,12 @@ function harness(options: HarnessOptions = {}) {
       }
       if (tool === "project_status") {
         return (
+          // One busy slot, because the default host read births one Worker: a
+          // reader that counted 0 over a live fleet is the #3081 defect, not
+          // the green answer it used to be asserted as.
           options.status ?? {
             supervisor: { pid: null, alive: false },
-            slots: { busy: 0, free: 0, total: 0, parked: 0 },
+            slots: { busy: 1, free: 0, total: 1, parked: 0 },
           }
         );
       }
@@ -465,7 +468,7 @@ describe("MCP lane canary — the other inert steps", () => {
 
   it("fails at project_status when the reader still sees a per-project supervisor", async () => {
     const { deps } = harness({
-      status: { supervisor: { pid: STRAY_PID, alive: true }, slots: { busy: 0 } },
+      status: { supervisor: { pid: STRAY_PID, alive: true }, slots: { busy: 1 } },
     });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
@@ -474,15 +477,36 @@ describe("MCP lane canary — the other inert steps", () => {
     expect(result.summary).toContain(`supervisor pid ${STRAY_PID} alive`);
   });
 
-  it("fails at project_status when the reader reports busy slots nothing started", async () => {
+  it("fails at project_status when the reader cannot count the Worker the host birthed", async () => {
+    // The #3081 shape: the host birthed a Worker, the reader says the project
+    // has nothing running. An empty fleet over a busy one is indistinguishable
+    // from an idle repository, which is exactly why it must go inert here.
     const { deps } = harness({
-      status: { supervisor: { pid: null, alive: false }, slots: { busy: 1, free: 0, total: 1 } },
+      status: { supervisor: { pid: null, alive: false }, slots: { busy: 0, free: 1, total: 1 } },
     });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
     expect(result.inertStep).toBe("project_status");
-    expect(result.summary).toContain("slots.busy=1");
+    expect(result.summary).toContain("slots.busy=0");
+    expect(result.summary).toContain("birthed 1 Worker(s)");
+  });
+
+  it("fails at project_status when the reader could not attribute its own Workers", async () => {
+    // A warning here means the join between host ids and project ids came apart:
+    // the reader answered, and its answer says it cannot recognise its own fleet.
+    const { deps } = harness({
+      status: {
+        supervisor: { pid: null, alive: false },
+        slots: { busy: 1, free: 0, total: 1 },
+        warnings: ["the host ids and the project ids are disjoint (#3081)"],
+      },
+    });
+
+    const result = await runMcpLaneCanary(deps, OPTIONS);
+
+    expect(result.inertStep).toBe("project_status");
+    expect(result.summary).toContain("attribution warning(s)");
   });
 
   it("fails at project_stop when the registration is not given back", async () => {

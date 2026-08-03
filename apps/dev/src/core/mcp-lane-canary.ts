@@ -474,8 +474,8 @@ export async function runMcpLaneCanary(
           `${born.workers.map((worker) => `${worker.workerId} (pid=${worker.pid})`).join(", ")}`,
       );
 
-      // ---- 7. project_status: the canonical reader agrees the project runs
-      // no process of its own ----
+      // ---- 7. project_status: the canonical reader runs no process of its own,
+      // and RECOGNISES the Workers step 6 just watched the host birth ----
       const observedStatus = await call("project_status", "project_status", {});
       const supervisor = asRecord(observedStatus.supervisor);
       const reportedPid = supervisor ? readPid(supervisor.pid) : null;
@@ -486,14 +486,35 @@ export async function runMcpLaneCanary(
             `the lane's reader can still see a per-project process the start was supposed to have stopped creating`,
         );
       }
+      // A busy slot per Worker the host birthed. `busy: 0` here used to be the
+      // green answer, and it was the defect (#3081): attribution compared the
+      // daemon's ids against ids the project minted itself, matched nothing,
+      // and rendered a project with live Workers as an idle one. A reader that
+      // cannot count the Workers step 6 just proved exist is inert.
       const busy = readCount(asRecord(observedStatus.slots)?.busy);
-      if (busy > 0) {
+      if (busy !== born.workers.length) {
         inert(
           "project_status",
-          `project_status reports slots.busy=${busy} while this project started nothing — the lane's reader and writer disagree`,
+          `project_status reports slots.busy=${busy} while the host birthed ${born.workers.length} Worker(s) for this ` +
+            `project — the lane's reader and writer disagree about who is running`,
         );
       }
-      record("project_status", "ok", "project_status answers with no per-project supervisor and no busy slot");
+      // The other half of the same join: a Worker of ours in the unattributed
+      // bucket is two disjoint id spaces for one Worker, which reads as an
+      // empty fleet on every surface downstream.
+      const statusWarnings = Array.isArray(observedStatus.warnings) ? observedStatus.warnings : [];
+      if (statusWarnings.length > 0) {
+        inert(
+          "project_status",
+          `project_status answered with ${statusWarnings.length} attribution warning(s): ${statusWarnings.join("; ")}`,
+        );
+      }
+      record(
+        "project_status",
+        "ok",
+        `project_status answers with no per-project supervisor and counts ${busy} busy slot(s) — the Worker(s) the ` +
+          `host birthed for this project`,
+      );
     } finally {
       // ---- 8. project_stop: give the registration back, always ----
       // Nothing thrown here may mask the walk's own verdict, so the teardown
