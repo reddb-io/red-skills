@@ -44,6 +44,7 @@ function earlyExitLaunch(state: { exit?: (code: number) => void }) {
       pid: 4_242,
       started_at: options.clock?.() ?? "2026-08-03T16:47:00.000Z",
       workspace_path: options.spec.workspace_path,
+      ...(options.spec.log_path == null ? {} : { log_path: options.spec.log_path }),
       isolated: false,
       warnings: [],
     };
