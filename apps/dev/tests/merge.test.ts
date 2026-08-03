@@ -1771,6 +1771,25 @@ describe("waitForQueuedMerge (#2986)", () => {
     expect(calls[0]!.join(" ")).toContain("api repos/o/r/pulls/42");
   });
 
+  it("does not hand `gh api` the `-R` flag it rejects (#3182, #3169)", async () => {
+    // `-R` belongs to `gh pr view`. `gh api` refuses it outright — "unknown
+    // shorthand flag: 'R' in -R" — and the REST plan already carries the repo in
+    // its path, so the flag is redundant as well as fatal.
+    //
+    // Asserting the PATH is present was not enough to catch this: `gh -R o/r api
+    // repos/o/r/pulls/42` contains the path too, and the existing test above went
+    // on passing while every real probe failed before it reached GitHub.
+    const { exec, calls } = queueExec([
+      JSON.stringify(restPullBody({ state: "MERGED", mergeCommitOid: "sha", autoMerge: false })),
+    ]);
+    await waitForQueuedMerge(exec, "o/r", 42, { sleep: async () => {}, maxPolls: 2 });
+
+    expect(calls[0]).not.toContain("-R");
+    expect(calls[0]).not.toContain("--repo");
+    // …and the repository is still addressed, by the only means `gh api` accepts.
+    expect(calls[0]!.join(" ")).toContain("repos/o/r/pulls/42");
+  });
+
   it("reports a dequeue once the accepted auto-merge request disappears", async () => {
     const { exec } = queueExec([
       queued,

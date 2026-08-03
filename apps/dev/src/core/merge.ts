@@ -1412,9 +1412,16 @@ async function readQueuedPrView(
   probeTimeoutMs: number | undefined,
 ): Promise<QueuedPrProbe> {
   const plan = planGithubRestRead({ kind: "pr", number: prNumber, fields: QUEUED_PR_FIELDS, repo });
+  // `-R` belongs to `gh pr view` and NOT to `gh api`, which rejects it outright
+  // ("unknown shorthand flag: 'R' in -R") — the REST plan already carries the
+  // repository inside its path, `repos/<owner>/<name>/pulls/<n>`. Prefixing it
+  // anyway made every REST-routed confirmation fail before it reached GitHub, and
+  // an unreadable probe is deliberately not a verdict, so the caller retried,
+  // exhausted its budget and parked the issue `blocked:infra` asking a human to
+  // repair infrastructure that was never broken (#3182, #3169).
   const args =
     plan.outcome === "plan"
-      ? ["gh", "-R", repo, ...plan.args]
+      ? ["gh", ...plan.args]
       : ["gh", "-R", repo, "pr", "view", String(prNumber), "--json", QUEUED_PR_FIELDS.join(",")];
   const res = await boundedProbe(() => exec(args), probeTimeoutMs);
   // #3160: the probe's exit code and stderr travel WITH the view, because the one
