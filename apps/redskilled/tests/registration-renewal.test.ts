@@ -242,13 +242,16 @@ describe("renewing a registration the daemon does not hold", () => {
 
     await expect(
       renewRedskilledProject(paths, { project_label: "acme/widgets" }, { sessionProject: "acme/widgets" }),
-    ).rejects.toThrow(/acme\/widgets/);
+    ).rejects.toThrow(/was never registered on this host/);
 
     daemon.registerProject(request());
     clock.advance(WINDOW_MS);
-    // A lapsed record renews into the same refusal as one that never existed: the
-    // client's next move is to register again, stating its selector and argv.
+    // The operation is still refused, but its diagnosis is not the never-held
+    // case: renewal stopped after a real registration and that is what to fix.
     expect(() => daemon.renewProject("acme/widgets")).toThrow(RedskilledProjectUnregisteredError);
+    expect(() => daemon.renewProject("acme/widgets")).toThrow(
+      /lapsed at 2026-07-31T12:01:00\.000Z \(registered 2026-07-31T12:00:00\.000Z\)/,
+    );
     expect(daemon.hostState().registrations).toEqual([]);
   });
 
