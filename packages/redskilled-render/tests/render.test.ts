@@ -11,6 +11,12 @@ import { encode as encodeToon } from "@reddb-io/toon";
 import {
   decodeRedskilledPayload,
   detailLadder,
+  BAR_AHEAD,
+  BAR_CURRENT,
+  BAR_DONE,
+  BOLD,
+  KEY,
+  RED,
   RedskilledRenderDecodeError,
   renderRedskilled,
   renderRedskilledDashboard,
@@ -21,6 +27,9 @@ import {
   REDSKILLED_PANEL_DEFAULTS,
   REDSKILLED_RENDER_ABSENCE,
   REDSKILLED_STATUSLINE_DEFAULTS,
+  stripAnsi,
+  VAL,
+  width,
 } from "../index.js";
 import { display, payload, worker } from "./fixture.js";
 
@@ -34,12 +43,13 @@ describe("one module, three densities", () => {
     const panel = renderRedskilledPanel(doc, { ...REDSKILLED_PANEL_DEFAULTS, project: "acme/widgets" });
     const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
 
-    expect(line.lines).toHaveLength(1);
+    expect(line.lines).toHaveLength(2);
     expect(line.line).toContain("acme/widgets 1w");
+    expect(stripAnsi(line.lines[1]!)).toContain("w-1");
     // The panel's FIRST row is the line density's own output, not a second
     // spelling of it — the composition is the no-drift guarantee.
     expect(panel.head.line).toBe(panel.lines[0]);
-    expect(panel.lines.length).toBeGreaterThan(line.lines.length);
+    expect(panel.lines.length).toBeGreaterThan(1);
     expect(panel.worker_rows[0]).toContain("w-1");
     expect(table.rows).toHaveLength(1);
     expect(table.header.line).toContain("wrk=1/1");
@@ -54,18 +64,82 @@ describe("one module, three densities", () => {
       .toEqual(renderRedskilledStatusline(doc, LOCAL).lines);
   });
 
-  it("degrades a crowded line down the shared ladder rather than overflowing", () => {
-    const workers = Array.from({ length: 3 }, (_, index) => worker({ worker_id: `w-${index}` }));
+  it("degrades cells from the right without dropping selected Workers", () => {
+    const workers = Array.from({ length: 3 }, (_, index) =>
+      worker({ worker_id: `w-${index}`, display: display({ issue: String(3100 + index) }) }));
     const doc = payload({ workers, host: { ...payload().host, worker_count: 3 } });
     const narrow = renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 40 });
-    expect(narrow.detail).toBe("host");
+    expect(narrow.detail).toBe("workers");
     expect(narrow.degraded).toBe(true);
-    expect([...narrow.line].length).toBeLessThanOrEqual(40);
+    expect(narrow.lines).toHaveLength(4);
+    for (const [index, line] of narrow.lines.entries()) {
+      expect(width(line)).toBeLessThanOrEqual(40);
+      if (index > 0) expect(stripAnsi(line)).toContain(`w-${index - 1}`);
+    }
+    expect(stripAnsi(narrow.lines[1]!)).not.toContain("txt=");
 
     // The ladder is layout, and it now lives beside every density rather than
     // inside one of them.
     expect(detailLadder({ mode: "global", maxWorkers: 2, maxProjects: 4, workers, projects: doc.projects }))
       .toEqual(["projects", "host"]);
+  });
+});
+
+describe("the statusline Worker table (#3151)", () => {
+  it("draws every dashboard cell in colour on a row beneath the head", () => {
+    const doc = payload({ workers: [worker({ display: display({ model: "claude-opus-5" }) })] });
+    const rendered = renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 });
+
+    expect(rendered.lines).toHaveLength(2);
+    expect(rendered.line).toBe(rendered.lines[0]);
+    const raw = rendered.lines[1]!;
+    expect(stripAnsi(raw)).toBe(
+      "w-1  run=claude opus high  org=afk  iss=3096  ██▶░░  coding·edit  2m5s  eta=10m40s  hb=3s  loc=+120 -8  tks=42k  ctx=108k  tls=31  rsn=9  txt=4",
+    );
+    expect(raw).toContain(`${BOLD}w-1`);
+    expect(raw).toContain(`${KEY}run=${VAL}claude opus high`);
+    expect(raw).toContain(`${BAR_DONE}██${BAR_CURRENT}▶${BAR_AHEAD}░░`);
+    for (const key of ["run", "org", "iss", "eta", "hb", "loc", "tks", "ctx", "tls", "rsn", "txt"]) {
+      expect(raw).toContain(`${KEY}${key}=${VAL}`);
+    }
+  });
+
+  it("aligns every populated column across Workers", () => {
+    const doc = payload({
+      workers: [
+        worker({ worker_id: "w-1", display: display() }),
+        worker({
+          worker_id: "worker-long",
+          display: display({ runner: "opencode", model: "gpt-5.4", effort: "xhigh", issue: "42", phase: "validating" }),
+        }),
+      ],
+      host: { ...payload().host, worker_count: 2 },
+    });
+    const rendered = renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 260 });
+    const rows = rendered.lines.slice(1).map(stripAnsi);
+
+    expect(rows).toHaveLength(2);
+    for (const token of ["run=", "org=", "iss=", "coding", "2m5s", "hb=", "loc=", "tks=", "ctx=", "tls=", "rsn=", "txt="]) {
+      const starts = rows.map((row) => row.indexOf(token === "coding" ? (row.includes("coding") ? "coding" : "validating") : token));
+      expect(starts[0], token).toBeGreaterThanOrEqual(0);
+      expect(starts[1], token).toBe(starts[0]);
+    }
+  });
+
+  it("uses the failure colour for a failed lifecycle cursor", () => {
+    const doc = payload({ workers: [worker({ display: display({ failed: true }) })] });
+    expect(renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).lines[1]).toContain(`${RED}✗`);
+  });
+
+  it.each([
+    ["landing", display({ phase: "merge", origin: "afk" })],
+    ["requeue", display({ phase: "validating", origin: "requeue" })],
+  ])("omits agent activity cells from a %s row", (_kind, workerDisplay) => {
+    const doc = payload({ workers: [worker({ display: workerDisplay })] });
+    const row = stripAnsi(renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).lines[1]!);
+    for (const key of ["loc=", "tks=", "tls=", "rsn=", "txt="]) expect(row).not.toContain(key);
+    expect(row).toContain("ctx=108k");
+    expect(row).toContain("hb=3s");
   });
 });
 
