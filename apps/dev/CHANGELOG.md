@@ -1,5 +1,16 @@
 # @reddb-io/dev
 
+## 3.3.16
+
+### Patch Changes
+
+- @reddb-io/github@3.3.16
+- @reddb-io/shared@3.3.16
+- @reddb-io/build-info@3.3.16
+- @reddb-io/red-castle@3.3.16
+- @reddb-io/redskilled@3.3.16
+- @reddb-io/redskilled-render@3.3.16
+
 ## 3.3.15
 
 ### Patch Changes
