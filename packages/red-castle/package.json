@@ -1,7 +1,7 @@
 {
   "name": "@reddb-io/red-castle",
   "version": "0.11.0",
-  "description": "reddb.io fork of sandcastle \u2014 CLI/library for orchestrating AI agents in isolated sandbox environments. Consumed as TypeScript source by the RedSkills dev plugin.",
+  "description": "reddb.io fork of sandcastle — CLI/library for orchestrating AI agents in isolated sandbox environments. Consumed as TypeScript source by the RedSkills dev plugin.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
