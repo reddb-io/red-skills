@@ -16,6 +16,12 @@
 //                fast-forward local <target> to the merge commit.
 
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
+import {
+  classifyDirtyTree,
+  describeCleanTreeRefusal,
+  describeToleratedSetupDirt,
+  isSetupOwnedDirtOnly,
+} from "./setup-owned-dirt.js";
 
 const FLEET_TRUNK_REF = "refs/heads/red-trunk";
 
@@ -1516,6 +1522,8 @@ export interface FastForwardLocalTargetGuardResult {
   readonly currentBranch?: string;
   readonly failed?: FastForwardLocalTargetRefusal;
   readonly failedCondition?: "on-trunk" | "clean-tree" | "fetch" | "ancestor" | "merge";
+  /** Setup-owned dirty paths the clean-tree condition tolerated (#3106). */
+  readonly toleratedDirt?: readonly string[];
   readonly evidence: string;
 }
 
@@ -1617,7 +1625,13 @@ export async function evaluateFastForwardLocalTarget(
       evidence: `condition failed: on-trunk (current=${currentBranch || "unknown"} expected=${target})`,
     };
   }
-  // 2. A dirty primary keeps pending WIP — never write over it (#1019).
+  // 2. A dirty primary keeps pending WIP — never write over it (#1019). The one
+  // exception is dirt our OWN setup authored: `/red-setup` writes
+  // `.red/config.yaml`, `.red/.gitignore` and hook scripts it is forbidden to
+  // `git add`, so a fresh repo is dirty by contract and could never boot a
+  // Worker (#3106). Tolerating that named class costs nothing the guard was
+  // protecting — `merge --ff-only` still refuses on its own if the incoming
+  // commits would clobber one of those files.
   const status = await exec(["git", "-C", gitRepo, "status", "--porcelain"]);
   if (status.code !== 0) {
     return {
@@ -1630,8 +1644,8 @@ export async function evaluateFastForwardLocalTarget(
       evidence: "condition failed: clean-tree (could not read git status)",
     };
   }
-  const dirty = status.stdout.trim();
-  if (dirty !== "") {
+  const tree = classifyDirtyTree(status.stdout);
+  if (tree.foreign.length > 0) {
     return {
       guard: "refused",
       target,
@@ -1639,9 +1653,10 @@ export async function evaluateFastForwardLocalTarget(
       currentBranch,
       failed: "dirty-tree",
       failedCondition: "clean-tree",
-      evidence: `condition failed: clean-tree (${dirty.split("\n").length} dirty path(s))`,
+      evidence: describeCleanTreeRefusal(tree),
     };
   }
+  const toleratedDirt = isSetupOwnedDirtOnly(tree) ? describeToleratedSetupDirt(tree) : undefined;
   // Refresh the remote ref so the ancestry test and the FF see the merge.
   const fetch = await exec(["git", "-C", gitRepo, "fetch", "--quiet", remote, target]);
   if (fetch.code !== 0) {
@@ -1676,7 +1691,8 @@ export async function evaluateFastForwardLocalTarget(
     target,
     remote,
     currentBranch,
-    evidence: `guard passed: on-trunk clean-tree ancestor (${target} -> ${remote}/${target})`,
+    ...(toleratedDirt ? { toleratedDirt: tree.setupOwned } : {}),
+    evidence: `guard passed: on-trunk clean-tree ancestor (${target} -> ${remote}/${target})${toleratedDirt ? `; ${toleratedDirt}` : ""}`,
   };
 }
 

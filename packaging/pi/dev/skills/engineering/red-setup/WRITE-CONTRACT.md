@@ -165,6 +165,21 @@ Script content for each signal type (all open with `#!/usr/bin/env bash` + `set 
 3. **Never perform the reload yourself, and never "fix" it on disk.** The declaration is already correct; only the load is missing. Do not edit `.mcp.json`, re-register the marketplace, or start a server process by hand — those change a file that is not broken and leave the real gap in place.
 4. **Corroborate with the doctor when asked.** `/red-doctor --session-mcp "<what this session sees, or none>"` runs the same audit as check 27 and prints the same cure. It is a read-only second opinion, not a substitute for saying the verdict here.
 
+## Report the files this run wrote and never committed
+
+**Run this immediately before the recap: this skill leaves the tree dirty on purpose, so it must say so.** Setup writes `.red/config.yaml`, `.red/.gitignore` and any accepted `.red/hooks/**` scripts and is forbidden to `git add` them — that is the operator's decision, not this skill's. Nothing else closes the loop, so before #3106 a fresh repository looked set up, reported success, and then died at first `/afk` boot with a message about git ancestry that never mentioned setup.
+
+1. **Name every file, exactly as written.** List each path this run created or merged and mark it `uncommitted`. Do not print a count; a count sends the reader to `git status` for something this run already knows.
+2. **Say what stays open until they decide.** The trunk-freshness guard tolerates dirt in exactly these paths, so `/afk` boots either way — but the files stay outside git, so a teammate cloning the repo gets no RedSkills activation, and `/red-doctor` check 28 keeps reporting them.
+3. **Offer the commit; never run it.** Give the exact command and stop there:
+
+    ```bash
+    git add .red/config.yaml .red/.gitignore .red/hooks && git commit -m "chore: enable RedSkills in this repo"
+    ```
+
+    Offering it is better than naming the files; deciding for them is worse than either. If they say yes, run that command and nothing wider — never `git add -A`, and never a path this run did not write.
+4. **Accept "no" as a complete answer.** A repo that deliberately keeps `.red/` out of git is a supported choice; say that adding `.red/` to the root `.gitignore` silences the doctor row for good, and move on.
+
 ## Done
 
-Tell the user the setup is complete, the session verdict from *Verify the session sees the plugin* (`installed and loaded`, or `installed, reload needed` plus `/reload-plugins`), which plugins are now enabled here (and that all other directories stay inert until they run this skill there too), and which engineering skills will now read from these files. If they enabled **memory** or **brain**, point them at the next step — `/memory:init` to pick a storage mode, or the brain setup — since enabling only authorizes the plugin to run; its own init configures it. Mention they can edit `.red/agents/*.md` directly later, and that one-off concrete work should be dispatched with `/go` (backlog via `/afk`, parked issues via `/retake`). Re-run this skill to enable or disable a plugin, switch issue trackers, or restart from scratch.
+Tell the user the setup is complete, the uncommitted-files report from *Report the files this run wrote and never committed*, the session verdict from *Verify the session sees the plugin* (`installed and loaded`, or `installed, reload needed` plus `/reload-plugins`), which plugins are now enabled here (and that all other directories stay inert until they run this skill there too), and which engineering skills will now read from these files. If they enabled **memory** or **brain**, point them at the next step — `/memory:init` to pick a storage mode, or the brain setup — since enabling only authorizes the plugin to run; its own init configures it. Mention they can edit `.red/agents/*.md` directly later, and that one-off concrete work should be dispatched with `/go` (backlog via `/afk`, parked issues via `/retake`). Re-run this skill to enable or disable a plugin, switch issue trackers, or restart from scratch.

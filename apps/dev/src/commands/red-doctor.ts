@@ -230,6 +230,7 @@ function renderClassifierSections(
     askRedRouter,
     redTaxonomy,
     unlandedDocs,
+    setupOwnedDirt,
     notes,
   } = classifiers;
   return [
@@ -304,6 +305,14 @@ function renderClassifierSections(
     `unlanded docs findings: ${unlandedDocs.findings.length}`,
     ...unlandedDocs.findings.map((finding) => `  ${finding.verdict} ${finding.kind}: ${finding.reason}`),
     ...unlandedDocs.findings.map((finding) => `  fix: ${finding.remediation}`),
+    "",
+    "red-doctor uncommitted /red-setup output",
+    `verdict: ${setupOwnedDirt.row.verdict}`,
+    `evidence: ${setupOwnedDirt.row.evidence}`,
+    `setup-owned dirt findings: ${setupOwnedDirt.findings.length}`,
+    ...setupOwnedDirt.findings.map((finding) => `  ${finding.verdict} ${finding.kind}: ${finding.reason}`),
+    ...setupOwnedDirt.findings.map((finding) => `  paths: ${finding.paths.join(" ")}`),
+    ...setupOwnedDirt.findings.map((finding) => `  fix: ${finding.remediation}`),
     ...(notes.length > 0
       ? ["", "red-doctor classifier notes", ...notes.map((note) => `  ${note}`)]
       : []),
@@ -693,6 +702,19 @@ function renderToon(
         verdict: finding.verdict,
         base: finding.base,
         files: finding.files,
+      })),
+    },
+    setupOwnedDirt: {
+      scorecard: {
+        check: classifiers.setupOwnedDirt.row.check,
+        verdict: classifiers.setupOwnedDirt.row.verdict,
+        evidence: classifiers.setupOwnedDirt.row.evidence,
+        fixHome: classifiers.setupOwnedDirt.row.fixHome,
+      },
+      findings: classifiers.setupOwnedDirt.findings.map((finding) => ({
+        kind: finding.kind,
+        verdict: finding.verdict,
+        paths: finding.paths.join(" "),
       })),
     },
     classifierNotes: classifiers.notes,
