@@ -6,6 +6,18 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## red-statusline, red-setup (engineering) — the shipped statusline draws the rich Worker row again (issue #3166)
+
+- **status**: modified
+- **upstream**: `66898f6` (reddb.io original skills)
+- **why**: The documented `statusLine` — the one `/red-setup` writes into **every** repo it touches — passed `--no-workers` to the dev bundle and delegated the Worker rows to the daemon. Correct by ADR 0130 rule 10, and wrong in practice, because the two producers do not draw the same thing: measured on one host at one moment against the same three live Workers, the daemon's `line` density drew a project label, an id and a memory figure, where the dev bundle drew a progress bar, a state colour, aligned `run=`/`org=`/`iss=` columns, `phase·activity`, `HH:MM:SS` elapsed, `hb=`, `loc=`, `tks=` and the tool/reason/text vitals — correctly suppressing the agent vitals on a landing row, which has no agent. **The rich line was never broken; a flag switched it off, and nothing measured what replaced it.** The `statusline-command-doc` sweep did its job perfectly, and that was the trap: all four copies said the same thing, and all four said the poorer thing, so the regression shipped once per repository. It was found by an operator noticing a sibling checkout that predates the flag looked better.
+- **what changed**:
+  - The published command drops `--no-workers`, so the dev bundle draws the header **and** the Worker rows, and drops the daemon half, which would otherwise put a second, poorer block of rows under the first. All four copies move together through the existing sweep.
+  - The `else` branch now hangs off the **dev** bundle's resolution: no cached bundle and no plugin-cache fallback means this machine has no statusline renderer, and it still says so in the daemon's own sentence. `; exit 0` is untouched (#3073 does not regress).
+  - `apps/dev/src/core/statusline-command-doc.ts` grows rule 5, `STATUSLINE_DELEGATION_ISSUE` and `statuslineCommandsDelegatingWorkers`: exactly one producer draws the Worker rows, refused in both directions — a `--no-workers` that leaves nothing to draw them, and a `redskilled` glob that draws them twice. **The rule states in code that it is INTERIM and names #3151**, so the next reader restores the delegation when the daemon's `line` density can carry the row rather than because rule 10 says it should.
+  - `apps/redskilled/tests/statusline-host-adapter.test.ts` held the delegation itself — it demanded the recipe reach a `redskilled` bundle and demanded `--no-workers` — so it would have refused this fix. What #2928 actually named is a COUNT: two renderers on screen. The guard now holds that count from the other side, and passes for whichever producer draws the rows once.
+  - Not a repudiation of ADR 0130 rule 10, and not an argument for two renderers. #3151 rewrites the daemon's `line` density to draw this row and #3152 gives the other densities the same palette; the delegation goes back when the daemon can serve it. The `redskilled` bundle stays warmed as a companion of the `dev` warm path throughout, so that restoration globs a directory already holding the file.
+
 ## red-statusline, red-setup (engineering) — the statusline actually contacts the daemon (issue #3074)
 
 - **status**: modified

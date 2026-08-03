@@ -2,13 +2,13 @@
 // published in more than one doc, so it must be ONE string and it must end in
 // success (issue #3073).
 //
-// The command is a two-producer line: the dev bundle renders the repo header,
-// the `redskilled` daemon renders the Worker rows (ADR 0130 rule 10). Only the
-// header is required. The daemon half is best-effort by construction — its
-// stderr is already discarded — and a host with no cached daemon bundle is the
-// ordinary case, not a fault.
+// The command is a ONE-producer line today: the dev bundle renders the repo
+// header AND the Worker rows. It was a two-producer line — the daemon rendering
+// the rows it owns (ADR 0130 rule 10) — and it will be one again; see the interim
+// note under rule 5. Either way the rule is the same: one renderer draws a Worker
+// row, and a host that cannot reach that renderer says so rather than going blank.
 //
-// **The defect this closes.** The command's last statement was the bare test
+// **The first defect this closes (issue #3073).** The command's last statement was the bare test
 // `[ -n "$r" ] && "$N" "$r" statusline 2>/dev/null`. With no cached daemon
 // bundle `$r` is empty, the test fails, and because it is the FINAL statement
 // its status becomes the exit status of the whole `sh -c`: a status producer
@@ -26,7 +26,17 @@
 // siblings (`companionBundlePlugins` in `packages/shared/bundle-fetch.ts`), and
 // the command STATES the absence when it still resolves nothing.
 //
-// Four rules, and the last two are what #3074 added:
+// **The third defect, same command (issue #3166).** Rules 1–4 all held and the
+// line still got poorer. `--no-workers` silenced the dev bundle's Worker rows and
+// the daemon's `line` density drew what it could: a project label, an id and a
+// memory figure, where the dev bundle had been drawing a bar, a colour, aligned
+// `run=`/`org=`/`iss=` columns, `phase·activity`, elapsed, heartbeat, diff and
+// token vitals — code already in the tree, already tested, already correct. The
+// sweep did its job perfectly and that was the trap: all four copies said the
+// same thing, and all four said the poorer thing, so every repo `/red-setup`
+// touched since the cutover shipped it. Rule 5 is the reversal, and it is INTERIM.
+//
+// Five rules — #3074 added 3 and 4, #3166 added 5:
 //
 //  1. THE COMMAND ENDS IN AN EXPLICIT SUCCESS. It terminates with
 //     {@link STATUSLINE_COMMAND_TERMINATOR} so the exit status states what the
@@ -41,11 +51,27 @@
 //     the warm path mints. {@link statuslineBundleGlobs} lifts the patterns out
 //     so a test can hold them against `bundleFileName(plugin, version)` rather
 //     than against a human's memory of it.
-//  4. AN UNRESOLVED DAEMON SAYS SO. When no bundle answers the glob the command
+//  4. AN UNRESOLVED RENDERER SAYS SO. When no bundle answers the glob the command
 //     prints {@link STATUSLINE_COMMAND_ABSENCE} itself. This is not the host
 //     rendering a Worker row — ADR 0130 rule 10 still holds, and there is no
 //     Worker here to render. It is the host reporting that no renderer exists on
 //     this machine, because a blank region and a quiet machine look identical.
+//  5. EXACTLY ONE PRODUCER DRAWS THE WORKER ROWS — **INTERIM, until #3151.**
+//     {@link statuslineCommandsDelegatingWorkers} refuses both halves of the
+//     delegation: `--no-workers`, which mutes the only producer left, and a
+//     `redskilled*.bundle.min.mjs` glob, which puts a second block of Worker rows
+//     under the first saying less than it.
+//
+//     **Read this before restoring the delegation.** Rule 5 does not repudiate
+//     ADR 0130 rule 10 and is not an argument for two renderers. The daemon owns
+//     the Worker line and should serve it finished; the delegation was simply made
+//     before the daemon could draw the row, and nothing measured what replaced it.
+//     #3151 rewrites the daemon's `line` density to carry it and #3152 gives the
+//     other densities the same palette. When #3151 lands, this rule inverts back:
+//     the dev bundle returns to `--no-workers`, the daemon half returns, and the
+//     `redskilled` glob returns with it (the companion warm path never stopped
+//     writing that bundle — see the glob test). Until then, restoring the
+//     delegation trades a rich line for a poor one across every repo at once.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -69,8 +95,29 @@ export const STATUSLINE_COMMAND_TERMINATOR = "; exit 0";
  */
 export const STATUSLINE_COMMAND_ABSENCE = "redskilled unreachable — Worker state unknown";
 
+/**
+ * The issue that ends the interim single-producer form (rule 5).
+ *
+ * Carried in the guard's own failure message rather than only in a comment: a
+ * reader who trips rule 5 is usually restoring ADR 0130 rule 10 on purpose, and
+ * what they need is not a refusal but the ticket that makes the restoration
+ * correct.
+ */
+export const STATUSLINE_DELEGATION_ISSUE = "#3151";
+
 /** The bundle cache directory every published glob hangs off. */
 const BUNDLE_CACHE_SEGMENT = "/.cache/red-skills/bundles/";
+
+/**
+ * The dev-bundle flag that renders the repo header and no Worker rows.
+ *
+ * In the command it is the whole of the defect: the rich rows are drawn by
+ * default, and this flag is what switched them off.
+ */
+const WORKER_ROWS_OFF = "--no-workers";
+
+/** The daemon bundle the delegated half invoked. Matched as a glob OR a filename. */
+const DAEMON_BUNDLE = /redskilled[\w.*-]*\.bundle\.min\.mjs/;
 
 /**
  * Every doc surface that publishes the command verbatim.
@@ -183,6 +230,34 @@ export function describeStatuslineAbsence(
     `${silent.length} statusLine command cop${silent.length === 1 ? "y" : "ies"} do not print \`${sentence}\` when no daemon bundle resolves.`,
     "A blank region below the header is indistinguishable from a machine with no Workers — the operator reads an outage as calm (#3074).",
     ...silent.map((site) => `  ${site.path}:${site.line}`),
+  ].join("\n");
+}
+
+/**
+ * The copies that split the Worker rows across two producers, or across none.
+ * PURE.
+ *
+ * One check, two spellings of one mistake: `--no-workers` mutes the dev bundle
+ * (nothing draws a row), and a `redskilled` bundle glob runs a second renderer
+ * under the first (two blocks of rows, the lower one poorer). Both are the
+ * delegation, and the delegation is on hold until {@link
+ * STATUSLINE_DELEGATION_ISSUE}.
+ */
+export function statuslineCommandsDelegatingWorkers(
+  sites: readonly StatuslineCommandSite[],
+): StatuslineCommandSite[] {
+  return sites.filter((site) => site.body.includes(WORKER_ROWS_OFF) || DAEMON_BUNDLE.test(site.body));
+}
+
+/** A failure message naming every copy that delegates, and the issue that un-holds it. */
+export function describeStatuslineDelegation(sites: readonly StatuslineCommandSite[]): string {
+  const delegating = statuslineCommandsDelegatingWorkers(sites);
+  if (delegating.length === 0) return "";
+  return [
+    `${delegating.length} statusLine command cop${delegating.length === 1 ? "y" : "ies"} split the Worker rows across two producers, or across none.`,
+    `Exactly one producer draws them, and it is the dev bundle — INTERIM, until ${STATUSLINE_DELEGATION_ISSUE} teaches the daemon's \`line\` density to carry the row (#3166).`,
+    `Drop \`${WORKER_ROWS_OFF}\` and drop the daemon half; restoring the ADR 0130 rule 10 delegation is correct only once ${STATUSLINE_DELEGATION_ISSUE} has landed.`,
+    ...delegating.map((site) => `  ${site.path}:${site.line}`),
   ].join("\n");
 }
 
