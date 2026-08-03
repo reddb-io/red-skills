@@ -346,7 +346,8 @@ describe("a project that no longer intends to drain lapses, and says so", () => 
       },
     );
     expect(render.project_match).toBe("lapsed");
-    expect(render.line).toContain("!lapsed");
+    expect(render.line).toContain("project unknown — acme/widgets lapsed at");
+    expect(render.line).toContain("(registered ");
     expect(render.line).not.toContain("idle");
 
     const polled = await daemon.pollQueueDiscovery();
