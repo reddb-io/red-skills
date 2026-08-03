@@ -11,7 +11,7 @@ import {
   renderRedskilledDashboard,
   renderRedskilledStatusline,
 } from "@reddb-io/redskilled-render";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { readRedskilledEvents } from "../src/event-lane.js";
 import type { RedskilledWorkerView } from "../src/host-state.js";
@@ -42,7 +42,7 @@ function earlyExitLaunch(state: { exit?: (code: number) => void }) {
       worker_id: workerId,
       project_label: options.spec.project_label,
       pid: 4_242,
-      started_at: "2026-08-03T16:47:00.000Z",
+      started_at: options.clock?.() ?? "2026-08-03T16:47:00.000Z",
       workspace_path: options.spec.workspace_path,
       isolated: false,
       warnings: [],
@@ -65,12 +65,13 @@ function earlyExitLaunch(state: { exit?: (code: number) => void }) {
   };
 }
 
-function spec(): RedskilledWorkerSpec {
+function spec(overrides: Partial<RedskilledWorkerSpec> = {}): RedskilledWorkerSpec {
   return {
     worker_id: "w-early",
     project_label: "acme/widgets",
     workspace_path: "/tmp/acme/w-early",
     command: process.execPath,
+    ...overrides,
   };
 }
 
@@ -146,6 +147,44 @@ describe("a Worker that exits before its first write", () => {
       pid: 4_242,
       sender_class: "unknown",
       confidence: "none",
+    });
+  });
+
+  it("counts a repeated two-second boot refusal and carries the refusal out of the log", async () => {
+    const paths = await sessionPaths();
+    const launched: { exit?: (code: number) => void } = {};
+    let now = "2026-08-03T16:40:00.000Z";
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      clock: () => now,
+      launch: earlyExitLaunch(launched),
+      unitInventory: () => [],
+      readLogTail: async () => "[afk] session-error: trunk freshness: dirt-collision (.red/config.yaml)",
+    });
+    running.push(daemon);
+
+    for (const minute of [0, 2, 4]) {
+      now = `2026-08-03T16:${String(40 + minute).padStart(2, "0")}:00.000Z`;
+      daemon.startWorker(spec({ log_path: "/tmp/acme/w-early/dispatch.log" }));
+      now = `2026-08-03T16:${String(40 + minute).padStart(2, "0")}:01.000Z`;
+      launched.exit?.(1);
+      await vi.waitFor(() => {
+        expect(daemon.statuslinePayload().deaths?.count).toBe(minute / 2 + 1);
+      });
+    }
+
+    expect(daemon.statuslinePayload().deaths?.latest).toMatchObject({
+      id: "w-early",
+      sender_class: "boot-refused",
+      last_phase: "boot-refused",
+      evidence: "trunk freshness: dirt-collision (.red/config.yaml)",
+    });
+    expect(daemon.statuslinePayload().deaths?.boot_loop).toEqual({
+      project_label: "acme/widgets",
+      count: 3,
+      span_ms: 240_000,
+      latest_refusal: "trunk freshness: dirt-collision (.red/config.yaml)",
     });
   });
 });
