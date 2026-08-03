@@ -472,3 +472,54 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
+
+/**
+ * How long until the next queue poll, given what the last one saw. PURE.
+ *
+ * **The balance arrives free with every poll and used to be thrown away.** This
+ * document has carried a `rate_limit` since it existed and nothing read it,
+ * while the poll ran on a constant — so the daemon asked at exactly the same
+ * rate whether the token was full or one request from empty.
+ *
+ * A fixed cadence must choose once between two opposite situations: slow at the
+ * edge, where the number moves fastest and matters most, or wasteful in the
+ * middle, where nothing is going to run out. This chooses per poll.
+ *
+ * **It may only ever slow DOWN.** Polling faster on a low balance would spend
+ * more of exactly the budget it just noticed running out.
+ *
+ * **Exhaustion waits for the reset**, because until then no answer can change:
+ * asking again spends a request to be told the same thing. The wait is clamped
+ * at both ends so a missing, malformed or absurd reset instant can neither spin
+ * nor sleep the poller out of existence.
+ */
+export function nextQueuePollMs(
+  discovery: RedskilledQueueDiscovery | null,
+  baseMs: number,
+  nowMs: number,
+): number {
+  const limit = discovery?.rate_limit;
+  if (limit == null) return baseMs;
+  if (limit.exhausted) {
+    const resetAtMs = limit.reset_at == null ? Number.NaN : Date.parse(limit.reset_at);
+    const waitMs = Number.isFinite(resetAtMs) ? resetAtMs - nowMs + 1_000 : baseMs * 4;
+    return Math.min(REDSKILLED_QUEUE_MAX_BACKOFF_MS, Math.max(baseMs, waitMs));
+  }
+  // `remaining` is a count, not a share: this payload states what is left and
+  // never what the ceiling was, so the thresholds are absolute — the same shape
+  // the balance module uses, expressed in the only unit carried here.
+  const remaining = limit.remaining;
+  if (remaining == null) return baseMs;
+  if (remaining <= REDSKILLED_QUEUE_TIGHT_REMAINING) return Math.max(baseMs, 30_000);
+  if (remaining <= REDSKILLED_QUEUE_LOW_REMAINING) return Math.max(baseMs, 20_000);
+  return baseMs;
+}
+
+/** Never sleep the poller longer than this, whatever a reset instant claims. */
+export const REDSKILLED_QUEUE_MAX_BACKOFF_MS = 300_000;
+
+/** At or under this many requests left, poll at the slowest ordinary cadence. */
+export const REDSKILLED_QUEUE_TIGHT_REMAINING = 250;
+
+/** At or under this many, begin slowing down. */
+export const REDSKILLED_QUEUE_LOW_REMAINING = 1_000;
