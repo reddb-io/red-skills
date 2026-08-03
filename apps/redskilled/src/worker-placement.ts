@@ -159,6 +159,18 @@ export interface WorkerPlacementPlan {
    */
   readonly memoryCeiling?: string;
   /**
+   * The budget this placement APPLIED — the properties systemd was really given.
+   *
+   * It is the client's declared budget merged with the ceiling the host derived,
+   * which is exactly the object the `--property=…` flags above are written from.
+   * Stated on the plan rather than re-derived by the caller because a caller that
+   * re-derived it would be a second authority on what the unit carries, and the
+   * two would drift: the host accounting once totalled the client's declaration
+   * while the units carried the derived ceiling, and reported `0B` for a machine
+   * holding 21.8 GiB of walls (#3080).
+   */
+  readonly budget: RedskilledWorkerBudget;
+  /**
    * What the Worker is told about its own placement — the scope, its ceiling and
    * the degradation when there is no scope (`@reddb-io/shared/worker-scope`).
    *
@@ -334,6 +346,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     args,
     cwd: opts.workspacePath,
     warning,
+    budget,
     ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
     // The Worker still learns its ceiling here, and learns WHY it has no scope:
     // an unscoped death that named neither would be the silent degradation this
@@ -406,6 +419,9 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     unit,
     command: opts.probes.systemdRun,
     args: [...unitArgs, "--", opts.command, ...args],
+    // The very object the `--property=` flags above were written from, so the
+    // accounting reads what the unit carries rather than a second derivation.
+    budget,
     ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
     environment,
     ...(unenforced != null ? { budgetWarning: unenforced } : {}),
@@ -450,6 +466,7 @@ function planPosixLimitsPlacement(
     cwd: opts.workspacePath,
     posix: limits,
     warning,
+    budget: effectiveBudget,
     ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
     // No scope: macOS has no resource group to name, so the Worker is told its
     // ceiling and told, in the same breath, that nothing but the floor holds it.
@@ -508,6 +525,7 @@ function planJobObjectPlacement(
     args: [...args],
     cwd: opts.workspacePath,
     job: { name, limits },
+    budget: effectiveBudget,
     ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
     // The job IS the scope on Windows, so the Worker names it exactly as a Linux
     // Worker names its unit — one vocabulary, whichever kernel drew the wall.

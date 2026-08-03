@@ -27,13 +27,25 @@
  * for RSS, so the second measurement costs no second instrument and no per-Worker
  * read: the tick's price stays the host's process table.
  *
+ * **The cgroup is asked first, because the daemon created it.** A unit's
+ * `memory.current` is the kernel's own charge for every process inside the
+ * boundary the placement drew, so it cannot miss a descendant by construction —
+ * no ppid chain to walk, nothing to reparent away, and no way for the recorded
+ * pid to be the `systemd-run` client rather than the unit's main process. That
+ * last case is not hypothetical: it read a 5.38 GiB pair of Workers as `14.6M`,
+ * low by a factor of 377, because the pid the daemon holds under `--wait` lives
+ * in the DAEMON's cgroup and its subtree is the client, not the Worker (#3080).
+ * The walk remains the floor for a Worker genuinely without a unit, and the
+ * reading says which instrument answered rather than presenting both as one
+ * number.
+ *
  * PURE except for {@link sampleWorkerTrees}, the one function that reads the host.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { parseMemoryBudget } from "./budget-accounting.js";
-import type { RedskilledWorkerView } from "./host-state.js";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { appliedWorkerBudget, parseMemoryBudget } from "./budget-accounting.js";
+import type { RedskilledRssSource, RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
 /** How the daemon classifies a termination it decided itself. */
@@ -116,6 +128,20 @@ export type RedskilledCpuReading = Readonly<Record<string, number>>;
 export interface RedskilledTreeReading {
   readonly rss: RedskilledRssReading;
   readonly cpu_seconds: RedskilledCpuReading;
+  /**
+   * Which instrument answered for each Worker, keyed by `worker_id`.
+   *
+   * Present because the two instruments do not carry the same guarantee, and the
+   * weaker one must not pass for the stronger: a reader shown one number could
+   * not tell a kernel charge from a ppid walk that quietly missed most of the
+   * tree. Absent for a Worker nothing measured, exactly as `rss` is.
+   *
+   * OPTIONAL on the reading rather than required, because an injected sampler
+   * that names no instrument has honestly named none — and a default of `cgroup`
+   * would be the silent upgrade this field exists to prevent. {@link
+   * sampleWorkerTrees} always states it.
+   */
+  readonly sources?: Readonly<Record<string, RedskilledRssSource>>;
 }
 
 /** Measures the whole Worker set in one call. Injected, so a test needs no process. */
@@ -132,18 +158,25 @@ export type RedskilledTreeSampler = (
  * willing to keep running. PURE.
  */
 export function resolveEnforcedBudget(
-  worker: { readonly budget?: RedskilledWorkerBudget; readonly memory_ceiling?: string },
+  worker: {
+    readonly budget?: RedskilledWorkerBudget;
+    readonly applied_budget?: RedskilledWorkerBudget;
+    readonly memory_ceiling?: string;
+  },
 ): { readonly name: RedskilledBudgetName; readonly declared: string; readonly bytes: number } | null {
-  const budget = worker.budget ?? {};
+  // The SAME resolver the host accounting totals, so the floor enforces exactly
+  // the wall the accounting reports. Two resolutions of one question is how the
+  // HOST and PROJECTS panels came to disagree in a single frame (#3080).
+  //
+  // The scope's ceiling is folded in last and answers only for a Worker whose
+  // client declared nothing: on a host with no cgroup to hold it — no systemd, or
+  // a Mac — the derived ceiling would otherwise be a wall with nothing behind it
+  // (#3029). Where the kernel does hold it, the floor is the redundant second
+  // ceiling it has always been.
+  const budget = appliedWorkerBudget(worker);
   const candidates: ReadonlyArray<readonly [RedskilledBudgetName, string | undefined]> = [
-    // The scope's ceiling comes last and answers only for a Worker whose client
-    // declared nothing: on a host with no cgroup to hold it — no systemd, or a
-    // Mac — the derived ceiling would otherwise be a wall with nothing behind it
-    // (#3029). Where the kernel does hold it, the floor is the redundant second
-    // ceiling it has always been.
     ["MemoryMax", budget.memory_max],
     ["MemoryHigh", budget.memory_high],
-    ["MemoryMax", worker.memory_ceiling],
   ];
   for (const [name, declared] of candidates) {
     if (declared == null) continue;
@@ -162,10 +195,21 @@ export function resolveEnforcedBudget(
  * its ceiling all leave the Worker running. The floor exists to stop a runaway,
  * and a floor that killed on missing evidence would be a worse failure than the
  * one it prevents.
+ *
+ * **The floor stands down where the kernel is already holding the wall.** A
+ * cgroup reading is `memory.current`, which counts reclaimable page cache that a
+ * process-tree RSS never saw — so a Worker that merely read a large repository
+ * can sit near its `MemoryMax` with no anonymous pressure at all, and the kernel
+ * reclaims that cache rather than killing it. A software floor acting on the
+ * same number would kill the Worker the kernel deliberately kept. The unit
+ * carries that exact `MemoryMax`, so the enforcement is not lost, only left to
+ * the one enforcer that can tell cache from anonymous memory.
  */
 export function evaluateMemoryBudgets(input: {
   readonly workers: readonly RedskilledWorkerView[];
   readonly rss: RedskilledRssReading;
+  /** Which instrument produced each reading; absent leaves every Worker judged. */
+  readonly sources?: Readonly<Record<string, RedskilledRssSource>>;
 }): RedskilledMemoryTickOutcome {
   const terminations: RedskilledBudgetTermination[] = [];
   const unenforceable: RedskilledUnenforceableBudget[] = [];
@@ -175,7 +219,7 @@ export function evaluateMemoryBudgets(input: {
     if (budget == null) {
       unenforceable.push({
         worker_id: worker.worker_id,
-        reason: (worker.budget?.memory_max ?? worker.budget?.memory_high ?? worker.memory_ceiling) == null
+        reason: (appliedWorkerBudget(worker).memory_max ?? appliedWorkerBudget(worker).memory_high) == null
           ? "this Worker declared no memory budget and the host derived no ceiling for it, so the sampler has none to enforce"
           : "this Worker's declared memory budget cannot be reduced to bytes, so the sampler has no ceiling to enforce",
       });
@@ -190,6 +234,15 @@ export function evaluateMemoryBudgets(input: {
       continue;
     }
     if (observed <= budget.bytes) continue;
+    if (input.sources?.[worker.worker_id] === "cgroup" && budget.name === "MemoryMax") {
+      unenforceable.push({
+        worker_id: worker.worker_id,
+        reason: `this Worker's ${budget.name} of ${budget.declared} is held by the kernel on its own cgroup, and the ` +
+          "reading is memory.current — which counts reclaimable page cache the kernel drops before it kills anything, " +
+          "so the daemon does not duplicate an enforcement that can tell cache from anonymous memory",
+      });
+      continue;
+    }
     terminations.push(buildBudgetTermination(worker, budget, observed));
   }
 
@@ -247,19 +300,33 @@ const PAGE_SIZE_BYTES = 4096;
  */
 export function sampleWorkerTrees(
   workers: readonly RedskilledWorkerView[],
-  options: {
-    readonly procRoot?: string;
-    readonly platform?: NodeJS.Platform;
-    /** Injected `ps` output, so the macOS arm is provable off a Mac. */
-    readonly psTable?: () => string;
-  } = {},
+  options: SampleWorkerTreesOptions = {},
 ): RedskilledTreeReading {
   const platform = options.platform ?? process.platform;
-  const empty: RedskilledTreeReading = { rss: {}, cpu_seconds: {} };
+  const empty: RedskilledTreeReading = { rss: {}, cpu_seconds: {}, sources: {} };
   if (workers.length === 0) return empty;
 
+  const rss: Record<string, number> = {};
+  const cpuSeconds: Record<string, number> = {};
+  const sources: Record<string, RedskilledRssSource> = {};
+
+  // The kernel's own charge first, for every Worker the daemon put in a unit.
+  const cgroups = resolveUnitCgroups(workers, platform, options);
+  for (const [workerId, dir] of cgroups) {
+    const charge = readCgroupCharge(dir);
+    if (charge == null) continue;
+    rss[workerId] = charge.memoryBytes;
+    if (charge.cpuSeconds != null) cpuSeconds[workerId] = charge.cpuSeconds;
+    sources[workerId] = "cgroup";
+  }
+
+  // The walk answers only for whoever the kernel did not: an unisolated Worker, a
+  // host with no cgroup filesystem, or a unit whose directory is already gone.
+  const remaining = workers.filter((worker) => sources[worker.worker_id] == null);
+  if (remaining.length === 0) return { rss, cpu_seconds: cpuSeconds, sources };
+
   const table = readHostProcessTable(platform, options);
-  if (table.size === 0) return empty;
+  if (table.size === 0) return { rss, cpu_seconds: cpuSeconds, sources };
 
   const children = new Map<number, number[]>();
   for (const entry of table.values()) {
@@ -268,9 +335,7 @@ export function sampleWorkerTrees(
     else children.set(entry.ppid, [entry.pid]);
   }
 
-  const rss: Record<string, number> = {};
-  const cpuSeconds: Record<string, number> = {};
-  for (const worker of workers) {
+  for (const worker of remaining) {
     if (!table.has(worker.pid)) continue;
     let totalRss = 0;
     let totalCpu = 0;
@@ -288,8 +353,161 @@ export function sampleWorkerTrees(
     }
     rss[worker.worker_id] = totalRss;
     cpuSeconds[worker.worker_id] = totalCpu;
+    sources[worker.worker_id] = "process-tree";
   }
-  return { rss, cpu_seconds: cpuSeconds };
+  return { rss, cpu_seconds: cpuSeconds, sources };
+}
+
+export interface SampleWorkerTreesOptions {
+  readonly procRoot?: string;
+  readonly platform?: NodeJS.Platform;
+  /** Injected `ps` output, so the macOS arm is provable off a Mac. */
+  readonly psTable?: () => string;
+  /** The unified cgroup mount point; injected so the arm is provable off a host. */
+  readonly cgroupRoot?: string;
+  /** The daemon's own cgroup path, as `/proc/self/cgroup` states it. Injected in tests. */
+  readonly selfCgroupPath?: string;
+  /** The uid whose `user@<uid>.service` slice holds the units. Defaults to the daemon's. */
+  readonly uid?: number;
+}
+
+/** The unified cgroup hierarchy's conventional mount point. */
+export const DEFAULT_CGROUP_ROOT = "/sys/fs/cgroup";
+
+/**
+ * The cgroup directory holding each Worker's unit, keyed by `worker_id`. PURE-ish.
+ *
+ * **Keyed by the unit's NAME, never by the Worker's pid.** The pid the daemon
+ * holds is the `systemd-run --wait` client, which lives in the daemon's own
+ * cgroup — reading `/proc/<pid>/cgroup` would therefore hand back the DAEMON's
+ * directory and charge every Worker with the daemon's memory (#3080). The unit
+ * name is the one identifier that survives that indirection, and the placement
+ * already recorded it.
+ *
+ * A Worker with no unit is simply absent: it has no cgroup to read, which is the
+ * `unisolated_workers` case the walk exists for.
+ */
+function resolveUnitCgroups(
+  workers: readonly RedskilledWorkerView[],
+  platform: NodeJS.Platform,
+  options: SampleWorkerTreesOptions,
+): Map<string, string> {
+  const found = new Map<string, string>();
+  const explicitRoot = options.cgroupRoot != null;
+  if (!explicitRoot && platform !== "linux") return found;
+  const root = options.cgroupRoot ?? DEFAULT_CGROUP_ROOT;
+  const units = workers.filter((worker) => worker.unit != null && worker.unit !== "");
+  if (units.length === 0) return found;
+
+  const parents = candidateUnitParents(root, options);
+  for (const worker of units) {
+    for (const parent of parents) {
+      const dir = join(parent, worker.unit!);
+      if (existsSync(join(dir, "memory.current"))) {
+        found.set(worker.worker_id, dir);
+        break;
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Where a transient `--user` unit's directory could be, best guess first. PURE-ish.
+ *
+ * Derived from the daemon's OWN cgroup rather than hard-coded, because the two
+ * are siblings whenever the daemon itself runs under a unit — which is the
+ * arrangement ADR 0130 rule 5 puts it in. The ancestors are walked because the
+ * daemon may sit one level deeper (`app.slice/redskilled.service`) or shallower
+ * (a login `session-N.scope`), and `user@<uid>.service/app.slice` is appended
+ * last for the case where the daemon is not in the user manager's slice at all.
+ *
+ * Every candidate costs one `existsSync`, so the whole search is cheaper than the
+ * `/proc` walk it replaces even when it misses.
+ */
+function candidateUnitParents(root: string, options: SampleWorkerTreesOptions): readonly string[] {
+  const self = options.selfCgroupPath ?? readSelfCgroupPath();
+  const parents: string[] = [];
+  const push = (path: string) => {
+    if (!parents.includes(path)) parents.push(path);
+  };
+
+  let relative = self;
+  while (relative != null && relative !== "" && relative !== "/" && relative !== ".") {
+    push(join(root, relative));
+    const parent = dirname(relative);
+    if (parent === relative) break;
+    relative = parent;
+  }
+  push(root);
+
+  const uid = options.uid ?? process.getuid?.();
+  if (uid != null) {
+    push(join(root, "user.slice", `user-${uid}.slice`, `user@${uid}.service`, "app.slice"));
+  }
+  return parents;
+}
+
+/** The daemon's own cgroup path, or `null` — an unreadable `/proc` is never a crash. */
+function readSelfCgroupPath(): string | null {
+  try {
+    // cgroup v2 writes exactly one line, `0::<path>`; on a v1/hybrid host the
+    // unified controller is the same `0::` row, so the same read answers both.
+    for (const line of readFileSync("/proc/self/cgroup", "utf8").split("\n")) {
+      if (line.startsWith("0::")) return line.slice(3).trim();
+    }
+  } catch {
+    // A host with no `/proc` falls back to the conventional slice path below.
+  }
+  return null;
+}
+
+/**
+ * One unit's memory charge and accumulated CPU, straight from the kernel.
+ *
+ * `memory.current` is the whole cgroup's charge — every process inside the
+ * boundary, however it got there — so it is a single read where the walk is a
+ * traversal, and it is exact where the walk is a best effort. CPU rides along
+ * from `cpu.stat` for the reason it rides the `/proc` line: the question "is this
+ * Worker alive and working?" must not need a second instrument.
+ *
+ * `null` when the directory holds no readable `memory.current`, which is a unit
+ * that has already gone away — the caller then falls back to the walk rather
+ * than reporting a Worker at zero.
+ */
+function readCgroupCharge(dir: string): { readonly memoryBytes: number; readonly cpuSeconds: number | null } | null {
+  let raw: string;
+  try {
+    raw = readFileSync(join(dir, "memory.current"), "utf8");
+  } catch {
+    return null;
+  }
+  const memoryBytes = Number(raw.trim());
+  if (!Number.isFinite(memoryBytes) || memoryBytes < 0) return null;
+  return { memoryBytes, cpuSeconds: readCgroupCpuSeconds(dir) };
+}
+
+/** `usage_usec` out of `cpu.stat`, in seconds; `null` when the host keeps none. */
+function readCgroupCpuSeconds(dir: string): number | null {
+  let raw: string;
+  try {
+    raw = readFileSync(join(dir, "cpu.stat"), "utf8");
+  } catch {
+    return null;
+  }
+  return parseCgroupCpuStat(raw);
+}
+
+/** Microseconds of `usage_usec` as seconds, or `null` when the key is absent. PURE. */
+export function parseCgroupCpuStat(raw: string): number | null {
+  for (const line of raw.split("\n")) {
+    const [key, value] = line.trim().split(/\s+/);
+    if (key !== "usage_usec") continue;
+    const usec = Number(value);
+    if (!Number.isFinite(usec) || usec < 0) return null;
+    return usec / 1_000_000;
+  }
+  return null;
 }
 
 /** One `/proc` row, in the kernel's own units. */

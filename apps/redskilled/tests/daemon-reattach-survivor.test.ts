@@ -120,6 +120,7 @@ function unitBackedLaunch(state: { exitLaunchClient?: (signal: NodeJS.Signals) =
         command: "systemd-run",
         args: [],
         unit: worker.unit!,
+        budget: options.spec.budget ?? {},
         environment: {},
       },
       child: { pid: worker.pid } as ChildProcess,

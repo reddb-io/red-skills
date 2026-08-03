@@ -28,7 +28,7 @@ import type {
 import type { ProcessDeathKind } from "@reddb-io/shared/death-record.js";
 import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHostConsumption } from "./admission.js";
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
-import type { RedskilledHostState, RedskilledWorkerView } from "./host-state.js";
+import type { RedskilledHostState, RedskilledRssSource, RedskilledWorkerView } from "./host-state.js";
 import { isRedskilledStatuslineMetrics, type RedskilledStatuslineMetrics } from "./live-metrics.js";
 import { resolveEnforcedBudget, type RedskilledBudgetName, type RedskilledRssReading } from "./memory-sampler.js";
 import {
@@ -65,6 +65,18 @@ export interface RedskilledStatuslineVitals {
   readonly age_ms: number | null;
   /** True when this Worker was measured within the staleness window. */
   readonly fresh: boolean;
+  /**
+   * Which instrument produced `rss_bytes`; `null` when the daemon named none.
+   *
+   * A surface shows it because the two instruments do not carry the same
+   * guarantee: `cgroup` is the kernel's charge for the unit, `process-tree` is a
+   * ppid walk that misses whatever reparented away. Rendering both as one
+   * unlabelled number is how a 5.38 GiB host displayed `14.6M` (#3080). OPTIONAL
+   * on the wire, because one daemon serves checkouts pinned to different bundle
+   * versions and a consumer finding it absent must render an unnamed source
+   * rather than reject the Worker.
+   */
+  readonly rss_source?: RedskilledRssSource | null;
 }
 
 /** What this Worker was promised, and how much of it the daemon has seen it take. */
@@ -563,6 +575,7 @@ function buildWorker(
       sampled_at: rssBytes == null ? null : ctx.sampledAt,
       age_ms: rssBytes == null ? null : ctx.ageMs,
       fresh: rssBytes != null && ctx.sampleFresh,
+      rss_source: rssBytes == null ? null : worker.rss_source ?? null,
     },
     budget: {
       name: enforced?.name ?? null,
