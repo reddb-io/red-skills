@@ -168,7 +168,7 @@ describe("what the host prints", () => {
     expect(written).toEqual([`${served.lines.join("\n")}\n`]);
     // `--verbose` is the interesting case: the extra rows carry each Worker's
     // last logged line, published by the Worker and stored opaque by the daemon.
-    expect(served.lines.length).toBe(3);
+    expect(served.lines.length).toBe(5);
     expect(written[0]).toContain("w-1 is doing something");
     expect(written[0]).toContain("w-2 is doing something");
   });
