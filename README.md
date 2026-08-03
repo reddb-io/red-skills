@@ -656,6 +656,18 @@ global verbose view is still one read and opens no project's files. A crowded
 machine **degrades rather than overflows**: one entry per project, then the host
 total, with the loss stated rather than left to be detected by re-parsing.
 
+### Dashboard
+
+The `dashboard` command is the same host view at the density a terminal can
+read — run as
+`npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled dashboard`, or
+with `global` for every project's Workers, each naming its owner, and
+`--max-width N` for a hard ceiling. It is the statusline's taller sibling and
+**not a second renderer**: it asks the daemon for the same payload and draws it
+with the same render the herdr plugin and the VS Code extension use (ADR 0132
+decision 1), so a terminal with no plugin installed sees what those UIs see. Like
+the statusline, it always writes something and always exits 0.
+
 ## Token-Efficient Terminal Work
 
 `rsp` ([`apps/rsp/`](./apps/rsp/README.md), ADR 0095) wraps the noisy development
