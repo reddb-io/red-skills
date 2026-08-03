@@ -653,6 +653,19 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       if (result.reason === "queue-pending") {
         return { ok: false, reason: "ci-pending", locked: input.locked, prNumber: result.prNumber };
       }
+      // #3160: the confirmation went BLIND, which says nothing about the PR. Route
+      // it to `infra` — the thing that is broken is this host's ability to read
+      // GitHub, and an operator told `ci-pending` would go look at the wrong thing.
+      if (result.reason === "queue-probe-failing") {
+        return {
+          ok: false,
+          reason: "infra",
+          locked: input.locked,
+          prNumber: result.prNumber,
+          infraReason:
+            result.queueDetail ?? "the merge confirmation could not read the pull request",
+        };
+      }
       if (result.reason === "pr-resolved-abort") {
         return { ok: false, reason: "pr-resolved-abort", locked: input.locked, prNumber: result.prNumber };
       }
@@ -1042,8 +1055,12 @@ function decorateMergeQueueWait(deps: LandingDeps, input: LandingInput): MergeQu
       await configured?.onPoll?.(event);
       // The FIRST probe is the confirmation itself — a synchronous merge answers
       // it immediately and never waited for anything. Narrate a wait only once
-      // there is one, so the phase trail of an ordinary landing is unchanged.
-      if (event.attempt > 1) await emitLandingWaitHeartbeat(deps, input, event);
+      // there is one, so the phase trail of an ordinary landing is unchanged. A
+      // probe that FAILED is narrated from the first one (#3160): a confirmation
+      // that cannot see is never the ordinary landing this silence was for.
+      if (event.attempt > 1 || event.status === "probe-failed") {
+        await emitLandingWaitHeartbeat(deps, input, event);
+      }
     },
   };
 }
@@ -1067,7 +1084,10 @@ async function emitLandingWaitHeartbeat(
   const step = event.kind === "review" ? "review-wait" : "merge-poll";
   await deps.landingPhase?.("wait", {
     step,
-    status: "poll",
+    // #3160: a probe that ANSWERED and one that did not are different states, and
+    // publishing both as `poll` is what let a slot burn on a blind probe while
+    // every observability surface read it as healthy waiting.
+    status: event.status ?? "poll",
     issue: input.issue,
     pr_number: event.prNumber,
     attempt: event.attempt,
@@ -1075,6 +1095,9 @@ async function emitLandingWaitHeartbeat(
     interval_ms: event.intervalMs,
     ...(event.probeTimeoutMs ? { probe_timeout_ms: event.probeTimeoutMs } : {}),
     ...(event.check ? { check: event.check } : {}),
+    ...(event.unobservedStreak !== undefined ? { unobserved_probes: event.unobservedStreak } : {}),
+    ...(event.probeExitCode !== undefined ? { probe_exit_code: event.probeExitCode } : {}),
+    ...(event.probeStderr ? { probe_stderr: event.probeStderr } : {}),
   });
 }
 
