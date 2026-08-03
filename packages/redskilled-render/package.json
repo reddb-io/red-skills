@@ -12,6 +12,7 @@
     "./format.js": "./format.ts",
     "./line.js": "./line.ts",
     "./marks.js": "./marks.ts",
+    "./palette.js": "./palette.ts",
     "./panel.js": "./panel.ts",
     "./payload.js": "./payload.ts",
     "./select.js": "./select.ts"

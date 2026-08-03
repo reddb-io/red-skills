@@ -39,8 +39,28 @@ export {
   formatDuration,
   formatRate,
   pad,
+  shortModel,
+  stripAnsi,
   width,
 } from "./format.js";
+
+export {
+  BAR_AHEAD,
+  BAR_CURRENT,
+  BAR_DONE,
+  BOLD,
+  DIM,
+  KEY,
+  NOBG,
+  NOBOLD,
+  RED,
+  RESET,
+  SOFT,
+  VAL,
+  WHITE,
+  WINE,
+  WINE2,
+} from "./palette.js";
 
 export {
   BUDGET_BAND_MARK,

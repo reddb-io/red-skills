@@ -27,6 +27,16 @@
 
 import { compareSemver } from "./bundle-version.js";
 
+/**
+ * `claude-opus-4-8` → `opus`, for the themed per-worker `run=` label (#1175).
+ *
+ * The shortening is pure string work over a display string, so it lives with the
+ * other layout primitives in `@reddb-io/redskilled-render` (#3150) and is
+ * re-exported here for the siblings that already ask this module for their
+ * formatting. Two spellings of one shortening is the drift the move ends.
+ */
+export { shortModel } from "@reddb-io/redskilled-render/format.js";
+
 /** The block-1 project inputs: basename plus optional git ref. */
 export interface ProjectInput {
   /** `basename "$cwd"` — always present. */
@@ -284,20 +294,6 @@ export function formatRspTickerValue(tokens: number): string {
   if (n < 1e3) return String(n);
   if (n < 1e6) return `${(Math.floor(n / 100) / 10).toFixed(1)}k`;
   return formatThreeSigValue(n);
-}
-
-/**
- * Shortens a model identifier to its friendly family token for the themed
- * per-worker `run=` label (issue #1175): `claude-opus-4-8` → `opus`, `Opus` →
- * `opus`, `claude-sonnet-5` → `sonnet`. Falls back to the input unchanged when
- * no known family substring matches, so an unrecognised model still renders.
- */
-export function shortModel(model: string): string {
-  const m = model.toLowerCase();
-  for (const family of ["opus", "sonnet", "haiku", "fable"]) {
-    if (m.includes(family)) return family;
-  }
-  return model;
 }
 
 /**
