@@ -553,6 +553,30 @@ export function buildGithubBalanceReport(input: {
 }
 
 /**
+ * The balance a report was built from. PURE.
+ *
+ * A report travels on the wire and a balance is what an admission turns on, so a
+ * consumer that received the first and needs the second must not rebuild it by
+ * hand: the pools are the same objects, only re-keyed. Nothing is invented here —
+ * a pool the report did not carry stays `null`.
+ */
+export function balanceFromReport(report: GithubBalanceReport): GithubBalance {
+  const pools: Record<GithubRateBudget, GithubPoolBalance | null> = { rest: null, graphql: null, search: null };
+  for (const pool of report.pools) pools[pool.pool] = pool;
+  return {
+    version: 1,
+    origin: "asked",
+    outcome: report.outcome,
+    source: "GET /rate_limit",
+    asked_at: report.asked_at ?? "",
+    request_count: report.outcome === "asked" ? 1 : 0,
+    pools,
+    unreported_pools: report.unreported_pools,
+    detail: report.reason,
+  };
+}
+
+/**
  * True when `value` is a complete balance report — a client's fail-closed check.
  *
  * A consumer that accepted a partial report would render a posture it cannot
