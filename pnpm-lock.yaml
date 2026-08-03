@@ -192,6 +192,9 @@ importers:
       '@reddb-io/redskilled':
         specifier: workspace:*
         version: link:../redskilled
+      '@reddb-io/redskilled-render':
+        specifier: workspace:*
+        version: link:../../packages/redskilled-render
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -335,6 +338,9 @@ importers:
       '@reddb-io/github':
         specifier: workspace:*
         version: link:../../packages/github
+      '@reddb-io/redskilled-render':
+        specifier: workspace:*
+        version: link:../../packages/redskilled-render
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -400,6 +406,9 @@ importers:
       '@reddb-io/redskilled':
         specifier: workspace:*
         version: link:../redskilled
+      '@reddb-io/redskilled-render':
+        specifier: workspace:*
+        version: link:../../packages/redskilled-render
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -509,6 +518,22 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/node@25.9.5)(tsx@4.23.1)(yaml@2.9.0)
+
+  packages/redskilled-render:
+    dependencies:
+      '@reddb-io/toon':
+        specifier: 'catalog:'
+        version: 0.13.0
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.1
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+      vitest:
+        specifier: 'catalog:'
+        version: 2.1.9(@types/node@22.20.1)
 
   packages/shared:
     dependencies:

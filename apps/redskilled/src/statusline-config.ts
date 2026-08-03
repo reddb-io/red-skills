@@ -23,7 +23,7 @@ import {
   REDSKILLED_STATUSLINE_DEFAULTS,
   type RedskilledStatuslineMode,
   type RedskilledStatuslineOptions,
-} from "./statusline-render.js";
+} from "@reddb-io/redskilled-render";
 
 /**
  * The canonical config block.

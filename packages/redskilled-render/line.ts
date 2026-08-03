@@ -1,14 +1,13 @@
 /**
- * statusline-render — the finished line, and nothing behind it.
+ * line — the statusline density: one row, and nothing behind it.
  *
  * **The string is a pure function of the payload.** That purity is the whole
- * mitigation for having two surfaces at all (ADR 0130 rule 10): a renderer that
- * could reach for one extra fact — a directory listing, a clock, an environment
- * variable — would be a second authority on a question the payload already
- * answers, and the two surfaces would eventually describe different machines.
- * Everything this function needs is an argument, so a test can prove the string
- * the daemon serves is the string this function computes from the payload the
- * daemon serves alongside it.
+ * mitigation for having four surfaces at all (ADR 0132 decision 1): a renderer
+ * that could reach for one extra fact — a directory listing, a clock, an
+ * environment variable — would be a second authority on a question the payload
+ * already answers, and the surfaces would eventually describe different machines.
+ * Everything this function needs is an argument, so a fixture payload renders
+ * byte-identically to a live one.
  *
  * **The default mode is quiet: only the local project's Workers.** The common
  * case is one operator in one repository, and a line that listed every project
@@ -31,42 +30,30 @@
  * project, and when the projects do not fit it drops to the host total — losing
  * detail on purpose, never losing the line.
  */
+import { clamp, flattenPublishedLine, formatBytes, width } from "./format.js";
+import {
+  BUDGET_BAND_MARK,
+  BUDGET_SPENT_MARK,
+  DEATH_MARK,
+  ENGINE_BEHIND_MARK,
+  LOG_LINE_MARK,
+  REDSKILLED_RENDER_ABSENCE,
+  UNREGISTERED_MARK,
+} from "./marks.js";
 import type {
-  RedskilledStatuslinePayload,
-  RedskilledStatuslineProject,
-  RedskilledStatuslineWorker,
-} from "./statusline-payload.js";
-
-/** Which Workers the line is about. */
-export type RedskilledStatuslineMode = "local" | "global";
-
-/** How much detail survived the width and count budgets. */
-export type RedskilledStatuslineDetail = "workers" | "projects" | "host";
-
-/**
- * Whether the calling directory's project is one this host knows.
- *
- * Three states rather than a boolean, because the two failures need different
- * sentences: a directory that resolved to no project at all has nothing to look
- * up, while one that resolved to `acme/widgets` and found no such project on the
- * host has a name to put in front of the operator. Collapsing either into
- * `matched` is how "the host holds three of your Workers" renders as `0w`.
- */
-export type RedskilledStatuslineProjectMatch =
-  | "matched"
-  /**
-   * The host knows this label, and holds no registration for it.
-   *
-   * A name is not a state (#2973). A project whose registration lapsed while a
-   * Worker of its own is still finishing is still *known* — the label is on the
-   * Worker — but nothing will be born for it again, so rendering it as a matched
-   * project is rendering a stopped drain as a healthy one.
-   */
-  | "name-only"
-  | "unregistered"
-  | "unresolved"
-  /** No daemon answered, so whether this host knows the project is unknowable. */
-  | "unanswered";
+  RedskilledRenderPayload,
+  RedskilledRenderProject,
+  RedskilledRenderWorker,
+  RedskilledStatuslineMode,
+} from "./payload.js";
+import {
+  detailLadder,
+  resolveStatuslineProjectMatch,
+  selectRenderProjects,
+  selectRenderWorkers,
+  type RedskilledStatuslineDetail,
+  type RedskilledStatuslineProjectMatch,
+} from "./select.js";
 
 export interface RedskilledStatuslineOptions {
   readonly mode: RedskilledStatuslineMode;
@@ -88,7 +75,7 @@ export interface RedskilledStatuslineOptions {
  *
  * `detail` is stated rather than inferred from the text: a consumer that had to
  * detect degradation by counting separators would be parsing the rendered line,
- * which is the failure this whole tool exists to remove.
+ * which is the failure this whole module exists to remove.
  */
 export interface RedskilledStatuslineRender {
   readonly version: 1;
@@ -139,15 +126,21 @@ export const REDSKILLED_STATUSLINE_DEFAULTS: RedskilledStatuslineOptions = {
  * memory figure is worse than an honest aggregate.
  */
 export function renderRedskilledStatusline(
-  payload: RedskilledStatuslinePayload,
+  payload: RedskilledRenderPayload,
   options: RedskilledStatuslineOptions = REDSKILLED_STATUSLINE_DEFAULTS,
 ): RedskilledStatuslineRender {
-  const match = resolveProjectMatch(payload, options);
-  const workers = selectWorkers(payload, options);
-  const projects = selectProjects(payload, options);
+  const match = resolveStatuslineProjectMatch(payload, options.project);
+  const workers = selectRenderWorkers(payload, options);
+  const projects = selectRenderProjects(payload, options);
   const head = renderHead(payload, options, workers, match);
 
-  const ladder = detailLadder(options, workers, projects);
+  const ladder = detailLadder({
+    mode: options.mode,
+    maxWorkers: options.maxWorkers,
+    maxProjects: options.maxProjects,
+    workers,
+    projects,
+  });
   let chosen: { detail: RedskilledStatuslineDetail; line: string } = {
     detail: "host",
     line: head,
@@ -241,7 +234,7 @@ export function renderRedskilledStatuslineAbsence(input: {
   readonly generated_at: string;
 }): RedskilledStatuslineRender {
   const options = input.options ?? REDSKILLED_STATUSLINE_DEFAULTS;
-  const line = clamp(REDSKILLED_STATUSLINE_ABSENCE, options.maxWidth);
+  const line = clamp(REDSKILLED_RENDER_ABSENCE, options.maxWidth);
   return {
     version: 1,
     line,
@@ -259,139 +252,15 @@ export function renderRedskilledStatuslineAbsence(input: {
   };
 }
 
-/**
- * The mark a known-by-name project carries, and the reason it carries one.
- *
- * `!` for the same reason the staleness mark has one: it is a state the operator
- * has to act on, not a detail, and it must survive being read at a glance next to
- * a Worker count that looks perfectly healthy. One word, because the head is the
- * part of the line that never degrades — a sentence here would push the Workers
- * off a narrow terminal to say something `project_status` says in full.
- */
-export const UNREGISTERED_MARK = "!unregistered";
-
-/** What a daemon that is not the current one appends to its version. */
-export const ENGINE_BEHIND_MARK = "⇡";
-
-/**
- * What a posed death is marked with — a dagger, and never a word.
- *
- * The head is the part of the line that never degrades, so a death has to fit
- * beside a Worker count on a narrow terminal; the class that follows is the
- * reason, and the lane holds the receipt.
- */
-export const DEATH_MARK = "†";
-
-/**
- * What a budget inside the reserved band is marked with, and what a spent one is.
- *
- * Two marks rather than one, because they call for opposite actions: inside the
- * band the machine is still landing work and refusing only convenience, and spent
- * means nothing goes out until the reset. A surface that drew one symbol for both
- * would make an operator read the sentence to learn which it was.
- */
-export const BUDGET_BAND_MARK = "◐";
-/** What a spent GitHub budget is marked with. */
-export const BUDGET_SPENT_MARK = "◯";
-
-/** The one sentence an unreachable host renders as. */
-export const REDSKILLED_STATUSLINE_ABSENCE = "redskilled unreachable — Worker state unknown";
-
-/**
- * The detail levels this render may use, richest first.
- *
- * A level whose count budget is already blown is never attempted: the budgets
- * are the operator's declared taste, and honouring them only when the line
- * happens to be long would make the setting mean nothing on a wide terminal.
- */
-function detailLadder(
-  options: RedskilledStatuslineOptions,
-  workers: readonly RedskilledStatuslineWorker[],
-  projects: readonly RedskilledStatuslineProject[],
-): readonly RedskilledStatuslineDetail[] {
-  const ladder: RedskilledStatuslineDetail[] = [];
-  if (workers.length > 0 && workers.length <= options.maxWorkers) ladder.push("workers");
-  // The local mode holds one project by construction, so a per-project line
-  // would repeat the head verbatim. Only `global` has an aggregate worth a step.
-  if (options.mode === "global" && projects.length > 0 && projects.length <= options.maxProjects) {
-    ladder.push("projects");
-  }
-  ladder.push("host");
-  return ladder;
-}
-
 function body(
   detail: RedskilledStatuslineDetail,
   options: RedskilledStatuslineOptions,
-  workers: readonly RedskilledStatuslineWorker[],
-  projects: readonly RedskilledStatuslineProject[],
+  workers: readonly RedskilledRenderWorker[],
+  projects: readonly RedskilledRenderProject[],
 ): readonly string[] {
   if (detail === "workers") return workers.map((worker) => renderWorker(worker, options));
   if (detail === "projects") return projects.map(renderProject);
   return [];
-}
-
-/**
- * The Workers this line is about.
- *
- * The default mode keeps the session inside its own repository; a session that
- * declared no project has nothing to filter on, and rather than guess it shows
- * none — the head still carries the host total, so the line stays truthful.
- */
-function selectWorkers(
-  payload: RedskilledStatuslinePayload,
-  options: RedskilledStatuslineOptions,
-): readonly RedskilledStatuslineWorker[] {
-  if (options.mode === "global") return payload.workers;
-  if (options.project == null) return [];
-  return payload.workers.filter((worker) => worker.project_label === options.project);
-}
-
-function selectProjects(
-  payload: RedskilledStatuslinePayload,
-  options: RedskilledStatuslineOptions,
-): readonly RedskilledStatuslineProject[] {
-  if (options.mode === "global") return payload.projects;
-  return payload.projects.filter((project) => project.project_label === options.project);
-}
-
-/**
- * Does this host know the project the caller is standing in? PURE.
- *
- * A daemon older than `known_projects` cannot say, and the answer then is
- * `matched`, never a guess at a mismatch: this decides whether an operator is
- * told their project is unregistered, and inventing that from a missing field
- * would put a false accusation on every line a skewed daemon serves.
- */
-function resolveProjectMatch(
-  payload: RedskilledStatuslinePayload,
-  options: RedskilledStatuslineOptions,
-): RedskilledStatuslineProjectMatch {
-  return resolveStatuslineProjectMatch(payload, options.project);
-}
-
-/**
- * The same verdict, for a renderer that is not the statusline. PURE.
- *
- * Exported so the dashboard reaches it by CALLING it rather than by restating
- * it: two renderers with two copies of this ladder is exactly how one surface
- * comes to accuse a project the other calls healthy. It takes the project alone
- * rather than a whole options record, so a caller with different budgets — a
- * table has row counts, a line has widths — can still ask.
- */
-export function resolveStatuslineProjectMatch(
-  payload: RedskilledStatuslinePayload,
-  project: string | null,
-): RedskilledStatuslineProjectMatch {
-  if (project == null) return "unresolved";
-  if (payload.known_projects == null) return "matched";
-  if (!payload.known_projects.includes(project)) return "unregistered";
-  // Known, and possibly known only by NAME. A daemon too old to state its
-  // registrations cannot say which, and the answer then is `matched` for the same
-  // reason it is above: a lapse invented from a missing field would put a false
-  // accusation on every line a skewed daemon serves.
-  if (payload.registered_projects == null) return "matched";
-  return payload.registered_projects.includes(project) ? "matched" : "name-only";
 }
 
 /**
@@ -401,9 +270,9 @@ export function resolveStatuslineProjectMatch(
  * because that is the question the statusline exists to answer.
  */
 function renderHead(
-  payload: RedskilledStatuslinePayload,
+  payload: RedskilledRenderPayload,
   options: RedskilledStatuslineOptions,
-  workers: readonly RedskilledStatuslineWorker[],
+  workers: readonly RedskilledRenderWorker[],
   match: RedskilledStatuslineProjectMatch,
 ): string {
   const parts: string[] = [];
@@ -446,7 +315,7 @@ function renderHead(
  * daemon still states the version it is actually running, since the number a
  * report quotes has to be the one answering the read.
  */
-function engineMark(payload: RedskilledStatuslinePayload): string {
+function engineMark(payload: RedskilledRenderPayload): string {
   const engine = payload.engine;
   const version = engine?.running_version ?? payload.daemon.daemon_version;
   if (engine == null || engine.current !== false) return `v${version}`;
@@ -466,7 +335,7 @@ function engineMark(payload: RedskilledStatuslinePayload): string {
  * about this daemon's polling rather than about the token, which the dashboard
  * has room to say and a head does not.
  */
-function budgetMark(payload: RedskilledStatuslinePayload): string | null {
+function budgetMark(payload: RedskilledRenderPayload): string | null {
   const balance = payload.github_balance;
   if (balance == null) return null;
   if (balance.posture === "spent") return `${BUDGET_SPENT_MARK} quota spent`;
@@ -487,7 +356,7 @@ function budgetMark(payload: RedskilledStatuslinePayload): string | null {
  * `†0` would be a badge for the healthy case, which is how a mark stops being
  * read at all.
  */
-function deathMark(payload: RedskilledStatuslinePayload): string | null {
+function deathMark(payload: RedskilledRenderPayload): string | null {
   const deaths = payload.deaths;
   if (deaths == null || deaths.count <= 0 || deaths.latest == null) return null;
   return `${DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`;
@@ -514,7 +383,7 @@ function unmatchedHead(project: string | null, match: RedskilledStatuslineProjec
  * quiet line wants to know what *their* repository is spending; the host figure
  * is one mode away.
  */
-function memoryFigure(payload: RedskilledStatuslinePayload, options: RedskilledStatuslineOptions): string {
+function memoryFigure(payload: RedskilledRenderPayload, options: RedskilledStatuslineOptions): string {
   const observed = options.mode === "global"
     ? payload.host.observed_rss_bytes
     : payload.projects
@@ -528,7 +397,7 @@ function memoryFigure(payload: RedskilledStatuslinePayload, options: RedskilledS
 }
 
 /** How old the answer is, in the shortest sentence that stays honest. */
-function stalenessMark(payload: RedskilledStatuslinePayload): string {
+function stalenessMark(payload: RedskilledRenderPayload): string {
   const age = payload.staleness.age_ms;
   return age == null ? "!unmeasured" : `!stale ${Math.round(age / 1000)}s`;
 }
@@ -540,8 +409,8 @@ function stalenessMark(payload: RedskilledStatuslinePayload): string {
  * no vertical dimension to group in, so the owner has to travel with the Worker
  * or it is not shown at all.
  */
-function renderWorker(worker: RedskilledStatuslineWorker, options: RedskilledStatuslineOptions): string {
-  const name = workerName(worker, options);
+function renderWorker(worker: RedskilledRenderWorker, options: RedskilledStatuslineOptions): string {
+  const name = workerName(worker, options.mode);
   const used = worker.vitals.rss_bytes;
   // An unmeasured Worker says so. A zero here would read as an idle Worker, and
   // "nothing measured it" and "it is using nothing" are opposite facts.
@@ -561,79 +430,27 @@ function renderWorker(worker: RedskilledStatuslineWorker, options: RedskilledSta
  * an unlabelled log line would belong to whichever Worker the reader guessed.
  */
 function workerLogLines(
-  workers: readonly RedskilledStatuslineWorker[],
+  workers: readonly RedskilledRenderWorker[],
   options: RedskilledStatuslineOptions,
 ): readonly string[] {
   const lines: string[] = [];
   for (const worker of workers) {
-    const logged = flatten(worker.log.last_line);
+    const logged = flattenPublishedLine(worker.log.last_line);
     if (logged == null) continue;
-    lines.push(clamp(`  ${LOG_LINE_MARK} ${workerName(worker, options)}: ${logged}`, options.maxWidth));
+    lines.push(clamp(`  ${LOG_LINE_MARK} ${workerName(worker, options.mode)}: ${logged}`, options.maxWidth));
   }
   return lines;
 }
 
-/** The mark that says "this line belongs to the entry above it". */
-const LOG_LINE_MARK = "↳";
-
-/**
- * A published line reduced to something that fits on one row. PURE.
- *
- * Whitespace — a newline included — is collapsed rather than escaped, and control
- * characters are dropped: the daemon stored the string a Worker published
- * verbatim, and this is the last moment before it becomes a terminal's line.
- * Returns `null` when nothing survives, which is the same absence as no publish.
- */
-function flatten(line: string | null): string | null {
-  if (line == null) return null;
-  const collapsed = line
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return collapsed === "" ? null : collapsed;
+/** How one Worker is named at any density: owner-qualified in `global`. PURE. */
+export function workerName(worker: RedskilledRenderWorker, mode: RedskilledStatuslineMode): string {
+  return mode === "global" ? `${worker.project_label}:${worker.worker_id}` : worker.worker_id;
 }
 
-/** How one Worker is named on this line: owner-qualified in `global`. PURE. */
-function workerName(worker: RedskilledStatuslineWorker, options: RedskilledStatuslineOptions): string {
-  return options.mode === "global" ? `${worker.project_label}:${worker.worker_id}` : worker.worker_id;
-}
-
-function renderProject(project: RedskilledStatuslineProject): string {
+function renderProject(project: RedskilledRenderProject): string {
   return `${project.project_label} ${project.worker_count}w ${formatBytes(project.observed_rss_bytes)}`;
 }
 
 function compose(head: string, body: readonly string[], separator: string): string {
   return [head, ...body].join(separator);
-}
-
-/** The visible width. One character is one column here — the line carries no ANSI. */
-function width(line: string): number {
-  return [...line].length;
-}
-
-function clamp(line: string, maxWidth: number): string {
-  if (maxWidth <= 0) return "";
-  const chars = [...line];
-  if (chars.length <= maxWidth) return line;
-  if (maxWidth === 1) return "…";
-  return `${chars.slice(0, maxWidth - 1).join("")}…`;
-}
-
-/**
- * Bytes at statusline resolution: three significant characters, never more.
- *
- * Exactness is the payload's job. A line that read `1.234567G` would spend the
- * width it does not have on precision nobody acts on.
- */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0B";
-  const units = ["B", "K", "M", "G", "T"] as const;
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const rendered = value >= 100 || unit === 0 ? Math.round(value).toString() : value.toFixed(1).replace(/\.0$/, "");
-  return `${rendered}${units[unit]}`;
 }

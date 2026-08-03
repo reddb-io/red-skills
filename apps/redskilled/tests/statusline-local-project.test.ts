@@ -28,7 +28,7 @@ import {
   REDSKILLED_STATUSLINE_DEFAULTS,
   renderRedskilledStatusline,
   type RedskilledStatuslineOptions,
-} from "../src/statusline-render.js";
+} from "@reddb-io/redskilled-render";
 
 const running: RedskilledDaemon[] = [];
 const roots: string[] = [];

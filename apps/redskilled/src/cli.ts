@@ -23,7 +23,7 @@ import {
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
-  readRedskilledStatuslineString,
+  readRedskilledStatuslineRender,
   stopRedskilledDaemon,
   type RedskilledClientConfig,
 } from "./client.js";
@@ -54,7 +54,7 @@ import {
   parseRedskilledStatuslineFlags,
   resolveRedskilledStatuslineOptions,
 } from "./statusline-config.js";
-import { renderRedskilledStatuslineAbsence } from "./statusline-render.js";
+import { renderRedskilledStatuslineAbsence } from "@reddb-io/redskilled-render";
 import {
   installRedskilledUnit,
   planRedskilledUnit,
@@ -539,9 +539,13 @@ export async function runUnit(
  * host's job.
  *
  * The host runs this and prints the one line it writes; it decides nothing about
- * shape, order, width or degradation, because ADR 0130 rule 10 moves rendering
- * off every host so that a second host cannot drift from the first. Config is
- * read HERE, on the client side, and only decided values cross the socket.
+ * shape, order, width or degradation, because the layout belongs to
+ * `@reddb-io/redskilled-render` and to nothing else (ADR 0132 decision 1). The
+ * PAYLOAD crosses the socket and the line is drawn here (decision 9): a
+ * `statusLine` entry is a shell command, not an MCP client, and what keeps this
+ * surface from drifting away from the MCP one is shared code rather than a
+ * shared string. Config is read HERE, on the client side, and only decided
+ * values reach the render.
  *
  * **It always writes a line and always exits 0.** A statusline that printed
  * nothing when the daemon was down would be indistinguishable from a machine
@@ -579,7 +583,7 @@ export async function runStatusline(
 
   let render;
   try {
-    render = await readRedskilledStatuslineString(io.paths ?? resolveRedskilledPaths(), resolved.options, {
+    render = await readRedskilledStatuslineRender(io.paths ?? resolveRedskilledPaths(), resolved.options, {
       ...(io.client ?? {}),
       ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
     });
@@ -590,9 +594,9 @@ export async function runStatusline(
       generated_at: (io.now ?? (() => new Date().toISOString()))(),
     });
   }
-  // Every line the daemon rendered, in order — one write, whatever the taste.
-  // With `--verbose` that is the Worker line plus a second line per Worker; the
-  // host still decides nothing about shape (ADR 0130 rule 10).
+  // Every line the shared render produced, in order — one write, whatever the
+  // taste. With `--verbose` that is the Worker line plus a second line per
+  // Worker; the host still decides nothing about shape.
   write(`${render.lines.join("\n")}\n`);
   return 0;
 }

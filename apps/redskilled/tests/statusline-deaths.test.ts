@@ -11,11 +11,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import { readRedskilledDashboard, readRedskilledStatuslineString } from "../src/client.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
-import { renderRedskilledDashboard } from "../src/dashboard-render.js";
+import { renderRedskilledDashboard } from "@reddb-io/redskilled-render";
 import { buildHostState, type RedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { buildStatuslinePayload } from "../src/statusline-payload.js";
-import { renderRedskilledStatusline, REDSKILLED_STATUSLINE_DEFAULTS } from "../src/statusline-render.js";
+import { renderRedskilledStatusline, REDSKILLED_STATUSLINE_DEFAULTS } from "@reddb-io/redskilled-render";
 
 const running: RedskilledDaemon[] = [];
 const roots: string[] = [];

@@ -11,7 +11,7 @@ import {
   ensureBundle,
   packagedBundleRelPath,
 } from "@reddb-io/shared/bundle-fetch.js";
-import { REDSKILLED_STATUSLINE_ABSENCE } from "@reddb-io/redskilled/statusline-render";
+import { REDSKILLED_RENDER_ABSENCE } from "@reddb-io/redskilled-render";
 import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
 import {
   STATUSLINE_COMMAND_ABSENCE,
@@ -199,7 +199,7 @@ describe("daemon bundle resolution (#3074)", () => {
   });
 
   it("says the absence in the daemon's own sentence, never a second spelling", () => {
-    expect(STATUSLINE_COMMAND_ABSENCE).toBe(REDSKILLED_STATUSLINE_ABSENCE);
+    expect(STATUSLINE_COMMAND_ABSENCE).toBe(REDSKILLED_RENDER_ABSENCE);
   });
 
   it("states the absence in every published copy", () => {
@@ -246,7 +246,7 @@ describe("daemon bundle resolution (#3074)", () => {
     const run = renderStatusline(hostWithoutDaemonBundle("» fixture (main) Opus"));
 
     expect(run.stdout).toContain("» fixture (main) Opus");
-    expect(run.stdout).toContain(REDSKILLED_STATUSLINE_ABSENCE);
+    expect(run.stdout).toContain(REDSKILLED_RENDER_ABSENCE);
     expect(run.status, run.stderr).toBe(0);
   });
 });

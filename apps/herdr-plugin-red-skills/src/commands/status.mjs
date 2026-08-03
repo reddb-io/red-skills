@@ -1,12 +1,13 @@
 /**
  * status — one read, printed or raised as a notification.
  *
- * The line comes from the daemon's own `statusline-string` op, never from this
- * plugin's rendering of the payload. ADR 0130 rule 10 makes the string a pure
- * function of the payload precisely so no surface has to reimplement it, and a
- * plugin that drew its own line would be the drift that pair of ops exists to
- * prevent. What travels over the socket is taste already decided here — mode,
- * width, verbosity — because the daemon must never learn what a config file is.
+ * The line comes from the daemon's `statusline-string` op, never from this
+ * plugin's own rendering of the payload. Behind that op is `@reddb-io/redskilled-
+ * render`, the ONE layout every surface shares (ADR 0132 decision 1) — so a
+ * plugin that drew its own line would be a second implementation of a module
+ * that already exists. What travels over the socket is taste already decided
+ * here — mode, width, verbosity — because the daemon must never learn what a
+ * config file is.
  */
 import { createRedskilledClient, readRedskilledSnapshot } from "../redskilled/client.mjs";
 import { resolveRedskilledPaths } from "../redskilled/paths.mjs";

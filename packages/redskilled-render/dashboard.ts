@@ -1,49 +1,47 @@
 /**
- * dashboard-render — the statusline, given the vertical dimension it never had.
+ * dashboard — the richest density: the payload given a vertical dimension.
  *
- * **THE DAEMON AGGREGATES AND RENDERS; SURFACES PRINT.** The statusline pair
- * (`statusline-payload` / `statusline-string`) already settled this for one line;
- * this module settles it for the table. Every cell here is computed once, in the
- * one process that holds the Worker set across projects, and a surface receives
- * finished text plus the structure behind it. A terminal pane and an editor panel
- * that each did their own worker math would be two dashboards lying in two
- * different ways about the same instant — which is the whole failure the pair of
- * statusline ops exists to prevent (ADR 0130 rule 10).
+ * **One implementation, four densities.** The statusline pair settled drift for
+ * one line by making the string a pure function of the payload; ADR 0132 decision
+ * 1 finishes the argument — four surfaces at four densities cannot share a
+ * string, and they must not each own a layout. So the table is drawn HERE, beside
+ * the line, from the same selection and the same marks, and a surface prints.
  *
  * **The string is a pure function of the payload.** Nothing here reads a clock, a
  * directory or an environment variable; the elapsed figures are the payload's own
  * `uptime_ms`, dated by the daemon's sampler, so the dashboard and the statusline
  * beside it can only disagree if a pure function is impure.
  *
- * **The daemon never learns the pipeline.** The progress bar is drawn from the
- * two integers a project published (`phase_index`, `phase_total`) and from
- * nothing else — see `worker-display.ts`. A daemon that knew what `coding` or
- * `validating` meant would be carrying castle semantics, which rule 3 forbids.
+ * **Nothing here learns the pipeline.** The progress bar is drawn from the two
+ * integers a project published (`phase_index`, `phase_total`) and from nothing
+ * else. A renderer that knew what `coding` or `validating` meant would be
+ * carrying castle semantics, which ADR 0130 rule 3 keeps out of the host lane
+ * entirely — and this module runs on both sides of it.
  *
  * **Host-side session facts stay absent rather than faked.** The context window
  * and the Pro/Max 5h/7d usage windows arrive from a Claude Code stdin payload
- * that never reaches this process. The header carries the windows the daemon DOES
+ * that never reaches the daemon. The header carries the windows the daemon DOES
  * own — the memory ceiling and the Worker slots — and says nothing about the ones
  * it does not, because a plausible zero is worse than a missing column.
  */
-import type { RedskilledMetricsWindow, RedskilledStatuslineMetrics } from "./live-metrics.js";
-import type {
-  RedskilledStatuslineDeaths,
-  RedskilledStatuslineEngine,
-  RedskilledStatuslinePayload,
-  RedskilledStatuslineWorker,
-} from "./statusline-payload.js";
+import { clamp, formatBytes, formatCount, formatDuration, formatRate, pad, width } from "./format.js";
+import { BUDGET_BAND_MARK, BUDGET_SPENT_MARK, DEATH_MARK, ENGINE_BEHIND_MARK } from "./marks.js";
 import {
-  BUDGET_BAND_MARK as DASHBOARD_BUDGET_BAND_MARK,
-  BUDGET_SPENT_MARK as DASHBOARD_BUDGET_SPENT_MARK,
-  DEATH_MARK as DASHBOARD_DEATH_MARK,
-  ENGINE_BEHIND_MARK as DASHBOARD_ENGINE_BEHIND_MARK,
-  formatBytes,
-  resolveStatuslineProjectMatch,
+  REDSKILLED_RENDER_DISPLAY_ABSENT,
+  type RedskilledRenderDeaths,
+  type RedskilledRenderEngine,
+  type RedskilledRenderMetrics,
+  type RedskilledRenderMetricsWindow,
+  type RedskilledRenderPayload,
+  type RedskilledRenderWorker,
+  type RedskilledRenderWorkerDisplay,
   type RedskilledStatuslineMode,
+} from "./payload.js";
+import {
+  resolveStatuslineProjectMatch,
+  selectRenderWorkers,
   type RedskilledStatuslineProjectMatch,
-} from "./statusline-render.js";
-import { REDSKILLED_WORKER_DISPLAY_ABSENT, type RedskilledWorkerDisplay } from "./worker-display.js";
+} from "./select.js";
 
 /** The row columns, in the order the statusline's per-worker line prints them. */
 export const REDSKILLED_DASHBOARD_COLUMNS = [
@@ -92,7 +90,7 @@ export interface RedskilledDashboardCounts {
  *
  * Named `windows` because that is the header slot the statusline spends on the
  * Pro/Max rate limits. Those are host-side and unknowable here; these two are the
- * ceilings this process actually enforces, so the slot carries a real answer
+ * ceilings the daemon actually enforces, so the slot carries a real answer
  * rather than an empty one.
  */
 export interface RedskilledDashboardWindows {
@@ -108,7 +106,7 @@ export interface RedskilledDashboardHeader {
   readonly repo: string | null;
   readonly project: string | null;
   readonly project_match: RedskilledStatuslineProjectMatch;
-  /** The daemon's version — the one version this process can honestly state. */
+  /** The daemon's version — the one version the answering process can state. */
   readonly version: string;
   /**
    * Which engine answered and whether it is current; `null` on an older daemon.
@@ -117,9 +115,9 @@ export interface RedskilledDashboardHeader {
    * with no interpretation, and this is the comparison behind the `⇡`. A `null`
    * here is "this daemon predates the block", never "it is up to date".
    */
-  readonly engine: RedskilledStatuslineEngine | null;
+  readonly engine: RedskilledRenderEngine | null;
   /** What this host could not explain; `null` when nothing has reaped. */
-  readonly deaths: RedskilledStatuslineDeaths | null;
+  readonly deaths: RedskilledRenderDeaths | null;
   /**
    * The rates the daemon derived; `null` on a daemon that derives none.
    *
@@ -128,7 +126,7 @@ export interface RedskilledDashboardHeader {
    * and a surface printing the line gets whatever the width allowed. `null` here
    * is "this daemon has no metrics block", never "this machine did nothing".
    */
-  readonly metrics: RedskilledStatuslineMetrics | null;
+  readonly metrics: RedskilledRenderMetrics | null;
   /** `runner model effort`, from the first Worker that published one; else `null`. */
   readonly model: string | null;
   readonly windows: RedskilledDashboardWindows;
@@ -177,9 +175,6 @@ export const REDSKILLED_DASHBOARD_DEFAULTS: RedskilledDashboardOptions = {
   maxRows: 16,
 };
 
-/** What a surface prints when nothing answered. PURE. */
-export const REDSKILLED_DASHBOARD_ABSENCE = "redskilled unreachable — Worker state unknown";
-
 const GUTTER = "  ";
 const BAR_DONE = "█";
 const BAR_CURSOR = "▶";
@@ -195,11 +190,11 @@ const BAR_AHEAD = "░";
  * are the ones that make the remainder attributable.
  */
 export function renderRedskilledDashboard(
-  payload: RedskilledStatuslinePayload,
+  payload: RedskilledRenderPayload,
   options: RedskilledDashboardOptions = REDSKILLED_DASHBOARD_DEFAULTS,
 ): RedskilledDashboard {
   const match = resolveStatuslineProjectMatch(payload, options.project);
-  const selected = selectWorkers(payload, options);
+  const selected = selectRenderWorkers(payload, options);
   const visible = selected.slice(0, Math.max(0, Math.floor(options.maxRows)));
   const cells = visible.map((worker) => workerCells(worker, options));
   const widths = columnWidths(cells);
@@ -244,23 +239,6 @@ export function renderRedskilledDashboard(
 }
 
 /**
- * The Workers this view is about.
- *
- * The same selection the statusline makes, and deliberately so: a dashboard that
- * listed a different set than the line above it would be the second authority
- * both surfaces exist to avoid. A local session that declared no project shows
- * none — the header still carries the host total, so the view stays truthful.
- */
-function selectWorkers(
-  payload: RedskilledStatuslinePayload,
-  options: RedskilledDashboardOptions,
-): readonly RedskilledStatuslineWorker[] {
-  if (options.mode === "global") return payload.workers;
-  if (options.project == null) return [];
-  return payload.workers.filter((worker) => worker.project_label === options.project);
-}
-
-/**
  * One Worker's cells, in the statusline's own vocabulary. PURE.
  *
  * A field the project never published renders as an EMPTY cell rather than as a
@@ -268,10 +246,10 @@ function selectWorkers(
  * publishes no display record has spent an unknown amount.
  */
 function workerCells(
-  worker: RedskilledStatuslineWorker,
+  worker: RedskilledRenderWorker,
   options: RedskilledDashboardOptions,
 ): RedskilledDashboardCells {
-  const display = worker.display ?? REDSKILLED_WORKER_DISPLAY_ABSENT;
+  const display = worker.display ?? REDSKILLED_RENDER_DISPLAY_ABSENT;
   const run = [display.runner, display.model, display.effort].filter((part): part is string => Boolean(part)).join(" ");
   return {
     wid: options.mode === "global" ? `${worker.project_label}:${worker.worker_id}` : worker.worker_id,
@@ -295,9 +273,9 @@ function workerCells(
  *
  * `index` completed cells, one cursor, and the rest ahead. A project that
  * published no position gets no bar at all — a bar with an invented cursor would
- * put a Worker somewhere in a pipeline this process cannot see.
+ * put a Worker somewhere in a pipeline this module cannot see.
  */
-export function progressBar(display: RedskilledWorkerDisplay): string {
+export function progressBar(display: RedskilledRenderWorkerDisplay): string {
   const total = display.phase_total;
   const index = display.phase_index;
   if (total == null || total <= 0 || index == null || index < 0) return "";
@@ -316,9 +294,9 @@ export function progressBar(display: RedskilledWorkerDisplay): string {
  * alone.
  */
 function buildHeader(
-  payload: RedskilledStatuslinePayload,
+  payload: RedskilledRenderPayload,
   options: RedskilledDashboardOptions,
-  selected: readonly RedskilledStatuslineWorker[],
+  selected: readonly RedskilledRenderWorker[],
   match: RedskilledStatuslineProjectMatch,
 ): RedskilledDashboardHeader {
   const activity = (payload.repository_activity?.projects ?? []).find(
@@ -349,7 +327,7 @@ function buildHeader(
   // surface reading `v3.1.0` on its own cannot tell a current daemon from one
   // three releases behind, and that is the whole of "is my engine current".
   const parts: string[] = [
-    `» ${repo ?? "host"} v${version}${engine != null && engine.current === false ? DASHBOARD_ENGINE_BEHIND_MARK : ""}`,
+    `» ${repo ?? "host"} v${version}${engine != null && engine.current === false ? ENGINE_BEHIND_MARK : ""}`,
   ];
   if (match === "unregistered") parts.push("!unregistered");
   if (match === "name-only") parts.push("!lapsed");
@@ -373,7 +351,7 @@ function buildHeader(
   // about the machine and not about one project's Workers — and the header is
   // the whole of what a status bar shows.
   if (deaths != null && deaths.count > 0 && deaths.latest != null) {
-    parts.push(`${DASHBOARD_DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`);
+    parts.push(`${DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`);
   }
   if (payload.staleness.stale) {
     const age = payload.staleness.age_ms;
@@ -420,7 +398,7 @@ function buildHeader(
  * must not assert the wrong one. A window that derived nothing at all yields
  * `null` here and costs the line no characters.
  */
-export function compactRates(window: RedskilledMetricsWindow): string | null {
+export function compactRates(window: RedskilledRenderMetricsWindow): string | null {
   const parts: string[] = [];
   if (window.tokens_per_min.value != null) parts.push(`tk/m=${formatRate(window.tokens_per_min.value)}`);
   if (window.tools_per_min.value != null) parts.push(`tl/m=${formatRate(window.tools_per_min.value)}`);
@@ -430,6 +408,26 @@ export function compactRates(window: RedskilledMetricsWindow): string | null {
   const leader = window.runner_share.shares[0];
   if (leader != null) parts.push(`${leader.key}=${Math.round(leader.share * 100)}%`);
   return parts.length === 0 ? null : parts.join(" ");
+}
+
+/**
+ * The budget posture, drawn only when it is something an operator must act on.
+ *
+ * An `open` balance draws nothing: a line that is always there is a line nobody
+ * reads, and the whole value of this one is that its presence means something.
+ * `unknown` is silent for the same reason it opens the gate — the daemon has not
+ * asked, which is a fact about the observer and not about the token.
+ */
+function balanceLines(
+  payload: RedskilledRenderPayload,
+  options: RedskilledDashboardOptions,
+): readonly string[] {
+  const balance = payload.github_balance;
+  if (balance == null) return [];
+  if (balance.posture !== "spent" && balance.posture !== "reserved") return [];
+  const mark = balance.posture === "spent" ? BUDGET_SPENT_MARK : BUDGET_BAND_MARK;
+  const age = balance.age_ms == null ? "" : ` (${Math.round(balance.age_ms / 1000)}s ago)`;
+  return [clamp(`${mark} github budget ${balance.posture}${age} — ${balance.reason}`, options.maxWidth)];
 }
 
 /**
@@ -444,35 +442,15 @@ export function compactRates(window: RedskilledMetricsWindow): string | null {
  * Nothing is drawn when the block is absent or empty — a dashboard that printed
  * `deaths 0` would spend a row telling a healthy machine it is healthy.
  */
-/**
- * The budget posture, drawn only when it is something an operator must act on.
- *
- * An `open` balance draws nothing: a line that is always there is a line nobody
- * reads, and the whole value of this one is that its presence means something.
- * `unknown` is silent for the same reason it opens the gate — the daemon has not
- * asked, which is a fact about the observer and not about the token.
- */
-function balanceLines(
-  payload: RedskilledStatuslinePayload,
-  options: RedskilledDashboardOptions,
-): readonly string[] {
-  const balance = payload.github_balance;
-  if (balance == null) return [];
-  if (balance.posture !== "spent" && balance.posture !== "reserved") return [];
-  const mark = balance.posture === "spent" ? DASHBOARD_BUDGET_SPENT_MARK : DASHBOARD_BUDGET_BAND_MARK;
-  const age = balance.age_ms == null ? "" : ` (${Math.round(balance.age_ms / 1000)}s ago)`;
-  return [clamp(`${mark} github budget ${balance.posture}${age} — ${balance.reason}`, options.maxWidth)];
-}
-
 function deathLines(
-  payload: RedskilledStatuslinePayload,
+  payload: RedskilledRenderPayload,
   options: RedskilledDashboardOptions,
 ): readonly string[] {
   const deaths = payload.deaths;
   if (deaths == null || deaths.count <= 0) return [];
   const lines = deaths.recent.map((death) =>
     clamp(
-      `${DASHBOARD_DEATH_MARK} ${death.kind} ${death.id} pid=${death.pid}` +
+      `${DEATH_MARK} ${death.kind} ${death.id} pid=${death.pid}` +
         ` ${death.sender_class}/${death.confidence} phase=${death.last_phase}` +
         (death.signal == null ? "" : ` signal=${death.signal}`) +
         (death.evidence == null ? "" : ` — ${death.evidence}`),
@@ -503,7 +481,7 @@ function memoryWindow(windows: RedskilledDashboardWindows): string {
  * answer, and a header that invented one would be stating something no Worker
  * said. The per-Worker `run=` cells carry the truth for each row.
  */
-function firstPublishedModel(workers: readonly RedskilledStatuslineWorker[]): string | null {
+function firstPublishedModel(workers: readonly RedskilledRenderWorker[]): string | null {
   for (const worker of workers) {
     const display = worker.display;
     if (display == null) continue;
@@ -520,48 +498,6 @@ function formatSignedPair(added: number | null, removed: number | null): string 
   if (added != null && added > 0) parts.push(`+${added}`);
   if (removed != null && removed > 0) parts.push(`-${removed}`);
   return `loc=${parts.length > 0 ? parts.join(" ") : "0"}`;
-}
-
-/** A count at dashboard resolution: at most one decimal, no trailing `.0`. PURE. */
-export function formatCount(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "0";
-  const scale = (scaled: number, suffix: string): string => {
-    const text = (Math.round(scaled * 10) / 10).toFixed(1);
-    return `${text.endsWith(".0") ? text.slice(0, -2) : text}${suffix}`;
-  };
-  if (value >= 1e9) return scale(value / 1e9, "B");
-  if (value >= 1e6) return scale(value / 1e6, "M");
-  if (value >= 1e3) return scale(value / 1e3, "k");
-  return String(Math.round(value));
-}
-
-/**
- * A rate at dashboard resolution, keeping the digit that survives rounding. PURE.
- *
- * `formatCount` rounds a small figure to a whole number, which turns a real
- * `0.4 issues/hour` into a `0` indistinguishable from an idle machine — the one
- * confusion every surface here exists to prevent. Below ten the first decimal is
- * kept; above it the count formatting takes over, because nobody reads the tenth
- * of a thousand tokens per minute.
- */
-export function formatRate(value: number): string {
-  if (!Number.isFinite(value)) return "—";
-  if (value >= 10) return formatCount(value);
-  if (value <= 0) return "0";
-  const text = (Math.round(value * 10) / 10).toFixed(1);
-  return text.endsWith(".0") ? text.slice(0, -2) : text;
-}
-
-/** An elapsed span in the two most significant units; `—` when unstated. PURE. */
-export function formatDuration(ms: number | null): string {
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m${seconds % 60}s`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h${minutes % 60}m`;
-  return `${Math.floor(hours / 24)}d${hours % 24}h`;
 }
 
 /**
@@ -614,21 +550,4 @@ function formatRow(
     pad(cells[column], widths[column]),
   );
   return parts.join(GUTTER).replace(/\s+$/, "");
-}
-
-function pad(text: string, target: number): string {
-  return text + " ".repeat(Math.max(0, target - width(text)));
-}
-
-/** The visible width. One character is one column here — no line carries ANSI. */
-function width(line: string): number {
-  return [...line].length;
-}
-
-function clamp(line: string, maxWidth: number): string {
-  if (maxWidth <= 0) return "";
-  const chars = [...line];
-  if (chars.length <= maxWidth) return line;
-  if (maxWidth === 1) return "…";
-  return `${chars.slice(0, maxWidth - 1).join("")}…`;
 }

@@ -62,7 +62,7 @@ export const STATUSLINE_COMMAND_TERMINATOR = "; exit 0";
 /**
  * The sentence the command prints when no daemon bundle answers its glob.
  *
- * It is a COPY of `REDSKILLED_STATUSLINE_ABSENCE`, kept here as a literal so
+ * It is a COPY of `REDSKILLED_RENDER_ABSENCE`, kept here as a literal so
  * this module stays free of the daemon package it describes; the test pins the
  * two together, so the shell branch and the daemon's own render can never say
  * the absence in two different sentences.

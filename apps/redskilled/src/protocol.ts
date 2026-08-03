@@ -88,9 +88,13 @@ import type {
   RedskilledUsageShare,
   RedskilledUsageShares,
 } from "./live-metrics.js";
-import { isRedskilledStatuslinePayload, type RedskilledStatuslinePayload } from "./statusline-payload.js";
-import type { RedskilledStatuslineMode, RedskilledStatuslineRender } from "./statusline-render.js";
-import { isRedskilledDashboard, type RedskilledDashboard } from "./dashboard-render.js";
+import {
+  isRedskilledStatuslinePayload,
+  type RedskilledStatuslineExtrasRequest,
+  type RedskilledStatuslinePayload,
+} from "./statusline-payload.js";
+import type { RedskilledStatuslineMode, RedskilledStatuslineRender } from "@reddb-io/redskilled-render";
+import { isRedskilledDashboard, type RedskilledDashboard } from "@reddb-io/redskilled-render";
 import type { RedskilledWorkerDisplay } from "./worker-display.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
 
@@ -172,7 +176,7 @@ export interface RedskilledDashboardRenderRequest {
 export type RedskilledRequest =
   | { id: string; op: "ping" }
   | { id: string; op: "host-state" }
-  | { id: string; op: "statusline-payload"; session_project?: string }
+  | { id: string; op: "statusline-payload"; session_project?: string; extras?: RedskilledStatuslineExtrasRequest }
   | { id: string; op: "statusline-string"; session_project?: string; render?: RedskilledStatuslineRenderRequest }
   | { id: string; op: "statusline-dashboard"; session_project?: string; dashboard?: RedskilledDashboardRenderRequest }
   | { id: string; op: "worker-start"; spec: RedskilledWorkerSpec; session_project?: string }

@@ -25,6 +25,7 @@
       "@reddb-io/red-browser",
       "@reddb-io/rsp",
       "@reddb-io/redskilled",
+      "@reddb-io/redskilled-render",
       "@reddb-io/afk-container",
       "@reddb-io/cdp-driver",
       "@reddb-io/browser-bridge",

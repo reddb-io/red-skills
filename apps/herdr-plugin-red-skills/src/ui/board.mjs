@@ -1,12 +1,13 @@
 /**
  * board — the statusline, given a pane's height. This file PRINTS.
  *
- * **Every cell on this screen was computed by the daemon.** The header, the
- * Worker rows, the pipeline bars and the counts all arrive finished from
- * `statusline-dashboard`, and nothing here recomputes one. That is the whole
- * rule the statusline pair was built on (ADR 0130 rule 10): a herdr pane and an
- * editor panel each doing their own Worker math would be two dashboards lying in
- * two different ways about the same instant.
+ * **Every cell on this screen was computed elsewhere.** The header, the Worker
+ * rows, the pipeline bars and the counts all arrive finished from
+ * `statusline-dashboard`, and behind that op sits `@reddb-io/redskilled-render`
+ * — one layout, drawn at parameterized densities (ADR 0132 decision 1). Nothing
+ * here recomputes a cell: a herdr pane and an editor panel each doing their own
+ * Worker math would be two dashboards lying in two different ways about the same
+ * instant.
  *
  * **The only judgement here is where a line goes.** Colour, the scroll window and
  * the key map belong to a terminal and to nothing else, so they live here; the
