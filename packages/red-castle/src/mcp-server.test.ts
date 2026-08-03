@@ -21,7 +21,7 @@ function deps(): CastleMcpDependencies {
         reason: "",
         launch_revision: 0,
       },
-      slots: { busy: 1, free: 1, parked: 0, total: 2 },
+      slots: { busy: 1, free: 1, parked: 0, total: 2, interactive_reservation: 1 },
       live_workers: [
         {
           id: "worker-1",

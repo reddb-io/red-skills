@@ -195,7 +195,11 @@ export interface DevAfkMcpRuntime {
    * a dispatched Worker was counted by no budget, absent from the host event
    * lane and reported by no surface — the exact shape ADR 0130 rule 6 forbids.
    */
-  birthWorker(root: string, args: readonly string[]): Promise<DispatchedWorkerBirth>;
+  birthWorker(
+    root: string,
+    args: readonly string[],
+    options?: { readonly reservation?: "interactive" },
+  ): Promise<DispatchedWorkerBirth>;
   /**
    * Judge the engine a dispatch would run against the published dist-tag
    * (#3031). Every `worker_dispatch` shape asks before it mints or births, so a
@@ -253,7 +257,7 @@ function buildWaitArgs(
 }
 
 const defaultMcpRuntime: DevAfkMcpRuntime = {
-  birthWorker: (root, args) => requestWorkerBirth(root, args),
+  birthWorker: (root, args, options) => requestWorkerBirth(root, args, options),
   checkEngineFloor: (root) => checkDispatchEngineFloor(root),
   launchRspWait: launchDetachedRspWait,
   async ensureLabel(root, name) {
@@ -370,7 +374,7 @@ export function createDefaultDevAfkMcpOperations(
           ensureLabel: (name) => runtime.ensureLabel(cwd, name),
           createIssue: (spec) => runtime.createIssue(cwd, spec),
           runEngine: async (args) => {
-            granted = await runtime.birthWorker(cwd, args);
+            granted = await runtime.birthWorker(cwd, args, { reservation: "interactive" });
             return 0;
           },
           disposeIssue: async (issue) => {
@@ -422,7 +426,7 @@ export function createDefaultDevAfkMcpOperations(
           ensureLabel: (name) => runtime.ensureLabel(cwd, name),
           createIssue: (spec) => runtime.createIssue(cwd, spec),
           runEngine: async (args) => {
-            granted = await runtime.birthWorker(cwd, args);
+            granted = await runtime.birthWorker(cwd, args, { reservation: "interactive" });
             return 0;
           },
           disposeIssue: async (issue) => {
@@ -855,9 +859,10 @@ async function concretizeSelectorUser<T extends { user?: string }>(
  */
 async function projectStatus(root: string): Promise<ProjectStatusOutput> {
   const port = createRedskilledBirthPort({ root });
-  const [monitor, registrationState] = await Promise.all([
+  const [monitor, registrationState, interactiveReservation] = await Promise.all([
     collectMonitorInputs(root),
     port.registrationState().catch(() => undefined),
+    port.interactiveReservation().catch(() => 0),
   ]);
   const held = registrationState?.held;
   const lapse = registrationState?.lapse;
@@ -920,6 +925,7 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
       free: Math.max(0, target - busy),
       parked: 0,
       total: target,
+      interactive_reservation: interactiveReservation,
     },
     live_workers: liveWorkers.map((worker) => ({
       id: worker.state.worker_id,
@@ -1836,7 +1842,18 @@ export function createCastleMcpDependencies(
       ) as WorkerVitalsProjectedOutput;
     },
     dashboard: ({ periodDays }) => collectDashboardReport(periodDays, root),
-    monitor: () => collectMonitorInputs(root),
+    monitor: async () => {
+      const [monitor, interactiveReservation] = await Promise.all([
+        collectMonitorInputs(root),
+        createRedskilledBirthPort({ root }).interactiveReservation().catch(() => 0),
+      ]);
+      return {
+        ...monitor,
+        fleet: monitor.fleet == null
+          ? null
+          : { ...monitor.fleet, interactiveReservation },
+      };
+    },
     history: async ({ limit }) => {
       const records = await readCastleHistoryRecords(
         createEnginePaths(join(root, ".red")).castleHistory,

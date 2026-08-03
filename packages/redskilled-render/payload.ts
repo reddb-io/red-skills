@@ -162,6 +162,8 @@ export interface RedskilledRenderProject {
 export interface RedskilledRenderCeiling {
   readonly memory_bytes: number | null;
   readonly worker_count: number | null;
+  /** Bounded capacity above `worker_count`, reserved for interactive dispatches. */
+  readonly interactive_reservation?: number;
 }
 
 /** What the host is charged with right now. */

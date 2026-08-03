@@ -55,7 +55,13 @@ function parseFleetState(raw: unknown): FleetState | null {
     shrink_mode?: unknown;
     bundle_version?: unknown;
     ready_for_agent?: unknown;
-    slots?: { busy?: unknown; free?: unknown; total?: unknown; parked?: unknown };
+    slots?: {
+      busy?: unknown;
+      free?: unknown;
+      total?: unknown;
+      parked?: unknown;
+      interactive_reservation?: unknown;
+    };
     spawns_this_tick?: unknown;
     churn?: { deaths?: unknown; respawns?: unknown; window_s?: unknown };
     trunk_freshness?: {
@@ -152,6 +158,9 @@ function parseFleetState(raw: unknown): FleetState | null {
     slotsFree: Number(rec.slots?.free ?? 0) || 0,
     slotsTotal: Number(rec.slots?.total ?? 0) || 0,
     slotsParked: Number(rec.slots?.parked ?? 0) || 0,
+    ...(Number.isFinite(Number(rec.slots?.interactive_reservation))
+      ? { interactiveReservation: Math.max(0, Number(rec.slots?.interactive_reservation)) }
+      : {}),
     spawnsThisTick: Number(rec.spawns_this_tick ?? 0) || 0,
     churnDeaths: Number(rec.churn?.deaths ?? 0) || 0,
     churnRespawns: Number(rec.churn?.respawns ?? 0) || 0,

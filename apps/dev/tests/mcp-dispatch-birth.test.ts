@@ -17,7 +17,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { startRedskilledDaemon, type RedskilledDaemon } from "@reddb-io/redskilled/daemon";
 import { resolveRedskilledPaths, type RedskilledPaths } from "@reddb-io/redskilled/paths";
 import { readRedskilledEvents } from "@reddb-io/redskilled/event-lane";
-import { readRedskilledHostState } from "@reddb-io/redskilled/client";
+import { readRedskilledHostState, startRedskilledWorker } from "@reddb-io/redskilled/client";
 import { dispatchLogPath, requestWorkerBirth } from "../src/runtime/mcp-worker-birth.js";
 
 const running: RedskilledDaemon[] = [];
@@ -87,6 +87,35 @@ describe("a Worker dispatched through the MCP is born by the daemon", () => {
       (event) => event.worker_id === granted.worker_id && event.event === "worker-birth",
     );
     expect(birth?.project_label).toBe("acme/widgets");
+  });
+
+  it("starts interactive work immediately above a saturated host without evicting the running Worker", async () => {
+    const paths = await sessionPaths();
+    const workspace = await scratch("mcp-dispatch-workspace-");
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      ceiling: { memory_bytes: null, worker_count: 1, interactive_reservation: 1, source: "declared" },
+    });
+    running.push(daemon);
+
+    const autonomous = await startRedskilledWorker(paths, {
+      project_label: "acme/widgets",
+      workspace_path: workspace,
+      command: process.execPath,
+      args: IDLE_ENTRY,
+    });
+    const interactive = await requestWorkerBirth(workspace, ["--issues", "3176", "--once"], {
+      paths,
+      projectLabel: "acme/widgets",
+      entry: [process.execPath, ...IDLE_ENTRY],
+      reservation: "interactive",
+    });
+
+    expect(interactive.admission).toContain("reserved interactive slot 1/1");
+    expect(daemon.hostState().workers.map((worker) => worker.worker_id)).toEqual(
+      expect.arrayContaining([autonomous.worker.worker_id, interactive.worker_id]),
+    );
   });
 
   it("refuses with a named reason and starts nothing when the daemon does not answer", async () => {

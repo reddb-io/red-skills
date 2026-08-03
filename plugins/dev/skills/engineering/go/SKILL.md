@@ -88,6 +88,8 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 
 **Dispatch survives the dispatcher.** Every `/go` — standard and `--scout` — is an ORDER, never the work: the host daemon owns the worker process, so a UI stop, a session teardown, or a closed terminal kills the launcher and leaves the run alive. The command returns as soon as the host grants the worker and answers with the two handles that outlive it — the worker id and its log lane:
 
+**Dispatch also skips the autonomous line.** Standard `/go` and `--scout` claim the host's bounded interactive reservation, so a saturated `/afk` target does not make a human-attached demand wait for an AFK Worker to finish. Nothing already running is stopped or resized: the daemon may admit the interactive Worker above the ordinary Worker ceiling, up to `REDSKILLED_INTERACTIVE_RESERVATION` extra Workers (default `1`). Host dashboard, project status, and monitor slot surfaces state that reservation beside their ordinary target, so `target+1` is policy rather than unexplained occupancy.
+
 ```
 🔍 /go --scout dispatched disposable issue #4210 (origin=scout, kind=scout, lane:scout).
    worker 8cb3eafdcbd2 (pid 41207) — detached from this session; stopping the dispatcher does not stop it.

@@ -141,7 +141,7 @@ async function createDefaultGoRuntime(cwd: string): Promise<GoRuntime> {
         },
       );
     },
-    birthWorker: (args) => requestWorkerBirth(ctx.root, args),
+    birthWorker: (args) => requestWorkerBirth(ctx.root, args, { reservation: "interactive" }),
     runEngineAttached: (args) => runCommand({ args, cwd }),
     checkEngineFloor: () => checkDispatchEngineFloor(ctx.root),
     hasHarness: configuredBackpressure.length > 0,

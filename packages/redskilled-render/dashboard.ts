@@ -109,6 +109,7 @@ export interface RedskilledDashboardWindows {
   readonly memory_ceiling_bytes: number | null;
   readonly worker_count: number;
   readonly worker_ceiling: number | null;
+  readonly interactive_reservation: number;
 }
 
 export interface RedskilledDashboardHeader {
@@ -358,6 +359,7 @@ function buildHeader(
     memory_ceiling_bytes: payload.host.ceiling.memory_bytes,
     worker_count: payload.host.worker_count,
     worker_ceiling: payload.host.ceiling.worker_count,
+    interactive_reservation: payload.host.ceiling.interactive_reservation ?? 0,
   };
   const model = firstPublishedModel(selected);
   const repo = activity?.repository ?? options.project;
@@ -377,9 +379,10 @@ function buildHeader(
   if (match === "lapsed") parts.push(LAPSED_MARK);
   if (model != null) parts.push(model);
   parts.push(`wrk=${selected.length}/${payload.host.worker_count}`);
-  parts.push(
-    windows.worker_ceiling == null ? "slots=∞" : `slots=${windows.worker_count}/${windows.worker_ceiling}`,
-  );
+  const slots = windows.worker_ceiling == null
+    ? "slots=∞"
+    : `slots=${windows.worker_count}/${windows.worker_ceiling}`;
+  parts.push(`${slots} reserve=${windows.interactive_reservation} interactive`);
   parts.push(memoryWindow(windows));
   if (counts.open_pull_requests != null) parts.push(`prs=${counts.open_pull_requests}`);
   if (counts.recently_closed != null) parts.push(`cpr=${counts.recently_closed}`);

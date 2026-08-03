@@ -310,10 +310,12 @@ describe("soft preemption is soft, and the policy is the project's", () => {
     expect(host.seen).toEqual([]);
   });
 
-  it("keeps every word of the priority policy out of the daemon", () => {
+  it("keeps lane semantics out of the host-owned reservation policy", () => {
     for (const file of ["daemon.ts", "admission.ts", "worker-launch.ts", "protocol.ts", "client.ts"]) {
       const source = readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
-      expect(source, `${file} must hold no priority policy`).not.toMatch(/interactive|reserv/i);
+      expect(source, `${file} must not interpret project lane vocabulary`).not.toMatch(
+        /lane:go|lane:scout|ready-for-agent/,
+      );
     }
   });
 });

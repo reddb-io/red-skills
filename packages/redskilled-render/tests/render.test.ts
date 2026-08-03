@@ -55,6 +55,20 @@ describe("one module, three densities", () => {
     expect(table.header.line).toContain("wrk=1/1");
   });
 
+  it("attributes target-plus-one slot usage to the interactive reservation", () => {
+    const base = payload();
+    const doc = payload({
+      host: {
+        ...base.host,
+        worker_count: 4,
+        ceiling: { ...base.host.ceiling, worker_count: 3, interactive_reservation: 1 },
+      },
+    });
+
+    expect(stripAnsi(renderRedskilledDashboard(doc, REDSKILLED_DASHBOARD_DEFAULTS).header.line))
+      .toContain("slots=4/3 reserve=1 interactive");
+  });
+
   it("routes a density by name through the one entry point", () => {
     const doc = payload();
     const drawn = renderRedskilled(doc, { density: "panel", options: { project: "acme/widgets" } });

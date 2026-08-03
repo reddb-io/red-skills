@@ -63,6 +63,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
   throughput through `/afk` config: `afk.landing.wait` chooses release after
   merge, green CI, or PR-open; route that choice to the AFK config reference.
+  Human-attached `/go` and scout dispatches skip a saturated AFK line through
+  the host's bounded interactive reservation; route its default, host override,
+  and slot-surface accounting to `/go`.
 - **Carrying one effort end to end** -> `/manager`. It is the liaison over the
   lanes above, not a replacement for them: `$dev:manager <intent>` starts or
   continues an effort and `manager status` renders its brief. Routing and
@@ -117,6 +120,8 @@ diagnostic surface: `host_state`, `host_dashboard`, `host_provision_check`,
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+`/go` interactive admission (`REDSKILLED_INTERACTIVE_RESERVATION`) ->
+`plugins/dev/skills/engineering/go/SKILL.md`;
 the host view a terminal can read (the `redskilled` daemon's `dashboard`
 command, and the `statusline` line it shares a render with) ->
 `plugins/dev/skills/engineering/red-statusline/HOST-NOTES.md`;

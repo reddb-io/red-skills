@@ -35,6 +35,12 @@ export const REDSKILLED_MEMORY_CEILING_ENV = "REDSKILLED_MEMORY_CEILING";
 /** Env var that states the host-wide Worker count ceiling; `infinity` lifts it. */
 export const REDSKILLED_WORKER_CEILING_ENV = "REDSKILLED_WORKER_CEILING";
 
+/** Env var that states how many interactive Workers may run above the Worker ceiling. */
+export const REDSKILLED_INTERACTIVE_RESERVATION_ENV = "REDSKILLED_INTERACTIVE_RESERVATION";
+
+/** One bounded extra birth keeps a human-attached dispatch immediate by default. */
+export const DEFAULT_INTERACTIVE_RESERVATION = 1;
+
 /**
  * The share of host memory Workers may commit when nobody stated a ceiling.
  *
@@ -50,6 +56,8 @@ export interface RedskilledHostCeiling {
   readonly memory_bytes: number | null;
   /** Total live Workers this host may hold, across every project. */
   readonly worker_count: number | null;
+  /** Extra Workers admitted only when a request claims the interactive reservation. */
+  readonly interactive_reservation?: number;
   /** `declared` when an operator stated it, `host-fraction` when derived. */
   readonly source: "declared" | "host-fraction";
 }
@@ -72,8 +80,10 @@ export interface RedskilledHostConsumption {
 
 export type RedskilledAdmissionVerdictKind =
   | "admitted"
+  | "admitted-interactive-reservation"
   | "refused-over-memory-ceiling"
   | "refused-over-worker-ceiling"
+  | "refused-over-interactive-reservation"
   | "refused-unaccountable-budget";
 
 /**
@@ -105,6 +115,8 @@ export interface EvaluateWorkerAdmissionInput {
   readonly budget?: RedskilledWorkerBudget;
   /** The requesting project's own opaque label, echoed into the reason. */
   readonly projectLabel?: string;
+  /** A host-owned capacity claim. Only interactive dispatches may state it. */
+  readonly reservation?: "interactive";
 }
 
 /**
@@ -151,6 +163,10 @@ export function evaluateWorkerAdmission(input: EvaluateWorkerAdmissionInput): Re
   const requested = charge === undefined ? null : charge;
   const projectedMemory = consumption.memory_bytes + (charge ?? 0);
   const projectedWorkers = consumption.worker_count + 1;
+  const interactiveReservation = Math.max(
+    0,
+    ceiling.interactive_reservation ?? DEFAULT_INTERACTIVE_RESERVATION,
+  );
   const who = input.projectLabel != null && input.projectLabel !== ""
     ? ` for project ${JSON.stringify(input.projectLabel)}`
     : "";
@@ -168,11 +184,22 @@ export function evaluateWorkerAdmission(input: EvaluateWorkerAdmissionInput): Re
     projected_memory_bytes: projectedMemory,
   });
 
-  if (ceiling.worker_count != null && projectedWorkers > ceiling.worker_count) {
-    return refuse(
-      "refused-over-worker-ceiling",
-      `redskilled refused this Worker${who}: it would be Worker ${projectedWorkers} past a host ceiling of ${ceiling.worker_count} Worker(s), and ${at}`,
-    );
+  const reservedSlot = ceiling.worker_count == null ? 0 : projectedWorkers - ceiling.worker_count;
+  if (reservedSlot > 0) {
+    if (input.reservation !== "interactive") {
+      return refuse(
+        "refused-over-worker-ceiling",
+        `redskilled refused this Worker${who}: it would be Worker ${projectedWorkers} past a host ceiling of ${ceiling.worker_count} Worker(s); ` +
+          `${interactiveReservation} extra slot(s) are reserved for interactive dispatches, and ${at}`,
+      );
+    }
+    if (reservedSlot > interactiveReservation) {
+      return refuse(
+        "refused-over-interactive-reservation",
+        `redskilled refused this interactive Worker${who}: reserved slot ${reservedSlot}/${interactiveReservation} is outside the bounded ` +
+          `interactive reservation above the host ceiling of ${ceiling.worker_count} Worker(s), and ${at}`,
+      );
+    }
   }
   if (ceiling.memory_bytes != null && charge === null) {
     return refuse(
@@ -187,11 +214,16 @@ export function evaluateWorkerAdmission(input: EvaluateWorkerAdmissionInput): Re
     );
   }
 
+  const usedReservation = input.reservation === "interactive" && reservedSlot > 0;
   return {
     version: 1,
     admitted: true,
-    verdict: "admitted",
-    reason: `redskilled admitted this Worker${who}: ${projectedMemory} bytes of declared Worker memory against a host ceiling of ${ceiling.memory_bytes ?? "unbounded"} bytes, and ${at}`,
+    verdict: usedReservation ? "admitted-interactive-reservation" : "admitted",
+    reason: usedReservation
+      ? `redskilled admitted this interactive Worker${who} into reserved interactive slot ${reservedSlot}/${interactiveReservation} ` +
+        `above the host ceiling of ${ceiling.worker_count} Worker(s): ${projectedMemory} bytes of declared Worker memory against a ` +
+        `host ceiling of ${ceiling.memory_bytes ?? "unbounded"} bytes, and ${at}`
+      : `redskilled admitted this Worker${who}: ${projectedMemory} bytes of declared Worker memory against a host ceiling of ${ceiling.memory_bytes ?? "unbounded"} bytes, and ${at}`,
     ceiling,
     consumption,
     requested_memory_bytes: requested,
@@ -306,11 +338,22 @@ export function resolveHostCeiling(
 ): RedskilledHostCeiling {
   const declaredMemory = (env[REDSKILLED_MEMORY_CEILING_ENV] ?? "").trim();
   const declaredWorkers = (env[REDSKILLED_WORKER_CEILING_ENV] ?? "").trim();
+  const declaredReservation = (env[REDSKILLED_INTERACTIVE_RESERVATION_ENV] ?? "").trim();
   const workerCount = parseCountCeiling(declaredWorkers);
+  const interactiveReservation = declaredReservation === ""
+    ? DEFAULT_INTERACTIVE_RESERVATION
+    : parseReservationCount(declaredReservation);
 
   if (declaredMemory !== "") {
     const memory = parseMemoryCeiling(declaredMemory, totalMemoryBytes);
-    if (memory !== undefined) return { memory_bytes: memory, worker_count: workerCount, source: "declared" };
+    if (memory !== undefined) {
+      return {
+        memory_bytes: memory,
+        worker_count: workerCount,
+        interactive_reservation: interactiveReservation ?? DEFAULT_INTERACTIVE_RESERVATION,
+        source: "declared",
+      };
+    }
     // Named rather than obeyed in silence. A malformed ceiling is a limit the
     // operator believes they set, and falling through quietly gives them the
     // 0.7 fraction instead — which for a mistyped `50%` is MORE permissive than
@@ -331,9 +374,16 @@ export function resolveHostCeiling(
         `integer; this host admits an unbounded number of Workers instead.`,
     );
   }
+  if (declaredReservation !== "" && interactiveReservation === undefined) {
+    warn(
+      `redskilled: ${REDSKILLED_INTERACTIVE_RESERVATION_ENV}=${JSON.stringify(declaredReservation)} is not a ` +
+        `non-negative integer; using the default reservation of ${DEFAULT_INTERACTIVE_RESERVATION} Worker(s) instead.`,
+    );
+  }
   return {
     memory_bytes: Math.floor(totalMemoryBytes * DEFAULT_HOST_MEMORY_CEILING_FRACTION),
     worker_count: workerCount,
+    interactive_reservation: interactiveReservation ?? DEFAULT_INTERACTIVE_RESERVATION,
     // **The source describes the MEMORY ceiling, and reaching here means it was
     // derived.** It used to be read off `declaredWorkers`, so declaring only a
     // WORKER ceiling labelled a derived memory ceiling `declared` — and that
@@ -375,6 +425,11 @@ function parseCountCeiling(value: string): number | null {
   return Number.isSafeInteger(count) && count > 0 ? count : null;
 }
 
+function parseReservationCount(value: string): number | undefined {
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 0 ? count : undefined;
+}
+
 /** True when `value` is a complete verdict — a client's fail-closed check. */
 export function isRedskilledAdmissionVerdict(value: unknown): value is RedskilledAdmissionVerdict {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
@@ -388,6 +443,8 @@ export function isRedskilledAdmissionVerdict(value: unknown): value is Redskille
     ceiling != null && typeof ceiling === "object" &&
     (ceiling.memory_bytes === null || typeof ceiling.memory_bytes === "number") &&
     (ceiling.worker_count === null || typeof ceiling.worker_count === "number") &&
+    (ceiling.interactive_reservation === undefined ||
+      (Number.isInteger(ceiling.interactive_reservation) && Number(ceiling.interactive_reservation) >= 0)) &&
     consumption != null && typeof consumption === "object" &&
     Number.isInteger(consumption.worker_count) &&
     typeof consumption.memory_bytes === "number" &&
