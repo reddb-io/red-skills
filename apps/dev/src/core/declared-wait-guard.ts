@@ -613,7 +613,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     deadline:
       "`maxPolls` × `intervalMs`, default 120 × 15s = 30 minutes, shared with the post-rebase retry so the whole tail costs ONE deadline; ONE probe when no clock is injected",
     escalation:
-      "returns `pending`, leaving the PR queued for the next sweep to re-read; a settled conflict returns `unqueueable` early (#3030) and the caller rebases ONCE, then parks the branch, the PR and the issue for a human",
+      "returns `pending`, leaving the PR queued for the next sweep to re-read; a settled conflict returns `unqueueable` early (#3030) and the caller rebases ONCE, then parks the branch, the PR and the issue for a human; four CONSECUTIVE unreadable probes return `probe-failing` early (#3160), which parks as `infra` because a confirmation that cannot see is a broken client rather than a slow queue",
     heartbeat: { sink: "onPoll" },
   },
   {
