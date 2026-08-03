@@ -10,6 +10,7 @@ import {
   surfaceForCardinality,
   tryRouteGithubArgs,
   type GithubOperation,
+  type GithubReadVolatility,
 } from "./surface.js";
 
 /**
@@ -18,44 +19,62 @@ import {
  * call runs on stopped being an emergent property of a default and became a
  * declared fact somebody has to edit on purpose.
  */
-const PINNED: ReadonlyArray<[key: string, kind: string, cardinality: string, surface: string, budget: string]> = [
-  ["issue view", "read", "single-object", "rest", "rest"],
-  ["pr view", "read", "single-object", "rest", "rest"],
-  ["repo view", "read", "single-object", "rest", "rest"],
-  ["run view", "read", "single-object", "rest", "rest"],
-  ["release view", "read", "single-object", "rest", "rest"],
-  ["pr diff", "read", "single-object", "rest", "rest"],
-  ["issue list", "read", "multi-node", "graphql", "graphql"],
-  ["pr list", "read", "multi-node", "graphql", "graphql"],
-  ["pr checks", "read", "multi-node", "graphql", "graphql"],
-  ["release list", "read", "multi-node", "rest", "rest"],
-  ["run list", "read", "multi-node", "rest", "rest"],
-  ["label list", "read", "multi-node", "graphql", "graphql"],
-  ["issue list (search)", "read", "multi-node", "graphql", "search"],
-  ["pr list (search)", "read", "multi-node", "graphql", "search"],
-  ["search issues", "read", "multi-repository", "rest", "search"],
-  ["search prs", "read", "multi-repository", "rest", "search"],
-  ["search repos", "read", "multi-repository", "rest", "search"],
-  ["api graphql", "read", "multi-node", "graphql", "graphql"],
-  ["api rest", "read", "single-object", "rest", "rest"],
-  ["issue create", "write", "single-object", "graphql", "graphql"],
-  ["issue edit", "write", "single-object", "graphql", "graphql"],
-  ["issue close", "write", "single-object", "graphql", "graphql"],
-  ["issue reopen", "write", "single-object", "graphql", "graphql"],
-  ["issue comment", "write", "single-object", "rest", "rest"],
-  ["issue develop", "write", "single-object", "graphql", "graphql"],
-  ["pr create", "write", "single-object", "rest", "rest"],
-  ["pr comment", "write", "single-object", "rest", "rest"],
-  ["pr merge", "write", "single-object", "graphql", "graphql"],
-  ["pr close", "write", "single-object", "graphql", "graphql"],
-  ["pr edit", "write", "single-object", "graphql", "graphql"],
-  ["pr ready", "write", "single-object", "graphql", "graphql"],
-  ["pr update-branch", "write", "single-object", "rest", "rest"],
-  ["label create", "write", "single-object", "rest", "rest"],
+const PINNED: ReadonlyArray<
+  [
+    key: string,
+    kind: string,
+    cardinality: string,
+    volatility: GithubReadVolatility | undefined,
+    surface: string,
+    budget: string,
+  ]
+> = [
+  ["issue view", "read", "single-object", "stable-poll", "rest", "rest"],
+  ["pr view", "read", "single-object", "stable-poll", "rest", "rest"],
+  ["repo view", "read", "single-object", "stable-poll", "rest", "rest"],
+  ["run view", "read", "single-object", "stable-poll", "rest", "rest"],
+  ["release view", "read", "single-object", "stable-poll", "rest", "rest"],
+  ["pr diff", "read", "single-object", "one-shot", "rest", "rest"],
+  ["issue list", "read", "multi-node", "stable-poll", "graphql", "graphql"],
+  ["pr list", "read", "multi-node", "stable-poll", "graphql", "graphql"],
+  ["pr checks", "read", "multi-node", "stable-poll", "graphql", "graphql"],
+  ["release list", "read", "multi-node", "stable-poll", "rest", "rest"],
+  ["run list", "read", "multi-node", "stable-poll", "rest", "rest"],
+  ["label list", "read", "multi-node", "one-shot", "graphql", "graphql"],
+  ["issue list (search)", "read", "multi-node", "stable-poll", "graphql", "search"],
+  ["pr list (search)", "read", "multi-node", "stable-poll", "graphql", "search"],
+  ["search issues", "read", "multi-repository", "one-shot", "rest", "search"],
+  ["search prs", "read", "multi-repository", "one-shot", "rest", "search"],
+  ["search repos", "read", "multi-repository", "one-shot", "rest", "search"],
+  ["api graphql", "read", "multi-node", "one-shot", "graphql", "graphql"],
+  ["api rest", "read", "single-object", "one-shot", "rest", "rest"],
+  ["issue create", "write", "single-object", undefined, "graphql", "graphql"],
+  ["issue edit", "write", "single-object", undefined, "graphql", "graphql"],
+  ["issue close", "write", "single-object", undefined, "graphql", "graphql"],
+  ["issue reopen", "write", "single-object", undefined, "graphql", "graphql"],
+  ["issue comment", "write", "single-object", undefined, "rest", "rest"],
+  ["issue develop", "write", "single-object", undefined, "graphql", "graphql"],
+  ["pr create", "write", "single-object", undefined, "rest", "rest"],
+  ["pr comment", "write", "single-object", undefined, "rest", "rest"],
+  ["pr merge", "write", "single-object", undefined, "graphql", "graphql"],
+  ["pr close", "write", "single-object", undefined, "graphql", "graphql"],
+  ["pr edit", "write", "single-object", undefined, "graphql", "graphql"],
+  ["pr ready", "write", "single-object", undefined, "graphql", "graphql"],
+  ["pr update-branch", "write", "single-object", undefined, "rest", "rest"],
+  ["label create", "write", "single-object", undefined, "rest", "rest"],
 ];
 
-function row(operation: GithubOperation): [string, string, string, string, string] {
-  return [operation.key, operation.kind, operation.cardinality, operation.surface, operation.budget];
+function row(
+  operation: GithubOperation,
+): [string, string, string, GithubReadVolatility | undefined, string, string] {
+  return [
+    operation.key,
+    operation.kind,
+    operation.cardinality,
+    operation.volatility,
+    operation.surface,
+    operation.budget,
+  ];
 }
 
 describe("the routing table", () => {
@@ -91,6 +110,7 @@ describe("the routing table", () => {
         key: "issue view",
         kind: "read",
         cardinality: "single-object",
+        volatility: "one-shot",
         surface: "graphql",
         budget: "graphql",
         why: "a single object sent to the node-point pool",
@@ -101,11 +121,26 @@ describe("the routing table", () => {
     ]);
   });
 
+  it("catches a read whose volatility is undeclared", () => {
+    const problems = assertGithubRoutingTable([
+      {
+        key: "issue view",
+        kind: "read",
+        cardinality: "single-object",
+        surface: "rest",
+        budget: "rest",
+        why: "one issue",
+      },
+    ]);
+    expect(problems).toEqual(["issue view states no volatility"]);
+  });
+
   it("catches a duplicate key", () => {
     const entry: GithubOperation = {
       key: "issue view",
       kind: "read",
       cardinality: "single-object",
+      volatility: "one-shot",
       surface: "rest",
       budget: "rest",
       why: "one issue",
