@@ -1,5 +1,12 @@
 # @reddb-io/red-browser
 
+## 3.3.20
+
+### Patch Changes
+
+- @reddb-io/cdp-driver@3.3.20
+- @reddb-io/browser-bridge@3.3.20
+
 ## 3.3.19
 
 ### Patch Changes
