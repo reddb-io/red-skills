@@ -1,0 +1,5 @@
+---
+"@reddb-io/red-skills": patch
+---
+
+A registration now hands its Workers the slot the host placed them on. `RED_AFK_SLOT` is READ in five places — the reconcile lane, the process-deps resolver and the hook environment, each as `parseSlot(process.env.RED_AFK_SLOT) ?? 0` — and was never written on the registration path, so every Worker resolved to slot 0 and the per-slot isolation the variable exists for collapsed onto one: retire files, cargo target directories and hook scoping all addressed the same slot no matter how wide the project ran. The runner the registration decided is pinned alongside it rather than inherited, because the passthrough environment may still carry an operator's runner from before the registration chose one. `RED_AFK_WORKER_ID` is deliberately still NOT set: it names the work's own identity — the worker directory, the claim comment, every project-side surface — and assigning the host's handle to it would rename the work to satisfy an address, so the host's id goes on travelling under its own name and a test now pins that distinction rather than leaving it to the next reader's judgement.

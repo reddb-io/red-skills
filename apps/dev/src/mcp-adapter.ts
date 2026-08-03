@@ -1006,7 +1006,7 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
       selector,
       argv,
       workspace_path: root,
-      env: registrationLaunchEnv(),
+      env: registrationLaunchEnv(input.runner),
       log_path: logPathTemplate,
       target: input.target,
     });
