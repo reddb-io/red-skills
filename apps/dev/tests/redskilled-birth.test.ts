@@ -191,6 +191,41 @@ describe("a project's registration outlives the session that made it", () => {
     await expect(port.renew()).rejects.toThrow(/acme\/widgets/);
     expect(daemon.hostState().registrations).toEqual([]);
   });
+
+  it("reports a standing registration as the daemon's refusal, not silence", async () => {
+    const paths = await sessionPaths();
+    const workspace = await scratch("dev-birth-registration-refusal-");
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      clock: () => "2026-08-03T13:26:08.361Z",
+    });
+    running.push(daemon);
+
+    const port = createRedskilledBirthPort({ root: workspace, projectLabel: "acme/widgets", paths });
+    const request = {
+      selector: "is:open label:ready-for-agent",
+      argv: ["red-skills-dev", "__work"],
+      workspace_path: workspace,
+      target: 3,
+      renew_within_ms: 330_271,
+    } as const;
+    const held = await port.register(request);
+
+    let refusal: unknown;
+    try {
+      await port.register(request);
+    } catch (err) {
+      refusal = err;
+    }
+    const advice = redskilledRegistrationRefusal(port.socketPath, refusal);
+
+    expect(advice).toContain(held.renew_by);
+    expect(advice).toContain("wait for the standing registration to lapse");
+    expect(advice).toContain("stop the existing registration");
+    expect(advice).not.toContain("did not answer");
+    expect(advice).not.toContain("provision");
+  });
 });
 
 describe("the project's identity and its advice", () => {
@@ -200,10 +235,17 @@ describe("the project's identity and its advice", () => {
   });
 
   it("names the socket and the repair in one sentence", () => {
-    const advice = redskilledUnreachableAdvice("/run/user/1/redskilled.sock", new Error("boom"));
+    const socketPath = "/run/user/1/redskilled.sock";
+    const cause = new Error("boom");
+    const advice = redskilledUnreachableAdvice(socketPath, cause);
     expect(advice).toContain("/run/user/1/redskilled.sock");
     expect(advice).toContain("redskilled provision");
     expect(advice).toContain("boom");
+
+    const registrationAdvice = redskilledRegistrationRefusal(socketPath, cause);
+    expect(registrationAdvice).toContain("did not answer");
+    expect(registrationAdvice).toContain(socketPath);
+    expect(registrationAdvice).toContain("redskilled provision");
   });
 
   it("never advises provisioning a daemon a live pid is already holding", () => {
