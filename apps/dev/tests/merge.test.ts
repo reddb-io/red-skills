@@ -401,6 +401,93 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
     expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
   });
 
+  /**
+   * #3155 — `SETUP_OWNED_FILES` are exactly the files a maturing repo ends up
+   * COMMITTING, so the tolerated untracked copy meets a tracked incoming one and
+   * `merge --ff-only` aborts under a verdict that said `passed`. Committing the
+   * files is what CAUSES it, so the collision is the guaranteed end state, not an
+   * edge case: one untracked file bricked a queue for a day.
+   */
+  describe("setup-owned dirt that the incoming commits carry (#3155)", () => {
+    const incoming = (paths: string) => ({
+      match: (a: string[]) => a.join(" ").includes("diff --name-only main origin/main"),
+      result: { stdout: paths },
+    });
+
+    it("supersedes the untracked local copy and lets the fast-forward land", async () => {
+      const { exec, calls } = fakeExec([
+        onTarget,
+        { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: "?? .red/.gitignore\n" } },
+        incoming(".red/.gitignore\napps/dev/src/x.ts\n"),
+      ]);
+      const result = await fastForwardLocalTarget(exec, base);
+      expect(result.action).toBe("fast-forward");
+      expect(result.supersededDirt).toEqual([".red/.gitignore"]);
+      const c = joined(calls);
+      // Moved aside, never deleted — the operator can still diff the two.
+      expect(c).toContain("mv -f /repo/.red/.gitignore /repo/.red/tmp/superseded-setup-dirt/.red/.gitignore");
+      expect(c.some((x) => x.includes("merge --ff-only"))).toBe(true);
+    });
+
+    it("leaves tolerated dirt the incoming commits do NOT touch exactly where it is", async () => {
+      const { exec, calls } = fakeExec([
+        onTarget,
+        { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: "?? .red/.gitignore\n" } },
+        incoming("apps/dev/src/x.ts\n"),
+      ]);
+      const result = await fastForwardLocalTarget(exec, base);
+      expect(result.action).toBe("fast-forward");
+      expect(result.supersededDirt).toBeUndefined();
+      expect(joined(calls).some((x) => x.startsWith("mv "))).toBe(false);
+    });
+
+    it("refuses HONESTLY when the local copy is tracked and edited — a delayed refusal is worse than a refusal", async () => {
+      const { exec, calls } = fakeExec([
+        onTarget,
+        { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: " M .red/config.yaml\n" } },
+        incoming(".red/config.yaml\n"),
+      ]);
+      const result = await fastForwardLocalTarget(exec, base);
+      expect(result.guard).toBe("refused");
+      expect(result.action).toBe("noop");
+      expect(result.failedCondition).toBe("dirt-collision");
+      expect(result.evidence).toContain(".red/config.yaml");
+      expect(result.evidence).toContain("origin/main");
+      expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
+    });
+
+    it("refuses rather than guess when the incoming path list is unreadable", async () => {
+      const { exec, calls } = fakeExec([
+        onTarget,
+        { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: "?? .red/.gitignore\n" } },
+        { match: (a) => a.join(" ").includes("diff --name-only"), result: { code: 128 } },
+      ]);
+      const result = await fastForwardLocalTarget(exec, base);
+      expect(result.guard).toBe("refused");
+      expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
+    });
+
+    it("does not merge when the backup move fails — the collision must not reach the merge", async () => {
+      const { exec, calls } = fakeExec([
+        onTarget,
+        { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: "?? .red/.gitignore\n" } },
+        incoming(".red/.gitignore\n"),
+        { match: (a) => a[0] === "mv", result: { code: 1 } },
+      ]);
+      const result = await fastForwardLocalTarget(exec, base);
+      expect(result.guard).toBe("refused");
+      expect(result.failed).toBe("supersede-failed");
+      expect(result.evidence).toContain(".red/.gitignore");
+      expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
+    });
+
+    it("costs a clean tree nothing: no incoming-path read at all", async () => {
+      const { exec, calls } = fakeExec([onTarget]);
+      await fastForwardLocalTarget(exec, base);
+      expect(joined(calls).some((x) => x.includes("diff --name-only"))).toBe(false);
+    });
+  });
+
   it("no-ops when local <target> is ahead/diverged (not a strict ancestor)", async () => {
     const { exec, calls } = fakeExec([
       onTarget,
