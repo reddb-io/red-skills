@@ -34,6 +34,8 @@ import type {
   RedskilledStatuslineWorker,
 } from "./statusline-payload.js";
 import {
+  BUDGET_BAND_MARK as DASHBOARD_BUDGET_BAND_MARK,
+  BUDGET_SPENT_MARK as DASHBOARD_BUDGET_SPENT_MARK,
   DEATH_MARK as DASHBOARD_DEATH_MARK,
   ENGINE_BEHIND_MARK as DASHBOARD_ENGINE_BEHIND_MARK,
   formatBytes,
@@ -221,6 +223,11 @@ export function renderRedskilledDashboard(
   // and these lines are the receipt behind it — one per verdict, naming what died
   // and the evidence the verdict rests on.
   lines.push(...deathLines(payload, options));
+  // ABOVE nothing and BELOW everything, but never absent when it matters: a
+  // spent or reserved budget is drawn even on a dashboard with no Workers and no
+  // deaths, because "the queue looks empty" and "we are out of quota" produce the
+  // same empty table and must not produce the same screen (#3095).
+  lines.push(...balanceLines(payload, options));
 
   return {
     version: 1,
@@ -437,6 +444,26 @@ export function compactRates(window: RedskilledMetricsWindow): string | null {
  * Nothing is drawn when the block is absent or empty — a dashboard that printed
  * `deaths 0` would spend a row telling a healthy machine it is healthy.
  */
+/**
+ * The budget posture, drawn only when it is something an operator must act on.
+ *
+ * An `open` balance draws nothing: a line that is always there is a line nobody
+ * reads, and the whole value of this one is that its presence means something.
+ * `unknown` is silent for the same reason it opens the gate — the daemon has not
+ * asked, which is a fact about the observer and not about the token.
+ */
+function balanceLines(
+  payload: RedskilledStatuslinePayload,
+  options: RedskilledDashboardOptions,
+): readonly string[] {
+  const balance = payload.github_balance;
+  if (balance == null) return [];
+  if (balance.posture !== "spent" && balance.posture !== "reserved") return [];
+  const mark = balance.posture === "spent" ? DASHBOARD_BUDGET_SPENT_MARK : DASHBOARD_BUDGET_BAND_MARK;
+  const age = balance.age_ms == null ? "" : ` (${Math.round(balance.age_ms / 1000)}s ago)`;
+  return [clamp(`${mark} github budget ${balance.posture}${age} — ${balance.reason}`, options.maxWidth)];
+}
+
 function deathLines(
   payload: RedskilledStatuslinePayload,
   options: RedskilledDashboardOptions,

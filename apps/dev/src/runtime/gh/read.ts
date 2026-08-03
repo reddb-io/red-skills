@@ -18,8 +18,9 @@
 // already wired through `quotaBackoff` applies rather than a generic failure
 // path; this module never retries on its own.
 
-import { githubSurfaceFor, type GithubApiSurface } from "@reddb-io/github";
+import { githubSurfaceFor, type GithubApiSurface, type GithubCallCriticality } from "@reddb-io/github";
 import { execTool, type ExecFn, type ExecOutput } from "../exec.js";
+import { resolveGhBandGate, type GhBandGate } from "./band.js";
 import { isGhRateLimited, withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./quota.js";
 
 /** Which GitHub API answered (or failed to answer) the read. */
@@ -29,9 +30,18 @@ export type GhReadSurface = GithubApiSurface;
  * Why the read produced no usable payload. `quota` is the only TRANSIENT class:
  * the bounded wait-and-retry primitive can still turn it into a real answer.
  */
-export type GhReadFailureClass = "quota" | "transport" | "malformed";
+export type GhReadFailureClass = "quota" | "transport" | "malformed" | "reserved";
 
-/** A read that did not run, or ran and returned something unusable. */
+/**
+ * A read that did not run, or ran and returned something unusable.
+ *
+ * `reserved` is the only class this process chose: the balance entered the
+ * reserved band and a convenience read was refused so the claim, a landing and a
+ * finishing Worker's closing comment keep passing (ADR 0132 Amendment 2, #3095).
+ * It is transient like `quota` — it clears at the reset — but it is a fact about
+ * OUR posture rather than about GitHub's refusal, and the two must not collapse:
+ * one says the budget is gone, the other says we are holding the last of it back.
+ */
 export interface GhReadFailure {
   readonly surface: GhReadSurface;
   readonly classification: GhReadFailureClass;
@@ -87,6 +97,23 @@ export interface GhReadContext {
   cwd: string;
   exec?: ExecFn;
   quotaBackoff?: GhQuotaBackoffOpts;
+  /**
+   * The reserved band this read runs under; the daemon-backed gate when absent.
+   *
+   * ABSENCE OF INJECTION IS NOT ABSENCE OF THE BAND (#2800): the resolver hands
+   * back the process-wide daemon-backed gate, which opens itself whenever no
+   * balance answers.
+   */
+  band?: GhBandGate;
+  /**
+   * What THIS call is worth, stated by the caller that knows.
+   *
+   * `convenience` by default, because a read is the class the band exists to
+   * refuse: a listing, a poll, a count. A caller whose read gates essential work
+   * — the claim's read-back above all — says `essential` and is refused only by a
+   * pool with nothing left at all.
+   */
+  criticality?: GithubCallCriticality;
 }
 
 export interface GhReadOptions {
@@ -142,6 +169,39 @@ function readFailed(failure: GhReadFailure): { outcome: "failed"; failure: GhRea
   return { outcome: "failed", failure };
 }
 
+/**
+ * The band's refusal as a read failure, so a caller branches on one shape.
+ *
+ * `code: -1` and empty streams, because nothing ran: inventing a 403 here would
+ * make our own posture indistinguishable from GitHub's refusal on every surface
+ * that reads the record afterwards.
+ */
+function reservedFailure(surface: GhReadSurface, message: string): GhReadFailure {
+  return {
+    surface,
+    classification: "reserved",
+    transient: true,
+    code: -1,
+    stdout: "",
+    stderr: "",
+    message,
+  };
+}
+
+/**
+ * Whether the reserved band admits this call. `null` when it does.
+ *
+ * One await on a cached balance, not a round trip per call: the gate holds the
+ * daemon's answer for the window that answer asked for.
+ */
+async function bandRefusal(
+  ctx: GhReadContext,
+  args: readonly string[],
+): Promise<GhReadFailure | null> {
+  const refusal = await resolveGhBandGate(ctx.band).admit(args, ctx.criticality ?? "convenience");
+  return refusal == null ? null : reservedFailure(ghReadSurface(args), refusal.message);
+}
+
 function dispatch(
   ctx: GhReadContext,
   args: readonly string[],
@@ -183,6 +243,11 @@ export async function tryReadGhJsonRows<T>(
   // The route is resolved BEFORE the call: an unclassified operation must raise
   // where a human can still name it, not while a failure record is being built.
   const surface = ghReadSurface(args);
+  // Refused BEFORE the call, which is the whole point: a band that let the
+  // request out and classified the answer would have spent the budget it is
+  // holding back.
+  const refused = await bandRefusal(ctx, args);
+  if (refused) return readFailed(refused);
   const out = await dispatch(ctx, args, options);
   if (out.code !== 0) return readFailed(failureFrom(surface, out, "gh read failed"));
   return parseRows<T>(surface, out);
@@ -226,6 +291,8 @@ export async function tryReadGhGraphql(
   options?: GhReadOptions,
 ): Promise<GhReadRecordResult> {
   const surface = ghReadSurface(args);
+  const refused = await bandRefusal(ctx, args);
+  if (refused) return readFailed(refused);
   const out = await dispatch(ctx, args, options);
   if (out.code !== 0) return readFailed(failureFrom(surface, out, "gh graphql read failed"));
 

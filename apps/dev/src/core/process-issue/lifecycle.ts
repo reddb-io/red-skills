@@ -270,12 +270,33 @@ export async function processIssue(
     return claimLost(issue, hooksFired, deps, undefined, laneModeRefusal);
   }
   if (deps.claimGh) {
-    const decision = await acquireClaim(
-      deps.claimGh,
-      { worker: input.claimant ?? input.workerId, runner: input.runner },
-      issue,
-      { isStale: deps.claimStale, deathFor: deps.recoveredWorkerDeathCause, nowS: deps.nowEpoch() },
-    );
+    // **A Worker that cannot WRITE its claim declines the issue** (#3095, ADR
+    // 0132 Amendment 2). Claiming is three layers — the local `mkdir` lock, this
+    // GitHub marker, the stale-lock boot sweep — and a marker that never lands
+    // leaves only the host-local lock: safe on one machine, and two Workers on
+    // one branch the moment a second host drains the same backlog. Proceeding on
+    // the lock alone is the one outcome that must not happen, so the failure is
+    // a stated decline here rather than an exception that also strands the lock
+    // it acquired a moment ago.
+    let decision: ClaimDecision;
+    try {
+      decision = await acquireClaim(
+        deps.claimGh,
+        { worker: input.claimant ?? input.workerId, runner: input.runner },
+        issue,
+        { isStale: deps.claimStale, deathFor: deps.recoveredWorkerDeathCause, nowS: deps.nowEpoch() },
+      );
+    } catch (err) {
+      await deps.claimLock.release(issue);
+      const reason = err instanceof Error ? err.message : String(err);
+      return claimLost(
+        issue,
+        hooksFired,
+        deps,
+        undefined,
+        `the claim could not be written, so this issue is declined rather than worked on a host-local lock: ${reason}`,
+      );
+    }
     if (decision.verdict === "lost") {
       await deps.claimLock.release(issue);
       return claimLost(issue, hooksFired, deps, decision);

@@ -1,225 +1,705 @@
-// balance — what is left of the token's budget, ASKED rather than accumulated.
+// balance.ts — the token's remaining budget, ASKED rather than counted.
 //
-// ADR 0132 Amendment 2. A ledger that counts its own calls is blind by
-// construction: the daemon is host-scoped, GitHub's quota is per TOKEN, and an
-// operator running four machines on one token would have four daemons each
-// reporting three quarters of a fiction. That was measured — the numbers only
-// began to make sense when three of the four machines were switched off.
+// ADR 0132 Amendment 2. The predecessor design was a ledger the daemon
+// **accumulates**: every caller reports its calls, the daemon totals them. That
+// ledger would have been born blind. The daemon is host-scoped by construction —
+// one per machine, and ADR 0130 deliberately extinguished the cross-host view —
+// while GitHub's quota is per **token**, therefore cross-host. An operator
+// running four machines on one token would have had four daemons each counting
+// its own share and each reporting three quarters of a fiction: *"I have spent
+// 2000 of 5000"* while the token already sat at zero.
 //
-// **The fix is not federation. It is to stop counting and start asking.**
-// `GET /rate_limit` returns the whole token's true remaining budget across every
-// machine, and it costs nothing: six consecutive calls moved `core` by zero.
-// A daemon never learns the operator's other machines exist; it sees their
-// effect in the balance.
+// **The fix is not federation. It is to stop counting and start asking.** `GET
+// /rate_limit` returns the true remaining budget for the whole token across every
+// machine, and it costs nothing — measured, six consecutive calls moved `core` by
+// exactly zero. The daemon does not need to know the operator's other machines
+// exist; it sees their effect in the balance.
 //
-// This generalizes the rule three defects here share: **when an authoritative
-// source exists, ask it — derive only when none exists, and say you are
-// deriving.** #3080 derived host memory from a per-process walk and was wrong by
-// 377x; #3092 derived "the daemon is absent" from its own failed reach while the
-// process was alive and listening.
+// Three properties follow, and each is enforced here rather than asked for in
+// prose:
 //
-// PURE. Every function is total over its inputs and performs no IO; the caller
-// owns the request and the clock.
-import type { GithubRateBudget } from "./surface.js";
+//   **The balance carries its origin in its type.** {@link GithubBalance.origin}
+//   is the literal `"asked"`, so a well-meaning local accumulator cannot produce
+//   one without saying, in the type, that it did not ask. The companion ratchet
+//   (`asked-balance-guard.ts`) refuses the accumulator itself.
+//
+//   **The cadence is a function of the balance.** Because asking is free, cadence
+//   is derived rather than fixed: rare above half, tightening as the balance
+//   falls, continuous once spent — when the only event that still matters is the
+//   reset. A fixed cadence forces a choice between being slow at the edge and
+//   wasting polls in the middle; an adaptive one does not choose. **One poller,
+//   the daemon's, never a check before each call** — that would double the
+//   request count and put a synchronous round trip in every hot path, which is
+//   ADR 0084's lesson paid twice.
+//
+//   **A stated fraction is reserved.** With an authoritative balance in hand the
+//   breaker stops being reactive: convenience reads are refused once the balance
+//   enters the reserved band, while the claim, a landing and a finishing Worker's
+//   closing comment still pass. Semi-offline stops being a mode discovered
+//   through a 403 and becomes a posture entered at a threshold an operator sees.
+//
+// **A caveat, stated rather than assumed:** `GET /rate_limit` is free of
+// *primary* quota only. GitHub also enforces secondary limits on request rate and
+// concurrency across every endpoint, so the cadence must stay a cadence — seconds,
+// never a poll per operation. {@link GITHUB_BALANCE_MIN_CADENCE_MS} is that floor,
+// and the ceiling it defends was deliberately not probed.
+//
+// PURE, apart from `fetchGithubBalance` and `createGithubBalanceTransport`, whose
+// transport is injected.
 
-/** One pool's standing, as GitHub reports it. */
+import type { GithubOperation, GithubRateBudget } from "./surface.js";
+
+/**
+ * The gh argv this ask is equivalent to: `gh api rate_limit`.
+ *
+ * Stated as an argv so the surface is a lookup in the shared routing table rather
+ * than a second opinion about it — the table already classifies any `gh api <path>`
+ * that is not `graphql` as a single REST request.
+ */
+export const GITHUB_RATE_LIMIT_ARGV: readonly string[] = ["api", "rate_limit"];
+
+/** The REST path the balance comes from, named once. */
+export const GITHUB_RATE_LIMIT_PATH = "rate_limit";
+
+/**
+ * The endpoint's own name for each pool this repo budgets.
+ *
+ * GitHub calls the request-metered pool `core`; this repo calls it `rest`, after
+ * the API that draws it. Both names travel, because an operator reading GitHub's
+ * documentation and an operator reading a payload here must be able to line the
+ * two up.
+ */
+export const GITHUB_POOL_RESOURCES: Readonly<Record<GithubRateBudget, string>> = {
+  rest: "core",
+  graphql: "graphql",
+  search: "search",
+};
+
+/** Every pool a call can draw from, in the order a report lists them. */
+export const GITHUB_POOLS: readonly GithubRateBudget[] = ["rest", "graphql", "search"];
+
+/** One pool's balance, exactly as the endpoint reported it. */
 export interface GithubPoolBalance {
+  readonly pool: GithubRateBudget;
+  /** GitHub's own name for this pool, so the two vocabularies line up. */
+  readonly resource: string;
   readonly limit: number;
   readonly remaining: number;
-  /** Epoch seconds at which this pool refills, as GitHub states it. */
-  readonly resetAtSec: number;
+  /** The endpoint's own `used`, echoed — never `limit - remaining` recomputed. */
+  readonly used: number;
+  readonly reset_at: string;
+  /** `remaining / limit`, the number every threshold here is stated against. */
+  readonly fraction: number;
 }
 
 /**
- * Every pool, plus WHEN it was asked.
+ * Whether this document is an answer or the absence of one.
  *
- * The instant is carried rather than implied because a balance is always read
- * later than it was taken, and a consumer that cannot see the age cannot tell a
- * fresh zero from a stale one.
+ * `unanswered` is its own outcome rather than an empty `asked`, because the
+ * failure this whole amendment was written about surfaced as a plausible number
+ * rather than as an error. A balance nobody could ask for is not a full budget
+ * and is not a spent one.
  */
+export type GithubBalanceOutcome = "asked" | "unanswered";
+
+/** The token's remaining budget, across every machine that shares the token. */
 export interface GithubBalance {
-  readonly pools: Readonly<Record<GithubRateBudget, GithubPoolBalance>>;
-  /** Epoch ms when this reading was taken. */
-  readonly askedAtMs: number;
+  readonly version: 1;
+  /**
+   * How this balance was obtained — and the literal type is the point.
+   *
+   * There is no second member. A path that derived a balance by counting its own
+   * calls could not construct this document without declaring an origin that does
+   * not exist, so the regression this module exists to prevent fails to compile
+   * before it fails a test.
+   */
+  readonly origin: "asked";
+  readonly outcome: GithubBalanceOutcome;
+  /** The authoritative source, named so nobody has to guess which one answered. */
+  readonly source: "GET /rate_limit";
+  readonly asked_at: string;
+  /** How many requests this ask cost. One when it happened, zero when it did not. */
+  readonly request_count: number;
+  /** Each pool's balance, or `null` for a pool the endpoint did not report. */
+  readonly pools: Readonly<Record<GithubRateBudget, GithubPoolBalance | null>>;
+  /** Pools the answer carried nothing for — an absence, never a zero. */
+  readonly unreported_pools: readonly GithubRateBudget[];
+  readonly detail: string;
+}
+
+/** The document a daemon that has asked nothing holds: honest, and empty. */
+export function unaskedGithubBalance(at: string, detail?: string): GithubBalance {
+  return {
+    version: 1,
+    origin: "asked",
+    outcome: "unanswered",
+    source: "GET /rate_limit",
+    asked_at: at,
+    request_count: 0,
+    pools: { rest: null, graphql: null, search: null },
+    unreported_pools: [...GITHUB_POOLS],
+    detail: detail ?? "no balance has been asked for yet, so none is known",
+  };
 }
 
 /**
- * How long a balance may be believed before it is only a rumour.
+ * One step of the adaptive cadence, as data so a test can pin the shape of the
+ * curve rather than one of its values.
  *
- * Deliberately shorter than the tightest poll below: a reading nobody refreshed
- * inside a full cadence means the poller stopped, and a stale balance presented
- * as current is what the reserved band exists to prevent.
+ * Read as a ladder: the first step whose `at_or_below_fraction` the tightest pool
+ * is at or under decides the window. The steps are the argument — rare above
+ * half, tightening as the balance falls, continuous once spent — and the exact
+ * milliseconds are merely their instance.
  */
-export const GITHUB_BALANCE_STALE_MS = 30_000;
-
-/** A pool at or under this share of its limit is close enough to matter. */
-export const GITHUB_BALANCE_TIGHT = 0.2;
-
-/** Above this share nothing is going to run out inside one cadence. */
-export const GITHUB_BALANCE_RELAXED = 0.5;
+export interface GithubBalanceCadenceStep {
+  readonly at_or_below_fraction: number;
+  readonly every_ms: number;
+  readonly why: string;
+}
 
 /**
- * The share held back for work that must not fail.
+ * The floor under every window.
  *
- * The claim, a landing, and the closing comment of a Worker that has finished
- * are not conveniences: refusing them strands work that is already done. The
- * band is what makes degradation graduated rather than a 403 nobody predicted.
+ * `GET /rate_limit` is free of PRIMARY quota; GitHub's secondary limits on
+ * request rate and concurrency apply to it like any other endpoint. This is what
+ * keeps the adaptive cadence a cadence — seconds, never a poll per operation.
  */
-export const GITHUB_RESERVED_BAND = 0.1;
+export const GITHUB_BALANCE_MIN_CADENCE_MS = 15_000;
 
 /**
- * How often to ask again, given the balance. PURE.
+ * The fraction of each pool held for work that must not fail.
  *
- * **Asking is free, so the cadence is a function of the balance rather than a
- * constant.** A fixed cadence forces one choice for two opposite situations: it
- * is either slow at the edge, where the number changes fastest and matters most,
- * or wasteful in the middle, where nothing is going to run out. An adaptive one
- * does not choose.
+ * Declared as a fraction rather than as a count because the three pools are
+ * metered differently — 5000 requests, 5000 node points, 30 searches a minute —
+ * and a reserve stated in absolute terms would mean three different postures.
  *
- * The returned delay is a CADENCE, never a per-operation check. `GET
- * /rate_limit` is free of PRIMARY quota only — GitHub enforces secondary limits
- * on request rate and concurrency across every endpoint — so the floor here is
- * seconds, and no caller may ask before each call.
+ * Declared BEFORE the cadence ladder, which names it: the band and the step that
+ * watches it must be one number, or the poller would ask least often at exactly
+ * the fraction where the posture changes.
  */
-export function nextBalancePollMs(balance: GithubBalance, nowMs: number): number {
-  const tightest = tightestShare(balance);
-  if (tightest <= 0) {
-    // Spent. The only event that matters now is the reset, so wait for it
-    // rather than asking a question whose answer cannot change until then.
-    const resetInMs = msUntilEarliestReset(balance, nowMs);
-    return clamp(resetInMs + 1_000, 5_000, 300_000);
+export const GITHUB_RESERVED_FRACTION = 0.15;
+
+/** The adaptive cadence, tightest step first. */
+export const GITHUB_BALANCE_CADENCE: readonly GithubBalanceCadenceStep[] = [
+  {
+    at_or_below_fraction: 0,
+    every_ms: GITHUB_BALANCE_MIN_CADENCE_MS,
+    why: "spent: the only event that still matters is the reset, so watch for it",
+  },
+  {
+    at_or_below_fraction: GITHUB_RESERVED_FRACTION,
+    every_ms: 30_000,
+    why: "inside the reserved band: the posture can change between two calls",
+  },
+  {
+    at_or_below_fraction: 0.5,
+    every_ms: 120_000,
+    why: "below half: tightening, because the band is now reachable inside one window",
+  },
+  {
+    at_or_below_fraction: 1,
+    every_ms: 600_000,
+    why: "above half: rare, because nothing this balance decides is anywhere close",
+  },
+];
+
+/**
+ * What posture the balance puts a pool in.
+ *
+ * `unknown` is not a fourth degree of scarcity — it is the absence of an answer,
+ * and it degrades to the reactive behaviour that predates this module rather than
+ * to a refusal. Refusing every convenience read because `GET /rate_limit` changed
+ * shape would turn a reporting failure into an outage.
+ */
+export type GithubBalancePosture = "open" | "reserved" | "spent" | "unknown";
+
+/**
+ * What a call is worth, stated by the caller that knows.
+ *
+ * The daemon executes and the project decides (ADR 0132 Amendment 1), so this
+ * never becomes a table here: `issue comment` is the closing comment of a
+ * finished Worker on one call and an optional progress note on the next, and only
+ * the caller can tell them apart. What this module owns is what the two words
+ * MEAN once said.
+ *
+ * - `essential`   — the claim, a landing, a finished Worker's closing comment.
+ *                   Refused only by a pool with nothing left at all.
+ * - `convenience` — a read that can be answered from cache, later, or not at all.
+ */
+export type GithubCallCriticality = "essential" | "convenience";
+
+/** One admission verdict, with everything an operator needs to argue with it. */
+export interface GithubAdmission {
+  readonly admitted: boolean;
+  readonly posture: GithubBalancePosture;
+  readonly pool: GithubRateBudget;
+  readonly criticality: GithubCallCriticality;
+  readonly remaining: number | null;
+  /** The count below which convenience reads are refused; `null` when unknown. */
+  readonly reserved_floor: number | null;
+  readonly reset_at: string | null;
+  readonly reason: string;
+}
+
+/** The balance report a surface renders: posture, age, and the next ask. */
+export interface GithubBalanceReport {
+  readonly version: 1;
+  readonly origin: "asked";
+  readonly outcome: GithubBalanceOutcome;
+  readonly asked_at: string | null;
+  readonly age_ms: number | null;
+  readonly threshold_ms: number;
+  readonly stale: boolean;
+  /** The worst posture across every reported pool — the one that governs. */
+  readonly posture: GithubBalancePosture;
+  readonly reserved_fraction: number;
+  readonly next_poll_ms: number;
+  readonly pools: readonly GithubPoolBalance[];
+  readonly unreported_pools: readonly GithubRateBudget[];
+  readonly reason: string;
+}
+
+/**
+ * How old a balance may be before a report calls it stale, as a multiple of the
+ * cadence that balance itself asked for.
+ *
+ * Two windows, for the same reason the memory sampler uses two of its own: one
+ * missed interval is the jitter of a busy host, and two is a poller that stopped.
+ */
+export const GITHUB_BALANCE_STALENESS_FACTOR = 2;
+
+/**
+ * Read one `GET /rate_limit` answer. PURE.
+ *
+ * Every number comes straight out of the payload, including `used` — recomputing
+ * it as `limit - remaining` would be the first derivation, and the first
+ * derivation is how a document stops being an answer and starts being an opinion.
+ */
+export function parseGithubBalance(payload: unknown, options: { readonly askedAt: string }): GithubBalance {
+  const root = asRecord(payload);
+  const resources = asRecord(root.resources);
+  const pools: Record<GithubRateBudget, GithubPoolBalance | null> = { rest: null, graphql: null, search: null };
+  const unreported: GithubRateBudget[] = [];
+
+  for (const pool of GITHUB_POOLS) {
+    const resource = GITHUB_POOL_RESOURCES[pool];
+    const node = resources[resource];
+    const parsed = readPool(pool, resource, node);
+    pools[pool] = parsed;
+    if (parsed == null) unreported.push(pool);
   }
-  if (tightest <= GITHUB_BALANCE_TIGHT) return 10_000;
-  if (tightest <= GITHUB_BALANCE_RELAXED) return 60_000;
-  return 300_000;
+
+  const answered = GITHUB_POOLS.length - unreported.length;
+  return {
+    version: 1,
+    origin: "asked",
+    outcome: answered > 0 ? "asked" : "unanswered",
+    source: "GET /rate_limit",
+    asked_at: options.askedAt,
+    request_count: 1,
+    pools,
+    unreported_pools: unreported,
+    detail: answered > 0
+      ? `the token's own answer for ${answered} of ${GITHUB_POOLS.length} pools`
+      : "the answer carried no pool this repo budgets, so nothing about the token is known",
+  };
 }
 
-/** The share left in whichever pool is closest to empty. PURE. */
-export function tightestShare(balance: GithubBalance): number {
-  let tightest = 1;
-  for (const pool of Object.values(balance.pools)) {
-    if (pool.limit <= 0) continue;
-    tightest = Math.min(tightest, Math.max(0, pool.remaining) / pool.limit);
+/** How a balance ask reaches GitHub; injected so nothing here opens a socket. */
+export type GithubBalanceTransport = () => Promise<unknown>;
+
+export interface FetchGithubBalanceInput {
+  readonly transport: GithubBalanceTransport;
+  readonly now: string;
+}
+
+/**
+ * Ask once. One request, and never more than one.
+ *
+ * A transport that throws comes back as `unanswered` carrying the thrown sentence
+ * rather than as an empty balance: a refusal that read as a full budget would
+ * admit every convenience read at exactly the moment the token stopped answering.
+ */
+export async function fetchGithubBalance(input: FetchGithubBalanceInput): Promise<GithubBalance> {
+  try {
+    const payload = await input.transport();
+    return parseGithubBalance(payload, { askedAt: input.now });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      ...unaskedGithubBalance(input.now, `the balance ask failed before the token answered: ${reason}`),
+      request_count: 1,
+    };
+  }
+}
+
+/**
+ * The tightest reported pool — the one whose scarcity governs. PURE.
+ *
+ * Returns `null` when no pool was reported, which is the difference between "the
+ * roomiest pool is empty" and "nothing answered".
+ */
+export function tightestGithubPool(balance: GithubBalance): GithubPoolBalance | null {
+  let tightest: GithubPoolBalance | null = null;
+  for (const pool of GITHUB_POOLS) {
+    const candidate = balance.pools[pool];
+    if (candidate == null) continue;
+    if (tightest == null || candidate.fraction < tightest.fraction) tightest = candidate;
   }
   return tightest;
 }
 
-/** Milliseconds until the first pool refills; `0` when one already has. PURE. */
-export function msUntilEarliestReset(balance: GithubBalance, nowMs: number): number {
-  let soonest = Number.POSITIVE_INFINITY;
-  for (const pool of Object.values(balance.pools)) {
-    soonest = Math.min(soonest, pool.resetAtSec * 1_000 - nowMs);
+/**
+ * How long until the next ask. PURE.
+ *
+ * Driven by the TIGHTEST pool rather than by an average or by `core`: the pool
+ * about to run out is the one whose crossing changes a decision, and the balance
+ * that measured `2200 GraphQL points spent while core sat at 5000/5000` is
+ * precisely the shape an average would have called healthy.
+ */
+export function githubBalanceCadenceMs(balance: GithubBalance, options: { readonly now: string }): number {
+  const tightest = tightestGithubPool(balance);
+  if (tightest == null) {
+    // Blind is not full. Ask again on the band's window — often enough to
+    // recover quickly, never often enough to become a poll per operation.
+    return stepFor(GITHUB_RESERVED_FRACTION).every_ms;
   }
-  return Number.isFinite(soonest) ? Math.max(0, soonest) : 0;
+  const step = stepFor(tightest.fraction);
+  if (tightest.remaining > 0) return step.every_ms;
+  // Spent: the reset is the only event left, so never sleep past it — and never
+  // under the floor either, because the secondary limits do not reset with the
+  // primary ones.
+  const untilReset = msBetween(options.now, tightest.reset_at);
+  if (untilReset == null) return step.every_ms;
+  return Math.max(GITHUB_BALANCE_MIN_CADENCE_MS, Math.min(step.every_ms, untilReset));
 }
 
-/** True when this reading is too old to act on. PURE. */
-export function isBalanceStale(balance: GithubBalance, nowMs: number): boolean {
-  return nowMs - balance.askedAtMs >= GITHUB_BALANCE_STALE_MS;
+/** The count below which convenience reads are refused for a pool. PURE. */
+export function githubReservedFloor(
+  pool: GithubPoolBalance,
+  reservedFraction: number = GITHUB_RESERVED_FRACTION,
+): number {
+  return Math.ceil(pool.limit * reservedFraction);
 }
 
-/**
- * Whether an operation may proceed, and why not when it may not.
- *
- * `essential` is the caller's word, not this module's: only the project knows
- * that a claim strands a Worker and a progress comment does not.
- */
-export interface GithubSpendVerdict {
-  readonly allowed: boolean;
-  /** The pool this verdict was decided against. */
-  readonly budget: GithubRateBudget;
-  /** Present only on a refusal, and always says which threshold refused it. */
-  readonly reason: string | null;
-}
-
-/**
- * May this call spend from `budget` right now? PURE.
- *
- * **Essential work outlives the band; convenience does not.** A Worker that has
- * finished must be able to say so, and a claim that cannot be written is a
- * Worker that must decline its issue rather than proceed unclaimed — so both
- * pass while the balance is merely low, and only an empty pool stops them.
- *
- * **A stale balance refuses convenience and admits essentials.** Refusing
- * everything on a reading nobody refreshed would let a dead poller halt a
- * healthy machine; admitting everything would spend a budget nobody has looked
- * at. Essentials are the smaller risk of the two.
- */
-export function maySpend(
+/** What posture one pool is in. PURE. */
+export function githubBalancePosture(
   balance: GithubBalance,
-  budget: GithubRateBudget,
-  essential: boolean,
-  nowMs: number,
-): GithubSpendVerdict {
-  const pool = balance.pools[budget];
-  const stale = isBalanceStale(balance, nowMs);
-  const share = pool.limit > 0 ? Math.max(0, pool.remaining) / pool.limit : 1;
+  pool: GithubRateBudget,
+  reservedFraction: number = GITHUB_RESERVED_FRACTION,
+): GithubBalancePosture {
+  const reported = balance.pools[pool];
+  if (reported == null) return "unknown";
+  if (reported.remaining <= 0) return "spent";
+  return reported.remaining < githubReservedFloor(reported, reservedFraction) ? "reserved" : "open";
+}
 
-  if (pool.remaining <= 0) {
-    return {
-      allowed: false,
-      budget,
-      reason:
-        `the ${budget} pool is spent (0/${pool.limit}); it refills in ` +
-        `${Math.ceil(msUntilEarliestReset(balance, nowMs) / 1_000)}s`,
-    };
-  }
-  if (essential) return { allowed: true, budget, reason: null };
-  if (stale) {
-    return {
-      allowed: false,
-      budget,
-      reason:
-        `the balance was last asked ${Math.round((nowMs - balance.askedAtMs) / 1_000)}s ago, past the ` +
-        `${GITHUB_BALANCE_STALE_MS / 1_000}s it may be believed, so only essential work spends`,
-    };
-  }
-  if (share <= GITHUB_RESERVED_BAND) {
-    return {
-      allowed: false,
-      budget,
-      reason:
-        `the ${budget} pool is inside the reserved band (${pool.remaining}/${pool.limit}, ` +
-        `${Math.round(share * 100)}% <= ${GITHUB_RESERVED_BAND * 100}%), which is held for the claim, the ` +
-        `landing and a finishing Worker's last word`,
-    };
-  }
-  return { allowed: true, budget, reason: null };
+export interface AdmitGithubCallInput {
+  readonly balance: GithubBalance | null;
+  readonly pool: GithubRateBudget;
+  readonly criticality: GithubCallCriticality;
+  readonly reservedFraction?: number;
 }
 
 /**
- * Read GitHub's `/rate_limit` document into a balance. PURE.
+ * Whether this call may be made now. PURE.
  *
- * Tolerant by design: a shape this does not recognise yields `null` rather than
- * a throw or a zero. A zero would read as "spent" and open the breaker on a
- * parse bug, which is the failure that fakes the emergency it was built to
- * detect.
+ * Graduated by construction: a spent pool refuses everything because GitHub would
+ * anyway, a pool inside the band refuses only what can wait, and an open pool
+ * refuses nothing. The verdict carries the numbers it turned on, so an operator
+ * reading a refusal never has to reconstruct the threshold that produced it.
  */
-export function parseRateLimit(document: unknown, askedAtMs: number): GithubBalance | null {
-  if (document === null || typeof document !== "object") return null;
-  const resources = (document as { resources?: unknown }).resources;
-  if (resources === null || typeof resources !== "object") return null;
-
-  const pools: Partial<Record<GithubRateBudget, GithubPoolBalance>> = {};
-  // GitHub names the REST pool `core`; the other two match our own vocabulary.
-  for (const [budget, key] of [["rest", "core"], ["graphql", "graphql"], ["search", "search"]] as const) {
-    const pool = readPool((resources as Record<string, unknown>)[key]);
-    if (pool === null) return null;
-    pools[budget] = pool;
+export function admitGithubCall(input: AdmitGithubCallInput): GithubAdmission {
+  const reservedFraction = input.reservedFraction ?? GITHUB_RESERVED_FRACTION;
+  const reported = input.balance?.pools[input.pool] ?? null;
+  if (input.balance == null || reported == null) {
+    return {
+      admitted: true,
+      posture: "unknown",
+      pool: input.pool,
+      criticality: input.criticality,
+      remaining: null,
+      reserved_floor: null,
+      reset_at: null,
+      reason:
+        `no authoritative balance names the ${input.pool} pool, so this call is admitted and the reactive breaker ` +
+        `still decides: refusing on an unread balance would turn a reporting failure into an outage`,
+    };
   }
-  return { pools: pools as Record<GithubRateBudget, GithubPoolBalance>, askedAtMs };
+
+  const floor = githubReservedFloor(reported, reservedFraction);
+  const posture = githubBalancePosture(input.balance, input.pool, reservedFraction);
+  const base = {
+    pool: input.pool,
+    criticality: input.criticality,
+    remaining: reported.remaining,
+    reserved_floor: floor,
+    reset_at: reported.reset_at,
+  } as const;
+
+  if (posture === "spent") {
+    return {
+      ...base,
+      admitted: false,
+      posture,
+      reason:
+        `the ${input.pool} pool is spent, so not even ${input.criticality} work can be issued until the quota ` +
+        `resets at ${reported.reset_at}`,
+    };
+  }
+  if (posture === "reserved" && input.criticality === "convenience") {
+    return {
+      ...base,
+      admitted: false,
+      posture,
+      reason:
+        `${reported.remaining} of ${reported.limit} left in the ${input.pool} pool is inside the reserved band of ` +
+        `${floor}, which is held for the claim, a landing and a finishing Worker's closing comment; this read can ` +
+        `wait, be answered from cache, or not happen at all`,
+    };
+  }
+  return {
+    ...base,
+    admitted: true,
+    posture,
+    reason: posture === "reserved"
+      ? `${reported.remaining} of ${reported.limit} left in the ${input.pool} pool is inside the reserved band of ` +
+        `${floor}, and essential work is exactly what the band is held for`
+      : `${reported.remaining} of ${reported.limit} left in the ${input.pool} pool, above the reserved band of ${floor}`,
+  };
 }
 
-function readPool(value: unknown): GithubPoolBalance | null {
-  if (value === null || typeof value !== "object") return null;
-  const pool = value as Record<string, unknown>;
-  const limit = pool.limit;
-  const remaining = pool.remaining;
-  const reset = pool.reset;
-  if (!Number.isFinite(limit) || !Number.isFinite(remaining) || !Number.isFinite(reset)) return null;
-  return { limit: limit as number, remaining: remaining as number, resetAtSec: reset as number };
+/**
+ * Whether a CLASSIFIED operation may be made now. PURE.
+ *
+ * The pool comes from the routing table rather than from the caller, so a call
+ * site cannot state a surface and then be admitted against a different pool's
+ * balance — which is the same class of mistake as classifying every `--json` read
+ * as GraphQL and then measuring REST.
+ */
+export function admitGithubOperation(input: {
+  readonly balance: GithubBalance | null;
+  readonly operation: GithubOperation;
+  readonly criticality: GithubCallCriticality;
+  readonly reservedFraction?: number;
+}): GithubAdmission {
+  return admitGithubCall({
+    balance: input.balance,
+    pool: input.operation.budget,
+    criticality: input.criticality,
+    ...(input.reservedFraction === undefined ? {} : { reservedFraction: input.reservedFraction }),
+  });
 }
 
-function clamp(value: number, low: number, high: number): number {
-  return Math.min(high, Math.max(low, value));
+/**
+ * Date the balance so the consumer renders the age instead of inventing it. PURE.
+ *
+ * The report exists so `"the queue looks empty"` and `"we are out of quota"` are
+ * never the same screen: a surface that holds only counts has no way to tell
+ * them apart, and the posture printed beside the counts is what separates them.
+ */
+export function buildGithubBalanceReport(input: {
+  readonly balance: GithubBalance | null;
+  readonly now: string;
+  readonly stalenessMs?: number;
+  readonly reservedFraction?: number;
+}): GithubBalanceReport {
+  const reservedFraction = input.reservedFraction ?? GITHUB_RESERVED_FRACTION;
+  const balance = input.balance;
+  if (balance == null) {
+    return {
+      version: 1,
+      origin: "asked",
+      outcome: "unanswered",
+      asked_at: null,
+      age_ms: null,
+      threshold_ms: stepFor(reservedFraction).every_ms * GITHUB_BALANCE_STALENESS_FACTOR,
+      stale: false,
+      posture: "unknown",
+      reserved_fraction: reservedFraction,
+      next_poll_ms: stepFor(reservedFraction).every_ms,
+      pools: [],
+      unreported_pools: [...GITHUB_POOLS],
+      reason: "this daemon has asked for no balance, so the token's budget is unknown rather than full",
+    };
+  }
+
+  const nextPollMs = githubBalanceCadenceMs(balance, { now: input.now });
+  const threshold = input.stalenessMs ?? nextPollMs * GITHUB_BALANCE_STALENESS_FACTOR;
+  const ageMs = msBetween(balance.asked_at, input.now);
+  const stale = balance.outcome === "asked" && (ageMs == null || ageMs > threshold);
+  const pools = GITHUB_POOLS.map((pool) => balance.pools[pool]).filter((pool): pool is GithubPoolBalance => pool != null);
+  const posture = worstPosture(balance, reservedFraction);
+  const tightest = tightestGithubPool(balance);
+
+  return {
+    version: 1,
+    origin: "asked",
+    outcome: balance.outcome,
+    asked_at: balance.asked_at,
+    age_ms: ageMs,
+    threshold_ms: threshold,
+    stale,
+    posture,
+    reserved_fraction: reservedFraction,
+    next_poll_ms: nextPollMs,
+    pools,
+    unreported_pools: balance.unreported_pools,
+    reason: stale
+      ? `this balance is stale: asked ${ageMs == null ? "at an unreadable instant" : `${ageMs}ms ago`}, past the ` +
+        `${threshold}ms window, so the posture below is the last one the token confirmed and not the current one`
+      : describePosture(posture, tightest, balance, reservedFraction),
+  };
+}
+
+/**
+ * The balance a report was built from. PURE.
+ *
+ * A report travels on the wire and a balance is what an admission turns on, so a
+ * consumer that received the first and needs the second must not rebuild it by
+ * hand: the pools are the same objects, only re-keyed. Nothing is invented here —
+ * a pool the report did not carry stays `null`.
+ */
+export function balanceFromReport(report: GithubBalanceReport): GithubBalance {
+  const pools: Record<GithubRateBudget, GithubPoolBalance | null> = { rest: null, graphql: null, search: null };
+  for (const pool of report.pools) pools[pool.pool] = pool;
+  return {
+    version: 1,
+    origin: "asked",
+    outcome: report.outcome,
+    source: "GET /rate_limit",
+    asked_at: report.asked_at ?? "",
+    request_count: report.outcome === "asked" ? 1 : 0,
+    pools,
+    unreported_pools: report.unreported_pools,
+    detail: report.reason,
+  };
+}
+
+/**
+ * True when `value` is a complete balance report — a client's fail-closed check.
+ *
+ * A consumer that accepted a partial report would render a posture it cannot
+ * trust, and the whole point of the posture is that an operator can act on it.
+ */
+export function isGithubBalanceReport(value: unknown): value is GithubBalanceReport {
+  if (!isRecord(value)) return false;
+  const report = value as Record<string, unknown>;
+  return report.version === 1 &&
+    report.origin === "asked" &&
+    (report.outcome === "asked" || report.outcome === "unanswered") &&
+    (report.asked_at === null || typeof report.asked_at === "string") &&
+    (report.age_ms === null || typeof report.age_ms === "number") &&
+    typeof report.threshold_ms === "number" &&
+    typeof report.stale === "boolean" &&
+    typeof report.posture === "string" &&
+    typeof report.reserved_fraction === "number" &&
+    typeof report.next_poll_ms === "number" &&
+    Array.isArray(report.pools) &&
+    Array.isArray(report.unreported_pools) &&
+    typeof report.reason === "string";
+}
+
+function describePosture(
+  posture: GithubBalancePosture,
+  tightest: GithubPoolBalance | null,
+  balance: GithubBalance,
+  reservedFraction: number,
+): string {
+  if (tightest == null) return balance.detail;
+  const floor = githubReservedFloor(tightest, reservedFraction);
+  switch (posture) {
+    case "spent":
+      return `the ${tightest.pool} pool is spent and resets at ${tightest.reset_at}: work is not queued, it is refused`;
+    case "reserved":
+      return `the ${tightest.pool} pool has ${tightest.remaining} of ${tightest.limit} left, inside the reserved band ` +
+        `of ${floor}: convenience reads are refused and the claim, a landing and a closing comment still pass`;
+    default:
+      return `the ${tightest.pool} pool is the tightest at ${tightest.remaining} of ${tightest.limit}, above the ` +
+        `reserved band of ${floor}`;
+  }
+}
+
+function worstPosture(balance: GithubBalance, reservedFraction: number): GithubBalancePosture {
+  let worst: GithubBalancePosture = "unknown";
+  for (const pool of GITHUB_POOLS) {
+    if (balance.pools[pool] == null) continue;
+    const posture = githubBalancePosture(balance, pool, reservedFraction);
+    if (posture === "spent") return "spent";
+    if (posture === "reserved" || worst === "unknown") worst = posture;
+  }
+  return worst;
+}
+
+function stepFor(fraction: number): GithubBalanceCadenceStep {
+  for (const step of GITHUB_BALANCE_CADENCE) {
+    if (fraction <= step.at_or_below_fraction) return step;
+  }
+  return GITHUB_BALANCE_CADENCE[GITHUB_BALANCE_CADENCE.length - 1]!;
+}
+
+function readPool(pool: GithubRateBudget, resource: string, value: unknown): GithubPoolBalance | null {
+  if (!isRecord(value)) return null;
+  const limit = integer(value.limit);
+  const remaining = integer(value.remaining);
+  const used = integer(value.used);
+  const reset = integer(value.reset);
+  if (limit == null || limit <= 0 || remaining == null) return null;
+  return {
+    pool,
+    resource,
+    limit,
+    remaining,
+    used: used ?? 0,
+    reset_at: reset == null ? "" : new Date(reset * 1000).toISOString(),
+    fraction: remaining / limit,
+  };
+}
+
+/**
+ * The GitHub balance transport, built around one token.
+ *
+ * `fetch` is injected so a test never opens a socket. An HTTP refusal throws
+ * rather than returning an empty body, because an empty body read as a balance is
+ * the failure mode this whole module was written about.
+ */
+export function createGithubBalanceTransport(options: {
+  readonly token: string;
+  readonly origin?: string;
+  readonly fetchImpl?: typeof fetch;
+}): GithubBalanceTransport {
+  const origin = options.origin ?? "https://api.github.com";
+  const call = options.fetchImpl ?? fetch;
+  return async (): Promise<unknown> => {
+    const response = await call(`${origin}/${GITHUB_RATE_LIMIT_PATH}`, {
+      method: "GET",
+      headers: {
+        authorization: `bearer ${options.token}`,
+        accept: "application/vnd.github+json",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`the balance ask was refused with HTTP ${response.status}`);
+    }
+    return await response.json();
+  };
+}
+
+function msBetween(from: string, to: string): number | null {
+  const fromMs = Date.parse(from);
+  const toMs = Date.parse(to);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return null;
+  return Math.max(0, toMs - fromMs);
+}
+
+function integer(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

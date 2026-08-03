@@ -39,9 +39,11 @@ import {
 import {
   DEFAULT_REDSKILLED_IDLE_MS,
   startRedskilledDaemon,
+  type RedskilledBalanceRegistration,
   type RedskilledQueueArming,
   type RedskilledQueueRegistration,
 } from "./daemon.js";
+import { createGithubBalanceTransport } from "@reddb-io/github";
 import { createGitHubActivityTransport } from "./repository-activity.js";
 import {
   reclaimRedskilledRuntimeDirs,
@@ -276,6 +278,28 @@ export function resolveServeQueueDiscovery(
 }
 
 /**
+ * Arm the ONE balance poller, or leave the host honestly blind.
+ *
+ * The same credential the queue poller uses, because the balance being asked for
+ * is the balance those calls spend: a second token here would report a budget
+ * nobody draws on. No token, no poller — and no invented budget either, because
+ * a daemon that reported a full one would admit every convenience read on a host
+ * that cannot even ask.
+ */
+export function resolveServeGithubBalance(
+  values: { readonly "queue-endpoint"?: string },
+  env: NodeJS.ProcessEnv = process.env,
+  readTrackerToken: RedskilledTrackerTokenReader = readTrackerCliToken,
+): RedskilledBalanceRegistration | null {
+  const host = resolveRedskilledHostToken(env, readTrackerToken);
+  if (host == null) return null;
+  const origin = env.GITHUB_API_URL;
+  return {
+    transport: createGithubBalanceTransport({ token: host.token, ...(origin ? { origin } : {}) }),
+  };
+}
+
+/**
  * One attempt at the credential, in the words of the thing that looked for it.
  *
  * The sentence names what was searched rather than reporting a bare absence,
@@ -338,6 +362,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   if (command === "serve") {
     const { values } = parseFlags(args, SERVE_FLAGS);
     const queueDiscovery = resolveServeQueueDiscovery(values);
+    const githubBalance = resolveServeGithubBalance(values);
     // The daemon's own black box (Spec #3022, slice #3023). The event lane already
     // carries `daemon-stop` for the stop this process CHOSE; this record carries
     // the death it did not — a signal, an uncaught error — in the one shape every
@@ -374,6 +399,11 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       // poller unarmed — carrying the reason, so an unconfigured poll is
       // REPORTED on every registration instead of passing for a drained queue.
       queueDiscovery,
+      // The one poller that asks the token what it has left (ADR 0132 Amendment
+      // 2). Absent when no credential names a tracker for this host — and absent
+      // is `unknown`, never a full budget, because a full budget is the one
+      // answer that admits every call.
+      ...(githubBalance == null ? {} : { githubBalance }),
       ...(values["demand-ms"] == null ? {} : { demandMs: values["demand-ms"] }),
     });
     // A signalled daemon LETS GO rather than being cut off: the stop path flushes

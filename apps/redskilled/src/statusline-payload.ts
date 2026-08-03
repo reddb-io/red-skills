@@ -25,6 +25,12 @@ import type {
   DeathAttribution,
   DeathSenderClass,
 } from "@reddb-io/shared/death-attribution.js";
+import {
+  buildGithubBalanceReport,
+  isGithubBalanceReport,
+  type GithubBalance,
+  type GithubBalanceReport,
+} from "@reddb-io/github";
 import type { ProcessDeathKind } from "@reddb-io/shared/death-record.js";
 import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHostConsumption } from "./admission.js";
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
@@ -314,6 +320,16 @@ export interface RedskilledStatuslinePayload {
    */
   readonly repository_activity: RedskilledActivityReport;
   /**
+   * What the TOKEN has left, asked rather than counted, with its own age.
+   *
+   * It rides beside the counts deliberately: `"the queue looks empty"` and
+   * `"we are out of quota"` must never be the same screen, and a payload that
+   * carried only counts gives a surface no way to tell them apart. The posture is
+   * the graduated breaker's state made observable — `open`, `reserved`, `spent`,
+   * or `unknown` when nothing has answered (ADR 0132 Amendment 2, #3095).
+   */
+  readonly github_balance: GithubBalanceReport;
+  /**
    * What this host could not explain, so every surface can answer "why did it die".
    *
    * Here rather than fetched per surface for the reason the activity counts are:
@@ -384,6 +400,16 @@ export interface BuildStatuslinePayloadInput {
    */
   readonly repositoryActivity?: RedskilledRepositoryActivity | null;
   readonly activityStalenessMs?: number;
+  /**
+   * The last balance the token answered with, or `null` when none was asked for.
+   *
+   * Passed in for the same reason the counts are: the balance belongs to the
+   * daemon that spent the request for it, and this document stays a pure function
+   * of its inputs.
+   */
+  readonly githubBalance?: GithubBalance | null;
+  /** The reserved fraction this host holds back; the package default when absent. */
+  readonly reservedFraction?: number;
   /**
    * The verdicts this host's boot reaper posed, or absent when it never reaped.
    *
@@ -469,6 +495,11 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       .map((registration) => registration.project_label)
       .sort((a, b) => a.localeCompare(b)),
     workers,
+    github_balance: buildGithubBalanceReport({
+      balance: input.githubBalance ?? null,
+      now: input.now,
+      ...(input.reservedFraction === undefined ? {} : { reservedFraction: input.reservedFraction }),
+    }),
     repository_activity: buildActivityReport({
       activity: input.repositoryActivity ?? null,
       now: input.now,
@@ -729,6 +760,10 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     // a field this consumer did not ask for would lose the Worker set — the very
     // version skew one host-scoped daemon exists to stop managing (ADR 0130).
     (payload.repository_activity === undefined || isRedskilledActivityReport(payload.repository_activity)) &&
+    // Absent is accepted for the same reason: a daemon older than the balance
+    // poller answers completely without it, and a consumer that rejected the
+    // whole payload would lose the Worker set over a badge.
+    (payload.github_balance === undefined || isGithubBalanceReport(payload.github_balance)) &&
     // Absent is accepted for the reason the two project lists are: a daemon that
     // predates the reaper, or the engine block, answers completely without them,
     // and rejecting the whole payload would lose the Worker set over a field this

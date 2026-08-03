@@ -17,8 +17,13 @@
  * projects polling with the same credential already share one budget and splitting
  * the poller across processes saves nothing. What saves is issuing one aliased
  * query that spans every repository at once — the machinery the shared batch layer
- * already had, bound to a single repository, with the parameter widened. Cost is
- * then flat in the number of projects rather than linear in it.
+ * already had, bound to a single repository, with the parameter widened.
+ *
+ * **Flat in REQUESTS, and never claimed flat in points.** The GraphQL pool is
+ * metered by nodes returned, so an aliased query spanning ten repositories is one
+ * request and ten repositories' worth of points. The query therefore asks GitHub
+ * what it charged (`rateLimit { cost }`) and the document echoes that answer, so
+ * no reader of this module can mistake one number for the other (#3095).
  *
  * **The condition is checked in code, not assumed in prose.** Every repository on
  * the host must be reachable with the same token; a project that declares its own
@@ -146,6 +151,17 @@ export interface RedskilledActivityRateLimit {
   readonly reset_at: string | null;
   /** True when this fetch was refused for quota rather than answered. */
   readonly exhausted: boolean;
+  /**
+   * What this one query cost in node points, as GitHub itself reported it.
+   *
+   * **Flat in requests is not flat in points.** One aliased query spanning ten
+   * repositories is one request and ten repositories' worth of nodes, and the
+   * GraphQL pool is metered by the second number. This field exists so the claim
+   * is never made in prose: the cost is ASKED for in the query (`rateLimit { cost }`)
+   * and echoed here, never computed as a constant. `null` when the answer did not
+   * say — an absence, not a free query.
+   */
+  readonly point_cost: number | null;
 }
 
 export interface RedskilledRepositoryActivity {
@@ -228,7 +244,7 @@ export function buildRepositoryActivityQuery(
   });
   const query = [
     "query RedskilledRepositoryActivity {",
-    "  rateLimit { remaining resetAt }",
+    "  rateLimit { cost remaining resetAt }",
     ...fields,
     "}",
   ].join("\n");
@@ -315,7 +331,7 @@ export function emptyRepositoryActivity(fetchedAt: string): RedskilledRepository
     fetched_at: fetchedAt,
     request_count: 0,
     project_count: 0,
-    rate_limit: { remaining: null, reset_at: null, exhausted: false },
+    rate_limit: { remaining: null, reset_at: null, exhausted: false, point_cost: null },
     projects: [],
   };
 }
@@ -358,7 +374,7 @@ export async function fetchRepositoryActivity(
       fetched_at: input.now,
       request_count: 1,
       project_count: input.projects.length,
-      rate_limit: { remaining: null, reset_at: null, exhausted: rateLimited },
+      rate_limit: { remaining: null, reset_at: null, exhausted: rateLimited, point_cost: null },
       projects: input.projects.map((project) => ({
         project_label: project.project_label,
         repository: `${project.owner}/${project.name}`,
@@ -412,7 +428,7 @@ export function buildActivityReport(input: {
       threshold_ms: threshold,
       stale: false,
       request_count: 0,
-      rate_limit: { remaining: null, reset_at: null, exhausted: false },
+      rate_limit: { remaining: null, reset_at: null, exhausted: false, point_cost: null },
       projects: [],
       reason: "the daemon polls no repository, so there are no counts to age",
     };
@@ -519,7 +535,11 @@ function readRateLimit(value: unknown, errors: readonly Record<string, unknown>[
   const remaining = typeof node.remaining === "number" && Number.isFinite(node.remaining) ? node.remaining : null;
   const resetAt = typeof node.resetAt === "string" ? node.resetAt : null;
   const flagged = errors.some(isRateLimitError);
-  return { remaining, reset_at: resetAt, exhausted: flagged || remaining === 0 };
+  // Echoed, never computed: the query asks GitHub what it charged, because the
+  // one number this module could plausibly invent is exactly the one that would
+  // let "one request" pass for "one point".
+  const cost = typeof node.cost === "number" && Number.isFinite(node.cost) ? node.cost : null;
+  return { remaining, reset_at: resetAt, exhausted: flagged || remaining === 0, point_cost: cost };
 }
 
 function isRateLimitError(error: Record<string, unknown> | undefined): boolean {

@@ -138,6 +138,13 @@ import {
   type RedskilledWorkerHeartbeatAck,
   type RedskilledWorkerHeartbeatRequest,
 } from "./protocol.js";
+import {
+  fetchGithubBalance,
+  githubBalanceCadenceMs,
+  unaskedGithubBalance,
+  type GithubBalance,
+  type GithubBalanceTransport,
+} from "@reddb-io/github";
 import { commandOp, evaluateSessionReach, type RedskilledSessionOp } from "./session-reach.js";
 import {
   assertOneHostToken,
@@ -149,7 +156,6 @@ import {
 } from "./repository-activity.js";
 import {
   DEFAULT_REDSKILLED_QUEUE_MS,
-  nextQueuePollMs,
   fetchQueueDiscovery,
   unconfiguredQueueDiscovery,
   type RedskilledQueueDiscovery,
@@ -394,6 +400,14 @@ export interface RedskilledDaemonOptions {
    */
   readonly repositoryActivity?: RedskilledActivityRegistration;
   /**
+   * How this daemon asks GitHub for the token's remaining budget.
+   *
+   * Absent leaves the poller unarmed and every surface honestly `unknown`: a
+   * daemon that was given no way to ask must not report a full budget, because a
+   * full budget is the one answer that admits every call.
+   */
+  readonly githubBalance?: RedskilledBalanceRegistration;
+  /**
    * How this daemon reaches the tracker for queue depth, and how often.
    *
    * Its own block and its own window, next to the activity poller rather than
@@ -439,6 +453,32 @@ export interface RedskilledActivityRegistration {
   /** Window between fetches; 0 or below leaves the poller unarmed. */
   readonly intervalMs?: number;
   readonly closedWindowMs?: number;
+}
+
+/**
+ * How this daemon asks the token what it has left — ONE poller, host-wide.
+ *
+ * ADR 0132 Amendment 2. The balance is asked rather than accumulated, because a
+ * host-scoped ledger of a per-token quota reports one machine's share as if it
+ * were the whole; and it is asked on a CADENCE rather than before each call,
+ * because a check per call doubles the request count and puts a synchronous round
+ * trip in every hot path.
+ *
+ * No interval: the cadence is a function of the balance itself, so a registration
+ * that stated one would be overriding the adaptation with a constant.
+ *
+ * No threshold either. The daemon stores the integer the token answered with and
+ * interprets none of it — what fraction of a pool is held back for work that must
+ * not fail is a POLICY, and policy lives in `@reddb-io/github` beside the surface
+ * that renders it (ADR 0130 rule 3).
+ */
+export interface RedskilledBalanceRegistration {
+  readonly transport: GithubBalanceTransport;
+  /**
+   * A hard window, for a test that needs one. Production leaves this absent and
+   * lets the balance decide — that is the whole decision.
+   */
+  readonly intervalMsOverride?: number;
 }
 
 /**
@@ -610,6 +650,16 @@ export interface RedskilledDaemon {
    * a whole window to see it counted. Resolves to `null` when nothing is registered.
    */
   pollRepositoryActivity(): Promise<RedskilledRepositoryActivity | null>;
+  /**
+   * Ask the token for its remaining budget once — one request, host-wide.
+   *
+   * Exposed so the adaptive cadence can be driven by a test as well as by the
+   * timer, and so a caller that has just armed the poller does not wait a whole
+   * window to see a balance. Resolves to `null` when nothing armed it.
+   */
+  pollGithubBalance(): Promise<GithubBalance | null>;
+  /** The last balance the token answered with; `null` before the first ask. */
+  githubBalance(): GithubBalance | null;
   /**
    * Discover every registered project's queue depth once — one request, not N.
    *
@@ -785,6 +835,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const replacementIO = options.replacementIO ?? {};
   const activityRegistration = options.repositoryActivity;
   const activityMs = activityRegistration?.intervalMs ?? DEFAULT_REDSKILLED_ACTIVITY_MS;
+  const balanceRegistration = options.githubBalance;
   const queueRegistration = options.queueDiscovery;
   // Not `const`: an unarmed poller asks again before every poll, so the daemon
   // that was spawned from a session without a credential still counts once one
@@ -850,6 +901,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // The last activity fetch, kept for the same reason the RSS reading is: a read
   // between two polls is dated by the poll it came from, never by the read.
   let lastActivity: RedskilledRepositoryActivity | null = null;
+  // The last balance the TOKEN answered with — the only copy on this host, and
+  // not a number this process maintains. It is `null` until something has been
+  // asked, because "nobody asked yet" and "the budget is full" are opposite facts
+  // and the second one admits every call (ADR 0132 Amendment 2).
+  let lastBalance: GithubBalance | null = null;
   // The last queue fetch, held beside the activity one rather than merged into it:
   // two cadences produce two instants, and a document that carried one date for
   // both would age the fast half by the slow half's clock.
@@ -877,6 +933,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let replaceTimer: NodeJS.Timeout | undefined;
   let replaceBootTimer: NodeJS.Timeout | undefined;
   let activityTimer: NodeJS.Timeout | undefined;
+  // A timeout rather than an interval: the window between two balance asks is
+  // recomputed from the answer each time, so the poller re-arms itself instead of
+  // running on a constant it would have to choose in advance.
+  let balanceTimer: NodeJS.Timeout | undefined;
   let queueTimer: NodeJS.Timeout | undefined;
   let stopping = false;
   // Raised the instant a stop begins; `stopping` follows once the daemon's own
@@ -986,10 +1046,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       startedAt,
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
       workers: [...workers.values()],
-      // The ceiling the accounting is judged against, from the one place that
-      // resolved it. Without it the totals are a sum nobody compared to anything,
-      // which is how a host carrying 2× its ceiling reported no over-commitment.
-      hostCeilingBytes: ceiling.memory_bytes,
       registrations: [...registrations.values()],
       // The ones that stopped, beside the ones that stand: a project missing from
       // the set is either one that never registered or one whose drain ended, and
@@ -1029,6 +1085,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now: clock(),
       reattachedWorkerIds: [...reattached],
       repositoryActivity: lastActivity,
+      githubBalance: lastBalance,
       ...(options.deaths === undefined ? {} : { deaths: options.deaths }),
       // Derived here, once, for every surface: the observation history belongs
       // to this process, so a statusline dividing its own counters would be a
@@ -1083,6 +1140,54 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now: clock(),
     });
     return lastActivity;
+  }
+
+  /**
+   * Ask the token what it has left. ONE request, and one poller host-wide.
+   *
+   * The answer replaces the stored one whatever it says, including when it says
+   * nothing: a refusal that left the last good balance standing would keep
+   * admitting convenience reads against a number the token stopped confirming.
+   */
+  async function pollGithubBalance(): Promise<GithubBalance | null> {
+    if (balanceRegistration == null) return null;
+    lastBalance = await fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() });
+    return lastBalance;
+  }
+
+  /**
+   * Arm the balance poller, and let the BALANCE choose when it runs again.
+   *
+   * Rare above half, tightening as the balance falls, continuous once spent —
+   * because asking is free of primary quota and a fixed cadence would have to
+   * choose between being slow at the edge and wasting polls in the middle. The
+   * re-arm is a timeout the poll itself schedules, so the window is a function of
+   * the answer rather than a constant chosen before any answer existed.
+   *
+   * The floor lives in `@reddb-io/github`: `GET /rate_limit` is free of PRIMARY
+   * quota only, and GitHub's secondary limits still meter request rate, so this
+   * stays a cadence in seconds and never becomes a check per call.
+   */
+  function armBalanceTimer(): void {
+    if (stopping || balanceTimer != null || balanceRegistration == null) return;
+    const tick = (): void => {
+      balanceTimer = undefined;
+      void pollGithubBalance()
+        .catch(() => undefined)
+        .then(() => {
+          if (stopping) return;
+          const nextMs = balanceRegistration.intervalMsOverride ??
+            githubBalanceCadenceMs(lastBalance ?? unaskedBalance(), { now: clock() });
+          balanceTimer = setTimeout(tick, nextMs);
+          balanceTimer.unref();
+        });
+    };
+    tick();
+  }
+
+  /** The balance a daemon that has asked nothing holds — never a full budget. */
+  function unaskedBalance(): GithubBalance {
+    return unaskedGithubBalance(clock());
   }
 
   /**
@@ -1779,8 +1884,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     lastReading = rss;
     lastSampledAt = clock();
     recordCpuReading(reading.cpu_seconds, lastSampledAt);
-    recordRssSources(reading.sources);
-    const { terminations } = evaluateMemoryBudgets({ workers: live, rss, ...(reading.sources == null ? {} : { sources: reading.sources }) });
+    const { terminations } = evaluateMemoryBudgets({ workers: live, rss });
     const done: RedskilledBudgetTermination[] = [];
     for (const termination of terminations) {
       if (await killWorkerOverBudget(termination.worker_id, termination.reason)) done.push(termination);
@@ -1802,23 +1906,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       const held = workers.get(workerId);
       if (!held) continue;
       workers.set(workerId, { ...held, cpu: { cpu_seconds: seconds, sampled_at: sampledAt } });
-    }
-  }
-
-  /**
-   * Carry which instrument answered onto the Workers it answered for.
-   *
-   * The number and its provenance travel together for the whole reason the
-   * provenance exists: a kernel charge and a ppid walk differ by a factor a
-   * reader cannot spot from the value alone, and one of them once read 377×
-   * low (#3080). A sampler that named no instrument leaves the Worker's last
-   * source standing rather than asserting one.
-   */
-  function recordRssSources(sources: RedskilledTreeReading["sources"]): void {
-    for (const [workerId, source] of Object.entries(sources ?? {})) {
-      const held = workers.get(workerId);
-      if (!held) continue;
-      workers.set(workerId, { ...held, rss_source: source });
     }
   }
 
@@ -2019,24 +2106,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   function armQueueTimer(): void {
     if (stopping || queueTimer != null) return;
     if (queueMs <= 0) return;
-    // Re-armed after each poll rather than set on a fixed interval, so the
-    // cadence can follow the balance the poll just reported (ADR 0132
-    // Amendment 2). A `setInterval` cannot: its period is chosen once, before
-    // anything is known about how close the token is to spent.
-    const schedule = (delayMs: number): void => {
-      if (stopping) return;
-      queueTimer = setTimeout(() => {
-        queueTimer = undefined;
-        void pollQueueDiscovery()
-          .catch(() => undefined)
-          .finally(() => schedule(nextQueuePollMs(lastQueue, queueMs, Date.parse(clock()))));
-      }, delayMs);
-      queueTimer.unref();
-    };
-    schedule(queueMs);
+    queueTimer = setInterval(() => {
+      void pollQueueDiscovery().catch(() => undefined);
+    }, queueMs);
+    queueTimer.unref();
   }
-
-
 
   /**
    * Arm the demand loop on its own window.
@@ -2180,8 +2254,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (replaceTimer) clearInterval(replaceTimer);
     if (replaceBootTimer) clearTimeout(replaceBootTimer);
     if (activityTimer) clearInterval(activityTimer);
-    if (queueTimer) clearTimeout(queueTimer);
-    queueTimer = undefined;
+    if (balanceTimer) clearTimeout(balanceTimer);
+    if (queueTimer) clearInterval(queueTimer);
     if (demandTimer) clearInterval(demandTimer);
     // Every event already handed over reaches the lane before the daemon lets go
     // of the session: a birth still in flight would leave the next daemon with a
@@ -2366,6 +2440,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   armLeaseTimer();
   armReplaceTimer();
   armActivityTimer();
+  armBalanceTimer();
   armQueueTimer();
   armDemandTimer();
 
@@ -2381,6 +2456,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     sampleMemoryBudgets,
     renewLease,
     pollRepositoryActivity,
+    pollGithubBalance,
+    githubBalance: () => lastBalance,
     pollQueueDiscovery,
     queueDiscovery: () => lastQueue,
     driveDemand,
