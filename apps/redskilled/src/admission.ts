@@ -311,12 +311,52 @@ export function resolveHostCeiling(
   if (declaredMemory !== "") {
     const memory = parseMemoryCeiling(declaredMemory, totalMemoryBytes);
     if (memory !== undefined) return { memory_bytes: memory, worker_count: workerCount, source: "declared" };
+    // Named rather than obeyed in silence. A malformed ceiling is a limit the
+    // operator believes they set, and falling through quietly gives them the
+    // 0.7 fraction instead — which for a mistyped `50%` is MORE permissive than
+    // what they asked for, so the daemon admits Workers past the line they
+    // meant to draw. Loud and continue: a bad env var must not stop the host.
+    warn(
+      `redskilled: ${REDSKILLED_MEMORY_CEILING_ENV}=${JSON.stringify(declaredMemory)} is not a memory ceiling ` +
+        `this host can read; using ${DEFAULT_HOST_MEMORY_CEILING_FRACTION * 100}% of host memory instead. ` +
+        `Accepted forms: systemd bytes (\`8G\`), a percentage (\`50%\`), or \`infinity\`.`,
+    );
+  }
+  if (declaredWorkers !== "" && workerCount === null && !isUnbounded(declaredWorkers)) {
+    // Same rule for the count: `parseCountCeiling` discards a non-integer or a
+    // non-positive value just as quietly, and an ignored worker ceiling is an
+    // unbounded host wearing a number the operator thinks they set.
+    warn(
+      `redskilled: ${REDSKILLED_WORKER_CEILING_ENV}=${JSON.stringify(declaredWorkers)} is not a positive ` +
+        `integer; this host admits an unbounded number of Workers instead.`,
+    );
   }
   return {
     memory_bytes: Math.floor(totalMemoryBytes * DEFAULT_HOST_MEMORY_CEILING_FRACTION),
     worker_count: workerCount,
-    source: declaredWorkers !== "" ? "declared" : "host-fraction",
+    // **The source describes the MEMORY ceiling, and reaching here means it was
+    // derived.** It used to be read off `declaredWorkers`, so declaring only a
+    // WORKER ceiling labelled a derived memory ceiling `declared` — and that
+    // word is interpolated into the admission reason, which speaks purely about
+    // memory. An operator debugging a denied Worker was told they had stated a
+    // number they never stated.
+    source: "host-fraction",
   };
+}
+
+/** `infinity` and its synonyms — a real declaration of "no ceiling". */
+function isUnbounded(value: string): boolean {
+  return ["infinity", "none", "off", "unbounded"].includes(value.trim().toLowerCase());
+}
+
+/** Where a named fallback goes. An input only so a test can watch it. */
+let warn: (message: string) => void = (message) => process.stderr.write(`${message}\n`);
+
+/** Redirect the warning sink; returns the previous one. For tests. */
+export function setHostCeilingWarningSink(sink: (message: string) => void): (message: string) => void {
+  const previous = warn;
+  warn = sink;
+  return previous;
 }
 
 /** `infinity` → unbounded, `N%` → a share of the host, otherwise systemd bytes. */
