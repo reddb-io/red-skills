@@ -187,5 +187,20 @@ describe("a Worker that exits before its first write", () => {
       span_ms: 240_000,
       latest_refusal: "trunk freshness: dirt-collision (.red/config.yaml)",
     });
+
+    await daemon.flushEvents();
+    await daemon.stop();
+    const successor = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      clock: () => now,
+      unitInventory: () => [],
+    });
+    running.push(successor);
+    expect(successor.statuslinePayload().deaths?.boot_loop).toMatchObject({
+      project_label: "acme/widgets",
+      count: 3,
+      latest_refusal: "trunk freshness: dirt-collision (.red/config.yaml)",
+    });
   });
 });
