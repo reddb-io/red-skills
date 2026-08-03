@@ -18,7 +18,7 @@
  * verdict" is a property of this function instead of a convention every future
  * call site has to remember.
  */
-import { randomUUID } from "node:crypto";
+import { randomInt } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
@@ -125,11 +125,33 @@ export interface LaunchWorkerOptions {
   readonly execPath?: string;
   readonly clock?: () => string;
   readonly workerId?: string;
+  /** Worker ids the host already holds, used when this launch has to mint one. */
+  readonly liveWorkerIds?: Iterable<string>;
   readonly spawnFn?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
   /** Called when the daemon observes this Worker's process end. */
   readonly onExit?: (workerId: string, code: number | null, signal: NodeJS.Signals | null) => void;
   /** False to leave the spec's `log_path` unopened — for a test with no real fs. */
   readonly openLog?: boolean;
+}
+
+const HOST_WORKER_ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const HOST_WORKER_ID_RANDOM_LENGTH = 4;
+const HOST_WORKER_ID_SPACE = HOST_WORKER_ID_ALPHABET.length ** HOST_WORKER_ID_RANDOM_LENGTH;
+
+/** Mint the host's short, human-facing Worker handle without colliding with a live Worker. */
+export function mintHostWorkerId(
+  liveWorkerIds: Iterable<string>,
+  draw: (maxExclusive: number) => number = randomInt,
+): string {
+  const live = new Set(liveWorkerIds);
+  for (let attempt = 0; attempt < HOST_WORKER_ID_SPACE; attempt += 1) {
+    let workerId = "h";
+    for (let index = 0; index < HOST_WORKER_ID_RANDOM_LENGTH; index += 1) {
+      workerId += HOST_WORKER_ID_ALPHABET[draw(HOST_WORKER_ID_ALPHABET.length)]!;
+    }
+    if (!live.has(workerId)) return workerId;
+  }
+  throw new RedskilledWorkerSpecError("redskilled exhausted the host Worker id space");
 }
 
 /** Open a Worker's log for append, or null when it has none / cannot be opened. */
@@ -196,7 +218,8 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
 
   const env = options.env ?? process.env;
   const clock = options.clock ?? (() => new Date().toISOString());
-  const workerId = (spec.worker_id ?? options.workerId ?? randomUUID()).trim() || randomUUID();
+  const workerId = (spec.worker_id ?? options.workerId)?.trim()
+    || mintHostWorkerId(options.liveWorkerIds ?? []);
   const probes = options.probes ?? detectWorkerPlacementProbes(env);
   // The Worker's own output is the project's log, so the daemon opens the file
   // the client named and hands the descriptor to the process it owns. Failing to

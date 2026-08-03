@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/redskilled",
-  "version": "3.3.21",
+  "version": "3.4.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -22,6 +22,7 @@
     "./reclaim": "./src/reclaim.ts",
     "./provision": "./src/provision.ts",
     "./statusline-payload": "./src/statusline-payload.ts",
+    "./supervision": "./src/supervision.ts",
     "./worker-display": "./src/worker-display.ts",
     "./worker-launch": "./src/worker-launch.ts"
   },

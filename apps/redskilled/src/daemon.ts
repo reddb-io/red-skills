@@ -187,6 +187,7 @@ import {
 } from "./live-metrics.js";
 import {
   launchWorker,
+  mintHostWorkerId,
   type LaunchWorkerOptions,
   type LaunchedWorker,
   type RedskilledWorkerSpec,
@@ -1454,7 +1455,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         // template may mention it: an id substituted into an argv, an env or a log
         // path and a different id on the record would be one Worker the host and
         // the work disagree about.
-        const workerId = randomUUID();
+        const workerId = mintHostWorkerId(workers.keys());
         const registration = registrations.get(birth.project_label);
         const spec = workerSpecFromLaunch(
           // The argv comes from the plan (it is the registration's, copied), and
@@ -1912,6 +1913,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       spec,
       admission: admit(spec),
       memoryCeiling,
+      liveWorkerIds: workers.keys(),
       clock,
       onExit: (workerId, code, signal) => {
         const worker = workers.get(workerId);

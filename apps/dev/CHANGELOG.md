@@ -1,5 +1,113 @@
 # @reddb-io/dev
 
+## 3.4.0
+
+### Patch Changes
+
+- 5796860: Stop handing `gh api` the `-R` flag it rejects, which parked landings as broken infrastructure
+
+  `readQueuedPrView` prefixed `-R <repo>` onto whatever the REST plan produced. `-R`
+  belongs to `gh pr view`; `gh api` refuses it outright — `unknown shorthand flag:
+'R' in -R` — and the plan already carries the repository inside its path,
+  `repos/<owner>/<name>/pulls/<n>`.
+
+  So every REST-routed merge confirmation failed before it reached GitHub. The wait
+  loop is deliberately built so an unreadable probe is not a verdict, which is
+  correct and which turned a permanently-failing command into four retries, an
+  exhausted budget, and an issue parked `blocked:infra` telling a human to _"fix the
+  landing infrastructure failure"_ that was never there. Two issues sat in that
+  state (#3182, #3169), one of them the last open ticket of a Spec and the other the
+  fix for a flake blocking the release train.
+
+  The sibling call site, `readSingleObject`, hands `plan.args` straight to `gh` and
+  was always correct.
+
+  The existing test asserted the PATH was present, which `gh -R o/r api
+repos/o/r/pulls/42` satisfies too — so it went on passing while every real probe
+  failed. The new test asserts the flag's ABSENCE.
+  - @reddb-io/github@3.4.0
+  - @reddb-io/shared@3.4.0
+  - @reddb-io/build-info@3.4.0
+  - @reddb-io/red-castle@3.4.0
+  - @reddb-io/redskilled@3.4.0
+  - @reddb-io/redskilled-render@3.4.0
+
+## 3.3.24
+
+### Patch Changes
+
+- 68d8c03: Give the castle and rsp MCP launchers a candidate that resolves outside this repo
+
+  An MCP server is declared once and started from EVERY directory the operator
+  works in — which is almost never this repo. `plugins/dev/.mcp.json` shipped three
+  servers with three different resolution strategies: `navigator` carried the
+  installed-marketplace fallback and worked, while `castle` and `rsp`, declared
+  three lines away, resolved only through `$CODEX_PLUGIN_ROOT` and `$PWD`.
+
+  Outside the repo both are wrong — the env var is unset and `$PWD` is the
+  operator's own project — so the launcher was never found and the host reported a
+  transport failure rather than a missing file:
+
+  ```
+  MCP client for `castle` failed to start: Broken pipe (os error 32),
+  when send initialize request
+  MCP client for `rsp` failed to start: connection closed: initialize response
+  ```
+
+  Both now carry the same `$HOME`-anchored candidate `navigator` already had. A
+  guard (`apps/dev/tests/mcp-launcher-reachability.test.ts`) fails any file-resolving
+  launcher without one, and separately pins the dev plugin's three servers to the
+  same contract — siblings in one file with nothing comparing them is how this
+  shipped.
+  - @reddb-io/github@3.3.24
+  - @reddb-io/shared@3.3.24
+  - @reddb-io/build-info@3.3.24
+  - @reddb-io/red-castle@3.3.24
+  - @reddb-io/redskilled@3.3.24
+  - @reddb-io/redskilled-render@3.3.24
+
+## 3.3.23
+
+### Patch Changes
+
+- dcf085d: Give every pushing workflow a push identity that is not the bot
+
+  A workflow's PUSH identity is not its API identity, and only the push is what
+  GitHub's anti-recursion guard watches. `actions/checkout` persists whatever token
+  it is given as the git credential and defaults to `GITHUB_TOKEN` — so a workflow
+  can hold a PAT, spend it on every API call, open its PR as the PAT identity, and
+  still push as `github-actions[bot]`, leaving every `pull_request` run on that
+  branch parked in `action_required` with every check green.
+
+  The earlier repair moved the PAT to the changesets action's `github-token` input.
+  The PR author changed to the PAT identity, so the fix looked complete, while the
+  commit stayed bot-authored and the release train kept stopping — once per merge
+  to main, which on a busy day is one manual approval per merge.
+
+  `red-release.yml`, `red-toon-watch.yml` and `red-publish.yml` now check out with
+  `secrets.RELEASE_PAT`. A guard (`apps/dev/tests/push-identity-guard.test.ts`)
+  fails any workflow that pushes while checking out as the bot — an ABSENT `token:`
+  fails the same way an explicit one does, because the default is the bot and that
+  silence is how this shipped twice.
+  - @reddb-io/github@3.3.23
+  - @reddb-io/shared@3.3.23
+  - @reddb-io/build-info@3.3.23
+  - @reddb-io/red-castle@3.3.23
+  - @reddb-io/redskilled@3.3.23
+  - @reddb-io/redskilled-render@3.3.23
+
+## 3.3.22
+
+### Patch Changes
+
+- Updated dependencies [8bbd8d4]
+  - @reddb-io/redskilled@3.3.22
+  - @reddb-io/github@3.3.22
+  - @reddb-io/shared@3.3.22
+  - @reddb-io/build-info@3.3.22
+  - @reddb-io/red-castle@3.3.22
+  - @reddb-io/redskilled-render@3.3.22
+
 ## 3.3.21
 
 ### Patch Changes

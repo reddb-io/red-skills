@@ -25,15 +25,27 @@ import {
   commandRedskilledWorker,
   deregisterRedskilledProject,
   ensureRedskilledDaemon,
+  readRedskilledDashboardRender,
   registerRedskilledProject,
   renewRedskilledProject,
   readRedskilledHostState,
   redskilledPresenceAdvice,
+  RedskilledRequestRefusedError,
   RedskilledUnreachableError,
   startRedskilledWorker,
   type RedskilledClientConfig,
 } from "@reddb-io/redskilled/client";
+import {
+  auditRedskilledProvisioning,
+  readRedskilledProvisionFacts,
+  type RedskilledProvisionReport,
+} from "@reddb-io/redskilled/provision";
 import { resolveRedskilledPaths, type RedskilledPaths } from "@reddb-io/redskilled/paths";
+import {
+  readRedskilledUnitStatus,
+  type RedskilledUnitStatus,
+} from "@reddb-io/redskilled/supervision";
+import type { RedskilledDashboard } from "@reddb-io/redskilled-render";
 import type {
   RedskilledProjectRegistration,
   RedskilledProjectRegistrationRequest,
@@ -41,6 +53,7 @@ import type {
 import type { RedskilledWorkerSpec } from "@reddb-io/redskilled/worker-launch";
 import { readRedskilledEvents, type RedskilledHostEvent } from "@reddb-io/redskilled/event-lane";
 import type {
+  RedskilledHostState,
   RedskilledRegistrationLapse,
   RedskilledRegistrationView,
 } from "@reddb-io/redskilled/host-state";
@@ -53,6 +66,10 @@ export { RedskilledDaemonHeldError, RedskilledUnreachableError } from "@reddb-io
 export type { RedskilledWorkerStarted } from "@reddb-io/redskilled/protocol";
 export type {
   RedskilledHostEvent,
+  RedskilledHostState,
+  RedskilledDashboard,
+  RedskilledProvisionReport,
+  RedskilledUnitStatus,
   RedskilledWorkerSpec,
   RedskilledProjectRegistration,
   RedskilledRegistrationView,
@@ -115,6 +132,14 @@ export interface RedskilledBirthPort {
   readonly socketPath: string;
   /** Prove the daemon answers, starting it when it is not yet running. */
   reach(): Promise<void>;
+  /** Read every project and Worker the daemon holds on this machine. */
+  hostState(): Promise<RedskilledHostState>;
+  /** Read the daemon's structured global dashboard, never this project's slice. */
+  hostDashboard(): Promise<RedskilledDashboard>;
+  /** Audit host provisioning without creating a home, bundle, daemon, or unit. */
+  provisionCheck(): Promise<RedskilledProvisionReport>;
+  /** Read whether the optional host supervisor unit is installed and running. */
+  unitStatus(): Promise<RedskilledUnitStatus>;
   /** Ask for one Worker. A refusal throws; the project never spawns instead. */
   start(spec: RedskilledWorkerSpec): Promise<GrantedWorkerBirth>;
   /**
@@ -249,6 +274,30 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
       await ensureRedskilledDaemon(paths, config);
     },
 
+    async hostState() {
+      return await readRedskilledHostState(paths, config);
+    },
+
+    async hostDashboard() {
+      return await readRedskilledDashboardRender(paths, { mode: "global" }, config);
+    },
+
+    async provisionCheck() {
+      const facts = await readRedskilledProvisionFacts({
+        paths,
+        projectRoot: options.root,
+        ...(config.env == null ? {} : { env: config.env }),
+        ...(config.serverCommand == null
+          ? {}
+          : { entryOverride: { serverCommand: config.serverCommand, serverArgs: config.serverArgs } }),
+      });
+      return auditRedskilledProvisioning(facts);
+    },
+
+    async unitStatus() {
+      return readRedskilledUnitStatus(config.env == null ? {} : { env: config.env });
+    },
+
     async start(spec) {
       const started = await startRedskilledWorker(paths, { ...spec, project_label: projectLabel }, config);
       return {
@@ -332,11 +381,18 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
  *
  * A sibling of {@link redskilledUnreachableAdvice} rather than a reuse of it,
  * because the two refusals leave different states behind: that one says no Worker
- * was born, this one says the project has no presence at all. Both name the
- * socket, because "start the daemon" and "fix the client that stopped asking it"
- * are still the two repairs, and the socket is what tells them apart.
+ * was born, this one says the project has no presence at all. Transport silence
+ * names the socket and its reach repair; an answered application refusal preserves
+ * the daemon's reason and never routes the operator to provisioning (#3158).
  */
 export function redskilledRegistrationRefusal(socketPath: string, cause: unknown): string {
+  if (cause instanceof RedskilledRequestRefusedError) {
+    const deadline = standingRegistrationDeadline(cause.refusal);
+    return deadline == null
+      ? `this project was not registered because the redskilled daemon refused it: ${cause.refusal}`
+      : `this project was not registered: ${cause.refusal}; wait for the standing registration to lapse at ` +
+          `${deadline}, or stop the existing registration before retrying.`;
+  }
   const detail = cause instanceof Error ? cause.message : String(cause);
   return (
     `this project was not registered: the redskilled daemon did not answer on ${socketPath}. ` +
@@ -344,6 +400,11 @@ export function redskilledRegistrationRefusal(socketPath: string, cause: unknown
     `that cannot reach the daemon starts nothing rather than launching a demand producer no host admitted, ` +
     `counts or can stop. ${repairFor(cause)} (${detail})`
   );
+}
+
+/** The deadline carried by the daemon's canonical duplicate-registration refusal. */
+function standingRegistrationDeadline(refusal: string): string | undefined {
+  return / standing until (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z):/.exec(refusal)?.[1];
 }
 
 export function redskilledUnreachableAdvice(socketPath: string, cause: unknown): string {

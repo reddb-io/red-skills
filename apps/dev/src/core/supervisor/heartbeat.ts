@@ -103,9 +103,9 @@ export async function emitFleetHeartbeat(
   result: TickResult,
   config: Pick<SupervisorConfig, "runner" | "target" | "shrinkMode" | "halfOpenBaseS" | "halfOpenCapS" | "circuitWindowS">,
 ): Promise<{ heartbeat: FleetHeartbeat; write: FleetHeartbeatEmitResult }> {
-  // Queue depth was fetched once by superviseTick at the start of this tick
-  // and stored in result.queueDepth — reuse it here so there is exactly one
-  // readyQueueDepth call per tick (0 on a stop tick or abandoned tick).
+  // Queue depth was fetched once at the start of the pass and stored in
+  // result.queueDepth — reuse it here so there is exactly one readyQueueDepth
+  // call per pass (0 on a stopped or abandoned pass).
   const readyForAgent = result.queueDepth;
   const epoch = deps.now();
   const churn = updateChurnStats(state, result, epoch, config.circuitWindowS);

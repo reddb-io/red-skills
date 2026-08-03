@@ -102,18 +102,6 @@ export interface SupervisorConfig {
    * (default 3600s = 1 hour). */
   halfOpenCapS: number;
   /**
-   * RED_AFK_UNBLOCK_SWEEP_INTERVAL_S — minimum seconds between periodic dependency
-   * Unblock Sweeps on the supervisor tick (#844, default 60). The boot-time sweep
-   * and the event-driven close-cascade are both best-effort; when a cascade misses
-   * an unblock AND the queue is all dependency-blocked the fleet goes idle and
-   * never re-runs the boot sweep, stranding the dependent forever. Running the
-   * idempotent sweep on the tick (throttled to this interval) self-heals that gap
-   * with no worker spawn. The sweep is cheap (one `gh issue list`, then a per-dep
-   * `gh issue view` only when blocked:dependency issues exist), so the throttle is
-   * a cost guard, not a correctness one. 0 / non-numeric falls back to the default.
-   */
-  unblockSweepIntervalS: number;
-  /**
    * RED_AFK_TRUNK_FRESHNESS_INTERVAL_S — minimum seconds between supervisor
    * refreshes of `origin/<trunk>` into the fleet-owned `red-trunk` mirror
    * (default 60). The first eligible tick refreshes immediately; later ticks
@@ -177,7 +165,6 @@ export const SUPERVISOR_DEFAULTS = {
   progressStaleS: 900,
   halfOpenBaseS: SLOT_CIRCUIT_DEFAULTS.halfOpenBaseS,
   halfOpenCapS: SLOT_CIRCUIT_DEFAULTS.halfOpenCapS,
-  unblockSweepIntervalS: 60,
   trunkFreshnessIntervalS: 60,
   supervisorMaxRestarts: 5,
   supervisorRestartWindowS: 300,
@@ -319,11 +306,6 @@ export function resolveSupervisorConfig(
       SUPERVISOR_DEFAULTS.progressStaleS,
     halfOpenBaseS: num("RED_AFK_HALF_OPEN_BASE_S", SUPERVISOR_DEFAULTS.halfOpenBaseS),
     halfOpenCapS: num("RED_AFK_HALF_OPEN_CAP_S", SUPERVISOR_DEFAULTS.halfOpenCapS),
-    // 0 would run the sweep on every tick — floor back to the default so the
-    // cost guard can never be silently disabled by a typo.
-    unblockSweepIntervalS:
-      num("RED_AFK_UNBLOCK_SWEEP_INTERVAL_S", SUPERVISOR_DEFAULTS.unblockSweepIntervalS) ||
-      SUPERVISOR_DEFAULTS.unblockSweepIntervalS,
     trunkFreshnessIntervalS:
       num("RED_AFK_TRUNK_FRESHNESS_INTERVAL_S", SUPERVISOR_DEFAULTS.trunkFreshnessIntervalS) ||
       parsePositiveNumber(getCfg("afk.trunk_freshness_interval_s")) ||

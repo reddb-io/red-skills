@@ -12,6 +12,13 @@
 // start — the session-boot clearer — and one per interval afterwards. It shares
 // nothing with the boot suite, so no unrelated halt can starve it, and it costs
 // a single `gh issue list` on a repo with nothing blocked.
+//
+// The periodic pass also closes the idle-queue stranding failure: when a close
+// cascade misses an unblock and every remaining Ticket is dependency-blocked,
+// ready-for-agent falls to zero, no Worker is born, and no Worker boot can run
+// another sweep. Without this independent belt the dependent is stranded
+// forever; the resident's idempotent pass self-heals it within one interval
+// without requiring a Worker birth.
 import { join } from "node:path";
 import {
   createEnginePaths,

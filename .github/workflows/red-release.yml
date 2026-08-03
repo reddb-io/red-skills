@@ -45,6 +45,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          # THE PUSH IDENTITY, and it is not the same thing as the API identity.
+          # `actions/checkout` persists whatever token it is given as the git
+          # credential, defaulting to GITHUB_TOKEN — so a workflow can hold a PAT,
+          # spend it on every API call, open the PR as the PAT identity, and still
+          # PUSH as `github-actions[bot]`. GitHub's anti-recursion guard watches
+          # the push, not the API call, which parks every `pull_request` run in
+          # `action_required`.
+          #
+          # #3168 moved the PAT to the action's `github-token` input and the PR
+          # author changed to the PAT identity — so the repair looked complete
+          # while the commit stayed bot-authored and the runs kept parking. Both
+          # halves are needed: this line owns the push, `github-token` owns the API.
+          token: ${{ secrets.RELEASE_PAT }}
           fetch-depth: 0
           fetch-tags: true
 

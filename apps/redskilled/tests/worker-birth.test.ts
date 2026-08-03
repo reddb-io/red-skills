@@ -9,7 +9,12 @@ import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { isRedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { evaluateWorkerAdmission, UNBOUNDED_HOST_CEILING } from "../src/admission.js";
-import { launchWorker, RedskilledWorkerSpecError, type RedskilledWorkerSpec } from "../src/worker-launch.js";
+import {
+  launchWorker,
+  mintHostWorkerId,
+  RedskilledWorkerSpecError,
+  type RedskilledWorkerSpec,
+} from "../src/worker-launch.js";
 import { detectWorkerPlacementProbes, type WorkerPlacementProbes } from "../src/worker-placement.js";
 
 const running: RedskilledDaemon[] = [];
@@ -54,6 +59,8 @@ describe("worker birth through the socket", () => {
 
     expect(isRedskilledWorkerView(started.worker)).toBe(true);
     expect(started.worker.project_label).toBe("acme/widgets");
+    expect(started.worker.worker_id).toMatch(/^h[A-Z0-9]{4}$/);
+    expect(started.worker.worker_id).toHaveLength(5);
     expect(started.worker.pid).toBeGreaterThan(0);
     expect(started.worker.workspace_path).toBe(workspace);
 
@@ -135,6 +142,34 @@ describe("worker birth through the socket", () => {
       startRedskilledWorker(paths, { ...proofSpec(workspace), project_label: "" }, { readyTimeoutMs: 5_000 }),
     ).rejects.toThrow(/project_label/);
     expect(daemon.workerCount()).toBe(0);
+  });
+
+  it("keeps a project-minted Worker id distinguishable from a host fallback", async () => {
+    const paths = await sessionPaths();
+    const workspace = await scratch("redskilled-workspace-");
+    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    running.push(daemon);
+
+    const started = await startRedskilledWorker(
+      paths,
+      proofSpec(workspace, { worker_id: "wVWHA" }),
+      { readyTimeoutMs: 5_000 },
+    );
+
+    expect(started.worker.worker_id).toBe("wVWHA");
+  });
+});
+
+describe("host-minted Worker ids", () => {
+  it("retries a collision against the live set and stays short", () => {
+    const draws = [0, 0, 0, 0, 0, 0, 0, 1];
+    const workerId = mintHostWorkerId(["hAAAA", "wVWHA"], () => draws.shift()!);
+
+    expect(workerId).toBe("hAAAB");
+    expect(workerId).toHaveLength(5);
+    expect(workerId.startsWith("h")).toBe(true);
+    expect(workerId.startsWith("w")).toBe(false);
+    expect(draws).toEqual([]);
   });
 });
 

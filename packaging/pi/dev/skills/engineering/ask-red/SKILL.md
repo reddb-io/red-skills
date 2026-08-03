@@ -111,7 +111,9 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
 
 Capability references registered by owner:
-`castle` MCP (the canonical castle interface) ->
+`castle` MCP (the canonical project interface and read-only host-daemon
+diagnostic surface: `host_state`, `host_dashboard`, `host_provision_check`,
+`host_unit_status`) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
@@ -151,6 +153,8 @@ through `/memory:view`, `memory docs reference-graph`, and
   feature-work routes. `/red-setup` owns `.red/config.yaml` authoring through its
   shipped config template and post-write loader check.
 - Execution-daemon provisioning is a setup route, not a feature-work one:
+  diagnose through the castle MCP's read-only `host_provision_check` and other
+  `host_*` tools first; no castle tool provisions or reclaims the host.
   `/red-setup` (Section E3) provisions `redskilled` by running `redskilled
   provision`, and `/red-doctor` (check 24) reports whether the host is
   provisioned. The daemon's home `~/.red/redskilled/` belongs to `redskilled`

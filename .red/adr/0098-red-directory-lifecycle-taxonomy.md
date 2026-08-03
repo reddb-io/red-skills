@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Amends ADR 0095 by moving the shared Repo store from the `.red/` root to the durable state tier.
+Accepted. Amends ADR 0095 by moving the shared Repo store from the `.red/` root to the durable state tier. Amendment 1 separates host-daemon, Worker, and dispatch log ownership.
 
 ## Context
 
@@ -32,9 +32,10 @@ Every writer under `.red/state/`, `.red/tmp/`, or `.red/researches/` owns a name
 | `.red/state/castle/` | durable state | castle engine | Supervisor/worker state snapshots, fleet registry, history, restart counters, and circuit-breakers that must survive tmp cleanup. **Amended 2026-07-21:** supersedes the original `.red/state/afk/` row — ADR 0105's boot migration moved the durable namespace to `state/castle/`, and no `state/afk/` writer remains. |
 | `.red/state/rsp/` | durable state | rsp | Telemetry spool, status summaries, and resident process metadata. |
 | `.red/state/statusline/` | durable state | dev/statusline | Statusline caches that should survive tmp cleanup. |
+| `.red/state/deaths/` | durable state | checkout launchers and Workers | Death records, live anchors, and attributed un-trap-able deaths for processes acting for this checkout. The `redskilled` daemon is expressly not a writer here; its corresponding lane is host-scoped (Amendment 1). |
 | `.red/state/branch-lock.yaml` | durable state | branch lock | Local branch lock state. |
 | `.red/state/red-skills.rdb` | durable state | shared Repo store | The shared RedDB file used by memory and rsp collections. This supersedes ADR 0095's `.red/red.rdb` location and the temporary `.red/tmp/red-skills.rdb` write-contract location. |
-| `.red/tmp/workers/` | disposable scratch | AFK | AFK worker lanes. **Amended 2026-07-21:** naming is flat `{worker}/{issue}` — the `-a{n}` attempt ordinal is retired (ADR 0103); stale workspaces are swept by the AFK orphan policy. **Amended 2026-07-22:** each workspace owns its git checkout at the conventional direct child `{worker}/{issue}/worktree`; castle-branded nested worktree paths are hygiene-only inputs until their TTL window expires. |
+| `.red/tmp/workers/` | disposable scratch | Worker | Per-project Worker lanes. **Amended 2026-07-21:** naming is flat `{id}/{issue}` — the `-a{n}` attempt ordinal is retired (ADR 0103); stale workspaces are swept by the AFK orphan policy. **Amended 2026-07-22:** each workspace owns its git checkout at the conventional direct child `{id}/{issue}/worktree`; castle-branded nested worktree paths are hygiene-only inputs until their TTL window expires. **Amended 2026-08-03:** the Worker's structured lifecycle log is `{id}/worker.log.toonl`, distinct from dated raw process captures (Amendment 1). |
 | `.red/tmp/rsp/` | disposable scratch | rsp | Ephemeral rsp guards (resident wake lock). Registered 2026-07-21 to end the loose `rsp.wake.lock` at the tmp root. |
 | `.red/tmp/go-workers/` | disposable scratch | `/go` | Disposable issue workers. Existing collision-safe worker/attempt naming stays. |
 | `.red/tmp/scout-workers/` | disposable scratch | scout | Scout workers. Existing collision-safe worker/attempt naming stays. |
@@ -47,7 +48,7 @@ Every writer under `.red/state/`, `.red/tmp/`, or `.red/researches/` owns a name
 | `.red/tmp/worktrees/cascade/` | disposable scratch | cascade | Cascade rebase/follow-up worktrees. |
 | `.red/tmp/worktrees/adopt/` | disposable scratch | adoption/requeue | Temporary adoption and no-agent landing worktrees. |
 | `.red/tmp/worktrees/docs/` | disposable scratch | `/start` docs finalizer | Temporary docs landing worktrees. |
-| `.red/tmp/logs/<yyyy-mm-dd>/` | disposable scratch | sessions | Ad-hoc session logs named `<lane>-<slug>.log`. |
+| `.red/tmp/logs/<yyyy-mm-dd>/` | disposable scratch | dispatching sessions | Raw process-stream captures owned by the session that requested the process. `/go` and `/afk` dispatches return `dispatch-<ts>-<id>.log`; registration captures use `worker-<daemon-worker-id>.log`. These are not Worker structured lanes or daemon state (Amendment 1). |
 | `.red/tmp/scratch/` | disposable scratch | sessions | Free-form short-lived scratch. |
 | `.red/tmp/diagnostics/` | disposable scratch | dev runtime | Failure diagnostics with age-based cleanup. |
 | `.red/researches/` | durable generated knowledge | `/research` | Date-disambiguated reports; gitignored until curated elsewhere. |
@@ -80,6 +81,72 @@ researches/
 ```
 
 Tracked knowledge/config and plugin definitions remain committable. The self-ignore contract prevents machine state from entering VCS; the lane registry prevents writers from colliding inside the local tree.
+
+## Amendment 1 — log ownership has three layers (#3201)
+
+The original registry described logs as if one CLI session owned every process
+and every record. The host daemon introduced a higher, longer-lived scope, while
+the Worker already had its own structured lane and a dispatch retained a raw
+process capture. A filename called “the log” without an owner can therefore lead
+a reader to an unrelated run. This amendment supersedes the original generic
+“sessions” policy for `.red/tmp/logs/` and makes the three owners non-overlapping.
+
+### 1. The host daemon
+
+`redskilled` is host-scoped: exactly one daemon serves the machine and owns
+Worker process birth, placement, limits, and host-level death evidence across
+all projects. Its home is `~/.red/redskilled/`, outside every checkout, and
+`provisionRedskilledHome` is the only creator (ADR 0130 Amendment 2). Its
+death-record lane is
+`~/.red/redskilled/state/deaths/deaths.toonl`.
+
+A project's `.red/` must never contain daemon logs. The daemon outlives any one
+project and is shared by all of them; putting its evidence under a project's
+home would let that project's cleanup delete evidence belonging to other
+projects. The checkout lane `.red/state/deaths/` consequently holds only
+project-side launcher and Worker records. The daemon writes its own death to the
+host lane above, never to a checkout's death lane.
+
+The daemon may physically open a capture file under a project's `.red/tmp/logs/`
+because it owns the Worker's stdout and stderr descriptors. That is an
+implementation detail, not lane ownership: the capture is named, retained, and
+returned by the project session that requested the process, and it remains 100%
+disposable project scratch. It is not daemon history.
+
+### 2. The Worker
+
+A Worker is per-project and transient. It owns
+`.red/tmp/workers/{id}/`; its one issue workspace is
+`.red/tmp/workers/{id}/{issue}/`, and the git Worktree is the conventional
+direct child `.red/tmp/workers/{id}/{issue}/worktree` (ADR 0103 and ADR 0105 as
+re-amended). Deleting this Worker directory after its liveness and issue-state
+guards clear deletes only that Worker's disposable artifacts.
+
+The canonical Worker lifecycle reader starts at
+`.red/tmp/workers/{id}/worker.log.toonl`. It contains structured Worker lifecycle
+events such as claims, phase changes, validation, and completion; the sibling
+`liveness.toonl` remains a separately protected heartbeat lane. For the
+issue-scoped inner run, readers use the records inside
+`.red/tmp/workers/{id}/{issue}/`, including `agent.log.toonl`, rather than a
+dated capture guessed from the Worker id. These lanes contain structured Worker
+lifecycle and inner-agent evidence, not the raw combined process stream.
+
+### 3. The dispatching session
+
+The `/go` or `/afk` session that asks the daemon to start a Worker owns the raw
+capture it hands back:
+`.red/tmp/logs/<yyyy-mm-dd>/dispatch-<ts>-<id>.log`. It contains the stdout and
+stderr of exactly that dispatched process, including early bootstrap output that
+may precede the Worker's own structured records. It does not contain the
+structured Worker lifecycle, the daemon's host history, or output from another
+dispatch.
+
+The log path returned by that dispatch is the authoritative post-mortem handle.
+A reader must not infer a dated filename from a Worker id, reuse a path retained
+from an earlier dispatch, or substitute the Worker's structured lane. A
+registration-lane process follows the same ownership rule but is captured as
+`worker-<daemon-worker-id>.log`; that daemon-minted id is an address for the host
+process, not the project's Worker id.
 
 ## Consequences
 

@@ -2,6 +2,7 @@
 import { createClaimTools, type ClaimDependencies } from "./mcp/claim.js";
 import { createMergeTools, type MergeDependencies } from "./mcp/merge.js";
 import { createHitlTools, type HitlDependencies } from "./mcp/hitl.js";
+import { createHostTools, type HostDependencies } from "./mcp/host.js";
 import { applyOutputContracts } from "./mcp/contracts.js";
 import { createProjectTools, type ProjectDependencies } from "./mcp/project.js";
 import { createGateTools, type GateDependencies } from "./mcp/gate.js";
@@ -91,6 +92,7 @@ export type {
 export interface CastleMcpDependencies
   extends
     ProjectDependencies,
+    HostDependencies,
     ObservabilityDependencies,
     DeadendDependencies,
     WorkerDependencies,
@@ -125,6 +127,7 @@ export function createCastleMcpTools(
 ): CastleMcpTool[] {
   const tools = [
     ...createProjectTools(deps),
+    ...createHostTools(deps),
     ...createObservabilityTools(deps),
     ...createDeadendTools(deps),
     ...createWorkerTools(deps),

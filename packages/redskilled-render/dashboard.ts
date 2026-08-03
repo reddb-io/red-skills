@@ -24,7 +24,7 @@
  * own — the memory ceiling and the Worker slots — and says nothing about the ones
  * it does not, because a plausible zero is worse than a missing column.
  */
-import { clamp, formatBytes, formatCount, formatDuration, formatRate, pad, width } from "./format.js";
+import { clamp, formatBytes, formatCount, formatDuration, formatRate, pad, shortModel, width } from "./format.js";
 import {
   BUDGET_BAND_MARK,
   BUDGET_SPENT_MARK,
@@ -190,6 +190,8 @@ const BAR_DONE = "█";
 const BAR_CURSOR = "▶";
 const BAR_FAILED = "✗";
 const BAR_AHEAD = "░";
+const LANDING_PHASES = new Set(["gate", "push-pr", "merge", "cascade"]);
+const NO_AGENT_ORIGINS = new Set(["requeue"]);
 
 /**
  * The finished dashboard. PURE — payload and options in, header and rows out.
@@ -255,17 +257,21 @@ export function renderRedskilledDashboard(
  * zero: `tks=0` is a Worker that has spent nothing, and a Worker whose bundle
  * publishes no display record has spent an unknown amount.
  */
-function workerCells(
+export function workerCells(
   worker: RedskilledRenderWorker,
-  options: RedskilledDashboardOptions,
+  options: Pick<RedskilledDashboardOptions, "mode">,
   generatedAt: string,
 ): RedskilledDashboardCells {
   const display = worker.display ?? REDSKILLED_RENDER_DISPLAY_ABSENT;
-  const run = [display.runner, display.model, display.effort].filter((part): part is string => Boolean(part)).join(" ");
+  const run = [display.runner, display.model == null ? null : shortModel(display.model), display.effort]
+    .filter((part): part is string => Boolean(part))
+    .join(" ");
+  const landing = display.phase != null && LANDING_PHASES.has(display.phase);
+  const noAgent = landing || (display.origin != null && NO_AGENT_ORIGINS.has(display.origin));
   return {
     wid: options.mode === "global" ? `${worker.project_label}:${worker.worker_id}` : worker.worker_id,
     run: run === "" ? "" : `run=${run}`,
-    org: display.origin == null ? "" : `org=${display.origin}`,
+    org: landing ? "org=landing" : display.origin == null ? "" : `org=${display.origin}`,
     iss: display.issue == null ? "" : `iss=${display.issue}`,
     bar: progressBar(display),
     phase: [display.phase, display.step].filter((part): part is string => Boolean(part)).join("·"),
@@ -274,13 +280,18 @@ function workerCells(
     // certainly not a figure this module could have extrapolated off the bar
     // beside it. The absence is the honest answer and it is legible as one.
     eta: display.eta == null ? "" : `eta=${formatDuration(display.eta * 1000)}`,
+    // Both sides of this merge are additive and neither subsumes the other: the
+    // declared-wait cell answers "is this Worker waiting or gone?", and the
+    // `noAgent` gate answers "is there an agent to have produced a figure at
+    // all?". Keeping only one would either redraw a waiting Worker as a silent
+    // one or print a diffstat for a Worker that has no agent.
     hb: declaredWaitCell(display, generatedAt) ?? `hb=${display.heartbeat ?? "?"}`,
-    loc: formatSignedPair(display.added, display.removed),
-    tks: display.tokens == null ? "" : `tks=${formatCount(display.tokens)}`,
+    loc: noAgent ? "" : formatSignedPair(display.added, display.removed),
+    tks: noAgent || display.tokens == null ? "" : `tks=${formatCount(display.tokens)}`,
     ctx: display.context == null ? "" : `ctx=${formatCount(display.context)}`,
-    tls: display.tools == null ? "" : `tls=${display.tools}`,
-    rsn: display.reasoning == null ? "" : `rsn=${display.reasoning}`,
-    txt: display.text == null ? "" : `txt=${display.text}`,
+    tls: noAgent || display.tools == null ? "" : `tls=${display.tools}`,
+    rsn: noAgent || display.reasoning == null ? "" : `rsn=${display.reasoning}`,
+    txt: noAgent || display.text == null ? "" : `txt=${display.text}`,
   };
 }
 

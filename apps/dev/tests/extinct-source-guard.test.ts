@@ -258,6 +258,20 @@ describe("a module named for an extinct concept fails, not only a reintroduced s
   });
 });
 
+describe("the retired per-project supervisor loop stays extinct (#3161)", () => {
+  it.each(["superviseTick", "runSupervisor"])("rejects the retired %s symbol", (symbol) => {
+    const findings = collectExtinctSourceFindingsFromFiles([
+      {
+        relativePath: "apps/dev/src/core/project-loop.ts",
+        sourceText: `export async function ${symbol}(): Promise<void> {}`,
+      },
+    ]);
+
+    expect(findings.map((finding) => finding.match)).toContain(symbol);
+    expect(findings.every((finding) => finding.noun === "supervisor")).toBe(true);
+  });
+});
+
 describe("findings only decrease (#2795)", () => {
   const path = "apps/dev/src/core/worker-attribution.ts";
   const findings = collectExtinctSourceFindingsFromFiles([{ relativePath: path, sourceText: FLEET_READER }]);
@@ -422,6 +436,8 @@ function nameProbeFor(id: string): string {
     "attempt-keyed-accounting": `export function attemptUsage(slot: SlotState): AttemptBudgets { return {}; }`,
     "fleet-keyed-accounting": `export function sampleFleetPeakRss(state: SupervisorState): void {}`,
     "project-supervisor-naming": `export async function spawnSupervisor(opts: SupervisorEntryLookup): Promise<number> { return 0; }`,
+    "project-supervisor-tick": `export async function superviseTick(): Promise<void> {}`,
+    "project-supervisor-loop": `export async function runSupervisor(): Promise<void> {}`,
   };
   const probe = probes[id];
   if (!probe) throw new Error(`no probe for extinct name ${id} — add one when adding an inventory entry`);

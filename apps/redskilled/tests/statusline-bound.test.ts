@@ -29,6 +29,7 @@ import {
   renderRedskilledStatusline,
   renderRedskilledStatuslineAbsence,
   type RedskilledStatuslineOptions,
+  width,
 } from "@reddb-io/redskilled-render";
 import type { RedskilledWorkerLogLine } from "../src/worker-log.js";
 
@@ -111,7 +112,7 @@ describe("the size of a statusline answer", () => {
       for (const workerCount of [0, 1, 4, 40, 500]) {
         const render = renderRedskilledStatusline(crowdedPayload(workerCount), taste);
         expect(render.lines.length).toBeLessThanOrEqual(bound.max_lines);
-        for (const line of render.lines) expect([...line].length).toBeLessThanOrEqual(bound.max_line_width);
+        for (const line of render.lines) expect(width(line)).toBeLessThanOrEqual(bound.max_line_width);
         expect(redskilledStatuslineCharacters(render)).toBeLessThanOrEqual(bound.max_characters);
       }
     }

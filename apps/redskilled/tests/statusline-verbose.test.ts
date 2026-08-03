@@ -29,6 +29,7 @@ import {
   REDSKILLED_STATUSLINE_DEFAULTS,
   renderRedskilledStatusline,
   type RedskilledStatuslineOptions,
+  width,
 } from "@reddb-io/redskilled-render";
 import { buildStatuslinePayload, type RedskilledStatuslinePayload } from "../src/statusline-payload.js";
 import type { RedskilledWorkerLogLine } from "../src/worker-log.js";
@@ -133,11 +134,11 @@ describe("the verbose statusline", () => {
     const render = renderRedskilledStatusline(payload, options({ project: "acme/widgets", verbose: true }));
 
     expect(render.verbose).toBe(true);
-    expect(render.lines).toHaveLength(3);
+    expect(render.lines).toHaveLength(5);
     expect(render.lines[0]).toBe(render.line);
     expect(render.lines[1]).toContain("w-1");
-    expect(render.lines[1]).toContain("running the gate: 41 files");
-    expect(render.lines[2]).toContain("waiting on PR checks");
+    expect(render.lines[2]).toContain("running the gate: 41 files");
+    expect(render.lines[4]).toContain("waiting on PR checks");
   });
 
   it("gives each Worker a second line in the global mode, still naming its owner", () => {
@@ -153,11 +154,11 @@ describe("the verbose statusline", () => {
     );
 
     expect(render.detail).toBe("workers");
-    expect(render.lines).toHaveLength(3);
+    expect(render.lines).toHaveLength(5);
     expect(render.lines[1]).toContain("acme/widgets:w-1");
-    expect(render.lines[1]).toContain("gate green");
-    expect(render.lines[2]).toContain("acme/gadgets:w-2");
-    expect(render.lines[2]).toContain("rebasing onto main");
+    expect(render.lines[2]).toContain("gate green");
+    expect(render.lines[3]).toContain("acme/gadgets:w-2");
+    expect(render.lines[4]).toContain("rebasing onto main");
   });
 
   it("renders no empty or broken second line for a Worker that has logged nothing", () => {
@@ -171,7 +172,7 @@ describe("the verbose statusline", () => {
 
     const render = renderRedskilledStatusline(payload, options({ project: "acme/widgets", verbose: true }));
 
-    expect(render.lines).toHaveLength(1);
+    expect(render.lines).toHaveLength(3);
     expect(render.lines[0]).toBe(render.line);
     for (const line of render.lines) expect(line.trim()).not.toBe("");
   });
@@ -191,14 +192,14 @@ describe("the verbose statusline", () => {
       options({ project: "acme/widgets", verbose: true, maxWidth: 41 }),
     );
 
-    expect(render.lines).toHaveLength(2);
+    expect(render.lines).toHaveLength(3);
     for (const line of render.lines) {
       expect(line).not.toContain("\n");
-      expect([...line].length).toBeLessThanOrEqual(41);
+      expect(width(line)).toBeLessThanOrEqual(41);
     }
     // Collapsed, not re-interpreted: the words survive in the order published.
-    expect(render.lines[1]).toContain("first second");
-    expect(render.lines[1].endsWith("…")).toBe(true);
+    expect(render.lines[2]).toContain("first second");
+    expect(render.lines[2].endsWith("…")).toBe(true);
   });
 
   it("annotates nothing once the line has degraded past the Workers", () => {
@@ -255,7 +256,7 @@ describe("the line the Worker publishes", () => {
     const render = await readRedskilledStatuslineString(paths, asked, { sessionProject: "acme/widgets" });
     expect(isRedskilledStatuslineRender(render)).toBe(true);
     expect(render.lines).toEqual(renderRedskilledStatusline(payload, asked).lines);
-    expect(render.lines[1]).toContain(opaque);
+    expect(render.lines[2]).toContain(opaque);
   });
 
   it("is refused from a session in another project, and never stored", async () => {
@@ -323,9 +324,9 @@ describe("the line the Worker publishes", () => {
     expect(code).toBe(0);
     expect(written).toHaveLength(1);
     const lines = written[0].trimEnd().split("\n");
-    expect(lines).toHaveLength(3);
-    expect(lines[1]).toContain("busy in acme/widgets");
-    expect(lines[2]).toContain("busy in acme/gadgets");
+    expect(lines).toHaveLength(5);
+    expect(lines[2]).toContain("busy in acme/widgets");
+    expect(lines[4]).toContain("busy in acme/gadgets");
 
     // The renderer could not open a foreign project's log even if it wanted to:
     // it is a pure function of the payload and reaches no filesystem at all.

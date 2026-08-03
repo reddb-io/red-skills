@@ -1,5 +1,37 @@
 # @reddb-io/rsp
 
+## 3.4.0
+
+### Patch Changes
+
+- @reddb-io/shared@3.4.0
+- @reddb-io/build-info@3.4.0
+- @reddb-io/red-castle@3.4.0
+
+## 3.3.24
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.24
+- @reddb-io/build-info@3.3.24
+- @reddb-io/red-castle@3.3.24
+
+## 3.3.23
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.23
+- @reddb-io/build-info@3.3.23
+- @reddb-io/red-castle@3.3.23
+
+## 3.3.22
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.22
+- @reddb-io/build-info@3.3.22
+- @reddb-io/red-castle@3.3.22
+
 ## 3.3.21
 
 ### Patch Changes

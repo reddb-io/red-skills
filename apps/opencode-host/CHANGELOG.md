@@ -1,5 +1,41 @@
 # @reddb-io/red-skills
 
+## 3.4.0
+
+### Minor Changes
+
+- 8bc025a: The castle MCP can now inspect the host-scoped `redskilled` daemon without
+  leaving its tool surface. Four read-only tools expose the machine-wide state,
+  global dashboard, provisioning health check, and optional supervisor-unit
+  status. Host mutations remain operator-only: castle exposes neither provisioning
+  nor reclaim, and the daemon wire protocol gains no command.
+
+### Patch Changes
+
+- @reddb-io/shared@3.4.0
+- @reddb-io/build-info@3.4.0
+
+## 3.3.24
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.24
+- @reddb-io/build-info@3.3.24
+
+## 3.3.23
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.23
+- @reddb-io/build-info@3.3.23
+
+## 3.3.22
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.22
+- @reddb-io/build-info@3.3.22
+
 ## 3.3.21
 
 ### Patch Changes
