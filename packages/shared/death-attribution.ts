@@ -72,7 +72,13 @@ export {
 export const DEATH_ATTRIBUTION_VERSION = 1;
 
 /** Who ended the process. Five classes, one of which is honest ignorance. */
-export type DeathSenderClass = "oomd" | "user-signal" | "parent-death" | "teardown" | "unknown";
+export type DeathSenderClass =
+  | "oomd"
+  | "user-signal"
+  | "parent-death"
+  | "teardown"
+  | "boot-refused"
+  | "unknown";
 
 /**
  * How far the evidence goes.
