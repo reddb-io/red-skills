@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { readRedskilledHostState } from "../src/client.js";
 import { isRedskilledHostState } from "../src/host-state.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
+import { resolveHostCeiling } from "../src/admission.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 
 const running: RedskilledDaemon[] = [];
@@ -44,7 +45,8 @@ function view(worker_id: string, project_label: string, pid: number) {
 describe("redskilled host state", () => {
   it("answers a client over the socket with an empty, well-formed host state", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, daemonVersion: "1.2.3" });
+    const ceiling = resolveHostCeiling({}, 16_000_000_000, { config: { workerCeiling: "6" } });
+    const daemon = await startRedskilledDaemon({ paths, daemonVersion: "1.2.3", ceiling });
     running.push(daemon);
 
     const state = await readRedskilledHostState(paths, { readyTimeoutMs: 5_000 });
@@ -57,6 +59,11 @@ describe("redskilled host state", () => {
     expect(state.session_key_hash).toMatch(/^[0-9a-f]{12}$/);
     expect(state.protocol_version).toBe(1);
     expect(state.pid).toBe(process.pid);
+    expect(state.ceiling).toMatchObject({
+      worker_count: 6,
+      worker_source: "home-config",
+      memory_source: "derived-default",
+    });
   });
 
   it("carries the host identity as a label, never as the socket's key", async () => {

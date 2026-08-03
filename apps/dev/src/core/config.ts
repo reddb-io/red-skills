@@ -768,6 +768,17 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
     };
   }
 
+  const misplacedHostKeys = Object.keys(parsed)
+    .filter((key) => key === "plugins.dev.redskilled" || key.startsWith("plugins.dev.redskilled."))
+    .sort();
+  for (const key of misplacedHostKeys) {
+    warn(
+      `[afk:config] warn: \`${key}\` is host-scoped and is ignored in project config ${path}; ` +
+        `declare it under \`plugins.dev.redskilled\` in ~/.red/config.yaml instead`,
+    );
+    delete parsed[key];
+  }
+
   // Retired keys are named, not silently carried (ADR 0117). Reported and warned
   // BEFORE the activation gate so a disabled directory still learns its config
   // is stale, and dropped below so no accessor can ever read one back.

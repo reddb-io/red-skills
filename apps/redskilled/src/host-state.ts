@@ -13,6 +13,7 @@ import {
   isRedskilledBudgetAccounting,
   type RedskilledBudgetAccounting,
 } from "./budget-accounting.js";
+import type { RedskilledHostCeiling } from "./admission.js";
 import { isRedskilledScopeState, type RedskilledScopeState } from "./machine-scope.js";
 import {
   isRedskilledProjectRegistration,
@@ -264,6 +265,8 @@ export interface RedskilledHostState {
   readonly session_key_hash: string;
   readonly pid: number;
   readonly started_at: string;
+  /** The machine-wide limits this daemon enforces, including each origin. */
+  readonly ceiling?: RedskilledHostCeiling;
   /**
    * The scope this daemon believes it holds, and the record that proves it.
    *
@@ -304,6 +307,8 @@ export interface BuildHostStateInput {
   readonly sessionKeyHash: string;
   readonly pid: number;
   readonly startedAt: string;
+  /** The resolved host policy. Older callers may still provide only its bytes. */
+  readonly ceiling?: RedskilledHostCeiling;
   /** The scope block; absent leaves the document without one rather than inventing it. */
   readonly scope?: RedskilledScopeState;
   readonly workers?: readonly RedskilledWorkerView[];
@@ -366,6 +371,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     session_key_hash: input.sessionKeyHash,
     pid: input.pid,
     started_at: input.startedAt,
+    ...(input.ceiling == null ? {} : { ceiling: input.ceiling }),
     ...(input.scope == null ? {} : { scope: input.scope }),
     workers,
     projects: [...counts.entries()]
@@ -378,7 +384,9 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     // block at all, so a reader never has to tell an empty list from a daemon too
     // old to keep one.
     ...(input.lapses == null || input.lapses.length === 0 ? {} : { lapsed_registrations: [...input.lapses] }),
-    budget_accounting: buildBudgetAccounting(workers, { hostCeilingBytes: input.hostCeilingBytes ?? null }),
+    budget_accounting: buildBudgetAccounting(workers, {
+      hostCeilingBytes: input.ceiling?.memory_bytes ?? input.hostCeilingBytes ?? null,
+    }),
     upgrade: buildUpgradeState(input),
   };
 }
@@ -478,6 +486,7 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     typeof state.session_key_hash === "string" &&
     Number.isInteger(state.pid) &&
     typeof state.started_at === "string" &&
+    (state.ceiling === undefined || isHostCeiling(state.ceiling)) &&
     Array.isArray(state.workers) &&
     Array.isArray(state.projects) &&
     isRedskilledBudgetAccounting(state.budget_accounting) &&
@@ -494,6 +503,17 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     // make an older daemon's complete answer read as malformed — while a field
     // that IS there and is the wrong shape still fails closed.
     (state.upgrade === undefined || isRedskilledUpgradeState(state.upgrade));
+}
+
+function isHostCeiling(value: unknown): value is RedskilledHostCeiling {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const ceiling = value as Record<string, unknown>;
+  const origins = new Set(["flag", "environment", "home-config", "derived-default"]);
+  return (ceiling.memory_bytes === null || typeof ceiling.memory_bytes === "number") &&
+    (ceiling.worker_count === null || typeof ceiling.worker_count === "number") &&
+    (ceiling.source === "declared" || ceiling.source === "host-fraction") &&
+    (ceiling.memory_source === undefined || origins.has(String(ceiling.memory_source))) &&
+    (ceiling.worker_source === undefined || origins.has(String(ceiling.worker_source)));
 }
 
 /** True when `value` is a complete version block. */

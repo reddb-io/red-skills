@@ -29,6 +29,7 @@ import {
   type RedskilledClientConfig,
 } from "./client.js";
 import { isResolvedRedskilledEntry } from "./daemon-entry.js";
+import { readRedskilledHostConfig, resolveRedskilledHostSettings } from "./host-config.js";
 import {
   auditRedskilledProvisioning,
   installRedskilledUserUnit,
@@ -38,7 +39,6 @@ import {
   renderRedskilledUserUnit,
 } from "./provision.js";
 import {
-  DEFAULT_REDSKILLED_IDLE_MS,
   startRedskilledDaemon,
   type RedskilledBalanceRegistration,
   type RedskilledQueueArming,
@@ -101,6 +101,8 @@ Runs the daemon in this process. Every path is a flag and none is derived
   --session-key-hash <hex>    publishable session identity
   --machine-id-hash <hex>     publishable host label
   --machine-claim <path>      the machine-wide claim record
+  --worker-ceiling <n>        host-wide Worker slots across every project
+  --memory-ceiling <size>     host-wide Worker memory budget
   --idle-ms <n>               exit after this long with no work
   --daemon-version <v>        the version this daemon reports as
   --queue-endpoint <url>      where the queue poll asks; GitHub's when absent
@@ -146,9 +148,10 @@ with no unit is a supported configuration (ADR 0130 rule 7). Defaults to status.
 Makes a machine with no prior state ready, and prints the audit. Idempotent: a
 second run creates nothing and reports the same verdicts.
 
-The host-scoped home is created only when a declared workspace target reads it
+The host-scoped state home is created only when a declared workspace target reads it
 (the \`host\` preset, or a custom parent under the home). The daemon never reads
-the home, so the default \`local\` preset needs none — and never gets an empty one.
+that state directory, so the default \`local\` preset needs none — and never gets
+an empty one. Host policy is read separately from ~/.red/config.yaml.
 
   --check         read-only; creates and starts nothing
   --no-start      make the host ready without starting the daemon
@@ -186,6 +189,8 @@ const SERVE_FLAGS = {
   "session-key-hash": { kind: "value", coerce: (raw: string) => raw },
   "machine-id-hash": { kind: "value", coerce: (raw: string) => raw },
   "machine-claim": { kind: "value", coerce: (raw: string) => raw },
+  "worker-ceiling": { kind: "value", coerce: (raw: string) => raw },
+  "memory-ceiling": { kind: "value", coerce: (raw: string) => raw },
   "idle-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
   "daemon-version": { kind: "value", coerce: (raw: string) => raw },
   "queue-endpoint": { kind: "value", coerce: (raw: string) => raw },
@@ -374,6 +379,15 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
 
   if (command === "serve") {
     const { values } = parseFlags(args, SERVE_FLAGS);
+    const hostConfig = await readRedskilledHostConfig(homedir());
+    const hostSettings = resolveRedskilledHostSettings({
+      flags: {
+        ...(values["worker-ceiling"] == null ? {} : { workerCeiling: values["worker-ceiling"] }),
+        ...(values["memory-ceiling"] == null ? {} : { memoryCeiling: values["memory-ceiling"] }),
+        ...(values["idle-ms"] == null ? {} : { idleMs: values["idle-ms"] }),
+      },
+      config: hostConfig,
+    });
     const queueDiscovery = resolveServeQueueDiscovery(values);
     const githubBalance = resolveServeGithubBalance(values);
     // The daemon's own black box (Spec #3022, slice #3023). The event lane already
@@ -396,7 +410,8 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     });
     const daemon = await startRedskilledDaemon({
       paths: servePaths(values),
-      idleMs: values["idle-ms"] ?? DEFAULT_REDSKILLED_IDLE_MS,
+      idleMs: hostSettings.idleMs,
+      ceiling: hostSettings.ceiling,
       // The artifact states what it IS. Absent, the daemon reports the version
       // baked into this build rather than a placeholder, because "what version is
       // answering" is the first fact a skew investigation needs.
@@ -629,9 +644,10 @@ const PROVISION_FLAGS = {
  * `redskilled provision` — a machine with no prior state, made ready.
  *
  * It starts the daemon through the ordinary auto-spawn path, prints the audit,
- * and creates the host-scoped home **when a declared workspace target reads it**
+ * and creates the host-scoped state home **when a declared workspace target reads it**
  * (`--workspace host`, or a repository whose config declares it). The home is not
- * a precondition for a daemon — the daemon never resolves it — so creating it
+ * a precondition for a daemon — the daemon never resolves that state directory
+ * (host policy is the sibling `~/.red/config.yaml`) — so creating it
  * unconditionally left most machines with a directory nothing would ever open
  * (#2958).
  *
