@@ -237,3 +237,47 @@ describe("doLanding — a queued merge is not a completed one (#2986)", () => {
     expect(h.firedHooks).toContain("post_merge");
   });
 });
+
+// #3160 — a confirmation that cannot SEE the PR spent its whole budget saying
+// "not yet", and every heartbeat rendered the blind slot as healthy waiting. The
+// blind read is its own outcome, and it says so on the beat.
+describe("doLanding — a merge confirmation that cannot read the PR (#3160)", () => {
+  it("parks as infra after a few blind probes instead of burning the whole budget", async () => {
+    const h = harness({ locked: false, openPr: true, nativeMergeQueue: true, queueOutcome: "probe-failing" });
+
+    const r = await doLanding(h.deps, h.input, h.hooks);
+
+    // Not `ci-pending`: nothing here says anything about CI, and an operator sent
+    // to the PR's checks would be looking at the wrong machine.
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.reason).toBe("infra");
+    expect(r.ok === false && r.infraReason).toContain("could not read PR #42");
+    expect(h.firedHooks).not.toContain("post_merge");
+    // Four blind probes, not the declared 30.
+    expect(h.mergeCalls.filter((argv) => readsPull(argv))).toHaveLength(4);
+  });
+
+  it("publishes the blind probe on the heartbeat, so no surface reads it as healthy waiting", async () => {
+    const h = harness({ locked: false, openPr: true, nativeMergeQueue: true, queueOutcome: "probe-failing" });
+
+    await doLanding(h.deps, h.input, h.hooks);
+
+    const failed = h.landingEvents.filter((event) => event.detail.status === "probe-failed");
+    expect(failed).toHaveLength(4);
+    expect(failed[0]).toEqual(
+      expect.objectContaining({
+        phase: "wait",
+        detail: expect.objectContaining({
+          step: "merge-poll",
+          status: "probe-failed",
+          pr_number: 42,
+          attempt: 1,
+          unobserved_probes: 1,
+          probe_exit_code: 1,
+          probe_stderr: "gh: could not resolve host api.github.com",
+        }),
+      }),
+    );
+    expect(failed[3]?.detail).toEqual(expect.objectContaining({ unobserved_probes: 4 }));
+  });
+});

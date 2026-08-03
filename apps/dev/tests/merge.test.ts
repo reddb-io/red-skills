@@ -1822,6 +1822,130 @@ describe("landPr on a merge-queue base (#2986)", () => {
     expect(r.reason).toBe("queue-rejected");
     expect(r.queueDetail).toContain("dequeued PR #42");
   });
+
+  it("reports queue-probe-failing — never queue-pending — when the confirmation goes blind", async () => {
+    const calls: string[][] = [];
+    const exec: Exec = async (argv) => {
+      calls.push(argv);
+      const cmd = argv.join(" ");
+      if (cmd.includes("pr list")) return { code: 0, stdout: "42\n", stderr: "" };
+      if (readsPull(argv)) return { code: 1, stdout: "", stderr: "gh: could not read PR" };
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const r = await landPr(exec, {
+      ...base,
+      mergeQueueWait: { sleep: async () => {}, maxPolls: 60 },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe("queue-probe-failing");
+    expect(r.queueDetail).toContain("could not read PR #42");
+    // The whole 60-probe budget was NOT spent on a client that cannot see.
+    expect(calls.filter((c) => readsPull(c))).toHaveLength(4);
+  });
+});
+
+// #3160 — a Worker polled an ALREADY-MERGED PR 48 times past its merge, because
+// an unreadable probe and an unmerged PR were the same answer to the loop. "Not
+// yet" is the most expensive spelling of an inconclusive read: it is the one
+// answer that buys another poll.
+describe("the merge confirmation on a blind probe (#3160)", () => {
+  const queued = JSON.stringify(
+    restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: true }),
+  );
+  const merged = JSON.stringify(
+    restPullBody({ state: "MERGED", mergeCommitOid: "queuesha", autoMerge: false }),
+  );
+
+  /** Each entry is one probe: a string is stdout, a number is a non-zero exit. */
+  const probeExec = (script: (string | number)[]): Exec => {
+    let i = 0;
+    return async () => {
+      const step = script[Math.min(i, script.length - 1)];
+      i += 1;
+      return typeof step === "number"
+        ? { code: step, stdout: "", stderr: "gh: connection reset by peer" }
+        : { code: 0, stdout: step ?? "", stderr: "" };
+    };
+  };
+
+  it("ends the wait with probe-failing, not with the timeout outcome", async () => {
+    const r = await waitForQueuedMerge(probeExec([1]), "o/r", 42, {
+      sleep: async () => {},
+      maxPolls: 180,
+    });
+    expect(r.outcome).toBe("probe-failing");
+    expect(r.polls).toBe(4);
+    expect(r.detail).toContain("4 consecutive unreadable probes");
+    expect(r.detail).toContain("last exit 1");
+    expect(r.detail).toContain("connection reset by peer");
+  });
+
+  it("names an exit-0 probe whose payload is unreadable, which has no stderr to quote", async () => {
+    const r = await waitForQueuedMerge(probeExec(["not json"]), "o/r", 42, {
+      sleep: async () => {},
+      maxPolls: 180,
+    });
+    expect(r.outcome).toBe("probe-failing");
+    expect(r.detail).toContain("empty or unparseable payload");
+  });
+
+  it("counts CONSECUTIVE blind probes, so a lone flaky probe still costs one retry", async () => {
+    // Three failures, an answer, three more failures, then the merge: seven blind
+    // probes in total and never four in a row.
+    const r = await waitForQueuedMerge(probeExec([1, 1, 1, queued, 1, 1, 1, merged]), "o/r", 42, {
+      sleep: async () => {},
+      maxPolls: 180,
+    });
+    expect(r).toEqual({ outcome: "merged", mergeSha: "queuesha", polls: 8 });
+  });
+
+  it("publishes a probe that did NOT answer as a distinct heartbeat status", async () => {
+    const events: { attempt: number; status?: string; streak?: number; code?: number }[] = [];
+    await waitForQueuedMerge(probeExec([1, 1, queued, merged]), "o/r", 42, {
+      sleep: async () => {},
+      maxPolls: 180,
+      onPoll: (event) => {
+        events.push({
+          attempt: event.attempt,
+          ...(event.status ? { status: event.status } : {}),
+          ...(event.unobservedStreak !== undefined ? { streak: event.unobservedStreak } : {}),
+          ...(event.probeExitCode !== undefined ? { code: event.probeExitCode } : {}),
+        });
+      },
+    });
+    expect(events).toEqual([
+      { attempt: 1, status: "poll" },
+      { attempt: 1, status: "probe-failed", streak: 1, code: 1 },
+      { attempt: 2, status: "poll" },
+      { attempt: 2, status: "probe-failed", streak: 2, code: 1 },
+      { attempt: 3, status: "poll" },
+      { attempt: 4, status: "poll" },
+    ]);
+  });
+
+  it("ends the wait on the merge itself — one poll interval, no probe past it", async () => {
+    let sleeps = 0;
+    let probes = 0;
+    const script = probeExec([queued, queued, merged]);
+    const r = await waitForQueuedMerge(
+      async (argv) => {
+        probes += 1;
+        return await script(argv);
+      },
+      "o/r",
+      42,
+      {
+        sleep: async () => {
+          sleeps += 1;
+        },
+        maxPolls: 180,
+      },
+    );
+    expect(r.outcome).toBe("merged");
+    expect(probes).toBe(3);
+    // Two intervals between three probes, and none after the merge was seen.
+    expect(sleeps).toBe(2);
+  });
 });
 
 // #3030 — a PR the queue can never accept is not a PR that is still queued. A

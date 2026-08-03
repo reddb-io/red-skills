@@ -546,6 +546,19 @@ export interface LandingWaitPollEvent {
   intervalMs: number;
   probeTimeoutMs?: number;
   check?: string;
+  /**
+   * What this event says about the probe (#3160). `poll` — the wait is about to
+   * ask, or asked and got an answer. `probe-failed` — the probe just came back
+   * unreadable, so the slot is burning on a blind wait and no observability
+   * surface may render it as healthy waiting.
+   */
+  status?: "poll" | "probe-failed";
+  /** On `status: "probe-failed"` — how many CONSECUTIVE probes have now failed. */
+  unobservedStreak?: number;
+  /** On `status: "probe-failed"` — the probe's exit code, so the heartbeat names the mechanism. */
+  probeExitCode?: number;
+  /** On `status: "probe-failed"` — the first line of the probe's stderr, truncated. */
+  probeStderr?: string;
 }
 
 async function boundedProbe(exec: () => Promise<ExecResult>, timeoutMs: number | undefined): Promise<ExecResult> {
@@ -1174,7 +1187,9 @@ export type LandPrFailReason =
   /** The merge queue took the PR and then kicked it back out (#2986). */
   | "queue-rejected"
   /** The PR was still queued when the confirmation budget ran out (#2986). */
-  | "queue-pending";
+  | "queue-pending"
+  /** The confirmation could not READ the PR — repeated unreadable probes (#3160). */
+  | "queue-probe-failing";
 
 export interface LandPrResult {
   ok: boolean;
@@ -1190,7 +1205,8 @@ export interface LandPrResult {
    * line describing it, read back from the PR (#2807). The caller records this
    * verbatim instead of guessing at branch protection. */
   mergeFailure?: MergeRejectionDiagnosis;
-  /** Set on `reason: "queue-rejected"` — what the queue was observed doing (#2986). */
+  /** Set on `reason: "queue-rejected"` — what the queue was observed doing (#2986) —
+   * and on `reason: "queue-probe-failing"` — why the confirmation went blind (#3160). */
   queueDetail?: string;
   /** Remaining landing tail when `releaseAt` stopped before the merge. */
   deferred?: {
@@ -1242,8 +1258,12 @@ export interface MergeQueueWaitInput {
  *   - `unqueueable` — the PR is settled CONFLICTING: no queue will ever accept it, so
  *                     asking again is the eternal poll #3030 observed. Terminal.
  *   - `pending`     — still queued when the budget ran out. NOT a merge.
+ *   - `probe-failing` — the confirmation could not SEE the PR: {@link MAX_UNOBSERVED_QUEUED_PROBES}
+ *                     consecutive unreadable probes (#3160). A broken client is not
+ *                     a slow queue, so it ends the wait with its own verdict rather
+ *                     than spending the whole budget being told nothing. Terminal.
  */
-export type QueuedMergeOutcome = "merged" | "rejected" | "unqueueable" | "pending";
+export type QueuedMergeOutcome = "merged" | "rejected" | "unqueueable" | "pending" | "probe-failing";
 
 export interface QueuedMergeResult {
   outcome: QueuedMergeOutcome;
@@ -1287,6 +1307,29 @@ const QUEUED_PR_FIELDS = [
   "mergeStateStatus",
   "mergeable",
 ] as const;
+
+/**
+ * How many CONSECUTIVE unreadable probes end the wait (#3160). An unreadable
+ * probe is not a rejected merge — but it is not a "not yet" either, and "not yet"
+ * is the most expensive answer in the loop because it is the one that buys another
+ * poll. Three or four in a row is a broken client, not a slow merge queue: two
+ * Workers were observed polling ALREADY-MERGED PRs 48 and 19 times past their
+ * merge on a probe that answered in 0.57s beside them. Small enough that a lone
+ * flaky probe still costs nothing but one retry.
+ */
+const MAX_UNOBSERVED_QUEUED_PROBES = 4;
+
+/** How much of a failed probe's stderr the terminal record and the heartbeat carry. */
+const PROBE_STDERR_LIMIT = 300;
+
+/** The probe's own report: what it saw, and — when it saw nothing — why. */
+interface QueuedPrProbe {
+  view: QueuedPrView;
+  /** Exec code of the probe. `0` with `observed: false` is an unparseable payload. */
+  code: number;
+  /** First lines of stderr, truncated, so a blind wait names its mechanism (#3160). */
+  stderr: string;
+}
 
 /** An unreadable payload yields `observed: false` so the caller polls again
  * rather than inventing a verdict from a failed probe. */
@@ -1363,20 +1406,29 @@ async function readQueuedPrView(
   repo: string,
   prNumber: number,
   probeTimeoutMs: number | undefined,
-): Promise<QueuedPrView> {
+): Promise<QueuedPrProbe> {
   const plan = planGithubRestRead({ kind: "pr", number: prNumber, fields: QUEUED_PR_FIELDS, repo });
   const args =
     plan.outcome === "plan"
       ? ["gh", "-R", repo, ...plan.args]
       : ["gh", "-R", repo, "pr", "view", String(prNumber), "--json", QUEUED_PR_FIELDS.join(",")];
   const res = await boundedProbe(() => exec(args), probeTimeoutMs);
-  if (res.code !== 0) return ABSENT_QUEUED_PR_VIEW;
-  if (plan.outcome !== "plan") return parseQueuedPrView(res.stdout);
-  try {
-    return queuedPrViewFrom(plan.decode(res.stdout));
-  } catch {
-    return ABSENT_QUEUED_PR_VIEW;
-  }
+  // #3160: the probe's exit code and stderr travel WITH the view, because the one
+  // moment they are needed is the one moment the view carries nothing.
+  const stderr = (res.stderr ?? "").trim().slice(0, PROBE_STDERR_LIMIT);
+  const blind = { view: ABSENT_QUEUED_PR_VIEW, code: res.code, stderr };
+  if (res.code !== 0) return blind;
+  const view =
+    plan.outcome !== "plan"
+      ? parseQueuedPrView(res.stdout)
+      : ((): QueuedPrView => {
+          try {
+            return queuedPrViewFrom(plan.decode(res.stdout));
+          } catch {
+            return ABSENT_QUEUED_PR_VIEW;
+          }
+        })();
+  return view.observed ? { view, code: res.code, stderr } : blind;
 }
 
 /**
@@ -1409,19 +1461,23 @@ export async function waitForQueuedMerge(
   const maxPollsWithClock = input.sleep ? maxPolls : 1;
   const sleep = input.sleep ?? (async () => {});
   let everQueued = false;
+  let unobserved = 0;
 
   for (let attempt = 0; attempt < maxPollsWithClock; attempt++) {
-    await input.onPoll?.({
+    const event: LandingWaitPollEvent = {
       kind: "merge",
       prNumber,
       attempt: attempt + 1,
       maxPolls: maxPollsWithClock,
       intervalMs,
       ...(input.probeTimeoutMs ? { probeTimeoutMs: input.probeTimeoutMs } : {}),
-    });
-    const view = await readQueuedPrView(exec, repo, prNumber, input.probeTimeoutMs);
+    };
+    await input.onPoll?.({ ...event, status: "poll" });
+    const probe = await readQueuedPrView(exec, repo, prNumber, input.probeTimeoutMs);
+    const view = probe.view;
     const polls = attempt + 1;
     if (view.observed) {
+      unobserved = 0;
       if (view.merged) {
         return { outcome: "merged", ...(view.mergeSha ? { mergeSha: view.mergeSha } : {}), polls };
       }
@@ -1445,6 +1501,26 @@ export async function waitForQueuedMerge(
         return {
           outcome: "rejected",
           detail: `the merge queue dequeued PR #${prNumber} without merging it (its auto-merge request is gone and the PR is still open)`,
+          polls,
+        };
+      }
+    } else {
+      // #3160: an unreadable probe is neither a merge nor a rejection — but it is
+      // not "not yet" either, and the loop's only other move is to buy another
+      // poll. Count the blind reads SEPARATELY from the polls, say so on the
+      // heartbeat, and stop once the streak says client rather than queue.
+      unobserved += 1;
+      await input.onPoll?.({
+        ...event,
+        status: "probe-failed",
+        unobservedStreak: unobserved,
+        probeExitCode: probe.code,
+        ...(probe.stderr ? { probeStderr: probe.stderr } : {}),
+      });
+      if (unobserved >= MAX_UNOBSERVED_QUEUED_PROBES) {
+        return {
+          outcome: "probe-failing",
+          detail: `the merge confirmation could not read PR #${prNumber}: ${unobserved} consecutive unreadable probes (last exit ${probe.code}${probe.stderr ? `: ${probe.stderr}` : ", empty or unparseable payload"})`,
           polls,
         };
       }
@@ -1860,6 +1936,12 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
 
     if (confirmed.outcome === "rejected") {
       return { ok: false, prNumber, reason: "queue-rejected", queueDetail: confirmed.detail };
+    }
+    // #3160: blind, not slow. The PR may well have merged — this says only that
+    // the confirmation cannot see, which is an operator's problem and not the
+    // work's, so it must never wear the timeout's clothes.
+    if (confirmed.outcome === "probe-failing") {
+      return { ok: false, prNumber, reason: "queue-probe-failing", queueDetail: confirmed.detail };
     }
     if (confirmed.outcome === "pending") return { ok: false, prNumber, reason: "queue-pending" };
     await promoteFleetTrunkMirror(exec, { gitRepo, remote, target });
