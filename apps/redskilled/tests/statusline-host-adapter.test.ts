@@ -1,16 +1,29 @@
-// The agent host DISPLAYS the Worker line; it does not produce one (#2928).
+// ONE producer draws the Worker rows, and the recipe is pinned HERE — in the
+// package that owns the daemon's string — by reading the shipped documents
+// rather than by anyone remembering to look (#2928).
 //
-// The daemon serving a finished string (ADR 0130 rule 10) buys nothing while the
-// installed adapter keeps rendering its own: what an operator reads is whatever
-// their `.claude/settings.json` runs, and before this test that command resolved
-// the dev bundle and formatted Workers inside it — the second renderer rule 10
-// exists to prevent, and the one actually on screen. So the recipe is pinned
-// HERE, in the package that owns the string, and pinned by reading the shipped
-// documents rather than by anyone remembering to look.
+// **Which producer, and why not the daemon yet (#3166).** Rule 10 says the
+// daemon owns the Worker line, and #2928 wired the recipe to it: the dev bundle
+// was asked for the header alone with `--no-workers` and the daemon's own
+// `statusline` was echoed under it. That delegation was made before the thing
+// delegated to could draw. What the operator actually got was a name and a
+// memory figure where the dev bundle had been drawing a bar, a colour, aligned
+// `run=`/`org=`/`iss=` columns, `phase·activity`, elapsed, heartbeat, diff and
+// token vitals — code already in the tree and already tested. So the recipe is
+// reversed to the single-producer form until #3151 rewrites the daemon's `line`
+// density to carry that row.
 //
-// The second half is the claim the first one rests on: what the command prints
-// is byte-for-byte what the daemon handed it. Not "contains the Worker ids",
-// not "looks right" — the same string, compared.
+// What did NOT change is the count: two renderers on screen is the defect #2928
+// named, and the test below still refuses it — from the other side. The recipe
+// may not run the daemon half (a second block of rows under the first) and may
+// not mute the dev bundle (no rows at all). Restoring the delegation is one edit
+// here plus one in `statusline-command-doc.ts`, and #3151 is what earns it.
+//
+// The second half is the claim rule 10 rests on: what the daemon's own command
+// prints is byte-for-byte what the daemon handed it. Not "contains the Worker
+// ids", not "looks right" — the same string, compared. That contract is live
+// today, for every surface that reads the daemon; only the Claude Code statusLine
+// recipe is on the interim detour.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -84,19 +97,18 @@ describe("the shipped Claude Code adapter", () => {
     expect(shippedAdapterRecipes().map((recipe) => recipe.path)).not.toEqual([]);
   });
 
-  it("asks the daemon for the Worker rows instead of rendering them", () => {
+  it("asks exactly one producer for the Worker rows — the dev bundle, until #3151", () => {
     const offenders: string[] = [];
     for (const recipe of shippedAdapterRecipes()) {
       for (const command of recipe.commands) {
-        // The daemon's own bundle, asked for its own line.
-        if (!/redskilled[\w.*-]*\.bundle\.min\.mjs/.test(command)) {
-          offenders.push(`${recipe.path}: never reaches redskilled for the Worker rows`);
+        // The daemon's own bundle under the dev bundle's rows is a second block
+        // of Workers on screen, saying less than the block above it.
+        if (/redskilled[\w.*-]*\.bundle\.min\.mjs/.test(command)) {
+          offenders.push(`${recipe.path}: runs the daemon renderer under the dev bundle's rows — double-render until #3151 lands`);
         }
-        // The dev bundle may still produce the repo header — that is its fact —
-        // but it must be asked for the header ALONE. An unqualified `statusline`
-        // there is the second renderer coming back.
-        if (/dev-\*\.bundle\.min\.mjs|afk\.mjs/.test(command) && !command.includes("--no-workers")) {
-          offenders.push(`${recipe.path}: asks the dev bundle for a full statusline, Worker rows included`);
+        // `--no-workers` mutes the only producer left, and nothing draws a row.
+        if (/dev-\*\.bundle\.min\.mjs|afk\.mjs/.test(command) && command.includes("--no-workers")) {
+          offenders.push(`${recipe.path}: mutes the dev bundle's Worker rows with nothing left to draw them (#3166)`);
         }
       }
     }
