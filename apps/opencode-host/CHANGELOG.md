@@ -1,5 +1,14 @@
 # @reddb-io/red-skills
 
+## 3.3.11
+
+### Patch Changes
+
+- 3ea8e9c: The daemon's queue poll now follows the balance it was already being told. `RedskilledQueueDiscovery` has carried a `rate_limit` since it existed and nothing read it — `grep rate_limit` over `daemon.ts` returned nothing — while the poll ran on a constant 15s, so the daemon asked at exactly the same rate whether the token was full or one request from empty. The reading arrives free with every poll and was thrown away. `nextQueuePollMs` is now a pure function in `queue-discovery.ts` and the timer re-arms after each poll rather than running on a fixed interval, because a `setInterval` chooses its period once, before anything is known about how close the token is to spent. The cadence may only ever slow DOWN — polling faster on a low balance would spend more of exactly the budget it just noticed running out — and exhaustion waits for the reset, since until then no answer can change and asking again spends a request to be told the same thing. The wait is clamped at both ends so a missing, malformed or absurd reset instant can neither spin the poller nor sleep it out of existence. The rule lives in one exported function rather than inside the daemon closure specifically so its test exercises the code that runs: the first version of this change had the test carrying its own copy of the rule, which is the two-implementations-of-one-rule shape this repo has now watched drift six times.
+- 7eceb6b: A registration now hands its Workers the slot the host placed them on. `RED_AFK_SLOT` is READ in five places — the reconcile lane, the process-deps resolver and the hook environment, each as `parseSlot(process.env.RED_AFK_SLOT) ?? 0` — and was never written on the registration path, so every Worker resolved to slot 0 and the per-slot isolation the variable exists for collapsed onto one: retire files, cargo target directories and hook scoping all addressed the same slot no matter how wide the project ran. The runner the registration decided is pinned alongside it rather than inherited, because the passthrough environment may still carry an operator's runner from before the registration chose one. `RED_AFK_WORKER_ID` is deliberately still NOT set: it names the work's own identity — the worker directory, the claim comment, every project-side surface — and assigning the host's handle to it would rename the work to satisfy an address, so the host's id goes on travelling under its own name and a test now pins that distinction rather than leaving it to the next reader's judgement.
+  - @reddb-io/shared@3.3.11
+  - @reddb-io/build-info@3.3.11
+
 ## 3.3.10
 
 ### Patch Changes
