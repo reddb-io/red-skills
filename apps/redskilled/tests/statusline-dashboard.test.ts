@@ -217,9 +217,11 @@ describe("the dashboard carries the statusline's own fields", () => {
       "bar",
       "phase",
       "elapsed",
+      "eta",
       "hb",
       "loc",
       "tks",
+      "ctx",
       "tls",
       "rsn",
       "txt",
@@ -396,6 +398,29 @@ describe("the published display record is stored and never interpreted", () => {
   it("clamps on the publisher's side, so a runaway value never makes a heartbeat expensive", () => {
     const clamped = clampPublishedWorkerDisplay(display({ step: "x".repeat(500) }));
     expect(clamped.step).toHaveLength(REDSKILLED_DISPLAY_FIELD_MAX);
+  });
+
+  it("stores the start, the context and the estimate as opaquely as it stores a count (#3097)", () => {
+    const coerced = coerceWorkerDisplay({
+      started_at: "2026-08-03T01:00:00.000Z",
+      context: 108_000,
+      eta: 640,
+    });
+
+    expect(coerced!.started_at).toBe("2026-08-03T01:00:00.000Z");
+    expect(coerced!.context).toBe(108_000);
+    expect(coerced!.eta).toBe(640);
+    // No branch in this process asks what any of them MEAN — an `elapsed` is
+    // deliberately absent from the record so no two surfaces can date one
+    // differently, and the daemon derives none of its own.
+    expect(coerced).not.toHaveProperty("elapsed");
+  });
+
+  it("holds an unstated estimate as null rather than as a zero", () => {
+    const coerced = coerceWorkerDisplay({ runner: "claude" });
+    expect(coerced!.eta).toBeNull();
+    expect(coerced!.context).toBeNull();
+    expect(coerced!.started_at).toBeNull();
   });
 });
 

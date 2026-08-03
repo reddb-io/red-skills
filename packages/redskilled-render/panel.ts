@@ -18,7 +18,7 @@
  */
 import { clamp, formatBytes, formatDuration } from "./format.js";
 import { BUDGET_BAND_MARK, BUDGET_SPENT_MARK, DEATH_MARK } from "./marks.js";
-import type { RedskilledRenderPayload, RedskilledStatuslineMode } from "./payload.js";
+import { workerElapsedMs, type RedskilledRenderPayload, type RedskilledStatuslineMode } from "./payload.js";
 import {
   REDSKILLED_STATUSLINE_DEFAULTS,
   renderRedskilledStatusline,
@@ -104,7 +104,7 @@ export function renderRedskilledPanel(
 
   const workerRows: string[] = [];
   for (const worker of visible) {
-    workerRows.push(clamp(`  ${workerRow(worker, options.mode)}`, options.maxWidth));
+    workerRows.push(clamp(`  ${workerRow(worker, options.mode, payload.generated_at)}`, options.maxWidth));
     if (!options.verbose) continue;
     const logged = worker.log.last_line == null ? null : worker.log.last_line.replace(/\s+/g, " ").trim();
     if (logged == null || logged === "") continue;
@@ -147,11 +147,14 @@ export function renderRedskilledPanel(
  *
  * The phase and the elapsed span come first because a panel is read to answer
  * "is this one stuck", and the memory figure last because it is the fact the
- * head already carries in aggregate.
+ * head already carries in aggregate. The estimate follows the elapsed span for
+ * the same reason, and is absent — not `eta=?` — whenever the project declined
+ * to make one.
  */
 function workerRow(
   worker: RedskilledRenderPayload["workers"][number],
   mode: RedskilledStatuslineMode,
+  generatedAt: string,
 ): string {
   const display = worker.display;
   const phase = display == null
@@ -161,7 +164,8 @@ function workerRow(
   const parts = [
     workerName(worker, mode),
     phase == null || phase === "" ? null : phase,
-    formatDuration(worker.uptime_ms),
+    formatDuration(workerElapsedMs(worker, generatedAt)),
+    display?.eta == null ? null : `eta=${formatDuration(display.eta * 1000)}`,
     // An unmeasured Worker says so. A zero here would read as an idle Worker, and
     // "nothing measured it" and "it is using nothing" are opposite facts.
     used == null ? "?" : formatBytes(used),

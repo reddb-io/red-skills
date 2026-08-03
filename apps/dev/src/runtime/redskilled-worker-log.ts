@@ -34,6 +34,7 @@
 import { join } from "node:path";
 import { logsDir } from "@reddb-io/shared/red-paths.js";
 import { publishRedskilledWorkerLogLine } from "@reddb-io/redskilled/client";
+import type { RedskilledWorkerDisplay } from "@reddb-io/redskilled/worker-display";
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
 import {
   RED_AFK_SLOT_PLACEHOLDER,
@@ -88,8 +89,15 @@ export function registrationLaunchEnv(runner?: string): Record<string, string> {
   };
 }
 
-/** Publish one line, or do nothing at all. Never throws, never blocks the work. */
-export type WorkerLogLinePublisher = (line: string) => Promise<void>;
+/**
+ * Publish one line and what a surface should SHOW, or do nothing at all.
+ *
+ * Never throws, never blocks the work. The display record is optional because a
+ * beat can happen before there is an attempt state to describe — a line with no
+ * record is exactly what the daemon held before #3097, and is still better than
+ * a record assembled from defaults.
+ */
+export type WorkerLogLinePublisher = (line: string, display?: RedskilledWorkerDisplay) => Promise<void>;
 
 export interface WorkerLogLinePublisherOptions {
   /** This checkout, for the one label the daemon keys this project by. */
@@ -131,7 +139,7 @@ export function createWorkerLogLinePublisher(
     ?? ((paths, heartbeat, config) => publishRedskilledWorkerLogLine(paths, heartbeat, config));
   const paths = resolveRedskilledPaths({ env });
   const projectLabel = resolveProjectLabel(options.root);
-  return async (line: string): Promise<void> => {
+  return async (line: string, display?: RedskilledWorkerDisplay): Promise<void> => {
     const trimmed = line.trim();
     if (trimmed === "") return;
     try {
@@ -140,6 +148,7 @@ export function createWorkerLogLinePublisher(
         // Clamped by the publisher, on the publisher's side: a runaway log line
         // must not make a heartbeat expensive.
         line: trimmed,
+        ...(display == null ? {} : { display }),
         session_project: projectLabel,
       });
     } catch {

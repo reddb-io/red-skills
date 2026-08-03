@@ -154,6 +154,10 @@ export interface ProgressHeartbeatInput {
     inputTokens: number;
     outputTokens: number;
     costUsd: number;
+    /** Input-side tokens the LAST turn carried — the context window's occupancy
+     * (#3097). A level, not a total, so the beat re-stamps it rather than
+     * accumulating it. */
+    contextTokens: number;
   };
 }
 
@@ -223,6 +227,7 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
             input_tokens: String(a.inputTokens),
             output_tokens: String(a.outputTokens),
             cost_usd: String(a.costUsd),
+            context_tokens: String(a.contextTokens),
             // Deprecated legacy alias — remove one release after S1.
             thinking_called_count: String(a.reasoningCount),
           }
@@ -242,6 +247,7 @@ export function buildProgressHeartbeat(input: ProgressHeartbeatInput): ProgressH
             "current.input_tokens": a.inputTokens,
             "current.output_tokens": a.outputTokens,
             "current.cost_usd": a.costUsd,
+            "current.context_tokens": a.contextTokens,
           }
         : {}),
     },

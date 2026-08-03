@@ -48,7 +48,7 @@ import {
   type StatuslinePreset,
   type StatuslineInput,
 } from "./statusline.js";
-import { AFK_PHASE_ORDER } from "./mirror.js";
+import { AFK_PHASE_ORDER, isLandingPhase, macroPhase } from "./mirror.js";
 import { formatDiff, workerFields, type CompactWorker } from "./monitor.js";
 
 /** Truecolor SGR helpers. */
@@ -104,7 +104,6 @@ const SHORT_WORKER_COLUMNS: readonly WorkerColumn[] = ["workerId", "iss", "lifec
 type WorkerCells = Record<WorkerColumn, string>;
 type WorkerWidths = Record<WorkerColumn, number>;
 const NO_AGENT_ORIGINS = new Set(["requeue"]);
-const LANDING_PHASES = new Set(["gate", "push-pr", "merge", "cascade"]);
 
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -312,8 +311,7 @@ const BAR_CURRENT = "\x1b[38;2;255;214;214m"; // healthy cursor: brightest pale 
 const BAR_AHEAD = "\x1b[38;2;146;84;94m"; // future cells: receded dark wine
 
 function lifecycleBar(phase: string, failed: boolean): string {
-  const macroPhase = LANDING_PHASES.has(phase) ? "merging" : phase;
-  const current = Math.max(0, (AFK_PHASE_ORDER as readonly string[]).indexOf(macroPhase));
+  const current = Math.max(0, (AFK_PHASE_ORDER as readonly string[]).indexOf(macroPhase(phase)));
   if (current === AFK_PHASE_ORDER.length - 1) {
     return `${BAR_DONE}${"█".repeat(AFK_PHASE_ORDER.length)}${SOFT}`;
   }
@@ -325,7 +323,7 @@ function workerCells(worker: CompactWorker, now: number): WorkerCells {
   const runVal = [f.runner, f.model ? shortModel(f.model) : undefined, f.effort]
     .filter((x): x is string => Boolean(x))
     .join(" ");
-  const landing = LANDING_PHASES.has(f.phase);
+  const landing = isLandingPhase(f.phase);
   const noAgent = landing || (f.origin !== undefined && NO_AGENT_ORIGINS.has(f.origin));
   const failed = worker.state.blocked > 0 || worker.state.failed > 0;
   return {
@@ -424,7 +422,7 @@ export function renderWorkerLine(worker: CompactWorker, now: number, preset: Sta
   // org=<afk|go> — spawn-time provenance (issue #1219). 3-letter key (house
   // rule), same kv colour convention. An unstamped worker is an afk-fleet
   // worker, so default the display to afk.
-  const landing = LANDING_PHASES.has(f.phase);
+  const landing = isLandingPhase(f.phase);
   parts.push(kv("org", landing ? "landing" : f.origin || "afk"));
   // Per-worker fleet attribution is deliberately NOT rendered (#2568): which
   // fleet owns a worker stays available in fleet_status/worker_status; on the

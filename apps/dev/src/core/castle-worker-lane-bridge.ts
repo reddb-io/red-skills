@@ -8,8 +8,12 @@ import {
   type CastleStateSnapshot,
 } from "@reddb-io/red-castle/engine";
 import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
+import type { RedskilledWorkerDisplay } from "@reddb-io/redskilled/worker-display";
 import { workerStatePath } from "./state.js";
 import { readWorkerStateDocument } from "./worker-state-reader.js";
+import { AFK_COSTED_PHASE_ORDER, macroPhase } from "./mirror.js";
+import { createPhaseDurationTracker, phaseDurationsPath, type PhaseDurationTracker } from "./phase-durations.js";
+import { workerDisplayFromState } from "./worker-display-record.js";
 import type { AfkState } from "../types/state.js";
 
 export type WorkerLifecycleKind =
@@ -44,7 +48,18 @@ export interface CastleWorkerLaneBridgeOptions {
    * one more thing that happens on it. Absent — a directly-invoked `run`, a test
    * — the bridge behaves exactly as it did before.
    */
-  publishHostLogLine?: (line: string) => Promise<void>;
+  publishHostLogLine?: (line: string, display?: RedskilledWorkerDisplay) => Promise<void>;
+  /**
+   * The per-phase duration model this Worker measures into and estimates from.
+   *
+   * Defaulted to the durable castle lane beside the ledger; injectable so a test
+   * can hold the whole model in a temp directory. Measuring lives HERE because
+   * this is the one place that sees `current.phase` on every beat: the phase is
+   * stamped by five different writers (`boot`, the stream sink's `coding`, the
+   * gate, each landing step, the exit patch), and instrumenting each of them
+   * would be five chances to add a sixth that nobody measures.
+   */
+  phaseDurations?: PhaseDurationTracker;
 }
 
 function currentIssue(state: AfkState): number | undefined {
@@ -113,10 +128,44 @@ export function createCastleWorkerLaneBridge(
   const writers = createCastleLaneWriters(paths, { clock: options.nowIso });
   const nowIso = options.nowIso ?? (() => new Date().toISOString());
   const nowMs = options.nowMs ?? (() => Date.now());
+  const phaseDurations = options.phaseDurations
+    ?? createPhaseDurationTracker({
+      path: phaseDurationsPath(options.redRoot),
+      order: AFK_COSTED_PHASE_ORDER,
+    });
+
+  /**
+   * Watch the phase, and measure the one that just ended.
+   *
+   * The MACRO phase, so the four landing steps accumulate into one `merging`
+   * span: a model that held a median for `push-pr` would be describing a step
+   * whose whole cost is a network round-trip, and would have no median at all for
+   * the phase the bar actually draws.
+   *
+   * Best-effort to the last line — a duration nobody could write is a worse
+   * estimate later, never a failed beat now.
+   */
+  async function measurePhase(state: AfkState): Promise<void> {
+    try {
+      await phaseDurations.observe({
+        phase: macroPhase(state.current.phase ?? ""),
+        identity: {
+          worker: state.worker_id || options.workerId,
+          issue: currentIssue(state) ?? 0,
+          runner: state.runner || state.current.runner || "",
+        },
+        nowEpoch: Math.floor(nowMs() / 1000),
+        nowIso: nowIso(),
+      });
+    } catch {
+      /* the model is evidence; losing evidence must never cost the work */
+    }
+  }
 
   async function snapshot(): Promise<void> {
     const state = readAttemptState(options.attemptDir());
     if (!state) return;
+    await measurePhase(state);
     await writeCastleStateSnapshot(
       castleStateSnapshotPath(paths, "worker", options.workerId),
       snapshotFromState(options.workerId, state, nowIso(), options.supervisorLane),
@@ -156,7 +205,21 @@ export function createCastleWorkerLaneBridge(
     // keeps is the cadence the heartbeat asked for, so nothing new is scheduled
     // and nothing is polled. What the host receives is the line just written,
     // rendered flat: it stores the string without reading it.
-    await options.publishHostLogLine?.(workerLogLine(kind, issue, payload));
+    //
+    // The display record rides the same beat and for the same reason. It is built
+    // HERE and not by the daemon because every field in it is a castle fact — what
+    // a phase is, which of five, how long the work has left — and ADR 0130 rule 3
+    // keeps those out of the host lane entirely.
+    if (options.publishHostLogLine != null) {
+      if (state != null) await measurePhase(state);
+      const display = state == null
+        ? undefined
+        : workerDisplayFromState(state, {
+          etaSeconds: phaseDurations.etaSeconds(Math.floor(nowMs() / 1000)),
+          nowMs: nowMs(),
+        });
+      await options.publishHostLogLine(workerLogLine(kind, issue, payload), display);
+    }
     await snapshot();
   }
 

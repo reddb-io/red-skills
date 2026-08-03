@@ -643,6 +643,11 @@ export function buildProcessDeps({
               "current.input_tokens": activityMeter.peek().inputTokens,
               "current.output_tokens": activityMeter.peek().outputTokens,
               "current.cost_usd": activityMeter.peek().costUsd,
+              // The context LEVEL rides the same flush (#3097): it is read off the
+              // very event that carries the cost group, and a dashboard cell that
+              // only refreshed on the ~60s heartbeat would show a window occupancy
+              // from two turns ago.
+              "current.context_tokens": activityMeter.peek().contextTokens,
             }
           : {};
       if (activity || discrete) {
@@ -783,6 +788,7 @@ export function buildProcessDeps({
         input_tokens: a.inputTokens,
         output_tokens: a.outputTokens,
         cost_usd: a.costUsd,
+        context_tokens: a.contextTokens,
         loc_added: lastHeartbeatDiff.added,
         loc_removed: lastHeartbeatDiff.removed,
       };

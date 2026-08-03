@@ -64,6 +64,12 @@ export interface RedskilledRenderWorkerDisplay {
   readonly phase_total: number | null;
   readonly failed: boolean;
   readonly heartbeat: string | null;
+  /** When the work started, ISO-8601. `elapsed` is derived from it, never published. */
+  readonly started_at: string | null;
+  /** Input-side tokens on the last turn — the context window's occupancy. */
+  readonly context: number | null;
+  /** Seconds the project expects the work still to take; `null` when it will not say. */
+  readonly eta: number | null;
   readonly added: number | null;
   readonly removed: number | null;
   readonly tokens: number | null;
@@ -85,6 +91,9 @@ export const REDSKILLED_RENDER_DISPLAY_ABSENT: RedskilledRenderWorkerDisplay = {
   phase_total: null,
   failed: false,
   heartbeat: null,
+  started_at: null,
+  context: null,
+  eta: null,
   added: null,
   removed: null,
   tokens: null,
@@ -104,6 +113,29 @@ export interface RedskilledRenderWorker {
   readonly log: RedskilledRenderWorkerLog;
   readonly display?: RedskilledRenderWorkerDisplay | null;
   readonly display_published_at?: string | null;
+}
+
+/**
+ * How long this Worker has been on the work it is showing. PURE.
+ *
+ * **The work's span, when the project stated one; the process's otherwise.** A
+ * Worker that finished one item and took another is one process and two spans,
+ * and `uptime_ms` — dated by the daemon, which is not told what a work item is —
+ * can only ever describe the first. `display.started_at` is the project saying
+ * when THIS span began, so it wins wherever it exists.
+ *
+ * **Derived here, never published.** Two surfaces that each carried their own
+ * elapsed figure would disagree about now within one sampling interval; both read
+ * this instead, against the one clock the payload was dated by.
+ */
+export function workerElapsedMs(worker: RedskilledRenderWorker, generatedAt: string): number | null {
+  const startedAt = worker.display?.started_at;
+  if (startedAt != null && startedAt !== "") {
+    const started = Date.parse(startedAt);
+    const now = Date.parse(generatedAt);
+    if (Number.isFinite(started) && Number.isFinite(now)) return Math.max(0, now - started);
+  }
+  return worker.uptime_ms;
 }
 
 /** One project's share of the machine. */
