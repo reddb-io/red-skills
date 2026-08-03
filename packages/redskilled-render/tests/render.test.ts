@@ -182,6 +182,74 @@ describe("stateless, and it opens no transport", () => {
   });
 });
 
+describe("an unknown project's registration history (#3191)", () => {
+  const emptyHost = {
+    ...payload().host,
+    worker_count: 0,
+    project_count: 0,
+    observed_rss_bytes: 0,
+    measured_worker_count: 0,
+    ceiling_used_fraction: 0,
+  };
+
+  it.each([
+    [
+      "was never registered",
+      payload({
+        host: emptyHost,
+        projects: [],
+        workers: [],
+        known_projects: [],
+        registered_projects: [],
+      }),
+      "project unknown — acme/widgets was never registered on this host v3.3.11",
+    ],
+    [
+      "lapsed",
+      payload({
+        host: emptyHost,
+        projects: [],
+        workers: [],
+        known_projects: ["acme/widgets"],
+        registered_projects: [],
+        lapsed_projects: [{
+          project_label: "acme/widgets",
+          at: "2026-08-03T17:36:15.000Z",
+          registered_at: "2026-08-03T17:25:30.000Z",
+          reason: "nothing renewed it",
+        }],
+      }),
+      "project unknown — acme/widgets lapsed at 17:36:15 (registered 17:25:30) v3.3.11",
+    ],
+    [
+      "was deliberately stopped",
+      payload({
+        host: emptyHost,
+        projects: [],
+        workers: [],
+        known_projects: ["acme/widgets"],
+        registered_projects: [],
+        stopped_projects: [{ project_label: "acme/widgets", at: "2026-08-03T17:41:02.000Z" }],
+      }),
+      "project unknown — acme/widgets was stopped at 17:41:02 v3.3.11",
+    ],
+    [
+      "belongs to an orphaned daemon",
+      payload({
+        host: emptyHost,
+        projects: [],
+        workers: [],
+        known_projects: ["acme/widgets"],
+        registered_projects: [],
+        orphaned_projects: ["acme/widgets"],
+      }),
+      "project unknown — acme/widgets is registered on a daemon this socket does not reach v3.3.11",
+    ],
+  ])("states that it %s", (_history, doc, expected) => {
+    expect(renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).line).toBe(expected);
+  });
+});
+
 describe("a fixture payload renders identically to a live one", () => {
   it("draws the same line from JSON, from TOON and from an already-decoded value", () => {
     const doc = payload({ workers: [worker({ display: display() })] });
