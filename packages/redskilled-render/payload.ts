@@ -329,8 +329,17 @@ export interface RedskilledRenderPayload {
   readonly lapsed_projects?: readonly {
     readonly project_label: string;
     readonly at: string;
+    /** When the registration began; absent on payloads from older daemons. */
+    readonly registered_at?: string;
     readonly reason: string;
   }[];
+  /** Registrations deliberately released through `project_stop`, newest last. */
+  readonly stopped_projects?: readonly {
+    readonly project_label: string;
+    readonly at: string;
+  }[];
+  /** Registrations held by a live daemon other than the one this socket reached. */
+  readonly orphaned_projects?: readonly string[];
   readonly repository_activity?: RedskilledRenderActivity;
   readonly github_balance?: RedskilledRenderBalance;
   readonly deaths?: RedskilledRenderDeaths;
