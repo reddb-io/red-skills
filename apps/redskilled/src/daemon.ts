@@ -149,6 +149,7 @@ import {
 } from "./repository-activity.js";
 import {
   DEFAULT_REDSKILLED_QUEUE_MS,
+  nextQueuePollMs,
   fetchQueueDiscovery,
   unconfiguredQueueDiscovery,
   type RedskilledQueueDiscovery,
@@ -2018,11 +2019,24 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   function armQueueTimer(): void {
     if (stopping || queueTimer != null) return;
     if (queueMs <= 0) return;
-    queueTimer = setInterval(() => {
-      void pollQueueDiscovery().catch(() => undefined);
-    }, queueMs);
-    queueTimer.unref();
+    // Re-armed after each poll rather than set on a fixed interval, so the
+    // cadence can follow the balance the poll just reported (ADR 0132
+    // Amendment 2). A `setInterval` cannot: its period is chosen once, before
+    // anything is known about how close the token is to spent.
+    const schedule = (delayMs: number): void => {
+      if (stopping) return;
+      queueTimer = setTimeout(() => {
+        queueTimer = undefined;
+        void pollQueueDiscovery()
+          .catch(() => undefined)
+          .finally(() => schedule(nextQueuePollMs(lastQueue, queueMs, Date.parse(clock()))));
+      }, delayMs);
+      queueTimer.unref();
+    };
+    schedule(queueMs);
   }
+
+
 
   /**
    * Arm the demand loop on its own window.
@@ -2166,7 +2180,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (replaceTimer) clearInterval(replaceTimer);
     if (replaceBootTimer) clearTimeout(replaceBootTimer);
     if (activityTimer) clearInterval(activityTimer);
-    if (queueTimer) clearInterval(queueTimer);
+    if (queueTimer) clearTimeout(queueTimer);
+    queueTimer = undefined;
     if (demandTimer) clearInterval(demandTimer);
     // Every event already handed over reaches the lane before the daemon lets go
     // of the session: a birth still in flight would leave the next daemon with a
