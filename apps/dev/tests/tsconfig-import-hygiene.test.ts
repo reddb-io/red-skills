@@ -21,7 +21,7 @@ const DEV_UNUSED_IMPORT_DEBT: Record<string, number> = {
   "src/commands/route-model-tier.ts": 1,
   "src/commands/statusline.ts": 1,
   "src/core/dashboard.ts": 1,
-  "src/core/process-issue/lifecycle.ts": 61,
+  "src/core/process-issue/lifecycle.ts": 60,
   "src/core/process-issue/recovery.ts": 92,
   "src/core/process-issue/terminal.ts": 75,
   "src/core/process-issue/types.ts": 72,
