@@ -1,5 +1,13 @@
 # vscode-extension-red-skills
 
+## 3.3.23
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.23
+- @reddb-io/redskilled@3.3.23
+- @reddb-io/redskilled-render@3.3.23
+
 ## 3.3.22
 
 ### Patch Changes

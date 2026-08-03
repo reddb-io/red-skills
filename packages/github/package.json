@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/github",
-  "version": "3.3.22",
+  "version": "3.3.23",
   "private": true,
   "type": "module",
   "description": "The one budget-aware GitHub client (ADR 0132 decision 4 as superseded by Amendment 2): which API answers a call decided by cardinality, the REST realization of a single-object read, the token's balance asked rather than counted, and a cache that carries its own age.",
