@@ -19,9 +19,13 @@ import { planGithubRestRead } from "@reddb-io/github";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import {
   classifyDirtyTree,
+  classifySetupDirtCollision,
   describeCleanTreeRefusal,
+  describeSetupDirtCollisionRefusal,
+  describeSupersededSetupDirt,
   describeToleratedSetupDirt,
   isSetupOwnedDirtOnly,
+  SUPERSEDED_SETUP_DIRT_LANE,
 } from "./setup-owned-dirt.js";
 
 const FLEET_TRUNK_REF = "refs/heads/red-trunk";
@@ -1558,6 +1562,8 @@ export type FastForwardLocalTargetRefusal =
   | "dirty-tree"
   | "fetch-failed"
   | "not-ancestor"
+  | "dirt-collision"
+  | "supersede-failed"
   | "merge-failed";
 
 export interface FastForwardLocalTargetGuardResult {
@@ -1566,9 +1572,12 @@ export interface FastForwardLocalTargetGuardResult {
   readonly remote: string;
   readonly currentBranch?: string;
   readonly failed?: FastForwardLocalTargetRefusal;
-  readonly failedCondition?: "on-trunk" | "clean-tree" | "fetch" | "ancestor" | "merge";
+  readonly failedCondition?: "on-trunk" | "clean-tree" | "fetch" | "ancestor" | "dirt-collision" | "merge";
   /** Setup-owned dirty paths the clean-tree condition tolerated (#3106). */
   readonly toleratedDirt?: readonly string[];
+  /** Tolerated dirt the incoming commits carry as tracked files, so the local
+   * untracked copy is stale: moved aside before the merge, never merged over (#3155). */
+  readonly supersededDirt?: readonly string[];
   readonly evidence: string;
 }
 
@@ -1731,14 +1740,82 @@ export async function evaluateFastForwardLocalTarget(
       evidence: `condition failed: ancestor (${target} is not an ancestor of ${remote}/${target})`,
     };
   }
+  // 4. A tolerated path the incoming commits also carry would abort the very
+  // merge this guard just approved (#3155), so decide it HERE: `guard=passed`
+  // must imply the merge succeeds, or the verdict must not be `passed`.
+  let supersededDirt: readonly string[] = [];
+  if (toleratedDirt) {
+    const ref = `${remote}/${target}`;
+    const incoming = await exec(["git", "-C", gitRepo, "diff", "--name-only", target, ref]);
+    if (incoming.code !== 0) {
+      // Unknowable is not tolerable: passing here would mint the misleading
+      // receipt this branch exists to prevent.
+      return {
+        guard: "refused",
+        target,
+        remote,
+        currentBranch,
+        toleratedDirt: tree.setupOwned,
+        failed: "dirt-collision",
+        failedCondition: "dirt-collision",
+        evidence: `condition failed: dirt-collision (could not read the incoming path list for ${ref} while ${tree.setupOwned.length} /red-setup file(s) are dirty)`,
+      };
+    }
+    const collision = classifySetupDirtCollision(
+      tree,
+      incoming.stdout.split("\n").map((line) => line.trim()).filter((line) => line !== ""),
+    );
+    if (collision.conflicting.length > 0) {
+      return {
+        guard: "refused",
+        target,
+        remote,
+        currentBranch,
+        toleratedDirt: tree.setupOwned,
+        failed: "dirt-collision",
+        failedCondition: "dirt-collision",
+        evidence: describeSetupDirtCollisionRefusal(collision.conflicting, ref),
+      };
+    }
+    supersededDirt = collision.superseded;
+  }
+  const supersededNote = supersededDirt.length > 0 ? describeSupersededSetupDirt(supersededDirt) : undefined;
   return {
     guard: "passed",
     target,
     remote,
     currentBranch,
     ...(toleratedDirt ? { toleratedDirt: tree.setupOwned } : {}),
-    evidence: `guard passed: on-trunk clean-tree ancestor (${target} -> ${remote}/${target})${toleratedDirt ? `; ${toleratedDirt}` : ""}`,
+    ...(supersededDirt.length > 0 ? { supersededDirt } : {}),
+    evidence: `guard passed: on-trunk clean-tree ancestor (${target} -> ${remote}/${target})${toleratedDirt ? `; ${toleratedDirt}` : ""}${supersededNote ? `; ${supersededNote}` : ""}`,
   };
+}
+
+/**
+ * Move each superseded untracked setup-owned file into the
+ * {@link SUPERSEDED_SETUP_DIRT_LANE} backup lane, preserving its repo-relative
+ * path, so `merge --ff-only` can write the tracked copy in its place. A failure
+ * to move ANY of them aborts the fast-forward rather than letting the merge
+ * discover the same collision one command later.
+ */
+async function supersedeSetupOwnedDirt(
+  exec: Exec,
+  gitRepo: string,
+  paths: readonly string[],
+): Promise<{ ok: boolean; evidence: string }> {
+  for (const path of paths) {
+    const destination = `${gitRepo}/${SUPERSEDED_SETUP_DIRT_LANE}/${path}`;
+    const parent = destination.slice(0, destination.lastIndexOf("/"));
+    const made = await exec(["mkdir", "-p", parent]);
+    if (made.code !== 0) {
+      return { ok: false, evidence: `condition failed: dirt-collision (could not create the backup lane ${SUPERSEDED_SETUP_DIRT_LANE}/ for ${path})` };
+    }
+    const moved = await exec(["mv", "-f", `${gitRepo}/${path}`, destination]);
+    if (moved.code !== 0) {
+      return { ok: false, evidence: `condition failed: dirt-collision (could not move the superseded ${path} into ${SUPERSEDED_SETUP_DIRT_LANE}/)` };
+    }
+  }
+  return { ok: true, evidence: "" };
 }
 
 export async function fastForwardLocalTarget(
@@ -1747,7 +1824,22 @@ export async function fastForwardLocalTarget(
 ): Promise<FastForwardLocalTargetResult> {
   const guard = await evaluateFastForwardLocalTarget(exec, input);
   if (guard.guard !== "passed") return { ...guard, action: "noop" };
-  // 4. Advance the pointer. ff-only can only succeed as a pure fast-forward.
+  // 4a. Clear the superseded untracked copies the incoming commits carry as
+  // tracked files. Moved, never deleted: the two differed only in a comment
+  // header on the host that found this, but that is the operator's call to make
+  // afterwards, not ours to erase (#3155).
+  const supersede = await supersedeSetupOwnedDirt(exec, input.gitRepo, guard.supersededDirt ?? []);
+  if (!supersede.ok) {
+    return {
+      ...guard,
+      guard: "refused",
+      action: "noop",
+      failed: "supersede-failed",
+      failedCondition: "dirt-collision",
+      evidence: supersede.evidence,
+    };
+  }
+  // 4b. Advance the pointer. ff-only can only succeed as a pure fast-forward.
   const ff = await exec(["git", "-C", input.gitRepo, "merge", "--ff-only", `${input.remote}/${input.target}`]);
   if (ff.code !== 0) {
     return {
