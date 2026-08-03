@@ -8,12 +8,55 @@
  * why four copies of them appeared before anyone noticed.
  *
  * PURE, to the last function: nothing here reads a clock, a directory or an
- * environment variable.
+ * environment variable. **Colour is unconditional**: nothing here reads
+ * `NO_COLOR` or probes a TTY, because a renderer that decides for itself is a
+ * renderer that reads the world. A caller wanting a plain string calls
+ * {@link stripAnsi} at its boundary.
  */
+import { RESET } from "./palette.js";
 
-/** The visible width. One character is one column here — no line carries ANSI. */
+/**
+ * One SGR escape, matched whole. A colour is `\x1b[…m` and nothing else here
+ * pretends to parse the wider CSI grammar: the palette emits SGR only, and a
+ * measurement primitive that guessed at cursor moves would be measuring
+ * something no line in this package carries.
+ */
+// eslint-disable-next-line no-control-regex
+const SGR_GLOBAL = /\x1b\[[0-9;]*m/g;
+/** The same pattern with a capture group, so `split` keeps the escapes as parts. */
+// eslint-disable-next-line no-control-regex
+const SGR_SPLIT = /(\x1b\[[0-9;]*m)/;
+/** The same pattern anchored, to ask of one part whether it IS an escape. */
+// eslint-disable-next-line no-control-regex
+const SGR_WHOLE = /^\x1b\[[0-9;]*m$/;
+
+/** A line with its colour removed — the plain string a colourless caller wants. PURE. */
+export function stripAnsi(line: string): string {
+  return line.replace(SGR_GLOBAL, "");
+}
+
+/**
+ * Whether one SGR escape closes everything it could have opened.
+ *
+ * `\x1b[0m`, the bare `\x1b[m` and `\x1b[0;0m` all reset; `\x1b[39m` (default
+ * foreground) does not, because it leaves a background standing. Reading it
+ * loosely would be the expensive mistake — a line believed closed and not is a
+ * terminal painted for every row that follows.
+ */
+function isReset(escape: string): boolean {
+  const params = escape.slice(2, -1);
+  return params.split(";").every((param) => param === "" || Number(param) === 0);
+}
+
+/**
+ * The VISIBLE width: what the terminal draws, not what the string holds.
+ *
+ * An SGR escape occupies zero columns, so counting it is how a coloured line
+ * "overflows" a budget it fits in — the degradation ladder drops detail nobody
+ * was out of room for, and {@link clamp} cuts a line that never needed cutting.
+ */
 export function width(line: string): number {
-  return [...line].length;
+  return [...stripAnsi(line)].length;
 }
 
 /**
@@ -22,18 +65,57 @@ export function width(line: string): number {
  * The ellipsis is kept even at the tightest budget, because a line that ends
  * mid-word and says nothing about it reads as a shorter fact rather than as a
  * truncated one.
+ *
+ * **The cut lands between columns, never inside an escape, and always closes
+ * what it opened.** Both halves of that are the same failure: a truncation that
+ * splits `\x1b[38;2;255;214;214m` leaves the terminal reading `2;255;214;214m`
+ * as text, and one that swallows the terminator leaves every subsequent row
+ * painted. The budget is spent on visible columns alone, so the escapes that
+ * survive cost nothing against it.
  */
 export function clamp(line: string, maxWidth: number): string {
   if (maxWidth <= 0) return "";
-  const chars = [...line];
-  if (chars.length <= maxWidth) return line;
+  if (width(line) <= maxWidth) return line;
   if (maxWidth === 1) return "…";
-  return `${chars.slice(0, maxWidth - 1).join("")}…`;
+  const budget = maxWidth - 1;
+  let visible = 0;
+  let opened = false;
+  let cut = "";
+  for (const part of line.split(SGR_SPLIT)) {
+    if (part === "") continue;
+    if (SGR_WHOLE.test(part)) {
+      cut += part;
+      opened = !isReset(part);
+      continue;
+    }
+    for (const char of part) {
+      if (visible === budget) return `${cut}…${opened ? RESET : ""}`;
+      cut += char;
+      visible += 1;
+    }
+  }
+  return `${cut}…${opened ? RESET : ""}`;
 }
 
-/** One cell padded to a column width. PURE. */
+/** One cell padded to a column width, counting columns the terminal draws. PURE. */
 export function pad(text: string, target: number): string {
   return text + " ".repeat(Math.max(0, target - width(text)));
+}
+
+/**
+ * A model identifier shortened to its family token. PURE.
+ *
+ * `claude-opus-5` costs twelve columns the lifecycle bar needs more, and the
+ * family is the whole of what a reader takes from it: `claude-opus-4-8` →
+ * `opus`, `Opus` → `opus`, `claude-sonnet-5` → `sonnet`. An unrecognised model
+ * falls through unchanged rather than rendering as nothing.
+ */
+export function shortModel(model: string): string {
+  const lower = model.toLowerCase();
+  for (const family of ["opus", "sonnet", "haiku", "fable"]) {
+    if (lower.includes(family)) return family;
+  }
+  return model;
 }
 
 /**
