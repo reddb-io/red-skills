@@ -35,6 +35,8 @@
 import {
   admitGithubOperation,
   balanceFromReport,
+  createGithubCache,
+  describeGithubCacheRead,
   githubBalanceCadenceMs,
   routeGithubArgs,
   tryRouteGithubArgs,
@@ -42,6 +44,9 @@ import {
   type GithubBalance,
   type GithubCallCriticality,
 } from "@reddb-io/github";
+
+/** The one key the gate keeps: this host's balance, as the daemon last read it. */
+const BALANCE_CACHE_KEY = "github:balance";
 
 /** How the gate obtains the balance the daemon polled. */
 export type GhBalanceReader = () => Promise<GithubBalance | null>;
@@ -63,7 +68,7 @@ export interface GhBandGate {
 
 export interface CreateGhBandGateOptions {
   readonly readBalance: GhBalanceReader;
-  readonly nowMs?: () => number;
+  /** The clock the cache ages against; the real one when absent. */
   readonly nowIso?: () => string;
   /** The band's fraction; the package default when absent. */
   readonly reservedFraction?: number;
@@ -78,31 +83,37 @@ export interface CreateGhBandGateOptions {
  * learn a number that cannot have changed.
  */
 export function createGhBandGate(options: CreateGhBandGateOptions): GhBandGate {
-  const nowMs = options.nowMs ?? (() => Date.now());
   const nowIso = options.nowIso ?? (() => new Date().toISOString());
-  let cached: GithubBalance | null = null;
-  let cachedUntilMs = 0;
+  // The shared cache, not a private one: a kept value must travel with its age,
+  // and a second staleness implementation here is how two surfaces come to
+  // disagree about how old the same number is (#3095).
+  const cache = createGithubCache({ freshMs: 30_000, capacity: 1 });
   let inFlight: Promise<GithubBalance | null> | null = null;
 
   async function balance(): Promise<GithubBalance | null> {
-    if (nowMs() < cachedUntilMs) return cached;
+    const kept = cache.read<GithubBalance | null>(BALANCE_CACHE_KEY, { now: nowIso() });
+    if (kept.outcome === "fresh") return kept.value ?? null;
     if (inFlight != null) return await inFlight;
     inFlight = options
       .readBalance()
       .catch(() => null)
       .then((answer) => {
-        cached = answer;
-        // The window comes from the balance, so a tight balance is re-read
-        // often and a roomy one is left alone — the same adaptation the poller
-        // makes, applied to the reader rather than to the ask.
-        const windowMs = answer == null ? 30_000 : githubBalanceCadenceMs(answer, { now: nowIso() });
-        cachedUntilMs = nowMs() + windowMs;
+        // The freshness window comes from the balance itself, so a tight balance
+        // is re-read often and a roomy one is left alone — the same adaptation
+        // the poller makes, applied to the reader rather than to the ask.
+        const freshMs = answer == null ? 30_000 : githubBalanceCadenceMs(answer, { now: nowIso() });
+        cache.put({ key: BALANCE_CACHE_KEY, kind: "github-balance", value: answer, fetchedAt: nowIso(), freshMs });
         return answer;
       })
       .finally(() => {
         inFlight = null;
       });
     return await inFlight;
+  }
+
+  /** How old the balance a refusal turned on is — rendered, never assumed. */
+  function keptAge(): string {
+    return describeGithubCacheRead(cache.read(BALANCE_CACHE_KEY, { now: nowIso() }));
   }
 
   return {
@@ -120,15 +131,27 @@ export function createGhBandGate(options: CreateGhBandGateOptions): GhBandGate {
         ...(options.reservedFraction === undefined ? {} : { reservedFraction: options.reservedFraction }),
       });
       if (admission.admitted) return null;
-      return { admission, message: renderBandRefusal(args, admission) };
+      return { admission, message: renderBandRefusal(args, admission, keptAge()) };
     },
   };
 }
 
-/** The sentence a refusal carries — the threshold, not just the verdict. PURE. */
-export function renderBandRefusal(args: readonly string[], admission: GithubAdmission): string {
+/**
+ * The sentence a refusal carries — the threshold and the AGE, not just the
+ * verdict. PURE.
+ *
+ * The age is in the sentence because a refusal is a judgement on a kept number:
+ * an operator reading "refused" deserves to know whether the balance behind it
+ * was read a second ago or a poll ago.
+ */
+export function renderBandRefusal(
+  args: readonly string[],
+  admission: GithubAdmission,
+  balanceAge?: string,
+): string {
   return (
     `gh ${args.join(" ")} was not issued: ${admission.reason}` +
+    (balanceAge ? ` [balance ${balanceAge}]` : "") +
     (admission.posture === "spent"
       ? ""
       : ` — the band exists so the claim, a landing and a finishing Worker's closing comment still pass`)
