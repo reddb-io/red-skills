@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-`CLAUDE.md`'s layout block now names directories that exist, and a test keeps it that way. It described `apps/herdr-plugin/`, a path #3011 renamed, and listed seven runtimes when thirteen exist — and `CLAUDE.md` is loaded into every agent session as project instructions, so a drifted path sends every agent to a directory that is not there. The block gains the runtimes it had been missing and `packages/github`, and `apps/dev/tests/claude-md-layout.test.ts` asserts every `apps/` and `packages/` entry resolves, with the pre-rename herdr path refused by name so a revert is caught for what it is rather than by a generic existence check. `HOST-NOTES.md` keeps its prohibition on routing the command-backed statusline through MCP — ADR 0132 decision 9 is the decision that says so — but stops attributing the reasoning to ADR 0084, which is about the bundle fetch and says nothing about MCP; what carries over is that a `statusLine` entry is a shell command rather than an MCP client, so a handshake per render tick blanks the line whenever the server is not up.
