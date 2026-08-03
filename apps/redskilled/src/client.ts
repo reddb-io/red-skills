@@ -175,6 +175,21 @@ export class RedskilledDaemonHeldError extends RedskilledUnreachableError {
 }
 
 /**
+ * Raised when the daemon answered a request with an application-level refusal.
+ *
+ * This is deliberately distinct from {@link RedskilledUnreachableError}: both
+ * leave the requested operation unapplied, but only the latter is transport
+ * silence. Surfaces use the distinction to preserve the daemon's explanation
+ * instead of routing an answered refusal to installation advice (#3158).
+ */
+export class RedskilledRequestRefusedError extends Error {
+  constructor(readonly refusal: string) {
+    super(refusal);
+    this.name = "RedskilledRequestRefusedError";
+  }
+}
+
+/**
  * Ask what is actually on this socket: answering, held-but-silent, or absent.
  *
  * The one probe every surface shares. It reads the socket and the lease and hands
@@ -418,7 +433,7 @@ export async function requestRedskilled(
       await probeRedskilledPresence(paths).catch(() => undefined),
     );
   }
-  if (!response.ok) throw new Error(response.error);
+  if (!response.ok) throw new RedskilledRequestRefusedError(response.error);
   return response.value;
 }
 
@@ -458,7 +473,7 @@ export async function stopRedskilledDaemon(
     // saying nothing, which is the one thing a stop must not report as done.
     throw new RedskilledUnreachableError(paths.socketPath, err);
   }
-  if (!response.ok) throw new Error(response.error);
+  if (!response.ok) throw new RedskilledRequestRefusedError(response.error);
   if (!isRedskilledDaemonStopped(response.value)) throw new Error("redskilled daemon returned a malformed stop report");
   const report = response.value;
 
