@@ -60,9 +60,28 @@ export async function releaseProject(root: string): Promise<ProjectStopResult> {
   }
 }
 
+/**
+ * Ask the host to let go of one Worker record, whatever is left of the process.
+ *
+ * The daemon's stop verb ends a process AND drops the record, so it is the one
+ * verb that expresses "stop counting this" — the intent an operator holding a
+ * dead-pid record has and previously had no way to say (#3123). A host that
+ * holds no such record answers `false`, which is the same outcome asked for.
+ */
+export async function releaseHostWorker(root: string, workerId: string, detail: string): Promise<boolean> {
+  try {
+    return await createRedskilledBirthPort({ root }).stop(workerId, detail);
+  } catch {
+    // An unreachable host is not a released record, and it is not this verb's to
+    // repair: the local classification stands and says what it found.
+    return false;
+  }
+}
+
 /** Injectable IO for deterministic testing. */
 export interface StopIO {
   releaseProject(root: string): Promise<ProjectStopResult>;
+  releaseHostWorker(root: string, workerId: string, detail: string): Promise<boolean>;
   listStaleClaimDirs(tmpDir: string): Promise<Array<{ path: string; issue?: number }>>;
   restoreClaimLabels(root: string, issue: number): Promise<boolean>;
   removeDir(path: string): Promise<void>;
@@ -73,6 +92,7 @@ export interface StopIO {
 
 const defaultIO: StopIO = {
   releaseProject,
+  releaseHostWorker,
   listStaleClaimDirs,
   restoreClaimLabels,
   removeDir,
@@ -123,7 +143,7 @@ export async function stopCommand(
 
   try {
     if (parsed.worker !== null) {
-      return await stopWorker(parsed.worker, paths.tmpDir, stdout, io);
+      return await stopWorker(parsed.worker, paths.tmpDir, stdout, io, cwd);
     }
     return await stopProjectWithReconcile(cwd, paths.tmpDir, stdout, io);
   } catch (error) {
@@ -187,7 +207,16 @@ export interface StopWorkerResult {
   op: "stop-worker";
   worker: string;
   worker_pid: number | null;
-  worker_status: "none" | "stale" | "stopped" | "timeout";
+  /**
+   * `released` — there was no process, and the host's record was dropped.
+   *
+   * It sits beside `none` and `stale` rather than replacing them, because those
+   * two still describe what an unreachable host leaves behind: nothing local,
+   * and nothing said about the record.
+   */
+  worker_status: "none" | "stale" | "stopped" | "timeout" | "released";
+  /** What happened, when the answer needs a sentence rather than a word. */
+  detail?: string;
 }
 
 /**
@@ -196,21 +225,40 @@ export interface StopWorkerResult {
  * the structured outcome — the CLI encodes it to TOON, the MCP `worker_stop`/
  * `worker_recycle` ops return it verbatim (TOON-encoded at the transport boundary).
  * Throws on a malformed worker id.
+ *
+ * **A record with no process is released, not merely reported (#3123).** The
+ * operator's intent is "stop counting this", and reporting `none` while the host
+ * kept holding the slot left them no verb that expressed it: the queue stayed
+ * undrained behind a Worker that had been dead for two hours. So both processless
+ * classifications ask the host to drop the record before they answer.
  */
 export async function executeStopWorker(
   workerId: string,
   tmpDir: string,
   io: StopIO = defaultIO,
+  /** The checkout whose host holds the record; omitted skips the host release. */
+  root?: string,
 ): Promise<StopWorkerResult> {
   if (!isValidWorkerId(workerId)) {
     throw new Error(`invalid worker id: ${JSON.stringify(workerId)}`);
   }
   const pid = await io.readWorkerPid(workerPidFile(tmpDir, workerId));
-  if (pid === null) {
-    return { op: "stop-worker", worker: workerId, worker_pid: null, worker_status: "none" };
-  }
-  if (!io.isLivePid(pid)) {
-    return { op: "stop-worker", worker: workerId, worker_pid: pid, worker_status: "stale" };
+  if (pid === null || !io.isLivePid(pid)) {
+    const found = pid === null
+      ? "no local pid file names a process for it"
+      : `its recorded pid ${pid} is dead`;
+    const released = root === undefined
+      ? false
+      : await io.releaseHostWorker(root, workerId, `afk stop released a record with no process: ${found}`);
+    return {
+      op: "stop-worker",
+      worker: workerId,
+      worker_pid: pid,
+      worker_status: released ? "released" : pid === null ? "none" : "stale",
+      detail: released
+        ? `${found}, so the host was asked to forget the record and it did: the slot it held is free`
+        : `${found}, and the host holds no record of it to release`,
+    };
   }
   const dead = await io.killTreeAndWait(pid);
   return {
@@ -226,12 +274,13 @@ async function stopWorker(
   tmpDir: string,
   stdout: NodeJS.WritableStream,
   io: StopIO,
+  root: string,
 ): Promise<number> {
   if (!isValidWorkerId(workerId)) {
     process.stderr.write(`[afk stop] invalid worker id: ${JSON.stringify(workerId)}\n`);
     return 1;
   }
-  const result = await executeStopWorker(workerId, tmpDir, io);
+  const result = await executeStopWorker(workerId, tmpDir, io, root);
   stdout.write(encodeToon(result as unknown as Parameters<typeof encodeToon>[0]) + "\n");
   return result.worker_status === "timeout" ? 1 : 0;
 }

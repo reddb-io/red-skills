@@ -17,11 +17,17 @@
 // launch log answer "how many daemons?" and "from which file, at which version?".
 import type { ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  acquireSpawnLock,
+  releaseSpawnLock,
+  type SpawnLockReaping,
+  type SpawnLockTaken,
+} from "@reddb-io/shared/resident-core.js";
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
@@ -236,6 +242,51 @@ describe("redskilled auto-spawn at the client reach boundary", () => {
     // all the caller's own file.
     expect(launches(callerLog)).toEqual([]);
     expect(await socketAnswers(paths.socketPath)).toBe(false);
+  }, 60_000);
+
+  it("spawns past an orphaned lock instead of obeying it forever", async () => {
+    const { paths, config, launchLog } = await host();
+    // The field artifact: zero bytes, hours old, naming nobody (#3123).
+    await mkdir(dirname(paths.lockPath), { recursive: true });
+    await writeFile(paths.lockPath, "");
+    const aged = new Date(Date.now() - 6 * 60 * 60 * 1_000);
+    await utimes(paths.lockPath, aged, aged);
+
+    const reaped: SpawnLockReaping[] = [];
+    const outcome = await ensureRedskilledDaemon(paths, {
+      ...config,
+      spawnLockMaxAgeMs: 60_000,
+      onSpawnLockReaped: (reaping) => reaped.push(reaping),
+    });
+    started.push(paths.socketPath);
+
+    expect(outcome, "an orphaned lock still blocked the only path to a daemon").toBe("spawned");
+    expect(launches(launchLog)).toHaveLength(1);
+    expect(reaped.map((r) => r.reason)).toEqual(["unattributed"]);
+    expect(await socketAnswers(paths.socketPath)).toBe(true);
+  }, 60_000);
+
+  it("blames the lock, not the daemon, when a fresh lock's winner never appears", async () => {
+    const { paths, config, launchLog } = await host();
+    // A live holder's fresh lock: obeyed, correctly — and the winner never binds.
+    const held = await acquireSpawnLock(paths.lockPath, { pid: process.pid });
+    expect(held.acquired).toBe(true);
+
+    const error = await ensureRedskilledDaemon(paths, { ...config, readyTimeoutMs: 500 }).then(
+      (outcome) => outcome as never,
+      (err: unknown) => err,
+    );
+
+    expect(error).toBeInstanceOf(RedskilledUnreachableError);
+    const message = (error as Error).message;
+    expect(message).toContain(paths.lockPath);
+    expect(message).toContain(`pid ${process.pid}`);
+    expect(message).toContain("no spawn was attempted");
+    // The misattribution this replaces: nothing was ever asked to start.
+    expect(message, "a spawn never attempted was reported as one that failed").not.toContain("did not start on");
+    expect(launches(launchLog)).toEqual([]);
+
+    await releaseSpawnLock(held as SpawnLockTaken);
   }, 60_000);
 
   it("surfaces an unreachable daemon as its own state, never as an empty answer", async () => {

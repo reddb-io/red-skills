@@ -6,7 +6,15 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { decode, encode, type JsonObject } from "@reddb-io/toon";
 import { rspStateDir } from "./red-paths.js";
-import { isPidAlive, runtimeSocketDir, terminatePid, tryAcquireExclusiveLock } from "./resident-core.js";
+import {
+  acquireSpawnLock,
+  describeSpawnLockHolder,
+  isPidAlive,
+  releaseSpawnLock,
+  runtimeSocketDir,
+  terminatePid,
+  tryAcquireExclusiveLock,
+} from "./resident-core.js";
 import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
 import { sendResidentRequest } from "./resident-protocol.js";
 import { requireRspEntry } from "./rsp-entry.js";
@@ -98,8 +106,17 @@ export async function ensureResidentServer(paths: RspResidentPaths, config: RspR
   if (await isResidentUsable(paths.socketPath, config)) return;
   await reconcileResidentRegistry(paths, config);
 
-  const lock = await tryAcquireLock(paths.lockPath);
-  if (lock) {
+  // Reaping, not merely exclusive: an orphaned lock here refuses every auto-spawn
+  // for as long as it exists, and the resident is the only path a fresh session
+  // has to a store (#3123). The reaping is reported rather than silent.
+  const lock = await acquireSpawnLock(paths.lockPath, {
+    onReap: (reaping) =>
+      process.stderr.write(
+        `rsp: reaped the resident spawn lock ${JSON.stringify(reaping.lockPath)} ` +
+          `(${reaping.reason}, ${Math.round(reaping.ageMs / 1_000)}s old)\n`,
+      ),
+  });
+  if (lock.acquired) {
     try {
       if (await isResidentUsable(paths.socketPath, config)) return;
       await reconcileResidentRegistry(paths, config);
@@ -108,12 +125,16 @@ export async function ensureResidentServer(paths: RspResidentPaths, config: RspR
       await waitForServer(paths.socketPath, child);
       return;
     } finally {
-      await lock.close();
-      await rm(paths.lockPath, { force: true });
+      await releaseSpawnLock(lock);
     }
   }
 
-  await waitForServer(paths.socketPath);
+  try {
+    await waitForServer(paths.socketPath);
+  } catch (err) {
+    // The gate that refused, not a daemon that failed: this client never spawned.
+    throw new Error(`${err instanceof Error ? err.message : String(err)}; ${describeSpawnLockHolder(lock)}`);
+  }
 }
 
 export async function pingResident(socketPath: string, timeoutMs = 200): Promise<boolean> {

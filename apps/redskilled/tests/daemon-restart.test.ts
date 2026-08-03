@@ -318,7 +318,7 @@ describe("a sweep retires a re-attached Worker the host stopped confirming", () 
     expect(daemon.workerCount()).toBe(1);
 
     alive = false;
-    const retired = await daemon.sweepReattached();
+    const retired = await daemon.sweepWorkerLiveness();
     await daemon.flushEvents();
 
     expect(retired.map((worker) => worker.worker_id)).toEqual(["w-fading"]);

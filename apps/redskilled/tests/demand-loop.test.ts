@@ -259,6 +259,10 @@ describe("the daemon drives the demand loop itself", () => {
       ceiling: UNBOUNDED_HOST_CEILING,
       sampleMs: 0,
       demandMs: 0,
+      // The recording launch births no process, so the host must be told these
+      // are alive: the tick's own liveness sweep (#3123) would otherwise retire
+      // the very Workers the second tick is meant to count.
+      liveness: () => true,
       launch: recordingLaunch([]),
       queueDiscovery: { intervalMs: 0, transport: async () => answer([9]) },
     });

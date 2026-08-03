@@ -34,7 +34,31 @@ export interface ProjectAttributionInput<W extends AttributableWorker> {
    * holds none.
    */
   readonly hostWorkerIds: readonly string[] | null;
+  /**
+   * When the host says each of its Workers was born, by id.
+   *
+   * Supplied so "the host counts a Worker this checkout sees no trace of" can be
+   * told apart from the ordinary newborn window, where a Worker legitimately
+   * holds its slot before it has written any project-side state. Omitted means
+   * the caller cannot date them, and the disagreement stays unreported rather
+   * than guessed at — a false alarm on every birth would be the louder defect.
+   */
+  readonly hostWorkerBirths?: Readonly<Record<string, string>>;
+  /** The instant to date those births against; `Date.now()` when unstated. */
+  readonly nowMs?: number;
+  /** How long a newborn is exempt; {@link NEWBORN_ATTRIBUTION_GRACE_MS} by default. */
+  readonly newbornGraceMs?: number;
 }
+
+/**
+ * How long a host Worker is too young for its absence here to mean anything.
+ *
+ * A Worker holds its slot from the instant the daemon births it, and writes its
+ * project-side state a moment later. Inside this window "the host holds one and
+ * we see none" is a birth in progress; past it, it is a record outliving its
+ * Worker (#3123).
+ */
+export const NEWBORN_ATTRIBUTION_GRACE_MS = 60_000;
 
 export interface ProjectAttribution<W extends AttributableWorker> {
   /** Workers the host attributes to this project. */
@@ -55,6 +79,27 @@ export interface ProjectAttribution<W extends AttributableWorker> {
  * its slot before it has written any project-side state, and a slot count that
  * waited for that file would read free while the daemon refused to fill it.
  */
+/**
+ * True when every held Worker is old enough for its absence to mean something.
+ *
+ * Undatable is treated as NEWBORN, not settled: a caller that supplied no births
+ * — or a host record missing one — has given no evidence, and inventing an alarm
+ * out of no evidence is how a warning teaches an operator to ignore it. PURE.
+ */
+function allSettled<W extends AttributableWorker>(
+  input: ProjectAttributionInput<W>,
+  held: readonly string[],
+): boolean {
+  const births = input.hostWorkerBirths;
+  if (births == null) return false;
+  const nowMs = input.nowMs ?? Date.now();
+  const graceMs = input.newbornGraceMs ?? NEWBORN_ATTRIBUTION_GRACE_MS;
+  return held.every((id) => {
+    const bornMs = Date.parse(births[id] ?? "");
+    return Number.isFinite(bornMs) && nowMs - bornMs >= graceMs;
+  });
+}
+
 export function attributeProjectWorkers<W extends AttributableWorker>(
   input: ProjectAttributionInput<W>,
 ): ProjectAttribution<W> {
@@ -68,6 +113,17 @@ export function attributeProjectWorkers<W extends AttributableWorker>(
     warnings.push(
       "the redskilled daemon did not answer, so no live Worker could be attributed to this project: every one of " +
         "them is listed as unattributed because ownership is the host's answer, never a guess made from a pid",
+    );
+  } else if (held.length > 0 && input.workers.length === 0 && allSettled(input, held)) {
+    // The #3123 signature: the host counts Workers this checkout can see no trace
+    // of, and none of them is young enough for a birth in progress to explain it.
+    // Silence here is what let `live_workers: []` sit beside `busy: 1` for two
+    // hours while a queue went undrained — the two surfaces described the same
+    // machine and disagreed, and neither said so.
+    warnings.push(
+      `the host holds ${held.length} Worker(s) for this project (${[...ourWorkerIds].slice(0, 3).join(", ")}) and ` +
+        "not one of them is running here: the daemon's count and this project's own read disagree, which is a record " +
+        "outliving its Worker — the host's liveness sweep reaps it, and `worker_stop <id>` releases it now (#3123)",
     );
   } else if (held.length > 0 && input.workers.length > 0 && live.length === 0) {
     // The #3081 signature, stated where it is read. Two disjoint id spaces and a

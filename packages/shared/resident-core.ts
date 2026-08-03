@@ -19,7 +19,7 @@
  */
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { mkdir, open, type FileHandle } from "node:fs/promises";
+import { mkdir, open, readFile, rm, stat, type FileHandle } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -172,6 +172,11 @@ export function serveWireSocket<TRequest>(
  * `O_CREAT | O_EXCL` is the whole mechanism: exactly one concurrent caller gets
  * a handle, every other gets `null` and must wait for the winner rather than
  * start a second daemon.
+ *
+ * **The raw primitive: it attributes nothing and reaps nothing.** A caller that
+ * can be blocked forever by a lock its owner never released wants
+ * {@link acquireSpawnLock} instead; this stays for the wake-marker case, where
+ * the file is a deliberate once-per-window token rather than a held lock.
  */
 export async function tryAcquireExclusiveLock(lockPath: string): Promise<FileHandle | null> {
   await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
@@ -179,6 +184,200 @@ export async function tryAcquireExclusiveLock(lockPath: string): Promise<FileHan
     return await open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    return null;
+  }
+}
+
+/**
+ * How long a spawn lock is believed before the next spawner reaps it.
+ *
+ * Six times the ready window a client gives a booting daemon, so a spawn that is
+ * merely slow is never robbed of its lock, and one whose owner vanished is not
+ * believed for an afternoon (#3123).
+ */
+export const DEFAULT_SPAWN_LOCK_MAX_AGE_MS = 60_000;
+
+/** Who took a spawn lock and when — read back off the lock file itself. */
+export interface SpawnLockHolder {
+  readonly pid: number;
+  readonly takenAt: string;
+}
+
+/** One lock this acquisition refused to obey, and the reason it did not. */
+export interface SpawnLockReaping {
+  readonly lockPath: string;
+  /**
+   * `holder-dead` — the pid on the lock is gone.
+   * `aged-out` — a live holder has held it past `maxAgeMs`.
+   * `unattributed` — the lock names nobody, and is older than `maxAgeMs`.
+   */
+  readonly reason: "holder-dead" | "aged-out" | "unattributed";
+  readonly holder: SpawnLockHolder | null;
+  readonly ageMs: number;
+}
+
+export interface SpawnLockTaken {
+  readonly acquired: true;
+  readonly lockPath: string;
+  readonly handle: FileHandle;
+  /** The stale locks cleared on the way in; empty on an uncontended take. */
+  readonly reaped: readonly SpawnLockReaping[];
+}
+
+export interface SpawnLockHeld {
+  readonly acquired: false;
+  readonly lockPath: string;
+  /** Null when the lock names nobody — the shape an older bundle's lock has. */
+  readonly holder: SpawnLockHolder | null;
+  /** Null when the lock's age could not be established at all. */
+  readonly ageMs: number | null;
+}
+
+export type SpawnLockOutcome = SpawnLockTaken | SpawnLockHeld;
+
+export interface SpawnLockOptions {
+  readonly maxAgeMs?: number;
+  readonly now?: () => number;
+  readonly pid?: number;
+  readonly isPidAlive?: (pid: number) => boolean;
+  /** Called for every lock reaped, so the reaping is never silent. */
+  readonly onReap?: (reaping: SpawnLockReaping) => void;
+}
+
+/** The lock file's one line. Deliberately not TOON: an operator `cat`s this. */
+const SPAWN_LOCK_MAGIC = "resident-spawn-lock v1";
+
+/** How many times an acquisition will reap and retry before reporting held. */
+const SPAWN_LOCK_REAP_ATTEMPTS = 3;
+
+/**
+ * Take the spawn lock, saying who took it, and reap one nobody released.
+ *
+ * **A lock that names no owner and no instant is a lock nothing can decide is
+ * stale**, which is how a zero-byte file six hours old came to refuse every
+ * auto-spawn on a healthy machine (#3123). So the record carries its pid and its
+ * instant, and this acquisition reaps three kinds of lock rather than obeying
+ * them: one whose holder is gone, one a live holder has held past `maxAgeMs`,
+ * and one from an older bundle that says nothing and is older than `maxAgeMs`.
+ *
+ * A reap is never silent — `onReap` is handed every one — because a mechanism
+ * that quietly deletes another process's lock must leave a trail when the guess
+ * was wrong. Losing the race is still the ordinary outcome and still not a
+ * failure: the caller waits for the winner, and now has a holder to name if the
+ * winner never appears.
+ */
+export async function acquireSpawnLock(
+  lockPath: string,
+  options: SpawnLockOptions = {},
+): Promise<SpawnLockOutcome> {
+  const maxAgeMs = options.maxAgeMs ?? DEFAULT_SPAWN_LOCK_MAX_AGE_MS;
+  const now = options.now ?? Date.now;
+  const pid = options.pid ?? process.pid;
+  const alive = options.isPidAlive ?? isPidAlive;
+  await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
+
+  const reaped: SpawnLockReaping[] = [];
+  for (let attempt = 0; ; attempt += 1) {
+    const handle = await tryAcquireExclusiveLock(lockPath);
+    if (handle) {
+      // Written after the exclusive create, which is why a lock caught mid-write
+      // reads as unattributed: that window is milliseconds wide, and the age
+      // bound is what keeps a reader from mistaking it for an orphan.
+      await handle
+        .writeFile(`${SPAWN_LOCK_MAGIC} pid=${pid} taken=${new Date(now()).toISOString()}\n`)
+        .catch(() => undefined);
+      return { acquired: true, lockPath, handle, reaped };
+    }
+
+    const holder = await readSpawnLockHolder(lockPath);
+    const ageMs = await spawnLockAgeMs(lockPath, holder, now());
+    if (attempt >= SPAWN_LOCK_REAP_ATTEMPTS || ageMs == null) {
+      return { acquired: false, lockPath, holder, ageMs };
+    }
+    const reason = spawnLockReapReason(holder, ageMs, maxAgeMs, alive);
+    if (reason == null) return { acquired: false, lockPath, holder, ageMs };
+
+    const reaping: SpawnLockReaping = { lockPath, reason, holder, ageMs };
+    await rm(lockPath, { force: true });
+    reaped.push(reaping);
+    options.onReap?.(reaping);
+  }
+}
+
+/** Give the lock back: close the handle, then remove the file. */
+export async function releaseSpawnLock(taken: SpawnLockTaken): Promise<void> {
+  await taken.handle.close().catch(() => undefined);
+  await rm(taken.lockPath, { force: true });
+}
+
+/** Why this lock may be reaped, or `null` when it must still be obeyed. PURE. */
+function spawnLockReapReason(
+  holder: SpawnLockHolder | null,
+  ageMs: number,
+  maxAgeMs: number,
+  alive: (pid: number) => boolean,
+): SpawnLockReaping["reason"] | null {
+  if (holder == null) return ageMs > maxAgeMs ? "unattributed" : null;
+  if (!alive(holder.pid)) return "holder-dead";
+  return ageMs > maxAgeMs ? "aged-out" : null;
+}
+
+/**
+ * The sentence a refused spawn owes its operator.
+ *
+ * Named here rather than at each caller because every caller owes the same three
+ * facts — which lock, whose it is, how old — and "the daemon did not start" is
+ * exactly the sentence this replaces: it describes a spawn that was never
+ * attempted, and sends an operator to inspect a daemon that is perfectly healthy.
+ */
+export function describeSpawnLockHolder(held: SpawnLockHeld): string {
+  const age = held.ageMs == null ? "of unknown age" : `taken ${Math.round(held.ageMs / 1_000)}s ago`;
+  const who = held.holder == null
+    ? "an owner it does not name"
+    : `pid ${held.holder.pid} (at ${held.holder.takenAt})`;
+  return (
+    `no spawn was attempted: the spawn lock ${JSON.stringify(held.lockPath)} is held by ${who}, ${age}. ` +
+    `If that process is gone, remove the file to clear it`
+  );
+}
+
+/** Read the holder a lock names; `null` when it names nobody or cannot be read. */
+async function readSpawnLockHolder(lockPath: string): Promise<SpawnLockHolder | null> {
+  try {
+    return parseSpawnLockHolder(await readFile(lockPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/** Parse the lock's one line. PURE. Anything else reads as unattributed. */
+export function parseSpawnLockHolder(raw: string): SpawnLockHolder | null {
+  const line = raw.split("\n", 1)[0]?.trim() ?? "";
+  if (!line.startsWith(SPAWN_LOCK_MAGIC)) return null;
+  const pid = Number(/\bpid=(\d+)\b/.exec(line)?.[1] ?? "");
+  const takenAt = /\btaken=(\S+)/.exec(line)?.[1] ?? "";
+  if (!Number.isInteger(pid) || pid <= 0 || !Number.isFinite(Date.parse(takenAt))) return null;
+  return { pid, takenAt };
+}
+
+/**
+ * How old this lock is: by its own stated instant, else by its mtime.
+ *
+ * The mtime fallback is what gives an unattributed lock an age at all — the
+ * whole reason the six-hour zero-byte file could not be judged. A negative age
+ * (a clock that moved backwards) is clamped to zero rather than reaped: a lock
+ * from the future is a machine problem, not an orphan.
+ */
+async function spawnLockAgeMs(
+  lockPath: string,
+  holder: SpawnLockHolder | null,
+  nowMs: number,
+): Promise<number | null> {
+  const stated = holder == null ? Number.NaN : Date.parse(holder.takenAt);
+  if (Number.isFinite(stated)) return Math.max(0, nowMs - stated);
+  try {
+    return Math.max(0, nowMs - (await stat(lockPath)).mtimeMs);
+  } catch {
     return null;
   }
 }

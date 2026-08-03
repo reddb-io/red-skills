@@ -39,27 +39,37 @@ function fakeIO(opts: {
   workerPid?: number | null;
   workerLive?: boolean;
   workerKillResult?: boolean;
+  hostReleased?: boolean;
 } = {}): StopIO & {
   releaseProjectCalled: boolean;
   removedDirs: string[];
   labelRestores: Array<{ issue: number; labels: string[] }>;
   workerKillCalled: boolean;
+  hostReleases: Array<{ worker: string; detail: string }>;
 } {
   let releaseProjectCalled = false;
   const removedDirs: string[] = [];
   const labelRestores: Array<{ issue: number; labels: string[] }> = [];
   let workerKillCalled = false;
+  const hostReleases: Array<{ worker: string; detail: string }> = [];
 
   const io: StopIO & {
     releaseProjectCalled: boolean;
     removedDirs: string[];
     labelRestores: Array<{ issue: number; labels: string[] }>;
     workerKillCalled: boolean;
+    hostReleases: Array<{ worker: string; detail: string }>;
   } = {
     get releaseProjectCalled() { return releaseProjectCalled; },
     get removedDirs() { return removedDirs; },
     get labelRestores() { return labelRestores; },
     get workerKillCalled() { return workerKillCalled; },
+    get hostReleases() { return hostReleases; },
+
+    async releaseHostWorker(_root, worker, detail) {
+      hostReleases.push({ worker, detail });
+      return opts.hostReleased ?? false;
+    },
 
     async releaseProject(_root: string) {
       releaseProjectCalled = true;
@@ -263,6 +273,43 @@ describe("stopCommand — --worker recycle", () => {
     expect(code).toBe(0);
     expect(text()).toContain("worker_status: stale");
     expect(io.workerKillCalled).toBe(false);
+  });
+
+  // #3123: `worker_stop` on a record with no process reported `none` and left the
+  // host holding the slot. There was no verb for "this record describes nothing;
+  // forget it", so a dead Worker's record blocked a whole queue until the daemon
+  // restarted. Both processless classifications now ASK, and say what came back.
+  it("releases the host's record when no pid file names a process", async () => {
+    const io = fakeIO({ workerPid: null, hostReleased: true });
+    const { stream, text } = capture();
+    const code = await stopCommand(["--worker", "wXXXX"], "/repo", stream, io);
+
+    expect(code).toBe(0);
+    expect(text()).toContain("worker_status: released");
+    expect(io.hostReleases.map((r) => r.worker)).toEqual(["wXXXX"]);
+    expect(text()).toContain("the slot it held is free");
+    expect(io.workerKillCalled).toBe(false);
+  });
+
+  it("releases the host's record when the recorded pid is dead", async () => {
+    const io = fakeIO({ workerPid: 7777, workerLive: false, hostReleased: true });
+    const { stream, text } = capture();
+    const code = await stopCommand(["--worker", "wSTAL"], "/repo", stream, io);
+
+    expect(code).toBe(0);
+    expect(text()).toContain("worker_status: released");
+    expect(io.hostReleases[0]!.detail).toContain("7777");
+  });
+
+  it("keeps saying none when the host holds no record to release", async () => {
+    const io = fakeIO({ workerPid: null, hostReleased: false });
+    const { stream, text } = capture();
+    await stopCommand(["--worker", "wXXXX"], "/repo", stream, io);
+
+    // The host was asked — silence about it is what made the slot un-releasable.
+    expect(io.hostReleases).toHaveLength(1);
+    expect(text()).toContain("worker_status: none");
+    expect(text()).toContain("holds no record of it to release");
   });
 
   it("returns exit code 1 and worker_status=timeout when the worker survives SIGKILL", async () => {

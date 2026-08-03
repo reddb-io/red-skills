@@ -47,7 +47,9 @@ describe("redskilled idle exit", () => {
 
   it("does not exit on idle while it believes a worker is alive", async () => {
     const paths = await sessionPaths();
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 20 });
+    // The fixture Worker has no process behind it, so the host is told it is
+    // alive: what this pins is the idle rule, not the liveness sweep (#3123).
+    const daemon = await startRedskilledDaemon({ paths, idleMs: 20, liveness: () => true });
     running.push(daemon);
     daemon.trackWorker(WORKER);
 

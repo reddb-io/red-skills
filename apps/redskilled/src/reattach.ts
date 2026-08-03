@@ -71,6 +71,16 @@ export async function reattachWorkers(
   return { alive, dead };
 }
 
+/**
+ * How long a newborn Worker is exempt from the liveness sweep.
+ *
+ * The sweep asks the init system, and a Worker whose unit is still being created
+ * would answer "not active" for reasons that are birth rather than death — so
+ * inside this window the child handle is authoritative and the probe is not
+ * asked. Past it, silence from the host means the Worker is gone (#3123).
+ */
+export const REDSKILLED_LIVENESS_GRACE_MS = 30_000;
+
 /** The default probe: the unit when there is one, the pid when there is not. */
 export function detectWorkerLiveness(worker: RedskilledWorkerView): boolean {
   if (worker.unit != null && worker.unit !== "") return isUnitActive(worker.unit);
