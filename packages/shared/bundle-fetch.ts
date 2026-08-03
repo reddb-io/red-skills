@@ -117,13 +117,28 @@ export function resolveBundle(input: ResolveBundleInput): string {
 /**
  * Bundles that ship under another plugin's warm path.
  *
+ * **A companion is a bundle nothing asks for by name.** `red-fetch.mjs <plugin>
+ * <version>` is invoked for `dev` and `code-nav` only, so any other bundle a
+ * host resolves from the shared cache must be warmed by the plugin it ships
+ * beside or it never lands there at all.
+ *
  * `rsp` is part of the dev plugin surface: the PATH shim and shell hooks resolve
  * it from the shared bundle cache, but no SessionStart hook invokes
- * `red-fetch.mjs rsp <version>` directly. Warming `dev` must therefore warm the
- * sibling `rsp` bundle from the same npm package materialization.
+ * `red-fetch.mjs rsp <version>` directly.
+ *
+ * `redskilled` is the same shape and the failure was worse (#3074). The
+ * documented Claude Code `statusLine` globs
+ * `~/.cache/red-skills/bundles/redskilled*.bundle.min.mjs` for the daemon that
+ * renders the Worker rows (ADR 0130 rule 10), and the render path is
+ * cached-first by contract — it must do no network and no resolution work (ADR
+ * 0084). Nothing wrote that file: the only copy on a host provisioned through
+ * `npx` lived inside the npx cache, so the glob resolved nothing, the daemon was
+ * never contacted, and the operator read a blank region as "no Workers". Warming
+ * `dev` warms the daemon bundle from the SAME npm package materialization, so
+ * the artifact the render command needs is already on disk when it looks.
  */
 export function companionBundlePlugins(plugin: string): readonly string[] {
-  return plugin === "dev" ? ["rsp"] : [];
+  return plugin === "dev" ? ["rsp", "redskilled"] : [];
 }
 
 /** Bundle filename inside the npm package tarball's `dist/`. */
