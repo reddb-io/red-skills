@@ -99,7 +99,7 @@ import {
   type RedskilledMachineClaimStore,
   type RedskilledMachineOwner,
 } from "./machine-scope.js";
-import type { RedskilledLaunchTemplate } from "./launch-template.js";
+import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "./launch-template.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
   buildProjectRegistration,
@@ -1203,13 +1203,26 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       let refusal: string | null = null;
       for (const birth of plan.births) {
         let launched: LaunchedWorker;
+        // The id is minted HERE rather than inside the launch, because the launch
+        // template may mention it: an id substituted into an argv, an env or a log
+        // path and a different id on the record would be one Worker the host and
+        // the work disagree about.
+        const workerId = randomUUID();
+        const registration = registrations.get(birth.project_label);
+        const spec = workerSpecFromLaunch(
+          // The argv comes from the plan (it is the registration's, copied), and
+          // the env and the log path from the registration itself: the planner
+          // reads three integers per project and was never given the launch.
+          {
+            argv: birth.argv,
+            ...(registration?.env == null ? {} : { env: registration.env }),
+            ...(registration?.log_path == null ? {} : { log_path: registration.log_path }),
+          },
+          { worker_id: workerId, slot: birth.index, workspace_path: birth.workspace_path },
+          { project_label: birth.project_label },
+        );
         try {
-          launched = startWorker({
-            project_label: birth.project_label,
-            workspace_path: birth.workspace_path,
-            command: birth.argv[0]!,
-            args: birth.argv.slice(1),
-          });
+          launched = startWorker(spec);
         } catch (err) {
           refusal = err instanceof Error ? err.message : String(err);
           demandBackoffUntilMs = (Number.isFinite(nowMs) ? nowMs : Date.now()) + demandBackoffMs;
@@ -1219,7 +1232,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           project_label: birth.project_label,
           worker_id: launched.worker.worker_id,
           pid: launched.worker.pid,
-          warnings: launched.warnings,
+          // Loud where it used to be silent (#3079): a registration that declared
+          // no log path produces a Worker no surface can ever show the output of,
+          // and the four layers between here and that surface each read the
+          // absence as legitimate. The grant says so once, where the operator who
+          // asked for the Worker is already reading.
+          warnings: spec.log_path == null
+            ? [
+              ...launched.warnings,
+              `project ${JSON.stringify(birth.project_label)} declared no log path, so no surface can show what ` +
+                `Worker ${JSON.stringify(launched.worker.worker_id)} logs unless it publishes a line on its heartbeat`,
+            ]
+            : launched.warnings,
         });
       }
       // A tick that asked and was never refused clears the hold, so the room a

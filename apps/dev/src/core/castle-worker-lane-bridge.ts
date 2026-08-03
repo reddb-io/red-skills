@@ -36,6 +36,15 @@ export interface CastleWorkerLaneBridgeOptions {
    * in every castle state snapshot so `fleet_status` can partition workers by
    * fleet without relying solely on the supervisor's slot-pid map. */
   supervisorLane?: string;
+  /**
+   * Where this worker's last line goes on the host, when it was born on one (#3079).
+   *
+   * Injected rather than reached for, because this module knows the castle lanes
+   * and nothing about a daemon: what it owns is the beat, and the publisher is
+   * one more thing that happens on it. Absent — a directly-invoked `run`, a test
+   * — the bridge behaves exactly as it did before.
+   */
+  publishHostLogLine?: (line: string) => Promise<void>;
 }
 
 function currentIssue(state: AfkState): number | undefined {
@@ -71,6 +80,25 @@ function snapshotFromState(
     envelope: state.envelope,
     ...(supervisorLane ? { supervisor_id: supervisorLane } : {}),
   };
+}
+
+/**
+ * One lane record as one line a human reads. PURE.
+ *
+ * Flat and short on purpose: this is what a statusline prints under a Worker and
+ * what a plugin shows beside it, so a nested payload rendered as an object would
+ * be a line nobody can read at that width. Scalars only — a payload value that is
+ * itself a structure is named and not unfolded.
+ */
+export function workerLogLine(
+  kind: WorkerLifecycleKind,
+  issue: number | undefined,
+  payload: Record<string, unknown>,
+): string {
+  const facts = Object.entries(payload)
+    .filter(([, value]) => value != null && (typeof value !== "object" || Array.isArray(value)))
+    .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(",") : String(value)}`);
+  return [kind, ...(issue == null ? [] : [`#${issue}`]), ...facts].join(" ");
 }
 
 function readAttemptState(attemptDir: string): AfkState | null {
@@ -124,6 +152,11 @@ export function createCastleWorkerLaneBridge(
         clock: nowMs,
       }).record("iteration-start");
     }
+    // The same record, said once more to the host — the beat this bridge already
+    // keeps is the cadence the heartbeat asked for, so nothing new is scheduled
+    // and nothing is polled. What the host receives is the line just written,
+    // rendered flat: it stores the string without reading it.
+    await options.publishHostLogLine?.(workerLogLine(kind, issue, payload));
     await snapshot();
   }
 

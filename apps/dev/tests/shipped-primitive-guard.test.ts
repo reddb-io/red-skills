@@ -60,6 +60,20 @@ describe("the live tree enables every declared safety primitive (#2800)", () => 
     expect(files.some((entry) => !entry.isTest)).toBe(true);
   });
 
+  it("finds a non-test caller for the Worker's log-line publisher specifically (#3079)", () => {
+    const callers = collectShippedPrimitiveCallers(readShippedPrimitiveFiles(ROOT));
+    const shipped = callers.filter(
+      (caller) => caller.primitiveId === "redskilled-worker-log-line" && !caller.isTest,
+    );
+
+    // The exact regression this entry exists for: the publisher shipped with one
+    // hit in the whole tree — its own definition — while HOST-NOTES.md described
+    // it as a working feature.
+    expect(shipped.map((caller) => caller.relativePath)).toEqual(
+      expect.arrayContaining(["apps/dev/src/runtime/redskilled-worker-log.ts"]),
+    );
+  });
+
   it("finds a non-test enabler for the gh quota backoff specifically", () => {
     const callers = collectShippedPrimitiveCallers(readShippedPrimitiveFiles(ROOT));
     const shipped = callers.filter((caller) => caller.primitiveId === "gh-quota-backoff" && !caller.isTest);
