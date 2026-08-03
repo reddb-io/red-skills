@@ -34,6 +34,12 @@ export interface StreamEventLike {
   readonly inputTokens?: number;
   readonly outputTokens?: number;
   readonly costUsd?: number;
+  /** The cached halves of the same turn's input side. Summed with `inputTokens`
+   * into the LAST-observed context level (#3097) — never into a cumulative
+   * total, because a context window is a level and cache reads would double-count
+   * the same resident prompt on every turn. */
+  readonly cacheReadInputTokens?: number;
+  readonly cacheCreationInputTokens?: number;
 }
 
 /** The counters surfaced into a heartbeat tick. All cumulative for the attempt. */
@@ -67,6 +73,16 @@ export interface ActivitySnapshot {
   readonly outputTokens: number;
   /** Cumulative USD cost when the runner reports it directly, else 0. */
   readonly costUsd: number;
+  /**
+   * Input-side tokens the LAST `usage` event carried — the context window's
+   * occupancy, in the engine's own spelling (`inputTokens +
+   * cacheCreationInputTokens + cacheReadInputTokens`).
+   *
+   * Overwritten rather than summed: this is a level, not a total. 0 means no
+   * runner has reported one, which for claude is the ordinary state — its usage
+   * arrives at the iteration boundary rather than on the stream.
+   */
+  readonly contextTokens: number;
 }
 
 export interface ActivityMeter {
@@ -96,6 +112,7 @@ export function createActivityMeter(): ActivityMeter {
   let inputTokens = 0;
   let outputTokens = 0;
   let costUsd = 0;
+  let contextTokens = 0;
   // Total events at the last window boundary, to derive per-window deltas.
   let eventsAtLastWindow = 0;
 
@@ -111,6 +128,9 @@ export function createActivityMeter(): ActivityMeter {
         if (typeof event.inputTokens === "number") inputTokens += event.inputTokens;
         if (typeof event.outputTokens === "number") outputTokens += event.outputTokens;
         if (typeof event.costUsd === "number") costUsd += event.costUsd;
+        const level =
+          (event.inputTokens ?? 0) + (event.cacheCreationInputTokens ?? 0) + (event.cacheReadInputTokens ?? 0);
+        if (level > 0) contextTokens = level;
       } else if (event.type === "reasoning") {
         reasoningCount += 1;
         if (typeof event.tokens === "number" && event.tokens > 0) reasoningTokens += event.tokens;
@@ -130,6 +150,7 @@ export function createActivityMeter(): ActivityMeter {
         inputTokens,
         outputTokens,
         costUsd,
+        contextTokens,
       };
     },
     peek() {
@@ -143,6 +164,7 @@ export function createActivityMeter(): ActivityMeter {
         inputTokens,
         outputTokens,
         costUsd,
+        contextTokens,
       };
     },
   };

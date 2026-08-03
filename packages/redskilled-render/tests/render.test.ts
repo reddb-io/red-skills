@@ -147,3 +147,61 @@ describe("a withheld extra is not a measurement gap", () => {
     expect(withheld.withheld).toContain("vitals");
   });
 });
+
+describe("the elapsed span, the context figure and the estimate (#3097)", () => {
+  it("derives elapsed from the record's start against the payload's own clock", () => {
+    // `uptime_ms` is the PROCESS's age, dated by a daemon that is not told what a
+    // work item is. A Worker that finished one issue and took another is one
+    // process and two spans, and the row must show the span it is showing.
+    const doc = payload({
+      generated_at: "2026-08-03T00:30:00.000Z",
+      workers: [worker({ uptime_ms: 7_200_000, display: display({ started_at: "2026-08-03T00:20:00.000Z" }) })],
+    });
+    const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
+    expect(table.rows[0]!.cells.elapsed).toBe("10m0s");
+  });
+
+  it("falls back to the process uptime when the project states no start", () => {
+    const doc = payload({ workers: [worker({ uptime_ms: 125_000, display: display({ started_at: null }) })] });
+    const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
+    expect(table.rows[0]!.cells.elapsed).toBe("2m5s");
+  });
+
+  it("prints the estimate and the context the project published", () => {
+    const doc = payload({ workers: [worker({ display: display({ eta: 640, context: 108_000 }) })] });
+    const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
+    expect(table.rows[0]!.cells.eta).toBe("eta=10m40s");
+    expect(table.rows[0]!.cells.ctx).toBe("ctx=108k");
+    expect(table.rows[0]!.line).toContain("eta=10m40s");
+  });
+
+  it("draws NO estimate for a Worker with none — absent is null, never a zero", () => {
+    const doc = payload({ workers: [worker({ display: display({ eta: null, context: null }) })] });
+    const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
+    const panel = renderRedskilledPanel(doc, { ...REDSKILLED_PANEL_DEFAULTS, project: "acme/widgets" });
+
+    expect(table.rows[0]!.cells.eta).toBe("");
+    expect(table.rows[0]!.cells.ctx).toBe("");
+    expect(table.rows[0]!.line).not.toContain("eta=");
+    expect(panel.worker_rows[0]).not.toContain("eta=");
+    // A zero would read as "any second now", which is a claim, not an absence.
+    expect(table.rows[0]!.line).not.toContain("eta=0s");
+  });
+
+  it("never extrapolates an estimate from the bar it draws beside it", () => {
+    // Two Workers at the SAME position in the same pipeline. One published an
+    // estimate, the other did not — and the render invents nothing for the second
+    // from the bar it just drew for both.
+    const doc = payload({
+      workers: [
+        worker({ worker_id: "w-a", display: display({ phase_index: 2, phase_total: 5, eta: 900 }) }),
+        worker({ worker_id: "w-b", display: display({ phase_index: 2, phase_total: 5, eta: null }) }),
+      ],
+    });
+    const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
+
+    expect(table.rows[0]!.cells.bar).toBe(table.rows[1]!.cells.bar);
+    expect(table.rows[0]!.cells.eta).toBe("eta=15m0s");
+    expect(table.rows[1]!.cells.eta).toBe("");
+  });
+});

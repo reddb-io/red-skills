@@ -102,6 +102,14 @@ export const AfkCurrentSchema = z.object({
   input_tokens: z.number().default(0),
   output_tokens: z.number().default(0),
   cost_usd: z.number().default(0),
+  /** Input-side tokens the LAST turn carried — the context window's occupancy
+   * (#3097), distinct from the cumulative `input_tokens` beside it. The sum of
+   * the turn's `inputTokens + cacheCreationInputTokens + cacheReadInputTokens`,
+   * which is what "context window: 103k" means everywhere else in the engine.
+   * Last-observed rather than cumulative on purpose: a context window is a level,
+   * not a total, and a Worker's whole spend says nothing about how close its next
+   * turn is to the ceiling. 0 means no runner has reported one. */
+  context_tokens: z.number().default(0),
   /** Output-shaping measurement arm (#1638). `steered` attempts receive only
    * phrasing constraints; `holdout` attempts receive no steering. Paired with
    * the existing `output_tokens` heartbeat counter for the report surface. */

@@ -8,9 +8,9 @@
  * the line, from the same selection and the same marks, and a surface prints.
  *
  * **The string is a pure function of the payload.** Nothing here reads a clock, a
- * directory or an environment variable; the elapsed figures are the payload's own
- * `uptime_ms`, dated by the daemon's sampler, so the dashboard and the statusline
- * beside it can only disagree if a pure function is impure.
+ * directory or an environment variable; the elapsed figures are subtracted from
+ * the payload's own `generated_at`, so the dashboard and the statusline beside it
+ * can only disagree if a pure function is impure.
  *
  * **Nothing here learns the pipeline.** The progress bar is drawn from the two
  * integers a project published (`phase_index`, `phase_total`) and from nothing
@@ -36,6 +36,7 @@ import {
   type RedskilledRenderWorker,
   type RedskilledRenderWorkerDisplay,
   type RedskilledStatuslineMode,
+  workerElapsedMs,
 } from "./payload.js";
 import {
   resolveStatuslineProjectMatch,
@@ -52,9 +53,11 @@ export const REDSKILLED_DASHBOARD_COLUMNS = [
   "bar",
   "phase",
   "elapsed",
+  "eta",
   "hb",
   "loc",
   "tks",
+  "ctx",
   "tls",
   "rsn",
   "txt",
@@ -196,7 +199,7 @@ export function renderRedskilledDashboard(
   const match = resolveStatuslineProjectMatch(payload, options.project);
   const selected = selectRenderWorkers(payload, options);
   const visible = selected.slice(0, Math.max(0, Math.floor(options.maxRows)));
-  const cells = visible.map((worker) => workerCells(worker, options));
+  const cells = visible.map((worker) => workerCells(worker, options, payload.generated_at));
   const widths = columnWidths(cells);
 
   const rows: RedskilledDashboardRow[] = visible.map((worker, index) => ({
@@ -248,6 +251,7 @@ export function renderRedskilledDashboard(
 function workerCells(
   worker: RedskilledRenderWorker,
   options: RedskilledDashboardOptions,
+  generatedAt: string,
 ): RedskilledDashboardCells {
   const display = worker.display ?? REDSKILLED_RENDER_DISPLAY_ABSENT;
   const run = [display.runner, display.model, display.effort].filter((part): part is string => Boolean(part)).join(" ");
@@ -258,10 +262,15 @@ function workerCells(
     iss: display.issue == null ? "" : `iss=${display.issue}`,
     bar: progressBar(display),
     phase: [display.phase, display.step].filter((part): part is string => Boolean(part)).join("·"),
-    elapsed: formatDuration(worker.uptime_ms),
+    elapsed: formatDuration(workerElapsedMs(worker, generatedAt)),
+    // A Worker whose project will not estimate gets NO cell — not `eta=—`, and
+    // certainly not a figure this module could have extrapolated off the bar
+    // beside it. The absence is the honest answer and it is legible as one.
+    eta: display.eta == null ? "" : `eta=${formatDuration(display.eta * 1000)}`,
     hb: `hb=${display.heartbeat ?? "?"}`,
     loc: formatSignedPair(display.added, display.removed),
     tks: display.tokens == null ? "" : `tks=${formatCount(display.tokens)}`,
+    ctx: display.context == null ? "" : `ctx=${formatCount(display.context)}`,
     tls: display.tools == null ? "" : `tls=${display.tools}`,
     rsn: display.reasoning == null ? "" : `rsn=${display.reasoning}`,
     txt: display.text == null ? "" : `txt=${display.text}`,

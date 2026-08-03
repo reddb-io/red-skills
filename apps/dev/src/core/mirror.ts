@@ -33,6 +33,43 @@ export type WorkerStatus = "running" | "gone" | "blocked";
 export const AFK_PHASE_ORDER = ["setup", "coding", "validating", "merging", "done"] as const;
 
 /**
+ * The landing steps, which are `merging` seen from close up.
+ *
+ * The orchestrator stamps `gate`, `push-pr`, `merge` and `cascade` as it lands,
+ * and each is a real step worth naming in the fine `phase·step` cell. None of
+ * them is a macro phase: a bar that grew a cell per landing step would say a
+ * Worker regressed every time it entered one.
+ */
+const LANDING_PHASES = new Set(["gate", "push-pr", "merge", "cascade"]);
+
+/**
+ * The phase a bar, a title and a duration model all agree on. PURE.
+ *
+ * **One namer, because three readers disagreeing about what phase a Worker is in
+ * is three different Workers on one screen.** The lifecycle bar, the mirror title
+ * and the per-phase duration ledger each need the coarse answer, and each
+ * derived it separately before this existed. An out-of-vocab phase (`boot`,
+ * `blocked`, `terminal`) is returned unchanged — it has no position, and
+ * inventing one is worse than having none.
+ */
+export function macroPhase(phase: string): string {
+  return isLandingPhase(phase) ? "merging" : phase;
+}
+
+/** True when `phase` is one of the landing steps {@link macroPhase} folds. PURE. */
+export function isLandingPhase(phase: string): boolean {
+  return LANDING_PHASES.has(phase);
+}
+
+/**
+ * The macro phases that COST time, in order — the duration model's vocabulary.
+ *
+ * `done` is dropped: it is a state a Worker arrives at, not a span it spends, so
+ * nothing is ever observed leaving it and no median of it could exist.
+ */
+export const AFK_COSTED_PHASE_ORDER: readonly string[] = AFK_PHASE_ORDER.slice(0, -1);
+
+/**
  * Build the calm macro-phase task title: `w<id> [<n>/5 <phase>] #<issue> <slug>`.
  * A phase inside {@link AFK_PHASE_ORDER} renders its 1-based `n/5` position; any
  * other non-empty phase (the terminal `blocked`) drops the `n/5` → `[<phase>]`;

@@ -9,6 +9,7 @@ import {
   validateCastleStateSnapshot,
   type CastleValidationRecord,
 } from "@reddb-io/red-castle/engine";
+import { PHASE_DURATIONS_FILENAME } from "./phase-durations.js";
 
 export type CastleStateFindingKind =
   | "castle-history-invalid"
@@ -211,7 +212,10 @@ async function auditSnapshots(
 }
 
 async function auditCastleRootSplit(root: string, paths: ReturnType<typeof createEnginePaths>): Promise<CastleStateFinding[]> {
-  const allowedRootFiles = new Set(["history.toonl", "validation.toonl"]);
+  // `phase-durations.toonl` is durable state, not a live artifact: it is the
+  // measured cost of each pipeline phase (#3097), which is what an ETA is derived
+  // from and is worth exactly as much as the history beside it.
+  const allowedRootFiles = new Set(["history.toonl", "validation.toonl", PHASE_DURATIONS_FILENAME]);
   const allowedRootDirs = new Set(["workers", "supervisors"]);
   const findings: CastleStateFinding[] = [];
   for (const entry of await childEntries(paths.castleStateRoot)) {

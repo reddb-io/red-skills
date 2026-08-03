@@ -21,6 +21,12 @@
  * surface that could not tell them apart would render an unmeasured row as an
  * idle one — the same failure `RedskilledStatuslineVitals` refuses for RSS.
  *
+ * **`elapsed` is absent on purpose, and `started_at` is why.** Two surfaces that
+ * each published their own elapsed figure would disagree about now the moment one
+ * of them sampled a beat later; a start instant is a fact that cannot drift, and
+ * the render subtracts it from the payload's own `generated_at`. One clock, read
+ * once, in the process that is already dating the answer.
+ *
  * PURE.
  */
 
@@ -51,6 +57,39 @@ export interface RedskilledWorkerDisplay {
   readonly failed: boolean;
   /** Proof-of-life as the project spells it (`3s`, `~11m+`, `!4m`). */
   readonly heartbeat: string | null;
+  /**
+   * When this Worker started the work it is on, ISO-8601, as its project stamped it.
+   *
+   * The render derives `elapsed` from this against the payload's `generated_at`;
+   * it is deliberately NOT the process start the daemon already holds, because a
+   * Worker that took a second work item is a new span the host cannot see.
+   */
+  readonly started_at: string | null;
+  /**
+   * Input-side tokens the last turn carried — the context window's occupancy.
+   *
+   * A count, not a fraction: the window's SIZE is a per-model fact neither the
+   * daemon nor the render is told, and a percentage of an assumed ceiling is the
+   * kind of precise-looking wrong number `eta` is refused for.
+   */
+  readonly context: number | null;
+  /**
+   * Seconds this Worker's project expects the work still to take; `null` when it
+   * will not say.
+   *
+   * **Computed by the project, and by nobody else.** The render is stateless and
+   * cannot accumulate the history an honest estimate needs; the daemon is
+   * forbidden the semantics to know what a phase is (ADR 0130 rule 3). So it
+   * travels as an opaque count, exactly as `tokens` does, and every surface prints
+   * what it was handed.
+   *
+   * **A linear extrapolation from the progress bar is not an ETA.** `phase_index /
+   * phase_total` moves with the bar, so it looks precise while being
+   * systematically wrong — `coding` and `validating` do not cost the same. A
+   * project with nothing better to say publishes `null`, and a dashboard that
+   * lies about one figure loses its reader for all of them.
+   */
+  readonly eta: number | null;
   readonly added: number | null;
   readonly removed: number | null;
   readonly tokens: number | null;
@@ -88,6 +127,9 @@ export const REDSKILLED_WORKER_DISPLAY_ABSENT: RedskilledWorkerDisplay = {
   phase_total: null,
   failed: false,
   heartbeat: null,
+  started_at: null,
+  context: null,
+  eta: null,
   added: null,
   removed: null,
   tokens: null,
@@ -96,10 +138,22 @@ export const REDSKILLED_WORKER_DISPLAY_ABSENT: RedskilledWorkerDisplay = {
   text: null,
 };
 
-const TEXT_FIELDS = ["runner", "model", "effort", "origin", "issue", "phase", "step", "heartbeat"] as const;
+const TEXT_FIELDS = [
+  "runner",
+  "model",
+  "effort",
+  "origin",
+  "issue",
+  "phase",
+  "step",
+  "heartbeat",
+  "started_at",
+] as const;
 const COUNT_FIELDS = [
   "phase_index",
   "phase_total",
+  "context",
+  "eta",
   "added",
   "removed",
   "tokens",
