@@ -17,13 +17,16 @@ import {
   STATUSLINE_COMMAND_ABSENCE,
   STATUSLINE_COMMAND_DOCS,
   STATUSLINE_COMMAND_TERMINATOR,
+  STATUSLINE_DELEGATION_ISSUE,
   describeStatuslineAbsence,
+  describeStatuslineDelegation,
   describeStatuslineDrift,
   describeStatuslineTermination,
   driftedStatuslineCommands,
   findStatuslineCommands,
   readStatuslineCommands,
   statuslineBundleGlobs,
+  statuslineCommandsDelegatingWorkers,
   statuslineCommandsMissingAbsence,
   statuslineGlobResolves,
   unterminatedStatuslineCommands,
@@ -46,13 +49,18 @@ function scratchHome(): string {
   return home;
 }
 
-/** A fake HOME holding a dev bundle that prints a header and NO daemon bundle. */
-function hostWithoutDaemonBundle(header: string): string {
+/** A fake HOME holding a dev bundle that prints a line and NO daemon bundle. */
+function hostWithDevBundleOnly(line: string): string {
   const home = scratchHome();
   const bundles = join(home, ".cache", "red-skills", "bundles");
   mkdirSync(bundles, { recursive: true });
-  writeFileSync(join(bundles, "dev-1.0.0.bundle.min.mjs"), `console.log(${JSON.stringify(header)});\n`);
+  writeFileSync(join(bundles, "dev-1.0.0.bundle.min.mjs"), `console.log(${JSON.stringify(line)});\n`);
   return home;
+}
+
+/** A fake HOME with no cached bundle and no plugin cache — nothing can render. */
+function hostWithNoRenderer(): string {
+  return scratchHome();
 }
 
 /**
@@ -175,7 +183,7 @@ describe("documented statusLine command (#3073)", () => {
   });
 
   it("prints the header and exits 0 on a host with no cached daemon bundle", () => {
-    const run = renderStatusline(hostWithoutDaemonBundle("» fixture (main) Opus"));
+    const run = renderStatusline(hostWithDevBundleOnly("» fixture (main) Opus"));
 
     expect(run.stdout).toContain("» fixture (main) Opus");
     expect(run.status, run.stderr).toBe(0);
@@ -210,24 +218,78 @@ describe("daemon bundle resolution (#3074)", () => {
 
   /**
    * The pairing #3074 was missing: the command globbed a directory nothing wrote
-   * a `redskilled` bundle to. Asserted against the filename the warm path mints
-   * rather than a literal, so renaming the cache key fails HERE.
+   * a bundle to. Asserted against the filename the warm path mints rather than a
+   * literal, so renaming the cache key fails HERE.
+   *
+   * Only `dev` is asserted while the interim reversal (#3166) holds: the command
+   * globs the renderer it invokes, and the daemon half is not invoked. `redskilled`
+   * is still WARMED — the daemon needs its own bundle regardless of who draws the
+   * statusline — so the companion set is asserted separately, and restoring the
+   * delegation for #3151 restores this glob with it.
    */
-  it("globs a name the dev warm path actually writes, for every warmed bundle", () => {
+  it("globs a name the dev warm path actually writes, for every bundle it invokes", () => {
     const [canonical] = readStatuslineCommands(REPO_ROOT);
     const body = shellBody(canonical!.body);
 
     expect(companionBundlePlugins("dev")).toContain("redskilled");
-    for (const plugin of ["dev", "redskilled"]) {
-      const warmed = bundleFileName(plugin, PROVISIONED_VERSION);
-      expect(
-        statuslineGlobResolves(body, warmed),
-        `no published glob resolves ${warmed} — globs: ${statuslineBundleGlobs(body).join(", ")}`,
-      ).toBe(true);
-    }
+    const warmed = bundleFileName("dev", PROVISIONED_VERSION);
+    expect(
+      statuslineGlobResolves(body, warmed),
+      `no published glob resolves ${warmed} — globs: ${statuslineBundleGlobs(body).join(", ")}`,
+    ).toBe(true);
   });
 
-  it("reaches the daemon on a freshly provisioned host", async () => {
+  it("states the absence when no renderer resolves at all", () => {
+    const run = renderStatusline(hostWithNoRenderer());
+
+    expect(run.stdout).toContain(REDSKILLED_RENDER_ABSENCE);
+    expect(run.status, run.stderr).toBe(0);
+  });
+});
+
+/**
+ * The interim reversal. The delegation was written before the thing delegated to
+ * could draw: `--no-workers` silenced the dev bundle's rich Worker rows — bar,
+ * colour, `phase·activity`, elapsed, heartbeat, diff and token vitals — and what
+ * replaced them was a name and a memory figure. Every repo `/red-setup` touched
+ * since the cutover shipped the poorer line, held byte-identical by the very
+ * sweep that was working correctly.
+ *
+ * These tests keep the command on ONE producer and name the condition for going
+ * back, so the next reader restores the delegation when #3151 can serve it rather
+ * than because ADR 0130 rule 10 says it should.
+ */
+describe(`one producer until ${STATUSLINE_DELEGATION_ISSUE} (#3166)`, () => {
+  it("names every copy that asks the dev bundle for the header alone", () => {
+    const muted = findStatuslineCommands("a.md", `"command": "sh -c '\\"$N\\" \\"$b\\" statusline --no-workers; exit 0'"`);
+
+    expect(statuslineCommandsDelegatingWorkers(muted).map((site) => site.path)).toEqual(["a.md"]);
+    expect(describeStatuslineDelegation(muted)).toContain(STATUSLINE_DELEGATION_ISSUE);
+  });
+
+  it("names every copy that runs a second renderer under the first", () => {
+    const doubled = findStatuslineCommands(
+      "a.md",
+      `"command": "sh -c 'r=$(ls -1 \\"$HOME\\"/.cache/red-skills/bundles/redskilled-*.bundle.min.mjs); exit 0'"`,
+    );
+
+    expect(statuslineCommandsDelegatingWorkers(doubled).map((site) => site.path)).toEqual(["a.md"]);
+  });
+
+  it("passes a command that draws the Worker rows from one bundle", () => {
+    const single = findStatuslineCommands("a.md", `"command": "sh -c '\\"$N\\" \\"$b\\" statusline; exit 0'"`);
+
+    expect(statuslineCommandsDelegatingWorkers(single)).toEqual([]);
+    expect(describeStatuslineDelegation(single)).toBe("");
+  });
+
+  it("keeps every published copy on one producer", () => {
+    const sites = readStatuslineCommands(REPO_ROOT);
+
+    expect(statuslineCommandsDelegatingWorkers(sites), describeStatuslineDelegation(sites)).toEqual([]);
+  });
+
+  it("renders through one producer on a freshly provisioned host", async () => {
     const home = await provisionedHost((plugin) =>
       plugin === "dev"
         ? 'console.log("» fixture (main) Opus");\n'
@@ -237,16 +299,17 @@ describe("daemon bundle resolution (#3074)", () => {
     const run = renderStatusline(home);
 
     expect(run.stdout).toContain("» fixture (main) Opus");
-    expect(run.stdout, "the daemon half was never contacted (#3074)").toContain("redskilled rows");
+    expect(run.stdout, "the daemon half double-renders the Worker rows (#3166)").not.toContain("redskilled rows");
     expect(run.stdout).not.toContain(STATUSLINE_COMMAND_ABSENCE);
     expect(run.status, run.stderr).toBe(0);
   });
 
-  it("states the absence when no daemon bundle resolves at all", () => {
-    const run = renderStatusline(hostWithoutDaemonBundle("» fixture (main) Opus"));
+  it("hands the reader the issue that ends the interim, not a bare refusal", () => {
+    const muted = findStatuslineCommands("a.md", `"command": "sh -c 'statusline --no-workers; exit 0'"`);
+    const message = describeStatuslineDelegation(muted);
 
-    expect(run.stdout).toContain("» fixture (main) Opus");
-    expect(run.stdout).toContain(REDSKILLED_RENDER_ABSENCE);
-    expect(run.status, run.stderr).toBe(0);
+    expect(STATUSLINE_DELEGATION_ISSUE).toBe("#3151");
+    expect(message).toContain("interim");
+    expect(message).toContain("a.md:1");
   });
 });
