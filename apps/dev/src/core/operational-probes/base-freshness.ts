@@ -86,7 +86,44 @@ export async function applyBaseFreshnessFix(
   if (result.action === "fast-forward") {
     return { probeId: finding.id, status: "applied", evidence: result.evidence };
   }
-  return { probeId: finding.id, status: "noop", evidence: `guard refused: ${result.evidence}` };
+  const reconciled = reconcileBaseFreshnessEvidence(finding, result.evidence);
+  return {
+    probeId: finding.id,
+    status: "noop",
+    evidence: `guard refused: ${result.evidence}`,
+    // Only when the finding's own verdict would otherwise contradict the fix. A
+    // finding that already read `guard=refused` agrees with it as it stands.
+    ...(reconciled === finding ? {} : { reconciled }),
+  };
+}
+
+/**
+ * Rewrite a base-freshness finding so its evidence agrees with what the fix
+ * actually did (#3155). The probe evaluated the guard a moment BEFORE the
+ * fast-forward ran; when the fast-forward then declines, the finding still reads
+ * `guard=passed` beside a repair that errored out, and nothing in the receipt
+ * reads as refused. A verdict the next command overrules is worse than no
+ * verdict — it sends the reader to the wrong subsystem.
+ */
+export function reconcileBaseFreshnessEvidence(
+  finding: OperationalProbeResult,
+  fixEvidence: string,
+): OperationalProbeResult {
+  const data = finding.data as Partial<BaseFreshnessProbeData> | undefined;
+  // Nothing to reconcile: a finding that already reported a refusal agrees with a
+  // fix that could not apply, and rewriting it would only lose the real reason.
+  if (!data?.trunk || !data.remote || data.guard?.guard !== "passed") return finding;
+  const refuted: BaseFreshnessProbeInput["guard"] = {
+    ...data.guard,
+    guard: "refused",
+    evidence: fixEvidence,
+  };
+  const reconciled = { ...data, guard: refuted } as BaseFreshnessProbeData;
+  return {
+    ...finding,
+    evidence: evidence(reconciled, data.finding),
+    data: reconciled,
+  };
 }
 
 export const baseFreshnessProbe: OperationalProbe = {
