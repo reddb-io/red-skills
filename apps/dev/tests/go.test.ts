@@ -273,6 +273,25 @@ describe("dispatchGo", () => {
     );
     expect(result.engineExit).toBe(1);
   });
+
+  it("disposes the minted Ticket when Worker admission fails before birth (#3175)", async () => {
+    const disposeIssue = vi.fn(async (_issue: number) => undefined);
+
+    await expect(
+      dispatchGo(
+        {
+          ensureLabel: async () => undefined,
+          createIssue: async () => 66,
+          runEngine: async () => {
+            throw new Error("host refused Worker birth");
+          },
+          disposeIssue,
+        },
+        "demand",
+      ),
+    ).rejects.toThrow("host refused Worker birth");
+    expect(disposeIssue).toHaveBeenCalledWith(66);
+  });
 });
 
 // A targeted dispatch that ran zero attempts is a failure, never a clean drain

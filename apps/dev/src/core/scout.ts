@@ -112,6 +112,8 @@ export interface ScoutDispatchDeps {
   createIssue: (spec: ScoutIssueSpec) => Promise<number>;
   /** Run the reused AFK engine with the built argv; resolves the exit code. */
   runEngine: (args: string[]) => Promise<number>;
+  /** Close the minted disposable Ticket if admission fails before Worker birth. */
+  disposeIssue?: (issue: number) => Promise<void>;
 }
 
 /** What one scout dispatch produced. */
@@ -135,6 +137,19 @@ export async function dispatchScout(
   const spec = buildScoutIssueSpec(question);
   await deps.ensureLabel(LABEL_SCOUT_LANE);
   const issue = await deps.createIssue(spec);
-  const engineExit = await deps.runEngine(buildScoutEngineArgs({ issue, runner: opts.runner }));
+  let engineExit: number;
+  try {
+    engineExit = await deps.runEngine(buildScoutEngineArgs({ issue, runner: opts.runner }));
+  } catch (error) {
+    try {
+      await deps.disposeIssue?.(issue);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `Worker admission failed and disposable issue #${issue} could not be closed`,
+      );
+    }
+    throw error;
+  }
   return { issue, engineExit };
 }

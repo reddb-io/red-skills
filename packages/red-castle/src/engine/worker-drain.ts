@@ -119,12 +119,15 @@ function sortByPriority(
  * @param poolLabel the label the candidates were LISTED under — `ready-for-agent`
  * for a fleet, the lane label for an isolated `/go` or scout dispatch. It decides
  * which lane-isolated issues this drain is allowed to see.
+ * @param declaredLane the lane the dispatch declared. Kept separate from the
+ * consulted pool so a transport mismatch is visible in the selection error.
  */
 export function selectCastleIssues(
   candidates: readonly CastleIssueCandidate[],
   filter: CastleSelectionFilter,
   labels: CastleSelectionLabels = DEFAULT_CASTLE_SELECTION_LABELS,
   poolLabel: string = labels.ready,
+  declaredLane: string = poolLabel,
 ): CastleIssueCandidate[] {
   const excluded = candidates.filter(
     (candidate) =>
@@ -155,7 +158,8 @@ export function selectCastleIssues(
       }
       if (missing.length > 0) {
         throw new CastleIssueSelectionError(
-          `requested issue(s) missing from the ${labels.ready} queue: ${missing.map((number) => `#${number}`).join(", ")}`,
+          `requested issue(s) missing: ${missing.map((number) => `#${number}`).join(", ")} ` +
+            `(declared lane \`${declaredLane}\`; consulted queue \`${poolLabel}\`)`,
           missing,
         );
       }
@@ -245,6 +249,9 @@ export interface CastleWorkerDrainContext<TIssueTemplate = unknown> {
   /** The label the candidate listing was drawn from (`--lane`). Absent means the
    * default `ready-for-agent` fleet pool, which sees no isolated lane. */
   poolLabel?: string;
+  /** The lane the dispatch declared before candidate listing. This is separate
+   * from `poolLabel` so a lost selector reports both sides of the mismatch. */
+  declaredLane?: string;
 }
 
 export interface CastleWorkerDrainProcessed {
@@ -408,6 +415,7 @@ export async function runCastleWorkerDrain<
       ctx.filter,
       deps.labels,
       ctx.poolLabel,
+      ctx.declaredLane,
     );
     const total = queue.length;
     await fireSessionHook("post_pick", JSON.stringify({ issues: queue.map((candidate) => candidate.number) }));

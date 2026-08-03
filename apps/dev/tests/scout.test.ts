@@ -126,6 +126,24 @@ describe("dispatchScout", () => {
     expect(result.engineExit).toBe(1);
   });
 
+  it("disposes the minted scout Ticket when Worker admission fails (#3175)", async () => {
+    const disposeIssue = vi.fn(async (_issue: number) => undefined);
+    await expect(
+      dispatchScout(
+        {
+          ensureLabel: async () => undefined,
+          createIssue: async () => 67,
+          runEngine: async () => {
+            throw new Error("host refused Worker birth");
+          },
+          disposeIssue,
+        },
+        "question",
+      ),
+    ).rejects.toThrow("host refused Worker birth");
+    expect(disposeIssue).toHaveBeenCalledWith(67);
+  });
+
   it("passes --run-mode scout in engine args so process-issue enforces read-only", async () => {
     const runEngine = vi.fn(async (_args: string[]) => 0);
     await dispatchScout({ ensureLabel: async () => {}, createIssue: async () => 7, runEngine }, "q");

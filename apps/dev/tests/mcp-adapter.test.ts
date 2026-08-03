@@ -291,8 +291,32 @@ describe("castle MCP host adapter", () => {
       labels: ["lane:go"],
     });
     expect(createIssue.mock.calls[0]?.[1].body).toContain("--repair release");
-    expect(birthWorker.mock.calls[1]?.[1]).not.toContain("--repair release");
+    const goArgs = birthWorker.mock.calls[1]?.[1] as string[];
+    expect(goArgs).not.toContain("--repair release");
+    expect(goArgs[goArgs.indexOf("--lane") + 1]).toBe("lane:go");
+    expect(goArgs).not.toContain("ready-for-agent");
     expect(stdout).not.toHaveBeenCalled();
+  });
+
+  it("closes the minted /go Ticket when the host refuses Worker birth (#3175)", async () => {
+    const cwd = await root();
+    const closeIssue = vi.fn(async () => undefined);
+    const commentIssue = vi.fn(async () => undefined);
+    const operations = createDefaultDevAfkMcpOperations(cwd, {
+      birthWorker: async () => {
+        throw new Error("host refused Worker birth");
+      },
+      createIssue: async () => 3175,
+      ensureLabel: async () => undefined,
+      closeIssue,
+      commentIssue,
+    });
+
+    await expect(operations.dispatchDemand(cwd, { demand: "fix the lane" })).rejects.toThrow(
+      "host refused Worker birth",
+    );
+    expect(commentIssue).toHaveBeenCalledOnce();
+    expect(closeIssue).toHaveBeenCalledWith(cwd, 3175);
   });
 
   it("reports a refused dispatch rather than a pid, when the host does not answer", async () => {

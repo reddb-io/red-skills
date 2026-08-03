@@ -64,11 +64,13 @@ import { initStateSync, readPidStartTime, updateState, workerStatePath, writeIde
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { createWorkerLogLinePublisher } from "../../runtime/redskilled-worker-log.js";
 import { HOST_CONFIG_EXIT_CODE, sweepDiscardsWorkspace } from "../../core/worker-outcome.js";
+import { LABEL_READY } from "../../core/triage-labels.js";
 
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
 import { makeBootReconcileRunner, runReconcileWorker } from "./reconcile.js";
 import { initBootWorkerState, openRunnerCircuit, recordBootError, requeueOrdinalSync, runnerCircuitOpen } from "./state.js";
+import { cleanupDisposableDispatchOnBootFailure } from "./disposable-cleanup.js";
 
 export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
@@ -91,6 +93,34 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const ctx = await resolveRepoContext(cwd);
   const settings = resolveRunSettings(cwd, process.env, runner);
   const paths = afkPaths(cwd);
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
+  const declaredLane = dispatchIdentity.lane ?? LABEL_READY;
+  // Kept as a separate fact from the declaration so any future transport
+  // mismatch can name both sides instead of blaming only the queue (#3175).
+  const consultedQueue = dispatchIdentity.lane ?? LABEL_READY;
+  const cleanupBootFailure = async (failureType: "boot-error" | "session-error") => {
+    try {
+      await cleanupDisposableDispatchOnBootFailure(
+        {
+          comment: (issue, body) => ghx.comment(ghCtx, issue, body),
+          close: (issue) => ghx.closeIssue(ghCtx, issue),
+        },
+        {
+          declaredLane,
+          consultedQueue,
+          filter: flags.filter,
+          failureType,
+        },
+      );
+    } catch (error) {
+      // The original boot failure remains primary, but a refused close is loud:
+      // otherwise the dispatch would silently leave the tracker litter #3175
+      // exists to prevent.
+      process.stderr.write(
+        `[afk] disposable cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+    }
+  };
 
   // One-time boot migration: relocate any legacy `.red/tmp` durable artifacts to
   // canonical state or supervisor tmp lanes before this worker reads/writes supervisor/circuit state
@@ -114,7 +144,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
       lane: dispatchIdentity.lane,
     });
     const guard = await checkBootGuard(pidFile, flags.force, process.stdout, isLivePid, exempt);
-    if (guard === "refused") return 1;
+    if (guard === "refused") {
+      await cleanupBootFailure("boot-error");
+      return 1;
+    }
   }
 
   // Worker id — ADOPTED from the host, or minted when nobody assigned one.
@@ -193,13 +226,18 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const supervisorSweepsDone = process.env.RED_AFK_SWEEPS_DONE === "1";
   const skipSweeps = shouldSkipBootSweeps(flags.filter, supervisorSweepsDone);
 
-  const sessionCtx: SessionContext & { hostProfile?: HostCapabilityProfile; poolLabel?: string } = {
+  const sessionCtx: SessionContext & {
+    hostProfile?: HostCapabilityProfile;
+    poolLabel?: string;
+    declaredLane?: string;
+  } = {
     runner,
     workerId,
     // The pool this drain LISTED from decides which isolated lanes it may see
     // (#2894): `/go` and scout list their own lane and see their issue, a fleet
     // lists `ready-for-agent` and can never see one, stale label or not.
-    ...(dispatchIdentity.lane !== undefined ? { poolLabel: dispatchIdentity.lane } : {}),
+    poolLabel: consultedQueue,
+    declaredLane,
     iterCap: flags.iterCap,
     once: flags.once,
     filter: flags.filter,
@@ -217,8 +255,6 @@ export async function runCommand(options: RunOptions): Promise<number> {
       model: settings.model,
     },
   };
-
-  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
 
   // Concretize a `--user @me` territory facet before anything consumes the
   // filter, so the castle drain, the session preview, and every forwarded
@@ -269,6 +305,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => {
       process.stderr.write(`[afk] boot-error: ${err instanceof Error ? err.message : String(err)}\n`);
     });
+    await cleanupBootFailure("boot-error");
     return 1;
   }
 
@@ -357,6 +394,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     if (retireFile) {
       try { writeFileSync(retireFile, ""); } catch { /* best-effort */ }
     }
+    await cleanupBootFailure("boot-error");
     return 1;
   }
 
@@ -395,7 +433,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     ProcessIssueResult,
     SessionIssueTemplate
   > = {
-    gh: { listCandidates: () => ghx.listCandidates(ghCtx, dispatchIdentity.lane) },
+    gh: { listCandidates: () => ghx.listCandidates(ghCtx, consultedQueue) },
     runBoot,
     bootDeps,
     bootOptions,
@@ -566,6 +604,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     await recordBootError(bootstrap.workerDir, "session-error", err).catch(() => {
       process.stderr.write(`[afk] session-error: ${err instanceof Error ? err.message : String(err)}\n`);
     });
+    await cleanupBootFailure("session-error");
     return 1;
   } finally {
     await feedback.cleanup();
@@ -574,6 +613,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   if (!summary.boot.precheck.ok) {
     const failed = summary.boot.precheck.failed;
     process.stderr.write(`[afk] precheck failed: ${failed}\n`);
+    await cleanupBootFailure("boot-error");
     return 1;
   }
 
