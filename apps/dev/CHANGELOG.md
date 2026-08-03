@@ -1,5 +1,17 @@
 # @reddb-io/dev
 
+## 3.3.22
+
+### Patch Changes
+
+- Updated dependencies [8bbd8d4]
+  - @reddb-io/redskilled@3.3.22
+  - @reddb-io/github@3.3.22
+  - @reddb-io/shared@3.3.22
+  - @reddb-io/build-info@3.3.22
+  - @reddb-io/red-castle@3.3.22
+  - @reddb-io/redskilled-render@3.3.22
+
 ## 3.3.21
 
 ### Patch Changes
