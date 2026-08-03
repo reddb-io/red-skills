@@ -224,6 +224,7 @@ function renderClassifierSections(
     runtimeUnresolved,
     hostBinaries,
     marketplaceSources,
+    pluginVersion,
     mcpLoad,
     dependencyEdges,
     dependencyEdgesUnread,
@@ -260,6 +261,10 @@ function renderClassifierSections(
     ...hostBinaries.findings.map((finding) => `  ${finding.kind}: ${finding.reason}`),
     ...hostBinaries.findings.map((finding) => `  fix: ${finding.remediation}`),
     "",
+    "red-doctor plugin version",
+    `  installed=${pluginVersion.installed ?? "none"} published=${pluginVersion.published ?? "unknown"} → ${pluginVersion.verdict}`,
+    ...(pluginVersion.verdict === "current" ? [] : [`  ${pluginVersion.detail}`]),
+    ...(pluginVersion.fix == null ? [] : [`  fix: ${pluginVersion.fix}`]),
     "red-doctor marketplace registration source",
     ...marketplaceSources.rows.map(
       (row) => `  ${MARKETPLACE_VERDICT_ICON[row.verdict]} ${row.host} ${row.marketplace} source=${row.source} (${row.detail})`,
