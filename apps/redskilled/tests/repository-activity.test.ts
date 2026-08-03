@@ -31,8 +31,23 @@ function project(index: number, overrides: Partial<RedskilledProjectRepository> 
   return { project_label: `acme/p${index}`, owner: "acme", name: `p${index}`, ...overrides };
 }
 
-function answer(projects: readonly RedskilledProjectRepository[], counts: readonly [number, number, number][]) {
-  const data: Record<string, unknown> = { rateLimit: { remaining: 4900, resetAt: "2026-07-30T13:00:00.000Z" } };
+function answer(
+  projects: readonly RedskilledProjectRepository[],
+  counts: readonly [number, number, number][],
+  rateLimit: Record<string, unknown> = {},
+) {
+  const data: Record<string, unknown> = {
+    // GitHub charges a query by the nodes it returns, so the fixture's cost grows
+    // with the alias count exactly as the real answer's does. A fixture that
+    // returned a constant here would be the test asserting the false half of
+    // "flat in requests, flat in points".
+    rateLimit: {
+      remaining: 4900,
+      resetAt: "2026-07-30T13:00:00.000Z",
+      cost: projects.length + 1,
+      ...rateLimit,
+    },
+  };
   projects.forEach((_, index) => {
     const [prs, issues, closed] = counts[index]!;
     data[`r${index}`] = {
@@ -75,6 +90,50 @@ describe("one request per interval, whatever the project count", () => {
     expect(activity.request_count).toBe(1);
     expect(activity.project_count).toBe(20);
     expect(activity.projects.every((entry) => entry.outcome === "counted")).toBe(true);
+  });
+
+  it("is flat in REQUESTS and says so in points, which are not flat", async () => {
+    const fetch = async (count: number) => {
+      const projects = Array.from({ length: count }, (_, index) => project(index));
+      return await fetchRepositoryActivity({
+        projects,
+        hostTokenRef: "host",
+        now: NOW,
+        transport: async () => answer(projects, projects.map(() => [1, 2, 3] as [number, number, number])),
+      });
+    };
+
+    const one = await fetch(1);
+    const twenty = await fetch(20);
+
+    // One request either way — that is the whole point of the aliased query.
+    expect(one.request_count).toBe(twenty.request_count);
+    expect(twenty.request_count).toBe(1);
+    // And the node points GitHub charged are NOT the same number, which is the
+    // half ADR 0130's "flat in the number of projects" left unsaid.
+    expect(twenty.rate_limit.point_cost).toBeGreaterThan(one.rate_limit.point_cost!);
+  });
+
+  it("asks GitHub what the query cost rather than assuming it", async () => {
+    const projects = [project(0), project(1)];
+    const operation = buildRepositoryActivityQuery(projects, { now: NOW });
+
+    expect(operation.query).toContain("rateLimit { cost remaining resetAt }");
+
+    const charged = parseRepositoryActivityResponse(
+      operation,
+      answer(projects, [[1, 2, 3], [4, 5, 6]], { cost: 47 }),
+      { fetchedAt: NOW },
+    );
+    const silent = parseRepositoryActivityResponse(
+      operation,
+      { data: { rateLimit: { remaining: 10, resetAt: null } } },
+      { fetchedAt: NOW },
+    );
+
+    expect(charged.rate_limit.point_cost).toBe(47);
+    // An answer that did not say is an absence, never a free query.
+    expect(silent.rate_limit.point_cost).toBeNull();
   });
 
   it("has nothing to fetch, and no request to spend, when nothing is registered", async () => {
@@ -208,7 +267,12 @@ describe("a rate-limited fetch is not an empty one", () => {
 
     const activity = parseRepositoryActivityResponse(operation, payload, { fetchedAt: NOW });
 
-    expect(activity.rate_limit).toEqual({ remaining: 0, reset_at: "2026-07-30T13:00:00.000Z", exhausted: true });
+    expect(activity.rate_limit).toEqual({
+      remaining: 0,
+      reset_at: "2026-07-30T13:00:00.000Z",
+      exhausted: true,
+      point_cost: null,
+    });
     expect(activity.projects[0]!.outcome).toBe("rate-limited");
     expect(activity.projects[0]!.counts).toBeNull();
     expect(activity.projects[0]!.detail).toContain("quota");
