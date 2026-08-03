@@ -8,6 +8,9 @@
   "exports": {
     ".": "./index.ts",
     "./surface.js": "./surface.ts",
-    "./rest-plan.js": "./rest-plan.ts"
+    "./rest-plan.js": "./rest-plan.ts",
+    "./balance.js": "./balance.ts",
+    "./cache.js": "./cache.ts",
+    "./aliased-query.js": "./aliased-query.ts"
   }
 }
