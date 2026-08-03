@@ -1,5 +1,14 @@
 # @reddb-io/red-skills
 
+## 3.3.13
+
+### Patch Changes
+
+- 36cb6d3: `resolveHostCeiling` now describes its own answer honestly. Its `source` field was read off the WORKER ceiling, so declaring only `REDSKILLED_WORKER_CEILING` labelled a derived memory ceiling `declared` — and that word is interpolated into the admission reason, which speaks purely about memory, so an operator debugging a denied Worker was told they had stated a number they never stated. Reaching that branch means the memory ceiling is the 0.7 host fraction, always, and it now says so. A malformed ceiling is also named rather than obeyed in silence: an unreadable `REDSKILLED_MEMORY_CEILING` used to fall through quietly to the same fraction, which for a mistyped `50%` is MORE permissive than what the operator asked for, so the daemon admitted Workers past the line they meant to draw — the same silent-fallback shape on the worker count, where a non-integer was discarded without a word. Both now warn on stderr, name the offending value and the fallback that replaced it, and continue; `infinity`, `none`, `off` and `unbounded` stay silent because those are declarations rather than mistakes, and a bad env var never fails the host.
+- 023a3a6: `CLAUDE.md`'s layout block now names directories that exist, and a test keeps it that way. It described `apps/herdr-plugin/`, a path #3011 renamed, and listed seven runtimes when thirteen exist — and `CLAUDE.md` is loaded into every agent session as project instructions, so a drifted path sends every agent to a directory that is not there. The block gains the runtimes it had been missing and `packages/github`, and `apps/dev/tests/claude-md-layout.test.ts` asserts every `apps/` and `packages/` entry resolves, with the pre-rename herdr path refused by name so a revert is caught for what it is rather than by a generic existence check. `HOST-NOTES.md` keeps its prohibition on routing the command-backed statusline through MCP — ADR 0132 decision 9 is the decision that says so — but stops attributing the reasoning to ADR 0084, which is about the bundle fetch and says nothing about MCP; what carries over is that a `statusLine` entry is a shell command rather than an MCP client, so a handshake per render tick blanks the line whenever the server is not up.
+  - @reddb-io/shared@3.3.13
+  - @reddb-io/build-info@3.3.13
+
 ## 3.3.12
 
 ### Patch Changes
