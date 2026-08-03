@@ -1,5 +1,12 @@
 # @reddb-io/memory
 
+## 3.3.12
+
+### Patch Changes
+
+- @reddb-io/shared@3.3.12
+- @reddb-io/build-info@3.3.12
+
 ## 3.3.11
 
 ### Patch Changes
