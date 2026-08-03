@@ -288,13 +288,42 @@ export function buildProjectRegistration(
  * that quietly minted a record would resurrect an argv nobody restated.
  */
 export class RedskilledProjectUnregisteredError extends Error {
-  constructor(readonly projectLabel: string) {
-    super(
-      `redskilled holds no registration for project ${JSON.stringify(projectLabel)} to renew: it lapsed or was never ` +
-        `held, and a renewal never mints a record — register again, stating the selector, the argv and the target`,
-    );
+  constructor(
+    readonly projectLabel: string,
+    readonly absence: RedskilledProjectRegistrationAbsence = { kind: "never" },
+  ) {
+    super(describeRegistrationAbsence(projectLabel, absence));
     this.name = "RedskilledProjectUnregisteredError";
   }
+}
+
+/** Why a project has no registration on the daemon which answered. */
+export type RedskilledProjectRegistrationAbsence =
+  | { readonly kind: "never" }
+  | { readonly kind: "lapsed"; readonly at: string; readonly registered_at?: string }
+  | { readonly kind: "stopped"; readonly at: string }
+  | { readonly kind: "orphaned" };
+
+function describeRegistrationAbsence(
+  projectLabel: string,
+  absence: RedskilledProjectRegistrationAbsence,
+): string {
+  const project = JSON.stringify(projectLabel);
+  if (absence.kind === "lapsed") {
+    const registered = absence.registered_at == null ? "" : ` (registered ${absence.registered_at})`;
+    return `redskilled holds no registration for project ${project} to renew: it lapsed at ${absence.at}${registered}; ` +
+      `renewal stopped — find why before registering it again`;
+  }
+  if (absence.kind === "stopped") {
+    return `redskilled holds no registration for project ${project} to renew: it was stopped at ${absence.at}; ` +
+      `this is the requested state, so there is nothing to renew`;
+  }
+  if (absence.kind === "orphaned") {
+    return `redskilled holds no registration for project ${project} to renew: it is registered on a daemon this ` +
+      `socket does not reach — do not register it again`;
+  }
+  return `redskilled holds no registration for project ${project} to renew: it was never registered on this host; ` +
+    `register it first, stating the selector, the argv and the target`;
 }
 
 export interface RenewProjectRegistrationOptions {

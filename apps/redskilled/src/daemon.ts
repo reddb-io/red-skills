@@ -78,7 +78,9 @@ import {
 import {
   buildHostState,
   type RedskilledHostState,
+  type RedskilledOrphanedRegistration,
   type RedskilledRegistrationLapse,
+  type RedskilledRegistrationStop,
   type RedskilledWorkerView,
 } from "./host-state.js";
 import {
@@ -379,6 +381,8 @@ export interface RedskilledDaemonOptions {
    * never reaped and not a machine where nothing died.
    */
   readonly deaths?: readonly DeathAttribution[];
+  /** Registrations proved to remain behind another live daemon beyond this socket. */
+  readonly orphanedRegistrations?: readonly RedskilledOrphanedRegistration[];
   readonly idleMs?: number;
   /** The host-wide ceiling admission is decided against; the host's own by default. */
   readonly ceiling?: RedskilledHostCeiling;
@@ -1017,6 +1021,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // otherwise only an absence, and an absence is what let a stopped drain read as
   // a healthy one (#2973).
   const lapses: RedskilledRegistrationLapse[] = [];
+  // A deliberate stop is not a lapse and not an absence nobody can explain.
+  // Retained on the same bounded tail as lapses so `project_stop` remains visible
+  // without turning live registration state into a durable second authority.
+  const stops: RedskilledRegistrationStop[] = [];
+  const orphanedRegistrations = new Map(
+    (options.orphanedRegistrations ?? []).map((record) => [record.project_label, record]),
+  );
   let demandBackoffUntilMs: number | null = null;
   // Per project, its record of Workers that died before they could work. In
   // memory rather than durable on purpose: it answers "can a Worker boot here
@@ -1098,6 +1109,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const at = Number.isFinite(nowMs) ? new Date(nowMs).toISOString() : registration.renew_by;
     lapses.push({
       project_label: registration.project_label,
+      registered_at: registration.registered_at,
       at,
       renew_by: registration.renew_by,
       renewals: registration.renewals,
@@ -1192,6 +1204,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // the set is either one that never registered or one whose drain ended, and
       // only the second is something an operator has to act on.
       lapses,
+      stops,
+      orphanedRegistrations: [...orphanedRegistrations.values()],
       // The poll each registration was last covered by, so "why is nothing
       // happening" is answerable from one read instead of from a log.
       queue: lastQueue,
@@ -1803,6 +1817,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       held: registrations.get(request.project_label),
     });
     registrations.set(registration.project_label, registration);
+    // A current registration outranks every historical absence. Remove the old
+    // tail now so a later deliberate stop cannot uncover an older lapse and lie
+    // about which transition happened most recently.
+    removeRegistrationHistory(registration.project_label);
     // A registration holds the daemon awake, exactly as a Worker does: a drain the
     // operator walked away from must outlive the terminal, and a daemon that idled
     // out under a standing registration would take the promise with it.
@@ -1839,7 +1857,24 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const now = clock();
     expireLapsedRegistrations(now);
     const held = registrations.get(projectLabel);
-    if (held == null) throw new RedskilledProjectUnregisteredError(projectLabel);
+    if (held == null) {
+      if (orphanedRegistrations.has(projectLabel)) {
+        throw new RedskilledProjectUnregisteredError(projectLabel, { kind: "orphaned" });
+      }
+      const stopped = [...stops].reverse().find((record) => record.project_label === projectLabel);
+      if (stopped != null) {
+        throw new RedskilledProjectUnregisteredError(projectLabel, { kind: "stopped", at: stopped.at });
+      }
+      const lapsed = [...lapses].reverse().find((record) => record.project_label === projectLabel);
+      if (lapsed != null) {
+        throw new RedskilledProjectUnregisteredError(projectLabel, {
+          kind: "lapsed",
+          at: lapsed.at,
+          ...(lapsed.registered_at == null ? {} : { registered_at: lapsed.registered_at }),
+        });
+      }
+      throw new RedskilledProjectUnregisteredError(projectLabel);
+    }
     const registration = renewProjectRegistration(held, {
       now,
       ...(options.renewWithinMs == null ? {} : { renew_within_ms: options.renewWithinMs }),
@@ -1872,7 +1907,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   function deregisterProject(projectLabel: string, sessionProject?: string): RedskilledProjectDeregistered {
     const reach = authorize("project-deregister", sessionProject, projectLabel);
     if (!reach.permitted) throw new Error(reach.reason);
+    const held = registrations.get(projectLabel);
     const released = registrations.delete(projectLabel);
+    if (held != null) {
+      const detail = `redskilled released the registration for project ${JSON.stringify(projectLabel)}`;
+      removeRegistrationHistory(projectLabel);
+      stops.push({ project_label: projectLabel, registered_at: held.registered_at, at: clock(), detail });
+      if (stops.length > REDSKILLED_LAPSE_MEMORY) stops.splice(0, stops.length - REDSKILLED_LAPSE_MEMORY);
+    }
     return {
       version: 1,
       project_label: projectLabel,
@@ -1882,6 +1924,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         ? `redskilled released the registration for project ${JSON.stringify(projectLabel)}`
         : `redskilled held no registration for project ${JSON.stringify(projectLabel)}, so there was nothing to release`,
     };
+  }
+
+  /** Forget an older absence when a newer registration transition supersedes it. */
+  function removeRegistrationHistory(projectLabel: string): void {
+    recoverableRegistrations.delete(projectLabel);
+    for (let index = lapses.length - 1; index >= 0; index -= 1) {
+      if (lapses[index]!.project_label === projectLabel) lapses.splice(index, 1);
+    }
+    for (let index = stops.length - 1; index >= 0; index -= 1) {
+      if (stops[index]!.project_label === projectLabel) stops.splice(index, 1);
+    }
+    orphanedRegistrations.delete(projectLabel);
   }
 
   /** Stop one Worker the daemon holds, and record its death. */

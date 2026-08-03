@@ -340,8 +340,16 @@ export interface RedskilledStatuslinePayload {
   readonly lapsed_projects?: readonly {
     readonly project_label: string;
     readonly at: string;
+    readonly registered_at?: string;
     readonly reason: string;
   }[];
+  /** Registrations deliberately released through `project_stop`. */
+  readonly stopped_projects?: readonly {
+    readonly project_label: string;
+    readonly at: string;
+  }[];
+  /** Registrations held by a live daemon beyond the socket that answered. */
+  readonly orphaned_projects?: readonly string[];
   readonly workers: readonly RedskilledStatuslineWorker[];
   /**
    * Each registered project's repository counts, dated on their own clock.
@@ -618,8 +626,14 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
     lapsed_projects: (input.hostState.lapsed_registrations ?? []).map((lapse) => ({
       project_label: lapse.project_label,
       at: lapse.at,
+      ...(lapse.registered_at == null ? {} : { registered_at: lapse.registered_at }),
       reason: lapse.detail,
     })),
+    stopped_projects: (input.hostState.stopped_registrations ?? []).map((stopped) => ({
+      project_label: stopped.project_label,
+      at: stopped.at,
+    })),
+    orphaned_projects: (input.hostState.orphaned_registrations ?? []).map((record) => record.project_label),
     workers,
     github_balance: buildGithubBalanceReport({
       balance: input.githubBalance ?? null,
@@ -816,6 +830,8 @@ function knownProjects(hostState: RedskilledHostState): readonly string[] {
   for (const registration of hostState.registrations ?? []) labels.add(registration.project_label);
   for (const project of hostState.projects) labels.add(project.project_label);
   for (const lapse of hostState.lapsed_registrations ?? []) labels.add(lapse.project_label);
+  for (const stopped of hostState.stopped_registrations ?? []) labels.add(stopped.project_label);
+  for (const orphaned of hostState.orphaned_registrations ?? []) labels.add(orphaned.project_label);
   return [...labels].sort((a, b) => a.localeCompare(b));
 }
 
@@ -925,6 +941,11 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
         payload.registered_projects.every((label) => typeof label === "string"))) &&
     (payload.lapsed_projects === undefined ||
       (Array.isArray(payload.lapsed_projects) && payload.lapsed_projects.every(isStatuslineLapse))) &&
+    (payload.stopped_projects === undefined ||
+      (Array.isArray(payload.stopped_projects) && payload.stopped_projects.every(isStatuslineStop))) &&
+    (payload.orphaned_projects === undefined ||
+      (Array.isArray(payload.orphaned_projects) &&
+        payload.orphaned_projects.every((label) => typeof label === "string"))) &&
     // Absent is accepted, malformed is not: a daemon older than the activity
     // poller answers a newer client's read, and rejecting its whole payload over
     // a field this consumer did not ask for would lose the Worker set — the very
@@ -948,7 +969,14 @@ function isStatuslineLapse(value: unknown): boolean {
   const lapse = value as Record<string, unknown>;
   return typeof lapse.project_label === "string" &&
     typeof lapse.at === "string" &&
+    (lapse.registered_at === undefined || typeof lapse.registered_at === "string") &&
     typeof lapse.reason === "string";
+}
+
+function isStatuslineStop(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const stopped = value as Record<string, unknown>;
+  return typeof stopped.project_label === "string" && typeof stopped.at === "string";
 }
 
 function isStatuslineDeaths(value: unknown): boolean {

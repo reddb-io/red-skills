@@ -210,7 +210,7 @@ describe("`project unknown`", () => {
 
     expect(render.project_match).toBe("unregistered");
     expect(render.line).toContain("project unknown");
-    expect(render.line).toContain("acme/widgets is not registered on this host");
+    expect(render.line).toContain("acme/widgets was never registered on this host");
     // No idle zero to read as calm — the host may be busy for someone else.
     expect(render.line).not.toContain("0w");
     expect(render.line).not.toContain("idle");

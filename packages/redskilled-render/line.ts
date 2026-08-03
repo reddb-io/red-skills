@@ -41,7 +41,6 @@ import {
   BUDGET_SPENT_MARK,
   DEATH_MARK,
   ENGINE_BEHIND_MARK,
-  LAPSED_MARK,
   LOG_LINE_MARK,
   REDSKILLED_RENDER_ABSENCE,
   UNREGISTERED_MARK,
@@ -295,18 +294,18 @@ function renderHead(
     parts.push(`${options.project} ${workers.length}w`);
     parts.push(memoryFigure(payload, options));
     if (workers.length === 0) parts.push("idle");
-  } else if (match === "name-only" || match === "lapsed") {
+  } else if (match === "name-only") {
     // The Workers still count — they are running — but the line says out loud
     // that the host holds no registration, and it never says `idle`: a project
     // nothing will be born for is stopped, not resting (#2973).
     parts.push(`${options.project} ${workers.length}w`);
     parts.push(memoryFigure(payload, options));
-    parts.push(match === "lapsed" ? LAPSED_MARK : UNREGISTERED_MARK);
+    parts.push(UNREGISTERED_MARK);
   } else {
     // NOT `0w idle`. An unmatched directory has no Worker count to report — the
     // host may be holding a dozen for a project this one failed to name — so the
     // head states the mismatch instead of an aggregate that reads as calm.
-    parts.push(unmatchedHead(options.project, match));
+    parts.push(unmatchedHead(payload, options.project, match));
   }
   parts.push(engineMark(payload));
   const budget = budgetMark(payload);
@@ -397,10 +396,33 @@ function compactLoopSpan(spanMs: number): string {
  * `project.name` or a git remote, the other wants the project registered — and a
  * line that named neither would leave the operator with a word and no next step.
  */
-function unmatchedHead(project: string | null, match: RedskilledStatuslineProjectMatch): string {
-  return match === "unregistered"
-    ? `project unknown — ${project} is not registered on this host`
-    : "project unknown — this directory resolved to no project";
+function unmatchedHead(
+  payload: RedskilledRenderPayload,
+  project: string | null,
+  match: RedskilledStatuslineProjectMatch,
+): string {
+  if (match === "unregistered") return `project unknown — ${project} was never registered on this host`;
+  if (match === "orphaned") {
+    return `project unknown — ${project} is registered on a daemon this socket does not reach`;
+  }
+  if (match === "stopped") {
+    const stopped = payload.stopped_projects?.find((record) => record.project_label === project);
+    return `project unknown — ${project} was stopped${stopped == null ? "" : ` at ${clockTime(stopped.at)}`}`;
+  }
+  if (match === "lapsed") {
+    const lapse = payload.lapsed_projects?.find((record) => record.project_label === project);
+    if (lapse != null) {
+      const registered = lapse.registered_at == null ? "" : ` (registered ${clockTime(lapse.registered_at)})`;
+      return `project unknown — ${project} lapsed at ${clockTime(lapse.at)}${registered}`;
+    }
+    return `project unknown — ${project} lapsed`;
+  }
+  return "project unknown — this directory resolved to no project";
+}
+
+/** The clock part of a daemon instant, without consulting this process's locale. PURE. */
+function clockTime(instant: string): string {
+  return /^\d{4}-\d{2}-\d{2}T(\d{2}:\d{2}:\d{2})/.exec(instant)?.[1] ?? instant;
 }
 
 /**
