@@ -50,6 +50,12 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   rsp usage gains, skill quality, or repository context. For operational
   troubleshooting, route to the owning reference: `/afk`, `/go`, `/hitl`, or
   rsp.
+- **"What is this host running right now?"** -> the `redskilled` daemon's own
+  `dashboard` command, not a plugin surface. It is the host view — every Worker
+  on the machine, whichever project owns it — at terminal density, so it answers
+  where no plugin is installed. `/dashboard` stays the route for this
+  repository's queue health; `/red-statusline` owns the one-line form and
+  documents both in its host notes.
 - **Operating the castle itself** -> the `castle` MCP, not a shell command.
   Fleet lifecycle, worker dispatch, runners and live steer, gate, landing,
   claim, worktrees, hygiene, and observability are all tools on one canonical
@@ -109,6 +115,9 @@ Capability references registered by owner:
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+the host view a terminal can read (the `redskilled` daemon's `dashboard`
+command, and the `statusline` line it shares a render with) ->
+`plugins/dev/skills/engineering/red-statusline/HOST-NOTES.md`;
 territory scoping (`tag:<value>` labels, `/afk --tags`/`--user`) ->
 `plugins/dev/skills/engineering/red-setup/triage-labels.md`.
 
