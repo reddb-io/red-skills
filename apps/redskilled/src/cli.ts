@@ -23,6 +23,7 @@ import {
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
+  readRedskilledDashboardRender,
   readRedskilledStatuslineRender,
   stopRedskilledDaemon,
   type RedskilledClientConfig,
@@ -78,6 +79,7 @@ Commands:
   host-state (default)  print the host's state as JSON
   serve                 run the daemon in this process
   statusline [global]   render one agent-host status line
+  dashboard [global]    render the host view a terminal can read
   unit                  install | uninstall | status — the optional supervisor
   provision             make this machine ready; --check is the read-only half
   reclaim               clear runtime dirs left by dead sessions
@@ -114,6 +116,17 @@ no queue — an honest unknown, never a drained one.
 Prints the host's state as JSON. Contacts the running daemon; the default
 command when none is named.
 `,
+  dashboard: `Usage: redskilled dashboard [global] [flags]
+
+The host view the herdr plugin and the VS Code extension draw, at the density a
+terminal can read. Same payload and same render as the statusline (ADR 0132
+decision 1) — a density argument, never a second renderer.
+
+  global          every project's Workers, each naming its owner
+  --max-width N   hard ceiling in characters
+
+It always writes something and always exits 0: a dashboard that printed nothing
+is indistinguishable from a host with no Workers.`,
   statusline: `Usage: redskilled statusline [global] [--verbose] [flags]
 
 Renders the status line the agent host prints verbatim. Config is read on this
@@ -346,9 +359,9 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   }
 
   const { command, args } = routeCommand<
-    "serve" | "stop" | "host-state" | "statusline" | "unit" | "provision" | "reclaim"
+    "serve" | "stop" | "host-state" | "statusline" | "dashboard" | "unit" | "provision" | "reclaim"
   >(argv, {
-    commands: { serve: {}, stop: {}, "host-state": {}, statusline: {}, unit: {}, provision: {}, reclaim: {} },
+    commands: { serve: {}, stop: {}, "host-state": {}, statusline: {}, dashboard: {}, unit: {}, provision: {}, reclaim: {} },
     default: "host-state",
   });
 
@@ -424,6 +437,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
 
   if (command === "stop") return await runStop(args);
   if (command === "statusline") return await runStatusline(args);
+  if (command === "dashboard") return await runDashboard(args);
   if (command === "unit") return await runUnit(args);
 
   if (command === "provision") return await runProvision(args);
@@ -815,4 +829,72 @@ if (invokedDirectly) {
       process.exitCode = 1;
     },
   );
+}
+
+/**
+ * `redskilled dashboard [global] [--max-width N]` — the host view in a terminal.
+ *
+ * **The same payload and the same render as the statusline, at a taller
+ * density** (#3098, ADR 0132 decision 1). Layout moved out of the daemon so four
+ * surfaces could differ in HEIGHT without differing in content; this is the
+ * terminal one, and it asks for a density rather than importing a second
+ * renderer. A host that drew its own dashboard would be the drift the decision
+ * exists to prevent.
+ *
+ * **It always writes something and always exits 0**, for the same reason the
+ * statusline does: a dashboard that printed nothing is indistinguishable from a
+ * host with no Workers, and an operator reaching for it is usually already
+ * trying to find out why something is quiet.
+ */
+export async function runDashboard(
+  args: readonly string[],
+  io: {
+    readonly cwd?: string;
+    readonly paths?: RedskilledPaths;
+    readonly write?: (line: string) => void;
+    readonly warn?: (line: string) => void;
+    readonly client?: RedskilledClientConfig;
+    readonly now?: () => string;
+  } = {},
+): Promise<number> {
+  const write = io.write ?? ((line: string) => process.stdout.write(line));
+  const warn = io.warn ?? ((line: string) => process.stderr.write(line));
+
+  // The statusline's own flag parse, so `global` and `--max-width` mean here
+  // exactly what they mean there — two spellings of one scope is how a second
+  // vocabulary starts.
+  const parsed = parseRedskilledStatuslineFlags(args);
+  const project = readStatuslineProject(io.cwd ?? process.cwd());
+  const resolved = resolveRedskilledStatuslineOptions({
+    ...(project.configText == null ? {} : { configText: project.configText }),
+    project: project.label,
+    flags: parsed.flags,
+  });
+  for (const warning of [...resolved.warnings, ...parsed.warnings]) {
+    warn(`redskilled dashboard: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);
+  }
+
+  try {
+    const render = await readRedskilledDashboardRender(
+      io.paths ?? resolveRedskilledPaths(),
+      {
+        ...(resolved.options.project == null ? {} : { project: resolved.options.project }),
+        // `mode` is the shared vocabulary for scope — `local` or `global` — and
+        // the statusline's resolver already decided it from config and flags.
+        mode: resolved.options.mode,
+        ...(resolved.options.maxWidth == null ? {} : { maxWidth: resolved.options.maxWidth }),
+      },
+      {
+        ...(io.client ?? {}),
+        ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
+      },
+    );
+    write(`${render.lines.join("\n")}\n`);
+  } catch (err) {
+    // A stated absence, never silence. The operator asked what the host is
+    // doing; "I could not ask" is an answer and an empty screen is not.
+    warn(`redskilled dashboard: ${err instanceof Error ? err.message : String(err)}\n`);
+    write("redskilled unreachable — the host was not asked, so its Workers are unknown\n");
+  }
+  return 0;
 }

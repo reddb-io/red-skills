@@ -74,8 +74,11 @@ import {
   type RedskilledWorkerStarted,
 } from "./protocol.js";
 import {
+  REDSKILLED_DASHBOARD_DEFAULTS,
   REDSKILLED_STATUSLINE_DEFAULTS,
+  renderRedskilledDashboard,
   renderRedskilledStatusline,
+  type RedskilledDashboard as RedskilledDashboardRender,
   type RedskilledDashboardOptions,
   type RedskilledStatuslineOptions,
 } from "@reddb-io/redskilled-render";
@@ -548,6 +551,28 @@ export async function readRedskilledStatuslineRender(
     logs: options.verbose,
   });
   return renderRedskilledStatusline(payload, options);
+}
+
+/**
+ * The host dashboard, read from the socket and drawn HERE (#3098).
+ *
+ * **The same payload and the same render as the statusline, at a taller
+ * density.** ADR 0132 decision 1 moved layout out of the daemon precisely so
+ * four surfaces could differ in height without differing in content; this is
+ * the terminal one, and it is a density argument rather than a second renderer.
+ *
+ * Vitals and log lines are both asked for, because a dashboard is the density
+ * that draws them — the statusline pays for logs only under `--verbose`, and a
+ * dashboard that omitted them would be a taller statusline rather than a
+ * dashboard.
+ */
+export async function readRedskilledDashboardRender(
+  paths: RedskilledPaths,
+  options: Partial<RedskilledDashboardOptions> = {},
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledDashboardRender> {
+  const payload = await readRedskilledStatuslinePayload(paths, config, { vitals: true, logs: true });
+  return renderRedskilledDashboard(payload, { ...REDSKILLED_DASHBOARD_DEFAULTS, ...options });
 }
 
 /**
