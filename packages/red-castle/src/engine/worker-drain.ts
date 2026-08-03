@@ -190,6 +190,9 @@ export type CastleWorkerOutcome =
 
 export interface CastleWorkerProcessResult {
   outcome: CastleWorkerOutcome;
+  /** Why this ending happened, in one operator-facing line. Optional: only the
+   * endings whose workspace the sweep discards must supply it (#3156). */
+  reason?: string;
 }
 
 export interface CastleWorkerDrainBudgetSnapshot {
@@ -247,6 +250,8 @@ export interface CastleWorkerDrainContext<TIssueTemplate = unknown> {
 export interface CastleWorkerDrainProcessed {
   issue: number;
   outcome: CastleWorkerOutcome;
+  /** The ending's one-line cause, when it reported one (#3156). */
+  reason?: string;
 }
 
 export interface CastleWorkerDrainSummary<TBootResult = unknown> {
@@ -474,7 +479,16 @@ export async function runCastleWorkerDrain<
       if (bucket === "done") done++;
       else if (bucket === "blocked") blocked++;
       else failed++;
-      processed.push({ issue: candidate.number, outcome: result.outcome });
+      processed.push({
+        issue: candidate.number,
+        outcome: result.outcome,
+        ...(result.reason ? { reason: result.reason } : {}),
+      });
+      // Say WHY a withdrawal happened on the console the operator is watching
+      // (#3156). The per-worker workspace holding the long form is deleted the
+      // moment a `claim-lost` returns, so a drain that printed only the outcome
+      // name left nothing behind to read.
+      if (result.reason) deps.emit(`#${candidate.number} ${result.outcome}: ${result.reason}`);
 
       const idx = i + 1;
       const pct = Math.floor((idx * 100) / total);

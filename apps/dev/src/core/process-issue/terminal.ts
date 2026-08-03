@@ -1014,25 +1014,77 @@ export async function runCascadeRebase(
     );
   }
 }
-export function claimLost(
-  issue: number,
-  hooksFired: HookName[],
-  deps?: Pick<ProcessIssueDeps, "appendIterLog" | "nowEpoch">,
+/** Everything known about why this worker walked away from the issue. The
+ * console line, the iteration log line and the durable history record are all
+ * rendered from ONE account, so no surface can carry less than the others. */
+export interface ClaimLostAccount {
+  /** The bare cause — what an operator asks first. Never empty. */
+  reason: string;
+  /** The cause plus the arbitration qualifiers (`holder`, `claim_id`, `age_s`)
+   * that were known, as one line. */
+  detail: string;
+}
+
+export function claimLostAccount(
+  nowEpoch: () => number,
   decision?: ClaimDecision,
   fallbackReason?: string,
-): ProcessIssueResult {
-  if (deps) {
-    const parts = [`🤖 /afk claim-lost #${issue}`];
-    if (decision?.winner) parts.push(`holder=${decision.winner}`);
-    if (decision?.winnerClaimId !== undefined) parts.push(`claim_id=${decision.winnerClaimId}`);
-    if (decision?.winnerCreatedAt) {
-      const createdMs = Date.parse(decision.winnerCreatedAt);
-      if (!Number.isNaN(createdMs)) parts.push(`age_s=${Math.max(0, deps.nowEpoch() - Math.floor(createdMs / 1000))}`);
-    }
-    parts.push(`reason=${decision?.reason ?? fallbackReason ?? "issue no longer claimable"}`);
-    deps.appendIterLog(parts.join(" "));
+): ClaimLostAccount {
+  const reason = decision?.reason ?? fallbackReason ?? "issue no longer claimable";
+  const parts: string[] = [];
+  if (decision?.winner) parts.push(`holder=${decision.winner}`);
+  if (decision?.winnerClaimId !== undefined) parts.push(`claim_id=${decision.winnerClaimId}`);
+  if (decision?.winnerCreatedAt) {
+    const createdMs = Date.parse(decision.winnerCreatedAt);
+    if (!Number.isNaN(createdMs)) parts.push(`age_s=${Math.max(0, nowEpoch() - Math.floor(createdMs / 1000))}`);
   }
-  return { outcome: "claim-lost", issue, hooksFired, preserved: false, swept: false };
+  parts.push(`reason=${reason}`);
+  return { reason, detail: parts.join(" ") };
+}
+
+/**
+ * The abandoned ending — and the ONE outcome whose whole diagnostic value is its
+ * `reason` (#3156).
+ *
+ * **The account goes to a lane the sweep does not delete.** `claim-lost` returns
+ * `preserved: false`, so the per-worker workspace — and the iteration log inside
+ * it — is removed the moment this returns (`sweepDiscardsWorkspace`). Writing the
+ * only explanation there is how eight consecutive claim-lost deaths retained zero
+ * causes. The iteration log still gets the line for a live tail; the durable
+ * `.red/state/castle/history.toonl` record is what an operator reads afterwards,
+ * and the `reason` rides back on the result for the console.
+ */
+export async function claimLost(
+  issue: number,
+  hooksFired: HookName[],
+  deps?: Pick<ProcessIssueDeps, "appendIterLog" | "nowEpoch" | "historyPath" | "historyClock">,
+  decision?: ClaimDecision,
+  fallbackReason?: string,
+  who?: { workerId?: string; runner?: Runner },
+): Promise<ProcessIssueResult> {
+  const account = claimLostAccount(deps?.nowEpoch ?? (() => 0), decision, fallbackReason);
+  if (deps) {
+    deps.appendIterLog(`🤖 /afk claim-lost #${issue} ${account.detail}`);
+    if (deps.historyPath && deps.historyClock) {
+      const { historyAppend } = await import("../history.js");
+      // Best-effort: a ledger that cannot be written must never turn an orderly
+      // withdrawal into a throw. The console still carries the reason.
+      await historyAppend(deps.historyPath, deps.historyClock, "claim-lost", {
+        ...(who?.workerId ? { worker: who.workerId } : {}),
+        issue,
+        ...(who?.runner ? { runner: who.runner } : {}),
+        reason: account.detail,
+      }).catch(() => {});
+    }
+  }
+  return {
+    outcome: "claim-lost",
+    issue,
+    hooksFired,
+    preserved: false,
+    swept: false,
+    reason: account.reason,
+  };
 }
 export async function releaseOwnedClaim(deps: ProcessIssueDeps, input: ProcessIssueInput): Promise<void> {
   if (deps.claimGh) {

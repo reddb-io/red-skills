@@ -107,6 +107,10 @@ export interface Trace {
 export interface HarnessOptions {
   labels?: string[];
   acquire?: boolean;
+  /** Durable history ledger path (`.red/state/castle/history.toonl` in a real
+   * run). Set it to assert that a terminal's testimony outlives the swept
+   * per-worker workspace (#3156). */
+  historyPath?: string;
   /** Inject the ADR 0066 GitHub-native claim arbiter. When set, the claim path
    * is the authority and `running` is a projection. The `winner` field decides
    * the verdict for the test (self worker is "h:w"). */
@@ -863,6 +867,9 @@ export function harness(opts: HarnessOptions = {}): {
     },
     nowEpoch: () => 1000,
     nowIso: () => "2026-05-30T00:00:00Z",
+    ...(opts.historyPath
+      ? { historyPath: opts.historyPath, historyClock: { ts: "2026-05-30T00:00:00Z", epoch: 1000 } }
+      : {}),
     appendIterLog: (line) => {
       trace.iterLogs.push(line);
     },

@@ -49,9 +49,12 @@ import {
  *   - `stalled` — the supervisor stall-reaper hard-killed the slot.
  *   - `infra`   — worktree/base/push setup failed before the agent ran.
  *
- * Successful or abandoned endings (`done`, `claim-lost`, `review-requested`) are
- * members so every mapping is total, but they carry no typed `blocked:*` label
- * (null).
+ * Successful endings (`done`, `review-requested`) and the ABANDONED one
+ * (`claim-lost`) are members so every mapping is total, but they carry no typed
+ * `blocked:*` label (null). **Successful and abandoned are not one group** — they
+ * share the label mapping and nothing else. `claim-lost` is a withdrawal with a
+ * cause, and grouping it with `done` is what let its explanation be deleted with
+ * its workspace (#3156); see {@link sweepDiscardsWorkspace}.
  */
 export type WorkerOutcome =
   | "done"
@@ -135,6 +138,33 @@ export type WorkerOutcome =
  * subset are NON-recoverable (always escalate, see `recoveryReasonFor`).
  */
 export type RecoveryReason = "quota" | "runner-transient" | "merge-conflict" | "crashed" | "policy" | "validation-infra";
+
+/**
+ * Does the terminal path itself DELETE this ending's per-worker workspace, so a
+ * diagnostic written into that directory does not outlive the iteration?
+ *
+ * **The grouping is what made the deletion invisible** (#3156). `claim-lost`
+ * shares this fate with `done` — for a good reason each: `done` is swept because
+ * the work landed, `claim-lost` because the workspace names an issue this worker
+ * never owned and the next boot's orphan sweep would misread it as a mid-issue
+ * crash (#644). But the two have opposite DIAGNOSTIC needs: `done` has nothing to
+ * say, and `claim-lost` is a failure whose entire value is its `reason`. Sharing
+ * the sweep must therefore never mean sharing the silence — every ending that
+ * answers true here owes its account to a durable lane (`claimLost` writes the
+ * arbitration record to `.red/state/castle/history.toonl`).
+ *
+ * Every other ending keeps its directory through the terminal path; a later
+ * reclaim may release it, but the explanation is readable in the meantime.
+ */
+export function sweepDiscardsWorkspace(o: WorkerOutcome): boolean {
+  switch (o) {
+    case "done":
+    case "claim-lost":
+      return true;
+    default:
+      return false;
+  }
+}
 
 /**
  * Pure mapping from a terminal outcome to its DESCRIPTIVE `blocked:<…>`

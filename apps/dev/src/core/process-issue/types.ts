@@ -432,6 +432,10 @@ export interface ProcessIssueResult {
   envelopePosted?: boolean;
   preserved: boolean;
   swept: boolean;
+  /** Why this ending happened, in one operator-facing line. Set by the endings
+   * whose workspace the sweep discards (#3156) — a `claim-lost` that reported
+   * only its outcome name withheld the answer it already had. */
+  reason?: string;
 }
 const CLEAN_EXIT_CODE = 0;
 const CRASH_EXIT_CODE = 1;

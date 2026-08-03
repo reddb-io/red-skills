@@ -63,7 +63,7 @@ import { workerIdentity } from "../../core/host-identity.js";
 import { initStateSync, readPidStartTime, updateState, workerStatePath, writeIdentitySync } from "../../core/state.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { createWorkerLogLinePublisher } from "../../runtime/redskilled-worker-log.js";
-import { HOST_CONFIG_EXIT_CODE } from "../../core/worker-outcome.js";
+import { HOST_CONFIG_EXIT_CODE, sweepDiscardsWorkspace } from "../../core/worker-outcome.js";
 
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
@@ -415,7 +415,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
       // leaves them naming an issue this worker never owned. The next boot's
       // orphan sweep would misread that as a mid-issue crash and restore
       // ready-for-agent over the live winner's `running` label.
-      if (result.outcome === "claim-lost") {
+      //
+      // The deletion stands; what changed (#3156) is that it is a NAMED policy
+      // (`sweepDiscardsWorkspace`) and no longer takes the explanation with it —
+      // `claimLost` has already written the arbitration account to the durable
+      // history lane, so this removes a workspace, not the testimony.
+      if (sweepDiscardsWorkspace(result.outcome) && result.outcome === "claim-lost") {
         await fsx.removeDir(pi.attemptDir).catch(() => {});
         return result;
       }
