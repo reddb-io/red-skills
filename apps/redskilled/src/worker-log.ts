@@ -2,8 +2,8 @@
  * worker-log — the last line a Worker logged, as a published string.
  *
  * **The Worker publishes; the daemon stores.** The line travels on the Worker's
- * heartbeat and the daemon never reads it for meaning — no level is parsed, no
- * progress is inferred, no field is extracted. That is what keeps the global
+ * heartbeat and the daemon normally never reads it for meaning — no level is
+ * parsed, no progress is inferred. That is what keeps the global
  * verbose view to ONE read: the line is already in the payload, so a statusline
  * never opens a log, and the daemon never learns what a repository's log layout
  * is (ADR 0130 rule 3).
@@ -14,12 +14,13 @@
  * single-anchor rule forbids — a second authority on a question the payload
  * already answers.
  *
- * **One bounded exception: a restart.** A daemon that has just come back holds
- * Workers it has never heard a heartbeat from, and for those it may read the log
- * ONCE — from the path it was GIVEN at spawn, never from a path it derives. A
- * Worker whose client gave no log path simply has no line until it publishes one;
- * guessing a filename inside its workspace would be the derived layout this whole
- * design refuses.
+ * **Two bounded exceptions: restart and death before first heartbeat.** A daemon
+ * that has just come back may recover one display line for a Worker it adopted.
+ * A Worker that exits before publishing anything may have its tail read once so
+ * an explicit `session-error:` boot refusal reaches the death surface. Both reads
+ * use the path GIVEN at spawn, never one the daemon derives. A Worker whose client
+ * gave no log path stays honestly unexplained; guessing a filename inside its
+ * workspace would be the derived layout this whole design refuses.
  */
 import { open, stat } from "node:fs/promises";
 
@@ -37,7 +38,7 @@ export interface RedskilledWorkerLogLine {
   readonly source: "heartbeat" | "rehydrated";
 }
 
-/** How the daemon recovers a line after a restart; injected so a test can refuse it. */
+/** How the daemon performs either bounded log-tail read; injected so tests can pose the bytes. */
 export type RedskilledLogTailProbe = (path: string) => Promise<string | null>;
 
 /**
