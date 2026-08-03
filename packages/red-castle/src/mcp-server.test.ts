@@ -43,6 +43,15 @@ function deps(): CastleMcpDependencies {
       status: "stopped",
       force: input.force ?? false,
     })),
+    hostState: vi.fn(async () => ({ pid: 42, workers: [] })),
+    hostDashboard: vi.fn(async () => ({ version: 1, mode: "global", rows: [] })),
+    hostProvisionCheck: vi.fn(async () => ({ verdict: "ok", rows: [], findings: [] })),
+    hostUnitStatus: vi.fn(async () => ({
+      installed: false,
+      enabled: false,
+      active: false,
+      floor: "auto-spawn",
+    })),
     logs: vi.fn(async () => [
       { at: "2026-07-21T00:00:00.000Z", kind: "worker.started" },
     ]),
@@ -148,6 +157,10 @@ describe("castle MCP tools", () => {
       "project_start",
       "project_resize",
       "project_stop",
+      "host_state",
+      "host_dashboard",
+      "host_provision_check",
+      "host_unit_status",
       "logs",
       "worker_vitals",
       "dashboard",
@@ -198,6 +211,26 @@ describe("castle MCP tools", () => {
       registration: { held: true, renewal: "renewing", target: 2 },
       slots: { total: 2 },
       live_workers: [{ id: "worker-1" }],
+    });
+  });
+
+  it("returns the daemon's read-only host diagnostics", async () => {
+    const d = deps();
+    const tools = createCastleMcpTools(d);
+
+    await expect(tools.find((tool) => tool.name === "host_state")!.invoke({})).resolves.toEqual({
+      pid: 42,
+      workers: [],
+    });
+    await expect(tools.find((tool) => tool.name === "host_dashboard")!.invoke({})).resolves.toMatchObject({
+      version: 1,
+      mode: "global",
+    });
+    await expect(tools.find((tool) => tool.name === "host_provision_check")!.invoke({})).resolves.toMatchObject({
+      verdict: "ok",
+    });
+    await expect(tools.find((tool) => tool.name === "host_unit_status")!.invoke({})).resolves.toMatchObject({
+      floor: "auto-spawn",
     });
   });
 
