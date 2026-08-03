@@ -10,8 +10,7 @@ import { resolveTier, type ConfigValues } from "../src/core/config.js";
 import { buildProjectLaunchTemplate } from "../src/core/supervisor/launch-template.js";
 
 const BASE = {
-  interpreter: "/usr/bin/node",
-  bundle: "/bundle.mjs",
+  bundleArgv: ["/usr/bin/node", "/bundle.mjs"],
   workerEnv: { PATH: "/usr/bin", RED_AFK_RUNNER: "claude", RED_AFK_SWEEPS_DONE: "1" },
   retireDir: "/state",
 } as const;
@@ -82,6 +81,39 @@ describe("the launch a project states for its next Worker", () => {
 
     expect(downgraded.env!.RED_AFK_TASK_TIER_DOWNGRADE).toBe("1");
     expect(ordinary.env).not.toHaveProperty("RED_AFK_TASK_TIER_DOWNGRADE");
+  });
+
+  it("carries every word of a multi-word bundle invocation", () => {
+    // A host with no bundle on disk resolves to a version-pinned dispatch, which
+    // is a command followed by SEVERAL words. An interpreter/bundle pair would
+    // have dropped everything after the first argument.
+    const template = buildProjectLaunchTemplate({
+      ...BASE,
+      bundleArgv: ["/usr/bin/npx", "-y", "-p", "@reddb-io/red-skills@1.2.3", "red-skills-dev"],
+      runner: "claude",
+    });
+    expect(template.argv.slice(0, 6)).toEqual([
+      "/usr/bin/npx",
+      "-y",
+      "-p",
+      "@reddb-io/red-skills@1.2.3",
+      "red-skills-dev",
+      "run",
+    ]);
+  });
+
+  it("states where the next Worker logs, so a restatement cannot clear it", () => {
+    // Restating a launch is all-or-nothing: a renewal carrying an argv and no log
+    // path clears the one the registration declared (#3079), and the Worker born
+    // from it reaches every surface with nothing to show.
+    const template = buildProjectLaunchTemplate({
+      ...BASE,
+      runner: "claude",
+      logPath: "/repo/.red/tmp/logs/2026-08-03/worker-{{worker_id}}.log",
+    });
+    expect(template.log_path).toBe("/repo/.red/tmp/logs/2026-08-03/worker-{{worker_id}}.log");
+    const born = expandLaunchTemplate(template, { worker_id: "wAAAA", slot: 0, workspace_path: "/repo" });
+    expect(born.log_path).toBe("/repo/.red/tmp/logs/2026-08-03/worker-wAAAA.log");
   });
 
   it("carries a reconcile Ticket when a tick asks for a reconcile Worker", () => {

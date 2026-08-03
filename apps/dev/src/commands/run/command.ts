@@ -1,12 +1,12 @@
 import { parseRunnerFlag, detectRunner } from "../../core/runner-detection.js";
 import { callerProcessTreeNative } from "../../runtime/caller-process.js";
 import {
+  resolveWorkerId,
   runModeForCandidate,
   type SessionContext,
   type SessionIssueTemplate,
   type IssueCandidate,
 } from "../../core/session.js";
-import { genWorkerId } from "../../core/session.js";
 import { SUPERVISOR_LANE_ENV } from "../../core/supervisor-lane.js";
 import { runBoot, type BootDeps, type BootOptions, type BootResult, type BootstrapInput } from "../../core/boot.js";
 import { processIssue, type ProcessIssueDeps, type ProcessIssueInput, type ProcessIssueResult } from "../../core/process-issue.js";
@@ -117,19 +117,20 @@ export async function runCommand(options: RunOptions): Promise<number> {
     if (guard === "refused") return 1;
   }
 
-  // Worker id — probe the workers root for collisions.
+  // Worker id — ADOPTED from the host, or minted when nobody assigned one.
   //
   // A Worker born through the host daemon is HANDED its id (`RED_AFK_WORKER_ID`,
   // #2851): the daemon already recorded that string as the Worker's identity on
   // the host event lane before this process existed, so minting a second one
   // here would leave the host and the work naming the same Worker differently
-  // and no surface able to join them. A directly-invoked `run` still mints,
-  // which is what keeps the standalone lane working with no daemon in it.
+  // and no surface able to join them (#3081). A directly-invoked `run` still
+  // mints, which is what keeps the standalone lane working with no daemon in it.
+  // The collision probe governs the MINTED id only: an assigned id is a fact.
   const existing = new Set((await collectMonitorInputs(cwd)).workers.map((w) => w.state.worker_id));
-  const assigned = (process.env.RED_AFK_WORKER_ID ?? "").trim();
-  const workerId = assigned !== "" && !existing.has(assigned)
-    ? assigned
-    : genWorkerId(Math.random, (id) => existing.has(id));
+  const workerId = resolveWorkerId(
+    process.env.RED_AFK_WORKER_ID,
+    (id) => existing.has(id),
+  );
   const pidStartTime = readPidStartTime(process.pid) ?? "";
   // Emit the per-slot boot-stamp immediately so the supervisor's slot log
   // captures this worker's ID before any failure. The circuit-trip sweep

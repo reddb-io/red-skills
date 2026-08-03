@@ -156,6 +156,16 @@ export const projectStatusOutputSchema = z.object({
       origin: z.string(),
     }),
   ),
+  /**
+   * What went structurally wrong with the read itself (#3081).
+   *
+   * A project whose own Workers all land in `unattributed_workers` renders
+   * exactly like an idle repository, and the two are opposite states: the first
+   * is a broken identity wire, the second is nothing to do. An attribution
+   * predicate that matched nothing across a non-empty Worker set says so here
+   * rather than letting `live_workers: []` read as calm.
+   */
+  warnings: z.array(z.string()).optional(),
 });
 
 export type ProjectStatusOutput = z.infer<typeof projectStatusOutputSchema>;

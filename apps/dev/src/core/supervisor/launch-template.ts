@@ -37,10 +37,16 @@ export const RED_AFK_WORKER_ID_PLACEHOLDER = "{{worker_id}}";
 export const RED_AFK_SLOT_PLACEHOLDER = "{{slot}}";
 
 export interface ProjectLaunchInput {
-  /** The interpreter that runs the bundle — `process.execPath` at the call site. */
-  readonly interpreter: string;
-  /** The bundle this project's Workers run. */
-  readonly bundle: string;
+  /**
+   * How this project's bundle is invoked, as the whole leading argv.
+   *
+   * A pair of `interpreter` and `bundle` would have been the shorter statement
+   * and is the wrong shape: `publishedBundleArgv()` resolves to a version-pinned
+   * dispatch on a host with no bundle on disk, which is a command followed by
+   * SEVERAL words. Splitting it in two would have silently dropped every word
+   * after the first argument.
+   */
+  readonly bundleArgv: readonly string[];
   /**
    * The runner the NEXT Worker uses, as this tick decided it.
    *
@@ -59,6 +65,15 @@ export interface ProjectLaunchInput {
   readonly taskTierDowngrade?: boolean;
   /** The Ticket a reconcile Worker is born for; an ordinary drain when absent. */
   readonly reconcileIssue?: number | null;
+  /**
+   * Where the NEXT Worker's output goes — a template, like the rest (#3079).
+   *
+   * Stated HERE rather than beside the launch, because restating a launch is
+   * all-or-nothing: a renewal that carried an argv and no log path would clear
+   * the path the registration declared, and the Worker born from it would reach
+   * every surface with nothing to show.
+   */
+  readonly logPath?: string | null;
 }
 
 /**
@@ -71,8 +86,7 @@ export interface ProjectLaunchInput {
  */
 export function buildProjectLaunchTemplate(input: ProjectLaunchInput): RedskilledLaunchTemplate {
   const argv = [
-    input.interpreter,
-    input.bundle,
+    ...input.bundleArgv,
     "run",
     "--once",
     "--runner",
@@ -96,5 +110,9 @@ export function buildProjectLaunchTemplate(input: ProjectLaunchInput): Redskille
     env.RED_AFK_RETIRE_FILE = `${input.retireDir}/afk-supervisor-slot-${RED_AFK_SLOT_PLACEHOLDER}.retire`;
   } else delete env.RED_AFK_RETIRE_FILE;
 
-  return { argv, env };
+  return {
+    argv,
+    env,
+    ...(input.logPath == null || input.logPath === "" ? {} : { log_path: input.logPath }),
+  };
 }

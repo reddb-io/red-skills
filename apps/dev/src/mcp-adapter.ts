@@ -61,7 +61,6 @@ import { matchesSelector } from "./core/session.js";
 import { resolveHitlDecision } from "./core/hitl-resolve.js";
 import { detectWedgedOrchestrator } from "./core/wedged-orchestrator.js";
 import * as ghx from "./runtime/gh.js";
-import { publishedBundleArgv } from "./runtime/published-entry.js";
 import { requestWorkerBirth, type DispatchedWorkerBirth } from "./runtime/mcp-worker-birth.js";
 import { checkDispatchEngineFloor } from "./runtime/engine-floor-check.js";
 import type { EngineFloorVerdict } from "./core/engine-floor.js";
@@ -70,10 +69,9 @@ import {
   createRedskilledBirthPort,
   redskilledRegistrationRefusal,
 } from "./runtime/redskilled-birth.js";
-import {
-  registrationLaunchEnv,
-  registrationLogPathTemplate,
-} from "./runtime/redskilled-worker-log.js";
+import { registrationLogPathTemplate } from "./runtime/redskilled-worker-log.js";
+import { registrationLaunch } from "./runtime/registration-launch.js";
+import { attributeProjectWorkers } from "./core/project-attribution.js";
 import { migrateToTwoPlayer } from "./runtime/two-player-migration.js";
 import {
   publishWorkerLiveness,
@@ -824,18 +822,26 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
   // Attribution is the HOST's, never a pid map of our own: a Worker is ours when
   // the daemon says its project is ours. A stamp for another project — or none
   // at all — lands in the unattributed bucket even when the pid looks familiar.
-  const ourWorkerIds = new Set(
-    await port.workerIds().catch(() => [] as readonly string[]),
-  );
-  const attributedToThisProject = (worker: (typeof allLiveWorkers)[number]): boolean =>
-    ourWorkerIds.has(worker.state.worker_id);
-  const liveWorkers = allLiveWorkers.filter(attributedToThisProject);
-  const unattributedWorkers = allLiveWorkers.filter((w) => !attributedToThisProject(w));
+  //
+  // The join works because the two ids are ONE id: the launch declares
+  // `RED_AFK_WORKER_ID={{worker_id}}` and the Worker adopts the string the host
+  // assigned rather than minting its own (#3081). A predicate that matches
+  // nothing across a non-empty Worker set is that wire broken, and it is
+  // reported rather than rendered as an idle project.
+  const attribution = attributeProjectWorkers({
+    workers: allLiveWorkers,
+    hostWorkerIds: await port.workerIds().catch(() => null),
+  });
+  const liveWorkers = attribution.live;
+  const unattributedWorkers = attribution.unattributed;
   // The published version comes from the one owner the boot probe also consults
   // (#2809), so a reader replays that answer instead of deriving its own.
   const version = publishedVersionReport("", readPublishedBundleVersion());
   const target = held?.target ?? 0;
-  const busy = liveWorkers.length;
+  // The host's count, not the matched list's: a Worker born a moment ago holds
+  // its slot before it has written any project-side state, and a `busy` that
+  // waited for that file would read free while the daemon refused to fill it.
+  const busy = attribution.busy;
   return {
     registration: {
       held: held != null,
@@ -871,6 +877,7 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
       activity: worker.state.current.activity,
       origin: worker.state.origin ?? "afk",
     })),
+    ...(attribution.warnings.length > 0 ? { warnings: [...attribution.warnings] } : {}),
   };
 }
 
@@ -975,19 +982,6 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
   }
   const selector = encodeRegistrationSelector(repo, input.selector);
   const warnings = startWarnings(input, registrationQueryUnexpressedFacets(input.selector));
-  // What runs when a Worker is born for this project — resolved from the
-  // PUBLISHED bundle rather than from this process's own entry (#2808), so a
-  // registration made from a stale plugin cache never commits the host to an
-  // older Worker than the one this project publishes.
-  const argv = [
-    ...publishedBundleArgv(),
-    "run",
-    "--once",
-    "--runner",
-    input.runner,
-    ...(input.selector ? ["--selector", JSON.stringify(input.selector)] : []),
-  ];
-
   // Where this project's Workers write their output, and how each one addresses
   // the host it must publish its last line to (#3079). Declared HERE because a
   // registration is the only thing this lane ever tells the daemon: a project
@@ -995,6 +989,18 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
   // exactly how the herdr plugin, the VS Code extension and the verbose
   // statusline all came to report a Worker with nothing to say.
   const logPathTemplate = registrationLogPathTemplate(root, new Date().toISOString().slice(0, 10));
+
+  // What runs when a Worker is born for this project — resolved from the
+  // PUBLISHED bundle rather than from this process's own entry (#2808), so a
+  // registration made from a stale plugin cache never commits the host to an
+  // older Worker than the one this project publishes.
+  //
+  // Composed by the ONE namer (#3081). The argv used to be assembled here and
+  // the env stated separately, so the env carried only the host's log handle
+  // while the three vars a Worker needs to know who and where it is — its id,
+  // its slot and its runner — lived in a builder nothing called. A Worker born
+  // without its id minted a second one, and no surface could join the two.
+  const launch = registrationLaunch({ runner: input.runner, selector: input.selector, logPath: logPathTemplate });
 
   let registered;
   try {
@@ -1004,10 +1010,14 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
     // like — the one thing rule 3 forbids.
     registered = await port.register({
       selector,
-      argv,
+      argv: [...launch.argv],
       workspace_path: root,
-      env: registrationLaunchEnv(input.runner),
-      log_path: logPathTemplate,
+      // Both halves of the env come from the ONE composer (#3081): the host's log
+      // handle it carries through `registrationLaunchEnv`, and the per-birth facts
+      // — the runner this start decided, the slot the host places the Worker on
+      // (#3118) and the worker id it assigns — that the pure builder re-pins.
+      env: launch.env ?? {},
+      ...(launch.log_path == null ? {} : { log_path: launch.log_path }),
       target: input.target,
     });
   } catch (err) {
@@ -1108,17 +1118,18 @@ async function projectResize(root: string, rawInput: ProjectResizeInput) {
   const warnings: string[] = [];
   if (input.runner !== undefined) {
     // All-or-nothing, as the amendment requires: the argv is restated whole, and
-    // the env travels with it, so the next Worker is never half one tick's
-    // decision and half an older one.
-    const argv = [
-      ...publishedBundleArgv(),
-      "run",
-      "--once",
-      "--runner",
-      input.runner,
-      ...(input.selector ? ["--selector", JSON.stringify(input.selector)] : []),
-    ];
-    await port.restateLaunch({ argv, env: held.env });
+    // the env and the log path travel with it, so the next Worker is never half
+    // one tick's decision and half an older one. Restated through the SAME namer
+    // the registration used (#3081) — a resize that rebuilt the argv by hand and
+    // carried the old env forward is how a launch came to be half-composed, and
+    // a restatement that omitted the log path would clear it outright.
+    await port.restateLaunch(
+      registrationLaunch({
+        runner: input.runner,
+        selector: input.selector,
+        logPath: held.log_path ?? registrationLogPathTemplate(root, new Date().toISOString().slice(0, 10)),
+      }),
+    );
     directive = "restated";
   }
   if (input.target !== undefined && input.target !== held.target) {
