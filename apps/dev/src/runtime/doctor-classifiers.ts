@@ -48,6 +48,12 @@ import {
 import { collectDocsSweepInput } from "./wire/docs.js";
 import type { RepoContext } from "./wire/paths.js";
 import { listDependencyEdgeTickets, type GhContext } from "./gh.js";
+import {
+  judgePluginVersion,
+  readInstalledPluginVersions,
+  type PluginVersionFacts,
+  type PluginVersionReport,
+} from "../core/plugin-version-doctor.js";
 
 /**
  * doctor-classifiers.ts — the fact-collection half of the `/red-doctor` checks
@@ -99,6 +105,7 @@ export interface DoctorClassifierReports {
   readonly hostBinaries: HostBinaryReport;
   /** Check 26 — marketplace registration source per host CLI. */
   readonly marketplaceSources: MarketplaceSourceReport;
+  readonly pluginVersion: PluginVersionReport;
   /** Check 27 — declared MCP servers that never loaded in this session. */
   readonly mcpLoad: McpLoadReport;
   /** Check 15 — native blocked-by vs `req:N` divergence. */
@@ -477,6 +484,8 @@ export interface DoctorClassifierOptions {
    * means nobody told this run, which the audit reports as unobserved rather
    * than assuming a clean session.
    */
+  /** Injected so a test needs no plugin cache and no registry. */
+  readonly readPluginVersions?: () => Promise<PluginVersionFacts>;
   readonly sessionMcpServers?: readonly string[] | null;
 }
 
@@ -557,6 +566,18 @@ export async function collectDoctorClassifierReports(
     notes.push(`marketplace source audit unavailable: ${message(error)}`);
   }
 
+  // The plugin lane, which nothing watched until #3147. The bundle lane
+  // self-updates and reports; this one is installed by the agent host and its
+  // version was never read — so an eight-release skew sat under a green doctor.
+  let pluginVersion: PluginVersionReport = judgePluginVersion({ installed: null, published: null });
+  try {
+    pluginVersion = judgePluginVersion(
+      await (options.readPluginVersions ?? readInstalledPluginVersions)(),
+    );
+  } catch (error) {
+    notes.push(`plugin version probe unavailable: ${message(error)}`);
+  }
+
   let mcpLoad: McpLoadReport = { findings: [], rows: [] };
   try {
     mcpLoad = collectMcpLoadReport(ctx.root, configText, options.sessionMcpServers ?? null, notes);
@@ -631,6 +652,7 @@ export async function collectDoctorClassifierReports(
     runtimeUnresolved,
     hostBinaries,
     marketplaceSources,
+    pluginVersion,
     mcpLoad,
     dependencyEdges,
     dependencyEdgesUnread,
