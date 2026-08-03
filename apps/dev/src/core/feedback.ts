@@ -740,8 +740,49 @@ function isWorktreeSetupFailure(output: string): boolean {
  * The sidecar summary for an `inconclusive` check — the comparison evidence a
  * human needs to read the `blocked:validation` park without re-running anything.
  */
+/**
+ * Patterns that mean the baseline was never BUILT, not that it also failed.
+ *
+ * A baseline worktree that could not be created, checked out or installed
+ * produces a message about a path or a ref, not about a test — and calling that
+ * "also fails on the baseline" asserts a comparison that never ran.
+ */
+const BASELINE_UNBUILT_PATTERNS: readonly RegExp[] = [
+  /\bENOENT\b/i,
+  /couldn't find remote ref/i,
+  /could not find remote ref/i,
+  /\bunable to lock ref\b/i,
+  /worktree (?:add|install) failed/i,
+  /lock wait timed out/i,
+  /\bEACCES\b/i,
+];
+
+/** True when the baseline never ran, so nothing was compared. PURE. */
+export function baselineNeverRan(baselineSummary: string | undefined): boolean {
+  const detail = baselineSummary?.trim();
+  if (detail == null || detail === "") return false;
+  return BASELINE_UNBUILT_PATTERNS.some((pattern) => pattern.test(detail));
+}
+
+/**
+ * What the branch's record says once the baseline has been consulted.
+ *
+ * **"Also fails on the baseline" is a claim about a comparison, and it must not
+ * be made when the comparison never happened.** A baseline worktree that could
+ * not be constructed — a missing ref, a busy lock, an `ENOENT` on the path —
+ * produces a message about infrastructure, and the old wording concatenated it
+ * behind "also fails on the baseline", asserting a result nobody measured.
+ *
+ * That mattered: #3082 sat parked as broken work for hours on a record reading
+ * `failed` in 146ms, with `typecheck` and `build` green, because the baseline
+ * worktree for `main` did not exist. The change was complete and landed
+ * unmodified once rebased.
+ */
 function baselineComparisonSummary(baselineSummary: string | undefined): string {
   const detail = baselineSummary?.trim();
+  if (detail && baselineNeverRan(detail)) {
+    return `inconclusive: the baseline could not be built, so nothing was compared — ${detail}`;
+  }
   return detail
     ? `inconclusive: also fails on the baseline — ${detail}`
     : "inconclusive: also fails on the baseline";
