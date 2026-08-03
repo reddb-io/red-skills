@@ -33,7 +33,6 @@ function bandAt(remaining: number): GithubBalance {
 function gate(balance: GithubBalance) {
   return createGhBandGate({
     readBalance: async () => balance,
-    nowMs: () => Date.parse(NOW),
     nowIso: () => NOW,
   });
 }
