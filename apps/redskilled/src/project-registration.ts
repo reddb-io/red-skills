@@ -47,6 +47,7 @@
 import {
   requireLaunchArgv,
   requireLaunchEnv,
+  requireLaunchLogPath,
   type RedskilledLaunchTemplate,
 } from "./launch-template.js";
 import type { RedskilledQueueOutcome } from "./queue-discovery.js";
@@ -110,6 +111,16 @@ export interface RedskilledProjectRegistrationRequest {
    * to add, which is an ordinary answer rather than a missing one.
    */
   readonly env?: Readonly<Record<string, string>>;
+  /**
+   * Where a Worker born for this project writes its output. Opaque, likewise.
+   *
+   * A template, carrying the same `{{worker_id}}`-style placeholders the env
+   * does, because one registration births many Workers and two of them must never
+   * share a file. Absent means this project keeps its Worker's last line entirely
+   * on the heartbeat — legal, and the reason the daemon never refuses a
+   * registration for stating no path.
+   */
+  readonly log_path?: string;
   /** How many Workers this project wants; the host still decides how many it gets. */
   readonly target: number;
   /** How long this registration stands without renewal; the default when absent. */
@@ -124,6 +135,8 @@ export interface RedskilledProjectRegistration {
   readonly argv: readonly string[];
   readonly workspace_path: string;
   readonly env: Readonly<Record<string, string>>;
+  /** The declared log-path template; absent when this project declared none. */
+  readonly log_path?: string;
   readonly target: number;
   /** The daemon's own clock, at the instant it accepted this registration. */
   readonly registered_at: string;
@@ -212,6 +225,7 @@ export function buildProjectRegistration(
   const selector = requireText(request.selector, "a selector");
   const argv = requireLaunchArgv(request.argv, projectLabel);
   const env = requireLaunchEnv(request.env, projectLabel);
+  const logPath = requireLaunchLogPath(request.log_path, projectLabel);
   // Same shape check, same reason as the argv: a registration the host could
   // never start a Worker for is a client bug the daemon can see without reading
   // anything about what the path names.
@@ -244,6 +258,7 @@ export function buildProjectRegistration(
     argv,
     workspace_path: workspacePath,
     env,
+    ...(logPath == null ? {} : { log_path: logPath }),
     target: request.target,
     registered_at: new Date(nowMs).toISOString(),
     renew_within_ms: renewWithinMs,
@@ -326,8 +341,17 @@ export function renewProjectRegistration(
       env: requireLaunchEnv(options.launch.env, held.project_label),
       launch_revision: (held.launch_revision ?? 0) + 1,
     };
+  // All-or-nothing with the rest of the launch: a restatement that kept the old
+  // path while replacing the argv would point a new Worker's output at the file
+  // an older decision named. So a restated launch that declares none CLEARS it,
+  // which a spread of an absent key could not do.
+  const logPath = options.launch == null
+    ? held.log_path
+    : requireLaunchLogPath(options.launch.log_path, held.project_label);
+  const { log_path: _cleared, ...carried } = held;
   return {
-    ...held,
+    ...carried,
+    ...(logPath == null ? {} : { log_path: logPath }),
     ...launch,
     renew_within_ms: renewWithinMs,
     renewed_at: new Date(nowMs).toISOString(),
@@ -539,6 +563,7 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     (registration.renewed_at === undefined || typeof registration.renewed_at === "string") &&
     (registration.renewals === undefined || Number.isInteger(registration.renewals)) &&
     (registration.env === undefined || isLaunchEnvShape(registration.env)) &&
+    (registration.log_path === undefined || typeof registration.log_path === "string") &&
     (registration.launch_revision === undefined || Number.isInteger(registration.launch_revision)) &&
     // Optional for the same reason, one amendment later: a daemon older than the
     // sustain holds no such fields, and a client that failed its records closed

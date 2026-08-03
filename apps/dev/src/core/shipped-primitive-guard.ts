@@ -66,6 +66,18 @@ export const SHIPPED_PRIMITIVES: readonly ShippedPrimitive[] = [
     consequence:
       "a worker that hits a GitHub rate limit fails immediately instead of waiting for the reset, and the failure reads as a merge/label error rather than as quota",
   },
+  {
+    id: "redskilled-worker-log-line",
+    what: "the Worker's publication of its last log line to the host daemon, on the beat it already keeps",
+    definedIn: "apps/redskilled/src/client.ts",
+    // Call-shaped, and deliberately: this publisher shipped exported, documented
+    // in HOST-NOTES.md as a working feature, and referenced by nothing but its own
+    // definition (#3079). A reference is not a call — a default value handed to an
+    // option is exactly the shape that reads as wiring and supplies nothing.
+    enabler: /\bpublishRedskilledWorkerLogLine\s*\(/,
+    consequence:
+      "no daemon-side surface can show what an AFK Worker is logging: the herdr plugin and the VS Code extension report a Worker that declared no log path, and `redskilled statusline --verbose` has no second line to print",
+  },
 ];
 
 /** One file that references a primitive's enabler, and whether it is a test. */

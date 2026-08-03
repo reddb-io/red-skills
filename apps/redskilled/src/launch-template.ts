@@ -68,20 +68,40 @@ export interface RedskilledLaunchFacts {
 /**
  * What a project states about how its Workers are started.
  *
- * Opaque in both halves: the argv is the argv the daemon already carried, and the
- * env is the slot-scoped bag that used to be composed at the spawn site. Neither
- * is read — the env is a map only because a process environment is one, not
- * because the daemon looks anything up in it.
+ * Opaque in all three parts: the argv is the argv the daemon already carried, the
+ * env is the slot-scoped bag that used to be composed at the spawn site, and the
+ * log path is a filename. None is read — the env is a map only because a process
+ * environment is one, not because the daemon looks anything up in it.
+ *
+ * **The log path is stated here because the registration lane has nowhere else to
+ * state it** (#3079). `log_path` was always one of the four facts a birth
+ * supplies, but only the direct `worker-start` lane could supply it: a project
+ * that registers hands over a template and then never hears about a birth again,
+ * so a Worker born from a registration reached every surface carrying no path,
+ * and each surface reported the absence as a Worker with nothing to say.
  */
 export interface RedskilledLaunchTemplate {
   readonly argv: readonly string[];
   readonly env?: Readonly<Record<string, string>>;
+  /**
+   * Where this project's NEXT Worker writes its output — a template, like the rest.
+   *
+   * Stated with `{{worker_id}}` in it in the ordinary case, because one template
+   * serves every Worker of a project and two Workers must never be handed one
+   * file. The daemon opens it and pipes the Worker's stdout and stderr into it,
+   * so it must name a file the project does not otherwise write: a path already
+   * owned by a project-side writer would be two writers interleaving into one
+   * file.
+   */
+  readonly log_path?: string;
 }
 
 /** One launch, with every fact filled in. */
 export interface RedskilledExpandedLaunch {
   readonly argv: readonly string[];
   readonly env: Readonly<Record<string, string>>;
+  /** The template's own log path with the facts written in; absent when it stated none. */
+  readonly log_path?: string;
 }
 
 /** Raised when a template names a fact the daemon does not have. Fail closed. */
@@ -138,7 +158,8 @@ export function expandLaunchTemplate(
   for (const [key, value] of Object.entries(template.env ?? {})) {
     env[key] = substitute(value, `env entry ${JSON.stringify(key)}`);
   }
-  return { argv, env };
+  const logPath = template.log_path == null ? undefined : substitute(template.log_path, "the log path");
+  return { argv, env, ...(logPath == null || logPath === "" ? {} : { log_path: logPath }) };
 }
 
 /**
@@ -168,6 +189,10 @@ export function workerSpecFromLaunch(
   readonly env: Readonly<Record<string, string>>;
 } {
   const launch = expandLaunchTemplate(template, facts);
+  // The template's own statement wins over the fact, because the fact exists for
+  // the lane that has no template: a caller holding both is a caller that stated
+  // where its Worker logs, and the daemon's default must not overrule it.
+  const logPath = launch.log_path ?? facts.log_path;
   const [command, ...args] = launch.argv;
   if (command === undefined || command === "") {
     throw new Error(
@@ -179,7 +204,7 @@ export function workerSpecFromLaunch(
     worker_id: facts.worker_id,
     project_label: project.project_label,
     workspace_path: facts.workspace_path,
-    ...(facts.log_path == null ? {} : { log_path: facts.log_path }),
+    ...(logPath == null || logPath === "" ? {} : { log_path: logPath }),
     command,
     args,
     env: launch.env,
@@ -210,6 +235,29 @@ export function requireLaunchArgv(argv: unknown, projectLabel: string): readonly
     }
     return word;
   });
+}
+
+/**
+ * Check a declared log path's SHAPE, and never its meaning. PURE.
+ *
+ * Absence is legal and stays legal: the heartbeat is the primary supply of a
+ * Worker's last line and needs no path at all, so a registration that declares
+ * none is a project keeping the whole mechanism on the beat. What is refused is
+ * a path stated as something other than a non-empty string — an empty one is a
+ * client that meant to declare and did not, which is exactly the silence #3079
+ * was: a `log_path` that expanded to `""` degraded four layers deep and every
+ * one of them read the absence as legitimate.
+ */
+export function requireLaunchLogPath(value: unknown, projectLabel: string): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(
+      `redskilled needs a declared log path to be a non-empty string to register project ` +
+        `${JSON.stringify(projectLabel)}, not ${JSON.stringify(value)}: a project that declares an empty path ` +
+        `states a Worker whose output no surface can ever show, which reads as a Worker with nothing to say`,
+    );
+  }
+  return value;
 }
 
 /**

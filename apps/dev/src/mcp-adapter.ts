@@ -70,6 +70,10 @@ import {
   createRedskilledBirthPort,
   redskilledRegistrationRefusal,
 } from "./runtime/redskilled-birth.js";
+import {
+  registrationLaunchEnv,
+  registrationLogPathTemplate,
+} from "./runtime/redskilled-worker-log.js";
 import { migrateToTwoPlayer } from "./runtime/two-player-migration.js";
 import {
   publishWorkerLiveness,
@@ -984,13 +988,28 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
     ...(input.selector ? ["--selector", JSON.stringify(input.selector)] : []),
   ];
 
+  // Where this project's Workers write their output, and how each one addresses
+  // the host it must publish its last line to (#3079). Declared HERE because a
+  // registration is the only thing this lane ever tells the daemon: a project
+  // that states neither births Workers whose logs no surface can show, which is
+  // exactly how the herdr plugin, the VS Code extension and the verbose
+  // statusline all came to report a Worker with nothing to say.
+  const logPathTemplate = registrationLogPathTemplate(root, new Date().toISOString().slice(0, 10));
+
   let registered;
   try {
     // Where a Worker runs, stated rather than derived: the daemon owns the demand
     // loop (ADR 0130 Amendment 4), so it births the Worker itself, and a host that
     // had to work out a working directory would have to know what a checkout looks
     // like — the one thing rule 3 forbids.
-    registered = await port.register({ selector, argv, workspace_path: root, target: input.target });
+    registered = await port.register({
+      selector,
+      argv,
+      workspace_path: root,
+      env: registrationLaunchEnv(),
+      log_path: logPathTemplate,
+      target: input.target,
+    });
   } catch (err) {
     throw new Error(redskilledRegistrationRefusal(port.socketPath, err));
   }
@@ -1004,6 +1023,10 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
     argv: [...registered.argv],
     socket: port.socketPath,
     renew_by: registered.renew_by,
+    // Reported rather than assumed: an operator who cannot see a Worker's output
+    // needs to know which path was declared for it, and a registration answering
+    // with none is the defect rather than a Worker that says nothing.
+    log_path: registered.log_path ?? null,
     ...(input.selector ? { work_selector: input.selector } : {}),
     ...(input.base !== undefined ? { base: input.base } : {}),
     // Stated, never swallowed: the frozen contract carries no environment, and a

@@ -62,6 +62,7 @@ import { dirname, join } from "node:path";
 import { workerIdentity } from "../../core/host-identity.js";
 import { initStateSync, readPidStartTime, updateState, workerStatePath, writeIdentitySync } from "../../core/state.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
+import { createWorkerLogLinePublisher } from "../../runtime/redskilled-worker-log.js";
 import { HOST_CONFIG_EXIT_CODE } from "../../core/worker-outcome.js";
 
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
@@ -281,11 +282,16 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // BEFORE the feedback manager so the gate's lock-wait sink can reach the live
   // attempt dir and the worker event lane (#2985).
   const current: CurrentAttempt = { attemptDir: "" };
+  // The host hears what this Worker logs, on the beat the bridge already keeps
+  // (#3079). Null for a Worker the daemon did not birth, which is the whole gate:
+  // a run invoked directly has no host record to address.
+  const publishHostLogLine = createWorkerLogLinePublisher({ root: ctx.root });
   const castleBridge = createCastleWorkerLaneBridge({
     redRoot: join(ctx.root, ".red"),
     workerId,
     attemptDir: () => current.attemptDir,
     supervisorLane: process.env[SUPERVISOR_LANE_ENV] || undefined,
+    ...(publishHostLogLine == null ? {} : { publishHostLogLine }),
   });
 
   // Feedback worktree manager — checks out the worker branch for the gate.

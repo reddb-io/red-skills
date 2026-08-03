@@ -51,6 +51,7 @@ import { resolveAttemptLoc, locMemoPath } from "../../core/loc-memo.js";
 import { createActivityMeter } from "../../core/activity-meter.js";
 import { resolveImplementerPluginRoots } from "../../runtime/implementer-environment.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
+import { createWorkerLogLinePublisher } from "../../runtime/redskilled-worker-log.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
 
 import type { CurrentAttempt } from "./attempt.js";
@@ -120,10 +121,14 @@ export function buildProcessDeps({
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec, ghProbeTimeoutMs: LANDING_GH_PROBE_TIMEOUT_MS };
   const paths = afkPaths(ctx.root);
+  // The same beat reaches the host here too (#3079); null when this Worker was
+  // not born by the daemon, so a direct `run` publishes nothing.
+  const publishHostLogLine = createWorkerLogLinePublisher({ root: ctx.root });
   const castleBridge = createCastleWorkerLaneBridge({
     redRoot: join(ctx.root, ".red"),
     workerId,
     attemptDir: () => current.attemptDir,
+    ...(publishHostLogLine == null ? {} : { publishHostLogLine }),
   });
   // Per-agentic-iteration boundary tracking (observability): when sandcastle's
   // re-invocation count (event.iteration) ticks, emit "iteration N ended/started"
