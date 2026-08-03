@@ -17,6 +17,17 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
   - The prose in both docs states where the daemon bundle comes from and why the `else` branch exists.
   - `apps/dev/src/core/statusline-command-doc.ts` grows two rules: every published glob must resolve what the warm path writes (`statuslineBundleGlobs` / `statuslineGlobResolves`, held against `bundleFileName`, not against a literal), and every copy must state the absence. The suite provisions a fake HOME through the **real** `ensureBundle` and runs the published command against it, so the test fails the moment provisioning stops satisfying the render command — the arrangement that was wrong in a shipped release with nothing going red.
 
+## red-setup, red-statusline (engineering) — a statusline written mid-session reaches the next one (issue #3075)
+
+- **status**: modified
+- **upstream**: `66898f6` (reddb.io original skills)
+- **why**: Claude Code loads `.claude/settings.json` at **session start**, and `/red-setup` writes the `statusLine` key **during** a session. The running process never sees what it was just handed, so "the statusline does not work" was the guaranteed first experience of every newly set-up repo — and no surface said why. The operator then diagnoses a correct configuration: `settings.local.json` precedence, the user-level settings, `.gitignore`, whether the command renders standalone, all clean, because the file is right and only the process is stale. `/reload-plugins` does not cure it either; it reloads plugins, not project settings. The verification step compounded it — `HOST-NOTES.md` step 5 has the operator prove the command renders, and it does, a true result that points away from the real cause because what is stale is the host, not the command.
+- **what changed**:
+  - `red-setup/WRITE-CONTRACT.md` + `SKILL.md` + `INTERVIEW.md`: the statusline write ends in a `written, restart needed` verdict naming **start a new session** as the cure, carried into the closing recap. It is stated only on the write path — a run that took the config opt-out or left an existing key alone changed no setting and has no restart to ask for.
+  - `red-statusline/SKILL.md`: the same verdict at the point it writes, plus an honest probe — a passing render proves the command, not the host wiring, so a blank line after it means restart, not misconfiguration.
+  - `red-statusline/HOST-NOTES.md`: the blank-statusline diagnosis becomes an ordered list with the stale host process first — the most common cause and the only one where every check passes — ahead of the command-backed causes, which apply only once the settings predate the session.
+  - New guard `apps/dev/tests/statusline-restart-docs.test.ts` pins the verdict, the write-path-only condition, the recap carry, the honest probe framing, the diagnosis ordering, and the generated `packaging/pi/` mirrors.
+
 ## red-setup, red-doctor (engineering) — setup leaves the tree dirty by contract, so it says so (issue #3106)
 
 - **status**: modified
