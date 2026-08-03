@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-`red-doctor` now reports when the installed plugin is behind the published one, with both numbers and the command that closes the gap. Two update lanes exist and only one was watched: the bundle lane self-updates and reports, while the plugin lane — the host's own install, which carries the MCP server and the skills — sat nine releases behind under a doctor that answered `marketplace findings: 0`. The skew is invisible from outside, and that is what makes it costly: the MCP server is what COMPOSES a project registration, so an old one registers with an empty launch environment while writing the CURRENT bundle path into the argv — a fresh Worker running new code, born from a registration composed by old code, with every version number on screen true about something else. An unaskable registry reports `unknown` rather than `current`, because reporting an unreachable npm as up-to-date would be the loudest instance yet of the unknown-read-as-negative confusion this repo has hit in four organs — it would certify the machine.
