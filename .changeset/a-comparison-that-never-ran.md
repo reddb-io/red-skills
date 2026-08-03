@@ -1,5 +1,0 @@
----
-"@reddb-io/red-skills": patch
----
-
-A validation record no longer claims a baseline comparison that never happened. `baselineComparisonSummary` concatenated whatever the baseline produced behind the words "also fails on the baseline", so a worktree that could not be built at all — a missing ref, a busy lock, an `ENOENT` on the path — was reported as a failure the baseline had reproduced. That parked #3082 as broken work for hours on a record reading `failed` in 146 milliseconds, with `typecheck` and `build` green and no test having run; the change was complete and landed unmodified once rebased. The summary now distinguishes the two, saying "the baseline could not be built, so nothing was compared" when the message is about infrastructure rather than about a test. Blocking on a genuinely inconclusive result is unchanged and deliberate (#2380) — the probe downgrades nothing, because pre-merge gating is the sole quality gate — and the tests pin both directions so a real reproduced failure is never mistaken for a harness fault.
