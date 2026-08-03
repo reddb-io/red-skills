@@ -282,6 +282,18 @@ export const ENGINE_BEHIND_MARK = "⇡";
  */
 export const DEATH_MARK = "†";
 
+/**
+ * What a budget inside the reserved band is marked with, and what a spent one is.
+ *
+ * Two marks rather than one, because they call for opposite actions: inside the
+ * band the machine is still landing work and refusing only convenience, and spent
+ * means nothing goes out until the reset. A surface that drew one symbol for both
+ * would make an operator read the sentence to learn which it was.
+ */
+export const BUDGET_BAND_MARK = "◐";
+/** What a spent GitHub budget is marked with. */
+export const BUDGET_SPENT_MARK = "◯";
+
 /** The one sentence an unreachable host renders as. */
 export const REDSKILLED_STATUSLINE_ABSENCE = "redskilled unreachable — Worker state unknown";
 
@@ -416,6 +428,8 @@ function renderHead(
     parts.push(unmatchedHead(options.project, match));
   }
   parts.push(engineMark(payload));
+  const budget = budgetMark(payload);
+  if (budget != null) parts.push(budget);
   const death = deathMark(payload);
   if (death != null) parts.push(death);
   if (payload.staleness.stale) parts.push(stalenessMark(payload));
@@ -437,6 +451,27 @@ function engineMark(payload: RedskilledStatuslinePayload): string {
   const version = engine?.running_version ?? payload.daemon.daemon_version;
   if (engine == null || engine.current !== false) return `v${version}`;
   return `v${version}${ENGINE_BEHIND_MARK}`;
+}
+
+/**
+ * The budget posture, in the smallest honest token. PURE.
+ *
+ * In the HEAD rather than the degradable tail, because it is what makes an empty
+ * queue and a spent quota different screens: a one-line statusline is often the
+ * only surface an operator looks at, and a drained backlog and a refused one are
+ * rendered identically by every count on it.
+ *
+ * An `open` budget prints nothing, and so does an `unknown` one. A mark for the
+ * healthy case is how a mark stops being read at all — and `unknown` is a fact
+ * about this daemon's polling rather than about the token, which the dashboard
+ * has room to say and a head does not.
+ */
+function budgetMark(payload: RedskilledStatuslinePayload): string | null {
+  const balance = payload.github_balance;
+  if (balance == null) return null;
+  if (balance.posture === "spent") return `${BUDGET_SPENT_MARK} quota spent`;
+  if (balance.posture === "reserved") return `${BUDGET_BAND_MARK} quota band`;
+  return null;
 }
 
 /**
