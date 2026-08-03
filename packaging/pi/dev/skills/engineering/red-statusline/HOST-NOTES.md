@@ -14,7 +14,12 @@ The statusline data surface has two distinct client paths with different render-
 
 The two paths share collector cores and never duplicate them. Adding a new field to the statusline means adding it to the collector → both clients get it in the same change.
 
-**Diagnosing a blank statusline**: the MCP is NOT in the `statusLine` render path. A blank line is always a problem with the command-backed path (node not on PATH, bundle not cached, opt-out in config). Run step 5 of the Claude Code recipe below to probe the command directly; do not look at MCP transport or the `statusline_aggregate` tool.
+**Diagnosing a blank statusline — take the causes in this order:**
+
+1. **A stale host process (the most common, and the only one where every check passes).** Claude Code reads `.claude/settings.json` at **session start**, so a `statusLine` written during THIS session is on disk and never reached the running process — the line stays blank until a new session starts (#3075). The file is valid, the key is present, the step-5 probe renders, `settings.local.json` and `~/.claude/settings.json` are clean, and `/reload-plugins` changes nothing (it reloads plugins, not project settings). Ask when the key was written before believing anything is misconfigured: if it was this session, the cure is **restart**, and there is nothing else to find.
+2. **The command-backed path**, once the settings predate the session: node not on PATH, bundle not cached, opt-out in config. Run step 5 of the Claude Code recipe below to probe the command directly.
+
+The MCP is NOT in the `statusLine` render path at any step — do not look at MCP transport or the `statusline_aggregate` tool.
 
 ## Shared Architecture And Line Shapes
 
@@ -85,6 +90,8 @@ Use a 60s refresh interval because the producer reads cached state: 5s ticks bur
 Use `jq` to merge when `.claude/settings.json` already exists; create `.claude/`
 and a fresh file when it is missing. Keep unrelated settings intact.
 
+**Having written it, report `written, restart needed`:** Claude Code reads this file at **session start**, so the key just written is on disk and absent from the running process, and the line stays blank in the current session no matter how correct the write was (#3075). Name the cure — **start a new session** — and do not offer `/reload-plugins`, which reloads plugins and not project settings. A run that stopped at step 2 or step 3 changed no setting and says none of this.
+
 5. Verify: confirm `.claude/settings.json` is valid JSON and has `.statusLine.command`. Unlike the old `$CLAUDE_PLUGIN_ROOT` form, you **can** prove this one renders by piping a minimal session JSON into the **same `sh -c '…'` command from step 4** (no need to re-type it):
 
 ```bash
@@ -92,7 +99,9 @@ printf '{"workspace":{"project_dir":"%s"},"model":{"display_name":"Opus"}}' "$PW
   | <the step-4 statusLine command>
 ```
 
-It should print the themed **header line** (e.g. `» red-skills (main) v… Opus·high …`) and, below it, whatever the daemon's `statusline` command returned — the local project's Workers, or a stated absence when no daemon answered. It must also **exit 0** — check `echo $?` — including on a host where no daemon bundle is cached yet. Probe the two halves separately when one is missing: the header is `<bundle> statusline --no-workers`, the Worker rows are the daemon's own `statusline`. Under `NO_COLOR` the header collapses to the single-line plain form `red-skills (main) · Opus·high · …`.
+It should print the themed **header line** (e.g. `» red-skills (main) v… Opus·high …`) and, below it, whatever the daemon's `statusline` command returned — the local project's Workers, or a stated absence when no daemon answered. It must also **exit 0** — check `echo $?` — including on a host where no daemon bundle is cached yet.
+
+**Report what this probe proves, and what it does not.** A successful render **proves the command, not the host wiring**: the host is a separate reader that picked up `.claude/settings.json` at its own session start. Left unqualified, a passing probe is worse than no probe — it is a true result that points away from the real cause, sending the operator to hunt `settings.local.json` precedence, the user-level settings, and `.gitignore` while the only stale thing is the process (#3075). So a blank line in the current session **after** this probe passes means restart, not misconfiguration. Probe the two halves separately when one is missing: the header is `<bundle> statusline --no-workers`, the Worker rows are the daemon's own `statusline`. Under `NO_COLOR` the header collapses to the single-line plain form `red-skills (main) · Opus·high · …`.
 
 ## Claude Code Rationale
 

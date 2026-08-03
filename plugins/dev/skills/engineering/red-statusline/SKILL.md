@@ -22,7 +22,8 @@ disable-model-invocation: true
 2. **Opt-out gate** — if `.red/config.yaml` has top-level `statusline: false` or nested `afk.statusline: false`, stop and tell the user it is disabled.
 3. **Existing-config gate** — if `.claude/settings.json` already has `statusLine`, preserve it unless the user explicitly asked to replace it. Replacement touches only `statusLine`; keep every other key.
 4. **Apply the adapter recipe** — read [HOST-NOTES.md](HOST-NOTES.md#claude-code-adapter-recipe), then write or merge the cached-bundle-first `statusLine` block exactly as documented there.
-5. **Verify the write** — confirm `.claude/settings.json` is valid JSON, contains `.statusLine.command`, and renders by piping minimal session JSON into the same command from the recipe.
+5. **Verify the write, and say what the probe did not prove** — confirm `.claude/settings.json` is valid JSON, contains `.statusLine.command`, and renders by piping minimal session JSON into the same command from the recipe. A passing probe **proves the command, not the host wiring**; never report it as proof the line will appear.
+6. **Report `written, restart needed` whenever you wrote** — Claude Code loads `.claude/settings.json` at **session start**, so the key just written is on disk and absent from the running process. Name the cure: **start a new session** (`/reload-plugins` reloads plugins, not project settings). A blank line in THIS session after a passing probe means **restart, not misconfiguration** (#3075). Say nothing about restarting when a gate above left an existing `statusLine` alone — that run changed no setting.
 
 ## 3. Codex
 
@@ -69,6 +70,6 @@ The statusline has two client architectures — read [HOST-NOTES.md](HOST-NOTES.
 - **Command-backed host (`statusLine`)** — a direct collector client (ADR 0084). Never rewire it through the MCP server; an MCP handshake per render tick is the synchronous-fetch-in-render-path regression the ADR forbids.
 - **Agents and UIs** — consume the same aggregate via the `dev:afk` MCP tool `statusline_aggregate`. The tool calls the identical collector cores and cache discipline as the command, so both surfaces stay in sync without duplicating logic.
 
-When diagnosing a blank statusline, the MCP path is NOT in scope — probe the `statusLine` command directly (step 5 of the Claude Code recipe in HOST-NOTES.md).
+When diagnosing a blank statusline, rule out the stale session first — a `statusLine` written during the running session reaches the host only at the next start — then probe the `statusLine` command directly (step 5 of the Claude Code recipe in HOST-NOTES.md). The MCP path is NOT in scope either way.
 
 </supporting-info>
