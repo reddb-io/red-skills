@@ -39,6 +39,7 @@ describe("the daemon-owned host config", () => {
       "    redskilled:",
       "      worker_ceiling: 6",
       "      memory_ceiling: 8G",
+      "      validation_ceiling: 3",
       "      idle_ms: 61000",
       "",
     ].join("\n"));
@@ -46,6 +47,7 @@ describe("the daemon-owned host config", () => {
     await expect(readRedskilledHostConfig(home)).resolves.toEqual({
       workerCeiling: "6",
       memoryCeiling: "8G",
+      validationCeiling: "3",
       idleMs: "61000",
     });
   });
@@ -131,5 +133,35 @@ describe("host setting precedence", () => {
       config: { idleMs: "60000" },
       totalMemoryBytes: TOTAL,
     })).toMatchObject({ idleMs: 60_000, idleMsSource: "home-config" });
+  });
+
+  it("derives validation slots from the tightest CPU, memory, and Worker ceiling", () => {
+    const settings = resolveRedskilledHostSettings({
+      env: {},
+      config: { workerCeiling: "3", memoryCeiling: "16G" },
+      totalMemoryBytes: 32 * 1024 ** 3,
+      availableParallelism: 12,
+    });
+
+    expect(settings.ceiling.validation_count).toBe(3);
+    expect(settings.ceiling.validation_source).toBe("derived-default");
+  });
+
+  it("keeps a small host at one validation slot and lets the operator declare K = 1", () => {
+    const derived = resolveRedskilledHostSettings({
+      env: {},
+      totalMemoryBytes: 2 * 1024 ** 3,
+      availableParallelism: 2,
+    });
+    expect(derived.ceiling.validation_count).toBe(1);
+
+    const declared = resolveRedskilledHostSettings({
+      env: {},
+      config: { validationCeiling: "1" },
+      totalMemoryBytes: 64 * 1024 ** 3,
+      availableParallelism: 32,
+    });
+    expect(declared.ceiling.validation_count).toBe(1);
+    expect(declared.ceiling.validation_source).toBe("home-config");
   });
 });

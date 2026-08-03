@@ -24,7 +24,7 @@
  * that reads the environment, and even that takes the host's memory as an
  * argument.
  */
-import { totalmem } from "node:os";
+import { availableParallelism, totalmem } from "node:os";
 import { parseMemoryBudget } from "./budget-accounting.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
@@ -34,6 +34,9 @@ export const REDSKILLED_MEMORY_CEILING_ENV = "REDSKILLED_MEMORY_CEILING";
 
 /** Env var that states the host-wide Worker count ceiling; `infinity` lifts it. */
 export const REDSKILLED_WORKER_CEILING_ENV = "REDSKILLED_WORKER_CEILING";
+
+/** Env var that states how many validation suites may run at once on this host. */
+export const REDSKILLED_VALIDATION_CEILING_ENV = "REDSKILLED_VALIDATION_CEILING";
 
 /** Env var that states how many interactive Workers may run above the Worker ceiling. */
 export const REDSKILLED_INTERACTIVE_RESERVATION_ENV = "REDSKILLED_INTERACTIVE_RESERVATION";
@@ -50,6 +53,12 @@ export const DEFAULT_INTERACTIVE_RESERVATION = 1;
  */
 export const DEFAULT_HOST_MEMORY_CEILING_FRACTION = 0.7;
 
+/** One validation child may use this much old-space before Node terminates it. */
+export const DEFAULT_VALIDATION_MEMORY_BYTES = 2 * 1024 ** 3;
+
+/** Keep one core available to the Worker/orchestrator for every validation child. */
+export const DEFAULT_VALIDATION_CORES_PER_SLOT = 2;
+
 /** The operator-facing origin of one resolved host setting. */
 export type RedskilledHostSettingSource = "flag" | "environment" | "home-config" | "derived-default";
 
@@ -59,6 +68,8 @@ export interface RedskilledHostCeiling {
   readonly memory_bytes: number | null;
   /** Total live Workers this host may hold, across every project. */
   readonly worker_count: number | null;
+  /** Concurrent full validation suites this host may run. */
+  readonly validation_count?: number;
   /** Extra Workers admitted only when a request claims the interactive reservation. */
   readonly interactive_reservation?: number;
   /** `declared` when an operator stated it, `host-fraction` when derived. */
@@ -67,17 +78,23 @@ export interface RedskilledHostCeiling {
   readonly memory_source?: RedskilledHostSettingSource;
   /** How the Worker-count dimension was resolved. Present on daemon-resolved ceilings. */
   readonly worker_source?: RedskilledHostSettingSource;
+  /** How the validation-count dimension was resolved. Present on daemon-resolved ceilings. */
+  readonly validation_source?: RedskilledHostSettingSource;
 }
 
 export interface RedskilledHostCeilingOptions {
   readonly flags?: {
     readonly memoryCeiling?: string;
     readonly workerCeiling?: string;
+    readonly validationCeiling?: string;
   };
   readonly config?: {
     readonly memoryCeiling?: string;
     readonly workerCeiling?: string;
+    readonly validationCeiling?: string;
   };
+  /** Injectable host fact for deterministic capacity tests. */
+  readonly availableParallelism?: number;
 }
 
 /** No ceiling at all — an operator's explicit opt-out, and the tests' baseline. */
@@ -365,6 +382,11 @@ export function resolveHostCeiling(
     env[REDSKILLED_WORKER_CEILING_ENV],
     options.config?.workerCeiling,
   );
+  const validationDeclaration = selectDeclaration(
+    options.flags?.validationCeiling,
+    env[REDSKILLED_VALIDATION_CEILING_ENV],
+    options.config?.validationCeiling,
+  );
   const declaredMemory = memoryDeclaration?.value ?? "";
   const declaredWorkers = workerDeclaration?.value ?? "";
   const declaredReservation = (env[REDSKILLED_INTERACTIVE_RESERVATION_ENV] ?? "").trim();
@@ -388,14 +410,14 @@ export function resolveHostCeiling(
   if (declaredMemory !== "") {
     const memory = parseMemoryCeiling(declaredMemory, totalMemoryBytes);
     if (memory !== undefined) {
-      return {
+      return withValidationCapacity({
         memory_bytes: memory,
         worker_count: workerCount,
         interactive_reservation: interactiveReservation ?? DEFAULT_INTERACTIVE_RESERVATION,
         source: "declared",
         memory_source: memoryDeclaration!.source,
         worker_source: workerSource,
-      };
+      }, validationDeclaration, options.availableParallelism ?? availableParallelism());
     }
     // Named rather than obeyed in silence. A malformed ceiling is a limit the
     // operator believes they set, and falling through quietly gives them the
@@ -415,7 +437,7 @@ export function resolveHostCeiling(
         `non-negative integer; using the default reservation of ${DEFAULT_INTERACTIVE_RESERVATION} Worker(s) instead.`,
     );
   }
-  return {
+  return withValidationCapacity({
     memory_bytes: Math.floor(totalMemoryBytes * DEFAULT_HOST_MEMORY_CEILING_FRACTION),
     worker_count: workerCount,
     interactive_reservation: interactiveReservation ?? DEFAULT_INTERACTIVE_RESERVATION,
@@ -428,6 +450,35 @@ export function resolveHostCeiling(
     // memory. An operator debugging a denied Worker was told they had stated a
     // number they never stated.
     source: "host-fraction",
+  }, validationDeclaration, options.availableParallelism ?? availableParallelism());
+}
+
+function withValidationCapacity(
+  ceiling: RedskilledHostCeiling,
+  declaration: { readonly value: string; readonly source: RedskilledHostSettingSource } | undefined,
+  hostParallelism: number,
+): RedskilledHostCeiling {
+  if (declaration !== undefined) {
+    const count = parseCountCeiling(declaration.value);
+    if (count !== null) {
+      return { ...ceiling, validation_count: count, validation_source: declaration.source };
+    }
+    warn(
+      `redskilled: ${describeDeclaration(declaration)} ${REDSKILLED_VALIDATION_CEILING_ENV}=` +
+        `${JSON.stringify(declaration.value)} is not a positive integer; deriving the validation ceiling from ` +
+        "host CPU, memory, and Worker capacity instead.",
+    );
+  }
+
+  const cpuSlots = Math.max(1, Math.floor(Math.max(1, hostParallelism) / DEFAULT_VALIDATION_CORES_PER_SLOT));
+  const memorySlots = ceiling.memory_bytes == null
+    ? Number.POSITIVE_INFINITY
+    : Math.max(1, Math.floor(ceiling.memory_bytes / DEFAULT_VALIDATION_MEMORY_BYTES));
+  const workerSlots = ceiling.worker_count ?? Number.POSITIVE_INFINITY;
+  return {
+    ...ceiling,
+    validation_count: Math.max(1, Math.min(cpuSlots, memorySlots, workerSlots)),
+    validation_source: "derived-default",
   };
 }
 
@@ -498,6 +549,8 @@ export function isRedskilledAdmissionVerdict(value: unknown): value is Redskille
     ceiling != null && typeof ceiling === "object" &&
     (ceiling.memory_bytes === null || typeof ceiling.memory_bytes === "number") &&
     (ceiling.worker_count === null || typeof ceiling.worker_count === "number") &&
+    (ceiling.validation_count === undefined ||
+      (Number.isInteger(ceiling.validation_count) && Number(ceiling.validation_count) > 0)) &&
     (ceiling.interactive_reservation === undefined ||
       (Number.isInteger(ceiling.interactive_reservation) && Number(ceiling.interactive_reservation) >= 0)) &&
     consumption != null && typeof consumption === "object" &&

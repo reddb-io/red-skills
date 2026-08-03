@@ -296,12 +296,17 @@ plugins:
     redskilled:
       worker_ceiling: 6
       memory_ceiling: 8G
+      validation_ceiling: 2
       idle_ms: 300000
 ```
 
 Resolution is `serve` flag > environment > home config > derived default.
 The ceiling flags are `--worker-ceiling` and `--memory-ceiling`; their environment
 counterparts are `REDSKILLED_WORKER_CEILING` and `REDSKILLED_MEMORY_CEILING`.
+`validation_ceiling` (or `REDSKILLED_VALIDATION_CEILING`) sizes the host-wide
+full-suite semaphore. When absent, its capacity is the tightest of half the
+available CPU count, the resolved memory ceiling in 2 GiB shares, and the
+Worker ceiling; every dimension retains a minimum capacity of one.
 `REDSKILLED_IDLE_MS` follows the same precedence for idle time. `host-state`
 reports the resolved `ceiling` and the `memory_source` / `worker_source` that won,
 so a restart or an auto-spawn from another project remains directly auditable.

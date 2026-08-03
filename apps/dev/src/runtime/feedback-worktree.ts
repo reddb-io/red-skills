@@ -54,9 +54,13 @@ import {
 } from "../core/feedback.js";
 import type { BackpressureExec } from "../core/backpressure.js";
 import type { PostWorkerFormatExec } from "../core/post-worker-format.js";
+import {
+  readRedskilledHostConfig,
+  resolveRedskilledHostSettings,
+} from "@reddb-io/redskilled/host-config";
 import { execTool, pnpm as runPnpm, type ExecOptions, type ExecOutput } from "./exec.js";
 import * as gitx from "./git.js";
-import { createPathLock } from "./land-lock.js";
+import { createPathLock, createPathSemaphore } from "./land-lock.js";
 import type { LandLockWaitInfo } from "../core/land-lock.js";
 
 /**
@@ -191,8 +195,8 @@ export interface FeedbackWorktreeIO {
    */
   lock?(dest: string, onWait?: LockWaitSink): Promise<(() => Promise<void>) | null>;
   /**
-   * Host-wide capacity-one semaphore for validation commands. Every live worker
-   * and no-agent reconcile manager binds the same `.red/state` lock.
+   * Host-wide sized semaphore for validation commands. Every live worker and
+   * no-agent reconcile manager binds the same `.red/state` slot set.
    */
   gateLock?(root: string, onWait?: LockWaitSink): Promise<(() => Promise<void>) | null>;
 }
@@ -204,7 +208,7 @@ export interface FeedbackWorktreeIO {
  * healthy `live=true` worker doing nothing for half an hour (#2985).
  */
 export interface LockWaitNotice {
-  /** `validation-gate` (host-wide capacity-one) or `feedback-worktree`. */
+  /** `validation-gate` (host-wide sized semaphore) or `feedback-worktree`. */
   lock: "validation-gate" | "feedback-worktree";
   /**
    * Where the wait stands. A `waiting` notice is only ever followed by exactly
@@ -416,8 +420,10 @@ const defaultIO: FeedbackWorktreeIO = {
   gateLock: async (root, onWait) => {
     const stateDir = join(root, ".red", "state");
     await mkdir(stateDir, { recursive: true });
+    const hostConfig = await readRedskilledHostConfig();
+    const capacity = resolveRedskilledHostSettings({ config: hostConfig }).ceiling.validation_count ?? 1;
     return acquireAnnounced("validation-gate", onWait, (report) =>
-      createPathLock(join(stateDir, "validation-gate.lock"), `validation-gate:${process.pid}`, {
+      createPathSemaphore(join(stateDir, "validation-gate.lock"), `validation-gate:${process.pid}`, capacity, {
         waitTimeoutMs: GATE_LOCK_WAIT_MS,
         staleAfterMs: GATE_LOCK_STALE_MS,
         pollMs: 500,

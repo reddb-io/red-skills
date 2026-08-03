@@ -511,9 +511,12 @@ function isHostCeiling(value: unknown): value is RedskilledHostCeiling {
   const origins = new Set(["flag", "environment", "home-config", "derived-default"]);
   return (ceiling.memory_bytes === null || typeof ceiling.memory_bytes === "number") &&
     (ceiling.worker_count === null || typeof ceiling.worker_count === "number") &&
+    (ceiling.validation_count === undefined ||
+      (Number.isInteger(ceiling.validation_count) && Number(ceiling.validation_count) > 0)) &&
     (ceiling.source === "declared" || ceiling.source === "host-fraction") &&
     (ceiling.memory_source === undefined || origins.has(String(ceiling.memory_source))) &&
-    (ceiling.worker_source === undefined || origins.has(String(ceiling.worker_source)));
+    (ceiling.worker_source === undefined || origins.has(String(ceiling.worker_source))) &&
+    (ceiling.validation_source === undefined || origins.has(String(ceiling.validation_source)));
 }
 
 /** True when `value` is a complete version block. */
