@@ -35,7 +35,7 @@ import {
   type RedskilledDashboardCells,
   type RedskilledDashboardColumn,
 } from "./dashboard.js";
-import { clamp, flattenPublishedLine, formatBytes, pad, width } from "./format.js";
+import { clamp, flattenPublishedLine, formatBytes, formatDuration, pad, width } from "./format.js";
 import {
   BUDGET_BAND_MARK,
   BUDGET_SPENT_MARK,
@@ -360,9 +360,10 @@ function budgetMark(payload: RedskilledRenderPayload): string | null {
  *
  * The class rides with the count because `†1` alone sends the operator to a lane
  * to learn the one thing they came for, and the classes differ in what they cost:
- * `oomd` is a machine to resize and `user-signal` is somebody's Ctrl-C. Only the
- * newest verdict's class is named — a head has no room for a census, and
- * `deaths.count` says how many more are behind it.
+ * `oomd` is a machine to resize and `user-signal` is somebody's Ctrl-C. A proved
+ * boot loop spends that space on its repetition, span and repair clue. Otherwise
+ * only the newest verdict's class is named — a head has no room for a census,
+ * and `deaths.count` says how many more are behind it.
  *
  * An ABSENT block prints nothing, and so does a reaping that attributed nothing:
  * `†0` would be a badge for the healthy case, which is how a mark stops being
@@ -371,7 +372,21 @@ function budgetMark(payload: RedskilledRenderPayload): string | null {
 function deathMark(payload: RedskilledRenderPayload): string | null {
   const deaths = payload.deaths;
   if (deaths == null || deaths.count <= 0 || deaths.latest == null) return null;
+  const loop = deaths.boot_loop;
+  if (loop != null) {
+    const refusal = flattenPublishedLine(loop.latest_refusal);
+    return `${DEATH_MARK}${deaths.count} boot-refused ×${loop.count} in ${compactLoopSpan(loop.span_ms)}` +
+      (refusal == null ? "" : ` — ${refusal}`);
+  }
   return `${DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`;
+}
+
+/** A loop span without zero-valued trailing units (`4m`, not `4m0s`). PURE. */
+function compactLoopSpan(spanMs: number): string {
+  return formatDuration(spanMs)
+    .replace(/m0s$/, "m")
+    .replace(/h0m$/, "h")
+    .replace(/d0h$/, "d");
 }
 
 /**
