@@ -28,6 +28,7 @@ export {
   type GithubOperation,
   type GithubOperationKind,
   type GithubRateBudget,
+  type GithubReadVolatility,
 } from "./surface.js";
 
 export {

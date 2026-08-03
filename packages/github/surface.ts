@@ -41,6 +41,14 @@ export type GithubRateBudget = "rest" | "graphql" | "search";
  */
 export type GithubCardinality = "single-object" | "multi-node" | "multi-repository";
 
+/**
+ * Whether a read is repeated against usually-stable data or made once.
+ *
+ * A stable poll can later exploit REST conditional requests: an unchanged
+ * answer costs no rate-limit request, while GraphQL charges every query.
+ */
+export type GithubReadVolatility = "stable-poll" | "one-shot";
+
 /** Whether the operation observes state or changes it. */
 export type GithubOperationKind = "read" | "write";
 
@@ -50,6 +58,8 @@ export interface GithubOperation {
   readonly key: string;
   readonly kind: GithubOperationKind;
   readonly cardinality: GithubCardinality;
+  /** Required for reads; omitted for writes, whose surface is observed. */
+  readonly volatility?: GithubReadVolatility;
   /**
    * The API that answers this operation.
    *
@@ -87,6 +97,7 @@ export function surfaceForCardinality(cardinality: GithubCardinality): GithubApi
 function read(
   key: string,
   cardinality: GithubCardinality,
+  volatility: GithubReadVolatility,
   budget: GithubRateBudget,
   why: string,
   only?: GithubApiSurface,
@@ -95,6 +106,7 @@ function read(
     key,
     kind: "read",
     cardinality,
+    volatility,
     surface: only ?? surfaceForCardinality(cardinality),
     budget,
     ...(only ? { only } : {}),
@@ -120,31 +132,31 @@ function write(
  */
 export const GITHUB_OPERATIONS: readonly GithubOperation[] = [
   // ── single-object reads: the hot path, and the whole reason this module exists
-  read("issue view", "single-object", "rest", "one issue by number; REST answers it in one request against the idle pool"),
-  read("pr view", "single-object", "rest", "one pull request by number, polled per Worker per iteration"),
-  read("repo view", "single-object", "rest", "one repository's own metadata"),
-  read("run view", "single-object", "rest", "one Actions run; the Actions API has no GraphQL surface either way"),
-  read("release view", "single-object", "rest", "one release by tag"),
-  read("pr diff", "single-object", "rest", "one pull request's diff, served by a REST media type"),
+  read("issue view", "single-object", "stable-poll", "rest", "one issue by number, repeatedly polled while usually unchanged; REST answers in one request"),
+  read("pr view", "single-object", "stable-poll", "rest", "one pull request by number, polled per Worker per iteration"),
+  read("repo view", "single-object", "stable-poll", "rest", "one repository's own metadata, repeatedly read while usually unchanged"),
+  read("run view", "single-object", "stable-poll", "rest", "one Actions run repeatedly polled to terminal; Actions has no GraphQL surface"),
+  read("release view", "single-object", "stable-poll", "rest", "one release by tag, repeatedly checked while usually absent or unchanged"),
+  read("pr diff", "single-object", "one-shot", "rest", "one pull request's diff, read once for review and served by a REST media type"),
 
   // ── multi-node listings: a connection inside one repository
-  read("issue list", "multi-node", "graphql", "a connection of issues; one GraphQL query beats N REST pages"),
-  read("pr list", "multi-node", "graphql", "a connection of pull requests; one GraphQL query beats N REST pages"),
-  read("pr checks", "multi-node", "graphql", "every check context on one commit, which is a connection, not an object"),
-  read("release list", "multi-node", "rest", "Releases have no GraphQL connection gh reads; REST pages them", "rest"),
-  read("run list", "multi-node", "rest", "the Actions API has no GraphQL surface, so a listing draws the request pool", "rest"),
-  read("label list", "multi-node", "graphql", "a connection of labels inside one repository"),
+  read("issue list", "multi-node", "stable-poll", "graphql", "a repeatedly polled, usually-unchanged issue connection; GraphQL avoids N REST pages"),
+  read("pr list", "multi-node", "stable-poll", "graphql", "a repeatedly polled, usually-unchanged pull-request connection; GraphQL avoids N REST pages"),
+  read("pr checks", "multi-node", "stable-poll", "graphql", "check contexts form a connection repeatedly polled while awaiting terminal state"),
+  read("release list", "multi-node", "stable-poll", "rest", "release waits poll a usually-unchanged list; Releases has no GraphQL connection gh reads", "rest"),
+  read("run list", "multi-node", "stable-poll", "rest", "run waits poll a usually-unchanged list; Actions has no GraphQL surface", "rest"),
+  read("label list", "multi-node", "one-shot", "graphql", "a label connection loaded once for the current operation"),
 
   // ── search: a third pool, metered by the minute
-  read("issue list (search)", "multi-node", "search", "`--search` routes the listing through the search connection, metered 30/min"),
-  read("pr list (search)", "multi-node", "search", "`--search` routes the listing through the search connection, metered 30/min"),
-  read("search issues", "multi-repository", "search", "gh's `search` drives the REST search endpoints, metered 30/min", "rest"),
-  read("search prs", "multi-repository", "search", "gh's `search` drives the REST search endpoints, metered 30/min", "rest"),
-  read("search repos", "multi-repository", "search", "gh's `search` drives the REST search endpoints, metered 30/min", "rest"),
+  read("issue list (search)", "multi-node", "stable-poll", "search", "queue discovery polls usually-unchanged search results through the 30/min search connection"),
+  read("pr list (search)", "multi-node", "stable-poll", "search", "PR discovery polls usually-unchanged search results through the 30/min search connection"),
+  read("search issues", "multi-repository", "one-shot", "search", "a one-shot cross-repository read through the REST search endpoint, metered 30/min", "rest"),
+  read("search prs", "multi-repository", "one-shot", "search", "a one-shot cross-repository read through the REST search endpoint, metered 30/min", "rest"),
+  read("search repos", "multi-repository", "one-shot", "search", "a one-shot cross-repository read through the REST search endpoint, metered 30/min", "rest"),
 
   // ── the raw API escape hatches: the caller has already chosen
-  read("api graphql", "multi-node", "graphql", "the caller wrote the query; `gh api graphql` is GraphQL by construction"),
-  read("api rest", "single-object", "rest", "any `gh api <path>` that is not `graphql` is a REST request"),
+  read("api graphql", "multi-node", "one-shot", "graphql", "the caller supplies one explicit GraphQL query rather than a routed poll"),
+  read("api rest", "single-object", "one-shot", "rest", "the caller supplies one explicit REST path rather than a routed poll"),
 
   // ── writes: the surface is gh's, observed rather than chosen
   write("issue create", "graphql", "graphql", "gh files an issue with the createIssue mutation — an exhausted GraphQL pool blocks filing"),
@@ -266,6 +278,7 @@ export function assertGithubRoutingTable(
     seen.add(operation.key);
     if (operation.why.trim() === "") problems.push(`${operation.key} states no reason`);
     if (operation.kind !== "read") continue;
+    if (operation.volatility === undefined) problems.push(`${operation.key} states no volatility`);
     const implied = operation.only ?? surfaceForCardinality(operation.cardinality);
     if (operation.surface !== implied) {
       problems.push(
