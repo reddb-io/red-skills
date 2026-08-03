@@ -422,11 +422,11 @@ export interface RedskilledDaemonOptions {
   /** Window between registration sustain passes; 0 or below leaves the belt unarmed. */
   readonly registrationSustainMs?: number;
   /**
-   * How the daemon recovers a Worker's last logged line after a restart.
+   * How the daemon performs a bounded read after restart or pre-heartbeat death.
    *
    * Injected so a test can prove the read happens exactly once, on exactly the
-   * path the client gave. It is never used on the normal path: a live Worker's
-   * line arrives on its own heartbeat.
+   * path the client gave. A live Worker's line still arrives on its own heartbeat;
+   * an early death gets one read solely to surface an explicit boot refusal.
    */
   readonly readLogTail?: RedskilledLogTailProbe;
   /**
