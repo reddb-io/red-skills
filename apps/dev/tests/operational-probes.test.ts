@@ -142,6 +142,32 @@ describe("operational probe registry", () => {
     ]);
   });
 
+  it("reports a stale successful bundle check with the verdict age", async () => {
+    const report = await runOperationalProbes({
+      remoteUrls: [],
+      bundleCoherence: {
+        installedVersion: "3.3.19",
+        pointerVersion: "3.3.19",
+        laneNewestVersion: "3.3.19",
+        npmNewestVersion: "3.3.21",
+        lastStatus: "up-to-date",
+        lastCheckAgeMs: 5 * 60 * 60 * 1000,
+      },
+    });
+
+    expect(report.findings).toEqual([
+      expect.objectContaining({
+        id: "afk.bundle-coherence",
+        verdict: "red",
+        evidence: expect.stringContaining("last_check=up-to-date@5h"),
+        data: expect.objectContaining({
+          findings: expect.arrayContaining(["stale-successful-check"]),
+        }),
+      }),
+    ]);
+    expect(report.findings[0]?.evidence).toContain("versions_since_check=2");
+  });
+
   it("stays ok when the last self-update success supersedes an old failure", async () => {
     const root = await mkdtemp(join(tmpdir(), "probe-bundle-cache-"));
     try {

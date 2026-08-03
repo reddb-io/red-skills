@@ -18,7 +18,9 @@ export type BundleCoherenceFindingKind =
   | "pointer-ahead-of-lane"
   | "pointer-behind-npm"
   | "lane-behind-npm"
-  | "stale-failed-check";
+  | "stale-failed-check"
+  | "stale-successful-check"
+  | "undated-successful-check";
 
 function effectivePointer(input: BundleCoherenceProbeInput): string | undefined {
   return input.pointerVersion ?? input.installedVersion;
@@ -48,6 +50,13 @@ function findings(input: BundleCoherenceProbeInput): BundleCoherenceFindingKind[
   if (input.lastFailureAgeMs !== undefined && input.lastFailureAgeMs > DEFAULT_STALE_FAILURE_MS) {
     out.push("stale-failed-check");
   }
+  if (input.lastStatus === "updated" || input.lastStatus === "up-to-date") {
+    if (input.lastCheckAgeMs === undefined) {
+      out.push("undated-successful-check");
+    } else if (input.lastCheckAgeMs > DEFAULT_STALE_FAILURE_MS) {
+      out.push("stale-successful-check");
+    }
+  }
   return out;
 }
 
@@ -68,11 +77,24 @@ function evidence(input: BundleCoherenceProbeInput, fs: readonly BundleCoherence
     `npm=${input.npmNewestVersion ?? (input.npmError ? "unknown" : "not-checked")}`,
   ];
   if (input.npmError) parts.push("npm_error=present");
+  const checkAge = age(input.lastCheckAgeMs);
+  if (input.lastStatus === "updated" || input.lastStatus === "up-to-date") {
+    parts.push(checkAge ? `last_check=${input.lastStatus}@${checkAge}` : "last_check=undated");
+    const shipped = versionsSinceCheck(input.pointerVersion ?? input.installedVersion, input.npmNewestVersion);
+    if (shipped !== undefined) parts.push(`versions_since_check=${shipped}`);
+  }
   const failureAge = age(input.lastFailureAgeMs);
   if (failureAge) parts.push(`last_failure_age=${failureAge}`);
   if (input.lastError) parts.push("last_error=present");
   if (fs.length > 0) parts.push(`findings=${fs.join(",")}`);
   return parts.join(" ");
+}
+
+function versionsSinceCheck(current: string | undefined, published: string | undefined): number | undefined {
+  const left = /^(\d+)\.(\d+)\.(\d+)/.exec(current ?? "");
+  const right = /^(\d+)\.(\d+)\.(\d+)/.exec(published ?? "");
+  if (!left || !right || left[1] !== right[1] || left[2] !== right[2]) return undefined;
+  return Math.max(0, Number(right[3]) - Number(left[3]));
 }
 
 export function runBundleCoherenceProbe(context: OperationalProbeContext): OperationalProbeResult {

@@ -111,6 +111,8 @@ export interface BundleCoherenceProbeInput {
   readonly laneNewestVersion?: string;
   readonly npmNewestVersion?: string;
   readonly npmError?: string;
+  readonly lastStatus?: "updated" | "up-to-date" | "skipped-channel" | "error";
+  readonly lastCheckAgeMs?: number;
   readonly lastFailureAgeMs?: number;
   readonly lastError?: string;
 }

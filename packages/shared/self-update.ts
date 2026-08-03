@@ -244,6 +244,19 @@ export interface ActiveVersionResolution {
     ageMs: number;
     lastError?: string;
   };
+  /** The persisted verdict together with when it was formed. A status without
+   * this age is not evidence about the current registry horizon. */
+  selfUpdateStatus?: {
+    status: SelfUpdateStatus;
+    checkedAtMs: number;
+    ageMs: number;
+  };
+  /** A successful registry check loses its authority at the same boundary as a
+   * failed check. Callers can distinguish stale success from live evidence. */
+  staleSuccess?: {
+    status: "updated" | "up-to-date";
+    ageMs: number;
+  };
   logNotes: string[];
 }
 
@@ -312,6 +325,14 @@ export async function resolveActiveVersionDetailed(
   const state = await readStateFile(io, cacheDir, plugin);
   const nowMs = options.nowMs ?? Date.now();
   const staleAfterMs = options.staleAfterMs ?? DEFAULT_SELF_UPDATE_STALE_AFTER_MS;
+  const selfUpdateStatus =
+    state.lastStatus !== undefined && state.lastCheckAtMs !== undefined
+      ? {
+          status: state.lastStatus,
+          checkedAtMs: state.lastCheckAtMs,
+          ageMs: Math.max(0, nowMs - state.lastCheckAtMs),
+        }
+      : undefined;
   let staleFailure: ActiveVersionResolution["staleFailure"];
   if (
     state.lastFailureAtMs !== undefined &&
@@ -321,6 +342,24 @@ export async function resolveActiveVersionDetailed(
     staleFailure = { ageMs: nowMs - state.lastFailureAtMs, lastError: state.lastError };
     logNotes.push(`self-update stale: last check failed ${formatAgeMs(staleFailure.ageMs)} ago`);
   }
+  let staleSuccess: ActiveVersionResolution["staleSuccess"];
+  if (
+    selfUpdateStatus !== undefined &&
+    (selfUpdateStatus.status === "updated" || selfUpdateStatus.status === "up-to-date")
+  ) {
+    logNotes.push(
+      `self-update ${selfUpdateStatus.status}: checked ${formatAgeMs(selfUpdateStatus.ageMs)} ago`,
+    );
+    if (selfUpdateStatus.ageMs > staleAfterMs) {
+      staleSuccess = {
+        status: selfUpdateStatus.status,
+        ageMs: selfUpdateStatus.ageMs,
+      };
+      logNotes.push(
+        `self-update stale: last successful check was ${formatAgeMs(staleSuccess.ageMs)} ago`,
+      );
+    }
+  }
 
   return {
     version,
@@ -328,6 +367,8 @@ export async function resolveActiveVersionDetailed(
     ...(laneNewestVersion ? { laneNewestVersion } : {}),
     ...(reconciled ? { reconciled } : {}),
     ...(staleFailure ? { staleFailure } : {}),
+    ...(selfUpdateStatus ? { selfUpdateStatus } : {}),
+    ...(staleSuccess ? { staleSuccess } : {}),
     logNotes,
   };
 }
