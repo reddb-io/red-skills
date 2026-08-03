@@ -289,10 +289,12 @@ describe("the ceiling a host admits against", () => {
       .toEqual({
         memory_bytes: 6 * GIB,
         worker_count: 4,
+        validation_count: 3,
         interactive_reservation: 1,
         source: "declared",
         memory_source: "environment",
         worker_source: "environment",
+        validation_source: "derived-default",
       });
   });
 

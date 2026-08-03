@@ -72,6 +72,7 @@ plugins:
     redskilled:
       # worker_ceiling: 6
       # memory_ceiling: 8G
+      # validation_ceiling: 2
       # idle_ms: 300000
 `;
 

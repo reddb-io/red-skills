@@ -21,12 +21,14 @@ export const REDSKILLED_HOST_CONFIG_PATH = ".red/config.yaml";
 export interface RedskilledHostConfig {
   readonly workerCeiling?: string;
   readonly memoryCeiling?: string;
+  readonly validationCeiling?: string;
   readonly idleMs?: string;
 }
 
 export interface RedskilledHostSettingFlags {
   readonly workerCeiling?: string;
   readonly memoryCeiling?: string;
+  readonly validationCeiling?: string;
   readonly idleMs?: number;
 }
 
@@ -55,6 +57,7 @@ export async function readRedskilledHostConfig(
     return {
       ...valueAt(values, "plugins.dev.redskilled.worker_ceiling", "workerCeiling"),
       ...valueAt(values, "plugins.dev.redskilled.memory_ceiling", "memoryCeiling"),
+      ...valueAt(values, "plugins.dev.redskilled.validation_ceiling", "validationCeiling"),
       ...valueAt(values, "plugins.dev.redskilled.idle_ms", "idleMs"),
     };
   } catch (error) {
@@ -71,12 +74,14 @@ export function resolveRedskilledHostSettings(input: {
   readonly env?: NodeJS.ProcessEnv;
   readonly config?: RedskilledHostConfig;
   readonly totalMemoryBytes?: number;
+  readonly availableParallelism?: number;
 } = {}): RedskilledHostSettings {
   const env = input.env ?? process.env;
   const config = input.config ?? {};
   const ceiling = resolveHostCeiling(env, input.totalMemoryBytes ?? totalmem(), {
     flags: input.flags,
     config,
+    ...(input.availableParallelism == null ? {} : { availableParallelism: input.availableParallelism }),
   });
   const idle = select(input.flags?.idleMs == null ? undefined : String(input.flags.idleMs), env[REDSKILLED_IDLE_MS_ENV], config.idleMs);
   if (idle == null) {

@@ -90,6 +90,88 @@ export function createPathLock(
   );
 }
 
+/**
+ * Build a host-backed sized semaphore from independent file-lock slots.
+ *
+ * Slot one deliberately keeps `path` unchanged, so a capacity-one host and a
+ * rolling upgrade from the old mutex coordinate through the exact historical
+ * lock file. Higher capacities add numbered sibling locks. Acquisition scans
+ * every slot without waiting before it polls one, so a busy first slot cannot
+ * hide a free later slot.
+ */
+export function createPathSemaphore(
+  path: string,
+  holder: string,
+  capacity: number,
+  options: {
+    waitTimeoutMs?: number;
+    pollMs?: number;
+    staleAfterMs?: number;
+    onWait?: (info: LandLockWaitInfo) => void;
+  } = {},
+  pid: number = process.pid,
+): LandLock {
+  const slots = Number.isSafeInteger(capacity) && capacity > 0 ? capacity : 1;
+  const waitTimeoutMs = options.waitTimeoutMs ?? 15 * 60_000;
+  const pollMs = options.pollMs ?? 1_000;
+  let nextSlot = Math.abs(pid) % slots;
+  let attempt = 0;
+  let startedAtMs = 0;
+  let deadline = 0;
+
+  const slotPath = (index: number): string => {
+    if (index === 0) return path;
+    return path.endsWith(".lock")
+      ? `${path.slice(0, -".lock".length)}.${index + 1}.lock`
+      : `${path}.${index + 1}`;
+  };
+
+  const lockFor = (
+    index: number,
+    timeout: number,
+    onWait?: (info: LandLockWaitInfo) => void,
+  ): LandLock => createPathLock(slotPath(index), `${holder}:slot-${index + 1}`, {
+    waitTimeoutMs: timeout,
+    pollMs: Math.max(1, Math.min(pollMs, timeout || pollMs)),
+    ...(options.staleAfterMs == null ? {} : { staleAfterMs: options.staleAfterMs }),
+    ...(onWait == null ? {} : { onWait }),
+  }, pid);
+
+  return {
+    async acquire() {
+      startedAtMs = Date.now();
+      deadline = startedAtMs + waitTimeoutMs;
+      for (;;) {
+        for (let offset = 0; offset < slots; offset += 1) {
+          const index = (nextSlot + offset) % slots;
+          const release = await lockFor(index, 0).acquire();
+          if (release !== null) return release;
+        }
+
+        const now = Date.now();
+        if (now >= deadline) return null;
+        const index = nextSlot;
+        nextSlot = (nextSlot + 1) % slots;
+        const waitForMs = Math.max(1, Math.min(pollMs, deadline - now));
+        const release = await lockFor(index, waitForMs, (info) => {
+          attempt += 1;
+          try {
+            options.onWait?.({
+              ...info,
+              waitedMs: Math.max(0, Date.now() - startedAtMs),
+              remainingMs: Math.max(0, deadline - Date.now()),
+              attempt,
+            });
+          } catch {
+            // Observability cannot change semaphore ownership.
+          }
+        }).acquire();
+        if (release !== null) return release;
+      }
+    },
+  };
+}
+
 /** Build the host-backed global land-lock for this worker process. */
 export function createLandLock(tmpDir: string, holder: string, pid: number = process.pid): LandLock {
   return createPathLock(landLockPath(tmpDir), holder, {}, pid);
