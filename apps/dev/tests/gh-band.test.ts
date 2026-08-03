@@ -35,7 +35,6 @@ function gate(answer: GithubBalance | null, reads?: { count: number }) {
       if (reads) reads.count += 1;
       return answer;
     },
-    nowMs: () => Date.parse(NOW),
     nowIso: () => NOW,
   });
 }
