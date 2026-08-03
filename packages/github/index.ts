@@ -41,6 +41,7 @@ export {
   GITHUB_RESERVED_FRACTION,
   admitGithubCall,
   admitGithubOperation,
+  balanceFromReport,
   buildGithubBalanceReport,
   createGithubBalanceTransport,
   fetchGithubBalance,
