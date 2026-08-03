@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/redskilled",
-  "version": "3.3.11",
+  "version": "3.3.12",
   "private": true,
   "type": "module",
   "exports": {
@@ -27,7 +27,7 @@
     "./worker-display": "./src/worker-display.ts",
     "./worker-launch": "./src/worker-launch.ts"
   },
-  "description": "redskilled \u2014 the host-scoped execution daemon (ADR 0130): exactly one singleton per machine behind a unix socket, owning Worker processes across every project on that machine while each project's bundle keeps owning the work.",
+  "description": "redskilled — the host-scoped execution daemon (ADR 0130): exactly one singleton per machine behind a unix socket, owning Worker processes across every project on that machine while each project's bundle keeps owning the work.",
   "license": "Apache-2.0",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
