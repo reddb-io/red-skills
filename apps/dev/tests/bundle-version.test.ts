@@ -39,6 +39,7 @@ describe("dev bundle cache state", () => {
       writeFileSync(
         join(root, statusFileName("dev")),
         encodeDevSnapshotToon({
+          lastCheckAtMs: 200,
           lastFailureAtMs: 100,
           lastSuccessAtMs: 200,
           lastStatus: "up-to-date",
@@ -48,6 +49,11 @@ describe("dev bundle cache state", () => {
 
       const state = readDevBundleCacheState("2.71.0", { RED_SKILLS_CACHE_DIR: root }, 100_000_000);
       expect(state.lastFailureAgeMs).toBeUndefined();
+      expect(state).toMatchObject({
+        lastStatus: "up-to-date",
+        lastCheckAtMs: 200,
+        lastCheckAgeMs: 100_000_000 - 200,
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

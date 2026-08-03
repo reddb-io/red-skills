@@ -421,6 +421,8 @@ export async function collectPrecheckFacts(
       laneNewestVersion: bundleCache.laneNewestVersion,
       npmNewestVersion,
       npmError,
+      lastStatus: bundleCache.lastStatus,
+      lastCheckAgeMs: bundleCache.lastCheckAgeMs,
       lastFailureAgeMs: bundleCache.lastFailureAgeMs,
       lastError: bundleCache.lastError,
     },

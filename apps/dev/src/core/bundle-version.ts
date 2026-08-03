@@ -59,6 +59,9 @@ export interface DevBundleCacheState {
   readonly installedVersion?: string;
   readonly pointerVersion?: string;
   readonly laneNewestVersion?: string;
+  readonly lastStatus?: SelfUpdateStateRecord["lastStatus"];
+  readonly lastCheckAtMs?: number;
+  readonly lastCheckAgeMs?: number;
   readonly lastFailureAtMs?: number;
   readonly lastFailureAgeMs?: number;
   readonly lastError?: string;
@@ -84,6 +87,11 @@ export function readDevBundleCacheState(
     ...(installedVersion ? { installedVersion } : {}),
     ...(pointerVersion ? { pointerVersion } : {}),
     ...(laneNewestVersion ? { laneNewestVersion } : {}),
+    ...(state.lastStatus !== undefined ? { lastStatus: state.lastStatus } : {}),
+    ...(state.lastCheckAtMs !== undefined ? { lastCheckAtMs: state.lastCheckAtMs } : {}),
+    ...(state.lastCheckAtMs !== undefined
+      ? { lastCheckAgeMs: Math.max(0, nowMs - state.lastCheckAtMs) }
+      : {}),
     ...(live.lastFailureAtMs !== undefined ? { lastFailureAtMs: live.lastFailureAtMs } : {}),
     ...(live.lastFailureAtMs !== undefined ? { lastFailureAgeMs: Math.max(0, nowMs - live.lastFailureAtMs) } : {}),
     ...(live.lastError ? { lastError: live.lastError } : {}),
@@ -136,9 +144,16 @@ function readSelfUpdateState(path: string): SelfUpdateStateRecord {
   try {
     const parsed = decodeDevSnapshotSniff(readFileSync(path, "utf8")) as Record<string, unknown>;
     return {
+      ...(Number.isFinite(parsed.lastCheckAtMs) ? { lastCheckAtMs: Number(parsed.lastCheckAtMs) } : {}),
       ...(Number.isFinite(parsed.lastSuccessAtMs) ? { lastSuccessAtMs: Number(parsed.lastSuccessAtMs) } : {}),
       ...(Number.isFinite(parsed.lastFailureAtMs) ? { lastFailureAtMs: Number(parsed.lastFailureAtMs) } : {}),
       ...(typeof parsed.lastError === "string" ? { lastError: parsed.lastError } : {}),
+      ...(parsed.lastStatus === "updated" ||
+        parsed.lastStatus === "up-to-date" ||
+        parsed.lastStatus === "skipped-channel" ||
+        parsed.lastStatus === "error"
+        ? { lastStatus: parsed.lastStatus }
+        : {}),
     };
   } catch {
     return {};

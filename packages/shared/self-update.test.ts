@@ -251,6 +251,38 @@ describe("resolveActiveVersion (render/hook path — local reads only)", () => {
     expect(result.logNotes.join(" ")).toContain("self-update stale: last check failed 5h ago");
   });
 
+  it("reports the age of an up-to-date verdict and marks an old success stale", async () => {
+    const nowMs = 10 * 60 * 60 * 1000;
+    const checkedAtMs = nowMs - 5 * 60 * 60 * 1000;
+    const { io } = makeIO({
+      files: {
+        [statusPath(CACHE, PLUGIN)]: enc(JSON.stringify({
+          lastCheckAtMs: checkedAtMs,
+          lastSuccessAtMs: checkedAtMs,
+          lastStatus: "up-to-date",
+        })),
+      },
+    });
+
+    const result = await resolveActiveVersionDetailed(
+      io,
+      { plugin: PLUGIN, installedVersion: INSTALLED, cacheDir: CACHE, channel: "stable" },
+      { nowMs, staleAfterMs: 4 * 60 * 60 * 1000 },
+    );
+
+    expect(result.selfUpdateStatus).toEqual({
+      status: "up-to-date",
+      checkedAtMs,
+      ageMs: 5 * 60 * 60 * 1000,
+    });
+    expect(result.staleSuccess).toEqual({
+      status: "up-to-date",
+      ageMs: 5 * 60 * 60 * 1000,
+    });
+    expect(result.logNotes).toContain("self-update up-to-date: checked 5h ago");
+    expect(result.logNotes).toContain("self-update stale: last successful check was 5h ago");
+  });
+
   it("writes self-update status as TOON and reads legacy JSON status", async () => {
     const updated = "1.145.0";
     const nowMs = 10 * 60 * 60 * 1000;

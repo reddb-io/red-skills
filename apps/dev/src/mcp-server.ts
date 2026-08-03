@@ -39,6 +39,7 @@ import {
   type ResidentJanitor,
 } from "./resident-cron.js";
 import { startResidentUnblockSweep } from "./resident-unblock.js";
+import { startResidentSelfUpdate } from "./resident-self-update.js";
 
 const buildInfo = readBuildInfo("castle");
 
@@ -268,6 +269,9 @@ export interface McpEntrypointDependencies {
    * last `req:*` blocker closed. Optional so every existing caller keeps
    * working; omitted means the belt does not run in that host. */
   startUnblockSweep?(): Promise<void>;
+  /** The #3178 bundle belt: refresh a SessionStart verdict throughout a
+   * long-lived session. Optional for compatibility with injected test hosts. */
+  startSelfUpdate?(): Promise<void>;
   connect(): Promise<void>;
   /** The lane's own canary (#2706). Optional so every existing caller keeps
    * working; omitted means the real probe. */
@@ -301,6 +305,11 @@ export async function main(
     startMergeDriver: startResidentMergeDriver,
     startUnblockSweep: async () => {
       await startResidentUnblockSweep();
+    },
+    startSelfUpdate: async () => {
+      await startResidentSelfUpdate({
+        notice: (line) => process.stderr.write(`castle resident: ${line}\n`),
+      });
     },
     connect: run,
   },
@@ -347,6 +356,9 @@ export async function main(
   // Started BEFORE the transport (#3014): its first pass is the session-boot
   // clearer, and it is detached inside, so a slow tracker delays no handshake.
   await dependencies.startUnblockSweep?.();
+  // Like the other belts, this starts before stdio and detaches its first pass:
+  // an eight-hour session keeps learning about releases after its first second.
+  await dependencies.startSelfUpdate?.();
   await dependencies.connect();
   return 0;
 }
