@@ -47,6 +47,7 @@ export {
   githubBalanceCadenceMs,
   githubBalancePosture,
   githubReservedFloor,
+  isGithubBalanceReport,
   parseGithubBalance,
   tightestGithubPool,
   unaskedGithubBalance,
