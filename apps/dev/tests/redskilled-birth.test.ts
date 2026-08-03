@@ -51,6 +51,43 @@ async function until<T>(probe: () => Promise<T | null>, what: string, ms = 5_000
 }
 
 describe("a project's Worker is born by the daemon", () => {
+  it("reads the host-wide diagnostics without mutating the host", async () => {
+    const paths = await sessionPaths();
+    const workspace = await scratch("dev-birth-host-diagnostics-");
+    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    running.push(daemon);
+
+    const port = createRedskilledBirthPort({
+      root: workspace,
+      projectLabel: "acme/widgets",
+      paths,
+      config: { serverCommand: process.execPath },
+    });
+
+    await expect(port.hostState()).resolves.toMatchObject({
+      pid: process.pid,
+      workers: [],
+    });
+    await expect(port.hostDashboard()).resolves.toMatchObject({
+      version: 1,
+      mode: "global",
+      rows: [],
+    });
+    await expect(port.provisionCheck()).resolves.toMatchObject({
+      verdict: "ok",
+      rows: expect.arrayContaining([
+        expect.objectContaining({ check: "daemon-entry", verdict: "ok" }),
+        expect.objectContaining({ check: "reach", verdict: "ok" }),
+      ]),
+    });
+    await expect(port.unitStatus()).resolves.toMatchObject({
+      installed: expect.any(Boolean),
+      enabled: expect.any(Boolean),
+      active: expect.any(Boolean),
+      floor: "auto-spawn",
+    });
+  });
+
   it("runs in the workspace the project named and appears in host state under its label", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("dev-birth-workspace-");
