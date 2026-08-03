@@ -71,4 +71,26 @@ describe("writer skill lane taxonomy docs", () => {
     expect(sweeps).toContain("pid-guarded and slug-sparing");
     expect(sweeps).toContain("Tmp lane cleanup never deletes `.red/state/`");
   });
+
+  it("separates host-daemon, Worker, and dispatch log ownership", async () => {
+    const [adr, index, claude] = await Promise.all([
+      readRepoFile(".red/adr/0098-red-directory-lifecycle-taxonomy.md"),
+      readRepoFile(".red/adr/INDEX.md"),
+      readRepoFile("CLAUDE.md"),
+    ]);
+
+    expect(adr).toContain("Amendment 1 — log ownership has three layers");
+    expect(adr).toContain("`provisionRedskilledHome`");
+    expect(adr).toContain("`~/.red/redskilled/state/deaths/deaths.toonl`");
+    expect(adr).toContain("must never contain daemon logs");
+    expect(adr).toContain("`.red/tmp/workers/{id}/{issue}/worktree`");
+    expect(adr).toContain("`.red/tmp/workers/{id}/worker.log.toonl`");
+    expect(adr).toContain("`.red/tmp/logs/<yyyy-mm-dd>/dispatch-<ts>-<id>.log`");
+    expect(adr).toContain("stdout and stderr");
+    expect(adr).toContain("structured Worker lifecycle");
+    expect(index).toContain("log ownership has three non-overlapping layers");
+    expect(claude).toContain("A project's `.red/` never contains `redskilled` daemon logs");
+    expect(claude).toContain("`.red/tmp/workers/{id}/worker.log.toonl`");
+    expect(claude).toContain("`dispatch-<ts>-<id>.log`");
+  });
 });
