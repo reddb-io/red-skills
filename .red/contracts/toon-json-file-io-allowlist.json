@@ -32,6 +32,12 @@
    "moveKey": "24cdd7f5b667"
   },
   {
+   "id": "apps/dev/src/core/toon-version.ts#json-parse-file-read#155234ba4b8b",
+   "classification": "external",
+   "reason": "package.json is ecosystem JSON.",
+   "moveKey": "fb5939f4f4c6"
+  },
+  {
    "id": "apps/dev/src/runtime/feedback-worktree.ts#json-parse-file-read#abf5b08523f6",
    "classification": "external",
    "reason": "package.json is ecosystem JSON.",

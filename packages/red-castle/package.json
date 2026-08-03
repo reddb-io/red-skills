@@ -46,7 +46,7 @@
     "@effect/cli": "^0.74.0",
     "@effect/platform": "^0.95.0",
     "@effect/platform-node": "^0.105.0",
-    "@reddb-io/toon": "^0.3.0",
+    "@reddb-io/toon": "catalog:",
     "@standard-schema/spec": "^1.0.0",
     "effect": "^3.20.0",
     "zod": "^4.4.3"

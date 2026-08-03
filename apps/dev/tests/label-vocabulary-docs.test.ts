@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readCatalogToonVersion } from "../src/core/toon-version.js";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..");
 const obsoleteHitl = `slice:${"hitl"}`;
@@ -230,14 +231,18 @@ describe("red-setup docs", () => {
     const skill = await readSetupRedSkillsDocs();
     const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
 
+    // Derived from the catalog, never restated: a second literal pin here is exactly the kind of
+    // site that ages out of step with the one source of the toon version (ADR 0097).
+    const { version, tag } = readCatalogToonVersion(ROOT);
+
     expect(skill).toContain("**Section E2 — Required host binaries");
-    expect(skill).toContain("TQ_VERSION=v0.3.0");
-    expect(skill).toContain("https://raw.githubusercontent.com/reddb-io/toon/v0.3.0/install.sh");
+    expect(skill).toContain(`TQ_VERSION=${tag}`);
+    expect(skill).toContain(`https://raw.githubusercontent.com/reddb-io/toon/${tag}/install.sh`);
     expect(skill).toContain("no jq fallback");
     expect(skill).toContain("host_binaries:");
     expect(template).toContain("host_binaries:");
     expect(template).toContain("tq:");
-    expect(template).toContain("version: 0.3.0");
+    expect(template).toContain(`version: ${version}`);
   });
 
   it("installs a runtime shim that prefers active env roots, then the highest host cache", () => {

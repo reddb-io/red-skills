@@ -1,5 +1,5 @@
 export const GH_MIN_VERSION = "2.47.0";
-export const TQ_PINNED_VERSION = "0.3.0";
+export const TQ_PINNED_VERSION = "0.13.0";
 
 export type GhInstallManager = "asdf" | "apt" | "brew" | "direct" | "unknown";
 export type HostToolchainVerdict = "ok" | "error";

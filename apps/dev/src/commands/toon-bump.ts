@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import {
+  findWorkspaceRoot,
   readCatalogToonVersion,
   TOON_PIN_SITES,
   type CatalogToonVersion,
@@ -134,14 +135,13 @@ function bumpWorkspaceYaml(text: string, previous: string, target: string): { te
 function bumpLockfile(text: string, previous: string, target: string): { text: string; replacements: Replacement[] } {
   if (previous === target) return { text, replacements: [] };
   const replacements: Replacement[] = [];
-  let next = text;
   const oldKey = `@reddb-io/toon@${previous}`;
-  const newKey = `@reddb-io/toon@${target}`;
 
-  if (next.includes(oldKey)) {
-    next = next.split(oldKey).join(newKey);
-    replacements.push({ site: "lockfile.packages-and-snapshots", before: oldKey, after: newKey });
-  }
+  // A `packages:` entry carries the tarball integrity of the version in its key, so renaming the
+  // key onto the target would assert that the new version hashes to the old bytes. `pnpm install`
+  // rejects that, and a follow-up `--lockfile-only` will not repair it — pnpm reuses an entry whose
+  // key already matches. Drop the stale block instead and let pnpm re-resolve the real resolution.
+  let next = removeLockfileBlocks(text, oldKey, replacements);
 
   const lines = next.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
@@ -183,6 +183,36 @@ function bumpRegisteredSite(
   };
 }
 
+/** Removes every `'<key>':` mapping and the indented block under it. */
+function removeLockfileBlocks(text: string, key: string, replacements: Replacement[]): string {
+  const lines = text.split("\n");
+  const kept: string[] = [];
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    const match = new RegExp(`^(\\s*)'?${escapeRegExp(key)}'?:`).exec(line);
+    if (!match) {
+      kept.push(line);
+      continue;
+    }
+
+    const blockIndent = match[1]!.length;
+    while (i + 1 < lines.length) {
+      const child = lines[i + 1]!;
+      if (child.trim() !== "" && indentOf(child) <= blockIndent) break;
+      if (child.trim() === "" && indentOf(lines[i + 2] ?? "") <= blockIndent) break;
+      i += 1;
+    }
+    replacements.push({ site: "lockfile.stale-resolution-removed", before: key, after: "" });
+  }
+
+  return kept.join("\n");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function replaceFirstCapture(
   text: string,
   pattern: RegExp,
@@ -208,7 +238,9 @@ function toonVersion(version: string): CatalogToonVersion {
 }
 
 function parseToonBumpArgs(args: readonly string[]): ParsedToonBumpArgs {
-  let rootDir = process.cwd();
+  // The watcher runs this verb as `pnpm -C apps/dev dev toon-bump`, so the cwd is the package, not
+  // the workspace. Walk up to the pnpm-workspace.yaml that owns the catalog instead of assuming it.
+  let rootDir = findWorkspaceRoot();
   let targetVersion = "";
   let dryRun = false;
 

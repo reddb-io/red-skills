@@ -218,7 +218,7 @@ jobs:
       - name: Install pinned tq
         if: contains(fromJSON(env.PACKAGES), 'apps/dev')
         env:
-          TQ_VERSION: v0.3.0
+          TQ_VERSION: v0.13.0
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail

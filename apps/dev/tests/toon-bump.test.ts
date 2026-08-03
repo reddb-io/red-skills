@@ -147,6 +147,27 @@ describe("toon-bump dev command", () => {
     });
   });
 
+  test("resolves the workspace root from a nested cwd, as the watcher invokes it", async () => {
+    const root = await scratch();
+    await writeFixture(root);
+    await mkdir(join(root, "apps", "dev"), { recursive: true });
+    const cwd = process.cwd();
+    process.chdir(join(root, "apps", "dev"));
+
+    try {
+      // No --root: the watcher runs `pnpm -C apps/dev dev toon-bump`, which lands the cwd here.
+      const code = await toonBumpCommand(["0.3.0"], {
+        stdout: { write: () => true },
+        stderr: { write: () => true },
+      });
+
+      expect(code).toBe(0);
+      await expect(collectToonPinDrift(root, target("0.3.0"))).resolves.toEqual([]);
+    } finally {
+      process.chdir(cwd);
+    }
+  });
+
   test("bumps every S1 registered site and replaces stale lockfile entries", async () => {
     const root = await scratch();
     await writeFixture(root);
@@ -162,9 +183,28 @@ describe("toon-bump dev command", () => {
     await expect(collectToonPinDrift(root, target("0.3.0"))).resolves.toEqual([]);
     await expect(read(root, "pnpm-workspace.yaml")).resolves.toContain("'@reddb-io/toon@0.3.0'");
     const lockfile = await read(root, "pnpm-lock.yaml");
-    expect(lockfile).toContain("'@reddb-io/toon@0.3.0'");
+    expect(lockfile).toContain("specifier: 0.3.0");
     expect(lockfile).not.toContain("@reddb-io/toon@0.2.6");
     expect(lockfile).not.toMatch(/version: 0\.2\.6/);
+  });
+
+  test("drops the stale resolution instead of re-pointing its integrity at the new version", async () => {
+    const root = await scratch();
+    await writeFixture(root);
+
+    const code = await toonBumpCommand(["0.3.0", "--root", root], {
+      stdout: { write: () => true },
+      stderr: { write: () => true },
+    });
+
+    expect(code).toBe(0);
+    const lockfile = await read(root, "pnpm-lock.yaml");
+    // `sha512-fixture` is 0.2.6's tarball hash. Renaming the key onto 0.3.0 would claim the new
+    // version resolves to the old bytes — an integrity `pnpm install` rejects and that a follow-up
+    // `--lockfile-only` will not repair, because pnpm trusts an entry whose key already matches.
+    expect(lockfile).not.toContain("sha512-fixture");
+    expect(lockfile).not.toMatch(/'@reddb-io\/toon@0\.3\.0':\s*\n\s+resolution/);
+    expect(lockfile).not.toContain("@reddb-io/toon@0.2.6");
   });
 
   test("dry-run prints the would-be plan without writing", async () => {
