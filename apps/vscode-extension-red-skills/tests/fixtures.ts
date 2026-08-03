@@ -134,6 +134,26 @@ export function statuslinePayload(overrides: PayloadOverrides = {}): RedskilledS
       measured_worker_count: workers.filter((entry) => entry.project_label === label).length,
     })),
     workers,
+    // The token's balance, as the daemon last asked for it (ADR 0132 Amendment
+    // 2). `open` here means the budget is nowhere near the reserved band, which
+    // is the state every existing fixture assertion was written under.
+    github_balance: {
+      version: 1,
+      origin: "asked",
+      outcome: "asked",
+      asked_at: FIXED_NOW,
+      age_ms: 0,
+      threshold_ms: 1_200_000,
+      stale: false,
+      posture: "open",
+      reserved_fraction: 0.15,
+      next_poll_ms: 600_000,
+      pools: [
+        { pool: "rest", resource: "core", limit: 5_000, remaining: 4_900, used: 100, reset_at: FIXED_NOW, fraction: 0.98 },
+      ],
+      unreported_pools: [],
+      reason: "the rest pool is the tightest at 4900 of 5000, above the reserved band of 750",
+    },
     repository_activity: {
       version: 1,
       fetched_at: FIXED_NOW,
@@ -142,7 +162,9 @@ export function statuslinePayload(overrides: PayloadOverrides = {}): RedskilledS
       stale: false,
       request_count: 1,
       reason: "counted in one request",
-      rate_limit: { remaining: 4_900, reset_at: null, limit: 5_000, exhausted: false },
+      // `point_cost` is what GitHub charged this one aliased query in node
+      // points: flat in requests, never flat in points (#3095).
+      rate_limit: { remaining: 4_900, reset_at: null, limit: 5_000, exhausted: false, point_cost: 3 },
       projects: [
         open === null
           ? {
