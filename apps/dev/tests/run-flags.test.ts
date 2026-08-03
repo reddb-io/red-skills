@@ -266,6 +266,15 @@ describe("parseRunFlags", () => {
     });
   });
 
+  it("derives the isolated queue from the Worker kind when a dispatch loses --lane (#3175)", () => {
+    expect(
+      resolveRunDispatchIdentity(parseRunFlags(["--issues", "66", "--origin", "go", "--kind", "go"])),
+    ).toEqual({ origin: "go", kind: "go", lane: "lane:go" });
+    expect(
+      resolveRunDispatchIdentity(parseRunFlags(["--issues", "67", "--origin", "scout"])),
+    ).toEqual({ origin: "scout", kind: "scout", lane: "lane:scout" });
+  });
+
   it("parses --run-mode (the scout read-only enforcement flag), undefined by default", () => {
     expect(parseRunFlags([]).runMode).toBeUndefined();
     const f = parseRunFlags(["--run-mode", "scout"]);

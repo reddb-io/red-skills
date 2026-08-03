@@ -144,8 +144,20 @@ describe("castle worker drain", () => {
     // Not even when the operator names the number outright: the issue is not in
     // this pool, so `--issues` reports it missing rather than claiming it.
     expect(() => selectCastleIssues(candidates, { kind: "issues", numbers: [20] })).toThrow(
-      /missing from the ready-for-agent queue/,
+      /declared lane `ready-for-agent`; consulted queue `ready-for-agent`/,
     );
+
+    // A future transport regression must expose the mismatch directly: the
+    // declared /go lane and the queue boot actually consulted are both facts.
+    expect(() =>
+      selectCastleIssues(
+        candidates,
+        { kind: "issues", numbers: [20] },
+        undefined,
+        "ready-for-agent",
+        "lane:go",
+      ),
+    ).toThrow(/declared lane `lane:go`; consulted queue `ready-for-agent`/);
 
     // The `/go` worker lists `lane:go` as its pool and still sees its own issue.
     expect(

@@ -50,6 +50,8 @@ import {
 } from "../runtime/mcp-worker-birth.js";
 import { checkDispatchEngineFloor } from "../runtime/engine-floor-check.js";
 import type { EngineFloorVerdict } from "../core/engine-floor.js";
+import { LABEL_GO_LANE, LABEL_SCOUT_LANE } from "../core/triage-labels.js";
+import { cleanupDisposableDispatchOnBootFailure } from "./run/disposable-cleanup.js";
 
 interface ParsedGoArgs {
   demand: string;
@@ -71,6 +73,11 @@ export interface GoRuntime {
   ensureLabel(name: string): Promise<void>;
   createGoIssue(spec: DisposableIssueSpec): Promise<number>;
   createScoutIssue(spec: ScoutIssueSpec): Promise<number>;
+  /** Dispose a minted /go Ticket when host admission fails before a Worker
+   * exists. Optional only for injected planner-only test runtimes. */
+  disposeGoIssue?(issue: number): Promise<void>;
+  /** Scout equivalent of `disposeGoIssue`. */
+  disposeScoutIssue?(issue: number): Promise<void>;
   /** Ask the host for a Worker it owns; the caller is not its parent, so the
    * caller's death is not the Worker's (ADR 0130, #3027). */
   birthWorker(args: readonly string[]): Promise<DispatchedWorkerBirth>;
@@ -106,6 +113,34 @@ async function createDefaultGoRuntime(cwd: string): Promise<GoRuntime> {
     ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
     createGoIssue: (spec) => tracker.createIssue!(spec),
     createScoutIssue: (spec) => ghx.createIssue(ghCtx, spec),
+    disposeGoIssue: async (issue) => {
+      await cleanupDisposableDispatchOnBootFailure(
+        {
+          comment: (number, body) => ghx.comment(ghCtx, number, body),
+          close: (number) => ghx.closeIssue(ghCtx, number),
+        },
+        {
+          declaredLane: LABEL_GO_LANE,
+          consultedQueue: LABEL_GO_LANE,
+          filter: { kind: "issues", numbers: [issue] },
+          failureType: "boot-error",
+        },
+      );
+    },
+    disposeScoutIssue: async (issue) => {
+      await cleanupDisposableDispatchOnBootFailure(
+        {
+          comment: (number, body) => ghx.comment(ghCtx, number, body),
+          close: (number) => ghx.closeIssue(ghCtx, number),
+        },
+        {
+          declaredLane: LABEL_SCOUT_LANE,
+          consultedQueue: LABEL_SCOUT_LANE,
+          filter: { kind: "issues", numbers: [issue] },
+          failureType: "boot-error",
+        },
+      );
+    },
     birthWorker: (args) => requestWorkerBirth(ctx.root, args),
     runEngineAttached: (args) => runCommand({ args, cwd }),
     checkEngineFloor: () => checkDispatchEngineFloor(ctx.root),
@@ -291,6 +326,9 @@ export async function goCommand(
           ensureLabel: (name) => runtime.ensureLabel(name),
           createIssue: (spec: ScoutIssueSpec) => runtime.createScoutIssue(spec),
           runEngine,
+          ...(runtime.disposeScoutIssue === undefined
+            ? {}
+            : { disposeIssue: (issue: number) => runtime.disposeScoutIssue!(issue) }),
         },
         parsed.demand,
         { runner: parsed.runner },
@@ -316,6 +354,9 @@ export async function goCommand(
         ensureLabel: (name) => runtime.ensureLabel(name),
         createIssue: (spec: DisposableIssueSpec) => runtime.createGoIssue(spec),
         runEngine,
+        ...(runtime.disposeGoIssue === undefined
+          ? {}
+          : { disposeIssue: (issue: number) => runtime.disposeGoIssue!(issue) }),
       },
       parsed.demand,
       {

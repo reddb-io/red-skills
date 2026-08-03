@@ -99,6 +99,8 @@ import {
   type DisposableIssueSpec,
 } from "./core/go.js";
 import { dispatchScout as dispatchScoutCore } from "./core/scout.js";
+import { LABEL_GO_LANE, LABEL_SCOUT_LANE } from "./core/triage-labels.js";
+import { cleanupDisposableDispatchOnBootFailure } from "./commands/run/disposable-cleanup.js";
 import {
   getConfig,
   loadConfig,
@@ -205,6 +207,8 @@ export interface DevAfkMcpRuntime {
   launchRspWait(args: readonly string[], cwd: string): Promise<number>;
   ensureLabel(root: string, name: string): Promise<void>;
   createIssue(root: string, spec: DisposableIssueSpec): Promise<number>;
+  commentIssue(root: string, issue: number, body: string): Promise<void>;
+  closeIssue(root: string, issue: number): Promise<void>;
   executeRequeue(root: string, input: RequeueToolInput): Promise<unknown>;
   /** Injected in tests to intercept hook execution without spawning a shell. */
   hookExec?: HookExec;
@@ -259,6 +263,14 @@ const defaultMcpRuntime: DevAfkMcpRuntime = {
   async createIssue(root, spec) {
     const context = await resolveRepoContext(root);
     return ghx.createIssue({ cwd: context.root, repo: context.repo }, spec);
+  },
+  async commentIssue(root, issue, body) {
+    const context = await resolveRepoContext(root);
+    await ghx.comment({ cwd: context.root, repo: context.repo }, issue, body);
+  },
+  async closeIssue(root, issue) {
+    const context = await resolveRepoContext(root);
+    await ghx.closeIssue({ cwd: context.root, repo: context.repo }, issue);
   },
   executeRequeue: (root, input) => executeRequeue(input, { cwd: root }),
 };
@@ -361,6 +373,20 @@ export function createDefaultDevAfkMcpOperations(
             granted = await runtime.birthWorker(cwd, args);
             return 0;
           },
+          disposeIssue: async (issue) => {
+            await cleanupDisposableDispatchOnBootFailure(
+              {
+                comment: (number, body) => runtime.commentIssue(cwd, number, body),
+                close: (number) => runtime.closeIssue(cwd, number),
+              },
+              {
+                declaredLane: LABEL_GO_LANE,
+                consultedQueue: LABEL_GO_LANE,
+                filter: { kind: "issues", numbers: [issue] },
+                failureType: "boot-error",
+              },
+            );
+          },
         },
         input.demand,
         {
@@ -398,6 +424,20 @@ export function createDefaultDevAfkMcpOperations(
           runEngine: async (args) => {
             granted = await runtime.birthWorker(cwd, args);
             return 0;
+          },
+          disposeIssue: async (issue) => {
+            await cleanupDisposableDispatchOnBootFailure(
+              {
+                comment: (number, body) => runtime.commentIssue(cwd, number, body),
+                close: (number) => runtime.closeIssue(cwd, number),
+              },
+              {
+                declaredLane: LABEL_SCOUT_LANE,
+                consultedQueue: LABEL_SCOUT_LANE,
+                filter: { kind: "issues", numbers: [issue] },
+                failureType: "boot-error",
+              },
+            );
           },
         },
         input.demand,

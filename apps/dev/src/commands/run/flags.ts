@@ -367,5 +367,17 @@ export function parseRunFlags(args: readonly string[]): ParsedRunFlags {
 export function resolveRunDispatchIdentity(flags: Pick<ParsedRunFlags, "origin" | "kind" | "lane">): RunDispatchIdentity {
   const origin = flags.origin?.trim() || "afk";
   const kind = flags.kind?.trim() || origin;
-  return flags.lane === undefined ? { origin, kind } : { origin, kind, lane: flags.lane };
+  // The Worker kind is the durable lane declaration; `--lane` is only its
+  // transport to candidate listing. Recovering the queue from kind/origin keeps
+  // a /go or scout Worker isolated even when an older/skewed dispatch path drops
+  // that optional argv pair (#3175). It also prevents a contradictory explicit
+  // lane from collapsing an isolated Worker into the fleet pool.
+  const declaredLane =
+    kind === GO_KIND || origin === GO_ORIGIN
+      ? LABEL_GO_LANE
+      : kind === SCOUT_ORIGIN || origin === SCOUT_ORIGIN
+        ? LABEL_SCOUT_LANE
+        : undefined;
+  const lane = declaredLane ?? flags.lane?.trim();
+  return lane ? { origin, kind, lane } : { origin, kind };
 }

@@ -261,6 +261,10 @@ export interface GoDispatchDeps {
   createIssue: (spec: DisposableIssueSpec) => Promise<number>;
   /** Run the reused AFK engine with the built argv; resolves the exit code. */
   runEngine: (args: string[]) => Promise<number>;
+  /** Close the just-minted disposable Ticket when Worker admission fails before
+   * any Worker exists to own cleanup. Production dispatchers always provide it;
+   * optionality preserves pure planner callers that cannot fail admission. */
+  disposeIssue?: (issue: number) => Promise<void>;
 }
 
 /** What one `/go` dispatch produced. */
@@ -288,17 +292,30 @@ export async function dispatchGo(
     await deps.ensureLabel(label);
   }
   const issue = await deps.createIssue(spec);
-  const engineExit = await deps.runEngine(
-    buildGoEngineArgs({
-      issue,
-      runner: opts.runner,
-      mode: opts.mode,
-      yolo: opts.yolo,
-      verifyCommand: opts.verifyCommand,
-      request: opts.request,
-      hasHarness: opts.hasHarness,
-    }),
-  );
+  let engineExit: number;
+  try {
+    engineExit = await deps.runEngine(
+      buildGoEngineArgs({
+        issue,
+        runner: opts.runner,
+        mode: opts.mode,
+        yolo: opts.yolo,
+        verifyCommand: opts.verifyCommand,
+        request: opts.request,
+        hasHarness: opts.hasHarness,
+      }),
+    );
+  } catch (error) {
+    try {
+      await deps.disposeIssue?.(issue);
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        `Worker admission failed and disposable issue #${issue} could not be closed`,
+      );
+    }
+    throw error;
+  }
   return { issue, engineExit };
 }
 
