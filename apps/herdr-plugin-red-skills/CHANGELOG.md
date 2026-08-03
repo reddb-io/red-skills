@@ -1,5 +1,11 @@
 # @reddb-io/herdr-plugin-red-skills
 
+## 3.4.0
+
+### Patch Changes
+
+- @reddb-io/build-info@3.4.0
+
 ## 3.3.24
 
 ### Patch Changes
