@@ -203,6 +203,13 @@ export interface OperationalProbeFixResult {
   readonly probeId: string;
   readonly status: OperationalProbeFixStatus;
   readonly evidence: string;
+  /**
+   * The finding restated so its evidence agrees with what the fix actually did
+   * (#3155). Present only when the fix could NOT apply and the original evidence
+   * would otherwise stand as a passing verdict beside a repair that errored out;
+   * every reporter must prefer this over the finding it was handed.
+   */
+  readonly reconciled?: OperationalProbeResult;
 }
 
 export interface OperationalProbe {
