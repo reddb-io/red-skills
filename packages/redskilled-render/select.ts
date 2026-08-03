@@ -45,6 +45,10 @@ export type RedskilledStatuslineProjectMatch =
   | "name-only"
   /** The daemon recorded when and why this project's registration lapsed. */
   | "lapsed"
+  /** The daemon recorded that an operator deliberately released the registration. */
+  | "stopped"
+  /** Another live daemon still owns the registration, beyond this socket. */
+  | "orphaned"
   | "unregistered"
   | "unresolved"
   /** No daemon answered, so whether this host knows the project is unknowable. */
@@ -96,6 +100,10 @@ export function resolveStatuslineProjectMatch(
   // accusation on every line a skewed daemon serves.
   if (payload.registered_projects == null) return "matched";
   if (payload.registered_projects.includes(project)) return "matched";
+  if (payload.orphaned_projects?.includes(project) === true) return "orphaned";
+  if (payload.stopped_projects?.some((stopped) => stopped.project_label === project) === true) {
+    return "stopped";
+  }
   if (payload.lapsed_projects?.some((lapse) => lapse.project_label === project) === true) {
     return "lapsed";
   }
