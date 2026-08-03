@@ -91,19 +91,11 @@ export function freshSlot(): SlotState {
 export interface SupervisorState {
   slots: SlotState[];
   /**
-   * Epoch seconds of the last NON-ABANDONED tick (#579). 0 = no successful tick
-   * has been observed yet. Updated by runSupervisor after each non-abandoned
-   * guardedTick and carried into every FleetHeartbeat so the watchdog can detect
-   * a loop that spins on abandoned ticks.
+   * Epoch seconds of the last non-abandoned pass (#579). 0 = no successful pass
+   * has been observed yet. Carried into every FleetHeartbeat so stalled progress
+   * remains visible.
    */
   lastProgressEpoch: number;
-  /**
-   * Epoch seconds of the last periodic dependency Unblock Sweep (#844). 0 = never
-   * swept; the first eligible tick sweeps immediately. The tick throttles the
-   * next sweep to `unblockSweepIntervalS` past this stamp so an idle, all-blocked
-   * queue still self-heals within one interval without a per-tick gh cost.
-   */
-  lastUnblockSweepEpoch: number;
   /** Epoch seconds of the last attempted supervisor trunk-mirror refresh. */
   lastTrunkFreshnessEpoch: number;
   /** Last recorded trunk freshness outcome for heartbeat/status surfacing. */
@@ -112,7 +104,7 @@ export interface SupervisorState {
    * Cumulative wake accounting (#934): how many health-check loop iterations woke
    * on a worker state-change event vs the safety-net timer. Lets the supervisor
    * log — and a test assert — the measurable reduction in idle (timer) wake-ups
-   * the event lane delivered. Updated by runSupervisor after each iteration.
+   * the event lane delivered.
    */
   wakeStats: WakeStats;
   /** Once HARD_STOP is reached, no new workers are spawned for this supervisor. */
@@ -133,7 +125,6 @@ export function initSupervisorState(target: number): SupervisorState {
   return {
     slots: Array.from({ length: target }, () => freshSlot()),
     lastProgressEpoch: 0,
-    lastUnblockSweepEpoch: 0,
     lastTrunkFreshnessEpoch: 0,
     wakeStats: freshWakeStats(),
     drainBudgetHardStopped: false,

@@ -627,15 +627,6 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     },
   },
   {
-    path: "apps/dev/src/core/supervisor/runtime.ts",
-    fn: "runSupervisor",
-    subject: "the next worker-state-change event, or the safety-net poll timer",
-    deadline: "one interval: `eventFallbackS` with a wake lane wired, `pollIntervalS` without",
-    escalation:
-      "the timer leg wins and the loop ticks anyway — this wait cannot outlive a single interval, which is why the LOOP is unbounded and the WAIT never is",
-    heartbeat: { sink: "emitFleetHeartbeat" },
-  },
-  {
     path: "apps/dev/src/runtime/etag-transport.ts",
     fn: "loop",
     subject: "the next GitHub poll window for the watched repo's events and checks",

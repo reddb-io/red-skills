@@ -424,30 +424,6 @@ export interface SupervisorDeps {
    */
   emitSupervisorEvent?(record: SupervisorEventRecord): void | Promise<void>;
   /**
-   * Run the shared boot sweeps ONCE before the initial fleet spawn (#623). The
-   * fleet supervisor owns the boot: it runs orphan cleanup / attempt cap /
-   * branch cleanup / unblock sweep / straggler check a single time, pre-spawn,
-   * and every worker it then spawns carries the `RED_AFK_SWEEPS_DONE` marker so
-   * it boots bootstrap+claim only — respawns are cheap and workers never race
-   * peers over shared `.red/tmp` state. Called exactly once per supervisor
-   * lifetime (never on a respawn, which happens inside the tick loop). The
-   * closure itself logs its sweep results via {@link SupervisorDeps.log}.
-   * Best-effort: a throw is caught and logged, never aborting the fleet. Absent
-   * in tests / non-fleet contexts → no boot runs (back-compat).
-   */
-  bootSweeps?(): Promise<void>;
-  /**
-   * Run the dependency Unblock Sweep on the supervisor tick (#844): list open
-   * `blocked:dependency` issues, resolve each `req:*` blocker, and promote only
-   * those whose every blocker is CLOSED — returning the promoted issue numbers.
-   * Read-mostly and idempotent (re-uses the boot sweep's {@link
-   * executeUnblockSweep} core). The tick throttles invocation to
-   * `unblockSweepIntervalS`. Best-effort: a throw is swallowed and retried next
-   * due tick. Absent in tests / non-fleet contexts → the tick skips the periodic
-   * sweep entirely (back-compat; the boot-time sweep still runs).
-   */
-  unblockSweep?(): Promise<number[]>;
-  /**
    * Refresh `origin/<trunk>` into the fleet-owned `red-trunk` mirror. The
    * supervisor owns throttling and observability; the injected runtime owns the
    * concrete git exec.

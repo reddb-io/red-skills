@@ -10,7 +10,6 @@ import {
   buildCrashEnvelope,
   buildDiscardEnvelope,
   buildReaperEnvelope,
-  adoptPersistedSlotPids,
   decideCrashReconcile,
   dispatchReconcileIfPossible,
   reconcileDeadWorkerClaim,
@@ -21,9 +20,7 @@ import {
   resolveReapContest,
   recordDeath,
   resolveSupervisorConfig,
-  runSupervisor,
   sweepParkedSlot,
-  superviseTick,
   validateStallThresholds,
   validateSupervisorStaleThreshold,
   validateSupervisorProgressThreshold,
@@ -69,13 +66,6 @@ describe("validateStallThresholds", () => {
     expect(() => validateStallThresholds({ stallThresholdS: 600, stallKillThresholdS: 300 })).toThrow();
   });
 
-  it("runSupervisor refuses to boot with KILL <= STALL", async () => {
-    const { deps } = makeDeps();
-    const state = initSupervisorState(1);
-    await expect(
-      runSupervisor(state, deps, config({ stallThresholdS: 600, stallKillThresholdS: 600 }), () => true),
-    ).rejects.toThrow();
-  });
 });
 
 describe("validateSupervisorStaleThreshold", () => {
@@ -91,13 +81,6 @@ describe("validateSupervisorStaleThreshold", () => {
     expect(() => validateSupervisorStaleThreshold({ supervisorStaleS: 60, tickTimeoutS: 120 })).toThrow();
   });
 
-  it("runSupervisor refuses to boot with STALE <= TICK_TIMEOUT", async () => {
-    const { deps } = makeDeps();
-    const state = initSupervisorState(1);
-    await expect(
-      runSupervisor(state, deps, config({ supervisorStaleS: 120, tickTimeoutS: 120 }), () => true),
-    ).rejects.toThrow(/RED_AFK_SUPERVISOR_STALE_S/);
-  });
 });
 
 describe("validateSupervisorProgressThreshold", () => {
@@ -119,13 +102,6 @@ describe("validateSupervisorProgressThreshold", () => {
     ).toThrow();
   });
 
-  it("runSupervisor refuses to boot with PROGRESS_STALE <= SUPERVISOR_STALE", async () => {
-    const { deps } = makeDeps();
-    const state = initSupervisorState(1);
-    await expect(
-      runSupervisor(state, deps, config({ progressStaleS: 300, supervisorStaleS: 300 }), () => true),
-    ).rejects.toThrow(/RED_AFK_SUPERVISOR_PROGRESS_STALE_S/);
-  });
 });
 
 describe("classifySupervisor", () => {
@@ -413,7 +389,6 @@ describe("guardedTick — abandoned flag", () => {
       reaped: [],
       crashReconciled: [],
       reconciledSlots: [],
-      unblocked: [],
       retiredSlots: [],
       runnerChanged: false,
       stopped: false,
@@ -441,44 +416,6 @@ describe("guardedTick — abandoned flag", () => {
     const sleep = vi.fn((_ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 0)));
     const result = await guardedTick(tick, 5000, sleep);
     expect(result.abandoned).toBe(true);
-  });
-});
-
-describe("runSupervisor — lastProgressEpoch tracking (#579)", () => {
-  it("advances lastProgressEpoch on a non-abandoned tick", async () => {
-    const { deps, io } = makeDeps();
-    io.isAlive.mockReturnValue(true); // workers stay alive — no deaths/respawns
-    let ticks = 0;
-    // Run two ticks then stop.
-    const stopFn = () => ++ticks > 2;
-    const state = initSupervisorState(1);
-    await runSupervisor(state, deps, config(), stopFn);
-    // lastProgressEpoch must have been set (non-zero) since ticks completed.
-    expect(state.lastProgressEpoch).toBe(NOW);
-    // emitFleetHeartbeat was called with lastProgressEpoch == NOW.
-    const lastHb = io.emitFleetHeartbeat.mock.lastCall?.[0];
-    expect(lastHb?.lastProgressEpoch).toBe(NOW);
-  });
-
-  it("does NOT advance lastProgressEpoch on an abandoned tick", async () => {
-    // A tick that throws is "abandoned": guardedTick reports abandoned=true and the
-    // caller must NOT advance lastProgressEpoch. We assert this directly on
-    // guardedTick rather than by driving the whole runSupervisor loop — the loop
-    // form here previously mocked io.sleep to resolve INSTANTLY with a tick that
-    // always abandons, so stopFn was never reached and it spun forever, allocating
-    // until the vitest worker OOM-died (#446). The direct call is the real test.
-    const result = await guardedTick(
-      async (): Promise<never> => {
-        throw new Error("tick threw");
-      },
-      5000,
-      vi.fn(async () => {}),
-    );
-    expect(result.abandoned).toBe(true);
-    const state = initSupervisorState(1);
-    state.lastProgressEpoch = 0;
-    if (!result.abandoned) state.lastProgressEpoch = 999;
-    expect(state.lastProgressEpoch).toBe(0);
   });
 });
 
