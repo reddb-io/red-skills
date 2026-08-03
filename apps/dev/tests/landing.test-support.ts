@@ -140,8 +140,10 @@ export interface Opts {
    *   - `merged`   → queued first, then merged.
    *   - `rejected` → queued first, then the auto-merge request disappears.
    *   - `pending`  → still queued for the whole (test-sized) budget.
+   *   - `probe-failing` → every confirmation probe exits non-zero, so the wait
+   *     never sees the PR at all (#3160).
    */
-  queueOutcome?: "merged" | "rejected" | "pending";
+  queueOutcome?: "merged" | "rejected" | "pending" | "probe-failing";
   /** Explicit PR-resolved callback abort used by adversarial correction before merge. */
   onPrResolvedAbort?: boolean;
   /**
@@ -282,6 +284,11 @@ export function harness(opts: Opts = {}): Harness {
       // (#3094) and answers a REST body.
       if (readsPull(argv)) {
         queuePolls += 1;
+        // #3160: a confirmation that cannot READ the PR — the probe fails, so the
+        // wait observes nothing rather than observing "not merged".
+        if (opts.queueOutcome === "probe-failing") {
+          return { code: 1, stdout: "", stderr: "gh: could not resolve host api.github.com" };
+        }
         const accepted = restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: true });
         // Unset → the forge merged on the spot and the very first confirmation
         // says so. A test that opts in models the ENQUEUE: accepted first, then
@@ -363,7 +370,9 @@ export function harness(opts: Opts = {}): Harness {
     waitForReview: opts.waitForReview ? { check: "CodeRabbit", sleep: async () => {} } : undefined,
     ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     // #2986: always injected so no queue landing under test can reach a real timer.
-    mergeQueueWait: { sleep: async () => {}, maxPolls: 3 },
+    // A blind confirmation needs a budget LARGER than the blind-probe threshold,
+    // or `pending` would win the race and hide the outcome under test (#3160).
+    mergeQueueWait: { sleep: async () => {}, maxPolls: opts.queueOutcome === "probe-failing" ? 30 : 3 },
     makeLandingWorktree: async () => (opts.noWorktree ? null : WT),
     removeLandingWorktree: async (dir) => {
       removedWorktrees.push(dir);
