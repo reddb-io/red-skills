@@ -35,7 +35,10 @@ import { join } from "node:path";
 import { logsDir } from "@reddb-io/shared/red-paths.js";
 import { publishRedskilledWorkerLogLine } from "@reddb-io/redskilled/client";
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
-import { RED_AFK_WORKER_ID_PLACEHOLDER } from "../core/supervisor/launch-template.js";
+import {
+  RED_AFK_SLOT_PLACEHOLDER,
+  RED_AFK_WORKER_ID_PLACEHOLDER,
+} from "../core/supervisor/launch-template.js";
 import { resolveProjectLabel } from "./redskilled-birth.js";
 
 /**
@@ -62,8 +65,27 @@ export function registrationLogPathTemplate(root: string, date: string): string 
 }
 
 /** What a registration adds to its Workers' environment. PURE. */
-export function registrationLaunchEnv(): Record<string, string> {
-  return { [REDSKILLED_HOST_WORKER_ID_ENV]: RED_AFK_WORKER_ID_PLACEHOLDER };
+export function registrationLaunchEnv(runner?: string): Record<string, string> {
+  return {
+    [REDSKILLED_HOST_WORKER_ID_ENV]: RED_AFK_WORKER_ID_PLACEHOLDER,
+    // The slot the host placed this Worker on. Read in five places
+    // (`reconcile.ts`, `process-deps.ts`, the hook env) and, until #3081, never
+    // written on this path — so `parseSlot(process.env.RED_AFK_SLOT) ?? 0`
+    // resolved every Worker to slot 0 and the per-slot isolation it exists for
+    // (retire files, cargo target dirs, hook scoping) collapsed onto one.
+    RED_AFK_SLOT: RED_AFK_SLOT_PLACEHOLDER,
+    // `RED_AFK_WORKER_ID` is deliberately NOT set here. It names the work's own
+    // identity — the worker directory, the claim comment, every project-side
+    // surface — and assigning the host's handle to it would rename the work to
+    // satisfy an address. The two ids both exist on purpose; #3081's cure is to
+    // make attribution read the host's id where the host is the authority, not
+    // to collapse one name onto the other.
+    //
+    // Re-pinned rather than inherited: the passthrough environment may carry an
+    // operator's runner from before the registration decided one, and the
+    // Worker's detection cascade must read the one this registration states.
+    ...(runner == null || runner === "" ? {} : { RED_AFK_RUNNER: runner }),
+  };
 }
 
 /** Publish one line, or do nothing at all. Never throws, never blocks the work. */
