@@ -33,10 +33,17 @@ red-skills/                         ← repo root + marketplace
 │   ├── code-nav/                   ← code navigation runtime implementation
 │   ├── redskilled/                 ← host-scoped execution daemon: exactly one singleton per machine behind a unix socket (ADR 0130)
 │   ├── opencode-host/              ← opencode-host adapter: emits opencode.json from .red/config.yaml (ADR 0075; Slice 1 = provider block)
-│   └── herdr-plugin/               ← vendored herdr plugin that READS `redskilled` (ADR 0131); `.upstream` records the absorbed SHA
+│   ├── herdr-plugin-red-skills/    ← vendored herdr plugin that READS `redskilled` (ADR 0131); `.upstream` records the absorbed SHA
+│   ├── vscode-extension-red-skills/ ← VS Code extension reading the same daemon
+│   ├── rsp/                        ← token-efficient command wrappers and the elision store
+│   ├── red-browser/                ← CDP-driven browser surface
+│   ├── afk-container/              ← containerised AFK runner image
+│   └── benchmark-memory/, benchmark-code-understanding/
 ├── packages/                       ← code shared by multiple runtimes
 │   ├── shared/                     ← CLI args, bundle-fetch, entrypoint (ADR 0034)
 │   ├── build-info/                 ← shared build metadata helpers
+│   ├── github/                     ← the one budget-aware GitHub client: cardinality routing, asked balance, cache (ADR 0132)
+│   ├── cdp-driver/, browser-bridge/ ← browser transport
 │   └── red-castle/                 ← vendored AFK execution substrate source (@reddb-io/red-castle, ADR 0061/0101)
 ├── dist/                           ← generated release bundles and manifests
 └── plugins/
