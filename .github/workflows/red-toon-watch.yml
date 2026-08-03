@@ -28,7 +28,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # This job pushes a bump branch, and a GITHUB_TOKEN-authored push leaves
+          # the resulting PR's checks parked in `action_required` — the same guard
+          # that stopped the release train (#3168, and its other half). A workflow
+          # that pushes needs a push identity that is not the bot.
+          token: ${{ secrets.RELEASE_PAT }}
 
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
 
