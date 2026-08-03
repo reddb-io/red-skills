@@ -55,6 +55,18 @@ import type { RedskilledWorkerLogLine } from "./worker-log.js";
  */
 export const REDSKILLED_STALENESS_MS = 30_000;
 
+/** A Worker dead by this age never reached work; repeated refusals are a boot loop. */
+export const REDSKILLED_BOOT_REFUSAL_MAX_UPTIME_S = 2;
+/** One refusal can be incidental and two can be a retry; three establishes repetition. */
+export const REDSKILLED_BOOT_LOOP_MIN_DEATHS = 3;
+
+/** Host-observed facts that enrich a generic death attribution when they exist. */
+export interface RedskilledDeathObservation extends DeathAttribution {
+  readonly project_label?: string;
+  readonly uptime_s?: number;
+  readonly detail?: string | null;
+}
+
 /** What a Worker is doing, as the daemon knows it. */
 export type RedskilledWorkerState = "running" | "reattached";
 
@@ -242,6 +254,16 @@ export interface RedskilledStatuslineDeaths {
   readonly latest: RedskilledStatuslineDeath | null;
   /** When the reaper concluded; `null` when it attributed nothing. */
   readonly reaped_at: string | null;
+  /** A repeated same-project boot refusal, absent when the deaths do not establish one. */
+  readonly boot_loop?: RedskilledStatuslineBootLoop;
+}
+
+/** The actionable shape hidden by a flat death count. */
+export interface RedskilledStatuslineBootLoop {
+  readonly project_label: string;
+  readonly count: number;
+  readonly span_ms: number;
+  readonly latest_refusal: string;
 }
 
 /**
@@ -517,7 +539,7 @@ export interface BuildStatuslinePayloadInput {
    * An empty array is a reaping that found nothing — a real answer — and absent is
    * a reaper that never ran; the two must not collapse.
    */
-  readonly deaths?: readonly DeathAttribution[];
+  readonly deaths?: readonly RedskilledDeathObservation[];
   /** How many verdicts the payload lists before the rest are counted instead. */
   readonly recentDeathLimit?: number;
   /**
@@ -621,7 +643,7 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
 
 /** The death block a surface prints, newest verdict first. PURE. */
 function buildDeaths(
-  attributions: readonly DeathAttribution[],
+  attributions: readonly RedskilledDeathObservation[],
   limit: number,
 ): RedskilledStatuslineDeaths {
   const ordered = [...attributions].sort((a, b) => (instant(b.ts) ?? 0) - (instant(a.ts) ?? 0));
@@ -639,12 +661,53 @@ function buildDeaths(
       evidence: attribution.evidence[0] ?? null,
     }),
   );
+  const bootLoop = buildBootLoop(ordered);
   return {
     count: ordered.length,
     recent,
     latest: recent[0] ?? null,
     reaped_at: recent[0]?.ts ?? null,
+    ...(bootLoop == null ? {} : { boot_loop: bootLoop }),
   };
+}
+
+/** Reduce the rolling death window to its strongest same-project boot loop. PURE. */
+function buildBootLoop(
+  ordered: readonly RedskilledDeathObservation[],
+): RedskilledStatuslineBootLoop | null {
+  const byProject = new Map<string, RedskilledDeathObservation[]>();
+  for (const death of ordered) {
+    if (
+      death.sender_class !== "boot-refused" ||
+      death.uptime_s == null ||
+      death.uptime_s > REDSKILLED_BOOT_REFUSAL_MAX_UPTIME_S ||
+      death.project_label == null ||
+      death.project_label === "" ||
+      instant(death.ts) == null
+    ) continue;
+    const grouped = byProject.get(death.project_label) ?? [];
+    grouped.push(death);
+    byProject.set(death.project_label, grouped);
+  }
+
+  const loops = [...byProject.entries()]
+    .filter(([, deaths]) => deaths.length >= REDSKILLED_BOOT_LOOP_MIN_DEATHS)
+    .map(([projectLabel, deaths]): RedskilledStatuslineBootLoop | null => {
+      const newest = deaths[0]!;
+      const newestAt = instant(newest.ts)!;
+      const oldestAt = Math.min(...deaths.map((death) => instant(death.ts)!));
+      const refusal = newest.detail?.trim() || newest.evidence[0]?.trim();
+      if (refusal == null || refusal === "") return null;
+      return {
+        project_label: projectLabel,
+        count: deaths.length,
+        span_ms: Math.max(0, newestAt - oldestAt),
+        latest_refusal: refusal,
+      };
+    })
+    .filter((loop): loop is RedskilledStatuslineBootLoop => loop != null)
+    .sort((left, right) => right.count - left.count || right.span_ms - left.span_ms);
+  return loops[0] ?? null;
 }
 
 /**
