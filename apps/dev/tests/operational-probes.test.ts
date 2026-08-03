@@ -768,6 +768,119 @@ describe("operational probe registry", () => {
     }
   });
 
+  /**
+   * #3155 — the collision every maturing repo reaches: trunk commits the
+   * `.red/.gitignore` that `/red-setup` leaves untracked, so the guard tolerated
+   * the dirt, `merge --ff-only` aborted on it, and the probe reported
+   * `guard=passed` beside a fix that errored out. Local main then sat behind
+   * origin forever and every Worker died at the same probe.
+   */
+  it("recovers a repo whose trunk now TRACKS the file setup left untracked (#3155)", async () => {
+    const { root, repo, origin } = await makeBaseFreshnessRepo();
+    try {
+      // Trunk grows up: a peer commits the file setup only ever wrote locally.
+      const peer = join(root, "peer-gitignore");
+      git(root, "clone", origin, "peer-gitignore");
+      configureGit(peer);
+      await mkdir(join(peer, ".red"), { recursive: true });
+      await writeFile(join(peer, ".red", ".gitignore"), "# tracked by trunk\ntmp/\nstate/\n", "utf8");
+      git(peer, "add", ".red/.gitignore");
+      git(peer, "commit", "-m", "track the setup gitignore");
+      git(peer, "push", "origin", "main");
+      // The local tree still holds the untracked copy `/red-setup` wrote.
+      await writeFile(join(repo, ".red", ".gitignore"), "tmp/\nstate/\n", "utf8");
+
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        fastForwardLocalBase: async ({ remote, target }) =>
+          fastForwardLocalTarget(realExec(), { gitRepo: repo, remote, target }),
+      });
+
+      expect(fixes.find((fix) => fix.probeId === "afk.base-freshness")?.status).toBe("applied");
+      expect(git(repo, "rev-parse", "main").trim()).toBe(git(repo, "rev-parse", "origin/main").trim());
+      // The tracked copy landed; the local one was preserved, never deleted.
+      expect(await readFile(join(repo, ".red", ".gitignore"), "utf8")).toContain("# tracked by trunk");
+      expect(
+        await readFile(join(repo, ".red", "tmp", "superseded-setup-dirt", ".red", ".gitignore"), "utf8"),
+      ).toBe("tmp/\nstate/\n");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses with the real reason when the operator EDITED a now-tracked setup file (#3155)", async () => {
+    const { root, repo, origin } = await makeBaseFreshnessRepo();
+    try {
+      const peer = join(root, "peer-config");
+      git(root, "clone", origin, "peer-config");
+      configureGit(peer);
+      await writeFile(join(peer, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\n    trunk: main\n    n: 2\n", "utf8");
+      git(peer, "add", ".red/config.yaml");
+      git(peer, "commit", "-m", "change the config upstream");
+      git(peer, "push", "origin", "main");
+      // Tracked here, and locally edited: real content the fast-forward would eat.
+      await writeFile(join(repo, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\n    trunk: main\n    n: 9\n", "utf8");
+
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+      const finding = report.findings.find((row) => row.id === "afk.base-freshness");
+      // The verdict is refused BEFORE the merge, so no `passed` receipt is minted.
+      expect(finding?.evidence).toContain("guard=refused");
+      expect(finding?.evidence).toContain(".red/config.yaml");
+      expect(finding?.evidence).toContain("local main is 3 commit(s) behind origin/main");
+      expect(git(repo, "rev-parse", "main").trim()).not.toBe(git(repo, "rev-parse", "origin/main").trim());
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never leaves a guard=passed evidence line standing beside a fix that could not apply (#3155)", async () => {
+    const { root, repo } = await makeBaseFreshnessRepo();
+    try {
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+      const finding = report.findings.find((row) => row.id === "afk.base-freshness");
+      expect(finding?.evidence).toContain("guard=passed");
+
+      // The tree changed between the probe and the fix — the race the receipt lied about.
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        fastForwardLocalBase: async () => ({
+          action: "noop" as const,
+          guard: "refused" as const,
+          target: "main",
+          remote: "origin",
+          evidence: "condition failed: merge (ff-only merge of origin/main failed)",
+        }),
+      });
+
+      const fix = fixes.find((entry) => entry.probeId === "afk.base-freshness");
+      expect(fix?.status).toBe("noop");
+      expect(fix?.reconciled?.evidence).toContain("guard=refused");
+      expect(fix?.reconciled?.evidence).toContain("ff-only merge of origin/main failed");
+      expect(fix?.reconciled?.evidence).not.toContain("guard=passed");
+      // The trunk is still named, so the reader is not sent to another subsystem.
+      expect(fix?.reconciled?.evidence).toContain("local main is 2 commit(s) behind origin/main");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves an already-refused finding exactly as reported — nothing to reconcile", async () => {
+    const { root, repo } = await makeBaseFreshnessRepo();
+    try {
+      git(repo, "checkout", "-b", "feature/work");
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        fastForwardLocalBase: async ({ remote, target }) =>
+          fastForwardLocalTarget(realExec(), { gitRepo: repo, remote, target }),
+      });
+      expect(fixes.find((fix) => fix.probeId === "afk.base-freshness")?.reconciled).toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("refuses the gated base-freshness fix when local trunk is not an ancestor of origin", async () => {
     const { root, repo } = await makeBaseFreshnessRepo();
     try {

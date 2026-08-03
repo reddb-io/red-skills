@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   auditSetupOwnedDirt,
   classifyDirtyTree,
+  classifySetupDirtCollision,
   describeCleanTreeRefusal,
+  describeSetupDirtCollisionRefusal,
+  describeSupersededSetupDirt,
   isSetupOwnedPath,
   renderSetupOwnedDirtToon,
   SETUP_OWNED_DIRT_REMEDIATION,
@@ -45,6 +48,11 @@ describe("classifyDirtyTree", () => {
     const tree = classifyDirtyTree('R  old.ts -> apps/new.ts\n M ".red/config.yaml"\n');
     expect(tree.foreign).toEqual(["apps/new.ts"]);
     expect(tree.setupOwned).toEqual([".red/config.yaml"]);
+  });
+
+  it("keeps each dirty path's porcelain code, so untracked can be told from edited", () => {
+    const tree = classifyDirtyTree("?? .red/.gitignore\n M .red/config.yaml\n");
+    expect(tree.dirty.map((entry) => entry.status)).toEqual(["??", " M"]);
   });
 
   it("reports a clean tree as neither dirty nor setup-owned", () => {
@@ -101,5 +109,57 @@ describe("auditSetupOwnedDirt (red-doctor check)", () => {
     const toon = renderSetupOwnedDirtToon(auditSetupOwnedDirt(classifyDirtyTree(" M .red/config.yaml\n")));
     expect(toon).toContain("setup-owned-dirt");
     expect(toon.trim().startsWith("{")).toBe(false);
+  });
+});
+
+/**
+ * #3155 — the tolerance stopped at the verdict. `SETUP_OWNED_FILES` are exactly
+ * the files a maturing repo eventually COMMITS, so the untracked copy setup
+ * wrote and the tracked copy trunk now carries collide by definition, and the
+ * `--ff-only` merge aborted under a `guard=passed` receipt.
+ */
+describe("classifySetupDirtCollision", () => {
+  it("calls an untracked local copy the incoming commits track SUPERSEDED", () => {
+    const collision = classifySetupDirtCollision(classifyDirtyTree("?? .red/.gitignore\n"), [
+      ".red/.gitignore",
+      "apps/dev/src/x.ts",
+    ]);
+    expect(collision.superseded).toEqual([".red/.gitignore"]);
+    expect(collision.conflicting).toEqual([]);
+  });
+
+  it("calls a tracked, locally-edited path the incoming commits touch CONFLICTING", () => {
+    const collision = classifySetupDirtCollision(classifyDirtyTree(" M .red/config.yaml\n"), [".red/config.yaml"]);
+    expect(collision.conflicting).toEqual([".red/config.yaml"]);
+    expect(collision.superseded).toEqual([]);
+  });
+
+  it("ignores tolerated dirt the incoming commits never touch — nothing collides", () => {
+    const collision = classifySetupDirtCollision(
+      classifyDirtyTree("?? .red/.gitignore\n M .red/config.yaml\n"),
+      ["apps/dev/src/x.ts"],
+    );
+    expect(collision).toEqual({ superseded: [], conflicting: [] });
+  });
+
+  it("never classifies foreign dirt — the clean-tree condition already refused it", () => {
+    const collision = classifySetupDirtCollision(classifyDirtyTree("?? notes.md\n"), ["notes.md"]);
+    expect(collision).toEqual({ superseded: [], conflicting: [] });
+  });
+});
+
+describe("collision evidence", () => {
+  it("says where a superseded file went, so nothing reads as deleted", () => {
+    const evidence = describeSupersededSetupDirt([".red/.gitignore"]);
+    expect(evidence).toContain(".red/.gitignore");
+    expect(evidence).toContain(".red/tmp/superseded-setup-dirt");
+  });
+
+  it("names the blocking path and the repair in the refusal", () => {
+    const evidence = describeSetupDirtCollisionRefusal([".red/config.yaml"], "origin/main");
+    expect(evidence).toContain("dirt-collision");
+    expect(evidence).toContain(".red/config.yaml");
+    expect(evidence).toContain("origin/main");
+    expect(evidence).toContain("commit or stash");
   });
 });
