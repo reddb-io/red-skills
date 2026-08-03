@@ -11,6 +11,8 @@ import { GITHUB_RATE_LIMIT_PATH, createGithubBalanceTransport } from "@reddb-io/
 import { afterEach, describe, expect, it } from "vitest";
 
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
+import { renderRedskilledDashboard } from "../src/dashboard-render.js";
+import { renderRedskilledStatusline } from "../src/statusline-render.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { isRedskilledStatuslinePayload } from "../src/statusline-payload.js";
@@ -186,5 +188,45 @@ describe("the ask reaches the authoritative endpoint", () => {
     expect(seen[0]!.url).toContain(`/${GITHUB_RATE_LIMIT_PATH}`);
     expect(seen[0]!.method).toBe("GET");
     expect(payload).toBeTruthy();
+  });
+});
+
+describe("an empty queue and a spent quota are not the same screen", () => {
+  async function render(remaining: number) {
+    const daemon = await start({
+      paths: await paths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      githubBalance: { transport: async () => answer(remaining), intervalMsOverride: 3_600_000 },
+    });
+    await daemon.pollGithubBalance();
+    const payload = daemon.statuslinePayload();
+    return {
+      statusline: renderRedskilledStatusline(payload).line,
+      dashboard: renderRedskilledDashboard(payload).lines.join("\n"),
+    };
+  }
+
+  it("marks a spent budget on the statusline and explains it on the dashboard", async () => {
+    const spent = await render(0);
+
+    expect(spent.statusline).toContain("quota spent");
+    expect(spent.dashboard).toContain("github budget spent");
+    expect(spent.dashboard).toContain("resets at");
+  });
+
+  it("marks the reserved band differently from a spent budget", async () => {
+    const band = await render(100);
+
+    expect(band.statusline).toContain("quota band");
+    expect(band.statusline).not.toContain("quota spent");
+    expect(band.dashboard).toContain("github budget reserved");
+  });
+
+  it("says nothing at all while the budget is open", async () => {
+    const open = await render(5000);
+
+    expect(open.statusline).not.toContain("quota");
+    expect(open.dashboard).not.toContain("github budget");
   });
 });
