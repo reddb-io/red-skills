@@ -552,6 +552,30 @@ export function buildGithubBalanceReport(input: {
   };
 }
 
+/**
+ * True when `value` is a complete balance report — a client's fail-closed check.
+ *
+ * A consumer that accepted a partial report would render a posture it cannot
+ * trust, and the whole point of the posture is that an operator can act on it.
+ */
+export function isGithubBalanceReport(value: unknown): value is GithubBalanceReport {
+  if (!isRecord(value)) return false;
+  const report = value as Record<string, unknown>;
+  return report.version === 1 &&
+    report.origin === "asked" &&
+    (report.outcome === "asked" || report.outcome === "unanswered") &&
+    (report.asked_at === null || typeof report.asked_at === "string") &&
+    (report.age_ms === null || typeof report.age_ms === "number") &&
+    typeof report.threshold_ms === "number" &&
+    typeof report.stale === "boolean" &&
+    typeof report.posture === "string" &&
+    typeof report.reserved_fraction === "number" &&
+    typeof report.next_poll_ms === "number" &&
+    Array.isArray(report.pools) &&
+    Array.isArray(report.unreported_pools) &&
+    typeof report.reason === "string";
+}
+
 function describePosture(
   posture: GithubBalancePosture,
   tightest: GithubPoolBalance | null,
