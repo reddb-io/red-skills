@@ -8,6 +8,7 @@ import { landPr } from "../src/core/merge.js";
 import { mergeExec, type GitContext } from "../src/runtime/git.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 import type { GhQuotaBackoffOpts } from "../src/runtime/gh/quota.js";
+import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 
 const REPO = "owner/repo";
 const BRANCH = "afk/w1/42-fix";
@@ -39,15 +40,17 @@ function buildFakeExec(prMergeResponses: ExecOutput[]): {
     }
     // gh pr view — the #2986 merge confirmation, answered by a forge that
     // merged the PR on the spot once the quota window closed.
-    if (cmd === "gh" && args.includes("view") && j.includes("mergedAt")) {
+    if (cmd === "gh" && readsPull(args)) {
       return {
         code: 0,
-        stdout: JSON.stringify({
-          state: "MERGED",
-          mergedAt: "2026-08-01T00:00:00Z",
-          mergeCommit: { oid: "deadbeef" },
-          autoMergeRequest: null,
-        }),
+        stdout: JSON.stringify(
+          restPullBody({
+            state: "MERGED",
+            mergedAt: "2026-08-01T00:00:00Z",
+            mergeCommitOid: "deadbeef",
+            autoMerge: false,
+          }),
+        ),
         stderr: "",
       };
     }

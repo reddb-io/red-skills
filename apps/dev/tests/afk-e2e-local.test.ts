@@ -9,6 +9,7 @@ import {
   type ProcessIssueInput,
 } from "../src/core/process-issue.js";
 import { classifyMergeState } from "../src/core/merge.js";
+import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 
 // AFK end-to-end lifecycle harness against a REAL local git repo.
 //
@@ -181,25 +182,30 @@ async function setup(opts: {
       state.prNumber = 101;
       return { code: 0, stdout: "", stderr: "" };
     }
-    if (sub === "view" && argv.some((a) => a.includes("mergedAt"))) {
-      // #2986 merge confirmation. This forge merges synchronously, so the probe
-      // reports MERGED exactly when the scripted `pr merge` actually landed —
-      // and reports an unmerged, still-open PR when it did not.
+    if (readsPull(argv)) {
+      // #2986 merge confirmation, now a REST single-object read (#3094). This
+      // forge merges synchronously, so the probe reports MERGED exactly when the
+      // scripted `pr merge` actually landed — and reports an unmerged, still-open
+      // PR when it did not.
       if (!state.mergedTipSha) {
         return {
           code: 0,
-          stdout: JSON.stringify({ state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: null }),
+          stdout: JSON.stringify(
+            restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: false }),
+          ),
           stderr: "",
         };
       }
       return {
         code: 0,
-        stdout: JSON.stringify({
-          state: "MERGED",
-          mergedAt: "2026-08-01T00:00:00Z",
-          mergeCommit: { oid: state.mergedTipSha },
-          autoMergeRequest: null,
-        }),
+        stdout: JSON.stringify(
+          restPullBody({
+            state: "MERGED",
+            mergedAt: "2026-08-01T00:00:00Z",
+            mergeCommitOid: state.mergedTipSha,
+            autoMerge: false,
+          }),
+        ),
         stderr: "",
       };
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WT, createFileLandLock, doLanding, harness, joined, type Harness, type LandLock, type LandLockDeps, type LandLockFs } from "./landing.test-support.js";
+import { readsPull } from "./support/gh-rest-fixtures.js";
 
 // ---------------------------------------------------------------------------
 // Serialized landing (#1337). Two near-simultaneous workers used to race on the
@@ -210,7 +211,7 @@ describe("doLanding — a queued merge is not a completed one (#2986)", () => {
     // The post_merge hook is part of the close/cleanup tail — it must not fire.
     expect(h.firedHooks).not.toContain("post_merge");
     // It really did poll the PR rather than trusting the merge command's exit.
-    expect(joined(h.mergeCalls).filter((c) => c.includes("autoMergeRequest")).length).toBeGreaterThan(1);
+    expect(h.mergeCalls.filter((argv) => readsPull(argv)).length).toBeGreaterThan(1);
   });
 
   it("parks a merge-queue rejection with the observed reason, issue and branch intact", async () => {

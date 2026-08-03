@@ -3,6 +3,7 @@ import { createFileLandLock, type LandLock, type LandLockDeps, type LandLockFs }
 
 export { doLanding, createFileLandLock, type LandLock, type LandLockDeps, type LandLockFs };
 import type { ExecResult } from "../src/core/merge.js";
+import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 
 // doLanding owns the flag-toggled landing (ADR 0030 amended by #842 / 0031):
 // push → pre_merge → integrate → land → (direct conflict self-resolve) →
@@ -277,9 +278,11 @@ export function harness(opts: Opts = {}): Harness {
       // #2986 post-enqueue merge confirmation. The queue accepts the PR on the
       // first poll (auto-merge request present, not yet merged) and resolves on
       // the second, so a landing that skipped the wait cannot pass by accident.
-      if (j.includes("pr view") && j.includes("autoMergeRequest")) {
+      // The confirmation reads one pull request by number, so it routes to REST
+      // (#3094) and answers a REST body.
+      if (readsPull(argv)) {
         queuePolls += 1;
-        const accepted = { state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: { enabledAt: "t" } };
+        const accepted = restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: true });
         // Unset → the forge merged on the spot and the very first confirmation
         // says so. A test that opts in models the ENQUEUE: accepted first, then
         // its outcome, so the landing has something to actually wait through.
@@ -290,18 +293,22 @@ export function harness(opts: Opts = {}): Harness {
         if (outcome === "rejected") {
           return {
             code: 0,
-            stdout: JSON.stringify({ state: "OPEN", mergedAt: null, mergeCommit: null, autoMergeRequest: null }),
+            stdout: JSON.stringify(
+              restPullBody({ state: "OPEN", mergedAt: null, mergeCommitOid: null, autoMerge: false }),
+            ),
             stderr: "",
           };
         }
         return {
           code: 0,
-          stdout: JSON.stringify({
-            state: "MERGED",
-            mergedAt: "2026-08-01T00:00:00Z",
-            mergeCommit: { oid: "abc1234" },
-            autoMergeRequest: null,
-          }),
+          stdout: JSON.stringify(
+            restPullBody({
+              state: "MERGED",
+              mergedAt: "2026-08-01T00:00:00Z",
+              mergeCommitOid: "abc1234",
+              autoMerge: false,
+            }),
+          ),
           stderr: "",
         };
       }

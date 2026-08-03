@@ -4,6 +4,7 @@ import { ACCEPTANCE_CRITERIA_RECIPE_COMMENT_MARKER } from "../src/core/executabl
 import type { GhContext } from "../src/runtime/gh.js";
 import type { ExecFn, ExecOutput } from "../src/runtime/exec.js";
 import type { TrustPolicy } from "../src/core/trust-gate.js";
+import { readsIssue, restIssueBody } from "./support/gh-rest-fixtures.js";
 
 // End-to-end coverage of the trust-gated `dev triage` flow against a FAKE `gh`
 // (#751 acceptance #4): trusted ⇒ auto, untrusted ⇒ no-op until summon,
@@ -51,11 +52,12 @@ function fakeGh(
     if (has("view") && has("--json") && args[args.indexOf("--json") + 1] === "author") {
       return Promise.resolve(ok(JSON.stringify({ author: { login: author } })));
     }
-    if (has("view") && has("--json") && args[args.indexOf("--json") + 1] === "labels") {
-      return Promise.resolve(ok(JSON.stringify({ labels: labels.map((name) => ({ name })) })));
-    }
-    if (has("view") && has("--json") && args[args.indexOf("--json") + 1] === "body") {
-      return Promise.resolve(ok(JSON.stringify({ body })));
+    // The label and body reads name one issue, so they arrive over REST (#3094).
+    // The author read stays on gh's own command: REST spells a bot login
+    // `<name>[bot]` where gh normalizes it to `app/<name>`, a difference the
+    // trust check would read as a different actor.
+    if (readsIssue(args)) {
+      return Promise.resolve(ok(JSON.stringify(restIssueBody({ labels, body }))));
     }
     if (has("view") && has("--json") && args[args.indexOf("--json") + 1] === "comments") {
       return Promise.resolve(ok(JSON.stringify({
@@ -240,7 +242,10 @@ describe("runTriage — ready-for-agent acceptance criteria lint", () => {
       repo: "acme/widgets",
       exec: (cmd, argv) => {
         const args = [...argv];
-        if (args.includes("--json") && args[args.indexOf("--json") + 1] === "body") {
+        // The body read is one issue by number, so it addresses REST (#3094) —
+        // the same path the label read uses, which is why this fake refuses the
+        // whole single-object read rather than one `--json` selection of it.
+        if (readsIssue(args)) {
           return Promise.resolve({ code: 1, stdout: "", stderr: "network unavailable" });
         }
         return fake.exec(cmd, argv, { cwd: "/r" });

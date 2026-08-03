@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { planGithubRestRead } from "@reddb-io/github";
 import type {
   TrackerIssue,
   TrackerPort,
@@ -118,10 +119,11 @@ export function createGitHubTrackerAdapter(
       return parseIssueList(stdout);
     },
     async isIssueClosed(issue) {
-      const stdout = await gh(
-        withRepo(["issue", "view", String(issue), "--json", "state"]),
-      );
-      const row = parseJson<GhIssueViewRow>(stdout);
+      // One issue by number is a single-object read, so it goes to REST — the
+      // pool GraphQL's node-point budget was starving while sitting idle
+      // (ADR 0132 decision 4). `packages/github` owns that decision for the
+      // castle and the daemon alike; a second table here would drift.
+      const row = await viewSingleIssue(gh, withRepo, options.repo, issue, ["state"]);
       return row.state === "CLOSED";
     },
     async editIssueLabels(issue, mutation) {
@@ -140,16 +142,11 @@ export function createGitHubTrackerAdapter(
       await gh(withRepo(["issue", "close", String(issue)]));
     },
     async issueReference(issue) {
-      const stdout = await gh(
-        withRepo([
-          "issue",
-          "view",
-          String(issue),
-          "--json",
-          "number,title,url",
-        ]),
-      );
-      const row = parseJson<GhIssueViewRow>(stdout);
+      const row = await viewSingleIssue(gh, withRepo, options.repo, issue, [
+        "number",
+        "title",
+        "url",
+      ]);
       const number = typeof row.number === "number" ? row.number : issue;
       return {
         number,
@@ -175,6 +172,32 @@ export function createGitHubTrackerAdapter(
       });
     },
   };
+}
+
+/**
+ * Read one issue on the surface `@reddb-io/github` routes it to. A field with no
+ * single-request REST projection keeps gh's own `issue view` command — a named
+ * field gap, never the old "everything unclassified is GraphQL" default.
+ */
+async function viewSingleIssue(
+  gh: GhExec,
+  withRepo: (args: string[]) => string[],
+  repo: string | undefined,
+  issue: number,
+  fields: readonly string[],
+): Promise<GhIssueViewRow> {
+  const plan = planGithubRestRead({
+    kind: "issue",
+    number: issue,
+    fields,
+    ...(repo ? { repo } : {}),
+  });
+  if (plan.outcome !== "plan") {
+    const stdout = await gh(withRepo(["issue", "view", String(issue), "--json", fields.join(",")]));
+    return parseJson<GhIssueViewRow>(stdout);
+  }
+  const stdout = await gh([...plan.args]);
+  return plan.decode(stdout) as GhIssueViewRow;
 }
 
 function labelArgs(labels: readonly string[]): string[] {

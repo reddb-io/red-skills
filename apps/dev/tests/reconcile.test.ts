@@ -13,6 +13,7 @@ import {
 import { HOST_RECONCILE_PORTS } from "../src/core/reconcile-ports.js";
 import { DEFAULT_TRIAGE_LABELS } from "../src/core/triage-labels.js";
 import { upsertCurrentBlocker } from "../src/core/blocker-state.js";
+import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
 
 // Everything injected is a fake — no real gh / git / pnpm / fs ever runs. The
 // harness records the side-effect sequence (label edits, comments, close, sweep,
@@ -212,16 +213,19 @@ function harness(opts: HarnessOptions = {}): {
         return { code: 0, stdout: "42\n", stderr: "" };
       }
       // #2986 merge confirmation: this forge merges on the spot, so the probe
-      // that follows the merge command reports a MERGED pull request.
-      if (j.includes("--json state,mergedAt")) {
+      // that follows the merge command reports a MERGED pull request. The probe
+      // is a single-object read, so it arrives over REST (#3094).
+      if (readsPull(argv)) {
         return {
           code: 0,
-          stdout: JSON.stringify({
-            state: "MERGED",
-            mergedAt: "2026-08-01T00:00:00Z",
-            mergeCommit: { oid: "abc1234" },
-            autoMergeRequest: null,
-          }),
+          stdout: JSON.stringify(
+            restPullBody({
+              state: "MERGED",
+              mergedAt: "2026-08-01T00:00:00Z",
+              mergeCommitOid: "abc1234",
+              autoMerge: false,
+            }),
+          ),
           stderr: "",
         };
       }

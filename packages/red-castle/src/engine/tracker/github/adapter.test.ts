@@ -26,12 +26,14 @@ describe("GitHub tracker adapter", () => {
       ) {
         return JSON.stringify({ comments });
       }
-      if (args[0] === "issue" && args[1] === "view") {
+      // One issue by number is a single-object read, so `@reddb-io/github`
+      // routes it to REST and the fake answers a REST body (#3094).
+      if (args[0] === "api" && /\/issues\/\d+$/.test(args[1] ?? "")) {
         return JSON.stringify({
-          state: "CLOSED",
+          state: "closed",
           number: 7,
           title: "Base",
-          url: "https://example.invalid/7",
+          html_url: "https://example.invalid/7",
         });
       }
       if (args[0] === "api") {
@@ -137,7 +139,9 @@ describe("GitHub tracker adapter", () => {
         "--repo",
         "owner/repo",
       ],
-      ["issue", "view", "7", "--json", "state", "--repo", "owner/repo"],
+      // The single-object read addresses REST; the comment listing below has no
+      // single-request REST projection and keeps gh's own command (#3094).
+      ["api", "repos/owner/repo/issues/7"],
       [
         "issue",
         "edit",

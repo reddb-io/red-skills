@@ -183,6 +183,9 @@ importers:
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
+      '@reddb-io/github':
+        specifier: workspace:*
+        version: link:../../packages/github
       '@reddb-io/red-castle':
         specifier: workspace:*
         version: link:../../packages/red-castle
@@ -329,6 +332,9 @@ importers:
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
+      '@reddb-io/github':
+        specifier: workspace:*
+        version: link:../../packages/github
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -450,6 +456,8 @@ importers:
         specifier: 'catalog:'
         version: 2.1.9(@types/node@22.20.1)
 
+  packages/github: {}
+
   packages/red-castle:
     dependencies:
       '@clack/prompts':
@@ -464,6 +472,9 @@ importers:
       '@effect/platform-node':
         specifier: ^0.105.0
         version: 0.105.0(@effect/cluster@0.57.0(@effect/platform@0.95.0(effect@3.22.0))(@effect/rpc@0.74.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/sql@0.50.0(@effect/experimental@0.59.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/workflow@0.17.0(@effect/experimental@0.59.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(@effect/rpc@0.74.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(@effect/rpc@0.74.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/sql@0.50.0(@effect/experimental@0.59.0(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(@effect/platform@0.95.0(effect@3.22.0))(effect@3.22.0))(effect@3.22.0)
+      '@reddb-io/github':
+        specifier: workspace:*
+        version: link:../github
       '@reddb-io/toon':
         specifier: 'catalog:'
         version: 0.13.0

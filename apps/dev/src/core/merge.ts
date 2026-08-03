@@ -15,6 +15,7 @@
 //                branch, open or reuse the PR, `gh pr merge --merge`), then
 //                fast-forward local <target> to the merge commit.
 
+import { planGithubRestRead } from "@reddb-io/github";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import {
   classifyDirtyTree,
@@ -1275,21 +1276,36 @@ interface QueuedPrView {
   observed: boolean;
 }
 
-/** Parse `gh pr view --json state,mergedAt,mergeCommit,autoMergeRequest,mergeStateStatus,mergeable`.
- * Tolerant: an unreadable payload yields `observed: false` so the caller polls again
+/** The six fields the queued-PR poll reads. Every one has a single-request REST
+ * projection, which is why this poll — run once per interval per landing — routes
+ * to REST rather than to the node-point pool (ADR 0132 decision 4, #3094). */
+const QUEUED_PR_FIELDS = [
+  "state",
+  "mergedAt",
+  "mergeCommit",
+  "autoMergeRequest",
+  "mergeStateStatus",
+  "mergeable",
+] as const;
+
+/** An unreadable payload yields `observed: false` so the caller polls again
  * rather than inventing a verdict from a failed probe. */
-export function parseQueuedPrView(stdout: string): QueuedPrView {
-  const absent: QueuedPrView = {
-    merged: false,
-    state: "",
-    autoMerge: false,
-    conflicted: false,
-    observed: false,
-  };
-  const text = stdout.trim();
-  if (text === "") return absent;
-  try {
-    const parsed: unknown = JSON.parse(text);
+const ABSENT_QUEUED_PR_VIEW: QueuedPrView = {
+  merged: false,
+  state: "",
+  autoMerge: false,
+  conflicted: false,
+  observed: false,
+};
+
+/**
+ * The queued-PR verdict from an ALREADY-PROJECTED row, so the REST route and the
+ * GraphQL route share one reading of the same six fields rather than growing a
+ * second interpretation of `mergeable` and `mergeStateStatus`.
+ */
+export function queuedPrViewFrom(parsed: unknown): QueuedPrView {
+  const absent = ABSENT_QUEUED_PR_VIEW;
+  {
     if (typeof parsed !== "object" || parsed === null) return absent;
     const row = parsed as {
       state?: unknown;
@@ -1321,8 +1337,45 @@ export function parseQueuedPrView(stdout: string): QueuedPrView {
       conflicted: mergeable === "CONFLICTING" || (mergeable === "" && mergeStateStatus === "DIRTY"),
       observed: true,
     };
+  }
+}
+
+/** {@link queuedPrViewFrom} over raw gh stdout. */
+export function parseQueuedPrView(stdout: string): QueuedPrView {
+  const text = stdout.trim();
+  if (text === "") return ABSENT_QUEUED_PR_VIEW;
+  try {
+    return queuedPrViewFrom(JSON.parse(text));
   } catch {
-    return absent;
+    return ABSENT_QUEUED_PR_VIEW;
+  }
+}
+
+/**
+ * Read the queued pull request on the surface the router chose. One pull request
+ * by number is a single-object read, so it goes to REST — the pool that sat at
+ * `4891/5000` while the node-point pool this poll used to draw was at `0/5000`.
+ * A field gap would put it back on gh's own command; today there is none, and
+ * {@link QUEUED_PR_FIELDS} is pinned so a new field cannot quietly reopen one.
+ */
+async function readQueuedPrView(
+  exec: Exec,
+  repo: string,
+  prNumber: number,
+  probeTimeoutMs: number | undefined,
+): Promise<QueuedPrView> {
+  const plan = planGithubRestRead({ kind: "pr", number: prNumber, fields: QUEUED_PR_FIELDS, repo });
+  const args =
+    plan.outcome === "plan"
+      ? ["gh", "-R", repo, ...plan.args]
+      : ["gh", "-R", repo, "pr", "view", String(prNumber), "--json", QUEUED_PR_FIELDS.join(",")];
+  const res = await boundedProbe(() => exec(args), probeTimeoutMs);
+  if (res.code !== 0) return ABSENT_QUEUED_PR_VIEW;
+  if (plan.outcome !== "plan") return parseQueuedPrView(res.stdout);
+  try {
+    return queuedPrViewFrom(plan.decode(res.stdout));
+  } catch {
+    return ABSENT_QUEUED_PR_VIEW;
   }
 }
 
@@ -1366,16 +1419,8 @@ export async function waitForQueuedMerge(
       intervalMs,
       ...(input.probeTimeoutMs ? { probeTimeoutMs: input.probeTimeoutMs } : {}),
     });
-    const res = await boundedProbe(
-      () =>
-        exec([
-          "gh", "-R", repo, "pr", "view", String(prNumber),
-          "--json", "state,mergedAt,mergeCommit,autoMergeRequest,mergeStateStatus,mergeable",
-        ]),
-      input.probeTimeoutMs,
-    );
+    const view = await readQueuedPrView(exec, repo, prNumber, input.probeTimeoutMs);
     const polls = attempt + 1;
-    const view = res.code === 0 ? parseQueuedPrView(res.stdout) : parseQueuedPrView("");
     if (view.observed) {
       if (view.merged) {
         return { outcome: "merged", ...(view.mergeSha ? { mergeSha: view.mergeSha } : {}), polls };

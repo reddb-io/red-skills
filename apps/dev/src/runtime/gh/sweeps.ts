@@ -9,28 +9,25 @@ import {
 import type { IssueOpenState } from "../../core/reclaim.js";
 import type { ReconcileSweepCandidate, UnblockCandidate } from "../../core/boot-sweep.js";
 import { repoArgs, runGh, type GhContext } from "./common.js";
+import { readSingleObject } from "./single-object.js";
 
 export async function orphanState(
   ctx: GhContext,
   issue: number,
 ): Promise<{ ghOk: boolean; state: IssueOpenState; label: string | null; envelopePosted: boolean }> {
-  const r = await runGh(ctx, 
-    ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,labels"],
-  );
-  if (r.code !== 0) return { ghOk: false, state: "OPEN", label: null, envelopePosted: false };
-  try {
-    const parsed = JSON.parse(r.stdout) as { state?: string; labels?: Array<{ name?: string }> };
-    const labels = Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [];
-    // afk.sh checks ready-for-human first, then running.
-    const label = labels.includes(LABEL_HUMAN)
-      ? LABEL_HUMAN
-      : labels.includes(LABEL_RUNNING)
-        ? LABEL_RUNNING
-        : null;
-    return { ghOk: true, state: String(parsed.state ?? "OPEN"), label, envelopePosted: false };
-  } catch {
-    return { ghOk: false, state: "OPEN", label: null, envelopePosted: false };
-  }
+  // One issue by number: the router sends it to REST (ADR 0132 decision 4). This
+  // is the poll the drain runs per Worker per iteration.
+  const read = await readSingleObject(ctx, "issue", issue, ["state", "labels"]);
+  if (!read.row) return { ghOk: false, state: "OPEN", label: null, envelopePosted: false };
+  const parsed = read.row as { state?: string; labels?: Array<{ name?: string }> };
+  const labels = Array.isArray(parsed.labels) ? parsed.labels.map((l) => String(l.name ?? "")) : [];
+  // afk.sh checks ready-for-human first, then running.
+  const label = labels.includes(LABEL_HUMAN)
+    ? LABEL_HUMAN
+    : labels.includes(LABEL_RUNNING)
+      ? LABEL_RUNNING
+      : null;
+  return { ghOk: true, state: String(parsed.state ?? "OPEN"), label, envelopePosted: false };
 }
 
 /** Running-supervisor crash-reconcile lookup (#815): whether a dead worker's
@@ -47,10 +44,12 @@ export async function crashedClaimState(
   ctx: GhContext,
   issue: number,
 ): Promise<{ ghOk: boolean; stillRunning: boolean; envelopePosted: boolean; labels?: string[] }> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state,labels,comments"]);
-  if (r.code !== 0) return { ghOk: false, stillRunning: false, envelopePosted: false };
-  try {
-    const parsed = JSON.parse(r.stdout) as {
+  // `comments` is a COUNT in REST and a LIST here, so this one read keeps gh's
+  // GraphQL command by declared field gap rather than by default.
+  const read = await readSingleObject(ctx, "issue", issue, ["state", "labels", "comments"]);
+  if (!read.row) return { ghOk: false, stillRunning: false, envelopePosted: false };
+  {
+    const parsed = read.row as {
       state?: string;
       labels?: Array<{ name?: string }>;
       comments?: Array<{ body?: string }>;
@@ -61,21 +60,15 @@ export async function crashedClaimState(
       ? parsed.comments.some((c) => String(c.body ?? "").includes("data-attempt-status"))
       : false;
     return { ghOk: true, stillRunning, envelopePosted, labels };
-  } catch {
-    return { ghOk: false, stillRunning: false, envelopePosted: false };
   }
 }
 
 /** Branch-cleanup/boot blocker-state lookup: gh issue view --json state → the
  * raw state string ("OPEN" | "CLOSED"), or undefined on a 404/transient miss. */
 export async function blockerState(ctx: GhContext, issue: number): Promise<string | undefined> {
-  const r = await runGh(ctx, ["issue", "view", String(issue), ...repoArgs(ctx), "--json", "state"]);
-  if (r.code !== 0) return undefined;
-  try {
-    return String((JSON.parse(r.stdout) as { state?: string }).state ?? "") || undefined;
-  } catch {
-    return undefined;
-  }
+  const read = await readSingleObject(ctx, "issue", issue, ["state"]);
+  if (!read.row) return undefined;
+  return String((read.row as { state?: string }).state ?? "") || undefined;
 }
 
 export async function listUnblockCandidates(ctx: GhContext): Promise<UnblockCandidate[]> {
