@@ -37,10 +37,15 @@ import type { Runner } from "../types/runner.js";
  * `config_get` in the shell — callers compare against literals like "false".
  */
 
+import {
+  DEFAULT_FLEET_WIDTH_CONFIG,
+  FLEET_WIDTH_CONFIG_KEY,
+} from "@reddb-io/shared/default-fleet-width.js";
+
 /** Documented v1 defaults — the only way to expand the schema. */
 export const CONFIG_DEFAULTS = {
   "afk.default_runner": "claude",
-  "afk.fleet.target": "2",
+  [FLEET_WIDTH_CONFIG_KEY]: DEFAULT_FLEET_WIDTH_CONFIG,
   // Fleet cgroup isolation (#2697). On Linux with a systemd `--user` session the
   // launcher runs the supervisor inside a transient `red-fleet-<name>.scope`, so
   // `systemd-oomd` charges the fleet's memory to the fleet instead of to the
