@@ -290,6 +290,12 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     isolated,
     ...(plan.unit != null ? { unit: plan.unit } : {}),
     ...(spec.budget != null ? { budget: spec.budget } : {}),
+    // What the placement really applied, beside what the client declared. The two
+    // are recorded separately because they are charged separately: admission
+    // charges the declaration, and the host accounting totals this (#3080). A
+    // Worker carrying neither records nothing rather than an empty object, so
+    // "declared no budget" stays distinguishable from "applied an empty one".
+    ...(Object.keys(plan.budget).length > 0 ? { applied_budget: plan.budget } : {}),
     // Carried for the Worker's whole life, beside the budget and for the same
     // reason: a ceiling stated once at launch is a ceiling no later reader —
     // the sampling floor included — can ask for.

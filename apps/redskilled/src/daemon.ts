@@ -985,6 +985,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       startedAt,
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
       workers: [...workers.values()],
+      // The ceiling the accounting is judged against, from the one place that
+      // resolved it. Without it the totals are a sum nobody compared to anything,
+      // which is how a host carrying 2× its ceiling reported no over-commitment.
+      hostCeilingBytes: ceiling.memory_bytes,
       registrations: [...registrations.values()],
       // The ones that stopped, beside the ones that stand: a project missing from
       // the set is either one that never registered or one whose drain ended, and
@@ -1750,7 +1754,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     lastReading = rss;
     lastSampledAt = clock();
     recordCpuReading(reading.cpu_seconds, lastSampledAt);
-    const { terminations } = evaluateMemoryBudgets({ workers: live, rss });
+    recordRssSources(reading.sources);
+    const { terminations } = evaluateMemoryBudgets({ workers: live, rss, ...(reading.sources == null ? {} : { sources: reading.sources }) });
     const done: RedskilledBudgetTermination[] = [];
     for (const termination of terminations) {
       if (await killWorkerOverBudget(termination.worker_id, termination.reason)) done.push(termination);
@@ -1772,6 +1777,23 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       const held = workers.get(workerId);
       if (!held) continue;
       workers.set(workerId, { ...held, cpu: { cpu_seconds: seconds, sampled_at: sampledAt } });
+    }
+  }
+
+  /**
+   * Carry which instrument answered onto the Workers it answered for.
+   *
+   * The number and its provenance travel together for the whole reason the
+   * provenance exists: a kernel charge and a ppid walk differ by a factor a
+   * reader cannot spot from the value alone, and one of them once read 377×
+   * low (#3080). A sampler that named no instrument leaves the Worker's last
+   * source standing rather than asserting one.
+   */
+  function recordRssSources(sources: RedskilledTreeReading["sources"]): void {
+    for (const [workerId, source] of Object.entries(sources ?? {})) {
+      const held = workers.get(workerId);
+      if (!held) continue;
+      workers.set(workerId, { ...held, rss_source: source });
     }
   }
 

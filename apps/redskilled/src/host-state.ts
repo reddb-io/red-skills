@@ -26,6 +26,17 @@ import type { RedskilledMajorHold, RedskilledReplacementHoldReason } from "./sel
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
 /**
+ * Which instrument produced an RSS reading.
+ *
+ * `cgroup` is the kernel's own charge for the unit and cannot miss a descendant;
+ * `process-tree` is a ppid walk over the host's process table and misses anything
+ * that reparented out of the tree. Named as a value rather than left implicit so
+ * a surface can show the weaker guarantee instead of presenting both as one
+ * number (#3080).
+ */
+export type RedskilledRssSource = "cgroup" | "process-tree";
+
+/**
  * One Worker process, as the daemon sees it.
  *
  * `project_label` and `workspace_path` are the client's own opaque strings,
@@ -61,6 +72,26 @@ export interface RedskilledWorkerView {
    * could state once and never again after a restart.
    */
   readonly budget?: RedskilledWorkerBudget;
+  /**
+   * The budget the placement really handed the kernel, recorded at launch.
+   *
+   * Distinct from `budget` because they answer different questions and a single
+   * field made one of them unanswerable (#3080): `budget` is what the CLIENT
+   * declared and is what admission charges, while this is what the unit CARRIES
+   * — the `--property=MemoryMax=…` systemd was actually given, derived ceiling
+   * included. The host accounting totals THIS, so the number on screen is the
+   * number the machine is holding.
+   */
+  readonly applied_budget?: RedskilledWorkerBudget;
+  /**
+   * Where this Worker's last RSS reading came from — the kernel, or a walk.
+   *
+   * Present because the two carry different guarantees and the weaker one must
+   * not pass for the stronger: a cgroup's `memory.current` cannot miss a
+   * descendant by construction, while a ppid walk misses anything that reparented
+   * away, which is how a 5.38 GiB tree once reported 14.6M (#3080).
+   */
+  readonly rss_source?: RedskilledRssSource;
   /**
    * The memory ceiling this Worker's scope carries, however it was arrived at.
    *
@@ -276,6 +307,14 @@ export interface BuildHostStateInput {
   /** The scope block; absent leaves the document without one rather than inventing it. */
   readonly scope?: RedskilledScopeState;
   readonly workers?: readonly RedskilledWorkerView[];
+  /**
+   * The host memory ceiling the accounting is judged against; `null` is unbounded.
+   *
+   * Absent leaves the totals unjudged rather than judged against a guess — but a
+   * daemon that HAS a ceiling must pass it, because an over-commitment nobody
+   * states is the promise this document exists to keep (#3080).
+   */
+  readonly hostCeilingBytes?: number | null;
   /** The registrations the daemon holds; absent is a host with none, not an error. */
   readonly registrations?: readonly RedskilledProjectRegistration[];
   /** The ones it dropped, in the order it dropped them; absent when none lapsed. */
@@ -339,7 +378,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     // block at all, so a reader never has to tell an empty list from a daemon too
     // old to keep one.
     ...(input.lapses == null || input.lapses.length === 0 ? {} : { lapsed_registrations: [...input.lapses] }),
-    budget_accounting: buildBudgetAccounting(workers),
+    budget_accounting: buildBudgetAccounting(workers, { hostCeilingBytes: input.hostCeilingBytes ?? null }),
     upgrade: buildUpgradeState(input),
   };
 }

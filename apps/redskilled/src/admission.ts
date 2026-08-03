@@ -270,8 +270,20 @@ export function deriveWorkerScopeCeiling(input: {
         "the daemon's RSS sampling floor is the only remaining ceiling",
     };
   }
+  // **With no slot count, the derived ceiling is a per-Worker wall and NOT
+  // memory the host sets aside, and it says so.** The arithmetic is unchanged — a
+  // share cannot be divided by a number nobody stated — but the promise it was
+  // silently making could not be kept: two Workers each derived the whole
+  // ceiling, so the host carried 2× what it admits against while reporting
+  // nothing (#3080). Narrowing the share instead would be worse, not better: the
+  // second Worker would derive zero and fall through to `memory_max: null`,
+  // trading a stated over-commitment for a Worker with no kernel wall at all.
+  // So the host states the exposure here, and `buildBudgetAccounting` totals it.
   const from = slots == null
-    ? `the headroom under this host's memory ceiling of ${input.ceiling.memory_bytes} bytes`
+    ? `the headroom under this host's memory ceiling of ${input.ceiling.memory_bytes} bytes; this host declares no ` +
+      `Worker slot count (${REDSKILLED_WORKER_CEILING_ENV} is unset), so this ceiling is a per-Worker wall and not ` +
+      "memory the host sets aside — N Workers may carry N such walls, and the host ceiling is not enforced " +
+      "host-wide. Declare a slot count to make it divide into shares that sum to it"
     : `this host's memory ceiling of ${input.ceiling.memory_bytes} bytes shared across its ${slots} Worker slot(s)`;
   return {
     memory_max: String(bytes),
