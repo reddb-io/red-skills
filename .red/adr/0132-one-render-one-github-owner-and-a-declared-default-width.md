@@ -67,3 +67,34 @@ What changed is not the argument but the scope of the ask. Decision 5 had alread
 `packages/github` survives with a smaller job. It is no longer a table two processes consult; it is the daemon's own routing, and the castle's side becomes a client of the socket. Decision 4's cardinality principle is unchanged — it decides which API the daemon reaches for.
 
 **The cost, stated so it is not discovered later: fail-closed now covers reading.** ADR 0130 rule 6 means no daemon, no Worker; after this it also means no daemon, no issue read. A Worker that could previously answer "what does this ticket say" from its own `gh` call now cannot. That is a real widening of the unavailability surface, accepted because a token nobody accounts for is what spent three hours of this machine's quota in one afternoon.
+
+## Amendment 2 — ask the authoritative source; `packages/github` is a budget-aware client, not a router
+
+Decision 5 put the quota ledger on the daemon and described it as a total the daemon accumulates. **That ledger would have been born blind**, and the reason is worth stating plainly because it is the third instance of one mistake.
+
+The daemon is host-scoped by construction — one per machine, and ADR 0130 deliberately extinguished the cross-host federated view. GitHub's quota is per **token**, therefore cross-host. An operator running four machines on one token would have four daemons each counting its own calls and each reporting three quarters of a fiction: "I have spent 2000 of 5000" while the token was already at zero. Measured today at the moment three of four machines were switched off, which is the only reason the numbers looked sane.
+
+**The fix is not federation. It is to stop counting and start asking.** `GET /rate_limit` returns the true remaining budget for the whole token across every machine, and it **costs nothing**: measured here, six consecutive calls moved `core` by zero. The daemon does not need to know the operator's other machines exist — it sees their effect in the balance.
+
+This generalizes into the rule these three defects share:
+
+> **When an authoritative source exists, ask it. Derive only when none exists, and say that you are deriving.**
+
+`#3080` derived host memory from a per-process RSS walk while the cgroup held the exact number: wrong by 377×. `#3092` derived "the daemon is absent" from its own failed reach while the process was alive and listening. A locally-accumulated quota ledger would have derived a token's balance from one host's share. Each read as a fact about the world and was a fact about the observer's scope.
+
+### What `packages/github` owns
+
+It is not a routing table. It is the one budget-aware client every GitHub call goes through, and it owns four things:
+
+1. **Surface routing by cardinality** (decision 4, unchanged): single-object read → REST, multi-node listing or multi-repository aggregate → GraphQL. The two pools are separately budgeted, and today's measurement is the argument — two healthy Workers spent 2200 GraphQL points/hour while `core` sat at `5000/5000`, **completely untouched**. Half the account's available budget was reachable and unused.
+2. **One aliased query spanning every registered repository**, which ADR 0130 already decided and nothing built. Cost becomes flat in the number of projects rather than linear — in *requests*; the GraphQL pool is budgeted in node points, so an aliased query that returns many nodes is cheaper in requests and not free in points, and the two must not be conflated.
+3. **A cache with the age attached.** Counts, issue bodies and PR states are read far more often than they change. The cached value travels with its own staleness, as everything else in this system does, so a consumer renders age rather than presenting a stale count as current.
+4. **An adaptive balance poll.** Because asking is free, the cadence is a function of the balance rather than a constant: rare above half, tightening as the balance falls, continuous once spent — the only event that then matters is the reset. A fixed cadence forces a choice between being slow at the edge and wasting polls in the middle; an adaptive one does not choose. **One poller, the daemon's, never a check before each call**: that would double the request count and put a synchronous round trip in every hot path, which is ADR 0084's lesson paid twice.
+
+### Degradation becomes graduated
+
+With an authoritative balance in hand, decision 6's breaker stops being reactive. A reserved band — a stated fraction of the budget — is kept for operations that must not fail: the claim, a landing, the closing comment of a Worker that has finished. Convenience reads are refused when the balance enters that band, while essential work continues.
+
+So "semi-offline" is no longer a mode entered by discovering a 403. It is a posture entered deliberately, at a threshold an operator can see, with the cheap things degrading first.
+
+**A caveat, stated rather than assumed:** `GET /rate_limit` is free of *primary* quota. GitHub also enforces secondary limits on request rate and concurrency that apply to every endpoint. The adaptive cadence must stay a cadence — seconds, not a poll per operation — and that ceiling was deliberately not probed here.
