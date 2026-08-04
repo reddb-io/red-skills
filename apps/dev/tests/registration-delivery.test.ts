@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  renewRegistrationDelivery,
   planRegistrationDeliveryRenewal,
   registrationBundleVersion,
   registrationDeliveryLanes,
@@ -77,5 +78,21 @@ describe("registration delivery reconciliation", () => {
     expect(plan.action).toBe("renew");
     expect(plan.launch).toBeUndefined();
   });
-});
 
+  it("makes the published comparison part of the ordinary renewal", async () => {
+    const calls: string[] = [];
+    const result = await renewRegistrationDelivery({
+      port: {
+        registration: async () => ({ ...registration }),
+        renew: async () => { calls.push("renew"); },
+        restateLaunch: async (launch) => { calls.push(`repoint:${launch.argv[1]}`); },
+      },
+      publishedVersion: async () => PUBLISHED,
+      publishedArgv: (version) => ["/usr/bin/node", `/cache/dev-${version}.bundle.min.mjs`],
+      pluginCacheVersion: () => "3.3.21",
+    });
+
+    expect(result?.action).toBe("repoint");
+    expect(calls).toEqual([`repoint:/cache/dev-${PUBLISHED}.bundle.min.mjs`]);
+  });
+});
