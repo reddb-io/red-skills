@@ -519,6 +519,7 @@ export async function buildBootDeps(
       reapProcessGroup: (pgid) => killTreeAndWait(pgid),
     },
     gh: {
+      ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
       editLabels: async (issue, remove, add) => {
         await editLabelsWithStatuslineCache(
           countCachePath,
