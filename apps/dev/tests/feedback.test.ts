@@ -131,6 +131,36 @@ describe("scope resolution", () => {
 });
 
 describe("runFeedback", () => {
+  it("runs only operator-declared feedback commands when the discovered harness is replaced (#3276)", async () => {
+    const layout = fakeLayout({
+      packages: [".", "apps/dev"],
+      scripts: { ".": ["test", "typecheck", "lint", "build"], "apps/dev": ["test"] },
+    });
+    const { exec, calls } = fakeExec();
+    const shellCalls: Array<{ command: string; cwd: string }> = [];
+
+    const result = await runFeedback(exec, {
+      worktree: "/wt",
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(),
+      commands: ["pnpm -C apps/dev exec tsc --noEmit"],
+      commandExec: async ({ command, cwd }) => {
+        shellCalls.push({ command, cwd });
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(calls).toEqual([]);
+    expect(shellCalls).toEqual([
+      { command: "pnpm -C apps/dev exec tsc --noEmit", cwd: "/wt" },
+    ]);
+    expect(result.checks.map((check) => check.name)).toEqual([
+      "feedback:pnpm -C apps/dev exec tsc --noEmit",
+    ]);
+  });
+
   it("runs declared scripts via the exact pnpm -C argv and passes", async () => {
     const layout = fakeLayout({
       packages: ["plugins/memory"],

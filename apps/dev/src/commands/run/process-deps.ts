@@ -14,7 +14,7 @@ import * as fsx from "../../runtime/fs.js";
 import type { GhContext } from "../../runtime/gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, readPostWorkerFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds, resolveMergeQueueTimeoutSeconds } from "../../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readFeedbackCommands, readPostWorkerFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds, resolveMergeQueueTimeoutSeconds } from "../../core/config.js";
 import {
   makeExtractAdversarialReview,
   resolveAdversarialReviewConfig,
@@ -312,6 +312,7 @@ export function buildProcessDeps({
     // Backpressure gate (#430, PRD #429): operator-declared `afk.backpressure`
     // shell commands run against the same worker-branch checkout after feedback.
     backpressure: feedback.backpressure,
+    feedbackCommands: readFeedbackCommands(config),
     backpressureCommands: mergedBackpressureCommands,
     outputShaping,
     ...buildReviewPorts(ghCtx),

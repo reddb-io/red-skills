@@ -529,7 +529,10 @@ export async function processIssue(
     comments,
     prevFailureContext,
     specRef: input.specRef,
-    mergeGateCommands: deps.backpressureCommands ?? [],
+    mergeGateCommands: [
+      ...(deps.feedbackCommands ?? []),
+      ...(deps.backpressureCommands ?? []),
+    ],
     outputShaping,
     resumeFromBranch: resumeInstruction,
     enrichment,
@@ -1493,6 +1496,9 @@ export async function processIssue(
       baselineWorktree: base,
       validationScope,
       resourceBudget: deps.validationResourceBudget,
+      ...(deps.feedbackCommands === undefined
+        ? {}
+        : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
     });
     markProcessSafetyStep("post-agent:feedback-done");
     gateStages.push({ stage: "feedback", ok: feedback.ok });
@@ -1762,6 +1768,9 @@ export async function processIssue(
           baselineWorktree: base,
           validationScope: lastValidationScope,
           resourceBudget: deps.validationResourceBudget,
+          ...(deps.feedbackCommands === undefined
+            ? {}
+            : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
         });
         if (!mergedFeedback.ok) {
           validationSidecar = mergedFeedback.sidecar;

@@ -133,6 +133,9 @@ afk:
   sandbox: none
   max_iterations: 12      # override the default re-invocation ceiling here
   statusline_cache_ttl: 180   # statusline gh/git cache TTL (seconds); flat key, NOT under afk.statusline
+  feedback:
+    commands:             # declared → replaces discovery; [] disables locally
+      - pnpm -C apps/dev exec tsc --noEmit
   backpressure:           # extra pre-merge gate, runs after the feedback gate
     - npm run test
     - npm run lint
@@ -153,6 +156,12 @@ afk:
 
 `RED_AFK_IDLE_TIMEOUT_S` is env-only (no `afk.*` config key); `sandbox`, `max_iterations`, and `statusline_cache_ttl` resolve env > config > default. The three runtime bounds — silence (`idleTimeoutSeconds`), re-invocation count (`maxIterations`), and the fixed no-commit-progress worker guard — are detailed under *Attempt Completion & Termination Bounds*.
 
+### Feedback command authority
+
+`plugins.dev.afk.feedback.commands` declares exactly what AFK runs for the feedback stage. When present, it **replaces** package-script discovery rather than extending it: the ordered shell strings run verbatim through `sh -c` at the validation Worktree root, and the discovered `test`/`typecheck`/`lint`/`build`, workspace typecheck, and invariant suites run nowhere locally. `commands: []` explicitly disables the local feedback stage. When the key is absent, discovery is byte-for-byte unchanged.
+
+Narrowing local feedback moves the full-suite verdict to CI. That is sound only when branch protection requires the merge queue's `test` check; `/red-doctor` warns when it sees a replacement without that required check. Every declared feedback command is also placed verbatim in the Worker's `<merge-gate>` contract, before any additive backpressure commands, so the Worker runs the same command and must not invent a broader suite.
+
 ### Backpressure gate
 
 `afk.backpressure` is an operator-declared, ordered list of shell commands that **supplements** the auto-derived feedback gate (it does not replace it). On a successful DONE attempt — after the scope-derived `test`/`typecheck`/`lint`/`build` feedback gate passes, before landing — AFK runs each backpressure command in order (`sh -c <command>`) against a checkout of the worker branch. If **any** command exits non-zero the merge is blocked and the issue is parked to `ready-for-human` with `blocked:validation`, exactly like a feedback failure: the failing command and its output tail land in the terminal envelope and in the `red.afk.validation.v1` validation sidecar (records named `backpressure:<command>`). An absent or empty block is a no-op (today's behaviour). The namespaced `plugins.dev.afk.backpressure` location is honoured with the legacy bare `afk.backpressure` fallback (ADR 0042).
@@ -161,7 +170,7 @@ afk:
 
 For older undeclared repos only, AFK retains a hardened compatibility fallback: `pnpm install --frozen-lockfile` with `LEFTHOOK=0` and `HUSKY=0`. If stderr still names the custom-hooksPath refusal, AFK retries once with `--ignore-scripts`; a successful retry is recorded on each `red.afk.validation.v1` record as setup that skipped lifecycle scripts. Any unrelated install failure remains fatal without retry. `/red-doctor` reports an undeclared or mismatched setup so the fallback is migration scaffolding, not permanent guessed policy.
 
-**This is how maintainers tell an inner agent the exact gate it must satisfy — without ad-hoc `-r` retry guidance.** When `afk.backpressure` is set, every inner-agent handoff carries a `<merge-gate>` section listing the configured commands verbatim, and the agent's exit-protocol completion contract instructs it to run and pass those commands *before* emitting `<promise>DONE</promise>` (issue #849). The contract distinguishes two kinds of check: the **touched-package confidence checks** the agent runs while developing (the package's own `test`/`typecheck`/`lint`/`build`) versus the **binding merge gate** the orchestrator enforces after DONE (these backpressure commands plus `drift-guard`). So for repos with a broader gate than any single touched package — `cargo fmt --all -- --check`, a workspace-wide `cargo clippy`, an integration smoke — declare it once under `afk.backpressure` and the agent sees and satisfies it on the first attempt instead of bouncing as `blocked:validation`. On an automatic re-queue, the prior failure's summary remains visible through `<prev-failure-context>`, so the next agent can target the real blocker. The agent is told **not** to re-run an unbounded full repository suite after its final commit; the listed gate commands are the contract.
+**This is how maintainers tell an inner agent the exact gate it must satisfy — without ad-hoc `-r` retry guidance.** When `feedback.commands` or `afk.backpressure` is set, every inner-agent handoff carries a `<merge-gate>` section listing the configured commands verbatim, and the agent's exit-protocol completion contract instructs it to run and pass those commands *before* emitting `<promise>DONE</promise>` (issues #849 and #3276). The contract distinguishes two kinds of check: the **touched-package confidence checks** the agent runs while developing versus the **binding merge gate** the orchestrator enforces after DONE. The declared feedback list may intentionally be narrower than discovery; backpressure remains additive. On an automatic re-queue, the prior failure's summary remains visible through `<prev-failure-context>`, so the next agent can target the real blocker. The agent is told **not** to re-run an unbounded full repository suite after its final commit; the listed gate commands are the contract.
 
 ### HUMAN-ONLY ticket types
 

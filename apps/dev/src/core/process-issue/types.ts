@@ -298,6 +298,8 @@ export interface ProcessIssueDeps {
   layout: PackageLayout;
   graph?: WorkspaceGraph;
   backpressure?: BackpressureExec;
+  /** Declared replacement for feedback script discovery; `undefined` preserves discovery. */
+  feedbackCommands?: readonly string[];
   backpressureCommands?: readonly string[];
   outputShaping?: OutputShapingConfig;
   postBackpressureReview?: (pr: number, body: string) => Promise<void>;

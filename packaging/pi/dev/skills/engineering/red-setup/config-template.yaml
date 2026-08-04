@@ -157,6 +157,13 @@ host_binaries:
 #                                 # config keeps tracking stable. Canary promotion
 #                                 # moves the npm dist-tag (scripts/afk-promote-channel.sh),
 #                                 # gated on the proof-by-drain telemetry.
+#   feedback:
+#     commands:                   # optional replacement for discovered
+#       - pnpm typecheck          # test/typecheck/lint/build feedback. Commands
+#                                 # run verbatim; `commands: []` disables local
+#                                 # feedback. Narrowing is safe only when branch
+#                                 # protection requires the merge queue's test
+#                                 # check; /red-doctor verifies that protection.
 #   backpressure:                 # extra merge gates run on every successful
 #     - npm run test              # iteration (DONE + salvaged no-sentinel), after
 #     - npm run lint              # the built-in feedback gate. Any non-zero exit

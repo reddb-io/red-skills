@@ -147,7 +147,7 @@ export interface GoDodSpec {
   verifyCommand?: string;
   /** Optional per-dispatch steering block forwarded to the inner agent prompt. */
   request?: string;
-  /** True when the repo already has a configured harness/backpressure gate. */
+  /** True when the repo already declares feedback commands or backpressure. */
   hasHarness?: boolean;
   /** Territory tags stamped on the minted issue as `tag:<value>` labels (bare
    * values). Missing labels are auto-created before the mint. */
@@ -177,7 +177,7 @@ export function buildDisposableIssue(demand: string, dodSpec: GoDodSpec = {}): D
       ? `Ephemeral inline check for this dispatch: \`${verifyCommand}\`.`
       : dodSpec.hasHarness === false
         ? "No configured harness/backpressure was approved for this dispatch; run best-effort under the tightened iteration cap."
-        : "Configured `afk.backpressure` plus the auto-derived feedback gate (`test`/`typecheck`/`lint`/`build`).";
+        : "Configured feedback/backpressure gate; the Worker's `<merge-gate>` is the exact local validation contract.";
   const body = [
     dod ? "## Task" : "## Demand",
     "",

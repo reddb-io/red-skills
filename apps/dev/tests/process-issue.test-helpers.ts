@@ -95,6 +95,8 @@ export interface Trace {
   baseMovementCalls: Array<{ baseRef: string; sinceSha: string }>;
   /** Raw pnpm argv vectors emitted by the feedback/backpressure fakes. */
   pnpmArgs: string[][];
+  /** Operator-declared shell commands emitted by feedback/backpressure stages. */
+  shellCommands: string[];
   /** Handoff bodies written before the sandcastle run. */
   handoffs: Array<{ path: string; content: string }>;
   /** Fresh-branch preparation calls before sandcastle can reuse a worktree. */
@@ -150,6 +152,8 @@ export interface HarnessOptions {
   /** Operator-declared backpressure commands (afk.backpressure, #430). When set,
    * the backpressure gate runs after feedback against the worker branch. */
   backpressureCommands?: string[];
+  /** Operator-declared replacement for the discovered feedback harness (#3276). */
+  feedbackCommands?: string[];
   outputShaping?: { terseSteering: boolean };
   /** When false, the backpressure exec returns a non-zero code (a failing gate).
    * Defaults to passing. Only consulted when `backpressureCommands` is set. */
@@ -347,6 +351,7 @@ export function harness(opts: HarnessOptions = {}): {
     changedFileCalls: [],
     baseMovementCalls: [],
     pnpmArgs: [],
+    shellCommands: [],
     handoffs: [],
     freshWorkerBranchCalls: [],
     issueTrustCalls: [],
@@ -676,14 +681,18 @@ export function harness(opts: HarnessOptions = {}): {
     },
     // Backpressure gate (#430): a fake shell exec that fails when opted out. The
     // failing-command output is captured so the envelope/sidecar carry the tail.
-    backpressure: async ({ command }) => ({
-      code: opts.backpressureOk === false ? 1 : 0,
-      stdout:
-        opts.backpressureOk === false && opts.backpressureStderr === undefined
-          ? `${command} exploded\nstack trace here\n`
-          : "",
-      stderr: opts.backpressureOk === false ? (opts.backpressureStderr ?? "") : "",
-    }),
+    backpressure: async ({ command }) => {
+      trace.shellCommands.push(command);
+      return {
+        code: opts.backpressureOk === false ? 1 : 0,
+        stdout:
+          opts.backpressureOk === false && opts.backpressureStderr === undefined
+            ? `${command} exploded\nstack trace here\n`
+            : "",
+        stderr: opts.backpressureOk === false ? (opts.backpressureStderr ?? "") : "",
+      };
+    },
+    feedbackCommands: opts.feedbackCommands,
     backpressureCommands: opts.backpressureCommands,
     outputShaping: opts.outputShaping,
     // Non-blocking backpressure evidence review seam (#1279): record every

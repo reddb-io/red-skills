@@ -41,6 +41,7 @@ const OFFLINE: DoctorClassifierOptions = {
   readToolVersion: async () => undefined,
   readMarketplaceList: async () => ({ present: false }),
   readPorcelainStatus: async () => "",
+  readRequiredStatusChecks: async () => [],
 };
 
 function repoContext(root: string, repo = ""): RepoContext {
@@ -125,6 +126,36 @@ describe("check 12 — AFK hook / backpressure static validation", () => {
       expect.arrayContaining([["pre_session", "ok"], ["pre_sesion", "ok"]]),
     );
     expect(reports.hooks.unknownHooks).toEqual(["pre_sesion"]);
+  });
+});
+
+describe("feedback command authority safety (#3276)", () => {
+  it("warns when a replacement narrows local feedback without a required CI test check", async () => {
+    const root = await poseRoot("doctor-feedback-authority-");
+    await write(
+      root,
+      ".red/config.yaml",
+      [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      feedback:",
+        "        commands:",
+        "          - pnpm -C apps/dev exec tsc --noEmit",
+        "",
+      ].join("\n"),
+    );
+
+    const reports = await collectDoctorClassifierReports(repoContext(root, "acme/widgets"), {
+      ...OFFLINE,
+      readRequiredStatusChecks: async () => [],
+    });
+
+    expect(reports.feedbackAuthority.verdict).toBe("warn");
+    expect(reports.feedbackAuthority.findings).toEqual([
+      expect.objectContaining({ kind: "narrowed-feedback-without-required-test", verdict: "warn" }),
+    ]);
   });
 });
 

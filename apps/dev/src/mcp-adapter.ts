@@ -116,6 +116,7 @@ import {
   getConfig,
   loadConfig,
   readBackpressure,
+  readFeedbackCommands,
   readHitlTypeLabels,
   readValidationResourceBudget,
   readSetupCommands,
@@ -386,9 +387,9 @@ export function createDefaultDevAfkMcpOperations(
     async dispatchDemand(cwd, input) {
       const floorWarnings = await engineFloorWarnings(cwd);
       let granted: DispatchedWorkerBirth | undefined;
-      const configuredBackpressure = readBackpressure(
-        loadConfig(afkPaths(cwd).configPath, { warn: () => undefined }),
-      );
+      const gateConfig = loadConfig(afkPaths(cwd).configPath, { warn: () => undefined });
+      const configuredBackpressure = readBackpressure(gateConfig);
+      const configuredFeedback = readFeedbackCommands(gateConfig);
       const result = await dispatchGo(
         {
           ensureLabel: (name) => runtime.ensureLabel(cwd, name),
@@ -418,7 +419,7 @@ export function createDefaultDevAfkMcpOperations(
           // scout is routed before dispatchDemand is reached — cast to go-mode union
           mode: input.mode as "no-mistakes" | "direct-PR" | "local-only" | undefined,
           request: input.request,
-          hasHarness: configuredBackpressure.length > 0,
+          hasHarness: configuredFeedback !== undefined || configuredBackpressure.length > 0,
         },
       );
       if (granted === undefined) {

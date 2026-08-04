@@ -128,6 +128,8 @@ repair) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+`/afk` local validation authority (`plugins.dev.afk.feedback.commands`) ->
+`plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/go` interactive admission (`REDSKILLED_INTERACTIVE_RESERVATION`) ->
 `plugins/dev/skills/engineering/go/SKILL.md`;
 the host view a terminal can read (the `redskilled` daemon's `dashboard`

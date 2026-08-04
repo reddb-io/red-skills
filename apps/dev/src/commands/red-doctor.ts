@@ -252,6 +252,7 @@ function renderClassifierSections(
 ): string[] {
   const {
     worktreeSetup,
+    feedbackAuthority,
     hooks,
     hookPoints,
     runtime,
@@ -277,6 +278,16 @@ function renderClassifierSections(
       (finding) =>
         `  ${finding.verdict} ${finding.command ?? "(undeclared)"}: ${finding.reason}`,
     ),
+    "",
+    "red-doctor AFK feedback command authority",
+    `declared: ${feedbackAuthority.declared}`,
+    `verdict: ${feedbackAuthority.verdict}`,
+    `commands: ${feedbackAuthority.commands.length}`,
+    `required checks: ${feedbackAuthority.requiredChecks?.join(",") || "none/unavailable"}`,
+    ...feedbackAuthority.findings.map(
+      (finding) => `  ${finding.verdict} ${finding.kind}: ${finding.reason}`,
+    ),
+    ...feedbackAuthority.findings.map((finding) => `  fix: ${finding.remediation}`),
     "",
     "red-doctor AFK hook / backpressure static validation",
     `declared hook points: ${hookPoints.length}`,
@@ -661,6 +672,20 @@ function renderToon(
         command: finding.command ?? "",
         verdict: finding.verdict,
         reason: finding.reason,
+      })),
+    },
+    afkFeedbackAuthority: {
+      declared: classifiers.feedbackAuthority.declared,
+      verdict: classifiers.feedbackAuthority.verdict,
+      commands: [...classifiers.feedbackAuthority.commands],
+      requiredChecks: classifiers.feedbackAuthority.requiredChecks === null
+        ? null
+        : [...classifiers.feedbackAuthority.requiredChecks],
+      findings: classifiers.feedbackAuthority.findings.map((finding) => ({
+        kind: finding.kind,
+        verdict: finding.verdict,
+        reason: finding.reason,
+        remediation: finding.remediation,
       })),
     },
     pluginRuntime: {

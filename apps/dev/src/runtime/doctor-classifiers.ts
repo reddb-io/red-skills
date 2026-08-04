@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { newestCachedBundleVersion, redSkillsCacheDir, semverParts } from "../core/bundle-version.js";
-import { getConfig, loadConfig, readBackpressure, readSetupCommands, type ConfigValues } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readFeedbackCommands, readSetupCommands, type ConfigValues } from "../core/config.js";
 import { HOOK_DEFAULT_NAMES } from "../core/hook-config.js";
 import { HOOK_REGISTRY, type ExitPolicy } from "../core/hook-registry.js";
 import {
@@ -66,6 +66,10 @@ import {
   type SetupPackageManager,
   type WorktreeSetupReport,
 } from "../core/worktree-setup-doctor.js";
+import {
+  auditFeedbackAuthority,
+  type FeedbackAuthorityReport,
+} from "../core/feedback-authority-doctor.js";
 
 /**
  * doctor-classifiers.ts — the fact-collection half of the `/red-doctor` checks
@@ -108,6 +112,8 @@ export interface HookPointRow {
 export interface DoctorClassifierReports {
   /** Repository declaration vs detected package/hook managers (#3268). */
   readonly worktreeSetup: WorktreeSetupReport;
+  /** Operator-owned feedback replacement vs required CI test protection (#3276). */
+  readonly feedbackAuthority: FeedbackAuthorityReport;
   /** Check 12 — AFK hook / backpressure static validation. */
   readonly hooks: ValidationReport;
   readonly hookPoints: HookPointRow[];
@@ -537,6 +543,11 @@ export interface DoctorClassifierOptions {
   readonly readMarketplaceList?: (host: MarketplaceHost) => Promise<MarketplaceListProbe>;
   /** Injected for tests; defaults to this repo's own `git status --porcelain`. */
   readonly readPorcelainStatus?: (ctx: RepoContext) => Promise<string>;
+  /** Injected for tests; defaults to the Trunk's required status-check contexts. */
+  readonly readRequiredStatusChecks?: (
+    ctx: RepoContext,
+    trunk: string,
+  ) => Promise<readonly string[] | null>;
   /**
    * The MCP servers the invoking session sees (check 27). `null` — the default —
    * means nobody told this run, which the audit reports as unobserved rather
@@ -574,6 +585,18 @@ export async function collectDoctorClassifierReports(
     notes.push(`hook validation unavailable: ${message(error)}`);
   }
   const worktreeSetup = collectWorktreeSetupReport(ctx.root, config);
+
+  const trunk = getConfig(config, "dev.trunk")?.trim() || "main";
+  const feedbackCommands = readFeedbackCommands(config);
+  let requiredChecks: readonly string[] | null = null;
+  if (feedbackCommands !== undefined && ctx.repo) {
+    try {
+      requiredChecks = await (options.readRequiredStatusChecks ?? readRequiredStatusChecks)(ctx, trunk);
+    } catch (error) {
+      notes.push(`feedback authority CI audit unavailable: ${message(error)}`);
+    }
+  }
+  const feedbackAuthority = auditFeedbackAuthority({ commands: feedbackCommands, requiredChecks });
 
   let runtime: RuntimeReport = { findings: [], rows: [] };
   let runtimeUnresolved: string[] = [];
@@ -694,7 +717,7 @@ export async function collectDoctorClassifierReports(
     notes.push(`.red taxonomy audit unavailable: ${message(error)}`);
   }
 
-  const base = getConfig(config, "dev.trunk")?.trim() || "main";
+  const base = trunk;
   let unlandedDocs: UnlandedDocsDoctorReport = auditUnlandedDocs({ base, files: [] });
   try {
     unlandedDocs = auditUnlandedDocs(
@@ -719,6 +742,7 @@ export async function collectDoctorClassifierReports(
 
   return {
     worktreeSetup,
+    feedbackAuthority,
     hooks,
     hookPoints,
     runtime,
@@ -736,6 +760,26 @@ export async function collectDoctorClassifierReports(
     setupOwnedDirt,
     notes,
   };
+}
+
+/** Read branch-protection contexts without mutating protection or CI state. */
+async function readRequiredStatusChecks(
+  ctx: RepoContext,
+  trunk: string,
+): Promise<readonly string[] | null> {
+  if (!ctx.repo) return null;
+  const { execTool } = await import("./exec.js");
+  const endpoint = `repos/${ctx.repo}/branches/${encodeURIComponent(trunk)}/protection/required_status_checks/contexts`;
+  const result = await execTool("gh", ["api", endpoint], { cwd: ctx.root, timeoutMs: 20_000 });
+  if (result.code !== 0) return result.code === 1 && /404|not found/i.test(result.stderr) ? [] : null;
+  try {
+    const parsed: unknown = JSON.parse(result.stdout);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "")
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
