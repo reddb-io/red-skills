@@ -104,6 +104,10 @@ export const projectRegistrationStatusSchema = z.object({
    * that moves when a runner directive lands.
    */
   launch_revision: z.number(),
+  /** Engine version named by the registration argv; "" when it cannot be read. */
+  bundle_version: z.string(),
+  /** Newest dev plugin version in the host's plugin cache; "" when absent. */
+  plugin_cache_version: z.string(),
   /**
    * What the last queue poll said about THIS project; absent when none has run.
    *
