@@ -104,6 +104,10 @@ import {
 import { workerSpecFromLaunch, type RedskilledLaunchTemplate } from "./launch-template.js";
 import type { RedskilledPaths } from "./paths.js";
 import {
+  createRedskilledRegistrationIntentStore,
+  type RedskilledRegistrationIntentStore,
+} from "./registration-intent-store.js";
+import {
   buildProjectRegistration,
   renewProjectRegistration,
   RedskilledProjectUnregisteredError,
@@ -397,6 +401,8 @@ export interface RedskilledDaemonOptions {
   readonly launch?: (options: LaunchWorkerOptions) => LaunchedWorker;
   /** The append-only host event lane; defaults to this session's own. */
   readonly eventLane?: RedskilledEventLane;
+  /** The durable registration snapshot; defaults to this session's own. */
+  readonly registrationIntentStore?: RedskilledRegistrationIntentStore;
   /** How the daemon asks whether a re-attached Worker is still running. */
   readonly liveness?: RedskilledLivenessProbe;
   /**
@@ -900,6 +906,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   const startedAt = clock();
   const eventLane = options.eventLane ?? createRedskilledEventLane(paths.eventLanePath);
+  const registrationIntentStore = options.registrationIntentStore ??
+    createRedskilledRegistrationIntentStore(paths.registrationIntentPath);
   const liveness = options.liveness ?? detectWorkerLiveness;
   const livenessGraceMs = options.livenessGraceMs ?? REDSKILLED_LIVENESS_GRACE_MS;
   const stopProbe = options.stopWorker ?? stopWorker;
@@ -970,15 +978,24 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // a calm zero in place of an absent instrument.
   let deathAttributions: RedskilledDeathObservation[] | undefined =
     options.deaths === undefined ? undefined : [...options.deaths];
-  // What each project asked the host to hold for it, by project label. In memory,
-  // like the log lines and for the same reason: a registration is a live statement
-  // a session renews, and a durable copy would outlive the thing it describes. The
-  // slice that polls it owns keeping the daemon alive while one stands.
+  // What each project asked the host to hold for it, by project label. The
+  // snapshot preserves that opaque intent across daemon replacement; its lease
+  // deadline still decides whether the successor may keep using it.
+  const restoredRegistrations = await registrationIntentStore.read().catch(() => []);
+  const restoredAtMs = Date.parse(startedAt);
   const registrations = new Map<string, RedskilledProjectRegistration>();
   // A lapsed record is retained for one more window so the next queue poll can
   // prove that work still exists and restore it without a person restating the
   // selector and launch. Bounded: a drained or one-window-old record is dropped.
   const recoverableRegistrations = new Map<string, RedskilledProjectRegistration>();
+  for (const restored of restoredRegistrations) {
+    const renewByMs = Date.parse(restored.renew_by);
+    if (!Number.isFinite(restoredAtMs) || !Number.isFinite(renewByMs) || renewByMs >= restoredAtMs) {
+      registrations.set(restored.project_label, restored);
+    } else if (restoredAtMs - renewByMs <= restored.renew_within_ms) {
+      recoverableRegistrations.set(restored.project_label, restored);
+    }
+  }
   const activeSockets = new Set<Socket>();
   // The last thing the sampler measured, kept so a read is dated rather than
   // dating itself: staleness belongs to the daemon that took the measurement.
@@ -1093,7 +1110,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       }
       rememberLapse(lapsed, nowMs);
     }
+    if (swept.lapsed.length > 0) persistRegistrationIntent();
     return swept.lapsed;
+  }
+
+  /** Persist the live set plus the bounded recovery set, in mutation order. */
+  function persistRegistrationIntent(): void {
+    const durable = new Map(recoverableRegistrations);
+    for (const [label, registration] of registrations) durable.set(label, registration);
+    void registrationIntentStore.replace([...durable.values()]).catch(() => undefined);
   }
 
   /**
@@ -1142,6 +1167,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     }
     const pollAt = lastQueue == null ? Number.NaN : Date.parse(lastQueue.fetched_at);
     const polled = new Map((lastQueue?.projects ?? []).map((project) => [project.project_label, project]));
+    let changed = false;
     for (const held of [...registrations.values()]) {
       // A read is not a new observation. Reusing a positive depth forever would
       // let status reads keep a closed project alive; one registration window is
@@ -1153,37 +1179,45 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         ...(poll == null ? {} : { queue: { outcome: poll.outcome, depth: poll.depth } }),
         liveWorkers: live[held.project_label] ?? 0,
       });
-      if (sustained.registration !== held) registrations.set(held.project_label, sustained.registration);
+      if (sustained.registration !== held) {
+        registrations.set(held.project_label, sustained.registration);
+        changed = true;
+      }
     }
+    if (changed) persistRegistrationIntent();
   }
 
   /** Restore a just-lapsed project when a fresh poll proves its queue is non-empty. */
   function recoverRegistrations(now: string): void {
-    if (recoverableRegistrations.size === 0 || lastQueue == null) return;
+    if (recoverableRegistrations.size === 0) return;
     const nowMs = Date.parse(now);
     if (!Number.isFinite(nowMs)) return;
-    const polled = new Map(lastQueue.projects.map((project) => [project.project_label, project]));
+    const polled = new Map((lastQueue?.projects ?? []).map((project) => [project.project_label, project]));
+    let changed = false;
     for (const [label, lapsed] of [...recoverableRegistrations]) {
       // Recovery is a belt, not immortal intent. After one original window there
       // is no live statement left to restore, so the extra polling stops.
       if (nowMs - Date.parse(lapsed.renew_by) > lapsed.renew_within_ms) {
         recoverableRegistrations.delete(label);
+        changed = true;
         continue;
       }
       const poll = polled.get(label);
-      if (poll == null) continue;
       const recovered = sustainProjectRegistration(lapsed, {
         now,
-        queue: { outcome: poll.outcome, depth: poll.depth },
+        ...(poll == null ? {} : { queue: { outcome: poll.outcome, depth: poll.depth } }),
         liveWorkers: [...workers.values()].filter((worker) => worker.project_label === label).length,
       });
       if (recovered.verdict === "open-work" || recovered.verdict === "live-worker") {
         registrations.set(label, recovered.registration);
         recoverableRegistrations.delete(label);
+        changed = true;
       } else if (recovered.verdict === "drained") {
         recoverableRegistrations.delete(label);
+        changed = true;
       }
     }
+    if (changed) persistRegistrationIntent();
   }
 
   function hostState(): RedskilledHostState {
@@ -1817,6 +1851,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       held: registrations.get(request.project_label),
     });
     registrations.set(registration.project_label, registration);
+    persistRegistrationIntent();
     // A current registration outranks every historical absence. Remove the old
     // tail now so a later deliberate stop cannot uncover an older lapse and lie
     // about which transition happened most recently.
@@ -1881,6 +1916,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       ...(options.launch == null ? {} : { launch: options.launch }),
     });
     registrations.set(registration.project_label, registration);
+    persistRegistrationIntent();
     armIdleTimer();
     return {
       version: 1,
@@ -1907,14 +1943,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   function deregisterProject(projectLabel: string, sessionProject?: string): RedskilledProjectDeregistered {
     const reach = authorize("project-deregister", sessionProject, projectLabel);
     if (!reach.permitted) throw new Error(reach.reason);
-    const held = registrations.get(projectLabel);
-    const released = registrations.delete(projectLabel);
+    const held = registrations.get(projectLabel) ?? recoverableRegistrations.get(projectLabel);
+    const releasedCurrent = registrations.delete(projectLabel);
+    const releasedRecoverable = recoverableRegistrations.delete(projectLabel);
+    const released = releasedCurrent || releasedRecoverable;
     if (held != null) {
       const detail = `redskilled released the registration for project ${JSON.stringify(projectLabel)}`;
       removeRegistrationHistory(projectLabel);
       stops.push({ project_label: projectLabel, registered_at: held.registered_at, at: clock(), detail });
       if (stops.length > REDSKILLED_LAPSE_MEMORY) stops.splice(0, stops.length - REDSKILLED_LAPSE_MEMORY);
     }
+    if (released) persistRegistrationIntent();
     return {
       version: 1,
       project_label: projectLabel,
@@ -2297,6 +2336,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const prepared = prepareRedskilledReplacement(decision, replacementIO);
     replacementState = "in-progress";
     await eventLane.flush().catch(() => undefined);
+    await registrationIntentStore.flush().catch(() => undefined);
     await stop({ reason: "replaced" });
     completeRedskilledReplacement(prepared, paths, {
       ...(idleMs == null ? {} : { idleMs }),
@@ -2571,6 +2611,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // of the session: a birth still in flight would leave the next daemon with a
     // Worker it holds a budget for and no record of.
     await eventLane.flush().catch(() => undefined);
+    await registrationIntentStore.flush().catch(() => undefined);
     server.close();
     for (const socket of activeSockets) socket.destroy();
     await new Promise<void>((resolve) => server.once("close", () => resolve()));
@@ -2648,6 +2689,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     reattached.add(worker.worker_id);
     record("worker-birth", worker, "adopted from an active unit with no birth on this lane");
   }
+  // A successor can prove an expired-but-recoverable intent immediately from a
+  // Worker the predecessor left running; no queue round-trip or human restart is
+  // needed before that project is registered again.
+  recoverRegistrations(clock());
   // The bounded exception. A daemon that has just come back holds Workers it has
   // never heard a heartbeat from, so for those — and only those — it reads the log
   // ONCE, from the path the client GAVE at spawn and carried on the event lane. A
@@ -2720,21 +2765,27 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         return { id: request.id, ok: true, value: publishWorkerHeartbeat(request.heartbeat) };
       }
       if (request.op === "project-register") {
-        return { id: request.id, ok: true, value: registerProject(request.registration, request.session_project) };
+        const value = registerProject(request.registration, request.session_project);
+        await registrationIntentStore.flush();
+        return { id: request.id, ok: true, value };
       }
       if (request.op === "project-renew") {
+        const value = renewProject(request.project_label, {
+          ...(request.session_project == null ? {} : { sessionProject: request.session_project }),
+          ...(request.renew_within_ms == null ? {} : { renewWithinMs: request.renew_within_ms }),
+          ...(request.launch == null ? {} : { launch: request.launch }),
+        });
+        await registrationIntentStore.flush();
         return {
           id: request.id,
           ok: true,
-          value: renewProject(request.project_label, {
-            ...(request.session_project == null ? {} : { sessionProject: request.session_project }),
-            ...(request.renew_within_ms == null ? {} : { renewWithinMs: request.renew_within_ms }),
-            ...(request.launch == null ? {} : { launch: request.launch }),
-          }),
+          value,
         };
       }
       if (request.op === "project-deregister") {
-        return { id: request.id, ok: true, value: deregisterProject(request.project_label, request.session_project) };
+        const value = deregisterProject(request.project_label, request.session_project);
+        await registrationIntentStore.flush();
+        return { id: request.id, ok: true, value };
       }
       if (request.op === "worker-command") {
         return { id: request.id, ok: true, value: await runWorkerCommand(request.command) };
