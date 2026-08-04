@@ -111,7 +111,9 @@ export type RedskilledDemandOutcome =
   | "queue-unknown"
   | "backing-off"
   /** This project's Workers keep dying in boot, so it is not asked again yet. */
-  | "birth-halted";
+  | "birth-halted"
+  /** One birth is due or running after the breaker's cooldown. */
+  | "half-open-probe";
 
 export interface RedskilledDemandIntent {
   readonly project_label: string;
@@ -155,6 +157,12 @@ export interface PlanHostDemandInput {
    * healthy one, which a host-wide backoff would.
    */
   readonly birthHaltUntilMs?: Readonly<Record<string, number>>;
+  /**
+   * The complete breaker state. New callers pass this instead of reducing the
+   * state to a halt instant, because an expired halt is a half-open circuit —
+   * exactly one probe — rather than an ordinary unlatched project.
+   */
+  readonly birthHealth?: Readonly<Record<string, RedskilledBirthHealth>>;
 }
 
 /**
@@ -196,7 +204,8 @@ export function planHostDemand(input: PlanHostDemandInput): RedskilledDemandPlan
     // for a Worker whether or not anyone has counted its queue, and reporting
     // "nobody counted yet" for a project whose Workers are dying in boot names
     // the wrong problem to whoever reads it.
-    const haltUntilMs = input.birthHaltUntilMs?.[project.project_label];
+    const health = input.birthHealth?.[project.project_label];
+    const haltUntilMs = health?.haltUntilMs ?? input.birthHaltUntilMs?.[project.project_label];
     if (haltUntilMs != null && input.nowMs < haltUntilMs) {
       intents.push({
         ...base,
@@ -208,6 +217,18 @@ export function planHostDemand(input: PlanHostDemandInput): RedskilledDemandPlan
           `${REDSKILLED_SHORT_LIFE_MS}ms of birth, so it is not asked for another before ` +
           `${new Date(haltUntilMs).toISOString()} — a Worker that cannot survive boot will not ` +
           `survive the next one either, and every birth spends host quota shared with every project`,
+      });
+      continue;
+    }
+    if (health?.probeWorkerId != null) {
+      intents.push({
+        ...base,
+        outcome: "half-open-probe",
+        wanted: 0,
+        detail:
+          `project ${JSON.stringify(project.project_label)} is half-open and probe Worker ` +
+          `${JSON.stringify(health.probeWorkerId)} has not yet survived ${REDSKILLED_SHORT_LIFE_MS}ms, ` +
+          `so no second birth is admitted`,
       });
       continue;
     }
@@ -248,15 +269,19 @@ export function planHostDemand(input: PlanHostDemandInput): RedskilledDemandPlan
       });
       continue;
     }
+    const halfOpen = health?.haltUntilMs != null && input.nowMs >= health.haltUntilMs;
+    const admitted = halfOpen ? 1 : wanted;
     intents.push({
       ...base,
-      outcome: "asking",
-      wanted,
-      detail:
-        `project ${JSON.stringify(project.project_label)} holds ${live} Worker(s) against a target of ` +
-        `${project.target} and a queue of ${depth}, so it asks for ${wanted} more`,
+      outcome: halfOpen ? "half-open-probe" : "asking",
+      wanted: admitted,
+      detail: halfOpen
+        ? `project ${JSON.stringify(project.project_label)} finished its birth-breaker cooldown, so exactly one ` +
+          `probe Worker is admitted before the remaining ${Math.max(0, wanted - 1)} birth(s)`
+        : `project ${JSON.stringify(project.project_label)} holds ${live} Worker(s) against a target of ` +
+          `${project.target} and a queue of ${depth}, so it asks for ${wanted} more`,
     });
-    for (let index = 0; index < wanted; index += 1) {
+    for (let index = 0; index < admitted; index += 1) {
       const round = rounds[index] ?? (rounds[index] = []);
       round.push({
         project_label: project.project_label,
@@ -340,10 +365,38 @@ export interface RedskilledBirthHealth {
   readonly shortLifeStreak: number;
   /** When this project may be asked for a Worker again; `null` when it may now. */
   readonly haltUntilMs: number | null;
+  /** The instant the current open period began; refreshed after a failed probe. */
+  readonly openedAtMs: number | null;
+  /** The sole half-open Worker; while present no second birth is admitted. */
+  readonly probeWorkerId: string | null;
 }
 
 /** A project with no history — never halted, no streak. */
-export const EMPTY_BIRTH_HEALTH: RedskilledBirthHealth = { shortLifeStreak: 0, haltUntilMs: null };
+export const EMPTY_BIRTH_HEALTH: RedskilledBirthHealth = {
+  shortLifeStreak: 0,
+  haltUntilMs: null,
+  openedAtMs: null,
+  probeWorkerId: null,
+};
+
+/** The structured cure carried beside every visible birth latch. */
+export interface RedskilledBirthLatchRepair {
+  readonly tool: "project_reset";
+  readonly args: { readonly latch: "project-birth-breaker" };
+  readonly why: string;
+}
+
+/** One project's birth-refusing latch, in the shape read surfaces expose. */
+export interface RedskilledBirthLatch {
+  readonly name: "project-birth-breaker";
+  readonly project_label: string;
+  readonly state: "open" | "half-open";
+  readonly opened_at: string;
+  readonly reason: string;
+  readonly closes: string;
+  readonly probe_worker_id: string | null;
+  readonly repair: RedskilledBirthLatchRepair;
+}
 
 /**
  * Fold one Worker's death into its project's birth health. PURE.
@@ -365,8 +418,71 @@ export function foldWorkerDeath(
 ): RedskilledBirthHealth {
   if (lifetimeMs >= REDSKILLED_SHORT_LIFE_MS) return EMPTY_BIRTH_HEALTH;
   const shortLifeStreak = health.shortLifeStreak + 1;
-  if (shortLifeStreak < REDSKILLED_SHORT_LIFE_STREAK) return { shortLifeStreak, haltUntilMs: null };
-  return { shortLifeStreak, haltUntilMs: nowMs + REDSKILLED_BIRTH_HALT_MS };
+  const wasLatched = health.haltUntilMs != null || health.probeWorkerId != null;
+  if (!wasLatched && shortLifeStreak < REDSKILLED_SHORT_LIFE_STREAK) {
+    return { shortLifeStreak, haltUntilMs: null, openedAtMs: null, probeWorkerId: null };
+  }
+  return {
+    shortLifeStreak,
+    haltUntilMs: nowMs + REDSKILLED_BIRTH_HALT_MS,
+    openedAtMs: nowMs,
+    probeWorkerId: null,
+  };
+}
+
+/** Mark the one Worker admitted by a half-open circuit. PURE. */
+export function beginBirthProbe(health: RedskilledBirthHealth, workerId: string): RedskilledBirthHealth {
+  return health.haltUntilMs == null
+    ? health
+    : { ...health, probeWorkerId: workerId };
+}
+
+/** Explicit operator reset and successful-probe closure share one transition. PURE. */
+export function resetBirthHealth(): RedskilledBirthHealth {
+  return EMPTY_BIRTH_HEALTH;
+}
+
+/** Compose the one truthful latch record every read surface carries. PURE. */
+export function describeBirthLatch(
+  projectLabel: string,
+  health: RedskilledBirthHealth,
+  nowMs: number,
+): RedskilledBirthLatch | null {
+  if (health.haltUntilMs == null || health.openedAtMs == null) return null;
+  const halfOpen = nowMs >= health.haltUntilMs;
+  return {
+    name: "project-birth-breaker",
+    project_label: projectLabel,
+    state: halfOpen ? "half-open" : "open",
+    opened_at: new Date(health.openedAtMs).toISOString(),
+    reason:
+      `${health.shortLifeStreak} Workers from this project died before surviving ` +
+      `${REDSKILLED_SHORT_LIFE_MS}ms`,
+    closes: halfOpen
+      ? health.probeWorkerId == null
+        ? "the next demand tick admits one probe Worker; surviving the short-life window closes the latch"
+        : `probe Worker ${JSON.stringify(health.probeWorkerId)} surviving ${REDSKILLED_SHORT_LIFE_MS}ms closes ` +
+          "the latch; a fast death re-opens it with a fresh cooldown"
+      : `the cooldown ends at ${new Date(health.haltUntilMs).toISOString()}, then one probe Worker is admitted; ` +
+        "surviving the short-life window closes the latch",
+    probe_worker_id: health.probeWorkerId,
+    repair: {
+      tool: "project_reset",
+      args: { latch: "project-birth-breaker" },
+      why: "clear the project's birth-breaker history and allow the next demand tick to birth normally",
+    },
+  };
+}
+
+/** Every active latch, stable by project label for host-state readers. PURE. */
+export function describeBirthLatches(
+  health: Readonly<Record<string, RedskilledBirthHealth>>,
+  nowMs: number,
+): readonly RedskilledBirthLatch[] {
+  return Object.entries(health)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([projectLabel, record]) => describeBirthLatch(projectLabel, record, nowMs))
+    .filter((latch): latch is RedskilledBirthLatch => latch != null);
 }
 
 /**
