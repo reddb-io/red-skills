@@ -15,8 +15,12 @@ import {
   BAR_CURRENT,
   BAR_DONE,
   BOLD,
+  DIM,
+  GOLD,
   KEY,
+  NOBG,
   RED,
+  RESET,
   RedskilledRenderDecodeError,
   renderRedskilled,
   renderRedskilledDashboard,
@@ -28,7 +32,11 @@ import {
   REDSKILLED_RENDER_ABSENCE,
   REDSKILLED_STATUSLINE_DEFAULTS,
   stripAnsi,
+  SOFT,
   VAL,
+  WHITE,
+  WINE,
+  WINE2,
   width,
 } from "../index.js";
 import { display, payload, worker } from "./fixture.js";
@@ -52,7 +60,7 @@ describe("one module, three densities", () => {
     expect(panel.lines.length).toBeGreaterThan(1);
     expect(panel.worker_rows[0]).toContain("w-1");
     expect(table.rows).toHaveLength(1);
-    expect(table.header.line).toContain("wrk=1/1");
+    expect(stripAnsi(table.header.line)).toContain("wrk=1/1");
   });
 
   it("attributes target-plus-one slot usage to the interactive reservation", () => {
@@ -154,6 +162,73 @@ describe("the statusline Worker table (#3151)", () => {
     for (const key of ["loc=", "tks=", "tls=", "rsn=", "txt="]) expect(row).not.toContain(key);
     expect(row).toContain("ctx=108k");
     expect(row).toContain("hb=3s");
+  });
+});
+
+describe("the coloured panel and dashboard (#3152)", () => {
+  it("draws the dashboard identity, version, model and header pairs in their palette roles", () => {
+    const doc = payload({ workers: [worker({ display: display({ model: "claude-opus-5" }) })] });
+    const header = renderRedskilledDashboard(doc, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      project: "acme/widgets",
+    }).header.line;
+
+    expect(header).toContain(`${WINE2}${WHITE}${GOLD}»${WHITE} ${BOLD}acme/widgets`);
+    expect(header).toContain(`${DIM}v3.3.11${WHITE}`);
+    expect(header).toContain(`${WINE}${WHITE}claude·claude-opus-5·high${NOBG}${SOFT}`);
+    for (const key of ["wrk", "slots", "reserve", "mem"]) {
+      expect(header).toContain(`${KEY}${key}=${VAL}`);
+    }
+    expect(header.endsWith(RESET)).toBe(true);
+  });
+
+  it.each([
+    ["healthy", false, BAR_CURRENT],
+    ["failed", true, RED],
+  ])("draws a %s lifecycle cursor in the same tone at every density", (_state, failed, cursorTone) => {
+    const doc = payload({ workers: [worker({ display: display({ failed }) })] });
+    const line = renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).lines[1]!;
+    const panel = renderRedskilledPanel(doc, {
+      ...REDSKILLED_PANEL_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 240,
+    }).worker_rows[0]!;
+    const dashboard = renderRedskilledDashboard(doc, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 240,
+    }).rows[0]!.line;
+    const cursor = failed ? "✗" : "▶";
+
+    for (const row of [line, panel, dashboard]) {
+      expect(row).toContain(`${BAR_DONE}██${cursorTone}${cursor}${BAR_AHEAD}░░`);
+      expect(row).toContain(`${KEY}eta=${VAL}10m40s`);
+    }
+  });
+
+  it("keeps dashboard columns aligned after colouring their cells", () => {
+    const doc = payload({
+      workers: [
+        worker({ worker_id: "w-1", display: display() }),
+        worker({
+          worker_id: "worker-long",
+          display: display({ runner: "opencode", model: "gpt-5.4", effort: "xhigh", issue: "42" }),
+        }),
+      ],
+      host: { ...payload().host, worker_count: 2 },
+    });
+    const rendered = renderRedskilledDashboard(doc, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 260,
+    });
+    const rows = rendered.rows.map((row) => stripAnsi(row.line));
+
+    expect(rendered.rows[0]!.line).toContain(`${KEY}run=${VAL}`);
+    for (const token of ["run=", "org=", "iss=", "eta=", "hb=", "loc=", "tks=", "ctx=", "tls=", "rsn=", "txt="]) {
+      expect(rows[0]!.indexOf(token), token).toBeGreaterThanOrEqual(0);
+      expect(rows[1]!.indexOf(token), token).toBe(rows[0]!.indexOf(token));
+    }
   });
 });
 
@@ -328,7 +403,7 @@ describe("the elapsed span, the context figure and the estimate (#3097)", () => 
     const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
     expect(table.rows[0]!.cells.eta).toBe("eta=10m40s");
     expect(table.rows[0]!.cells.ctx).toBe("ctx=108k");
-    expect(table.rows[0]!.line).toContain("eta=10m40s");
+    expect(stripAnsi(table.rows[0]!.line)).toContain("eta=10m40s");
   });
 
   it("draws NO estimate for a Worker with none — absent is null, never a zero", () => {

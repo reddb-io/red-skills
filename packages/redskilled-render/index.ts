@@ -50,6 +50,7 @@ export {
   BAR_DONE,
   BOLD,
   DIM,
+  GOLD,
   KEY,
   NOBG,
   NOBOLD,
