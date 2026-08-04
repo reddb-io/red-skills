@@ -1,3 +1,8 @@
+import {
+  composeRepair,
+  type RepairAction,
+} from "@reddb-io/shared/repair.js";
+
 export interface DrainRequest {
   readonly runner: string;
   readonly target: number;
@@ -27,12 +32,23 @@ export interface DrainReport {
   readonly workers_born: number | "kept";
 }
 
-export interface DrainPlan {
+export interface DrainApplyPlan {
   readonly outcome: "apply";
   readonly actions: readonly DrainAction[];
   readonly report: DrainReport;
   readonly summary: string;
 }
+
+export interface DrainRefusalPlan {
+  readonly outcome: "refuse";
+  readonly actions: readonly [];
+  readonly report: DrainReport;
+  readonly summary: string;
+  readonly reason: string;
+  readonly repair: RepairAction;
+}
+
+export type DrainPlan = DrainApplyPlan | DrainRefusalPlan;
 
 function renderDrainReport(report: DrainReport): string {
   return `registration: ${report.registration}; target: ${report.target}; runner: ${report.runner}; workers born: ${report.workers_born}`;
@@ -69,7 +85,35 @@ export function planDrain(state: DrainState, request: DrainRequest): DrainPlan {
         summary: renderDrainReport(report),
       };
     }
-    throw new Error("a runner change is not implemented yet");
+    const report: DrainReport = {
+      registration: "kept",
+      target: "kept",
+      runner: "kept",
+      workers_born: "kept",
+    };
+    const composed = composeRepair({
+      state:
+        `drain refused runner change from ${JSON.stringify(state.registration.runner)} to ` +
+        JSON.stringify(request.runner),
+      repair: {
+        tool: "project_stop",
+        args: {},
+        why:
+          `stop runner ${JSON.stringify(state.registration.runner)}, then call \`drain\` with ` +
+          `\`${JSON.stringify(request)}\`; changing runners can end its live Workers`,
+      },
+    });
+    if (composed.repair === "none") {
+      throw new Error("runner-change repair must be callable");
+    }
+    return {
+      outcome: "refuse",
+      actions: [],
+      report,
+      summary: renderDrainReport(report),
+      reason: composed.prose,
+      repair: composed.repair,
+    };
   }
   const report: DrainReport = {
     registration: state.lapsed ? "re-created" : "created",
