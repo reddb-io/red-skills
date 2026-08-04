@@ -271,11 +271,22 @@ describe("evaluateClaimTrust — visibility-aware claim decision (#1101)", () =>
     expect(v.executable).toBe(true);
   });
 
-  it("FAIL-CLOSED holds an untrusted AUTHOR for a maintainer summon", async () => {
+  it("FAIL-CLOSED gives an untrusted author the executable external-approval repair", async () => {
     const v = await evaluateClaimTrust(failClosed, prov("stranger", "maint"), maintainerLookup("maint"));
     expect(v.executable).toBe(false);
     expect(v.reason).toContain("untrusted author");
-    expect(v.reason).toContain("held for maintainer summon");
+    expect(v.repair).toEqual({
+      tool: "github_issue",
+      args: {
+        add_label: "origin:external",
+        comment: "/approve-external",
+        comment_author: "maintainer",
+      },
+      why: "mark the issue as external and record explicit approval from a maintainer with write access",
+    });
+    expect(v.reason).toContain("origin:external");
+    expect(v.reason).toContain("/approve-external");
+    expect(v.reason).not.toContain("summon");
   });
 
   it("FAIL-CLOSED holds an untrusted PROMOTER even when the author is a maintainer", async () => {
@@ -317,6 +328,10 @@ describe("evaluateExternalOriginGate — origin:external hold (#2603)", () => {
     expect(v.holdForApproval).toBe(true);
     expect(v.reason).toContain("origin:external");
     expect(v.reason).toContain("/approve-external");
+    expect(v.repair).toMatchObject({
+      tool: "github_issue",
+      args: { add_label: "origin:external", comment: "/approve-external" },
+    });
   });
 
   it("releases an approved external issue", () => {
@@ -348,6 +363,23 @@ describe("evaluateClaimTrust — external-origin integration (#2603)", () => {
     const v = await evaluateClaimTrust(policy, prov("alice", "bob"), noLookup, external(false));
     expect(v.executable).toBe(false);
     expect(v.holdForApproval).toBe(true);
+  });
+
+  it("keeps the trust gate held when triage:summon is the only attempted cure", async () => {
+    // `triage:summon` is deliberately not an input to this gate: applying that
+    // label cannot satisfy either half of the external-approval mechanism.
+    const v = await evaluateClaimTrust(
+      failClosed,
+      prov("stranger", "maint"),
+      maintainerLookup("maint"),
+      { external: false, approved: false },
+    );
+
+    expect(v.executable).toBe(false);
+    expect(v.repair).toMatchObject({
+      args: { add_label: "origin:external", comment: "/approve-external" },
+    });
+    expect(JSON.stringify(v)).not.toContain("triage:summon");
   });
 
   it("an APPROVED external issue vouches for its untrusted author on the fail-closed path", async () => {
