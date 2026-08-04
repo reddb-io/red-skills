@@ -645,6 +645,19 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { silent: "a sub-second drain bounded by two fixed try counts; the boolean IS the report" },
   },
   {
+    path: "apps/dev/src/runtime/exec.ts",
+    fn: "monitorCpuStall",
+    subject: "the validation process group consuming CPU after its normal wall-time envelope",
+    deadline:
+      "one `sampleIntervalMs` window after `minWallTimeMs`; production defaults to 30 seconds after 20 minutes",
+    escalation:
+      "terminates the process group and returns typed `stall` infrastructure evidence to the validation sidecar",
+    heartbeat: {
+      silent:
+        "the enclosing gate-child wait already publishes the pid and subject; this sampler publishes its terminal stall evidence through that same sink",
+    },
+  },
+  {
     path: "apps/dev/src/runtime/gh/quota.ts",
     fn: "withGhQuotaBackoff",
     subject: "the GitHub rate-limit window reopening",
