@@ -14,7 +14,18 @@ import * as fsx from "../../runtime/fs.js";
 import type { GhContext } from "../../runtime/gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
-import { getConfig, loadConfig, readBackpressure, readFeedbackCommands, readPostWorkerFormat, readValidationResourceBudget, resolveTier, resolveCiTimeoutSeconds, resolveMergeQueueTimeoutSeconds } from "../../core/config.js";
+import {
+  getConfig,
+  loadConfig,
+  readBackpressure,
+  readFeedbackCommands,
+  readPostWorkerFormat,
+  readValidationMoments,
+  readValidationResourceBudget,
+  resolveTier,
+  resolveCiTimeoutSeconds,
+  resolveMergeQueueTimeoutSeconds,
+} from "../../core/config.js";
 import {
   makeExtractAdversarialReview,
   resolveAdversarialReviewConfig,
@@ -304,6 +315,7 @@ export function buildProcessDeps({
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
     validationResourceBudget: readValidationResourceBudget(config),
+    validationMoments: readValidationMoments(config),
     // The gate's proof that a declared validation worktree is really there
     // (#3041): a landing worktree that vanished refuses as an infrastructure
     // error instead of composing commands against a path that resolves nowhere.
