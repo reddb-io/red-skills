@@ -90,7 +90,6 @@ describe("rsp telemetry spool", () => {
   it("pipes a real Codex PreToolUse payload through the built bundle and drains a decision event", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();
-    const env = await envWithRsp(root);
     const payload = {
       cwd: root,
       tool_name: "bash",
@@ -99,7 +98,7 @@ describe("rsp telemetry spool", () => {
 
     const hook = spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
       cwd: root,
-      env,
+      env: await rspBundleEnv(root, bundle),
       input: Buffer.from(JSON.stringify(payload)),
       encoding: "buffer",
     });
@@ -108,7 +107,7 @@ describe("rsp telemetry spool", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: `${process.execPath} ${bundle} proxy -- 'git status'` },
+        updatedInput: { command: "rsp proxy -- 'git status'" },
       },
     });
 
@@ -156,7 +155,6 @@ describe("rsp telemetry spool", () => {
     const root = await tempRoot();
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
     const bundle = await ensureRspBundle();
-    const env = await envWithRsp(root);
     const command = "printf 'out\\n'; printf 'err\\n' >&2";
     const payload = {
       cwd: root,
@@ -166,7 +164,7 @@ describe("rsp telemetry spool", () => {
 
     const hook = spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
       cwd: root,
-      env,
+      env: await rspBundleEnv(root, bundle),
       input: Buffer.from(JSON.stringify(payload)),
       encoding: "buffer",
     });
@@ -174,9 +172,7 @@ describe("rsp telemetry spool", () => {
     const updated = JSON.parse(hook.stdout.toString("utf8")) as {
       hookSpecificOutput: { updatedInput: { command: string } };
     };
-    expect(updated.hookSpecificOutput.updatedInput.command).toBe(
-      `${process.execPath} ${bundle} proxy -- 'printf '\\''out\\n'\\''; printf '\\''err\\n'\\'' >&2'`,
-    );
+    expect(updated.hookSpecificOutput.updatedInput.command).toBe("rsp proxy -- 'printf '\\''out\\n'\\''; printf '\\''err\\n'\\'' >&2'");
 
     const raw = spawnSync(command, { cwd: root, shell: true, encoding: "buffer" });
     const proxied = spawnSync(process.execPath, [bundle, "proxy", "--", command], {
@@ -620,11 +616,11 @@ describe("rsp telemetry spool", () => {
   });
 });
 
-async function envWithRsp(root: string): Promise<NodeJS.ProcessEnv> {
-  const binDir = join(root, "bin");
-  const rsp = join(binDir, "rsp");
-  await mkdir(binDir, { recursive: true });
-  await writeFile(rsp, "#!/bin/sh\nexit 0\n", "utf8");
+async function rspBundleEnv(root: string, bundle: string): Promise<NodeJS.ProcessEnv> {
+  const bin = join(root, "bin");
+  const rsp = join(bin, "rsp");
+  await mkdir(bin, { recursive: true });
+  await writeFile(rsp, `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(bundle)} "$@"\n`, "utf8");
   await chmod(rsp, 0o755);
-  return { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` };
+  return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
 }

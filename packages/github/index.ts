@@ -1,11 +1,12 @@
 // @reddb-io/github — the one budget-aware GitHub client.
 //
-// ADR 0132 decision 4 as superseded by Amendment 2. Four modules, one question
+// ADR 0132 decision 4 as superseded by Amendment 2. Five modules, one question
 // each:
 //   surface.ts   — WHICH API answers a call, decided by cardinality.
 //   rest-plan.ts — HOW a single-object read is actually issued on REST.
 //   balance.ts   — WHAT the token has left, asked rather than counted, and what
 //                  that balance admits.
+//   attribution.ts — WHO this process believes spent each pool, durably.
 //   cache.ts     — WHAT was kept, and how old it is.
 //
 // The daemon and the castle both import this package rather than each keeping a
@@ -30,6 +31,15 @@ export {
   type GithubRateBudget,
   type GithubReadVolatility,
 } from "./surface.js";
+
+export {
+  createGithubAttributionLedger,
+  type CreateGithubAttributionLedgerOptions,
+  type GithubAttributionLedger,
+  type GithubOperationSpend,
+  type GithubSpendAttributionReport,
+  type GithubSpendObservation,
+} from "./attribution.js";
 
 export {
   GITHUB_BALANCE_CADENCE,

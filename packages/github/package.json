@@ -7,9 +7,13 @@
   "license": "Apache-2.0",
   "exports": {
     ".": "./index.ts",
+    "./attribution.js": "./attribution.ts",
     "./surface.js": "./surface.ts",
     "./rest-plan.js": "./rest-plan.ts",
     "./balance.js": "./balance.ts",
     "./cache.js": "./cache.ts"
+  },
+  "dependencies": {
+    "@reddb-io/toon": "catalog:"
   }
 }
