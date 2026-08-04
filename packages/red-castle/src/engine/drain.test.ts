@@ -51,4 +51,29 @@ describe("drain ensure planner", () => {
         "registration: kept; target: kept; runner: kept; workers born: kept",
     });
   });
+
+  it("resizes a standing drain and reports the target difference", () => {
+    expect(
+      planDrain(
+        {
+          daemon_reachable: true,
+          registration: { runner: "codex", target: 4 },
+          lapsed: false,
+          workers: 4,
+        },
+        { runner: "codex", target: 6 },
+      ),
+    ).toEqual({
+      outcome: "apply",
+      actions: [{ kind: "resize", runner: "codex", target: 6 }],
+      report: {
+        registration: "kept",
+        target: "4→6",
+        runner: "kept",
+        workers_born: 2,
+      },
+      summary:
+        "registration: kept; target: 4→6; runner: kept; workers born: 2",
+    });
+  });
 });
