@@ -123,6 +123,12 @@ export interface ReconcileFs {
 export interface ReconcileLookups {
   /** Changed files of the worker branch vs the base, for feedback scope resolution. */
   changedFiles(branch: string, base: string): Promise<string[]>;
+  /** Optional before/after content evidence for safe root-manifest narrowing. */
+  changedFileContents?(
+    branch: string,
+    base: string,
+    file: string,
+  ): Promise<{ before: string; after: string } | undefined>;
   /** Confirm the worker branch actually reached the host (optional → assume present). */
   branchPresent?(branch: string): Promise<boolean>;
   /** True when the session is locked to a branch. Since #842 the lock only
@@ -497,6 +503,14 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     );
     return { outcome: "skipped", reason: "no-commits" };
   }
+  const rootPackageJson = changedFiles.includes("package.json")
+    ? await deps.lookups.changedFileContents?.(branch, baseRef, "package.json").catch(() => undefined)
+    : undefined;
+  const feedbackScopes = deps.feedback.gateScopes(
+    deps.layout,
+    changedFiles,
+    rootPackageJson ? { rootPackageJson } : undefined,
+  );
 
   // ---- 4. feedback gate (the verdict — SAME authority as the DONE path) ----
   // The merge-conflict reland route (#1095) trusts the prior green validation
@@ -527,7 +541,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     // Mirrors the DONE path.
     feedback = await deps.feedback.runFeedback(deps.pnpm, {
       worktree: branch,
-      scopes: deps.feedback.gateScopes(deps.layout, changedFiles),
+      scopes: feedbackScopes,
       layout: deps.layout,
       now: deps.nowEpoch,
       baselineWorktree: input.base,
@@ -590,7 +604,7 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
           // is an infrastructure error, never a red validation verdict.
           worktreeKind: "checkout",
           ...(deps.dirExists === undefined ? {} : { dirExists: deps.dirExists }),
-          scopes: deps.feedback.gateScopes(deps.layout, changedFiles),
+          scopes: feedbackScopes,
           layout: deps.layout,
           now: deps.nowEpoch,
           baselineWorktree: input.base,

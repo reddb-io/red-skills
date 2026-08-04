@@ -186,6 +186,15 @@ export interface ProcessLookups {
   /** Best-effort owning-glossary and path-local exemplar supplement (#2402). */
   handoffEnrichment?(input: HandoffEnrichmentInput & { issue: number }): Promise<string | undefined>;
   changedFiles(branch: string, base: string): Promise<string[]>;
+  /**
+   * File contents at the merge-base and branch endpoints of `base...branch`.
+   * Optional narrowing evidence: absence must retain path-based validation.
+   */
+  changedFileContents?(
+    branch: string,
+    base: string,
+    file: string,
+  ): Promise<{ before: string; after: string } | undefined>;
   diffstat(branch: string, base: string): Promise<string>;
   /**
    * The WORKTREE diff of `branch` against the merge base (#2730) — what the gate

@@ -43,6 +43,15 @@ export interface WorkspaceGraph {
   packages: WorkspacePackage[];
 }
 
+/** Content evidence for root files whose path alone cannot prove blast radius. */
+export interface ValidationScopeContentEvidence {
+  /** The two endpoints of the `base...branch` diff for the root manifest. */
+  rootPackageJson?: {
+    before: string;
+    after: string;
+  };
+}
+
 /**
  * The computed validation scope — either a filtered cone (touching only the
  * affected packages and their transitive dependents) or whole-workspace (when a
@@ -133,6 +142,51 @@ export type PathClass =
 
 function stripDotSlash(file: string): string {
   return file.startsWith("./") ? file.slice(2) : file;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => jsonValuesEqual(value, right[index]))
+    );
+  }
+  if (!isJsonObject(left) || !isJsonObject(right)) return false;
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key, index) => key === rightKeys[index] && jsonValuesEqual(left[key], right[key]),
+    )
+  );
+}
+
+/**
+ * Prove that two package manifests differ only in their top-level `version`.
+ * Parse failures, missing/non-string versions, and an unchanged version all
+ * fail closed: path-only evidence must retain whole-workspace validation.
+ */
+export function isVersionOnlyPackageJsonChange(before: string, after: string): boolean {
+  try {
+    const left: unknown = JSON.parse(before);
+    const right: unknown = JSON.parse(after);
+    if (!isJsonObject(left) || !isJsonObject(right)) return false;
+    if (typeof left.version !== "string" || typeof right.version !== "string") return false;
+    if (left.version === right.version) return false;
+    const { version: _leftVersion, ...leftWithoutVersion } = left;
+    const { version: _rightVersion, ...rightWithoutVersion } = right;
+    return jsonValuesEqual(leftWithoutVersion, rightWithoutVersion);
+  } catch {
+    return false;
+  }
 }
 
 /** The doc-contract owners this layout actually declares. */
@@ -264,6 +318,7 @@ export function computeValidationScope(
   changedFiles: readonly string[],
   layout: PackageLayout,
   graph: WorkspaceGraph,
+  contentEvidence: ValidationScopeContentEvidence = {},
 ): ValidationScope {
   const coreTrigger = coreModuleTriggerFile(changedFiles);
   if (coreTrigger !== undefined) {
@@ -271,9 +326,19 @@ export function computeValidationScope(
   }
 
   const touched = new Set<string>();
+  const versionOnlyRootManifest =
+    contentEvidence.rootPackageJson !== undefined &&
+    isVersionOnlyPackageJsonChange(
+      contentEvidence.rootPackageJson.before,
+      contentEvidence.rootPackageJson.after,
+    );
   for (const raw of changedFiles) {
     if (raw === "") continue;
     const file = stripDotSlash(raw);
+    // `package.json` remains a root trigger by default. It is discounted only
+    // when the diff endpoints prove that the top-level version is the sole
+    // semantic change; any missing or mixed evidence falls through to `whole`.
+    if (file === "package.json" && versionOnlyRootManifest) continue;
     const verdict = classifyChangedPath(file, layout);
     if (verdict.kind === "whole") return { type: "whole-workspace", triggerFile: file };
     if (verdict.kind === "inert") continue;
@@ -311,8 +376,14 @@ export function scopesForValidationScope(scope: ValidationScope): string[] {
  * these gates either (#2984). Prefer `computeValidationScope` wherever a graph
  * IS available: this resolves the trigger packages only, never their dependents.
  */
-export function gateScopes(layout: PackageLayout, changedFiles: readonly string[]): string[] {
-  return scopesForValidationScope(computeValidationScope(changedFiles, layout, { packages: [] }));
+export function gateScopes(
+  layout: PackageLayout,
+  changedFiles: readonly string[],
+  contentEvidence: ValidationScopeContentEvidence = {},
+): string[] {
+  return scopesForValidationScope(
+    computeValidationScope(changedFiles, layout, { packages: [] }, contentEvidence),
+  );
 }
 
 /**

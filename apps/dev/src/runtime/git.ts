@@ -519,6 +519,28 @@ export async function changedFiles(ctx: GitContext, branch: string, base: string
 }
 
 /**
+ * Read one file at both endpoints of the same three-dot diff used by
+ * {@link changedFiles}. Missing refs/files or any git failure return undefined,
+ * so callers that use this as narrowing evidence fail closed.
+ */
+export async function changedFileContents(
+  ctx: GitContext,
+  branch: string,
+  base: string,
+  file: string,
+): Promise<{ before: string; after: string } | undefined> {
+  if (!branch || !base || !file) return undefined;
+  const mergeBase = await runGit(ctx, ["merge-base", base, branch]);
+  const beforeRef = mergeBase.code === 0 ? mergeBase.stdout.trim() : "";
+  if (!beforeRef) return undefined;
+  const before = await runGit(ctx, ["show", `${beforeRef}:${file}`]);
+  if (before.code !== 0) return undefined;
+  const after = await runGit(ctx, ["show", `${branch}:${file}`]);
+  if (after.code !== 0) return undefined;
+  return { before: before.stdout, after: after.stdout };
+}
+
+/**
  * The worktree diff of <branch> against the merge base (git diff base...branch).
  *
  * This is what the gate fold's review stage reads (#2730): the stage runs BEFORE

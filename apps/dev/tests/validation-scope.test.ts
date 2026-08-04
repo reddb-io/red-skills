@@ -142,6 +142,46 @@ describe("computeValidationScope — whole-workspace escalation", () => {
     }
     expect(scopesForValidationScope(scope)).toEqual(["apps/dev"]);
   });
+
+  it("does not widen a package cone for a proven version-only root manifest change", () => {
+    const scope = computeValidationScope(
+      ["package.json", "apps/dev/src/core/go.ts"],
+      layout,
+      g,
+      {
+        rootPackageJson: {
+          before: JSON.stringify({ name: "red-skills", version: "1.2.3", scripts: { test: "vitest" } }),
+          after: JSON.stringify({ name: "red-skills", version: "1.2.4", scripts: { test: "vitest" } }),
+        },
+      },
+    );
+
+    expect(scope.type).toBe("cone");
+    expect(scopesForValidationScope(scope)).toEqual(["apps/dev"]);
+    expect(scopesForValidationScope(scope)).not.toContain(".");
+  });
+
+  it("keeps a root manifest global when version and behavioural content both change", () => {
+    const scope = computeValidationScope(
+      ["package.json", "apps/dev/src/core/go.ts"],
+      layout,
+      g,
+      {
+        rootPackageJson: {
+          before: JSON.stringify({ name: "red-skills", version: "1.2.3", dependencies: { a: "1" } }),
+          after: JSON.stringify({ name: "red-skills", version: "1.2.4", dependencies: { a: "2" } }),
+        },
+      },
+    );
+
+    expect(scope.type).toBe("whole-workspace");
+    expect(scopesForValidationScope(scope)).toEqual(["."]);
+  });
+
+  it("keeps a root manifest global when no content comparison proves the change safe", () => {
+    const scope = computeValidationScope(["package.json", "apps/dev/src/core/go.ts"], layout, g);
+    expect(scope.type).toBe("whole-workspace");
+  });
 });
 
 // ---- computeValidationScope — cone expansion ----

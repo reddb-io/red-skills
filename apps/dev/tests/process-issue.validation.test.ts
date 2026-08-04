@@ -1521,7 +1521,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
    * a probe that echoes it back means the base stood still. */
   const BASE_START_SHA = "origin/main-tip";
 
-  it("charges nothing to /go's budget for a gate failure the base caused, and lands on the re-validation", async () => {
+  it("charges nothing to /go's budget and reruns only the gate when the base caused the failures", async () => {
     const { deps, input, trace } = harness({
       labels: ["lane:go"],
       laneLabel: "lane:go",
@@ -1539,7 +1539,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
     // Two gate failures under a cap of ONE, and the branch still landed: both
     // were attributed to the base moving, so neither consumed the budget.
     expect(result.outcome).toBe("done");
-    expect(trace.runAgentCalls).toHaveLength(3);
+    expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.closed).toEqual([9]);
     expect(trace.baseMovementCalls).toEqual([
       { baseRef: "red-trunk", sinceSha: BASE_START_SHA },
@@ -1586,7 +1586,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
-    expect(trace.runAgentCalls).toHaveLength(3);
+    expect(trace.runAgentCalls).toHaveLength(2);
     expect(trace.closed).toEqual([9]);
     // Criterion: a complete, mergeable branch is never left reading blocked:validation.
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
@@ -1611,14 +1611,9 @@ describe("processIssue — stale-base drift never spends the correction budget (
     // The /go correction cap is ZERO here: only the free stale-base cycle can
     // explain a second attempt at all.
     expect(result.outcome).toBe("done");
-    expect(trace.runAgentCalls).toHaveLength(2);
-    const retryHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
-    expect(retryHandoff).toContain("<go-machine-gate-retry>");
-    expect(retryHandoff).toContain("<stale-base-drift>");
-    expect(retryHandoff).toContain(RELEASE_BUMP);
-    expect(retryHandoff).toContain("git merge origin/main");
-    expect(retryHandoff).toContain("this correction is FREE");
-    expect(retryHandoff).not.toContain("bounded correction retry");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((line) => line.includes(RELEASE_BUMP))).toBe(true);
+    expect(trace.iterLogs.some((line) => line.includes("re-running validation without re-seeding"))).toBe(true);
     expect(trace.closed).toEqual([9]);
   });
 
@@ -1640,8 +1635,8 @@ describe("processIssue — stale-base drift never spends the correction budget (
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("feedback-failed");
-    // 2 free stale-base cycles + 1 charged cycle + the park.
-    expect(trace.runAgentCalls).toHaveLength(4);
+    // Two free gate-only cycles, then one charged Re-seed before the park.
+    expect(trace.runAgentCalls).toHaveLength(2);
     const envelope = trace.envelopeBodies.at(-1) ?? "";
     expect(envelope).toContain("Post-DONE gate-correction budget exhausted");
     expect(envelope).toContain("1/1 charged");
@@ -1663,7 +1658,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("feedback-failed");
-    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
   });
 
@@ -1677,10 +1672,8 @@ describe("processIssue — stale-base drift never spends the correction budget (
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
-    expect(trace.runAgentCalls).toHaveLength(2);
-    const retryHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
-    expect(retryHandoff).toContain("<afk-gate-correction>");
-    expect(retryHandoff).toContain("<stale-base-drift>");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((line) => line.includes("re-running validation without re-seeding"))).toBe(true);
     expect(trace.closed).toEqual([9]);
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
   });
