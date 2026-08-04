@@ -32,6 +32,7 @@ import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { routeCommand, UnknownCommandError, type RouterSchema } from "@reddb-io/shared/args.js";
 import { adoptEngineNodeOnPath } from "@reddb-io/shared/engine-node.js";
 import { reconcileEngineDelivery } from "./runtime/reconcile-engine.js";
+import { runWorkerGhBoundary } from "./runtime/worker-gh-boundary.js";
 
 export type CliCommand =
   | "run"
@@ -66,6 +67,7 @@ export type CliCommand =
   | "toon-bump"
   | "toon-migrate"
   | "reconcile-engine"
+  | "worker-gh"
   | "version";
 
 export interface ParsedCli {
@@ -116,6 +118,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "toon-bump": {},
     "toon-migrate": {},
     "reconcile-engine": {},
+    "worker-gh": {},
     version: {},
   },
   default: "run",
@@ -208,6 +211,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   // with a help flag.
   if (
     parsed.command !== "go" &&
+    parsed.command !== "worker-gh" &&
     (parsed.args.includes("--help") || parsed.args.includes("-h"))
   ) {
     process.stdout.write(
@@ -229,6 +233,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       `engine ${result.version} ready at ${result.bundle_path}; registration ${result.registration}\n`,
     );
     return 0;
+  }
+  if (parsed.command === "worker-gh") {
+    const result = await runWorkerGhBoundary(parsed.args);
+    if (result.stdout !== "") process.stdout.write(result.stdout);
+    if (result.stderr !== "") process.stderr.write(result.stderr);
+    return result.code;
   }
   if (parsed.command === "monitor") return monitorCommand(parsed.args);
   if (parsed.command === "stop") return stopCommand(parsed.args);

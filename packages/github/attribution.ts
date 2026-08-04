@@ -24,6 +24,8 @@ export interface GithubSpendObservation {
   readonly observed_at: string;
   readonly operation_key: string;
   readonly pool: GithubRateBudget;
+  /** Process/work owner when the transport can name one (for example a Worker). */
+  readonly actor?: string;
   readonly cost: number;
 }
 
@@ -31,6 +33,7 @@ export interface GithubSpendObservation {
 export interface GithubOperationSpend {
   readonly operation_key: string;
   readonly pool: GithubRateBudget;
+  readonly actor?: string;
   readonly count: number;
   readonly cost: number;
 }
@@ -56,6 +59,7 @@ export interface GithubAttributionLedger {
   record(input: {
     readonly operation: GithubAttributedOperation;
     readonly cost: number;
+    readonly actor?: string;
     readonly observedAt?: string;
   }): Promise<void>;
   /** Aggregate durable observations for a half-open time window. */
@@ -91,7 +95,7 @@ export function createGithubAttributionLedger(
 
   return {
     record(input): Promise<void> {
-      const observation = makeObservation(input.operation, input.cost, input.observedAt ?? now());
+      const observation = makeObservation(input.operation, input.cost, input.observedAt ?? now(), input.actor);
       const segment = encodeLines().push(toToonlRecord(observation));
       pendingWrite = pendingWrite.then(async () => {
         await mkdir(dirname(options.path), { recursive: true });
@@ -112,11 +116,12 @@ export function createGithubAttributionLedger(
         const observedAt = Date.parse(observation.observed_at);
         if (observedAt < from || observedAt >= to) continue;
         if (input.pool !== undefined && observation.pool !== input.pool) continue;
-        const groupKey = `${observation.pool}\u0000${observation.operation_key}`;
+        const groupKey = `${observation.pool}\u0000${observation.operation_key}\u0000${observation.actor ?? ""}`;
         const current = grouped.get(groupKey);
         grouped.set(groupKey, {
           operation_key: observation.operation_key,
           pool: observation.pool,
+          ...(observation.actor === undefined ? {} : { actor: observation.actor }),
           count: (current?.count ?? 0) + 1,
           cost: (current?.cost ?? 0) + observation.cost,
         });
@@ -127,7 +132,8 @@ export function createGithubAttributionLedger(
           right.cost - left.cost ||
           right.count - left.count ||
           left.operation_key.localeCompare(right.operation_key) ||
-          left.pool.localeCompare(right.pool),
+          left.pool.localeCompare(right.pool) ||
+          (left.actor ?? "").localeCompare(right.actor ?? ""),
       );
       return {
         version: 1,
@@ -147,16 +153,21 @@ function makeObservation(
   operation: GithubAttributedOperation,
   cost: number,
   observedAt: string,
+  actor?: string,
 ): GithubSpendObservation {
   instant(observedAt, "GitHub spend observation");
   if (!Number.isSafeInteger(cost) || cost < 0) {
     throw new Error(`GitHub spend observation cost must be a non-negative safe integer; received ${cost}`);
+  }
+  if (actor !== undefined && actor.trim() === "") {
+    throw new Error("GitHub spend observation actor must be non-empty when supplied");
   }
   return {
     version: 1,
     observed_at: observedAt,
     operation_key: operation.key,
     pool: operation.budget,
+    ...(actor === undefined ? {} : { actor }),
     cost,
   };
 }
@@ -209,6 +220,7 @@ function toToonlRecord(observation: GithubSpendObservation): ToonlRecord {
     observed_at: observation.observed_at,
     operation_key: observation.operation_key,
     pool: observation.pool,
+    ...(observation.actor === undefined ? {} : { actor: observation.actor }),
     cost: observation.cost,
   };
 }
@@ -221,6 +233,7 @@ function isObservation(value: unknown): value is GithubSpendObservation {
     typeof value.operation_key === "string" &&
     value.operation_key !== "" &&
     (value.pool === "rest" || value.pool === "graphql" || value.pool === "search") &&
+    (value.actor === undefined || (typeof value.actor === "string" && value.actor !== "")) &&
     typeof value.cost === "number" &&
     Number.isSafeInteger(value.cost) &&
     value.cost >= 0;

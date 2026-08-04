@@ -354,6 +354,14 @@ describe("buildHandoff", () => {
     expect(EXIT_PROTOCOL).toContain("prose");
   });
 
+  it("EXIT_PROTOCOL states the inner agent's GitHub budget contract (#3269)", () => {
+    expect(EXIT_PROTOCOL).toContain("GITHUB API BUDGET");
+    expect(EXIT_PROTOCOL).toContain("prefer provided summaries and tools");
+    expect(EXIT_PROTOCOL).toContain("batch related reads");
+    expect(EXIT_PROTOCOL).toContain("never poll `gh` in a loop");
+    expect(EXIT_PROTOCOL).toContain("budget-aware boundary");
+  });
+
   it("schema-enabled protocol instructs the agent to emit the structured AgentOutput block (ADR 0082 / #919)", () => {
     // The AgentOutput clause is spliced in ONLY for a schema-enabled runner (the
     // coexist design); the plain EXIT_PROTOCOL stays text-sentinel-only so a

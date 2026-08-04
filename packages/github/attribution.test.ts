@@ -99,4 +99,29 @@ describe("the GitHub spend attribution ledger", () => {
       { operation_key: "issue view", pool: "rest", count: 1, cost: 1 },
     ]);
   });
+
+  it("keeps the actor that spent a routed operation instead of merging Workers", async () => {
+    const path = await ledgerPath();
+    const ledger = createGithubAttributionLedger({ path });
+
+    await ledger.record({
+      operation: routeGithubArgs(["issue", "list"]),
+      cost: 8,
+      actor: "worker:wONE",
+      observedAt: "2026-08-03T12:05:00.000Z",
+    });
+    await ledger.record({
+      operation: routeGithubArgs(["issue", "list"]),
+      cost: 3,
+      actor: "worker:wTWO",
+      observedAt: "2026-08-03T12:06:00.000Z",
+    });
+
+    const report = await ledger.report({ from: HOUR_START, to: HOUR_END });
+
+    expect(report.operations).toEqual([
+      { operation_key: "issue list", pool: "graphql", actor: "worker:wONE", count: 1, cost: 8 },
+      { operation_key: "issue list", pool: "graphql", actor: "worker:wTWO", count: 1, cost: 3 },
+    ]);
+  });
 });

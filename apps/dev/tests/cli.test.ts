@@ -40,6 +40,14 @@ describe("cli parser", () => {
       args: ["--human"],
     });
   });
+
+  it("routes the private worker-gh shim command without consuming gh flags", () => {
+    expect(parseCli(["worker-gh", "issue", "list", "--json", "number"])).toEqual({
+      command: "worker-gh",
+      args: ["issue", "list", "--json", "number"],
+    });
+    expect(parseCli(["worker-gh", "--help"])).toEqual({ command: "worker-gh", args: ["--help"] });
+  });
 });
 
 describe("top-level help and unknown flags never boot a worker (#2581)", () => {
