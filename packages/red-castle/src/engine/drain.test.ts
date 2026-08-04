@@ -26,4 +26,29 @@ describe("drain ensure planner", () => {
         "registration: created; target: 0→2; runner: none→codex; workers born: 2",
     });
   });
+
+  it("keeps every dimension when the requested drain already stands", () => {
+    expect(
+      planDrain(
+        {
+          daemon_reachable: true,
+          registration: { runner: "codex", target: 2 },
+          lapsed: false,
+          workers: 2,
+        },
+        { runner: "codex", target: 2 },
+      ),
+    ).toEqual({
+      outcome: "apply",
+      actions: [],
+      report: {
+        registration: "kept",
+        target: "kept",
+        runner: "kept",
+        workers_born: "kept",
+      },
+      summary:
+        "registration: kept; target: kept; runner: kept; workers born: kept",
+    });
+  });
 });
