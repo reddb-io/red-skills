@@ -648,6 +648,11 @@ export async function processIssue(
   let noSourceDiffWarning: string | undefined;
   let currentHandoff = handoff;
   let correctionLedger: CorrectionLedger = EMPTY_CORRECTION_LEDGER;
+  // Two consecutive identical suspect-infra readings on the gate-only rerun
+  // saw the same branch and the same environment. That is deterministic setup
+  // failure, not a flake worth another free cycle or outer recovery attempt.
+  let previousSuspectInfraSignature: string | undefined;
+  let deterministicInfraSignature: string | undefined;
   // A stale-base attribution buys another GATE run, not another implementer
   // run: the branch did not change, only the merge result did (#3231).
   let gateRevalidationSkip = false;
@@ -845,6 +850,28 @@ export async function processIssue(
       cause === "gate"
         ? await attributeGateFailureNow(req.driftEligible ?? false, req.suspectInfra ?? false)
         : { attribution: undefined, drift: undefined };
+    const signature = req.signature ?? roundSignature(req.sidecar);
+    if (attribution?.cause === "suspect-infra") {
+      if (previousSuspectInfraSignature === signature) {
+        deterministicInfraSignature = signature;
+        const gate = req.gate ?? "feedback";
+        const note =
+          `🤖 ${reseedLane}: ${gate} machine gate repeated deterministic suspect-infra ` +
+          `signature=${signature} on the unchanged branch/environment; parking immediately ` +
+          `without another free correction or recovery retry.`;
+        deps.appendIterLog(note);
+        deps.recordWorkerEvent?.("worker.gate_revalidation_refused", {
+          trigger: req.trigger,
+          cause: "deterministic-suspect-infra",
+          signature,
+          lane: reseedBudget.lane,
+        });
+        return "refused";
+      }
+      previousSuspectInfraSignature = signature;
+    } else {
+      previousSuspectInfraSignature = undefined;
+    }
     if (attribution && attribution.cause !== "branch-fault") {
       correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
       gateRevalidationSkip = true;
@@ -884,7 +911,7 @@ export async function processIssue(
       req.review
         ? withReviewOutstanding(reseedOutstanding, req.review)
         : withGateOutstanding(reseedOutstanding, { gate, validation: req.validation ?? "", drift }),
-      req.signature ?? roundSignature(req.sidecar),
+      signature,
     );
     const gateSpend = reseedSpend.gate ?? 0;
     /** The round's one-line account. It reaches the iteration log AND the trail's
@@ -1546,6 +1573,11 @@ export async function processIssue(
       if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar, suspectInfra))) {
         continue;
       }
+      if (deterministicInfraSignature) {
+        notes +=
+          ` Deterministic suspect-infra signature ${deterministicInfraSignature} repeated ` +
+          `on the unchanged gate environment; parked immediately without recovery retry.`;
+      }
       if (!isInfra) {
         notes += correctionBudgetNote();
         await parkReseedTrail(validationText);
@@ -1590,6 +1622,11 @@ export async function processIssue(
           await reseedAfterGate("gate-stage", "backpressure", validationText, backpressure.sidecar, suspectInfra)
         )) {
           continue;
+        }
+        if (deterministicInfraSignature) {
+          bpNotes +=
+            ` Deterministic suspect-infra signature ${deterministicInfraSignature} repeated ` +
+            `on the unchanged gate environment; parked immediately without recovery retry.`;
         }
         if (!bpInfra) {
           bpNotes += correctionBudgetNote();
