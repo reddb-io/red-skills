@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyAbsorb,
   applyArchiveMove,
   applyComposite,
   applyIndexArchive,
   applyRenumber,
   applyStalePathFix,
   applyStatusAndSuccessor,
+  planAbsorb,
   planArchiveMove,
   planIndexArchive,
   planIndexEntry,
+  planIndexReviewAnnotation,
   planMerge,
   planRenumber,
   planSplit,
@@ -212,6 +215,30 @@ describe("planIndexArchive", () => {
     });
 
     expect(writes).toEqual([[plan.path, plan.text]]);
+  });
+});
+
+describe("planIndexReviewAnnotation", () => {
+  it("visibly stamps a reviewed bullet and replaces an older review marker", () => {
+    const first = planIndexReviewAnnotation({
+      path: ".red/adr/INDEX.md",
+      text: INDEX,
+      number: "0001",
+      reviewedOn: "2026-08-04",
+      baseSha: "abc1234",
+    });
+    const second = planIndexReviewAnnotation({
+      path: first.path,
+      text: first.text,
+      number: "0001",
+      reviewedOn: "2026-09-10",
+      baseSha: "def5678",
+    });
+
+    expect(first.text).toContain("- **0001** Live decision — reviewed 2026-08-04 @ abc1234");
+    expect(second.text).toContain("- **0001** Live decision — reviewed 2026-09-10 @ def5678");
+    expect(second.text).not.toContain("reviewed 2026-08-04");
+    expect(second.text.match(/reviewed /g)).toHaveLength(1);
   });
 });
 
@@ -633,6 +660,110 @@ describe("planMerge", () => {
         indexText: INDEX,
       }),
     ).toThrow("A merge must consolidate at least two records");
+  });
+});
+
+describe("planAbsorb", () => {
+  const SECOND = ADR.replace("# Retired decision", "# Auxiliary decision");
+
+  it("rewrites one governing ADR and archives only its auxiliaries", () => {
+    const rewritten = ADR.replace(
+      "Keep `apps/old/runtime.ts` as the canonical runtime.",
+      "Keep `apps/new/runtime.ts` as the canonical runtime, including the auxiliary amendment.",
+    );
+    const plan = planAbsorb({
+      governing: { path: ".red/adr/0001-live.md", text: ADR },
+      rewrittenGoverningText: rewritten,
+      auxiliaries: [{ path: ".red/adr/0002-retired.md", text: SECOND }],
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+    });
+
+    expect(plan.governing).toEqual({
+      path: ".red/adr/0001-live.md",
+      originalText: ADR,
+      text: rewritten,
+    });
+    expect(plan.archives).toHaveLength(1);
+    expect(plan.archives[0]!.to).toBe(".red/adr/archive/0002-retired.md");
+    expect(plan.archives[0]!.adrText).toContain("superseded-by: 0001");
+    expect(plan.indexText.match(/- \*\*0001\*\*/g)).toHaveLength(1);
+    expect(plan.indexText.indexOf("- **0001**")).toBeLessThan(plan.indexText.indexOf("## Archived"));
+    expect(plan.indexText.indexOf("- **0002**")).toBeGreaterThan(plan.indexText.indexOf("## Archived"));
+  });
+});
+
+describe("applyAbsorb", () => {
+  it("rewrites the governor, archives auxiliaries, then writes the INDEX once", async () => {
+    const plan = planAbsorb({
+      governing: { path: ".red/adr/0001-live.md", text: ADR },
+      rewrittenGoverningText: ADR.replace("canonical runtime", "governing runtime"),
+      auxiliaries: [{ path: ".red/adr/0002-retired.md", text: ADR }],
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+    });
+    const events: string[] = [];
+
+    await applyAbsorb(plan, {
+      fs: {
+        writeFile: async (path) => {
+          events.push(`write:${path}`);
+        },
+      },
+      git: {
+        mv: async (from, to) => {
+          events.push(`git-mv:${from}:${to}`);
+        },
+      },
+    });
+
+    expect(events).toEqual([
+      "write:.red/adr/0001-live.md",
+      "write:.red/adr/0002-retired.md",
+      "git-mv:.red/adr/0002-retired.md:.red/adr/archive/0002-retired.md",
+      "write:.red/adr/INDEX.md",
+    ]);
+  });
+
+  it("rolls back the INDEX, auxiliaries, and governor when apply fails", async () => {
+    const plan = planAbsorb({
+      governing: { path: ".red/adr/0001-live.md", text: ADR },
+      rewrittenGoverningText: ADR.replace("canonical runtime", "governing runtime"),
+      auxiliaries: [{ path: ".red/adr/0002-retired.md", text: ADR }],
+      indexPath: ".red/adr/INDEX.md",
+      indexText: INDEX,
+    });
+    const events: string[] = [];
+
+    await expect(applyAbsorb(plan, {
+      fs: {
+        writeFile: async (path, text) => {
+          const version = path === plan.indexPath
+            ? text === plan.indexText ? "planned" : "original"
+            : path === plan.governing.path
+              ? text === plan.governing.text ? "planned" : "original"
+              : text === plan.archives[0]!.adrText ? "planned" : "original";
+          events.push(`write:${path}:${version}`);
+          if (path === plan.indexPath && text === plan.indexText) throw new Error("INDEX write failed");
+        },
+      },
+      git: {
+        mv: async (from, to) => {
+          events.push(`git-mv:${from}:${to}`);
+        },
+      },
+    })).rejects.toThrow("INDEX write failed");
+
+    expect(events).toEqual([
+      "write:.red/adr/0001-live.md:planned",
+      "write:.red/adr/0002-retired.md:planned",
+      "git-mv:.red/adr/0002-retired.md:.red/adr/archive/0002-retired.md",
+      "write:.red/adr/INDEX.md:planned",
+      "write:.red/adr/INDEX.md:original",
+      "git-mv:.red/adr/archive/0002-retired.md:.red/adr/0002-retired.md",
+      "write:.red/adr/0002-retired.md:original",
+      "write:.red/adr/0001-live.md:original",
+    ]);
   });
 });
 

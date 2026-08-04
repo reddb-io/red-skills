@@ -63,12 +63,33 @@ export interface AdrTriageContext {
    * every record as undocumented.
    */
   indexNumbers?: readonly string[];
-  /** An unlinked ADR older than this is inert. Default 365. */
+  /** @deprecated Age is evidence to inspect, never a terminal disposition. */
   inertAfterDays?: number;
   /** Decision points at/above which an ADR is overloaded. Default 5. */
   splitDecisionThreshold?: number;
   /** Shared title terms at/above which two ADRs cover one subject. Default 3. */
   mergeOverlapThreshold?: number;
+  /** Current code, test, documentation, and newer-ADR evidence gathered by the caller. */
+  candidateEvidence?: readonly AdrCandidateEvidence[];
+  /** Visible INDEX review annotations parsed by the caller. */
+  reviewMarkers?: readonly AdrReviewMarker[];
+}
+
+export type AdrCandidateEvidenceKind = "code" | "test" | "documentation" | "newer-adr";
+
+export interface AdrCandidateEvidence {
+  kind: AdrCandidateEvidenceKind;
+  path: string;
+  detail: string;
+  numbers: readonly string[];
+  /** Git-aware callers set this only when the evidence changed after the recorded review SHA. */
+  changedSinceReview: boolean;
+}
+
+export interface AdrReviewMarker {
+  number: string;
+  reviewedOn: string;
+  baseSha: string;
 }
 
 export type AdrSubjectFilter =
@@ -104,7 +125,6 @@ export interface AdrTriageReport {
   subject?: AdrTriageSubjectReport;
 }
 
-const DEFAULT_INERT_AFTER_DAYS = 365;
 const DEFAULT_SPLIT_THRESHOLD = 5;
 const DEFAULT_MERGE_OVERLAP = 3;
 
@@ -228,7 +248,6 @@ interface Classification {
 }
 
 function classify(record: AdrRecord, context: AdrTriageContext): Classification {
-  const inertAfterDays = context.inertAfterDays ?? DEFAULT_INERT_AFTER_DAYS;
   const splitThreshold = context.splitDecisionThreshold ?? DEFAULT_SPLIT_THRESHOLD;
   const mergeThreshold = context.mergeOverlapThreshold ?? DEFAULT_MERGE_OVERLAP;
 
@@ -296,14 +315,6 @@ function classify(record: AdrRecord, context: AdrTriageContext): Classification 
 
   if (isDeprecated(record)) {
     return { bucket: "archive-candidate", signals, reason: "Deprecated; terminal record, safe to archive." };
-  }
-
-  if (ageDays >= inertAfterDays && inboundLinks === 0) {
-    return {
-      bucket: "archive-candidate",
-      signals,
-      reason: `Inert: ${ageDays} days old and no ADR links to it.`,
-    };
   }
 
   if (points >= splitThreshold) {
@@ -531,6 +542,94 @@ export function groupAdrs(context: AdrTriageContext, options: AdrTriageOptions =
         : { kind: subject.kind, matched };
   }
   return report;
+}
+
+// ---------------------------------------------------------------------------
+// reverse-grill cluster ranking
+// ---------------------------------------------------------------------------
+
+export type AdrClusterRecommendation = "review-now" | "review-next" | "defer-until-new-evidence";
+
+export interface AdrRankedCluster {
+  rank: number;
+  title: string;
+  numbers: string[];
+  evidence: AdrCandidateEvidence[];
+  hasNewEvidence: boolean;
+  recommendation: AdrClusterRecommendation;
+  /** Deterministic ordering aid, not a disposition or replacement for maintainer judgment. */
+  score: number;
+}
+
+export interface AdrClusterRankingReport {
+  clusters: AdrRankedCluster[];
+  excludedArchived: string[];
+}
+
+function isArchivedPath(path: string): boolean {
+  return /^\.red\/adr\/archive\//.test(path);
+}
+
+/**
+ * Rank active ADR clusters for the reverse grill. The helper emits candidate
+ * evidence and a stable place to start; it never chooses an ADR disposition.
+ * Archived records are deliberately absent from both clustering and evidence.
+ */
+export function rankAdrClusters(context: AdrTriageContext): AdrClusterRankingReport {
+  const activeAdrs = context.adrs.filter((record) => !isArchivedPath(record.path));
+  const activeNumbers = new Set(activeAdrs.map((record) => record.number));
+  const excludedArchived = context.adrs
+    .filter((record) => isArchivedPath(record.path))
+    .map((record) => record.number)
+    .sort();
+  const activeContext: AdrTriageContext = {
+    ...context,
+    adrs: activeAdrs,
+    indexSections: context.indexSections?.map((section) => ({
+      ...section,
+      numbers: section.numbers.filter((number) => activeNumbers.has(number)),
+    })),
+  };
+  const grouped = groupAdrs(activeContext);
+  const clusterSeeds = [
+    ...grouped.groups.map((group) => ({ title: group.title, numbers: group.numbers })),
+    ...grouped.ungrouped.map((number) => ({
+      title: activeAdrs.find((record) => record.number === number)?.title ?? `ADR ${number}`,
+      numbers: [number],
+    })),
+  ];
+  const reviewMarkers = new Set((context.reviewMarkers ?? []).map((marker) => marker.number));
+
+  const scored = clusterSeeds.map((seed) => {
+    const numberSet = new Set(seed.numbers);
+    const evidence = (context.candidateEvidence ?? [])
+      .filter((item) => item.numbers.some((number) => numberSet.has(number)))
+      .map((item) => ({
+        ...item,
+        numbers: item.numbers.filter((number) => numberSet.has(number) && activeNumbers.has(number)),
+      }))
+      .filter((item) => item.numbers.length > 0);
+    const hasNewEvidence = evidence.some((item) => item.changedSinceReview);
+    const reviewed = seed.numbers.every((number) => reviewMarkers.has(number));
+    const triageWeight = triageAdrs(activeContext, {
+      subject: { kind: "numbers", numbers: seed.numbers },
+    }).entries.reduce((score, entry) => score + (entry.bucket === "keep" ? 0 : 5), 0);
+    const score = (hasNewEvidence ? 100 : 0) + (reviewed ? 0 : 20) + triageWeight + evidence.length;
+    const recommendation: AdrClusterRecommendation = reviewed && !hasNewEvidence
+      ? "defer-until-new-evidence"
+      : hasNewEvidence
+        ? "review-now"
+        : "review-next";
+    return { ...seed, evidence, hasNewEvidence, recommendation, score };
+  });
+
+  scored.sort(
+    (a, b) => b.score - a.score || a.numbers[0]!.localeCompare(b.numbers[0]!) || a.title.localeCompare(b.title),
+  );
+  return {
+    clusters: scored.map((cluster, index) => ({ rank: index + 1, ...cluster })),
+    excludedArchived,
+  };
 }
 
 // ---------------------------------------------------------------------------
