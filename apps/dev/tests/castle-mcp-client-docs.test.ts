@@ -78,7 +78,7 @@ describe("castle MCP client docs contract", () => {
       readRepoFile(`${AFK}/monitor.md`),
     ]);
 
-    for (const tool of ["project_start", "project_status", "project_resize", "project_stop", "logs"]) {
+    for (const tool of ["project_start", "project_status", "project_resize", "project_reset", "project_stop", "logs"]) {
       expect(fleet, `fleet.md should route through ${tool}`).toContain(`\`${tool}\``);
     }
     for (const tool of ["monitor", "worker_vitals", "queue_status"]) {
