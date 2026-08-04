@@ -535,6 +535,8 @@ describe("castle MCP tools", () => {
     ).resolves.toMatchObject({
       refused: true,
       reason: expect.stringContaining("exactly one"),
+      repair: "none",
+      repair_reason: "the caller must choose one dispatch intent before retrying",
     });
     expect(d.workerDispatch).not.toHaveBeenCalled();
   });
@@ -550,6 +552,8 @@ describe("castle MCP tools", () => {
     ).resolves.toMatchObject({
       refused: true,
       reason: expect.stringContaining("exactly one"),
+      repair: "none",
+      repair_reason: "the caller must choose one dispatch intent before retrying",
     });
     expect(d.workerRequest).not.toHaveBeenCalled();
   });
