@@ -60,8 +60,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   the resolved value and its origin. To declare or change it, route through
   `/red-setup` Section E3 and the daemon-owned `~/.red/config.yaml`; a repository
   `.red/config.yaml` cannot set machine policy.
-- **A superseded-engine warning** -> run the exact `npx … red-skills-dev
-  reconcile-engine` command printed by the warning, then retry the dispatch. The
+- **A superseded-engine warning** -> run the exact
+  `npx -y -p @reddb-io/red-skills@<version> red-skills-dev reconcile-engine`
+  command printed by the warning, then retry the dispatch. The
   command warms that published dev bundle and re-points a standing registration
   in one operation; no separate plugin name, version lookup, or re-registration
   is required.
@@ -134,7 +135,7 @@ diagnostic surface: `host_state`, `host_dashboard`, `host_provision_check`,
 the host view a terminal can read (the `redskilled` daemon's `dashboard`
 command, and the `statusline` line it shares a render with) ->
 `plugins/dev/skills/engineering/red-statusline/HOST-NOTES.md`;
-engine delivery repair (`red-skills-dev reconcile-engine`) ->
+engine delivery repair (the `reconcile-engine` dev CLI subcommand) ->
 `apps/dev/src/runtime/reconcile-engine.ts`;
 territory scoping (`tag:<value>` labels, `/afk --tags`/`--user`) ->
 `plugins/dev/skills/engineering/red-setup/triage-labels.md`.
