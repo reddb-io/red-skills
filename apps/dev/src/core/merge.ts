@@ -37,8 +37,12 @@ export interface ExecResult {
   stderr: string;
 }
 
+export interface ExecOptions {
+  readonly input?: string;
+}
+
 /** Injected git/gh executor. Receives a full argv (incl. the `git`/`gh` head). */
-export type Exec = (args: string[]) => Promise<ExecResult>;
+export type Exec = (args: string[], options?: ExecOptions) => Promise<ExecResult>;
 
 /** Inputs for {@link integrateOrigin}. The behind/sync facts are injected. */
 export interface IntegrateOriginInput {
@@ -1632,10 +1636,11 @@ async function mergeWithStaleBranchRecovery(
  *   1. no-op unless the primary is actually ON `<target>` (a locked primary is
  *      pinned to main; if the human moved HEAD, leave it alone);
  *   2. no-op if the working tree is DIRTY (uncommitted WIP is sacred, #1019);
- *   3. no-op unless local `<target>` is a strict ancestor of the remote tip
- *      (a 0-ahead pure fast-forward — an ahead/diverged local never gets a
- *      merge commit or a reset);
- *   4. `merge --ff-only` only — never `reset`, never `--no-ff`.
+ *   3. advance a strict ancestor with `merge --ff-only`; a divergent local is
+ *      eligible only when every local-only commit has a patch-equivalent
+ *      remote-only commit, in which case the local commits are superseded;
+ *   4. reset only the clean, fully-superseded divergence to the fetched remote
+ *      tip — never merge or discard a local patch origin does not carry.
  * Every git call is best-effort; any non-zero exit leaves the primary untouched.
  */
 export type FastForwardLocalTargetRefusal =
@@ -1645,9 +1650,16 @@ export type FastForwardLocalTargetRefusal =
   | "dirty-tree"
   | "fetch-failed"
   | "not-ancestor"
+  | "superseded-commits"
   | "dirt-collision"
   | "supersede-failed"
+  | "reconcile-failed"
   | "merge-failed";
+
+export interface SupersededCommitPair {
+  readonly localSha: string;
+  readonly remoteSha: string;
+}
 
 export interface FastForwardLocalTargetGuardResult {
   readonly guard: "passed" | "refused";
@@ -1655,12 +1667,16 @@ export interface FastForwardLocalTargetGuardResult {
   readonly remote: string;
   readonly currentBranch?: string;
   readonly failed?: FastForwardLocalTargetRefusal;
-  readonly failedCondition?: "on-trunk" | "clean-tree" | "fetch" | "ancestor" | "dirt-collision" | "merge";
+  readonly failedCondition?: "on-trunk" | "clean-tree" | "fetch" | "ancestor" | "superseded-commits" | "dirt-collision" | "merge";
   /** Setup-owned dirty paths the clean-tree condition tolerated (#3106). */
   readonly toleratedDirt?: readonly string[];
   /** Tolerated dirt the incoming commits carry as tracked files, so the local
    * untracked copy is stale: moved aside before the merge, never merged over (#3155). */
   readonly supersededDirt?: readonly string[];
+  /** Local-only commits whose stable patches are already present on the remote
+   * side of the divergence. One remote commit is consumed by each local commit,
+   * making the reset proof auditable and one-to-one (#3248). */
+  readonly supersededCommits?: readonly SupersededCommitPair[];
   readonly evidence: string;
 }
 
@@ -1674,6 +1690,54 @@ export interface PromoteFleetTrunkMirrorResult {
   readonly target: string;
   readonly remote: string;
   readonly evidence: string;
+}
+
+function outputLines(output: string): string[] {
+  return output.split("\n").map((line) => line.trim()).filter((line) => line !== "");
+}
+
+async function stablePatchId(exec: Exec, gitRepo: string, sha: string): Promise<string | undefined> {
+  const patch = await exec([
+    "git", "-C", gitRepo, "diff-tree", "--root", "--patch", "--binary", "--full-index", "--no-commit-id", "-r", sha,
+  ]);
+  if (patch.code !== 0 || patch.stdout === "") return undefined;
+  const id = await exec(["git", "patch-id", "--stable"], { input: patch.stdout });
+  if (id.code !== 0) return undefined;
+  return id.stdout.trim().split(/\s+/)[0] || undefined;
+}
+
+async function classifySupersededCommits(
+  exec: Exec,
+  input: { gitRepo: string; localRef: string; remoteRef: string },
+): Promise<{ pairs: SupersededCommitPair[]; unmatched: string[]; proofFailed: boolean }> {
+  const local = await exec(["git", "-C", input.gitRepo, "rev-list", input.localRef, "--not", input.remoteRef]);
+  const remote = await exec(["git", "-C", input.gitRepo, "rev-list", input.remoteRef, "--not", input.localRef]);
+  if (local.code !== 0 || remote.code !== 0) return { pairs: [], unmatched: [], proofFailed: true };
+
+  const localShas = outputLines(local.stdout);
+  const remoteByPatch = new Map<string, string[]>();
+  for (const remoteSha of outputLines(remote.stdout)) {
+    const patchId = await stablePatchId(exec, input.gitRepo, remoteSha);
+    if (!patchId) continue;
+    const matches = remoteByPatch.get(patchId) ?? [];
+    matches.push(remoteSha);
+    remoteByPatch.set(patchId, matches);
+  }
+
+  const pairs: SupersededCommitPair[] = [];
+  const unmatched: string[] = [];
+  for (const localSha of localShas) {
+    const patchId = await stablePatchId(exec, input.gitRepo, localSha);
+    const matches = patchId ? remoteByPatch.get(patchId) : undefined;
+    const remoteSha = matches?.shift();
+    if (remoteSha) pairs.push({ localSha, remoteSha });
+    else unmatched.push(localSha);
+  }
+  return { pairs, unmatched, proofFailed: localShas.length === 0 };
+}
+
+function describeSupersededCommits(pairs: readonly SupersededCommitPair[]): string {
+  return pairs.map(({ localSha, remoteSha }) => `${localSha} -> ${remoteSha}`).join(", ");
 }
 
 /**
@@ -1807,29 +1871,60 @@ export async function evaluateFastForwardLocalTarget(
       evidence: `condition failed: fetch (${remote}/${target} unavailable)`,
     };
   }
-  // 3. Pure fast-forward only: local <target> must be an ancestor of the tip.
+  // 3. Prefer a pure fast-forward. A divergence is safe only when every local
+  // commit has a one-to-one stable-patch match on the remote side (#3248).
+  const remoteRef = `${remote}/${target}`;
   const ancestor = await exec([
     "git", "-C", gitRepo,
-    "merge-base", "--is-ancestor", target, `${remote}/${target}`,
+    "merge-base", "--is-ancestor", target, remoteRef,
   ]);
+  let supersededCommits: readonly SupersededCommitPair[] = [];
+  let lineageEvidence = `ancestor (${target} -> ${remoteRef})`;
   if (ancestor.code !== 0) {
-    return {
-      guard: "refused",
-      target,
-      remote,
-      currentBranch,
-      failed: "not-ancestor",
-      failedCondition: "ancestor",
-      evidence: `condition failed: ancestor (${target} is not an ancestor of ${remote}/${target})`,
-    };
+    // The setup-owned exception is safe for an ff-only merge because Git leaves
+    // unrelated edits in place. Divergence reconciliation uses reset --hard, so
+    // its clean-tree contract is literal: even our own tolerated dirt must stop
+    // before any patch-equivalence proof can authorize the pointer move.
+    if (toleratedDirt) {
+      return {
+        guard: "refused",
+        target,
+        remote,
+        currentBranch,
+        toleratedDirt: tree.setupOwned,
+        failed: "dirty-tree",
+        failedCondition: "clean-tree",
+        evidence: `condition failed: clean-tree (superseded-commit reconciliation requires no dirty paths; ${tree.setupOwned.join(", ")})`,
+      };
+    }
+    const classified = await classifySupersededCommits(exec, {
+      gitRepo,
+      localRef: target,
+      remoteRef,
+    });
+    if (classified.proofFailed || classified.unmatched.length > 0) {
+      const realCommits = classified.unmatched.length > 0
+        ? classified.unmatched.join(", ")
+        : "local-only commits could not be resolved";
+      return {
+        guard: "refused",
+        target,
+        remote,
+        currentBranch,
+        failed: "superseded-commits",
+        failedCondition: "superseded-commits",
+        evidence: `condition failed: superseded-commits (${realCommits} not carried by ${remoteRef})`,
+      };
+    }
+    supersededCommits = classified.pairs;
+    lineageEvidence = `superseded-commits (${describeSupersededCommits(supersededCommits)})`;
   }
   // 4. A tolerated path the incoming commits also carry would abort the very
   // merge this guard just approved (#3155), so decide it HERE: `guard=passed`
   // must imply the merge succeeds, or the verdict must not be `passed`.
   let supersededDirt: readonly string[] = [];
   if (toleratedDirt) {
-    const ref = `${remote}/${target}`;
-    const incoming = await exec(["git", "-C", gitRepo, "diff", "--name-only", target, ref]);
+    const incoming = await exec(["git", "-C", gitRepo, "diff", "--name-only", target, remoteRef]);
     if (incoming.code !== 0) {
       // Unknowable is not tolerable: passing here would mint the misleading
       // receipt this branch exists to prevent.
@@ -1841,7 +1936,7 @@ export async function evaluateFastForwardLocalTarget(
         toleratedDirt: tree.setupOwned,
         failed: "dirt-collision",
         failedCondition: "dirt-collision",
-        evidence: `condition failed: dirt-collision (could not read the incoming path list for ${ref} while ${tree.setupOwned.length} /red-setup file(s) are dirty)`,
+        evidence: `condition failed: dirt-collision (could not read the incoming path list for ${remoteRef} while ${tree.setupOwned.length} /red-setup file(s) are dirty)`,
       };
     }
     const collision = classifySetupDirtCollision(
@@ -1857,7 +1952,7 @@ export async function evaluateFastForwardLocalTarget(
         toleratedDirt: tree.setupOwned,
         failed: "dirt-collision",
         failedCondition: "dirt-collision",
-        evidence: describeSetupDirtCollisionRefusal(collision.conflicting, ref),
+        evidence: describeSetupDirtCollisionRefusal(collision.conflicting, remoteRef),
       };
     }
     supersededDirt = collision.superseded;
@@ -1870,7 +1965,8 @@ export async function evaluateFastForwardLocalTarget(
     currentBranch,
     ...(toleratedDirt ? { toleratedDirt: tree.setupOwned } : {}),
     ...(supersededDirt.length > 0 ? { supersededDirt } : {}),
-    evidence: `guard passed: on-trunk clean-tree ancestor (${target} -> ${remote}/${target})${toleratedDirt ? `; ${toleratedDirt}` : ""}${supersededNote ? `; ${supersededNote}` : ""}`,
+    ...(supersededCommits.length > 0 ? { supersededCommits } : {}),
+    evidence: `guard passed: on-trunk clean-tree ${lineageEvidence}${toleratedDirt ? `; ${toleratedDirt}` : ""}${supersededNote ? `; ${supersededNote}` : ""}`,
   };
 }
 
@@ -1922,7 +2018,29 @@ export async function fastForwardLocalTarget(
       evidence: supersede.evidence,
     };
   }
-  // 4b. Advance the pointer. ff-only can only succeed as a pure fast-forward.
+  // 4b. A squash-merged local commit is no longer an ancestor even though its
+  // patch landed. The clean-tree + one-to-one patch proof above makes moving the
+  // pointer to the fetched tip safe; the pair list remains in the receipt.
+  if ((guard.supersededCommits?.length ?? 0) > 0) {
+    const reset = await exec(["git", "-C", input.gitRepo, "reset", "--hard", `${input.remote}/${input.target}`]);
+    if (reset.code !== 0) {
+      return {
+        ...guard,
+        guard: "refused",
+        action: "noop",
+        failed: "reconcile-failed",
+        failedCondition: "superseded-commits",
+        evidence: `condition failed: superseded-commits (could not move ${input.target} to ${input.remote}/${input.target})`,
+      };
+    }
+    return {
+      ...guard,
+      action: "fast-forward",
+      evidence: `reconciled superseded commits and moved ${input.target} to ${input.remote}/${input.target}: ${describeSupersededCommits(guard.supersededCommits ?? [])}`,
+    };
+  }
+  // 4c. Advance the ordinary behind-only pointer. ff-only can only succeed as a
+  // pure fast-forward.
   const ff = await exec(["git", "-C", input.gitRepo, "merge", "--ff-only", `${input.remote}/${input.target}`]);
   if (ff.code !== 0) {
     return {

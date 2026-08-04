@@ -202,6 +202,53 @@ describe("runBoot precheck short-circuit", () => {
     ]);
   });
 
+  it("boots after reconciling patch-equivalent divergent commits and logs the SHA pair (#3248)", async () => {
+    const localSha = "1111111111111111111111111111111111111111";
+    const remoteSha = "2222222222222222222222222222222222222222";
+    const pair = `${localSha} -> ${remoteSha}`;
+    const fastForwardLocalBase = vi.fn(async () => ({
+      action: "fast-forward" as const,
+      guard: "passed" as const,
+      target: "main",
+      remote: "origin",
+      currentBranch: "main",
+      supersededCommits: [{ localSha, remoteSha }],
+      evidence: `reconciled superseded commits and moved main to origin/main: ${pair}`,
+    }));
+    const log = vi.fn();
+    const { deps } = makeDeps({ fastForwardLocalBase, log });
+
+    const result = await runBoot(
+      deps,
+      options({
+        operationalProbes: {
+          remoteUrls: [],
+          baseFreshness: {
+            trunk: "main",
+            remote: "origin",
+            localSha,
+            remoteSha,
+            ahead: 1,
+            behind: 2,
+            remoteReachable: true,
+            guard: {
+              guard: "passed",
+              target: "main",
+              remote: "origin",
+              currentBranch: "main",
+              supersededCommits: [{ localSha, remoteSha }],
+              evidence: `guard passed: on-trunk clean-tree superseded-commits (${pair})`,
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(fastForwardLocalBase).toHaveBeenCalledWith({ remote: "origin", target: "main" });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(pair));
+  });
+
   it.each([
     [
       "off-trunk",

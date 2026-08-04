@@ -730,15 +730,17 @@ export function gitExec(ctx: GitContext): GitExec {
 
 /** The merge.ts Exec executor (integrateOrigin / landMerge / landPr). */
 export function mergeExec(ctx: GitContext): MergeExec {
-  return async (args: string[]): Promise<MergeExecResult> => {
+  return async (args, mergeOptions): Promise<MergeExecResult> => {
     // merge.ts passes a full argv whose head is "git" or "gh"; route both
     // through the same injectable seam so the test fake sees the real land
     // commands (git push / gh pr merge) the close path issues.
     const [head, ...rest] = args;
     const exec = ctx.exec ?? execTool;
-    const commandOpts = head === "gh" && ctx.ghProbeTimeoutMs
-      ? { ...opts(ctx), timeoutMs: ctx.ghProbeTimeoutMs }
-      : opts(ctx);
+    const commandOpts = {
+      ...opts(ctx),
+      ...(head === "gh" && ctx.ghProbeTimeoutMs ? { timeoutMs: ctx.ghProbeTimeoutMs } : {}),
+      ...(mergeOptions?.input !== undefined ? { input: mergeOptions.input } : {}),
+    };
     const fn = (): Promise<ExecOutput> => exec(head ?? "git", rest, commandOpts);
     // Apply quota backoff only to `gh`-headed commands: git commands do not
     // make GitHub API calls and must never be silently delayed. For `gh`, an

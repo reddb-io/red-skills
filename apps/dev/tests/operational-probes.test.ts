@@ -695,7 +695,8 @@ describe("operational probe registry", () => {
       });
       expect(finding?.evidence).toContain("local main is 2 commit(s) behind origin/main");
       expect(finding?.evidence).toContain("guard=passed");
-      expect(finding?.canonicalFix).toContain("on-trunk, clean tree, and local ancestor");
+      expect(finding?.canonicalFix).toContain("on-trunk, clean tree");
+      expect(finding?.canonicalFix).toContain("patch-equivalent to an origin commit");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -924,8 +925,75 @@ describe("operational probe registry", () => {
       expect(fixes).toContainEqual({
         probeId: "afk.base-freshness",
         status: "noop",
-        evidence: "guard refused: condition failed: ancestor (main is not an ancestor of origin/main)",
+        evidence: expect.stringMatching(
+          /^guard refused: condition failed: superseded-commits \([0-9a-f]{40} not carried by origin\/main\)$/,
+        ),
       });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles a clean divergent trunk when origin carries every local patch (#3248)", async () => {
+    const { root, repo, localSha, remoteSha } = await makeSupersededCommitRepo();
+    try {
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+      const finding = report.findings.find((row) => row.id === "afk.base-freshness");
+
+      expect(finding?.evidence).toContain("guard=passed");
+      expect(finding?.evidence).toContain(`${localSha} -> ${remoteSha}`);
+
+      const fixes = await applyOperationalProbeFixes(report, {
+        confirm: async () => true,
+        fastForwardLocalBase: async ({ remote, target }) =>
+          fastForwardLocalTarget(realExec(), { gitRepo: repo, remote, target }),
+      });
+
+      expect(fixes.find((fix) => fix.probeId === "afk.base-freshness")).toMatchObject({
+        status: "applied",
+        evidence: expect.stringContaining(`${localSha} -> ${remoteSha}`),
+      });
+      expect(git(repo, "rev-parse", "main").trim()).toBe(git(repo, "rev-parse", "origin/main").trim());
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses divergence and names each local commit whose patch origin lacks (#3248)", async () => {
+    const { root, repo } = await makeBaseFreshnessRepo();
+    try {
+      await writeFile(join(repo, "local-only.txt"), "real local work\n", "utf8");
+      git(repo, "add", "local-only.txt");
+      git(repo, "commit", "-m", "real local work");
+      const localSha = git(repo, "rev-parse", "HEAD").trim();
+
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+      const finding = report.findings.find((row) => row.id === "afk.base-freshness");
+
+      expect(finding?.evidence).toContain("guard=refused");
+      expect(finding?.evidence).toContain(localSha);
+      expect(finding?.evidence).toContain("not carried by origin/main");
+      expect(git(repo, "rev-parse", "main").trim()).toBe(localSha);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("still refuses a dirty tree when every divergent commit is superseded (#3248)", async () => {
+    const { root, repo, localSha } = await makeSupersededCommitRepo();
+    try {
+      const configPath = join(repo, ".red", "config.yaml");
+      const dirtyConfig = "plugins:\n  dev:\n    enabled: true\n    trunk: main\n    local: keep\n";
+      // Setup-owned dirt is tolerated by an ordinary ff-only update, but a
+      // superseded-commit repair uses reset --hard and must therefore refuse it.
+      await writeFile(configPath, dirtyConfig, "utf8");
+      const report = await runOperationalProbes(await collectPrecheckFacts({ root: repo, repo: "", remote: "origin" }));
+      const finding = report.findings.find((row) => row.id === "afk.base-freshness");
+
+      expect(finding?.evidence).toContain("guard=refused");
+      expect(finding?.evidence).toContain("clean-tree");
+      expect(git(repo, "rev-parse", "main").trim()).toBe(localSha);
+      expect(await readFile(configPath, "utf8")).toBe(dirtyConfig);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -980,17 +1048,41 @@ async function makeBaseFreshnessRepo(): Promise<{ root: string; repo: string; or
   return { root, repo, origin };
 }
 
+async function makeSupersededCommitRepo(): Promise<{
+  root: string;
+  repo: string;
+  localSha: string;
+  remoteSha: string;
+}> {
+  const { root, repo, origin } = await makeBaseFreshnessRepo();
+  await writeFile(join(repo, "squashed.txt"), "the same patch\n", "utf8");
+  git(repo, "add", "squashed.txt");
+  git(repo, "commit", "-m", "local pre-squash commit");
+  const localSha = git(repo, "rev-parse", "HEAD").trim();
+
+  const peer = join(root, "squash-peer");
+  git(root, "clone", origin, "squash-peer");
+  configureGit(peer);
+  await writeFile(join(peer, "squashed.txt"), "the same patch\n", "utf8");
+  git(peer, "add", "squashed.txt");
+  git(peer, "commit", "-m", "squashed landing");
+  const remoteSha = git(peer, "rev-parse", "HEAD").trim();
+  git(peer, "push", "origin", "main");
+  return { root, repo, localSha, remoteSha };
+}
+
 function configureGit(cwd: string): void {
   git(cwd, "config", "user.email", "red@example.invalid");
   git(cwd, "config", "user.name", "Red Test");
 }
 
 function realExec(): Exec {
-  return async (argv: string[]): Promise<ExecResult> => {
+  return async (argv, options): Promise<ExecResult> => {
     try {
       const stdout = execFileSync(argv[0] ?? "git", argv.slice(1), {
         encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
+        input: options?.input,
+        stdio: ["pipe", "pipe", "pipe"],
       });
       return { code: 0, stdout, stderr: "" };
     } catch (error) {
