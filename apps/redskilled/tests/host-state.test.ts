@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readRedskilledHostState } from "../src/client.js";
-import { isRedskilledHostState } from "../src/host-state.js";
+import { buildHostState, isRedskilledHostState } from "../src/host-state.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { resolveHostCeiling } from "../src/admission.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
@@ -88,5 +88,29 @@ describe("redskilled host state", () => {
       { project_label: "alpha", worker_count: 2 },
       { project_label: "beta", worker_count: 1 },
     ]);
+  });
+
+  it("carries the daemon's last demand refusal on the socket-local host state", () => {
+    const demand = {
+      version: 1 as const,
+      at: "2026-08-04T18:05:00.000Z",
+      requested: 1,
+      granted: [],
+      shortfall: 1,
+      refusal: "host ceiling is temporarily full",
+      retry_after: "2026-08-04T18:05:30.000Z",
+      projects: [],
+    };
+    const state = buildHostState({
+      daemonVersion: "3.4.2",
+      machineIdHash: "machine",
+      sessionKeyHash: "session",
+      pid: 42,
+      startedAt: "2026-08-04T18:00:00.000Z",
+      demand,
+    });
+
+    expect(state.demand).toBe(demand);
+    expect(isRedskilledHostState(state)).toBe(true);
   });
 });
