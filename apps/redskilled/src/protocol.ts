@@ -389,6 +389,34 @@ export function isRedskilledPong(value: unknown): value is RedskilledPong {
     Number.isInteger(pong.pid);
 }
 
+function isRepairArgument(value: unknown, seen: Set<object>): boolean {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object" || seen.has(value)) return false;
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) return value.every((item) => isRepairArgument(item, seen));
+    return Object.values(value as Record<string, unknown>)
+      .every((item) => isRepairArgument(item, seen));
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function hasValidRepair(render: Record<string, unknown>): boolean {
+  const repair = render.repair;
+  const reason = render.repair_reason;
+  if (repair === undefined) return reason === undefined;
+  if (repair === "none") return typeof reason === "string" && reason.length > 0;
+  if (repair === null || typeof repair !== "object" || Array.isArray(repair)) return false;
+  const action = repair as Record<string, unknown>;
+  return reason === undefined &&
+    typeof action.tool === "string" && action.tool.length > 0 &&
+    typeof action.why === "string" && action.why.length > 0 &&
+    action.args !== null && typeof action.args === "object" && !Array.isArray(action.args) &&
+    isRepairArgument(action.args, new Set());
+}
+
 /**
  * True when `value` is a rendered statusline.
  *
@@ -411,6 +439,7 @@ export function isRedskilledStatuslineRender(value: unknown): value is Redskille
     // daemon predating the match verdict still serves a complete line, and a
     // client that rejected it would blank the statusline over a diagnostic.
     (render.project_match === undefined || typeof render.project_match === "string") &&
+    hasValidRepair(render) &&
     typeof render.degraded === "boolean" &&
     typeof render.stale === "boolean" &&
     typeof render.generated_at === "string";
