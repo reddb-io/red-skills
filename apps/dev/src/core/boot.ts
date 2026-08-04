@@ -643,7 +643,10 @@ async function tryBootAutoApplyLabelBodyCoherence(
     } catch (error) {
       deps.log?.(`boot coherence probe label quarantine failed for #${action.issue}: ${String(error)}`);
       try {
-        await deps.gh.editLabels(action.issue, [], [LABEL_READY]);
+        await applyBootStateTransition(deps, action.issue, { kind: "queue" }, [
+          [],
+          [LABEL_READY],
+        ]);
         deps.log?.(`boot coherence probe restored ready-for-agent for #${action.issue}`);
       } catch (restoreError) {
         const warning = `boot coherence probe left #${action.issue} without a visible quarantine; restoring ready-for-agent also failed: ${String(restoreError)}`;
