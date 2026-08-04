@@ -59,8 +59,10 @@ export function auditWorktreeSetup(facts: WorktreeSetupFacts): WorktreeSetupRepo
 
   const findings: WorktreeSetupFinding[] = [];
   let matchedManager = facts.packageManager === undefined;
+  let sawPackageManager = false;
   for (const command of declared) {
     const invoked = invokedPackageManager(command);
+    if (invoked) sawPackageManager = true;
     const reasons: string[] = [];
     if (facts.packageManager && invoked && invoked !== facts.packageManager) {
       reasons.push(`repository uses ${facts.packageManager}, but the setup declaration does not`);
@@ -95,7 +97,7 @@ export function auditWorktreeSetup(facts: WorktreeSetupFacts): WorktreeSetupRepo
     });
   }
 
-  if (!matchedManager && facts.packageManager) {
+  if (!matchedManager && !sawPackageManager && facts.packageManager) {
     findings.push({
       verdict: "error",
       reason: `repository uses ${facts.packageManager}, but no setup command invokes it`,
