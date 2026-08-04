@@ -141,6 +141,7 @@ import {
 } from "./core/branch-cleanup.js";
 import { planBranchReclaim } from "./core/branch-reclaim.js";
 import {
+  buildRegistrationPollPlan,
   buildRegistrationQuery,
   registrationQueryUnexpressedFacets,
 } from "./core/registration-query.js";
@@ -1101,6 +1102,7 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
     // like — the one thing rule 3 forbids.
     registered = await port.register({
       selector,
+      queue_poll: buildRegistrationPollPlan({ repo, selector: input.selector }),
       argv: [...launch.argv],
       workspace_path: root,
       // Both halves of the env come from the ONE composer (#3081): the host's log

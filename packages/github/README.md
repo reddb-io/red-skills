@@ -25,6 +25,22 @@ refuses a read entry that states anything else. The one exception is declared,
 not silent: `only` marks a resource that just one API exposes (Actions runs,
 Releases, the search endpoints), where there is no routing choice to make.
 
+## Stable polls use conditional REST
+
+Volatility is the exception cardinality cannot price. The daemon's repository
+activity and queue discovery reads repeat against usually unchanged collections,
+so their production transport uses repository issue and pull-request list
+endpoints through `createGithubClient().conditionalPaginate()`. GitHub's Search
+endpoint did not return a validator in the migration measurement, while these
+list endpoints did. The first `200` stores each page with its `ETag`, and the next
+request sends `If-None-Match` per page. A `304` reuses the stored page and records
+zero spend; it never becomes an empty answer. Rate-limit refusals and network
+failures still fail and cannot fall back to the stored value.
+
+The client is built from `@octokit/rest`, retry, throttling, and the pagination
+plugin bundled by REST.js. Interactive and not-yet-migrated reads keep their
+existing route while migration proceeds one slice at a time under ADR 0133.
+
 ## Three budgets, not two
 
 | Pool      | Metered by  | Limit    |
@@ -52,6 +68,11 @@ Deciding that a read belongs on REST changes nothing on its own — `gh issue vi
 `gh api repos/{o}/{r}/issues/{n}` argv plus a decoder projecting the REST body
 back into the shape `--json` would have printed, so a call site swaps its argv
 and keeps its parsing.
+
+That argv planner remains for call sites not yet migrated. The stable daemon poll
+path is the first typed-client slice: it calls REST directly through Octokit,
+keeps validators with their response bodies, and attributes a changed response
+as cost one and an unchanged response as cost zero.
 
 A field with no single-request REST equivalent is **named, not approximated**:
 `comments` (REST carries a count, not the list), `author` (gh normalizes a bot to
@@ -117,12 +138,12 @@ the reads that would refill it.
 ## Consumers
 
 `apps/dev` (the read boundary, the migrated single-object reads and the reserved
-band in `runtime/gh/band.ts`), `apps/redskilled` (the daemon's multi-repository
-activity query and its one balance poller) and `packages/red-castle` (the tracker
+band in `runtime/gh/band.ts`), `apps/redskilled` (the daemon's conditional REST
+pollers and its one balance poller) and `packages/red-castle` (the tracker
 adapter) all import this package. One table, because two implementations of one
 routing rule drift — and one balance, because two would be two fictions.
 
-An aliased multi-repository query is flat in **requests** and not in **points**:
-the GraphQL pool is metered by nodes returned, so the daemon's activity query
-asks GitHub what it charged (`rateLimit { cost }`) rather than letting one number
-pass for the other.
+The old aliased GraphQL path remains available to injected migration adapters and
+states its point cost explicitly. Production stable polls accept N sequential
+round trips instead: unchanged collections answer `304`, so the API budget pays
+only for the repositories whose representation actually changed.

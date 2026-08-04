@@ -1,9 +1,9 @@
 /**
- * repository-activity — every registered project's counts, in one request.
+ * repository-activity — every registered project's conditionally revalidated counts.
  *
  * ADR 0130 Amendment 1: **the daemon holds one token and the repository identity
- * of each registered project, and fetches every project's activity counts in a
- * single aliased query per interval.** Rendering the statusline needs open pull
+ * of each registered project, and fetches every project's activity counts with
+ * one host-scoped poller.** Rendering the statusline needs open pull
  * requests, open Issues and recently closed work, and those come from the issue
  * tracker rather than from any process the daemon owns.
  *
@@ -13,17 +13,16 @@
  * returns without interpreting, exactly as it carries a Worker's last logged line
  * without parsing it.
  *
- * **One request, not N.** GitHub quota is per token, not per process, so several
- * projects polling with the same credential already share one budget and splitting
- * the poller across processes saves nothing. What saves is issuing one aliased
- * query that spans every repository at once — the machinery the shared batch layer
- * already had, bound to a single repository, with the parameter widened.
+ * **N round trips, usually zero budget.** Each project has three stable REST
+ * list representations. Their ETags make an unchanged collection answer 304,
+ * which costs no API budget; GraphQL charged the full aggregate on every poll.
+ * The latency trade is deliberate on a poller, where budget binds and wall-clock
+ * slack exists. The aliased GraphQL path remains only for injected migration
+ * adapters that do not expose conditional lists.
  *
- * **Flat in REQUESTS, and never claimed flat in points.** The GraphQL pool is
- * metered by nodes returned, so an aliased query spanning ten repositories is one
- * request and ten repositories' worth of points. The query therefore asks GitHub
- * what it charged (`rateLimit { cost }`) and the document echoes that answer, so
- * no reader of this module can mistake one number for the other (#3095).
+ * **A 304 is the held answer, never an empty one.** The typed client keeps each
+ * validator with the body it validates. Rate-limit and network failures remain
+ * failures with null counts; only an actual unchanged response reuses data.
  *
  * **The condition is checked in code, not assumed in prose.** Every repository on
  * the host must be reachable with the same token; a project that declares its own
@@ -39,17 +38,24 @@
  * **The surface is not this module's to pick.** Which GitHub API answers a call
  * is owned by `@reddb-io/github`, which the castle imports too (ADR 0132
  * decision 4): one table, because two implementations of one routing rule drift.
- * This poll is a multi-repository aggregate, and cardinality sends a
- * multi-repository aggregate to GraphQL — so the endpoint below is DERIVED from
- * the route rather than hardcoded next to it. Note the third budget: an aliased
- * query makes cost flat in the number of projects by REQUEST count and not by
- * node POINTS, and the aliased `search` fields draw the Search pool (30/min)
- * rather than either.
+ * Stable-poll volatility selects conditional REST for production. The legacy
+ * aliased-query constants below stay explicit for migration adapters; they are
+ * not a second production surface decision.
  *
  * PURE, apart from `fetchRepositoryActivity`, whose transport is injected.
  */
 
-import { githubSurfaceFor, type GithubApiSurface } from "@reddb-io/github";
+import {
+  createGithubClient,
+  githubSurfaceFor,
+  isGithubRateLimitError,
+  type GithubApiSurface,
+  type GithubAttributionLedger,
+  type GithubAttributedOperation,
+  type GithubRequestFetch,
+  type GithubPaginatedRestAnswer,
+  type GithubResponseHeaders,
+} from "@reddb-io/github";
 
 /**
  * The gh argv this poll is equivalent to. It exists so the surface below is a
@@ -167,7 +173,7 @@ export interface RedskilledActivityRateLimit {
 export interface RedskilledRepositoryActivity {
   readonly version: 1;
   readonly fetched_at: string;
-  /** How many requests the whole fetch cost — one, for any number of projects. */
+  /** Network requests issued; a 304 is included even though its API-budget cost is zero. */
   readonly request_count: number;
   readonly project_count: number;
   readonly rate_limit: RedskilledActivityRateLimit;
@@ -336,8 +342,25 @@ export function emptyRepositoryActivity(fetchedAt: string): RedskilledRepository
   };
 }
 
-/** How a fetch reaches the tracker; injected so nothing here opens a socket. */
-export type RedskilledActivityTransport = (query: string) => Promise<unknown>;
+export interface RedskilledConditionalListRequest {
+  readonly cacheKey: string;
+  readonly route: string;
+  readonly parameters: Readonly<Record<string, unknown>>;
+  readonly operation: GithubAttributedOperation;
+}
+
+/**
+ * How a fetch reaches the tracker; injected so nothing here opens a socket.
+ *
+ * The callable GraphQL half remains for test adapters and migration fallback.
+ * Production transports add `conditionalList`, which is the stable poll path.
+ */
+export interface RedskilledActivityTransport {
+  (query: string): Promise<unknown>;
+  conditionalList?(
+    input: RedskilledConditionalListRequest,
+  ): Promise<GithubPaginatedRestAnswer<Record<string, unknown>>>;
+}
 
 export interface FetchRepositoryActivityInput {
   readonly projects: readonly RedskilledProjectRepository[];
@@ -348,7 +371,8 @@ export interface FetchRepositoryActivityInput {
 }
 
 /**
- * One interval's fetch: one request, however many projects are registered.
+ * One interval's fetch: conditional REST in production, aliased GraphQL for a
+ * migration adapter that exposes no conditional list.
  *
  * A transport that throws is not swallowed into zeros — the whole document comes
  * back with every project unreachable and the thrown sentence as its detail, so a
@@ -359,6 +383,7 @@ export async function fetchRepositoryActivity(
 ): Promise<RedskilledRepositoryActivity> {
   if (input.projects.length === 0) return emptyRepositoryActivity(input.now);
   assertOneHostToken(input.projects, input.hostTokenRef);
+  if (input.transport.conditionalList) return await fetchConditionalRepositoryActivity(input);
   const operation = buildRepositoryActivityQuery(input.projects, {
     now: input.now,
     closedWindowMs: input.closedWindowMs,
@@ -384,6 +409,107 @@ export async function fetchRepositoryActivity(
       })),
     };
   }
+}
+
+const REDSKILLED_ACTIVITY_REST_OPERATION: GithubAttributedOperation = {
+  key: "redskilled repository activity poll",
+  budget: "rest",
+};
+
+async function fetchConditionalRepositoryActivity(
+  input: FetchRepositoryActivityInput,
+): Promise<RedskilledRepositoryActivity> {
+  assertActivityProjects(input.projects);
+  // A sliding timestamp would make the recently-closed URL different on every
+  // poll and therefore impossible to revalidate. Bucket that human-speed count
+  // by hour: its seven-day meaning changes by at most one hour, while 59 of 60
+  // minute polls can reuse the same representation validator.
+  const nowMs = Date.parse(input.now);
+  const queryNow = Number.isFinite(nowMs)
+    ? new Date(Math.floor(nowMs / (60 * 60 * 1000)) * 60 * 60 * 1000).toISOString()
+    : input.now;
+  const operation = buildRepositoryActivityQuery(input.projects, {
+    now: queryNow,
+    closedWindowMs: input.closedWindowMs,
+  });
+  const list = input.transport.conditionalList!;
+  const projects: RedskilledProjectActivity[] = [];
+  let requestCount = 0;
+  let rateLimit: RedskilledActivityRateLimit = {
+    remaining: null,
+    reset_at: null,
+    exhausted: false,
+    point_cost: null,
+  };
+
+  for (const project of input.projects) {
+    const repository = `${project.owner}/${project.name}`;
+    const queries = [
+      ["open-prs", "GET /repos/{owner}/{repo}/pulls", { owner: project.owner, repo: project.name, state: "open" }],
+      ["open-issues", "GET /repos/{owner}/{repo}/issues", { owner: project.owner, repo: project.name, state: "open" }],
+      [
+        "recently-closed",
+        "GET /repos/{owner}/{repo}/issues",
+        { owner: project.owner, repo: project.name, state: "closed", since: operation.closed_since },
+      ],
+    ] as const;
+    const counts: number[] = [];
+    try {
+      for (const [kind, route, parameters] of queries) {
+        const answer = await list({
+          cacheKey: `activity:${repository}:${kind}:${JSON.stringify(parameters)}`,
+          route,
+          parameters,
+          operation: REDSKILLED_ACTIVITY_REST_OPERATION,
+        });
+        requestCount += answer.requestCount;
+        const items = kind === "open-prs"
+          ? answer.data
+          : answer.data.filter((item) => !isRecord(item.pull_request));
+        counts.push(kind === "recently-closed"
+          ? items.filter((item) => stringValue(item.closed_at) >= operation.closed_since).length
+          : items.length);
+        rateLimit = mergeActivityRateLimit(rateLimit, activityRateLimitFromHeaders(answer.headers));
+      }
+      projects.push({
+        project_label: project.project_label,
+        repository,
+        outcome: "counted",
+        counts: {
+          open_pull_requests: counts[0]!,
+          open_issues: counts[1]!,
+          recently_closed: counts[2]!,
+        },
+        detail: `counted ${repository} for project ${JSON.stringify(project.project_label)}`,
+      });
+    } catch (error) {
+      const rateLimited = isGithubRateLimitError(error);
+      rateLimit = mergeActivityRateLimit(rateLimit, {
+        remaining: null,
+        reset_at: null,
+        exhausted: rateLimited,
+        point_cost: null,
+      });
+      projects.push({
+        project_label: project.project_label,
+        repository,
+        outcome: rateLimited ? "rate-limited" : "unreachable",
+        counts: null,
+        detail:
+          `the activity fetch failed before ${repository} answered: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
+
+  return {
+    version: 1,
+    fetched_at: input.now,
+    request_count: requestCount,
+    project_count: projects.length,
+    rate_limit: rateLimit,
+    projects,
+  };
 }
 
 /** One project's counts, dated — the shape a consumer renders. */
@@ -487,30 +613,71 @@ export function isRedskilledActivityReport(value: unknown): value is RedskilledA
 export function createGitHubActivityTransport(options: {
   readonly token: string;
   readonly endpoint?: string;
-  readonly fetchImpl?: typeof fetch;
+  readonly fetchImpl?: GithubRequestFetch;
+  readonly attribution?: GithubAttributionLedger;
+  readonly retryCount?: number;
+  readonly throttle?: boolean;
 }): RedskilledActivityTransport {
-  const endpoint = options.endpoint ?? githubEndpointFor(REDSKILLED_ACTIVITY_SURFACE);
-  const call = options.fetchImpl ?? fetch;
-  return async (query: string): Promise<unknown> => {
-    const response = await call(endpoint, {
-      method: "POST",
-      headers: {
-        authorization: `bearer ${options.token}`,
-        "content-type": "application/json",
-        accept: "application/vnd.github+json",
-      },
-      body: JSON.stringify({ query }),
+  const baseUrl = options.endpoint == null ? undefined : restBaseUrl(options.endpoint);
+  const client = createGithubClient({
+    token: options.token,
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.attribution ? { attribution: options.attribution } : {}),
+    ...(options.retryCount === undefined ? {} : { retryCount: options.retryCount }),
+    ...(options.throttle === undefined ? {} : { throttle: options.throttle }),
+  });
+  const transport = (async (query: string): Promise<unknown> => await client.graphql(query)) as RedskilledActivityTransport;
+  transport.conditionalList = async (input) =>
+    await client.conditionalPaginate<Record<string, unknown>>({
+      cacheKey: input.cacheKey,
+      route: input.route,
+      parameters: input.parameters,
+      operation: input.operation,
     });
-    if (!response.ok) {
-      const remaining = response.headers.get("x-ratelimit-remaining");
-      const quotaSpent = response.status === 429 || remaining === "0";
-      throw new Error(
-        `the activity query was refused with HTTP ${response.status}` +
-          (quotaSpent ? ": the host token's rate limit is spent" : ""),
-      );
-    }
-    return await response.json();
+  return transport;
+}
+
+function restBaseUrl(endpoint: string): string {
+  const url = new URL(endpoint);
+  if (/\/api\/graphql\/?$/.test(url.pathname)) url.pathname = url.pathname.replace(/\/api\/graphql\/?$/, "/api/v3");
+  else url.pathname = url.pathname.replace(/\/graphql\/?$/, "");
+  url.search = "";
+  url.hash = "";
+  return url.toString().replace(/\/$/, "");
+}
+
+function activityRateLimitFromHeaders(headers: GithubResponseHeaders): RedskilledActivityRateLimit {
+  const remaining = integerHeader(headers, "x-ratelimit-remaining");
+  const resetSeconds = integerHeader(headers, "x-ratelimit-reset");
+  return {
+    remaining,
+    reset_at: resetSeconds == null ? null : new Date(resetSeconds * 1000).toISOString(),
+    exhausted: remaining === 0,
+    point_cost: null,
   };
+}
+
+function mergeActivityRateLimit(
+  held: RedskilledActivityRateLimit,
+  next: RedskilledActivityRateLimit,
+): RedskilledActivityRateLimit {
+  const remaining = next.remaining == null
+    ? held.remaining
+    : held.remaining == null ? next.remaining : Math.min(held.remaining, next.remaining);
+  return {
+    remaining,
+    reset_at: next.reset_at ?? held.reset_at,
+    exhausted: held.exhausted || next.exhausted,
+    point_cost: null,
+  };
+}
+
+function integerHeader(headers: GithubResponseHeaders, name: string): number | null {
+  const raw = headers[name];
+  if (typeof raw !== "string" && typeof raw !== "number") return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function assertActivityProjects(projects: readonly RedskilledProjectRepository[]): void {

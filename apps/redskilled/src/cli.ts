@@ -44,7 +44,11 @@ import {
   type RedskilledQueueArming,
   type RedskilledQueueRegistration,
 } from "./daemon.js";
-import { createGithubBalanceTransport } from "@reddb-io/github";
+import {
+  createGithubAttributionLedger,
+  createGithubBalanceTransport,
+  type GithubAttributionLedger,
+} from "@reddb-io/github";
 import { createGitHubActivityTransport } from "./repository-activity.js";
 import {
   reclaimRedskilledRuntimeDirs,
@@ -282,16 +286,17 @@ export function resolveServeQueueDiscovery(
   values: { readonly "queue-endpoint"?: string; readonly "queue-ms"?: number },
   env: NodeJS.ProcessEnv = process.env,
   readTrackerToken: RedskilledTrackerTokenReader = readTrackerCliToken,
+  attribution?: GithubAttributionLedger,
 ): RedskilledQueueRegistration {
   const interval = values["queue-ms"] == null ? {} : { intervalMs: values["queue-ms"] };
   return {
     ...interval,
-    ...armRedskilledQueueTransport(values, env, readTrackerToken),
+    ...armRedskilledQueueTransport(values, env, readTrackerToken, attribution),
     // The same lookup, handed over so the daemon can repeat it. A credential
     // resolved once at start is resolved in the environment of whichever session
     // auto-spawned this daemon — and that session exits, while the daemon stays
     // (#3056). The daemon asks again only while it holds no transport.
-    armTransport: () => armRedskilledQueueTransport(values, env, readTrackerToken),
+    armTransport: () => armRedskilledQueueTransport(values, env, readTrackerToken, attribution),
   };
 }
 
@@ -328,6 +333,7 @@ export function armRedskilledQueueTransport(
   values: { readonly "queue-endpoint"?: string },
   env: NodeJS.ProcessEnv = process.env,
   readTrackerToken: RedskilledTrackerTokenReader = readTrackerCliToken,
+  attribution?: GithubAttributionLedger,
 ): RedskilledQueueArming {
   const host = resolveRedskilledHostToken(env, readTrackerToken);
   if (host == null) {
@@ -339,7 +345,13 @@ export function armRedskilledQueueTransport(
     };
   }
   const endpoint = values["queue-endpoint"] ?? env.GITHUB_GRAPHQL_URL;
-  return { transport: createGitHubActivityTransport({ token: host.token, ...(endpoint ? { endpoint } : {}) }) };
+  return {
+    transport: createGitHubActivityTransport({
+      token: host.token,
+      ...(endpoint ? { endpoint } : {}),
+      ...(attribution ? { attribution } : {}),
+    }),
+  };
 }
 
 export async function runRedskilledCli(argv: readonly string[]): Promise<number> {
@@ -388,14 +400,22 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       },
       config: hostConfig,
     });
-    const queueDiscovery = resolveServeQueueDiscovery(values);
-    const githubBalance = resolveServeGithubBalance(values);
     // The daemon's own black box (Spec #3022, slice #3023). The event lane already
     // carries `daemon-stop` for the stop this process CHOSE; this record carries
     // the death it did not — a signal, an uncaught error — in the one shape every
     // worker and launcher writes, on a lane that outlives the runtime directory
     // the event lane lives in.
     const hostStateRoot = join(redskilledHomeDir(homedir()), "state");
+    const githubAttribution = createGithubAttributionLedger({
+      path: join(hostStateRoot, "github", "spend.toonl"),
+    });
+    const queueDiscovery = resolveServeQueueDiscovery(
+      values,
+      process.env,
+      readTrackerCliToken,
+      githubAttribution,
+    );
+    const githubBalance = resolveServeGithubBalance(values);
     // Before this daemon anchors itself, it speaks for whatever the last one
     // could not (slice #3028). The host singleton is the only process guaranteed
     // to boot after a machine freeze, so an un-trap-able death on this lane has

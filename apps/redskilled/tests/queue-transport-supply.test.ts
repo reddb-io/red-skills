@@ -51,22 +51,19 @@ async function sessionPaths(): Promise<RedskilledPaths> {
   });
 }
 
-/** A tracker that answers every alias with one depth, and counts what it was asked. */
+/** A tracker that answers every conditional REST search with one depth. */
 async function trackerStandingIn(depth: number): Promise<{ url: string; requests: string[] }> {
   const requests: string[] = [];
   const server = createServer((req, res) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
+    const url = new URL(req.url ?? "/", "http://tracker.invalid");
+    const query = url.searchParams.get("q") ?? "";
+    requests.push(query);
+    res.writeHead(200, {
+      "content-type": "application/json",
+      etag: `"${Buffer.from(query).toString("base64url")}"`,
+      "x-ratelimit-remaining": "4900",
     });
-    req.on("end", () => {
-      requests.push(body);
-      const aliases = [...body.matchAll(/q(\d+): search/g)].map((match) => match[1]);
-      const data: Record<string, unknown> = { rateLimit: { remaining: 4_900, resetAt: null } };
-      for (const alias of aliases) data[`q${alias}`] = { issueCount: depth };
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ data }));
-    });
+    res.end(JSON.stringify(Array.from({ length: depth }, (_, index) => ({ number: index + 1 }))));
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -74,9 +71,11 @@ async function trackerStandingIn(depth: number): Promise<{ url: string; requests
 }
 
 function registration(label: string, workspace: string, target = 1) {
+  const [owner, repo] = label.split("/") as [string, string];
   return {
     project_label: label,
     selector: `repo:${label} is:issue is:open label:"ready-for-agent"`,
+    queue_poll: { owner, repo, labels: ["ready-for-agent"] },
     // A Worker that leaves proof it ran, in the workspace it was handed.
     argv: [process.execPath, "-e", "require('node:fs').writeFileSync('proof.txt', process.cwd());"],
     workspace_path: workspace,
@@ -119,9 +118,9 @@ describe("whatever registers a project reaches the tracker for it", () => {
       .toBe(workspace);
   });
 
-  it("costs one tracker request per interval, however many projects are registered", async () => {
-    // The reason the poll moved into the host at all: quota is per credential, so
-    // three registered projects that cost three requests is the shape this replaced.
+  it("makes one conditional request per registered project", async () => {
+    // N round trips are the deliberate cost of making each unchanged collection
+    // free against the API budget instead of charging one aliased GraphQL query.
     const tracker = await trackerStandingIn(2);
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
@@ -142,8 +141,8 @@ describe("whatever registers a project reaches the tracker for it", () => {
     }
     const discovery = await daemon.pollQueueDiscovery();
 
-    expect(tracker.requests).toHaveLength(1);
-    expect(discovery!.request_count).toBe(1);
+    expect(tracker.requests).toHaveLength(3);
+    expect(discovery!.request_count).toBe(3);
     expect(discovery!.projects.map((entry) => entry.project_label)).toEqual(["acme/a", "acme/b", "acme/c"]);
   });
 
@@ -151,8 +150,11 @@ describe("whatever registers a project reaches the tracker for it", () => {
     // A tracker that refuses is not a drained backlog. Nothing is born, and the
     // depth stays absent rather than becoming the zero that reads as "done".
     const server = createServer((_req, res) => {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] }));
+      res.writeHead(403, {
+        "content-type": "application/json",
+        "x-ratelimit-remaining": "0",
+      });
+      res.end(JSON.stringify({ message: "API rate limit exceeded" }));
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

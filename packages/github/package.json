@@ -8,12 +8,16 @@
   "exports": {
     ".": "./index.ts",
     "./attribution.js": "./attribution.ts",
+    "./conditional-client.js": "./conditional-client.ts",
     "./surface.js": "./surface.ts",
     "./rest-plan.js": "./rest-plan.ts",
     "./balance.js": "./balance.ts",
     "./cache.js": "./cache.ts"
   },
   "dependencies": {
+    "@octokit/plugin-retry": "^8.1.1",
+    "@octokit/plugin-throttling": "^11.0.5",
+    "@octokit/rest": "^22.0.1",
     "@reddb-io/toon": "catalog:"
   }
 }

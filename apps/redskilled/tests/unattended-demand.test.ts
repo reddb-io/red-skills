@@ -29,6 +29,7 @@ import { registerRedskilledProject } from "../src/client.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { REDSKILLED_HOST_TOKEN_ENV, resolveServeQueueDiscovery } from "../src/cli.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
+import { createGitHubActivityTransport } from "../src/repository-activity.js";
 
 const running: RedskilledDaemon[] = [];
 const roots: string[] = [];
@@ -54,22 +55,19 @@ async function sessionPaths(): Promise<RedskilledPaths> {
   });
 }
 
-/** A tracker that answers every alias with one depth, and counts what it was asked. */
+/** A tracker that answers every conditional REST search with one depth. */
 async function trackerStandingIn(depth: number): Promise<{ url: string; requests: string[] }> {
   const requests: string[] = [];
   const server = createServer((req, res) => {
-    let body = "";
-    req.on("data", (chunk) => {
-      body += chunk;
+    const url = new URL(req.url ?? "/", "http://tracker.invalid");
+    const query = url.searchParams.get("q") ?? "";
+    requests.push(query);
+    res.writeHead(200, {
+      "content-type": "application/json",
+      etag: `"${Buffer.from(query).toString("base64url")}"`,
+      "x-ratelimit-remaining": "4900",
     });
-    req.on("end", () => {
-      requests.push(body);
-      const aliases = [...body.matchAll(/q(\d+): search/g)].map((match) => match[1]);
-      const data: Record<string, unknown> = { rateLimit: { remaining: 4_900, resetAt: null } };
-      for (const alias of aliases) data[`q${alias}`] = { issueCount: depth };
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ data }));
-    });
+    res.end(JSON.stringify(Array.from({ length: depth }, (_, index) => ({ number: index + 1 }))));
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -77,9 +75,11 @@ async function trackerStandingIn(depth: number): Promise<{ url: string; requests
 }
 
 function registration(label: string, workspace: string, target = 1, renewWithinMs?: number) {
+  const [owner, repo] = label.split("/") as [string, string];
   return {
     project_label: label,
     selector: `repo:${label} is:issue is:open label:"ready-for-agent"`,
+    queue_poll: { owner, repo, labels: ["ready-for-agent"] },
     // A Worker that leaves proof it ran, in the workspace it was handed.
     argv: [process.execPath, "-e", "require('node:fs').writeFileSync('proof.txt', process.cwd());"],
     workspace_path: workspace,
@@ -178,7 +178,12 @@ describe("the sustain and the idle exit follow the poll outcome", () => {
       // No births: this is about what keeps the RECORD standing, not about work.
       demandMs: 0,
       queueDiscovery: {
-        ...resolveServeQueueDiscovery({ "queue-endpoint": tracker.url }, { [REDSKILLED_HOST_TOKEN_ENV]: "t" }),
+        transport: createGitHubActivityTransport({
+          token: "t",
+          endpoint: tracker.url,
+          retryCount: 0,
+          throttle: false,
+        }),
         intervalMs: 40,
       },
     });

@@ -1430,7 +1430,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       ...registrations,
     ]);
     const projects = [...candidates.values()]
-      .map((registration) => ({ project_label: registration.project_label, selector: registration.selector }))
+      .map((registration) => ({
+        project_label: registration.project_label,
+        selector: registration.selector,
+        ...(registration.queue_poll == null ? {} : { poll: registration.queue_poll }),
+      }))
       // By label, like every other list the daemon reports: the order a client
       // happened to register in is not a fact about the host.
       .sort((left, right) => left.project_label.localeCompare(right.project_label));

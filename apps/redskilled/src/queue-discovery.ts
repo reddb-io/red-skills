@@ -1,27 +1,24 @@
 /**
- * queue-discovery — every registered project's queue depth, in one request.
+ * queue-discovery — every registered project's conditionally revalidated depth.
  *
- * ADR 0130 Amendment 3: **the daemon fetches every registered project's queue in
- * one aliased request per interval, alongside the activity counts it already
- * batches.** The reasoning is the one Amendment 1 already accepted for activity:
- * GitHub quota is per token, not per process, so several projects polling with one
- * credential already share a budget and splitting the poller saves nothing — what
- * saves is one request instead of N.
+ * ADR 0130 Amendment 3 keeps one host-scoped poller over every registration.
+ * ADR 0133 changes its production transport: one conditional REST list per
+ * project, whose unchanged 304 costs no API budget, replaces a charged aliased
+ * GraphQL query. N round trips are the deliberate latency trade.
  *
- * **The bigger half was the one left outside.** Queue depth is the same fetch
- * against the same token, and it is the larger consumer: activity moves at human
- * speed, while the queue is read every tick. Batching the smaller half and leaving
- * the larger one per-project was an inconsistency, not a boundary.
+ * **A 304 is a depth, not zero.** The ETag store retains the body with its
+ * validator, so unchanged is indistinguishable from a fresh identical count.
+ * Quota refusal and transport failure still carry null and their own outcome.
  *
  * **Two cadences, not one.** Activity and queue keep their own intervals. Forcing
  * the slow half onto the fast half's rhythm would spend more quota than the
  * batching saves, which is the opposite of the point — so the interval lives with
  * the caller and nothing here assumes the two ever tick together.
  *
- * **A selector is carried, never read.** The daemon asks whether it holds a
- * non-empty string and hands that string to the tracker verbatim; it still does
- * not know what an Issue, a label, a Spec, a gate or a Landing *is* (rule 3). The
- * frontier moved by a query string and no further.
+ * **A selector is carried, never read.** The project also supplies the equivalent
+ * repository-list parameters because it understands selector facets. The daemon
+ * carries both shapes to the transport and derives neither, so it still does not
+ * know what an Issue, a label, a Spec, a gate or a Landing *is* (rule 3).
  *
  * **Never a zero standing in for an absence.** A selector the token cannot resolve
  * and a spent quota each carry a `null` depth and their own outcome, because "this
@@ -32,6 +29,15 @@
  *
  * PURE, apart from `fetchQueueDiscovery`, whose transport is injected.
  */
+
+import {
+  isGithubRateLimitError,
+  type GithubAttributedOperation,
+  type GithubResponseHeaders,
+} from "@reddb-io/github";
+
+import type { RedskilledActivityTransport } from "./repository-activity.js";
+import type { RedskilledQueuePollPlan } from "./project-registration.js";
 
 /**
  * How many selectors one aliased query may span.
@@ -59,6 +65,8 @@ export interface RedskilledProjectSelector {
   readonly project_label: string;
   /** The query, carried verbatim to the tracker and never parsed here. */
   readonly selector: string;
+  /** Typed list parameters supplied by the project; carried, never derived here. */
+  readonly poll?: RedskilledQueuePollPlan;
 }
 
 /**
@@ -90,7 +98,7 @@ export interface RedskilledQueueRateLimit {
 export interface RedskilledQueueDiscovery {
   readonly version: 1;
   readonly fetched_at: string;
-  /** How many requests this interval cost — one per batch, not one per project. */
+  /** Network requests issued: one per conditional project, or one per legacy batch. */
   readonly request_count: number;
   readonly project_count: number;
   readonly batch_size: number;
@@ -257,8 +265,8 @@ export function unconfiguredQueueDiscovery(
   };
 }
 
-/** How a fetch reaches the tracker; injected so nothing here opens a socket. */
-export type RedskilledQueueTransport = (query: string) => Promise<unknown>;
+/** The queue shares the host's conditional-capable activity transport. */
+export type RedskilledQueueTransport = RedskilledActivityTransport;
 
 export interface FetchQueueDiscoveryInput {
   readonly projects: readonly RedskilledProjectSelector[];
@@ -268,7 +276,8 @@ export interface FetchQueueDiscoveryInput {
 }
 
 /**
- * One interval's queue fetch: ONE request, however many projects are registered.
+ * One interval's queue fetch: one conditional request per project in production,
+ * or aliased batches for an injected migration adapter.
  *
  * Batches are issued in order rather than at once, because a host past the bound
  * is spending one token's quota either way and a burst is the shape that trips a
@@ -278,6 +287,7 @@ export interface FetchQueueDiscoveryInput {
  */
 export async function fetchQueueDiscovery(input: FetchQueueDiscoveryInput): Promise<RedskilledQueueDiscovery> {
   if (input.projects.length === 0) return emptyQueueDiscovery(input.now);
+  if (input.transport.conditionalList) return await fetchConditionalQueueDiscovery(input);
   const batchSize = input.batchSize ?? REDSKILLED_QUEUE_BATCH_SIZE;
   const batches = planQueueDiscoveryBatches(input.projects, batchSize);
 
@@ -311,6 +321,80 @@ export async function fetchQueueDiscovery(input: FetchQueueDiscoveryInput): Prom
     request_count: batches.length,
     project_count: projects.length,
     batch_size: batchSize,
+    rate_limit: rateLimit,
+    projects,
+  };
+}
+
+const REDSKILLED_QUEUE_REST_OPERATION: GithubAttributedOperation = {
+  key: "redskilled queue poll",
+  budget: "rest",
+};
+
+async function fetchConditionalQueueDiscovery(
+  input: FetchQueueDiscoveryInput,
+): Promise<RedskilledQueueDiscovery> {
+  assertQueueProjects(input.projects);
+  const list = input.transport.conditionalList!;
+  const projects: RedskilledProjectQueue[] = [];
+  let rateLimit: RedskilledQueueRateLimit = { remaining: null, reset_at: null, exhausted: false };
+  let requestCount = 0;
+
+  for (const project of input.projects) {
+    try {
+      if (project.poll == null) {
+        const operation = buildQueueDiscoveryQuery([project], { batchSize: 1 });
+        const parsed = parseQueueDiscoveryResponse(operation, await input.transport(operation.query));
+        requestCount += 1;
+        projects.push(...parsed.projects);
+        rateLimit = mergeRateLimit(rateLimit, parsed.rate_limit);
+        continue;
+      }
+      const answer = await list({
+        cacheKey: `queue:${project.project_label}:${JSON.stringify(project.poll)}`,
+        route: "GET /repos/{owner}/{repo}/issues",
+        parameters: {
+          owner: project.poll.owner,
+          repo: project.poll.repo,
+          state: "open",
+          labels: project.poll.labels.join(","),
+          ...(project.poll.creator == null ? {} : { creator: project.poll.creator }),
+        },
+        operation: REDSKILLED_QUEUE_REST_OPERATION,
+      });
+      requestCount += answer.requestCount;
+      const depth = answer.data.filter((item) => !isRecord(item.pull_request)).length;
+      rateLimit = mergeRateLimit(rateLimit, queueRateLimitFromHeaders(answer.headers));
+      projects.push({
+        project_label: project.project_label,
+        outcome: "counted",
+        depth,
+        detail: `project ${JSON.stringify(project.project_label)} has ${depth} item(s) matching its selector`,
+      });
+    } catch (error) {
+      const rateLimited = isGithubRateLimitError(error);
+      rateLimit = mergeRateLimit(rateLimit, {
+        remaining: null,
+        reset_at: null,
+        exhausted: rateLimited,
+      });
+      projects.push({
+        project_label: project.project_label,
+        outcome: rateLimited ? "rate-limited" : "unreachable",
+        depth: null,
+        detail:
+          `the queue fetch failed before project ${JSON.stringify(project.project_label)} answered: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
+
+  return {
+    version: 1,
+    fetched_at: input.now,
+    request_count: requestCount,
+    project_count: projects.length,
+    batch_size: 1,
     rate_limit: rateLimit,
     projects,
   };
@@ -438,6 +522,23 @@ function mergeRateLimit(held: RedskilledQueueRateLimit, next: RedskilledQueueRat
     reset_at: next.reset_at ?? held.reset_at,
     exhausted: held.exhausted || next.exhausted,
   };
+}
+
+function queueRateLimitFromHeaders(headers: GithubResponseHeaders): RedskilledQueueRateLimit {
+  const remaining = integerHeader(headers, "x-ratelimit-remaining");
+  const resetSeconds = integerHeader(headers, "x-ratelimit-reset");
+  return {
+    remaining,
+    reset_at: resetSeconds == null ? null : new Date(resetSeconds * 1000).toISOString(),
+    exhausted: remaining === 0,
+  };
+}
+
+function integerHeader(headers: GithubResponseHeaders, name: string): number | null {
+  const raw = headers[name];
+  if (typeof raw !== "string" && typeof raw !== "number") return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function readRateLimit(value: unknown, errors: readonly Record<string, unknown>[]): RedskilledQueueRateLimit {

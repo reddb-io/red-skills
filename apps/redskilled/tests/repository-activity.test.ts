@@ -311,7 +311,7 @@ describe("a rate-limited fetch is not an empty one", () => {
 
     expect(seen).toHaveLength(1);
     expect(seen[0]!.url).toBe("https://api.github.com/graphql");
-    expect((seen[0]!.init.headers as Record<string, string>).authorization).toBe("bearer host-token");
+    expect((seen[0]!.init.headers as Record<string, string>).authorization).toBe("token host-token");
   });
 });
 

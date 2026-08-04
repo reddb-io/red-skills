@@ -154,6 +154,11 @@ describe("starting work registers the project", () => {
     expect(held.selector).toBe(
       'repo:acme/widgets is:issue is:open label:"ready-for-agent" label:"lane:go"',
     );
+    expect(held.queue_poll).toEqual({
+      owner: "acme",
+      repo: "widgets",
+      labels: ["ready-for-agent", "lane:go"],
+    });
     expect(started.warnings).toEqual([expect.stringContaining("issues")]);
     // The argv is what runs when a Worker is born for this project, so it carries
     // the runner the operator chose and the same selector the registration does.

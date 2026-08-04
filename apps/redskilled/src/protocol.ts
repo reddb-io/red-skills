@@ -39,12 +39,13 @@
  * carries the commanding verbs — stop, recycle, steer — as data rather than as
  * three ops, so the reach rule is decided once for all of them.
  *
- * `project-register` widens the contract by a query string and no further (ADR
- * 0130 Amendment 4). A project contributes a registration rather than a process,
- * and the two strings it carries — a selector and an argv — are opaque in exactly
- * the sense a Worker's last logged line already is: stored, echoed, never read.
- * The daemon still does not know what an Issue, a label, a Spec, a gate or a
- * Landing is, which is what keeps this a frozen surface rather than a growing one.
+ * `project-register` widens the contract by a query string and its typed REST
+ * polling equivalent (ADR 0130 Amendment 4, ADR 0133). The project understands
+ * selector facets and authors both; the daemon stores and passes them to their
+ * transports without deriving either. The selector and argv remain opaque in
+ * exactly the sense a Worker's last logged line already is: stored, echoed, never
+ * read. The daemon still does not know what an Issue, a label, a Spec, a gate or
+ * a Landing is, which keeps this a frozen transport surface rather than semantics.
  * `project-deregister` widens it by nothing at all: it names a project the daemon
  * already keys registrations by, and takes the record back out. `project-renew`
  * names that same project and obliges a client to state nothing further, because

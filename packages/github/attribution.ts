@@ -10,7 +10,13 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 
-import type { GithubOperation, GithubRateBudget } from "./surface.js";
+import type { GithubRateBudget } from "./surface.js";
+
+/** The two routing facts attribution consumes, without re-stating policy. */
+export interface GithubAttributedOperation {
+  readonly key: string;
+  readonly budget: GithubRateBudget;
+}
 
 /** One completed routed call, priced by the transport that observed it. */
 export interface GithubSpendObservation {
@@ -48,7 +54,7 @@ export interface GithubSpendAttributionReport {
 export interface GithubAttributionLedger {
   /** Append one transport-observed call to durable storage. */
   record(input: {
-    readonly operation: GithubOperation;
+    readonly operation: GithubAttributedOperation;
     readonly cost: number;
     readonly observedAt?: string;
   }): Promise<void>;
@@ -138,7 +144,7 @@ export function createGithubAttributionLedger(
 }
 
 function makeObservation(
-  operation: GithubOperation,
+  operation: GithubAttributedOperation,
   cost: number,
   observedAt: string,
 ): GithubSpendObservation {
