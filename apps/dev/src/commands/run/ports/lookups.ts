@@ -77,6 +77,8 @@ export function buildLookups({
         },
       }),
     changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
+    changedFileContents: (branch, base, file) =>
+      gitx.changedFileContents(gitCtx, branch, base, file),
     diffstat: (branch, base) => gitx.diffstat(gitCtx, branch, base),
     // The review stage's subject (#2730): the branch as it stands against the
     // merge base, read before any PR exists.

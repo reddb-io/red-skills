@@ -540,9 +540,16 @@ export function createDefaultDevAfkMcpOperations(
       );
       try {
         const changedFiles = await gitx.changedFiles({ cwd: root }, input.branch, base);
+        const rootPackageJson = changedFiles.includes("package.json")
+          ? await gitx.changedFileContents({ cwd: root }, input.branch, base, "package.json")
+          : undefined;
         const result = await runFeedback(feedback.pnpm, {
           worktree: input.branch,
-          scopes: gateScopes(feedback.layout, changedFiles),
+          scopes: gateScopes(
+            feedback.layout,
+            changedFiles,
+            rootPackageJson ? { rootPackageJson } : undefined,
+          ),
           layout: feedback.layout,
           now: () => Date.now(),
           baselineWorktree: base,

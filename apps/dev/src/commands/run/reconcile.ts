@@ -208,6 +208,8 @@ export function makeBootReconcileRunner(
       },
       lookups: {
         changedFiles: (branch, base) => gitx.changedFiles(gitCtx, branch, base),
+        changedFileContents: (branch, base, file) =>
+          gitx.changedFileContents(gitCtx, branch, base, file),
         branchPresent: async (branch) => {
           if (await gitx.branchExists(gitCtx, branch)) return true;
           await gitx.fetchBranch(gitCtx, branch);

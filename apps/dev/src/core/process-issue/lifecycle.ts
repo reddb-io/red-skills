@@ -643,6 +643,9 @@ export async function processIssue(
   let noSourceDiffWarning: string | undefined;
   let currentHandoff = handoff;
   let correctionLedger: CorrectionLedger = EMPTY_CORRECTION_LEDGER;
+  // A stale-base attribution buys another GATE run, not another implementer
+  // run: the branch did not change, only the merge result did (#3231).
+  let gateRevalidationSkip = false;
   const scoutTextChunks: string[] = [];
   const agentEventSink: typeof deps.recordAgentEvent =
     input.runMode === "scout"
@@ -824,20 +827,42 @@ export async function processIssue(
    * bumps the round ordinal, appends to the handoff, fires `pre_attempt`, and
    * emits one worker event naming the trigger.
    *
-   * A drift-attributed gate round is FREE: it is recorded on the ledger but
-   * never drawn from the budget, so an already-spent counter can no longer park
-   * a branch whose gate only failed because the base moved beneath it (#2711). */
+   * A drift-attributed failure exits before the Re-seed mechanics: it records a
+   * free ledger cycle and requests gate-only re-validation, because no
+   * implementer work changed (#3231). */
   const requestReseed = async (req: ReseedRequest): Promise<ReseedOutcome> => {
     const cause = reseedTriggerCause(req.trigger);
     const { attribution, drift } =
       cause === "gate"
         ? await attributeGateFailureNow(req.driftEligible ?? false)
         : { attribution: undefined, drift: undefined };
-    const free = drift !== undefined;
+    if (drift) {
+      correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
+      gateRevalidationSkip = true;
+      const gate = req.gate ?? "feedback";
+      const releaseBumps = attribution.releaseBumps.length > 0
+        ? ` Release bump: ${attribution.releaseBumps.join("; ")}.`
+        : "";
+      const note =
+        `🤖 ${reseedLane}: ${gate} machine gate failed after DONE, but ${attribution.reason}; ` +
+        `granting a free stale-base correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
+        `re-running validation without re-seeding; budget untouched at ` +
+        `${reseedSpend.gate ?? 0}/${gateSubCap}.${releaseBumps}`;
+      deps.appendIterLog(note);
+      deps.recordWorkerEvent?.("worker.gate_revalidation_requested", {
+        trigger: req.trigger,
+        cause: "stale-base-drift",
+        lane: reseedBudget.lane,
+        free: true,
+        cycle: correctionLedger.refunded,
+        cap: staleBaseDriftCap,
+      });
+      return "granted";
+    }
     const draw = reseedDraw(reseedBudget, cause, reseedSpend);
-    if (!free && !draw.allowed) return "refused";
+    if (!draw.allowed) return "refused";
     if (attribution) correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
-    if (!free) reseedSpend = recordReseedDraw(reseedSpend, cause);
+    reseedSpend = recordReseedDraw(reseedSpend, cause);
     roundOrdinal += 1;
     reseedRound += 1;
     const gate = req.gate ?? "feedback";
@@ -882,13 +907,9 @@ export async function processIssue(
     } else {
       currentHandoff = composeReseed(
         isGoLane ? "go-machine-gate-retry" : "afk-gate-correction",
-        gateReseedDirectives({ gate, retry: gateSpend, cap: gateSubCap, drift }),
+        gateReseedDirectives({ gate, retry: gateSpend, cap: gateSubCap }),
       );
-      note = drift
-        ? `🤖 ${reseedLane}: ${gate} machine gate failed after DONE, but ${attribution?.reason}; ` +
-          `granting a free stale-base correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
-          `budget untouched at ${gateSpend}/${gateSubCap}.`
-        : `🤖 ${reseedLane}: ${gate} machine gate failed after DONE; correction retry ${gateSpend}/${gateSubCap}.`;
+      note = `🤖 ${reseedLane}: ${gate} machine gate failed after DONE; correction retry ${gateSpend}/${gateSubCap}.`;
     }
     deps.appendIterLog(note);
     await publishReseedTrail({ round: reseedRound, trigger: req.trigger, cause, note });
@@ -896,7 +917,7 @@ export async function processIssue(
       trigger: req.trigger,
       cause,
       lane: reseedBudget.lane,
-      free,
+      free: false,
       round: totalReseedSpend(reseedSpend),
       ceiling: reseedBudget.ceiling,
       cause_spent: reseedSpend[cause] ?? 0,
@@ -1097,14 +1118,21 @@ export async function processIssue(
       effort: routedEffort,
     });
     let run: RunAgentResult;
-    if (gateGreenSkip) {
-      // Consume the flag — subsequent loop iterations (e.g. go-verify retries)
-      // run the agent normally.
-      gateGreenSkip = false;
-      const fastBranch = resumableBranch!.branch;
-      deps.appendIterLog(
-        `🤖 /afk #${issue}: gate-green fast path — re-validating \`${fastBranch}\`, agent skipped.`,
-      );
+    let skippedAgentForGateOnly = false;
+    if (gateGreenSkip || gateRevalidationSkip) {
+      const fastBranch = gateGreenSkip ? resumableBranch!.branch : workerBranch;
+      if (gateGreenSkip) {
+        gateGreenSkip = false;
+        deps.appendIterLog(
+          `🤖 /afk #${issue}: gate-green fast path — re-validating \`${fastBranch}\`, agent skipped.`,
+        );
+      } else {
+        gateRevalidationSkip = false;
+        skippedAgentForGateOnly = true;
+        deps.appendIterLog(
+          `🤖 ${reseedLane} #${issue}: stale-base fast path — re-validating \`${fastBranch}\`, agent skipped.`,
+        );
+      }
       run = { outcome: "done", branch: fastBranch, commits: [], stdout: "" };
     } else {
       const baseAgentInput: RunAgentInput = {
@@ -1309,7 +1337,9 @@ export async function processIssue(
       };
     } else {
       const pwStatus = run.outcome === "done" ? "success" : "fail";
-      await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run.outcome));
+      if (!skippedAgentForGateOnly) {
+        await fireHook("post_attempt", postAttemptContext(current, workerBranch, pwStatus, run.outcome));
+      }
       if (run.outcome === "blocked") {
         return await terminalFailure(common, "blocked", "blocked", {
           notes: `_(inner agent emitted BLOCKED — see iteration log at \`${input.attemptDir}\`)_`,
@@ -1343,7 +1373,7 @@ export async function processIssue(
       return await mergeFailed(common, "worker branch absent — sandcastle commits did not reach the host");
     }
     const postWorkerFormatCommands = deps.postWorkerFormatCommands ?? [];
-    if (deps.postWorkerFormat && postWorkerFormatCommands.length > 0) {
+    if (!skippedAgentForGateOnly && deps.postWorkerFormat && postWorkerFormatCommands.length > 0) {
       markProcessSafetyStep("post-agent:post-attempt-format");
       const pfmt = await runPostWorkerFormat(deps.postWorkerFormat, {
         worktree: workerBranch,
@@ -1376,10 +1406,17 @@ export async function processIssue(
     if (noSourceDiffWarning) {
       deps.appendIterLog(`🤖 /afk: ${noSourceDiffWarning}`);
     }
+    let rootPackageJson: { before: string; after: string } | undefined;
+    if (changedFiles.some((file) => file === "package.json" || file === "./package.json")) {
+      rootPackageJson = await deps.lookups
+        .changedFileContents?.(workerBranch, baseRef, "package.json")
+        .catch(() => undefined);
+    }
     const validationScope = computeValidationScope(
       changedFiles,
       deps.layout,
       deps.graph ?? { packages: [] },
+      rootPackageJson ? { rootPackageJson } : undefined,
     );
     const feedbackScopes = scopesForValidationScope(validationScope);
     landingFeedbackScopes = feedbackScopes;
