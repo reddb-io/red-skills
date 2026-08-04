@@ -14,7 +14,8 @@
 // worktree it created is torn down by `cleanup()` after the session.
 //
 // When the worktree cannot be materialised (worktreeAdd failure) or the
-// install fails, the gate fails closed: all validation calls return code 1.
+// declared setup (or the undeclared install fallback) fails, the gate fails
+// closed: all validation calls return code 1.
 // A failed setup never silently validates the primary checkout. It also NAMES
 // its cause (#2964): the blocked message carries which of lock-wait timeout,
 // `worktree add` failure or `pnpm install` failure fired, plus the underlying
@@ -24,7 +25,7 @@
 //
 // AFK runner improvement — cross-session worktree cache: by default, a
 // materialised worktree whose branch HEAD matches the live branch's HEAD
-// is REUSED across sessions (no `worktree add` / `pnpm install` on re-claim).
+// is REUSED across sessions (no `worktree add` / setup command on re-claim).
 // The worktree itself is the cache — it just
 // isn't torn down if it was a cache hit. SHA mismatch (force-push, new
 // commit) is the only invalidation signal; there is no mtime/TTL GC. The
@@ -459,6 +460,17 @@ export interface FeedbackWorktree {
 /** Optional configuration for {@link makeFeedbackWorktree}. */
 export interface FeedbackWorktreeOptions {
   /**
+   * Operator-declared dependency setup authority (`plugins.dev.afk.setup`).
+   * Commands run in order, byte-for-byte through `sh -c`, in the freshly
+   * materialised checkout. When at least one command is declared the engine
+   * never guesses or substitutes a package-manager command.
+   *
+   * Absent/empty keeps the compatibility fallback: pnpm's frozen install with
+   * hook-manager opt-outs, plus one `--ignore-scripts` retry only when stderr
+   * names the custom-core.hooksPath refusal caused by AFK's hook redirect.
+   */
+  setupCommands?: readonly string[];
+  /**
    * AFK runner improvement: when true (the default), a materialised worktree
    * whose branch HEAD matches the live branch's HEAD is REUSED across sessions
    * (no `worktree add` / `pnpm install` on re-claim).
@@ -514,6 +526,7 @@ export function makeFeedbackWorktree(
 ): FeedbackWorktree {
   const cacheEnabled = options.cacheEnabled !== false; // default: ON
   const rebaseOnto = options.rebaseOnto; // default: undefined (OFF)
+  const setupCommands = (options.setupCommands ?? []).filter((command) => command.trim() !== "");
   const resourceBudget = options.resourceBudget ?? {};
   const onLockWait = options.onLockWait;
   const onGateWait = options.onGateWait;
@@ -544,6 +557,11 @@ export function makeFeedbackWorktree(
   // `noteSetupFailure`) precisely because the latched calls are the ones a
   // reader sees in the record.
   const setupFailureReason = new Map<string, string>();
+  // A successful fallback may still have skipped lifecycle scripts after the
+  // repo's hook installer refused AFK's custom core.hooksPath. Carry that fact
+  // into every validation record produced from this checkout; success must not
+  // erase what setup actually ran.
+  const setupRecord = new Map<string, string>();
 
   async function runGateChild(
     subject: string,
@@ -579,6 +597,11 @@ export function makeFeedbackWorktree(
   function briefly(detail: string): string {
     const flat = detail.replace(/\s+/g, " ").trim();
     return flat.length > 400 ? `${flat.slice(0, 400)}…` : flat;
+  }
+
+  /** The mainstream husky/lefthook refusal emitted for a redirected hook path. */
+  function refusedCustomHooksPath(stderr: string): boolean {
+    return /core\.hooksPath|custom hooks? paths?/i.test(stderr);
   }
 
   /**
@@ -743,27 +766,71 @@ export function makeFeedbackWorktree(
         `worktree add failed: ${briefly(added.stderr ?? "") || "no git detail"}`,
       );
     }
-    // A freshly added worktree has NO node_modules. Without an install here,
+    // A freshly added worktree has NO dependencies. Without setup here,
     // the feedback gate's `pnpm -C <dest> test/build` calls fail with
     // `tsc/vite/svelte-kit: not found` — a FALSE validation failure that parks
     // otherwise-green work as blocked:validation (#458). Install before any
     // check can run.
-    const ins = await runGateChild("pnpm install", (onSpawn) =>
-      io.pnpm(["install", "--frozen-lockfile"], { cwd: dest, onSpawn })
-    );
-    if (ins.code !== 0) {
+    let setupFailure: { command: string; result: ExecOutput } | undefined;
+    if (setupCommands.length > 0) {
+      for (const command of setupCommands) {
+        const result = await runGateChild(`setup: ${command}`, (onSpawn) =>
+          io.exec("sh", ["-c", command], { cwd: dest, onSpawn })
+        );
+        if (result.code !== 0) {
+          setupFailure = { command, result };
+          break;
+        }
+      }
+    } else {
+      // Compatibility for repos that pre-date the declaration. Hook managers
+      // are disabled up front because AFK deliberately redirected hooksPath.
+      // An implementation that ignores those envs gets one targeted retry;
+      // every other install failure remains fatal on the first reading.
+      const env = { ...process.env, LEFTHOOK: "0", HUSKY: "0" };
+      const command = "pnpm install --frozen-lockfile";
+      let result = await runGateChild("pnpm install", (onSpawn) =>
+        io.pnpm(["install", "--frozen-lockfile"], { cwd: dest, env, onSpawn })
+      );
+      if (result.code !== 0 && refusedCustomHooksPath(result.stderr)) {
+        const retryCommand = `${command} --ignore-scripts`;
+        result = await runGateChild(retryCommand, (onSpawn) =>
+          io.pnpm(["install", "--frozen-lockfile", "--ignore-scripts"], {
+            cwd: dest,
+            env,
+            onSpawn,
+          })
+        );
+        if (result.code === 0) {
+          setupRecord.set(
+            branch,
+            `${retryCommand} (fallback after custom core.hooksPath refusal; lifecycle scripts skipped)`,
+          );
+          process.stderr.write(
+            `warn: feedback worktree setup for ${branch} retried with --ignore-scripts; ` +
+              `lifecycle scripts were skipped\n`,
+          );
+        } else {
+          setupFailure = { command: retryCommand, result };
+        }
+      } else if (result.code !== 0) {
+        setupFailure = { command, result };
+      }
+    }
+    if (setupFailure) {
       // Lockfile drift on the branch, or a transient registry error. Remove the
       // partial checkout eagerly and block — continuing would silently validate
       // the wrong environment (binaries absent, wrong lockfile).
       await io.worktreeRemove(gitCtx, dest);
       process.stderr.write(
-        `error: feedback worktree install failed for ${branch} (exit ${ins.code}); ` +
-          `blocking validation\n${ins.stderr.trim()}\n`,
+        `error: feedback worktree setup command failed for ${branch} ` +
+          `(exit ${setupFailure.result.code}); blocking validation\n` +
+          `${setupFailure.result.stderr.trim()}\n`,
       );
       return noteSetupFailure(
         branch,
-        `pnpm install --frozen-lockfile failed (exit ${ins.code}): ` +
-          `${briefly(ins.stderr) || "no install detail"}`,
+        `${setupFailure.command} failed (exit ${setupFailure.result.code}): ` +
+          `${briefly(setupFailure.result.stderr) || "no setup detail"}`,
       );
     }
     // AFK runner improvement (Pattern 2): best-effort rebase onto the session
@@ -841,7 +908,13 @@ export function makeFeedbackWorktree(
       // this the record reads `pnpm -C afk/<n>-<slug>/apps/dev …`, which looks
       // like a relative path that resolves nowhere and is indistinguishable
       // from a command that never ran.
-      return { code: r.code, stdout: r.stdout, stderr: r.stderr, commandDir: rewritten };
+      return {
+        code: r.code,
+        stdout: r.stdout,
+        stderr: r.stderr,
+        commandDir: rewritten,
+        ...(setupRecord.has(branch) ? { setup: setupRecord.get(branch)! } : {}),
+      };
     }
     const head = args[0] === "pnpm" ? args.slice(1) : args;
     const r = await runValidationCommand(() =>
@@ -935,6 +1008,7 @@ export function makeFeedbackWorktree(
       resolved.clear();
       setupFailures.clear();
       setupFailureReason.clear();
+      setupRecord.clear();
     },
   };
 }

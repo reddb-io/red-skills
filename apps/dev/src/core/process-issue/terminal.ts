@@ -66,6 +66,11 @@ import {
 } from "../worker-outcome.js";
 import { resolveHooks, type ResolveHooksOptions, type ResolvedHooks, type HookName } from "../hook-config.js";
 import { formatStartedMarker } from "../heartbeat.js";
+import {
+  EMPTY_FAILURE_SIGNATURE,
+  failureSignature,
+  validationFailureMarker,
+} from "../failure-signature.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, promotionLaneNote, type DependentIssue } from "../boot-sweep.js";
 import { isRefused, parkOrHuman, planTransition, transitionLabels } from "../state-transition.js";
 import { deriveOutcomeRecord } from "../outcome-record.js";
@@ -391,6 +396,17 @@ export async function terminalFailure(
     await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, sections));
   }
   const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
+  if (record.validationSummary) {
+    const signature = failureSignature({ sidecar: record.validationSummary.split("\n") });
+    if (signature !== EMPTY_FAILURE_SIGNATURE) {
+      // emitFailure wrote the envelope summary marker first. Replace only the
+      // reason (writeMarkers leaves envelope.ref untouched) with the compact
+      // outcome+signature fact the next Worker can compare deterministically.
+      await deps.envelope.writeMarkers({
+        failureReason: `${validationFailureMarker(outcome, signature)}\n`,
+      });
+    }
+  }
   await recordOutcomeBestEffort(c, outcome, {
     durationS: deps.nowEpoch() - c.startedEpoch,
   });

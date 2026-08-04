@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { newestCachedBundleVersion, redSkillsCacheDir, semverParts } from "../core/bundle-version.js";
-import { getConfig, loadConfig, readBackpressure, type ConfigValues } from "../core/config.js";
+import { getConfig, loadConfig, readBackpressure, readSetupCommands, type ConfigValues } from "../core/config.js";
 import { HOOK_DEFAULT_NAMES } from "../core/hook-config.js";
 import { HOOK_REGISTRY, type ExitPolicy } from "../core/hook-registry.js";
 import {
@@ -60,6 +60,12 @@ import {
   type WarmPathFacts,
   type WarmPathReport,
 } from "../core/warm-path-doctor.js";
+import {
+  auditWorktreeSetup,
+  type SetupHookManager,
+  type SetupPackageManager,
+  type WorktreeSetupReport,
+} from "../core/worktree-setup-doctor.js";
 
 /**
  * doctor-classifiers.ts — the fact-collection half of the `/red-doctor` checks
@@ -100,6 +106,8 @@ export interface HookPointRow {
 }
 
 export interface DoctorClassifierReports {
+  /** Repository declaration vs detected package/hook managers (#3268). */
+  readonly worktreeSetup: WorktreeSetupReport;
   /** Check 12 — AFK hook / backpressure static validation. */
   readonly hooks: ValidationReport;
   readonly hookPoints: HookPointRow[];
@@ -251,6 +259,48 @@ function collectHookReport(
   }));
 
   return { report, points };
+}
+
+function collectWorktreeSetupReport(root: string, config: ConfigValues): WorktreeSetupReport {
+  let packageManager: SetupPackageManager | undefined;
+  const hookManagers = new Set<SetupHookManager>();
+  const packageText = readOptionalText(join(root, "package.json"));
+  if (packageText) {
+    try {
+      const pkg = JSON.parse(packageText) as {
+        packageManager?: unknown;
+        scripts?: Record<string, unknown>;
+        dependencies?: Record<string, unknown>;
+        devDependencies?: Record<string, unknown>;
+      };
+      const declaredManager =
+        typeof pkg.packageManager === "string" ? pkg.packageManager.split("@", 1)[0] : undefined;
+      if (["pnpm", "bun", "yarn", "npm"].includes(declaredManager ?? "")) {
+        packageManager = declaredManager as SetupPackageManager;
+      }
+      const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+      const prepare = typeof pkg.scripts?.prepare === "string" ? pkg.scripts.prepare : "";
+      if ("lefthook" in deps || /\blefthook\b/.test(prepare)) hookManagers.add("lefthook");
+      if ("husky" in deps || /\bhusky\b/.test(prepare)) hookManagers.add("husky");
+    } catch {
+      // Lockfiles still provide the package-manager fact below. A malformed
+      // package manifest cannot safely assert that no hook manager exists.
+    }
+  }
+  packageManager ??= existsSync(join(root, "pnpm-lock.yaml"))
+    ? "pnpm"
+    : existsSync(join(root, "bun.lock")) || existsSync(join(root, "bun.lockb"))
+      ? "bun"
+      : existsSync(join(root, "yarn.lock"))
+        ? "yarn"
+        : existsSync(join(root, "package-lock.json"))
+          ? "npm"
+          : undefined;
+  return auditWorktreeSetup({
+    declared: readSetupCommands(config),
+    ...(packageManager ? { packageManager } : {}),
+    hookManagers: [...hookManagers],
+  });
 }
 
 // ---------- check 13: per-plugin runtime distribution ----------
@@ -523,6 +573,7 @@ export async function collectDoctorClassifierReports(
   } catch (error) {
     notes.push(`hook validation unavailable: ${message(error)}`);
   }
+  const worktreeSetup = collectWorktreeSetupReport(ctx.root, config);
 
   let runtime: RuntimeReport = { findings: [], rows: [] };
   let runtimeUnresolved: string[] = [];
@@ -667,6 +718,7 @@ export async function collectDoctorClassifierReports(
   }
 
   return {
+    worktreeSetup,
     hooks,
     hookPoints,
     runtime,

@@ -128,6 +128,43 @@ describe("check 12 — AFK hook / backpressure static validation", () => {
   });
 });
 
+describe("AFK worktree setup declaration audit (#3268)", () => {
+  it("re-checks hook-manager repositories for a safe declared setup command", async () => {
+    const root = await poseRoot("doctor-worktree-setup-");
+    await write(
+      root,
+      "package.json",
+      JSON.stringify({
+        name: "posed",
+        packageManager: "pnpm@11.5.0",
+        scripts: { prepare: "lefthook install" },
+        devDependencies: { lefthook: "1.12.0" },
+      }),
+    );
+    await write(root, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+    await write(root, ".red/config.yaml", "plugins:\n  dev:\n    enabled: true\n");
+
+    const missing = await collectDoctorClassifierReports(repoContext(root), OFFLINE);
+    expect(missing.worktreeSetup.verdict).toBe("error");
+    expect(missing.worktreeSetup.findings[0]?.reason).toContain("plugins.dev.afk.setup is undeclared");
+
+    await write(
+      root,
+      ".red/config.yaml",
+      [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      setup: LEFTHOOK=0 pnpm install --frozen-lockfile",
+        "",
+      ].join("\n"),
+    );
+    const safe = await collectDoctorClassifierReports(repoContext(root), OFFLINE);
+    expect(safe.worktreeSetup.verdict).toBe("ok");
+  });
+});
+
 describe("check 13 — per-plugin runtime distribution", () => {
   it("reports an enabled plugin whose cached runtime never arrived", async () => {
     const root = await poseRoot("doctor-runtime-");

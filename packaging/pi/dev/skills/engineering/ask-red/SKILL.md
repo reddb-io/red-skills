@@ -164,7 +164,9 @@ through `/memory:view`, `memory docs reference-graph`, and
   and store-growth incidents.
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes. `/red-setup` owns `.red/config.yaml` authoring through its
-  shipped config template and post-write loader check.
+  shipped config template and post-write loader check, including inspection and
+  human confirmation of `plugins.dev.afk.setup` when a repository's package or
+  hook manager determines how fresh AFK Worktrees install dependencies.
 - Execution-daemon operation is a host route, not a feature-work one:
   diagnose through the castle MCP's read-only `host_provision_check` and other
   `host_*` tools first; no castle tool provisions or reclaims the host.

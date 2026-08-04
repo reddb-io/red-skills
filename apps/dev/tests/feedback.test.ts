@@ -296,6 +296,33 @@ describe("runFeedback", () => {
     );
   });
 
+  it("records when compatibility setup skipped lifecycle scripts (#3268)", async () => {
+    const layout = fakeLayout({
+      packages: ["apps/dev"],
+      scripts: { "apps/dev": ["test"] },
+    });
+    const exec: Exec = async () => ({
+      code: 0,
+      stdout: "",
+      stderr: "",
+      setup:
+        "pnpm install --frozen-lockfile --ignore-scripts (fallback after custom core.hooksPath refusal; lifecycle scripts skipped)",
+    });
+    const result = await runFeedback(exec, {
+      worktree: "afk/3268-setup-record",
+      worktreeKind: "branch",
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(),
+    });
+
+    const check = result.checks.find((entry) => entry.name === "test:apps/dev");
+    expect(check?.record.setup).toContain("--ignore-scripts");
+    expect(JSON.parse(result.sidecar.find((line) => line.includes('"test:apps/dev"'))!).setup).toContain(
+      "lifecycle scripts skipped",
+    );
+  });
+
   it("flags a sub-second suite failure as suspect-infra in the record (#3041)", async () => {
     const layout = fakeLayout({
       packages: ["apps/dev"],

@@ -13,6 +13,7 @@ import {
   upsertCurrentBlocker,
 } from "./process-issue.test-helpers.js";
 import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./process-issue.test-helpers.js";
+import { failureSignature } from "../src/core/failure-signature.js";
 describe("processIssue — feedback fail", () => {
   it("rejects a DONE attempt whose worker branch has no diff against base", async () => {
     const { deps, input, trace } = harness({
@@ -1773,6 +1774,65 @@ describe("processIssue — suspect-infra uses the bounded free correction pool (
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.iterLogs.filter((line) => line.includes("free suspect-infra correction"))).toHaveLength(1);
     expect(trace.labelEdits.some((edit) => edit.add.includes("blocked:validation"))).toBe(true);
+  });
+
+  it("parks the second identical suspect-infra signature without spending another retry (#3268)", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false, false],
+      feedbackDurationsMs: [465, 465],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.iterLogs.filter((line) => line.includes("free suspect-infra correction"))).toHaveLength(1);
+    expect(
+      trace.iterLogs.some(
+        (line) => line.includes("deterministic suspect-infra") && line.includes("signature="),
+      ),
+    ).toBe(true);
+    expect(
+      trace.labelEdits.some(
+        (edit) => edit.add.includes("ready-for-human") && edit.add.includes("blocked:validation"),
+      ),
+    ).toBe(true);
+  });
+
+  it("parks an identical carried INFRA signature instead of exhausting outer recovery (#3268)", async () => {
+    const command = "bash gate";
+    const signature = failureSignature({
+      sidecar: [
+        JSON.stringify({
+          schema: "red.afk.validation.v1",
+          name: `backpressure:${command}`,
+          status: "failed",
+        }),
+      ],
+    });
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      backpressureCommands: [command],
+      backpressureOk: false,
+      backpressureStderr:
+        "feedback worktree setup failed for afk/w1/9-x; validation blocked (core.hooksPath custom hooks path)",
+      prevFailureContext:
+        `prev-failure-reason:\nfeedback-failed-infra validation-signature:${signature}`,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.iterLogs.some((line) => line.includes(`signature=${signature}`))).toBe(true);
+    expect(
+      trace.labelEdits.some(
+        (edit) => edit.add.includes("ready-for-human") && edit.add.includes("blocked:validation"),
+      ),
+    ).toBe(true);
   });
 });
 
