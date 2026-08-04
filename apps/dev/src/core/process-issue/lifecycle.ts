@@ -365,7 +365,13 @@ export async function processIssue(
   }
   const canFailClosed = !!(trustPolicy.failClosed && deps.gh.actorTrustSignals);
   if ((trustPolicy.enabled || canFailClosed || externalOrigin) && (provenance || externalOrigin)) {
-    const verdict = await evaluateClaimTrust(trustPolicy, provenance ?? {}, trustLookup, externalOrigin);
+    const verdict = await evaluateClaimTrust(
+      trustPolicy,
+      provenance ?? {},
+      trustLookup,
+      externalOrigin,
+      issue,
+    );
     if (!verdict.executable) {
       // An unapproved external-origin HOLD parks the issue as `ready-for-human`
       // (never claimable), rather than merely un-claiming it.
@@ -374,8 +380,7 @@ export async function processIssue(
         await editIssueLifecycleLabels(deps, issue, labels, [LABEL_READY], [LABEL_HUMAN], "preflight-blocked");
         await deps.gh.comment(
           issue,
-          `🤖 /afk external-origin gate: ${verdict.reason}. ` +
-            `A maintainer with write access must comment \`/approve-external\` to release it.`,
+          `🤖 /afk external-origin gate: ${verdict.reason}`,
         );
         deps.appendIterLog(`🤖 /afk external-origin gate held #${issue} for approval: ${verdict.reason}`);
         await releaseClaim();
