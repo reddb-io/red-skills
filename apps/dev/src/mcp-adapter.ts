@@ -3,6 +3,11 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { waitsDir, worktreesDir } from "@reddb-io/shared/red-paths.js";
+import {
+  composeRepair,
+  noRepair,
+  registrationRepair,
+} from "@reddb-io/shared/repair.js";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
   armPr,
@@ -922,6 +927,17 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
   // its slot before it has written any project-side state, and a `busy` that
   // waited for that file would read free while the daemon refused to fill it.
   const busy = attribution.busy;
+  const registrationAbsence = held != null
+    ? null
+    : registrationState === undefined
+      ? composeRepair({
+          state: "the redskilled daemon did not answer, so registration state is unknown",
+          repair: noRepair("the daemon must answer before registration can be changed safely"),
+        })
+      : composeRepair({
+          state: lapse?.detail ?? "the host holds no registration for this project and recorded no lapse",
+          repair: registrationRepair(),
+        });
   return {
     registration: {
       held: held != null,
@@ -934,13 +950,15 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
       renew_by: held?.renew_by ?? "",
       renewals: held?.renewals ?? 0,
       lapsed_at: held == null ? (lapse?.at ?? "") : "",
-      reason:
-        held != null
-          ? ""
-          : lapse?.detail ??
-            (registrationState === undefined
-              ? "the redskilled daemon did not answer, so registration state is unknown"
-              : "the host holds no registration for this project and recorded no lapse"),
+      reason: registrationAbsence?.prose ?? "",
+      ...(registrationAbsence == null
+        ? {}
+        : {
+            repair: registrationAbsence.repair,
+            ...(registrationAbsence.repair === "none"
+              ? { repair_reason: registrationAbsence.repair_reason }
+              : {}),
+          }),
       launch_revision: held?.launch_revision ?? 0,
       bundle_version: delivery.bundle_version,
       plugin_cache_version: delivery.plugin_cache_version,
