@@ -60,6 +60,11 @@ import {
   type RedskilledStatuslineDetail,
   type RedskilledStatuslineProjectMatch,
 } from "./select.js";
+import {
+  composeRepair,
+  registrationRepair,
+  type RepairAction,
+} from "@reddb-io/shared/repair.js";
 
 export interface RedskilledStatuslineOptions {
   readonly mode: RedskilledStatuslineMode;
@@ -104,6 +109,10 @@ export interface RedskilledStatuslineRender {
    * would be parsing the render, which is the failure this surface removes.
    */
   readonly project_match: RedskilledStatuslineProjectMatch;
+  /** Pasteable cure for a repairable empty state, composed with the head text. */
+  readonly repair?: RepairAction | "none";
+  /** Why this state deliberately has no callable cure. */
+  readonly repair_reason?: string;
   readonly detail: RedskilledStatuslineDetail;
   /** True when the line lost detail to the width or the count budgets. */
   readonly degraded: boolean;
@@ -137,7 +146,8 @@ export function renderRedskilledStatusline(
   const match = resolveStatuslineProjectMatch(payload, options.project);
   const workers = selectRenderWorkers(payload, options);
   const projects = selectRenderProjects(payload, options);
-  const head = renderHead(payload, options, workers, match);
+  const unmatched = unmatchedHead(payload, options.project, match);
+  const head = renderHead(payload, options, workers, match, unmatched.prose);
 
   const ladder = detailLadder({
     mode: options.mode,
@@ -187,6 +197,7 @@ export function renderRedskilledStatusline(
     mode: options.mode,
     project: options.project,
     project_match: match,
+    ...(unmatched.repair === undefined ? {} : { repair: unmatched.repair }),
     detail: chosen.detail,
     degraded: chosen.detail !== richest || line !== chosen.line || table.degraded,
     stale: payload.staleness.stale,
@@ -285,6 +296,7 @@ function renderHead(
   options: RedskilledStatuslineOptions,
   workers: readonly RedskilledRenderWorker[],
   match: RedskilledStatuslineProjectMatch,
+  unmatched: string,
 ): string {
   const parts: string[] = [];
   if (options.mode === "global") {
@@ -305,7 +317,7 @@ function renderHead(
     // NOT `0w idle`. An unmatched directory has no Worker count to report — the
     // host may be holding a dozen for a project this one failed to name — so the
     // head states the mismatch instead of an aggregate that reads as calm.
-    parts.push(unmatchedHead(payload, options.project, match));
+    parts.push(unmatched);
   }
   parts.push(engineMark(payload));
   const budget = budgetMark(payload);
@@ -400,24 +412,31 @@ function unmatchedHead(
   payload: RedskilledRenderPayload,
   project: string | null,
   match: RedskilledStatuslineProjectMatch,
-): string {
-  if (match === "unregistered") return `project unknown — ${project} was never registered on this host`;
+): { readonly prose: string; readonly repair?: RepairAction } {
+  if (match === "unregistered") {
+    const repair = registrationRepair();
+    const composed = composeRepair({
+      state: `project unknown — ${project} was never registered on this host`,
+      repair,
+    });
+    return { prose: composed.prose, repair };
+  }
   if (match === "orphaned") {
-    return `project unknown — ${project} is registered on a daemon this socket does not reach`;
+    return { prose: `project unknown — ${project} is registered on a daemon this socket does not reach` };
   }
   if (match === "stopped") {
     const stopped = payload.stopped_projects?.find((record) => record.project_label === project);
-    return `project unknown — ${project} was stopped${stopped == null ? "" : ` at ${clockTime(stopped.at)}`}`;
+    return { prose: `project unknown — ${project} was stopped${stopped == null ? "" : ` at ${clockTime(stopped.at)}`}` };
   }
   if (match === "lapsed") {
     const lapse = payload.lapsed_projects?.find((record) => record.project_label === project);
     if (lapse != null) {
       const registered = lapse.registered_at == null ? "" : ` (registered ${clockTime(lapse.registered_at)})`;
-      return `project unknown — ${project} lapsed at ${clockTime(lapse.at)}${registered}`;
+      return { prose: `project unknown — ${project} lapsed at ${clockTime(lapse.at)}${registered}` };
     }
-    return `project unknown — ${project} lapsed`;
+    return { prose: `project unknown — ${project} lapsed` };
   }
-  return "project unknown — this directory resolved to no project";
+  return { prose: "project unknown — this directory resolved to no project" };
 }
 
 /** The clock part of a daemon instant, without consulting this process's locale. PURE. */
