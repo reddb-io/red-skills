@@ -18,6 +18,7 @@ and mutation modes.
 | launch | `project_start` | `{runner, target, selector?, config?, base?}` — hands the work policy to the host daemon as a registration; the project spawns nothing. |
 | resize / switch | `project_resize` | Same fields, all optional; restates the launch on the registration's renewal (Amendment 5). |
 | ground truth | `project_status` | The registration the host holds, its renewal and last poll, plus slots and live workers. |
+| reset birth latch | `project_reset` | Invoke the structured repair returned in `project_status.birth_latch`; clears only this project's birth breaker. |
 | shutdown | `project_stop` | Asks the host to end this project's Workers, then gives the registration back. |
 | logs | `logs` | One structured lane per call (`supervisor` / `worker` / `monitor` / `liveness`). |
 
@@ -162,6 +163,6 @@ The safe fleet width for a given queue is the **degree of disjunction** — the 
 
 ### Refs
 
-- [`MCP.md`](./MCP.md) — the `castle` tool surface; `project_start`, `project_resize`, `project_status`, `project_stop`, and `logs` are the primary interface.
+- [`MCP.md`](./MCP.md) — the `castle` tool surface; `project_start`, `project_resize`, `project_status`, `project_reset`, `project_stop`, and `logs` are the primary interface.
 - ADR 0130 Amendment 4 — why a project contributes a registration and holds no process of its own, and why the `fleet` launcher, the `__supervise` entrypoint and the self-heal watchdog were deleted rather than renamed.
 - [`monitor.md`](./monitor.md) — the readonly dashboard and native-task mirror.
