@@ -618,7 +618,8 @@ export function parseConfigYaml(text: string): ConfigValues {
     }
   }
 
-  return out;
+  validateValidationMomentShapes(out);
+  return ConfigValuesSchema.parse(out);
 }
 
 /** Injectable file reader. Returns the file's text, or `undefined` if absent. */
@@ -766,6 +767,17 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
       gateClosed: false,
       retiredKeys: [],
     };
+  }
+
+  const validationMomentAliases = ["afk.feedback.commands", "afk.backpressure"] as const;
+  for (const alias of validationMomentAliases) {
+    const spellings = [alias, `plugins.dev.${alias}`];
+    if (Object.keys(parsed).some((key) => spellings.some((spelling) => key === spelling || key.startsWith(`${spelling}.`)))) {
+      warn(
+        `[afk:config] warn: \`${alias}\` is deprecated; declare its commands under ` +
+          "`afk.validation.post_done` instead",
+      );
+    }
   }
 
   const misplacedHostKeys = Object.keys(parsed)
@@ -1034,6 +1046,76 @@ export function readFeedbackCommands(values: ConfigValues): string[] | undefined
   if (scalar === undefined) return undefined;
   if (scalar.trim() === "[]" || scalar.trim() === "") return [];
   return [scalar];
+}
+
+export const VALIDATION_MOMENTS = ["iteration", "post_done", "landing"] as const;
+export type ValidationMoment = (typeof VALIDATION_MOMENTS)[number];
+
+/**
+ * The final product release allowed to read the ADR 0135 legacy aliases.
+ * Do not advance this constant: the live-version test deliberately fails on
+ * the next release so the aliases and their warnings are removed together.
+ */
+export const VALIDATION_MOMENT_ALIASES_LAST_RELEASE = "3.5.0";
+
+export const ValidationMomentsSchema = z.object({
+  iteration: z.array(z.string()).optional(),
+  post_done: z.array(z.string()).optional(),
+  landing: z.array(z.string()).optional(),
+});
+export type ValidationMoments = z.infer<typeof ValidationMomentsSchema>;
+
+function validateValidationMomentShapes(values: ConfigValues): void {
+  for (const root of ["afk.validation", "plugins.dev.afk.validation"]) {
+    for (const moment of VALIDATION_MOMENTS) {
+      const key = `${root}.${moment}`;
+      const scalar = values[key];
+      const descendants = Object.keys(values).filter((candidate) => candidate.startsWith(`${key}.`));
+      const hasOnlyIndexedItems = descendants.every((candidate) => /^\d+$/.test(candidate.slice(key.length + 1)));
+      if ((scalar !== undefined && scalar.trim() !== "[]") || !hasOnlyIndexedItems) {
+        throw new MalformedConfigError(`invalid config shape: \`${key}\` must be an ordered list of commands`);
+      }
+    }
+  }
+}
+
+function readValidationMoment(values: ConfigValues, moment: ValidationMoment): string[] | undefined {
+  const prefix = `afk.validation.${moment}`;
+  const commands: string[] = [];
+  let declared = false;
+  for (let i = 0; ; i++) {
+    const command = values[`${prefix}.${i}`];
+    if (command === undefined) break;
+    declared = true;
+    if (command.trim() !== "") commands.push(command);
+  }
+  if (declared) return commands;
+  return values[prefix]?.trim() === "[]" ? [] : undefined;
+}
+
+function hasConfigDeclaration(values: ConfigValues, key: string): boolean {
+  return Object.keys(values).some((candidate) => candidate === key || candidate.startsWith(`${key}.`));
+}
+
+/** Read the operator-declared Validation moment schedule (ADR 0135). */
+export function readValidationMoments(values: ConfigValues): ValidationMoments {
+  const schedule = Object.fromEntries(
+    VALIDATION_MOMENTS.flatMap((moment) => {
+      const commands = readValidationMoment(values, moment);
+      return commands === undefined ? [] : [[moment, commands]];
+    }),
+  ) as ValidationMoments;
+
+  const feedback = readFeedbackCommands(values);
+  const backpressureDeclared = hasConfigDeclaration(values, "afk.backpressure");
+  if (schedule.post_done !== undefined || feedback !== undefined || backpressureDeclared) {
+    schedule.post_done = [
+      ...(schedule.post_done ?? []),
+      ...(feedback ?? []),
+      ...(backpressureDeclared ? readBackpressure(values) : []),
+    ];
+  }
+  return ValidationMomentsSchema.parse(schedule);
 }
 
 /**
