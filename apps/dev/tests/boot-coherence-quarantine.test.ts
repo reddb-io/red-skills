@@ -68,7 +68,7 @@ function wireIssueMutations(
     if (overrides.failBody) throw new Error("body mutation failed");
     issues.find((candidate) => candidate.number === number)!.body = body;
   });
-  deps.gh.editLabels = editLabels;
+  deps.gh.editLabels = editLabels as typeof deps.gh.editLabels;
   Object.assign(deps.gh, {
     editBody,
     // The transition API reads live labels before planning (#2528).
