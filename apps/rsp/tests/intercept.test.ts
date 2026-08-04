@@ -619,7 +619,7 @@ describe("rsp binary resolution guard", () => {
     expect(decision).toEqual({ kind: "passthrough", reason: "binary-unresolved" });
   });
 
-  it("records binary-unresolved in telemetry so rsp stats can render it", async () => {
+  it("uses the self-entry fallback and records contribution when rsp is absent from PATH", async () => {
     const root = await tempRoot();
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n", "utf8");
@@ -631,13 +631,17 @@ describe("rsp binary resolution guard", () => {
     });
 
     expect(res.status).toBe(0);
-    expect(res.stdout).toEqual(Buffer.alloc(0));
+    expect(JSON.parse(res.stdout.toString("utf8"))).toMatchObject({
+      hookSpecificOutput: {
+        updatedInput: { command: `${process.execPath} ${cli} proxy -- 'git status'` },
+      },
+    });
     const events = await readSpoolEvents(root);
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       collection: RSP_DECISIONS_COLLECTION,
-      decision: "passed",
-      reason: "binary-unresolved",
+      decision: "contributed",
+      reason: "universal-proxy",
     });
   });
 });

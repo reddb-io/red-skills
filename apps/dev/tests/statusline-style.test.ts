@@ -269,7 +269,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     const t = stripAnsi(line);
     // The terse spec, token by token (issue #1176 fixes).
     expect(t).toContain("w1"); // bare wID (no [live]/[quiet] badge)
-    expect(t).toContain("run=claude opus high"); // runner + shortened model + effort
+    expect(t).toContain("run=claude opus-4.8 high"); // runner + shortened model + effort
     expect(t).toContain("iss=17"); // the ISSUE NUMBER (current.number), not a done/total counter
     expect(t).toContain("impl"); // bare stage (no activity: prefix, no #<n>)
     expect(t).toContain("00:05:00"); // elapsed REQUIRED
@@ -444,8 +444,8 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
       },
     });
     const t = stripAnsi(renderWorkerLine(w, NOW));
-    expect(t).toContain("run=claude opus ");
-    expect(t).not.toContain("run=claude opus high");
+    expect(t).toContain("run=claude opus-4.8 ");
+    expect(t).not.toContain("run=claude opus-4.8 high");
   });
 
   it("humanizes the per-worker token total on the tks= token", () => {
@@ -515,7 +515,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     });
     const t = stripAnsi(renderWorkerLine(w, NOW));
     expect(t).toContain("requeue-adopt");
-    expect(t).toContain("run=claude opus high");
+    expect(t).toContain("run=claude opus-4.8 high");
     expect(t).toContain("org=requeue");
     expect(t).toContain("iss=1293");
     expect(t).toContain("typecheck");
@@ -551,7 +551,7 @@ describe("statusline style — full themed assembly", () => {
     expect(stripAnsi(rows[0])).toContain("» red-skills");
     expect(stripAnsi(rows[0])).toContain("prs=3");
     expect(stripAnsi(rows[1])).toContain("w1"); // terse worker row, no [live] badge
-    expect(stripAnsi(rows[1])).toContain("run=claude opus high");
+    expect(stripAnsi(rows[1])).toContain("run=claude opus-4.8 high");
     expect(stripAnsi(rows[1])).not.toContain("[live]");
     expect(stripAnsi(rows[2])).toContain("iss=20"); // second worker's issue number
   });

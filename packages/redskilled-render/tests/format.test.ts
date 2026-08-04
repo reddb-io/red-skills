@@ -117,16 +117,25 @@ describe("pad aligns a coloured cell to the same column as an uncoloured one", (
 });
 
 describe("shortModel lives here now (#3150)", () => {
-  it("shortens a model to its family token", () => {
-    expect(shortModel("claude-opus-5")).toBe("opus");
-    expect(shortModel("claude-opus-4-8")).toBe("opus");
-    expect(shortModel("Opus")).toBe("opus");
-    expect(shortModel("claude-sonnet-5")).toBe("sonnet");
-    expect(shortModel("claude-haiku-4-5-20251001")).toBe("haiku");
-    expect(shortModel("claude-fable-5")).toBe("fable");
+  it.each([
+    ["claude-opus-5", "opus-5"],
+    ["claude-opus-4-8", "opus-4.8"],
+    ["claude-sonnet-5", "sonnet-5"],
+    ["claude-haiku-4-5-20251001", "haiku-4.5"],
+    ["Opus", "opus"],
+    ["gpt-5.6-sol", "gpt-5.6-sol"],
+  ])("shortens %s without discarding its version", (model, expected) => {
+    expect(shortModel(model)).toBe(expected);
   });
 
-  it("renders an unrecognised model unchanged rather than as nothing", () => {
-    expect(shortModel("gpt-5")).toBe("gpt-5");
+  it("renders an absent version as the bare family without a placeholder", () => {
+    const rendered = shortModel("Opus");
+    expect(rendered).toBe("opus");
+    expect(rendered).not.toContain("-");
+    expect(rendered).not.toContain("undefined");
+  });
+
+  it("distinguishes Workers running different Opus majors", () => {
+    expect(shortModel("claude-opus-5")).not.toBe(shortModel("claude-opus-4-8"));
   });
 });
