@@ -457,6 +457,18 @@ _Avoid_: offline mode (reads still need warm state), "queue the claim", degraded
 How many Workers a project registers for when nobody says — **one**. It is machine budget, not project preference, so the **redskilled** daemon's host-scoped `defaultFleetWidth` is its ceiling and a project declares its own in `plugins.dev.afk.target` beneath that. One is the floor a maintainer can reason about: a second Worker doubles GitHub polling, doubles memory against a host ceiling every Worker is already granted in full, and is a decision worth making deliberately rather than inheriting. The rule this exists to enforce is that **every surface announces the same number** — a default advertised as `2` by an MCP schema, absent from config documentation and remembered as `1` by the maintainer is three defaults, and the drift is invisible until someone counts running Workers.
 _Avoid_: concurrency, parallelism (both describe the effect, not the declared number), "the fleet size" (the Fleet is extinct)
 
+**Front door (`drain`)**:
+The castle MCP's one entry verb for the common intent — "make this project drain": daemon reachable, project registered at the requested target, queue flowing. **Ensure semantics with a difference report**: calling it is never an error; an unchanged state answers with a report, a different target resizes, a lapsed registration is re-created, and the response always states what changed versus what already stood. The one refusal it keeps is a **runner** change, the single genuinely destructive switch. Specialized verbs remain for surgical use; the front door is where an agent starts without knowing the choreography.
+_Avoid_: wrapper tool, macro verb, "the happy-path helper"
+
+**Situational help**:
+The castle MCP's `help` tool: it reads the host's real state — daemon, registration, queue, workers, last refusal — and answers "you are HERE; the next step is THIS verb with THESE args", followed by a short intent map of the surface. **The one live source of choreography**: MCP prompts and skills point at it rather than restating it, because two sources of operating instructions drift and the drifted one is always the one somebody follows.
+_Avoid_: manual tool, docs tool, static usage dump
+
+**Repair (structured)**:
+The machine-readable half of every castle refusal and empty-state: `repair: {tool, args, why}` — a cure the agent can invoke directly, beside the human sentence. The field exists so the stated cure and the executable cure cannot diverge: a message that names a label no code reads (the `triage:summon` incident) is impossible when the named cure IS the call. A refusal with no cure declares `repair: none` with its reason; a ratchet holds every new refusal to one or the other.
+_Avoid_: hint, suggestion, "see the error message"
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**.
