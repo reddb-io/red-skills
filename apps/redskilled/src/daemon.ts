@@ -59,11 +59,13 @@ import {
 } from "./event-lane.js";
 import {
   DEFAULT_REDSKILLED_DEMAND_MS,
+  beginBirthProbe,
+  describeBirthLatches,
   emptyDemandTick,
   planHostDemand,
-  birthHaltMap,
   foldWorkerDeath,
   EMPTY_BIRTH_HEALTH,
+  resetBirthHealth,
   REDSKILLED_SHORT_LIFE_MS,
   type RedskilledBirthHealth,
   REDSKILLED_DEMAND_BACKOFF_MS,
@@ -141,6 +143,7 @@ import {
   type RedskilledProjectDeregistered,
   type RedskilledProjectRegistered,
   type RedskilledProjectRenewed,
+  type RedskilledProjectReset,
   type RedskilledWorkerCommandResult,
   type RedskilledWorkerHeartbeatAck,
   type RedskilledWorkerHeartbeatRequest,
@@ -680,6 +683,8 @@ export interface RedskilledDaemon {
       readonly launch?: RedskilledLaunchTemplate;
     },
   ): RedskilledProjectRenewed;
+  /** Explicitly clear this project's birth breaker. */
+  resetProjectBirthBreaker(projectLabel: string, sessionProject?: string): RedskilledProjectReset;
   /** The registrations this daemon holds, ordered by project label; lapsed ones swept. */
   registrations(): readonly RedskilledProjectRegistration[];
   hostState(): RedskilledHostState;
@@ -1240,6 +1245,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       lapses,
       stops,
       orphanedRegistrations: [...orphanedRegistrations.values()],
+      birthLatches: describeBirthLatches(birthHealth, Date.parse(now)),
       // The poll each registration was last covered by, so "why is nothing
       // happening" is answerable from one read instead of from a log.
       queue: lastQueue,
@@ -1500,6 +1506,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       for (const project of lastQueue?.projects ?? []) queue[project.project_label] = project.depth;
 
       const nowMs = Date.parse(at);
+      const demandNowMs = Number.isFinite(nowMs) ? nowMs : 0;
+      // A half-open Worker closes the latch only after proving it survived the
+      // same short-life window that opened it. Until then it is the sole probe.
+      for (const [projectLabel, health] of Object.entries(birthHealth)) {
+        if (health.probeWorkerId == null) continue;
+        const probe = workers.get(health.probeWorkerId);
+        if (probe != null && demandNowMs - Date.parse(probe.started_at) >= REDSKILLED_SHORT_LIFE_MS) {
+          birthHealth[projectLabel] = resetBirthHealth();
+        }
+      }
       const plan = planHostDemand({
         projects: [...registrations.values()].map((registration) => ({
           project_label: registration.project_label,
@@ -1510,9 +1526,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         })),
         queue,
         live,
-        nowMs: Number.isFinite(nowMs) ? nowMs : 0,
+        nowMs: demandNowMs,
         backoffUntilMs: demandBackoffUntilMs,
-        birthHaltUntilMs: birthHaltMap(birthHealth, Number.isFinite(nowMs) ? nowMs : 0),
+        birthHealth,
       });
 
       const granted: RedskilledDemandGrant[] = [];
@@ -1561,11 +1577,29 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
             ]
             : launched.warnings,
         });
+        const health = birthHealth[birth.project_label];
+        if (health?.haltUntilMs != null && demandNowMs >= health.haltUntilMs) {
+          birthHealth[birth.project_label] = beginBirthProbe(health, launched.worker.worker_id);
+        }
       }
       // A tick that asked and was never refused clears the hold, so the room a
       // dying Worker freed is spent on the next tick rather than on the timer
       // the last refusal set.
       if (refusal == null && plan.births.length > 0) demandBackoffUntilMs = null;
+
+      // A counted positive queue and free project slots is birth-eligible. If
+      // this tick granted that project nothing, the host lane must state why —
+      // otherwise the silent three-hour stall from #3267 is indistinguishable
+      // from a healthy idle daemon.
+      const grantedProjects = new Set(granted.map((worker) => worker.project_label));
+      for (const intent of plan.intents) {
+        if (intent.queue_depth == null || intent.queue_depth <= 0 || intent.live >= intent.target) continue;
+        if (grantedProjects.has(intent.project_label)) continue;
+        const detail = refusal != null && (intent.outcome === "asking" || intent.outcome === "half-open-probe")
+          ? `project ${JSON.stringify(intent.project_label)} was birth-eligible but the host refused it: ${refusal}`
+          : intent.detail;
+        await eventLane.recordDemandRefusal({ ts: at, projectLabel: intent.project_label, detail }).catch(() => undefined);
+      }
 
       lastDemand = {
         version: 1,
@@ -1796,6 +1830,24 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           `${new Date(after.haltUntilMs).toISOString()}\n`,
       );
     }
+  }
+
+  /** Clear one project's birth breaker after project-scoped reach permits it. */
+  function resetProjectBirthBreaker(projectLabel: string, sessionProject?: string): RedskilledProjectReset {
+    const reach = authorize("project-reset", sessionProject, projectLabel);
+    if (!reach.permitted) throw new Error(reach.reason);
+    const reset = birthHealth[projectLabel]?.haltUntilMs != null || birthHealth[projectLabel]?.probeWorkerId != null;
+    birthHealth[projectLabel] = resetBirthHealth();
+    return {
+      version: 1,
+      project_label: projectLabel,
+      latch: "project-birth-breaker",
+      reset,
+      reach,
+      detail: reset
+        ? `redskilled cleared project ${JSON.stringify(projectLabel)}'s birth breaker; the next demand tick may birth normally`
+        : `redskilled found no open birth breaker for project ${JSON.stringify(projectLabel)}; nothing changed`,
+    };
   }
 
   /** Ask the host about one Worker; an unanswerable probe is not a confirmation. */
@@ -2787,6 +2839,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         await registrationIntentStore.flush();
         return { id: request.id, ok: true, value };
       }
+      if (request.op === "project-reset") {
+        return {
+          id: request.id,
+          ok: true,
+          value: resetProjectBirthBreaker(request.project_label, request.session_project),
+        };
+      }
       if (request.op === "worker-command") {
         return { id: request.id, ok: true, value: await runWorkerCommand(request.command) };
       }
@@ -2871,6 +2930,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     workerCount: () => workers.size,
     registerProject,
     renewProject,
+    resetProjectBirthBreaker,
     deregisterProject,
     registrations: () => hostState().registrations ?? [],
     hostState,
