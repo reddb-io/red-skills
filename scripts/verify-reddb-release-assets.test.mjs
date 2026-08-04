@@ -20,7 +20,6 @@ const server = createServer((_request, reply) => {
   const status = response === "missing" ? 404 : 200;
   reply.writeHead(status).end();
 });
-
 before(async () => {
   await writeFile(manifest, JSON.stringify({
     reddb: {
@@ -80,4 +79,3 @@ test("a 404 is a missing asset verdict and is not retried", async () => {
   assert.equal(requests, 2, "one binary HEAD and one checksum HEAD");
   assert.match(result.stderr, /missing reddb release asset/);
 });
-
