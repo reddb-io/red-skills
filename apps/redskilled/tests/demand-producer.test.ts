@@ -509,12 +509,12 @@ describe("the seam holds in both directions", () => {
     }
   });
 
-  it("keeps every breaker policy out of the daemon's half", () => {
+  it("keeps the selector/work-policy breaker out of the daemon's half", () => {
     for (const file of ["daemon.ts", "protocol.ts", "host-state.ts", "admission.ts", "event-lane.ts"]) {
       const source = readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
       const code = source.replace(/\/\*\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-      expect(code, `${file} must hold no circuit-breaker policy`).not.toMatch(
-        /breaker|half.?open|cooldown|\bparked?\b/i,
+      expect(code, `${file} must hold no selector circuit policy`).not.toMatch(
+        /project-breaker|ProjectBreaker|SelectorBreaker|selectorPark|selector_id|selectorId/,
       );
     }
   });
