@@ -10,7 +10,7 @@ import type {
 export const BASE_FRESHNESS_PROBE_ID = "afk.base-freshness";
 export const BASE_FRESHNESS_PROBE_NAME = "AFK local trunk freshness";
 export const BASE_FRESHNESS_CANONICAL_FIX =
-  "Boot auto-applies the local-trunk fast-forward from origin when the shared finalizer guard passes: on-trunk, clean tree, and local ancestor only; otherwise confirm the same guarded fix manually.";
+  "Boot auto-applies local-trunk reconciliation from origin when the shared finalizer guard passes: on-trunk, clean tree, and either a local ancestor or every local-only commit patch-equivalent to an origin commit; otherwise confirm the same guarded fix manually.";
 
 export interface BaseFreshnessProbeData extends BaseFreshnessProbeInput {
   readonly finding?: "local-trunk-behind-origin";
@@ -57,7 +57,7 @@ export function runBaseFreshnessProbe(context: OperationalProbeContext): Operati
     fix: finding
       ? {
           gate: "confirm",
-          description: "fast-forward local trunk from origin under the finalizer guard",
+          description: "reconcile local trunk from origin under the finalizer guard",
         }
       : undefined,
     data: { ...input, finding } satisfies BaseFreshnessProbeData,
