@@ -275,6 +275,8 @@ export interface OrphanTestRunnerSweepEntry {
 
 /** gh side effects: label edits and audit/recovery comments. Best-effort. */
 export interface BootGh {
+  /** Idempotently create a label before a transition depends on it. */
+  ensureLabel?(name: string): Promise<void>;
   /** gh issue edit --remove-label … --add-label … */
   editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
   /** gh issue comment --body … */
@@ -585,20 +587,23 @@ async function applyBootStateTransition(
   issue: number,
   transition: StateTransition,
   legacyEdit: [string[], string[]],
-): Promise<void> {
+): Promise<boolean> {
   let labels: string[];
   try {
     labels = await deps.gh.viewLabels(issue);
   } catch {
-    await deps.gh.editLabels(issue, legacyEdit[0], legacyEdit[1]);
-    return;
+    const ok: unknown = await deps.gh.editLabels(issue, legacyEdit[0], legacyEdit[1]);
+    if (ok === false) throw new Error(`boot ${transition.kind} label edit rejected for #${issue}`);
+    return true;
   }
   const plan = planTransition(labels, transition);
   if (isRefused(plan)) {
     deps.log?.(`boot ${transition.kind} transition refused for #${issue}: ${plan.reason}`);
-    return;
+    return false;
   }
-  await deps.gh.editLabels(issue, [...plan.remove], [...plan.add]);
+  const ok: unknown = await deps.gh.editLabels(issue, [...plan.remove], [...plan.add]);
+  if (ok === false) throw new Error(`boot ${transition.kind} label edit rejected for #${issue}`);
+  return true;
 }
 
 /**
@@ -630,15 +635,35 @@ async function tryBootAutoApplyLabelBodyCoherence(
       deps.log?.(`boot coherence probe body diagnosis failed for #${action.issue}: ${String(error)}`);
     }
     try {
-      await applyBootStateTransition(deps, action.issue, { kind: "quarantine", diagnosis: "" }, [
+      await deps.gh.ensureLabel?.(LABEL_QUARANTINE);
+      const quarantined = await applyBootStateTransition(deps, action.issue, { kind: "quarantine", diagnosis: "" }, [
         [LABEL_READY],
         [LABEL_QUARANTINE],
       ]);
+      if (!quarantined) throw new Error("quarantine transition refused");
       deps.log?.(
         `boot coherence probe quarantined #${action.issue}: ready-for-agent→quarantine; blocker kind=${action.blocker.kind} summary=${JSON.stringify(action.blocker.summary)}`,
       );
     } catch (error) {
       deps.log?.(`boot coherence probe label quarantine failed for #${action.issue}: ${String(error)}`);
+      try {
+        const restored = await applyBootStateTransition(deps, action.issue, { kind: "queue" }, [
+          [],
+          [LABEL_READY],
+        ]);
+        if (!restored) throw new Error("ready-for-agent restoration refused");
+        deps.log?.(`boot coherence probe restored ready-for-agent for #${action.issue}`);
+      } catch (restoreError) {
+        const warning = `boot coherence probe left #${action.issue} without a visible quarantine; restoring ready-for-agent also failed: ${String(restoreError)}`;
+        deps.log?.(warning);
+        try {
+          await deps.gh.comment(action.issue, `🤖 ${warning}`);
+        } catch (commentError) {
+          deps.log?.(
+            `boot coherence probe failed to publish recovery warning for #${action.issue}: ${String(commentError)}`,
+          );
+        }
+      }
     }
   }
 

@@ -519,13 +519,15 @@ export async function buildBootDeps(
       reapProcessGroup: (pgid) => killTreeAndWait(pgid),
     },
     gh: {
+      ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
       editLabels: async (issue, remove, add) => {
-        await editLabelsWithStatuslineCache(
+        const ok = await editLabelsWithStatuslineCache(
           countCachePath,
           () => ghx.editLabels(ghCtx, issue, remove, add),
           remove,
           add,
         );
+        if (!ok) throw new Error(`failed to edit labels for issue #${issue}`);
       },
       comment: (issue, body) => ghx.comment(ghCtx, issue, body),
       editBody: async (issue, body) => {
