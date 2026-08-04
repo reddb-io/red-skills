@@ -41,6 +41,13 @@ const SURFACE: ReadonlyArray<{
     schema: ["runner", "target", "selector", "config", "base", "fleet"],
   },
   {
+    name: "project_reset",
+    title: "Reset project execution latch",
+    description:
+      "MUTATING: clear a named in-memory latch for this project so autonomous demand may retry immediately.",
+    schema: ["latch", "fleet"],
+  },
+  {
     name: "project_stop",
     title: "Stop this project's workers",
     description:
