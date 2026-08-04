@@ -251,6 +251,7 @@ function renderClassifierSections(
   marketplaceFixes: readonly MarketplaceSourceFixReceipt[] = [],
 ): string[] {
   const {
+    worktreeSetup,
     hooks,
     hookPoints,
     runtime,
@@ -269,6 +270,13 @@ function renderClassifierSections(
     notes,
   } = classifiers;
   return [
+    "",
+    "red-doctor AFK worktree setup declaration",
+    `verdict: ${worktreeSetup.verdict}`,
+    ...worktreeSetup.findings.map(
+      (finding) =>
+        `  ${finding.verdict} ${finding.command ?? "(undeclared)"}: ${finding.reason}`,
+    ),
     "",
     "red-doctor AFK hook / backpressure static validation",
     `declared hook points: ${hookPoints.length}`,
@@ -646,6 +654,14 @@ function renderToon(
         reason: entry.finding.reason,
       })),
       unknownHooks: classifiers.hooks.unknownHooks,
+    },
+    afkWorktreeSetup: {
+      verdict: classifiers.worktreeSetup.verdict,
+      findings: classifiers.worktreeSetup.findings.map((finding) => ({
+        command: finding.command ?? "",
+        verdict: finding.verdict,
+        reason: finding.reason,
+      })),
     },
     pluginRuntime: {
       plugins: classifiers.runtime.rows.map((row) => ({
