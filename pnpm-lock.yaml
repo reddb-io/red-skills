@@ -528,6 +528,9 @@ importers:
 
   packages/redskilled-render:
     dependencies:
+      '@reddb-io/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@reddb-io/toon':
         specifier: 'catalog:'
         version: 0.13.0
