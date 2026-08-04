@@ -1,5 +1,13 @@
 # @ai-hero/sandcastle
 
+## 3.4.3
+
+### Patch Changes
+
+- Updated dependencies [bda5bd7]
+  - @reddb-io/github@3.4.3
+  - @reddb-io/shared@3.4.3
+
 ## 3.4.2
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @reddb-io/github
 
+## 3.4.3
+
+### Patch Changes
+
+- bda5bd7: Route inner-agent `gh` calls through the daemon-backed GitHub budget boundary and attribute each invocation to the Worker that issued it.
+
 ## 3.4.2
 
 ## 3.4.1

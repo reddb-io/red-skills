@@ -1,5 +1,16 @@
 # @reddb-io/redskilled
 
+## 3.4.3
+
+### Patch Changes
+
+- eea6d66: Poll repository activity and queue discovery through conditional Octokit REST reads, preserving the last answer on `304 Not Modified` while keeping quota and network failures distinct.
+- Updated dependencies [bda5bd7]
+  - @reddb-io/github@3.4.3
+  - @reddb-io/shared@3.4.3
+  - @reddb-io/build-info@3.4.3
+  - @reddb-io/redskilled-render@3.4.3
+
 ## 3.4.2
 
 ### Patch Changes
