@@ -14,6 +14,8 @@ import {
   EMPTY_FAILURE_SIGNATURE,
   failureSignature,
   failureSignatureTerms,
+  parseValidationFailureSignature,
+  validationFailureMarker,
   type FailureSignatureFinding,
 } from "../src/core/failure-signature.js";
 import { VALIDATION_SCHEMA, type ValidationRecord } from "../src/core/feedback.js";
@@ -182,5 +184,19 @@ describe("failureSignatureTerms", () => {
 
   it("is empty for degenerate input", () => {
     expect(failureSignatureTerms({})).toEqual([]);
+  });
+});
+
+describe("validation failure signature carry-forward (#3268)", () => {
+  it("round-trips the signature through the terminal failure reason", () => {
+    const signature = failureSignature({ sidecar: [TEST_ROOT_FAILED] });
+    const marker = validationFailureMarker("feedback-failed-infra", signature);
+
+    expect(marker).toBe(`feedback-failed-infra validation-signature:${signature}`);
+    expect(parseValidationFailureSignature(`worker=x status=blocked ${marker}`)).toBe(signature);
+  });
+
+  it("does not invent a signature from unrelated prior failure text", () => {
+    expect(parseValidationFailureSignature("feedback-failed-infra without evidence")).toBeUndefined();
   });
 });
