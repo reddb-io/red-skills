@@ -393,7 +393,7 @@ export function dashboard(overrides: Record<string, unknown> = {}): RedskilledDa
       mine: true,
       cells: {
         wid: "wA1B2",
-        run: "run=claude opus high",
+        run: "run=claude opus-4.8 high",
         org: "org=afk",
         iss: "iss=3012",
         bar: "██▶░░░",
@@ -406,7 +406,7 @@ export function dashboard(overrides: Record<string, unknown> = {}): RedskilledDa
         rsn: "rsn=4",
         txt: "txt=9",
       },
-      line: "wA1B2  run=claude opus high  org=afk  iss=3012  ██▶░░░  coding·impl  1h0m  hb=3s  loc=+142 -36  tks=45k  tls=12  rsn=4  txt=9",
+      line: "wA1B2  run=claude opus-4.8 high  org=afk  iss=3012  ██▶░░░  coding·impl  1h0m  hb=3s  loc=+142 -36  tks=45k  tls=12  rsn=4  txt=9",
     },
   ];
   return {

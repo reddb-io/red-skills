@@ -105,7 +105,7 @@ describe("rsp telemetry spool", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp proxy -- 'git status'" },
+        updatedInput: { command: `${process.execPath} ${bundle} proxy -- 'git status'` },
       },
     });
 
@@ -169,7 +169,9 @@ describe("rsp telemetry spool", () => {
     const updated = JSON.parse(hook.stdout.toString("utf8")) as {
       hookSpecificOutput: { updatedInput: { command: string } };
     };
-    expect(updated.hookSpecificOutput.updatedInput.command).toBe("rsp proxy -- 'printf '\\''out\\n'\\''; printf '\\''err\\n'\\'' >&2'");
+    expect(updated.hookSpecificOutput.updatedInput.command).toBe(
+      `${process.execPath} ${bundle} proxy -- 'printf '\\''out\\n'\\''; printf '\\''err\\n'\\'' >&2'`,
+    );
 
     const raw = spawnSync(command, { cwd: root, shell: true, encoding: "buffer" });
     const proxied = spawnSync(process.execPath, [bundle, "proxy", "--", command], {

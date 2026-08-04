@@ -28,7 +28,7 @@
 import { compareSemver } from "./bundle-version.js";
 
 /**
- * `claude-opus-4-8` → `opus`, for the themed per-worker `run=` label (#1175).
+ * `claude-opus-4-8` → `opus-4.8`, for the themed per-worker `run=` label.
  *
  * The shortening is pure string work over a display string, so it lives with the
  * other layout primitives in `@reddb-io/redskilled-render` (#3150) and is

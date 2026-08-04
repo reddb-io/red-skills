@@ -368,7 +368,7 @@ export function dashboard(overrides = {}) {
       mine: true,
       cells: {
         wid: "w-busy",
-        run: "run=claude opus high",
+        run: "run=claude opus-4.8 high",
         org: "org=afk",
         iss: "iss=3012",
         bar: "██▶░░░",
@@ -381,7 +381,7 @@ export function dashboard(overrides = {}) {
         rsn: "rsn=4",
         txt: "txt=9",
       },
-      line: "w-busy  run=claude opus high  org=afk  iss=3012  ██▶░░░  coding·impl  1h0m  hb=3s  loc=+142 -36  tks=45k  tls=12  rsn=4  txt=9",
+      line: "w-busy  run=claude opus-4.8 high  org=afk  iss=3012  ██▶░░░  coding·impl  1h0m  hb=3s  loc=+142 -36  tks=45k  tls=12  rsn=4  txt=9",
     },
     {
       worker_id: "w-idle",

@@ -103,17 +103,23 @@ export function pad(text: string, target: number): string {
 }
 
 /**
- * A model identifier shortened to its family token. PURE.
+ * A model identifier shortened to its family and human-readable version. PURE.
  *
- * `claude-opus-5` costs twelve columns the lifecycle bar needs more, and the
- * family is the whole of what a reader takes from it: `claude-opus-4-8` →
- * `opus`, `Opus` → `opus`, `claude-sonnet-5` → `sonnet`. An unrecognised model
- * falls through unchanged rather than rendering as nothing.
+ * Provider prefixes and trailing date stamps cost columns without identifying
+ * the model: `claude-opus-4-8` → `opus-4.8`, `Opus` → `opus`, and
+ * `claude-haiku-4-5-20251001` → `haiku-4.5`. An unrecognised model falls
+ * through unchanged rather than rendering as nothing.
  */
 export function shortModel(model: string): string {
   const lower = model.toLowerCase();
   for (const family of ["opus", "sonnet", "haiku", "fable"]) {
-    if (lower.includes(family)) return family;
+    const familyIndex = lower.indexOf(family);
+    if (familyIndex === -1) continue;
+
+    const suffix = lower.slice(familyIndex + family.length);
+    const version = suffix.match(/^-(\d+(?:[-.]\d+)*)/)?.[1]?.split(/[-.]/) ?? [];
+    if (/^\d{8}$/.test(version.at(-1) ?? "")) version.pop();
+    return version.length === 0 ? family : `${family}-${version.join(".")}`;
   }
   return model;
 }

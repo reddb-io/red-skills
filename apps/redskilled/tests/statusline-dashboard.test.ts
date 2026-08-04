@@ -190,12 +190,15 @@ const LOCAL = { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" };
 
 describe("the dashboard carries the statusline's own fields", () => {
   it("renders one row per Worker with run, org, iss, phase, elapsed, heartbeat, loc and the vitals", () => {
-    const dashboard = renderRedskilledDashboard(payloadOf([worker()], { "w-1": display() }), LOCAL);
+    const dashboard = renderRedskilledDashboard(
+      payloadOf([worker()], { "w-1": display({ model: "claude-opus-4-8" }) }),
+      LOCAL,
+    );
 
     expect(dashboard.rows).toHaveLength(1);
     const cells = dashboard.rows[0]!.cells;
     expect(cells.wid).toBe("w-1");
-    expect(cells.run).toBe("run=claude opus high");
+    expect(cells.run).toBe("run=claude opus-4.8 high");
     expect(cells.org).toBe("org=afk");
     expect(cells.iss).toBe("iss=3012");
     expect(cells.phase).toBe("coding·impl");
