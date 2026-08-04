@@ -46,7 +46,7 @@ function recordingLaunch(launched: LaunchWorkerOptions[]) {
         project_label: options.spec.project_label,
         workspace_path: options.spec.workspace_path,
         pid: 4_000 + born,
-        started_at: options.clock(),
+        started_at: options.clock!(),
         isolated: false,
         warnings: [],
       },
