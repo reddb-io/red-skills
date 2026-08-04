@@ -46,6 +46,50 @@ describe("execTool", () => {
     expect(r.code).toBe(KILLED_EXIT_CODE);
   });
 
+  it.skipIf(process.platform !== "linux")(
+    "kills a CPU-idle validation child within one sampling window after its normal envelope (#3280)",
+    async () => {
+      const started = Date.now();
+      const r = await execTool("sh", ["-c", "sleep 60"], {
+        stallDetection: {
+          minWallTimeMs: 100,
+          sampleIntervalMs: 100,
+          idleCpuThresholdMs: 1,
+        },
+      });
+
+      expect(Date.now() - started).toBeLessThan(1_500);
+      expect(r.code).toBe(KILLED_EXIT_CODE);
+      expect(r.infraEvidence).toMatchObject({
+        kind: "stall",
+        cpuDeltaMs: 0,
+      });
+      expect(r.infraEvidence!.sampleWindowMs).toBeGreaterThanOrEqual(100);
+      expect(r.infraEvidence!.wallTimeMs).toBeGreaterThanOrEqual(200);
+      expect(r.stderr).toContain("validation child stalled");
+    },
+  );
+
+  it.skipIf(process.platform !== "linux")(
+    "leaves a slow CPU-active validation child alive (#3280)",
+    async () => {
+      const r = await execTool(
+        process.execPath,
+        ["-e", "const end = Date.now() + 450; while (Date.now() < end) {}"],
+        {
+          stallDetection: {
+            minWallTimeMs: 100,
+            sampleIntervalMs: 100,
+            idleCpuThresholdMs: 1,
+          },
+        },
+      );
+
+      expect(r.code).toBe(0);
+      expect(r.infraEvidence).toBeUndefined();
+    },
+  );
+
   it.skipIf(process.platform === "win32")("reaps fork children when a gate parent times out", async () => {
     const r = await execTool(
       "sh",
