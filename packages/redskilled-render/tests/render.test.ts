@@ -192,6 +192,29 @@ describe("an unknown project's registration history (#3191)", () => {
     ceiling_used_fraction: 0,
   };
 
+  it("carries the pasteable registration repair beside the unregistered head", () => {
+    const rendered = renderRedskilledStatusline(
+      payload({
+        host: emptyHost,
+        projects: [],
+        workers: [],
+        known_projects: [],
+        registered_projects: [],
+      }),
+      { ...LOCAL, maxWidth: 400 },
+    );
+
+    expect(rendered.repair).toEqual({
+      tool: "project_start",
+      args: { runner: "claude", target: 1 },
+      why: "register this project with the host so its queue can drain",
+    });
+    expect(rendered.line).toBe(
+      "project unknown — acme/widgets was never registered on this host; repair: call `project_start` with " +
+      "`{\"runner\":\"claude\",\"target\":1}` because register this project with the host so its queue can drain v3.3.11",
+    );
+  });
+
   it.each([
     [
       "was never registered",
@@ -202,7 +225,8 @@ describe("an unknown project's registration history (#3191)", () => {
         known_projects: [],
         registered_projects: [],
       }),
-      "project unknown — acme/widgets was never registered on this host v3.3.11",
+      "project unknown — acme/widgets was never registered on this host; repair: call `project_start` with " +
+        "`{\"runner\":\"claude\",\"target\":1}` because register this project with the host so its queue can drain v3.3.11",
     ],
     [
       "lapsed",
