@@ -59,11 +59,11 @@ describe("events_since tool", () => {
     expect(result.refused).toBe(true);
     expect(result).toMatchObject({
       reason:
-        "Unknown cursor format; repair: call `events_since` with `{}` because request a fresh baseline cursor",
+        "Unknown cursor format; repair: call `events_since` with `{}` because re-baseline with a fresh cursor",
       repair: {
         tool: "events_since",
         args: {},
-        why: "request a fresh baseline cursor",
+        why: "re-baseline with a fresh cursor",
       },
     });
     expect(result).not.toHaveProperty("history");
