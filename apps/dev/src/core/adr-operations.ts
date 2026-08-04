@@ -18,6 +18,14 @@ export interface IndexArchiveInput {
   number: string;
 }
 
+export interface IndexReviewAnnotationInput {
+  path: string;
+  text: string;
+  number: string;
+  reviewedOn: string;
+  baseSha: string;
+}
+
 export interface ArchiveMoveInput extends StatusAndSuccessorInput {
   indexPath: string;
   indexText: string;
@@ -148,6 +156,25 @@ export function planIndexArchive(input: IndexArchiveInput): AdrTextPlan {
 /** Apply a planned INDEX resync through an injected filesystem. */
 export async function applyIndexArchive(plan: AdrTextPlan, fs: AdrOperationFs): Promise<void> {
   await fs.writeFile(plan.path, plan.text);
+}
+
+/** Plan the visible review date and short base SHA on one existing INDEX bullet. */
+export function planIndexReviewAnnotation(input: IndexReviewAnnotationInput): AdrTextPlan {
+  if (!/^\d{4}$/.test(input.number)) throw new Error(`Invalid ADR number: ${input.number}`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.reviewedOn)) {
+    throw new Error(`Invalid ADR review date: ${input.reviewedOn}`);
+  }
+  if (!/^[0-9a-f]{7,12}$/i.test(input.baseSha)) {
+    throw new Error(`Invalid short base SHA: ${input.baseSha}`);
+  }
+  const bullet = new RegExp(`^- \\*\\*${input.number}\\*\\*.*$`, "m").exec(input.text);
+  if (!bullet) throw new Error(`ADR ${input.number} has no INDEX bullet`);
+  const unmarked = bullet[0].replace(/\s+— reviewed \d{4}-\d{2}-\d{2} @ [0-9a-f]{7,12}\s*$/i, "");
+  const annotation = `${unmarked} — reviewed ${input.reviewedOn} @ ${input.baseSha}`;
+  return {
+    path: input.path,
+    text: input.text.slice(0, bullet.index) + annotation + input.text.slice(bullet.index + bullet[0].length),
+  };
 }
 
 /** Plan the status, history-preserving archive path, and INDEX change together. */
@@ -400,6 +427,29 @@ export interface MergeInput {
   indexText: string;
 }
 
+export interface AbsorbInput {
+  /** The active ADR that remains authoritative after incorporating amendments. */
+  governing: AdrOriginal;
+  /** Complete post-absorb text for the governing ADR. */
+  rewrittenGoverningText: string;
+  /** Active amendment records that become auxiliaries in the archive. */
+  auxiliaries: readonly AdrOriginal[];
+  indexPath: string;
+  indexText: string;
+}
+
+export interface AdrAbsorbPlan {
+  governing: {
+    path: string;
+    originalText: string;
+    text: string;
+  };
+  archives: AdrArchiveStep[];
+  indexPath: string;
+  originalIndexText: string;
+  indexText: string;
+}
+
 function draftNumbers(drafts: readonly AdrDraft[]): string[] {
   return drafts.map((draft) => draft.number);
 }
@@ -478,6 +528,75 @@ export function planMerge(input: MergeInput): AdrCompositePlan {
     originalIndexText: input.indexText,
     indexText: addDraftBullets([input.successor], input.indexPath, indexText),
   };
+}
+
+/**
+ * Absorb auxiliary amendments into one governing ADR. Unlike merge, absorb
+ * mints no successor and never archives the governor.
+ */
+export function planAbsorb(input: AbsorbInput): AdrAbsorbPlan {
+  const governingMatch = /^\.red\/adr\/(\d{4})-.+\.md$/.exec(input.governing.path);
+  if (!governingMatch) throw new Error(`Governing ADR is not in the active lane: ${input.governing.path}`);
+  if (input.rewrittenGoverningText === input.governing.text) {
+    throw new Error("Absorb must rewrite the governing ADR with the accepted amendments");
+  }
+  if (input.auxiliaries.length < 1) throw new Error("Absorb must archive at least one auxiliary ADR");
+  if (input.auxiliaries.some((auxiliary) => auxiliary.path === input.governing.path)) {
+    throw new Error("The governing ADR cannot absorb itself");
+  }
+
+  const archives: AdrArchiveStep[] = [];
+  let indexText = input.indexText;
+  for (const auxiliary of input.auxiliaries) {
+    const archived = archiveStep(auxiliary, [governingMatch[1]!], input.indexPath, indexText);
+    archives.push(archived.step);
+    indexText = archived.indexText;
+  }
+  return {
+    governing: {
+      path: input.governing.path,
+      originalText: input.governing.text,
+      text: input.rewrittenGoverningText,
+    },
+    archives,
+    indexPath: input.indexPath,
+    originalIndexText: input.indexText,
+    indexText,
+  };
+}
+
+/** Apply an absorb plan in dependency order, compensating every completed step on failure. */
+export async function applyAbsorb(plan: AdrAbsorbPlan, io: AdrOperationIo): Promise<void> {
+  let governingTouched = false;
+  let indexTouched = false;
+  const prepared: AdrArchiveStep[] = [];
+  const moved: AdrArchiveStep[] = [];
+  try {
+    governingTouched = true;
+    await io.fs.writeFile(plan.governing.path, plan.governing.text);
+    for (const step of plan.archives) {
+      prepared.push(step);
+      await io.fs.writeFile(step.from, step.adrText);
+      await io.git.mv(step.from, step.to);
+      moved.push(step);
+    }
+    indexTouched = true;
+    await io.fs.writeFile(plan.indexPath, plan.indexText);
+  } catch (error) {
+    if (indexTouched) await io.fs.writeFile(plan.indexPath, plan.originalIndexText);
+    const movedPaths = new Set(moved.map((step) => step.from));
+    for (const step of moved.reverse()) {
+      await io.git.mv(step.to, step.from);
+      await io.fs.writeFile(step.from, step.originalAdrText);
+    }
+    for (const step of prepared.reverse()) {
+      if (!movedPaths.has(step.from)) await io.fs.writeFile(step.from, step.originalAdrText);
+    }
+    if (governingTouched) {
+      await io.fs.writeFile(plan.governing.path, plan.governing.originalText);
+    }
+    throw error;
+  }
 }
 
 /**

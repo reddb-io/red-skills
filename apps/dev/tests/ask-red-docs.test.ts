@@ -68,6 +68,15 @@ describe("ask-red router docs contract", () => {
     expect(askRedSkill).toContain("/red-doctor");
   });
 
+  it("routes ADR curation through the proposal-driven reverse grill", async () => {
+    const askRedSkill = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");
+
+    expect(askRedSkill).toContain("proposal-driven reverse grill");
+    expect(askRedSkill).toContain("ranks active ADR clusters");
+    expect(askRedSkill).toContain("one cluster per PR");
+    expect(askRedSkill).toContain("P01");
+  });
+
   it("documents the maintenance rule in both repo agent instruction files", async () => {
     const [claude, agents] = await Promise.all([readRepoFile("CLAUDE.md"), readRepoFile("AGENTS.md")]);
 
