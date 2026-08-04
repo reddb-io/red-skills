@@ -1,5 +1,20 @@
 # @reddb-io/dev
 
+## 3.5.0
+
+### Minor Changes
+
+- 6abd96a: Expose ordered AFK Validation moment declarations for iteration, post-DONE, and Landing, with one-release warnings and compatibility contributions from the legacy validation knobs.
+
+### Patch Changes
+
+- @reddb-io/github@3.5.0
+- @reddb-io/shared@3.5.0
+- @reddb-io/build-info@3.5.0
+- @reddb-io/red-castle@3.5.0
+- @reddb-io/redskilled@3.5.0
+- @reddb-io/redskilled-render@3.5.0
+
 ## 3.4.3
 
 ### Patch Changes
