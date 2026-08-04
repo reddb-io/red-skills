@@ -110,6 +110,28 @@ async function liveHost(): Promise<RedskilledDaemon> {
 }
 
 describe("starting work registers the project", () => {
+  it("reaches a draining registration through drain alone", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+
+    const result = await createCastleMcpDependencies(root).drain({
+      runner: "codex",
+      target: 2,
+    }) as Record<string, unknown>;
+
+    expect(result).toMatchObject({
+      outcome: "applied",
+      report: {
+        registration: "created",
+        target: "0→2",
+        runner: "none→codex",
+        workers_born: 2,
+      },
+    });
+    expect(daemon.registrations()).toHaveLength(1);
+    expect(daemon.registrations()[0]).toMatchObject({ target: 2 });
+  });
+
   it("gives an absent registration a pasteable project_start repair", async () => {
     await liveHost();
     const root = await project();
