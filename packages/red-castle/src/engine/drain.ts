@@ -17,7 +17,8 @@ export interface DrainState {
 
 export type DrainAction =
   | { readonly kind: "reach-daemon" }
-  | { readonly kind: "register"; readonly runner: string; readonly target: number };
+  | { readonly kind: "register"; readonly runner: string; readonly target: number }
+  | { readonly kind: "resize"; readonly runner: string; readonly target: number };
 
 export interface DrainReport {
   readonly registration: string;
@@ -40,10 +41,21 @@ function renderDrainReport(report: DrainReport): string {
 /** Plan how `drain` makes the requested project state true. PURE. */
 export function planDrain(state: DrainState, request: DrainRequest): DrainPlan {
   if (state.registration !== null) {
-    if (
-      state.registration.runner === request.runner &&
-      state.registration.target === request.target
-    ) {
+    if (state.registration.runner === request.runner) {
+      if (state.registration.target !== request.target) {
+        const report: DrainReport = {
+          registration: "kept",
+          target: `${state.registration.target}→${request.target}`,
+          runner: "kept",
+          workers_born: Math.max(0, request.target - state.registration.target),
+        };
+        return {
+          outcome: "apply",
+          actions: [{ kind: "resize", runner: request.runner, target: request.target }],
+          report,
+          summary: renderDrainReport(report),
+        };
+      }
       const report: DrainReport = {
         registration: "kept",
         target: "kept",
@@ -57,7 +69,7 @@ export function planDrain(state: DrainState, request: DrainRequest): DrainPlan {
         summary: renderDrainReport(report),
       };
     }
-    throw new Error("a changed standing registration is not implemented yet");
+    throw new Error("a runner change is not implemented yet");
   }
   const report: DrainReport = {
     registration: state.lapsed ? "re-created" : "created",
