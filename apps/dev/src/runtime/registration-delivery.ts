@@ -106,3 +106,49 @@ export function planRegistrationDeliveryRenewal(input: {
   };
 }
 
+/** The narrow project-side port one delivery renewal needs. */
+export interface RegistrationDeliveryPort {
+  registration(): Promise<(RegistrationLaunchRecord & { readonly argv: readonly string[] }) | null>;
+  renew(): Promise<unknown>;
+  restateLaunch(launch: RedskilledLaunchTemplate): Promise<unknown>;
+}
+
+/**
+ * Perform one renewal with delivery reconciliation attached.
+ *
+ * Registry silence costs only the comparison: the ordinary renewal still moves
+ * the deadline. When publication is ahead, the resolved argv may be either a
+ * warmed cache path or the version-pinned package fallback; both make the next
+ * Worker run the published engine without an operator re-registering it.
+ */
+export async function renewRegistrationDelivery(input: {
+  readonly port: RegistrationDeliveryPort;
+  readonly publishedVersion: () => Promise<string | null | undefined>;
+  readonly publishedArgv: (version: string) => readonly string[];
+  readonly pluginCacheVersion?: () => string | null | undefined;
+}): Promise<RegistrationDeliveryRenewal | null> {
+  const registration = await input.port.registration();
+  if (registration == null) return null;
+
+  let published = "";
+  try {
+    published = (await input.publishedVersion()) ?? "";
+  } catch {
+    await input.port.renew();
+    return null;
+  }
+  if (published === "") {
+    await input.port.renew();
+    return null;
+  }
+
+  const plan = planRegistrationDeliveryRenewal({
+    registration,
+    publishedVersion: published,
+    publishedArgv: input.publishedArgv(published),
+    pluginCacheVersion: input.pluginCacheVersion?.(),
+  });
+  if (plan.action === "repoint") await input.port.restateLaunch(plan.launch);
+  else await input.port.renew();
+  return plan;
+}
