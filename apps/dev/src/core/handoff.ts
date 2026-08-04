@@ -83,7 +83,8 @@ export interface HandoffInput {
   specRef?: string;
   /**
    * The effective binding merge gate for this attempt: the operator-declared
-   * `afk.backpressure` commands the orchestrator will run against the worker
+   * replacement `feedback.commands` followed by additive `afk.backpressure`
+   * commands the orchestrator will run against the worker
    * branch AFTER `<promise>DONE</promise>` (issue #849). Surfaced verbatim in a
    * `<merge-gate>` section so the inner agent can run/satisfy the EXACT command
    * + scope it must pass — instead of finishing on a narrower touched-package
@@ -277,7 +278,7 @@ export function buildThreadDiscussion(comments: HandoffComment[]): string {
 }
 
 /**
- * `<merge-gate>` inner body: the operator-declared `afk.backpressure` commands
+ * `<merge-gate>` inner body: the operator-declared feedback/backpressure commands
  * the orchestrator runs against the worker branch AFTER `<promise>DONE</promise>`
  * (issue #849). Each command is surfaced verbatim as a `- <cmd>` line in
  * declaration order so the inner agent satisfies the EXACT binding gate rather
@@ -296,8 +297,8 @@ export function buildMergeGate(commands: readonly string[] | undefined): string 
     "These operator-declared commands are the binding merge gate. AFTER you emit",
     "`<promise>DONE</promise>` the orchestrator runs them against your branch, in",
     "order, and any non-zero exit parks the issue as `blocked:validation`. Run them",
-    "yourself and make them pass BEFORE you emit DONE — they are broader than your",
-    "touched-package confidence checks:",
+    "yourself and make them pass BEFORE you emit DONE. The repository may have",
+    "intentionally replaced a broader discovered suite with this exact list:",
   ];
   for (const cmd of cmds) lines.push(`- ${cmd}`);
   lines.push(
@@ -447,8 +448,8 @@ export const EXIT_PROTOCOL = [
   "",
   "1. ALREADY-DONE SHORT-CIRCUIT (check first, every time). Before exploring or planning, check whether the current branch ALREADY satisfies the acceptance criteria — a prior attempt may have finished it. Run `git log --oneline origin/main..HEAD` and inspect the tip against the criteria. If the work is already present and correct, do NOT re-explore, re-plan, or re-run a full-suite sanity pass: emit `<promise>DONE</promise>` as your final line immediately. This is the single most common way an attempt wastes its whole budget.",
   "2. Otherwise implement the slice: failing test first, minimal code, one commit per file (`git add -- <path>` then commit; never `git add -A`), `Refs #N` in each message. Before DONE, run `git status --short`; if it is not clean, commit the remaining changed paths instead of emitting DONE.",
-  "3. Two kinds of check, do not confuse them: (a) touched-package CONFIDENCE checks — the test/typecheck/lint/build for the package you changed — run these while developing to gain confidence; (b) the BINDING merge gate the orchestrator enforces AFTER you emit DONE. If your handoff carries a `<merge-gate>` section, those operator-declared commands ARE the binding gate (broader than your touched package): run them and make them pass before DONE. When your work is committed and both are green, STOP. Do not open a PR, merge, close the issue, or poll CI — the orchestrator owns landing. Do NOT re-run an unbounded full repository suite after your final commit; the listed gate commands are the contract.",
-  "   VALIDATION AUTHORITY: the gate command is canonical. Run it EXACTLY as the repo defines it — never add stricter flags (`--all-targets`), extra lint restrictions, or a harder contract than the gate. An error class that appears only under flags the gate does not use is a MIRAGE: reconcile against the gate's real command (`<merge-gate>`, `afk.backpressure`, package scripts, `clippy.toml`) and re-run it unmodified before you believe the failure. If that command is green, drop the finding — never report `main` as red on the strength of a check the gate does not run.",
+  "3. Two kinds of check, do not confuse them: (a) touched-package CONFIDENCE checks — use these only while developing when useful; (b) the BINDING merge gate the orchestrator enforces AFTER you emit DONE. If your handoff carries a `<merge-gate>` section, those operator-declared commands ARE the complete local binding gate: run exactly them before DONE, even when they are narrower than the discovered suite. When your work is committed and the listed gate is green, STOP. Do not open a PR, merge, close the issue, or poll CI — the orchestrator owns landing. Do NOT re-run an unbounded full repository suite or any omitted suite after your final commit; the listed gate commands are the contract.",
+  "   VALIDATION AUTHORITY: the gate command is canonical. Run it EXACTLY as the repo defines it — never add stricter flags (`--all-targets`), extra lint restrictions, omitted suites, or a harder contract than the gate. An error class that appears only under flags or suites the gate does not use is a MIRAGE: reconcile against the gate's real command (`<merge-gate>`, `feedback.commands`, `afk.backpressure`, package scripts, `clippy.toml`) and re-run it unmodified before you believe the failure. If that command is green, drop the finding — never report `main` as red on the strength of a check the gate does not run.",
   "4. Your FINAL line MUST be exactly `<promise>DONE</promise>` (work complete) or `<promise>BLOCKED</promise>` (genuinely impossible/contradictory — explain in `<agent-notes>` first). A prose \"done\" is NOT a sentinel: an exit without the literal tag is read as a CRASH and re-invokes you, burning iterations. One of the two tags is always your last line.",
   "</exit-protocol>",
 ].join("\n");

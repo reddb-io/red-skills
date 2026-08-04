@@ -20,7 +20,7 @@ import * as fsx from "../../runtime/fs.js";
 import type { GhContext } from "../../runtime/gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
-import { getConfig, loadConfig, readHitlTypeLabels, readSetupCommands, readValidationResourceBudget, resolveTier } from "../../core/config.js";
+import { getConfig, loadConfig, readFeedbackCommands, readHitlTypeLabels, readSetupCommands, readValidationResourceBudget, resolveTier } from "../../core/config.js";
 import { LABEL_MERGE_CONFLICT } from "../../core/triage-labels.js";
 import { createFsIssueLeaseStore } from "@reddb-io/red-castle/engine";
 import { readFile } from "node:fs/promises";
@@ -220,6 +220,8 @@ export function makeBootReconcileRunner(
       mergeExec: gitx.mergeExec(gitCtx),
       remoteGit: gitx.gitExec(gitCtx),
       pnpm: feedback.pnpm,
+      feedbackCommands: readFeedbackCommands(reconcileConfig),
+      feedbackCommandExec: feedback.backpressure,
       // Proof that a declared validation worktree exists (#3041) — without it
       // the gate would report a missing directory as the branch's red verdict.
       dirExists: realDirectoryProbe,

@@ -10,6 +10,11 @@ plugins:
     afk:
       setup:
         - pnpm install --frozen-lockfile
+      # Local AFK validation stays inside the per-Ticket budget. The merge
+      # queue's required `test` check owns the full-suite verdict on the live tip.
+      feedback:
+        commands:
+          - pnpm -C apps/dev exec tsc --noEmit
       # Maintainer decision 2026-08-03: codex is this repo's executor.
       #
       # The `models.codex.*` table below only says WHICH MODEL codex uses once

@@ -210,7 +210,7 @@ Surgical precision. If you find an unrelated bug, mention it in Notes — don't 
 
 **A new error class that appears only under flags the gate does not use is a mirage.** Before you believe it — and long before you report it — reconcile against the real gate:
 
-1. **Find the gate's actual command.** `<merge-gate>` in the handoff, `afk.backpressure` in `.red/config.yaml`, the package script (`package.json`, `Makefile`, `justfile`), the lint config (`clippy.toml`, `eslint.config.*`, `ruff.toml`).
+1. **Find the gate's actual command.** `<merge-gate>` in the handoff, `plugins.dev.afk.feedback.commands` / `afk.backpressure` in `.red/config.yaml`, the package script (`package.json`, `Makefile`, `justfile`), the lint config (`clippy.toml`, `eslint.config.*`, `ruff.toml`).
 2. **Re-run that exact command, unmodified.**
 3. **If it is green, the error class does not exist for this repo.** Drop it, record the mirage in one line inside `<agent-notes>`, and carry on with your slice.
 
@@ -246,9 +246,9 @@ timeout --kill-after=30 600 pnpm test 2>&1 | tee /tmp/test.log; echo "exit=$?"
 
 Foreground, hard cap, no polling. The exit code is meaningful (0 success, 124 timeout, other = failure) and the output is in front of you — **read it before you decide anything.** This is the default for *every* gate, test, and check.
 
-**The orchestrator owns the merge gate.** It re-runs `test` / `typecheck` / `lint` / `build` itself in the Feedback-loops step *after* you commit (*Workflow* step 4); that run, not yours, is the merge authority. You still run gates in the foreground while iterating to know where you stand — just never background them.
+**The orchestrator owns the merge gate.** In an undeclared repository it discovers `test` / `typecheck` / `lint` / `build`; when `plugins.dev.afk.feedback.commands` is declared, it runs exactly that replacement and none of the discovered suite. That post-commit run, not a broader check you invent, is the merge authority. You still run the declared gate in the foreground while iterating to know where you stand — just never background it.
 
-**If your handoff carries a `<merge-gate>` section, those operator-declared commands ARE the binding gate (issue #849).** They come from the repo's `afk.backpressure` config and the orchestrator runs them against your branch after you emit `DONE`; any non-zero exit parks the issue as `blocked:validation`. They are typically broader than your touched package — `cargo fmt --all -- --check`, a workspace-wide clippy, an integration smoke. Run those exact commands and make them pass *before* `DONE`. Distinguish them from the touched-package **confidence checks** you run while developing: confidence checks tell you where you stand; the `<merge-gate>` commands are the contract you must satisfy. Do **not** invent a broader full-repo suite of your own, and do **not** harden the listed commands with flags they do not carry — the listed commands are the contract (see *Validation Authority* above).
+**If your handoff carries a `<merge-gate>` section, those operator-declared commands ARE the binding gate (issues #849 and #3276).** They come from the repo's replacement `feedback.commands` followed by additive `afk.backpressure`, and the orchestrator runs them against your branch after you emit `DONE`; any non-zero exit parks the issue as `blocked:validation`. The list may intentionally be narrower than the discovered suite. Run those exact commands and make them pass *before* `DONE`. Distinguish them from touched-package **confidence checks**: confidence checks tell you where you stand; the `<merge-gate>` commands are the contract you must satisfy. Do **not** run the omitted full suite locally, invent a broader full-repo suite, or harden the listed commands with flags they do not carry — the listed commands are the contract (see *Validation Authority* above).
 
 **If you genuinely must background a long-lived process** — a dev server that must stay *up* while you do other work, not a command whose result you are waiting on — then every wait loop must satisfy both:
 

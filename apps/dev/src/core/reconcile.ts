@@ -43,6 +43,7 @@ import type {
   runFeedback,
   isInfraFeedbackFailure,
   Exec as PnpmExec,
+  FeedbackCommandExec,
   FeedbackCheck,
   PackageLayout,
   RunFeedbackResult,
@@ -214,6 +215,10 @@ export interface ReconcileDeps {
   remoteGit: GitExec;
   /** pnpm executor for the feedback gate. */
   pnpm: PnpmExec;
+  /** Declared replacement for script discovery; `undefined` preserves discovery. */
+  feedbackCommands?: readonly string[];
+  /** Shell executor for declared feedback commands. */
+  feedbackCommandExec?: FeedbackCommandExec;
   /** Package layout probe for feedback scope resolution. */
   layout: PackageLayout;
   /**
@@ -545,6 +550,9 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
       layout: deps.layout,
       now: deps.nowEpoch,
       baselineWorktree: input.base,
+      ...(deps.feedbackCommands === undefined
+        ? {}
+        : { commands: deps.feedbackCommands, commandExec: deps.feedbackCommandExec }),
     });
     await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
 
@@ -608,6 +616,9 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
           layout: deps.layout,
           now: deps.nowEpoch,
           baselineWorktree: input.base,
+          ...(deps.feedbackCommands === undefined
+            ? {}
+            : { commands: deps.feedbackCommands, commandExec: deps.feedbackCommandExec }),
         });
         if (!mergedFeedback.ok) {
           await writeValidationSidecar(deps, input.attemptDir, mergedFeedback.sidecar);

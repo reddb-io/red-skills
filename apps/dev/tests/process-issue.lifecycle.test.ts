@@ -1065,6 +1065,25 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(handoff).toContain("- npm run e2e");
   });
 
+  it("uses feedback.commands as the exact local feedback stage and worker contract (#3276)", async () => {
+    const command = "pnpm -C apps/dev exec tsc --noEmit";
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackCommands: [command],
+      locked: false,
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.pnpmArgs).toEqual([]);
+    expect(trace.shellCommands.length).toBeGreaterThan(0);
+    expect(trace.shellCommands.every((entry) => entry === command)).toBe(true);
+    const handoff = trace.runAgentCalls[0]?.handoffContent ?? "";
+    expect(handoff).toContain("<merge-gate>");
+    expect(handoff).toContain(`- ${command}`);
+  });
+
   it("omits <merge-gate> from the handoff when no backpressure command is configured (#849)", async () => {
     const { deps, input, trace } = harness({ outcome: "done" });
     await processIssue(deps, input);

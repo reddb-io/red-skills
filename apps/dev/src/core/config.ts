@@ -1011,6 +1011,32 @@ export function readBackpressure(values: ConfigValues): string[] {
 }
 
 /**
+ * Read the repository-owned replacement for the discovered feedback harness
+ * (`plugins.dev.afk.feedback.commands`, #3276).
+ *
+ * `undefined` means undeclared and preserves script discovery exactly. A list
+ * means the repository owns the stage and its commands run verbatim in order;
+ * the scalar YAML spelling `commands: []` is an explicit empty replacement and
+ * therefore disables local feedback rather than falling back to discovery.
+ */
+export function readFeedbackCommands(values: ConfigValues): string[] | undefined {
+  const indexed: string[] = [];
+  let declared = false;
+  for (let i = 0; ; i++) {
+    const value = values[`afk.feedback.commands.${i}`];
+    if (value === undefined) break;
+    declared = true;
+    if (value.trim() !== "") indexed.push(value);
+  }
+  if (declared) return indexed;
+
+  const scalar = values["afk.feedback.commands"];
+  if (scalar === undefined) return undefined;
+  if (scalar.trim() === "[]" || scalar.trim() === "") return [];
+  return [scalar];
+}
+
+/**
  * Read the repository-declared dependency setup authority for AFK-created
  * worker/feedback worktrees (`plugins.dev.afk.setup`, #3268). Commands are
  * shell strings and preserve declaration order because the engine executes

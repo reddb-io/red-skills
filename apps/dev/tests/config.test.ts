@@ -12,6 +12,7 @@ import {
   MalformedConfigError,
   parseConfigYaml,
   readBackpressure,
+  readFeedbackCommands,
   readSetupCommands,
   readHitlTypeLabels,
   readValidationResourceBudget,
@@ -842,6 +843,42 @@ describe("config — block sequences (afk.backpressure, #430)", () => {
   it("readHitlTypeLabels returns [] when the repo declares no HUMAN-ONLY type", () => {
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => "afk:\n  default_runner: codex\n" });
     expect(readHitlTypeLabels(values)).toEqual([]);
+  });
+});
+
+describe("config — feedback command authority (#3276)", () => {
+  it("reads namespaced feedback.commands in declaration order", () => {
+    const text = [
+      "plugins:",
+      "  dev:",
+      "    enabled: true",
+      "    afk:",
+      "      feedback:",
+      "        commands:",
+      "          - pnpm -C apps/dev exec tsc --noEmit",
+      "          - pnpm -C apps/dev lint",
+      "",
+    ].join("\n");
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+
+    expect(readFeedbackCommands(values)).toEqual([
+      "pnpm -C apps/dev exec tsc --noEmit",
+      "pnpm -C apps/dev lint",
+    ]);
+  });
+
+  it("distinguishes an absent declaration from an explicit empty replacement", () => {
+    const absent = loadConfig("/x/.red/config.yaml", {
+      ignoreActivationGate: true,
+      read: () => "afk:\n  default_runner: codex\n",
+    });
+    const disabled = loadConfig("/x/.red/config.yaml", {
+      ignoreActivationGate: true,
+      read: () => "afk:\n  feedback:\n    commands: []\n",
+    });
+
+    expect(readFeedbackCommands(absent)).toBeUndefined();
+    expect(readFeedbackCommands(disabled)).toEqual([]);
   });
 });
 

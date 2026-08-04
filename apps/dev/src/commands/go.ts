@@ -36,7 +36,7 @@ import {
   type DisposableIssueSpec,
   type GoMode,
 } from "../core/go.js";
-import { loadConfig, readBackpressure } from "../core/config.js";
+import { loadConfig, readBackpressure, readFeedbackCommands } from "../core/config.js";
 import { dispatchScout, SCOUT_WORKERS_SEGMENT, type ScoutIssueSpec } from "../core/scout.js";
 import { afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import { runCommand } from "./run.js";
@@ -106,9 +106,9 @@ async function createDefaultGoRuntime(cwd: string): Promise<GoRuntime> {
       return result.stdout;
     },
   });
-  const configuredBackpressure = readBackpressure(
-    loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined }),
-  );
+  const gateConfig = loadConfig(afkPaths(ctx.root).configPath, { warn: () => undefined });
+  const configuredBackpressure = readBackpressure(gateConfig);
+  const configuredFeedback = readFeedbackCommands(gateConfig);
   return {
     ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
     createGoIssue: (spec) => tracker.createIssue!(spec),
@@ -144,7 +144,7 @@ async function createDefaultGoRuntime(cwd: string): Promise<GoRuntime> {
     birthWorker: (args) => requestWorkerBirth(ctx.root, args, { reservation: "interactive" }),
     runEngineAttached: (args) => runCommand({ args, cwd }),
     checkEngineFloor: () => checkDispatchEngineFloor(ctx.root),
-    hasHarness: configuredBackpressure.length > 0,
+    hasHarness: configuredFeedback !== undefined || configuredBackpressure.length > 0,
     write: (text) => process.stdout.write(text),
   };
 }

@@ -190,6 +190,10 @@ Read the focused reference before touching that concern:
   restrictions, widened target sets, or a harder contract than the gate defines.
   If an error appears only under an extra check, reconcile it against the real
   gate command before reporting a red `main`.
+- A declared `plugins.dev.afk.feedback.commands` list replaces feedback script
+  discovery completely (including workspace and invariant suites); absent keeps
+  discovery unchanged. The Worker runs the declared list exactly and never runs
+  an omitted full suite locally. `afk.backpressure` remains additive.
 - `blocked:ci` leaves the completed PR open and escalates to `ready-for-human`;
   AFK does not re-run the inner agent for already-complete work waiting on CI.
 - On DONE, completion sweep reclaims all attempt directories for that issue

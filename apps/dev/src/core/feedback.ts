@@ -76,6 +76,20 @@ export interface FeedbackExecOptions {
 export type Exec = (args: string[], opts?: FeedbackExecOptions) => Promise<ExecResult>;
 
 /**
+ * Executor for an operator-declared feedback command. The command is a shell
+ * string and must be passed byte-for-byte to `sh -c` by the host adapter; the
+ * feedback core owns only ordering, timing, and validation records.
+ */
+export type FeedbackCommandExec = (input: {
+  command: string;
+  cwd: string;
+  timeoutMs: number;
+}) => Promise<ExecResult>;
+
+/** A declared feedback command has the same bounded post-DONE lifetime as backpressure. */
+export const DEFAULT_FEEDBACK_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
  * Feedback validation subprocess env contract.
  *
  * Allow: stable OS/toolchain variables needed to find node/pnpm and their
@@ -653,6 +667,16 @@ export interface RunFeedbackInput {
    * command and baseline probe through the sanitized env.
    */
   resourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
+  /**
+   * Operator-owned replacement for the discovered test/typecheck/lint/build
+   * harness (`plugins.dev.afk.feedback.commands`, #3276). `undefined` preserves
+   * discovery byte-for-byte; a declared list, including `[]`, replaces it.
+   */
+  commands?: readonly string[];
+  /** Shell executor paired with {@link RunFeedbackInput.commands}. */
+  commandExec?: FeedbackCommandExec;
+  /** Per-command deadline for a declared replacement. */
+  commandTimeoutMs?: number;
 }
 
 export interface RunFeedbackResult {
@@ -947,6 +971,59 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     push({ name, script: "test", label: "worktree", scope: "", status: "failed", record });
     return {
       ok: false,
+      checks,
+      sidecar,
+      baselineInconclusive: [],
+      quarantined: [],
+      ...(validationScope === undefined ? {} : { validationScope }),
+    };
+  }
+
+  // A repository declaration owns WHAT runs. Presence, not length, is the
+  // switch: `commands: []` intentionally disables local feedback, while an
+  // absent declaration retains the discovered harness below byte-for-byte.
+  if (input.commands !== undefined) {
+    const timeoutMs = input.commandTimeoutMs ?? DEFAULT_FEEDBACK_COMMAND_TIMEOUT_MS;
+    const commands = input.commands.map((command) => command.trim()).filter(Boolean);
+    if (commands.length > 0 && input.commandExec === undefined) {
+      const name = "feedback:executor-missing";
+      const record = buildValidationRecord({
+        name,
+        status: "failed",
+        summary: "feedback.commands is declared but no shell executor is available",
+      });
+      push({ name, script: "test", label: "operator", scope: "", status: "failed", record });
+      return {
+        ok: false,
+        checks,
+        sidecar,
+        baselineInconclusive: [],
+        quarantined: [],
+        ...(validationScope === undefined ? {} : { validationScope }),
+      };
+    }
+
+    for (const command of commands) {
+      const name = `feedback:${command}`;
+      const start = now();
+      const result = await input.commandExec!({ command, cwd: target.root, timeoutMs });
+      const durationMs = now() - start;
+      const status: ValidationStatus = result.code === 0 ? "passed" : "failed";
+      if (status === "failed") failed = true;
+      const record = buildRanRecord({
+        name,
+        status,
+        command,
+        exitCode: result.code,
+        durationMs,
+        summary: outputSummary(status, joinCommandOutput(result.stdout, result.stderr)),
+        setup: result.setup,
+      });
+      push({ name, script: "test", label: "operator", scope: "", status, record });
+    }
+
+    return {
+      ok: !failed,
       checks,
       sidecar,
       baselineInconclusive: [],
