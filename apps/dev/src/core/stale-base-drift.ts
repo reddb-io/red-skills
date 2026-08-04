@@ -13,12 +13,12 @@
 // as `blocked:validation`.
 //
 // The fix is an accounting one. A gate failure observed while the base moved
-// under the attempt is attributed to `stale-base-drift` and granted a FREE
-// correction cycle: the agent is told to merge the base and re-validate, and the
-// budget is untouched. The NEXT gate run is the re-validation that settles it —
-// green means the drift attribution was right and the engine opens the PR; red
-// again with a base that has since stood still is charged as `branch-fault` like
-// any other failure. The free cycles are bounded
+// under the attempt is attributed to `stale-base-drift`; a failure the gate has
+// already marked `suspectInfra` is attributed to `suspect-infra`. Either cause
+// grants a FREE correction cycle: the budget is untouched and the NEXT gate run
+// settles the attribution. Green means it was right; red again without a free
+// cause is charged as `branch-fault` like any other failure. The causes share
+// one bounded free-cycle pool
 // ({@link DEFAULT_STALE_BASE_DRIFT_CORRECTIONS}) so a churning base can never
 // buy an unbounded run.
 //
@@ -60,7 +60,7 @@ export function releaseBumpSubjects(movement: BaseMovement | undefined): string[
 }
 
 /** Who a post-DONE machine-gate failure belongs to. */
-export type GateFailureCause = "branch-fault" | "stale-base-drift";
+export type GateFailureCause = "branch-fault" | "stale-base-drift" | "suspect-infra";
 
 export interface GateFailureAttribution {
   cause: GateFailureCause;
@@ -97,6 +97,8 @@ export function resolveStaleBaseDriftCorrections(
  */
 export function attributeGateFailure(input: {
   movement?: BaseMovement;
+  /** The gate already classified the command as too fast to have run. */
+  suspectInfra?: boolean;
   /** Free cycles already granted to this attempt chain. */
   refundsUsed: number;
   maxRefunds?: number;
@@ -105,6 +107,25 @@ export function attributeGateFailure(input: {
   const releaseBumps = releaseBumpSubjects(movement);
   const movedCommits = baseMoved(movement) ? movement!.subjects.length : 0;
   const maxRefunds = input.maxRefunds ?? DEFAULT_STALE_BASE_DRIFT_CORRECTIONS;
+  if (input.suspectInfra === true) {
+    if (input.refundsUsed >= maxRefunds) {
+      return {
+        cause: "branch-fault",
+        reason:
+          `the gate marked the failure suspect-infra, but the shared free-correction ` +
+          `allowance (${maxRefunds}) is spent, so this failure is charged to the branch`,
+        releaseBumps,
+        movedCommits,
+      };
+    }
+    return {
+      cause: "suspect-infra",
+      reason:
+        "the gate marked the command too fast to have started, so it is an environment failure before the branch's",
+      releaseBumps,
+      movedCommits,
+    };
+  }
   if (!baseMoved(movement)) {
     return {
       cause: "branch-fault",
@@ -139,7 +160,7 @@ export function attributeGateFailure(input: {
 export interface CorrectionLedger {
   /** Cycles charged to the caller's correction budget (`branch-fault`). */
   charged: number;
-  /** Cycles granted free because the base moved under the run. */
+  /** Cycles granted free because the base moved or the gate suspected infra. */
   refunded: number;
   /** Every cycle in order, so a park can narrate what actually happened. */
   cycles: readonly GateFailureCause[];
@@ -156,7 +177,7 @@ export const EMPTY_CORRECTION_LEDGER: CorrectionLedger = Object.freeze({
 export function chargeCorrection(ledger: CorrectionLedger, cause: GateFailureCause): CorrectionLedger {
   return {
     charged: ledger.charged + (cause === "branch-fault" ? 1 : 0),
-    refunded: ledger.refunded + (cause === "stale-base-drift" ? 1 : 0),
+    refunded: ledger.refunded + (cause === "branch-fault" ? 0 : 1),
     cycles: [...ledger.cycles, cause],
   };
 }
@@ -171,11 +192,13 @@ export function correctionBudgetExhausted(ledger: CorrectionLedger, cap: number)
 /** Park-comment fragment naming both counters, so a reader sees which budget
  * ran out and how much of the run was spent absorbing base drift. */
 export function describeCorrectionLedger(ledger: CorrectionLedger, cap: number): string {
-  const drift =
-    ledger.refunded > 0
-      ? `, plus ${ledger.refunded} stale-base correction${ledger.refunded === 1 ? "" : "s"} that did not consume it`
-      : "";
-  return `${ledger.charged}/${cap} charged${drift}`;
+  const staleBase = ledger.cycles.filter((cause) => cause === "stale-base-drift").length;
+  const suspectInfra = ledger.cycles.filter((cause) => cause === "suspect-infra").length;
+  const free = [
+    staleBase > 0 ? `${staleBase} stale-base correction${staleBase === 1 ? "" : "s"}` : "",
+    suspectInfra > 0 ? `${suspectInfra} suspect-infra correction${suspectInfra === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(" and ");
+  return `${ledger.charged}/${cap} charged${free === "" ? "" : `, plus ${free} that did not consume it`}`;
 }
 
 export interface StaleBaseDriftNote {

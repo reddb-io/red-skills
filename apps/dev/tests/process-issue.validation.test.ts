@@ -1715,6 +1715,64 @@ describe("processIssue — an empty-diff DONE is never stale-base drift (#2711)"
   });
 });
 
+describe("processIssue — suspect-infra uses the bounded free correction pool (#3233)", () => {
+  it("re-runs only the gate without charging the branch when the record says suspect-infra", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false, true],
+      feedbackDurationsMs: [465, 1000],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.iterLogs.some((line) => line.includes("free suspect-infra correction (1/2)"))).toBe(true);
+    expect(trace.iterLogs.some((line) => line.includes("budget untouched at 0/0"))).toBe(true);
+    expect(trace.closed).toEqual([9]);
+  });
+
+  it("charges the next red gate when suspect-infra is no longer present", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false, false, true],
+      feedbackDurationsMs: [465, 1000, 1000],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.iterLogs.some((line) => line.includes("free suspect-infra correction (1/2)"))).toBe(true);
+    expect(trace.iterLogs.some((line) => line.includes("correction retry 1/1"))).toBe(true);
+    expect(trace.closed).toEqual([9]);
+  });
+
+  it("cannot buy unbounded gate runs while the environment stays suspect", async () => {
+    const { deps, input, trace } = harness({
+      labels: ["lane:go"],
+      laneLabel: "lane:go",
+      outcome: "done",
+      feedbackResults: [false],
+      feedbackDurationsMs: [465],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0", RED_GATE_STALE_BASE_CORRECTIONS: "1" },
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.iterLogs.filter((line) => line.includes("free suspect-infra correction"))).toHaveLength(1);
+    expect(trace.labelEdits.some((edit) => edit.add.includes("blocked:validation"))).toBe(true);
+  });
+});
+
 describe("processIssue — one Re-seed request path (#2727, ADR 0129)", () => {
   /** Every `worker.reseeded` event this run emitted, in order. */
   const reseeds = (trace: { workerEvents: Array<{ kind: string; payload?: Record<string, unknown> }> }) =>

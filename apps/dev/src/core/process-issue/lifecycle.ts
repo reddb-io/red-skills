@@ -673,13 +673,14 @@ export async function processIssue(
   };
   /** Attribute one post-DONE gate failure and, when it is stale-base drift,
    * build the handoff note that tells the agent to merge the base. */
-  const attributeGateFailureNow = async (driftEligible: boolean): Promise<{
+  const attributeGateFailureNow = async (driftEligible: boolean, suspectInfra: boolean): Promise<{
     attribution: GateFailureAttribution;
     drift?: StaleBaseDriftNote;
   }> => {
-    const movement = driftEligible ? await observeBaseMovement() : undefined;
+    const movement = driftEligible && !suspectInfra ? await observeBaseMovement() : undefined;
     const attribution = attributeGateFailure({
       movement,
+      suspectInfra,
       refundsUsed: correctionLedger.refunded,
       maxRefunds: staleBaseDriftCap,
     });
@@ -759,6 +760,9 @@ export async function processIssue(
      * is unambiguously the branch's problem, and no amount of base movement can
      * explain it away. */
     driftEligible?: boolean;
+    /** True when the gate record already says the command failed too quickly to
+     * have started, so the cause belongs to the shared free-cycle pool. */
+    suspectInfra?: boolean;
     /** Tier escalation only — which tier failed and which one now runs. */
     tiers?: { from: string; to: string };
     /** Review only — the blocking findings and the diff they were raised
@@ -834,24 +838,25 @@ export async function processIssue(
     const cause = reseedTriggerCause(req.trigger);
     const { attribution, drift } =
       cause === "gate"
-        ? await attributeGateFailureNow(req.driftEligible ?? false)
+        ? await attributeGateFailureNow(req.driftEligible ?? false, req.suspectInfra ?? false)
         : { attribution: undefined, drift: undefined };
-    if (drift) {
+    if (attribution && attribution.cause !== "branch-fault") {
       correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
       gateRevalidationSkip = true;
       const gate = req.gate ?? "feedback";
       const releaseBumps = attribution.releaseBumps.length > 0
         ? ` Release bump: ${attribution.releaseBumps.join("; ")}.`
         : "";
+      const freeCause = attribution.cause === "stale-base-drift" ? "stale-base" : attribution.cause;
       const note =
         `🤖 ${reseedLane}: ${gate} machine gate failed after DONE, but ${attribution.reason}; ` +
-        `granting a free stale-base correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
+        `granting a free ${freeCause} correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
         `re-running validation without re-seeding; budget untouched at ` +
         `${reseedSpend.gate ?? 0}/${gateSubCap}.${releaseBumps}`;
       deps.appendIterLog(note);
       deps.recordWorkerEvent?.("worker.gate_revalidation_requested", {
         trigger: req.trigger,
-        cause: "stale-base-drift",
+        cause: attribution.cause,
         lane: reseedBudget.lane,
         free: true,
         cycle: correctionLedger.refunded,
@@ -937,8 +942,16 @@ export async function processIssue(
     gate: "feedback" | "backpressure",
     validation: string,
     sidecar?: readonly string[],
+    suspectInfra: boolean = false,
   ): Promise<boolean> =>
-    (await requestReseed({ trigger, gate, validation, sidecar, driftEligible: trigger === "gate-stage" })) ===
+    (await requestReseed({
+      trigger,
+      gate,
+      validation,
+      sidecar,
+      driftEligible: trigger === "gate-stage",
+      suspectInfra,
+    })) ===
     "granted";
   /** The park-note suffix naming the exhausted correction budget. It reports the
    * CHARGED cycles against the lane's cap and, separately, the stale-base cycles
@@ -1522,7 +1535,10 @@ export async function processIssue(
         notes = "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
       }
       if (classification.note !== "") notes += ` ${classification.note}`;
-      if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar))) {
+      const suspectInfra = feedback.checks.some(
+        (check) => check.status === "failed" && check.record.suspectInfra === true,
+      );
+      if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar, suspectInfra))) {
         continue;
       }
       if (!isInfra) {
@@ -1562,7 +1578,12 @@ export async function processIssue(
         if (bpClass.note !== "") bpNotes += ` ${bpClass.note}`;
         const overrideFooter = bpClass.note === "" ? "" : `\n${bpClass.note}`;
         const validationText = `${backpressure.sidecar.join("\n")}${overrideFooter}`;
-        if (!bpInfra && (await reseedAfterGate("gate-stage", "backpressure", validationText, backpressure.sidecar))) {
+        const suspectInfra = backpressure.checks.some(
+          (check) => check.status === "failed" && check.record.suspectInfra === true,
+        );
+        if (!bpInfra && (
+          await reseedAfterGate("gate-stage", "backpressure", validationText, backpressure.sidecar, suspectInfra)
+        )) {
           continue;
         }
         if (!bpInfra) {
