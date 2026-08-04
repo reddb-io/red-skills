@@ -63,10 +63,10 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   in one operation; no separate plugin name, version lookup, or re-registration
   is required.
 - **Operating the castle itself** -> the `castle` MCP, not a shell command.
-  Fleet lifecycle, worker dispatch, runners and live steer, gate, landing,
-  claim, worktrees, hygiene, and observability are all tools on one canonical
-  interface (ADR 0120); `/afk` and `/go` are its clients. The tool surface is
-  `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
+  Call its `help` tool first and follow the pasteable next action it derives
+  from live host state; it is the sole runtime source of castle choreography
+  (ADR 0134). `/afk` and `/go` are clients of that canonical interface. The
+  tool protocol is `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
   throughput through `/afk` config: `afk.landing.wait` chooses release after
   merge, green CI, or PR-open; route that choice to the AFK config reference.
   Human-attached `/go` and scout dispatches skip a saturated AFK line through
@@ -120,10 +120,11 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
 
 Capability references registered by owner:
-`castle` MCP (the canonical project interface and read-only host-daemon
-diagnostic surface: `host_state`, `host_dashboard`, `host_provision_check`,
-`host_unit_status`; a visible `project_status.birth_latch` routes through its
-structured `project_reset` repair) ->
+`castle` MCP (the canonical project interface; start with its situational
+`help` tool, while `host_state`, `host_dashboard`, `host_provision_check`, and
+`host_unit_status` provide read-only host diagnostics, and a visible
+`project_status.birth_latch` routes through its structured `project_reset`
+repair) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
