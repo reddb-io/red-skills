@@ -7,6 +7,7 @@ import {
   composeRepair,
   noRepair,
   registrationRepair,
+  type RepairAction,
 } from "@reddb-io/shared/repair.js";
 import { decode as decodeToon } from "@reddb-io/toon";
 import {
@@ -1730,18 +1731,31 @@ function encodeCursor(at: string): string {
   );
 }
 
-function decodeCursor(
-  cursor: string,
-): { at: string } | { refused: true; reason: string } {
+interface CursorRefusal {
+  refused: true;
+  reason: string;
+  repair: RepairAction;
+}
+
+function cursorRefusal(state: string): CursorRefusal {
+  const composed = composeRepair({
+    state,
+    repair: {
+      tool: "events_since",
+      args: {},
+      why: "request a fresh baseline cursor",
+    },
+  });
+  if (composed.repair === "none") throw new Error("invalid cursor refusal repair");
+  return { refused: true, reason: composed.prose, repair: composed.repair };
+}
+
+function decodeCursor(cursor: string): { at: string } | CursorRefusal {
   let raw: unknown;
   try {
     raw = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
   } catch {
-    return {
-      refused: true,
-      reason:
-        "Unknown cursor format; call queue_status or worker_status to re-baseline.",
-    };
+    return cursorRefusal("Unknown cursor format");
   }
   if (
     raw === null ||
@@ -1750,20 +1764,12 @@ function decodeCursor(
     (raw as Record<string, unknown>).v !== CURSOR_VERSION ||
     typeof (raw as Record<string, unknown>).at !== "string"
   ) {
-    return {
-      refused: true,
-      reason:
-        "Unknown cursor format; call queue_status or worker_status to re-baseline.",
-    };
+    return cursorRefusal("Unknown cursor format");
   }
   const at = (raw as Record<string, unknown>).at as string;
   const atMs = Date.parse(at);
   if (!Number.isFinite(atMs) || Date.now() - atMs > CURSOR_MAX_AGE_MS) {
-    return {
-      refused: true,
-      reason:
-        "Cursor expired; call queue_status or worker_status to re-baseline.",
-    };
+    return cursorRefusal("Cursor expired");
   }
   return { at };
 }
