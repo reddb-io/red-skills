@@ -7,12 +7,14 @@ import {
   auditConfigLoad,
   CONFIG_DEFAULTS,
   DELETED_CONFIG_KEYS,
+  VALIDATION_MOMENT_ALIASES_LAST_RELEASE,
   getConfig,
   loadConfig,
   MalformedConfigError,
   parseConfigYaml,
   readBackpressure,
   readFeedbackCommands,
+  readValidationMoments,
   readSetupCommands,
   readHitlTypeLabels,
   readValidationResourceBudget,
@@ -879,6 +881,87 @@ describe("config — feedback command authority (#3276)", () => {
 
     expect(readFeedbackCommands(absent)).toBeUndefined();
     expect(readFeedbackCommands(disabled)).toEqual([]);
+  });
+});
+
+describe("config — validation moments (ADR 0135, #3284)", () => {
+  it("reads every declared moment in command order", () => {
+    const text = [
+      "plugins:",
+      "  dev:",
+      "    enabled: true",
+      "    afk:",
+      "      validation:",
+      "        iteration:",
+      "          - pnpm --filter @reddb-io/dev test -- config.test.ts",
+      "          - pnpm --filter @reddb-io/dev typecheck",
+      "        post_done:",
+      "          - pnpm --filter @reddb-io/dev test",
+      "        landing:",
+      "          - pnpm --filter @reddb-io/dev build",
+      "",
+    ].join("\n");
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+
+    expect(readValidationMoments(values)).toEqual({
+      iteration: [
+        "pnpm --filter @reddb-io/dev test -- config.test.ts",
+        "pnpm --filter @reddb-io/dev typecheck",
+      ],
+      post_done: ["pnpm --filter @reddb-io/dev test"],
+      landing: ["pnpm --filter @reddb-io/dev build"],
+    });
+  });
+
+  it("rejects a non-list moment and names the offending key", () => {
+    expect(() =>
+      parseConfigYaml(
+        "plugins:\n  dev:\n    afk:\n      validation:\n        iteration: pnpm test\n",
+      ),
+    ).toThrow(/afk\.validation\.iteration.*ordered list/);
+  });
+
+  it("reads both legacy knobs as post_done contributions and warns with the moments key", () => {
+    const warnings: string[] = [];
+    const text = [
+      "plugins:",
+      "  dev:",
+      "    enabled: true",
+      "    afk:",
+      "      feedback:",
+      "        commands:",
+      "          - pnpm test",
+      "      backpressure:",
+      "        - pnpm lint",
+      "",
+    ].join("\n");
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => text,
+      warn: (warning) => warnings.push(warning),
+    });
+
+    expect(readValidationMoments(values)).toEqual({ post_done: ["pnpm test", "pnpm lint"] });
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain("afk.validation.post_done");
+    expect(warnings[1]).toContain("afk.validation.post_done");
+    expect(warnings.join("\n")).toContain("afk.feedback.commands");
+    expect(warnings.join("\n")).toContain("afk.backpressure");
+  });
+
+  it("expires the legacy aliases after their one-release window", () => {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+    const ordinal = (version: string): number => {
+      const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
+      return major * 1_000_000 + minor * 1_000 + patch;
+    };
+
+    expect(
+      ordinal(manifest.version),
+      "remove the Validation moment aliases when advancing beyond their one-release window",
+    ).toBeLessThanOrEqual(ordinal(VALIDATION_MOMENT_ALIASES_LAST_RELEASE));
+    expect(ordinal("3.5.1")).toBeGreaterThan(ordinal(VALIDATION_MOMENT_ALIASES_LAST_RELEASE));
   });
 });
 
