@@ -290,6 +290,40 @@ describe("castle worker drain", () => {
     expect(emitted).toEqual([CASTLE_NO_MORE_TASKS]);
   });
 
+  it("reports a fully trust-held queue without claiming progress", async () => {
+    const emitted: string[] = [];
+    const processIssue = vi.fn(async () => ({ outcome: "done" as const }));
+    const result = await runCastleWorkerDrain(
+      {
+        gh: { listCandidates: async () => [{ ...candidate(2062), author: "github-actions" }] },
+        classifyEligibility: async () => ({
+          eligible: false,
+          reason: "untrusted author — held for maintainer summon",
+        }),
+        runBoot: async () => boot,
+        bootDeps: {},
+        bootOptions: {},
+        processIssue,
+        processDeps,
+        buildProcessInput: (row, ctx) => ({ issue: row.number, runner: ctx.runner }),
+        emit: (line) => emitted.push(line),
+      },
+      {
+        runner: "codex",
+        workerId: "wHELD",
+        filter: { kind: "all" },
+        issueTemplate: {},
+      },
+    );
+
+    expect(processIssue).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ total: 0, heldForSummon: 1, drained: true });
+    expect(emitted).toContain(
+      "0 eligible, 1 held for summon (#2062) — release with `triage:summon`, `dev triage --summon`, or `afk.trust-gate.allowlist`",
+    );
+    expect(emitted.some((line) => line.includes("progress:") || line.includes("100%"))).toBe(false);
+  });
+
   it.each([
     {
       name: "supervisor kill before budget, lifetime, and iteration caps",

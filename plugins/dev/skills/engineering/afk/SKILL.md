@@ -168,9 +168,11 @@ Read the focused reference before touching that concern:
 - The `castle` MCP is the canonical castle interface (ADR 0120). `/afk` is a
   client of it, so a capability missing from the tools is a gap to file against
   the MCP, never a reason to hand-roll the operation in shell.
-- Tracked work belongs in `/afk`. An empty `ready-for-agent` queue with a
-  non-empty open backlog is a flow bug to surface with a gate census, not a
-  clean "nothing to do" stop.
+- Tracked work belongs in `/afk`. A queue with zero eligible `ready-for-agent`
+  entries and a non-empty open backlog is a flow bug to surface with a gate
+  census, not a clean "nothing to do" stop. This includes a non-empty queue
+  whose entries are all `held_for_summon`; release those with `triage:summon`,
+  `dev triage --summon`, or `afk.trust-gate.allowlist`.
 - Dependencies use `req:N` edge labels plus `blocked:dependency`; human gates
   use `## Current blocker` / `ready-for-human`.
 - Worktrees live under `.red/tmp/workers/{id}/{N}-a{n}/worktree`; the worker
@@ -206,8 +208,9 @@ rather than as competing loops. Choose the width by disjointness; read
 
 ## Stop Conditions
 
-- Queue drained -> `<promise>NO MORE TASKS</promise>` and exit 0, with a gate
-  census when open non-Spec issues remain.
+- Eligible queue drained -> `<promise>NO MORE TASKS</promise>` and exit 0, with
+  a gate census when open non-Spec issues remain, including ready-labelled
+  issues held for maintainer summon.
 - `-n N` reached -> summary and exit 0.
 - Runner exhaustion or transient runner failure -> bounded recovery for the
   current issue, then outer exit 75.

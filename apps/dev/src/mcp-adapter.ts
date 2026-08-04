@@ -108,6 +108,13 @@ import {
   readHitlTypeLabels,
   readValidationResourceBudget,
 } from "./core/config.js";
+import {
+  evaluateClaimTrust,
+  parseTrustPolicy,
+  type ActorTrustLookup,
+  type TrustPolicy,
+  type TrustProvenance,
+} from "./core/trust-gate.js";
 import * as gitx from "./runtime/git.js";
 import { makeFeedbackWorktree } from "./runtime/feedback-worktree.js";
 import { runFeedback } from "./core/feedback.js";
@@ -1505,19 +1512,52 @@ function projectFields(
  * and a full body per candidate would dwarf the rest of the payload.
  */
 export function buildQueueStatus(
-  readyForAgent: readonly IssueCandidate[],
+  eligibleForAgent: readonly IssueCandidate[],
+  heldForSummon: readonly IssueCandidate[],
   readyForHuman: readonly HitlCandidate[],
 ): QueueStatusOutput {
+  const projectCandidate = ({ body: _body, author: _author, ...candidate }: IssueCandidate) => candidate;
   return {
-    ready_for_agent: readyForAgent.map(
-      ({ body: _body, ...candidate }) => candidate,
-    ),
+    ready_for_agent: {
+      eligible: eligibleForAgent.map(projectCandidate),
+      held_for_summon: heldForSummon.map(projectCandidate),
+    },
     ready_for_human: [...readyForHuman],
     counts: {
-      ready_for_agent: readyForAgent.length,
+      ready_for_agent_eligible: eligibleForAgent.length,
+      ready_for_agent_held: heldForSummon.length,
       ready_for_human: readyForHuman.length,
     },
   };
+}
+
+export async function partitionReadyForAgentByTrust(
+  candidates: readonly IssueCandidate[],
+  policy: TrustPolicy,
+  deps: {
+    issueTrust(candidate: IssueCandidate): Promise<TrustProvenance>;
+    actorTrustSignals: ActorTrustLookup;
+  },
+): Promise<{
+  eligible: IssueCandidate[];
+  heldForSummon: IssueCandidate[];
+}> {
+  const eligible: IssueCandidate[] = [];
+  const heldForSummon: IssueCandidate[] = [];
+  const gateActive = policy.enabled || policy.failClosed === true;
+  for (const candidate of candidates) {
+    if (!gateActive) {
+      eligible.push(candidate);
+      continue;
+    }
+    const verdict = await evaluateClaimTrust(
+      policy,
+      await deps.issueTrust(candidate),
+      deps.actorTrustSignals,
+    );
+    (verdict.executable ? eligible : heldForSummon).push(candidate);
+  }
+  return { eligible, heldForSummon };
 }
 
 /** Every checkout under the disposable `.red/tmp/worktrees/<lane>/` lanes, in
@@ -1883,7 +1923,17 @@ export function createCastleMcpDependencies(
         );
         readyForAgent = readyForAgent.filter((c) => matchesSelector(c, selector ?? {}));
       }
-      return buildQueueStatus(readyForAgent, readyForHuman);
+      const config = loadConfig(afkPaths(root).configPath, { warn: () => undefined });
+      const policy = parseTrustPolicy(config, await ghx.repoVisibility(gh));
+      const { eligible, heldForSummon } = await partitionReadyForAgentByTrust(
+        readyForAgent,
+        policy,
+        {
+          issueTrust: (candidate) => ghx.issueTrust(gh, candidate.number),
+          actorTrustSignals: (actor) => ghx.actorTrustSignals(gh, actor),
+        },
+      );
+      return buildQueueStatus(eligible, heldForSummon, readyForHuman);
     },
     workerDispatch: (input) => {
       if (input.issue !== undefined) {

@@ -85,7 +85,18 @@ function makeFakeDeps(): Pick<
   }
   return {
     callCounts,
-    queueStatus: vi.fn(async () => { count("queueStatus"); return { ready_for_agent: [], ready_for_human: [], counts: { ready_for_agent: 0, ready_for_human: 0 } }; }),
+    queueStatus: vi.fn(async () => {
+      count("queueStatus");
+      return {
+        ready_for_agent: { eligible: [], held_for_summon: [] },
+        ready_for_human: [],
+        counts: {
+          ready_for_agent_eligible: 0,
+          ready_for_agent_held: 0,
+          ready_for_human: 0,
+        },
+      };
+    }),
     claimStatus: vi.fn(async () => { count("claimStatus"); return { issue: 2370, records: [], holders: [] }; }),
     cascadeStatus: vi.fn(async () => { count("cascadeStatus"); return { issue: 2370, dependents: [], promotable: [] }; }),
     claimRelease: vi.fn(async () => { count("claimRelease"); return { issue: 2370, conceded: [] }; }),

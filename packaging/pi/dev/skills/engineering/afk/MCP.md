@@ -226,12 +226,15 @@ state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `queue_status` | read | `ready-for-agent` and `ready-for-human` queue candidates. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
+| `queue_status` | read | Trust-partitioned `ready-for-agent` candidates (`eligible` and `held_for_summon`) plus `ready-for-human`. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
 | `events_since` | read | Castle history events and worker lane records after an opaque cursor, plus the next cursor. |
 | `deadend_audit` | read | Every stuck AFK pattern with its recommended cure: dangling claims, red PRs with dead owners, superseded PRs, executable Tickets carrying an active Current blocker, dependency blocks whose `req:*` targets all closed, human-queue age outliers, and stale worktrees. Cache-backed — repeated calls within the refresh window cost zero GitHub quota. Detection only. |
 
-`queue_status` is the first call of any drain: an empty `ready-for-agent` queue
-with a non-empty open backlog is a flow bug to census, not a clean stop.
+`queue_status` is the first call of any drain: zero eligible `ready-for-agent`
+entries with a non-empty open backlog is a flow bug to census, not a clean stop.
+That rule includes a non-empty queue whose every entry is `held_for_summon`;
+release it with `triage:summon`, `dev triage --summon`, or
+`afk.trust-gate.allowlist`.
 
 `deadend_audit` is the census surface for that flow bug: it names each stuck
 pattern and the cure to apply, without mutating anything. The resident cron

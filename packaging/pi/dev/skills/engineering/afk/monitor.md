@@ -18,8 +18,10 @@ command renders the same truth for a human terminal. See [`MCP.md`](./MCP.md).
 | What happened over the last N days? | `dashboard` (`periodDays`), `history` |
 | What did one lane actually record? | `logs` |
 
-`queue_status` is the census tool: an empty `ready-for-agent` queue with a
-non-empty open backlog is a flow bug to diagnose, never a clean stop.
+`queue_status` is the census tool: zero eligible `ready-for-agent` entries with
+a non-empty open backlog is a flow bug to diagnose, never a clean stop. A
+non-empty `held_for_summon` bucket is still zero drainable work; release it with
+`triage:summon`, `dev triage --summon`, or `afk.trust-gate.allowlist`.
 
 ## The binding mirror rule (authoritative — stated once)
 
