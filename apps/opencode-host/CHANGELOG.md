@@ -1,5 +1,15 @@
 # @reddb-io/red-skills
 
+## 3.4.2
+
+### Patch Changes
+
+- 2ae310c: Worker rows now keep the model version in their compact `run=` label. Claude
+  model IDs such as `claude-opus-4-8` render as `opus-4.8`, trailing date stamps
+  are omitted, and genuinely versionless family names remain bare.
+  - @reddb-io/shared@3.4.2
+  - @reddb-io/build-info@3.4.2
+
 ## 3.4.1
 
 ### Patch Changes
