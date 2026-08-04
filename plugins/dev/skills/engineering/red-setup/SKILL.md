@@ -37,7 +37,7 @@ This is a prompt-driven skill, not a deterministic script. Explore, present what
 ## Hard Rules
 
 - **Only this skill may create `.red/`.** Creating `.red/` is authorized only by the plugin-activation decision; if the user enables no plugins, write nothing.
-- **The daemon's home is the daemon's.** This skill's `.red/` authority is repository-scoped. `~/.red/redskilled/` is operator-scoped, owned by `redskilled` (ADR 0130 Amendment 1), and provisioned by running `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision` — never by creating the directory here.
+- **The daemon's home is the daemon's.** This skill's `.red/` authority is repository-scoped. `~/.red/redskilled/` is operator-scoped, owned by `redskilled` (ADR 0130 Amendment 1), and provisioned by running `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision` — never by creating the directory here. Route per-machine status, ceilings, and lifecycle to `/redskilled`.
 - **Global hooks are inert by default.** A plugin block alone is not enough: each enabled plugin must have `plugins.<name>.enabled: true` in `.red/config.yaml` (ADR 0067).
 - **GitHub Issues only.** In reddb.io repos there is no local fallback and no supported alternate issue tracker. Stop if the repo has no GitHub remote.
 - **No clobbering.** Existing files are project state. Skip existing targets unless the referenced write contract explicitly names a surgical exception.

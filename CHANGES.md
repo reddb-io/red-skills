@@ -6,6 +6,20 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## redskilled (engineering) — per-machine daemon operator cycle (issue #3249)
+
+- **status**: added
+- **upstream**: —
+- **why**: The host-scoped daemon already exposed provisioning, host state,
+  setting origins, and a survival-reporting stop, but operators had no single
+  skill that carried those surfaces through a durable configure-and-restart
+  cycle.
+- **what changed**: Added `/redskilled` as the per-machine front door for status,
+  owner-authorized provisioning, home policy, restart/adoption, and origin
+  confirmation; registered it in the plugin and skill maps; routed host daemon
+  work through `/ask-red`; documented the boundary with per-repository
+  `/red-setup`; and regenerated the host projections.
+
 ## red-statusline, red-setup (engineering) — the shipped statusline draws the rich Worker row again (issue #3166)
 
 - **status**: modified
