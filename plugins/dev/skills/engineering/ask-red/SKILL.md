@@ -60,6 +60,12 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   the resolved value and its origin. To declare or change it, route through
   `/red-setup` Section E3 and the daemon-owned `~/.red/config.yaml`; a repository
   `.red/config.yaml` cannot set machine policy.
+- **A superseded-engine warning** -> run the exact
+  `npx -y -p @reddb-io/red-skills@<version> red-skills-dev reconcile-engine`
+  command printed by the warning, then retry the dispatch. The
+  command warms that published dev bundle and re-points a standing registration
+  in one operation; no separate plugin name, version lookup, or re-registration
+  is required.
 - **Operating the castle itself** -> the `castle` MCP, not a shell command.
   Fleet lifecycle, worker dispatch, runners and live steer, gate, landing,
   claim, worktrees, hygiene, and observability are all tools on one canonical
@@ -129,6 +135,8 @@ diagnostic surface: `host_state`, `host_dashboard`, `host_provision_check`,
 the host view a terminal can read (the `redskilled` daemon's `dashboard`
 command, and the `statusline` line it shares a render with) ->
 `plugins/dev/skills/engineering/red-statusline/HOST-NOTES.md`;
+engine delivery repair (the `reconcile-engine` dev CLI subcommand) ->
+`apps/dev/src/runtime/reconcile-engine.ts`;
 territory scoping (`tag:<value>` labels, `/afk --tags`/`--user`) ->
 `plugins/dev/skills/engineering/red-setup/triage-labels.md`.
 
@@ -178,13 +186,13 @@ through `/memory:view`, `memory docs reference-graph`, and
   adopt a hand-done branch through the no-agent gate, or hand off to `/hitl`.
 - An on-fire Ticket carries the `priority:urgent` label; the `/afk` queue
   promotes it ahead of every `--spec` / `--issues` filter.
-- `/adr-editor` is the totipotent editor over the `.red/adr/` collection. It
-  opens by asking which subject to work on, offering the collection's real INDEX
-  themes and title-term clusters with counts, then reports and mutates that slice:
-  list, group by subject, surface inconsistencies, add, remove, rewrite, merge,
-  split, archive, renumber, and re-index all apply in-session. One confirmation
-  gates a destructive or wide batch; `/to-spec` is an offered escape hatch for
-  genuinely large batches, never a required route.
+- `/adr-editor` is the proposal-driven reverse grill over the active `.red/adr/`
+  collection. It ranks active ADR clusters, recommends where to start, and works
+  one cluster per PR. Inside that cluster it confronts each ADR with code, tests,
+  documentation, and newer ADR evidence, then presents P01, P02, and so on — one
+  proposal per turn — until every active record has an explicit disposition.
+  Accepted proposals accumulate behind one full-text/diff preview and one
+  destructive-batch confirmation; all eleven ADR operations remain available.
 - `/model-tier-policy` answers runner/model tier choices; `runner_list` and
   `runner_detect` on the `castle` MCP answer which backend a host resolves to.
 - `/zoom-out`, `/research`, `/handoff`, `/ff`, and `/reflect` are understanding

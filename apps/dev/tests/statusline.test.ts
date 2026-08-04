@@ -194,11 +194,11 @@ describe("statusline — formatRspTickerValue", () => {
 });
 
 describe("statusline — shortModel (issue #1175)", () => {
-  it("shortens a full model id to its family token", () => {
-    expect(shortModel("claude-opus-4-8")).toBe("opus");
+  it("shortens a full model id without discarding its version", () => {
+    expect(shortModel("claude-opus-4-8")).toBe("opus-4.8");
     expect(shortModel("Opus")).toBe("opus");
-    expect(shortModel("claude-sonnet-5")).toBe("sonnet");
-    expect(shortModel("claude-haiku-4-5-20251001")).toBe("haiku");
+    expect(shortModel("claude-sonnet-5")).toBe("sonnet-5");
+    expect(shortModel("claude-haiku-4-5-20251001")).toBe("haiku-4.5");
   });
 
   it("falls back to the input unchanged when no family matches", () => {

@@ -65,6 +65,7 @@ import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-brid
 import { createWorkerLogLinePublisher } from "../../runtime/redskilled-worker-log.js";
 import { HOST_CONFIG_EXIT_CODE, sweepDiscardsWorkspace } from "../../core/worker-outcome.js";
 import { LABEL_READY } from "../../core/triage-labels.js";
+import { evaluateClaimTrust, parseTrustPolicy } from "../../core/trust-gate.js";
 
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
@@ -453,6 +454,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     goVerifyRetries: flags.goVerifyRetries,
     workerId,
   });
+  let queueTrustPolicy: ReturnType<typeof parseTrustPolicy> | undefined;
 
   const deps: CastleWorkerDrainDeps<
     BootDeps,
@@ -464,6 +466,29 @@ export async function runCommand(options: RunOptions): Promise<number> {
     SessionIssueTemplate
   > = {
     gh: { listCandidates: () => ghx.listCandidates(ghCtx, consultedQueue) },
+    classifyEligibility: async (candidate) => {
+      queueTrustPolicy ??= parseTrustPolicy(
+        config,
+        await processDeps.gh.repoVisibility?.(),
+      );
+      const canFailClosed =
+        queueTrustPolicy.failClosed === true &&
+        processDeps.gh.actorTrustSignals !== undefined;
+      if (!queueTrustPolicy.enabled && !canFailClosed) return { eligible: true };
+      if (!processDeps.gh.issueTrust) return { eligible: true };
+      const provenance = await processDeps.gh.issueTrust(
+        candidate.number,
+        consultedQueue,
+      );
+      const verdict = await evaluateClaimTrust(
+        queueTrustPolicy,
+        provenance,
+        processDeps.gh.actorTrustSignals
+          ? (actor) => processDeps.gh.actorTrustSignals!(actor)
+          : async () => ({}),
+      );
+      return { eligible: verdict.executable, reason: verdict.reason };
+    },
     runBoot,
     bootDeps,
     bootOptions,

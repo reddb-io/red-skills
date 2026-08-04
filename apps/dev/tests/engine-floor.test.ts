@@ -15,6 +15,7 @@ import {
   parseEngineFloorPolicy,
   DEFAULT_ENGINE_FLOOR_POLICY,
   ENGINE_FLOOR_CONFIG_KEY,
+  engineFloorRepair,
   type EngineFloorVerdict,
 } from "../src/core/engine-floor.js";
 import {
@@ -74,6 +75,13 @@ const UNRESOLVED: PublishedVersionObservation = {
 };
 
 describe("the engine floor judges the engine a dispatch would run", () => {
+  it("hands the operator one executable repair command with the exact version", () => {
+    const repair = engineFloorRepair("3.4.1");
+    expect(repair).toContain("@reddb-io/red-skills@3.4.1");
+    expect(repair).toContain("red-skills-dev reconcile-engine");
+    expect(repair).not.toContain("<version>");
+  });
+
   it("refuses a superseded engine under `refuse`, naming both versions", () => {
     const verdict = evaluateEngineFloor({
       engineVersion: "3.2.0",

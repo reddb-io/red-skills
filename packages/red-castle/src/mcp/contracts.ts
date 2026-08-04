@@ -7,7 +7,7 @@ import type { CastleMcpTool } from "./tool.js";
  * string to detect a breaking change. Adding an OPTIONAL field is additive and
  * keeps the version.
  */
-export const CASTLE_MCP_CONTRACT_VERSION = "1.0.0";
+export const CASTLE_MCP_CONTRACT_VERSION = "2.0.0";
 
 /**
  * One tool's declared output shape plus the version that shape belongs to.
@@ -104,6 +104,10 @@ export const projectRegistrationStatusSchema = z.object({
    * that moves when a runner directive lands.
    */
   launch_revision: z.number(),
+  /** Engine version named by the registration argv; "" when it cannot be read. */
+  bundle_version: z.string(),
+  /** Newest dev plugin version in the host's plugin cache; "" when absent. */
+  plugin_cache_version: z.string(),
   /**
    * What the last queue poll said about THIS project; absent when none has run.
    *
@@ -336,14 +340,17 @@ export type MonitorOutput = z.infer<typeof monitorOutputSchema>;
 // queue_status
 // ---------------------------------------------------------------------------
 
+const queueIssueSchema = z.object({
+  number: z.number(),
+  title: z.string(),
+  labels: z.array(z.string()),
+});
+
 export const queueStatusOutputSchema = z.object({
-  ready_for_agent: z.array(
-    z.object({
-      number: z.number(),
-      title: z.string(),
-      labels: z.array(z.string()),
-    }),
-  ),
+  ready_for_agent: z.object({
+    eligible: z.array(queueIssueSchema),
+    held_for_summon: z.array(queueIssueSchema),
+  }),
   ready_for_human: z.array(
     z.object({
       number: z.number(),
@@ -354,7 +361,8 @@ export const queueStatusOutputSchema = z.object({
     }),
   ),
   counts: z.object({
-    ready_for_agent: z.number(),
+    ready_for_agent_eligible: z.number(),
+    ready_for_agent_held: z.number(),
     ready_for_human: z.number(),
   }),
 });

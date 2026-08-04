@@ -4,6 +4,7 @@ import {
   type AdrTriageContext,
   detectAdrInconsistencies,
   groupAdrs,
+  rankAdrClusters,
   triageAdrs,
 } from "../src/core/adr-triage.js";
 
@@ -65,7 +66,7 @@ function fixtureTree(): AdrTriageContext {
       // merge-candidate pair — near-identical subjects
       adr("0008", { title: "AFK worker heartbeat protocol" }),
       adr("0009", { title: "AFK worker heartbeat sampling" }),
-      // archive-candidate — accepted but old and nothing links to it
+      // keep — age and a lack of links are evidence to inspect, never terminal evidence
       adr("0010", { title: "Inert shipped decision", ageDays: 900 }),
     ],
     existingPaths: ["apps/memory/src/index.ts", "apps/dev/src/cli.ts"],
@@ -94,7 +95,7 @@ describe("triageAdrs", () => {
       "0007": "split-candidate",
       "0008": "merge-candidate",
       "0009": "merge-candidate",
-      "0010": "archive-candidate",
+      "0010": "keep",
     });
   });
 
@@ -102,12 +103,12 @@ describe("triageAdrs", () => {
     const report = triageAdrs(fixtureTree());
 
     expect(report.countsByBucket).toEqual({
-      keep: 3,
+      keep: 4,
       "stale-reference": 1,
       "missing-supersession": 1,
       "merge-candidate": 2,
       "split-candidate": 1,
-      "archive-candidate": 2,
+      "archive-candidate": 1,
     });
   });
 
@@ -226,6 +227,15 @@ describe("triageAdrs", () => {
     expect(bucketsByNumber(context)["0030"]).toBe("keep");
   });
 
+  it("never treats age and a lack of links as sufficient archival evidence", () => {
+    const entry = triageAdrs({ adrs: [adr("0030", { ageDays: 9_000 })] }).entries[0]!;
+
+    expect(entry.bucket).toBe("keep");
+    expect(entry.signals).toContain("age-days:9000");
+    expect(entry.signals).toContain("inbound-links:0");
+    expect(entry.reason).not.toMatch(/archive|inert/i);
+  });
+
   it("is pure — it does not mutate the records it classifies", () => {
     const context = fixtureTree();
     const snapshot = JSON.parse(JSON.stringify(context));
@@ -332,6 +342,72 @@ describe("groupAdrs", () => {
       { kind: "subject-cluster", title: "castle + execution + owns", numbers: ["0001"] },
     ]);
     expect(report.subject).toEqual({ kind: "numbers", matched: ["0001"], unmatched: ["0099"] });
+  });
+});
+
+describe("rankAdrClusters", () => {
+  it("ranks active clusters by candidate evidence and excludes archived records", () => {
+    const context: AdrTriageContext = {
+      adrs: [
+        adr("0001", { title: "Worker launch contract" }),
+        adr("0002", { title: "Worker launch policy" }),
+        adr("0003", { title: "Memory graph contract" }),
+        adr("0004", {
+          path: ".red/adr/archive/0004-worker-launch-history.md",
+          title: "Worker launch history",
+          status: "Superseded by ADR 0002.",
+        }),
+      ],
+      indexSections: [
+        { title: "Execution", numbers: ["0001", "0002", "0004"] },
+        { title: "Memory", numbers: ["0003"] },
+      ],
+      candidateEvidence: [
+        {
+          kind: "code",
+          path: "apps/dev/src/core/launch.ts",
+          detail: "runtime behavior differs from the launch ADRs",
+          numbers: ["0001", "0002", "0004"],
+          changedSinceReview: true,
+        },
+        {
+          kind: "documentation",
+          path: "docs/memory.md",
+          detail: "documentation still matches the memory ADR",
+          numbers: ["0003"],
+          changedSinceReview: false,
+        },
+      ],
+      reviewMarkers: [
+        { number: "0003", reviewedOn: "2026-08-01", baseSha: "abc1234" },
+      ],
+    };
+
+    const report = rankAdrClusters(context);
+
+    expect(report.clusters.map((cluster) => cluster.title)).toEqual(["Execution", "Memory"]);
+    expect(report.clusters[0]).toMatchObject({
+      rank: 1,
+      numbers: ["0001", "0002"],
+      hasNewEvidence: true,
+      recommendation: "review-now",
+    });
+    expect(report.clusters[0]!.evidence).toEqual([
+      {
+        kind: "code",
+        path: "apps/dev/src/core/launch.ts",
+        detail: "runtime behavior differs from the launch ADRs",
+        numbers: ["0001", "0002"],
+        changedSinceReview: true,
+      },
+    ]);
+    expect(report.clusters[1]).toMatchObject({
+      rank: 2,
+      numbers: ["0003"],
+      hasNewEvidence: false,
+      recommendation: "defer-until-new-evidence",
+    });
+    expect(report.excludedArchived).toEqual(["0004"]);
   });
 });
 

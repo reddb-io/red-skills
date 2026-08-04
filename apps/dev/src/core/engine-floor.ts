@@ -103,9 +103,10 @@ export interface EngineFloorVerdict {
   readonly message: string;
 }
 
-/** The repair, stated once so every surface prescribes the same one. */
-export const ENGINE_FLOOR_REPAIR =
-  "let self-update reconcile the bundle (or warm it: `npx -y -p @reddb-io/red-skills@<version> red-skills-dev --version`), then dispatch again";
+/** The one executable repair, with the measured version already substituted. */
+export function engineFloorRepair(version: string): string {
+  return `\`npx -y -p @reddb-io/red-skills@${version} red-skills-dev reconcile-engine\``;
+}
 
 /**
  * Judge one dispatch's engine against the published dist-tag. PURE.
@@ -187,7 +188,7 @@ export function evaluateEngineFloor(input: EngineFloorInput): EngineFloorVerdict
       message:
         `⚠ engine floor: engine ${engine} looks superseded by ${published} ` +
         `(source ${source}, not a fresh registry read), so ${forfeits}. Dispatching anyway — ` +
-        `a refusal is never taken on unverified evidence. Repair: ${ENGINE_FLOOR_REPAIR}.`,
+        `a refusal is never taken on unverified evidence. Repair: ${engineFloorRepair(published)}.`,
     };
   }
 
@@ -198,7 +199,7 @@ export function evaluateEngineFloor(input: EngineFloorInput): EngineFloorVerdict
       code: "superseded",
       message:
         `✗ engine floor: refusing to dispatch engine ${engine} — the published dist-tag is ` +
-        `${published}, so ${forfeits}. Repair: ${ENGINE_FLOOR_REPAIR}. ` +
+        `${published}, so ${forfeits}. Repair: ${engineFloorRepair(published)}. ` +
         `Policy: ${ENGINE_FLOOR_CONFIG_KEY}=refuse (set \`warn\` to dispatch loudly instead).`,
     };
   }
@@ -209,7 +210,7 @@ export function evaluateEngineFloor(input: EngineFloorInput): EngineFloorVerdict
     code: "superseded",
     message:
       `⚠ engine floor: engine ${engine} is superseded — the published dist-tag is ${published}, ` +
-      `so ${forfeits}. Dispatching anyway. Repair: ${ENGINE_FLOOR_REPAIR}. ` +
+      `so ${forfeits}. Dispatching anyway. Repair: ${engineFloorRepair(published)}. ` +
       `Policy: ${ENGINE_FLOOR_CONFIG_KEY}=warn (set \`refuse\` to make this a hard stop).`,
   };
 }

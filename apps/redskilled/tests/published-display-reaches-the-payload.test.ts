@@ -54,7 +54,7 @@ const VIEW: RedskilledWorkerView = {
 const PUBLISHED: RedskilledWorkerDisplay = {
   ...REDSKILLED_WORKER_DISPLAY_ABSENT,
   runner: "claude",
-  model: "opus",
+  model: "claude-opus-4-8",
   effort: "high",
   origin: "afk",
   issue: "3144",
@@ -116,7 +116,7 @@ describe("a published display reaches the payload", () => {
     // a `toBeDefined` would have passed on a record holding nothing but nulls.
     expect(worker?.display).toMatchObject({
       runner: "claude",
-      model: "opus",
+      model: "claude-opus-4-8",
       effort: "high",
       origin: "afk",
       issue: "3144",
@@ -178,7 +178,7 @@ describe("a published display reaches the payload", () => {
     const row = dashboard.rows.find((candidate) => candidate.worker_id === VIEW.worker_id);
     expect(row, "the dashboard drew no row for a Worker the daemon tracks").toBeDefined();
     expect(row?.cells.iss).toBe("iss=3144");
-    expect(row?.cells.run).toBe("run=claude opus high");
+    expect(row?.cells.run).toBe("run=claude opus-4.8 high");
     expect(row?.cells.org).toBe("org=afk");
     expect(row?.cells.phase).toBe("coding·tests");
     // Two behind, one cursor, two ahead — the bar the daemon never has to name.

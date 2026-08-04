@@ -29,6 +29,8 @@ const PROJECT_STATUS: ProjectStatusOutput = {
     lapsed_at: "",
     reason: "",
     launch_revision: 0,
+    bundle_version: "3.3.24",
+    plugin_cache_version: "3.3.21",
   },
   slots: { busy: 1, free: 1, parked: 0, total: 2, interactive_reservation: 1 },
   live_workers: [
@@ -55,6 +57,18 @@ function tool(output: unknown): CastleMcpTool {
 }
 
 describe("observability output contracts", () => {
+  it("keeps all three engine delivery lanes in project status", () => {
+    expect(PROJECT_STATUS.registration).toMatchObject({
+      bundle_version: "3.3.24",
+      plugin_cache_version: "3.3.21",
+    });
+    const { bundle_version: _bundle, ...withoutBundle } = PROJECT_STATUS.registration;
+    expect(projectStatusOutputSchema.safeParse({
+      ...PROJECT_STATUS,
+      registration: withoutBundle,
+    }).success).toBe(false);
+  });
+
   it("carries the interactive reservation beside every slot count", () => {
     expect(projectStatusOutputSchema.parse(PROJECT_STATUS).slots.interactive_reservation).toBe(1);
   });
@@ -91,7 +105,7 @@ describe("observability output contracts", () => {
     const [wrapped] = applyOutputContracts([tool(drifted)]);
 
     await expect(wrapped!.invoke({})).rejects.toThrow(
-      /project_status output violates contract 1\.0\.0: slots\.total/,
+      /project_status output violates contract 2\.0\.0: slots\.total/,
     );
   });
 
@@ -128,7 +142,7 @@ describe("observability output contracts", () => {
     const [wrapped] = applyOutputContracts([drifted]);
 
     await expect(wrapped!.invoke({ fields: ["live"] })).rejects.toThrow(
-      /worker_vitals output violates contract 1\.0\.0: 0\.live/,
+      /worker_vitals output violates contract 2\.0\.0: 0\.live/,
     );
   });
 
@@ -152,11 +166,16 @@ describe("observability output contracts", () => {
       workerVitals: vi.fn(async () => []),
       monitor: vi.fn(async () => ({ workers: [], events: [], fleet: null })),
       queueStatus: vi.fn(async () => ({
-        ready_for_agent: [
-          { number: 2335, title: "E1", labels: ["type:ticket"] },
-        ],
+        ready_for_agent: {
+          eligible: [{ number: 2335, title: "E1", labels: ["type:ticket"] }],
+          held_for_summon: [],
+        },
         ready_for_human: [],
-        counts: { ready_for_agent: 1, ready_for_human: 0 },
+        counts: {
+          ready_for_agent_eligible: 1,
+          ready_for_agent_held: 0,
+          ready_for_human: 0,
+        },
       })),
     } as unknown as CastleMcpDependencies;
     const tools = createCastleMcpTools(deps);

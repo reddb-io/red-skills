@@ -68,7 +68,7 @@ test("the frame prints the daemon's own lines, header first", () => {
 test("every statusline field reaches the pane", () => {
   const rendered = text(renderBoard({ dashboard: dashboard(), state: state(), size: SIZE }));
   for (const cell of [
-    "run=claude opus high",
+    "run=claude opus-4.8 high",
     "org=afk",
     "iss=3012",
     "██▶░░░",

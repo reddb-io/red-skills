@@ -166,6 +166,15 @@ describe("dev:afk observability output contracts", () => {
       ],
       [
         {
+          number: 2062,
+          title: "bot-authored canonical ticket",
+          body: "maintainer-curated body",
+          labels: ["ready-for-agent"],
+          author: "github-actions",
+        },
+      ],
+      [
+        {
           number: 2334,
           title: "H3",
           labels: ["ready-for-human"],
@@ -175,7 +184,16 @@ describe("dev:afk observability output contracts", () => {
     );
 
     expect(queueStatusOutputSchema.parse(queue)).toEqual({
-      ready_for_agent: [{ number: 2335, title: "E1", labels: ["type:ticket"] }],
+      ready_for_agent: {
+        eligible: [{ number: 2335, title: "E1", labels: ["type:ticket"] }],
+        held_for_summon: [
+          {
+            number: 2062,
+            title: "bot-authored canonical ticket",
+            labels: ["ready-for-agent"],
+          },
+        ],
+      },
       ready_for_human: [
         {
           number: 2334,
@@ -184,7 +202,11 @@ describe("dev:afk observability output contracts", () => {
           createdAt: null,
         },
       ],
-      counts: { ready_for_agent: 1, ready_for_human: 1 },
+      counts: {
+        ready_for_agent_eligible: 1,
+        ready_for_agent_held: 1,
+        ready_for_human: 1,
+      },
     });
   });
 });

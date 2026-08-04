@@ -131,7 +131,7 @@ describe("the dashboard panel shows the rows the daemon rendered", () => {
   it("carries every statusline field into the body", () => {
     const html = renderDashboardHtml(snapshotOf());
     for (const cell of [
-      "run=claude opus high",
+      "run=claude opus-4.8 high",
       "org=afk",
       "iss=3012",
       "██▶░░░",

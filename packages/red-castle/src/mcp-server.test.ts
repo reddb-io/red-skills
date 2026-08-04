@@ -20,6 +20,8 @@ function deps(): CastleMcpDependencies {
         lapsed_at: "",
         reason: "",
         launch_revision: 0,
+        bundle_version: "3.3.24",
+        plugin_cache_version: "3.3.21",
       },
       slots: { busy: 1, free: 1, parked: 0, total: 2, interactive_reservation: 1 },
       live_workers: [
@@ -60,9 +62,13 @@ function deps(): CastleMcpDependencies {
     monitor: vi.fn(async () => ({ workers: [], events: [], fleet: null })),
     history: vi.fn(async () => []),
     queueStatus: vi.fn(async () => ({
-      ready_for_agent: [],
+      ready_for_agent: { eligible: [], held_for_summon: [] },
       ready_for_human: [],
-      counts: { ready_for_agent: 0, ready_for_human: 0 },
+      counts: {
+        ready_for_agent_eligible: 0,
+        ready_for_agent_held: 0,
+        ready_for_human: 0,
+      },
     })),
     deadendAudit: vi.fn(async () => ({ total: 0, classes: [] })),
     eventsSince: vi.fn(async (input) => {

@@ -248,7 +248,11 @@ async function hookDecisionResultFromPreExecJson(
       event: hookDecisionEvent({ hook, command, decision, reason: "missing-command" }),
     };
   }
-  const binaryResolved = resolveBinaryOnce(options.resolveBinary ?? resolveRspBinaryFromPath);
+  const rspPrefix = options.rspInvocationPrefix ?? resolveRspInvocationPrefix();
+  const binaryResolved = resolveBinaryOnce(
+    options.resolveBinary
+      ?? (() => options.rspInvocationPrefix !== undefined || rspPrefix[0] !== "rsp" || resolveRspBinaryFromPath()),
+  );
   if (!binaryResolved) {
     emitBinaryHint();
     const decision: RewriteDecision = { kind: "passthrough", reason: "binary-unresolved" };
@@ -261,7 +265,6 @@ async function hookDecisionResultFromPreExecJson(
 
   const started = process.hrtime.bigint();
   const config = resolveRspConfig(cwd, process.env);
-  const rspPrefix = options.rspInvocationPrefix ?? resolveRspInvocationPrefix();
   const decision = config.proxyEnabled
     ? proxyCommand(command, rspPrefix)
     : (options.rewrite ?? ((cmd: string) => rewriteCommand(cmd, rspPrefix)))(command);

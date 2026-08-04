@@ -70,6 +70,8 @@ import {
   cli,
 } from "./cli.helpers.js";
 
+const BUNDLED_STATUS_REWRITE = `${process.execPath} ${bundle} proxy -- 'git status'`;
+
 describe("rsp cli", () => {
   it("built bundle keeps cold small git status off the resident", async () => {
     buildBundleOnce();
@@ -320,7 +322,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp proxy -- 'git status'" },
+        updatedInput: { command: BUNDLED_STATUS_REWRITE },
       },
     });
     expect(cold.stderr).toEqual(Buffer.alloc(0));
@@ -347,7 +349,7 @@ describe("rsp cli", () => {
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "allow",
-            updatedInput: { command: "rsp proxy -- 'git status'" },
+            updatedInput: { command: BUNDLED_STATUS_REWRITE },
           },
         });
         expect(retryCold.stderr).toEqual(Buffer.alloc(0));
@@ -370,7 +372,7 @@ describe("rsp cli", () => {
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: "allow",
-          updatedInput: { command: "rsp proxy -- 'git status'" },
+          updatedInput: { command: BUNDLED_STATUS_REWRITE },
         },
       });
       expect(repeat.stderr).toEqual(Buffer.alloc(0));
@@ -388,7 +390,7 @@ describe("rsp cli", () => {
           hookSpecificOutput: {
             hookEventName: "PreToolUse",
             permissionDecision: "allow",
-            updatedInput: { command: "rsp proxy -- 'git status'" },
+            updatedInput: { command: BUNDLED_STATUS_REWRITE },
           },
         });
         expect(warm.stderr).toEqual(Buffer.alloc(0));
@@ -443,7 +445,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp proxy -- 'git status'" },
+        updatedInput: { command: BUNDLED_STATUS_REWRITE },
       },
     });
     expect(cold.stderr).toEqual(Buffer.alloc(0));
@@ -457,7 +459,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp proxy -- 'git status'" },
+        updatedInput: { command: BUNDLED_STATUS_REWRITE },
       },
     });
     expect(warm.stderr).toEqual(Buffer.alloc(0));
@@ -470,7 +472,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp proxy -- 'git status'" },
+        updatedInput: { command: BUNDLED_STATUS_REWRITE },
       },
     });
     expect(expired.stderr).toEqual(Buffer.alloc(0));
@@ -495,7 +497,7 @@ describe("rsp cli", () => {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "allow",
-        updatedInput: { command: "rsp proxy -- 'git status'" },
+        updatedInput: { command: BUNDLED_STATUS_REWRITE },
       },
     });
 

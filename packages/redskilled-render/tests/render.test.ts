@@ -116,10 +116,10 @@ describe("the statusline Worker table (#3151)", () => {
     expect(rendered.line).toBe(rendered.lines[0]);
     const raw = rendered.lines[1]!;
     expect(stripAnsi(raw)).toBe(
-      "w-1  run=claude opus high  org=afk  iss=3096  ██▶░░  coding·edit  2m5s  eta=10m40s  hb=3s  loc=+120 -8  tks=42k  ctx=108k  tls=31  rsn=9  txt=4",
+      "w-1  run=claude opus-5 high  org=afk  iss=3096  ██▶░░  coding·edit  2m5s  eta=10m40s  hb=3s  loc=+120 -8  tks=42k  ctx=108k  tls=31  rsn=9  txt=4",
     );
     expect(raw).toContain(`${BOLD}w-1`);
-    expect(raw).toContain(`${KEY}run=${VAL}claude opus high`);
+    expect(raw).toContain(`${KEY}run=${VAL}claude opus-5 high`);
     expect(raw).toContain(`${BAR_DONE}██${BAR_CURRENT}▶${BAR_AHEAD}░░`);
     for (const key of ["run", "org", "iss", "eta", "hb", "loc", "tks", "ctx", "tls", "rsn", "txt"]) {
       expect(raw).toContain(`${KEY}${key}=${VAL}`);

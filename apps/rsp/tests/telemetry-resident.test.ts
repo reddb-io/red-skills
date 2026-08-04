@@ -1,3 +1,4 @@
+import { chmod } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { commandFamily } from "../src/command-classifier.js";
 import {
@@ -97,6 +98,7 @@ describe("rsp telemetry spool", () => {
 
     const hook = spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
       cwd: root,
+      env: await rspBundleEnv(root, bundle),
       input: Buffer.from(JSON.stringify(payload)),
       encoding: "buffer",
     });
@@ -162,6 +164,7 @@ describe("rsp telemetry spool", () => {
 
     const hook = spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
       cwd: root,
+      env: await rspBundleEnv(root, bundle),
       input: Buffer.from(JSON.stringify(payload)),
       encoding: "buffer",
     });
@@ -612,3 +615,12 @@ describe("rsp telemetry spool", () => {
     }
   });
 });
+
+async function rspBundleEnv(root: string, bundle: string): Promise<NodeJS.ProcessEnv> {
+  const bin = join(root, "bin");
+  const rsp = join(bin, "rsp");
+  await mkdir(bin, { recursive: true });
+  await writeFile(rsp, `#!/usr/bin/env bash\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(bundle)} "$@"\n`, "utf8");
+  await chmod(rsp, 0o755);
+  return { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
+}

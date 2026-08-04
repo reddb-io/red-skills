@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { ESC, displayWidth, padEnd, padStart, stripAnsi, style, truncate } from "../src/ui/ansi.mjs";
+import { ESC, colorEnabled, displayWidth, padEnd, padStart, stripAnsi, style, truncate } from "../src/ui/ansi.mjs";
 import { ago, bytes, count, duration, oneLine, percent } from "../src/ui/format.mjs";
 import { decodeKey } from "../src/ui/screen.mjs";
 
@@ -18,7 +18,11 @@ test("padding aligns on visible width so styled columns stay square", () => {
 test("truncate never cuts an escape sequence in half", () => {
   const cut = truncate(style.red("abcdefgh"), 5);
   assert.equal(displayWidth(cut), 5);
-  assert.ok(cut.endsWith(`${ESC}[0m`), "a truncated styled cell closes its own styling");
+  if (colorEnabled) {
+    assert.ok(cut.endsWith(`${ESC}[0m`), "a truncated styled cell closes its own styling");
+  } else {
+    assert.equal(cut, "abcd…", "a colorless terminal emits no styling to close");
+  }
 });
 
 test("bytes and duration render an absence as an absence, never as zero", () => {
