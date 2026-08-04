@@ -6,6 +6,7 @@
 // shape the daemon can act on, and the facets the query cannot carry.
 import { describe, expect, it } from "vitest";
 import {
+  buildRegistrationPollPlan,
   buildRegistrationQuery,
   registrationQueryUnexpressedFacets,
 } from "../src/core/registration-query.js";
@@ -33,6 +34,18 @@ describe("the query a registration hands the host", () => {
       'repo:acme/widgets is:issue is:open label:"ready-for-agent" label:"lane:go" label:"type:ticket" ' +
         'label:"tag:alpha" label:"tag:beta" author:octocat',
     );
+  });
+
+  it("describes the equivalent conditional REST list without asking the daemon to parse the query", () => {
+    expect(buildRegistrationPollPlan({
+      repo: "acme/widgets",
+      selector: { lane: "go", label: "type:ticket", tags: ["alpha", "beta"], user: "octocat" },
+    })).toEqual({
+      owner: "acme",
+      repo: "widgets",
+      labels: ["ready-for-agent", "lane:go", "type:ticket", "tag:alpha", "tag:beta"],
+      creator: "octocat",
+    });
   });
 
   it("leaves an unresolved `@me` out rather than searching for the literal", () => {

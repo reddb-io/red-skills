@@ -7,7 +7,8 @@
  * machine, which will own the demand loop. A registration is the whole of the
  * project's side of that seam: a record the daemon stores and reports back.
  *
- * **A registration carries six things, and the daemon interprets none of them.**
+ * **A registration carries its work, launch, placement and lifetime, and the
+ * daemon interprets none of the project-authored parts.**
  * The repository identity — already carried today as the opaque project label. An
  * opaque **selector**, the query that names this project's work. An opaque
  * **argv**, what to run when a Worker is born for it. An opaque **workspace
@@ -24,8 +25,9 @@
  * an Issue, a label, a Spec, a gate or a Landing *is*. A selector is a string it
  * carries and hands back, never a sentence it reads — exactly as it already
  * carries a Worker's last logged line without parsing it. Amendment 1 moved the
- * frontier by a repository identity and a token; this moves it by a query string
- * and no further.
+ * frontier by a repository identity and a token; ADR 0133 adds a typed REST
+ * equivalent beside the query so the transport can revalidate it without making
+ * the daemon parse project semantics.
  *
  * **Shape is checked; meaning never is.** The daemon asks whether it holds a
  * string and whether that string is empty, and that is the last thing it ever
@@ -86,6 +88,17 @@ export const REDSKILLED_RENEWAL_CADENCE = 0.5;
 export type RedskilledRenewalStatus = "renewing" | "self-renewing" | "running-on";
 
 /**
+ * An ETag-capable repository list, authored by the project that understands the
+ * selector and carried by the daemon without interpreting it.
+ */
+export interface RedskilledQueuePollPlan {
+  readonly owner: string;
+  readonly repo: string;
+  readonly labels: readonly string[];
+  readonly creator?: string;
+}
+
+/**
  * One project asking to be held, as it states itself.
  *
  * The deadline arrives as a WINDOW rather than as an instant, and the daemon
@@ -98,6 +111,8 @@ export interface RedskilledProjectRegistrationRequest {
   readonly project_label: string;
   /** The query that names this project's work. Opaque — carried, never read. */
   readonly selector: string;
+  /** REST equivalent of the selector; optional for mixed-version clients. */
+  readonly queue_poll?: RedskilledQueuePollPlan;
   /** What to run when a Worker is born for this project. Opaque, likewise. */
   readonly argv: readonly string[];
   /** Where to run it — used verbatim as the Worker's working directory. */
@@ -132,6 +147,7 @@ export interface RedskilledProjectRegistration {
   readonly version: 1;
   readonly project_label: string;
   readonly selector: string;
+  readonly queue_poll?: RedskilledQueuePollPlan;
   readonly argv: readonly string[];
   readonly workspace_path: string;
   readonly env: Readonly<Record<string, string>>;
@@ -232,6 +248,7 @@ export function buildProjectRegistration(
   // Shape, not meaning. The daemon asks whether it holds a non-empty string and
   // never asks a second question about what the string says.
   const selector = requireText(request.selector, "a selector");
+  const queuePoll = requireQueuePollPlan(request.queue_poll, projectLabel);
   const argv = requireLaunchArgv(request.argv, projectLabel);
   const env = requireLaunchEnv(request.env, projectLabel);
   const logPath = requireLaunchLogPath(request.log_path, projectLabel);
@@ -264,6 +281,7 @@ export function buildProjectRegistration(
     version: 1,
     project_label: projectLabel,
     selector,
+    ...(queuePoll == null ? {} : { queue_poll: queuePoll }),
     argv,
     workspace_path: workspacePath,
     env,
@@ -595,6 +613,7 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
   return registration.version === 1 &&
     typeof registration.project_label === "string" &&
     typeof registration.selector === "string" &&
+    (registration.queue_poll === undefined || isQueuePollPlanShape(registration.queue_poll)) &&
     Array.isArray(registration.argv) &&
     registration.argv.every((word) => typeof word === "string") &&
     typeof registration.workspace_path === "string" &&
@@ -620,6 +639,27 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     (registration.sustained_by === undefined ||
       registration.sustained_by === "open-work" ||
       registration.sustained_by === "live-worker");
+}
+
+function requireQueuePollPlan(value: unknown, projectLabel: string): RedskilledQueuePollPlan | undefined {
+  if (value === undefined) return undefined;
+  if (!isQueuePollPlanShape(value)) {
+    throw new Error(
+      `redskilled needs a complete queue poll plan for project ${JSON.stringify(projectLabel)} when one is stated`,
+    );
+  }
+  return value;
+}
+
+function isQueuePollPlanShape(value: unknown): value is RedskilledQueuePollPlan {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const plan = value as Record<string, unknown>;
+  return typeof plan.owner === "string" && plan.owner !== "" &&
+    typeof plan.repo === "string" && plan.repo !== "" &&
+    Array.isArray(plan.labels) &&
+    plan.labels.length > 0 &&
+    plan.labels.every((label) => typeof label === "string" && label !== "") &&
+    (plan.creator === undefined || typeof plan.creator === "string");
 }
 
 /** True when `value` is a map of strings to strings — a launch env's whole shape. */

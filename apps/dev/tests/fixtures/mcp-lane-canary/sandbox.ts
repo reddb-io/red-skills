@@ -59,9 +59,9 @@ export interface CanarySandbox {
  *
  * The transport under test is the shipped one, built from a token and pointed at
  * an endpoint, so the only thing standing in for GitHub is GitHub: the daemon
- * really issues its aliased query over a socket and really parses an answer. It
- * counts its requests, which is what makes "one request covers every registered
- * project" an assertion rather than a hope.
+ * really issues its conditional REST list over a socket and really parses an
+ * answer. The tracker returns an ETag and then 304 so the repeated-poll path must
+ * retain the original queue depth rather than turning "unchanged" into empty.
  */
 interface CanaryTracker {
   readonly endpoint: string;
@@ -75,6 +75,7 @@ const CANARY_QUEUE_DEPTH = 1;
 
 async function startCanaryTracker(): Promise<CanaryTracker> {
   let requests = 0;
+  const queueEtag = '"canary-queue-v1"';
   const server: Server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk: Buffer) => {
@@ -82,6 +83,17 @@ async function startCanaryTracker(): Promise<CanaryTracker> {
     });
     request.on("end", () => {
       requests += 1;
+      const url = new URL(request.url ?? "/", "http://canary.invalid");
+      if (request.method === "GET" && url.pathname === "/repos/acme/canary/issues") {
+        if (request.headers["if-none-match"] === queueEtag) {
+          response.writeHead(304, { etag: queueEtag });
+          response.end();
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json", etag: queueEtag });
+        response.end(JSON.stringify([{ number: 1 }]));
+        return;
+      }
       // One `issueCount` per alias the query asked for, answered from the query
       // itself: a stub that invented its own aliases would answer a question the
       // daemon never asked, and the parser would read every project as unreachable.

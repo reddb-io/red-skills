@@ -38,6 +38,14 @@ export interface RegistrationQueryInput {
   readonly readyLabel?: string;
 }
 
+/** The repository list request equivalent to a registration query. */
+export interface RegistrationPollPlan {
+  readonly owner: string;
+  readonly repo: string;
+  readonly labels: readonly string[];
+  readonly creator?: string;
+}
+
 /**
  * Build the tracker query for one registration.
  *
@@ -52,13 +60,7 @@ export interface RegistrationQueryInput {
  * `spec`/`issues` are carried by the argv to the Worker instead.
  */
 export function buildRegistrationQuery(input: RegistrationQueryInput): string {
-  const repo = input.repo.trim();
-  if (repo === "") {
-    throw new Error(
-      "a registration needs the repository its queue lives in: the daemon polls the string it is handed and " +
-        "cannot work out which tracker a checkout belongs to",
-    );
-  }
+  const repo = requireRepo(input.repo).join("/");
   const selector = input.selector ?? {};
   const terms = [`repo:${repo}`, "is:issue", "is:open", label(input.readyLabel ?? LABEL_READY)];
   if (selector.lane != null && selector.lane !== "") terms.push(label(`lane:${selector.lane}`));
@@ -70,6 +72,28 @@ export function buildRegistrationQuery(input: RegistrationQueryInput): string {
     terms.push(`author:${selector.user}`);
   }
   return terms.join(" ");
+}
+
+/**
+ * Build the typed REST list description beside the opaque tracker query. PURE.
+ *
+ * The project owns this translation because it understands selector facets. The
+ * daemon only carries the resulting route parameters to the transport, so moving
+ * the poll to an ETag-capable endpoint does not teach the host to parse selectors.
+ */
+export function buildRegistrationPollPlan(input: RegistrationQueryInput): RegistrationPollPlan {
+  const [owner, repo] = requireRepo(input.repo);
+  const selector = input.selector ?? {};
+  const labels = [input.readyLabel ?? LABEL_READY];
+  if (selector.lane != null && selector.lane !== "") labels.push(`lane:${selector.lane}`);
+  if (selector.label != null && selector.label !== "") labels.push(selector.label);
+  for (const tag of selector.tags ?? []) {
+    if (tag !== "") labels.push(`${TAG_LABEL_PREFIX}${tag}`);
+  }
+  const creator = selector.user != null && selector.user !== "" && selector.user !== "@me"
+    ? selector.user
+    : undefined;
+  return { owner, repo, labels, ...(creator === undefined ? {} : { creator }) };
 }
 
 /**
@@ -89,4 +113,15 @@ export function registrationQueryUnexpressedFacets(
 
 function label(value: string): string {
   return `label:${JSON.stringify(value)}`;
+}
+
+function requireRepo(value: string): readonly [string, string] {
+  const parts = value.trim().split("/");
+  if (parts.length !== 2 || parts[0] === "" || parts[1] === "") {
+    throw new Error(
+      "a registration needs the repository its queue lives in: the daemon polls the string it is handed and " +
+        "cannot work out which tracker a checkout belongs to",
+    );
+  }
+  return [parts[0]!, parts[1]!];
 }
