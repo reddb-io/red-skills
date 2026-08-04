@@ -76,4 +76,34 @@ describe("drain ensure planner", () => {
         "registration: kept; target: 4→6; runner: kept; workers born: 2",
     });
   });
+
+  it("refuses a runner change with the explicit stop-then-drain repair", () => {
+    const plan = planDrain(
+      {
+        daemon_reachable: true,
+        registration: { runner: "codex", target: 4 },
+        lapsed: false,
+        workers: 4,
+      },
+      { runner: "claude", target: 6 },
+    );
+
+    expect(plan).toMatchObject({
+      outcome: "refuse",
+      actions: [],
+      report: {
+        registration: "kept",
+        target: "kept",
+        runner: "kept",
+        workers_born: "kept",
+      },
+      repair: {
+        tool: "project_stop",
+        args: {},
+      },
+    });
+    expect(plan.reason).toContain("runner change from \"codex\" to \"claude\"");
+    expect(plan.repair.why).toContain("then call `drain`");
+    expect(plan.repair.why).toContain('{"runner":"claude","target":6}');
+  });
 });
