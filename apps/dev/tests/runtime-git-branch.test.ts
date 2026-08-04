@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import {
   branchExists,
+  branchReversionBaseline,
   fetchBranch,
+  fetchBranchRequired,
   FLEET_TRUNK_REF,
   changedFiles,
   prepareFreshWorkerBranch,
@@ -82,6 +84,46 @@ describe("fetchBranch (FIX E recovery)", () => {
     const ctx: GitContext = { cwd: "/repo", exec };
     await fetchBranch(ctx, "");
     expect(calls).toEqual([]);
+  });
+});
+
+describe("fetchBranchRequired (safety barriers)", () => {
+  it("fetches the named remote before reading safety geometry", async () => {
+    const { exec, calls } = recordingExec(() => ok());
+    const ctx: GitContext = { cwd: "/repo", exec };
+
+    await fetchBranchRequired(ctx, "main", "upstream");
+
+    expect(calls[0]).toEqual(["git", "fetch", "upstream", "main"]);
+  });
+
+  it("rejects a failed fetch instead of reading a stale tracking ref", async () => {
+    const { exec } = recordingExec(() => fail());
+    const ctx: GitContext = { cwd: "/repo", exec };
+
+    await expect(fetchBranchRequired(ctx, "main", "origin")).rejects.toThrow(
+      "required git fetch failed for origin/main",
+    );
+  });
+});
+
+describe("branchReversionBaseline", () => {
+  it("pins the base SHA so both geometry patches share immutable coordinates", async () => {
+    const { exec, calls } = recordingExec((_cmd, args) => {
+      if (args.join(" ") === "rev-parse --verify origin/main^{commit}") return ok("base-sha\n");
+      if (args.join(" ") === "merge-base base-sha afk/w/9-x") return ok("fork-sha\n");
+      if (args.at(-1) === "fork-sha..base-sha") return ok("after-fork patch");
+      return fail();
+    });
+
+    await expect(
+      branchReversionBaseline({ cwd: "/repo", exec }, "afk/w/9-x", "origin/main"),
+    ).resolves.toEqual({
+      forkPoint: "fork-sha",
+      afterForkBasePatch: "after-fork patch",
+      baseRef: "base-sha",
+    });
+    expect(calls.some((call) => call.at(-1) === "fork-sha..origin/main")).toBe(false);
   });
 });
 

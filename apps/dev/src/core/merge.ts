@@ -110,6 +110,8 @@ export interface PreMergeRebaseInput {
   remote: string;
   /** Base branch to rebase onto (e.g. `main`). */
   base: string;
+  /** Immutable base commit used by geometric intent validation when present. */
+  baseRef?: string;
   /** Worker branch being rebased + force-pushed. */
   branch: string;
   /**
@@ -281,7 +283,7 @@ export async function preMergeRebase(exec: Exec, input: PreMergeRebaseInput): Pr
   const { repo, remote, base, branch } = input;
   const maxRetries = input.maxPushRetries ?? 2;
   const maxAgentResolveAttempts = Math.max(0, input.maxAgentResolveAttempts ?? 2);
-  const baseRef = `${remote}/${base}`;
+  const baseRef = input.baseRef ?? `${remote}/${base}`;
 
   // Squash the branch's own micro-history down to one commit at its fork point
   // (issue #2481). Field pathology: a five-worker retry chain accumulated 65
@@ -427,6 +429,8 @@ export interface LandMergeInput {
   mergeTitle?: string;
   /** Integrated tip captured before the merge, for rollback on push reject. */
   preMergeSha: string;
+  /** Leave the completed merge in the isolated worktree for a pre-push gate. */
+  push?: boolean;
 }
 
 export interface LandMergeResult {
@@ -470,6 +474,7 @@ export async function landMerge(exec: Exec, input: LandMergeInput): Promise<Land
     mergeTitle,
   ]);
   if (merge.code !== 0) return { ok: false, rolledBack: false };
+  if (input.push === false) return { ok: true, rolledBack: false };
 
   const push = await exec(["git", "-C", repo, "push", remote, `HEAD:refs/heads/${target}`]);
   if (push.code !== 0) {

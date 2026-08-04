@@ -155,6 +155,11 @@ export interface LandingDeps {
    */
   postMergeGate?: (mergedTreeDir: string) => Promise<{ ok: boolean }>;
   /**
+   * Deterministic intent barrier (#3279), run on the integrated tree before any
+   * PR is opened or attempt commit is merged. A refusal is never auto-repaired.
+   */
+  intentGate?: (integratedTreeDir: string) => Promise<{ ok: boolean }>;
+  /**
    * When true, a landing that cannot use fresh PR CI must have `postMergeGate`.
    * This lets validation-aware callers fail as infra instead of silently landing
    * without either CI provenance or a local fallback.
@@ -216,6 +221,8 @@ export interface LandingInput {
   validatedBranchTip?: string;
   /** Resolved base branch (lock > pin > main). */
   base: string;
+  /** Immutable base commit shared by the Landing integration and intent geometry. */
+  intentBaseRef?: string;
   /**
    * The configured Trunk (`plugins.dev.trunk`, default `main`; ADR 0083). Kept
    * for caller compatibility and observability; trunk freshness is resolved
@@ -353,6 +360,9 @@ export type LandingResult =
         // routes this through the existing merge-conflict/validation recovery so
         // an unvalidated or stale-main-broken result is never merged.
         | "post-merge-gate"
+        // Geometric after-fork reversion/test-count intent finding (#3279).
+        // The integrated tree is discarded before a PR or base write occurs.
+        | "intent-finding"
         // Land-lock serialization (#2596): another worker held the land-lock past
         // the wait timeout. This is a BACKOFF signal, not an infra failure — the
         // caller routes it to self-requeue rather than parking the issue.
@@ -559,6 +569,9 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
   const waitForReview = decorateReviewWait(deps, input);
   const ciAwait = decorateCiAwait(deps, input);
   try {
+    if (deps.intentGate && !(await deps.intentGate(prepared.dir)).ok) {
+      return { ok: false, reason: "intent-finding", locked: input.locked };
+    }
     await deps.landingPhase?.("push-pr", { step: "pr", status: "start" });
     const r = await landPr(deps.mergeExec, {
       repo: input.repo,
@@ -813,6 +826,7 @@ async function preparePrRebaseWorktree(
       repo: dir,
       remote: input.remote,
       base: input.base,
+      ...(input.intentBaseRef ? { baseRef: input.intentBaseRef } : {}),
       branch: input.branch,
       resolveMechanical: deps.resolveMechanicalConflict,
       resolveAgent: deps.resolveAgentConflict,
@@ -876,38 +890,17 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
   let postMergeValidation: LandingPostMergeValidation | undefined;
   try {
     // Integrate origin/<base> into the detached worktree HEAD (not the primary).
-    const integrated = await integrateOrigin(deps.mergeExec, {
-      repo: landDir,
-      remote: input.remote,
-      branch: input.base,
-      stillBehind: true,
-      inSync: false,
-    });
+    const integrated = input.intentBaseRef
+      ? await deps.mergeExec(["git", "-C", landDir, "reset", "--hard", input.intentBaseRef])
+          .then((result) => ({ ok: result.code === 0, action: "fast-forward" as const }))
+      : await integrateOrigin(deps.mergeExec, {
+          repo: landDir,
+          remote: input.remote,
+          branch: input.base,
+          stillBehind: true,
+          inSync: false,
+        });
     if (!integrated.ok) return { ok: false, reason: "integrate-failed", locked: input.locked };
-
-    // Post-merge-integration gate (#1335): re-run the feedback gate on the
-    // already-integrated worktree (worker branch merged with current
-    // origin/<base>) before pushing anything to the remote. A failure aborts
-    // here so a stale-main-broken result is never merged.
-    if (!deps.postMergeGate && deps.requirePostMergeValidation) {
-      return {
-        ok: false,
-        reason: "infra",
-        locked: input.locked,
-        infraReason: "Post-merge validation fallback is not configured for a direct landing that bypassed PR CI.",
-      };
-    }
-    if (!deps.postMergeGate) {
-      postMergeValidation = undefined;
-    } else {
-      await deps.landingPhase?.("gate", { step: "re-validation", status: "start" });
-      const gateResult = await deps.postMergeGate(landDir);
-      if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
-      postMergeValidation = {
-        path: "local-rerun",
-        reason: "Direct landing bypassed PR CI; local post-merge validation fallback ran.",
-      };
-    }
 
     const branchTip = input.validatedBranchTip ?? (await resolveRemoteBranchTip(deps.mergeExec, {
       repo: landDir,
@@ -921,9 +914,10 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
     // the issue as done without delivering any work. The PR path rejects this
     // naturally — `gh pr create` fails on an empty branch — so mirror that guard
     // here: route a zero-commit direct landing to land-failed.
+    const baseComparisonRef = input.intentBaseRef ?? `origin/${input.base}`;
     const countRes = await deps.mergeExec([
       "git", "-C", landDir,
-      "rev-list", "--count", `origin/${input.base}..${branchTip}`,
+      "rev-list", "--count", `${baseComparisonRef}..${branchTip}`,
     ]);
     const commitCount = parseInt(countRes.stdout.trim(), 10);
     if (countRes.code !== 0 || !Number.isInteger(commitCount) || commitCount === 0) {
@@ -932,15 +926,42 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
 
     // Capture the integrated tip from the worktree as the rollback anchor.
     const preMergeSha = (await deps.mergeExec(["git", "-C", landDir, "rev-parse", "--short", "HEAD"])).stdout.trim();
+    const validateIntegratedTree = async (): Promise<LandingResult | undefined> => {
+      if (deps.intentGate && !(await deps.intentGate(landDir)).ok) {
+        return { ok: false, reason: "intent-finding", locked: input.locked };
+      }
+      if (!deps.postMergeGate && deps.requirePostMergeValidation) {
+        return {
+          ok: false,
+          reason: "infra",
+          locked: input.locked,
+          infraReason: "Post-merge validation fallback is not configured for a direct landing that bypassed PR CI.",
+        };
+      }
+      if (!deps.postMergeGate) return undefined;
+      await deps.landingPhase?.("gate", { step: "re-validation", status: "start" });
+      const gateResult = await deps.postMergeGate(landDir);
+      if (!gateResult.ok) return { ok: false, reason: "post-merge-gate", locked: input.locked };
+      postMergeValidation = {
+        path: "local-rerun",
+        reason: "Direct landing bypassed PR CI; local post-merge validation fallback ran.",
+      };
+      return undefined;
+    };
 
     const fastForwardable = await deps.mergeExec([
       "git", "-C", landDir,
-      "merge-base", "--is-ancestor", `origin/${input.base}`, branchTip,
+      "merge-base", "--is-ancestor", baseComparisonRef, branchTip,
     ]);
     if (fastForwardable.code === 0) {
       await deps.landingPhase?.("merge", { step: "fast-forward", status: "start" });
       const ff = await deps.mergeExec(["git", "-C", landDir, "merge", "--ff-only", branchTip]);
       if (ff.code !== 0) return { ok: false, reason: "land-failed", locked: input.locked };
+      const validationFailure = await validateIntegratedTree();
+      if (validationFailure) {
+        await deps.mergeExec(["git", "-C", landDir, "reset", "--hard", preMergeSha]);
+        return validationFailure;
+      }
       const push = await deps.mergeExec([
         "git",
         "-C",
@@ -973,6 +994,7 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
       title: input.title,
       mergeTitle: landingMergeTitle(input),
       preMergeSha,
+      push: false,
     });
     let landed = merged.ok;
 
@@ -990,24 +1012,29 @@ async function landDirectInWorktree(deps: LandingDeps, input: LandingInput): Pro
         target: input.base,
       });
       if (resolved.resolved) {
-        const push = await deps.mergeExec([
-          "git",
-          "-C",
-          landDir,
-          "push",
-          input.remote,
-          `HEAD:refs/heads/${input.base}`,
-        ]);
-        if (push.code === 0) {
-          landed = true;
-        } else {
-          await deps.mergeExec(["git", "-C", landDir, "reset", "--hard", preMergeSha]);
-        }
+        landed = true;
       } else {
         await deps.mergeExec(["git", "-C", landDir, "merge", "--abort"]);
       }
     }
     if (!landed) return { ok: false, reason: "land-failed", locked: input.locked };
+    const validationFailure = await validateIntegratedTree();
+    if (validationFailure) {
+      await deps.mergeExec(["git", "-C", landDir, "reset", "--hard", preMergeSha]);
+      return validationFailure;
+    }
+    const push = await deps.mergeExec([
+      "git",
+      "-C",
+      landDir,
+      "push",
+      input.remote,
+      `HEAD:refs/heads/${input.base}`,
+    ]);
+    if (push.code !== 0) {
+      await deps.mergeExec(["git", "-C", landDir, "reset", "--hard", preMergeSha]);
+      return { ok: false, reason: "land-failed", locked: input.locked };
+    }
 
     // The merge commit lives on the worktree's HEAD (and now origin/<base>); the
     // primary HEAD did not advance, so carry the landed sha back for the close.

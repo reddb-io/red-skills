@@ -14,7 +14,113 @@ import {
 } from "./process-issue.test-helpers.js";
 import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./process-issue.test-helpers.js";
 import { failureSignature } from "../src/core/failure-signature.js";
+import type { BranchReversionGeometry } from "../src/core/branch-reversion.js";
+
+function addedFilePatch(file: string, lines: number): string {
+  const body = Array.from({ length: lines }, (_, index) => `+line ${index + 1}`).join("\n");
+  return `diff --git a/${file} b/${file}\n--- /dev/null\n+++ b/${file}\n@@ -0,0 +1,${lines} @@\n${body}\n`;
+}
+
+function deletedFilePatch(file: string, lines: number): string {
+  const body = Array.from({ length: lines }, (_, index) => `-line ${index + 1}`).join("\n");
+  return `diff --git a/${file} b/${file}\n--- a/${file}\n+++ /dev/null\n@@ -1,${lines} +0,0 @@\n${body}\n`;
+}
+
+function reversionGeometry(): BranchReversionGeometry {
+  const source = "apps/redskilled/src/demand-loop.ts";
+  const test = "apps/redskilled/tests/birth-latch.test.ts";
+  return {
+    forkPoint: "fork-sha",
+    baseRef: "origin/main",
+    afterForkBasePatch: addedFilePatch(source, 1) + addedFilePatch(test, 173),
+    diff: deletedFilePatch(source, 1) + deletedFilePatch(test, 173),
+  };
+}
 describe("processIssue — feedback fail", () => {
+  it("fails closed when production omits the feedback reversion barrier", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    deps.requireBranchReversionSafety = true;
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("infra");
+    expect(trace.pnpmArgs).toEqual([]);
+    expect(trace.closed).toEqual([]);
+  });
+
+  it("fails closed when production omits the Landing reversion barrier", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    deps.requireBranchReversionSafety = true;
+    deps.baseMergeReversionGeometry = () => undefined;
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("infra");
+    expect(trace.pnpmArgs.length).toBeGreaterThan(0);
+    expect(trace.mergeCalls.some((argv) => argv.includes("create"))).toBe(false);
+    expect(trace.closed).toEqual([]);
+  });
+
+  it("parks an after-fork reversion created by the feedback worktree base correction", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    const calls: string[] = [];
+    deps.baseMergeReversionGeometry = () => {
+      calls.push("base-merge");
+      return reversionGeometry();
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(calls).toEqual(["base-merge"]);
+    expect(trace.pnpmArgs.length).toBeGreaterThan(0);
+    expect(trace.closed).toEqual([]);
+    const record = trace.sidecarWrites.at(-1)?.lines.at(-1) ?? "";
+    expect(record).toContain('"schema":"red.afk.branch-reversion.v1"');
+    expect(record).toContain('"test_line_delta":-173');
+    expect(record).toContain("apps/redskilled/src/demand-loop.ts");
+    expect(record).toContain("git checkout origin/main --");
+  });
+
+  it("checks again at the landing/PR-open net after a green machine gate", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    const geometry = reversionGeometry();
+    let baselineCalls = 0;
+    let diffCalls = 0;
+    deps.baseMergeReversionGeometry = () => undefined;
+    deps.lookups.branchReversionBaseline = async () => {
+      baselineCalls += 1;
+      const { diff: _diff, ...baseline } = geometry;
+      return baseline;
+    };
+    deps.lookups.branchReversionDiffAt = async () => {
+      diffCalls += 1;
+      return geometry.diff;
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(baselineCalls).toBe(1);
+    expect(diffCalls).toBe(1);
+    expect(trace.pnpmArgs.length).toBeGreaterThan(0);
+    expect(trace.mergeCalls.some((argv) => argv.includes("create"))).toBe(false);
+    expect(trace.closed).toEqual([]);
+  });
+
+  it("records the cited declaration when an intentional deletion passes", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
+    const citation =
+      "Consolidation, contract phase: remove demand-loop.ts and birth-latch.test.ts as deprecation aliases.";
+    input.body = citation;
+    deps.baseMergeReversionGeometry = () => reversionGeometry();
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.sidecarWrites.flatMap((write) => write.lines).some((line) => line.includes(citation))).toBe(true);
+  });
+
   it("rejects a DONE attempt whose worker branch has no diff against base", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",

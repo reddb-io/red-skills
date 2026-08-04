@@ -314,6 +314,8 @@ export function buildProcessDeps({
     // Feedback runs against a checkout of the worker branch — the feedback
     // worktree manager materialises it and rebases pnpm/layout onto it.
     pnpm: feedback.pnpm,
+    baseMergeReversionGeometry: feedback.baseMergeReversionGeometry,
+    requireBranchReversionSafety: true,
     validationResourceBudget: readValidationResourceBudget(config),
     validationMoments: readValidationMoments(config),
     // The gate's proof that a declared validation worktree is really there
