@@ -1,5 +1,10 @@
 import { z } from "zod/v3";
 import type { CastleMcpTool } from "./tool.js";
+import {
+  composeRepair,
+  noRepair,
+  type RepairAction,
+} from "@reddb-io/shared/repair.js";
 
 export interface WorkerDispatchInput {
   issue?: number;
@@ -22,6 +27,22 @@ export interface WorkerStopInput {
 export interface WorkerInputRefusal {
   refused: true;
   reason: string;
+  repair: RepairAction | "none";
+  repair_reason?: string;
+}
+
+export function workerInputRefusal(error: unknown): WorkerInputRefusal {
+  const composed = composeRepair({
+    state: error instanceof Error ? error.message : String(error),
+    repair: noRepair("the caller must choose one dispatch intent before retrying"),
+  });
+  if (composed.repair !== "none") throw new Error("invalid worker refusal repair");
+  return {
+    refused: true,
+    reason: composed.prose,
+    repair: composed.repair,
+    repair_reason: composed.repair_reason,
+  };
 }
 
 export interface WorkerDependencies {
@@ -67,10 +88,7 @@ export function createWorkerTools(deps: WorkerDependencies): CastleMcpTool[] {
         try {
           parsed = dispatchInput(input);
         } catch (err) {
-          return Promise.resolve<WorkerInputRefusal>({
-            refused: true,
-            reason: err instanceof Error ? err.message : String(err),
-          });
+          return Promise.resolve(workerInputRefusal(err));
         }
         return deps.workerDispatch(parsed);
       },
