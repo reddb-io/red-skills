@@ -69,6 +69,10 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   tool protocol is `plugins/dev/skills/engineering/afk/MCP.md`. Repo owners tune worker-slot
   throughput through `/afk` config: `afk.landing.wait` chooses release after
   merge, green CI, or PR-open; route that choice to the AFK config reference.
+  A merge-queue ejection, or a clean fleet PR found outside the queue, belongs
+  to AFK's automatic `current.kind=repair` Worker lane; route to `/hitl` only
+  after that lane attaches a genuinely semantic queue failure to the owning
+  Ticket. A mechanical ejection is not a `/retake` or human-requeue task.
   Human-attached `/go` and scout dispatches skip a saturated AFK line through
   the host's bounded interactive reservation; route its default, host override,
   and slot-surface accounting to `/go`.
