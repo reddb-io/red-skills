@@ -50,16 +50,12 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   rsp usage gains, skill quality, or repository context. For operational
   troubleshooting, route to the owning reference: `/afk`, `/go`, `/hitl`, or
   rsp.
-- **"What is this host running right now?"** -> the `redskilled` daemon's own
-  `dashboard` command, not a plugin surface. It is the host view — every Worker
-  on the machine, whichever project owns it — at terminal density, so it answers
-  where no plugin is installed. `/dashboard` stays the route for this
-  repository's queue health; `/red-statusline` owns the one-line form and
-  documents both in its host notes.
-- **"What is this machine's Worker ceiling?"** -> the daemon's `host-state` command for
-  the resolved value and its origin. To declare or change it, route through
-  `/red-setup` Section E3 and the daemon-owned `~/.red/config.yaml`; a repository
-  `.red/config.yaml` cannot set machine policy.
+- **Host daemon status, provisioning, policy, or lifecycle** -> `/redskilled`.
+  It reads the daemon's socket, version, registrations, Workers, ceilings, and
+  setting origins; provisions the daemon-owned home; edits host policy; and
+  restarts through the survival-reporting stop path. `/dashboard` stays the
+  route for this repository's queue health, while `/red-statusline` owns the
+  one-line host adapter.
 - **A superseded-engine warning** -> run the exact
   `npx -y -p @reddb-io/red-skills@<version> red-skills-dev reconcile-engine`
   command printed by the warning, then retry the dispatch. The
@@ -115,7 +111,7 @@ The router must mention every published dev skill so `/red-doctor` can flag drif
 `/ground-truth`, `/red-doctor`, `/adr-editor`, `/start`, `/triage`, `/hitl`,
 `/report-bug`, `/retake`, `/improve-codebase-architecture`,
 `/red-setup`, `/red-gains`, `/red-statusline`, `/implement`, `/tdd`, `/to-tickets`,
-`/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
+`/redskilled`, `/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
 `/resolving-merge-conflicts`, `/branch-lock`, `/git-guardrails-claude-code`,
 `/migrate-to-shoehorn`, `/setup-pre-commit`, `/research`, `/ff`, `/reflect`,
 `/handoff`, `/write-a-skill`.
@@ -169,15 +165,15 @@ through `/memory:view`, `memory docs reference-graph`, and
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes. `/red-setup` owns `.red/config.yaml` authoring through its
   shipped config template and post-write loader check.
-- Execution-daemon provisioning is a setup route, not a feature-work one:
+- Execution-daemon operation is a host route, not a feature-work one:
   diagnose through the castle MCP's read-only `host_provision_check` and other
   `host_*` tools first; no castle tool provisions or reclaims the host.
-  `/red-setup` (Section E3) provisions `redskilled` by running `redskilled
-  provision`, and `/red-doctor` (check 24) reports whether the host is
-  provisioned. The daemon's home `~/.red/redskilled/` belongs to `redskilled`
-  itself (ADR 0130 Amendment 2), as does the host policy file
-  `~/.red/config.yaml`; `/red-setup` calls the daemon's provisioner rather than
-  writing either one, because its own `.red/` authority is repository-scoped.
+  `/redskilled` owns provisioning, host policy, status, and lifecycle;
+  `/red-doctor` (check 24) reports whether the host is provisioned. The daemon's
+  home `~/.red/redskilled/` and host policy file `~/.red/config.yaml` belong to
+  the daemon (ADR 0130 Amendment 2). `/red-setup` only calls that provisioner
+  while setting up a repository because its own `.red/` authority is
+  repository-scoped.
 - TOON/TOONL operational reader changes are documentation-maintenance work:
   `/red-setup` owns the pinned `tq` host binary, `/red-doctor` verifies it, and
   `/afk` plus `/daily-review` own the lane-reading examples.
