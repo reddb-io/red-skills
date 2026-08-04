@@ -52,7 +52,11 @@ import type {
 } from "@reddb-io/red-castle/mcp-server";
 import { listWaits as listRspWaits } from "../../rsp/src/wait/registry.js";
 import { readBuildInfo } from "@reddb-io/build-info";
-import { publishedVersionReport, readPublishedBundleVersion } from "./core/published-version.js";
+import {
+  newestInstalledPluginVersion,
+  publishedVersionReport,
+  readPublishedBundleVersion,
+} from "./core/published-version.js";
 import { collectDashboardReport } from "./commands/dashboard.js";
 import type { HitlCandidate } from "./core/hitl-selection.js";
 import type { IssueCandidate } from "./core/session.js";
@@ -71,6 +75,7 @@ import {
 } from "./runtime/redskilled-birth.js";
 import { registrationLogPathTemplate } from "./runtime/redskilled-worker-log.js";
 import { registrationLaunch } from "./runtime/registration-launch.js";
+import { registrationDeliveryLanes } from "./runtime/registration-delivery.js";
 import { attributeProjectWorkers } from "./core/project-attribution.js";
 import { migrateToTwoPlayer } from "./runtime/two-player-migration.js";
 import {
@@ -898,7 +903,13 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
   const unattributedWorkers = attribution.unattributed;
   // The published version comes from the one owner the boot probe also consults
   // (#2809), so a reader replays that answer instead of deriving its own.
-  const version = publishedVersionReport("", readPublishedBundleVersion());
+  const published = readPublishedBundleVersion();
+  const version = publishedVersionReport("", published);
+  const delivery = registrationDeliveryLanes({
+    registrationArgv: held?.argv,
+    publishedVersion: published.version,
+    pluginCacheVersion: newestInstalledPluginVersion(),
+  });
   const target = held?.target ?? 0;
   // The host's count, not the matched list's: a Worker born a moment ago holds
   // its slot before it has written any project-side state, and a `busy` that
@@ -924,6 +935,8 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
               ? "the redskilled daemon did not answer, so registration state is unknown"
               : "the host holds no registration for this project and recorded no lapse"),
       launch_revision: held?.launch_revision ?? 0,
+      bundle_version: delivery.bundle_version,
+      plugin_cache_version: delivery.plugin_cache_version,
       ...(held?.last_poll ? { last_poll: held.last_poll } : {}),
       ...(version.published_version ? { published_version: version.published_version } : {}),
     },
