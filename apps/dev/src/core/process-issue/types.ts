@@ -91,7 +91,7 @@ import {
   type ActorTrustSignals,
 } from "../trust-gate.js";
 import { getConfig } from "../config.js";
-import type { AfkModelTier, ConfigValues } from "../config.js";
+import type { AfkModelTier, ConfigValues, ValidationMoments } from "../config.js";
 import { runNotesLoop, notesPath, type NotesLoopConfig } from "../notes-loop.js";
 import {
   buildIssueClassificationMetadata,
@@ -288,6 +288,8 @@ export interface ProcessIssueDeps {
   remoteGit: GitExec;
   pnpm: PnpmExec;
   validationResourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
+  /** Resolved declaration schedule; lifecycle consumption lands in the dependent slice. */
+  validationMoments?: ValidationMoments;
   /**
    * Directory probe the gate uses to PROVE a declared validation worktree
    * exists (#3041). Wired to the real filesystem in production; absent in a
