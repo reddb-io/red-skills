@@ -28,21 +28,47 @@ describe("castle repair composer", () => {
   it("carries the complete external-approval cure and never invents triage:summon", () => {
     const composed = composeRepair({
       state: "untrusted author",
-      repair: externalApprovalRepair(),
+      repair: externalApprovalRepair(2062),
     });
 
     expect(composed.repair).toEqual({
-      tool: "github_issue",
+      tool: "gh",
       args: {
-        add_label: "origin:external",
-        comment: "/approve-external",
-        comment_author: "maintainer",
+        commands: [
+          ["issue", "edit", "2062", "--add-label", "origin:external"],
+          ["issue", "comment", "2062", "--body", "/approve-external"],
+        ],
+        required_actor: "maintainer",
       },
       why: "mark the issue as external and record explicit approval from a maintainer with write access",
     });
     expect(composed.prose).toContain("origin:external");
     expect(composed.prose).toContain("/approve-external");
     expect(composed.prose).not.toContain("triage:summon");
+  });
+
+  it("normalizes and freezes args before rendering or returning them", () => {
+    const args = { issue: 2062, labels: ["origin:external"] };
+    const composed = composeRepair({
+      state: "held",
+      repair: { tool: "gh", args, why: "approve external work" },
+    });
+
+    args.issue = 9999;
+    args.labels.push("triage:summon");
+
+    expect(composed).toEqual({
+      prose:
+        "held; repair: call `gh` with `{" +
+        "\"issue\":2062,\"labels\":[\"origin:external\"]}` because approve external work",
+      repair: {
+        tool: "gh",
+        args: { issue: 2062, labels: ["origin:external"] },
+        why: "approve external work",
+      },
+    });
+    expect(Object.isFrozen(composed.repair)).toBe(true);
+    expect(composed.repair === "none" || Object.isFrozen(composed.repair.args)).toBe(true);
   });
 
   it("argues an explicit none when no callable cure is safe", () => {
