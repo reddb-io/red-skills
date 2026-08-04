@@ -148,12 +148,15 @@ export interface ExternalOriginState {
  * Runs INDEPENDENTLY of the trust posture — an unapproved external issue is held
  * even on a permissive private repo, even if somehow already `ready-for-agent`.
  */
-export function evaluateExternalOriginGate(state: ExternalOriginState | undefined): TrustVerdict {
+export function evaluateExternalOriginGate(
+  state: ExternalOriginState | undefined,
+  issue?: number,
+): TrustVerdict {
   if (!state?.external || state.approved) return { executable: true };
   return {
     ...trustRefusal(
       "origin:external issue lacks explicit maintainer approval",
-      externalApprovalRepair(),
+      externalApprovalRepair(issue),
     ),
     holdForApproval: true,
   };
@@ -324,8 +327,9 @@ export async function evaluateClaimTrust(
   provenance: TrustProvenance,
   lookup: ActorTrustLookup,
   external?: ExternalOriginState,
+  issue?: number,
 ): Promise<TrustVerdict> {
-  const externalVerdict = evaluateExternalOriginGate(external);
+  const externalVerdict = evaluateExternalOriginGate(external, issue);
   if (!externalVerdict.executable) return externalVerdict;
 
   if (policy.enabled) return evaluateTrustGate(policy, provenance);
@@ -337,7 +341,7 @@ export async function evaluateClaimTrust(
     if (!author.executable) {
       return trustRefusal(
         `untrusted author ${provenance.author ? `'${provenance.author}'` : "(unknown)"} did not resolve as a repository maintainer`,
-        externalApprovalRepair(),
+        externalApprovalRepair(issue),
       );
     }
   }
@@ -345,7 +349,7 @@ export async function evaluateClaimTrust(
   if (!actor.executable) {
     return trustRefusal(
       `untrusted ready-for-agent promoter ${provenance.readyForAgentActor ? `'${provenance.readyForAgentActor}'` : "(unknown)"} did not resolve as a repository maintainer`,
-      externalApprovalRepair(),
+      externalApprovalRepair(issue),
     );
   }
   return { executable: true };
