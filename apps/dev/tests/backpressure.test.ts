@@ -187,6 +187,36 @@ describe("runBackpressure", () => {
     // The earlier command still passed — only the hung one blocks.
     expect(result.checks.find((c) => c.name === "backpressure:npm run test")?.status).toBe("passed");
   });
+
+  it("distinguishes a CPU stall reap from the ordinary wall-time deadline (#3280)", async () => {
+    const { exec } = fakeExec([
+      {
+        match: (command) => command === "pnpm test",
+        result: {
+          code: KILLED_EXIT_CODE,
+          stderr: "validation child stalled: 0ms CPU over 30000ms",
+          infraEvidence: {
+            kind: "stall",
+            wallTimeMs: 1_230_000,
+            sampleWindowMs: 30_000,
+            cpuDeltaMs: 0,
+          },
+        },
+      },
+    ]);
+
+    const result = await runBackpressure(exec, {
+      worktree: "/wt",
+      commands: ["pnpm test"],
+      now: fakeClock(1_230_000),
+    });
+
+    expect(result.checks[0]?.record).toMatchObject({
+      status: "failed",
+      infra: "stall",
+      summary: "validation child stalled: 0ms CPU over 30000ms",
+    });
+  });
 });
 
 describe("renderBackpressureReviewBody (#1279)", () => {
