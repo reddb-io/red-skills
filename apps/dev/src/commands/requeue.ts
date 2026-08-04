@@ -45,7 +45,7 @@ import { pathExists, removeDir } from "../runtime/fs.js";
 import { afkPaths, editLabelsWithStatuslineCache, resolveRepoSlug, statuslineCountCachePath } from "../runtime/wire.js";
 import { branchLockPath, isLocked, readLockedBranch } from "../runtime/lock.js";
 import { resolveBase } from "../core/base-resolver.js";
-import { getConfig, loadConfig, readHitlTypeLabels, readValidationResourceBudget } from "../core/config.js";
+import { getConfig, loadConfig, readHitlTypeLabels, readSetupCommands, readValidationResourceBudget } from "../core/config.js";
 import * as ghx from "../runtime/gh.js";
 import * as gitx from "../runtime/git.js";
 import type { GhContext } from "../runtime/gh.js";
@@ -376,6 +376,7 @@ async function runAdoptLanding(
   const config = loadConfig(paths.configPath, { warn: () => undefined });
   const feedback = makeFeedbackWorktree(cwd, feedbackDir, undefined, {
     resourceBudget: readValidationResourceBudget(config),
+    setupCommands: readSetupCommands(config),
   });
 
   // Bound to the live worker-presence row's stage inside withAdoptPresence
