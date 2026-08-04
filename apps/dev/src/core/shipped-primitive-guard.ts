@@ -78,6 +78,17 @@ export const SHIPPED_PRIMITIVES: readonly ShippedPrimitive[] = [
     consequence:
       "no daemon-side surface can show what an AFK Worker is logging: the herdr plugin and the VS Code extension report a Worker that declared no log path, and `redskilled statusline --verbose` has no second line to print",
   },
+  {
+    id: "github-spend-report",
+    what: "the durable report naming which operation and Worker spent each GitHub budget pool",
+    definedIn: "packages/github/attribution.ts",
+    // The awaited dispatch is the shipped surface, not merely a constructed
+    // ledger. The first implementation created and exported the ledger while no
+    // production caller read it, leaving the incident question unanswered.
+    enabler: /\bawait runGithubSpend\s*\(/,
+    consequence:
+      "the host can append GitHub spend observations but no operator surface can answer what spent the GraphQL budget in a window, so attribution survives only as unread local bytes",
+  },
 ];
 
 /** One file that references a primitive's enabler, and whether it is a test. */
