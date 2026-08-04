@@ -70,6 +70,7 @@ import {
 import * as gitx from "./git.js";
 import { createPathLock, createPathSemaphore } from "./land-lock.js";
 import type { LandLockWaitInfo } from "../core/land-lock.js";
+import type { BranchReversionGeometry } from "../core/branch-reversion.js";
 
 /**
  * Is `token` an ALREADY-MATERIALISED checkout rather than a branch name (#2339)?
@@ -184,6 +185,12 @@ export interface FeedbackWorktreeIO {
    * throws — the gate still has to run.
    */
   rebase(ctx: gitx.GitContext, dest: string, base: string): Promise<{ ok: true } | { ok: false; stderr: string }>;
+  reversionBaseline?(
+    ctx: gitx.GitContext,
+    dest: string,
+    base: string,
+  ): Promise<Omit<BranchReversionGeometry, "diff">>;
+  reversionDiff?(ctx: gitx.GitContext, dest: string, base: string): Promise<string>;
   /** Run `pnpm <args>` with the given cwd. */
   pnpm(args: readonly string[], opts: ExecOptions): Promise<ExecOutput>;
   /** Run an arbitrary tool (used by the backpressure `sh -c` executor). */
@@ -410,6 +417,9 @@ const defaultIO: FeedbackWorktreeIO = {
     await execTool("git", ["-C", dest, "rebase", "--abort"], { cwd: dest });
     return { ok: false, stderr: r.stderr.trim() };
   },
+  reversionBaseline: async (_ctx, dest, base) =>
+    gitx.branchReversionBaseline({ cwd: dest }, "HEAD", base),
+  reversionDiff: async (_ctx, dest, base) => gitx.branchReversionDiffAt(dest, base),
   pnpm: runPnpm,
   exec: execTool,
   lock: async (dest, onWait) => {
@@ -461,6 +471,8 @@ export interface FeedbackWorktree {
    * branch token (materialised the same way as the pnpm/backpressure executors).
    */
   postWorkerFormat: PostWorkerFormatExec;
+  /** Geometry captured around feedback's completed stale-base correction. */
+  baseMergeReversionGeometry(branch: string): BranchReversionGeometry | undefined;
   /** Remove every worktree this manager created in THIS session (best-effort). */
   cleanup(): Promise<void>;
 }
@@ -573,6 +585,7 @@ export function makeFeedbackWorktree(
   // into every validation record produced from this checkout; success must not
   // erase what setup actually ran.
   const setupRecord = new Map<string, string>();
+  const reversionGeometry = new Map<string, BranchReversionGeometry>();
 
   async function runGateChild(
     subject: string,
@@ -863,12 +876,18 @@ export function makeFeedbackWorktree(
     // after a FRESH materialise (not a cache hit), so the cached worktree's
     // HEAD stays aligned with the branch ref for the next session's cache check.
     if (rebaseOnto) {
+      const baseline = io.reversionBaseline
+        ? await io.reversionBaseline(gitCtx, dest, rebaseOnto)
+        : undefined;
       const rb = await io.rebase(gitCtx, dest, rebaseOnto);
       if (!rb.ok) {
         process.stderr.write(
           `warn: feedback worktree rebase of ${branch} onto ${rebaseOnto} failed ` +
-            `(${rb.stderr || "no detail"}); running the gate on the un-rebased branch\n`,
+          `(${rb.stderr || "no detail"}); running the gate on the un-rebased branch\n`,
         );
+      } else if (baseline && io.reversionDiff) {
+        const diff = await io.reversionDiff(gitCtx, dest, baseline.baseRef);
+        reversionGeometry.set(branch, { ...baseline, diff });
       }
     }
     created.add(dest);
@@ -1033,6 +1052,7 @@ export function makeFeedbackWorktree(
     layout,
     backpressure,
     postWorkerFormat,
+    baseMergeReversionGeometry: (branch) => reversionGeometry.get(branch),
     async cleanup() {
       for (const dest of created) {
         await io.worktreeRemove(gitCtx, dest);
@@ -1042,6 +1062,7 @@ export function makeFeedbackWorktree(
       setupFailures.clear();
       setupFailureReason.clear();
       setupRecord.clear();
+      reversionGeometry.clear();
     },
   };
 }

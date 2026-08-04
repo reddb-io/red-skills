@@ -90,6 +90,40 @@ describe("doLanding — happy paths", () => {
   });
 });
 
+describe("doLanding — after-fork intent barrier (#3279)", () => {
+  it("checks the rebased PR worktree before opening or merging a pull request", async () => {
+    const h = harness({ locked: false, openPr: true, createPr: true });
+    const checked: string[] = [];
+    h.deps.intentGate = async (dir) => {
+      checked.push(dir);
+      return { ok: false };
+    };
+
+    const result = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(result).toEqual({ ok: false, reason: "intent-finding", locked: false });
+    expect(checked).toEqual([RWT]);
+    expect(joined(h.mergeCalls).some((call) => call.includes("pr create"))).toBe(false);
+    expect(joined(h.mergeCalls).some((call) => call.includes("pr merge"))).toBe(false);
+  });
+
+  it("checks the integrated direct worktree before merging the attempt", async () => {
+    const h = harness({ locked: true, openPr: false });
+    const checked: string[] = [];
+    h.deps.intentGate = async (dir) => {
+      checked.push(dir);
+      return { ok: false };
+    };
+
+    const result = await doLanding(h.deps, h.input, h.hooks);
+
+    expect(result).toEqual({ ok: false, reason: "intent-finding", locked: true });
+    expect(checked).toEqual([WT]);
+    expect(joined(h.mergeCalls).some((call) => call.includes("merge --no-ff"))).toBe(true);
+    expect(joined(h.mergeCalls).some((call) => call.includes("push origin HEAD:refs/heads/main"))).toBe(false);
+  });
+});
+
 describe("doLanding — conventional landing titles (#1267)", () => {
   it.each([
     { labels: ["type:bug"], title: "fix: #9 Fix the thing" },
@@ -836,7 +870,7 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     expect(h.postMergeGateDirs).toEqual([WT]);
     // The merge still happened (gate passed, not a no-merge).
     expect(joined(h.mergeCalls).some((c) => c.includes("merge"))).toBe(true);
-    expect(h.landingPhases).toEqual(["gate", "gate", "merge", "cascade"]);
+    expect(h.landingPhases).toEqual(["gate", "merge", "gate", "cascade"]);
   });
 
   it("PR path: usable CI evidence → records satisfied-by-CI and skips the local gate", async () => {
@@ -885,8 +919,9 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     // Nothing was pushed to the remote base (origin/<base>).
     const j = joined(h.mergeCalls);
     expect(j.some((c) => c.includes(`push origin HEAD:refs/heads/`))).toBe(false);
-    // No --no-ff landing merge was created (integrateOrigin's ff-only is allowed).
-    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(false);
+    // The attempt is merged only in the disposable checkout so the gate can
+    // inspect the real integrated tree; the failed gate prevents its push.
+    expect(j.some((c) => c.includes("merge --no-ff"))).toBe(true);
   });
 
   it("PR path: gate wired + fails → returns post-merge-gate, no admin-merge attempted", async () => {

@@ -676,6 +676,34 @@ describe("makeFeedbackWorktree — rebaseOnto (Pattern 2 drift mitigation)", () 
     expect(rebaseCall.base).toBe("main");
   });
 
+  it("captures the original fork before rebase and the integrated diff after it", async () => {
+    const { io } = fakeIO(0, true, 0, { enabled: false });
+    io.reversionBaseline = async () => ({
+      forkPoint: "fork-sha",
+      afterForkBasePatch: "after-fork patch",
+      baseRef: "pinned-base-sha",
+    });
+    const diffBaseRefs: string[] = [];
+    io.reversionDiff = async (_ctx, _dest, baseRef) => {
+      diffBaseRefs.push(baseRef);
+      return "integrated diff";
+    };
+    const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+      rebaseOnto: "main",
+    });
+
+    await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
+
+    expect(fb.baseMergeReversionGeometry(BRANCH)).toEqual({
+      forkPoint: "fork-sha",
+      afterForkBasePatch: "after-fork patch",
+      baseRef: "pinned-base-sha",
+      diff: "integrated diff",
+    });
+    expect(diffBaseRefs).toEqual(["pinned-base-sha"]);
+  });
+
   it("does NOT rebase when `rebaseOnto` is unset (default OFF — no behaviour change)", async () => {
     const { io, calls } = fakeIO(0, true, 0, { enabled: false });
     const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io, { cacheEnabled: false });

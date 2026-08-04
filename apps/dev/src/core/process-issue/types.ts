@@ -1,5 +1,6 @@
 import { resolveBase, type ResolveBaseDeps, type ResolveBaseInput } from "../base-resolver.js";
 import type { BranchRef } from "../branch-cleanup.js";
+import type { BranchReversionGeometry } from "../branch-reversion.js";
 import type { AttemptPullRequest } from "../branch-resume.js";
 import {
   buildRefFromSlug,
@@ -204,6 +205,14 @@ export interface ProcessLookups {
    * pass a Ticket it never saw.
    */
   worktreeDiff?(branch: string, base: string): Promise<string>;
+  /** Capture fork→fresh-base geometry before Landing integrates the branch. */
+  branchReversionBaseline?(
+    branch: string,
+    remote: string,
+    base: string,
+  ): Promise<Omit<BranchReversionGeometry, "diff">>;
+  /** Read fresh-base→HEAD geometry inside the integrated Landing worktree. */
+  branchReversionDiffAt?(repo: string, baseRef: string): Promise<string>;
   /**
    * What the base ref did while this attempt ran (issue #2711): its head sha
    * NOW plus the subjects of the commits it gained since `sinceSha`. The gate
@@ -287,6 +296,10 @@ export interface ProcessIssueDeps {
   mergeExec: MergeExec;
   remoteGit: GitExec;
   pnpm: PnpmExec;
+  /** Geometry captured around feedback's successful stale-base correction. */
+  baseMergeReversionGeometry?(branch: string): BranchReversionGeometry | undefined;
+  /** Production wiring fails closed when either geometric safety barrier is absent. */
+  requireBranchReversionSafety?: boolean;
   validationResourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
   /** Resolved declaration schedule; lifecycle consumption lands in the dependent slice. */
   validationMoments?: ValidationMoments;

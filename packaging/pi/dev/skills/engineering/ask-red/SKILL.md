@@ -130,6 +130,9 @@ repair) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` local validation authority (`plugins.dev.afk.feedback.commands`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+`/afk` after-fork reversion/test-line intent finding
+(`red.afk.branch-reversion.v1`, with its pasteable restoration repair) ->
+`plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md`;
 `/go` interactive admission (`REDSKILLED_INTERACTIVE_RESERVATION`) ->
 `plugins/dev/skills/engineering/go/SKILL.md`;
 the host view a terminal can read (the `redskilled` daemon's `dashboard`

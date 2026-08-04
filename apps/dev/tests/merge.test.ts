@@ -145,6 +145,25 @@ describe("integrateOrigin", () => {
 });
 
 describe("landMerge (locked path)", () => {
+  it("can leave the integrated tree unpushed for intent validation", async () => {
+    const { exec, calls } = fakeExec();
+
+    const result = await landMerge(exec, {
+      repo: "/repo",
+      remote: "origin",
+      branch: "afk/wAAAA/9-x",
+      target: "work-branch",
+      n: 9,
+      title: "do thing",
+      preMergeSha: "deadbeef",
+      push: false,
+    });
+
+    expect(result).toEqual({ ok: true, rolledBack: false });
+    expect(joined(calls).some((call) => call.includes("merge --no-ff"))).toBe(true);
+    expect(joined(calls).some((call) => call.includes("push"))).toBe(false);
+  });
+
   it("merges --no-ff into the locked branch then pushes it", async () => {
     const { exec, calls } = fakeExec();
     const result = await landMerge(exec, {

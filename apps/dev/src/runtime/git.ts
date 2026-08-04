@@ -9,6 +9,11 @@ import { execTool, type ExecOptions, type ExecFn, type ExecOutput } from "./exec
 import type { GitExec, GitExecResult } from "../core/remote-branch.js";
 import type { Exec as MergeExec, ExecResult as MergeExecResult } from "../core/merge.js";
 import type { BranchRef } from "../core/branch-cleanup.js";
+import {
+  detectBranchReversion,
+  type BranchReversionFinding,
+  type BranchReversionGeometry,
+} from "../core/branch-reversion.js";
 import type { RemoteUrlFact } from "../core/operational-probes.js";
 import { resolveGhQuotaBackoff, withGhQuotaBackoff, type GhQuotaBackoffOpts } from "./gh/quota.js";
 
@@ -272,11 +277,27 @@ export async function localRemoteDivergence(
   };
 }
 
-/** Best-effort `git fetch origin <branch>` (FIX E recovery: try once to pull a
- * sandcastle-pushed worker branch onto the host before declaring it absent). */
-export async function fetchBranch(ctx: GitContext, branch: string): Promise<void> {
+/** Best-effort `git fetch <remote> <branch>` (FIX E recovery defaults to origin). */
+export async function fetchBranch(
+  ctx: GitContext,
+  branch: string,
+  remote = "origin",
+): Promise<void> {
   if (!branch) return;
-  await runGit(ctx, ["fetch", "origin", branch]);
+  await runGit(ctx, ["fetch", remote, branch]);
+}
+
+/** Required fetch for safety barriers that must never inspect a stale remote ref. */
+export async function fetchBranchRequired(
+  ctx: GitContext,
+  branch: string,
+  remote = "origin",
+): Promise<void> {
+  if (!branch) throw new Error("required git fetch was given an empty branch");
+  const fetched = await runGit(ctx, ["fetch", remote, branch]);
+  if (fetched.code !== 0) {
+    throw new Error(`required git fetch failed for ${remote}/${branch}`);
+  }
 }
 
 export interface ResolveFreshBaseInput {
@@ -551,6 +572,67 @@ export async function changedFileContents(
 export async function worktreeDiff(ctx: GitContext, branch: string, base: string): Promise<string> {
   const r = await runGit(ctx, ["diff", `${base}...${branch}`]);
   return r.code === 0 ? r.stdout : "";
+}
+
+/**
+ * Read the two zero-context patches whose shared base-line coordinates prove an
+ * after-fork reversion (#3279), then hand all judgment to the pure detector.
+ * A failed read rejects: inability to run a safety check is not a clean result.
+ */
+export async function branchReversion(
+  ctx: GitContext,
+  branch: string,
+  base: string,
+  issueBody: string,
+  restoreRef: string,
+): Promise<BranchReversionFinding> {
+  const baseline = await branchReversionBaseline(ctx, branch, base);
+  const diff = await branchReversionDiff(ctx, branch, baseline.baseRef);
+  return detectBranchReversion(
+    diff,
+    baseline.forkPoint,
+    baseline.afterForkBasePatch,
+    issueBody,
+    restoreRef,
+  );
+}
+
+const REVERSION_DIFF_ARGS = ["diff", "--no-ext-diff", "--no-renames", "--unified=0"] as const;
+
+/** Capture fork→base evidence before a branch is integrated into that base. */
+export async function branchReversionBaseline(
+  ctx: GitContext,
+  branch: string,
+  baseRef: string,
+): Promise<Omit<BranchReversionGeometry, "diff">> {
+  const resolvedBase = await runGit(ctx, ["rev-parse", "--verify", `${baseRef}^{commit}`]);
+  const baseSha = resolvedBase.code === 0 ? resolvedBase.stdout.trim() : "";
+  if (!baseSha) throw new Error("branch reversion check could not pin the base tip");
+  const mergeBase = await runGit(ctx, ["merge-base", baseSha, branch]);
+  const forkPoint = mergeBase.code === 0 ? mergeBase.stdout.trim() : "";
+  if (!forkPoint) throw new Error("branch reversion check could not resolve the fork point");
+  const patch = await runGit(ctx, [...REVERSION_DIFF_ARGS, `${forkPoint}..${baseSha}`]);
+  if (patch.code !== 0) throw new Error("branch reversion check could not read the after-fork base patch");
+  return { forkPoint, afterForkBasePatch: patch.stdout, baseRef: baseSha };
+}
+
+/** Read base→candidate geometry after integration; `candidate` may be a ref. */
+export async function branchReversionDiff(
+  ctx: GitContext,
+  candidate: string,
+  baseRef: string,
+): Promise<string> {
+  const diff = await runGit(ctx, [...REVERSION_DIFF_ARGS, `${baseRef}..${candidate}`]);
+  if (diff.code !== 0) throw new Error("branch reversion check could not read the integrated diff");
+  return diff.stdout;
+}
+
+/** Read base→HEAD geometry inside an already-integrated Worktree. */
+export async function branchReversionDiffAt(
+  repo: string,
+  baseRef: string,
+): Promise<string> {
+  return branchReversionDiff({ cwd: repo }, "HEAD", baseRef);
 }
 
 /** How many base commits to name when reporting stale-base drift. Enough to

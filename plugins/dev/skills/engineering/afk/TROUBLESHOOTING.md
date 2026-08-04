@@ -67,6 +67,44 @@ tracked issue or a global land block.
 This manual verification is a stopgap for the queue reconciler and validation
 authority hardening tracked in #1739.
 
+## After-fork reversion intent finding
+
+### Symptom
+
+A Worker parks on `blocked:validation` with a
+`red.afk.branch-reversion.v1` record. The record names `reverting_files`, a
+negative `test_line_delta`, or both, and carries a structured `repair`.
+
+### Confirm
+
+1. Read the record's `stage`: `base-merge` inspected the feedback Worktree
+   immediately after it corrected a stale base; `landing` is the final net on
+   the integrated tree before a PR opens or the base is written.
+2. Inspect `fork_point`, `reverting_files`, and `test_files_shrunk`. A reverting
+   file deletes lines that reached the base after that fork; the test ratchet
+   independently refuses an undeclared decrease in test-source lines.
+3. Check `declarations`. A path-specific issue-body deletion statement covers
+   only the named path; an explicit `contract phase: remove ...` statement (the
+   #3266 shape) covers the contract deletion and is retained verbatim as its
+   citation. Problem prose or a prohibition on deletion is not a declaration.
+
+### Recover
+
+1. If the deletion was accidental, run the record's pasteable `repair.command`.
+   It is composed as `git checkout origin/<base> -- <exact flagged files>` and
+   restores only `repair.files`.
+2. Reconcile any legitimate branch edits in those files, commit the repair, and
+   re-run the same gate. Never auto-apply the checkout: restoring a whole file
+   can discard intentional edits, which is why this is an intent finding.
+3. If the deletion is intentional, add a precise deletion declaration to the
+   Ticket body (name the paths when the intent is path-specific), then requeue.
+   The next passing record cites the declaration used.
+
+### Root fix
+
+The two deterministic barriers and test-line ratchet are the root fix in #3279;
+adversarial review remains complementary and is not required for this check.
+
 ## Scout and worker salvage after crashed or no-sentinel runs
 
 ### Symptom

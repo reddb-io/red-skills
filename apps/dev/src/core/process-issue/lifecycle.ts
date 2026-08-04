@@ -133,6 +133,12 @@ import {
 } from "../shared-gate.js";
 import { isPrePrPipelineActive } from "../pre-pr-pipeline.js";
 import {
+  detectBranchReversion,
+  formatBranchReversionRecord,
+  type BranchReversionFinding,
+  type BranchReversionGeometry,
+} from "../branch-reversion.js";
+import {
   aggregateAdversarialReviewFindings,
   decideAdversarialReview,
   renderAdversarialReviewBlockerSummary,
@@ -647,6 +653,11 @@ export async function processIssue(
     resolvedBase: baseResolution,
   };
   let validationSidecar: string[] = [];
+  const branchReversionRecords = new Map<"base-merge" | "landing", string>();
+  const completeValidationSidecar = (): string[] => [
+    ...branchReversionRecords.values(),
+    ...validationSidecar,
+  ];
   let lastValidationScope: ValidationScope | undefined = undefined;
   let landingFeedbackScopes: string[] = ["."];
   let noSourceDiffWarning: string | undefined;
@@ -657,6 +668,41 @@ export async function processIssue(
   // failure, not a flake worth another free cycle or outer recovery attempt.
   let previousSuspectInfraSignature: string | undefined;
   let deterministicInfraSignature: string | undefined;
+
+  const evaluateBranchReversion = (
+    stage: "base-merge" | "landing",
+    geometry: BranchReversionGeometry,
+  ): BranchReversionFinding => {
+    const finding = detectBranchReversion(
+      geometry.diff,
+      geometry.forkPoint,
+      geometry.afterForkBasePatch,
+      input.body,
+      remoteTrackingBaseRef(input.remote, base),
+    );
+    const record = formatBranchReversionRecord(finding, stage);
+    branchReversionRecords.set(stage, record);
+    return finding;
+  };
+  const parkBranchReversion = async (
+    finding: BranchReversionFinding,
+  ): Promise<ProcessIssueResult> => {
+    const intentSidecar = completeValidationSidecar();
+    await writeValidationSidecar(deps, input.attemptDir, intentSidecar);
+    const files = finding.repair?.files.join(", ") || "the recorded files";
+    const repair = finding.repair?.command ?? "human intent resolution required";
+    const notes =
+      `Intent finding: the branch would erase after-fork base work or silently shrink test source ` +
+      `(${files}). The branch was parked without an automatic fix. Repair: ${repair}`;
+    deps.appendIterLog(`🤖 /afk: ${notes}`);
+    return await terminalFailure(
+      common,
+      "feedback-failed",
+      "validation",
+      { notes, validation: intentSidecar.join("\n") },
+      { validationSummary: intentSidecar.join("\n") },
+    );
+  };
   // A stale-base attribution buys another GATE run, not another implementer
   // run: the branch did not change, only the merge result did (#3231).
   let gateRevalidationSkip = false;
@@ -1484,6 +1530,11 @@ export async function processIssue(
     ) {
       return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_feedback");
     }
+    if (deps.requireBranchReversionSafety && !deps.baseMergeReversionGeometry) {
+      const reason = "branch reversion safety is required but the feedback base-merge geometry port is absent";
+      deps.appendIterLog(`🤖 /afk: ${reason}`);
+      return await terminalFailure(common, "infra", "infra", { log: reason }, { notes: reason });
+    }
     const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
       worktree: workerBranch,
       // A branch NAME, not a directory (#3041): `deps.pnpm` materialises it and
@@ -1501,6 +1552,11 @@ export async function processIssue(
         : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
     });
     markProcessSafetyStep("post-agent:feedback-done");
+    const baseMergeGeometry = deps.baseMergeReversionGeometry?.(workerBranch);
+    if (baseMergeGeometry) {
+      const finding = evaluateBranchReversion("base-merge", baseMergeGeometry);
+      if (finding.blocked) return await parkBranchReversion(finding);
+    }
     gateStages.push({ stage: "feedback", ok: feedback.ok });
     if (!feedback.ok) {
       await fireHook(
@@ -1673,7 +1729,7 @@ export async function processIssue(
     }
     if (review.next === "park") {
       const validation = review.validation ?? "Blocking review findings remain.";
-      await writeValidationSidecar(deps, input.attemptDir, [...validationSidecar, validation]);
+      await writeValidationSidecar(deps, input.attemptDir, [...completeValidationSidecar(), validation]);
       await parkReseedTrail(validation);
       return await terminalFailure(
         common,
@@ -1706,11 +1762,32 @@ export async function processIssue(
   const locked = await deps.lookups.isLocked();
   const openPr = deps.worktreeLaunchesPr !== false;
   if (labels.includes(LABEL_LANDING_MANUAL)) {
-    return await handoffForManualLanding(common, base, validationSidecar);
+    return await handoffForManualLanding(common, base, completeValidationSidecar());
   }
   if (openPr && deps.reviewGate && shouldRequestReview(activeTaskClass, deps.reviewGate)) {
-    return await handoffForReview(common, activeTaskClass, validationSidecar);
+    return await handoffForReview(common, activeTaskClass, completeValidationSidecar());
   }
+  const baselineProbe = deps.lookups.branchReversionBaseline;
+  const integratedDiffProbe = deps.lookups.branchReversionDiffAt;
+  if (deps.requireBranchReversionSafety && (!baselineProbe || !integratedDiffProbe)) {
+    const reason = "branch reversion safety is required but the Landing geometry ports are absent";
+    deps.appendIterLog(`🤖 /afk: ${reason}`);
+    return await terminalFailure(common, "infra", "infra", { log: reason }, { notes: reason });
+  }
+  let landingBaseline: Omit<BranchReversionGeometry, "diff"> | undefined;
+  if (baselineProbe && integratedDiffProbe) {
+    try {
+      landingBaseline = await baselineProbe(workerBranch, input.remote, base);
+    } catch (err) {
+      const reason =
+        "branch reversion safety could not capture the fresh Landing baseline: " +
+        (err instanceof Error ? err.message : String(err));
+      deps.appendIterLog(`🤖 /afk: ${reason}`);
+      return await terminalFailure(common, "infra", "infra", { log: reason }, { notes: reason });
+    }
+  }
+  let landingIntentFinding: BranchReversionFinding | undefined;
+  let landingIntentError: string | undefined;
   const markLandingPhase = (phase: LandingPhase, detail: Record<string, unknown> = {}): void => {
     const startedAt = deps.nowIso();
     deps.markState?.({
@@ -1748,6 +1825,25 @@ export async function processIssue(
       makeRebaseWorktree: deps.makeRebaseWorktree,
       removeRebaseWorktree: deps.removeRebaseWorktree,
       landLock: deps.landLock,
+      ...(landingBaseline && integratedDiffProbe
+        ? {
+            intentGate: async (integratedTreeDir: string) => {
+              try {
+                const diff = await integratedDiffProbe(integratedTreeDir, landingBaseline.baseRef);
+                landingIntentFinding = evaluateBranchReversion("landing", {
+                  ...landingBaseline,
+                  diff,
+                });
+                return { ok: !landingIntentFinding.blocked };
+              } catch (err) {
+                landingIntentError =
+                  "branch reversion safety could not inspect the integrated Landing tree: " +
+                  (err instanceof Error ? err.message : String(err));
+                return { ok: false };
+              }
+            },
+          }
+        : {}),
       // Backpressure evidence only. Review left this callback for the gate fold
       // (#2730): it now runs before the PR exists, on the worktree diff.
       onPrResolved: async (pr) => {
@@ -1773,8 +1869,8 @@ export async function processIssue(
             : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
         });
         if (!mergedFeedback.ok) {
-          validationSidecar = mergedFeedback.sidecar;
-          await writeValidationSidecar(deps, input.attemptDir, mergedFeedback.sidecar);
+          validationSidecar = [...mergedFeedback.sidecar];
+          await writeValidationSidecar(deps, input.attemptDir, completeValidationSidecar());
           return { ok: false };
         }
         const gateBackpressureCommands = deps.backpressureCommands ?? [];
@@ -1787,11 +1883,11 @@ export async function processIssue(
           common.backpressureChecks = mergedBackpressure.checks;
           validationSidecar = [...mergedFeedback.sidecar, ...mergedBackpressure.sidecar];
           if (!mergedBackpressure.ok) {
-            await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
+            await writeValidationSidecar(deps, input.attemptDir, completeValidationSidecar());
           }
           return { ok: mergedBackpressure.ok };
         }
-        validationSidecar = mergedFeedback.sidecar;
+        validationSidecar = [...mergedFeedback.sidecar];
         return { ok: true };
       },
       requirePostMergeValidation: true,
@@ -1805,6 +1901,7 @@ export async function processIssue(
       remote: input.remote,
       branch: workerBranch,
       base,
+      ...(landingBaseline ? { intentBaseRef: landingBaseline.baseRef } : {}),
       trunk,
       issue,
       title: input.title,
@@ -1843,8 +1940,9 @@ export async function processIssue(
     }
     markLandingPhase("cascade");
     deps.recordWorkerEvent?.("worker.landed", { merge_sha: mergeSha, base });
-    await writeValidationSidecar(deps, input.attemptDir, validationSidecar);
-    const posted = await emitDone(common, mergeSha, durationS, validationSidecar, lastValidationScope, noSourceDiffWarning);
+    const finalValidationSidecar = completeValidationSidecar();
+    await writeValidationSidecar(deps, input.attemptDir, finalValidationSidecar);
+    const posted = await emitDone(common, mergeSha, durationS, finalValidationSidecar, lastValidationScope, noSourceDiffWarning);
     await recordOutcomeBestEffort(common, "done", { durationS });
     markLandingPhase("close", { step: "close-issue", status: "start" });
     await deps.gh.close(issue);
@@ -1947,6 +2045,21 @@ export async function processIssue(
     }
   }
   if (!landing.ok) {
+    if (landing.reason === "intent-finding") {
+      if (landingIntentError) {
+        deps.appendIterLog(`🤖 /afk: ${landingIntentError}`);
+        return await terminalFailure(
+          common,
+          "infra",
+          "infra",
+          { log: landingIntentError },
+          { notes: landingIntentError },
+        );
+      }
+      if (landingIntentFinding) return await parkBranchReversion(landingIntentFinding);
+      const reason = "Landing intent barrier refused without a structured reversion finding";
+      return await terminalFailure(common, "infra", "infra", { log: reason }, { notes: reason });
+    }
     if (landing.reason === "pr-resolved-abort") {
       // No pre-merge observer aborts any more — review left this path for the
       // gate fold (#2730). A surviving abort is an unexplained landing refusal.
@@ -2008,7 +2121,7 @@ export async function processIssue(
       // when the gate could not even materialise its worktree and every check
       // short-circuited with `durationMs: 0`.
       const validation =
-        validationSidecar.join("\n") ||
+        completeValidationSidecar().join("\n") ||
         "The post-merge integration gate failed on the rebased tree; nothing was merged.";
       return await terminalFailure(
         common,
