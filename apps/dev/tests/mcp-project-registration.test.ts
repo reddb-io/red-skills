@@ -219,6 +219,41 @@ describe("starting work registers the project", () => {
       reason: expect.stringContaining("nothing renewed it"),
     });
   });
+
+  it("carries the host birth latch and its callable reset on project_status", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+    const deps = createCastleMcpDependencies(root);
+    await deps.projectStart({ runner: "codex", target: 6 });
+
+    for (let death = 0; death < 3; death += 1) {
+      const workerId = `fast-${death}`;
+      daemon.trackWorker({
+        worker_id: workerId,
+        project_label: "acme/widgets",
+        pid: 8_000 + death,
+        started_at: new Date(Date.now() - 13_000).toISOString(),
+        workspace_path: root,
+        isolated: false,
+        warnings: [],
+      });
+      daemon.releaseWorker(workerId);
+    }
+
+    const status = await deps.projectStatus();
+    expect(status.birth_latch).toMatchObject({
+      name: "project-birth-breaker",
+      state: "open",
+      repair: { tool: "project_reset", args: { latch: "project-birth-breaker" } },
+    });
+    expect(daemon.hostState().birth_latches).toEqual([status.birth_latch]);
+
+    await expect(deps.projectReset({ latch: "project-birth-breaker" })).resolves.toMatchObject({
+      latch: "project-birth-breaker",
+      reset: true,
+    });
+    await expect(deps.projectStatus()).resolves.toMatchObject({ birth_latch: null });
+  });
 });
 
 describe("stopping work deregisters the project", () => {
