@@ -48,6 +48,7 @@ import {
   createGithubAttributionLedger,
   createGithubBalanceTransport,
   type GithubAttributionLedger,
+  type GithubRateBudget,
 } from "@reddb-io/github";
 import { createGitHubActivityTransport } from "./repository-activity.js";
 import {
@@ -84,6 +85,7 @@ Commands:
   serve                 run the daemon in this process
   statusline [global]   render one agent-host status line
   dashboard [global]    render the host view a terminal can read
+  github-spend          report which operations spent GitHub budget
   unit                  install | uninstall | status — the optional supervisor
   provision             make this machine ready; --check is the read-only half
   reclaim               clear runtime dirs left by dead sessions
@@ -133,6 +135,15 @@ decision 1) — a density argument, never a second renderer.
 
 It always writes something and always exits 0: a dashboard that printed nothing
 is indistinguishable from a host with no Workers.`,
+  "github-spend": `Usage: redskilled github-spend [--pool <pool|all>] [--hours <n>]
+
+Reports what this host observed itself spending from GitHub's API budget,
+grouped by operation key and Worker. Defaults to the GraphQL pool over the last
+hour. This is durable process attribution, never GitHub's authoritative balance.
+
+  --pool <pool|all>  graphql (default), rest, search, or every pool
+  --hours <n>        positive number of hours ending now (default: 1)
+`,
   statusline: `Usage: redskilled statusline [global] [--verbose] [flags]
 
 Renders the status line the agent host prints verbatim. Config is read on this
@@ -376,9 +387,27 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   }
 
   const { command, args } = routeCommand<
-    "serve" | "stop" | "host-state" | "statusline" | "dashboard" | "unit" | "provision" | "reclaim"
+    | "serve"
+    | "stop"
+    | "host-state"
+    | "statusline"
+    | "dashboard"
+    | "github-spend"
+    | "unit"
+    | "provision"
+    | "reclaim"
   >(argv, {
-    commands: { serve: {}, stop: {}, "host-state": {}, statusline: {}, dashboard: {}, unit: {}, provision: {}, reclaim: {} },
+    commands: {
+      serve: {},
+      stop: {},
+      "host-state": {},
+      statusline: {},
+      dashboard: {},
+      "github-spend": {},
+      unit: {},
+      provision: {},
+      reclaim: {},
+    },
     default: "host-state",
   });
 
@@ -473,6 +502,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   if (command === "stop") return await runStop(args);
   if (command === "statusline") return await runStatusline(args);
   if (command === "dashboard") return await runDashboard(args);
+  if (command === "github-spend") return await runGithubSpend(args);
   if (command === "unit") return await runUnit(args);
 
   if (command === "provision") return await runProvision(args);
@@ -481,6 +511,70 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
   const state = await readRedskilledHostState(resolveRedskilledPaths());
   process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
   return 0;
+}
+
+const GITHUB_SPEND_FLAGS = {
+  pool: { kind: "value", coerce: (raw: string) => raw },
+  hours: { kind: "value", coerce: (raw: string) => Number(raw) },
+} as const;
+
+/**
+ * `redskilled github-spend` — the durable answer to "who spent GraphQL?".
+ *
+ * The report is intentionally read from the host lane instead of from daemon
+ * memory: an incident may restart the daemon, and the Worker-side `gh` boundary
+ * appends from separate processes. Its `origin` remains process attribution so
+ * no caller can mistake observed spend for the balance asked from GitHub.
+ */
+export async function runGithubSpend(
+  args: readonly string[],
+  io: {
+    readonly ledger?: GithubAttributionLedger;
+    readonly homeDir?: string;
+    readonly now?: () => string;
+    readonly write?: (text: string) => void;
+  } = {},
+): Promise<number> {
+  const { values } = parseFlags(args, GITHUB_SPEND_FLAGS, { unknownFlags: "error" });
+  const hours = values.hours ?? 1;
+  if (!Number.isFinite(hours) || hours <= 0) {
+    throw new Error(`redskilled github-spend --hours must be a positive number; received ${String(hours)}`);
+  }
+
+  const rawPool = values.pool ?? "graphql";
+  const pool = rawPool === "all" ? undefined : githubSpendPool(rawPool);
+  const to = (io.now ?? (() => new Date().toISOString()))();
+  const toMs = Date.parse(to);
+  if (!Number.isFinite(toMs)) throw new Error(`redskilled github-spend clock returned an invalid instant: ${to}`);
+  const from = new Date(toMs - hours * 60 * 60 * 1_000).toISOString();
+  const ledger = io.ledger ?? createGithubAttributionLedger({
+    path: join(redskilledHomeDir(io.homeDir ?? homedir()), "state", "github", "spend.toonl"),
+  });
+  const report = await ledger.report({ from, to, ...(pool === undefined ? {} : { pool }) });
+  (io.write ?? ((text: string) => process.stdout.write(text)))(`${encodeToon({
+    version: report.version,
+    origin: report.origin,
+    window: { from: report.window.from, to: report.window.to },
+    pool: report.pool,
+    total_count: report.total_count,
+    total_cost: report.total_cost,
+    operations: report.operations.map((operation) => ({
+      operation_key: operation.operation_key,
+      pool: operation.pool,
+      ...(operation.actor === undefined ? {} : { actor: operation.actor }),
+      count: operation.count,
+      cost: operation.cost,
+    })),
+    unreadable_records: report.unreadable_records,
+  })}\n`);
+  return 0;
+}
+
+function githubSpendPool(raw: string): GithubRateBudget {
+  if (raw === "graphql" || raw === "rest" || raw === "search") return raw;
+  throw new Error(
+    `redskilled github-spend --pool must be graphql, rest, search or all; received ${JSON.stringify(raw)}`,
+  );
 }
 
 const STOP_FLAGS = {
