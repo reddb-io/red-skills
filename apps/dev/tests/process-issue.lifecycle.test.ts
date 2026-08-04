@@ -14,6 +14,7 @@ import {
 } from "./process-issue.test-helpers.js";
 import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./process-issue.test-helpers.js";
 import { reseedParkMarker } from "../src/core/process-issue/reseed-trail.js";
+import { encodeLines } from "@reddb-io/toon";
 import { vi } from "vitest";
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
   describe("landing.wait slot release (#2427)", () => {
@@ -874,16 +875,18 @@ describe("processIssue — BLOCKED", () => {
 
 
 describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
-  it("surfaces a sandbox setup failure from afk.log when runner stdout is empty (#2536)", async () => {
+  it("surfaces a sandbox setup failure from the structured Worker log when runner stdout is empty", async () => {
     const { deps, input, trace } = harness({ outcome: "no-sentinel", changedFiles: [] });
+    deps.workerLogPath = "/worker/worker.log.toonl";
+    const lane = encodeLines();
     Object.assign(deps.fs, {
-      readText: async () =>
-        [
-          "[heartbeat] iteration started for #9",
-          "Setting up sandbox",
-          'Command failed in sandbox (git config --global user.name "Worker"): Command failed (exit 255)',
-          "error: could not lock config file [REDACTED_HOME]/.gitconfig: File exists",
-        ].join("\n"),
+      readText: async (path: string) => {
+        expect(path).toBe(deps.workerLogPath);
+        return lane.push({ at: "2026-08-04T00:00:00Z", kind: "worker.heartbeat", msg: "iteration started" })
+          + lane.push({ at: "2026-08-04T00:00:01Z", kind: "worker.log", msg: "Setting up sandbox" })
+          + lane.push({ at: "2026-08-04T00:00:02Z", kind: "worker.log", msg: 'Command failed in sandbox (git config --global user.name "Worker"): Command failed (exit 255)' })
+          + lane.push({ at: "2026-08-04T00:00:03Z", kind: "worker.log", msg: "error: could not lock config file [REDACTED_HOME]/.gitconfig: File exists" });
+      },
     });
     deps.runAgent = async (runInput) => ({
       outcome: "no-sentinel",

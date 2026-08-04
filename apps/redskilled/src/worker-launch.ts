@@ -20,8 +20,9 @@
  */
 import { randomInt } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { encodeLines } from "@reddb-io/toon";
 import { pathWithEngineNode } from "@reddb-io/shared/engine-node.js";
 import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
@@ -156,23 +157,40 @@ export function mintHostWorkerId(
   throw new RedskilledWorkerSpecError("redskilled exhausted the host Worker id space");
 }
 
-/** Open a Worker's log for append, or null when it has none / cannot be opened. */
-function openWorkerLog(logPath: string | undefined): number | null {
-  if (logPath == null || logPath.trim() === "") return null;
+/** Prepare a Worker's structured log, or return false when it cannot be opened. */
+function prepareWorkerLog(logPath: string | undefined): boolean {
+  if (logPath == null || logPath.trim() === "") return false;
   try {
     mkdirSync(dirname(logPath), { recursive: true });
-    return openSync(logPath, "a");
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
-function closeWorkerLog(fd: number): void {
-  try {
-    closeSync(fd);
-  } catch {
-    // A descriptor the host already reclaimed is the outcome we wanted anyway.
-  }
+function attachWorkerLog(child: ChildProcess, logPath: string): void {
+  const attach = (stream: NodeJS.ReadableStream | null, kind: "worker.stdout" | "worker.stderr"): void => {
+    if (stream == null) return;
+    let pending = "";
+    const flush = (line: string): void => {
+      try {
+        appendFileSync(logPath, encodeLines().push({ at: new Date().toISOString(), kind, msg: line }), "utf8");
+      } catch {
+        // Losing evidence must never cost the Worker.
+      }
+    };
+    stream.on("data", (chunk: Buffer | string) => {
+      pending += String(chunk);
+      const lines = pending.split("\n");
+      pending = lines.pop() ?? "";
+      for (const line of lines) flush(line);
+    });
+    stream.on("end", () => {
+      if (pending !== "") flush(pending);
+    });
+  };
+  attach(child.stdout, "worker.stdout");
+  attach(child.stderr, "worker.stderr");
 }
 
 /** Reject a spec the daemon cannot act on, naming the field rather than the shape. */
@@ -227,7 +245,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   // the client named and hands the descriptor to the process it owns. Failing to
   // open it degrades to a silent Worker rather than a refused launch: a log is
   // evidence, and losing evidence must never cost the work.
-  const logFd = options.openLog === false ? null : openWorkerLog(spec.log_path);
+  const logReady = options.openLog === false ? false : prepareWorkerLog(spec.log_path);
   // The daemon hands its own node down instead of hoping the Worker's PATH
   // holds one (#3064). Under a transient unit the Worker's PATH is the init
   // system's canonical `/usr/bin`-shaped one, so on a version-manager host
@@ -250,7 +268,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     env: workerEnv,
     enabled: options.enabled ?? placementEnabled(env),
     probes,
-    pipeOutput: logFd !== null,
+    pipeOutput: logReady,
   });
 
   const spawnFn = options.spawnFn ?? spawn;
@@ -260,7 +278,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     // would have run fine.
     ...(plan.cwd != null ? { cwd: plan.cwd } : {}),
     detached: true,
-    stdio: logFd === null ? "ignore" : ["ignore", logFd, logFd],
+    stdio: logReady ? ["ignore", "pipe", "pipe"] : "ignore",
     // The Worker's own env goes through `--setenv` under the transient unit;
     // every other backend has to merge it here, or the downgrade would silently
     // change behaviour. The backend decides, not `isolated`: a Job Object is
@@ -271,9 +289,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
       ? { ...env }
       : { ...env, ...workerEnv, ...plan.environment },
   });
-  // The child holds its own copy from here on; a descriptor left open in the
-  // daemon would keep the file alive for the daemon's lifetime, not the Worker's.
-  if (logFd !== null) closeWorkerLog(logFd);
+  if (logReady && spec.log_path != null) attachWorkerLog(child, spec.log_path);
 
   if (child.pid == null) {
     child.once("error", () => undefined);

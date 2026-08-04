@@ -348,7 +348,6 @@ export async function runCommand(options: RunOptions): Promise<number> {
     onLockWait: (notice) => {
       const waiting = notice.state === "waiting";
       if (current.attemptDir !== "") {
-        void fsx.appendLine(join(current.attemptDir, "afk.log"), notice.message);
         void updateState(workerStatePath(current.attemptDir), {
           // The terminal notice RETIRES the banner. A blocked marker that
           // outlives its block is the same observability lie in reverse.
@@ -368,7 +367,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
           held_for_s: Math.floor((notice.heldForMs ?? 0) / 1000),
           waited_s: Math.floor(notice.waitedMs / 1000),
           remaining_s: Math.floor(notice.remainingMs / 1000),
-        })
+        }, notice.message)
         .catch(() => {});
     },
     onGateWait: (notice) => {
@@ -378,7 +377,6 @@ export async function runCommand(options: RunOptions): Promise<number> {
           ? `⏳ /afk gate: waiting on ${notice.subject} (pid ${notice.pid}).`
           : `✅ /afk gate: ${notice.subject} exited (pid ${notice.pid}).`;
         gateWaitPublication = gateWaitPublication.then(async () => {
-          await fsx.appendLine(join(current.attemptDir, "afk.log"), line);
           await updateState(workerStatePath(current.attemptDir), {
             "current.wait_kind": waiting ? notice.kind : "",
             "current.wait_subject": waiting ? notice.subject : "",
@@ -396,7 +394,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
             started_at: notice.startedAt,
             deadline: notice.deadline,
             escalation: notice.escalation,
-          });
+          }, line);
         }).catch(() => {});
       }
     },
@@ -600,7 +598,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
           // Spawn-time provenance (issue #930): stamped once here, never mutated.
           // The entry point (`/afk`, `/go`) passes `--origin <label>`.
           origin: dispatchIdentity.origin,
-          log: join(attemptDir, "afk.log"),
+          log: join(paths.workersRoot, c.workerId, "worker.log.toonl"),
           started_at: startedAt,
           "current.kind": dispatchIdentity.kind,
           "current.number": candidate.number,

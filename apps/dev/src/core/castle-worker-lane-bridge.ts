@@ -26,7 +26,9 @@ export type WorkerLifecycleKind =
   | (string & {});
 
 export interface CastleWorkerLaneBridge {
-  record(kind: WorkerLifecycleKind, payload?: Record<string, unknown>): Promise<void>;
+  record(kind: WorkerLifecycleKind, payload?: Record<string, unknown>, message?: string): Promise<void>;
+  /** Append human-readable narration to the Worker's one structured log. */
+  log(message: string): Promise<void>;
   snapshot(): Promise<void>;
 }
 
@@ -175,6 +177,7 @@ export function createCastleWorkerLaneBridge(
   async function record(
     kind: WorkerLifecycleKind,
     payload: Record<string, unknown> = {},
+    message?: string,
   ): Promise<void> {
     const attemptDir = options.attemptDir();
     const state = readAttemptState(attemptDir);
@@ -186,6 +189,7 @@ export function createCastleWorkerLaneBridge(
       worker_id: options.workerId,
       issue,
       attempt,
+      ...(message == null ? {} : { msg: message }),
       payload,
     });
     await writers.liveness(options.workerId).append({
@@ -223,5 +227,16 @@ export function createCastleWorkerLaneBridge(
     await snapshot();
   }
 
-  return { record, snapshot };
+  async function log(message: string): Promise<void> {
+    const state = readAttemptState(options.attemptDir());
+    await writers.worker(options.workerId).append({
+      kind: "worker.log",
+      worker_id: options.workerId,
+      issue: state ? currentIssue(state) : undefined,
+      attempt: 1,
+      msg: message,
+    });
+  }
+
+  return { record, log, snapshot };
 }

@@ -10,6 +10,7 @@ describe("runLinkedSubagent", () => {
       record: async (kind, payload) => {
         records.push({ kind, payload });
       },
+      log: async () => {},
       snapshot: async () => {},
     };
     const exec: ExecFn = async (_command, _args, options) => {
@@ -80,6 +81,7 @@ describe("runLinkedSubagent", () => {
       record: async (kind, payload) => {
         records.push({ kind, payload });
       },
+      log: async () => {},
       snapshot: async () => {},
     };
     const exec: ExecFn = async (_command, _args, options) => {

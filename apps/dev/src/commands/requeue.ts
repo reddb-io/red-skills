@@ -306,7 +306,7 @@ export function makeAdoptPresenceIo(runner: Runner): AdoptPresenceIo {
           // Spawn-time provenance (#1306): the origin-agnostic reader renders
           // this as the row's per-source count, distinct from afk/go.
           origin: REQUEUE_ORIGIN,
-          log: join(input.attemptDir, "afk.log"),
+          log: join(dirname(input.attemptDir), "worker.log.toonl"),
           started_at: startedAt,
           "current.number": input.issue,
           "current.title": input.title,

@@ -7,7 +7,7 @@
 
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   planWorkerReclaim,
@@ -64,7 +64,7 @@ async function workspace(tmp: string, worker: string, issue: number): Promise<{
   const issueDir = join(tmp, "workers", worker, String(issue));
   const worktree = join(issueDir, "worktree");
   await mkdir(join(worktree, "node_modules"), { recursive: true });
-  const log = join(issueDir, "worker.log.toonl");
+  const log = join(dirname(issueDir), "worker.log.toonl");
   await writeFile(log, "", "utf8");
   return { worktree, log };
 }
@@ -204,7 +204,7 @@ describe("the reclaim planner stays total", () => {
     const plan = planWorkerReclaim(
       [
         artifact(),
-        artifact({ kind: "log", path: "/red/tmp/workers/wDEAD/1/worker.log.toonl" }),
+        artifact({ kind: "log", path: "/red/tmp/workers/wDEAD/worker.log.toonl" }),
         artifact({ kind: "branch", path: undefined }),
         artifact({ kind: "moonbeam", path: "/red/tmp/workers/wDEAD/1/moonbeam" }),
       ],

@@ -44,7 +44,6 @@ import type { FeedbackWorktree } from "../../runtime/feedback-worktree.js";
 import { deathCauseForRecoveredWorker } from "../../core/process-safety.js";
 import { join } from "node:path";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
-import { appendAgentRecord, appendRecordToonlTaggedRow } from "../../core/jsonl-log.js";
 import { updateState, workerStatePath } from "../../core/state.js";
 import { buildProgressHeartbeat, formatIterationMarker } from "../../core/heartbeat.js";
 import { resolveAttemptLoc, locMemoPath } from "../../core/loc-memo.js";
@@ -501,50 +500,30 @@ export function buildProcessDeps({
     envelope: buildEnvelopePort(ghCtx, gitCtx, current),
     nowEpoch: () => Math.floor(Date.now() / 1000),
     nowIso: () => new Date().toISOString(),
-    // The per-iteration afk.log heartbeat boundary lives in the attempt dir.
+    // Orchestrator narration shares the Worker's canonical structured log.
     appendIterLog: (line) => {
-      void fsx.appendLine(join(current.attemptDir, "afk.log"), line);
+      void castleBridge.log(line).catch(() => {});
     },
+    workerLogPath: join(paths.workersRoot, workerId, "worker.log.toonl"),
     // Native-path liveness (#284 observability gap): sandcastle captures the
-    // inner agent's stream itself, so on the native path nothing advances the
-    // agent lane and its mtime freezes at iteration start — the stall detector
-    // (reaper-signal) and monitor then read a live agent as silent. Forward
-    // each sandcastle stream event to the clean agent lane (the liveness signal
-    // supervisor-fs / reaper key off) and mirror it into the firehose afk.log.
+    // inner agent's stream itself. Forward each event into Worker activity and
+    // liveness state while the file display writes its readable structured row.
     // Best-effort: lane-write failures are swallowed so observability can never
     // break a run (sandcastle also swallows any throw from this callback).
     recordAgentEvent: (event) => {
       const ts = new Date().toISOString();
       // Raw stdout lines (sandcastle 0.11.0 verbose stream `{type:"raw"}`) are
-      // noisy per-line output, not assistant turns. Fan them to the FIREHOSE only
-      // so a stuck/silent agent stays diagnosable, while the clean agent lane keeps
-      // its one-record-per-turn invariant. Not a liveness/activity unit, so skip
-      // the meter + iteration markers. Returning here also narrows `event` to the
-      // non-raw variants for the rest of the handler.
+      // noisy per-line output, not assistant turns. Keep it in the canonical log
+      // for diagnostics, but do not count it as an activity unit.
       if (event.type === "raw") {
-        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.toonl"), "raw", {
-          iteration: event.iteration,
-          line: event.line,
-        }, {
-          ts,
-        }).catch(() => {});
+        void castleBridge.log(event.line).catch(() => {});
         return;
       }
       if (event.type === "sessionId") {
-        void appendRecordToonlTaggedRow(join(current.attemptDir, "log.toonl"), "session", `session ${event.sessionId}`, {
-          ts,
-          fields: {
-            extra: {
-              kind: "sessionId",
-              iteration: String(event.iteration),
-              session_id: event.sessionId,
-            },
-          },
-        }).catch(() => {});
+        void castleBridge.log(`session ${event.sessionId}`).catch(() => {});
         return;
       }
-      // Agentic-iteration boundary markers (synthetic — afk.log + firehose, NEVER
-      // the agent lane). Emit "iteration N ended" + "iteration N+1 started" when
+      // Agentic-iteration boundary markers. Emit "iteration N ended" + "iteration N+1 started" when
       // sandcastle's re-invocation count advances, so a run burning through
       // iterations (re-validating instead of emitting DONE) is visible.
       const dir0 = current.attemptDir;
@@ -572,16 +551,12 @@ export function buildProcessDeps({
         activityMeter.record(event);
       }
       if (event.iteration !== lastIter) {
-        const emit = (line: string, phase: string, n: number): void => {
-          void fsx.appendLine(join(dir0, "afk.log"), line);
-          void appendRecordToonlTaggedRow(join(dir0, "log.toonl"), "iteration", line, {
-            ts,
-            fields: { extra: { iteration: String(n), phase } },
-          }).catch(() => {});
+        const emit = (line: string): void => {
+          void castleBridge.log(line).catch(() => {});
         };
-        if (lastIter > 0) emit(formatIterationMarker(lastIter, "ended", iterMax), "ended", lastIter);
+        if (lastIter > 0) emit(formatIterationMarker(lastIter, "ended", iterMax));
         lastIter = event.iteration;
-        emit(formatIterationMarker(lastIter, "started", iterMax), "started", lastIter);
+        emit(formatIterationMarker(lastIter, "started", iterMax));
         void updateState(workerStatePath(dir0), { "current.iteration": String(lastIter) }).catch(() => {});
       }
       const msg =
@@ -598,26 +573,12 @@ export function buildProcessDeps({
               : event.type === "result"
                 ? `result: ${event.result}`
                 : `→ ${event.name} ${event.formattedArgs}`;
-      void appendAgentRecord(join(current.attemptDir, "agent.log.toonl"), msg, {
-        ts,
-        fields: { extra: { iteration: String(event.iteration), kind: event.type } },
-      }).catch(() => {});
       void castleBridge.record("worker.heartbeat", {
         event: event.type,
         iteration: String(event.iteration),
       }).catch(() => {});
-      // Firehose lane (issue #250): every record in the uniform envelope. The
-      // native port left this unopened; restore it so the post-mortem firehose
-      // carries the agent turns alongside the (future) heartbeat/hook records.
-      void appendRecordToonlTaggedRow(join(current.attemptDir, "log.toonl"), "agent", msg, {
-        ts,
-        fields: { extra: { iteration: String(event.iteration), kind: event.type } },
-      }).catch(() => {});
-      // The plaintext `[agent] …` mirror into afk.log is intentionally gone:
-      // red-castle's file-log now points at the SAME afk.log (process-issue.ts), so
-      // it already renders agent text + tool calls there — re-appending here would
-      // double every turn. The structured per-event record stays in agent.log.toonl
-      // + the firehose above, where the rich reasoning/usage glyphs live.
+      // The file display already renders agent text + tool calls into the Worker
+      // log, so re-appending the formatted callback message would double turns.
       // Advance the monitor's state view on recognised tool-call transitions
       // (bounded write rate vs every text chunk — the lane mtime above is the
       // stall-detector's liveness signal; this is the dashboard's activity/last).
@@ -666,8 +627,8 @@ export function buildProcessDeps({
     },
     // Worker-vitals heartbeat sink (ADR 0065/0103): the independent vitals
     // sampler fires this every ~20s (and the codex stream pulse opportunistically
-    // in between) with the live progress signal. Append an enriched `type=heartbeat`
-    // firehose record carrying the live LINE-DIFF (+A -R) AND mirror
+    // in between) with the live progress signal. Append the readable heartbeat
+    // to the Worker log and mirror
     // `current.{last_progress_at,diff_added,diff_removed}` into the state file, so
     // each tick shows how the attempt is evolving and the monitor's +A -R stays
     // fresh between its sparse 10-min ticks (#448). Best-effort — swallowed.
@@ -755,11 +716,6 @@ export function buildProcessDeps({
           removed,
           activity,
         });
-        await appendRecordToonlTaggedRow(join(current.attemptDir, "log.toonl"), "heartbeat", hb.msg, {
-          ts,
-          fields: { extra: hb.extra },
-        }).catch(() => {});
-        await fsx.appendLine(join(current.attemptDir, "afk.log"), `[heartbeat] ${hb.msg}`);
         await updateState(workerStatePath(current.attemptDir), {
           ...hb.statePatch,
           "current.loc_peak_added": peakLocAdded,
@@ -771,7 +727,7 @@ export function buildProcessDeps({
           signal: "vitals-sampler",
           seconds_since_progress: secs,
           head,
-        }).catch(() => {});
+        }, `[heartbeat] ${hb.msg}`).catch(() => {});
       })();
     },
     // Worker-vitals provider for the on_heartbeat hook context (ADR 0065/#832):

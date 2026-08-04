@@ -254,20 +254,18 @@ $RS provision --workspace host # a lane under the home: provision the home too
 $RS provision --install-unit   # also write the optional supervising user unit
 ```
 
-- **The state home is NOT a precondition for a daemon.** The daemon binds its socket
-  and writes its lease and event lane under the session runtime dir; it resolves
-  `~/.red/redskilled/` nowhere. It does read host policy from the sibling
-  `~/.red/config.yaml`. Exactly one thing reads the state home: a workspace
-  lane rooted inside it (`plugins.dev.workspace.target: host`, or a custom parent
-  under the home). So the home is created **when a declared target reads it** and
-  never otherwise — creating it unconditionally left most machines with an empty
-  directory and put `/red-setup` on the critical path of a daemon that never
-  touched it (#2958). Selecting the `host` preset provisions it at that moment,
+- **The daemon owns its state home.** The socket and lease stay in the session
+  runtime directory; the durable event/narrative lane is the host-scoped
+  `~/.red/redskilled/redskilled.log.toonl`. The daemon creates that private home
+  on first append, and `provision` may create it earlier. Host policy remains in
+  the sibling `~/.red/config.yaml`. A workspace lane rooted inside the home
+  (`plugins.dev.workspace.target: host`, or a custom parent under it) uses the
+  same owner-provisioned directory. Selecting the `host` preset provisions it,
   and the receipt names the declaration (`needed_by`) that asked for it.
 - **The home is this app's.** `~/.red/redskilled/` is operator-scoped and sits
   outside every checkout, so it is not the `.red/` ADR 0067 gave `/red-setup`
-  sole authority over. `provisionRedskilledHome` is the only thing that creates
-  it (ADR 0130 Amendment 2); every other surface reads the one namer in
+  sole authority over. `redskilled` creates it through its provisioner or its
+  canonical log writer (ADR 0130 Amendment 2); every surface reads the one namer in
   `packages/shared/redskilled-home.ts`. Deciding *when* to call it changes
   nothing about *who* calls it.
 - **Idempotent by construction.** An existing home is kept with everything in

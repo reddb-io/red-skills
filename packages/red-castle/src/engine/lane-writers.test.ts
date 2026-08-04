@@ -42,6 +42,7 @@ describe("castle lane writers", () => {
       worker_id: "wAB12",
       issue: 1905,
       attempt: 1,
+      msg: "claimed issue 1905",
       payload: { runner: "codex" },
     });
     await writers.supervisor("s1").append({
@@ -93,6 +94,7 @@ describe("castle lane writers", () => {
         worker_id: "wAB12",
         issue: 1905,
         attempt: 1,
+        msg: "claimed issue 1905",
         payload: { runner: "codex" },
       },
     ]);
@@ -181,7 +183,7 @@ describe("castle lane writers", () => {
         at: "2026-07-16T20:04:00.000Z",
         kind: "worker.claimed",
         worker_id: "wAB12",
-        msg: "prose does not belong in the lane",
+        unknown: "not part of the published lane family",
       } as never),
     ).rejects.toBeInstanceOf(CastleLaneValidationError);
 

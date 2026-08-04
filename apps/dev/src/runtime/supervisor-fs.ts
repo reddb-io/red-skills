@@ -7,14 +7,15 @@
 //   workerLivenessFor          (iter dir → liveness lane → evaluator verdict)
 //   iter_dirs_for_worker       (worker dir → every attempt dir)
 //   iter_dir_issue_number      (afk.state.toon → .current.number)
-//   reap_stalled_slot reads    (notes, afk.log tail, duration)
+//   reap_stalled_slot reads    (notes, worker.log.toonl tail, duration)
 //
 // Every export is BEST-EFFORT: a failed read / stat / glob degrades to the safe
 // value (null verdict, null iter dir, empty sweep work) and never throws out of
 // a SupervisorFs closure — the bash `|| true` cleanups.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { parseRecords } from "@reddb-io/toon";
 import type { IterDirInfo, SweepWork, SweepWorker } from "../core/supervisor.js";
 import { buildRef } from "../core/remote-branch.js";
 import {
@@ -291,10 +292,21 @@ function tailFile(path: string, n: number): string {
   return lines.slice(-n).join("\n");
 }
 
+function tailWorkerLog(path: string, n: number): string {
+  try {
+    const messages = parseRecords(readFileSync(path, "utf8"))
+      .map((record) => record.msg)
+      .filter((message): message is string => typeof message === "string");
+    return messages.slice(-n).join("\n");
+  } catch {
+    return tailFile(path, n);
+  }
+}
+
 /**
  * resolveIterDir backing: the slot's current iteration + the envelope material
  * reap_stalled_slot pulls from afk.state.toon (issue, worker_id, started_at →
- * duration), handoff.md (notes), and afk.log (log tail). Returns null when no
+ * duration), handoff.md (notes), and worker.log.toonl (log tail). Returns null when no
  * iter dir resolves. Best-effort: missing pieces degrade to empty / 0.
  */
 export function resolveIterDirInfo(
@@ -337,7 +349,7 @@ export function resolveIterDirInfo(
   }
 
   const notes = tailFile(join(dir, "handoff.md"), 200);
-  const logTail = tailFile(join(dir, "afk.log"), 50);
+  const logTail = tailWorkerLog(join(dirname(dir), "worker.log.toonl"), 50);
 
   // Real attempt number from the `<issue>-a<N>` iter dir, for the bounded stalled
   // re-claim cap (#402). Degrades to attempt 1 when the path is non-canonical.

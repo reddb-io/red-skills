@@ -373,12 +373,17 @@ describe("buildRunOptions", () => {
     expect(opts.logging).toBeUndefined();
   });
 
-  it("drains sandcastle's file-log to the supplied logPath (#284 observability)", () => {
+  it("drains sandcastle's narration as TOONL into the supplied Worker log (#3220)", () => {
     const opts = buildRunOptions(
       makeDeps(async () => fakeResult()),
       { ...baseInput, logPath: "/abs/attempt/dir/sandcastle.log" },
     );
-    expect(opts.logging).toMatchObject({ type: "file", path: "/abs/attempt/dir/sandcastle.log" });
+    expect(opts.logging).toMatchObject({
+      type: "file",
+      path: "/abs/attempt/dir/sandcastle.log",
+      format: "toonl",
+      kindPrefix: "worker",
+    });
   });
 
   it("wires a capture-time redactLine into file logging (#1368 leak masking)", () => {

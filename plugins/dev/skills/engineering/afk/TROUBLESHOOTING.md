@@ -77,9 +77,9 @@ completed report, useful notes, or finished work.
 ### Confirm
 
 1. Inspect the attempt log and grep for `<promise>DONE</promise>` or
-   `<promise>BLOCKED</promise>` in `afk.log`.
-2. Extract final `kind=text` events from the agent lane and read the last useful
-   agent message.
+   `<promise>BLOCKED</promise>` in the Worker's `worker.log.toonl`.
+2. Read the final `kind=text` records from that same Worker log and find the
+   last useful agent message.
 3. Check whether the branch contains unique commits or an uncommitted diff.
 4. Distinguish envelope failure from real failure: a completed report or DONE
    followed only by sentinel handling failure is salvageable; an explicit

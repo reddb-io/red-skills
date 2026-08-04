@@ -373,16 +373,7 @@ async function listRetainedLogFiles(workersRoot: string): Promise<string[]> {
     return out;
   }
   for (const worker of workers) {
-    let attempts: string[];
-    try {
-      attempts = await readdir(join(workersRoot, worker));
-    } catch {
-      continue;
-    }
-    for (const attempt of attempts) {
-      out.push(join(workersRoot, worker, attempt, "log.toonl"));
-      out.push(join(workersRoot, worker, attempt, "agent.log.toonl"));
-    }
+    out.push(join(workersRoot, worker, "worker.log.toonl"));
   }
   return out;
 }
@@ -390,7 +381,7 @@ async function listRetainedLogFiles(workersRoot: string): Promise<string[]> {
 function timestampFromLogRecord(value: unknown): Date | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const rec = value as Record<string, unknown>;
-  for (const key of ["ts", "createdAt", "created_at", "timestamp", "time"]) {
+  for (const key of ["at", "ts", "createdAt", "created_at", "timestamp", "time"]) {
     const raw = rec[key];
     if (typeof raw !== "string") continue;
     const date = new Date(raw);
