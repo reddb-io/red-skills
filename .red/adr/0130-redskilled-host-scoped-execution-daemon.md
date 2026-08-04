@@ -642,6 +642,31 @@ record through the shared render, `project_status` publishes its timestamp and
 reason, and `/red-doctor` reports `lapsed-with-work` when executable queue items
 remain. A current registration always outranks an older lapse record.
 
+## Amendment 9 — daemon replacement preserves project intent (#3180)
+
+Amendment 8 kept a registration alive for as long as one daemon process lived,
+but the record itself remained only in that process's memory. A supervised
+restart or self-replacement deliberately left Workers running and reattached
+them in its successor while silently discarding the selector and launch needed
+to birth the next Worker. The liveness belt could not renew a record it no
+longer had.
+
+**Decision: the daemon atomically snapshots the opaque registration set and a
+successor rehydrates it before serving the socket.** Registration, renewal,
+work-driven sustainment, lapse recovery and deliberate deregistration all move
+the snapshot with the live set. Project-write operations do not answer until
+their snapshot mutation is durable, and graceful daemon departure flushes every
+queued sustainment before releasing the socket. The snapshot is mode `0600`
+because it carries the launch environment exactly as the project stated it.
+
+Durability does not make intent immortal. A record whose deadline still stands
+is restored as current. One that expired less than one original window ago is
+restored only into Amendment 8's bounded recovery set, where a live Worker or a
+fresh positive queue observation may sustain it. Older records are ignored, a
+counted-empty project removes its recovered intent, and `project_stop` removes
+both current and recoverable forms. The daemon still interprets none of the
+selector, argv, environment or workspace it persists.
+
 ## Recovering from a bad two-player migration
 
 The way back, for an operator whose machine the migration left confusing. Every
