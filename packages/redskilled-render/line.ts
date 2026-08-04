@@ -62,6 +62,7 @@ import {
 } from "./select.js";
 import {
   composeRepair,
+  noRepair,
   registrationRepair,
   type RepairAction,
 } from "@reddb-io/shared/repair.js";
@@ -198,6 +199,9 @@ export function renderRedskilledStatusline(
     project: options.project,
     project_match: match,
     ...(unmatched.repair === undefined ? {} : { repair: unmatched.repair }),
+    ...(unmatched.repair_reason === undefined
+      ? {}
+      : { repair_reason: unmatched.repair_reason }),
     detail: chosen.detail,
     degraded: chosen.detail !== richest || line !== chosen.line || table.degraded,
     stale: payload.staleness.stale,
@@ -412,31 +416,55 @@ function unmatchedHead(
   payload: RedskilledRenderPayload,
   project: string | null,
   match: RedskilledStatuslineProjectMatch,
-): { readonly prose: string; readonly repair?: RepairAction } {
+): {
+  readonly prose: string;
+  readonly repair?: RepairAction | "none";
+  readonly repair_reason?: string;
+} {
   if (match === "unregistered") {
-    const repair = registrationRepair();
-    const composed = composeRepair({
+    return composeRepair({
       state: `project unknown — ${project} was never registered on this host`,
-      repair,
+      repair: registrationRepair(),
     });
-    return { prose: composed.prose, repair };
   }
   if (match === "orphaned") {
-    return { prose: `project unknown — ${project} is registered on a daemon this socket does not reach` };
+    return composeRepair({
+      state: `project unknown — ${project} is registered on a daemon this socket does not reach`,
+      repair: noRepair(
+        "this socket cannot safely replace a registration owned by an unreachable daemon",
+      ),
+    });
   }
   if (match === "stopped") {
     const stopped = payload.stopped_projects?.find((record) => record.project_label === project);
-    return { prose: `project unknown — ${project} was stopped${stopped == null ? "" : ` at ${clockTime(stopped.at)}`}` };
+    return composeRepair({
+      state: `project unknown — ${project} was stopped${stopped == null ? "" : ` at ${clockTime(stopped.at)}`}`,
+      repair: registrationRepair(),
+    });
   }
   if (match === "lapsed") {
     const lapse = payload.lapsed_projects?.find((record) => record.project_label === project);
     if (lapse != null) {
       const registered = lapse.registered_at == null ? "" : ` (registered ${clockTime(lapse.registered_at)})`;
-      return { prose: `project unknown — ${project} lapsed at ${clockTime(lapse.at)}${registered}` };
+      return composeRepair({
+        state: `project unknown — ${project} lapsed at ${clockTime(lapse.at)}${registered}`,
+        repair: registrationRepair(),
+      });
     }
-    return { prose: `project unknown — ${project} lapsed` };
+    return composeRepair({
+      state: `project unknown — ${project} lapsed`,
+      repair: registrationRepair(),
+    });
   }
-  return { prose: "project unknown — this directory resolved to no project" };
+  if (match === "unresolved") {
+    return composeRepair({
+      state: "project unknown — this directory resolved to no project",
+      repair: noRepair(
+        "the directory must resolve to a project before registration args can be safe",
+      ),
+    });
+  }
+  return { prose: "" };
 }
 
 /** The clock part of a daemon instant, without consulting this process's locale. PURE. */
