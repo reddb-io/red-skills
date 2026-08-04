@@ -5,9 +5,17 @@
  * {@link composeRepair}; callers cannot provide an independent human sentence
  * that could name a different mechanism.
  */
+export type RepairArgument =
+  | null
+  | string
+  | number
+  | boolean
+  | readonly RepairArgument[]
+  | { readonly [key: string]: RepairArgument };
+
 export interface RepairAction {
   readonly tool: string;
-  readonly args: Readonly<Record<string, unknown>>;
+  readonly args: Readonly<Record<string, RepairArgument>>;
   readonly why: string;
 }
 
@@ -25,7 +33,7 @@ export type ComposedRepair =
 
 /** Declare that this state has no safe callable cure, and say why. */
 export function noRepair(reason: string): NoRepair {
-  return { none: true, reason };
+  return Object.freeze({ none: true, reason });
 }
 
 /** The pasteable registration action shared by every unregistered surface. */
@@ -38,16 +46,50 @@ export function registrationRepair(): RepairAction {
 }
 
 /** The exact two-part approval required by the external-origin trust gate. */
-export function externalApprovalRepair(): RepairAction {
+export function externalApprovalRepair(issue: number | string = "<issue-number>"): RepairAction {
   return {
-    tool: "github_issue",
+    tool: "gh",
     args: {
-      add_label: "origin:external",
-      comment: "/approve-external",
-      comment_author: "maintainer",
+      commands: [
+        ["issue", "edit", String(issue), "--add-label", "origin:external"],
+        ["issue", "comment", String(issue), "--body", "/approve-external"],
+      ],
+      required_actor: "maintainer",
     },
     why: "mark the issue as external and record explicit approval from a maintainer with write access",
   };
+}
+
+/** Copy one JSON value into an immutable representation used by both outputs. */
+function normalizeRepairArgument(value: RepairArgument, seen: Set<object>): RepairArgument {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("repair args must contain only finite JSON numbers");
+    return value;
+  }
+  if (seen.has(value)) throw new TypeError("repair args must not contain cycles");
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      return Object.freeze(value.map((item) => normalizeRepairArgument(item, seen)));
+    }
+    const normalized: Record<string, RepairArgument> = {};
+    for (const [key, item] of Object.entries(value)) {
+      normalized[key] = normalizeRepairArgument(item, seen);
+    }
+    return Object.freeze(normalized);
+  } finally {
+    seen.delete(value);
+  }
+}
+
+function normalizeRepairAction(repair: RepairAction): RepairAction {
+  const args = normalizeRepairArgument(repair.args, new Set());
+  return Object.freeze({
+    tool: repair.tool,
+    args: args as Readonly<Record<string, RepairArgument>>,
+    why: repair.why,
+  });
 }
 
 /**
@@ -68,10 +110,12 @@ export function composeRepair(input: {
     };
   }
 
+  const repair = normalizeRepairAction(input.repair);
+
   return {
     prose:
-      `${input.state}; repair: call \`${input.repair.tool}\` with ` +
-      `\`${JSON.stringify(input.repair.args)}\` because ${input.repair.why}`,
-    repair: input.repair,
+      `${input.state}; repair: call \`${repair.tool}\` with ` +
+      `\`${JSON.stringify(repair.args)}\` because ${repair.why}`,
+    repair,
   };
 }
