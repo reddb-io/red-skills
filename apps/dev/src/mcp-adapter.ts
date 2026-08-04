@@ -115,8 +115,7 @@ import { cleanupDisposableDispatchOnBootFailure } from "./commands/run/disposabl
 import {
   getConfig,
   loadConfig,
-  readBackpressure,
-  readFeedbackCommands,
+  readValidationMoments,
   readHitlTypeLabels,
   readValidationResourceBudget,
   readSetupCommands,
@@ -388,8 +387,7 @@ export function createDefaultDevAfkMcpOperations(
       const floorWarnings = await engineFloorWarnings(cwd);
       let granted: DispatchedWorkerBirth | undefined;
       const gateConfig = loadConfig(afkPaths(cwd).configPath, { warn: () => undefined });
-      const configuredBackpressure = readBackpressure(gateConfig);
-      const configuredFeedback = readFeedbackCommands(gateConfig);
+      const postDone = readValidationMoments(gateConfig).post_done;
       const result = await dispatchGo(
         {
           ensureLabel: (name) => runtime.ensureLabel(cwd, name),
@@ -419,7 +417,7 @@ export function createDefaultDevAfkMcpOperations(
           // scout is routed before dispatchDemand is reached — cast to go-mode union
           mode: input.mode as "no-mistakes" | "direct-PR" | "local-only" | undefined,
           request: input.request,
-          hasHarness: configuredFeedback !== undefined || configuredBackpressure.length > 0,
+          hasHarness: postDone !== undefined && postDone.length > 0,
         },
       );
       if (granted === undefined) {

@@ -122,22 +122,16 @@ describe("Pattern 2 — test drift between worker branch and main", () => {
     expect(check.record.summary).toContain("inconclusive: also fails on the baseline");
   });
 
-  it("the optional rebase-on-base is wired through resolveRunSettings (opt-in, default OFF)", async () => {
-    // The deeper fix for drift: rebase the worker branch onto the moved base
-    // BEFORE the gate runs so the updated test runs against the worker's code.
-    // It is opt-in (afk.feedback.rebase_on_base) so a per-issue-pinned repo
-    // doesn't rebase onto the wrong base. Here we assert the resolution
-    // contract: OFF by default, ON via the flag.
+  it("retires the live-base feedback rebase from run settings", async () => {
     const { resolveRunSettings } = await import("../src/runtime/wire.js");
     const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const root = mkdtempSync(join(tmpdir(), "afk-resilience-rebase-"));
     try {
-      expect(resolveRunSettings(root).feedbackRebaseBase).toBeUndefined();
       mkdirSync(join(root, ".red"), { recursive: true });
       writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  feedback:\n    rebase_on_base: true\n");
-      expect(resolveRunSettings(root).feedbackRebaseBase).toBe("main");
+      expect(resolveRunSettings(root)).not.toHaveProperty("feedbackRebaseBase");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

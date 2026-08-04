@@ -501,6 +501,7 @@ export async function processIssue(
       : null;
   const failureReason = extractFailureReason(prevFailureContext);
   const carriedValidationSignature = parseValidationFailureSignature(failureReason);
+  const usesDeclaredValidationMoments = deps.validationMoments !== undefined;
   const resumeIsGateGreen = adoptedPullRequest !== null ||
     (resumableBranch !== null && isGateGreenBranch(failureReason));
   if (adoptedPullRequest) {
@@ -535,10 +536,12 @@ export async function processIssue(
     comments,
     prevFailureContext,
     specRef: input.specRef,
-    mergeGateCommands: [
-      ...(deps.feedbackCommands ?? []),
-      ...(deps.backpressureCommands ?? []),
-    ],
+    mergeGateCommands: usesDeclaredValidationMoments
+      ? (deps.validationMoments?.post_done ?? [])
+      : [
+          ...(deps.feedbackCommands ?? []),
+          ...(deps.backpressureCommands ?? []),
+        ],
     outputShaping,
     resumeFromBranch: resumeInstruction,
     enrichment,
@@ -658,11 +661,60 @@ export async function processIssue(
     ...branchReversionRecords.values(),
     ...validationSidecar,
   ];
+  let postDoneCorrectionCommands: readonly string[] | undefined;
   let lastValidationScope: ValidationScope | undefined = undefined;
   let landingFeedbackScopes: string[] = ["."];
   let noSourceDiffWarning: string | undefined;
   let currentHandoff = handoff;
   let correctionLedger: CorrectionLedger = EMPTY_CORRECTION_LEDGER;
+  const validationBaseRef = usesDeclaredValidationMoments
+    ? (baseResolution.sha || baseRef)
+    : baseRef;
+  const skippedMomentResult = (
+    moment: "post_done" | "landing",
+    validationScope?: ValidationScope,
+  ): RunFeedbackResult => {
+    const record = buildValidationRecord({
+      name: `validation:${moment}`,
+      status: "skipped",
+      summary: "undeclared",
+    });
+    deps.appendIterLog(`🤖 /afk validation moment ${moment} skipped: undeclared.`);
+    return {
+      ok: true,
+      checks: [],
+      sidecar: [formatValidationLine(record)],
+      baselineInconclusive: [],
+      quarantined: [],
+      ...(validationScope === undefined ? {} : { validationScope }),
+    };
+  };
+  const runDeclaredMoment = async (
+    moment: "post_done" | "landing",
+    commands: readonly string[] | undefined,
+    scopes: readonly string[],
+    validationScope?: ValidationScope,
+  ): Promise<RunFeedbackResult> => {
+    if (commands === undefined) return skippedMomentResult(moment, validationScope);
+    deps.appendIterLog(
+      `🤖 /afk validation moment ${moment} running ${commands.length} declared command${commands.length === 1 ? "" : "s"}.`,
+    );
+    const result = await runFeedback(deps.pnpm, {
+      worktree: workerBranch,
+      worktreeKind: "branch",
+      scopes,
+      layout: deps.layout,
+      now: deps.nowEpoch,
+      validationScope,
+      resourceBudget: deps.validationResourceBudget,
+      commands,
+      commandExec: deps.backpressure,
+    });
+    deps.appendIterLog(
+      `🤖 /afk validation moment ${moment} ${result.ok ? "passed" : "failed"}.`,
+    );
+    return result;
+  };
   // Two consecutive identical suspect-infra readings on the gate-only rerun
   // saw the same branch and the same environment. That is deterministic setup
   // failure, not a flake worth another free cycle or outer recovery attempt.
@@ -1031,7 +1083,7 @@ export async function processIssue(
       gate,
       validation,
       sidecar,
-      driftEligible: trigger === "gate-stage",
+      driftEligible: trigger === "gate-stage" && !usesDeclaredValidationMoments,
       suspectInfra,
     })) ===
     "granted";
@@ -1483,7 +1535,7 @@ export async function processIssue(
     deps.markPhase?.("validating");
     markProcessSafetyStep("post-agent:feedback-start");
 
-    const changedFiles = await deps.lookups.changedFiles(workerBranch, baseRef);
+    const changedFiles = await deps.lookups.changedFiles(workerBranch, validationBaseRef);
     if (changedFiles.length === 0) {
       const validationText =
         "DONE rejected: attempt branch has no diff against the merge-base; no work changed, so the completion claim was not accepted.";
@@ -1504,7 +1556,7 @@ export async function processIssue(
     let rootPackageJson: { before: string; after: string } | undefined;
     if (changedFiles.some((file) => file === "package.json" || file === "./package.json")) {
       rootPackageJson = await deps.lookups
-        .changedFileContents?.(workerBranch, baseRef, "package.json")
+        .changedFileContents?.(workerBranch, validationBaseRef, "package.json")
         .catch(() => undefined);
     }
     const validationScope = computeValidationScope(
@@ -1535,22 +1587,46 @@ export async function processIssue(
       deps.appendIterLog(`🤖 /afk: ${reason}`);
       return await terminalFailure(common, "infra", "infra", { log: reason }, { notes: reason });
     }
-    const feedback: RunFeedbackResult = await runFeedback(deps.pnpm, {
-      worktree: workerBranch,
-      // A branch NAME, not a directory (#3041): `deps.pnpm` materialises it and
-      // reports back the absolute checkout it ran in. Declaring the kind keeps
-      // the gate from ever reading the branch token as a missing directory.
-      worktreeKind: "branch",
-      scopes: feedbackScopes,
-      layout: deps.layout,
-      now: deps.nowEpoch,
-      baselineWorktree: base,
-      validationScope,
-      resourceBudget: deps.validationResourceBudget,
-      ...(deps.feedbackCommands === undefined
-        ? {}
-        : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
-    });
+    let feedback: RunFeedbackResult;
+    if (usesDeclaredValidationMoments) {
+      const fullDeclaration = deps.validationMoments?.post_done;
+      feedback = await runDeclaredMoment(
+        "post_done",
+        postDoneCorrectionCommands ?? fullDeclaration,
+        feedbackScopes,
+        validationScope,
+      );
+      if (postDoneCorrectionCommands !== undefined && feedback.ok) {
+        deps.appendIterLog(
+          "🤖 /afk validation moment post_done correction subset passed; folding back to the full declaration.",
+        );
+        postDoneCorrectionCommands = undefined;
+        feedback = await runDeclaredMoment("post_done", fullDeclaration, feedbackScopes, validationScope);
+      }
+      if (!feedback.ok && fullDeclaration !== undefined) {
+        const failedCommands = feedback.checks.flatMap((check) =>
+          check.status === "failed" && check.record.command ? [check.record.command] : []
+        );
+        postDoneCorrectionCommands = failedCommands.length > 0 ? failedCommands : fullDeclaration;
+      }
+    } else {
+      feedback = await runFeedback(deps.pnpm, {
+        worktree: workerBranch,
+        // A branch NAME, not a directory (#3041): `deps.pnpm` materialises it and
+        // reports back the absolute checkout it ran in. Declaring the kind keeps
+        // the gate from ever reading the branch token as a missing directory.
+        worktreeKind: "branch",
+        scopes: feedbackScopes,
+        layout: deps.layout,
+        now: deps.nowEpoch,
+        baselineWorktree: base,
+        validationScope,
+        resourceBudget: deps.validationResourceBudget,
+        ...(deps.feedbackCommands === undefined
+          ? {}
+          : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
+      });
+    }
     markProcessSafetyStep("post-agent:feedback-done");
     const baseMergeGeometry = deps.baseMergeReversionGeometry?.(workerBranch);
     if (baseMergeGeometry) {
@@ -1658,7 +1734,7 @@ export async function processIssue(
         validation: validationText,
       }, { validationSummary: feedback.sidecar.join("\n") });
     }
-    const backpressureCommands = deps.backpressureCommands ?? [];
+    const backpressureCommands = usesDeclaredValidationMoments ? [] : (deps.backpressureCommands ?? []);
     let backpressureSidecar: string[] = [];
     if (deps.backpressure && backpressureCommands.length > 0) {
       markProcessSafetyStep("post-agent:backpressure-start");
@@ -1759,6 +1835,30 @@ export async function processIssue(
     });
 
   markProcessSafetyStep("post-agent:landing-start");
+  if (usesDeclaredValidationMoments) {
+    const landingValidation = await runDeclaredMoment(
+      "landing",
+      deps.validationMoments?.landing,
+      landingFeedbackScopes,
+      lastValidationScope,
+    );
+    validationSidecar = [...validationSidecar, ...landingValidation.sidecar];
+    if (!landingValidation.ok) {
+      const completeSidecar = completeValidationSidecar();
+      await writeValidationSidecar(deps, input.attemptDir, completeSidecar);
+      const validationText = completeSidecar.join("\n");
+      return await terminalFailure(
+        common,
+        "feedback-failed",
+        "feedback",
+        {
+          notes: "The declared landing validation moment failed before push or pull-request creation.",
+          validation: validationText,
+        },
+        { validationSummary: validationText },
+      );
+    }
+  }
   const locked = await deps.lookups.isLocked();
   const openPr = deps.worktreeLaunchesPr !== false;
   if (labels.includes(LABEL_LANDING_MANUAL)) {
@@ -1849,48 +1949,52 @@ export async function processIssue(
       onPrResolved: async (pr) => {
         await emitBackpressureReview(common, pr);
       },
-      postMergeGate: async (mergedTreeDir) => {
-        const mergedFeedback = await runFeedback(deps.pnpm, {
-          worktree: mergedTreeDir,
-          // The landing worktree is a DIRECTORY the caller just provisioned
-          // (#3041). Declaring it means a vanished one refuses the gate as an
-          // infrastructure error instead of composing commands against a path
-          // that resolves nowhere and calling the result the branch's verdict.
-          worktreeKind: "checkout",
-          ...(deps.dirExists === undefined ? {} : { dirExists: deps.dirExists }),
-          scopes: landingFeedbackScopes,
-          layout: deps.layout,
-          now: deps.nowEpoch,
-          baselineWorktree: base,
-          validationScope: lastValidationScope,
-          resourceBudget: deps.validationResourceBudget,
-          ...(deps.feedbackCommands === undefined
-            ? {}
-            : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
-        });
-        if (!mergedFeedback.ok) {
-          validationSidecar = [...mergedFeedback.sidecar];
-          await writeValidationSidecar(deps, input.attemptDir, completeValidationSidecar());
-          return { ok: false };
-        }
-        const gateBackpressureCommands = deps.backpressureCommands ?? [];
-        if (deps.backpressure && gateBackpressureCommands.length > 0) {
-          const mergedBackpressure = await runBackpressure(deps.backpressure, {
-            worktree: mergedTreeDir,
-            commands: gateBackpressureCommands,
-            now: deps.nowEpoch,
-          });
-          common.backpressureChecks = mergedBackpressure.checks;
-          validationSidecar = [...mergedFeedback.sidecar, ...mergedBackpressure.sidecar];
-          if (!mergedBackpressure.ok) {
-            await writeValidationSidecar(deps, input.attemptDir, completeValidationSidecar());
-          }
-          return { ok: mergedBackpressure.ok };
-        }
-        validationSidecar = [...mergedFeedback.sidecar];
-        return { ok: true };
-      },
-      requirePostMergeValidation: true,
+      ...(usesDeclaredValidationMoments
+        ? {}
+        : {
+            postMergeGate: async (mergedTreeDir: string) => {
+              const mergedFeedback = await runFeedback(deps.pnpm, {
+                worktree: mergedTreeDir,
+                // The landing worktree is a DIRECTORY the caller just provisioned
+                // (#3041). Declaring it means a vanished one refuses the gate as an
+                // infrastructure error instead of composing commands against a path
+                // that resolves nowhere and calling the result the branch's verdict.
+                worktreeKind: "checkout",
+                ...(deps.dirExists === undefined ? {} : { dirExists: deps.dirExists }),
+                scopes: landingFeedbackScopes,
+                layout: deps.layout,
+                now: deps.nowEpoch,
+                baselineWorktree: base,
+                validationScope: lastValidationScope,
+                resourceBudget: deps.validationResourceBudget,
+                ...(deps.feedbackCommands === undefined
+                  ? {}
+                  : { commands: deps.feedbackCommands, commandExec: deps.backpressure }),
+              });
+              if (!mergedFeedback.ok) {
+                validationSidecar = [...mergedFeedback.sidecar];
+                await writeValidationSidecar(deps, input.attemptDir, completeValidationSidecar());
+                return { ok: false };
+              }
+              const gateBackpressureCommands = deps.backpressureCommands ?? [];
+              if (deps.backpressure && gateBackpressureCommands.length > 0) {
+                const mergedBackpressure = await runBackpressure(deps.backpressure, {
+                  worktree: mergedTreeDir,
+                  commands: gateBackpressureCommands,
+                  now: deps.nowEpoch,
+                });
+                common.backpressureChecks = mergedBackpressure.checks;
+                validationSidecar = [...mergedFeedback.sidecar, ...mergedBackpressure.sidecar];
+                if (!mergedBackpressure.ok) {
+                  await writeValidationSidecar(deps, input.attemptDir, completeValidationSidecar());
+                }
+                return { ok: mergedBackpressure.ok };
+              }
+              validationSidecar = [...mergedFeedback.sidecar];
+              return { ok: true };
+            },
+            requirePostMergeValidation: true,
+          }),
       landingPhase: markLandingPhase,
     },
     {

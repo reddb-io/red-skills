@@ -841,15 +841,13 @@ describe("doLanding — post-merge-integration gate (#1335)", () => {
     expect(h.postMergeGateDirs).toEqual([]);
   });
 
-  it("PR path: gate absent + unusable CI evidence → fails infra", async () => {
+  it("PR path: gate not required + unusable CI evidence → proceeds without a local rerun", async () => {
     const h = harness({ locked: false, openPr: true, ciAware: "skipped" });
     const r = await doLanding(h.deps, h.input, h.hooks);
     expect(r).toEqual({
-      ok: false,
-      reason: "infra",
+      ok: true,
       locked: false,
-      prNumber: 42,
-      infraReason: "Post-merge validation fallback is not configured and PR CI evidence was absent or unusable.",
+      mergeSha: "abc1234",
     });
     expect(h.postMergeGateDirs).toEqual([]);
   });

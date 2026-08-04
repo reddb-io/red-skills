@@ -623,7 +623,7 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
           postMergeValidation = ciSatisfiedValidation(prNumber, ciEvidence);
           return { ok: true };
         }
-        if (!deps.postMergeGate && (deps.requirePostMergeValidation || deps.ciAwait)) {
+        if (!deps.postMergeGate && deps.requirePostMergeValidation) {
           missingPostMergeFallback = true;
           return { ok: false };
         }
