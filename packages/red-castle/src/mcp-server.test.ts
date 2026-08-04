@@ -20,6 +20,8 @@ function deps(): CastleMcpDependencies {
         lapsed_at: "",
         reason: "",
         launch_revision: 0,
+        bundle_version: "3.3.24",
+        plugin_cache_version: "3.3.21",
       },
       slots: { busy: 1, free: 1, parked: 0, total: 2, interactive_reservation: 1 },
       live_workers: [
