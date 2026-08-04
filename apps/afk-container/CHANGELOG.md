@@ -1,5 +1,7 @@
 # @reddb-io/afk-container
 
+## 3.4.3
+
 ## 3.4.2
 
 ## 3.4.1
