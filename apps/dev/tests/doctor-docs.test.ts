@@ -464,8 +464,8 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("read-only by default");
     expect(skill).toContain("destructive fixes are individually gated under `--fix`");
     expect(skill).toContain("Fleet boot refusal");
-    expect(skill).toContain("boot auto-applies that fast-forward");
-    expect(skill).toContain("logs the before/after SHAs");
+    expect(skill).toContain("boot auto-applies the guarded reconciliation");
+    expect(skill).toContain("superseded local-to-origin SHA pairs");
     expect(skill).toContain("refuses to spawn workers");
     expect(skill).toContain("BootHaltError(\"operational-probe\")");
   });
