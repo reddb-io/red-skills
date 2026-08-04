@@ -8,12 +8,28 @@
 // head so call sites read as argv arrays.
 
 import { spawn } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 
 const PROCESS_GROUP_POLL_MS = 50;
 const PROCESS_GROUP_GRACE_TRIES = 10;
 const PROCESS_GROUP_KILL_TRIES = 20;
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number, signal?: AbortSignal): Promise<boolean> =>
+  new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve(true);
+    }, ms);
+    const abort = (): void => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 
 function processGroupAlive(pgid: number): boolean {
   try {
@@ -50,7 +66,32 @@ export interface ExecOutput {
   code: number;
   stdout: string;
   stderr: string;
+  /** Typed infrastructure evidence emitted when validation made no CPU progress. */
+  infraEvidence?: ValidationInfraEvidence;
 }
+
+export interface ValidationInfraEvidence {
+  kind: "stall";
+  wallTimeMs: number;
+  sampleWindowMs: number;
+  cpuDeltaMs: number;
+}
+
+export interface ValidationStallDetection {
+  /** Do not judge CPU idleness until the command exceeds its normal envelope. */
+  minWallTimeMs: number;
+  /** One CPU-progress observation window. */
+  sampleIntervalMs: number;
+  /** CPU growth at or below this value is treated as no progress. */
+  idleCpuThresholdMs: number;
+}
+
+/** Production validation envelope: 20 minutes, then one 30-second CPU window. */
+export const DEFAULT_VALIDATION_STALL_DETECTION: Readonly<ValidationStallDetection> = Object.freeze({
+  minWallTimeMs: 20 * 60_000,
+  sampleIntervalMs: 30_000,
+  idleCpuThresholdMs: 5,
+});
 
 export interface ExecOptions {
   cwd?: string;
@@ -70,6 +111,79 @@ export interface ExecOptions {
    * exit. Callback failures are observability failures and never affect the
    * child. */
   onSpawn?: (pid: number) => void;
+  /** Linux process-group CPU-idle detector, enabled only for validation children. */
+  stallDetection?: ValidationStallDetection;
+}
+
+/** Linux exposes process CPU in USER_HZ ticks; USER_HZ is 100 on supported hosts. */
+const LINUX_USER_TICK_MS = 10;
+
+/** Aggregate current CPU for every process in the detached validation group. */
+function processGroupCpuMs(pgid: number): number | null {
+  if (process.platform !== "linux") return null;
+  let ticks = 0;
+  let seen = false;
+  let entries: string[];
+  try {
+    entries = readdirSync("/proc");
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (!/^\d+$/.test(entry)) continue;
+    try {
+      const stat = readFileSync(`/proc/${entry}/stat`, "utf8");
+      const close = stat.lastIndexOf(")");
+      if (close < 0) continue;
+      const fields = stat.slice(close + 2).trim().split(/\s+/);
+      if (Number(fields[2]) !== pgid) continue;
+      const utime = Number(fields[11]);
+      const stime = Number(fields[12]);
+      if (!Number.isFinite(utime) || !Number.isFinite(stime)) continue;
+      ticks += utime + stime;
+      seen = true;
+    } catch {
+      // A process can exit between the /proc directory read and its stat read.
+    }
+  }
+  return seen ? ticks * LINUX_USER_TICK_MS : null;
+}
+
+/**
+ * Watch one detached validation process group until it exits or exceeds the
+ * normal wall envelope without consuming CPU for a complete sampling window.
+ */
+async function monitorCpuStall(
+  pgid: number,
+  options: ValidationStallDetection,
+  signal: AbortSignal,
+  onStall: (evidence: ValidationInfraEvidence) => void,
+): Promise<void> {
+  const started = Date.now();
+  let previousCpuMs = processGroupCpuMs(pgid);
+  let previousSampleAt = started;
+  while (!signal.aborted) {
+    const elapsed = await sleep(options.sampleIntervalMs, signal);
+    if (!elapsed || signal.aborted) return;
+    const sampledAt = Date.now();
+    const cpuMs = processGroupCpuMs(pgid);
+    if (cpuMs === null || previousCpuMs === null) {
+      previousCpuMs = cpuMs;
+      previousSampleAt = sampledAt;
+      continue;
+    }
+    const wallTimeMs = sampledAt - started;
+    const sampleWindowMs = sampledAt - previousSampleAt;
+    const cpuDeltaMs = Math.max(0, cpuMs - previousCpuMs);
+    const sampleStartedAfterEnvelope = previousSampleAt - started >= options.minWallTimeMs;
+    previousCpuMs = cpuMs;
+    previousSampleAt = sampledAt;
+    if (wallTimeMs < options.minWallTimeMs) continue;
+    if (!sampleStartedAfterEnvelope) continue;
+    if (cpuDeltaMs > options.idleCpuThresholdMs) continue;
+    onStall({ kind: "stall", wallTimeMs, sampleWindowMs, cpuDeltaMs });
+    return;
+  }
 }
 
 /**
@@ -145,8 +259,10 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
     let stderrBytes = 0;
     let overflow = false;
     let timedOut = false;
+    let infraEvidence: ValidationInfraEvidence | undefined;
     let spawnError: Error | undefined;
     let termination: Promise<boolean> | undefined;
+    const monitorAbort = new AbortController();
 
     const terminate = (): Promise<boolean> => {
       if (termination) return termination;
@@ -158,6 +274,17 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
       termination = terminateProcessGroup(child.pid);
       return termination;
     };
+
+    if (
+      child.pid !== undefined &&
+      process.platform === "linux" &&
+      opts.stallDetection !== undefined
+    ) {
+      void monitorCpuStall(child.pid, opts.stallDetection, monitorAbort.signal, (evidence) => {
+        infraEvidence = evidence;
+        void terminate();
+      });
+    }
 
     const capture = (stream: "stdout" | "stderr", chunk: Buffer): void => {
       const used = stream === "stdout" ? stdoutBytes : stderrBytes;
@@ -189,6 +316,7 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
       : undefined;
 
     child.on("close", async (code, signal) => {
+      monitorAbort.abort();
       if (timeout) clearTimeout(timeout);
       const cleaned = signal !== null
         ? await terminate()
@@ -217,10 +345,15 @@ export function execTool(cmd: string, args: readonly string[], opts: ExecOptions
         return;
       }
       if (timedOut || signal !== null) {
+        const stallMessage = infraEvidence
+          ? `validation child stalled: ${infraEvidence.cpuDeltaMs}ms CPU over ` +
+            `${infraEvidence.sampleWindowMs}ms while wall time reached ${infraEvidence.wallTimeMs}ms`
+          : undefined;
         resolve({
           code: KILLED_EXIT_CODE,
           stdout,
-          stderr: stderr || `command terminated by ${signal ?? "timeout"}`,
+          stderr: stallMessage ?? (stderr || `command terminated by ${signal ?? "timeout"}`),
+          ...(infraEvidence === undefined ? {} : { infraEvidence }),
         });
         return;
       }
