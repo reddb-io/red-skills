@@ -306,6 +306,36 @@ describe("starting work registers the project", () => {
     });
   });
 
+  it("re-creates a lapsed registration through drain", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+    daemon.registerProject({
+      project_label: "acme/widgets",
+      selector: 'repo:acme/widgets is:issue is:open label:"ready-for-agent"',
+      argv: ["red-skills-dev", "run", "--once", "--runner", "codex"],
+      workspace_path: root,
+      env: { RED_AFK_RUNNER: "codex" },
+      target: 1,
+      renew_within_ms: 20,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(daemon.hostState().registrations).toEqual([]);
+
+    await expect(
+      createCastleMcpDependencies(root).drain({ runner: "codex", target: 2 }),
+    ).resolves.toMatchObject({
+      outcome: "applied",
+      report: {
+        registration: "re-created",
+        target: "0→2",
+        runner: "none→codex",
+        workers_born: 2,
+      },
+    });
+    expect(daemon.registrations()).toHaveLength(1);
+    expect(daemon.registrations()[0]).toMatchObject({ target: 2 });
+  });
+
   it("carries the host birth latch and its callable reset on project_status", async () => {
     const daemon = await liveHost();
     const root = await project();
