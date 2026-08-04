@@ -1,8 +1,13 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  collectRepairSites,
   collectRepairViolations,
+  DECLARED_REPAIR_SITES,
+  findRepairDeclarationViolations,
+  formatRepairDeclarationFailure,
   readRepairScanFiles,
+  type DeclaredRepairSite,
   type RepairScanFile,
 } from "../src/core/repair-guard.js";
 import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
@@ -15,7 +20,14 @@ function file(path: string, sourceText: string): RepairScanFile {
 
 describe("every structured castle refusal carries a repair (#3260)", () => {
   it("is green on the live castle refusal surfaces", () => {
-    expect(collectRepairViolations(readRepairScanFiles(ROOT))).toEqual([]);
+    const files = readRepairScanFiles(ROOT);
+    const violations = findRepairDeclarationViolations(
+      collectRepairSites(files),
+      DECLARED_REPAIR_SITES,
+      files,
+    );
+
+    expect(violations, formatRepairDeclarationFailure(violations)).toEqual([]);
   });
 
   it("fails a new refusal that has only prose", () => {
@@ -58,5 +70,82 @@ describe("every structured castle refusal carries a repair (#3260)", () => {
   it("runs in every cone-scoped gate", () => {
     expect(REPO_INVARIANT_SUITES.map((suite) => suite.name))
       .toContain("invariants:structured-repairs");
+  });
+});
+
+describe("every castle refusal and empty state is declared (#3261)", () => {
+  it("fails an undeclared refusal, naming its file and site", () => {
+    const files = [
+      file(
+        "packages/red-castle/src/mcp/demo.ts",
+        [
+          "export function refuseDemo() {",
+          '  return { refused: true, reason: "not available", repair: "none", repair_reason: "demo" };',
+          "}",
+        ].join("\n"),
+      ),
+    ];
+
+    const violations = findRepairDeclarationViolations(collectRepairSites(files), [], files);
+
+    expect(violations).toEqual([
+      {
+        kind: "undeclared",
+        path: "packages/red-castle/src/mcp/demo.ts",
+        fn: "refuseDemo",
+        line: 2,
+        surface: "refusal",
+      },
+    ]);
+    const message = formatRepairDeclarationFailure(violations);
+    expect(message).toContain("packages/red-castle/src/mcp/demo.ts:2");
+    expect(message).toContain("refuseDemo");
+  });
+
+  it("fails a declaration whose refusal path is gone", () => {
+    const declared: DeclaredRepairSite[] = [
+      {
+        path: "packages/red-castle/src/mcp/demo.ts",
+        fn: "refuseDemo",
+        surface: "refusal",
+      },
+    ];
+
+    const violations = findRepairDeclarationViolations([], declared, []);
+
+    expect(violations).toEqual([
+      {
+        kind: "stale",
+        path: "packages/red-castle/src/mcp/demo.ts",
+        fn: "refuseDemo",
+        surface: "refusal",
+      },
+    ]);
+    expect(formatRepairDeclarationFailure(violations)).toContain("delete the declaration");
+  });
+
+  it("declares the live refusal and empty-state sites by stable function name", () => {
+    expect(DECLARED_REPAIR_SITES).toEqual([
+      {
+        path: "packages/red-castle/src/mcp/posture.ts",
+        fn: "refusal",
+        surface: "refusal",
+      },
+      {
+        path: "packages/red-castle/src/mcp/worker.ts",
+        fn: "workerInputRefusal",
+        surface: "refusal",
+      },
+      {
+        path: "apps/dev/src/mcp-adapter.ts",
+        fn: "projectStatus",
+        surface: "empty-state",
+      },
+      {
+        path: "apps/dev/src/mcp-adapter.ts",
+        fn: "cursorRefusal",
+        surface: "refusal",
+      },
+    ]);
   });
 });
