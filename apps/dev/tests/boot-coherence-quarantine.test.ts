@@ -53,12 +53,15 @@ function coherenceOptions(issues: MutableIssue[]) {
 function wireIssueMutations(
   deps: ReturnType<typeof makeDeps>["deps"],
   issues: MutableIssue[],
-  overrides: { failLabels?: boolean; failBody?: boolean } = {},
+  overrides: { failLabels?: boolean; failQuarantineAddAfterRemove?: boolean; failBody?: boolean } = {},
 ) {
   const editLabels = vi.fn(async (number: number, remove: string[], add: string[]) => {
     if (overrides.failLabels) throw new Error("label mutation failed");
     const issue = issues.find((candidate) => candidate.number === number)!;
     issue.labels = issue.labels.filter((label) => !remove.includes(label));
+    if (overrides.failQuarantineAddAfterRemove && add.includes("quarantine")) {
+      throw new Error("quarantine label missing");
+    }
     issue.labels.push(...add.filter((label) => !issue.labels.includes(label)));
   });
   const editBody = vi.fn(async (number: number, body: string) => {
@@ -147,6 +150,21 @@ describe("ADR 0122 boot quarantine posture", () => {
       expect(processed).toEqual([1972]);
     },
   );
+
+  it("restores ready-for-agent when the tracker removes queue labels before rejecting quarantine", async () => {
+    const issues = [poisonedIssue(), healthyIssue()];
+    const { deps } = makeDeps();
+    const ensureLabel = vi.fn(async () => undefined);
+    Object.assign(deps.gh, { ensureLabel });
+    wireIssueMutations(deps, issues, { failQuarantineAddAfterRemove: true });
+
+    const { processed, result } = await drainAfterBoot(deps, issues);
+
+    expect(result.boot.bootstrap).toEqual({ ok: true });
+    expect(processed).toEqual([1972]);
+    expect(ensureLabel).toHaveBeenCalledWith("quarantine");
+    expect(issues[0]?.labels).toContain("ready-for-agent");
+  });
 
   it("is idempotent after the issue has left the executable queue", async () => {
     const issues = [poisonedIssue()];
