@@ -22,6 +22,7 @@ import {
   type RedskilledRenewalStatus,
 } from "./project-registration.js";
 import { REDSKILLED_PROTOCOL_VERSION } from "./protocol.js";
+import type { RedskilledBirthLatch } from "./demand-loop.js";
 import type { RedskilledQueueDiscovery, RedskilledQueueOutcome } from "./queue-discovery.js";
 import type { RedskilledMajorHold, RedskilledReplacementHoldReason } from "./self-replace.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
@@ -315,6 +316,8 @@ export interface RedskilledHostState {
   readonly stopped_registrations?: readonly RedskilledRegistrationStop[];
   /** Registrations held by another live daemon which this socket cannot reach. */
   readonly orphaned_registrations?: readonly RedskilledOrphanedRegistration[];
+  /** Every project whose autonomous births are currently latched. */
+  readonly birth_latches?: readonly RedskilledBirthLatch[];
   /** What the daemon has promised the machine, derived from `workers`. */
   readonly budget_accounting: RedskilledBudgetAccounting;
   /** Running version against published version, and what is being done about it. */
@@ -348,6 +351,8 @@ export interface BuildHostStateInput {
   readonly stops?: readonly RedskilledRegistrationStop[];
   /** Registrations proved to remain behind another live daemon. */
   readonly orphanedRegistrations?: readonly RedskilledOrphanedRegistration[];
+  /** The daemon's in-memory birth latches, already composed for read surfaces. */
+  readonly birthLatches?: readonly RedskilledBirthLatch[];
   /**
    * The last queue poll, as the poller left it; absent when none has run.
    *
@@ -412,6 +417,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     ...(input.orphanedRegistrations == null || input.orphanedRegistrations.length === 0
       ? {}
       : { orphaned_registrations: [...input.orphanedRegistrations] }),
+    birth_latches: [...(input.birthLatches ?? [])],
     budget_accounting: buildBudgetAccounting(workers, {
       hostCeilingBytes: input.ceiling?.memory_bytes ?? input.hostCeilingBytes ?? null,
     }),
@@ -532,11 +538,29 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
       (Array.isArray(state.stopped_registrations) && state.stopped_registrations.every(isRegistrationStop))) &&
     (state.orphaned_registrations === undefined ||
       (Array.isArray(state.orphaned_registrations) && state.orphaned_registrations.every(isOrphanedRegistration))) &&
+    (state.birth_latches === undefined ||
+      (Array.isArray(state.birth_latches) && state.birth_latches.every(isBirthLatch))) &&
     // Checked only when present. One daemon serves checkouts pinned to different
     // bundle versions (ADR 0130 rule 3), so a field this bundle added must not
     // make an older daemon's complete answer read as malformed — while a field
     // that IS there and is the wrong shape still fails closed.
     (state.upgrade === undefined || isRedskilledUpgradeState(state.upgrade));
+}
+
+function isBirthLatch(value: unknown): value is RedskilledBirthLatch {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const latch = value as Record<string, unknown>;
+  const repair = latch.repair as Record<string, unknown> | undefined;
+  return latch.name === "project-birth-breaker" &&
+    typeof latch.project_label === "string" &&
+    (latch.state === "open" || latch.state === "half-open") &&
+    typeof latch.opened_at === "string" &&
+    typeof latch.reason === "string" &&
+    typeof latch.closes === "string" &&
+    (latch.probe_worker_id === null || typeof latch.probe_worker_id === "string") &&
+    repair != null && repair.tool === "project_reset" &&
+    typeof repair.args === "object" && repair.args !== null &&
+    typeof repair.why === "string";
 }
 
 function isRegistrationLapse(value: unknown): value is RedskilledRegistrationLapse {
