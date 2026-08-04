@@ -102,6 +102,8 @@ describe("drain ensure planner", () => {
         args: {},
       },
     });
+    expect(plan.outcome).toBe("refuse");
+    if (plan.outcome !== "refuse") throw new Error("expected runner change refusal");
     expect(plan.reason).toContain("runner change from \"codex\" to \"claude\"");
     expect(plan.repair.why).toContain("then call `drain`");
     expect(plan.repair.why).toContain('{"runner":"claude","target":6}');
