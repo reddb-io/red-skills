@@ -1,5 +1,6 @@
 import type { WorkSelector } from "./work-selector.js";
 import type { Runner } from "./runner-types.js";
+import type { RepairAction } from "@reddb-io/shared/repair.js";
 import {
   resolveHostCapabilities,
   type HostCapabilityProfile,
@@ -199,9 +200,16 @@ export interface CastleWorkerProcessResult {
   reason?: string;
 }
 
-export interface CastleIssueEligibility {
-  eligible: boolean;
-  reason?: string;
+export type CastleIssueEligibility =
+  | { eligible: true; reason?: never; repair?: never; repair_reason?: never }
+  | { eligible: false; reason: string; repair: RepairAction; repair_reason?: never }
+  | { eligible: false; reason: string; repair: "none"; repair_reason: string };
+
+export interface CastleIssueHold {
+  issue: number;
+  reason: string;
+  repair: RepairAction | "none";
+  repair_reason?: string;
 }
 
 export interface CastleWorkerDrainBudgetSnapshot {
@@ -276,6 +284,8 @@ export interface CastleWorkerDrainSummary<TBootResult = unknown> {
   /** Ready-labelled issues the executable-issue trust gate excluded before the
    * progress denominator was calculated. */
   heldForSummon: number;
+  /** Structured trust refusals excluded from this drain, one per Ticket. */
+  held: CastleIssueHold[];
   boot: TBootResult;
   processed: CastleWorkerDrainProcessed[];
   drained: boolean;
@@ -398,6 +408,7 @@ export async function runCastleWorkerDrain<
     failed: 0,
     total: 0,
     heldForSummon: 0,
+    held: [],
     boot,
     processed: [],
     drained: false,
@@ -432,22 +443,31 @@ export async function runCastleWorkerDrain<
       ctx.declaredLane,
     );
     const queue: CastleIssueCandidate[] = [];
-    const held: CastleIssueCandidate[] = [];
+    const held: CastleIssueHold[] = [];
     for (const candidate of selected) {
-      const eligibility = deps.classifyEligibility
+      const eligibility: CastleIssueEligibility = deps.classifyEligibility
         ? await deps.classifyEligibility(candidate)
         : { eligible: true };
-      (eligibility.eligible ? queue : held).push(candidate);
+      if (eligibility.eligible) {
+        queue.push(candidate);
+      } else {
+        held.push({
+          issue: candidate.number,
+          reason: eligibility.reason,
+          repair: eligibility.repair,
+          ...(eligibility.repair === "none"
+            ? { repair_reason: eligibility.repair_reason }
+            : {}),
+        });
+      }
     }
     const total = queue.length;
     await fireSessionHook("post_pick", JSON.stringify({ issues: queue.map((candidate) => candidate.number) }));
 
     if (held.length > 0) {
-      const issues = held.map((candidate) => `#${candidate.number}`).join(", ");
-      deps.emit(
-        `${total} eligible, ${held.length} held for summon (${issues}) — ` +
-          "release with `triage:summon`, `dev triage --summon`, or `afk.trust-gate.allowlist`",
-      );
+      const issues = held.map((hold) => `#${hold.issue}`).join(", ");
+      deps.emit(`${total} eligible, ${held.length} held by trust gate (${issues})`);
+      for (const hold of held) deps.emit(`trust hold #${hold.issue}: ${hold.reason}`);
     }
 
     if (total === 0) {
@@ -458,6 +478,7 @@ export async function runCastleWorkerDrain<
         ...empty,
         total: 0,
         heldForSummon: held.length,
+        held,
         drained: true,
         stopReason: "drain-empty",
       };
@@ -576,6 +597,7 @@ export async function runCastleWorkerDrain<
       failed,
       total,
       heldForSummon: held.length,
+      held,
       boot,
       processed,
       drained: false,
