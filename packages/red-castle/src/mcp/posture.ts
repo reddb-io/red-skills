@@ -1,5 +1,11 @@
 import { z } from "zod/v3";
 import type { CastleMcpTool } from "./tool.js";
+import {
+  composeRepair,
+  noRepair,
+  type RepairAction,
+  type RepairArgument,
+} from "@reddb-io/shared/repair.js";
 
 export type DangerPosture = "allow" | "confirm" | "deny";
 
@@ -8,17 +14,40 @@ export interface DangerRefusal {
   posture: DangerPosture;
   action: string;
   reason: string;
+  repair: RepairAction | "none";
+  repair_reason?: string;
 }
 
-function refusal(posture: DangerPosture, toolName: string): DangerRefusal {
+function refusal(
+  posture: DangerPosture,
+  toolName: string,
+  input: Record<string, unknown> = {},
+): DangerRefusal {
+  const composed = posture === "confirm"
+    ? composeRepair({
+        state: "dangerous tool requires explicit confirmation",
+        repair: {
+          tool: toolName,
+          args: {
+            ...(input as Record<string, RepairArgument>),
+            confirmation: true,
+          },
+          why: "retry the same operation with explicit confirmation",
+        },
+      })
+    : composeRepair({
+        state: "dangerous tool is denied by the configured posture",
+        repair: noRepair("the configured posture deliberately forbids this tool"),
+      });
   return {
     refused: true,
     posture,
     action: toolName,
-    reason:
-      posture === "confirm"
-        ? "dangerous tool requires explicit confirmation — retry with confirmation: true"
-        : "dangerous tool is denied by the configured posture",
+    reason: composed.prose,
+    repair: composed.repair,
+    ...(composed.repair === "none"
+      ? { repair_reason: composed.repair_reason }
+      : {}),
   };
 }
 
@@ -59,7 +88,7 @@ export function applyDangerPosture(
       inputSchema: augmentedSchema,
       invoke: async (input) => {
         if (input["confirmation"] !== true) {
-          return refusal("confirm", tool.name);
+          return refusal("confirm", tool.name, input);
         }
         const { confirmation: _c, ...rest } = input;
         return realInvoke(rest);
