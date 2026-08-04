@@ -1,5 +1,7 @@
 # @reddb-io/github
 
+## 3.5.0
+
 ## 3.4.3
 
 ### Patch Changes

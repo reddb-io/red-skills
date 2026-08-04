@@ -1,5 +1,11 @@
 # @reddb-io/redskilled-render
 
+## 3.5.0
+
+### Patch Changes
+
+- @reddb-io/shared@3.5.0
+
 ## 3.4.3
 
 ### Patch Changes

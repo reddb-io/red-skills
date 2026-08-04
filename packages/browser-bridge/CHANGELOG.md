@@ -1,5 +1,7 @@
 # @reddb-io/browser-bridge
 
+## 3.5.0
+
 ## 3.4.3
 
 ## 3.4.2

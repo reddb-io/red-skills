@@ -1,5 +1,13 @@
 # @reddb-io/rsp
 
+## 3.5.0
+
+### Patch Changes
+
+- @reddb-io/shared@3.5.0
+- @reddb-io/build-info@3.5.0
+- @reddb-io/red-castle@3.5.0
+
 ## 3.4.3
 
 ### Patch Changes
