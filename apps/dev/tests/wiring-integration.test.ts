@@ -89,6 +89,47 @@ function makeFakeExec(repoRoot: string): { exec: ExecFn; trace: TraceEntry[] } {
 }
 
 describe("wiring integration — real buildProcessDeps over a fake exec", () => {
+  it("exposes the declared Validation moments to the engine dependency surface", () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-wiring-validation-moments-"));
+    mkdirSync(join(root, ".red"), { recursive: true });
+    writeFileSync(
+      join(root, ".red", "config.yaml"),
+      [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      validation:",
+        "        iteration:",
+        "          - pnpm test",
+        "        post_done:",
+        "          - pnpm typecheck",
+        "        landing:",
+        "          - pnpm build",
+        "",
+      ].join("\n"),
+    );
+    const ctx: RepoContext = { root, repo: "acme/widgets", remote: "origin" };
+    const { exec } = makeFakeExec(root);
+    const feedback = makeFeedbackWorktree(root, join(root, ".red", "tmp", "feedback"));
+    const deps = buildProcessDeps({
+      ctx,
+      model: "gpt-5.5",
+      sandbox: "none",
+      feedback,
+      current: { attemptDir: join(root, ".red", "tmp", "workers", "w1", "42-a1") },
+      fallbackRunner: false,
+      runner: "codex",
+      exec,
+    });
+
+    expect(deps.validationMoments).toEqual({
+      iteration: ["pnpm test"],
+      post_done: ["pnpm typecheck"],
+      landing: ["pnpm build"],
+    });
+  });
+
   it("feeds a landing conflict resolver's native stream into its parent Worker lane (#2480)", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-wiring-linked-resolver-"));
     const attemptDir = join(root, ".red", "tmp", "workers", "wLINK", "2480");
