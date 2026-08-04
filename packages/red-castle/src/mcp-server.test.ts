@@ -159,6 +159,7 @@ function deps(): CastleMcpDependencies {
 describe("castle MCP tools", () => {
   it("publishes the Fleet and Observability domains", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
+      "help",
       "project_status",
       "project_start",
       "project_resize",
