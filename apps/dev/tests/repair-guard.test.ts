@@ -137,6 +137,11 @@ describe("every castle refusal and empty state is declared (#3261)", () => {
         surface: "refusal",
       },
       {
+        path: "packages/red-castle/src/mcp/help.ts",
+        fn: "invoke",
+        surface: "empty-state",
+      },
+      {
         path: "apps/dev/src/mcp-adapter.ts",
         fn: "projectStatus",
         surface: "empty-state",

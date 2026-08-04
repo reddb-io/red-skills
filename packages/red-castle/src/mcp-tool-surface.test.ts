@@ -19,6 +19,13 @@ const SURFACE: ReadonlyArray<{
   schema: string[];
 }> = [
   {
+    name: "help",
+    title: "Find the next castle action",
+    description:
+      "Read live daemon, registration, queue, Worker, and refusal state; return the pasteable next call and a generated intent map. Makes no GitHub request.",
+    schema: [],
+  },
+  {
     name: "project_status",
     title: "Get project worker status",
     description:

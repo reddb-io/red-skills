@@ -14,6 +14,10 @@ import {
   type RedskilledBudgetAccounting,
 } from "./budget-accounting.js";
 import type { RedskilledHostCeiling } from "./admission.js";
+import {
+  isRedskilledDemandTick,
+  type RedskilledDemandTick,
+} from "./demand-loop.js";
 import { isRedskilledScopeState, type RedskilledScopeState } from "./machine-scope.js";
 import {
   isRedskilledProjectRegistration,
@@ -305,6 +309,14 @@ export interface RedskilledHostState {
    */
   readonly registrations?: readonly RedskilledRegistrationView[];
   /**
+   * The last demand decision, including the host's refusal and retry instant.
+   *
+   * Optional for compatibility with daemons predating this field. It is already
+   * host-owned state; carrying it here lets hot read surfaces answer why a queue
+   * is not moving without fetching the tracker or parsing a log.
+   */
+  readonly demand?: RedskilledDemandTick;
+  /**
    * The registrations this daemon dropped, oldest first; absent when it dropped none.
    *
    * Beside `registrations` because it answers the question that set cannot: a
@@ -345,6 +357,8 @@ export interface BuildHostStateInput {
   readonly hostCeilingBytes?: number | null;
   /** The registrations the daemon holds; absent is a host with none, not an error. */
   readonly registrations?: readonly RedskilledProjectRegistration[];
+  /** The last demand tick; absent/null means this daemon has not decided yet. */
+  readonly demand?: RedskilledDemandTick | null;
   /** The ones it dropped, in the order it dropped them; absent when none lapsed. */
   readonly lapses?: readonly RedskilledRegistrationLapse[];
   /** Deliberate registration releases, oldest first. */
@@ -409,6 +423,7 @@ export function buildHostState(input: BuildHostStateInput): RedskilledHostState 
     // Ordered by the one field the daemon is allowed to read. A document ordered
     // by anything a selector says would be the daemon having read one.
     registrations: buildRegistrationViews(input),
+    ...(input.demand == null ? {} : { demand: input.demand }),
     // Absent rather than empty: a host that has dropped nothing has no lapse
     // block at all, so a reader never has to tell an empty list from a daemon too
     // old to keep one.
@@ -532,6 +547,7 @@ export function isRedskilledHostState(value: unknown): value is RedskilledHostSt
     // while a block that IS there and is the wrong shape still fails closed.
     (state.registrations === undefined ||
       (Array.isArray(state.registrations) && state.registrations.every(isRedskilledProjectRegistration))) &&
+    (state.demand === undefined || isRedskilledDemandTick(state.demand)) &&
     (state.lapsed_registrations === undefined ||
       (Array.isArray(state.lapsed_registrations) && state.lapsed_registrations.every(isRegistrationLapse))) &&
     (state.stopped_registrations === undefined ||

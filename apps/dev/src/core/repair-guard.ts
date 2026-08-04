@@ -46,6 +46,11 @@ export const DECLARED_REPAIR_SITES: readonly DeclaredRepairSite[] = [
     surface: "refusal",
   },
   {
+    path: "packages/red-castle/src/mcp/help.ts",
+    fn: "invoke",
+    surface: "empty-state",
+  },
+  {
     path: "apps/dev/src/mcp-adapter.ts",
     fn: "projectStatus",
     surface: "empty-state",
