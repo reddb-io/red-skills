@@ -82,6 +82,8 @@ const PAYLOAD: StatuslineAggregate = {
       lapsed_at: "",
       reason: "",
       launch_revision: 1,
+      bundle_version: "3.3.24",
+      plugin_cache_version: "3.3.21",
     },
     slots: { busy: 2, free: 1, parked: 1, total: 4, interactive_reservation: 1 },
     live_workers: [
