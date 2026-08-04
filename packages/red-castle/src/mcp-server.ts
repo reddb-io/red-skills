@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createClaimTools, type ClaimDependencies } from "./mcp/claim.js";
+import { createHelpTools, type HelpDependencies } from "./mcp/help.js";
 import { createMergeTools, type MergeDependencies } from "./mcp/merge.js";
 import { createHitlTools, type HitlDependencies } from "./mcp/hitl.js";
 import { createHostTools, type HostDependencies } from "./mcp/host.js";
@@ -91,6 +92,7 @@ export type {
  */
 export interface CastleMcpDependencies
   extends
+    HelpDependencies,
     ProjectDependencies,
     HostDependencies,
     ObservabilityDependencies,
@@ -125,7 +127,9 @@ export function createCastleMcpTools(
   deps: CastleMcpDependencies,
   posture: DangerPosture = "allow",
 ): CastleMcpTool[] {
+  let publishedTools: CastleMcpTool[] = [];
   const tools = [
+    ...createHelpTools(deps, () => publishedTools),
     ...createProjectTools(deps),
     ...createHostTools(deps),
     ...createObservabilityTools(deps),
@@ -143,5 +147,6 @@ export function createCastleMcpTools(
     ...createReviewTools(deps),
     ...createStatuslineTools(deps),
   ];
-  return applyDangerPosture(applyOutputContracts(tools), posture);
+  publishedTools = applyDangerPosture(applyOutputContracts(tools), posture);
+  return publishedTools;
 }
