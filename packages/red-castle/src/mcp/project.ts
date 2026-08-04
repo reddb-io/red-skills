@@ -35,6 +35,11 @@ export interface ProjectStartInput {
   base?: string;
 }
 
+export interface ProjectDrainInput {
+  runner: string;
+  target: number;
+}
+
 export interface ProjectResizeInput {
   runner?: string;
   target?: number;
@@ -53,6 +58,7 @@ export interface ProjectResetInput {
 
 export interface ProjectDependencies {
   projectStatus(): Promise<ProjectStatusOutput>;
+  drain(input: ProjectDrainInput): Promise<unknown>;
   projectStart(input: ProjectStartInput): Promise<unknown>;
   projectResize(input: ProjectResizeInput): Promise<unknown>;
   projectReset(input: ProjectResetInput): Promise<unknown>;
@@ -109,9 +115,7 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
         runner: z.string().min(1),
         target: z.number().int().min(0).default(DEFAULT_FLEET_WIDTH),
       },
-      invoke: async () => {
-        throw new Error("drain adapter is not implemented yet");
-      },
+      invoke: async (input) => deps.drain(input as unknown as ProjectDrainInput),
     },
     {
       name: "project_start",
