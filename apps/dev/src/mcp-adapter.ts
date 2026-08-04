@@ -1743,7 +1743,7 @@ function cursorRefusal(state: string): CursorRefusal {
     repair: {
       tool: "events_since",
       args: {},
-      why: "request a fresh baseline cursor",
+      why: "re-baseline with a fresh cursor",
     },
   });
   if (composed.repair === "none") throw new Error("invalid cursor refusal repair");
