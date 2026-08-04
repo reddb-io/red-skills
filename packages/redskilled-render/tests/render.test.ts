@@ -243,7 +243,8 @@ describe("an unknown project's registration history (#3191)", () => {
           reason: "nothing renewed it",
         }],
       }),
-      "project unknown — acme/widgets lapsed at 17:36:15 (registered 17:25:30) v3.3.11",
+      "project unknown — acme/widgets lapsed at 17:36:15 (registered 17:25:30); repair: call `project_start` with " +
+        "`{\"runner\":\"claude\",\"target\":1}` because register this project with the host so its queue can drain v3.3.11",
     ],
     [
       "was deliberately stopped",
@@ -255,7 +256,8 @@ describe("an unknown project's registration history (#3191)", () => {
         registered_projects: [],
         stopped_projects: [{ project_label: "acme/widgets", at: "2026-08-03T17:41:02.000Z" }],
       }),
-      "project unknown — acme/widgets was stopped at 17:41:02 v3.3.11",
+      "project unknown — acme/widgets was stopped at 17:41:02; repair: call `project_start` with " +
+        "`{\"runner\":\"claude\",\"target\":1}` because register this project with the host so its queue can drain v3.3.11",
     ],
     [
       "belongs to an orphaned daemon",
@@ -267,10 +269,39 @@ describe("an unknown project's registration history (#3191)", () => {
         registered_projects: [],
         orphaned_projects: ["acme/widgets"],
       }),
-      "project unknown — acme/widgets is registered on a daemon this socket does not reach v3.3.11",
+      "project unknown — acme/widgets is registered on a daemon this socket does not reach; repair: none because " +
+        "this socket cannot safely replace a registration owned by an unreachable daemon v3.3.11",
     ],
   ])("states that it %s", (_history, doc, expected) => {
-    expect(renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).line).toBe(expected);
+    const rendered = renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 320 });
+    expect(rendered.line).toBe(expected);
+    if (_history === "belongs to an orphaned daemon") {
+      expect(rendered).toMatchObject({
+        repair: "none",
+        repair_reason: "this socket cannot safely replace a registration owned by an unreachable daemon",
+      });
+    } else {
+      expect(rendered.repair).toMatchObject({
+        tool: "project_start",
+        args: { runner: "claude", target: 1 },
+      });
+    }
+  });
+
+  it("argues none when this directory has no project identity to register", () => {
+    const rendered = renderRedskilledStatusline(
+      payload({ host: emptyHost, projects: [], workers: [] }),
+      { ...LOCAL, project: null, maxWidth: 320 },
+    );
+
+    expect(rendered).toMatchObject({
+      project_match: "unresolved",
+      repair: "none",
+      repair_reason: "the directory must resolve to a project before registration args can be safe",
+    });
+    expect(rendered.line).toContain(
+      "repair: none because the directory must resolve to a project before registration args can be safe",
+    );
   });
 });
 
