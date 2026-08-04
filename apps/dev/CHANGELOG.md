@@ -1,5 +1,18 @@
 # @reddb-io/dev
 
+## 3.4.1
+
+### Patch Changes
+
+- 4e8458a: Keep release-only version bumps inside a Worker's validation cone and rerun only the gate after stale-base drift.
+- Updated dependencies [c979efe]
+  - @reddb-io/redskilled@3.4.1
+  - @reddb-io/redskilled-render@3.4.1
+  - @reddb-io/github@3.4.1
+  - @reddb-io/shared@3.4.1
+  - @reddb-io/build-info@3.4.1
+  - @reddb-io/red-castle@3.4.1
+
 ## 3.4.0
 
 ### Patch Changes
