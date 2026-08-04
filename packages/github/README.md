@@ -80,6 +80,21 @@ A field with no single-request REST equivalent is **named, not approximated**:
 third request). Those come back as `{outcome: "unavailable"}` with the blocking
 fields, and the caller keeps its GraphQL call.
 
+## Inner agents share the boundary
+
+An AFK implementer's raw `gh` resolves first to a private shim in the Worker's
+disposable workspace. The shim classifies the argv through this package, admits
+it against the daemon's kept token-wide balance as convenience work, applies the
+same bounded quota retry as engine calls, and forwards to the captured real
+binary. Unclassified operations fail closed instead of inheriting a guessed
+pool. Every issued invocation, including a retry, is appended to the attribution
+ledger with the Worker as `actor`; the canonical operation key stays canonical.
+
+This attribution remains local evidence, not a reconstructed balance. REST cost
+is one request; because `gh` does not expose GraphQL node cost, the shim records
+the minimum observed cost of one while the exact invocation count and Worker
+identity remain available for incident attribution.
+
 ## The balance is asked, never counted
 
 The design this replaced was a ledger the daemon **accumulates**: every caller

@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   buildRunOptions,
   buildContinuousPushHook,
@@ -37,6 +40,10 @@ import {
   fakeResult,
   makeDeps,
 } from "./execution-test-helpers.js";
+import {
+  WORKER_GH_ACTOR_ENV,
+  WORKER_GH_REAL_ENV,
+} from "../src/runtime/worker-gh-boundary.js";
 
 describe("runAgent — FIX F continuous-push under isolation warning", () => {
   function captureWarn(): { warn: (m: string) => void; lines: string[] } {
@@ -94,6 +101,52 @@ describe("runAgent — FIX J env application", () => {
     // Just proves the empty-env path does not throw.
     const r = await runAgent(makeDeps(async () => fakeResult()), baseInput);
     expect(r.outcome).toBe("done");
+  });
+});
+
+describe("runAgent — Worker gh boundary", () => {
+  it("puts the private gh shim on the implementer's PATH before sandcastle runs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "execution-worker-gh-"));
+    const bin = join(root, "host-bin");
+    const realGh = join(bin, "gh");
+    await mkdir(bin, { recursive: true });
+    await writeFile(realGh, "#!/bin/sh\nexit 0\n", "utf8");
+    await chmod(realGh, 0o700);
+
+    const saved = {
+      PATH: process.env.PATH,
+      real: process.env[WORKER_GH_REAL_ENV],
+      actor: process.env[WORKER_GH_ACTOR_ENV],
+    };
+    delete process.env[WORKER_GH_REAL_ENV];
+    delete process.env[WORKER_GH_ACTOR_ENV];
+    process.env.PATH = bin;
+    try {
+      let seen: { path?: string; real?: string; actor?: string } = {};
+      await runAgent(
+        makeDeps(async () => {
+          seen = {
+            path: process.env.PATH,
+            real: process.env[WORKER_GH_REAL_ENV],
+            actor: process.env[WORKER_GH_ACTOR_ENV],
+          };
+          return fakeResult();
+        }),
+        { ...baseInput, cwd: root, githubBoundaryActor: "worker:wBOUND" },
+      );
+
+      expect(seen.path?.split(":")[0]).toBe(join(root, "github-boundary", "bin"));
+      expect(seen.real).toBe(realGh);
+      expect(seen.actor).toBe("worker:wBOUND");
+    } finally {
+      if (saved.PATH === undefined) delete process.env.PATH;
+      else process.env.PATH = saved.PATH;
+      if (saved.real === undefined) delete process.env[WORKER_GH_REAL_ENV];
+      else process.env[WORKER_GH_REAL_ENV] = saved.real;
+      if (saved.actor === undefined) delete process.env[WORKER_GH_ACTOR_ENV];
+      else process.env[WORKER_GH_ACTOR_ENV] = saved.actor;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

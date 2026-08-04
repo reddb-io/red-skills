@@ -17,6 +17,11 @@ import { extractAgentOutput } from "@reddb-io/red-castle";
 import { join } from "node:path";
 import { buildLineRedactor } from "../../runtime/outbound-redaction.js";
 import { resolveHostEnvAllowlist } from "../host-env-allowlist.js";
+import {
+  WORKER_GH_REAL_ENV,
+  findRealGh,
+  installWorkerGhBoundary,
+} from "../../runtime/worker-gh-boundary.js";
 import { isRunnerExhausted } from "../runner-spawn.js";
 import { startLaneIdleReaper, DEFAULT_STALL_POLL_S } from "../lane-idle-reaper.js";
 import { RUNNER_SPECS, runnerSupportsStructuredOutput } from "../runner-spec.js";
@@ -321,6 +326,12 @@ export interface RunAgentInput {
    * that the agent's build actually sees CARGO_TARGET_DIR is pending #284.
    */
   env?: Record<string, string>;
+  /**
+   * Attribution label that arms the inner agent's private `gh` PATH boundary.
+   * Omitted for non-Worker/maintenance executions. The implementation wrapper
+   * supplies `worker:<id>` for every real AFK implementer run.
+   */
+  githubBoundaryActor?: string;
   /** Runner-native projection of the repo-enabled implementer skill surface. */
   implementer?: ImplementerRuntimeProjection;
   /**
@@ -930,6 +941,34 @@ export async function runAgent(deps: SandcastleDeps, input: RunAgentInput): Prom
   // its own process, so this is isolated per-worker. Under docker/podman the env
   // must enter the container instead (sandbox env lane) — out of scope (#284).
   for (const [k, v] of Object.entries(input.env ?? {})) process.env[k] = v;
+
+  // The inner agent is an API caller owned by this Worker, not an unmetered
+  // child of it (#3269). Capture the real binary BEFORE changing PATH, then put
+  // a private forwarding shim in the disposable Worker workspace. Container
+  // sandboxes do not share the host's node/bundle paths, so this host-native
+  // boundary is armed only for noSandbox; their env lane remains separate.
+  if (
+    input.githubBoundaryActor &&
+    input.cwd &&
+    (input.sandboxMode === undefined || input.sandboxMode === "none")
+  ) {
+    const path = process.env.PATH ?? "";
+    const realGh = (process.env[WORKER_GH_REAL_ENV] ?? "").trim() || await findRealGh(path);
+    const entry = process.argv[1] ?? "";
+    if (realGh && entry !== "") {
+      const installed = await installWorkerGhBoundary({
+        workerRoot: input.cwd,
+        path,
+        realGh,
+        node: process.execPath,
+        entry,
+        actor: input.githubBoundaryActor,
+      });
+      for (const [key, value] of Object.entries(installed.env)) {
+        if (value !== undefined) process.env[key] = value;
+      }
+    }
+  }
 
   const now = deps.now ?? (() => Date.now());
   const makeController = deps.makeAbortController ?? (() => new AbortController());

@@ -71,6 +71,10 @@ export function makeImplementerRunAgent(
     const originalOnAgentEvent = input.onAgentEvent;
     return inner({
       ...input,
+      // Every raw `gh` the inner agent spawns belongs to this Worker. The
+      // execution boundary uses this explicit opt-in to install the private
+      // PATH shim only for implementer runs, never for maintenance commands.
+      githubBoundaryActor: `worker:${options.workerId}`,
       steerFile: steerFilePath,
       onSteerConsumed: (iteration) => {
         void options.castleBridge.record("worker.steer_consumed", { iteration });
