@@ -1234,6 +1234,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       scope: describeMachineScope(machineClaimStore.claimPath, claimLabels, machineOwner),
       workers: [...workers.values()],
       registrations: [...registrations.values()],
+      demand: lastDemand,
       // The ones that stopped, beside the ones that stand: a project missing from
       // the set is either one that never registered or one whose drain ended, and
       // only the second is something an operator has to act on.
