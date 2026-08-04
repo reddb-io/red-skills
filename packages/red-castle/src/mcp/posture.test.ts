@@ -48,6 +48,8 @@ describe("applyDangerPosture", () => {
         posture: "deny",
         action: "dangerous_op",
         reason: expect.stringContaining("denied"),
+        repair: "none",
+        repair_reason: "the configured posture deliberately forbids this tool",
       });
     });
 
@@ -81,6 +83,11 @@ describe("applyDangerPosture", () => {
         posture: "confirm",
         action: "dangerous_op",
         reason: expect.stringContaining("confirmation"),
+        repair: {
+          tool: "dangerous_op",
+          args: { branch: "afk/w80UR/1234", confirmation: true },
+          why: "retry the same operation with explicit confirmation",
+        },
       });
     });
 

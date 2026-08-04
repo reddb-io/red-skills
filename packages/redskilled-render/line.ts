@@ -60,6 +60,12 @@ import {
   type RedskilledStatuslineDetail,
   type RedskilledStatuslineProjectMatch,
 } from "./select.js";
+import {
+  composeRepair,
+  noRepair,
+  registrationRepair,
+  type RepairAction,
+} from "@reddb-io/shared/repair.js";
 
 export interface RedskilledStatuslineOptions {
   readonly mode: RedskilledStatuslineMode;
@@ -104,6 +110,10 @@ export interface RedskilledStatuslineRender {
    * would be parsing the render, which is the failure this surface removes.
    */
   readonly project_match: RedskilledStatuslineProjectMatch;
+  /** Pasteable cure for a repairable empty state, composed with the head text. */
+  readonly repair?: RepairAction | "none";
+  /** Why this state deliberately has no callable cure. */
+  readonly repair_reason?: string;
   readonly detail: RedskilledStatuslineDetail;
   /** True when the line lost detail to the width or the count budgets. */
   readonly degraded: boolean;
@@ -137,7 +147,8 @@ export function renderRedskilledStatusline(
   const match = resolveStatuslineProjectMatch(payload, options.project);
   const workers = selectRenderWorkers(payload, options);
   const projects = selectRenderProjects(payload, options);
-  const head = renderHead(payload, options, workers, match);
+  const unmatched = unmatchedHead(payload, options.project, match);
+  const head = renderHead(payload, options, workers, match, unmatched.prose);
 
   const ladder = detailLadder({
     mode: options.mode,
@@ -187,6 +198,10 @@ export function renderRedskilledStatusline(
     mode: options.mode,
     project: options.project,
     project_match: match,
+    ...(unmatched.repair === undefined ? {} : { repair: unmatched.repair }),
+    ...(unmatched.repair_reason === undefined
+      ? {}
+      : { repair_reason: unmatched.repair_reason }),
     detail: chosen.detail,
     degraded: chosen.detail !== richest || line !== chosen.line || table.degraded,
     stale: payload.staleness.stale,
@@ -285,8 +300,10 @@ function renderHead(
   options: RedskilledStatuslineOptions,
   workers: readonly RedskilledRenderWorker[],
   match: RedskilledStatuslineProjectMatch,
+  unmatched: string,
 ): string {
   const parts: string[] = [];
+  const unmatchedProject = match !== "matched" && match !== "name-only";
   if (options.mode === "global") {
     parts.push(`host ${payload.host.worker_count}w/${payload.host.project_count}p`);
     parts.push(memoryFigure(payload, options));
@@ -305,7 +322,7 @@ function renderHead(
     // NOT `0w idle`. An unmatched directory has no Worker count to report — the
     // host may be holding a dozen for a project this one failed to name — so the
     // head states the mismatch instead of an aggregate that reads as calm.
-    parts.push(unmatchedHead(payload, options.project, match));
+    parts.push(unmatched);
   }
   parts.push(engineMark(payload));
   const budget = budgetMark(payload);
@@ -313,7 +330,19 @@ function renderHead(
   const death = deathMark(payload);
   if (death != null) parts.push(death);
   if (payload.staleness.stale) parts.push(stalenessMark(payload));
-  return parts.join(" ");
+  const line = parts.join(" ");
+  if (!unmatchedProject || width(line) <= options.maxWidth || (budget == null && death == null)) {
+    return line;
+  }
+
+  // A composed repair is deliberately verbose. On a narrow line keep urgent
+  // quota/death marks ahead of that prose so the clamp cannot turn a refusal
+  // into a false all-clear. Wide lines retain the natural refusal-first order.
+  return [budget, death, unmatched, engineMark(payload), payload.staleness.stale
+    ? stalenessMark(payload)
+    : null]
+    .filter((part): part is string => part != null)
+    .join(" ");
 }
 
 /**
@@ -400,24 +429,55 @@ function unmatchedHead(
   payload: RedskilledRenderPayload,
   project: string | null,
   match: RedskilledStatuslineProjectMatch,
-): string {
-  if (match === "unregistered") return `project unknown — ${project} was never registered on this host`;
+): {
+  readonly prose: string;
+  readonly repair?: RepairAction | "none";
+  readonly repair_reason?: string;
+} {
+  if (match === "unregistered") {
+    return composeRepair({
+      state: `project unknown — ${project} was never registered on this host`,
+      repair: registrationRepair(),
+    });
+  }
   if (match === "orphaned") {
-    return `project unknown — ${project} is registered on a daemon this socket does not reach`;
+    return composeRepair({
+      state: `project unknown — ${project} is registered on a daemon this socket does not reach`,
+      repair: noRepair(
+        "this socket cannot safely replace a registration owned by an unreachable daemon",
+      ),
+    });
   }
   if (match === "stopped") {
     const stopped = payload.stopped_projects?.find((record) => record.project_label === project);
-    return `project unknown — ${project} was stopped${stopped == null ? "" : ` at ${clockTime(stopped.at)}`}`;
+    return composeRepair({
+      state: `project unknown — ${project} was stopped${stopped == null ? "" : ` at ${clockTime(stopped.at)}`}`,
+      repair: registrationRepair(),
+    });
   }
   if (match === "lapsed") {
     const lapse = payload.lapsed_projects?.find((record) => record.project_label === project);
     if (lapse != null) {
       const registered = lapse.registered_at == null ? "" : ` (registered ${clockTime(lapse.registered_at)})`;
-      return `project unknown — ${project} lapsed at ${clockTime(lapse.at)}${registered}`;
+      return composeRepair({
+        state: `project unknown — ${project} lapsed at ${clockTime(lapse.at)}${registered}`,
+        repair: registrationRepair(),
+      });
     }
-    return `project unknown — ${project} lapsed`;
+    return composeRepair({
+      state: `project unknown — ${project} lapsed`,
+      repair: registrationRepair(),
+    });
   }
-  return "project unknown — this directory resolved to no project";
+  if (match === "unresolved") {
+    return composeRepair({
+      state: "project unknown — this directory resolved to no project",
+      repair: noRepair(
+        "the directory must resolve to a project before registration args can be safe",
+      ),
+    });
+  }
+  return { prose: "" };
 }
 
 /** The clock part of a daemon instant, without consulting this process's locale. PURE. */

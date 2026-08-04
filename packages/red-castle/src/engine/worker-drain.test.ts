@@ -293,12 +293,29 @@ describe("castle worker drain", () => {
   it("reports a fully trust-held queue without claiming progress", async () => {
     const emitted: string[] = [];
     const processIssue = vi.fn(async () => ({ outcome: "done" as const }));
+    const repair = {
+      tool: "gh",
+      args: {
+        commands: [
+          ["issue", "edit", "2062", "--add-label", "origin:external"],
+          ["issue", "comment", "2062", "--body", "/approve-external"],
+        ],
+        required_actor: "maintainer",
+      },
+      why: "mark the issue as external and record explicit approval from a maintainer with write access",
+    } as const;
+    const reason =
+      "untrusted author; repair: call `gh` with " +
+      "`{\"commands\":[[\"issue\",\"edit\",\"2062\",\"--add-label\",\"origin:external\"]," +
+      "[\"issue\",\"comment\",\"2062\",\"--body\",\"/approve-external\"]],\"required_actor\":\"maintainer\"}` " +
+      "because mark the issue as external and record explicit approval from a maintainer with write access";
     const result = await runCastleWorkerDrain(
       {
         gh: { listCandidates: async () => [{ ...candidate(2062), author: "github-actions" }] },
         classifyEligibility: async () => ({
           eligible: false,
-          reason: "untrusted author — held for maintainer summon",
+          reason,
+          repair,
         }),
         runBoot: async () => boot,
         bootDeps: {},
@@ -317,10 +334,17 @@ describe("castle worker drain", () => {
     );
 
     expect(processIssue).not.toHaveBeenCalled();
-    expect(result).toMatchObject({ total: 0, heldForSummon: 1, drained: true });
+    expect(result).toMatchObject({
+      total: 0,
+      heldForSummon: 1,
+      held: [{ issue: 2062, reason, repair }],
+      drained: true,
+    });
     expect(emitted).toContain(
-      "0 eligible, 1 held for summon (#2062) — release with `triage:summon`, `dev triage --summon`, or `afk.trust-gate.allowlist`",
+      "0 eligible, 1 held by trust gate (#2062)",
     );
+    expect(emitted).toContain(`trust hold #2062: ${reason}`);
+    expect(emitted.join("\n")).not.toContain("triage:summon");
     expect(emitted.some((line) => line.includes("progress:") || line.includes("100%"))).toBe(false);
   });
 

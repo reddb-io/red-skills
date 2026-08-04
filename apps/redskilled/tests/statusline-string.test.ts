@@ -174,6 +174,22 @@ describe("the rendered statusline", () => {
     expect(render.lines.join("\n")).not.toContain("acme/gadgets");
   });
 
+  it("rejects malformed structured repairs at the rendered-statusline wire", () => {
+    const render = renderRedskilledStatusline(
+      payloadOf([], {}),
+      options({ project: "acme/widgets" }),
+    );
+
+    expect(isRedskilledStatuslineRender({ ...render, repair: { tool: 7, args: {}, why: "x" } }))
+      .toBe(false);
+    expect(isRedskilledStatuslineRender({ ...render, repair: "none" })).toBe(false);
+    expect(isRedskilledStatuslineRender({
+      ...render,
+      repair: "none",
+      repair_reason: "the host did not answer",
+    })).toBe(true);
+  });
+
   it("lists every project's Workers in `global`, each showing its owner", () => {
     const payload = payloadOf(
       [worker(), worker({ worker_id: "w-2", project_label: "acme/gadgets", pid: 43, budget: { memory_max: "512M" } })],

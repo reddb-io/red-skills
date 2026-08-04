@@ -22,6 +22,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:"
   },
   "devDependencies": {

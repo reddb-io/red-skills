@@ -486,8 +486,23 @@ export async function runCommand(options: RunOptions): Promise<number> {
         processDeps.gh.actorTrustSignals
           ? (actor) => processDeps.gh.actorTrustSignals!(actor)
           : async () => ({}),
+        undefined,
+        candidate.number,
       );
-      return { eligible: verdict.executable, reason: verdict.reason };
+      if (verdict.executable) return { eligible: true };
+      if (verdict.repair === undefined) {
+        throw new Error(`trust refusal for #${candidate.number} carried no repair`);
+      }
+      const reason = verdict.reason ?? "the trust gate refused this Ticket";
+      if (verdict.repair === "none") {
+        return {
+          eligible: false,
+          reason,
+          repair: "none",
+          repair_reason: verdict.repair_reason ?? "no safe callable cure was declared",
+        };
+      }
+      return { eligible: false, reason, repair: verdict.repair };
     },
     runBoot,
     bootDeps,

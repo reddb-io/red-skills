@@ -893,7 +893,10 @@ describe("processIssue — origin:external claim gate (#2603)", () => {
     ).toBe(true);
     expect(trace.labelEdits.some((e) => e.add.includes("running"))).toBe(false);
     expect(trace.released).toEqual([9]);
-    expect(trace.comments.some((c) => /external-origin gate/.test(c.body))).toBe(true);
+    const holdComment = trace.comments.find((c) => /external-origin gate/.test(c.body))?.body ?? "";
+    expect(holdComment).toContain('"issue","edit","9","--add-label","origin:external"');
+    expect(holdComment).toContain('"issue","comment","9","--body","/approve-external"');
+    expect(holdComment).not.toContain("triage:summon");
     expect(trace.iterLogs.some((l) => /external-origin gate held #9/.test(l))).toBe(true);
   });
 

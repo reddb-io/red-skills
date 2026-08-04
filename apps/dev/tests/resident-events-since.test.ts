@@ -57,8 +57,15 @@ describe("events_since tool", () => {
     const result = await tool.invoke({ cursor: "not-a-valid-base64url-cursor" }) as Record<string, unknown>;
 
     expect(result.refused).toBe(true);
-    expect(typeof result.reason).toBe("string");
-    expect(result.reason as string).toContain("re-baseline");
+    expect(result).toMatchObject({
+      reason:
+        "Unknown cursor format; repair: call `events_since` with `{}` because re-baseline with a fresh cursor",
+      repair: {
+        tool: "events_since",
+        args: {},
+        why: "re-baseline with a fresh cursor",
+      },
+    });
     expect(result).not.toHaveProperty("history");
     expect(result).not.toHaveProperty("lane_records");
   });

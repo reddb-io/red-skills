@@ -3,8 +3,8 @@ import type { CastleMcpTool } from "./tool.js";
 import {
   dispatchInput,
   dispatchShape,
+  workerInputRefusal,
   type WorkerDispatchInput,
-  type WorkerInputRefusal,
 } from "./worker.js";
 
 export interface RunnerDetectInput {
@@ -91,10 +91,7 @@ export function createRunnerTools(deps: RunnerDependencies): CastleMcpTool[] {
         try {
           parsed = dispatchInput(input);
         } catch (err) {
-          return Promise.resolve<WorkerInputRefusal>({
-            refused: true,
-            reason: err instanceof Error ? err.message : String(err),
-          });
+          return Promise.resolve(workerInputRefusal(err));
         }
         return deps.workerRequest({ ...parsed, text: input.text as string });
       },
