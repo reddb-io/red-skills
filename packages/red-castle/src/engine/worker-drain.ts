@@ -199,6 +199,11 @@ export interface CastleWorkerProcessResult {
   reason?: string;
 }
 
+export interface CastleIssueEligibility {
+  eligible: boolean;
+  reason?: string;
+}
+
 export interface CastleWorkerDrainBudgetSnapshot {
   used: number;
   cap: number;
@@ -268,6 +273,9 @@ export interface CastleWorkerDrainSummary<TBootResult = unknown> {
   blocked: number;
   failed: number;
   total: number;
+  /** Ready-labelled issues the executable-issue trust gate excluded before the
+   * progress denominator was calculated. */
+  heldForSummon: number;
   boot: TBootResult;
   processed: CastleWorkerDrainProcessed[];
   drained: boolean;
@@ -290,6 +298,11 @@ export interface CastleWorkerDrainDeps<
   gh: {
     listCandidates(): Promise<CastleIssueCandidate[]>;
   };
+  /** Trust-aware admission preview. Absent keeps legacy all-candidates-eligible
+   * behavior for embedders that do not expose the executable-issue gate. */
+  classifyEligibility?(
+    candidate: CastleIssueCandidate,
+  ): Promise<CastleIssueEligibility>;
   runBoot(deps: TBootDeps, options: TBootOptions): Promise<TBootResult>;
   bootDeps: TBootDeps;
   bootOptions: TBootOptions;
@@ -384,6 +397,7 @@ export async function runCastleWorkerDrain<
     blocked: 0,
     failed: 0,
     total: 0,
+    heldForSummon: 0,
     boot,
     processed: [],
     drained: false,
@@ -410,21 +424,43 @@ export async function runCastleWorkerDrain<
     await fireSessionHook("pre_pick", JSON.stringify({ filter: ctx.filter }));
     const candidates = await deps.gh.listCandidates();
     const quarantined = new Set(boot.quarantinedIssues ?? []);
-    const queue = selectCastleIssues(
+    const selected = selectCastleIssues(
       candidates.filter((candidate) => !quarantined.has(candidate.number)),
       ctx.filter,
       deps.labels,
       ctx.poolLabel,
       ctx.declaredLane,
     );
+    const queue: CastleIssueCandidate[] = [];
+    const held: CastleIssueCandidate[] = [];
+    for (const candidate of selected) {
+      const eligibility = deps.classifyEligibility
+        ? await deps.classifyEligibility(candidate)
+        : { eligible: true };
+      (eligibility.eligible ? queue : held).push(candidate);
+    }
     const total = queue.length;
     await fireSessionHook("post_pick", JSON.stringify({ issues: queue.map((candidate) => candidate.number) }));
+
+    if (held.length > 0) {
+      const issues = held.map((candidate) => `#${candidate.number}`).join(", ");
+      deps.emit(
+        `${total} eligible, ${held.length} held for summon (${issues}) — ` +
+          "release with `triage:summon`, `dev triage --summon`, or `afk.trust-gate.allowlist`",
+      );
+    }
 
     if (total === 0) {
       await fireSessionHook("on_idle", statsContext(0, 0, 0));
       deps.emit(CASTLE_NO_MORE_TASKS);
       await fireSessionHook("post_session", statsContext(0, 0, 0));
-      return { ...empty, total: 0, drained: true, stopReason: "drain-empty" };
+      return {
+        ...empty,
+        total: 0,
+        heldForSummon: held.length,
+        drained: true,
+        stopReason: "drain-empty",
+      };
     }
 
     const cap = ctx.iterCap && ctx.iterCap > 0 ? ctx.iterCap : total;
@@ -539,6 +575,7 @@ export async function runCastleWorkerDrain<
       blocked,
       failed,
       total,
+      heldForSummon: held.length,
       boot,
       processed,
       drained: false,

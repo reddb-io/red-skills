@@ -7,7 +7,7 @@ import type { CastleMcpTool } from "./tool.js";
  * string to detect a breaking change. Adding an OPTIONAL field is additive and
  * keeps the version.
  */
-export const CASTLE_MCP_CONTRACT_VERSION = "1.0.0";
+export const CASTLE_MCP_CONTRACT_VERSION = "2.0.0";
 
 /**
  * One tool's declared output shape plus the version that shape belongs to.
@@ -336,14 +336,17 @@ export type MonitorOutput = z.infer<typeof monitorOutputSchema>;
 // queue_status
 // ---------------------------------------------------------------------------
 
+const queueIssueSchema = z.object({
+  number: z.number(),
+  title: z.string(),
+  labels: z.array(z.string()),
+});
+
 export const queueStatusOutputSchema = z.object({
-  ready_for_agent: z.array(
-    z.object({
-      number: z.number(),
-      title: z.string(),
-      labels: z.array(z.string()),
-    }),
-  ),
+  ready_for_agent: z.object({
+    eligible: z.array(queueIssueSchema),
+    held_for_summon: z.array(queueIssueSchema),
+  }),
   ready_for_human: z.array(
     z.object({
       number: z.number(),
@@ -354,7 +357,8 @@ export const queueStatusOutputSchema = z.object({
     }),
   ),
   counts: z.object({
-    ready_for_agent: z.number(),
+    ready_for_agent_eligible: z.number(),
+    ready_for_agent_held: z.number(),
     ready_for_human: z.number(),
   }),
 });

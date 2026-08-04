@@ -91,7 +91,7 @@ describe("observability output contracts", () => {
     const [wrapped] = applyOutputContracts([tool(drifted)]);
 
     await expect(wrapped!.invoke({})).rejects.toThrow(
-      /project_status output violates contract 1\.0\.0: slots\.total/,
+      /project_status output violates contract 2\.0\.0: slots\.total/,
     );
   });
 
@@ -128,7 +128,7 @@ describe("observability output contracts", () => {
     const [wrapped] = applyOutputContracts([drifted]);
 
     await expect(wrapped!.invoke({ fields: ["live"] })).rejects.toThrow(
-      /worker_vitals output violates contract 1\.0\.0: 0\.live/,
+      /worker_vitals output violates contract 2\.0\.0: 0\.live/,
     );
   });
 
@@ -152,11 +152,16 @@ describe("observability output contracts", () => {
       workerVitals: vi.fn(async () => []),
       monitor: vi.fn(async () => ({ workers: [], events: [], fleet: null })),
       queueStatus: vi.fn(async () => ({
-        ready_for_agent: [
-          { number: 2335, title: "E1", labels: ["type:ticket"] },
-        ],
+        ready_for_agent: {
+          eligible: [{ number: 2335, title: "E1", labels: ["type:ticket"] }],
+          held_for_summon: [],
+        },
         ready_for_human: [],
-        counts: { ready_for_agent: 1, ready_for_human: 0 },
+        counts: {
+          ready_for_agent_eligible: 1,
+          ready_for_agent_held: 0,
+          ready_for_human: 0,
+        },
       })),
     } as unknown as CastleMcpDependencies;
     const tools = createCastleMcpTools(deps);
