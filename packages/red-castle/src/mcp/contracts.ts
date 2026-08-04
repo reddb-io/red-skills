@@ -63,6 +63,15 @@ export const publishedVersionObservationSchema = z.object({
 
 export type PublishedVersionObservationOutput = z.infer<typeof publishedVersionObservationSchema>;
 
+/** A callable castle cure rendered from the same source as refusal prose. */
+export const repairActionSchema = z.object({
+  tool: z.string().min(1),
+  args: z.record(z.string(), z.unknown()),
+  why: z.string().min(1),
+});
+
+export const repairSchema = z.union([repairActionSchema, z.literal("none")]);
+
 /**
  * What the host holds for this project, since a project contributes a
  * REGISTRATION rather than a process (ADR 0130 Amendment 4, #2909).
@@ -98,6 +107,10 @@ export const projectRegistrationStatusSchema = z.object({
   lapsed_at: z.string(),
   /** Why registration is absent; "" while a current registration is held. */
   reason: z.string(),
+  /** Callable cure for an absent registration, or an explicit argued `none`. */
+  repair: repairSchema.optional(),
+  /** Required explanation when `repair` is `none`. */
+  repair_reason: z.string().min(1).optional(),
   /**
    * How many times the launch has been restated (ADR 0130 Amendment 5). Separate
    * from `renewals` because most renewals restate nothing: this is the number
@@ -129,6 +142,21 @@ export const projectRegistrationStatusSchema = z.object({
    * (ADR 0128 §6) so a cached read cannot be rendered as current (#2809).
    */
   published_version: publishedVersionObservationSchema.optional(),
+}).superRefine((registration, ctx) => {
+  if (!registration.held && registration.repair === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["repair"],
+      message: "an absent registration must carry a repair or an argued none",
+    });
+  }
+  if (registration.repair === "none" && registration.repair_reason === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["repair_reason"],
+      message: "repair none must state why no callable cure is safe",
+    });
+  }
 });
 
 export type ProjectRegistrationStatusOutput = z.infer<typeof projectRegistrationStatusSchema>;
