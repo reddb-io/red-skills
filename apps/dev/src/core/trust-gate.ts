@@ -31,6 +31,13 @@
 import type { ConfigValues } from "./config.js";
 import { getConfig } from "./config.js";
 import type { SourceTrustLevel } from "./source-trust.js";
+import {
+  composeRepair,
+  externalApprovalRepair,
+  noRepair,
+  type RepairAction,
+  type RepairSource,
+} from "@reddb-io/shared/repair.js";
 
 /** The accessor key the allowlist lives under (folded from
  * `plugins.dev.afk.trust-gate.allowlist`, ADR 0042). Intentionally NOT in
@@ -101,6 +108,23 @@ export interface TrustVerdict {
    * trust-gate rejection. The claim path parks such an issue as `ready-for-human`
    * (awaiting a maintainer `/approve-external`) instead of merely un-claiming it. */
   holdForApproval?: boolean;
+  /** Callable cure composed from the same data as {@link reason}. */
+  repair?: RepairAction | "none";
+  /** Required explanation when {@link repair} is explicitly `none`. */
+  repair_reason?: string;
+}
+
+/** Build every trust refusal through the one repair/prose composer. */
+function trustRefusal(state: string, repair: RepairSource): TrustVerdict {
+  const composed = composeRepair({ state, repair });
+  return {
+    executable: false,
+    reason: composed.prose,
+    repair: composed.repair,
+    ...(composed.repair === "none"
+      ? { repair_reason: composed.repair_reason }
+      : {}),
+  };
 }
 
 /** The external-origin state resolved at claim time (issue #2603). `external` is
@@ -127,11 +151,11 @@ export interface ExternalOriginState {
 export function evaluateExternalOriginGate(state: ExternalOriginState | undefined): TrustVerdict {
   if (!state?.external || state.approved) return { executable: true };
   return {
-    executable: false,
+    ...trustRefusal(
+      "origin:external issue lacks explicit maintainer approval",
+      externalApprovalRepair(),
+    ),
     holdForApproval: true,
-    reason:
-      "origin:external issue lacks a maintainer '/approve-external' marker — " +
-      "held for human review (a maintainer with write access must approve it)",
   };
 }
 
@@ -176,16 +200,16 @@ export function evaluateTrustGate(policy: TrustPolicy, provenance: TrustProvenan
   const actor = (provenance.readyForAgentActor ?? "").trim();
 
   if (!author || !allow.has(author)) {
-    return {
-      executable: false,
-      reason: `untrusted author ${author ? `'${author}'` : "(unknown)"} — not in the trust-gate allowlist`,
-    };
+    return trustRefusal(
+      `untrusted author ${author ? `'${author}'` : "(unknown)"} — not in the trust-gate allowlist`,
+      noRepair("a maintainer must change the trust policy or submit the work through a trusted identity"),
+    );
   }
   if (!actor || !allow.has(actor)) {
-    return {
-      executable: false,
-      reason: `ready-for-agent applied by ${actor ? `'${actor}'` : "an unknown actor"} — not in the trust-gate allowlist`,
-    };
+    return trustRefusal(
+      `ready-for-agent applied by ${actor ? `'${actor}'` : "an unknown actor"} — not in the trust-gate allowlist`,
+      noRepair("a trusted maintainer must apply ready-for-agent"),
+    );
   }
   return { executable: true };
 }
@@ -269,12 +293,11 @@ export async function resolveActorTrust(
   }
 
   // 4. refuse via the existing trust-gate refusal shape.
-  return {
-    executable: false,
-    reason:
+  return trustRefusal(
       `${login ? `actor '${login}'` : "actor (unknown)"} is not a repository maintainer — ` +
       `no write access, not in CODEOWNERS, and not in the trust-gate allowlist`,
-  };
+    noRepair("a maintainer must grant trust through repository access, CODEOWNERS, or the allowlist"),
+  );
 }
 
 /**
@@ -312,15 +335,18 @@ export async function evaluateClaimTrust(
   if (!authorVouched) {
     const author = await resolveActorTrust(policy, provenance.author, lookup);
     if (!author.executable) {
-      return { executable: false, reason: `untrusted author — ${author.reason} (held for maintainer summon)` };
+      return trustRefusal(
+        `untrusted author ${provenance.author ? `'${provenance.author}'` : "(unknown)"} did not resolve as a repository maintainer`,
+        externalApprovalRepair(),
+      );
     }
   }
   const actor = await resolveActorTrust(policy, provenance.readyForAgentActor, lookup);
   if (!actor.executable) {
-    return {
-      executable: false,
-      reason: `untrusted ready-for-agent promoter — ${actor.reason} (held for maintainer summon)`,
-    };
+    return trustRefusal(
+      `untrusted ready-for-agent promoter ${provenance.readyForAgentActor ? `'${provenance.readyForAgentActor}'` : "(unknown)"} did not resolve as a repository maintainer`,
+      externalApprovalRepair(),
+    );
   }
   return { executable: true };
 }
