@@ -1,7 +1,7 @@
 /**
  * event-lane — the daemon's own append-only memory of the Workers it birthed.
  *
- * **One lane, three facts: birth, death, and a budget-driven kill.** ADR 0130
+ * **One lane, host facts: birth, death, budget kill, and demand refusal.** ADR 0130
  * gives the daemon exactly one thing no other authority holds — Worker-to-process
  * — and this lane is the durable form of it. The tracker already owns
  * issue-to-PR and git already owns branch-to-commits, so a per-Worker durable
@@ -31,14 +31,19 @@ import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
 /**
- * The four facts the lane carries. Nothing else is a host event.
+ * The five facts the lane carries. Nothing else is a host event.
  *
- * `daemon-stop` is the one that is not about a Worker, and it is here because
+ * `daemon-stop` and `demand-refusal` are not about a Worker. The first is here because
  * its absence is what a successor otherwise has to guess at: a lane that ends
  * mid-life reads identically whether the daemon was asked to leave or was killed,
  * and only one of those is a fault worth reporting.
  */
-export type RedskilledEventKind = "worker-birth" | "worker-death" | "worker-budget-kill" | "daemon-stop";
+export type RedskilledEventKind =
+  | "worker-birth"
+  | "worker-death"
+  | "worker-budget-kill"
+  | "demand-refusal"
+  | "daemon-stop";
 
 /**
  * One host event, flat and total.
@@ -120,6 +125,13 @@ export interface RecordDaemonStopInput {
   readonly signal?: string | null;
 }
 
+/** One positive-depth project the demand loop deliberately did not birth for. */
+export interface RecordDemandRefusalInput {
+  readonly ts: string;
+  readonly projectLabel: string;
+  readonly detail: string;
+}
+
 /** Build one event from a Worker view. PURE. */
 export function buildHostEvent(input: RecordEventInput): RedskilledHostEvent {
   const budget = input.worker.budget ?? {};
@@ -170,6 +182,29 @@ export function buildDaemonStopEvent(input: RecordDaemonStopInput): RedskilledHo
   };
 }
 
+/** Build a project demand refusal without inventing a Worker. PURE. */
+export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): RedskilledHostEvent {
+  return {
+    version: 1,
+    ts: input.ts,
+    event: "demand-refusal",
+    worker_id: `demand:${input.projectLabel}`,
+    project_label: input.projectLabel,
+    pid: 0,
+    workspace_path: "",
+    log_path: null,
+    isolated: false,
+    unit: null,
+    memory_high: null,
+    memory_max: null,
+    cpu_weight: null,
+    detail: input.detail,
+    exit_code: null,
+    signal: null,
+    reason: null,
+  };
+}
+
 /**
  * An open lane writer.
  *
@@ -183,6 +218,8 @@ export interface RedskilledEventLane {
   readonly path: string;
   /** Append one event; resolves once the bytes are on the lane. */
   record(input: RecordEventInput): Promise<RedskilledHostEvent>;
+  /** Append one demand decision that refused an otherwise birth-eligible project. */
+  recordDemandRefusal(input: RecordDemandRefusalInput): Promise<RedskilledHostEvent>;
   /**
    * Append the daemon's own stop; resolves once the bytes are on the lane.
    *
@@ -218,6 +255,7 @@ export function createRedskilledEventLane(path: string): RedskilledEventLane {
   return {
     path,
     record: (input) => append(buildHostEvent(input)),
+    recordDemandRefusal: (input) => append(buildDemandRefusalEvent(input)),
     recordDaemonStop: (input) => append(buildDaemonStopEvent(input)),
     read: () => readRedskilledEvents(path),
     flush: async () => {
@@ -318,7 +356,7 @@ export function rehydrateWorkers(events: readonly RedskilledHostEvent[]): Redski
   for (const event of events) {
     // A daemon's own stop retires nothing: the daemon left and every Worker it
     // held is still running, which is exactly what the successor replays to find.
-    if (event.event === "daemon-stop") continue;
+    if (event.event === "daemon-stop" || event.event === "demand-refusal") continue;
     if (event.event === "worker-birth") alive.set(event.worker_id, toWorkerView(event));
     else alive.delete(event.worker_id);
   }
@@ -373,7 +411,8 @@ function isHostEventRecord(record: ToonlRecord): boolean {
     typeof record.ts === "string" &&
     typeof record.worker_id === "string" &&
     (record.event === "worker-birth" || record.event === "worker-death" ||
-      record.event === "worker-budget-kill" || record.event === "daemon-stop");
+      record.event === "worker-budget-kill" || record.event === "demand-refusal" ||
+      record.event === "daemon-stop");
 }
 
 function fromRow(record: ToonlRecord): RedskilledHostEvent {
