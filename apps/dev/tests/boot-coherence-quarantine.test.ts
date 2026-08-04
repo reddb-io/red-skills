@@ -60,7 +60,7 @@ function wireIssueMutations(
     const issue = issues.find((candidate) => candidate.number === number)!;
     issue.labels = issue.labels.filter((label) => !remove.includes(label));
     if (overrides.failQuarantineAddAfterRemove && add.includes("quarantine")) {
-      throw new Error("quarantine label missing");
+      return false;
     }
     issue.labels.push(...add.filter((label) => !issue.labels.includes(label)));
   });
