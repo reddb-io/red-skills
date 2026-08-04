@@ -1011,6 +1011,27 @@ export function readBackpressure(values: ConfigValues): string[] {
 }
 
 /**
+ * Read the repository-declared dependency setup authority for AFK-created
+ * worker/feedback worktrees (`plugins.dev.afk.setup`, #3268). Commands are
+ * shell strings and preserve declaration order because the engine executes
+ * each one verbatim through `sh -c`; it must never infer a package manager or
+ * append flags to a declared command. The legacy top-level `afk.setup` lane is
+ * retained under ADR 0042. Absent/empty means "undeclared", which selects the
+ * runtime's hardened compatibility fallback.
+ */
+export function readSetupCommands(values: ConfigValues): string[] {
+  const indexed: string[] = [];
+  for (let i = 0; ; i++) {
+    const value = values[`afk.setup.${i}`];
+    if (value === undefined) break;
+    if (value.trim() !== "") indexed.push(value);
+  }
+  if (indexed.length > 0) return indexed;
+  const scalar = values["afk.setup"];
+  return scalar && scalar.trim() !== "" ? [scalar] : [];
+}
+
+/**
  * Read the TYPE labels this repo's installed vocabulary declares HUMAN-ONLY
  * (`afk.labels.hitl_types`, #2966). A Ticket carrying one resolves only through
  * a live exchange with a human, so an unblock sweep or close cascade routes it
