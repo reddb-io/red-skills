@@ -238,6 +238,43 @@ describe("runFeedback", () => {
     expect(test?.record.suspectInfra).toBe(true);
   });
 
+  it("records a reaped CPU-idle child as stall infra evidence, not a branch verdict (#3280)", async () => {
+    const layout = fakeLayout({
+      packages: ["apps/dev"],
+      scripts: { "apps/dev": ["test"] },
+    });
+    const { exec, calls } = fakeExec([
+      {
+        match: (a) => a.includes("test"),
+        result: {
+          code: 124,
+          stderr: "validation child stalled: 0ms CPU over 30000ms while wall time reached 1200000ms",
+          infraEvidence: {
+            kind: "stall",
+            wallTimeMs: 1_200_000,
+            sampleWindowMs: 30_000,
+            cpuDeltaMs: 0,
+          },
+        },
+      },
+    ]);
+    const result = await runFeedback(exec, {
+      worktree: "afk/3280-stalled-suite",
+      worktreeKind: "branch",
+      scopes: ["apps/dev"],
+      layout,
+      now: fakeClock(1_200_000),
+      baselineWorktree: "origin/main",
+    });
+
+    const check = result.checks.find((entry) => entry.name === "test:apps/dev");
+    expect(check?.record.infra).toBe("stall");
+    expect(check?.record.suspectInfra).toBeUndefined();
+    expect(check?.record.summary).toContain("validation child stalled");
+    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
   it("produces the exact red.afk.validation.v1 sidecar record shape", async () => {
     const layout = fakeLayout({
       packages: ["plugins/memory"],

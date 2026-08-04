@@ -7,7 +7,9 @@ import {
   resolveCheckoutDir,
   splitBranchDir,
   type FeedbackWorktreeIO,
+  type GateWaitNotice,
 } from "../src/runtime/feedback-worktree.js";
+import { DEFAULT_VALIDATION_STALL_DETECTION } from "../src/runtime/exec.js";
 
 // A monorepo's package dirs are full root-relative paths. The probe is true for
 // exactly these and nothing else (mirroring the real accessSync layout check).
@@ -1182,7 +1184,7 @@ describe("the gate's lock waits reach the caller's sink (#2985)", () => {
 
 describe("the gate child declares what the Worker awaits (#3182)", () => {
   it("publishes each child pid, safe command subject, start, deadline, escalation, and completion", async () => {
-    const notices: Array<Record<string, unknown>> = [];
+    const notices: GateWaitNotice[] = [];
     let nextPid = 7000;
     const io: FeedbackWorktreeIO = {
       worktreeAdd: async () => ({ ok: true, stderr: "" }),
@@ -1202,8 +1204,8 @@ describe("the gate child declares what the Worker awaits (#3182)", () => {
     const fb = makeFeedbackWorktree("/repo", "/repo/.red/tmp/feedback", io, {
       cacheEnabled: false,
       nowIso: () => "2026-08-03T18:00:00.000Z",
-      onGateWait: (notice: Record<string, unknown>) => notices.push(notice),
-    } as never);
+      onGateWait: (notice) => notices.push(notice),
+    });
 
     await fb.pnpm(["pnpm", "-C", "afk/wAAAA/3182-x", "test"]);
 
@@ -1245,5 +1247,54 @@ describe("the gate child declares what the Worker awaits (#3182)", () => {
         escalation: "fail the validation stage",
       },
     ]);
+  });
+
+  it("publishes terminal stall evidence from the default validation detector (#3280)", async () => {
+    const notices: GateWaitNotice[] = [];
+    const detectorOptions: unknown[] = [];
+    let call = 0;
+    const evidence = {
+      kind: "stall" as const,
+      wallTimeMs: 1_230_000,
+      sampleWindowMs: 30_000,
+      cpuDeltaMs: 0,
+    };
+    const io: FeedbackWorktreeIO = {
+      worktreeAdd: async () => ({ ok: true }),
+      worktreeRemove: async () => {},
+      branchHead: async () => null,
+      worktreeHead: async () => null,
+      rebase: async () => ({ ok: true }),
+      pnpm: async (_args, opts) => {
+        detectorOptions.push(opts.stallDetection);
+        opts.onSpawn?.(7100 + ++call);
+        return call === 1
+          ? { code: 0, stdout: "", stderr: "" }
+          : {
+              code: 124,
+              stdout: "",
+              stderr: "validation child stalled",
+              infraEvidence: evidence,
+            };
+      },
+      exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+    };
+    const fb = makeFeedbackWorktree("/repo", "/repo/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+      onGateWait: (notice) => notices.push(notice),
+    });
+
+    const result = await fb.pnpm(["pnpm", "-C", "afk/wAAAA/3280-x", "test"]);
+
+    expect(detectorOptions).toEqual([
+      DEFAULT_VALIDATION_STALL_DETECTION,
+      DEFAULT_VALIDATION_STALL_DETECTION,
+    ]);
+    expect(result.infraEvidence).toEqual(evidence);
+    expect(notices.at(-1)).toMatchObject({
+      state: "stalled",
+      subject: "pnpm test",
+      infraEvidence: evidence,
+    });
   });
 });

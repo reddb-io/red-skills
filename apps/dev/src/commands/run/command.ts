@@ -376,7 +376,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
       if (current.attemptDir !== "") {
         const line = waiting
           ? `⏳ /afk gate: waiting on ${notice.subject} (pid ${notice.pid}).`
-          : `✅ /afk gate: ${notice.subject} exited (pid ${notice.pid}).`;
+          : notice.state === "stalled"
+            ? `⛔ /afk gate: reaped stalled ${notice.subject} (pid ${notice.pid}); ` +
+              `${notice.infraEvidence?.cpuDeltaMs ?? 0}ms CPU over ` +
+              `${notice.infraEvidence?.sampleWindowMs ?? 0}ms.`
+            : `✅ /afk gate: ${notice.subject} exited (pid ${notice.pid}).`;
         gateWaitPublication = gateWaitPublication.then(async () => {
           await fsx.appendLine(join(current.attemptDir, "afk.log"), line);
           await updateState(workerStatePath(current.attemptDir), {
@@ -396,6 +400,10 @@ export async function runCommand(options: RunOptions): Promise<number> {
             started_at: notice.startedAt,
             deadline: notice.deadline,
             escalation: notice.escalation,
+            infra: notice.infraEvidence?.kind ?? "",
+            cpu_delta_ms: notice.infraEvidence?.cpuDeltaMs ?? 0,
+            sample_window_ms: notice.infraEvidence?.sampleWindowMs ?? 0,
+            wall_time_ms: notice.infraEvidence?.wallTimeMs ?? 0,
           });
         }).catch(() => {});
       }

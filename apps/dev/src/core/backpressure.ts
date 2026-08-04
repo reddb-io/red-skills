@@ -123,10 +123,20 @@ export async function runBackpressure(
     // no useful captured output — give the operator an explicit timed-out
     // summary instead of the generic `command exited non-zero`.
     const summary =
-      result.code === KILLED_EXIT_CODE
+      result.infraEvidence?.kind === "stall"
+        ? outputSummary(status, `${result.stdout}${result.stderr}`)
+        : result.code === KILLED_EXIT_CODE
         ? `command timed out after ${timeoutMs}ms`
         : outputSummary(status, `${result.stdout}${result.stderr}`);
-    const record = buildValidationRecord({ name, status, command, exitCode: result.code, durationMs, summary });
+    const record = buildValidationRecord({
+      name,
+      status,
+      command,
+      exitCode: result.code,
+      durationMs,
+      summary,
+      infra: result.infraEvidence?.kind,
+    });
     checks.push({ name, command, status, record });
     sidecar.push(formatValidationLine(record));
   }

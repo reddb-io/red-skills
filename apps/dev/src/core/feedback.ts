@@ -49,6 +49,13 @@ export interface ExecResult {
   code: number;
   stdout: string;
   stderr: string;
+  /** Typed infrastructure evidence from the real validation process boundary. */
+  infraEvidence?: {
+    kind: "stall";
+    wallTimeMs: number;
+    sampleWindowMs: number;
+    cpuDeltaMs: number;
+  };
   /**
    * The ABSOLUTE directory the command actually ran in, when the executor
    * rewrote the `-C` token (#3041). The AFK gate is posed with a branch NAME;
@@ -236,6 +243,8 @@ export interface ValidationRecord {
    * millisecond count, which is how the #3027 phantom survived a whole park.
    */
   suspectInfra?: true;
+  /** The command ran, but infrastructure reaped it after observing no progress. */
+  infra?: "stall";
 }
 
 /**
@@ -379,6 +388,7 @@ export function buildValidationRecord(input: {
   summary?: string;
   setup?: string;
   suspectInfra?: boolean;
+  infra?: "stall";
 }): ValidationRecord {
   const record: ValidationRecord = {
     schema: VALIDATION_SCHEMA,
@@ -391,6 +401,7 @@ export function buildValidationRecord(input: {
   if (input.summary !== undefined && input.summary !== "") record.summary = input.summary;
   if (input.setup !== undefined && input.setup !== "") record.setup = input.setup;
   if (input.suspectInfra === true) record.suspectInfra = true;
+  if (input.infra !== undefined) record.infra = input.infra;
   return record;
 }
 
@@ -408,6 +419,7 @@ function buildRanRecord(input: {
   durationMs: number;
   summary: string;
   setup?: string;
+  infra?: "stall";
 }): ValidationRecord {
   const suspect = isSuspectInfraFailure({ status: input.status, durationMs: input.durationMs });
   const summary = suspect
@@ -482,6 +494,7 @@ export function isInfraValidationFailure(checks: readonly ClassifiableCheck[]): 
     if (check.status !== "failed") continue;
     const exitCode = check.record.exitCode;
     if (exitCode === 0) continue;
+    if (check.record.infra === "stall") return true;
     if (exitCode === 137) return true;
     const summary = check.record.summary ?? "";
     if (
@@ -1018,6 +1031,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         durationMs,
         summary: outputSummary(status, joinCommandOutput(result.stdout, result.stderr)),
         setup: result.setup,
+        infra: result.infraEvidence?.kind,
       });
       push({ name, script: "test", label: "operator", scope: "", status, record });
     }
@@ -1116,6 +1130,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         durationMs,
         summary,
         setup: result.setup,
+        infra: result.infraEvidence?.kind,
       });
       push({ name, script, label, scope, status, record });
     }
@@ -1149,6 +1164,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       durationMs,
       summary,
       setup: result.setup,
+      infra: result.infraEvidence?.kind,
     });
     push({ name, script: "typecheck", label, scope, status, record });
   }
@@ -1199,6 +1215,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         durationMs,
         summary,
         setup: result.setup,
+        infra: result.infraEvidence?.kind,
       });
       push({ name: suite.name, script: "test", label, scope: run.scope, runScript: run.script, status, record });
     }
@@ -1206,7 +1223,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
 
   // AFK runner improvement: baseline probe for pre-existing failures. Only
   // triggered when the gate failed AND a baseline worktree was supplied.
-  if (failed && baselineWorktree) {
+  if (failed && baselineWorktree && !isInfraValidationFailure(checks)) {
     const failing = checks
       .filter((c) => c.status === "failed")
       .map((c) => ({ name: c.name, script: c.script, scope: c.scope, runScript: c.runScript }));
@@ -1236,6 +1253,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         exitCode: check.record.exitCode,
         durationMs: check.record.durationMs,
         summary: baselineComparisonSummary(evidence?.summary),
+        infra: check.record.infra,
       });
       checks[i] = { ...check, record: newRecord };
       sidecar[i] = formatValidationLine(newRecord);
