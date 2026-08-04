@@ -26,6 +26,7 @@
     "./project-identity-resolve.js": "./project-identity-resolve.ts",
     "./project-identity.js": "./project-identity.ts",
     "./red-paths.js": "./red-paths.ts",
+    "./repair.js": "./repair.ts",
     "./red-runtime.js": "./red-runtime.ts",
     "./redskilled-home.js": "./redskilled-home.ts",
     "./repo-root.js": "./repo-root.ts",
