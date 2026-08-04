@@ -919,6 +919,20 @@ describe("config — validation moments (ADR 0135, #3284)", () => {
         "plugins:\n  dev:\n    afk:\n      validation:\n        iteration: pnpm test\n",
       ),
     ).toThrow(/afk\.validation\.iteration.*ordered list/);
+    expect(() =>
+      parseConfigYaml(
+        "plugins:\n  dev:\n    afk:\n      validation:\n        iteration:\n",
+      ),
+    ).toThrow(/afk\.validation\.iteration.*ordered list/);
+  });
+
+  it("preserves every declared command string verbatim", () => {
+    const values = loadConfig("/x/.red/config.yaml", {
+      ignoreActivationGate: true,
+      read: () => 'afk:\n  validation:\n    iteration:\n      - "   "\n      - echo ok\n',
+    });
+
+    expect(readValidationMoments(values)).toEqual({ iteration: ["   ", "echo ok"] });
   });
 
   it("reads both legacy knobs as post_done contributions and warns with the moments key", () => {
@@ -942,8 +956,8 @@ describe("config — validation moments (ADR 0135, #3284)", () => {
 
     expect(readValidationMoments(values)).toEqual({ post_done: ["pnpm test", "pnpm lint"] });
     expect(warnings).toHaveLength(2);
-    expect(warnings[0]).toContain("afk.validation.post_done");
-    expect(warnings[1]).toContain("afk.validation.post_done");
+    expect(warnings[0]).toContain("plugins.dev.afk.validation.post_done");
+    expect(warnings[1]).toContain("plugins.dev.afk.validation.post_done");
     expect(warnings.join("\n")).toContain("afk.feedback.commands");
     expect(warnings.join("\n")).toContain("afk.backpressure");
   });
