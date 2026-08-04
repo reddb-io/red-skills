@@ -82,6 +82,19 @@ describe("the live tree enables every declared safety primitive (#2800)", () => 
       expect.arrayContaining(["apps/dev/src/runtime/git.ts", "apps/dev/src/runtime/gh/common.ts"]),
     );
   });
+
+  it("keeps the GitHub spend ledger reachable from a shipped report surface (#3205)", () => {
+    const declared = SHIPPED_PRIMITIVES.find((primitive) => primitive.id === "github-spend-report");
+    const callers = collectShippedPrimitiveCallers(readShippedPrimitiveFiles(ROOT));
+    const shipped = callers.filter(
+      (caller) => caller.primitiveId === "github-spend-report" && !caller.isTest,
+    );
+
+    expect(declared?.definedIn).toBe("packages/github/attribution.ts");
+    expect(shipped.map((caller) => caller.relativePath)).toEqual([
+      "apps/redskilled/src/cli.ts",
+    ]);
+  });
 });
 
 describe("the test-only shape is the failure (#2800)", () => {
