@@ -101,6 +101,19 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
       },
     },
     {
+      name: "drain",
+      title: "Make this project drain",
+      description:
+        "MUTATING: ensure the daemon is reachable and this project is registered at the requested runner and target; repeated calls report what was kept.",
+      inputSchema: {
+        runner: z.string().min(1),
+        target: z.number().int().min(0).default(DEFAULT_FLEET_WIDTH),
+      },
+      invoke: async () => {
+        throw new Error("drain adapter is not implemented yet");
+      },
+    },
+    {
       name: "project_start",
       title: "Start this project's workers",
       description:
