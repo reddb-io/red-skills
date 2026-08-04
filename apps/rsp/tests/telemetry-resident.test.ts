@@ -1,3 +1,4 @@
+import { chmod } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { commandFamily } from "../src/command-classifier.js";
 import {
@@ -89,6 +90,7 @@ describe("rsp telemetry spool", () => {
   it("pipes a real Codex PreToolUse payload through the built bundle and drains a decision event", async () => {
     const root = await tempRoot();
     const bundle = await ensureRspBundle();
+    const env = await envWithRsp(root);
     const payload = {
       cwd: root,
       tool_name: "bash",
@@ -97,6 +99,7 @@ describe("rsp telemetry spool", () => {
 
     const hook = spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
       cwd: root,
+      env,
       input: Buffer.from(JSON.stringify(payload)),
       encoding: "buffer",
     });
@@ -153,6 +156,7 @@ describe("rsp telemetry spool", () => {
     const root = await tempRoot();
     await writeFile(join(root, ".red", "config.yaml"), "rsp:\n  enabled: true\n  proxy:\n    enabled: true\n", "utf8");
     const bundle = await ensureRspBundle();
+    const env = await envWithRsp(root);
     const command = "printf 'out\\n'; printf 'err\\n' >&2";
     const payload = {
       cwd: root,
@@ -162,6 +166,7 @@ describe("rsp telemetry spool", () => {
 
     const hook = spawnSync(process.execPath, [bundle, "hook", "codex-pre-exec"], {
       cwd: root,
+      env,
       input: Buffer.from(JSON.stringify(payload)),
       encoding: "buffer",
     });
@@ -612,3 +617,12 @@ describe("rsp telemetry spool", () => {
     }
   });
 });
+
+async function envWithRsp(root: string): Promise<NodeJS.ProcessEnv> {
+  const binDir = join(root, "bin");
+  const rsp = join(binDir, "rsp");
+  await mkdir(binDir, { recursive: true });
+  await writeFile(rsp, "#!/bin/sh\nexit 0\n", "utf8");
+  await chmod(rsp, 0o755);
+  return { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` };
+}
