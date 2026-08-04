@@ -122,7 +122,8 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 Capability references registered by owner:
 `castle` MCP (the canonical project interface and read-only host-daemon
 diagnostic surface: `host_state`, `host_dashboard`, `host_provision_check`,
-`host_unit_status`) ->
+`host_unit_status`; a visible `project_status.birth_latch` routes through its
+structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;

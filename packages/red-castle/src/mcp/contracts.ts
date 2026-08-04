@@ -161,8 +161,25 @@ export const projectRegistrationStatusSchema = z.object({
 
 export type ProjectRegistrationStatusOutput = z.infer<typeof projectRegistrationStatusSchema>;
 
+export const projectBirthLatchSchema = z.object({
+  name: z.literal("project-birth-breaker"),
+  project_label: z.string(),
+  state: z.enum(["open", "half-open"]),
+  opened_at: z.string(),
+  reason: z.string(),
+  closes: z.string(),
+  probe_worker_id: z.string().nullable(),
+  repair: z.object({
+    tool: z.literal("project_reset"),
+    args: z.object({ latch: z.literal("project-birth-breaker") }),
+    why: z.string(),
+  }),
+});
+
 export const projectStatusOutputSchema = z.object({
   registration: projectRegistrationStatusSchema,
+  /** The project-wide birth latch, or null when autonomous births are allowed. */
+  birth_latch: projectBirthLatchSchema.nullable(),
   slots: z.object({
     busy: z.number(),
     free: z.number(),

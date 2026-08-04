@@ -47,10 +47,15 @@ export interface ProjectStopInput {
   force?: boolean;
 }
 
+export interface ProjectResetInput {
+  latch: "project-birth-breaker";
+}
+
 export interface ProjectDependencies {
   projectStatus(): Promise<ProjectStatusOutput>;
   projectStart(input: ProjectStartInput): Promise<unknown>;
   projectResize(input: ProjectResizeInput): Promise<unknown>;
+  projectReset(input: ProjectResetInput): Promise<unknown>;
   projectStop(input: ProjectStopInput): Promise<unknown>;
 }
 
@@ -130,6 +135,20 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
       invoke: async (input) => {
         refuseFleetNaming(input.fleet);
         return deps.projectResize(input as unknown as ProjectResizeInput);
+      },
+    },
+    {
+      name: "project_reset",
+      title: "Reset project execution latch",
+      description:
+        "MUTATING: clear a named in-memory latch for this project so autonomous demand may retry immediately.",
+      inputSchema: {
+        latch: z.literal("project-birth-breaker"),
+        fleet: removedFleetName,
+      },
+      invoke: async ({ latch, fleet }) => {
+        refuseFleetNaming(fleet);
+        return deps.projectReset({ latch: latch as "project-birth-breaker" });
       },
     },
     {

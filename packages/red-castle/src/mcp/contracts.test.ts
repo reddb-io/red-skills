@@ -32,6 +32,7 @@ const PROJECT_STATUS: ProjectStatusOutput = {
     bundle_version: "3.3.24",
     plugin_cache_version: "3.3.21",
   },
+  birth_latch: null,
   slots: { busy: 1, free: 1, parked: 0, total: 2, interactive_reservation: 1 },
   live_workers: [
     { id: "worker-1", pid: 43, issue: "2305", activity: "impl", origin: "afk" },

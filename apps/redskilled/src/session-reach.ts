@@ -42,6 +42,7 @@ export type RedskilledSessionOp =
   | "worker-heartbeat"
   | "project-register"
   | "project-renew"
+  | "project-reset"
   | "project-deregister";
 
 /** The three reaches. A reader of this type knows the whole model. */
@@ -71,6 +72,9 @@ export const REDSKILLED_OP_REACH: Readonly<Record<RedskilledSessionOp, Redskille
   // session that could renew another project's registration could keep a drain
   // nobody is watching running past the deadline that exists to end it.
   "project-renew": "project-write",
+  // Clearing a birth latch resumes this project's autonomous births, so only a
+  // session in that project may perform it.
+  "project-reset": "project-write",
   // Releasing one lands exactly where taking it did: a session that could release
   // another project's registration could stop its work from outside it.
   "project-deregister": "project-write",

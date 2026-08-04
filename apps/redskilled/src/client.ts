@@ -52,6 +52,7 @@ import {
   isRedskilledDaemonStopped,
   isRedskilledProjectRegistered,
   isRedskilledProjectRenewed,
+  isRedskilledProjectReset,
   isRedskilledStatuslinePayload,
   isRedskilledStatuslineRender,
   isRedskilledWorkerCommandResult,
@@ -61,6 +62,7 @@ import {
   type RedskilledProjectDeregistered,
   type RedskilledProjectRegistered,
   type RedskilledProjectRenewed,
+  type RedskilledProjectReset,
   type RedskilledRequest,
   type RedskilledStatuslinePayload,
   type RedskilledStatuslineRender,
@@ -802,6 +804,26 @@ export async function renewRedskilledProject(
     config,
   );
   if (!isRedskilledProjectRenewed(value)) throw new Error("redskilled daemon returned a malformed renewal");
+  return value;
+}
+
+/** Clear this project's in-memory birth breaker and resume ordinary demand. */
+export async function resetRedskilledProjectBirthBreaker(
+  paths: RedskilledPaths,
+  request: { project_label: string },
+  config: RedskilledClientConfig = {},
+): Promise<RedskilledProjectReset> {
+  const value = await requestRedskilled(
+    paths,
+    {
+      op: "project-reset",
+      project_label: request.project_label,
+      latch: "project-birth-breaker",
+      session_project: config.sessionProject ?? request.project_label,
+    },
+    config,
+  );
+  if (!isRedskilledProjectReset(value)) throw new Error("redskilled daemon returned a malformed project reset");
   return value;
 }
 

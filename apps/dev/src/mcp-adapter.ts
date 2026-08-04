@@ -971,6 +971,7 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
       ...(held?.last_poll ? { last_poll: held.last_poll } : {}),
       ...(version.published_version ? { published_version: version.published_version } : {}),
     },
+    birth_latch: registrationState?.birthLatch ?? null,
     slots: {
       busy,
       free: Math.max(0, target - busy),
@@ -1911,6 +1912,7 @@ export function createCastleMcpDependencies(
     projectStatus: () => projectStatus(root),
     projectStart: (input) => projectStart(root, input),
     projectResize: (input) => projectResize(root, input),
+    projectReset: async () => createRedskilledBirthPort({ root }).resetBirthBreaker(),
     // Stopping is giving the registration back and asking the host to end this
     // project's Workers. There is no process of the project's own left to kill
     // (ADR 0130 Amendment 4), so `force` no longer selects a harder teardown —
