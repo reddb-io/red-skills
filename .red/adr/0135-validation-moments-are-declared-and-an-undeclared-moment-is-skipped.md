@@ -1,0 +1,18 @@
+# Validation moments are declared, and an undeclared moment is skipped
+
+A fleet at width 5 spent most of its wall clock re-buying the same green verdict: every Worker ran the full discovered suite (`test, typecheck, lint, build`) over its dependency cone against the live base, every correction round re-ran all of it for one failed check, landing re-validated everything again, and every base movement (most sharply a `chore(release)` bump rewriting generated mirrors) expired every in-flight verdict at once — quadratic re-validation across the fleet, with the maintainer unable to see any of the schedule that caused it. Meanwhile the merge queue — mandatory, serialized, already running `test` + `typecheck` on the merged result — validated freshness a second time at the only point where it is actually decidable.
+
+## Decision
+
+1. **Validation runs at named lifecycle moments, and every moment's commands are operator-declared.** The moments are `iteration` (what the handoff instructs the inner agent to run while writing — declared, not improvised), `post_done` (when the agent emits DONE), and `landing` (before push/PR/queue). `setup` and `format` remain the separate declarations they already are; the merge queue is documented as the CI-side final moment, configured in the repo, not in the engine.
+2. **There is no default, and there is no refusal: an undeclared moment is skipped, loudly.** The engine never guesses a command (the declared-setup principle extended to validation) and never blocks a repo for lack of a declaration — it skips the moment and every narrating surface says so. `/red-setup` discovers and proposes the block; the operator confirms it. Upgrade day for an undeclared repo means moments skip and the merge queue is the validator that remains.
+3. **Correction is not a declarable moment.** A correction round mechanically re-runs only the failed subset of the `post_done` declaration, folding back to the full declaration once the subset passes — otherwise skip-if-undeclared would break the correction loop itself.
+4. **`post_done` validates the branch against its fork point.** Freshness against the live base belongs exclusively to the merge queue. A queue ejection is healed by a generic repair lane (merge base, regenerate, re-queue), escalating to the owning Worker only on a genuinely semantic failure. This deletes the stale-base free-correction economy: a moving base no longer costs any in-flight Worker a suite run.
+5. **One declaration surface.** `afk.backpressure` and the `afk.feedback.commands` override (#3276, which shipped while this was being decided) are both deprecated into aliases of `post_done` for one release, warning with the migration; `/go --verify` survives as the one ad-hoc injection into that dispatch's `post_done`.
+6. **The schedule is visible everywhere the question arises**: the statusline shows validation-semaphore occupancy (`gate N/M`), `help`/`project_status` narrate the project's moment schedule including skips, `/red-doctor` checks declaration against engine, and every Worker echoes the schedule it will obey at boot in its log.
+
+## Considered options
+
+- **Hardcoded defaults equal to the new design** — rejected: a default the operator never chose is the same invisible schedule that caused this, one layer down.
+- **Mandatory declaration (engine refuses without one)** — rejected: it turns an upgrade into a fleet halt, and the skip semantics achieve the same "never guess" property without ever blocking.
+- **Keeping freshness local (continuous base merges, cheaper corrections)** — rejected: it optimizes the quadratic instead of deleting it; the serialized validator already exists and is already mandatory.
