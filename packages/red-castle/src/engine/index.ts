@@ -25,6 +25,7 @@ export * from "./terminal-events.js";
 export * from "./validation-cone.js";
 export * from "./worker-drain.js";
 export * from "./config.js";
+export * from "./drain.js";
 export * from "./work-selector.js";
 export * from "./extinct-nouns.js";
 export * from "./host-capability-profile.js";
