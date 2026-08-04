@@ -469,6 +469,10 @@ _Avoid_: manual tool, docs tool, static usage dump
 The machine-readable half of every castle refusal and empty-state: `repair: {tool, args, why}` — a cure the agent can invoke directly, beside the human sentence. The field exists so the stated cure and the executable cure cannot diverge: a message that names a label no code reads (the `triage:summon` incident) is impossible when the named cure IS the call. A refusal with no cure declares `repair: none` with its reason; a ratchet holds every new refusal to one or the other.
 _Avoid_: hint, suggestion, "see the error message"
 
+**Validation moment**:
+A named point in a Worker's lifecycle where operator-declared validation commands run — post-DONE, correction, landing, with the merge queue documented as the CI-side final moment. **The declaration defines the moment; an undeclared moment is skipped, loudly** — the engine never guesses a command and never refuses to run for lack of one; every surface that narrates the run states which moments ran, which were skipped, and why. Post-DONE validates the branch against its **fork point**; freshness against the live base belongs exclusively to the merge queue, and a queue ejection is healed by the repair lane, not by re-validating in every Worker.
+_Avoid_: gate stage (the gate is the semaphore, not the schedule), "the feedback loop", hardcoded default
+
 ## Relationships
 
 - An **Issue tracker** holds many **Issues**.
