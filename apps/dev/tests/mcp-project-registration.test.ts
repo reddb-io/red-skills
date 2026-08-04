@@ -110,6 +110,24 @@ async function liveHost(): Promise<RedskilledDaemon> {
 }
 
 describe("starting work registers the project", () => {
+  it("gives an absent registration a pasteable project_start repair", async () => {
+    await liveHost();
+    const root = await project();
+
+    const status = await createCastleMcpDependencies(root).projectStatus();
+
+    expect(status.registration).toMatchObject({
+      held: false,
+      daemon_reachable: true,
+      reason: expect.stringContaining("call `project_start`"),
+      repair: {
+        tool: "project_start",
+        args: { runner: "claude", target: 1 },
+        why: "register this project with the host so its queue can drain",
+      },
+    });
+  });
+
   it("hands the daemon a registration and starts no process of the project's own", async () => {
     const daemon = await liveHost();
     const root = await project();
