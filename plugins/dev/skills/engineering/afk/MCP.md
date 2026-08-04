@@ -52,6 +52,16 @@ mutating tool with a `MUTATING:` description prefix; the table below mirrors it.
 
 ## Tool surface by domain
 
+### Help — the situational front door
+
+| Tool | Mode | What it does |
+| --- | --- | --- |
+| `help` | read | Read the daemon, registration, last socket-local queue poll, Workers, and latest refusal; return where this project stands, one pasteable next call, and an intent map generated from this live tool table. It makes no GitHub request. |
+
+When the next castle call is unclear, call `help` and follow its structured
+`next` action. It is the sole runtime source of operating choreography; this
+document defines the protocol without copying its state-dependent routes.
+
 ### Fleet — named multi-fleet lifecycle
 
 **A project has exactly one producer.** The named fleet is gone (ADR 0130): the
@@ -230,7 +240,8 @@ state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 | `events_since` | read | Castle history events and worker lane records after an opaque cursor, plus the next cursor. |
 | `deadend_audit` | read | Every stuck AFK pattern with its recommended cure: dangling claims, red PRs with dead owners, superseded PRs, executable Tickets carrying an active Current blocker, dependency blocks whose `req:*` targets all closed, human-queue age outliers, and stale worktrees. Cache-backed — repeated calls within the refresh window cost zero GitHub quota. Detection only. |
 
-`queue_status` is the first call of any drain: zero eligible `ready-for-agent`
+`help` is the first call when operating a drain. Use `queue_status` when its
+answer calls for the tracker-backed queue census: zero eligible `ready-for-agent`
 entries with a non-empty open backlog is a flow bug to census, not a clean stop.
 That rule includes a non-empty queue whose every entry is `held_for_summon`;
 release it with `triage:summon`, `dev triage --summon`, or
