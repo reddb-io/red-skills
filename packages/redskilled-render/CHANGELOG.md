@@ -1,5 +1,11 @@
 # @reddb-io/redskilled-render
 
+## 3.4.1
+
+### Patch Changes
+
+- c979efe: Distinguish never-registered, lapsed, deliberately stopped, and orphaned-daemon project histories in statusline and renewal diagnostics.
+
 ## 3.4.0
 
 ## 3.3.24
