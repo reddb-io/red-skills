@@ -272,15 +272,23 @@ describe("evaluateClaimTrust — visibility-aware claim decision (#1101)", () =>
   });
 
   it("FAIL-CLOSED gives an untrusted author the executable external-approval repair", async () => {
-    const v = await evaluateClaimTrust(failClosed, prov("stranger", "maint"), maintainerLookup("maint"));
+    const v = await evaluateClaimTrust(
+      failClosed,
+      prov("stranger", "maint"),
+      maintainerLookup("maint"),
+      undefined,
+      2062,
+    );
     expect(v.executable).toBe(false);
     expect(v.reason).toContain("untrusted author");
     expect(v.repair).toEqual({
-      tool: "github_issue",
+      tool: "gh",
       args: {
-        add_label: "origin:external",
-        comment: "/approve-external",
-        comment_author: "maintainer",
+        commands: [
+          ["issue", "edit", "2062", "--add-label", "origin:external"],
+          ["issue", "comment", "2062", "--body", "/approve-external"],
+        ],
+        required_actor: "maintainer",
       },
       why: "mark the issue as external and record explicit approval from a maintainer with write access",
     });
@@ -323,14 +331,19 @@ describe("evaluateExternalOriginGate — origin:external hold (#2603)", () => {
   });
 
   it("HOLDS an unapproved external issue and marks it for approval parking", () => {
-    const v = evaluateExternalOriginGate(ext(true, false));
+    const v = evaluateExternalOriginGate(ext(true, false), 2062);
     expect(v.executable).toBe(false);
     expect(v.holdForApproval).toBe(true);
     expect(v.reason).toContain("origin:external");
     expect(v.reason).toContain("/approve-external");
     expect(v.repair).toMatchObject({
-      tool: "github_issue",
-      args: { add_label: "origin:external", comment: "/approve-external" },
+      tool: "gh",
+      args: {
+        commands: [
+          ["issue", "edit", "2062", "--add-label", "origin:external"],
+          ["issue", "comment", "2062", "--body", "/approve-external"],
+        ],
+      },
     });
   });
 
@@ -373,11 +386,18 @@ describe("evaluateClaimTrust — external-origin integration (#2603)", () => {
       prov("stranger", "maint"),
       maintainerLookup("maint"),
       { external: false, approved: false },
+      2062,
     );
 
     expect(v.executable).toBe(false);
     expect(v.repair).toMatchObject({
-      args: { add_label: "origin:external", comment: "/approve-external" },
+      tool: "gh",
+      args: {
+        commands: [
+          ["issue", "edit", "2062", "--add-label", "origin:external"],
+          ["issue", "comment", "2062", "--body", "/approve-external"],
+        ],
+      },
     });
     expect(JSON.stringify(v)).not.toContain("triage:summon");
   });
