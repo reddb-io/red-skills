@@ -303,6 +303,7 @@ function renderHead(
   unmatched: string,
 ): string {
   const parts: string[] = [];
+  const unmatchedProject = match !== "matched" && match !== "name-only";
   if (options.mode === "global") {
     parts.push(`host ${payload.host.worker_count}w/${payload.host.project_count}p`);
     parts.push(memoryFigure(payload, options));
@@ -329,7 +330,19 @@ function renderHead(
   const death = deathMark(payload);
   if (death != null) parts.push(death);
   if (payload.staleness.stale) parts.push(stalenessMark(payload));
-  return parts.join(" ");
+  const line = parts.join(" ");
+  if (!unmatchedProject || width(line) <= options.maxWidth || (budget == null && death == null)) {
+    return line;
+  }
+
+  // A composed repair is deliberately verbose. On a narrow line keep urgent
+  // quota/death marks ahead of that prose so the clamp cannot turn a refusal
+  // into a false all-clear. Wide lines retain the natural refusal-first order.
+  return [budget, death, unmatched, engineMark(payload), payload.staleness.stale
+    ? stalenessMark(payload)
+    : null]
+    .filter((part): part is string => part != null)
+    .join(" ");
 }
 
 /**
