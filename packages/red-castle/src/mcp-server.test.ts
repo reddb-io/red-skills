@@ -163,6 +163,7 @@ describe("castle MCP tools", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
       "help",
       "project_status",
+      "drain",
       "project_start",
       "project_resize",
       "project_reset",
