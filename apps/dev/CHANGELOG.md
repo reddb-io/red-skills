@@ -1,5 +1,18 @@
 # @reddb-io/dev
 
+## 3.4.2
+
+### Patch Changes
+
+- f956b18: Partition `queue_status` into eligible and trust-held ready work, and keep
+  maintainer-summon holds out of AFK drain progress totals.
+  - @reddb-io/github@3.4.2
+  - @reddb-io/shared@3.4.2
+  - @reddb-io/build-info@3.4.2
+  - @reddb-io/red-castle@3.4.2
+  - @reddb-io/redskilled@3.4.2
+  - @reddb-io/redskilled-render@3.4.2
+
 ## 3.4.1
 
 ### Patch Changes
