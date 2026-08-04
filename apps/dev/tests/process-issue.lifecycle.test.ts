@@ -1084,6 +1084,100 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(handoff).toContain(`- ${command}`);
   });
 
+  it("skips undeclared post_done and landing moments without discovering local commands", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", locked: false });
+    deps.validationMoments = {};
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.pnpmArgs).toEqual([]);
+    expect(trace.shellCommands).toEqual([]);
+    expect(trace.iterLogs).toContain("🤖 /afk validation moment post_done skipped: undeclared.");
+    expect(trace.iterLogs).toContain("🤖 /afk validation moment landing skipped: undeclared.");
+    expect(trace.envelopeBodies.at(-1) ?? "").toContain('"name":"validation:post_done","status":"skipped"');
+    expect(trace.envelopeBodies.at(-1) ?? "").toContain('"name":"validation:landing","status":"skipped"');
+  });
+
+  it("runs declared post_done at the branch fork point even when the live base moves", async () => {
+    const command = "pnpm test:fork-point";
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      baseMovements: [{ head: "new-main", subjects: ["chore: moved base"] }],
+      locked: false,
+    });
+    deps.validationMoments = { post_done: [command] };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.shellCommands).toEqual([command]);
+    expect(trace.baseMovementCalls).toEqual([]);
+    expect(trace.changedFileCalls[0]?.base).toBe("origin/main-tip");
+  });
+
+  it("re-runs only the failed post_done subset, then folds back to the full declaration", async () => {
+    const commands = ["pnpm test:a", "pnpm test:b"];
+    const { deps, input, trace } = harness({ outcome: "done", reseedGateBudget: 1, locked: false });
+    deps.validationMoments = { post_done: commands };
+    let call = 0;
+    let clock = 0;
+    deps.nowEpoch = () => (clock += 1000);
+    deps.backpressure = async ({ command }) => {
+      trace.shellCommands.push(command);
+      call += 1;
+      return {
+        code: call === 1 ? 1 : 0,
+        stdout: call === 1 ? "a failed" : "",
+        stderr: "",
+      };
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.shellCommands).toEqual([
+      "pnpm test:a",
+      "pnpm test:b",
+      "pnpm test:a",
+      "pnpm test:a",
+      "pnpm test:b",
+    ]);
+    expect(trace.iterLogs).toContain(
+      "🤖 /afk validation moment post_done correction subset passed; folding back to the full declaration.",
+    );
+  });
+
+  it("runs a declared landing moment before push and PR creation", async () => {
+    const events: string[] = [];
+    const { deps, input, trace } = harness({ outcome: "done", locked: false });
+    deps.validationMoments = { landing: ["pnpm test:landing"] };
+    const shellExec = deps.backpressure!;
+    deps.backpressure = async (request) => {
+      events.push(`validation:${request.command}`);
+      return shellExec(request);
+    };
+    const remoteGit = deps.remoteGit;
+    deps.remoteGit = async (argv) => {
+      events.push(`push:${argv.join(" ")}`);
+      return remoteGit(argv);
+    };
+    const mergeExec = deps.mergeExec;
+    deps.mergeExec = async (argv) => {
+      if (argv.includes("pr") && argv.includes("create")) events.push("pr:create");
+      return mergeExec(argv);
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(events[0]).toBe("validation:pnpm test:landing");
+    expect(events.indexOf("validation:pnpm test:landing")).toBeLessThan(events.findIndex((event) => event.startsWith("push:")));
+    expect(events.indexOf("validation:pnpm test:landing")).toBeLessThan(events.indexOf("pr:create"));
+    expect(trace.shellCommands).toEqual(["pnpm test:landing"]);
+  });
+
   it("omits <merge-gate> from the handoff when no backpressure command is configured (#849)", async () => {
     const { deps, input, trace } = harness({ outcome: "done" });
     await processIssue(deps, input);

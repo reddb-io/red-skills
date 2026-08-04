@@ -121,11 +121,12 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
       fallbackRunner: false,
       runner: "codex",
       exec,
+      inlineVerifyCommand: "pnpm test:inline",
     });
 
     expect(deps.validationMoments).toEqual({
       iteration: ["pnpm test"],
-      post_done: ["pnpm typecheck"],
+      post_done: ["pnpm typecheck", "pnpm test:inline"],
       landing: ["pnpm build"],
     });
   });

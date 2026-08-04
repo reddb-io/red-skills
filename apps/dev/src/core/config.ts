@@ -106,17 +106,6 @@ export const CONFIG_DEFAULTS = {
   "afk.models.claude-minimax.think.effort": "low",
   "afk.hooks.defaults.cargo": "true",
   "afk.hooks.defaults.gradle": "true",
-  // Feedback-gate base rebase (AFK runner improvement, Pattern 2). When true,
-  // a freshly materialised worker worktree is rebased onto the session base
-  // BEFORE the gate runs, so a worker test written against a now-moved base
-  // (the wPB6F/wQYIB CLAUDE_CODE_SIMPLE drift) validates against the latest
-  // source rather than failing on stale expectations. Best-effort: a rebase
-  // conflict aborts and the gate runs un-rebased (the baseline probe then
-  // downgrades the resulting pre-existing failure). OFF by default — a repo
-  // that pins per-issue bases (issue body pinning to a non-main branch) must
-  // leave it off, since the session-level base would rebase onto the wrong
-  // ref. Safe to enable for repos whose issues all target one trunk.
-  "afk.feedback.rebase_on_base": "false",
   // Merge-gate policy (ADR 0048). The unlocked admin-merge ignores advisory
   // review checks by default — the binding gates are `drift-guard` (the
   // pre_merge hook) + in-process backpressure/feedback. Opt into waiting for an

@@ -310,10 +310,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
     return 1;
   }
 
-  // Feedback worktree manager — checks out the worker branch for the gate.
-  // AFK runner improvement (Pattern 2): `feedbackRebaseBase` is set only when
-  // the `afk.feedback.rebase_on_base` flag is on; undefined → no rebase
-  // (default behaviour unchanged).
+  // Load the declaration schedule before constructing the feedback worktree
+  // that will materialise the Worker's fixed branch tip.
   const config = loadConfig(paths.configPath, { warn: () => undefined });
 
   // Per-issue mutable attempt context the process deps' envelope/iter-log close
@@ -334,12 +332,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   });
   let gateWaitPublication: Promise<void> = Promise.resolve();
 
-  // Feedback worktree manager — checks out the worker branch for the gate.
-  // AFK runner improvement (Pattern 2): `feedbackRebaseBase` is set only when
-  // the `afk.feedback.rebase_on_base` flag is on; undefined → no rebase
-  // (default behaviour unchanged).
+  // Feedback worktree manager — checks out the worker branch at its own tip.
+  // ADR 0135 deliberately does not rebase it onto the moving live base:
+  // post_done validates against the Worker's fork point, while freshness is
+  // owned by the merge queue.
   const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
-    rebaseOnto: settings.feedbackRebaseBase,
     resourceBudget: readValidationResourceBudget(config),
     setupCommands: readSetupCommands(config),
     // A host-wide lock wait is the gate's only silent stall: no child, no

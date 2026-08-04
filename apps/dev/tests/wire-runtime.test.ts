@@ -199,60 +199,12 @@ describe("resolveRunSettings", () => {
     }
   });
 
-  // AFK runner improvement (Pattern 2): feedbackRebaseBase is undefined by
-  // default (the rebase is OFF), resolves to "main" when the flag is on with
-  // no lock, and to the config-locked branch when one is set. The
-  // RED_AFK_FEEDBACK_REBASE=1 env knob forces it on without config.
-  it("feedbackRebaseBase is undefined by default (rebase OFF)", () => {
-    const root = scratch();
-    try {
-      expect(resolveRunSettings(root).feedbackRebaseBase).toBeUndefined();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("feedbackRebaseBase resolves to 'main' when afk.feedback.rebase_on_base is true", () => {
+  it("does not expose the retired live-base feedback rebase setting", () => {
     const root = scratch();
     try {
       mkdirSync(join(root, ".red"), { recursive: true });
       writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\nafk:\n  feedback:\n    rebase_on_base: true\n");
-      expect(resolveRunSettings(root).feedbackRebaseBase).toBe("main");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("feedbackRebaseBase resolves to the config-locked branch when set + flag on", () => {
-    const root = scratch();
-    try {
-      mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(
-        join(root, ".red", "config.yaml"),
-        "plugins:\n  dev:\n    enabled: true\ndev:\n  lock:\n    branch: release-2\nafk:\n  feedback:\n    rebase_on_base: true\n",
-      );
-      expect(resolveRunSettings(root).feedbackRebaseBase).toBe("release-2");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("RED_AFK_FEEDBACK_REBASE=1 forces the rebase base on without config", () => {
-    const root = scratch();
-    try {
-      expect(resolveRunSettings(root, { RED_AFK_FEEDBACK_REBASE: "1" }).feedbackRebaseBase).toBe("main");
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("the config-locked branch alone does NOT enable the rebase (flag must be on)", () => {
-    const root = scratch();
-    try {
-      mkdirSync(join(root, ".red"), { recursive: true });
-      writeFileSync(join(root, ".red", "config.yaml"), "plugins:\n  dev:\n    enabled: true\ndev:\n  lock:\n    branch: release-2\n");
-      // No rebase_on_base flag → undefined even though a locked branch exists.
-      expect(resolveRunSettings(root).feedbackRebaseBase).toBeUndefined();
+      expect(resolveRunSettings(root, { RED_AFK_FEEDBACK_REBASE: "1" })).not.toHaveProperty("feedbackRebaseBase");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

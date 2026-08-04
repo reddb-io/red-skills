@@ -10,7 +10,6 @@ import {
 } from "../../core/merge-conflict-reconcile.js";
 import type { Runner } from "../../types/runner.js";
 import {
-  resolveRunSettings,
   type RepoContext,
   type AfkPaths,
 } from "../../runtime/wire.js";
@@ -363,10 +362,8 @@ export async function runReconcileWorker(
     branch,
   };
 
-  const reconcileSettings = resolveRunSettings(ctx.root, process.env, runner);
   const config = loadConfig(paths.configPath);
   const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
-    rebaseOnto: reconcileSettings.feedbackRebaseBase,
     resourceBudget: readValidationResourceBudget(config),
     setupCommands: readSetupCommands(config),
   });

@@ -283,6 +283,13 @@ export function buildProcessDeps({
     inlineVerifyCommand && inlineVerifyCommand.trim() !== ""
       ? [...backpressureCommands, inlineVerifyCommand.trim()]
       : backpressureCommands;
+  const validationMoments = readValidationMoments(config);
+  if (inlineVerifyCommand && inlineVerifyCommand.trim() !== "") {
+    validationMoments.post_done = [
+      ...(validationMoments.post_done ?? []),
+      inlineVerifyCommand.trim(),
+    ];
+  }
 
   return {
     gh: buildGhPort(ghCtx),
@@ -311,13 +318,13 @@ export function buildProcessDeps({
     // the agent commits (the continuous-push hook, issue #191); a worktree still
     // dirty when the worker exits is disposable, and the terminal Envelope plus
     // those pushed commits are the forensic record.
-    // Feedback runs against a checkout of the worker branch — the feedback
-    // worktree manager materialises it and rebases pnpm/layout onto it.
+    // Validation runs against a checkout of the worker branch — the feedback
+    // worktree manager materialises pnpm/layout onto that fixed branch tip.
     pnpm: feedback.pnpm,
     baseMergeReversionGeometry: feedback.baseMergeReversionGeometry,
     requireBranchReversionSafety: true,
     validationResourceBudget: readValidationResourceBudget(config),
-    validationMoments: readValidationMoments(config),
+    validationMoments,
     // The gate's proof that a declared validation worktree is really there
     // (#3041): a landing worktree that vanished refuses as an infrastructure
     // error instead of composing commands against a path that resolves nowhere.
