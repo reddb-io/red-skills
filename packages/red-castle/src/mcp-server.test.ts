@@ -23,6 +23,7 @@ function deps(): CastleMcpDependencies {
         bundle_version: "3.3.24",
         plugin_cache_version: "3.3.21",
       },
+      birth_latch: null,
       slots: { busy: 1, free: 1, parked: 0, total: 2, interactive_reservation: 1 },
       live_workers: [
         {
@@ -41,6 +42,7 @@ function deps(): CastleMcpDependencies {
       pid: 42,
     })),
     projectResize: vi.fn(async (input) => ({ status: "resized", target: input.target })),
+    projectReset: vi.fn(async (input) => ({ status: "reset", latch: input.latch })),
     projectStop: vi.fn(async (input) => ({
       status: "stopped",
       force: input.force ?? false,
@@ -163,6 +165,7 @@ describe("castle MCP tools", () => {
       "project_status",
       "project_start",
       "project_resize",
+      "project_reset",
       "project_stop",
       "host_state",
       "host_dashboard",
@@ -218,6 +221,14 @@ describe("castle MCP tools", () => {
       registration: { held: true, renewal: "renewing", target: 2 },
       slots: { total: 2 },
       live_workers: [{ id: "worker-1" }],
+    });
+  });
+
+  it("resets the named project latch", async () => {
+    const tool = createCastleMcpTools(deps()).find((candidate) => candidate.name === "project_reset")!;
+    await expect(tool.invoke({ latch: "project-birth-breaker" })).resolves.toEqual({
+      status: "reset",
+      latch: "project-birth-breaker",
     });
   });
 

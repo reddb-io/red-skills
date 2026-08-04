@@ -23,6 +23,7 @@ const listLabelNames = vi.fn(async () => ({
 const projectRegistrationState = vi.fn<() => Promise<ProjectRegistrationState>>(async () => ({
   held: null,
   lapse: null,
+  birthLatch: null,
 }));
 
 vi.mock("../src/runtime/redskilled-birth.js", async (importOriginal) => ({
@@ -193,6 +194,7 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
   it("finds a lapsed registration while the executable queue is non-empty", async () => {
     projectRegistrationState.mockResolvedValueOnce({
       held: null,
+      birthLatch: null,
       lapse: {
         project_label: "acme/widgets",
         at: "2026-08-03T17:20:00.000Z",

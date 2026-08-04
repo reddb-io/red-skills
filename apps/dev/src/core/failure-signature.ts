@@ -155,3 +155,17 @@ export function failureSignature(input: FailureSignatureInput): string {
   const digest = createHash("sha256").update(terms.join("\n")).digest("hex");
   return `${SIGNATURE_VERSION}:${digest.slice(0, DIGEST_LENGTH)}`;
 }
+
+/** Stable terminal-marker vocabulary used to compare validation infra across Workers. */
+export const VALIDATION_FAILURE_SIGNATURE_MARKER = "validation-signature:";
+
+/** Compose the compact failure reason persisted for the next AFK claim. */
+export function validationFailureMarker(outcome: string, signature: string): string {
+  return `${outcome} ${VALIDATION_FAILURE_SIGNATURE_MARKER}${signature}`;
+}
+
+/** Read a carried v1 validation signature without interpreting surrounding text. */
+export function parseValidationFailureSignature(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  return /\bvalidation-signature:(v1:[0-9a-f]{16})\b/.exec(text)?.[1];
+}

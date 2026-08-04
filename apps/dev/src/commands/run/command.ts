@@ -36,7 +36,7 @@ import * as ghx from "../../runtime/gh.js";
 import * as fsx from "../../runtime/fs.js";
 import { migrateLegacyDevPaths } from "../../runtime/red-path-migration.js";
 import type { GhContext } from "../../runtime/gh.js";
-import { getConfig, loadConfig, readValidationResourceBudget } from "../../core/config.js";
+import { getConfig, loadConfig, readSetupCommands, readValidationResourceBudget } from "../../core/config.js";
 import { resolveHooks, validateHookConfig, UnknownHookError, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
 import {
@@ -341,6 +341,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
     rebaseOnto: settings.feedbackRebaseBase,
     resourceBudget: readValidationResourceBudget(config),
+    setupCommands: readSetupCommands(config),
     // A host-wide lock wait is the gate's only silent stall: no child, no
     // socket, no write, and `live=true` on every surface for as long as an hour
     // (#2985). Say it out loud on all three lanes the operator reads.

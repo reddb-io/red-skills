@@ -20,7 +20,7 @@ import * as fsx from "../../runtime/fs.js";
 import type { GhContext } from "../../runtime/gh.js";
 import type { GitContext } from "../../runtime/git.js";
 import { execTool, type ExecFn } from "../../runtime/exec.js";
-import { getConfig, loadConfig, readHitlTypeLabels, readValidationResourceBudget, resolveTier } from "../../core/config.js";
+import { getConfig, loadConfig, readHitlTypeLabels, readSetupCommands, readValidationResourceBudget, resolveTier } from "../../core/config.js";
 import { LABEL_MERGE_CONFLICT } from "../../core/triage-labels.js";
 import { createFsIssueLeaseStore } from "@reddb-io/red-castle/engine";
 import { readFile } from "node:fs/promises";
@@ -366,6 +366,7 @@ export async function runReconcileWorker(
   const feedback = makeFeedbackWorktree(ctx.root, paths.feedbackWorktreesDir, undefined, {
     rebaseOnto: reconcileSettings.feedbackRebaseBase,
     resourceBudget: readValidationResourceBudget(config),
+    setupCommands: readSetupCommands(config),
   });
   try {
     const reconcileRunner = makeBootReconcileRunner(ctx, paths, workerId, runner, feedback);

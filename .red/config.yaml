@@ -8,6 +8,8 @@ plugins:
     lock:
       primary-branch: true       # primary-checkout branch-switch guard
     afk:
+      setup:
+        - pnpm install --frozen-lockfile
       # Maintainer decision 2026-08-03: codex is this repo's executor.
       #
       # The `models.codex.*` table below only says WHICH MODEL codex uses once

@@ -75,6 +75,7 @@ re-aimed by `project_resize`.
 | `project_status` | read | Supervisor pid, slots, churn, and live workers for this project. |
 | `project_start` | mutating | Register this project with the host daemon — a runner, a target width, and its work policy. It registers; it launches no process of the project's own. |
 | `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
+| `project_reset` | mutating | Clear the named `project-birth-breaker` latch. Call it from `project_status.birth_latch.repair`; the structured repair supplies the exact args. |
 | `project_stop` | mutating | Give this project's registration back and stop what it still holds; pass `force: true` to hard-stop only its attributed workers. |
 
 ### Host daemon diagnostics

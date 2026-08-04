@@ -122,7 +122,8 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 Capability references registered by owner:
 `castle` MCP (the canonical project interface and read-only host-daemon
 diagnostic surface: `host_state`, `host_dashboard`, `host_provision_check`,
-`host_unit_status`) ->
+`host_unit_status`; a visible `project_status.birth_latch` routes through its
+structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
@@ -164,7 +165,9 @@ through `/memory:view`, `memory docs reference-graph`, and
   and store-growth incidents.
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes. `/red-setup` owns `.red/config.yaml` authoring through its
-  shipped config template and post-write loader check.
+  shipped config template and post-write loader check, including inspection and
+  human confirmation of `plugins.dev.afk.setup` when a repository's package or
+  hook manager determines how fresh AFK Worktrees install dependencies.
 - Execution-daemon operation is a host route, not a feature-work one:
   diagnose through the castle MCP's read-only `host_provision_check` and other
   `host_*` tools first; no castle tool provisions or reclaims the host.

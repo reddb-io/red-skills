@@ -55,6 +55,7 @@ export type {
   WorkSelectorInput,
   ProjectStartInput,
   ProjectResizeInput,
+  ProjectResetInput,
   ProjectStopInput,
 } from "./mcp/project.js";
 export type { EventsSinceInput, LogsInput, QueueStatusInput, WorkerVitalsInput } from "./mcp/observability.js";

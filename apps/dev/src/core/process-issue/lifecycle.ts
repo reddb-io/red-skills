@@ -170,7 +170,7 @@ import {
   withoutReviewOutstanding,
 } from "./reseed-handoff.js";
 import { decideTierEscalation } from "./tier-escalation.js";
-import { failureSignature } from "../failure-signature.js";
+import { failureSignature, parseValidationFailureSignature } from "../failure-signature.js";
 import {
   EMPTY_CORRECTION_LEDGER,
   attributeGateFailure,
@@ -494,6 +494,7 @@ export async function processIssue(
       ? candidateBranch
       : null;
   const failureReason = extractFailureReason(prevFailureContext);
+  const carriedValidationSignature = parseValidationFailureSignature(failureReason);
   const resumeIsGateGreen = adoptedPullRequest !== null ||
     (resumableBranch !== null && isGateGreenBranch(failureReason));
   if (adoptedPullRequest) {
@@ -648,6 +649,11 @@ export async function processIssue(
   let noSourceDiffWarning: string | undefined;
   let currentHandoff = handoff;
   let correctionLedger: CorrectionLedger = EMPTY_CORRECTION_LEDGER;
+  // Two consecutive identical suspect-infra readings on the gate-only rerun
+  // saw the same branch and the same environment. That is deterministic setup
+  // failure, not a flake worth another free cycle or outer recovery attempt.
+  let previousSuspectInfraSignature: string | undefined;
+  let deterministicInfraSignature: string | undefined;
   // A stale-base attribution buys another GATE run, not another implementer
   // run: the branch did not change, only the merge result did (#3231).
   let gateRevalidationSkip = false;
@@ -845,6 +851,28 @@ export async function processIssue(
       cause === "gate"
         ? await attributeGateFailureNow(req.driftEligible ?? false, req.suspectInfra ?? false)
         : { attribution: undefined, drift: undefined };
+    const signature = req.signature ?? roundSignature(req.sidecar);
+    if (attribution?.cause === "suspect-infra") {
+      if (previousSuspectInfraSignature === signature) {
+        deterministicInfraSignature = signature;
+        const gate = req.gate ?? "feedback";
+        const note =
+          `🤖 ${reseedLane}: ${gate} machine gate repeated deterministic suspect-infra ` +
+          `signature=${signature} on the unchanged branch/environment; parking immediately ` +
+          `without another free correction or recovery retry.`;
+        deps.appendIterLog(note);
+        deps.recordWorkerEvent?.("worker.gate_revalidation_refused", {
+          trigger: req.trigger,
+          cause: "deterministic-suspect-infra",
+          signature,
+          lane: reseedBudget.lane,
+        });
+        return "refused";
+      }
+      previousSuspectInfraSignature = signature;
+    } else {
+      previousSuspectInfraSignature = undefined;
+    }
     if (attribution && attribution.cause !== "branch-fault") {
       correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
       gateRevalidationSkip = true;
@@ -884,7 +912,7 @@ export async function processIssue(
       req.review
         ? withReviewOutstanding(reseedOutstanding, req.review)
         : withGateOutstanding(reseedOutstanding, { gate, validation: req.validation ?? "", drift }),
-      req.signature ?? roundSignature(req.sidecar),
+      signature,
     );
     const gateSpend = reseedSpend.gate ?? 0;
     /** The round's one-line account. It reaches the iteration log AND the trail's
@@ -1530,9 +1558,17 @@ export async function processIssue(
           continue;
         }
       }
-      const outcome: ProcessOutcome = isInfra ? "feedback-failed-infra" : "feedback-failed";
+      const repeatedOuterInfra = isInfra && carriedValidationSignature === roundKey;
+      const outcome: ProcessOutcome = isInfra && !repeatedOuterInfra
+        ? "feedback-failed-infra"
+        : "feedback-failed";
       let notes: string;
-      if (isInfra) {
+      if (repeatedOuterInfra) {
+        notes =
+          `Feedback validation repeated deterministic INFRA signature ${roundKey} on the ` +
+          `unchanged branch/environment — parked immediately without spending another recovery retry.`;
+        deps.appendIterLog(`🤖 /afk: deterministic validation infra signature=${roundKey} repeated across Workers; parking immediately.`);
+      } else if (isInfra) {
         notes = `Feedback validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`;
       } else if (salvaged) {
         notes = "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged.";
@@ -1545,6 +1581,11 @@ export async function processIssue(
       );
       if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar, suspectInfra))) {
         continue;
+      }
+      if (deterministicInfraSignature) {
+        notes +=
+          ` Deterministic suspect-infra signature ${deterministicInfraSignature} repeated ` +
+          `on the unchanged gate environment; parked immediately without recovery retry.`;
       }
       if (!isInfra) {
         notes += correctionBudgetNote();
@@ -1577,9 +1618,16 @@ export async function processIssue(
         // three times each against a gate that never executed.
         const bpClass = await classifyGateFailure("backpressure", backpressure.checks);
         const bpInfra = bpClass.isInfra;
-        let bpNotes = bpInfra
+        const bpSignature = failureSignature({ sidecar: backpressure.sidecar });
+        const repeatedOuterInfra = bpInfra && carriedValidationSignature === bpSignature;
+        let bpNotes = repeatedOuterInfra
+          ? `Backpressure validation repeated deterministic INFRA signature ${bpSignature} on the unchanged branch/environment — parked immediately without spending another recovery retry.`
+          : bpInfra
           ? `Backpressure validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`
           : "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
+        if (repeatedOuterInfra) {
+          deps.appendIterLog(`🤖 /afk: deterministic backpressure infra signature=${bpSignature} repeated across Workers; parking immediately.`);
+        }
         if (bpClass.note !== "") bpNotes += ` ${bpClass.note}`;
         const overrideFooter = bpClass.note === "" ? "" : `\n${bpClass.note}`;
         const validationText = `${backpressure.sidecar.join("\n")}${overrideFooter}`;
@@ -1591,11 +1639,16 @@ export async function processIssue(
         )) {
           continue;
         }
+        if (deterministicInfraSignature) {
+          bpNotes +=
+            ` Deterministic suspect-infra signature ${deterministicInfraSignature} repeated ` +
+            `on the unchanged gate environment; parked immediately without recovery retry.`;
+        }
         if (!bpInfra) {
           bpNotes += correctionBudgetNote();
           await parkReseedTrail(validationText);
         }
-        return await terminalFailure(common, bpInfra ? "feedback-failed-infra" : "feedback-failed", "feedback", {
+        return await terminalFailure(common, bpInfra && !repeatedOuterInfra ? "feedback-failed-infra" : "feedback-failed", "feedback", {
           notes: bpNotes,
           validation: validationText,
         }, { validationSummary: validationText });

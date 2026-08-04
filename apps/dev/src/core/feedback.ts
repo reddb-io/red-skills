@@ -59,6 +59,12 @@ export interface ExecResult {
    * happened and the composed command stands.
    */
   commandDir?: string;
+  /**
+   * Worktree setup fact that must survive into the validation sidecar. Present
+   * when the undeclared compatibility fallback had to skip lifecycle scripts
+   * after a hook manager refused AFK's redirected `core.hooksPath` (#3268).
+   */
+  setup?: string;
 }
 
 export interface FeedbackExecOptions {
@@ -207,6 +213,8 @@ export interface ValidationRecord {
   exitCode?: number;
   durationMs?: number;
   summary?: string;
+  /** Honest account of a non-standard dependency setup used for this check. */
+  setup?: string;
   /**
    * Set only on a failure that exited too fast to have run (#3041). A suite
    * command that reports a verdict in under a second reported nothing; the flag
@@ -355,6 +363,7 @@ export function buildValidationRecord(input: {
   exitCode?: number;
   durationMs?: number;
   summary?: string;
+  setup?: string;
   suspectInfra?: boolean;
 }): ValidationRecord {
   const record: ValidationRecord = {
@@ -366,6 +375,7 @@ export function buildValidationRecord(input: {
   if (input.exitCode !== undefined && Number.isFinite(input.exitCode)) record.exitCode = Math.trunc(input.exitCode);
   if (input.durationMs !== undefined) record.durationMs = input.durationMs;
   if (input.summary !== undefined && input.summary !== "") record.summary = input.summary;
+  if (input.setup !== undefined && input.setup !== "") record.setup = input.setup;
   if (input.suspectInfra === true) record.suspectInfra = true;
   return record;
 }
@@ -383,6 +393,7 @@ function buildRanRecord(input: {
   exitCode: number;
   durationMs: number;
   summary: string;
+  setup?: string;
 }): ValidationRecord {
   const suspect = isSuspectInfraFailure({ status: input.status, durationMs: input.durationMs });
   const summary = suspect
@@ -1020,7 +1031,15 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       if (status === "failed") failed = true;
       const command = recordedValidationCommand(composed, script, excludeArgs, result.commandDir);
       const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
-      const record = buildRanRecord({ name, status, command, exitCode: result.code, durationMs, summary });
+      const record = buildRanRecord({
+        name,
+        status,
+        command,
+        exitCode: result.code,
+        durationMs,
+        summary,
+        setup: result.setup,
+      });
       push({ name, script, label, scope, status, record });
     }
   }
@@ -1045,7 +1064,15 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     if (status === "failed") failed = true;
     const command = recordedValidationCommand(composed, "typecheck", [], result.commandDir);
     const summary = outputSummary(status, joinCommandOutput(result.stdout, result.stderr));
-    const record = buildRanRecord({ name, status, command, exitCode: result.code, durationMs, summary });
+    const record = buildRanRecord({
+      name,
+      status,
+      command,
+      exitCode: result.code,
+      durationMs,
+      summary,
+      setup: result.setup,
+    });
     push({ name, script: "typecheck", label, scope, status, record });
   }
 
@@ -1094,6 +1121,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
         exitCode: result.code,
         durationMs,
         summary,
+        setup: result.setup,
       });
       push({ name: suite.name, script: "test", label, scope: run.scope, runScript: run.script, status, record });
     }

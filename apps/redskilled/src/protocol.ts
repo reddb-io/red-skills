@@ -194,6 +194,13 @@ export type RedskilledRequest =
     session_project?: string;
   }
   | { id: string; op: "project-deregister"; project_label: string; session_project?: string }
+  | {
+    id: string;
+    op: "project-reset";
+    project_label: string;
+    latch: "project-birth-breaker";
+    session_project?: string;
+  }
   // `detail` is the operator's own words for WHY — opaque to the daemon, recorded
   // with the stop on the event lane so the successor inherits the intent and not
   // just the fact (#2919).
@@ -228,6 +235,27 @@ export interface RedskilledWorkerStarted {
    */
   readonly admission: RedskilledAdmissionVerdict;
   readonly warnings: readonly string[];
+}
+
+/** The answer to an explicit reset of this project's in-memory birth latch. */
+export interface RedskilledProjectReset {
+  readonly version: 1;
+  readonly project_label: string;
+  readonly latch: "project-birth-breaker";
+  readonly reset: boolean;
+  readonly reach: RedskilledReachVerdict;
+  readonly detail: string;
+}
+
+export function isRedskilledProjectReset(value: unknown): value is RedskilledProjectReset {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const reset = value as Record<string, unknown>;
+  return reset.version === 1 &&
+    typeof reset.project_label === "string" &&
+    reset.latch === "project-birth-breaker" &&
+    typeof reset.reset === "boolean" &&
+    typeof reset.detail === "string" &&
+    isRedskilledReachVerdict(reset.reach);
 }
 
 export function isRedskilledWorkerStarted(value: unknown): value is RedskilledWorkerStarted {

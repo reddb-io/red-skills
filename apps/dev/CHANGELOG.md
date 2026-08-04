@@ -1,5 +1,21 @@
 # @reddb-io/dev
 
+## 3.4.3
+
+### Patch Changes
+
+- e528b20: Report project birth-breaker latches on host and project status, persist every birth refusal, half-open with one probe after cooldown, and expose the structured `project_reset` repair.
+- 978359f: Castle trust holds and absent-registration surfaces now carry structured, pasteable repairs composed from the same source as their human-readable explanations.
+- bda5bd7: Route inner-agent `gh` calls through the daemon-backed GitHub budget boundary and attribute each invocation to the Worker that issued it.
+- Updated dependencies [eea6d66]
+- Updated dependencies [bda5bd7]
+  - @reddb-io/redskilled@3.4.3
+  - @reddb-io/github@3.4.3
+  - @reddb-io/red-castle@3.4.3
+  - @reddb-io/shared@3.4.3
+  - @reddb-io/build-info@3.4.3
+  - @reddb-io/redskilled-render@3.4.3
+
 ## 3.4.2
 
 ### Patch Changes

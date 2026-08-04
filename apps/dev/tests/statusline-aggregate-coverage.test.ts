@@ -85,6 +85,7 @@ const PAYLOAD: StatuslineAggregate = {
       bundle_version: "3.3.24",
       plugin_cache_version: "3.3.21",
     },
+    birth_latch: null,
     slots: { busy: 2, free: 1, parked: 1, total: 4, interactive_reservation: 1 },
     live_workers: [
       { id: "wTST1", pid: 4243, issue: "2344", activity: "editing", origin: "afk" },

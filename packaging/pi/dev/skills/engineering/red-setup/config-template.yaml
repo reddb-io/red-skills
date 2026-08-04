@@ -36,6 +36,12 @@ plugins:
   #                               # PR bodies/diffs as untrusted and never checks
   #                               # out, builds, tests, or executes PR code.
   #   afk:
+  #     setup:                    # required repository-owned dependency setup
+  #       - LEFTHOOK=0 pnpm install --frozen-lockfile
+  #                               # /red-setup detects the package/hook managers,
+  #                               # confirms exact commands, and writes them here.
+  #                               # AFK runs declared commands verbatim; the
+  #                               # engine never substitutes a package manager.
   #     implementer:
   #       skills: dev:tdd, dev:diagnose
   #       runner_startup_baseline_ms: 840

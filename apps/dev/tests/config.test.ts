@@ -12,6 +12,7 @@ import {
   MalformedConfigError,
   parseConfigYaml,
   readBackpressure,
+  readSetupCommands,
   readHitlTypeLabels,
   readValidationResourceBudget,
   downgradeAfkModelTier,
@@ -841,6 +842,29 @@ describe("config — block sequences (afk.backpressure, #430)", () => {
   it("readHitlTypeLabels returns [] when the repo declares no HUMAN-ONLY type", () => {
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => "afk:\n  default_runner: codex\n" });
     expect(readHitlTypeLabels(values)).toEqual([]);
+  });
+});
+
+describe("config — declared AFK worktree setup (#3268)", () => {
+  it("reads namespaced setup commands in declaration order", () => {
+    const text =
+      "plugins:\n  dev:\n    enabled: true\n    afk:\n      setup:\n        - corepack enable\n        - LEFTHOOK=0 pnpm install --frozen-lockfile\n";
+    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
+
+    expect(readSetupCommands(values)).toEqual([
+      "corepack enable",
+      "LEFTHOOK=0 pnpm install --frozen-lockfile",
+    ]);
+  });
+
+  it("keeps the legacy scalar fallback and treats absence as undeclared", () => {
+    const legacy = loadConfig("/x/.red/config.yaml", {
+      ignoreActivationGate: true,
+      read: () => "afk:\n  setup: bun install\n",
+    });
+
+    expect(readSetupCommands(legacy)).toEqual(["bun install"]);
+    expect(readSetupCommands(loadConfig("/missing", { read: () => undefined }))).toEqual([]);
   });
 });
 

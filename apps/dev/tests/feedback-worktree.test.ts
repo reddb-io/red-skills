@@ -275,6 +275,99 @@ describe("makeFeedbackWorktree install (#458)", () => {
   });
 });
 
+describe("makeFeedbackWorktree declared setup authority (#3268)", () => {
+  const branch = "afk/w1/3268-declared-setup";
+
+  function setupIO(
+    installs: Array<{ code: number; stderr: string }> = [{ code: 0, stderr: "" }],
+  ): {
+    io: FeedbackWorktreeIO;
+    pnpmCalls: Array<{ args: readonly string[]; env?: NodeJS.ProcessEnv }>;
+    execCalls: Array<{ cmd: string; args: readonly string[] }>;
+  } {
+    const pnpmCalls: Array<{ args: readonly string[]; env?: NodeJS.ProcessEnv }> = [];
+    const execCalls: Array<{ cmd: string; args: readonly string[] }> = [];
+    let install = 0;
+    return {
+      pnpmCalls,
+      execCalls,
+      io: {
+        worktreeAdd: async () => ({ ok: true, stderr: "" }),
+        worktreeRemove: async () => {},
+        branchHead: async () => null,
+        worktreeHead: async () => null,
+        rebase: async () => ({ ok: true }),
+        pnpm: async (args, opts) => {
+          pnpmCalls.push({ args: [...args], env: opts.env });
+          if (args[0] !== "install") return { code: 0, stdout: "", stderr: "" };
+          const result = installs[install++] ?? installs.at(-1)!;
+          return { ...result, stdout: "" };
+        },
+        exec: async (cmd, args) => {
+          execCalls.push({ cmd, args: [...args] });
+          return { code: 0, stdout: "", stderr: "" };
+        },
+      },
+    };
+  }
+
+  it("runs every declared setup command verbatim and never substitutes pnpm", async () => {
+    const { io, pnpmCalls, execCalls } = setupIO();
+    const fb = makeFeedbackWorktree("/repo", "/repo/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+      setupCommands: ["corepack enable", "bun install --frozen-lockfile"],
+    });
+
+    await fb.pnpm(["pnpm", "-C", branch, "test"]);
+
+    expect(execCalls).toEqual([
+      { cmd: "sh", args: ["-c", "corepack enable"] },
+      { cmd: "sh", args: ["-c", "bun install --frozen-lockfile"] },
+    ]);
+    expect(pnpmCalls.map((call) => call.args)).toEqual([
+      ["-C", "/repo/.red/tmp/feedback/afk-w1-3268-declared-setup", "test"],
+    ]);
+  });
+
+  it("hardens the undeclared fallback and records a custom-hooksPath scripts-skipped retry", async () => {
+    const { io, pnpmCalls } = setupIO([
+      {
+        code: 1,
+        stderr:
+          "core.hooksPath is set locally to '.git/worktrees/x/afk-hooks'\nCustom hooks paths are not supported by default.",
+      },
+      { code: 0, stderr: "" },
+    ]);
+    const fb = makeFeedbackWorktree("/repo", "/repo/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+    });
+
+    const result = await fb.pnpm(["pnpm", "-C", branch, "test"]);
+
+    expect(pnpmCalls.slice(0, 2).map((call) => call.args)).toEqual([
+      ["install", "--frozen-lockfile"],
+      ["install", "--frozen-lockfile", "--ignore-scripts"],
+    ]);
+    expect(pnpmCalls[0]?.env).toMatchObject({ LEFTHOOK: "0", HUSKY: "0" });
+    expect(pnpmCalls[1]?.env).toMatchObject({ LEFTHOOK: "0", HUSKY: "0" });
+    expect(result.setup).toContain("--ignore-scripts");
+    expect(result.setup).toContain("lifecycle scripts skipped");
+  });
+
+  it("does not hide an ordinary undeclared install failure behind the retry", async () => {
+    const { io, pnpmCalls } = setupIO([{ code: 1, stderr: "ERR_PNPM_OUTDATED_LOCKFILE" }]);
+    const fb = makeFeedbackWorktree("/repo", "/repo/.red/tmp/feedback", io, {
+      cacheEnabled: false,
+    });
+
+    const result = await fb.pnpm(["pnpm", "-C", branch, "test"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("ERR_PNPM_OUTDATED_LOCKFILE");
+    expect(pnpmCalls.filter((call) => call.args[0] === "install")).toHaveLength(1);
+  });
+});
+
 describe("host-wide validation gate semaphore (#2487)", () => {
   it("never runs a reconcile gate command alongside a live worker gate command", async () => {
     let held = false;
