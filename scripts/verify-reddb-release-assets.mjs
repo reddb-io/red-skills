@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 const manifestPath = process.argv[2] ?? "dist/memory-runtime-manifest.json";
 const releaseBase = process.env.REDDB_RELEASE_ASSET_BASE ?? "https://github.com";
 const timeoutMs = Number(process.env.REDDB_RELEASE_ASSET_TIMEOUT_MS ?? 15000);
+const attempts = Math.max(1, Number(process.env.REDDB_RELEASE_ASSET_ATTEMPTS ?? 4));
+const retryDelayMs = Math.max(0, Number(process.env.REDDB_RELEASE_ASSET_RETRY_DELAY_MS ?? 1000));
 
 function fail(message) {
   console.error(message);
@@ -31,7 +33,7 @@ function readReddbManifest(manifest) {
   return reddb;
 }
 
-async function headOk(url) {
+async function headAsset(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -40,12 +42,28 @@ async function headOk(url) {
       redirect: "follow",
       signal: controller.signal,
     });
-    return { ok: response.ok, status: response.status };
+    if (response.status === 404) return { outcome: "absent", status: response.status };
+    if (response.ok) return { outcome: "present", status: response.status };
+    return { outcome: "http-error", status: response.status };
   } catch (error) {
-    return { ok: false, status: error instanceof Error ? error.message : String(error) };
+    return { outcome: "unanswered", status: error instanceof Error ? error.message : String(error) };
   } finally {
     clearTimeout(timer);
   }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function headAssetWithRetry(url) {
+  let result;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    result = await headAsset(url);
+    if (result.outcome !== "unanswered") return { ...result, attempts: attempt };
+    if (attempt < attempts) await delay(retryDelayMs * 2 ** (attempt - 1));
+  }
+  return { ...result, attempts };
 }
 
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
@@ -65,10 +83,18 @@ if (checks.length === 0) {
 }
 
 for (const check of checks) {
-  const result = await headOk(check.url);
-  if (result.ok) {
+  const result = await headAssetWithRetry(check.url);
+  if (result.outcome === "present") {
     console.log(`ok ${check.platform} ${check.url}`);
+  } else if (result.outcome === "absent") {
+    fail(`missing reddb release asset for ${check.platform}: HEAD ${check.url} -> 404`);
+  } else if (result.outcome === "unanswered") {
+    fail(
+      `could not verify reddb release asset for ${check.platform}: the network never answered HEAD ${check.url} ` +
+        `after ${result.attempts} attempts -> ${result.status}`,
+    );
+    break;
   } else {
-    fail(`missing reddb release asset for ${check.platform}: HEAD ${check.url} -> ${result.status}`);
+    fail(`reddb release asset check failed for ${check.platform}: HEAD ${check.url} -> HTTP ${result.status}`);
   }
 }

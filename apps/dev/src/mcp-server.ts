@@ -40,8 +40,44 @@ import {
 } from "./resident-cron.js";
 import { startResidentUnblockSweep } from "./resident-unblock.js";
 import { startResidentSelfUpdate } from "./resident-self-update.js";
+import { createRedskilledBirthPort } from "./runtime/redskilled-birth.js";
+import { publishedBundleArgv } from "./runtime/published-entry.js";
+import { renewRegistrationDelivery } from "./runtime/registration-delivery.js";
+import {
+  newestInstalledPluginVersion,
+  refreshPublishedBundleVersion,
+} from "./core/published-version.js";
 
 const buildInfo = readBuildInfo("castle");
+const REGISTRATION_DELIVERY_RENEW_MS = 150_000;
+
+/**
+ * Keep a standing registration pointed at the published engine.
+ *
+ * The first pass repairs a registration inherited from an older MCP session;
+ * later passes ride the registration's ordinary half-window renewal. A registry
+ * outage costs one comparison and is retried on the next pass, while the renewal
+ * itself still moves inside `renewRegistrationDelivery`.
+ */
+export function startResidentRegistrationDelivery(root: string): { stop(): void } {
+  const tick = async () => {
+    const port = createRedskilledBirthPort({ root });
+    const installed = readBuildInfo("dev").version;
+    await renewRegistrationDelivery({
+      port,
+      publishedVersion: async () => (await refreshPublishedBundleVersion(installed)).version,
+      publishedArgv: (version) => publishedBundleArgv({
+        installedVersion: installed,
+        resolvePublished: () => version,
+      }),
+      pluginCacheVersion: () => newestInstalledPluginVersion(),
+    });
+  };
+  void tick().catch(() => undefined);
+  const timer = setInterval(() => void tick().catch(() => undefined), REGISTRATION_DELIVERY_RENEW_MS);
+  timer.unref();
+  return { stop: () => clearInterval(timer) };
+}
 
 function toon(value: unknown): string {
   return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue, {
@@ -130,6 +166,7 @@ async function run(): Promise<void> {
     phase: "connecting",
   });
   const server = createCastleMcpServer();
+  const registrationDelivery = startResidentRegistrationDelivery(root);
   const close = () => {
     void server.close();
   };
@@ -157,6 +194,7 @@ async function run(): Promise<void> {
       }),
     });
   } finally {
+    registrationDelivery.stop();
     deaths.phase("closing");
     process.removeListener("SIGINT", close);
     process.removeListener("SIGTERM", close);

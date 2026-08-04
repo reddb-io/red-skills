@@ -31,6 +31,7 @@ import { toonMigrateCommand } from "./commands/toon-migrate.js";
 import { readBuildInfo, renderVersion } from "@reddb-io/build-info";
 import { routeCommand, UnknownCommandError, type RouterSchema } from "@reddb-io/shared/args.js";
 import { adoptEngineNodeOnPath } from "@reddb-io/shared/engine-node.js";
+import { reconcileEngineDelivery } from "./runtime/reconcile-engine.js";
 
 export type CliCommand =
   | "run"
@@ -64,6 +65,7 @@ export type CliCommand =
   | "install-type-labels"
   | "toon-bump"
   | "toon-migrate"
+  | "reconcile-engine"
   | "version";
 
 export interface ParsedCli {
@@ -113,6 +115,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     "install-type-labels": {},
     "toon-bump": {},
     "toon-migrate": {},
+    "reconcile-engine": {},
     version: {},
   },
   default: "run",
@@ -144,7 +147,7 @@ export const CLI_USAGE = `Usage: red-skills-dev <command> [options]
 Commands: run (default), monitor, stop, go, manager, dashboard,
   daily-review, weekly-review, reap, orphan-branches, requeue, retake, review,
   respond, triage,
-  red-doctor, statusline, version, …
+  red-doctor, reconcile-engine, statusline, version, …
 
 Flag-led invocations route to the run surface: --issues N, --spec N,
   --selector <json>, --runner <r>, -n <count>, --once, --boot-only.
@@ -217,6 +220,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "version") {
     const info = readBuildInfo("dev");
     process.stdout.write(parsed.args.includes("--json") ? `${JSON.stringify(info)}\n` : `${renderVersion(info)}\n`);
+    return 0;
+  }
+  if (parsed.command === "reconcile-engine") {
+    const info = readBuildInfo("dev");
+    const result = await reconcileEngineDelivery({ root: process.cwd(), version: info.version });
+    process.stdout.write(
+      `engine ${result.version} ready at ${result.bundle_path}; registration ${result.registration}\n`,
+    );
     return 0;
   }
   if (parsed.command === "monitor") return monitorCommand(parsed.args);

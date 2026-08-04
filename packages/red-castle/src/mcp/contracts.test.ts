@@ -29,6 +29,8 @@ const PROJECT_STATUS: ProjectStatusOutput = {
     lapsed_at: "",
     reason: "",
     launch_revision: 0,
+    bundle_version: "3.3.24",
+    plugin_cache_version: "3.3.21",
   },
   slots: { busy: 1, free: 1, parked: 0, total: 2, interactive_reservation: 1 },
   live_workers: [
@@ -55,6 +57,18 @@ function tool(output: unknown): CastleMcpTool {
 }
 
 describe("observability output contracts", () => {
+  it("keeps all three engine delivery lanes in project status", () => {
+    expect(PROJECT_STATUS.registration).toMatchObject({
+      bundle_version: "3.3.24",
+      plugin_cache_version: "3.3.21",
+    });
+    const { bundle_version: _bundle, ...withoutBundle } = PROJECT_STATUS.registration;
+    expect(projectStatusOutputSchema.safeParse({
+      ...PROJECT_STATUS,
+      registration: withoutBundle,
+    }).success).toBe(false);
+  });
+
   it("carries the interactive reservation beside every slot count", () => {
     expect(projectStatusOutputSchema.parse(PROJECT_STATUS).slots.interactive_reservation).toBe(1);
   });

@@ -2,7 +2,7 @@
 // own argv[1]. A dev-bundle or castle-mcp host that re-execs itself with
 // `warm-resident` loses elision in silence, because rsp fails open by contract.
 import { spawnSync } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -150,6 +150,7 @@ describe("resident spawn target (#2736)", () => {
         {
           cwd: root,
           isEnabled: () => true,
+          resolveBinary: () => true,
           wakeResident: () => {
             throw Object.assign(new Error("no rsp entry"), { code: RSP_ENTRY_UNRESOLVED });
           },
@@ -182,8 +183,17 @@ describe("resident spawn target (#2736)", () => {
     );
     const emptyCache = join(root, "empty-cache");
     await mkdir(emptyCache, { recursive: true });
+    const binDir = join(root, "bin");
+    const rsp = join(binDir, "rsp");
+    await mkdir(binDir, { recursive: true });
+    await writeFile(rsp, "#!/bin/sh\nexit 0\n", "utf8");
+    await chmod(rsp, 0o755);
 
-    const env: NodeJS.ProcessEnv = { ...process.env, RED_SKILLS_CACHE_DIR: emptyCache };
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      RED_SKILLS_CACHE_DIR: emptyCache,
+    };
     for (const name of [
       "RSP_BIN",
       "RSP_DEBUG",
