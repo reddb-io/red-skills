@@ -82,6 +82,10 @@ Fields:
 - `status`: `passed`, `failed`, or `skipped`.
 - `durationMs`: command duration when a command ran.
 - `summary`: short relevant output/error summary, or a skip reason.
+- `infra`: typed infrastructure evidence when the command did not produce a
+  branch verdict. `stall` means the validation process group exceeded its normal
+  wall-time envelope and consumed no CPU for a complete sampling window before
+  the gate reaped it.
 
 The Memory attempt writer only consumes this structured sidecar after parsing it
 as JSON. It must not derive validation graph nodes by parsing free-form stdout,
