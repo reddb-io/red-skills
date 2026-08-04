@@ -1,4 +1,4 @@
-# Validation moments are declared, and an undeclared moment is skipped
+# 0135 — Validation moments are declared, and an undeclared moment is skipped
 
 A fleet at width 5 spent most of its wall clock re-buying the same green verdict: every Worker ran the full discovered suite (`test, typecheck, lint, build`) over its dependency cone against the live base, every correction round re-ran all of it for one failed check, landing re-validated everything again, and every base movement (most sharply a `chore(release)` bump rewriting generated mirrors) expired every in-flight verdict at once — quadratic re-validation across the fleet, with the maintainer unable to see any of the schedule that caused it. Meanwhile the merge queue — mandatory, serialized, already running `test` + `typecheck` on the merged result — validated freshness a second time at the only point where it is actually decidable.
 
