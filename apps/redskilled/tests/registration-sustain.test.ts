@@ -194,6 +194,40 @@ describe("sustainProjectRegistration — what holds a lease up", () => {
 });
 
 describe("a registration outlives its window while the project still drains", () => {
+  it("survives a daemon replacement and resumes polling without project_start", async () => {
+    const paths = await sessionPaths();
+    const first = await startRedskilledDaemon({
+      paths,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      launch: recordingLaunch([]),
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([3]) },
+    });
+    running.push(first);
+
+    first.registerProject(request());
+    await first.pollQueueDiscovery();
+    await first.stop({ reason: "replaced" });
+
+    const successor = await startRedskilledDaemon({
+      paths,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      launch: recordingLaunch([]),
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([3]) },
+    });
+    running.push(successor);
+
+    const polled = await successor.pollQueueDiscovery();
+    expect(polled?.projects[0]?.depth).toBe(3);
+    expect(successor.hostState().registrations?.[0]).toMatchObject({
+      project_label: "acme/widgets",
+      target: 1,
+    });
+  });
+
   it("keeps holding a project with open work past its deadline, with no session at all", async () => {
     const clock = testClock();
     const daemon = await startRedskilledDaemon({
