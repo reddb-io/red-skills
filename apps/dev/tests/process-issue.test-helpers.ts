@@ -143,6 +143,10 @@ export interface HarnessOptions {
    * says whether a run failed, this says HOW — which is what moves the failure
    * signature (#2724) between rounds. Takes precedence when both are set. */
   feedbackFailures?: readonly string[][];
+  /** Per-feedback-run command duration in milliseconds. Defaults to 1000 so
+   * ordinary semantic failures are not accidentally marked `suspectInfra`;
+   * values below 1000 model the gate's too-fast environment classification. */
+  feedbackDurationsMs?: readonly number[];
   /** Operator-declared backpressure commands (afk.backpressure, #430). When set,
    * the backpressure gate runs after feedback against the worker branch. */
   backpressureCommands?: string[];
@@ -359,6 +363,7 @@ export function harness(opts: HarnessOptions = {}): {
   let queuePolls = 0;
   let pnpmCalls = 0;
   let changedFilesCalls = 0;
+  let pendingValidationDurationMs: number | undefined;
 
   const deps: ProcessIssueDeps = {
     gh: {
@@ -652,6 +657,8 @@ export function harness(opts: HarnessOptions = {}): {
       }
       const feedbackRun = Math.floor(pnpmCalls / 4);
       pnpmCalls += 1;
+      pendingValidationDurationMs =
+        opts.feedbackDurationsMs?.[feedbackRun] ?? opts.feedbackDurationsMs?.at(-1) ?? 1000;
       const failures = opts.feedbackFailures
         ? (opts.feedbackFailures[feedbackRun] ?? opts.feedbackFailures.at(-1) ?? [])
         : undefined;
@@ -865,7 +872,12 @@ export function harness(opts: HarnessOptions = {}): {
       async writeMarkers() {},
       async writePosted() {},
     },
-    nowEpoch: () => 1000,
+    nowEpoch: () => {
+      if (pendingValidationDurationMs === undefined) return 1000;
+      const end = 1000 + pendingValidationDurationMs;
+      pendingValidationDurationMs = undefined;
+      return end;
+    },
     nowIso: () => "2026-05-30T00:00:00Z",
     ...(opts.historyPath
       ? { historyPath: opts.historyPath, historyClock: { ts: "2026-05-30T00:00:00Z", epoch: 1000 } }
