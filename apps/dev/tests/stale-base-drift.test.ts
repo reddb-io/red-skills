@@ -66,6 +66,22 @@ describe("attributeGateFailure", () => {
     expect(attribution.reason).toContain("release version bump");
   });
 
+  it("attributes a gate-declared suspect-infra failure away from the branch", () => {
+    const attribution = attributeGateFailure({ suspectInfra: true, refundsUsed: 0 });
+    expect(attribution.cause).toBe("suspect-infra");
+    expect(attribution.reason).toContain("environment failure");
+    expect(attribution.movedCommits).toBe(0);
+  });
+
+  it("makes suspect-infra share the bounded free-cycle allowance with stale-base drift", () => {
+    const attribution = attributeGateFailure({
+      suspectInfra: true,
+      refundsUsed: DEFAULT_STALE_BASE_DRIFT_CORRECTIONS,
+    });
+    expect(attribution.cause).toBe("branch-fault");
+    expect(attribution.reason).toContain("allowance");
+  });
+
   it("falls back to branch-fault once the bounded stale-base allowance is spent", () => {
     const attribution = attributeGateFailure({
       movement: movement(),
@@ -93,6 +109,15 @@ describe("correction ledger", () => {
     ledger = chargeCorrection(ledger, "stale-base-drift");
     expect(ledger).toMatchObject({ charged: 1, refunded: 1 });
     expect(ledger.cycles).toEqual(["branch-fault", "stale-base-drift"]);
+  });
+
+  it("refunds suspect-infra from the same counter as stale-base drift", () => {
+    const ledger = chargeCorrection(
+      chargeCorrection(EMPTY_CORRECTION_LEDGER, "stale-base-drift"),
+      "suspect-infra",
+    );
+    expect(ledger).toMatchObject({ charged: 0, refunded: 2 });
+    expect(ledger.cycles).toEqual(["stale-base-drift", "suspect-infra"]);
   });
 
   it("never mutates the ledger it is handed", () => {

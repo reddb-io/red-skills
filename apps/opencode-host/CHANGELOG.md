@@ -1,5 +1,12 @@
 # @reddb-io/red-skills
 
+## 3.4.1
+
+### Patch Changes
+
+- @reddb-io/shared@3.4.1
+- @reddb-io/build-info@3.4.1
+
 ## 3.4.0
 
 ### Minor Changes
