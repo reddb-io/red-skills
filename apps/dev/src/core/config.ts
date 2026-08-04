@@ -491,6 +491,7 @@ export function parseConfigYaml(text: string): ConfigValues {
   const out: ConfigValues = {};
   const stack: string[] = [];
   const indents: number[] = [];
+  const mappingContainers = new Set<string>();
   // Per-parent running index for block-sequence items (`- value`). A sequence
   // under the dotted parent path `p` materialises as `p.0`, `p.1`, … so the
   // flat config map keeps its `dotted.key -> value` shape (see readBackpressure).
@@ -611,6 +612,7 @@ export function parseConfigYaml(text: string): ConfigValues {
       lineIndex = block.nextIndex;
       out[full] = block.value;
     } else if (value === "") {
+      mappingContainers.add(full);
       stack.push(key);
       indents.push(indent);
     } else {
@@ -618,7 +620,7 @@ export function parseConfigYaml(text: string): ConfigValues {
     }
   }
 
-  validateValidationMomentShapes(out);
+  validateValidationMomentShapes(out, mappingContainers);
   return ConfigValuesSchema.parse(out);
 }
 
@@ -775,7 +777,7 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
     if (Object.keys(parsed).some((key) => spellings.some((spelling) => key === spelling || key.startsWith(`${spelling}.`)))) {
       warn(
         `[afk:config] warn: \`${alias}\` is deprecated; declare its commands under ` +
-          "`afk.validation.post_done` instead",
+          "`plugins.dev.afk.validation.post_done` instead",
       );
     }
   }
@@ -1065,14 +1067,15 @@ export const ValidationMomentsSchema = z.object({
 });
 export type ValidationMoments = z.infer<typeof ValidationMomentsSchema>;
 
-function validateValidationMomentShapes(values: ConfigValues): void {
+function validateValidationMomentShapes(values: ConfigValues, mappingContainers: ReadonlySet<string>): void {
   for (const root of ["afk.validation", "plugins.dev.afk.validation"]) {
     for (const moment of VALIDATION_MOMENTS) {
       const key = `${root}.${moment}`;
       const scalar = values[key];
       const descendants = Object.keys(values).filter((candidate) => candidate.startsWith(`${key}.`));
       const hasOnlyIndexedItems = descendants.every((candidate) => /^\d+$/.test(candidate.slice(key.length + 1)));
-      if ((scalar !== undefined && scalar.trim() !== "[]") || !hasOnlyIndexedItems) {
+      const emptyMapping = mappingContainers.has(key) && descendants.length === 0;
+      if ((scalar !== undefined && scalar.trim() !== "[]") || !hasOnlyIndexedItems || emptyMapping) {
         throw new MalformedConfigError(`invalid config shape: \`${key}\` must be an ordered list of commands`);
       }
     }
@@ -1087,7 +1090,7 @@ function readValidationMoment(values: ConfigValues, moment: ValidationMoment): s
     const command = values[`${prefix}.${i}`];
     if (command === undefined) break;
     declared = true;
-    if (command.trim() !== "") commands.push(command);
+    commands.push(command);
   }
   if (declared) return commands;
   return values[prefix]?.trim() === "[]" ? [] : undefined;
