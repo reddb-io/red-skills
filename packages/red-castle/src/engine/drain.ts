@@ -40,7 +40,24 @@ function renderDrainReport(report: DrainReport): string {
 /** Plan how `drain` makes the requested project state true. PURE. */
 export function planDrain(state: DrainState, request: DrainRequest): DrainPlan {
   if (state.registration !== null) {
-    throw new Error("a standing registration is not implemented yet");
+    if (
+      state.registration.runner === request.runner &&
+      state.registration.target === request.target
+    ) {
+      const report: DrainReport = {
+        registration: "kept",
+        target: "kept",
+        runner: "kept",
+        workers_born: "kept",
+      };
+      return {
+        outcome: "apply",
+        actions: [],
+        report,
+        summary: renderDrainReport(report),
+      };
+    }
+    throw new Error("a changed standing registration is not implemented yet");
   }
   const report: DrainReport = {
     registration: state.lapsed ? "re-created" : "created",
