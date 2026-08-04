@@ -49,6 +49,8 @@ export interface RedskilledPaths {
   readonly leasePath: string;
   /** The append-only host event lane the daemon rehydrates itself from. */
   readonly eventLanePath: string;
+  /** The durable project registrations a successor daemon rehydrates. */
+  readonly registrationIntentPath: string;
   /**
    * The machine-wide claim: the one record every OS user of this host can read.
    *
@@ -119,6 +121,7 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     lockPath: join(runtimeDir, "redskilled.spawn.lock"),
     leasePath: join(runtimeDir, "redskilled.lease.toon"),
     eventLanePath: join(runtimeDir, REDSKILLED_EVENT_LANE_FILE),
+    registrationIntentPath: join(runtimeDir, "redskilled.registrations.toon"),
     machineClaimPath: options.machineClaimPath ??
       resolveMachineClaimPath({ env: options.env, machineIdHash, platform: options.platform }),
   };
