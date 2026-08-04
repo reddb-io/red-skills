@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { reconcileEngineDelivery } from "../src/runtime/reconcile-engine.js";
+import { parseCli } from "../src/cli.js";
 
 const roots: string[] = [];
 
@@ -11,6 +12,10 @@ afterEach(async () => {
 });
 
 describe("the one-command engine repair", () => {
+  it("is reachable from the command printed by the engine floor", () => {
+    expect(parseCli(["reconcile-engine"])).toEqual({ command: "reconcile-engine", args: [] });
+  });
+
   it("warms the current bundle and re-points a standing registration", async () => {
     const root = await mkdtemp(join(tmpdir(), "reconcile-engine-"));
     roots.push(root);
@@ -45,4 +50,3 @@ describe("the one-command engine repair", () => {
     expect(result.registration).toBe("repointed");
   });
 });
-
