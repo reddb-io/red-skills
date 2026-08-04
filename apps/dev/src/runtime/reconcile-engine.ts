@@ -16,7 +16,6 @@ export interface ReconcileEngineDeliveryOptions {
   readonly execPath?: string;
   readonly port?: RegistrationDeliveryPort;
 }
-
 export interface ReconcileEngineDeliveryResult {
   readonly version: string;
   readonly bundle_path: string;
@@ -48,4 +47,3 @@ export async function reconcileEngineDelivery(
     registration: renewal == null ? "absent" : renewal.action === "repoint" ? "repointed" : "renewed",
   };
 }
-
