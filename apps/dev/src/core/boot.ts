@@ -275,6 +275,8 @@ export interface OrphanTestRunnerSweepEntry {
 
 /** gh side effects: label edits and audit/recovery comments. Best-effort. */
 export interface BootGh {
+  /** Idempotently create a label before a transition depends on it. */
+  ensureLabel?(name: string): Promise<void>;
   /** gh issue edit --remove-label … --add-label … */
   editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
   /** gh issue comment --body … */
@@ -630,6 +632,7 @@ async function tryBootAutoApplyLabelBodyCoherence(
       deps.log?.(`boot coherence probe body diagnosis failed for #${action.issue}: ${String(error)}`);
     }
     try {
+      await deps.gh.ensureLabel?.(LABEL_QUARANTINE);
       await applyBootStateTransition(deps, action.issue, { kind: "quarantine", diagnosis: "" }, [
         [LABEL_READY],
         [LABEL_QUARANTINE],
@@ -639,6 +642,20 @@ async function tryBootAutoApplyLabelBodyCoherence(
       );
     } catch (error) {
       deps.log?.(`boot coherence probe label quarantine failed for #${action.issue}: ${String(error)}`);
+      try {
+        await deps.gh.editLabels(action.issue, [], [LABEL_READY]);
+        deps.log?.(`boot coherence probe restored ready-for-agent for #${action.issue}`);
+      } catch (restoreError) {
+        const warning = `boot coherence probe left #${action.issue} without a visible quarantine; restoring ready-for-agent also failed: ${String(restoreError)}`;
+        deps.log?.(warning);
+        try {
+          await deps.gh.comment(action.issue, `🤖 ${warning}`);
+        } catch (commentError) {
+          deps.log?.(
+            `boot coherence probe failed to publish recovery warning for #${action.issue}: ${String(commentError)}`,
+          );
+        }
+      }
     }
   }
 
