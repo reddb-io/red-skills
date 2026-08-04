@@ -118,6 +118,7 @@ import {
   readBackpressure,
   readHitlTypeLabels,
   readValidationResourceBudget,
+  readSetupCommands,
 } from "./core/config.js";
 import {
   evaluateClaimTrust,
@@ -555,7 +556,10 @@ export function createDefaultDevAfkMcpOperations(
         root,
         paths.feedbackWorktreesDir,
         undefined,
-        { resourceBudget: readValidationResourceBudget(config) },
+        {
+          resourceBudget: readValidationResourceBudget(config),
+          setupCommands: readSetupCommands(config),
+        },
       );
       try {
         const changedFiles = await gitx.changedFiles({ cwd: root }, input.branch, base);
