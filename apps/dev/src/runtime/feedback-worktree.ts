@@ -59,7 +59,14 @@ import {
   readRedskilledHostConfig,
   resolveRedskilledHostSettings,
 } from "@reddb-io/redskilled/host-config";
-import { execTool, pnpm as runPnpm, type ExecOptions, type ExecOutput } from "./exec.js";
+import {
+  DEFAULT_VALIDATION_STALL_DETECTION,
+  execTool,
+  pnpm as runPnpm,
+  type ExecOptions,
+  type ExecOutput,
+  type ValidationStallDetection,
+} from "./exec.js";
 import * as gitx from "./git.js";
 import { createPathLock, createPathSemaphore } from "./land-lock.js";
 import type { LandLockWaitInfo } from "../core/land-lock.js";
@@ -236,13 +243,14 @@ export type LockWaitSink = (notice: LockWaitNotice) => void;
  * escalation deliberately match the declared-wait vocabulary; pid + start are
  * the process facts only the spawning Worker can publish. */
 export interface GateWaitNotice {
-  state: "waiting" | "completed";
+  state: "waiting" | "completed" | "stalled";
   kind: "gate";
   subject: string;
   pid: number;
   startedAt: string;
   deadline: string;
   escalation: string;
+  infraEvidence?: ExecOutput["infraEvidence"];
 }
 
 export type GateWaitSink = (notice: GateWaitNotice) => void;
@@ -509,6 +517,8 @@ export interface FeedbackWorktreeOptions {
   onGateWait?: GateWaitSink;
   /** Clock for the child wait's own age anchor. */
   nowIso?: () => string;
+  /** CPU-idle detection envelope for real validation process groups. */
+  stallDetection?: ValidationStallDetection;
 }
 
 /**
@@ -531,6 +541,7 @@ export function makeFeedbackWorktree(
   const onLockWait = options.onLockWait;
   const onGateWait = options.onGateWait;
   const nowIso = options.nowIso ?? (() => new Date().toISOString());
+  const stallDetection = options.stallDetection ?? DEFAULT_VALIDATION_STALL_DETECTION;
   const gitCtx: gitx.GitContext = { cwd: root };
   // branch -> resolved checkout path, or null when setup failed (block all runs).
   const resolved = new Map<string, string | null>();
@@ -576,7 +587,7 @@ export function makeFeedbackWorktree(
       }
     };
     try {
-      return await run((pid) => {
+      const result = await run((pid) => {
         active = {
           kind: "gate",
           subject,
@@ -587,6 +598,16 @@ export function makeFeedbackWorktree(
         };
         publish({ state: "waiting", ...active });
       });
+      const completed = active as Omit<GateWaitNotice, "state"> | null;
+      if (completed !== null) {
+        publish(
+          result.infraEvidence?.kind === "stall"
+            ? { state: "stalled", ...completed, infraEvidence: result.infraEvidence }
+            : { state: "completed", ...completed },
+        );
+        active = null;
+      }
+      return result;
     } finally {
       const completed = active as Omit<GateWaitNotice, "state"> | null;
       if (completed !== null) publish({ state: "completed", ...completed });
@@ -775,7 +796,7 @@ export function makeFeedbackWorktree(
     if (setupCommands.length > 0) {
       for (const command of setupCommands) {
         const result = await runGateChild(`setup: ${command}`, (onSpawn) =>
-          io.exec("sh", ["-c", command], { cwd: dest, onSpawn })
+          io.exec("sh", ["-c", command], { cwd: dest, onSpawn, stallDetection })
         );
         if (result.code !== 0) {
           setupFailure = { command, result };
@@ -790,7 +811,7 @@ export function makeFeedbackWorktree(
       const env = { ...process.env, LEFTHOOK: "0", HUSKY: "0" };
       const command = "pnpm install --frozen-lockfile";
       let result = await runGateChild("pnpm install", (onSpawn) =>
-        io.pnpm(["install", "--frozen-lockfile"], { cwd: dest, env, onSpawn })
+        io.pnpm(["install", "--frozen-lockfile"], { cwd: dest, env, onSpawn, stallDetection })
       );
       if (result.code !== 0 && refusedCustomHooksPath(result.stderr)) {
         const retryCommand = `${command} --ignore-scripts`;
@@ -799,6 +820,7 @@ export function makeFeedbackWorktree(
             cwd: dest,
             env,
             onSpawn,
+            stallDetection,
           })
         );
         if (result.code === 0) {
@@ -900,7 +922,7 @@ export function makeFeedbackWorktree(
       const rest = args.filter((_, i) => i !== 0 && i !== cIdx && i !== cIdx + 1);
       const r = await runValidationCommand(() =>
         runGateChild(`pnpm ${rest[0] ?? "validation"}`, (onSpawn) =>
-          io.pnpm(["-C", rewritten, ...rest], { cwd: root, env, onSpawn })
+          io.pnpm(["-C", rewritten, ...rest], { cwd: root, env, onSpawn, stallDetection })
         )
       );
       // Report the ABSOLUTE directory the command really ran in (#3041). The
@@ -912,6 +934,7 @@ export function makeFeedbackWorktree(
         code: r.code,
         stdout: r.stdout,
         stderr: r.stderr,
+        ...(r.infraEvidence === undefined ? {} : { infraEvidence: r.infraEvidence }),
         commandDir: rewritten,
         ...(setupRecord.has(branch) ? { setup: setupRecord.get(branch)! } : {}),
       };
@@ -919,10 +942,15 @@ export function makeFeedbackWorktree(
     const head = args[0] === "pnpm" ? args.slice(1) : args;
     const r = await runValidationCommand(() =>
       runGateChild(`pnpm ${head[0] ?? "validation"}`, (onSpawn) =>
-        io.pnpm(head, { cwd: root, env, onSpawn })
+        io.pnpm(head, { cwd: root, env, onSpawn, stallDetection })
       )
     );
-    return { code: r.code, stdout: r.stdout, stderr: r.stderr };
+    return {
+      code: r.code,
+      stdout: r.stdout,
+      stderr: r.stderr,
+      ...(r.infraEvidence === undefined ? {} : { infraEvidence: r.infraEvidence }),
+    };
   };
 
   // Backpressure commands are operator-declared shell strings (e.g. `npm run
@@ -941,10 +969,15 @@ export function makeFeedbackWorktree(
     const env = buildFeedbackSubprocessEnv(process.env, resourceBudget);
     const r = await runValidationCommand(() =>
       runGateChild("sh backpressure", (onSpawn) =>
-        io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env, onSpawn })
+        io.exec("sh", ["-c", command], { cwd: dir, timeoutMs, env, onSpawn, stallDetection })
       )
     );
-    return { code: r.code, stdout: r.stdout, stderr: r.stderr };
+    return {
+      code: r.code,
+      stdout: r.stdout,
+      stderr: r.stderr,
+      ...(r.infraEvidence === undefined ? {} : { infraEvidence: r.infraEvidence }),
+    };
   };
 
   // Post-attempt-format commands run in the worker-branch checkout (same
