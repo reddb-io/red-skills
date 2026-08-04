@@ -8,6 +8,7 @@
 
 import {
   composeRepair,
+  registrationRepair,
   type RepairAction,
 } from "@reddb-io/shared/repair.js";
 import type { ProjectStatusOutput } from "./contracts.js";
@@ -71,7 +72,7 @@ function nextAction(
   const registration = status.registration;
   if (!registration.daemon_reachable) return daemonRepair();
   if (!registration.held && registration.repair !== undefined && registration.repair !== "none") {
-    return registration.repair;
+    return registrationRepair();
   }
   if (status.live_workers.length > 0 && refusal === null) {
     return {
