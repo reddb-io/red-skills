@@ -30,6 +30,7 @@ import {
   renewRedskilledProject,
   readRedskilledHostState,
   readRedskilledStatuslinePayload,
+  resetRedskilledProjectBirthBreaker,
   redskilledPresenceAdvice,
   RedskilledRequestRefusedError,
   RedskilledUnreachableError,
@@ -59,6 +60,8 @@ import type {
   RedskilledRegistrationView,
 } from "@reddb-io/redskilled/host-state";
 import type { RedskilledLaunchTemplate } from "@reddb-io/redskilled/launch-template";
+import type { RedskilledBirthLatch } from "@reddb-io/redskilled/demand-loop";
+import type { RedskilledProjectReset } from "@reddb-io/redskilled/protocol";
 
 // Re-exported so a consumer of this port imports the host's vocabulary from the
 // one module that owns the project's reach into it — a second import path for
@@ -119,6 +122,7 @@ export interface GrantedWorkerBirth {
 export interface ProjectRegistrationState {
   readonly held: RedskilledRegistrationView | null;
   readonly lapse: RedskilledRegistrationLapse | null;
+  readonly birthLatch: RedskilledBirthLatch | null;
 }
 
 /**
@@ -172,6 +176,8 @@ export interface RedskilledBirthPort {
    * without an env replaces the env with none.
    */
   restateLaunch(launch: RedskilledLaunchTemplate): Promise<RedskilledProjectRegistration>;
+  /** Clear the host's birth breaker for this project. */
+  resetBirthBreaker(): Promise<RedskilledProjectReset>;
   /**
    * Take this project's presence back. Reports whether a record stood.
    *
@@ -266,6 +272,8 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
         [...(state.lapsed_registrations ?? [])]
           .reverse()
           .find((lapse) => lapse.project_label === projectLabel) ?? null,
+      birthLatch:
+        (state.birth_latches ?? []).find((latch) => latch.project_label === projectLabel) ?? null,
     };
   };
 
@@ -328,6 +336,10 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
     async restateLaunch(launch) {
       const renewed = await renewRedskilledProject(paths, { project_label: projectLabel, launch }, config);
       return renewed.registration;
+    },
+
+    async resetBirthBreaker() {
+      return resetRedskilledProjectBirthBreaker(paths, { project_label: projectLabel }, config);
     },
 
     async deregister() {
