@@ -31,6 +31,7 @@ export function createRedskilledRegistrationIntentStore(
   path: string,
 ): RedskilledRegistrationIntentStore {
   let tail: Promise<unknown> = Promise.resolve();
+  let failure: unknown | null = null;
 
   async function read(): Promise<readonly RedskilledProjectRegistration[]> {
     await tail;
@@ -63,11 +64,19 @@ export function createRedskilledRegistrationIntentStore(
     read,
     replace(registrations) {
       const writeSnapshot = tail.then(() => write(registrations));
-      tail = writeSnapshot.catch(() => undefined);
+      tail = writeSnapshot.then(
+        () => {
+          failure = null;
+        },
+        (error: unknown) => {
+          failure = error;
+        },
+      );
       return writeSnapshot;
     },
     async flush() {
       await tail;
+      if (failure != null) throw failure;
     },
   };
 }
