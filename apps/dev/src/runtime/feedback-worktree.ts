@@ -789,7 +789,7 @@ export function makeFeedbackWorktree(
       // every other install failure remains fatal on the first reading.
       const env = { ...process.env, LEFTHOOK: "0", HUSKY: "0" };
       const command = "pnpm install --frozen-lockfile";
-      let result = await runGateChild(command, (onSpawn) =>
+      let result = await runGateChild("pnpm install", (onSpawn) =>
         io.pnpm(["install", "--frozen-lockfile"], { cwd: dest, env, onSpawn })
       );
       if (result.code !== 0 && refusedCustomHooksPath(result.stderr)) {
