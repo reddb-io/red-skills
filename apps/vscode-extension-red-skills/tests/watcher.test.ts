@@ -148,7 +148,7 @@ describe("finding the socket", () => {
       env: { XDG_RUNTIME_DIR: "/run/user/1000" } as NodeJS.ProcessEnv,
       settingSocketPath: "/tmp/chosen/d.sock",
     });
-    expect(pinned.eventLanePath).toBe("/tmp/chosen/redskilled.events.toonl");
+    expect(pinned.eventLanePath).toBe("/tmp/chosen/redskilled.log.toonl");
     // The derivation is still reported, so a doctor can say what it would have used.
     expect(pinned.derivedSocketPath).toContain("/run/user/1000");
   });
