@@ -378,6 +378,9 @@ importers:
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@reddb-io/toon':
+        specifier: 'catalog:'
+        version: 0.13.0
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
