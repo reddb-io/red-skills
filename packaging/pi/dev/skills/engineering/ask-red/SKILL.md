@@ -56,6 +56,15 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   restarts through the survival-reporting stop path. `/dashboard` stays the
   route for this repository's queue health, while `/red-statusline` owns the
   one-line host adapter.
+- **"What is the Worker on issue N doing, or why did it never start?"** ->
+  `/redskilled <n>` (or `/redskilled #<n>`). The numeric argument selects the
+  same skill's read-only debug entry: it resolves the issue to its Worker(s)
+  through the castle MCP and the documented lane fallback, then writes a
+  self-serve dossier — fiche, event sequence, log excerpts with full paths, and
+  a diagnosis naming the operator's next commands — to
+  `.red/tmp/diagnostics/redskilled-debug-<n>-<timestamp>.md`. A Worker the
+  daemon refused at birth still gets one. Reconstructing the Ticket's *work*
+  state instead — PRs, branches, worktrees, blocker — stays with `/retake`.
 - **A superseded-engine warning** -> run the exact
   `npx -y -p @reddb-io/red-skills@<version> red-skills-dev reconcile-engine`
   command printed by the warning, then retry the dispatch. The

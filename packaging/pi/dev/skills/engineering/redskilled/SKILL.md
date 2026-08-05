@@ -1,6 +1,7 @@
 ---
 name: redskilled
-description: Operates the per-machine redskilled daemon through its published status, provisioning, policy, and lifecycle surfaces. Use when the operator needs to inspect, provision, configure, restart, or confirm the host-scoped execution daemon.
+description: Operates the per-machine redskilled daemon through its published status, provisioning, policy, and lifecycle surfaces, and writes a self-serve debug dossier for the Worker(s) that touched one issue. Use when the operator needs to inspect, provision, configure, restart, or confirm the host-scoped execution daemon, or needs to know what the Worker on issue N is doing, where it stalled, or why it never started.
+argument-hint: "nothing to operate the daemon, or an issue number (3351 / #3351) to debug its Worker"
 disable-model-invocation: true
 ---
 
@@ -8,7 +9,11 @@ disable-model-invocation: true
 
 Treat `redskilled` as the per-machine process authority: it owns Worker birth, death, limits, and placement across every project on the host.
 
+**The argument picks the entry.** No argument means operate the host daemon — run *Operate the host daemon*. A bare issue number, with or without a leading `#` (`/redskilled 3351`, `/redskilled #3351`), means debug that issue's Worker — skip to *Debug a Worker by issue*. The two entries are independent: debugging is read-only and changes nothing on the host, so never provision, restart, or repair while answering a debug argument.
+
 <what-to-do>
+
+## Operate the host daemon
 
 1. **Read status before changing it** — run both read surfaces:
 
@@ -80,6 +85,82 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
    a higher-precedence declaration still overrides the home policy; remove or
    change that declaration, repeat the restart, and read back again.
 
+## Debug a Worker by issue
+
+**The dossier is for the operator, not for you.** Write it so the user can keep digging after you stop: every claim carries the evidence it rests on, every open question carries the exact command that answers it. Never end the flow with a summary in chat only — the file is the deliverable.
+
+**A dead Worker still gets a dossier.** A Worker refused at birth produced no agent rounds, so the daemon's refusal line and the death evidence *are* the content. Never report "nothing to debug" when the answer is "it never started, here is why".
+
+1. **Resolve the issue to Worker(s) — tool surface first, lanes second.** Ask the
+   `castle` MCP before touching a file:
+
+   - `status { scope: "worker", live_only: false }` — the Worker vitals records.
+     Each record's `number` is the issue it holds, so the resolution is a filter
+     over that answer. Keep every record whose `number` matches the argument.
+   - `claim_status { issue: <n> }` — who holds or held the Ticket's claim.
+   - `history { limit: 200 }` and `events_since {}` — castle history and lane
+     records for the recent past, which name the Worker around park and landing.
+
+   Then read the lanes for whatever the tools could not answer — a Worker the
+   daemon refused, a Worker from before the current daemon, or any run at all
+   when the MCP is unreachable:
+
+   ```bash
+   ls -d .red/tmp/workers/*/<issue>
+   grep -l ",<issue>," .red/tmp/workers/*/worker.log.toonl
+   grep -E "worker-(birth|death|refused)" ~/.red/redskilled/redskilled.log.toonl
+   ```
+
+   The Worker id is the directory between `workers/` and the issue number. Match
+   the daemon's lines to it by `worker_id`, and confirm the project by
+   `workspace_path` — the daemon log is host-scoped and holds every project's
+   lines. **Resolve every Worker that touched the issue, not just the newest**: a
+   requeued Ticket has more than one, and the failure is usually in the earlier
+   one. Write one dossier covering all of them, ordered oldest first.
+
+2. **Open with the fiche** — a header the operator can read in ten seconds:
+   issue number, title, and GitHub link; PR number, branch, and link when one
+   exists; project label; Worker id; runner, model, and effort; bundle version;
+   started-at; pid; last heartbeat and its age; and the `loc_added` /
+   `loc_removed` and token counters. **State the phase in plain words, never as a
+   bare enum** — "waiting for the merge poll, 127 of 180, against a PR whose test
+   check is red" says what `landing` hides, and "dead at boot:
+   refused-over-worker-ceiling" says what an empty vitals row hides. When a field
+   has no answer, write `unknown` and name the surface that would have carried
+   it; a silently missing field reads as a zero.
+
+3. **Digest the event sequence** — one chronological table of the Worker's life,
+   built from the `worker.*` kinds in its log merged with the daemon's
+   admission, refusal, birth, and death lines for that Worker id. Keep every
+   timestamp; drop the payload noise. The sequence must show the shape of the
+   run — born, setup, agent rounds, push, gate, landing heartbeats, park or
+   death — so a stall is visible as the gap between two adjacent rows.
+
+4. **Quote the load-bearing log excerpts** — three of them, raw: the boot lines,
+   the last agent activity, and the last twenty lines of the Worker log. **Print
+   the full paths beside every excerpt**, because an excerpt the operator cannot
+   widen is a dead end. Redact absolute home paths, tokens, and session
+   identifiers as you copy.
+
+5. **Close with the self-serve diagnosis** — the section the operator actually
+   acts on. Say what the current phase means, whether the Worker is stuck and on
+   what evidence, and what the evidence says about why. Then list the exact next
+   moves as commands and tool calls the operator runs themselves: the `castle`
+   MCP reads that widen the picture (`status`, `logs`, `claim_status`,
+   `deadend_audit`), and the recovery verbs when the state calls for one —
+   `hitl_resolve` for a parked human decision, `claim_release` for a claim a dead
+   Worker never gave back, `project_reset` for a visible birth latch.
+   **Recommend, never execute**: this entry is read-only, so a recovery verb
+   belongs in the dossier as a line to run, and the operator decides.
+
+6. **Write the file and print its path.** The dossier goes to the registered
+   diagnostics lane as
+   `.red/tmp/diagnostics/redskilled-debug-<issue>-<timestamp>.md`, with the
+   timestamp from `date -u +%Y%m%dT%H%M%SZ`. Create the lane directory if it is
+   absent — it is a registered `.red/tmp/` lane and gitignored. Print the path as
+   the last thing you say, and keep the chat summary to a couple of sentences;
+   the file carries the detail.
+
 </what-to-do>
 
 <supporting-info>
@@ -91,8 +172,113 @@ and lifecycle. `/red-setup` is per-repository: it is the only authority allowed
 to create a checkout's `.red/` and enable plugins there. Route repository setup
 to `/red-setup`; route host daemon operation here.
 
+The debug entry is scoped the same way — it explains one Worker's process life
+from the daemon's and the Worker's own records. Queue health across the backlog
+stays with `/dashboard`, reconstructing one Ticket's *work* state (PRs,
+branches, worktrees, blocker) stays with `/retake`, and a parked human decision
+stays with `/hitl`. The dossier names those routes; it does not perform them.
+
 Use the ADR 0091 npm direct-run form for every daemon operation. The published
 binary is `red-skills-redskilled`; `redskilled` is only the daemon's name, and a
 bare invocation is not installed on an operator's machine by default.
+
+## Where the evidence lives
+
+| Surface | Path | What it answers |
+| --- | --- | --- |
+| Worker log | `.red/tmp/workers/<worker-id>/worker.log.toonl` | Everything the Worker did: lifecycle, stdout, narration, waits, heartbeats |
+| Worker workspace | `.red/tmp/workers/<worker-id>/<issue>/` | The run's scratch; `worktree/` is the git checkout |
+| Gate artifact | `.red/tmp/workers/<worker-id>/<issue>/validation.jsonl` | What the merge gate ran and what it returned |
+| Liveness anchor | `.red/tmp/workers/<worker-id>/liveness.toonl` | Whether the process was alive, independent of narration |
+| Safety log | `.red/tmp/diagnostics/<worker-id>.log` | Process-safety installation and signal handling |
+| Daemon log | `~/.red/redskilled/redskilled.log.toonl` | `worker-birth`, `worker-death`, `worker-refused`, `daemon-stop`, host-scoped |
+| Daemon deaths | `~/.red/redskilled/state/deaths/deaths.toonl` | The daemon's own exit evidence |
+| Checkout deaths | `.red/state/deaths/deaths.toonl`, `.red/state/deaths/attributions.toonl` | Launcher and Worker death evidence, with sender attribution |
+
+All of these are TOONL: a segment header declares the columns once and the rows
+follow positionally, so read the nearest preceding `[]{...}` header before
+interpreting a row. A crash-truncated tail is valid TOONL, not corruption.
+
+## Worker log kinds worth reading
+
+- **Birth and routing** — `worker.claimed` (issue and title), `worker.routed`
+  (runner, model tier, effort), `worker.run-started`, `worker.pid`,
+  `worker.validation_schedule` (which validation moments are declared),
+  `worker.steered` (the handoff path), `worker.implementer-environment`.
+- **Progress** — `worker.log` (the narration stream), `worker.heartbeat`,
+  `worker.agent`, `worker.subagent_started` / `worker.subagent_heartbeat` /
+  `worker.subagent_finished`, `worker.state`.
+- **Waiting** — `worker.gate_wait` and `worker.lock_wait` carry a declared
+  wait's subject, deadline, and escalation; `worker.landing_heartbeat` carries
+  the landing `phase`. A long run of identical landing heartbeats is the exact
+  shape of a merge poll that will not converge.
+- **Ending** — `worker.validated`, `worker.completed`, `worker.landed`,
+  `worker.blocked` (with its `outcome`), `worker.park_loop_detected`,
+  `worker.session-error`, `worker.reseeded`.
+
+## Daemon events worth reading
+
+`worker-birth` and `worker-death` bracket a Worker's process life and carry
+`worker_id`, `project_label`, `pid`, `workspace_path`, `log_path`, the cgroup
+`unit`, and the memory and cpu limits placed on it; `worker-death` adds
+`detail`, `exit_code`, `signal`, and `reason`. `worker-refused` is the birth
+that never happened, and its reason is the whole diagnosis — the vocabulary is
+`refused-over-worker-ceiling`, `refused-over-memory-ceiling`,
+`refused-over-class`, `refused-over-interactive-reservation`,
+`refused-cross-project`, and `refused-unaccountable-budget`. `daemon-stop`
+explains a gap that belongs to the host rather than to the Worker.
+
+## Dossier shape
+
+Follow `/handoff`'s document conventions — hand over context, not content;
+reference artifacts rather than reproducing them — with the sections adapted to
+this dossier:
+
+```markdown
+# redskilled debug — issue #<n> — <UTC timestamp>
+
+## Fiche
+| Field | Value |
+| --- | --- |
+| Issue | #<n> — <title> — <link> |
+| PR / branch | <#pr and link, or "none"> |
+| Project | <project label> |
+| Worker | <worker-id> (pid <pid>, unit <unit>) |
+| Runner | <runner> / <model> / effort <effort> |
+| Bundle | <version> |
+| Started | <iso> |
+| Phase | <plain-words state> |
+| Last heartbeat | <iso> (<age> ago) |
+| Progress | +<loc_added>/-<loc_removed>, <tools_called_count> tools, <input+output> tokens |
+
+## Event sequence
+| When | Source | What happened |
+| --- | --- | --- |
+| <iso> | daemon | worker-birth ... |
+| <iso> | worker | worker.claimed ... |
+
+## Log excerpts
+### Boot — `<path>`
+### Last agent activity — `<path>`
+### Last 20 lines — `<path>`
+
+## Diagnosis
+<what the phase means, whether it is stuck, what the evidence says about why>
+
+## Next moves
+1. <exact command or castle tool call> — <what it answers or repairs>
+
+## References
+- <path-or-url>: <one-line description>
+```
+
+## Known gap: no issue-keyed resolver
+
+No castle tool takes an issue number and returns the Worker(s) that ran it. The
+tool answers are Worker-keyed, so resolution is a client-side filter over
+`status { scope: "worker", live_only: false }` plus `claim_status`, and a Worker
+the daemon refused never appears in either — only the lane scan finds it. This
+entry documents the fallback rather than adding a verb; a future slice may key
+the resolution in the tool surface.
 
 </supporting-info>
