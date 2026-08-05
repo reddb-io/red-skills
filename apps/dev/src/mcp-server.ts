@@ -6,7 +6,10 @@ import { encode, type JsonValue } from "@reddb-io/toon";
 import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCastleMcpTools } from "@reddb-io/red-castle/mcp-server";
+import {
+  CASTLE_MCP_PROMPTS,
+  createCastleMcpTools,
+} from "@reddb-io/red-castle/mcp-server";
 import {
   createEnginePaths,
   createFileIssueCuratorStore,
@@ -109,6 +112,23 @@ export function createCastleMcpServer(root = process.cwd()): McpServer {
       async (input) => ({
         content: [
           { type: "text" as const, text: toon(await tool.invoke(input)) },
+        ],
+      }),
+    );
+  }
+  for (const prompt of CASTLE_MCP_PROMPTS) {
+    server.registerPrompt(
+      prompt.name,
+      {
+        title: prompt.title,
+        description: prompt.description,
+      },
+      async () => ({
+        messages: [
+          {
+            role: "user" as const,
+            content: { type: "text" as const, text: prompt.body },
+          },
         ],
       }),
     );
