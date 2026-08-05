@@ -50,7 +50,7 @@ export function percent(fraction) {
 }
 
 /**
- * A meter for a fraction, coloured by how close it is to its ceiling. PURE.
+ * A meter for a fraction, with pressure carried by its final filled glyph. PURE.
  *
  * An unknown fraction draws an empty track rather than a full or an absent one:
  * a bar is read at a glance, and both alternatives read as a fact.
@@ -61,9 +61,9 @@ export function meter(fraction, width = 12) {
   const clamped = Math.min(1, Math.max(0, fraction));
   const filled = Math.round(clamped * track);
   const bar = `${"█".repeat(filled)}${"░".repeat(track - filled)}`;
-  if (clamped >= 0.9) return style.brightRed(bar);
-  if (clamped >= 0.7) return style.yellow(bar);
-  return style.green(bar);
+  if (clamped >= 0.9) return style.red(`${"█".repeat(filled - 1)}!${"░".repeat(track - filled)}`);
+  if (clamped >= 0.7) return style.bold(`${"█".repeat(filled - 1)}▲${"░".repeat(track - filled)}`);
+  return bar;
 }
 
 /** A count, or an em dash when the daemon deliberately sent no number. PURE. */

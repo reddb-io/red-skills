@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  runIssueStateCurator,
+  runIssueStateCurator as runIssueStateCuratorCore,
   type IssueCuratorState,
   type IssueCuratorStore,
+  type IssueStateCuratorInput,
 } from "./issue-state-curator.js";
 import type { StateTransitionLabels } from "./state-transition.js";
 import type { TrackerIssue, TrackerPort } from "./tracker/port.js";
@@ -33,6 +34,17 @@ const ACTIVE_BLOCKER = [
   "<!-- afk:quarantine v1 issue=#12 -->",
   "Original diagnosis remains auditable.",
 ].join("\n");
+
+function runIssueStateCurator(
+  input: Omit<IssueStateCuratorInput, "hasActiveCurrentBlocker">,
+) {
+  return runIssueStateCuratorCore({
+    ...input,
+    // The parser belongs to apps/dev; this package test injects only the fact
+    // needed to exercise curator policy.
+    hasActiveCurrentBlocker: (body) => body.includes("status: blocked"),
+  });
+}
 
 function memoryStore(): IssueCuratorStore & { value: IssueCuratorState } {
   return {

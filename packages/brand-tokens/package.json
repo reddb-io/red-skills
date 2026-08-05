@@ -6,7 +6,10 @@
   "description": "Vendored RedDB brand color tokens with ANSI and CSS derivation helpers (ADR 0137).",
   "license": "Apache-2.0",
   "exports": {
-    ".": "./index.ts"
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.mjs"
+    }
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
