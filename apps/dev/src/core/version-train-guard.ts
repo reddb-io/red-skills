@@ -2,9 +2,8 @@
 // publishable surface reporting it (issue #3082).
 //
 // The defect this exists for is not a wrong number, it is an ABSENT LIST. The
-// `ignore` array in `.changeset/config.json` held eight packages, so the release
-// train left them behind; the herdr plugin was in NEITHER `fixed` nor `ignore`,
-// so it drifted entirely on its own, and the VS Code extension shipped every
+// former changesets fixed/ignore lists left packages behind, so the herdr plugin
+// drifted entirely on its own and the VS Code extension shipped every
 // release stamped `0.1.0` — the field the marketplace reads. Nothing was red.
 //
 // So the discovery here is DERIVED, never hand-kept: the package set comes from
@@ -15,14 +14,13 @@
 // Three properties are enforced:
 //
 //   1. Version — every discovered manifest carries the anchor's version.
-//   2. Coverage — every manifest is ON a train: a `fixed` group changesets bumps,
-//      or a file `scripts/sync-version.mjs` writes. Aligned-by-luck is not
-//      aligned; a package covered by neither drifts on the next release.
+//   2. Coverage — every manifest is a confirmed Release standard Version
+//      surface. Aligned-by-luck is not aligned.
 //   3. Scope — every workspace is named `@reddb-io/*`, unless it carries a
 //      stated exemption.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import yaml from "js-yaml";
 
 /** One discovered workspace manifest. */
 export interface WorkspaceManifest {
@@ -34,11 +32,9 @@ export interface WorkspaceManifest {
 }
 
 /**
- * The manifest whose version every other one follows (ADR 0040): a `fixed`-group
- * member, so `changeset version` has written the release number there before
- * anything else reads it.
+ * The root manifest the Release standard reads as the current product version.
  */
-export const VERSION_ANCHOR = "apps/dev/package.json";
+export const VERSION_ANCHOR: string = "package.json";
 
 /**
  * Package roots swept in addition to the pnpm workspace globs, each with the
@@ -50,7 +46,7 @@ export const VERSION_ANCHOR = "apps/dev/package.json";
 export const EXTRA_VERSION_ROOTS: readonly { readonly glob: string; readonly why: string }[] = [
   {
     glob: "plugins/*",
-    why: "plugin definitions ship as Pi packages, not as pnpm workspace members, so changesets never sees them — scripts/sync-version.mjs writes their version",
+    why: "plugin definitions ship as Pi packages, not as pnpm workspace members, so the Release standard declares their package manifests as extra Version surfaces",
   },
 ];
 
@@ -91,14 +87,9 @@ export interface ScopeViolation {
   readonly name: string;
 }
 
-/** The trains a manifest can ride: the changesets `fixed` groups, and the sync script. */
+/** The Release standard's confirmed Version surfaces. */
 export interface TrainCoverage {
-  /** Package NAMES changesets bumps together. */
-  readonly fixedNames: readonly string[];
-  /** Package names changesets deliberately leaves behind. */
-  readonly ignoredNames: readonly string[];
-  /** Repo-relative paths `scripts/sync-version.mjs` writes. */
-  readonly versionBearingFiles: readonly string[];
+  readonly versionSurfaces: readonly string[];
 }
 
 /**
@@ -191,7 +182,10 @@ export function collectWorkspaceManifests(
 
 /** The product version every manifest must carry. PURE-ish: one file read. */
 export function readAnchorVersion(repoRoot: string): string {
-  const anchor = readManifest(repoRoot, VERSION_ANCHOR.replace(/\/package\.json$/, ""));
+  const anchorDirectory = VERSION_ANCHOR === "package.json"
+    ? "."
+    : VERSION_ANCHOR.replace(/\/package\.json$/, "");
+  const anchor = readManifest(repoRoot, anchorDirectory);
   if (!anchor || !anchor.version) throw new Error(`no version in the anchor ${VERSION_ANCHOR}`);
   return anchor.version;
 }
@@ -209,19 +203,16 @@ export function findVersionDrift(
 /**
  * Manifests no release train writes. PURE.
  *
- * A package is covered when changesets bumps it (its name is in a `fixed` group)
- * or when `scripts/sync-version.mjs` writes its file. Being in `ignore` is the
- * opposite of coverage — it is the explicit statement that the train leaves it
- * behind — so an ignored package is a gap however aligned it happens to be today.
+ * A package is covered only when its manifest is explicitly confirmed under
+ * `release.version_surfaces`; this is the contract the engine writes.
  */
 export function findCoverageGaps(
   manifests: readonly WorkspaceManifest[],
   coverage: TrainCoverage,
 ): CoverageGap[] {
-  const fixed = new Set(coverage.fixedNames);
-  const written = new Set(coverage.versionBearingFiles);
+  const written = new Set(coverage.versionSurfaces);
   return manifests
-    .filter((manifest) => !written.has(manifest.relativePath) && !fixed.has(manifest.name))
+    .filter((manifest) => !written.has(manifest.relativePath))
     .map(({ relativePath, name }) => ({ relativePath, name }));
 }
 
@@ -236,32 +227,20 @@ export function findScopeViolations(
     .map(({ relativePath, name }) => ({ relativePath, name }));
 }
 
-/** The `fixed` / `ignore` lists changesets is configured with. */
-export function readChangesetCoverage(repoRoot: string): {
-  fixedNames: string[];
-  ignoredNames: string[];
-} {
-  // `.changeset/config.json` is changesets' own format; the tool owns the shape.
-  const config = JSON.parse(readFileSync(join(repoRoot, ".changeset", "config.json"), "utf8")) as {
-    fixed?: string[][];
-    ignore?: string[];
-  };
-  return {
-    fixedNames: (config.fixed ?? []).flat(),
-    ignoredNames: config.ignore ?? [],
-  };
-}
-
-/**
- * The files `scripts/sync-version.mjs` declares it writes.
- *
- * Imported from the script rather than restated here, so the two cannot disagree
- * — a second copy of this list is the same failure mode as the first one.
- */
-export async function readVersionBearingFiles(repoRoot: string): Promise<string[]> {
-  const specifier = pathToFileURL(join(repoRoot, "scripts", "sync-version.mjs")).href;
-  const module = (await import(specifier)) as { VERSION_BEARING_FILES?: string[] };
-  return module.VERSION_BEARING_FILES ?? [];
+/** Read the Version surfaces from the same Release standard config the engine owns. */
+export function readReleaseCoverage(repoRoot: string): TrainCoverage {
+  const document = yaml.load(readFileSync(join(repoRoot, ".red", "config.yaml"), "utf8"));
+  if (!isRecord(document) || !isRecord(document.release) ||
+      !Array.isArray(document.release.version_surfaces)) {
+    throw new Error(".red/config.yaml declares no release.version_surfaces");
+  }
+  const versionSurfaces = document.release.version_surfaces.map((surface, index) => {
+    if (!isRecord(surface) || typeof surface.path !== "string" || surface.path.trim() === "") {
+      throw new Error(`release.version_surfaces[${index}] has no path`);
+    }
+    return surface.path;
+  });
+  return { versionSurfaces };
 }
 
 /** A human-readable report of everything that is off the train. PURE. */
@@ -275,12 +254,12 @@ export function describeVersionTrainFailures(
   if (drift.length > 0) {
     lines.push(`${drift.length} manifest(s) are not at the product version ${anchorVersion}:`);
     for (const item of drift) lines.push(`  ${item.relativePath} — ${item.name || "(unnamed)"} is at ${item.version}`);
-    lines.push("  run `pnpm version:sync` (and check the .changeset/config.json `fixed` group)");
+    lines.push("  run the Release standard writer and review release.version_surfaces");
   }
   if (gaps.length > 0) {
     lines.push(`${gaps.length} manifest(s) ride no release train:`);
     for (const item of gaps) lines.push(`  ${item.relativePath} — ${item.name || "(unnamed)"}`);
-    lines.push("  add the package name to the .changeset/config.json `fixed` group, or its file to VERSION_BEARING_FILES in scripts/sync-version.mjs");
+    lines.push("  add its manifest to release.version_surfaces in .red/config.yaml");
   }
   if (scope.length > 0) {
     lines.push(`${scope.length} workspace(s) are named outside the @reddb-io scope:`);
@@ -288,4 +267,8 @@ export function describeVersionTrainFailures(
     lines.push("  rename it under @reddb-io/, or state the exemption in SCOPE_EXEMPTIONS with the reason the scope cannot be spelled there");
   }
   return lines.join("\n");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
