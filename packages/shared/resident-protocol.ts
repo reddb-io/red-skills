@@ -25,6 +25,14 @@ export type RspResidentRequest =
   | { id: string; op: "telemetry-gains"; sinceDays: number }
   | { id: string; op: "mint"; original: string; meta: unknown }
   | { id: string; op: "get"; handle: string }
+  | {
+      id: string;
+      op: "github-read";
+      args: string[];
+      path: string;
+      params?: Record<string, string | number | boolean | undefined>;
+      actor: string;
+    }
   | { id: string; op: "memory"; action: "recall" | "ingest"; payload: unknown }
   | { id: string; op: "brain"; action: BrainResidentAction; payload?: unknown };
 

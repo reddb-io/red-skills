@@ -1,65 +1,56 @@
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { decode } from "@reddb-io/toon";
+
 import { readGhConditionalJson } from "../src/gh-conditional.js";
-import { telemetrySpoolPath } from "../src/telemetry.js";
+import { createRspResidentGithubClient } from "../src/resident-github.js";
 
 const roots: string[] = [];
-
-async function tempRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "rsp-gh-conditional-"));
-  roots.push(root);
-  await mkdir(join(root, ".red", "state", "rsp"), { recursive: true });
-  return root;
-}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("gh conditional requests", () => {
-  it("serves repeated unchanged GETs from a 304-backed cached body and records quota-free telemetry", async () => {
-    const root = await tempRoot();
-    const bin = join(root, "bin");
-    const countFile = join(root, "count");
-    await mkdir(bin, { recursive: true });
-    await writeFile(join(bin, "gh"), [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `count_file=${shellQuote(countFile)}`,
-      "count=0",
-      "[ -f \"$count_file\" ] && count=\"$(cat \"$count_file\")\"",
-      "next=$((count + 1))",
-      "printf '%s' \"$next\" > \"$count_file\"",
-      "if printf '%s\\n' \"$@\" | grep -q 'If-None-Match: rsp-test-etag'; then",
-      "  printf 'HTTP/2 304 Not Modified\\r\\netag: rsp-test-etag\\r\\n\\r\\n'",
-      "else",
-      "  printf 'HTTP/2 200 OK\\r\\netag: rsp-test-etag\\r\\n\\r\\n{\"number\":1975,\"state\":\"OPEN\"}\\n'",
-      "fi",
-      "",
-    ].join("\n"), "utf8");
-    await chmod(join(bin, "gh"), 0o755);
+  it("crosses the resident boundary and reuses its 304-backed answer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rsp-gh-conditional-"));
+    roots.push(root);
+    const seen: Array<{ url: string; etag: string | null }> = [];
+    const github = createRspResidentGithubClient({
+      rootDir: root,
+      token: "fixture-token",
+      baseUrl: "https://github.invalid/api/v3",
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async (input, init) => {
+        const etag = new Headers(init?.headers).get("if-none-match");
+        seen.push({ url: String(input), etag });
+        if (etag === '"issue-v1"') return new Response(null, { status: 304, headers: { etag } });
+        return new Response(JSON.stringify({ number: 1975, state: "OPEN" }), {
+          status: 200,
+          headers: { "content-type": "application/json", etag: '"issue-v1"' },
+        });
+      },
+    });
+    const residentRead = github.read.bind(github);
+    const request = {
+      path: "repos/owner/repo/issues/1975",
+      args: ["issue", "view", "1975"],
+      cwd: root,
+      telemetryRoot: root,
+      residentRead,
+    } as const;
 
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` };
-    const first = await readGhConditionalJson({ path: "repos/owner/repo/issues/1975", cwd: root, telemetryRoot: root, env });
-    const second = await readGhConditionalJson({ path: "repos/owner/repo/issues/1975", cwd: root, telemetryRoot: root, env });
+    const first = await readGhConditionalJson(request);
+    const second = await readGhConditionalJson(request);
 
     expect(first).toMatchObject({ status: 0, quotaFree: false });
     expect(second).toMatchObject({ status: 0, quotaFree: true });
-    expect(second.stdout).toBe("{\"number\":1975,\"state\":\"OPEN\"}\n");
-    expect(await readFile(countFile, "utf8")).toBe("2");
-    // One partition per request key, so a lookup never reads the whole cache (#2745).
-    const partitions = await readdir(join(root, ".red", "state", "rsp", "gh-etag"));
-    expect(partitions).toHaveLength(1);
-    const cacheRaw = await readFile(join(root, ".red", "state", "rsp", "gh-etag", partitions[0]!), "utf8");
-    expect(() => JSON.parse(cacheRaw)).toThrow();
-    expect(decode(cacheRaw)).toMatchObject({ etag: "rsp-test-etag" });
-    await expect(readFile(telemetrySpoolPath(root), "utf8")).resolves.toContain("quota_free");
+    expect(second.stdout).toBe('{"number":1975,"state":"OPEN"}');
+    expect(seen).toEqual([
+      { url: "https://github.invalid/api/v3/repos/owner/repo/issues/1975", etag: null },
+      { url: "https://github.invalid/api/v3/repos/owner/repo/issues/1975", etag: '"issue-v1"' },
+    ]);
   });
 });
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}

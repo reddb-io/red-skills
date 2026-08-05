@@ -8,6 +8,7 @@ import type {
 } from "./elision-store.js";
 import type { RspAccountingLaneStats } from "./telemetry.js";
 import type { RspTelemetryGainsReport, RspTelemetryStats } from "./telemetry.js";
+import type { RspResidentGithubRead, RspResidentGithubResult } from "./resident-github.js";
 import type { RspResidentConfig, RspResidentRequest } from "./resident-protocol.js";
 import { sendResidentRequest } from "./resident-protocol.js";
 import {
@@ -112,6 +113,16 @@ export class ResidentRspElisionStore {
 
   async memory(action: "recall" | "ingest", payload: unknown): Promise<unknown> {
     return await this.request({ op: "memory", action, payload });
+  }
+
+  async githubRead(input: RspResidentGithubRead): Promise<RspResidentGithubResult> {
+    return await this.request({
+      op: "github-read",
+      args: [...input.args],
+      path: input.path,
+      actor: input.actor,
+      ...(input.params ? { params: { ...input.params } } : {}),
+    }) as RspResidentGithubResult;
   }
 
   async close(): Promise<void> {}
