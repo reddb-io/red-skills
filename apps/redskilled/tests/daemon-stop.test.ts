@@ -4,21 +4,39 @@
 // event lane so a successor can tell a handover from a crash, and answers a
 // machine with no daemon on it with a reason instead of an error.
 import { mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { runStop } from "../src/cli.js";
-import { stopRedskilledDaemon } from "../src/client.js";
+import {
+  ensureRedskilledDaemon,
+  readRedskilledHostState,
+  startRedskilledWorker,
+  stopRedskilledDaemon,
+} from "../src/client.js";
 import { socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { buildRedskilledNotRunningStop, buildRedskilledStopReport } from "../src/daemon-stop.js";
 import { lastRedskilledDaemonStop, readRedskilledEvents, rehydrateWorkers } from "../src/event-lane.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
+import { readRedskilledLeaseFile } from "../src/session-lease.js";
+
+const require_ = createRequire(import.meta.url);
+const tsxLoader = require_.resolve("tsx");
+const cliEntry = resolve(__dirname, "..", "src", "cli.ts");
 
 const running: RedskilledDaemon[] = [];
 const roots: string[] = [];
+const spawnedPids: number[] = [];
 
 afterEach(async () => {
   for (const daemon of running.splice(0)) await daemon.stop().catch(() => undefined);
+  for (const pid of spawnedPids.splice(0)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
@@ -26,6 +44,20 @@ async function sessionPaths(): Promise<RedskilledPaths> {
   const root = await mkdtemp(join(tmpdir(), "redskilled-stop-"));
   roots.push(root);
   return resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root });
+}
+
+function clientConfig(paths: RedskilledPaths) {
+  return {
+    serverCommand: process.execPath,
+    serverArgs: ["--import", tsxLoader, cliEntry],
+    readyTimeoutMs: 20_000,
+    idleMs: 60_000,
+    env: {
+      ...process.env,
+      REDSKILLED_SESSION: `test:${paths.runtimeDir}`,
+      REDSKILLED_PLACEMENT: "off",
+    },
+  };
 }
 
 const WORKER = {
@@ -107,6 +139,30 @@ describe("redskilled stop report", () => {
 });
 
 describe("redskilled stop", () => {
+  it("returns only after the daemon process exits and releases the lease while its Worker survives", async () => {
+    const paths = await sessionPaths();
+    const config = clientConfig(paths);
+    await ensureRedskilledDaemon(paths, config);
+    const state = await readRedskilledHostState(paths, config);
+    spawnedPids.push(state.pid);
+    const worker = await startRedskilledWorker(paths, {
+      project_label: "alpha",
+      workspace_path: paths.runtimeDir,
+      command: process.execPath,
+      args: ["-e", "setInterval(() => {}, 30_000)"],
+      log_path: join(paths.runtimeDir, "worker.toonl"),
+      placement: { isolation: "inherit" },
+    }, config);
+    spawnedPids.push(worker.worker.pid);
+
+    const report = await stopRedskilledDaemon(paths, { settleTimeoutMs: 2_000 });
+
+    expect(report.stopped).toBe(true);
+    expect(isPidAlive(state.pid)).toBe(false);
+    expect(await readRedskilledLeaseFile(paths.leasePath)).toBeUndefined();
+    expect(isPidAlive(worker.worker.pid)).toBe(true);
+  });
+
   it("shuts the daemon down and reports what it was holding", async () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000, daemonVersion: "3.0.2" });
