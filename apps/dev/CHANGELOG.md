@@ -1,5 +1,17 @@
 # @reddb-io/dev
 
+## 3.6.1
+
+### Patch Changes
+
+- d00de9e: Treat sub-second suspect-infra gate failures as environment failures that retry without consuming the Worker's re-seed budget.
+  - @reddb-io/github@3.6.1
+  - @reddb-io/shared@3.6.1
+  - @reddb-io/build-info@3.6.1
+  - @reddb-io/red-castle@3.6.1
+  - @reddb-io/redskilled@3.6.1
+  - @reddb-io/redskilled-render@3.6.1
+
 ## 3.6.0
 
 ### Minor Changes
