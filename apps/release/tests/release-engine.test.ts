@@ -278,7 +278,7 @@ type MutableVersionPullRequest = {
 class FakeGithub implements ReleaseEngineGithub {
   readonly pullRequests: MutableVersionPullRequest[] = [];
   readonly releases: PublishedRelease[] = [];
-  private assets: Array<{ id: number; name: string }> = [];
+  private readonly assets = new Map<number, Array<{ id: number; name: string }>>();
 
   constructor(private readonly repository: string) {}
 
@@ -318,17 +318,22 @@ class FakeGithub implements ReleaseEngineGithub {
 
   async findByTag(tag: string): Promise<PublishedRelease | null> {
     const release = this.releases.find((candidate) => candidate.tag === tag);
-    return release === undefined ? null : { ...release, assets: this.assets };
+    return release === undefined
+      ? null
+      : { ...release, assets: this.assets.get(release.id) ?? [] };
   }
 
   async create(input: CreateReleaseInput): Promise<PublishedRelease> {
     const release = { id: this.releases.length + 1, ...input, assets: [] };
     this.releases.push(release);
+    this.assets.set(release.id, []);
     return release;
   }
 
   async uploadAsset(input: UploadReleaseAssetInput): Promise<void> {
-    this.assets.push({ id: this.assets.length + 1, name: input.name });
+    const assets = this.assets.get(input.releaseId);
+    if (assets === undefined) throw new Error(`missing fixture release ${input.releaseId}`);
+    assets.push({ id: assets.length + 1, name: input.name });
   }
 }
 
