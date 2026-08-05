@@ -206,6 +206,16 @@
       "id": "apps/release/src/cli.ts#json-parse-file-read#06f60309d571",
       "classification": "external",
       "reason": "npm package.json manifests are an external JSON format the release engine must read as-is"
+    },
+    {
+      "id": "apps/release/src/version-surfaces.ts#json-parse-file-read#1a7789e22743",
+      "classification": "external",
+      "reason": "npm package.json version surfaces are ecosystem JSON the release engine rewrites in place"
+    },
+    {
+      "id": "apps/release/src/version-surfaces.ts#json-parse-file-read#4e3250e520ef",
+      "classification": "external",
+      "reason": "workspace package.json manifests are ecosystem JSON; version derivation reads them as-is"
     }
   ]
 }
