@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { ReleaseExecution, ReleaseTrigger } from "./version-surfaces.js";
@@ -56,6 +57,9 @@ export function generateReleaseWorkflows(
   const repoRoot = resolve(input.repoRoot);
   const config = readReleaseConfig(repoRoot);
   const engineVersion = normalizedEngineVersion(input.engineVersion);
+  const vendored = config.execution === "vendored"
+    ? prepareVendoredBundle(repoRoot, input.engineBundlePath, engineVersion)
+    : undefined;
   const source = renderReleaseWorkflow({
     trigger: config.trigger,
     execution: config.execution,
@@ -64,14 +68,15 @@ export function generateReleaseWorkflows(
   const path = join(repoRoot, RELEASE_WORKFLOW_PATH);
   const previous = existsSync(path) ? readFileSync(path, "utf8") : undefined;
   const workflowChanged = previous !== source;
+  if (vendored?.changed === true) {
+    mkdirSync(dirname(vendored.path), { recursive: true });
+    writeFileSync(vendored.path, vendored.source);
+  }
   if (workflowChanged) {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, source, "utf8");
   }
 
-  const vendored = config.execution === "vendored"
-    ? emitVendoredBundle(repoRoot, input.engineBundlePath)
-    : undefined;
   return {
     path,
     changed: workflowChanged || vendored?.changed === true,
@@ -82,10 +87,11 @@ export function generateReleaseWorkflows(
   };
 }
 
-function emitVendoredBundle(
+function prepareVendoredBundle(
   repoRoot: string,
   engineBundlePath: string | undefined,
-): { readonly path: string; readonly changed: boolean } {
+  engineVersion: string,
+): { readonly path: string; readonly source: Buffer; readonly changed: boolean } {
   if (engineBundlePath === undefined) {
     throw new Error("vendored release workflow generation requires engineBundlePath");
   }
@@ -96,15 +102,32 @@ function emitVendoredBundle(
   } catch (error) {
     throw new Error(`cannot read vendored release bundle ${sourcePath}: ${errorMessage(error)}`);
   }
+  const versionAnswer = spawnSync(process.execPath, [sourcePath, "--version"], {
+    encoding: "utf8",
+    timeout: 5_000,
+    windowsHide: true,
+  });
+  if (versionAnswer.error !== undefined || versionAnswer.status !== 0) {
+    throw new Error(
+      `vendored release bundle cannot answer --version statically: ${
+        errorMessage(versionAnswer.error ?? versionAnswer.stderr.trim())
+      }`,
+    );
+  }
+  const [app, reportedVersion] = versionAnswer.stdout.trim().split(/\s+/);
+  if (app !== "red-skills-release" || reportedVersion === undefined) {
+    throw new Error("vendored release bundle returned an invalid static --version answer");
+  }
+  if (reportedVersion !== engineVersion) {
+    throw new Error(
+      `vendored release bundle reports ${reportedVersion}, expected ${engineVersion}`,
+    );
+  }
 
   const path = join(repoRoot, VENDORED_RELEASE_BUNDLE_PATH);
   const previous = existsSync(path) ? readFileSync(path) : undefined;
   const changed = previous === undefined || !previous.equals(source);
-  if (changed) {
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, source);
-  }
-  return { path, changed };
+  return { path, source, changed };
 }
 
 function pinnedInvocation(engineVersion: string): string {
