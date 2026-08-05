@@ -651,9 +651,9 @@ export async function baseMovementSince(
   ctx: GitContext,
   baseRef: string,
   sinceSha: string,
-): Promise<{ head: string; subjects: string[] }> {
+): Promise<{ head: string; subjects: string[]; files: string[] }> {
   const head = (baseRef ? await revParse(ctx, baseRef) : undefined) ?? "";
-  if (!head || !sinceSha || head === sinceSha) return { head, subjects: [] };
+  if (!head || !sinceSha || head === sinceSha) return { head, subjects: [], files: [] };
   const r = await runGit(ctx, [
     "log",
     "--reverse",
@@ -661,8 +661,12 @@ export async function baseMovementSince(
     `--max-count=${BASE_MOVEMENT_SUBJECT_LIMIT}`,
     `${sinceSha}..${head}`,
   ]);
-  if (r.code !== 0) return { head, subjects: [] };
-  return { head, subjects: r.stdout.split("\n").map((l) => l.trim()).filter(Boolean) };
+  const diff = await runGit(ctx, ["diff", "--name-only", `${sinceSha}..${head}`, "--"]);
+  return {
+    head,
+    subjects: r.code === 0 ? r.stdout.split("\n").map((l) => l.trim()).filter(Boolean) : [],
+    files: diff.code === 0 ? diff.stdout.split("\n").map((l) => l.trim()).filter(Boolean) : [],
+  };
 }
 
 /** Diffstat summary line of <branch> vs <base>. */
