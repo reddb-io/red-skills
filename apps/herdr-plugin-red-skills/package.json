@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/herdr-plugin-red-skills",
-  "version": "3.6.2",
+  "version": "3.7.0",
   "private": true,
   "type": "module",
   "description": "A herdr plugin that reads the redskilled host daemon: live Workers, worker logs, the host event lane, open pull requests, and notifications when any of it changes.",

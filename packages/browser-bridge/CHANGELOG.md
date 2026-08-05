@@ -1,5 +1,7 @@
 # @reddb-io/browser-bridge
 
+## 3.7.0
+
 ## 3.6.2
 
 ## 3.6.1
