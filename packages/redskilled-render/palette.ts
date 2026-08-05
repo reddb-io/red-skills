@@ -43,6 +43,8 @@ export const KEY = sgr("38;2;255;214;214");
 export const VAL = sgr("39");
 /** General transparent-zone text — runners, sigils, the bare phase cell. */
 export const SOFT = sgr("38;2;224;138;148");
+/** The `»` identity accent. */
+export const GOLD = sgr("38;2;240;200;120");
 
 // ---------- the lifecycle bar's wine ramp ----------
 //
