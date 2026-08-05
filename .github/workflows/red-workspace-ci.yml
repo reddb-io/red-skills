@@ -190,23 +190,34 @@ jobs:
         if: env.RUN_ANY != 'true'
         run: echo "No typed or manifest input changed (scope ${{ needs.scope.outputs.mode }}) — nothing to check."
 
-  test:
+  # The apps/dev suite is the merge-latency critical path: 423 files / 6000+
+  # tests, and `fileParallelism: false` in its vitest config runs them one file
+  # at a time, so a single runner spends ~4m45s of a ~5m job on this one step.
+  # `--shard=N/4` splits the FILE set four ways across four runners that each
+  # keep the serial-within-runner semantics the config asks for; per-runner
+  # fixed cost is seconds (checkout 4s, install 6s), so the fan-out is nearly
+  # pure win. The narrowing is unchanged — the whole matrix idles on a PR whose
+  # cone does not contain apps/dev.
+  test-shard:
     runs-on: ubuntu-latest
     needs: scope
+    strategy:
+      # A failing shard must not cancel its siblings: the run has to report
+      # every failure at once, not just the first shard to notice one.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
-      # JSON array of every package in the affected cone; each step below asks
-      # whether its own package is in it.
-      PACKAGES: ${{ needs.scope.outputs.test_packages }}
-      RUN_ANY: ${{ needs.scope.outputs.test_packages != '[]' }}
+      RUN_DEV: ${{ contains(fromJSON(needs.scope.outputs.test_packages), 'apps/dev') }}
     steps:
       - name: Checkout
-        if: env.RUN_ANY == 'true'
+        if: env.RUN_DEV == 'true'
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
-      - if: env.RUN_ANY == 'true'
+      - if: env.RUN_DEV == 'true'
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
 
-      - if: env.RUN_ANY == 'true'
+      - if: env.RUN_DEV == 'true'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
@@ -216,7 +227,7 @@ jobs:
       # binary must exist here exactly as it does on dev machines (/red-setup)
       # and in red-rsp-benchmark-ci.yml. Same pinned installer, no fallback.
       - name: Install pinned tq
-        if: contains(fromJSON(env.PACKAGES), 'apps/dev')
+        if: env.RUN_DEV == 'true'
         env:
           TQ_VERSION: v0.13.0
           GH_TOKEN: ${{ github.token }}
@@ -232,7 +243,7 @@ jobs:
           sh "$installer"
 
       - name: Install workspace dependencies
-        if: env.RUN_ANY == 'true'
+        if: env.RUN_DEV == 'true'
         env:
           # This PR gate typechecks/tests apps/dev; it does not execute the
           # @reddb-io/sdk-backed memory/brain runtimes. Skip the SDK postinstall
@@ -241,8 +252,55 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Test apps/dev (includes packages/shared)
-        if: contains(fromJSON(env.PACKAGES), 'apps/dev')
-        run: pnpm -C apps/dev test
+        if: env.RUN_DEV == 'true'
+        # No `--` before the flag: pnpm forwards the separator VERBATIM, and
+        # vitest then reads `--shard=…` as a filename filter and runs the whole
+        # suite on every shard — four full runs that all pass, which is exactly
+        # what a broken shard split looks like from the outside.
+        run: pnpm -C apps/dev test --shard=${{ matrix.shard }}/4
+
+      - name: Report narrowed scope
+        if: env.RUN_DEV != 'true'
+        run: echo "apps/dev is not in the affected cone (scope ${{ needs.scope.outputs.mode }}) — no shard to run."
+
+  # The remaining suites are seconds-cheap, so they stay in one job rather than
+  # paying a runner's fixed cost each.
+  test-packages:
+    runs-on: ubuntu-latest
+    needs: scope
+    env:
+      # JSON array of every package in the affected cone; each step below asks
+      # whether its own package is in it.
+      PACKAGES: ${{ needs.scope.outputs.test_packages }}
+      # apps/dev is deliberately absent: it belongs to the shard matrix, and
+      # asking for it here would install a workspace for no step to use.
+      RUN_ANY: >-
+        ${{ contains(fromJSON(needs.scope.outputs.test_packages), 'packages/red-castle')
+        || contains(fromJSON(needs.scope.outputs.test_packages), 'apps/opencode-host')
+        || contains(fromJSON(needs.scope.outputs.test_packages), 'apps/afk-container')
+        || contains(fromJSON(needs.scope.outputs.test_packages), 'apps/herdr-plugin-red-skills')
+        || contains(fromJSON(needs.scope.outputs.test_packages), 'apps/vscode-extension-red-skills') }}
+    steps:
+      - name: Checkout
+        if: env.RUN_ANY == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - if: env.RUN_ANY == 'true'
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+
+      - if: env.RUN_ANY == 'true'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - name: Install workspace dependencies
+        if: env.RUN_ANY == 'true'
+        env:
+          # This PR gate typechecks/tests apps/dev; it does not execute the
+          # @reddb-io/sdk-backed memory/brain runtimes. Skip the SDK postinstall
+          # binary download so CI is not coupled to reddb release assets.
+          REDDB_SKIP_POSTINSTALL: "1"
+        run: pnpm install --frozen-lockfile
 
       # The engine's own suite carries the castle-tree transition-API contract
       # lint (#2666). The root `test` script filters red-castle out, so without
@@ -275,4 +333,27 @@ jobs:
 
       - name: Report narrowed scope
         if: env.RUN_ANY != 'true'
-        run: echo "No package is in the affected cone (scope ${{ needs.scope.outputs.mode }}) — no suite to run."
+        run: echo "No non-dev package is in the affected cone (scope ${{ needs.scope.outputs.mode }}) — no suite to run."
+
+  # Branch protection requires a check named `test`, so the name survives the
+  # fan-out as an aggregate: the work moved, the contract did not.
+  test:
+    # `always()` is what keeps this a gate. Without it a FAILED dependency
+    # skips this job, and a skipped required check is one branch protection
+    # reads as satisfied — the gate would go quiet exactly when it should be
+    # loud. Narrowing never produces a skip here: the dependencies always run
+    # and shrink their own steps, so a docs-only PR reaches this job green.
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [scope, test-shard, test-packages]
+    steps:
+      - name: Fail when a test dependency failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "scope=${{ needs.scope.result }}"
+          echo "test-shard=${{ needs['test-shard'].result }}"
+          echo "test-packages=${{ needs['test-packages'].result }}"
+          exit 1
+
+      - name: Report aggregate result
+        run: echo "All test dependencies reported success (scope ${{ needs.scope.outputs.mode }})."
