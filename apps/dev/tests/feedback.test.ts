@@ -883,7 +883,7 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
       worktree: "afk/wX/123-slug",
       scopes: ["apps/dev"],
       layout: makeLayout(),
-      now: () => 0,
+      now: fakeClock(1000),
       baselineWorktree: "main",
     });
     // test:apps/dev failed on worker AND on baseline → inconclusive; the gate
@@ -913,7 +913,7 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
       worktree: "afk/wX/123-slug",
       scopes: ["apps/dev"],
       layout: makeLayout(),
-      now: () => 0,
+      now: fakeClock(1000),
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(false);
@@ -945,7 +945,7 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
       worktree: "afk/wX/123-slug",
       scopes: ["apps/dev"],
       layout: makeLayout(),
-      now: () => 0,
+      now: fakeClock(1000),
       baselineWorktree: "main",
     });
     expect(result.baselineProbeRan).toBe(true);
@@ -973,7 +973,7 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
       worktree: "afk/wX/123-slug",
       scopes: ["apps/dev"],
       layout: makeLayout(),
-      now: () => 0,
+      now: fakeClock(1000),
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(false);
@@ -1029,7 +1029,7 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
       worktree: "afk/wX/123-slug",
       scopes: ["apps/dev"],
       layout: makeLayout(),
-      now: () => 0,
+      now: fakeClock(1000),
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(false);
@@ -1187,7 +1187,7 @@ describe("runFeedback — workspace typecheck", () => {
       worktree: "afk/wX/123-slug",
       scopes: ["apps/dev"],
       layout: workspaceLayout(),
-      now: () => 0,
+      now: fakeClock(1000),
       baselineWorktree: "main",
     });
 
@@ -1212,7 +1212,7 @@ describe("runFeedback — workspace typecheck", () => {
       worktree: "afk/wX/123-slug",
       scopes: ["apps/dev"],
       layout: workspaceLayout(),
-      now: () => 0,
+      now: fakeClock(1000),
       baselineWorktree: "main",
     });
 

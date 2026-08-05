@@ -32,6 +32,11 @@ function fakeExec(plan: Record<string, number>): Exec {
   };
 }
 
+function healthyGateClock(): () => number {
+  let now = 0;
+  return () => (now += 1000);
+}
+
 // Pattern 1: Submodule lifecycle in a fresh worktree — git worktree add does
 // NOT populate submodules, so the feedback-worktree setup fails with
 // "feedback worktree setup failed for <branch>; validation blocked" and the
@@ -94,7 +99,7 @@ describe("Pattern 2 — test drift between worker branch and main", () => {
       worktree: "afk/wX/123-slug",
       scopes: ["apps/dev"],
       layout: makeLayout(),
-      now: () => 0,
+      now: healthyGateClock(),
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(false);
@@ -111,7 +116,7 @@ describe("Pattern 2 — test drift between worker branch and main", () => {
       worktree: "afk/wX/123-slug",
       scopes: ["apps/dev"],
       layout: makeLayout(),
-      now: () => 0,
+      now: healthyGateClock(),
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(false); // inconclusive still blocks THIS branch
@@ -162,7 +167,7 @@ describe("Pattern 3 — failures inherited from the base branch", () => {
       worktree: "afk/wX/123-slug",
       scopes: [".", "apps/dev"],
       layout: makeLayout(),
-      now: () => 0,
+      now: healthyGateClock(),
       baselineWorktree: "main",
     });
     expect(result.ok).toBe(false);

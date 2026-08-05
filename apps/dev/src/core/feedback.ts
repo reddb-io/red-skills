@@ -494,6 +494,11 @@ export function isInfraValidationFailure(checks: readonly ClassifiableCheck[]): 
     if (check.status !== "failed") continue;
     const exitCode = check.record.exitCode;
     if (exitCode === 0) continue;
+    // The validation command classifier has already proved that a sub-second
+    // suite failure did not run long enough to judge the branch. Preserve that
+    // environment verdict at round classification so it receives bounded infra
+    // recovery and cannot be charged (or overridden to semantic) downstream.
+    if (check.record.suspectInfra === true) return true;
     if (check.record.infra === "stall") return true;
     if (exitCode === 137) return true;
     const summary = check.record.summary ?? "";

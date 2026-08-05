@@ -59,7 +59,7 @@ function fakeExec(
   return { exec, calls };
 }
 
-const clock = (step = 5): (() => number) => {
+const clock = (step = 1000): (() => number) => {
   let t = 0;
   return () => (t += step);
 };

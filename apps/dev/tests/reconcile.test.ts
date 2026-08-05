@@ -80,6 +80,7 @@ function harness(opts: HarnessOptions = {}): {
   input: ReconcileInput;
   trace: Trace;
 } {
+  let nowEpoch = 0;
   const trace: Trace = {
     labelEdits: [],
     comments: [],
@@ -285,7 +286,7 @@ function harness(opts: HarnessOptions = {}): {
     },
     makeRebaseWorktree: async () => "/rwt",
     removeRebaseWorktree: async () => {},
-    nowEpoch: () => 1000,
+    nowEpoch: () => (nowEpoch += 1000),
     ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     appendIterLog: (line) => {
       trace.iterLogs.push(line);
