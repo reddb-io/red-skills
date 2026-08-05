@@ -7,6 +7,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { RedDB } from "@reddb-io/sdk";
 import { type JsonObject } from "@reddb-io/toon";
+import {
+  createGithubBalanceTransport,
+  fetchGithubBalance,
+  githubBalanceCadenceMs,
+  type GithubBalance,
+} from "@reddb-io/github";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
 import { removeResidentRegistry, writeResidentRegistry } from "@reddb-io/shared/resident-client.js";
 import { serveWireSocket } from "@reddb-io/shared/resident-core.js";
@@ -866,10 +872,40 @@ function createLazyResidentGithub(rootDir: string): RspResidentGithubClient {
           stdio: ["ignore", "pipe", "pipe"],
         })).trim();
         if (token === "") throw new Error("rsp resident could not obtain a GitHub credential from gh");
-        client = createRspResidentGithubClient({ rootDir, token });
+        client = createRspResidentGithubClient({
+          rootDir,
+          token,
+          balance: residentGithubBalanceReader(token),
+        });
       }
       return await client.read(input);
     },
+  };
+}
+
+/**
+ * Ask the token for its authoritative balance at the package-owned adaptive
+ * cadence. The rsp resident deliberately remains independent from redskilled;
+ * an unanswered ask never becomes evidence that either pool is empty or full.
+ */
+function residentGithubBalanceReader(token: string): () => Promise<GithubBalance | null> {
+  const transport = createGithubBalanceTransport({ token });
+  let held: GithubBalance | null = null;
+  let freshUntil = 0;
+  let inFlight: Promise<GithubBalance | null> | null = null;
+  return async (): Promise<GithubBalance | null> => {
+    const now = Date.now();
+    if (now < freshUntil) return held;
+    if (inFlight !== null) return await inFlight;
+    const askedAt = new Date(now).toISOString();
+    inFlight = fetchGithubBalance({ transport, now: askedAt }).then((answer) => {
+      held = answer;
+      freshUntil = Date.now() + githubBalanceCadenceMs(answer, { now: new Date().toISOString() });
+      return held;
+    }).finally(() => {
+      inFlight = null;
+    });
+    return await inFlight;
   };
 }
 

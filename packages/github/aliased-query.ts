@@ -17,6 +17,8 @@
 //
 // PURE.
 
+import type { GithubSingleObjectKind } from "./rest-plan.js";
+
 /** One repository this query will span. */
 export interface GithubRepoRef {
   readonly owner: string;
@@ -32,6 +34,28 @@ export interface GithubAliasedQuery {
   readonly repoCount: number;
 }
 
+/** One cold single-object read eligible to share an aliased request. */
+export interface GithubAliasedSingleObjectRead {
+  readonly kind: GithubSingleObjectKind;
+  readonly owner: string;
+  readonly repo: string;
+  readonly number: number;
+  /** A trusted GraphQL field selection owned by the caller. */
+  readonly selection: string;
+}
+
+/** One query spanning single-object reads of the same kind. */
+export interface GithubAliasedSingleObjectQuery {
+  readonly query: string;
+  readonly aliases: Readonly<Record<string, GithubAliasedSingleObjectRead>>;
+}
+
+/** One alias read back from a coalesced single-object response. */
+export interface GithubAliasedSingleObjectRow {
+  readonly read: GithubAliasedSingleObjectRead;
+  readonly value: Record<string, unknown> | null;
+}
+
 /**
  * GraphQL aliases must be identifiers; repository names are not.
  *
@@ -41,6 +65,74 @@ export interface GithubAliasedQuery {
  */
 function aliasFor(index: number): string {
   return `r${index}`;
+}
+
+/**
+ * Build one request for cold single-object reads that arrived in the same turn.
+ *
+ * The coalescer groups by kind before calling this builder. Repository aliases
+ * remain at the query root, so reads may span repositories without inventing a
+ * second request. The result also asks GitHub what the query cost: one request
+ * is still each returned object's worth of GraphQL points.
+ */
+export function buildSingleObjectReadsQuery(
+  reads: readonly GithubAliasedSingleObjectRead[],
+): GithubAliasedSingleObjectQuery {
+  if (reads.length === 0) throw new Error("an aliased single-object query needs at least one read");
+  const kind = reads[0]!.kind;
+  if (reads.some((read) => read.kind !== kind)) {
+    throw new Error("an aliased single-object query may contain only one object kind");
+  }
+
+  const aliases: Record<string, GithubAliasedSingleObjectRead> = {};
+  const graphqlField = kind === "pr" ? "pullRequest" : "issue";
+  const selections = reads.map((read, index) => {
+    if (!Number.isSafeInteger(read.number) || read.number <= 0) {
+      throw new Error(`an aliased single-object read needs a positive number, got ${read.number}`);
+    }
+    const selection = read.selection.trim();
+    if (selection === "") throw new Error("an aliased single-object read needs a field selection");
+    const alias = aliasFor(index);
+    aliases[alias] = read;
+    return [
+      `  ${alias}: repository(owner: ${JSON.stringify(read.owner)}, name: ${JSON.stringify(read.repo)}) {`,
+      `    object: ${graphqlField}(number: ${read.number}) { ${selection} }`,
+      "  }",
+    ].join("\n");
+  });
+
+  return {
+    query: [
+      "query CoalescedSingleObjectReads {",
+      ...selections,
+      "  rateLimit { cost }",
+      "}",
+    ].join("\n"),
+    aliases,
+  };
+}
+
+/** Read each aliased object in request order; an unanswered alias stays null. */
+export function readSingleObjectRows(
+  aliased: GithubAliasedSingleObjectQuery,
+  data: unknown,
+): readonly GithubAliasedSingleObjectRow[] {
+  const envelope = data !== null && typeof data === "object" ? data as Record<string, unknown> : {};
+  const rootValue = envelope.data ?? envelope;
+  const root = rootValue !== null && typeof rootValue === "object"
+    ? rootValue as Record<string, unknown>
+    : {};
+  return Object.entries(aliased.aliases).map(([alias, read]) => {
+    const repository = root[alias];
+    if (repository === null || typeof repository !== "object") return { read, value: null };
+    const value = (repository as Record<string, unknown>).object;
+    return {
+      read,
+      value: value !== null && typeof value === "object" && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null,
+    };
+  });
 }
 
 /**

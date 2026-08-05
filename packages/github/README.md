@@ -42,6 +42,23 @@ The client is built from `@octokit/rest`, retry, throttling, and the pagination
 plugin bundled by REST.js. Interactive and not-yet-migrated reads keep their
 existing route while migration proceeds one slice at a time under ADR 0133.
 
+## Cold single-object bursts coalesce
+
+The single-object rule and its counter-rule live together in
+`createGithubClient().singleObject()`: one issue or pull request prefers REST,
+but cold reads of the same kind that arrive in one turn share one aliased
+GraphQL query when their count exceeds the live coalescing threshold. The
+threshold is the ratio of REST headroom to GraphQL headroom, rounded up, so it
+rises when REST is healthier and falls when GraphQL has room to absorb the
+nodes. An unknown balance or a spent GraphQL pool diverts nothing.
+
+Conditional reads are deliberately outside that trade. Once the client holds
+an ETag and its answer, that read stays on REST even during a burst: turning a
+possible zero-cost `304` into a charged GraphQL node would lose the free tier
+that made stable polls REST-preferred in the first place. The saving from a cold
+aliased query is one request instead of k REST requests; it is still k objects'
+worth of GraphQL points.
+
 ## Three budgets, not two
 
 | Pool      | Metered by  | Limit    |
@@ -123,8 +140,11 @@ fixing it: rare above half, tightening as the balance falls, continuous once
 spent — when the only event that still matters is the reset. A fixed cadence has
 to choose between being slow at the edge and wasting polls in the middle; an
 adaptive one does not choose. **One poller, the daemon's, never a check before
-each call**: that would double the request count and put a synchronous round trip
-in every hot path.
+each call** was the original boundary. The independent `rsp` resident introduced
+by #3311 is now a second declared execution owner: it asks at this same adaptive
+cadence without coupling to `redskilled`. Neither owner asks once per call; that
+would double the request count and put a synchronous round trip in every hot
+path.
 
 The curve is driven by the TIGHTEST pool, not by an average. The measurement that
 produced this module — 2200 GraphQL points spent while `core` sat at `5000/5000`
@@ -177,11 +197,12 @@ the reads that would refill it.
 
 `apps/dev` (the read boundary, the migrated single-object reads and the reserved
 band in `runtime/gh/band.ts`), `apps/redskilled` (the daemon's conditional REST
-pollers and its one balance poller) and `packages/red-castle` (the tracker
-adapter) all import this package. One table, because two implementations of one
-routing rule drift — and one balance, because two would be two fictions.
+pollers), `apps/rsp` (the independent resident-owned proxy reads), and
+`packages/red-castle` (the tracker adapter) all import this package. One policy,
+because two implementations of one routing rule drift — and one authoritative
+token answer, however many declared owners observe it.
 
-The old aliased GraphQL path remains available to injected migration adapters and
-states its point cost explicitly. Production stable polls accept N sequential
-round trips instead: unchanged collections answer `304`, so the API budget pays
-only for the repositories whose representation actually changed.
+Production stable collection polls accept N sequential round trips: unchanged
+collections answer `304`, so the API budget pays only for repositories whose
+representation changed. Cold single-object bursts use the separate coalescing
+rule above; warm objects never leave conditional REST.

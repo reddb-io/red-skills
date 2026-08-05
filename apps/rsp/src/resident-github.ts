@@ -4,6 +4,7 @@ import {
   createGithubClient,
   isGithubRateLimitError,
   routeGithubArgs,
+  type GithubBalance,
   type GithubClient,
   type GithubOperation,
   type GithubRequestFetch,
@@ -36,6 +37,7 @@ export interface CreateRspResidentGithubClientOptions {
   readonly token: string;
   readonly baseUrl?: string;
   readonly fetchImpl?: GithubRequestFetch;
+  readonly balance?: () => GithubBalance | null | Promise<GithubBalance | null>;
   readonly retryCount?: number;
   readonly throttle?: boolean;
 }
@@ -60,6 +62,7 @@ export function createRspResidentGithubClient(
     attribution,
     ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.balance ? { balance: options.balance } : {}),
     ...(options.retryCount === undefined ? {} : { retryCount: options.retryCount }),
     ...(options.throttle === undefined ? {} : { throttle: options.throttle }),
   });
@@ -83,6 +86,28 @@ function createRspResidentGithubReader(client: GithubClient): RspResidentGithubC
         return refusal(operation, "github-search-not-routable", "search reads are never a fallback; narrow the read to a classified object");
       }
       try {
+        const object = singleObjectPlan(operation, input);
+        if (object) {
+          const answer = await client.singleObject<Record<string, unknown>>({
+            cacheKey: stableCacheKey(input.path, input.params),
+            kind: object.kind,
+            owner: object.owner,
+            repo: object.repo,
+            number: object.number,
+            selection: object.selection,
+            operation,
+            actor: input.actor,
+            project: object.project,
+          });
+          return {
+            status: 0,
+            stdout: JSON.stringify(answer.data),
+            stderr: "",
+            surface: answer.surface,
+            pool: answer.surface === "graphql" ? "graphql" : "rest",
+            quotaFree: answer.quotaFree,
+          };
+        }
         if (operation.surface === "graphql") {
           const plan = graphqlPlan(operation, input);
           if (!plan) {
@@ -139,6 +164,71 @@ function createRspResidentGithubReader(client: GithubClient): RspResidentGithubC
         };
       }
     },
+  };
+}
+
+interface RspSingleObjectPlan {
+  readonly kind: "issue" | "pr";
+  readonly owner: string;
+  readonly repo: string;
+  readonly number: number;
+  readonly selection: string;
+  readonly project: (value: unknown, surface: "rest" | "graphql") => Record<string, unknown>;
+}
+
+function singleObjectPlan(
+  operation: GithubOperation,
+  input: RspResidentGithubRead,
+): RspSingleObjectPlan | null {
+  if (operation.key !== "issue view" && operation.key !== "pr view") return null;
+  const match = /^repos\/([^/]+)\/([^/]+)\/(issues|pulls)\/(\d+)\/?$/.exec(input.path.replace(/^\/+/, ""));
+  if (!match) return null;
+  const owner = stringParam(input.params, "owner") || match[1]!;
+  const repo = stringParam(input.params, "repo") || match[2]!;
+  const number = Number(match[4]);
+  if (!Number.isSafeInteger(number) || number <= 0 || owner.includes("{") || repo.includes("{")) return null;
+
+  if (operation.key === "issue view") {
+    return {
+      kind: "issue",
+      owner,
+      repo,
+      number,
+      selection: "number title state body url updatedAt author { login } labels(first: 100) { nodes { name } }",
+      project: (value, surface) => surface === "rest" ? record(value) ?? {} : issueGraphqlAsRest(value),
+    };
+  }
+  return {
+    kind: "pr",
+    owner,
+    repo,
+    number,
+    selection: "number title state body url updatedAt isDraft baseRefName headRefName author { login } labels(first: 100) { nodes { name } }",
+    project: (value, surface) => surface === "rest" ? record(value) ?? {} : prGraphqlAsRest(value),
+  };
+}
+
+function issueGraphqlAsRest(value: unknown): Record<string, unknown> {
+  const node = record(value) ?? {};
+  return {
+    number: node.number,
+    title: node.title,
+    state: String(node.state ?? "").toLowerCase(),
+    body: node.body,
+    html_url: node.url,
+    updated_at: node.updatedAt,
+    user: record(node.author) ?? {},
+    labels: nestedNodes(node.labels).map((label) => ({ name: label.name })),
+  };
+}
+
+function prGraphqlAsRest(value: unknown): Record<string, unknown> {
+  const node = record(value) ?? {};
+  return {
+    ...issueGraphqlAsRest(node),
+    draft: node.isDraft === true,
+    base: { ref: node.baseRefName },
+    head: { ref: node.headRefName },
   };
 }
 

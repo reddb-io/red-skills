@@ -27,10 +27,11 @@
 //   is derived rather than fixed: rare above half, tightening as the balance
 //   falls, continuous once spent — when the only event that still matters is the
 //   reset. A fixed cadence forces a choice between being slow at the edge and
-//   wasting polls in the middle; an adaptive one does not choose. **One poller,
-//   the daemon's, never a check before each call** — that would double the
-//   request count and put a synchronous round trip in every hot path, which is
-//   ADR 0084's lesson paid twice.
+//   wasting polls in the middle; an adaptive one does not choose. **One poller
+//   per declared execution owner, never a check before each call** — that would
+//   double the request count and put a synchronous round trip in every hot path,
+//   which is ADR 0084's lesson paid twice. The independent rsp resident is such
+//   an owner; it does not couple its read path to redskilled.
 //
 //   **A stated fraction is reserved.** With an authoritative balance in hand the
 //   breaker stops being reactive: convenience reads are refused once the balance
