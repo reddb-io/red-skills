@@ -7,6 +7,14 @@
 // merge. Detection and repair build on this same record rather than inventing a
 // second queue inventory.
 
+import {
+  healQueueEjection,
+  type QueueFailure,
+  type RepairCandidate,
+  type RepairLaneDeps,
+  type RepairLaneResult,
+} from "./repair-lane.js";
+
 export interface QueueCustodyIdentity {
   readonly repo: string;
   readonly prNumber: number;
@@ -16,7 +24,7 @@ export interface QueueCustodyIdentity {
 }
 
 export interface QueueCustodyRecord extends QueueCustodyIdentity {
-  readonly status: "watching" | "repairing";
+  readonly status: "watching" | "repairing" | "semantic-bounce" | "human";
   readonly semanticBounces: readonly QueueCustodyFailure[];
   readonly handedOffAt: string;
   readonly updatedAt: string;
@@ -84,6 +92,33 @@ export interface QueueCustodySweepResult {
   readonly merged: readonly number[];
   readonly admitted: readonly { readonly prNumber: number; readonly workerId: string }[];
 }
+
+export interface QueueCustodySemanticEvidence {
+  readonly prNumber: number;
+  readonly branch: string;
+  readonly failure: QueueFailure;
+  readonly history: readonly QueueCustodyFailure[];
+}
+
+export interface QueueCustodyRepairDeps {
+  readonly store: QueueCustodyStore;
+  readonly now: () => string;
+  readonly repair: Omit<RepairLaneDeps, "attachQueueFailure" | "escalateOwner">;
+  readonly adoptBranch: (ownerTicket: number, branch: string) => Promise<void>;
+  readonly readyForAgent: (
+    ownerTicket: number,
+    evidence: QueueCustodySemanticEvidence,
+  ) => Promise<void>;
+  readonly readyForHuman: (
+    ownerTicket: number,
+    evidence: QueueCustodySemanticEvidence,
+  ) => Promise<void>;
+}
+
+export type QueueCustodyRepairResult =
+  | RepairLaneResult
+  | { readonly outcome: "ready-for-agent"; readonly prNumber: number; readonly bounce: 1 }
+  | { readonly outcome: "ready-for-human"; readonly prNumber: number; readonly bounce: number };
 
 export type QueueCustodyHandoffResult =
   | { readonly ok: true; readonly prNumber: number; readonly outcome: "handed-off" }
@@ -169,4 +204,76 @@ export async function sweepQueueCustody(
     await deps.store.write({ version: 1, prs: next });
   }
   return { merged, admitted };
+}
+
+/**
+ * Run one admission-born repair Worker. Mechanical recovery remains entirely in
+ * the repair lane. Only its semantic verdict crosses back to the Ticket, with
+ * branch adoption and a durable two-bounce history owned here.
+ */
+export async function repairQueueCustody(
+  deps: QueueCustodyRepairDeps,
+  candidate: RepairCandidate & QueueCustodyIdentity,
+  generatorCommands: readonly string[],
+): Promise<QueueCustodyRepairResult> {
+  const result = await healQueueEjection(
+    {
+      ...deps.repair,
+      attachQueueFailure: async () => undefined,
+      escalateOwner: async () => undefined,
+    },
+    candidate,
+    generatorCommands,
+  );
+
+  const state = await deps.store.read();
+  const record = state.prs[String(candidate.prNumber)];
+  if (record == null) return result;
+
+  if (result.outcome !== "escalated") {
+    await deps.store.write({
+      version: 1,
+      prs: {
+        ...state.prs,
+        [String(candidate.prNumber)]: {
+          ...record,
+          status: "watching",
+          updatedAt: deps.now(),
+        },
+      },
+    });
+    return result;
+  }
+
+  const observedAt = deps.now();
+  const failure: QueueCustodyFailure = { ...result.failure, observedAt };
+  const history = [...record.semanticBounces, failure];
+  const bounce = history.length;
+  const status = bounce >= 2 ? "human" as const : "semantic-bounce" as const;
+  await deps.store.write({
+    version: 1,
+    prs: {
+      ...state.prs,
+      [String(candidate.prNumber)]: {
+        ...record,
+        status,
+        semanticBounces: history,
+        updatedAt: observedAt,
+      },
+    },
+  });
+
+  const evidence: QueueCustodySemanticEvidence = {
+    prNumber: candidate.prNumber,
+    branch: candidate.branch,
+    failure: result.failure,
+    history,
+  };
+  await deps.adoptBranch(candidate.ownerTicket, candidate.branch);
+  if (bounce >= 2) {
+    await deps.readyForHuman(candidate.ownerTicket, evidence);
+    return { outcome: "ready-for-human", prNumber: candidate.prNumber, bounce };
+  }
+  await deps.readyForAgent(candidate.ownerTicket, evidence);
+  return { outcome: "ready-for-agent", prNumber: candidate.prNumber, bounce: 1 };
 }
