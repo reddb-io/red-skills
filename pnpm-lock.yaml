@@ -406,6 +406,9 @@ importers:
 
   apps/vscode-extension-red-skills:
     dependencies:
+      '@reddb-io/brand-tokens':
+        specifier: workspace:*
+        version: link:../../packages/brand-tokens
       '@reddb-io/redskilled':
         specifier: workspace:*
         version: link:../redskilled
