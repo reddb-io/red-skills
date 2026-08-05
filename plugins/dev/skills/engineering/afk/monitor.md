@@ -37,7 +37,7 @@ non-empty `held_for_summon` bucket is still zero drainable work; release it with
 
 1. Globs `.red/tmp/workers/*/*/afk.state.json` and renders one section per active attempt.
 2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field), paired with `pid_start_time` when the platform exposes a stable process-start token. Attempts whose PID identity is dead or mismatched are flagged `stale`/`gone`; PID-live but agent-lane-quiet workers render `[quiet]` and are still counted as running.
-3. Reads sibling `afk.log` line counts through the monitor cursor and renders `log:<total>(+<new>)` when available, without re-reading whole logs on every tick.
+3. Reads the Worker's `worker.log.toonl` line counts through the monitor cursor and renders `log:<total>(+<new>)` when available, without re-reading whole logs on every tick.
 4. Renders WorkerVitals activity counters (`tools:<n> reason:<n> text:<n> wait:<n>`) so a quiet but pid-live worker can show useful progress signals.
 5. Renders the 48h sparkline header (next subsection) on every refresh.
 
@@ -168,7 +168,7 @@ supervisor under Codex:
 1. Fetch a sub-agent spawn primitive via `ToolSearch` (query:
    `spawn agent background monitor`).
 2. If unavailable, continue the worker launch and print:
-   `monitor loop unavailable in this runner; call the castle monitor tool (and worker_vitals for liveness); no-MCP fallback: run /dev:afk monitor or tail .red/tmp/workers/*/*/afk.log manually.`
+   `monitor loop unavailable in this runner; call the castle monitor tool (and worker_vitals for liveness); no-MCP fallback: run /dev:afk monitor or tail .red/tmp/workers/*/worker.log.toonl manually.`
 3. If available, emit the canonical prompt from the bundle (use `--mode run` for a
    single worker, `--mode fleet` for a supervisor, so the read-only rules stay
    identical across launches):

@@ -6,6 +6,7 @@ import {
 } from "../remote-branch.js";
 import { buildHandoff, exitProtocolFor, type HandoffComment } from "../handoff.js";
 import { assignOutputShaping, type OutputShapingConfig } from "../output-shaping.js";
+import { dirname, join } from "node:path";
 import { evaluateGoalPredicate } from "../goal-predicate.js";
 import {
   type AgentOutcome,
@@ -1301,7 +1302,7 @@ export function postAttemptContext(
     workspace,
     result: { status, outcome },
     attempt_n: input.attempt,
-    iter_log: `${input.attemptDir}/afk.log`,
+    iter_log: join(dirname(input.attemptDir), "worker.log.toonl"),
     state_file: `${input.attemptDir}/afk.state.toon`,
   });
 }

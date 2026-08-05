@@ -258,7 +258,9 @@ describe("WSL2 — the socket lands somewhere the kernel will actually bind", ()
     // that left the lease behind in the overlong one would be half a fallback.
     expect(paths.lockPath.startsWith(paths.runtimeDir)).toBe(true);
     expect(paths.leasePath.startsWith(paths.runtimeDir)).toBe(true);
-    expect(paths.eventLanePath.startsWith(paths.runtimeDir)).toBe(true);
+    expect(paths.eventLanePath).toBe(
+      join(WSL2_ENV.HOME!, ".red", "redskilled", "redskilled.log.toonl"),
+    );
   });
 
   it("prefers a fitting XDG_RUNTIME_DIR when one exists, so the fallback is a fallback", () => {

@@ -95,8 +95,8 @@ export interface RedskilledHostEvent {
   readonly signal: string | null;
 }
 
-/** The lane file's name inside the session runtime directory. */
-export const REDSKILLED_EVENT_LANE_FILE = "redskilled.events.toonl";
+/** The daemon's one structured log, inside its host-scoped home. */
+export const REDSKILLED_EVENT_LANE_FILE = "redskilled.log.toonl";
 
 export interface RecordEventInput {
   readonly event: RedskilledEventKind;

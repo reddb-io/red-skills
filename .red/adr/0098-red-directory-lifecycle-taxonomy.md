@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Amends ADR 0095 by moving the shared Repo store from the `.red/` root to the durable state tier. Amendment 1 separates host-daemon, Worker, and dispatch log ownership.
+Accepted. Amends ADR 0095 by moving the shared Repo store from the `.red/` root to the durable state tier. Amendment 1 separated host-daemon, Worker, and dispatch ownership; Amendment 2 consolidates runtime narration to one log per process owner.
 
 ## Context
 
@@ -35,7 +35,7 @@ Every writer under `.red/state/`, `.red/tmp/`, or `.red/researches/` owns a name
 | `.red/state/deaths/` | durable state | checkout launchers and Workers | Death records, live anchors, and attributed un-trap-able deaths for processes acting for this checkout. The `redskilled` daemon is expressly not a writer here; its corresponding lane is host-scoped (Amendment 1). |
 | `.red/state/branch-lock.yaml` | durable state | branch lock | Local branch lock state. |
 | `.red/state/red-skills.rdb` | durable state | shared Repo store | The shared RedDB file used by memory and rsp collections. This supersedes ADR 0095's `.red/red.rdb` location and the temporary `.red/tmp/red-skills.rdb` write-contract location. |
-| `.red/tmp/workers/` | disposable scratch | Worker | Per-project Worker lanes. **Amended 2026-07-21:** naming is flat `{id}/{issue}` — the `-a{n}` attempt ordinal is retired (ADR 0103); stale workspaces are swept by the AFK orphan policy. **Amended 2026-07-22:** each workspace owns its git checkout at the conventional direct child `{id}/{issue}/worktree`; castle-branded nested worktree paths are hygiene-only inputs until their TTL window expires. **Amended 2026-08-03:** the Worker's structured lifecycle log is `{id}/worker.log.toonl`, distinct from dated raw process captures (Amendment 1). |
+| `.red/tmp/workers/` | disposable scratch | Worker | Per-project Worker lanes. **Amended 2026-07-21:** naming is flat `{id}/{issue}` — the `-a{n}` attempt ordinal is retired (ADR 0103); stale workspaces are swept by the AFK orphan policy. **Amended 2026-07-22:** each workspace owns its git checkout at the conventional direct child `{id}/{issue}/worktree`; castle-branded nested worktree paths are hygiene-only inputs until their TTL window expires. **Amended 2026-08-04:** `{id}/worker.log.toonl` carries lifecycle, process output, narration, and heartbeat records together (Amendment 2). |
 | `.red/tmp/rsp/` | disposable scratch | rsp | Ephemeral rsp guards (resident wake lock). Registered 2026-07-21 to end the loose `rsp.wake.lock` at the tmp root. |
 | `.red/tmp/go-workers/` | disposable scratch | `/go` | Disposable issue workers. Existing collision-safe worker/attempt naming stays. |
 | `.red/tmp/scout-workers/` | disposable scratch | scout | Scout workers. Existing collision-safe worker/attempt naming stays. |
@@ -122,14 +122,10 @@ direct child `.red/tmp/workers/{id}/{issue}/worktree` (ADR 0103 and ADR 0105 as
 re-amended). Deleting this Worker directory after its liveness and issue-state
 guards clear deletes only that Worker's disposable artifacts.
 
-The canonical Worker lifecycle reader starts at
-`.red/tmp/workers/{id}/worker.log.toonl`. It contains structured Worker lifecycle
-events such as claims, phase changes, validation, and completion; the sibling
-`liveness.toonl` remains a separately protected heartbeat lane. For the
-issue-scoped inner run, readers use the records inside
-`.red/tmp/workers/{id}/{issue}/`, including `agent.log.toonl`, rather than a
-dated capture guessed from the Worker id. These lanes contain structured Worker
-lifecycle and inner-agent evidence, not the raw combined process stream.
+The canonical Worker reader starts at
+`.red/tmp/workers/{id}/worker.log.toonl`. Amendment 2 expands it from lifecycle
+events to the Worker's complete structured narrative. The sibling
+`liveness.toonl` remains a separately protected heartbeat anchor.
 
 ### 3. The dispatching session
 
@@ -147,6 +143,37 @@ from an earlier dispatch, or substitute the Worker's structured lane. A
 registration-lane process follows the same ownership rule but is captured as
 `worker-<daemon-worker-id>.log`; that daemon-minted id is an address for the host
 process, not the project's Worker id.
+
+## Amendment 2 — one log per process owner (#3220)
+
+Amendment 1 separated ownership correctly but let encoding and convenience split
+one Worker's evidence across `afk.log`, `agent.log.toonl`, `log.toonl`, a dated
+process capture, and the lifecycle lane. That made the name most readers opened
+the least complete account of what the Worker had done.
+
+There are now two canonical runtime logs:
+
+- `.red/tmp/workers/{id}/worker.log.toonl` contains everything one Worker did:
+  lifecycle facts, daemon-captured stdout/stderr, setup and agent narration,
+  iteration markers, waits, validation narration, and heartbeat messages.
+- `~/.red/redskilled/redskilled.log.toonl` contains everything the host daemon
+  records. It lives in the daemon-owned home because the daemon spans projects.
+
+Both are TOONL. Narrative records carry one prose `msg`, so `tail -f` stays
+readable while tools retain structured `kind`, identity, and payload fields.
+The old issue-local narrative/firehose/agent logs are retired; a reader never
+chooses among them.
+
+Two sidecars remain because they are not logs:
+
+- `validation.jsonl` is a gate artifact consumed as a validation contract, not
+  narration.
+- `liveness.toonl` is a liveness anchor consumed by the evaluator and reaper;
+  separating it prevents ordinary narration from manufacturing proof of life.
+
+Amendment 1's dispatch capture remains only for a detached process that is not a
+Worker. Once a dispatch has Worker identity, its process bytes are TOONL records
+in `worker.log.toonl`; a dated capture is not a second Worker log.
 
 ## Consequences
 

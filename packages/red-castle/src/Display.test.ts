@@ -724,7 +724,7 @@ describe("FileDisplay - TOONL framing", () => {
     ]);
   });
 
-  it("appends to an existing lane without a second header", async () => {
+  it("makes every row self-describing so another structured writer can interleave", async () => {
     const { logPath, layer } = setup();
     const again = Layer.provide(
       FileDisplay.layer(logPath, "toonl"),
@@ -741,12 +741,33 @@ describe("FileDisplay - TOONL framing", () => {
     }
 
     const log = readFileSync(logPath, "utf-8");
-    expect(log.split("\n").filter((line) => line.startsWith("[]{"))).toHaveLength(1);
+    expect(log.split("\n").filter((line) => line.startsWith("[]{"))).toHaveLength(4);
     expect(messages(logPath)).toEqual([
       "Run started",
       "tick",
       "Run started",
       "tick",
+    ]);
+  });
+
+  it("names narrative kinds when sharing a typed Worker lane", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sandcastle-display-worker-toonl-"));
+    const logPath = join(dir, "worker.log.toonl");
+    const layer = Layer.provide(
+      FileDisplay.layer(logPath, "toonl", "worker"),
+      NodeFileSystem.layer,
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const d = yield* Display;
+        yield* d.status("validating", "info");
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(parseRecords(readFileSync(logPath, "utf8"))).toEqual([
+      { at: expect.any(String), kind: "worker.run-started", msg: "Run started" },
+      { at: expect.any(String), kind: "worker.log", msg: "validating" },
     ]);
   });
 

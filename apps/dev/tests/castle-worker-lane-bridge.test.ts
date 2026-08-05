@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -75,7 +75,12 @@ describe("createCastleWorkerLaneBridge", () => {
       nowMs: () => Date.parse("2026-07-17T00:00:01.000Z"),
     });
 
-    await bridge.record("worker.claimed", { branch: "afk/wAB12/2064-slice" });
+    await bridge.log("preparing worktree");
+    await bridge.record(
+      "worker.heartbeat",
+      { signal: "vitals-sampler" },
+      "gate still running",
+    );
 
     const paths = createEnginePaths(redRoot);
     const workerPath = castleLanePath(paths, "worker", workerId);
@@ -83,18 +88,24 @@ describe("createCastleWorkerLaneBridge", () => {
     expect(workerPath.endsWith("worker.log.toonl")).toBe(true);
     expect(livenessPath.endsWith("liveness.toonl")).toBe(true);
 
-    await expect(readFile(workerPath, "utf8")).resolves.toContain("worker.claimed");
+    await expect(readFile(workerPath, "utf8")).resolves.toContain("preparing worktree");
     await expect(readFile(livenessPath, "utf8")).resolves.toContain("worker.heartbeat");
 
     const workerRecords = await readCastleLaneRecords(workerPath);
     expect(workerRecords).toEqual([
+      expect.objectContaining({ kind: "worker.log", msg: "preparing worktree" }),
       expect.objectContaining({
-        kind: "worker.claimed",
+        kind: "worker.heartbeat",
+        msg: "gate still running",
         worker_id: workerId,
         issue: 2064,
         attempt: 1,
       }),
     ]);
+
+    for (const redundant of ["afk.log", "agent.log.toonl", "log.toonl"]) {
+      await expect(access(join(attemptDir, redundant))).rejects.toMatchObject({ code: "ENOENT" });
+    }
 
     const attemptLiveness = parseLivenessRecords(await readFile(join(attemptDir, "liveness.toonl"), "utf8"));
     expect(attemptLiveness).toEqual([

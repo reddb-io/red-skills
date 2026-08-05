@@ -116,6 +116,9 @@ export function validateCastleLaneRecord(
   }
   assertOptionalNumber(raw, "issue");
   assertOptionalNumber(raw, "attempt");
+  if (raw.msg !== undefined && typeof raw.msg !== "string") {
+    throw new CastleLaneValidationError("castle record msg must be string");
+  }
   assertOptionalObject(raw, "payload");
   return record;
 }

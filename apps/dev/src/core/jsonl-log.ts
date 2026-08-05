@@ -1,6 +1,6 @@
 import { mkdir, appendFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { decode, encode, encodeLines, type JsonValue, type ToonlLineEmitter, type ToonlRecord } from "@reddb-io/toon";
+import { decode, encode, encodeLines, parseRecords, type JsonValue, type ToonlLineEmitter, type ToonlRecord } from "@reddb-io/toon";
 
 // The JSONL Log Module: owns the AFK structured-log lane format end to end.
 //
@@ -372,8 +372,12 @@ function completeLinesFrom(content: string, startByteOffset: number, includeFina
 
 function decodeToonlRow(header: string, line: string): JsonlLogRecord | null {
   try {
-    const value = decode(header.replace(/^\[(?:[0-9]+)?\]/, "[1]") + "\n" + line + "\n");
-    const row = Array.isArray(value) ? value[0] : value;
+    const row = header.startsWith("[]")
+      ? parseRecords(`${header}\n${line}\n`)[0]
+      : (() => {
+          const value = decode(header.replace(/^\[(?:[0-9]+)?\]/, "[1]") + "\n" + line + "\n");
+          return Array.isArray(value) ? value[0] : value;
+        })();
     return row && typeof row === "object" ? row as JsonlLogRecord : null;
   } catch {
     // TOONL readers are crash-tail tolerant during rollout.

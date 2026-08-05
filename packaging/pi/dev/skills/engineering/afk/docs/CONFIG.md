@@ -213,9 +213,9 @@ Every hook command emits explicit dispatch breadcrumbs around the shell call:
 `[afk:hooks] <point>: enter: <command>` and
 `[afk:hooks] <point>: exit rc=<n>: <command>`. Session-scoped hooks write those
 lines to the session output, per-issue hooks write them to the attempt's
-`afk.log`, and fleet hooks use the analogous `[afk:fleet-hooks]` prefix in the
-supervisor log. A quiet Worker can therefore still show policy/hook activity
-without pretending the inner agent lane advanced.
+parent Worker's `worker.log.toonl`, and project hooks use the analogous
+`[afk:fleet-hooks]` prefix in the project log. A quiet Worker can therefore
+still show policy/hook activity in its one narrative lane.
 
 ### Hook Hardening Contract
 

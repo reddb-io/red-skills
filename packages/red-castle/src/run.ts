@@ -1,5 +1,5 @@
 import { NodeContext, NodeFileSystem } from "@effect/platform-node";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import path, { join } from "node:path";
 import { styleText } from "node:util";
 import { Effect, Layer } from "effect";
@@ -264,6 +264,9 @@ export type LoggingOption =
        * whose log lane must be machine-decodable.
        */
       readonly format?: FileLogFormat;
+      /** Namespace TOONL kinds when the file is shared with another structured
+       * writer, for example `worker.log` lifecycle rows. */
+      readonly kindPrefix?: string;
     }
   /** Render progress and agent output as an interactive UI in the terminal (terminal mode). */
   | {
@@ -378,11 +381,11 @@ const buildVerboseRawLineSink = (
         // debugging dump never breaks the lane's decodability. The header is
         // emitted only when this sink is the very first writer.
         const payload = toonl
-          ? (existsSync(logPath) ? "" : `${FILE_LOG_TOONL_HEADER}\n`) +
+          ? `${FILE_LOG_TOONL_HEADER}\n` +
             encodeLines()
               .push({
                 at: new Date().toISOString(),
-                kind: "verbose",
+                kind: logging.kindPrefix ? `${logging.kindPrefix}.verbose` : "verbose",
                 msg: line,
               })
               .split("\n")
@@ -777,7 +780,11 @@ export async function run(
             hostRepoDir,
           });
           return Layer.provide(
-            FileDisplay.layer(resolvedLogging.path, resolvedLogging.format),
+                FileDisplay.layer(
+                  resolvedLogging.path,
+                  resolvedLogging.format,
+                  resolvedLogging.kindPrefix,
+                ),
             NodeFileSystem.layer,
           );
         })()

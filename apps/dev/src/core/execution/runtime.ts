@@ -336,11 +336,9 @@ export interface RunAgentInput {
   implementer?: ImplementerRuntimeProjection;
   /**
    * Absolute path sandcastle drains its own file-log to (the `logging.path` of
-   * the "file" mode). AFK points this at the attempt dir's `afk.log` — our ONE
-   * canonical log — so red-castle's setup narration (worktree / sandbox / deps)
-   * AND the inner agent's formatted stream land in the same file as the heartbeat
-   * lines, under `.red/`. (Was a separate `sandcastle.log`; unified so the log is
-   * never empty during setup.)
+   * the "file" mode). AFK points this at the Worker's `worker.log.toonl`, so
+   * setup narration and the formatted agent stream share the lifecycle and
+   * heartbeat reader in one structured lane.
    * Required to enable {@link onAgentEvent}: sandcastle only surfaces the stream
    * callback in log-to-file mode. Omitted → `buildRunOptions` leaves `logging`
    * unset and sandcastle uses its default location.
@@ -352,10 +350,8 @@ export interface RunAgentInput {
    * captures the stream itself). When set together with {@link logPath},
    * `buildRunOptions` wires it into sandcastle's `logging.onAgentStreamEvent`,
    * yielding one callback per text chunk / tool call. process-issue forwards
-   * each event to `agent.log.toonl` (the clean lane `reaper-signal` /
-   * `supervisor-fs` read for liveness) + the firehose — without it the lanes'
-   * mtime freezes at iteration start and the stall detector / monitor go blind
-   * to a live agent. sandcastle swallows any error this callback throws.
+   * each event into Worker activity/liveness state; sandcastle swallows any
+   * error this callback throws.
    */
   onAgentEvent?: (event: AgentStreamEvent) => void;
   /**
@@ -462,7 +458,7 @@ export interface SandcastleDeps {
    * Build the sandbox provider for a mode. `opts.mountPath` (issue #405) is the
    * absolute host attempt dir: under docker/podman it is added as a bind-mount at
    * the identical path inside the container so the attempt dir's proof-of-life
-   * lane (afk.state.toon / agent.log.toonl / log.toonl) AND the worktree
+   * artifacts (`afk.state.toon`, `liveness.toonl`, `validation.jsonl`) AND the worktree
    * sandcastle creates under it are host-visible in real time — the precondition
    * for arming the progress guard + heartbeat under isolation. Ignored for the
    * host-native `none` mode (no container to mount into).
@@ -712,7 +708,7 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
   }
   const hooks: RunOptions["hooks"] = { host: { onWorktreeReady: worktreeReady } };
   // Observability lane (native-path liveness): point sandcastle's file-log at
-  // the attempt dir's afk.log (the unified log, set by the caller) and, when a
+  // the Worker's canonical structured log (set by the caller) and, when a
   // sink is provided, forward each
   // agent stream event to it via `logging.onAgentStreamEvent`. sandcastle only
   // exposes the stream callback in "file" logging mode, so the callback rides
@@ -722,6 +718,8 @@ export function buildRunOptions(deps: SandcastleDeps, input: RunAgentInput): Run
     ? {
         type: "file",
         path: input.logPath,
+        format: "toonl",
+        kindPrefix: "worker",
         // Capture-time leak masking (issue #1368): every textual stream event
         // (raw line, text/reasoning message, result, tool-call args) passes
         // through the precomputed line redactor BEFORE the event sink and the

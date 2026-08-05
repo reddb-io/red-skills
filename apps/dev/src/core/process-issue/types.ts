@@ -395,6 +395,8 @@ export interface ProcessIssueDeps {
   envelope: EmitEnvelopeDeps;
   nowEpoch(): number;
   nowIso(): string;
+  /** Canonical structured log for everything this Worker did. */
+  workerLogPath?: string;
   appendIterLog(line: string): void;
   recordAgentEvent?(event: AgentStreamEvent): void;
   emitHeartbeat?(info: AttemptProgressInfo): void;

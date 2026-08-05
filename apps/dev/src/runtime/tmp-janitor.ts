@@ -303,7 +303,7 @@ async function collectWorkerArtifacts(tmpDir: string): Promise<{
         }
         observedPaths.push(worktree);
         artifacts.push({ worker_id: worker, kind: "worktree", path: worktree });
-        const log = join(issueDir, "worker.log.toonl");
+        const log = join(workersRoot, worker, "worker.log.toonl");
         if (await readText(log) !== null) {
           artifacts.push({ worker_id: worker, kind: "log", path: log });
         }

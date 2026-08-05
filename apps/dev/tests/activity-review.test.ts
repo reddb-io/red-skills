@@ -1,8 +1,8 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { decode } from "@reddb-io/toon";
+import { decode, encodeLines } from "@reddb-io/toon";
 import {
   activityReviewInterval,
   buildActivityReviewReport,
@@ -11,7 +11,6 @@ import {
   type ActivityReviewIssue,
 } from "../src/core/activity-review.js";
 import { collectTokenSummary, collectTokensFromObject, parseGitLogStats } from "../src/commands/activity-review.js";
-import { appendRecordToonlTaggedRow, buildRecord } from "../src/core/jsonl-log.js";
 import type { HistoryRecord } from "../src/core/history.js";
 
 const issue = (over: Partial<ActivityReviewIssue>): ActivityReviewIssue => ({
@@ -207,24 +206,16 @@ describe("activity review", () => {
     expect(collectTokensFromObject(newRaw)).toEqual({ input: 7, output: 11, total: 0, hits: 2 });
   });
 
-  it("activity-review token scan reads legacy JSONL and tagged-row TOONL attempt lanes", async () => {
+  it("activity-review token scan reads the canonical Worker log", async () => {
     const root = await mkdtemp(join(tmpdir(), "activity-review-firehose-"));
-    const attemptDir = join(root, "wAAAA", "1824-a1");
-    await mkdir(attemptDir, { recursive: true });
-    const log = join(attemptDir, "log.toonl");
-    const tagged: string[] = [];
-    const sink = async (_p: string, line: string) => void tagged.push(line);
-    await appendRecordToonlTaggedRow(log, "raw", { iteration: 1, line: "{\"inputTokens\":7,\"outputTokens\":11}" }, {
-      ts: "2026-07-15T12:00:00.000Z",
-      fields: { extra: { iteration: "1" } },
-      sink,
-    });
+    const workerDir = join(root, "wAAAA");
+    await mkdir(workerDir, { recursive: true });
+    const log = join(workerDir, "worker.log.toonl");
+    const lane = encodeLines({ trailer: false });
     await writeFile(
       log,
-      [
-        JSON.stringify(buildRecord("raw", { iteration: 0, line: "{\"inputTokens\":3,\"outputTokens\":5}" }, "2026-07-15T11:00:00.000Z")),
-        ...tagged,
-      ].join("\n") + "\n",
+      lane.push({ at: "2026-07-15T11:00:00.000Z", kind: "worker.stdout", msg: "{\"inputTokens\":3,\"outputTokens\":5}" })
+        + lane.push({ at: "2026-07-15T12:00:00.000Z", kind: "worker.stdout", msg: "{\"inputTokens\":7,\"outputTokens\":11}" }),
       "utf8",
     );
 
@@ -238,13 +229,11 @@ describe("activity review", () => {
 
   it("activity-review token scan resumes from disposable cursor state without changing results", async () => {
     const root = await mkdtemp(join(tmpdir(), "activity-review-cursor-"));
-    const attemptDir = join(root, "wAAAA", "1825-a1");
-    await mkdir(attemptDir, { recursive: true });
-    const log = join(attemptDir, "log.toonl");
-    await appendRecordToonlTaggedRow(log, "raw", { iteration: 1, line: "{\"inputTokens\":7,\"outputTokens\":11}" }, {
-      ts: "2026-07-15T12:00:00.000Z",
-      fields: { extra: { iteration: "1" } },
-    });
+    const workerDir = join(root, "wAAAA");
+    await mkdir(workerDir, { recursive: true });
+    const log = join(workerDir, "worker.log.toonl");
+    const lane = encodeLines({ trailer: false });
+    await writeFile(log, lane.push({ at: "2026-07-15T12:00:00.000Z", kind: "worker.stdout", msg: "{\"inputTokens\":7,\"outputTokens\":11}" }));
     const start = new Date("2026-07-15T00:00:00.000Z");
     const end = new Date("2026-07-16T00:00:00.000Z");
 
@@ -260,10 +249,7 @@ describe("activity review", () => {
       rows: [{ input: 7, output: 11, total: 0 }],
     });
 
-    await appendRecordToonlTaggedRow(log, "raw", { iteration: 2, line: "{\"inputTokens\":13,\"outputTokens\":17}" }, {
-      ts: "2026-07-15T12:05:00.000Z",
-      fields: { extra: { iteration: "2" } },
-    });
+    await appendFile(log, lane.push({ at: "2026-07-15T12:05:00.000Z", kind: "worker.stdout", msg: "{\"inputTokens\":13,\"outputTokens\":17}" }));
     const resumed = await collectTokenSummary(root, start, end);
     expect(resumed).toEqual({ available: true, input: 20, output: 28, total: null, sourceRecords: 2 });
 

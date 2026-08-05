@@ -14,6 +14,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseRecords } from "@reddb-io/toon";
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { readRedskilledEvents } from "../src/event-lane.js";
@@ -233,6 +234,9 @@ describe("the daemon writes its own facts into a registration's log path", () =>
       return text.includes("worker.claimed") ? text : null;
     });
     expect(written).toContain("worker.claimed #3079");
+    expect(parseRecords(written)).toEqual([
+      expect.objectContaining({ kind: "worker.stdout", msg: "worker.claimed #3079" }),
+    ]);
 
     // And the surfaces read the path off the event lane, which is where the
     // herdr plugin and the VS Code extension both look for it.

@@ -151,24 +151,25 @@ export const SilentDisplay = {
  */
 export type FileLogFormat = "text" | "toonl";
 
-/** The TOONL log lane's ONE segment header. Every row carries all three fields,
- * so the header is written once at file creation and never rotates. */
+/** The TOONL narrative segment header. Shared lanes repeat it before each row so
+ * another structured writer cannot change the active shape underneath us. */
 export const FILE_LOG_TOONL_HEADER = "[]{at,kind,msg}:";
 
-/** Encode one narrative line as a TOONL row (header-less, newline-terminated). */
-const toonlRow = (kind: string, msg: string): string => {
+/** Encode one narrative line as a self-describing TOONL segment. */
+const toonlSegment = (kind: string, msg: string, kindPrefix?: string): string => {
   const chunk = encodeLines().push({
     at: new Date().toISOString(),
-    kind,
+    kind: kindPrefix ? `${kindPrefix}.${kind}` : kind,
     msg,
   });
-  return chunk.slice(chunk.indexOf("\n") + 1);
+  return chunk;
 };
 
 export const FileDisplay = {
   layer: (
     filePath: string,
     format: FileLogFormat = "text",
+    kindPrefix?: string,
   ): Layer.Layer<Display, never, FileSystem.FileSystem> =>
     Layer.effect(
       Display,
@@ -178,11 +179,8 @@ export const FileDisplay = {
           .makeDirectory(dirname(filePath), { recursive: true })
           .pipe(Effect.orDie);
         const toonl = format === "toonl";
-        const existing = toonl
-          ? yield* fs.exists(filePath).pipe(Effect.orElseSucceed(() => false))
-          : false;
         const delimiter = toonl
-          ? `${existing ? "" : `${FILE_LOG_TOONL_HEADER}\n`}${toonlRow("run-started", "Run started")}`
+          ? toonlSegment("run-started", "Run started", kindPrefix)
           : `\n--- Run started: ${new Date().toISOString()} ---\n`;
         yield* fs
           .writeFileString(filePath, delimiter, { flag: "a" })
@@ -205,10 +203,10 @@ export const FileDisplay = {
             if (toonl) {
               // Flush any half-streamed prose as its own row first, so the
               // structured entry never lands mid-record.
-              const flushed = pending.length > 0 ? toonlRow("agent", pending) : "";
+              const flushed = pending.length > 0 ? toonlSegment("agent", pending, kindPrefix) : "";
               pending = "";
               return write(
-                flushed + line.split("\n").map((part) => toonlRow("log", part)).join(""),
+                flushed + line.split("\n").map((part) => toonlSegment("log", part, kindPrefix)).join(""),
               );
             }
             const prefix = midLine ? "\n" : "";
@@ -224,7 +222,7 @@ export const FileDisplay = {
               const parts = pending.split("\n");
               pending = parts.pop() ?? "";
               return parts.length > 0
-                ? write(parts.map((part) => toonlRow("agent", part)).join(""))
+                ? write(parts.map((part) => toonlSegment("agent", part, kindPrefix)).join(""))
                 : Effect.void;
             }
             midLine = !chunk.endsWith("\n");

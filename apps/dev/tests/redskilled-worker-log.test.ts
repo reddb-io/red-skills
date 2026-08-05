@@ -37,18 +37,15 @@ async function scratch(): Promise<string> {
 }
 
 describe("what a registration declares", () => {
-  it("names one file per Worker, in the disposable logs lane", () => {
+  it("names the Worker's canonical structured log", () => {
     const path = registrationLogPathTemplate("/repo", "2026-08-02");
 
-    expect(path).toBe("/repo/.red/tmp/logs/2026-08-02/worker-{{worker_id}}.log");
+    expect(path).toBe("/repo/.red/tmp/workers/{{worker_id}}/worker.log.toonl");
   });
 
-  it("does not point the host at a lane the project itself writes", () => {
-    // The daemon PIPES a Worker's stdout into the file it opens, so a declared
-    // `worker.log.toonl` would interleave plain text into a TOONL lane — the log
-    // this whole mechanism exists to expose.
-    expect(registrationLogPathTemplate("/repo", "2026-08-02")).not.toContain("worker.log.toonl");
-    expect(registrationLogPathTemplate("/repo", "2026-08-02")).not.toContain("/workers/");
+  it("does not mint a dated raw capture beside the Worker log", () => {
+    expect(registrationLogPathTemplate("/repo", "2026-08-02")).not.toContain("/logs/");
+    expect(registrationLogPathTemplate("/repo", "2026-08-02")).not.toContain("2026-08-02");
   });
 
   it("hands each Worker the host's own handle for it, without renaming the work's", () => {
