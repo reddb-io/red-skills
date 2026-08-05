@@ -73,7 +73,7 @@ function renderPlain(path: string, inspection: CodexStatuslineInspection, change
     lines.push("fix: afk codex-statusline --fix");
   }
   lines.push(
-    "boundary: Codex supports built-in footer IDs only; read rich AFK worker state from the castle `monitor` and `worker_vitals` tools (no-MCP fallback: /afk monitor).",
+    "boundary: Codex supports built-in footer IDs only; read rich AFK worker state from castle `status {scope: worker}` (no-MCP fallback: /afk monitor).",
   );
   lines.push("opencode: AFK API-auth runner only; no interactive host footer/plugin UI.");
   return `${lines.join("\n")}\n`;
