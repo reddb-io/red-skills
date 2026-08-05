@@ -1,12 +1,17 @@
 import { z } from "zod/v3";
 import {
+  monitorContract,
   queueStatusContract,
+  workerVitalsContract,
   type MonitorOutput,
   type QueueStatusOutput,
   type WorkerVitalsOutput,
   type WorkerVitalsProjectedOutput,
 } from "./contracts.js";
-import { deprecatedStatusAlias } from "./status.js";
+import {
+  deprecatedStatusAlias,
+  deprecatedStatusAliasContract,
+} from "./status.js";
 import type { CastleMcpTool } from "./tool.js";
 import { workSelectorShape, type WorkSelectorInput } from "./project.js";
 
@@ -69,6 +74,7 @@ export function createObservabilityTools(
         live_only: z.boolean().default(true),
         fields: z.array(z.string().min(1)).optional(),
       },
+      outputContract: deprecatedStatusAliasContract(workerVitalsContract),
       invoke: async (input) =>
         deprecatedStatusAlias(
           "worker_vitals",
@@ -96,6 +102,7 @@ export function createObservabilityTools(
       description:
         "DEPRECATED: use status { scope: worker }. Returns worker monitor inputs and names its replacement.",
       inputSchema: {},
+      outputContract: deprecatedStatusAliasContract(monitorContract),
       invoke: async () =>
         deprecatedStatusAlias("monitor", "worker", await deps.monitor()),
     },
