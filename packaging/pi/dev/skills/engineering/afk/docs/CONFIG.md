@@ -107,7 +107,7 @@ resolved tiers as documented by the model-tier policy.
 
 Every spawn appends a route line to the Worker log and stamps
 `current.model_tier`, `current.model`, and `current.effort` in the Worker state.
-The castle `monitor` and `worker_vitals` tools carry the active tier as a field;
+Castle `status { scope: worker }` carries the active tier as a field;
 the no-MCP fallback `npx -y -p @reddb-io/red-skills@<version> red-skills-dev monitor` renders it as `tier:<name>` on the
 Worker row, alongside the existing vitals.
 
