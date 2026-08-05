@@ -180,6 +180,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 'catalog:'
         version: 1.29.0(zod@3.25.76)
+      '@reddb-io/brand-tokens':
+        specifier: workspace:*
+        version: link:../../packages/brand-tokens
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info

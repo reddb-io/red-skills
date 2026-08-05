@@ -5,20 +5,20 @@
 // Claude Code layout (issue #1165): a repo-global HEADER line, always rendered,
 // then ONE line per live AFK worker.
 //
-//   line 1 (header, ALWAYS): [wine » project (branch) v· model·effort] ctx=… 5h=… 7d=… prs=… iss=… loc=+A -R
+//   line 1 (header, ALWAYS): [brand » project (branch) v· model·effort] ctx=… 5h=… 7d=… prs=… iss=… loc=+A -R
 //   line 2..N (one per live worker): the terse per-worker statusline line
 //
 // Only the leading IDENTITY ZONE of line 1 (project + model·effort) carries a
-// wine-red BACKGROUND; the rest of line 1 is background-transparent, each KPI a
-// `key=value` pair (light-red KEY, default-fg VALUE). The header's new tokens:
+// brand BACKGROUND; the rest of line 1 is background-transparent, each KPI a
+// `key=value` pair (paper KEY, default-fg VALUE). The header's new tokens:
 // `5h=`/`7d=` are the Pro/Max rate-limit windows (rendered only when the payload
 // exposes them); `prs=`/`iss=` are repo-global GitHub counts; `loc=+A -R` is the
 // LOCAL branch diff vs origin/main.
 //
 // The per-worker lines share the monitor's `workerFields` data extraction
 // (core/monitor.ts) and keep the same vitals vocabulary (`tls`/`rsn`/`txt`),
-// while rendering the compact Claude Code-specific layout. Each line is tinted
-// soft-red and ends with a reset so the background never bleeds. Zero live
+// while rendering the compact Claude Code-specific layout. Each line follows
+// the neutral hierarchy and ends with a reset so the background never bleeds. Zero live
 // workers → only line 1 is emitted.
 //
 // CODEX keeps the single aggregate line: its `tui.status_line` footer is
@@ -50,22 +50,24 @@ import {
   type StatuslinePreset,
   type StatuslineInput,
 } from "./statusline.js";
+import {
+  tokenToAnsiBackground,
+  tokenToAnsiForeground,
+} from "@reddb-io/brand-tokens";
 import { AFK_PHASE_ORDER, isLandingPhase, macroPhase } from "./mirror.js";
 import { formatDiff, workerFields, type CompactWorker } from "./monitor.js";
 
-/** Truecolor SGR helpers. */
-const WINE = "\x1b[48;2;114;47;55m"; // identity-zone bg (model block)
-const WINE2 = "\x1b[48;2;88;36;42m"; // identity-zone bg (project block)
+/** Brand-token-derived SGR paint. */
+const BRAND_BACKGROUND = tokenToAnsiBackground("brand.primary");
+const BRAND_INK = tokenToAnsiForeground("brand.on-primary");
+const MODEL_BACKGROUND = tokenToAnsiBackground("neutral.900");
+const PAPER = tokenToAnsiForeground("paper");
 const NOBG = "\x1b[49m"; // drop background → terminal default (the transparent zone)
-const WHITE = "\x1b[38;2;255;255;255m"; // identity-zone text
-const KEY = "\x1b[38;2;255;214;214m"; // transparent-zone KEY: very light red ≈ white, high contrast
+const KEY = PAPER;
 const VAL = "\x1b[39m"; // transparent-zone VALUE: terminal default foreground
-const SOFT = "\x1b[38;2;224;138;148m"; // transparent-zone general font: a lighter red (runner, +/-/# sigils, ·phase)
-const DIM = "\x1b[38;2;201;150;158m"; // identity-zone branch/version
-const GREEN = "\x1b[38;2;96;214;128m"; // healthy rsp resident
-const RED = "\x1b[38;2;255;95;95m"; // unreachable rsp resident
-const YELLOW = "\x1b[38;2;240;200;120m"; // current lifecycle stage
-const GOLD = "\x1b[38;2;240;200;120m"; // » accent
+const SOFT = tokenToAnsiForeground("neutral.400");
+const DIM = tokenToAnsiForeground("neutral.500");
+const SPOTLIGHT = tokenToAnsiForeground("red.500");
 const BOLD = "\x1b[1m";
 const NOBOLD = "\x1b[22m";
 const RESET = "\x1b[0m";
@@ -118,7 +120,7 @@ function padVisible(s: string, width: number): string {
   return s + " ".repeat(Math.max(0, width - visibleWidth(s)));
 }
 
-/** A transparent-zone `key=value`: light-red KEY, default-fg VALUE, back to SOFT. */
+/** A transparent-zone `key=value`: paper KEY, default-fg VALUE, back to SOFT. */
 const kv = (key: string, value: string): string => `${KEY}${key}=${VAL}${value}${SOFT}`;
 
 /** The `+A -R` signed-pair value (a zero side is omitted), or null when both are
@@ -161,26 +163,26 @@ function proofOfLifeCell(worker: CompactWorker, fields: ReturnType<typeof worker
   return fields.wait ?? `hb=${heartbeatDisplay(worker)}`;
 }
 
-// ---------- identity zone (wine background) ----------
+// ---------- identity zone (brand field) ----------
 
 /** `» bold-project dim-(branch) dim-vX`. Branch truncated like the plain renderer. */
 function projectContent(project: ProjectInput, includeVersion = true): string {
   let ref = "";
   if (project.branch) {
     const b = project.branch.length > BRANCH_MAX ? `${project.branch.slice(0, 27)}…` : project.branch;
-    ref = ` ${DIM}(${b})${WHITE}`;
+    ref = ` (${b})`;
   } else if (project.detachedSha) {
-    ref = ` ${DIM}(detached ${project.detachedSha})${WHITE}`;
+    ref = ` (detached ${project.detachedSha})`;
   }
   const version = includeVersion ? renderProjectVersionLabel(project, "always") : null;
-  const ver = version ? ` ${DIM}${version}${WHITE}` : "";
-  return `${GOLD}»${WHITE} ${BOLD}${project.basename}${NOBOLD}${ref}${ver}`;
+  const ver = version ? ` ${version}` : "";
+  return `» ${BOLD}${project.basename}${NOBOLD}${ref}${ver}`;
 }
 
 /** `model·effort`, or null when there is no model. */
 function modelContent(claude: ClaudeInput | undefined): string | null {
   if (!claude || !claude.model) return null;
-  return claude.effort ? `${claude.model}${DIM}·${WHITE}${claude.effort}` : claude.model;
+  return claude.effort ? `${claude.model}·${claude.effort}` : claude.model;
 }
 
 // ---------- line 1: header ----------
@@ -257,12 +259,12 @@ function validationGateKv(gate: ValidationGateInput | undefined): string[] {
 function rspKv(rsp: RspStatusInput | undefined): string[] {
   const block = renderRspBlock(rsp);
   if (!rsp || !block) return [];
-  if (rsp.state === "ready") return [`${GREEN}${block}${SOFT}`];
-  if (rsp.state === "error") return [`${RED}${block}${SOFT}`];
+  if (rsp.state === "ready") return [`${SOFT}${block}${SOFT}`];
+  if (rsp.state === "error") return [`${SPOTLIGHT}${block}${SOFT}`];
   return [`${DIM}${block}${SOFT}`];
 }
 
-/** Line 1 — wine identity zone (project + model) then a transparent KPI tail. */
+/** Line 1 — brand identity plus a receded model block, then a transparent KPI tail. */
 export function renderHeaderLine(
   project: ProjectInput,
   claude: ClaudeInput | undefined,
@@ -273,9 +275,9 @@ export function renderHeaderLine(
   docs?: DocsInput,
   validationGate?: ValidationGateInput,
 ): string {
-  let s = `${WINE2}${WHITE} ${projectContent(project, preset === "full")} `;
+  let s = `${BRAND_BACKGROUND}${BRAND_INK} ${projectContent(project, preset === "full")} `;
   const model = modelContent(claude);
-  if (preset === "full" && model !== null) s += `${WINE}${WHITE} ${model} `;
+  if (preset === "full" && model !== null) s += `${MODEL_BACKGROUND}${PAPER} ${model} `;
   // Drop the background: from here on the line is transparent.
   s += `${NOBG}${SOFT}`;
   const tail = preset === "short"
@@ -318,20 +320,19 @@ function progressCell(phase: string, activity: string): string {
   return [phase, activity].filter(Boolean).join("·");
 }
 
-// Lifecycle-bar ramp: three steps of the statusline's wine family, so the bar
-// reads as part of the identity zone instead of a green/yellow traffic light.
-// The failure cursor stays the saturated {@link RED} — clearly hotter than the
-// pale-pink healthy cursor.
-const BAR_DONE = "\x1b[38;2;240;110;120m"; // completed cells: full-bodied red
-const BAR_CURRENT = "\x1b[38;2;255;214;214m"; // healthy cursor: brightest pale pink in the ramp
-const BAR_AHEAD = "\x1b[38;2;146;84;94m"; // future cells: receded dark wine
+// Lifecycle-bar ramp: completed, current, and future are neutral intensity.
+// A failed/parked cursor changes glyph as well as taking the sole spotlight.
+const BAR_DONE = tokenToAnsiForeground("neutral.300");
+const BAR_CURRENT = tokenToAnsiForeground("neutral.0");
+const BAR_AHEAD = tokenToAnsiForeground("neutral.700");
 
 function lifecycleBar(phase: string, failed: boolean): string {
   const current = Math.max(0, (AFK_PHASE_ORDER as readonly string[]).indexOf(macroPhase(phase)));
   if (current === AFK_PHASE_ORDER.length - 1) {
     return `${BAR_DONE}${"█".repeat(AFK_PHASE_ORDER.length)}${SOFT}`;
   }
-  return `${BAR_DONE}${"█".repeat(current)}${failed ? RED : BAR_CURRENT}▶${BAR_AHEAD}${"░".repeat(AFK_PHASE_ORDER.length - current - 1)}${SOFT}`;
+  const cursor = failed ? `${SPOTLIGHT}!` : `${BAR_CURRENT}▶`;
+  return `${BAR_DONE}${"█".repeat(current)}${cursor}${BAR_AHEAD}${"░".repeat(AFK_PHASE_ORDER.length - current - 1)}${SOFT}`;
 }
 
 function workerCells(worker: CompactWorker, now: number): WorkerCells {
@@ -400,7 +401,7 @@ function renderWorkerLines(
  *
  * A visual sibling of line 1: the `wID` is BOLD + red, and every k=v token
  * (`run=`/`iss=`/`loc=`/`tks=` and each vital `tls=`/`rsn=`/`txt=`) reuses the
- * same {@link kv} colour convention line 1 uses — light-red KEY, default-fg
+ * same {@link kv} colour convention line 1 uses — paper KEY, default-fg
  * VALUE — so no token is a distinct blob. Existing keys stay exactly 3 letters
  * (house rule, issue #1176); the proof-of-life token keeps the canonical `hb=`
  * spelling from #2480. The vitals use the shared monitor/statusline
