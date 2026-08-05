@@ -1,5 +1,16 @@
 # @reddb-io/release
 
+## 3.8.0
+
+### Minor Changes
+
+- 0bc9856: Parse changeset queues and report the pending release from the release engine status command.
+
+### Patch Changes
+
+- @reddb-io/shared@3.8.0
+- @reddb-io/build-info@3.8.0
+
 ## 3.7.1
 
 ### Patch Changes
