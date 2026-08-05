@@ -97,6 +97,13 @@ import type { WorkerStateRecordReclaimPlan } from "./worker-state-reclaim.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 import { readHitlTypeLabels } from "./config.js";
 import { isRefused, planTransition, type StateTransition } from "./state-transition.js";
+import {
+  appendQuarantineDiagnosis,
+  makeBlocker,
+  parseCurrentBlocker,
+  quarantineMarker,
+  upsertCurrentBlocker,
+} from "./blocker-state.js";
 
 // ---------- precheck (hard preconditions) ----------
 
@@ -532,23 +539,17 @@ async function quarantineClaimIssue(
   issue: number,
   summary: string,
 ): Promise<void> {
-  const marker = `<!-- afk:quarantine v1 issue=#${issue} -->`;
+  const marker = quarantineMarker(issue);
   try {
     const body = await deps.gh.viewBody?.(issue);
     if (body !== undefined && !body.includes(marker)) {
-      const blocker = body.includes("<!-- red:blocker-state v1 -->")
-        ? ""
-        : [
-            "## Current blocker",
-            "",
-            "<!-- red:blocker-state v1 -->",
-            "status: blocked",
-            "kind: claim-hygiene",
-            `summary: ${summary}`,
-            "next: Resolve the claim state, then clear this blocker for curator release.",
-            "<!-- /red:blocker-state -->",
-            "",
-          ].join("\n");
+      const withBlocker = parseCurrentBlocker(body)
+        ? body
+        : upsertCurrentBlocker(body, makeBlocker({
+            kind: "claim-hygiene",
+            summary,
+            next: "Resolve the claim state, then clear this blocker for curator release.",
+          }));
       const diagnosis = [
         marker,
         "🤖 Claim-hygiene probe quarantined this issue instead of halting the fleet.",
@@ -557,7 +558,7 @@ async function quarantineClaimIssue(
       ].join("\n");
       await deps.gh.editBody?.(
         issue,
-        `${body.replace(/\s+$/, "")}\n\n${blocker}## Quarantine diagnosis\n\n${diagnosis}\n`,
+        appendQuarantineDiagnosis(withBlocker, issue, diagnosis),
       );
     }
   } catch (error) {

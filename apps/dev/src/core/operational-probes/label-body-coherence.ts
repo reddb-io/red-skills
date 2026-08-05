@@ -1,4 +1,10 @@
-import { clearCurrentBlocker, parseCurrentBlocker, type CurrentBlocker } from "../blocker-state.js";
+import {
+  appendQuarantineDiagnosis,
+  clearCurrentBlocker,
+  parseCurrentBlocker,
+  quarantineMarker,
+  type CurrentBlocker,
+} from "../blocker-state.js";
 import { LABEL_READY } from "../triage-labels.js";
 import type {
   LabelBodyCoherenceIssueInput,
@@ -99,7 +105,7 @@ function labelBodyCoherenceData(finding: OperationalProbeResult): LabelBodyCoher
 export function buildLabelBodyCoherenceQuarantineComment(action: LabelBodyCoherenceAction): string {
   const ref = action.blocker.ref ? ` ref=${action.blocker.ref}` : "";
   return [
-    `<!-- afk:quarantine v1 issue=#${action.issue} -->`,
+    quarantineMarker(action.issue),
     `🤖 /afk coherence probe quarantined this issue: it carried \`ready-for-agent\` while the body still contained an active \`Current blocker\`.`,
     ``,
     `**Incoherence:** labels=\`[${action.labels.join(",")}]\` body-blocker=\`{kind=${action.blocker.kind}${ref} summary=${JSON.stringify(action.blocker.summary)}}\``,
@@ -112,10 +118,11 @@ export function buildLabelBodyCoherenceQuarantineComment(action: LabelBodyCohere
  * existing body. The marker makes retries idempotent even when a prior label
  * mutation failed after the body write. */
 export function appendLabelBodyCoherenceQuarantineDiagnosis(action: LabelBodyCoherenceAction): string {
-  const marker = `<!-- afk:quarantine v1 issue=#${action.issue} -->`;
-  if (action.body.includes(marker)) return action.body;
-  const body = action.body.replace(/\s+$/, "");
-  return `${body}\n\n## Quarantine diagnosis\n\n${buildLabelBodyCoherenceQuarantineComment(action)}\n`;
+  return appendQuarantineDiagnosis(
+    action.body,
+    action.issue,
+    buildLabelBodyCoherenceQuarantineComment(action),
+  );
 }
 
 function archiveBody(action: LabelBodyCoherenceAction): string {

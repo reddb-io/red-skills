@@ -117,6 +117,22 @@ describe("auditDeadends — per-class detection with pinned cure", () => {
     expect(cls.findings.map((f) => f.subject)).toEqual(["#300"]);
   });
 
+  it("quarantines a malformed status: blocked record and names its defect", () => {
+    const malformed = [
+      "<!-- red:blocker-state v1 -->",
+      "status: blocked",
+      "kind: runner",
+      "<!-- /red:blocker-state -->",
+    ].join("\n");
+    const report = auditDeadends(baseInputs({
+      issues: [{ number: 303, labels: ["ready-for-agent"], body: malformed }],
+    }));
+
+    const finding = findingsFor(report, "active_current_blocker").findings[0]!;
+    expect(finding.subject).toBe("#303");
+    expect(finding.detail).toContain("malformed-blocker-state");
+  });
+
   it("detects a dependency-blocked Ticket whose req targets all closed → unblock_sweep", () => {
     const report = auditDeadends(
       baseInputs({

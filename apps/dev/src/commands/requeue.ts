@@ -24,12 +24,7 @@ import { encodeLines } from "@reddb-io/toon";
 import { parseFlags, type FlagSchema } from "@reddb-io/shared/args.js";
 import { execTool, type ExecFn } from "../runtime/exec.js";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
-import { planRequeue, type RequeuePlan } from "../core/requeue.js";
-import {
-  applyTransition,
-  isRefused,
-  planTransition,
-} from "../core/state-transition.js";
+import { applyRequeue, planRequeue, type RequeuePlan } from "../core/requeue.js";
 import { parseClaimRecords, renderClaimComment, type RawClaimComment } from "../core/claim.js";
 import { LABEL_READY } from "../core/triage-labels.js";
 import { reconcile, type ReconcileDeps, type ReconcileInput } from "../core/reconcile.js";
@@ -187,7 +182,7 @@ function ghFor(cwd: string, repo: string): RequeueGh {
   };
 }
 
-async function verifyFreshBase(
+export async function verifyFreshBase(
   cwd: string,
   issueBody: string,
 ): Promise<RequeueBaseFreshnessResult> {
@@ -247,20 +242,6 @@ async function sweepRequeueClaims(gh: RequeueGh, issue: number): Promise<string[
     );
   }
   return owners;
-}
-
-function directiveComment(plan: RequeuePlan, guidance?: string): string {
-  const lines = [
-    "<details data-kind=\"directive\">",
-    "<summary>Requeue</summary>",
-    "",
-    "Human guidance:",
-    guidance?.trim() || "(none recorded)",
-    "",
-    `Disposition:\nrequeued to ready-for-agent${plan.activeBlocker ? ` (cleared active blocker: ${plan.activeBlocker.kind})` : ""}`,
-    "</details>",
-  ];
-  return lines.join("\n");
 }
 
 async function resolveRepo(cwd: string, explicit?: string): Promise<string> {
@@ -590,23 +571,6 @@ export async function executeRequeue(
   const isBaseStale =
     plan.activeBlocker?.kind === "base-stale" ||
     plan.removeLabels.includes("blocked:base-stale");
-  if (plan.requeueable && isBaseStale) {
-    const freshness = await (
-      options.verifyBaseFreshness ?? ((body) => verifyFreshBase(cwd, body))
-    )(issueState.body);
-    if (!freshness.ok) {
-      return {
-        issue: input.issue,
-        plan,
-        applied: false,
-        outcome: "refused",
-        exitCode: 1,
-        reason: `base freshness verification failed: ${freshness.evidence}`,
-        ...(adoptBranch ? { adoptBranch } : {}),
-      };
-    }
-  }
-
   if (input.dryRun) {
     return {
       issue: input.issue,
@@ -622,29 +586,42 @@ export async function executeRequeue(
   let removeLabels: string[] | undefined;
   let addLabels: string[] | undefined;
   if (plan.requeueable) {
-    await sweepRequeueClaims(gh, input.issue);
-    if (plan.bodyChanged) await gh.editBody(input.issue, plan.body);
-    await gh.comment(input.issue, directiveComment(plan, guidance));
-    const lifecyclePlan = planTransition(issueState.labels, { kind: "queue" });
-    if (isRefused(lifecyclePlan)) {
-      throw new Error(`requeue transition refused: ${lifecyclePlan.reason}`);
-    }
-    removeLabels = [...plan.removeLabels];
-    addLabels = [...plan.addLabels];
-    await applyTransition(
+    const transition = await applyRequeue(
       {
-        editIssue: async (issue, edit) => {
-          await gh.editLabels(issue, [...edit.remove], [...edit.add]);
-          return true;
-        },
-        readBody: async () => plan.body,
+        verifyBaseFreshness: options.verifyBaseFreshness
+          ?? (isBaseStale
+            ? (body) => verifyFreshBase(cwd, body)
+            : async () => ({ ok: true, evidence: "fresh queue base" })),
+        releaseClaims: (issue) => sweepRequeueClaims(gh, issue),
+        editBody: (issue, body) => gh.editBody(issue, body),
+        comment: (issue, body) => gh.comment(issue, body),
+        editLabels: (issue, remove, add) => gh.editLabels(issue, remove, add),
       },
-      input.issue,
-      { remove: removeLabels, add: addLabels },
+      {
+        issue: input.issue,
+        authority: "machine",
+        body: issueState.body,
+        labels: issueState.labels,
+        guidance,
+        adoptBranch: adoptBranch !== undefined,
+      },
     );
+    if (!transition.applied) {
+      return {
+        issue: input.issue,
+        plan: transition.plan,
+        applied: false,
+        outcome: "refused",
+        exitCode: 1,
+        reason: transition.reason,
+        ...(adoptBranch ? { adoptBranch } : {}),
+      };
+    }
+    removeLabels = [...transition.plan.removeLabels];
+    addLabels = [...transition.plan.addLabels];
     return {
       issue: input.issue,
-      plan,
+      plan: transition.plan,
       applied: true,
       removeLabels,
       addLabels,

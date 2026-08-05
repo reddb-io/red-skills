@@ -1,4 +1,4 @@
-import { clearCurrentBlocker, parseCurrentBlocker } from "./blocker-state.js";
+import { applyRequeue, type RequeueFreshnessResult } from "./requeue.js";
 import { isRefused, planTransition } from "./state-transition.js";
 
 /**
@@ -22,6 +22,7 @@ export interface HitlResolveDeps {
   viewBody(issue: number): Promise<string>;
   /** Overwrite the issue body with the new markdown. */
   editBody(issue: number, body: string): Promise<void>;
+  verifyBaseFreshness(body: string): Promise<RequeueFreshnessResult>;
 }
 
 export interface HitlResolveResult {
@@ -39,11 +40,9 @@ export async function resolveHitlDecision(
   const rationaleComment =
     "> *This was recorded by the maintainer's session agent.*\n\n" +
     `🤖 HITL decision **${input.decision}** on #${input.issue}: ${input.rationale}`;
-  // Every decision leaves the rationale on the issue — the audit trail is not optional.
-  await deps.comment(input.issue, rationaleComment);
-  actions.push("rationale comment posted");
-
   if (input.decision === "close") {
+    await deps.comment(input.issue, rationaleComment);
+    actions.push("rationale comment posted");
     // Closing is a TRANSITION, not just a tracker verb (#2749): the park role
     // that brought the issue to HITL must not outlive the decision that ends
     // it, or the audit reads a resolved issue as still human-escalated. The
@@ -63,6 +62,8 @@ export async function resolveHitlDecision(
   const labels = await deps.viewLabels(input.issue);
 
   if (input.decision === "park") {
+    await deps.comment(input.issue, rationaleComment);
+    actions.push("rationale comment posted");
     const plan = planTransition(labels, { kind: "human" });
     if (!isRefused(plan) && (plan.add.length > 0 || plan.remove.length > 0)) {
       await deps.editLabels(input.issue, [...plan.remove], [...plan.add]);
@@ -71,34 +72,27 @@ export async function resolveHitlDecision(
     return { issue: input.issue, decision: input.decision, actions };
   }
 
-  // requeue / retake both free the issue: concede dangling claims first, then
-  // one atomic transition. A HUMAN decision consumes dangling req:* edges
-  // (promote) instead of refusing the way the automated queue path must.
-  const conceded = await deps.releaseClaims(input.issue);
-  if (conceded.length > 0) actions.push(`claims conceded: ${conceded.join(", ")}`);
-
-  // Clear any active Current blocker so the issue passes the coherence probe
-  // after the label transition. A hitl_resolve is an explicit human decision,
-  // so every blocker kind is accepted here regardless of the narrower set the
-  // CLI requeue operator enforces (#2597).
+  // Requeue / retake use the same complete transition as every machine caller;
+  // human authority is the only difference and permits every blocker kind.
   const body = await deps.viewBody(input.issue);
-  const activeBlocker = parseCurrentBlocker(body);
-  if (activeBlocker) {
-    const clearedBody = clearCurrentBlocker(body, {
-      summary: activeBlocker.summary,
-      resolution: input.rationale.trim() || "Resolved via hitl_resolve.",
-    });
-    await deps.editBody(input.issue, clearedBody);
-    actions.push(`body blocker cleared (kind=${activeBlocker.kind})`);
+  const applied = await applyRequeue(deps, {
+    issue: input.issue,
+    authority: "human",
+    body,
+    labels,
+    guidance: input.rationale,
+  });
+  if (!applied.applied) {
+    return { issue: input.issue, decision: input.decision, actions, refused: applied.reason };
   }
-
-  const hasReqEdges = labels.some((label) => label.startsWith("req:"));
-  const plan = planTransition(labels, { kind: hasReqEdges ? "promote" : "queue" });
-  if (isRefused(plan)) {
-    return { issue: input.issue, decision: input.decision, actions, refused: plan.reason };
+  actions.push("requeue directive posted");
+  if (applied.releasedClaims.length > 0) {
+    actions.push(`claims conceded: ${applied.releasedClaims.join(", ")}`);
   }
-  await deps.editLabels(input.issue, [...plan.remove], [...plan.add]);
-  actions.push(`labels transitioned (+${plan.add.join(",") || "∅"} -${plan.remove.join(",") || "∅"})`);
+  if (applied.plan.activeBlocker) {
+    actions.push(`body blocker cleared (kind=${applied.plan.activeBlocker.kind})`);
+  }
+  actions.push(`labels transitioned (+${applied.plan.addLabels.join(",") || "∅"} -${applied.plan.removeLabels.join(",") || "∅"})`);
   if (input.decision === "retake") {
     actions.push(
       "routed to the no-agent landing lane (ADR 0055): the reconcile dispatcher adopts the existing branch",
