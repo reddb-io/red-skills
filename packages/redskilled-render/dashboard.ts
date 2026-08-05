@@ -44,6 +44,24 @@ import {
   UNREGISTERED_MARK,
 } from "./marks.js";
 import {
+  BAR_AHEAD as BAR_AHEAD_TONE,
+  BAR_CURRENT as BAR_CURRENT_TONE,
+  BAR_DONE as BAR_DONE_TONE,
+  BOLD,
+  DIM,
+  GOLD,
+  KEY,
+  NOBG,
+  NOBOLD,
+  RED,
+  RESET,
+  SOFT,
+  VAL,
+  WHITE,
+  WINE,
+  WINE2,
+} from "./palette.js";
+import {
   REDSKILLED_RENDER_DISPLAY_ABSENT,
   type RedskilledRenderDeaths,
   type RedskilledRenderEngine,
@@ -382,28 +400,31 @@ function buildHeader(
   // The version carries its own currency mark rather than a separate token: a
   // surface reading `v3.1.0` on its own cannot tell a current daemon from one
   // three releases behind, and that is the whole of "is my engine current".
-  const parts: string[] = [
-    `» ${repo ?? "host"} v${version}${engine != null && engine.current === false ? ENGINE_BEHIND_MARK : ""}`,
-  ];
+  const parts: string[] = [dashboardIdentity(
+    repo ?? "host",
+    version,
+    engine != null && engine.current === false ? ENGINE_BEHIND_MARK : "",
+  )];
   if (match === "unregistered" || match === "name-only") parts.push(UNREGISTERED_MARK);
   if (match === "lapsed") parts.push(LAPSED_MARK);
-  if (model != null) parts.push(model);
-  parts.push(`wrk=${selected.length}/${payload.host.worker_count}`);
+  if (model != null) parts.push(`${WINE}${WHITE}${model}${NOBG}${SOFT}`);
+  parts.push(colourKeyValues(`wrk=${selected.length}/${payload.host.worker_count}`));
   const slots = windows.worker_ceiling == null
     ? "slots=∞"
     : `slots=${windows.worker_count}/${windows.worker_ceiling}`;
-  parts.push(`${slots} reserve=${windows.interactive_reservation} interactive`);
-  parts.push(memoryWindow(windows));
-  if (counts.open_pull_requests != null) parts.push(`prs=${counts.open_pull_requests}`);
-  if (counts.recently_closed != null) parts.push(`cpr=${counts.recently_closed}`);
-  if (counts.open_issues != null) parts.push(`iss=${counts.open_issues}`);
+  parts.push(colourKeyValues(`${slots} reserve=${windows.interactive_reservation} interactive`));
+  parts.push(colourKeyValues(memoryWindow(windows)));
+  if (counts.open_pull_requests != null) parts.push(colourKeyValues(`prs=${counts.open_pull_requests}`));
+  if (counts.recently_closed != null) parts.push(colourKeyValues(`cpr=${counts.recently_closed}`));
+  if (counts.open_issues != null) parts.push(colourKeyValues(`iss=${counts.open_issues}`));
   if (counts.stale) parts.push("!counts stale");
   // The rates go here, where a status bar still reads them, and they are the
   // FIRST thing dropped when the line does not fit — see below. Everything
   // before them answers "is this machine healthy"; the rates answer "how fast is
   // it going", which is the question that can wait for the table.
   const rates = metrics == null ? null : compactRates(metrics.hour);
-  if (rates != null) parts.push(rates);
+  const colouredRates = rates == null ? null : colourKeyValues(rates);
+  if (colouredRates != null) parts.push(colouredRates);
   // Beside the counts rather than under the table, because a death is a fact
   // about the machine and not about one project's Workers — and the header is
   // the whole of what a status bar shows.
@@ -424,9 +445,9 @@ function buildHeader(
   // reads as a smaller number than the one measured (`tk/m=1.2` for 1.2k), so
   // they are dropped whole rather than truncated. Every other part survived a
   // narrow pane before this one existed and still does.
-  const full = parts.join(" · ");
+  const full = `${parts.join(" · ")}${RESET}`;
   const line = rates != null && width(full) > options.maxWidth
-    ? parts.filter((part) => part !== rates).join(" · ")
+    ? `${parts.filter((part) => part !== colouredRates).join(" · ")}${RESET}`
     : full;
 
   return {
@@ -444,6 +465,20 @@ function buildHeader(
     age_ms: payload.staleness.age_ms,
     line: clamp(line, options.maxWidth),
   };
+}
+
+/** The dashboard's wine identity zone: accent, owner, and quiet version. PURE. */
+function dashboardIdentity(repo: string, version: string, currency: string): string {
+  return `${WINE2}${WHITE}${GOLD}»${WHITE} ${BOLD}${repo}${NOBOLD} ${DIM}v${version}${currency}` +
+    `${WHITE}${NOBG}${SOFT}`;
+}
+
+/** Paint every compact `k=v` token while leaving its surrounding prose soft. PURE. */
+function colourKeyValues(text: string): string {
+  return text.replace(
+    /(^|\s)([A-Za-z][A-Za-z0-9/]*=)([^\s]+)/g,
+    (_match, lead: string, key: string, value: string) => `${lead}${KEY}${key}${VAL}${value}${SOFT}`,
+  );
 }
 
 /** A loop span without zero-valued trailing units (`4m`, not `4m0s`). PURE. */
@@ -616,8 +651,28 @@ function formatRow(
   cells: RedskilledDashboardCells,
   widths: Record<RedskilledDashboardColumn, number>,
 ): string {
-  const parts = REDSKILLED_DASHBOARD_COLUMNS.filter((column) => widths[column] > 0).map((column) =>
-    pad(cells[column], widths[column]),
+  const columns = REDSKILLED_DASHBOARD_COLUMNS.filter((column) => widths[column] > 0);
+  if (columns.length === 0) return "";
+  const parts = columns.map((column, index) =>
+    colourWorkerCell(
+      column,
+      pad(cells[column], index === columns.length - 1 ? width(cells[column]) : widths[column]),
+    )
   );
-  return parts.join(GUTTER).replace(/\s+$/, "");
+  return `${NOBG}${SOFT}${parts.join(GUTTER)}${RESET}`;
+}
+
+/** One dashboard cell in the single palette role shared by every density. PURE. */
+export function colourWorkerCell(column: RedskilledDashboardColumn, raw: string): string {
+  if (column === "wid") return `${BOLD}${raw}${NOBOLD}`;
+  if (column === "bar") {
+    return raw
+      .replace(/█+/g, (done) => `${BAR_DONE_TONE}${done}`)
+      .replace("▶", `${BAR_CURRENT_TONE}▶`)
+      .replace("✗", `${RED}✗`)
+      .replace(/░+/g, (ahead) => `${BAR_AHEAD_TONE}${ahead}`) + SOFT;
+  }
+  const equals = raw.indexOf("=");
+  if (equals > 0) return `${KEY}${raw.slice(0, equals + 1)}${VAL}${raw.slice(equals + 1)}${SOFT}`;
+  return raw;
 }
