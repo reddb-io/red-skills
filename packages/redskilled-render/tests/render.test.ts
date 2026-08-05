@@ -44,6 +44,28 @@ import { display, payload, worker } from "./fixture.js";
 const LOCAL = { ...REDSKILLED_STATUSLINE_DEFAULTS, project: "acme/widgets" };
 
 describe("one module, three densities", () => {
+  it("renders the daemon's base-movement stamp at every Worker-row density", () => {
+    const doc = payload({
+      workers: [worker({ base_commits_ahead: 4, display: display() })],
+    });
+
+    const line = renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 });
+    const panel = renderRedskilledPanel(doc, {
+      ...REDSKILLED_PANEL_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 240,
+    });
+    const dashboard = renderRedskilledDashboard(doc, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 240,
+    });
+
+    expect(stripAnsi(line.lines[1]!)).toContain("base +4");
+    expect(stripAnsi(panel.worker_rows[0]!)).toContain("base +4");
+    expect(stripAnsi(dashboard.rows[0]!.line)).toContain("base +4");
+  });
+
   it("draws the same payload at a line, a panel and a table", () => {
     const doc = payload({ workers: [worker({ display: display() })] });
 

@@ -133,6 +133,8 @@ export interface RedskilledStatuslineWorker {
   readonly workspace_path: string;
   readonly pid: number;
   readonly started_at: string;
+  /** Host-computed movement from this Worker's granted fork to refreshed trunk. */
+  readonly base_commits_ahead?: number;
   readonly uptime_ms: number | null;
   readonly state: RedskilledWorkerState;
   readonly isolated: boolean;
@@ -777,6 +779,7 @@ function buildWorker(
     workspace_path: worker.workspace_path,
     pid: worker.pid,
     started_at: worker.started_at,
+    ...(worker.base_commits_ahead == null ? {} : { base_commits_ahead: worker.base_commits_ahead }),
     uptime_ms: ctx.nowMs == null || startedMs == null ? null : Math.max(0, ctx.nowMs - startedMs),
     state: ctx.state,
     isolated: worker.isolated,

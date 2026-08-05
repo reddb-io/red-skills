@@ -14,6 +14,7 @@ import { branchLockPath, readLockedBranch, isLocked } from "../../../runtime/loc
 import { parseTrustPolicy, resolveActorTrust } from "../../../core/trust-gate.js";
 import { buildHandoffEnrichment } from "../../../core/handoff-enrichment.js";
 import { lookupPrevFailureContext } from "../../../core/prev-failure.js";
+import { createRedskilledBirthPort } from "../../../runtime/redskilled-birth.js";
 
 export interface LookupsPortContext {
   ghCtx: GhContext;
@@ -39,6 +40,7 @@ export function buildLookups({
   const lockPath = branchLockPath(root);
   // Trust policy for the guidance-channel source-trust projection (issue #1100).
   const trustPolicy = parseTrustPolicy(config);
+  const host = createRedskilledBirthPort({ root });
 
   return {
     base: {
@@ -97,6 +99,20 @@ export function buildLookups({
       const branch = baseRef.startsWith("origin/") ? baseRef.slice("origin/".length) : baseRef;
       await gitx.fetchBranch(gitCtx, branch).catch(() => {});
       return gitx.baseMovementSince(gitCtx, baseRef, sinceSha);
+    },
+    workerBaseMovement: async (workerId) => {
+      const worker = (await host.hostState()).workers.find((candidate) => candidate.worker_id === workerId);
+      if (
+        worker?.fork_sha == null || worker.fork_sha === "" ||
+        worker.base_head_sha == null || worker.base_head_sha === "" ||
+        worker.base_commits_ahead == null
+      ) return undefined;
+      return {
+        startSha: worker.fork_sha,
+        gateSha: worker.base_head_sha,
+        commitsAhead: worker.base_commits_ahead,
+        subjects: [],
+      };
     },
     // FIX E: confirm the sandcastle worker branch actually landed on the host
     // before the merge gate. Try once, fetch on a miss, then re-check — a still
