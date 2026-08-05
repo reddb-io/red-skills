@@ -6,6 +6,10 @@ import { doLanding } from "../src/core/landing.js";
 import { harness } from "./landing.test-support.js";
 import { readsPull } from "./support/gh-rest-fixtures.js";
 import {
+  harness as processHarness,
+  processIssue,
+} from "./process-issue.test-helpers.js";
+import {
   createFileQueueCustodyStore,
   handoffQueueCustody,
   repairQueueCustody,
@@ -55,6 +59,31 @@ describe("Queue Custodian", () => {
     expect(landing.mergeCalls.some((argv) => argv.includes("--auto"))).toBe(true);
     expect(landing.mergeCalls.filter((argv) => readsPull(argv))).toHaveLength(0);
     expect(landing.firedHooks).toEqual(["pre_merge"]);
+    expect(store.state.prs["42"]).toMatchObject({ ownerTicket: 9, status: "watching" });
+  });
+
+  it("terminates the owning Worker without closing the Ticket at custody hand-off", async () => {
+    const store = memoryStore();
+    const { deps, input, trace } = processHarness({
+      outcome: "done",
+      feedbackOk: true,
+      locked: false,
+      queueOutcome: "pending",
+    });
+    Object.assign(deps, {
+      nativeMergeQueue: true,
+      queueCustody: (identity: Parameters<typeof handoffQueueCustody>[1], armNativeIntent: () => Promise<{ ok: boolean; reason?: string }>) =>
+        handoffQueueCustody(
+          { store, now: () => "2026-08-05T12:30:00.000Z", armNativeIntent },
+          identity,
+        ),
+    });
+
+    const result = await processIssue(deps, input);
+
+    expect(result).toMatchObject({ outcome: "done", swept: false });
+    expect(trace.released).toEqual([9]);
+    expect(trace.closed).toEqual([]);
     expect(store.state.prs["42"]).toMatchObject({ ownerTicket: 9, status: "watching" });
   });
 
