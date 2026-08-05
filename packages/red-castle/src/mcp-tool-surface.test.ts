@@ -26,10 +26,17 @@ const SURFACE: ReadonlyArray<{
     schema: [],
   },
   {
-    name: "project_status",
-    title: "Get project worker status",
+    name: "status",
+    title: "Read Castle status",
     description:
-      "Return this project's host registration, slots, and live-worker status.",
+      "Answer the current worker, project, or host status through one intent-scoped read.",
+    schema: ["scope", "worker", "live_only", "fields"],
+  },
+  {
+    name: "project_status",
+    title: "Deprecated project status alias",
+    description:
+      "DEPRECATED: use status { scope: project }. Returns the project answer and names its replacement.",
     schema: ["fleet"],
   },
   {
@@ -70,30 +77,30 @@ const SURFACE: ReadonlyArray<{
   },
   {
     name: "host_state",
-    title: "Read daemon host state",
+    title: "Deprecated host state alias",
     description:
-      "Return every project and Worker the redskilled daemon holds on this machine.",
+      "DEPRECATED: use status { scope: host }. Returns daemon host state and names its replacement.",
     schema: [],
   },
   {
     name: "host_dashboard",
-    title: "Read daemon host dashboard",
+    title: "Deprecated host dashboard alias",
     description:
-      "Return the structured global dashboard for every project's Workers on this machine.",
+      "DEPRECATED: use status { scope: host }. Returns the global dashboard and names its replacement.",
     schema: [],
   },
   {
     name: "host_provision_check",
-    title: "Check daemon host provisioning",
+    title: "Deprecated host provisioning alias",
     description:
-      "Read whether this machine is ready to run redskilled and what is missing; creates and starts nothing.",
+      "DEPRECATED: use status { scope: host }. Returns the provisioning check and names its replacement.",
     schema: [],
   },
   {
     name: "host_unit_status",
-    title: "Read daemon unit status",
+    title: "Deprecated host unit status alias",
     description:
-      "Return whether the optional redskilled supervisor unit is installed, enabled, and active.",
+      "DEPRECATED: use status { scope: host }. Returns the unit status and names its replacement.",
     schema: [],
   },
   {
@@ -105,9 +112,9 @@ const SURFACE: ReadonlyArray<{
   },
   {
     name: "worker_vitals",
-    title: "Read worker vitals",
+    title: "Deprecated worker vitals alias",
     description:
-      "Return the liveness-qualified state of local workers. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers. Pass `fields` to project top-level keys.",
+      "DEPRECATED: use status { scope: worker }. Returns liveness-qualified worker state and names its replacement.",
     schema: ["live_only", "fields"],
   },
   {
@@ -119,9 +126,9 @@ const SURFACE: ReadonlyArray<{
   },
   {
     name: "monitor",
-    title: "Read AFK monitor",
+    title: "Deprecated worker monitor alias",
     description:
-      "Return the current workers, history events, and monitor inputs.",
+      "DEPRECATED: use status { scope: worker }. Returns worker monitor inputs and names its replacement.",
     schema: [],
   },
   {
@@ -161,9 +168,9 @@ const SURFACE: ReadonlyArray<{
   },
   {
     name: "worker_status",
-    title: "Read worker status",
+    title: "Deprecated worker status alias",
     description:
-      "Return normalized, liveness-qualified state for one worker or every local worker. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers.",
+      "DEPRECATED: use status { scope: worker }. Returns normalized worker state and names its replacement.",
     schema: ["worker", "live_only", "fields"],
   },
   {
