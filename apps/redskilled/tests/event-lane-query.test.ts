@@ -18,9 +18,9 @@ const DOC_PATH = join(ROOT, "plugins/dev/skills/engineering/redskilled/SKILL.md"
 const roots: string[] = [];
 
 const TODAY_PERFORMANCE_QUERY =
-  'select(.ts >= "2026-08-05T00:00:00.000Z") | {ts, kind, worker_id, project_label, phase, exit_code}';
+  'select(.ts >= "2026-08-05T00:00:00.000Z") | {ts: .ts, kind: .kind, worker_id: .worker_id, project_label: .project_label, phase: .phase, exit_code: .exit_code}';
 const WORKER_STORY_QUERY =
-  'select(.worker_id == "wDOCS") | {ts, kind, phase, step, base_commits_ahead, heal_kind, exit_code}';
+  'select(.worker_id == "wDOCS") | {ts: .ts, kind: .kind, phase: .phase, step: .step, base_commits_ahead: .base_commits_ahead, heal_kind: .heal_kind, exit_code: .exit_code}';
 const DRIFT_HEAL_COUNTS_QUERY =
   '{drift: map(select(.kind == "worker-drift")) | length, heals: map(select(.kind == "worker-heal")) | length}';
 
@@ -94,10 +94,10 @@ describe("queryable daemon worker-event log", () => {
     expect(docs).toContain(WORKER_STORY_QUERY);
     expect(docs).toContain(DRIFT_HEAL_COUNTS_QUERY);
 
-    const today = await execFileAsync("tq", ["-p", "toonl", "-o", "json", TODAY_PERFORMANCE_QUERY, path]);
+    const today = await execFileAsync("tq", ["-p", "toonl", "-o", "json", "-c", TODAY_PERFORMANCE_QUERY, path]);
     expect(today.stdout.trim().split("\n")).toHaveLength(5);
 
-    const story = await execFileAsync("tq", ["-p", "toonl", "-o", "json", WORKER_STORY_QUERY, path]);
+    const story = await execFileAsync("tq", ["-p", "toonl", "-o", "json", "-c", WORKER_STORY_QUERY, path]);
     const storyRows = story.stdout.trim().split("\n").map((line) => JSON.parse(line) as { kind: string });
     expect(storyRows.map((row) => row.kind)).toEqual([
       "worker-birth",
@@ -112,6 +112,7 @@ describe("queryable daemon worker-event log", () => {
       "toonl",
       "-o",
       "json",
+      "-c",
       "--slurp",
       DRIFT_HEAL_COUNTS_QUERY,
       path,
