@@ -1,4 +1,4 @@
-# Release standard: changeset-compatible queue, Version-PR trigger, calver inside semver
+# 0139 — Release standard: changeset-compatible queue, Version-PR trigger, calver inside semver
 
 Status: accepted (design; implementation pending)
 
