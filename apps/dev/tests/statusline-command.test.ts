@@ -6,6 +6,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { Readable } from "node:stream";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { decode, encode } from "@reddb-io/toon";
+import { tokenToAnsiBackground } from "@reddb-io/brand-tokens";
 import { LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import {
   statuslineCommand,
@@ -428,8 +429,9 @@ describe("statusline command — rendered line", () => {
     expect(rows[1]).not.toContain("[live]"); // liveness badge dropped
     expect(rows[1]).not.toContain("activity:impl"); // no activity: prefix
 
-    // The raw output carries the wine-red background SGR (theme on by default).
-    expect(out.text()).toContain("\x1b[48;2;114;47;55m");
+    // The raw output carries the brand-primary background SGR (theme on by
+    // default), read from the tokens package exactly as the renderer does.
+    expect(out.text()).toContain(tokenToAnsiBackground("brand.primary"));
   });
 
   it("surfaces a newer locally cached dev bundle without network discovery", async () => {
