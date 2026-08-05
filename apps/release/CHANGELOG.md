@@ -1,5 +1,12 @@
 # @reddb-io/release
 
+## 3.7.1
+
+### Patch Changes
+
+- @reddb-io/shared@3.7.1
+- @reddb-io/build-info@3.7.1
+
 ## 3.7.0
 
 ### Minor Changes
