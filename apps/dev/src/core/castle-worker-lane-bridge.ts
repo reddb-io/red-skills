@@ -9,6 +9,7 @@ import {
 } from "@reddb-io/red-castle/engine";
 import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
 import type { RedskilledWorkerDisplay } from "@reddb-io/redskilled/worker-display";
+import type { RedskilledMechanicalHealStamp } from "@reddb-io/redskilled/protocol";
 import { workerStatePath } from "./state.js";
 import { readWorkerStateDocument } from "./worker-state-reader.js";
 import { AFK_COSTED_PHASE_ORDER, macroPhase } from "./mirror.js";
@@ -52,7 +53,11 @@ export interface CastleWorkerLaneBridgeOptions {
    * one more thing that happens on it. Absent — a directly-invoked `run`, a test
    * — the bridge behaves exactly as it did before.
    */
-  publishHostLogLine?: (line: string, display?: RedskilledWorkerDisplay) => Promise<void>;
+  publishHostLogLine?: (
+    line: string,
+    display?: RedskilledWorkerDisplay,
+    mechanicalHeal?: RedskilledMechanicalHealStamp,
+  ) => Promise<void>;
   /**
    * The per-phase duration model this Worker measures into and estimates from.
    *
@@ -224,7 +229,17 @@ export function createCastleWorkerLaneBridge(
           etaSeconds: phaseDurations.etaSeconds(Math.floor(nowMs() / 1000)),
           nowMs: nowMs(),
         });
-      await options.publishHostLogLine(workerLogLine(kind, issue, payload), display);
+      const mechanicalHeal: RedskilledMechanicalHealStamp | undefined =
+        kind === "worker.mechanical_regeneration_cure"
+          ? {
+              heal_kind: "mechanical-regeneration",
+              cause: typeof payload.cause === "string" ? payload.cause : "stale-base-drift",
+              cycle: typeof payload.cycle === "number" ? payload.cycle : 0,
+              cap: typeof payload.cap === "number" ? payload.cap : 0,
+              free: payload.free === true,
+            }
+          : undefined;
+      await options.publishHostLogLine(workerLogLine(kind, issue, payload), display, mechanicalHeal);
     }
     await snapshot();
   }

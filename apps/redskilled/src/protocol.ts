@@ -157,7 +157,24 @@ export interface RedskilledWorkerHeartbeatRequest {
    * a row of absences, which is the honest render, not a broken one.
    */
   readonly display?: RedskilledWorkerDisplay;
+  /**
+   * A completed generated-surface cure, already classified by the project.
+   *
+   * This is deliberately the only work-semantic event the host accepts: ADR
+   * 0138 names mechanical heals as a daemon-log fact, while the daemon still
+   * does not interpret arbitrary Worker narration or castle kinds.
+   */
+  readonly mechanical_heal?: RedskilledMechanicalHealStamp;
   readonly session_project?: string;
+}
+
+/** Stable wire stamp for a mechanically proved stale-base cure. */
+export interface RedskilledMechanicalHealStamp {
+  readonly heal_kind: "mechanical-regeneration";
+  readonly cause: string;
+  readonly cycle: number;
+  readonly cap: number;
+  readonly free: boolean;
 }
 
 /**

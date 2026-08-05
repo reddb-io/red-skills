@@ -73,6 +73,7 @@ import {
   type RedskilledWorkerCommandRequest,
   type RedskilledWorkerCommandResult,
   type RedskilledWorkerHeartbeatAck,
+  type RedskilledMechanicalHealStamp,
   type RedskilledWorkerStarted,
 } from "./protocol.js";
 import {
@@ -718,6 +719,8 @@ export async function publishRedskilledWorkerLogLine(
     readonly line: string;
     /** What a surface should SHOW about this Worker; omitted publishes nothing. */
     readonly display?: RedskilledWorkerDisplay;
+    /** Completed mechanical cure to stamp on the host event lane. */
+    readonly mechanicalHeal?: RedskilledMechanicalHealStamp;
     readonly session_project?: string;
   },
   config: RedskilledClientConfig = {},
@@ -731,6 +734,7 @@ export async function publishRedskilledWorkerLogLine(
         worker_id: heartbeat.worker_id,
         last_log_line: clampPublishedLogLine(heartbeat.line),
         ...(heartbeat.display == null ? {} : { display: clampPublishedWorkerDisplay(heartbeat.display) }),
+        ...(heartbeat.mechanicalHeal == null ? {} : { mechanical_heal: heartbeat.mechanicalHeal }),
         ...(sessionProject == null ? {} : { session_project: sessionProject }),
       },
     },
