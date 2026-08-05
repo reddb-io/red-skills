@@ -1842,7 +1842,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
 describe("processIssue — generated stale-base drift heals mechanically (#3352)", () => {
   const generated = {
     paths: ["packaging/pi/**"],
-    command: "pnpm version:sync && pnpm pi:packages:build",
+    command: "pnpm generate-manifests && pnpm pi:packages:build",
   } as const;
 
   function declareGeneratedGate(deps: ProcessIssueDeps, results: readonly boolean[]): void {
