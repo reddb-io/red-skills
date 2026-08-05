@@ -2241,6 +2241,15 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     return mergeAfterCi(ciEvidence);
   };
 
+  // ADR 0136: a native queue with durable custody has no resident-owned tail.
+  // The legacy slot-release settings controlled where that tail detached; once
+  // custody owns it there is nothing to detach. Advisory review still concludes
+  // before the intent is armed, while freshness/CI belong to the queue itself.
+  if (mergeQueue && input.queueHandoff) {
+    if (waitForReview) await waitForReviewCheck(exec, repo, prNumber, waitForReview);
+    return mergeAfterCi();
+  }
+
   if (releaseAt === "none") {
     return {
       ok: true,
