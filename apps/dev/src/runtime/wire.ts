@@ -37,6 +37,7 @@ export {
 export {
   collectStatuslineAfk,
   collectStatuslineFleet,
+  collectStatuslineValidationGate,
   collectStatuslineWorkers,
   collectStatuslineRepo,
 } from "./wire/statusline.js";

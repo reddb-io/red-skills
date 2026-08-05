@@ -35,6 +35,7 @@ import {
   collectStatuslineAfk,
   collectStatuslineDocs,
   collectStatuslineFleet,
+  collectStatuslineValidationGate,
   collectStatuslineRepo,
   collectStatuslineWorkers,
   inferGitHubRepoSlug,
@@ -367,7 +368,7 @@ export async function statuslineCommand(
   // the per-worker records feed the themed multi-line form (Claude Code). Both
   // read the same worker states — cheap file reads — so the two forms stay in
   // sync while each renders its own layout.
-  const [repo, docs, afk, rawFleet, workers, rsp] = await Promise.all([
+  const [repo, docs, afk, rawFleet, workers, rsp, validationGate] = await Promise.all([
     collectStatuslineRepo(repoCtx, cacheTtlS, repoLocBaseRef),
     collectStatuslineDocs(repoCtx, base),
     collectStatuslineAfk(repoCtx, cacheTtlS).then((a) => a ?? undefined),
@@ -378,6 +379,7 @@ export async function statuslineCommand(
     // input after the second renderer was taken off the line.
     withoutWorkers ? Promise.resolve([]) : collectStatuslineWorkers(repoCtx),
     resolveStatuslineRsp(root),
+    collectStatuslineValidationGate(root),
   ]);
   const fleet =
     rawFleet && rawFleet.bundleVersion !== undefined
@@ -391,7 +393,7 @@ export async function statuslineCommand(
   const color = !process.env.NO_COLOR;
   const columns = Number.parseInt(process.env.COLUMNS ?? "", 10);
   const nowS = Math.floor(Date.now() / 1000);
-  const line = renderStatuslineThemed({ project, claude, repo, docs, fleet, afk, rsp }, color, {
+  const line = renderStatuslineThemed({ project, claude, repo, docs, fleet, afk, rsp, validationGate }, color, {
     columns: Number.isFinite(columns) && columns > 0 ? columns : undefined,
     workers,
     now: nowS,

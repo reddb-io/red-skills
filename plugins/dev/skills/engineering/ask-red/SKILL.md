@@ -160,7 +160,10 @@ through `/memory:view`, `memory docs reference-graph`, and
 
 - `/red-doctor` checks RedSkills adoption drift, including whether this router still
   covers the registered skill set, reports/fixes ADR 0098 tmp janitor hygiene, and
-  runs the shared operational probe registry that fleet boot also consumes. It also
+  runs the shared operational probe registry that fleet boot also consumes. It
+  also compares configured Validation moment declarations with the lifecycle
+  engine registry, so a schedule key the engine would ignore is visible before
+  a drain. It also
   reports a project registration that lapsed while executable work remains queued;
   recovery belongs to the daemon's AFK runtime belt. The host toolchain
   drift routes here too: it checks `gh >= 2.47.0` and pinned `tq` read-only, while

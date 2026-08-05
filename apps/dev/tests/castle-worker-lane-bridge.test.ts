@@ -11,9 +11,44 @@ import {
 } from "@reddb-io/red-castle/engine";
 import { parseLivenessRecords } from "@reddb-io/red-castle";
 import { initStateSync } from "../src/core/state.js";
-import { createCastleWorkerLaneBridge } from "../src/core/castle-worker-lane-bridge.js";
+import {
+  createBootCastleWorkerLaneBridge,
+  createCastleWorkerLaneBridge,
+} from "../src/core/castle-worker-lane-bridge.js";
 
 describe("createCastleWorkerLaneBridge", () => {
+  it("opens a Worker's structured lane with its Validation moment schedule, including skips", async () => {
+    const root = await mkdtemp(join(tmpdir(), "castle-worker-boot-schedule-"));
+    const redRoot = join(root, ".red");
+    const workerId = "wSCHED";
+
+    await createBootCastleWorkerLaneBridge({
+      redRoot,
+      workerId,
+      attemptDir: () => "",
+      nowIso: () => "2026-08-04T20:00:00.000Z",
+      nowMs: () => Date.parse("2026-08-04T20:00:00.000Z"),
+    }, {
+      iteration: ["pnpm test", "pnpm typecheck"],
+      landing: [],
+    });
+
+    const records = await readCastleLaneRecords(
+      castleLanePath(createEnginePaths(redRoot), "worker", workerId),
+    );
+    expect(records[0]).toMatchObject({
+      kind: "worker.validation_schedule",
+      payload: {
+        narration:
+          "Validation moments — iteration: declared [pnpm test; pnpm typecheck]; " +
+          "post_done: skip (undeclared); landing: skip (empty declaration)",
+        iteration: "declared",
+        post_done: "skip",
+        landing: "skip",
+      },
+    });
+  });
+
   it("writes worker lifecycle, liveness, and state snapshot as honest TOON lanes", async () => {
     const root = await mkdtemp(join(tmpdir(), "castle-worker-lane-"));
     const redRoot = join(root, ".red");

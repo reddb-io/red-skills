@@ -4,7 +4,20 @@ import { join } from "node:path";
 import { pluginEnabledInConfig } from "@reddb-io/shared/plugin-gate.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { newestCachedBundleVersion, redSkillsCacheDir, semverParts } from "../core/bundle-version.js";
-import { getConfig, loadConfig, readBackpressure, readFeedbackCommands, readSetupCommands, type ConfigValues } from "../core/config.js";
+import {
+  getConfig,
+  loadConfig,
+  readBackpressure,
+  readFeedbackCommands,
+  readSetupCommands,
+  VALIDATION_MOMENTS,
+  type ConfigValues,
+} from "../core/config.js";
+import {
+  auditValidationMomentDrift,
+  type ValidationMomentDriftReport,
+} from "../core/validation-moment-doctor.js";
+import { ENGINE_VALIDATION_MOMENTS } from "../core/validation-moments.js";
 import { HOOK_DEFAULT_NAMES } from "../core/hook-config.js";
 import { HOOK_REGISTRY, type ExitPolicy } from "../core/hook-registry.js";
 import {
@@ -114,6 +127,8 @@ export interface DoctorClassifierReports {
   readonly worktreeSetup: WorktreeSetupReport;
   /** Operator-owned feedback replacement vs required CI test protection (#3276). */
   readonly feedbackAuthority: FeedbackAuthorityReport;
+  /** Project declaration + parser vocabulary vs lifecycle engine registry. */
+  readonly validationMoments: ValidationMomentDriftReport;
   /** Check 12 — AFK hook / backpressure static validation. */
   readonly hooks: ValidationReport;
   readonly hookPoints: HookPointRow[];
@@ -147,6 +162,15 @@ export interface DoctorClassifierReports {
 }
 
 const EMPTY_HOOK_REPORT: ValidationReport = { backpressure: [], hooks: [], unknownHooks: [] };
+
+function configuredValidationMoments(config: ConfigValues): string[] {
+  const moments = new Set<string>();
+  for (const key of Object.keys(config)) {
+    const match = /^afk\.validation\.([^.]+)(?:\.|$)/.exec(key);
+    if (match?.[1]) moments.add(match[1]);
+  }
+  return [...moments].sort();
+}
 
 function isDir(path: string): boolean {
   try {
@@ -597,6 +621,11 @@ export async function collectDoctorClassifierReports(
     }
   }
   const feedbackAuthority = auditFeedbackAuthority({ commands: feedbackCommands, requiredChecks });
+  const validationMoments = auditValidationMomentDrift({
+    configuredMoments: configuredValidationMoments(config),
+    declarationMoments: VALIDATION_MOMENTS,
+    engineMoments: ENGINE_VALIDATION_MOMENTS,
+  });
 
   let runtime: RuntimeReport = { findings: [], rows: [] };
   let runtimeUnresolved: string[] = [];
@@ -743,6 +772,7 @@ export async function collectDoctorClassifierReports(
   return {
     worktreeSetup,
     feedbackAuthority,
+    validationMoments,
     hooks,
     hookPoints,
     runtime,

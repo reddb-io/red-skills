@@ -9,6 +9,7 @@ import type {
   ProjectInput,
   RepoInput,
   StatuslineInput,
+  ValidationGateInput,
 } from "../src/core/statusline.js";
 import { renderStatusline } from "../src/core/statusline.js";
 import type { StatuslineAggregate } from "../src/mcp-adapter.js";
@@ -68,7 +69,16 @@ const PAYLOAD: StatuslineAggregate = {
     cache_age_s: 12,
   },
   docs: { unlanded: 2 },
+  validation_gate: { occupied: 2, total: 3 },
   fleet: {
+    validation_schedule: {
+      narration: "Validation moments — iteration: declared [pnpm test]; post_done: skip (undeclared); landing: skip (undeclared)",
+      moments: [
+        { moment: "iteration", state: "declared", declared: true, commands: ["pnpm test"] },
+        { moment: "post_done", state: "skip", declared: false, commands: [] },
+        { moment: "landing", state: "skip", declared: false, commands: [] },
+      ],
+    },
     registration: {
       held: true,
       daemon_reachable: true,
@@ -159,6 +169,11 @@ const docs = (p: StatuslineAggregate): Required<DocsInput> => ({
   count: p.docs.unlanded,
 });
 
+const validationGate = (p: StatuslineAggregate): Required<ValidationGateInput> => ({
+  occupied: p.validation_gate.occupied,
+  total: p.validation_gate.total,
+});
+
 const fleet = (p: StatuslineAggregate): Required<FleetInput> | undefined => {
   const chip = p.fleet_chip;
   if (!chip) return undefined;
@@ -215,6 +230,7 @@ const BLOCKS: ReadonlyArray<{
   { interfaceName: "ProjectInput", derive: project },
   { interfaceName: "RepoInput", derive: repo },
   { interfaceName: "DocsInput", derive: docs },
+  { interfaceName: "ValidationGateInput", derive: validationGate },
   { interfaceName: "FleetInput", derive: fleet },
   { interfaceName: "AfkInput", derive: afk },
 ];
@@ -238,12 +254,14 @@ describe("statusline_aggregate field coverage", () => {
       project: project(PAYLOAD),
       repo: repo(PAYLOAD),
       docs: docs(PAYLOAD),
+      validationGate: validationGate(PAYLOAD),
       fleet: fleet(PAYLOAD),
       afk: afk(PAYLOAD),
     };
     const line = renderStatusline(input);
     expect(line).toContain("red-skills");
     expect(line).toContain("main");
+    expect(line).toContain("gate 2/3");
   });
 
   // ADR 0130: the single-host view is the whole view. The cross-host aggregate

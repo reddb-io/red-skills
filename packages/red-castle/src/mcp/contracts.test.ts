@@ -16,6 +16,14 @@ import {
 import type { CastleMcpTool } from "./tool.js";
 
 const PROJECT_STATUS: ProjectStatusOutput = {
+  validation_schedule: {
+    narration: "Validation moments — iteration: skip (undeclared); post_done: skip (undeclared); landing: skip (undeclared)",
+    moments: [
+      { moment: "iteration", state: "skip", declared: false, commands: [] },
+      { moment: "post_done", state: "skip", declared: false, commands: [] },
+      { moment: "landing", state: "skip", declared: false, commands: [] },
+    ],
+  },
   registration: {
     held: true,
     daemon_reachable: true,
@@ -72,6 +80,11 @@ describe("observability output contracts", () => {
 
   it("carries the interactive reservation beside every slot count", () => {
     expect(projectStatusOutputSchema.parse(PROJECT_STATUS).slots.interactive_reservation).toBe(1);
+  });
+
+  it("requires the narrated Validation moment schedule", () => {
+    const { validation_schedule: _schedule, ...withoutSchedule } = PROJECT_STATUS;
+    expect(projectStatusOutputSchema.safeParse(withoutSchedule).success).toBe(false);
   });
 
   it("declares a versioned contract on every observability tool", () => {

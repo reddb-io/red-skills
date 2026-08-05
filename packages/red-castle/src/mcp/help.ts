@@ -162,6 +162,7 @@ export function createHelpTools(
             live: status.live_workers.length,
             target: status.slots.total,
           },
+          validation_schedule: status.validation_schedule,
           last_refusal: refusal,
           warnings: status.warnings ?? [],
         },

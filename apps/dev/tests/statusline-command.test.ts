@@ -345,6 +345,29 @@ describe("statusline command — rendered line", () => {
     expect(text).not.toContain("\x1b[");
   });
 
+  it("renders Validation gate occupancy from fixture lock files", async () => {
+    const stateDir = join(root, ".red", "state");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, "validation-gate.lock"), "holder one\n");
+    await writeFile(join(stateDir, "validation-gate.2.lock"), "holder two\n");
+    await seedFreshCache(root, 0, 0);
+    await seedFreshRepoCache(root, 0, 0);
+    const out = sink();
+    const oldValidationCeiling = process.env.REDSKILLED_VALIDATION_CEILING;
+    process.env.REDSKILLED_VALIDATION_CEILING = "3";
+    process.env.NO_COLOR = "1";
+    try {
+      await expect(withFakeGh(() =>
+        statuslineCommand([root], root, out.stream, fakeStdin(PAYLOAD)),
+      )).resolves.toBe(0);
+    } finally {
+      if (oldValidationCeiling === undefined) delete process.env.REDSKILLED_VALIDATION_CEILING;
+      else process.env.REDSKILLED_VALIDATION_CEILING = oldValidationCeiling;
+    }
+
+    expect(out.text()).toContain("gate 2/3");
+  });
+
   it("emits the multi-line themed layout: header row + one row per live worker", async () => {
     // One live worker on #17 with ad12 rm3, blocked 2, runner claude, done 7,
     // total 10; cached rq11 rh3; repo cache pr3 is24.

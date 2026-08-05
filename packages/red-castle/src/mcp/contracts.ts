@@ -176,8 +176,20 @@ export const projectBirthLatchSchema = z.object({
   }),
 });
 
+export const validationMomentScheduleSchema = z.object({
+  narration: z.string(),
+  moments: z.array(z.object({
+    moment: z.enum(["iteration", "post_done", "landing"]),
+    state: z.enum(["declared", "skip"]),
+    declared: z.boolean(),
+    commands: z.array(z.string()),
+  })).length(3),
+});
+
 export const projectStatusOutputSchema = z.object({
   registration: projectRegistrationStatusSchema,
+  /** The exact project declaration every new Worker receives (ADR 0135). */
+  validation_schedule: validationMomentScheduleSchema,
   /** The project-wide birth latch, or null when autonomous births are allowed. */
   birth_latch: projectBirthLatchSchema.nullable(),
   slots: z.object({
