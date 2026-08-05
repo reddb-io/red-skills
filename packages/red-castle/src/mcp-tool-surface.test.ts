@@ -33,6 +33,13 @@ const SURFACE: ReadonlyArray<{
     schema: ["fleet"],
   },
   {
+    name: "drain",
+    title: "Make this project drain",
+    description:
+      "MUTATING: ensure the daemon is reachable and this project is registered at the requested runner and target; repeated calls report what was kept.",
+    schema: ["runner", "target"],
+  },
+  {
     name: "project_start",
     title: "Start this project's workers",
     description:

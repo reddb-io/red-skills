@@ -67,12 +67,14 @@ document defines the protocol without copying its state-dependent routes.
 **A project has exactly one producer.** The named fleet is gone (ADR 0130): the
 host daemon owns the budget, so nothing is left for a fleet name to address and
 no registry of profiles to keep. What the profile carried that was about *work* —
-the selector, the runner, the base branch — is passed to `project_start` and
-re-aimed by `project_resize`.
+the selector, the runner, the base branch — is registered by the project tools.
+`drain` is the ensure-style front door; `project_start` and `project_resize`
+remain available for specialized lifecycle operations during consolidation.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `project_status` | read | Supervisor pid, slots, churn, and live workers for this project. |
+| `drain` | mutating | Ensure the daemon is reachable and this project is registered at the requested runner and target. Repeated calls succeed with a four-dimension difference report; a runner change is refused with the explicit stop-then-drain repair. |
 | `project_start` | mutating | Register this project with the host daemon — a runner, a target width, and its work policy. It registers; it launches no process of the project's own. |
 | `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
 | `project_reset` | mutating | Clear the named `project-birth-breaker` latch. Call it from `project_status.birth_latch.repair`; the structured repair supplies the exact args. |

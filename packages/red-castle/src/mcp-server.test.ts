@@ -36,6 +36,16 @@ function deps(): CastleMcpDependencies {
       ],
       unattributed_workers: [],
     })),
+    drain: vi.fn(async () => ({
+      outcome: "applied",
+      report: {
+        registration: "kept",
+        target: "kept",
+        runner: "kept",
+        workers_born: "kept",
+      },
+      summary: "registration: kept; target: kept; runner: kept; workers born: kept",
+    })),
     projectStart: vi.fn(async (input) => ({
       status: "launched",
       runner: input.runner,
@@ -163,6 +173,7 @@ describe("castle MCP tools", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
       "help",
       "project_status",
+      "drain",
       "project_start",
       "project_resize",
       "project_reset",
@@ -222,6 +233,21 @@ describe("castle MCP tools", () => {
       slots: { total: 2 },
       live_workers: [{ id: "worker-1" }],
     });
+  });
+
+  it("ensures a drain through the host adapter", async () => {
+    const d = deps();
+    const tool = createCastleMcpTools(d).find((candidate) => candidate.name === "drain")!;
+
+    await expect(tool.invoke({ runner: "codex", target: 2 })).resolves.toMatchObject({
+      report: {
+        registration: "kept",
+        target: "kept",
+        runner: "kept",
+        workers_born: "kept",
+      },
+    });
+    expect(d.drain).toHaveBeenCalledWith({ runner: "codex", target: 2 });
   });
 
   it("resets the named project latch", async () => {

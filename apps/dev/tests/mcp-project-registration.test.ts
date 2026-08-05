@@ -110,6 +110,69 @@ async function liveHost(): Promise<RedskilledDaemon> {
 }
 
 describe("starting work registers the project", () => {
+  it("reaches a draining registration through drain alone", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+
+    const result = await createCastleMcpDependencies(root).drain({
+      runner: "codex",
+      target: 2,
+    }) as Record<string, unknown>;
+
+    expect(result).toMatchObject({
+      outcome: "applied",
+      report: {
+        registration: "created",
+        target: "0→2",
+        runner: "none→codex",
+        workers_born: 2,
+      },
+    });
+    expect(daemon.registrations()).toHaveLength(1);
+    expect(daemon.registrations()[0]).toMatchObject({ target: 2 });
+  });
+
+  it("keeps an identical drain, resizes its target, and refuses a runner change", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+    const deps = createCastleMcpDependencies(root);
+
+    await deps.drain({ runner: "codex", target: 2 });
+    await expect(deps.drain({ runner: "codex", target: 2 })).resolves.toMatchObject({
+      outcome: "applied",
+      report: {
+        registration: "kept",
+        target: "kept",
+        runner: "kept",
+        workers_born: "kept",
+      },
+    });
+
+    await expect(deps.drain({ runner: "codex", target: 4 })).resolves.toMatchObject({
+      outcome: "applied",
+      report: {
+        registration: "kept",
+        target: "2→4",
+        runner: "kept",
+        workers_born: 2,
+      },
+    });
+    expect(daemon.registrations()).toHaveLength(1);
+    expect(daemon.registrations()[0]).toMatchObject({ target: 4 });
+
+    await expect(deps.drain({ runner: "claude", target: 4 })).resolves.toMatchObject({
+      outcome: "refused",
+      report: {
+        registration: "kept",
+        target: "kept",
+        runner: "kept",
+        workers_born: "kept",
+      },
+      repair: { tool: "project_stop", args: {} },
+    });
+    expect(daemon.registrations()[0]?.env.RED_AFK_RUNNER).toBe("codex");
+  });
+
   it("gives an absent registration a pasteable project_start repair", async () => {
     await liveHost();
     const root = await project();
@@ -241,6 +304,36 @@ describe("starting work registers the project", () => {
       lapsed_at: expect.stringMatching(/^2026-|^20\d\d-/),
       reason: expect.stringContaining("nothing renewed it"),
     });
+  });
+
+  it("re-creates a lapsed registration through drain", async () => {
+    const daemon = await liveHost();
+    const root = await project();
+    daemon.registerProject({
+      project_label: "acme/widgets",
+      selector: 'repo:acme/widgets is:issue is:open label:"ready-for-agent"',
+      argv: ["red-skills-dev", "run", "--once", "--runner", "codex"],
+      workspace_path: root,
+      env: { RED_AFK_RUNNER: "codex" },
+      target: 1,
+      renew_within_ms: 20,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(daemon.hostState().registrations).toEqual([]);
+
+    await expect(
+      createCastleMcpDependencies(root).drain({ runner: "codex", target: 2 }),
+    ).resolves.toMatchObject({
+      outcome: "applied",
+      report: {
+        registration: "re-created",
+        target: "0→2",
+        runner: "none→codex",
+        workers_born: 2,
+      },
+    });
+    expect(daemon.registrations()).toHaveLength(1);
+    expect(daemon.registrations()[0]).toMatchObject({ target: 2 });
   });
 
   it("carries the host birth latch and its callable reset on project_status", async () => {

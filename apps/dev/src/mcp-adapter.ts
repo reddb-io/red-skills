@@ -15,6 +15,7 @@ import {
   castleLanePath,
   createCastleLaneWriters,
   createEnginePaths,
+  planDrain,
   createFileMergeDriverStore,
   releasePr,
   readCastleHistoryRecords,
@@ -32,6 +33,7 @@ import type {
   HitlResolveInput,
   DailyReviewInput,
   EventsSinceInput,
+  ProjectDrainInput,
   ProjectStartInput,
   ProjectResizeInput,
   ProjectStatusOutput,
@@ -1164,6 +1166,92 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
   };
 }
 
+function registrationRunner(registration: {
+  readonly argv: readonly string[];
+  readonly env?: Readonly<Record<string, string>>;
+}): string | undefined {
+  const fromEnv = registration.env?.RED_AFK_RUNNER;
+  if (fromEnv) return fromEnv;
+  const flag = registration.argv.lastIndexOf("--runner");
+  const fromArgv = flag >= 0 ? registration.argv[flag + 1] : undefined;
+  return fromArgv === "" ? undefined : fromArgv;
+}
+
+/**
+ * Ensure this project's queue is draining, whatever safe state already stands.
+ *
+ * The pure planner owns the decision and difference report. This adapter only
+ * observes the daemon and applies the named actions. A target-only resize
+ * replaces the registration while leaving its Workers alone; if replacement
+ * fails, the old registration is restored before the error escapes.
+ */
+async function drain(root: string, input: ProjectDrainInput) {
+  const port = createRedskilledBirthPort({ root });
+  try {
+    await port.reach();
+  } catch (err) {
+    throw new Error(redskilledRegistrationRefusal(port.socketPath, err));
+  }
+
+  const state = await port.registrationState();
+  const held = state.held;
+  const currentRunner = held == null ? undefined : registrationRunner(held);
+  const plan = planDrain(
+    {
+      daemon_reachable: true,
+      registration:
+        held == null
+          ? null
+          : {
+              runner: currentRunner ?? "unknown",
+              target: held.target,
+            },
+      lapsed: held == null && state.lapse != null,
+      workers: await port.liveWorkers(),
+    },
+    input,
+  );
+
+  if (plan.outcome === "refuse") {
+    return { ...plan, outcome: "refused" as const };
+  }
+
+  for (const action of plan.actions) {
+    if (action.kind === "reach-daemon") {
+      await port.reach();
+      continue;
+    }
+    if (action.kind === "register") {
+      await projectStart(root, {
+        runner: action.runner,
+        target: action.target,
+      });
+      continue;
+    }
+
+    if (held == null) throw new Error("drain resize planned without a registration");
+    const request = {
+      selector: held.selector,
+      ...(held.queue_poll == null ? {} : { queue_poll: held.queue_poll }),
+      argv: [...held.argv],
+      workspace_path: held.workspace_path,
+      env: { ...held.env },
+      ...(held.log_path == null ? {} : { log_path: held.log_path }),
+      target: action.target,
+      renew_within_ms: held.renew_within_ms,
+    };
+    await port.deregister();
+    try {
+      await port.register(request);
+    } catch (err) {
+      await port.register({ ...request, target: held.target }).catch(() => undefined);
+      throw err;
+    }
+  }
+
+  return { ...plan, outcome: "applied" as const };
+}
+
 /**
  * Give this project's registration back — the other half of stopping work.
  *
@@ -1909,6 +1997,7 @@ export function createCastleMcpDependencies(
 ): CastleMcpDependencies {
   const baseDeps: CastleMcpDependencies = {
     projectStatus: () => projectStatus(root),
+    drain: (input) => drain(root, input),
     projectStart: (input) => projectStart(root, input),
     projectResize: (input) => projectResize(root, input),
     projectReset: async () => createRedskilledBirthPort({ root }).resetBirthBreaker(),

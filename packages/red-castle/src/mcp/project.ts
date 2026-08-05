@@ -35,6 +35,11 @@ export interface ProjectStartInput {
   base?: string;
 }
 
+export interface ProjectDrainInput {
+  runner: string;
+  target: number;
+}
+
 export interface ProjectResizeInput {
   runner?: string;
   target?: number;
@@ -53,6 +58,7 @@ export interface ProjectResetInput {
 
 export interface ProjectDependencies {
   projectStatus(): Promise<ProjectStatusOutput>;
+  drain(input: ProjectDrainInput): Promise<unknown>;
   projectStart(input: ProjectStartInput): Promise<unknown>;
   projectResize(input: ProjectResizeInput): Promise<unknown>;
   projectReset(input: ProjectResetInput): Promise<unknown>;
@@ -99,6 +105,17 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
         refuseFleetNaming(fleet);
         return deps.projectStatus();
       },
+    },
+    {
+      name: "drain",
+      title: "Make this project drain",
+      description:
+        "MUTATING: ensure the daemon is reachable and this project is registered at the requested runner and target; repeated calls report what was kept.",
+      inputSchema: {
+        runner: z.string().min(1),
+        target: z.number().int().min(0).default(DEFAULT_FLEET_WIDTH),
+      },
+      invoke: async (input) => deps.drain(input as unknown as ProjectDrainInput),
     },
     {
       name: "project_start",

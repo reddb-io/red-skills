@@ -53,6 +53,7 @@ export type {
 } from "./mcp/contracts.js";
 export type {
   WorkSelectorInput,
+  ProjectDrainInput,
   ProjectStartInput,
   ProjectResizeInput,
   ProjectResetInput,
