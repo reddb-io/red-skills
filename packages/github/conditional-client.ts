@@ -69,7 +69,16 @@ export interface GithubPaginatedRestAnswer<T> extends GithubRestAnswer<readonly 
 export interface GithubClient {
   conditionalRest<T>(request: GithubConditionalRestRequest): Promise<GithubRestAnswer<T>>;
   conditionalPaginate<T>(request: GithubConditionalRestRequest): Promise<GithubPaginatedRestAnswer<T>>;
-  graphql<T>(query: string, variables?: Readonly<Record<string, unknown>>): Promise<T>;
+  graphql<T>(
+    query: string,
+    variables?: Readonly<Record<string, unknown>>,
+    attribution?: GithubGraphqlAttribution,
+  ): Promise<T>;
+}
+
+export interface GithubGraphqlAttribution {
+  readonly operation: GithubAttributedOperation;
+  readonly actor?: string;
 }
 
 export interface CreateGithubClientOptions {
@@ -196,9 +205,24 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       return { data, headers, requestCount, quotaFree };
     },
 
-    async graphql<T>(query: string, variables: Readonly<Record<string, unknown>> = {}): Promise<T> {
+    async graphql<T>(
+      query: string,
+      variables: Readonly<Record<string, unknown>> = {},
+      attribution?: GithubGraphqlAttribution,
+    ): Promise<T> {
       try {
-        return await octokit.graphql(query, variables) as T;
+        const answer = await octokit.graphql(query, variables) as T;
+        if (attribution) {
+          // Generic GraphQL does not expose the response's point cost. One is
+          // the minimum observed spend; callers with a rateLimit.cost field can
+          // replace this with the exact transport observation later.
+          await options.attribution?.record({
+            operation: attribution.operation,
+            cost: 1,
+            actor: attribution.actor,
+          });
+        }
+        return answer;
       } catch (error) {
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
         throw error;
