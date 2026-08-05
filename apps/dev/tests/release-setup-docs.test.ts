@@ -48,7 +48,7 @@ describe("red-setup release standard docs (ADR 0139, #3372)", () => {
       "#   version_surfaces:",
       "#     - path: package.json",
       "#       format: npm",
-      "#   sync_command: node scripts/sync-version.mjs",
+      "#   sync_command: node scripts/sync-release-carriers.mjs",
     ]) {
       expect(template).toContain(line);
     }
