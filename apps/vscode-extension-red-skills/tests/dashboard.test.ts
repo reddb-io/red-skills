@@ -7,6 +7,7 @@
  * absence.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { tokenToCssHex } from "@reddb-io/brand-tokens";
 import { stripAnsi } from "@reddb-io/redskilled-render/format.js";
 import {
   dashboardRows,
@@ -149,6 +150,28 @@ describe("the status bar shows the daemon's own summary", () => {
 });
 
 describe("the dashboard panel shows the rows the daemon rendered", () => {
+  it("paints only the identity header from the brand token package", () => {
+    const html = renderDashboardHtml(snapshotOf());
+    const style = html.match(/<style>\n([\s\S]*?)\n<\/style>/)?.[1] ?? "";
+
+    expect(style).toContain(`background-color: ${tokenToCssHex("brand.primary")};`);
+    expect(style).toContain(`color: ${tokenToCssHex("brand.on-primary")};`);
+    expect(style.match(/#[0-9a-f]{6}/gi)).toEqual([
+      tokenToCssHex("brand.primary"),
+      tokenToCssHex("brand.on-primary"),
+    ]);
+    expect(style.replace(/\.header \{[^}]+\}/, "")).not.toMatch(/#[0-9a-f]{6}/i);
+  });
+
+  it("keeps stale state in text instead of a green or yellow paint slot", () => {
+    const view = statusBarView(snapshotOf({ dashboard: dashboard({ stale: true }) }));
+    const html = renderDashboardHtml(snapshotOf({ dashboard: dashboard({ stale: true }) }));
+
+    expect(view.text).toContain("$(warning)");
+    expect(html).not.toContain("editorWarning");
+    expect(html).not.toContain('class="header stale"');
+  });
+
   it("carries every statusline field into the body", () => {
     const html = renderDashboardHtml(snapshotOf());
     for (const cell of [
