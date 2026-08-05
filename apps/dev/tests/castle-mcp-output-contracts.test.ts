@@ -142,19 +142,21 @@ describe("dev:afk observability output contracts", () => {
     ]);
   });
 
-  it("keeps a worker_vitals `fields` projection callable through the contract", async () => {
+  it("keeps a worker fields projection callable through scoped status", async () => {
     const root = await fixtureRoot();
     const tools = createCastleMcpTools(createCastleMcpDependencies(root));
-    const workerVitals = tools.find((tool) => tool.name === "worker_vitals")!;
+    const status = tools.find((tool) => tool.name === "status")!;
 
     // A caller-requested projection is a deliberate narrowing of the declared
     // shape — the contract must not turn that supported input into an error.
     await expect(
-      workerVitals.invoke({ live_only: true, fields: ["live", "liveness"] }),
+      status.invoke({
+        scope: "worker",
+        live_only: true,
+        fields: ["live", "liveness"],
+      }),
     ).resolves.toMatchObject({
-      deprecated: true,
-      replacement: { tool: "status", args: { scope: "worker" } },
-      result: [{ live: true, liveness: "active" }],
+      vitals: [{ live: true, liveness: "active" }],
     });
   });
 
