@@ -2,7 +2,7 @@
 // validate-changesets — every pending changeset must resolve against this
 // workspace, checked while the PR is open (#2863).
 //
-// `changeset version` does not skip a changeset it cannot resolve. It throws,
+// The Release standard does not skip a changeset it cannot resolve. It throws,
 // and the whole release plan dies with it. One file saying `"red-skills"` (the
 // ROOT manifest's name, which is not a workspace package) where every other one
 // says `"@reddb-io/red-skills"` failed three consecutive release runs over half
@@ -69,7 +69,7 @@ function unquote(value) {
  * repo uses are supported — a literal directory and a `<prefix>/*` fan-out; an
  * unsupported pattern throws rather than narrowing the check silently.
  *
- * The ROOT manifest is deliberately absent: `changeset version` resolves against
+ * The ROOT manifest is deliberately absent: the engine resolves against
  * the glob-matched packages, so the root's own name is exactly the name that
  * broke the release.
  */
@@ -134,7 +134,7 @@ function readChangesetFiles(root) {
 function parseFrontmatter(source) {
   const lines = source.split("\n");
   if (lines[0]?.trim() !== "---") {
-    return { error: "no `---` frontmatter block — `changeset version` cannot read this file" };
+    return { error: "no `---` frontmatter block — the release engine cannot read this file" };
   }
   const end = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
   if (end === -1) return { error: "the `---` frontmatter block is never closed" };
@@ -197,7 +197,7 @@ export function run(argv = [], { root = REPO_ROOT, log = console.log, error = co
           file: relative,
           line: release.line,
           message:
-            `"${release.name}" is not a package in this workspace, so \`changeset version\` ` +
+            `"${release.name}" is not a package in this workspace, so the release engine ` +
             `throws and abandons the WHOLE release plan` +
             (suggestion ? ` — did you mean "${suggestion}"?` : ""),
         });
@@ -207,7 +207,7 @@ export function run(argv = [], { root = REPO_ROOT, log = console.log, error = co
           file: relative,
           line: release.line,
           message:
-            `"${release.bump}" is not a release type, so \`changeset version\` throws and ` +
+            `"${release.bump}" is not a release type, so the release engine throws and ` +
             `abandons the WHOLE release plan — use ${[...VERSION_TYPES].join(", ")}`,
         });
       }
