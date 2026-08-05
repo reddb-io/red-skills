@@ -31,6 +31,7 @@
  */
 import {
   colourWorkerCell,
+  isRepairWorker,
   REDSKILLED_DASHBOARD_COLUMNS,
   workerCells,
   type RedskilledDashboardCells,
@@ -306,17 +307,17 @@ function renderHead(
   const parts: string[] = [];
   const unmatchedProject = match !== "matched" && match !== "name-only";
   if (options.mode === "global") {
-    parts.push(`host ${payload.host.worker_count}w/${payload.host.project_count}p`);
+    parts.push(`host ${workerActivity(payload.workers, payload.host.worker_count)}/${payload.host.project_count}p`);
     parts.push(memoryFigure(payload, options));
   } else if (match === "matched") {
-    parts.push(`${options.project} ${workers.length}w`);
+    parts.push(`${options.project} ${workerActivity(workers, workers.length)}`);
     parts.push(memoryFigure(payload, options));
     if (workers.length === 0) parts.push("idle");
   } else if (match === "name-only") {
     // The Workers still count — they are running — but the line says out loud
     // that the host holds no registration, and it never says `idle`: a project
     // nothing will be born for is stopped, not resting (#2973).
-    parts.push(`${options.project} ${workers.length}w`);
+    parts.push(`${options.project} ${workerActivity(workers, workers.length)}`);
     parts.push(memoryFigure(payload, options));
     parts.push(UNREGISTERED_MARK);
   } else {
@@ -344,6 +345,13 @@ function renderHead(
     : null]
     .filter((part): part is string => part != null)
     .join(" ");
+}
+
+/** Split mechanical healing out only when it exists; calm hosts keep the compact count. PURE. */
+function workerActivity(workers: readonly RedskilledRenderWorker[], total: number): string {
+  const repairing = workers.filter(isRepairWorker).length;
+  if (repairing === 0) return `${total}w`;
+  return `${Math.max(0, total - repairing)} coding + ${repairing} repairing`;
 }
 
 /**
