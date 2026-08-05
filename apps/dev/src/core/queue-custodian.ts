@@ -14,6 +14,9 @@ import {
   type RepairLaneDeps,
   type RepairLaneResult,
 } from "./repair-lane.js";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { decode, encode, type JsonValue } from "@reddb-io/toon";
 
 export interface QueueCustodyIdentity {
   readonly repo: string;
@@ -45,6 +48,72 @@ export interface QueueCustodyState {
 export interface QueueCustodyStore {
   read(): Promise<QueueCustodyState>;
   write(state: QueueCustodyState): Promise<void>;
+}
+
+const EMPTY_CUSTODY: QueueCustodyState = { version: 1, prs: {} };
+
+function decodeCustody(value: unknown): QueueCustodyState {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return EMPTY_CUSTODY;
+  const root = value as { version?: unknown; prs?: unknown };
+  if (root.version !== 1 || root.prs == null || typeof root.prs !== "object" || Array.isArray(root.prs)) {
+    return EMPTY_CUSTODY;
+  }
+  const prs: Record<string, QueueCustodyRecord> = {};
+  for (const [key, raw] of Object.entries(root.prs)) {
+    if (!/^\d+$/.test(key) || raw == null || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const record = raw as Partial<QueueCustodyRecord>;
+    if (
+      !Number.isSafeInteger(record.prNumber) ||
+      !Number.isSafeInteger(record.ownerTicket) ||
+      typeof record.repo !== "string" ||
+      typeof record.branch !== "string" ||
+      typeof record.base !== "string" ||
+      typeof record.handedOffAt !== "string" ||
+      typeof record.updatedAt !== "string" ||
+      !["watching", "repairing", "semantic-bounce", "human"].includes(record.status ?? "")
+    ) continue;
+    const semanticBounces = Array.isArray(record.semanticBounces)
+      ? record.semanticBounces.filter((failure): failure is QueueCustodyFailure =>
+          failure != null && typeof failure === "object" &&
+          typeof (failure as Partial<QueueCustodyFailure>).summary === "string" &&
+          typeof (failure as Partial<QueueCustodyFailure>).observedAt === "string")
+      : [];
+    prs[key] = {
+      repo: record.repo,
+      prNumber: record.prNumber as number,
+      ownerTicket: record.ownerTicket as number,
+      branch: record.branch,
+      base: record.base,
+      status: record.status as QueueCustodyRecord["status"],
+      semanticBounces,
+      handedOffAt: record.handedOffAt,
+      updatedAt: record.updatedAt,
+    };
+  }
+  return { version: 1, prs };
+}
+
+/** Atomic TOON store in the durable `.red/state/afk/` lane. */
+export function createFileQueueCustodyStore(path: string): QueueCustodyStore {
+  return {
+    async read() {
+      try {
+        return decodeCustody(decode(await readFile(path, "utf8")));
+      } catch {
+        return EMPTY_CUSTODY;
+      }
+    },
+    async write(state) {
+      await mkdir(dirname(path), { recursive: true });
+      const temporary = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
+      await writeFile(
+        temporary,
+        encode(decodeCustody(state) as unknown as JsonValue, { keyedMapCollapse: true }),
+        "utf8",
+      );
+      await rename(temporary, path);
+    },
+  };
 }
 
 export interface QueueCustodyArmResult {
