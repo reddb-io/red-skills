@@ -60,9 +60,10 @@ describe("castle MCP client docs contract", () => {
 
     expect(skill).toContain("`castle` MCP");
     expect(skill).toContain("[`MCP.md`](./MCP.md)");
-    for (const tool of ["queue_status", "worker_dispatch", "status"]) {
+    for (const tool of ["queue_status", "worker_dispatch"]) {
       expect(skill, `/afk should route through ${tool}`).toContain(`\`${tool}\``);
     }
+    expect(skill).toContain("`status {scope:");
   });
 
   it("makes /go dispatch through the same MCP surface", async () => {
