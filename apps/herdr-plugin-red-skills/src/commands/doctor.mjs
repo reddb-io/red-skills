@@ -21,7 +21,7 @@ import { herdrBin, insideHerdr, invocationCwd, pluginId } from "../herdr.mjs";
 import { style } from "../ui/ansi.mjs";
 
 function verdict(ok, text) {
-  return `${ok ? style.brightGreen("ok  ") : style.brightRed("fail")} ${text}`;
+  return `${ok ? style.dim("+ ok  ") : style.red("! fail")} ${text}`;
 }
 
 function note(text) {
@@ -32,7 +32,7 @@ export async function runDoctor({ config, flags = {} }) {
   const socket = resolveRedskilledPaths({ socketPath: flags.socket ?? config.socketPath });
   const lines = [];
 
-  lines.push(style.bold("herdr"));
+  lines.push(style.bold(style.identity("herdr")));
   lines.push(verdict(insideHerdr(), `HERDR_ENV=1 — this process ${insideHerdr() ? "is" : "is NOT"} inside a herdr pane`));
   lines.push(note(`binary       ${herdrBin()}`));
   lines.push(note(`plugin id    ${pluginId()}`));
@@ -41,7 +41,7 @@ export async function runDoctor({ config, flags = {} }) {
   lines.push(note(`config file  ${config.path}${config.present ? "" : style.gray(" (absent — running on declared defaults)")}`));
 
   lines.push("");
-  lines.push(style.bold("redskilled"));
+  lines.push(style.bold(style.identity("redskilled")));
   lines.push(note(`socket       ${socket.socketPath}`));
   lines.push(note(`resolved by  ${socket.source}`));
   lines.push(note(`runtime dir  ${socket.runtimeDir}`));
@@ -74,7 +74,7 @@ export async function runDoctor({ config, flags = {} }) {
         verdict(
           true,
           `statusline-payload: ${payload.host.worker_count} Worker(s) · ${payload.host.project_count} project(s) · ` +
-            `${payload.repository_activity?.projects?.length ?? 0} repository(ies) polled${payload.staleness.stale ? style.yellow(" · STALE") : ""}`,
+            `${payload.repository_activity?.projects?.length ?? 0} repository(ies) polled${payload.staleness.stale ? style.red(" · ▲ STALE") : ""}`,
         ),
       );
     } catch (error) {
@@ -102,7 +102,7 @@ export async function runDoctor({ config, flags = {} }) {
   const label = await resolveProjectLabel(target).catch(() => null);
   lines.push(
     label
-      ? verdict(true, `project label ${style.brightCyan(label)} — local mode scopes to this`)
+      ? verdict(true, `project label ${style.bold(label)} — local mode scopes to this`)
       : note("no project label resolves here, so local mode has nothing to scope to"),
   );
 

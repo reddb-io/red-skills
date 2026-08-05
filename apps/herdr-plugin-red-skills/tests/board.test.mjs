@@ -117,7 +117,7 @@ test("a state change in the daemon reaches the pane without local re-derivation"
   const second = text(renderBoard({ dashboard: after, state: state(), size: SIZE }));
   assert.match(first, /● live/);
   assert.match(first, /iss=3012/);
-  assert.match(second, /● stale/);
+  assert.match(second, /▲ stale/);
   assert.ok(!second.includes("iss=3012"), "the pane kept a row the daemon no longer renders");
 });
 
