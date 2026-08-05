@@ -21,6 +21,7 @@ import { loadConfig } from "../core/config.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { parseCurrentBlocker } from "../core/blocker-state.js";
 import { applyRequeue } from "../core/requeue.js";
+import { blockedLabelsIn } from "../core/state-transition.js";
 import { parseClaimRecords, renderClaimComment } from "../core/claim.js";
 import { LABEL_HUMAN } from "../core/triage-labels.js";
 import {
@@ -387,7 +388,7 @@ async function executeApprove(exec: Exec, repo: string, issue: IssueData, prNumb
   // machine and the planner (which always lands on exactly one state role)
   // cannot express this shed. Same class as the reconcile land path's
   // `landDropLabels` — deliberately left raw (#2663).
-  const blockedLabels = issue.labels.filter((l) => l.startsWith("blocked:"));
+  const blockedLabels = blockedLabelsIn(issue.labels);
   const removeLabels = [LABEL_HUMAN, ...blockedLabels];
   const editArgs = ["gh", "issue", "edit", String(issue.number), ...repoArgs(repo)];
   for (const l of removeLabels) editArgs.push("--remove-label", l);
