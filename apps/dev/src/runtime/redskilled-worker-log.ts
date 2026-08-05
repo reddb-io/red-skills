@@ -32,6 +32,7 @@
 import { join } from "node:path";
 import { workersDir } from "@reddb-io/shared/red-paths.js";
 import { publishRedskilledWorkerLogLine } from "@reddb-io/redskilled/client";
+import type { RedskilledMechanicalHealStamp } from "@reddb-io/redskilled/protocol";
 import type { RedskilledWorkerDisplay } from "@reddb-io/redskilled/worker-display";
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
 import {
@@ -95,7 +96,11 @@ export function registrationLaunchEnv(runner?: string): Record<string, string> {
  * record is exactly what the daemon held before #3097, and is still better than
  * a record assembled from defaults.
  */
-export type WorkerLogLinePublisher = (line: string, display?: RedskilledWorkerDisplay) => Promise<void>;
+export type WorkerLogLinePublisher = (
+  line: string,
+  display?: RedskilledWorkerDisplay,
+  mechanicalHeal?: RedskilledMechanicalHealStamp,
+) => Promise<void>;
 
 export interface WorkerLogLinePublisherOptions {
   /** This checkout, for the one label the daemon keys this project by. */
@@ -137,7 +142,11 @@ export function createWorkerLogLinePublisher(
     ?? ((paths, heartbeat, config) => publishRedskilledWorkerLogLine(paths, heartbeat, config));
   const paths = resolveRedskilledPaths({ env });
   const projectLabel = resolveProjectLabel(options.root);
-  return async (line: string, display?: RedskilledWorkerDisplay): Promise<void> => {
+  return async (
+    line: string,
+    display?: RedskilledWorkerDisplay,
+    mechanicalHeal?: RedskilledMechanicalHealStamp,
+  ): Promise<void> => {
     const trimmed = line.trim();
     if (trimmed === "") return;
     try {
@@ -147,6 +156,7 @@ export function createWorkerLogLinePublisher(
         // must not make a heartbeat expensive.
         line: trimmed,
         ...(display == null ? {} : { display }),
+        ...(mechanicalHeal == null ? {} : { mechanicalHeal }),
         session_project: projectLabel,
       });
     } catch {
