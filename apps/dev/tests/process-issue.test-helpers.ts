@@ -129,6 +129,9 @@ export interface HarnessOptions {
    * parks on its own gate failure; nothing is filed anywhere.
    */
   baselineFails?: boolean;
+  /** Output emitted when the baseline probe fails. Use the feedback-worktree
+   * setup marker to model a baseline that could not be materialised at all. */
+  baselineStderr?: string;
   /**
    * When false, the POST-MERGE integration gate (#1335) fails while the
    * pre-landing gate still passes. Detected by the `-C` dir: the post-merge gate
@@ -653,7 +656,11 @@ export function harness(opts: HarnessOptions = {}): {
       const cIdx = Array.isArray(args) ? args.indexOf("-C") : -1;
       const dir = cIdx >= 0 ? (args[cIdx + 1] ?? "") : "";
       if (dir === "main" || dir.startsWith("main/")) {
-        return { code: opts.baselineFails ? 1 : 0, stdout: "", stderr: "" };
+        return {
+          code: opts.baselineFails ? 1 : 0,
+          stdout: "",
+          stderr: opts.baselineFails ? (opts.baselineStderr ?? "") : "",
+        };
       }
       // The post-merge integration gate runs against the landing/rebase
       // worktree PATH, never a branch name — so the dir discriminates it.

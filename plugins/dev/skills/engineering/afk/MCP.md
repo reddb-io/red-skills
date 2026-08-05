@@ -171,7 +171,9 @@ worker that is merely pointed the wrong way.
 **The gate command is canonical.** `gate_run` runs exactly what the repo
 declares; never widen it with stricter flags. When it fails, the baseline
 comparison classifies the verdict as `branch-fault` or `inconclusive` — it
-never tracks the base branch as red (#2380).
+never tracks the base branch as red (#2380). A baseline that could not be
+materialised is environment-inconclusive: its failed materialisation is not
+cached, the next round retries it, and the round consumes no Re-seed budget.
 
 ### Landing — merge and cascade
 

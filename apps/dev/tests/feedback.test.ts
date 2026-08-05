@@ -924,7 +924,7 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
     expect(testCheck.status).toBe("failed");
   });
 
-  it("probe-infrastructure failure (OOM/crash on the baseline) is inconclusive for the PROBE and silently ignored — it never claims the baseline is red", async () => {
+  it("makes a baseline OOM an inconclusive environment round, never branch fault", async () => {
     const exec: Exec = async (args) => {
       const script = args[args.length - 1] ?? "";
       const dir = args[args.indexOf("-C") + 1] ?? "";
@@ -948,15 +948,15 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
       now: () => 0,
       baselineWorktree: "main",
     });
-    // The baseline OOM is a probe-infrastructure failure: it is NOT added to the
-    // baseline-failing set, so the branch failure stays attributed to the branch.
-    // Nothing is filed; the worker's own clean failure blocks that one worker.
     expect(result.baselineProbeRan).toBe(true);
-    expect(result.baselineVerdict).toBe("branch-fault");
-    expect(result.baselineInconclusive).toEqual([]);
+    expect(result.baselineVerdict).toBe("inconclusive");
+    expect(result.baselineInconclusive).toEqual(["test:apps/dev"]);
     expect(result.ok).toBe(false);
+    expect(isInfraFeedbackFailure(result)).toBe(true);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("failed");
+    expect(testCheck.record.summary).toContain("baseline environment failure");
+    expect(testCheck.record.summary).not.toContain("also fails on the baseline");
   });
 
   it("a mix: one reproduced on the baseline, one worker-only → verdict is BRANCH-FAULT (a real new failure outranks an inconclusive one)", async () => {
@@ -1005,13 +1005,7 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
     expect(calls.length).toBe(5);
   });
 
-  it("baseline probe worktree setup failure → branch-fault, not inconclusive (#2379)", async () => {
-    // Model: the worker branch's test fails; the baseline probe's worktreeAdd
-    // failed for an infra reason (stale feedback/main), so the exec returns the
-    // 'feedback worktree setup failed' sentinel. That sentinel must NOT be treated
-    // as a confirmed baseline failure (which would make the worker's failure look
-    // pre-existing and dodge the block). Instead it is inconclusive for the PROBE
-    // only, and the branch failure stays attributed to the branch.
+  it("makes a baseline worktree setup failure an inconclusive environment round", async () => {
     const exec: Exec = async (args) => {
       const script = args[args.length - 1] ?? "";
       const dir = args[args.indexOf("-C") + 1] ?? "";
@@ -1021,7 +1015,13 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
       }
       if (isBaseline) {
         // The baseline executor returns the sentinel when worktree setup failed.
-        return { code: 1, stdout: "", stderr: "feedback worktree setup failed for main; validation blocked" };
+        return {
+          code: 1,
+          stdout: "",
+          stderr:
+            "feedback worktree setup failed for main; validation blocked " +
+            "(worktree add failed: fatal: transient fetch failure)",
+        };
       }
       return { code: 0, stdout: "ok", stderr: "" };
     };
@@ -1032,17 +1032,16 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
       now: () => 0,
       baselineWorktree: "main",
     });
-    // The branch's failure is real; the probe failure is inconclusive.
-    // Verdict must be branch-fault (not inconclusive) because the baseline probe
-    // did NOT confirm the failure — worktree setup failed.
     expect(result.ok).toBe(false);
     expect(result.baselineProbeRan).toBe(true);
-    expect(result.baselineVerdict).toBe("branch-fault");
-    // The setup failure is inconclusive for the probe — it must NOT appear in
-    // baselineInconclusive (that list is branch-perspective, not probe-perspective).
-    expect(result.baselineInconclusive).toEqual([]);
+    expect(result.baselineVerdict).toBe("inconclusive");
+    expect(result.baselineInconclusive).toEqual(["test:apps/dev"]);
+    expect(isInfraFeedbackFailure(result)).toBe(true);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("failed");
+    expect(testCheck.record.summary).toContain("the baseline could not be built");
+    expect(testCheck.record.summary).toContain("transient fetch failure");
+    expect(testCheck.record.summary).not.toContain("also fails on the baseline");
   });
 });
 

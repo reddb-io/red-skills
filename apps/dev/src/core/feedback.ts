@@ -501,6 +501,8 @@ export function isInfraValidationFailure(checks: readonly ClassifiableCheck[]): 
       summary.includes("feedback worktree setup failed") ||
       summary.includes("feedback worktree submodule init failed") ||
       summary.includes("feedback worktree install failed") ||
+      summary.includes("baseline environment failure") ||
+      summary.includes("the baseline could not be built") ||
       // A command the gate could not even pose — its worktree directory does not
       // exist (#3041). An unrunnable command judged nothing, so it is an
       // infrastructure error and never the branch's red verdict.
@@ -754,6 +756,8 @@ export interface BaselineFailureEvidence {
 interface BaselineCheckResult {
   status: "passed" | "failed" | "inconclusive";
   evidence?: BaselineFailureEvidence;
+  /** The baseline command did not produce a verdict the branch can influence. */
+  environmentFailure?: boolean;
 }
 
 function boundedFailureOutputTail(output: string): string {
@@ -828,6 +832,9 @@ export function baselineNeverRan(baselineSummary: string | undefined): boolean {
  */
 function baselineComparisonSummary(baselineSummary: string | undefined): string {
   const detail = baselineSummary?.trim();
+  if (detail?.includes("baseline environment failure")) {
+    return `inconclusive: ${detail}`;
+  }
   if (detail && baselineNeverRan(detail)) {
     return `inconclusive: the baseline could not be built, so nothing was compared — ${detail}`;
   }
@@ -883,15 +890,16 @@ async function runChecksForBaseline(
       // Probe-infrastructure failure ⇒ inconclusive, silently logged (#2380).
       // Main's CI is the validation authority; a local probe OOM/crash on the
       // resource-constrained fleet host must not manufacture a main-red verdict
-      // CI never saw. The caller filters `status === "failed"` into the
-      // baseline-failing set, so a crashed probe is excluded and the branch
-      // failure stays attributed to the branch — a per-worker block, never a
-      // cross-fleet claim about main.
+      // CI never saw. The caller promotes this to an environment-inconclusive
+      // round so lifecycle recovery reruns it for free before judging the branch.
       out.set(name, {
         status: "inconclusive",
+        environmentFailure: true,
         evidence: {
           check: name,
-          summary: "baseline probe inconclusive (crash/OOM) — not a confirmed baseline failure",
+          summary:
+            `baseline environment failure: baseline probe crashed/OOM before a verdict — ` +
+            outputSummary("failed", output),
           outputTail: boundedFailureOutputTail(output),
         },
       });
@@ -900,15 +908,16 @@ async function runChecksForBaseline(
     if (isWorktreeSetupFailure(output)) {
       // The baseline probe's worktree materialisation failed (stale detached
       // worktree, lock, missing ref — infra, not a test result). Treat as
-      // inconclusive so the failure is NOT counted as a pre-existing baseline
-      // failure. Without this, a setup failure makes every check appear to also
-      // fail on the baseline, falsely attributing the block to a baseline flake
-      // rather than the branch's code (#2379).
+      // environment-inconclusive so no branch verdict can be produced from a
+      // comparison that never ran. The lifecycle retries this round as INFRA.
       out.set(name, {
         status: "inconclusive",
+        environmentFailure: true,
         evidence: {
           check: name,
-          summary: "baseline probe inconclusive (worktree setup failed) — not a confirmed baseline failure",
+          summary:
+            `baseline environment failure: the baseline could not be built — ` +
+            outputSummary("failed", output),
           outputTail: boundedFailureOutputTail(output),
         },
       });
@@ -1228,9 +1237,16 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       .filter((c) => c.status === "failed")
       .map((c) => ({ name: c.name, script: c.script, scope: c.scope, runScript: c.runScript }));
     const baselineResults = await runChecksForBaseline(exec, baselineWorktree, failing, layout, now, subprocessEnv);
-    const baselineFailing = [...baselineResults.entries()]
-      .filter(([, result]) => result.status === "failed")
-      .map(([name]) => name);
+    const baselineEnvironmentEvidence = [...baselineResults.values()]
+      .find((result) => result.environmentFailure)?.evidence;
+    // A sick comparison environment cannot acquit or accuse the branch. Mark
+    // the whole round inconclusive so lifecycle routing retries it for free;
+    // only a healthy baseline may produce a branch-fault verdict.
+    const baselineFailing = baselineEnvironmentEvidence
+      ? failing.map((check) => check.name)
+      : [...baselineResults.entries()]
+          .filter(([, result]) => result.status === "failed")
+          .map(([name]) => name);
     const gateDecision = decideBaselineDiffGate(
       failing.map((check) => check.name),
       baselineFailing,
@@ -1245,7 +1261,7 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
       const check = checks[i]!;
       if (check.status !== "failed") continue;
       if (!inconclusive.has(check.name)) continue;
-      const evidence = baselineResults.get(check.name)?.evidence;
+      const evidence = baselineEnvironmentEvidence ?? baselineResults.get(check.name)?.evidence;
       const newRecord = buildValidationRecord({
         name: check.name,
         status: "failed",

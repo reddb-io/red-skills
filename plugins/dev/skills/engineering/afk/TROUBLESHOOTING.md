@@ -38,10 +38,12 @@ This manual census is a stopgap for the queue reconciler tracked in #1739.
 ### Symptom
 
 Validation claims `main` is red, but the failure appears only in a local or
-agent-specific probe environment. Since #2380 this can only ever surface as ONE
-branch's `blocked:validation` park carrying an `inconclusive` baseline
-comparison — the main-red repair lane is retired, so no probe result is a
-tracked issue or a global land block.
+agent-specific probe environment. A genuine failure reproduced on a healthy
+baseline can park one branch with an `inconclusive` comparison. A baseline that
+could not be built is different: it is INFRA, its failure is not cached, and a
+later round retries it without charging or Re-seeding the implementer. The
+main-red repair lane is retired, so neither result is a tracked issue or global
+land block.
 
 ### Confirm
 
@@ -55,8 +57,10 @@ tracked issue or a global land block.
 
 ### Recover
 
-1. Close the validation park with concrete evidence: current `main` CI state,
-   relevant release tag, and the exact gate command that passed.
+1. Let an environment-inconclusive round re-materialise the baseline and rerun
+   for free. If bounded infrastructure recovery still parks it, close that park
+   only with concrete evidence: current `main` CI state, relevant release tag,
+   and the exact gate command that passed.
 2. Link the probe-environment bug instead of blocking the validation lane on a
    check the gate does not run. Never file a "repair main" issue for it — that
    lane is retired; every problem is resolved in the PR before merge.

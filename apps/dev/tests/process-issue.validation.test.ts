@@ -202,6 +202,41 @@ describe("processIssue — feedback fail", () => {
     expect(trace.pushedAttempt).toEqual([]);
   });
 
+  it("treats an unbuildable baseline as free infra that a hook cannot charge", async () => {
+    const baselineDefect =
+      "feedback worktree setup failed for main; validation blocked " +
+      "(worktree add failed: fatal: transient fetch failure)";
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: false,
+      baselineFails: true,
+      baselineStderr: baselineDefect,
+      reseedGateBudget: 1,
+    });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      hooks: {
+        ...deps.hooks,
+        config: { "afk.hooks.on_feedback_classify": "cls" },
+        exec: async (command) =>
+          command === "cls"
+            ? { code: 0, stdout: JSON.stringify({ class: "semantic" }) }
+            : { code: 0, stdout: "" },
+      },
+    };
+
+    const result = await processIssue(customDeps, input);
+
+    expect(result.outcome).toBe("feedback-failed-infra");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.workerEvents.filter((event) => event.kind === "worker.reseeded")).toEqual([]);
+    const evidence = trace.envelopeBodies.join("\n");
+    expect(evidence).toContain("the baseline could not be built");
+    expect(evidence).toContain("transient fetch failure");
+    expect(evidence).not.toContain("correction budget exhausted");
+    expect(evidence).not.toContain("on branch `");
+  });
+
   it("/go retries a red post-DONE machine gate up to RED_GO_VERIFY_RETRIES, then parks with blocked:validation", async () => {
     const { deps, input, trace } = harness({
       labels: ["lane:go"],
@@ -447,10 +482,7 @@ describe("processIssue — backpressure fail (#430)", () => {
     expect(bp.summary).toContain("ERR_PNPM_OUTDATED_LOCKFILE");
   });
 
-  it("honours a hook that overrides the backpressure classification, and says so in the record", async () => {
-    // The classifier reads this as INFRA; the hook forces SEMANTIC. The override
-    // wins (the routing charges a correction round again) and is NAMED — the
-    // silent rewrite is what made the original diagnosis a guess.
+  it("does not let a hook convert a backpressure environment failure to semantic", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -472,12 +504,11 @@ describe("processIssue — backpressure fail (#430)", () => {
     };
     const result = await processIssue(customDeps, input);
 
-    expect(result.outcome).toBe("feedback-failed");
-    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(result.outcome).toBe("feedback-failed-infra");
+    expect(trace.runAgentCalls).toHaveLength(1);
     const envelope = trace.envelopeBodies.join("\n");
-    expect(envelope).toContain("classification override");
-    expect(envelope).toContain("`on_feedback_classify`");
-    expect(envelope).toContain("`semantic`");
+    expect(envelope).toContain("environment failure remained `infra`");
+    expect(envelope).not.toContain("correction budget exhausted");
   });
 
   it("merges + closes when feedback and backpressure both pass, sidecar carrying both", async () => {
