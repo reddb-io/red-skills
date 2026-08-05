@@ -82,5 +82,8 @@ describe("ADR 0136 transition vocabulary", () => {
     }
     const bootSweep = readFileSync(join(SRC, "core", "boot-sweep.ts"), "utf8");
     expect(bootSweep).not.toMatch(/\bBlockerState(?:Lookup)?\b/);
+
+    const requeue = readFileSync(join(SRC, "core", "requeue.ts"), "utf8");
+    expect(requeue.match(/\bplanTransition\(/g) ?? []).toHaveLength(1);
   });
 });
