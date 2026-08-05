@@ -2,7 +2,7 @@
 //
 // ADR 0132 decision 4 as superseded by Amendment 2. Six modules, one question
 // each:
-//   surface.ts   — WHICH API answers a call, decided by cardinality.
+//   surface.ts   — WHICH API is preferred and which can answer as fallback.
 //   rest-plan.ts — HOW a single-object read is actually issued on REST.
 //   balance.ts   — WHAT the token has left, asked rather than counted, and what
 //                  that balance admits.
@@ -22,6 +22,7 @@ export {
   githubOperationKey,
   githubOperations,
   githubSurfaceFor,
+  preferredSurfaceForRead,
   routeGithubArgs,
   surfaceForCardinality,
   tryRouteGithubArgs,

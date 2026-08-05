@@ -41,7 +41,7 @@ function gate(answer: GithubBalance | null, reads?: { count: number }) {
 
 describe("the band refuses convenience, never the claim", () => {
   it("refuses a listing once the balance enters the band", async () => {
-    const refusal = await gate(balance(100)).admit(["issue", "list", "--json", "number"], "convenience");
+    const refusal = await gate(balance(5000, 100)).admit(["issue", "list", "--json", "number"], "convenience");
 
     expect(refusal).not.toBeNull();
     expect(refusal!.admission.posture).toBe("reserved");
@@ -50,7 +50,7 @@ describe("the band refuses convenience, never the claim", () => {
   });
 
   it("lets the claim through the same band that refused the listing", async () => {
-    const band = gate(balance(100));
+    const band = gate(balance(100, 100));
 
     expect(await band.admit(["issue", "comment", "42", "--body", "claim"], "essential")).toBeNull();
     expect(await band.admit(["pr", "merge", "7"], "essential")).toBeNull();
@@ -70,7 +70,7 @@ describe("the band refuses convenience, never the claim", () => {
     // one hour, and the shape an average would have called healthy.
     const band = gate(balance(100, 5000));
 
-    expect(await band.admit(["issue", "list"], "convenience")).not.toBeNull();
+    expect(await band.admit(["label", "list"], "convenience")).not.toBeNull();
     expect(await band.admit(["issue", "view", "42"], "convenience")).toBeNull();
   });
 
@@ -105,7 +105,7 @@ describe("the read boundary refuses before it spends", () => {
     const result = await tryReadGhJsonRows(
       {
         cwd: "/tmp",
-        band: gate(balance(100)),
+        band: gate(balance(5000, 100)),
         exec: async () => {
           calls += 1;
           return { code: 0, stdout: "[]", stderr: "" };
@@ -127,7 +127,7 @@ describe("the read boundary refuses before it spends", () => {
     const result = await tryReadGhJsonRows(
       {
         cwd: "/tmp",
-        band: gate(balance(100)),
+        band: gate(balance(5000, 100)),
         criticality: "essential",
         exec: async () => {
           calls += 1;
