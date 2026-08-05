@@ -111,8 +111,13 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
    grep -E "worker-(birth|death|refused)" ~/.red/redskilled/redskilled.log.toonl
    ```
 
-   The Worker id is the directory between `workers/` and the issue number. Match
-   the daemon's lines to it by `worker_id`, and confirm the project by
+   **The directory glob is the authoritative answer; the grep is the widener.**
+   The Worker id is the directory between `workers/` and the issue number, so
+   the first command names exactly the Workers that ran the issue. The second
+   also matches a log that merely *mentions* the number in narration, so treat
+   any id it adds as a candidate to confirm against a `worker.claimed` row
+   before you write it into the dossier. Match the daemon's lines to a Worker by
+   `worker_id`, and confirm the project by
    `workspace_path` — the daemon log is host-scoped and holds every project's
    lines. **Resolve every Worker that touched the issue, not just the newest**: a
    requeued Ticket has more than one, and the failure is usually in the earlier
@@ -122,7 +127,11 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
    issue number, title, and GitHub link; PR number, branch, and link when one
    exists; project label; Worker id; runner, model, and effort; bundle version;
    started-at; pid; last heartbeat and its age; and the `loc_added` /
-   `loc_removed` and token counters. **State the phase in plain words, never as a
+   `loc_removed` and token counters. **Each field has one owner — read it there.**
+   Issue, title, runner, model, and effort come from the Worker's own
+   `worker.claimed` and `worker.routed` rows; project label, pid, cgroup unit,
+   and the host-side log path come from the daemon's `worker-birth` row; the
+   counters come from the Worker vitals record. **State the phase in plain words, never as a
    bare enum** — "waiting for the merge poll, 127 of 180, against a PR whose test
    check is red" says what `landing` hides, and "dead at boot:
    refused-over-worker-ceiling" says what an empty vitals row hides. When a field
@@ -190,6 +199,7 @@ bare invocation is not installed on an operator's machine by default.
 | Worker workspace | `.red/tmp/workers/<worker-id>/<issue>/` | The run's scratch; `worktree/` is the git checkout |
 | Gate artifact | `.red/tmp/workers/<worker-id>/<issue>/validation.jsonl` | What the merge gate ran and what it returned |
 | Liveness anchor | `.red/tmp/workers/<worker-id>/liveness.toonl` | Whether the process was alive, independent of narration |
+| Host-side stdout | `.red/tmp/logs/<yyyy-mm-dd>/worker-<worker-id>.log` | The raw stream the daemon redirected; its exact path is the `log_path` on the `worker-birth` row |
 | Safety log | `.red/tmp/diagnostics/<worker-id>.log` | Process-safety installation and signal handling |
 | Daemon log | `~/.red/redskilled/redskilled.log.toonl` | `worker-birth`, `worker-death`, `worker-refused`, `daemon-stop`, host-scoped |
 | Daemon deaths | `~/.red/redskilled/state/deaths/deaths.toonl` | The daemon's own exit evidence |
