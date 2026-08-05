@@ -38,6 +38,8 @@ export interface IssueStateCuratorInput {
   readonly store: IssueCuratorStore;
   /** The host's label vocabulary — the curator owns no spellings (#2666). */
   readonly labels: StateTransitionLabels;
+  /** The Park's canonical blocker parser, injected by the application owner. */
+  readonly hasActiveCurrentBlocker: (body: string) => boolean;
   readonly nowMs?: number;
   readonly recheckLimit?: number;
   /** Closed issues reconciled per sweep; see
@@ -59,21 +61,17 @@ function incoherentStateLabels(labels: StateTransitionLabels): Set<string> {
   return new Set([labels.ready, labels.human, labels.running, labels.needsTriage]);
 }
 
-function activeCurrentBlocker(body: string): boolean {
-  const match = /<!-- red:blocker-state v1 -->([\s\S]*?)<!-- \/red:blocker-state -->/.exec(body);
-  return match !== null && /^status:\s*blocked\s*$/m.test(match[1] ?? "");
-}
-
 /** The curator re-runs the same issue-level coherence rule that caused
  * quarantine: no active Current blocker and no competing lifecycle/blocked
  * state may remain before the issue re-enters the executable queue. */
 export function quarantineIncoherence(
   issue: TrackerIssue,
   labels: StateTransitionLabels,
+  hasActiveCurrentBlocker: (body: string) => boolean,
 ): string[] {
   const incoherent = incoherentStateLabels(labels);
   const reasons: string[] = [];
-  if (activeCurrentBlocker(issue.body)) reasons.push("active-current-blocker");
+  if (hasActiveCurrentBlocker(issue.body)) reasons.push("active-current-blocker");
   for (const label of issue.labels) {
     if (incoherent.has(label) || label.startsWith(labels.blockedPrefix)) {
       reasons.push(`state-label:${label}`);
@@ -203,7 +201,7 @@ export async function runIssueStateCurator(
   // reaches the tracker (#2666, ADR 0122 rule 5).
   for (const issue of issues) {
     const key = String(issue.number);
-    const reasons = quarantineIncoherence(issue, labels);
+    const reasons = quarantineIncoherence(issue, labels, input.hasActiveCurrentBlocker);
     if (reasons.length === 0) {
       // A quarantined issue carrying live `req:*` edges without its wait state
       // is itself incoherent: the planner refuses the queue and the issue stays
