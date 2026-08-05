@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { writeVersionSurfaces } from "../src/version-surfaces.js";
+import { readReleaseConfig, writeVersionSurfaces } from "../src/version-surfaces.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -13,6 +13,18 @@ afterEach(() => {
 });
 
 describe("version surfaces", () => {
+  it("reads the pinned default and the explicit vendored execution mode", () => {
+    expect(readReleaseConfig(workspaceFixture()).execution).toBe("pinned");
+    expect(readReleaseConfig(workspaceFixture({ execution: "vendored" })).execution).toBe(
+      "vendored",
+    );
+
+    const invalid = workspaceFixture({ execution: "network-magic" });
+    expect(() => readReleaseConfig(invalid)).toThrow(
+      "release.execution must be pinned or vendored",
+    );
+  });
+
   it("writes every confirmed npm, Cargo, and exotic surface byte-for-byte", () => {
     const root = workspaceFixture();
 
@@ -78,7 +90,7 @@ writeFileSync("synced-version.txt", process.env.RED_RELEASE_VERSION + "\\n");
   });
 });
 
-function workspaceFixture(options: { syncCommand?: string } = {}): string {
+function workspaceFixture(options: { syncCommand?: string; execution?: string } = {}): string {
   const root = mkdtempSync(join(tmpdir(), "red-release-surfaces-"));
   temporaryDirectories.push(root);
   write(root, "package.json", `{
@@ -107,9 +119,10 @@ version = "1.2.3"
   const syncCommand = options.syncCommand === undefined
     ? ""
     : `\n  sync_command: ${JSON.stringify(options.syncCommand)}`;
+  const execution = options.execution === undefined ? "" : `\n  execution: ${options.execution}`;
   write(root, ".red/config.yaml", `release:
   scheme: semver
-  trigger: version-pr
+  trigger: version-pr${execution}
   version_surfaces:
     - path: package.json
       format: npm
