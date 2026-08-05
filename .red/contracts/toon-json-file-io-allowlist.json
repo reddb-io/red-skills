@@ -201,6 +201,11 @@
       "classification": "external",
       "reason": "TOON migration accepts legacy JSON inputs.",
       "moveKey": "e57f5cae7679"
+    },
+    {
+      "id": "apps/release/src/cli.ts#json-parse-file-read#06f60309d571",
+      "classification": "external",
+      "reason": "npm package.json manifests are an external JSON format the release engine must read as-is"
     }
   ]
 }

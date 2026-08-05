@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
-    "@reddb-io/shared": "workspace:*"
+    "@reddb-io/shared": "workspace:*",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
