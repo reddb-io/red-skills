@@ -258,6 +258,14 @@ export interface LandingInput {
    * base falls back to the land-lock there. Defaults false/undefined.
    */
   nativeMergeQueue?: boolean;
+  /**
+   * True when the landing Worker holds this issue's claim (#3377). The claim is
+   * what licenses the gate's push step to RECONCILE a diverged `afk/*` tip with
+   * a leased force instead of parking: the attempt namespace belongs to the
+   * claim holder, so a tip it did not write is a dead attempt's leftover.
+   * Absent/false → a diverged tip stays a failure, exactly as before.
+   */
+  claimHeld?: boolean;
 }
 
 function isDocsOnlyPath(path: string): boolean {
@@ -452,7 +460,9 @@ export async function doLanding(
   // failure, not a merge conflict). Fail early with the real reason so no work
   // is silently lost and the issue is not mis-labelled blocked:merge-conflict.
   await deps.landingPhase?.("gate", { step: "push", status: "start" });
-  const pushed = await pushAttempt(deps.remoteGit, input.repoDir, input.branch, input.branch);
+  const pushed = await pushAttempt(deps.remoteGit, input.repoDir, input.branch, input.branch, {
+    claimHeld: input.claimHeld === true,
+  });
   if (!pushed.ok) {
     // Carry the REAL failure into the terminal record (#2576): a generic
     // land-failed with no diagnostic was being misread as a merge conflict.

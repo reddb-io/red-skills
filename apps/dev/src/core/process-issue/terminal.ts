@@ -78,6 +78,7 @@ import { deriveOutcomeRecord } from "../outcome-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
 import { applyCurrentBlockerEdit, makeBlocker, parseCurrentBlocker, type CurrentBlocker } from "../blocker-state.js";
+import { detectParkLoop, type ParkLoopVerdict } from "../park-loop.js";
 import {
   parseTrustPolicy,
   evaluateClaimTrust,
@@ -335,6 +336,10 @@ export const ACTIONABLE_BLOCKER_KINDS = new Set([
   "validation",
   "merge-conflict",
   "push-failed",
+  // #3377 — the divergence half of the old one-size push park. Actionable for
+  // the same reason `push-failed` is: it names a cause a later `runner` blocker
+  // must not overwrite.
+  "push-rejected",
   "ci",
   "stalled",
   "decision",
@@ -342,6 +347,24 @@ export const ACTIONABLE_BLOCKER_KINDS = new Set([
   "infra",
   "host-config",
 ]);
+/**
+ * The re-park loop verdict for the blocker this terminal is about to write
+ * (#3377), read off the issue body's previous park. A terminal with no blocker
+ * to write cannot be a repeat of one.
+ */
+export function parkLoopFor(
+  deps: ProcessIssueDeps,
+  input: ProcessIssueInput,
+  proposed: CurrentBlocker | null,
+): ParkLoopVerdict {
+  if (!proposed) return { loop: false, note: null };
+  return detectParkLoop({
+    previous: parseCurrentBlocker(input.body),
+    next: proposed,
+    nowEpoch: deps.nowEpoch(),
+  });
+}
+
 export function shouldPreserveCurrentBlocker(existing: CurrentBlocker | null, next: CurrentBlocker): boolean {
   if (!existing) return false;
   if (next.kind !== "runner") return false;
@@ -355,7 +378,15 @@ export async function writeCurrentBlockerBestEffort(
   if (!blocker || !deps.gh.editBody) return;
   try {
     const existing = parseCurrentBlocker(input.body);
-    const next = shouldPreserveCurrentBlocker(existing, blocker) ? existing! : blocker;
+    const preserved = shouldPreserveCurrentBlocker(existing, blocker) ? existing! : blocker;
+    // Every park this Worker WRITES carries the moment it wrote it (#3377). The
+    // stamp is what lets the next Worker's detector tell an issue nobody got to
+    // from an issue being reborn every few minutes. A preserved earlier blocker
+    // keeps its own stamp — it is not a new park.
+    const next =
+      preserved === blocker && blocker.parkedAtEpoch === undefined
+        ? { ...blocker, parkedAtEpoch: deps.nowEpoch() }
+        : preserved;
     const { body, changed } = applyCurrentBlockerEdit(input.body, next);
     if (!changed) return; // byte-exact no-op: body already reflects the desired blocker state
     await deps.gh.editBody(input.issue, body);
@@ -392,9 +423,35 @@ export async function terminalFailure(
 ): Promise<ProcessIssueResult> {
   const { deps, input } = c;
   markTerminalState(deps, outcome);
-  const decision = await routeRecovery(deps, input.issue, outcome, recoveryOrdinalFor(input));
+  // #3377 — compare this park to the last one BEFORE asking the recovery policy.
+  // The policy counts requeue ordinals, which a fresh Worker resets; an issue
+  // whose every Worker reproduces one blocker therefore never reaches a cap. An
+  // identical signature inside the window closes the automatic route instead.
+  const proposedBlocker = blockerForFailure(outcome, sections);
+  const loop = parkLoopFor(deps, input, proposedBlocker);
+  if (loop.loop && loop.note) {
+    deps.appendIterLog(`🤖 /afk #${input.issue}: ${loop.note}`);
+    deps.recordWorkerEvent?.("worker.park_loop_detected", {
+      issue: input.issue,
+      kind: proposedBlocker?.kind ?? "",
+      elapsed_s: loop.elapsedS ?? 0,
+    });
+  }
+  const decision = await routeRecovery(
+    deps,
+    input.issue,
+    outcome,
+    recoveryOrdinalFor(input),
+    loop.loop ? { forceDecision: "escalate" } : {},
+  );
   if (decision === "escalate") {
-    await writeCurrentBlockerBestEffort(deps, input, blockerForFailure(outcome, sections));
+    await writeCurrentBlockerBestEffort(
+      deps,
+      input,
+      loop.loop && loop.note && proposedBlocker
+        ? { ...proposedBlocker, loopNote: loop.note, parkedAtEpoch: deps.nowEpoch() }
+        : proposedBlocker,
+    );
   }
   const posted = await emitFailure(c, envelopeStatusFor(outcome), sectionKey, sections);
   if (record.validationSummary) {
