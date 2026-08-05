@@ -71,8 +71,10 @@ describe("codex monitor agent prompt", () => {
     expect(prompt).toContain("Project root: /repo");
     expect(prompt).toContain("AFK launch mode: fleet");
     expect(prompt).toContain("Every 10 seconds");
-    expect(prompt).toContain("castle `monitor` tool");
-    expect(prompt).toContain("`worker_vitals`");
+    expect(prompt).toContain("castle `status` tool");
+    expect(prompt).toContain("`scope: worker`");
+    expect(prompt).not.toContain("castle `monitor` tool");
+    expect(prompt).not.toContain("`worker_vitals`");
     expect(prompt).toContain("no-MCP fallback");
     expect(prompt).toContain("env RED_AFK_RUNNER=codex red-skills-dev monitor --once");
     expect(prompt).not.toContain(`${"r"}${"t"}${"k"} `);

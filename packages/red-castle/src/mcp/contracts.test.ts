@@ -92,8 +92,6 @@ describe("observability output contracts", () => {
     const contracted = [
       "status",
       "project_status",
-      "worker_vitals",
-      "monitor",
       "queue_status",
     ];
 

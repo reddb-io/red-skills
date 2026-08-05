@@ -74,7 +74,7 @@ describe("castle MCP client docs contract", () => {
     expect(skill).toContain("`worker_dispatch`");
   });
 
-  it("routes the fleet and observability verbs through the project tools", async () => {
+  it("routes fleet and observability reads through the intent surface", async () => {
     const [fleet, monitor] = await Promise.all([
       readRepoFile(`${AFK}/fleet.md`),
       readRepoFile(`${AFK}/monitor.md`),
@@ -83,9 +83,12 @@ describe("castle MCP client docs contract", () => {
     for (const tool of ["project_start", "status", "project_resize", "project_reset", "project_stop", "logs"]) {
       expect(fleet, `fleet.md should route through ${tool}`).toContain(`\`${tool}\``);
     }
-    for (const tool of ["monitor", "worker_vitals", "queue_status"]) {
+    for (const tool of ["status", "queue_status"]) {
       expect(monitor, `monitor.md should route through ${tool}`).toContain(`\`${tool}\``);
     }
+    expect(monitor).not.toContain("`worker_status`");
+    expect(monitor).not.toContain("`worker_vitals`");
+    expect(monitor).not.toContain("castle `monitor` tool");
   });
 
   it("makes every castle-verb skill an MCP-first client of its tools", async () => {

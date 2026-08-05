@@ -113,6 +113,28 @@ describe("the live tree carries no fleet or attempt source (#2795)", () => {
 });
 
 describe("a newly added source fails, naming the offending location (#2795)", () => {
+  it("rejects reintroducing an expired status alias as an MCP tool", () => {
+    const findings = collectExtinctSourceFindingsFromFiles([
+      {
+        relativePath: "packages/red-castle/src/mcp/legacy-status.ts",
+        sourceText: `
+export const tools = [
+  { name: "worker_status", invoke: () => readWorkers() },
+  { name: "worker_vitals", invoke: () => readVitals() },
+  { name: "monitor", invoke: () => readMonitor() },
+  { name: "host_state", invoke: () => readHost() },
+];
+`,
+      },
+    ]);
+
+    expect(findings.filter((finding) => finding.sourceId === "deprecated-status-alias")).toHaveLength(4);
+    const message = formatExtinctSourceFailureMessage(
+      formatExtinctSourceViolations({ findings, baseline: [] }),
+    );
+    expect(message).toContain("status { scope: worker | project | host }");
+  });
+
   it("names the file, line and column of a reintroduced fleet source", () => {
     const findings = collectExtinctSourceFindingsFromFiles([
       { relativePath: "apps/dev/src/core/worker-attribution.ts", sourceText: FLEET_READER },
@@ -411,6 +433,7 @@ describe("promoted into the normal check set (#2795)", () => {
 /** One line that must trip each declared source, so no entry can go dead. */
 function probeTextFor(id: string): string {
   const probes: Record<string, string> = {
+    "deprecated-status-alias": `const tools = [{ name: "worker_status", invoke: readWorkers }];`,
     "fleet-registry": `const p = await readFleetProfiles(path);`,
     "fleet-registry-lane": `const p = join(root, "fleets.toonl");`,
     "fleet-name": `const name = parseFleetFlag(argv) ?? env["RED_AFK_FLEET"];`,

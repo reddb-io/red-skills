@@ -187,20 +187,13 @@ describe("castle MCP tools", () => {
       "project_resize",
       "project_reset",
       "project_stop",
-      "host_state",
-      "host_dashboard",
-      "host_provision_check",
-      "host_unit_status",
       "logs",
-      "worker_vitals",
       "dashboard",
-      "monitor",
       "history",
       "queue_status",
       "events_since",
       "deadend_audit",
       "worker_dispatch",
-      "worker_status",
       "worker_stop",
       "worker_recycle",
       "runner_list",
@@ -266,27 +259,19 @@ describe("castle MCP tools", () => {
     });
   });
 
-  it("keeps every absorbed verb as an answering deprecation alias", async () => {
+  it("does not publish the expired worker and host status aliases", () => {
     const tools = createCastleMcpTools(deps());
     const aliases = [
-      ["project_status", "project"],
-      ["worker_status", "worker"],
-      ["worker_vitals", "worker"],
-      ["monitor", "worker"],
-      ["host_state", "host"],
-      ["host_dashboard", "host"],
-      ["host_provision_check", "host"],
-      ["host_unit_status", "host"],
-    ] as const;
+      "worker_status",
+      "worker_vitals",
+      "monitor",
+      "host_state",
+      "host_dashboard",
+      "host_provision_check",
+      "host_unit_status",
+    ];
 
-    for (const [name, scope] of aliases) {
-      const answer = await tools.find((tool) => tool.name === name)!.invoke({});
-      expect(answer).toMatchObject({
-        deprecated: true,
-        replacement: { tool: "status", args: { scope } },
-      });
-      expect(answer).toHaveProperty("result");
-    }
+    expect(tools.filter((tool) => aliases.includes(tool.name))).toEqual([]);
   });
 
   it("keeps structured project status inside the deprecated alias answer", async () => {
@@ -321,24 +306,6 @@ describe("castle MCP tools", () => {
     await expect(tool.invoke({ latch: "project-birth-breaker" })).resolves.toEqual({
       status: "reset",
       latch: "project-birth-breaker",
-    });
-  });
-
-  it("returns the daemon's read-only host diagnostics", async () => {
-    const d = deps();
-    const tools = createCastleMcpTools(d);
-
-    await expect(tools.find((tool) => tool.name === "host_state")!.invoke({})).resolves.toMatchObject({
-      result: { pid: 42, workers: [] },
-    });
-    await expect(tools.find((tool) => tool.name === "host_dashboard")!.invoke({})).resolves.toMatchObject({
-      result: { version: 1, mode: "global" },
-    });
-    await expect(tools.find((tool) => tool.name === "host_provision_check")!.invoke({})).resolves.toMatchObject({
-      result: { verdict: "ok" },
-    });
-    await expect(tools.find((tool) => tool.name === "host_unit_status")!.invoke({})).resolves.toMatchObject({
-      result: { floor: "auto-spawn" },
     });
   });
 
@@ -589,40 +556,33 @@ describe("castle MCP tools", () => {
     expect(d.statuslineAggregate).toHaveBeenCalledOnce();
   });
 
-  it("passes live_only and fields through to the worker_vitals dep", async () => {
+  it("passes worker filters through the consolidated status read", async () => {
     const d = deps();
     const tools = createCastleMcpTools(d);
+    const status = tools.find((tool) => tool.name === "status")!;
 
-    await tools.find((tool) => tool.name === "worker_vitals")!.invoke({});
+    await status.invoke({ scope: "worker" });
     expect(d.workerVitals).toHaveBeenCalledWith(
       expect.objectContaining({ live_only: true }),
     );
-
-    await tools
-      .find((tool) => tool.name === "worker_vitals")!
-      .invoke({ live_only: false, fields: ["worker", "live"] });
-    expect(d.workerVitals).toHaveBeenLastCalledWith({
-      live_only: false,
-      fields: ["worker", "live"],
-    });
-  });
-
-  it("passes live_only and fields through to the worker_status dep", async () => {
-    const d = deps();
-    const tools = createCastleMcpTools(d);
-
-    await tools.find((tool) => tool.name === "worker_status")!.invoke({});
     expect(d.workerStatus).toHaveBeenCalledWith(
       expect.objectContaining({ live_only: true }),
     );
 
-    await tools
-      .find((tool) => tool.name === "worker_status")!
-      .invoke({ worker: "wVM2Z", live_only: false, fields: ["worker"] });
+    await status.invoke({
+      scope: "worker",
+      worker: "wVM2Z",
+      live_only: false,
+      fields: ["worker", "live"],
+    });
+    expect(d.workerVitals).toHaveBeenLastCalledWith({
+      live_only: false,
+      fields: ["worker", "live"],
+    });
     expect(d.workerStatus).toHaveBeenLastCalledWith({
       worker: "wVM2Z",
       live_only: false,
-      fields: ["worker"],
+      fields: ["worker", "live"],
     });
   });
 

@@ -46,7 +46,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
 /** The noun an extinct source belonged to. */
-export type ExtinctNoun = "fleet" | "attempt" | "supervisor";
+export type ExtinctNoun = "fleet" | "attempt" | "supervisor" | "alias";
 
 /** One artifact ADR 0130 removed, with the route that replaced it. */
 export interface ExtinctSource {
@@ -69,6 +69,15 @@ export interface ExtinctSource {
  * work selector outlived the fleet that owned it).
  */
 export const EXTINCT_SOURCES: readonly ExtinctSource[] = [
+  {
+    id: "deprecated-status-alias",
+    noun: "alias",
+    what: "an expired status reader published as a separate MCP verb",
+    replacement:
+      "the consolidated `status { scope: worker | project | host }` intent read (ADR 0134)",
+    pattern:
+      /\bname\s*:\s*["'](?:worker_status|worker_vitals|monitor|host_state|host_dashboard|host_provision_check|host_unit_status)["']/,
+  },
   {
     id: "fleet-registry",
     noun: "fleet",

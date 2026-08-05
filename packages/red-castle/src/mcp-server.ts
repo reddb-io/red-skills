@@ -3,7 +3,7 @@ import { createClaimTools, type ClaimDependencies } from "./mcp/claim.js";
 import { createHelpTools, type HelpDependencies } from "./mcp/help.js";
 import { createMergeTools, type MergeDependencies } from "./mcp/merge.js";
 import { createHitlTools, type HitlDependencies } from "./mcp/hitl.js";
-import { createHostTools, type HostDependencies } from "./mcp/host.js";
+import type { HostDependencies } from "./mcp/host.js";
 import { applyOutputContracts } from "./mcp/contracts.js";
 import { createProjectTools, type ProjectDependencies } from "./mcp/project.js";
 import { createGateTools, type GateDependencies } from "./mcp/gate.js";
@@ -138,7 +138,6 @@ export function createCastleMcpTools(
     ...createHelpTools(deps, () => publishedTools),
     ...createStatusTools(deps),
     ...createProjectTools(deps),
-    ...createHostTools(deps),
     ...createObservabilityTools(deps),
     ...createDeadendTools(deps),
     ...createWorkerTools(deps),
