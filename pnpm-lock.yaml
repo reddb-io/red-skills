@@ -375,6 +375,9 @@ importers:
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info
+      '@reddb-io/github':
+        specifier: workspace:*
+        version: link:../../packages/github
       '@reddb-io/shared':
         specifier: workspace:*
         version: link:../../packages/shared
