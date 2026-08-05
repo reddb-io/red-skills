@@ -43,6 +43,8 @@ export interface ResidentServerOptions extends RspResidentConfig {
   registryPath?: string;
   telemetryDrainIntervalMs?: number;
   telemetryDrainTimeoutMs?: number;
+  /** Injected resident-lifetime GitHub client for transport fixtures. */
+  github?: RspResidentGithubClient;
 }
 
 export async function runResidentServer(opts: ResidentServerOptions): Promise<void> {
@@ -54,7 +56,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   let storeState: ResidentStoreState = { kind: "opening", startedAt: process.hrtime.bigint() };
   let telemetryTimer: NodeJS.Timeout | undefined;
   let shuttingDown = false;
-  const github = createLazyResidentGithub(opts.rootDir ?? process.cwd());
+  const github = opts.github ?? createLazyResidentGithub(opts.rootDir ?? process.cwd());
 
   const idleMs = opts.idleMs ?? DEFAULT_RSP_IDLE_MS;
   let idleTimer: NodeJS.Timeout | undefined;
