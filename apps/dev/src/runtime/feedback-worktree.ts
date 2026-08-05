@@ -40,10 +40,10 @@
 // under a host-wide file lock (#2437): concurrent landings serialize instead of
 // corrupting each other's setup, and the waiter re-checks the cache once it has
 // the lock, so the usual outcome of losing the race is a free cache hit. When
-// the wait itself times out, setup is reported as RETRYABLE — a failed setup is
-// only latched (blocking the rest of the session) after three consecutive
-// failures, because latching the first one turned one collision into a whole
-// ~25-minute revalidation cycle failing every check as inconclusive.
+// the wait itself times out, setup is reported as RETRYABLE. Failed setup is
+// never cached: a gate round can consume several validation calls, so even a
+// three-failure latch poisoned every later round after one transient fetch
+// incident. The next call always gets a fresh chance to heal the environment.
 
 import { accessSync, constants, readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
@@ -274,13 +274,6 @@ const WORKTREE_LOCK_WAIT_MS = 10 * 60_000;
 const WORKTREE_LOCK_STALE_MS = 20 * 60_000;
 const GATE_LOCK_WAIT_MS = 60 * 60_000;
 const GATE_LOCK_STALE_MS = 24 * 60 * 60_000;
-/**
- * Consecutive failed setups before a branch is latched as permanently broken.
- * Above 1 so a transient contention loss is retried; low enough that a genuine
- * lockfile drift costs three installs, not one per check in the cycle.
- */
-const MAX_SETUP_ATTEMPTS = 3;
-
 /**
  * How often a still-blocked waiter re-announces itself. The first poll speaks
  * IMMEDIATELY — a wait nobody hears about for 30s is still a wait nobody can
@@ -555,8 +548,9 @@ export function makeFeedbackWorktree(
   const nowIso = options.nowIso ?? (() => new Date().toISOString());
   const stallDetection = options.stallDetection ?? DEFAULT_VALIDATION_STALL_DETECTION;
   const gitCtx: gitx.GitContext = { cwd: root };
-  // branch -> resolved checkout path, or null when setup failed (block all runs).
-  const resolved = new Map<string, string | null>();
+  // Successful branch -> resolved checkout path. Failures are deliberately not
+  // cached: every later validation call may heal a transient environment fault.
+  const resolved = new Map<string, string>();
   // Worktrees created in THIS session — these are the only ones `cleanup()`
   // removes. A cache hit (worktree reused from a prior session) is NOT in
   // this set, so cleanup leaves it alone.
@@ -565,20 +559,14 @@ export function makeFeedbackWorktree(
   // in ONE process must share a single setup, not race each other into a
   // duplicate `worktree add`.
   const inflight = new Map<string, Promise<string | null>>();
-  // Consecutive setup failures per branch (#2437). A setup failure is treated
-  // as TRANSIENT until proven otherwise — contention on the shared baseline
-  // worktree looks exactly like a hard failure at the first attempt, and
-  // latching it made one collision fail every remaining check of the cycle.
-  const setupFailures = new Map<string, number>();
   // WHY the last materialise failed, per branch (#2964). `materialise()` returns
   // a bare `null` on three distinct paths — lock-wait timeout, `worktree add`
   // failure, `pnpm install` failure — and until this map existed the underlying
   // stderr went only to this process's stderr. The validation record then read
   // `setup failed … validation blocked` with no cause, so every occurrence in
   // the field became a fresh investigation that could not even confirm which
-  // path fired. The reason SURVIVES latching (it is never cleared by
-  // `noteSetupFailure`) precisely because the latched calls are the ones a
-  // reader sees in the record.
+  // path fired. The reason survives between retries so every failed call names
+  // the environment defect while the next call remains free to heal it.
   const setupFailureReason = new Map<string, string>();
   // A successful fallback may still have skipped lifecycle scripts after the
   // repo's hook installer refused AFK's custom core.hooksPath. Carry that fact
@@ -669,17 +657,9 @@ export function makeFeedbackWorktree(
     }
   }
 
-  /**
-   * Record a failed materialise. The branch is only latched as permanently
-   * broken (`resolved -> null`, every later call short-circuits) after
-   * {@link MAX_SETUP_ATTEMPTS} consecutive failures; before that the next
-   * validation call retries the baseline step from scratch.
-   */
+  /** Record a failed materialise without caching the failure. */
   function noteSetupFailure(branch: string, reason: string): null {
-    const attempts = (setupFailures.get(branch) ?? 0) + 1;
-    setupFailures.set(branch, attempts);
     setupFailureReason.set(branch, reason);
-    if (attempts >= MAX_SETUP_ATTEMPTS) resolved.set(branch, null);
     return null;
   }
 
@@ -737,8 +717,7 @@ export function makeFeedbackWorktree(
     if (io.lock && release === null) {
       // Timed out waiting for the holder. This is CONTENTION, not corruption:
       // report it as a retryable setup failure so the next validation call
-      // tries again (the holder will normally have finished by then) instead
-      // of latching the whole revalidation cycle as blocked.
+      // tries again (the holder will normally have finished by then).
       process.stderr.write(
         `warn: feedback worktree ${dest} is busy (lock wait timed out); ` +
           `baseline setup for ${branch} will be retried\n`,
@@ -892,7 +871,6 @@ export function makeFeedbackWorktree(
     }
     created.add(dest);
     resolved.set(branch, dest);
-    setupFailures.delete(branch);
     return dest;
   }
 
@@ -1059,7 +1037,6 @@ export function makeFeedbackWorktree(
       }
       created.clear();
       resolved.clear();
-      setupFailures.clear();
       setupFailureReason.clear();
       setupRecord.clear();
       reversionGeometry.clear();

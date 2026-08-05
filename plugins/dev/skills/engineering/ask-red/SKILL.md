@@ -134,6 +134,10 @@ repair) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` local validation authority (`plugins.dev.afk.feedback.commands`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+`/afk` baseline environment recovery (free environment-inconclusive rounds and
+the one-way `on_feedback_classify` override) ->
+`plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md` and
+`plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` after-fork reversion/test-line intent finding
 (`red.afk.branch-reversion.v1`, with its pasteable restoration repair) ->
 `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md`;

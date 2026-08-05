@@ -1020,27 +1020,34 @@ describe("makeFeedbackWorktree — shared baseline serialization (#2437)", () =>
     expect(attempt).toBe(2);
   });
 
-  it("latches after three consecutive failures so a truly broken baseline stops retrying", async () => {
+  it("retries after a whole failed round instead of permanently latching the baseline", async () => {
     let adds = 0;
+    const shas: Record<string, string> = {};
     const io: FeedbackWorktreeIO = {
-      worktreeAdd: async () => {
+      worktreeAdd: async (_ctx, dest) => {
         adds += 1;
-        return { ok: false, stderr: "fatal: couldn't find remote ref refs/heads/main" };
+        if (adds <= 3) {
+          return { ok: false, stderr: "fatal: transient fetch failure for refs/heads/main" };
+        }
+        shas[dest] = SHA;
+        return { ok: true, stderr: "" };
       },
       worktreeRemove: async () => {},
       pnpm: async () => ({ code: 0, stdout: "", stderr: "" }),
       exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-      branchHead: async () => null,
-      worktreeHead: async () => null,
+      branchHead: async (_ctx, branch) => (branch === BRANCH ? SHA : null),
+      worktreeHead: async (_ctx, dest) => shas[dest] ?? null,
       rebase: async () => ({ ok: true }),
     };
     const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
 
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       expect((await fb.pnpm(["pnpm", "-C", BRANCH, "test"])).code).toBe(1);
     }
-    // Three attempts, then the branch is latched — no unbounded retry storm.
-    expect(adds).toBe(3);
+    const healedRound = await fb.pnpm(["pnpm", "-C", BRANCH, "test"]);
+
+    expect(healedRound.code).toBe(0);
+    expect(adds).toBe(4);
   });
 
   it("shares one materialise across concurrent calls in the same process", async () => {
@@ -1129,7 +1136,7 @@ describe("makeFeedbackWorktree setup failure names its cause (#2964)", () => {
     expect(r.stderr).not.toContain("pnpm install");
   });
 
-  it("keeps the cause on the LATCHED calls — the ones a reader actually sees", async () => {
+  it("keeps the environment cause on every retry", async () => {
     const io: FeedbackWorktreeIO = {
       worktreeAdd: async () => ({ ok: false, stderr: "fatal: couldn't find remote ref refs/heads/nope" }),
       worktreeRemove: async () => {},
@@ -1141,11 +1148,12 @@ describe("makeFeedbackWorktree setup failure names its cause (#2964)", () => {
     };
     const fb = makeFeedbackWorktree("/root", "/root/.red/tmp/feedback", io);
 
-    // Burn through MAX_SETUP_ATTEMPTS so the branch latches to `resolved -> null`.
+    // A repeated environment failure remains diagnosable without becoming a
+    // permanent session latch.
     for (let i = 0; i < 3; i++) await fb.backpressure({ command: "x", cwd: BROKEN, timeoutMs: 1000 });
-    const latched = await fb.backpressure({ command: "x", cwd: BROKEN, timeoutMs: 1000 });
+    const retried = await fb.backpressure({ command: "x", cwd: BROKEN, timeoutMs: 1000 });
 
-    expect(latched.stderr).toContain("worktree add failed");
+    expect(retried.stderr).toContain("worktree add failed");
   });
 });
 

@@ -107,7 +107,7 @@ How a completed **Worker**'s branch is integrated into its base, toggled by the 
 _Avoid_: merge, merge-back, integrate (these are sub-steps of Landing, not the operation)
 
 **Baseline comparison**:
-The feedback gate's classifier for a FAILED branch gate: the failing checks are re-run against the base worktree solely to decide who owns the failure. A failure absent from the base is `branch-fault`; a failure reproduced on the base is `inconclusive`; a probe that OOMs, crashes, or cannot be set up is inconclusive and silently logged. Every verdict except `clean` fails the gate and parks that ONE branch `blocked:validation` with the comparison evidence on the sidecar. Comparison-only by construction: it files nothing, downgrades nothing, and never blocks another branch's **Landing**.
+The feedback gate's classifier for a FAILED branch gate: the failing checks are re-run against the base worktree solely to decide who owns the failure. A failure absent from a healthy base is `branch-fault`; a failure reproduced on a healthy base is genuinely `inconclusive` and parks that ONE branch `blocked:validation` with comparison evidence. A probe that OOMs, crashes, or cannot be set up is an environment-inconclusive INFRA round: it spends no **Re-seed budget**, cannot be overridden to semantic by `on_feedback_classify`, and the next round re-materialises the uncached baseline before judging the branch. Comparison-only by construction: it files nothing, downgrades nothing, and never blocks another branch's **Landing**.
 _Avoid_: baseline probe as a main-health check, pre-existing-failure downgrade, tracked-red
 
 **Main-red repair lane — RETIRED (#2380)**:

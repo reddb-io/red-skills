@@ -1104,7 +1104,9 @@ export async function processIssue(
    * the executor short-circuited to exit 1 with `durationMs: 0` — was charged as
    * a semantic failure and re-instructed three times against a gate that had run
    * nothing. Both stages emit the same `red.afk.validation.v1` records, so both
-   * get the same classifier and the same mutable `on_feedback_classify` hook.
+   * get the same classifier and the same `on_feedback_classify` hook. Hooks may
+   * downgrade semantic failures to infra, but environment evidence is
+   * authoritative: a hook cannot turn an unrunnable round into branch blame.
    *
    * A hook override is HONOURED and NAMED: the returned `note` states what the
    * classifier said and what the hook made it, so a reclassification is visible
@@ -1126,6 +1128,14 @@ export async function processIssue(
     );
     const override = parseFeedbackClass(classResult.context);
     if (override === null) return { isInfra: classified, note: "" };
+    if (classified && override === "semantic") {
+      return {
+        isInfra: true,
+        note:
+          `🤖 ${stage} environment failure remained \`infra\`; the ` +
+          `\`on_feedback_classify\` hook requested \`semantic\`, but environment verdicts cannot be overridden.`,
+      };
+    }
     const isInfra = override === "infra";
     const note =
       `🤖 classification override: the \`on_feedback_classify\` hook set the ${stage} ` +
@@ -1704,10 +1714,12 @@ export async function processIssue(
       if (repeatedOuterInfra) {
         notes =
           `Feedback validation repeated deterministic INFRA signature ${roundKey} on the ` +
-          `unchanged branch/environment — parked immediately without spending another recovery retry.`;
+          `unchanged gate environment — parked immediately without spending another recovery retry.`;
         deps.appendIterLog(`🤖 /afk: deterministic validation infra signature=${roundKey} repeated across Workers; parking immediately.`);
       } else if (isInfra) {
-        notes = `Feedback validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`;
+        notes =
+          "Feedback validation could not judge the work because the gate environment failed " +
+          "(worktree/submodule/dependency install/OOM) — the environment recovery policy will retry up to its cap.";
       } else if (salvaged) {
         notes = "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged.";
       } else {
@@ -1759,9 +1771,10 @@ export async function processIssue(
         const bpSignature = failureSignature({ sidecar: backpressure.sidecar });
         const repeatedOuterInfra = bpInfra && carriedValidationSignature === bpSignature;
         let bpNotes = repeatedOuterInfra
-          ? `Backpressure validation repeated deterministic INFRA signature ${bpSignature} on the unchanged branch/environment — parked immediately without spending another recovery retry.`
+          ? `Backpressure validation repeated deterministic INFRA signature ${bpSignature} on the unchanged gate environment — parked immediately without spending another recovery retry.`
           : bpInfra
-          ? `Backpressure validation failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on branch \`${workerBranch}\` — the recovery policy will retry up to its cap.`
+          ? "Backpressure validation could not judge the work because the gate environment failed " +
+            "(worktree/submodule/dependency install/OOM) — the environment recovery policy will retry up to its cap."
           : "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
         if (repeatedOuterInfra) {
           deps.appendIterLog(`🤖 /afk: deterministic backpressure infra signature=${bpSignature} repeated across Workers; parking immediately.`);
