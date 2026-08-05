@@ -201,7 +201,7 @@ bare invocation is not installed on an operator's machine by default.
 | Liveness anchor | `.red/tmp/workers/<worker-id>/liveness.toonl` | Whether the process was alive, independent of narration |
 | Host-side stdout | `.red/tmp/logs/<yyyy-mm-dd>/worker-<worker-id>.log` | The raw stream the daemon redirected; its exact path is the `log_path` on the `worker-birth` row |
 | Safety log | `.red/tmp/diagnostics/<worker-id>.log` | Process-safety installation and signal handling |
-| Daemon log | `~/.red/redskilled/redskilled.log.toonl` | `worker-birth`, `worker-death`, `worker-refused`, `daemon-stop`, host-scoped |
+| Daemon log | `~/.red/redskilled/redskilled.log.toonl` | Typed Worker lifecycle, drift, heal, refusal, and daemon-stop records, host-scoped |
 | Daemon deaths | `~/.red/redskilled/state/deaths/deaths.toonl` | The daemon's own exit evidence |
 | Checkout deaths | `.red/state/deaths/deaths.toonl`, `.red/state/deaths/attributions.toonl` | Launcher and Worker death evidence, with sender attribution |
 
@@ -228,15 +228,52 @@ interpreting a row. A crash-truncated tail is valid TOONL, not corruption.
 
 ## Daemon events worth reading
 
-`worker-birth` and `worker-death` bracket a Worker's process life and carry
-`worker_id`, `project_label`, `pid`, `workspace_path`, `log_path`, the cgroup
-`unit`, and the memory and cpu limits placed on it; `worker-death` adds
-`detail`, `exit_code`, `signal`, and `reason`. `worker-refused` is the birth
-that never happened, and its reason is the whole diagnosis — the vocabulary is
-`refused-over-worker-ceiling`, `refused-over-memory-ceiling`,
-`refused-over-class`, `refused-over-interactive-reservation`,
-`refused-cross-project`, and `refused-unaccountable-budget`. `daemon-stop`
-explains a gap that belongs to the host rather than to the Worker.
+Every row is a flat TOONL record with `version`, `ts`, and the stable `kind`
+discriminator. `event` is the one-release compatibility alias for `kind`; new
+queries use `kind`. Worker rows also carry `worker_id`, `project_label`, `pid`,
+`workspace_path`, `log_path`, `isolated`, `unit`, `memory_high`, `memory_max`,
+and `cpu_weight`. Fields that do not apply to a kind are `null`, never omitted,
+so one segment header remains valid for the complete vocabulary.
+
+| `kind` | Kind-specific fields |
+| --- | --- |
+| `worker-birth` | `admission_verdict`, `fork_sha`; the common placement and budget fields describe what the host admitted |
+| `worker-activity` | `phase`, `step`; appended only when either published value changes |
+| `worker-drift` | `fork_sha`, `base_head_sha`, `base_commits_ahead`; one stamp when the daemon's refreshed comparison changes |
+| `worker-heal` | `heal_kind` (`mechanical-regeneration`) and `detail` |
+| `worker-death` | `detail`, `exit_code`, `signal`, `reason` |
+| `worker-budget-kill` | `detail`, `exit_code`, `signal`, `reason`; distinct from ordinary death so host-pressure terminations are countable |
+| `demand-refusal` | `project_label`, `detail`; no Worker existed, so `worker_id` is the synthetic `demand:<project>` key |
+| `daemon-stop` | `reason`, `detail`, `signal`; `worker_id` uses the synthetic `daemon:<pid>` key |
+
+The admission vocabulary carried by `admission_verdict` is `admitted`,
+`admitted-interactive-reservation`, `refused-over-worker-ceiling`,
+`refused-over-memory-ceiling`, `refused-over-interactive-reservation`,
+`refused-unreachable-trunk-remote`, and `refused-unaccountable-budget`.
+
+### Canonical `tq` recipes
+
+Use `tq` directly on the daemon's TOONL lane; there is no report verb and no
+separate metrics file. Replace the fixture date and Worker id with the instant
+and Worker being investigated.
+
+Today's performance — the chronological host facts since UTC midnight:
+
+```bash
+tq -p toonl -o json -c 'select(.ts >= "2026-08-05T00:00:00.000Z") | {ts: .ts, kind: .kind, worker_id: .worker_id, project_label: .project_label, phase: .phase, exit_code: .exit_code}' ~/.red/redskilled/redskilled.log.toonl
+```
+
+One Worker's story:
+
+```bash
+tq -p toonl -o json -c 'select(.worker_id == "wDOCS") | {ts: .ts, kind: .kind, phase: .phase, step: .step, base_commits_ahead: .base_commits_ahead, heal_kind: .heal_kind, exit_code: .exit_code}' ~/.red/redskilled/redskilled.log.toonl
+```
+
+Drift and mechanical-heal counts over the selected lane:
+
+```bash
+tq -p toonl -o json -c --slurp '{drift: map(select(.kind == "worker-drift")) | length, heals: map(select(.kind == "worker-heal")) | length}' ~/.red/redskilled/redskilled.log.toonl
+```
 
 ## Dossier shape
 
