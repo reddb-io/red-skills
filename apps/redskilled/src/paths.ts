@@ -5,8 +5,8 @@
  * repository and no longer to a session. Two paths carry that between them, and
  * they are not the same kind of thing:
  *
- * - The **runtime dir** is where the daemon *lives* — socket, spawn lock, session
- *   lease, event lane. It stays derived from `XDG_RUNTIME_DIR`, which on Linux is
+ * - The **runtime dir** is where the daemon *lives* — socket, spawn lock and
+ *   session lease. It stays derived from `XDG_RUNTIME_DIR`, which on Linux is
  *   per **user**, not per login: every terminal and every login of one operator
  *   resolves to the same `/run/user/<uid>`, so this derivation already yields one
  *   daemon for all of that user's sessions. It is a *location*, not the scope.
@@ -27,6 +27,7 @@ import { createHash } from "node:crypto";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import { runtimeSocketDir } from "@reddb-io/shared/resident-core.js";
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { REDSKILLED_EVENT_LANE_FILE } from "./event-lane.js";
 import { resolveMachineClaimPath } from "./machine-scope.js";
 
@@ -47,7 +48,7 @@ export interface RedskilledPaths {
   readonly socketPath: string;
   readonly lockPath: string;
   readonly leasePath: string;
-  /** The append-only host event lane the daemon rehydrates itself from. */
+  /** The daemon's append-only structured log, which it rehydrates from. */
   readonly eventLanePath: string;
   /** The durable project registrations a successor daemon rehydrates. */
   readonly registrationIntentPath: string;
@@ -67,6 +68,8 @@ export interface ResolveRedskilledPathsOptions {
   host?: string;
   /** Overrides the whole derivation — tests and an explicit operator pin. */
   runtimeDir?: string;
+  /** Overrides the operator home used by the daemon-owned log. */
+  homeDir?: string;
   /** Overrides where the machine-wide claim lives — tests and an operator pin. */
   machineClaimPath?: string;
   platform?: NodeJS.Platform;
@@ -112,6 +115,10 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     uid: options.uid,
   });
   const machineIdHash = resolveMachineIdHash(options);
+  const homeDir = options.homeDir
+    ?? options.env?.HOME
+    ?? (options.runtimeDir == null ? process.env.HOME : options.runtimeDir)
+    ?? runtimeDir;
   return {
     sessionKey,
     sessionKeyHash: shortDigest(sessionKey),
@@ -120,7 +127,7 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     socketPath: join(runtimeDir, REDSKILLED_SOCKET_FILE),
     lockPath: join(runtimeDir, "redskilled.spawn.lock"),
     leasePath: join(runtimeDir, "redskilled.lease.toon"),
-    eventLanePath: join(runtimeDir, REDSKILLED_EVENT_LANE_FILE),
+    eventLanePath: join(redskilledHomeDir(homeDir), REDSKILLED_EVENT_LANE_FILE),
     registrationIntentPath: join(runtimeDir, "redskilled.registrations.toon"),
     machineClaimPath: options.machineClaimPath ??
       resolveMachineClaimPath({ env: options.env, machineIdHash, platform: options.platform }),

@@ -310,12 +310,14 @@ export async function collectMonitorInputs(root = process.cwd(), repo = ""): Pro
     await reclaimDeadWorkers(root, records, repo).catch(() => undefined);
     await fsx.reapDeadEmptyWorkerShells(paths.tmpDir).catch(() => undefined);
     const currentRecords = currentRenderableWorkerRecords(records);
-    const logPaths = currentRecords.map(({ path, state }) => state.log || join(dirname(path), "afk.log"));
+    const logPaths = currentRecords.map(({ path, state }) =>
+      state.log || join(dirname(dirname(path)), "worker.log.toonl")
+    );
     const logCounts = await collectLogLineCounts(paths.monitorLogCursorPath, logPaths);
     workers = currentRecords.map(({ path, state, active, live: pidLive, liveness, livenessVerdict }) => {
       // The shared current-worker selector applies the `renderableLive` gate and
       // collapses retained sibling attempt dirs to one row per worker.
-      const logPath = state.log || join(dirname(path), "afk.log");
+      const logPath = state.log || join(dirname(dirname(path)), "worker.log.toonl");
       const counts = logCounts.get(logPath);
       return {
         state: {

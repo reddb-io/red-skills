@@ -13,10 +13,8 @@
 // timing rather than two features:
 //
 //   - **Declared** — what a registration says at `project_start` about where its
-//     next Worker's output goes. The daemon opens that file and pipes the Worker's
-//     stdout and stderr into it, so it must name a file the project does not
-//     otherwise write; pointing it at `worker.log.toonl` would put plain text into
-//     a TOONL lane and corrupt the very log it was meant to expose.
+//     next Worker's output goes. The daemon frames stdout and stderr as TOONL, so
+//     the declaration names the same `worker.log.toonl` the project writes.
 //   - **Published** — the Worker's own last line, sent on the beat it already
 //     keeps. This is the PRIMARY path: it needs no path at all, so it works
 //     wherever the log lives. The declaration covers the gap the beat cannot —
@@ -32,7 +30,7 @@
 // this process, beside `RED_AFK_WORKER_ID`, which goes on naming the work's.
 
 import { join } from "node:path";
-import { logsDir } from "@reddb-io/shared/red-paths.js";
+import { workersDir } from "@reddb-io/shared/red-paths.js";
 import { publishRedskilledWorkerLogLine } from "@reddb-io/redskilled/client";
 import type { RedskilledWorkerDisplay } from "@reddb-io/redskilled/worker-display";
 import { resolveRedskilledPaths } from "@reddb-io/redskilled/paths";
@@ -57,12 +55,12 @@ export const REDSKILLED_HOST_WORKER_ID_ENV = "REDSKILLED_WORKER_ID";
  * Where a registration-lane Worker's output goes, as a template. PURE.
  *
  * `{{worker_id}}` is the daemon's own fact, so one registration serves every
- * Worker it ever births and no two of them are handed one file. The disposable
- * logs lane (ADR 0098), for the same reason the dispatch lane uses it: these are
- * captured bytes with a TTL, not state anything reads back.
+ * Worker it ever births and no two of them are handed one file. This is the
+ * Worker's disposable structured lane (ADR 0098), so a reader never has to guess
+ * between a dated process capture and the lifecycle log.
  */
-export function registrationLogPathTemplate(root: string, date: string): string {
-  return join(logsDir(root, date), `worker-${RED_AFK_WORKER_ID_PLACEHOLDER}.log`);
+export function registrationLogPathTemplate(root: string, _date: string): string {
+  return join(workersDir(root), RED_AFK_WORKER_ID_PLACEHOLDER, "worker.log.toonl");
 }
 
 /** What a registration adds to its Workers' environment. PURE. */

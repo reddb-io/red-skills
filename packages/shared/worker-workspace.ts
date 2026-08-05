@@ -178,11 +178,10 @@ export function resolveWorkspaceLayout(input: WorkspaceLayoutInput): WorkspaceLa
 /**
  * Whether a declared target READS the daemon's host-scoped home.
  *
- * The home is created by its one owner (`provisionRedskilledHome`, ADR 0130
- * Amendment 2) and read by exactly one thing: a workspace lane rooted inside it.
- * With the default `local` preset nothing ever reads it, which is why creating it
- * unconditionally left operators with an empty directory and put `/red-setup` on
- * the critical path of a daemon that never touches it (#2958).
+ * The home is created by its one owner (`redskilled`, ADR 0130 Amendment 2).
+ * This predicate asks only whether the WORKSPACE target reads it; the daemon's
+ * canonical log is independently rooted there. With the default `local` preset,
+ * workspace provisioning need not create the home ahead of daemon startup.
  *
  * A custom parent directory counts when it lands INSIDE the home — an operator
  * who spells the path out by hand needs it to exist no less than one who names

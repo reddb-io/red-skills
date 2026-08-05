@@ -18,8 +18,8 @@
 #                           (e.g. the native TS runtime manages heartbeat
 #                           internally). Killing a stale pid is guarded via
 #                           kill -0.
-#   RED_AFK_ITER_LOG      — absolute path to the iteration log (afk.log);
-#                           the boundary line is appended only when the file
+#   RED_AFK_ITER_LOG      — absolute path to the Worker's canonical
+#                           worker.log.toonl; the boundary payload is appended only when the file
 #                           exists. Unset/empty → skip the marker.
 #
 # Shadowing: place a same-named file in .red/hooks/red-heartbeat to replace

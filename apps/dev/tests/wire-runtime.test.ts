@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { encodeLines } from "@reddb-io/toon";
 import {
   afkPaths,
   appendCastleHistoryRecord,
@@ -337,7 +338,13 @@ describe("collectMonitorInputs", () => {
         join(attemptDir, "afk.state.toon"),
         JSON.stringify({ worker_id: "wAB12", pid: process.pid, runner: "claude", total: 3, done: 1 }),
       );
-      writeFileSync(join(attemptDir, "afk.log"), "a\nb\n");
+      const workerLog = join(dirname(attemptDir), "worker.log.toonl");
+      const lane = encodeLines({ trailer: false });
+      writeFileSync(
+        workerLog,
+        lane.push({ at: "2026-08-04T00:00:00Z", kind: "worker.log", msg: "a" })
+          + lane.push({ at: "2026-08-04T00:00:01Z", kind: "worker.log", msg: "b" }),
+      );
       const { workers } = await collectMonitorInputs(root);
       expect(workers).toHaveLength(1);
       expect(workers[0]!.state.worker_id).toBe("wAB12");
@@ -348,7 +355,13 @@ describe("collectMonitorInputs", () => {
       // the renderableLive render-gate — a bare process.pid worker renders but is not active.
       expect(workers[0]!.live).toBe(false);
 
-      writeFileSync(join(attemptDir, "afk.log"), "a\nb\nc\n");
+      const lane2 = encodeLines({ trailer: false });
+      writeFileSync(
+        workerLog,
+        lane2.push({ at: "2026-08-04T00:00:00Z", kind: "worker.log", msg: "a" })
+          + lane2.push({ at: "2026-08-04T00:00:01Z", kind: "worker.log", msg: "b" })
+          + lane2.push({ at: "2026-08-04T00:00:02Z", kind: "worker.log", msg: "c" }),
+      );
       const again = await collectMonitorInputs(root);
       expect(again.workers[0]!.logLines).toBe(3);
       expect(again.workers[0]!.logNewLines).toBe(1);

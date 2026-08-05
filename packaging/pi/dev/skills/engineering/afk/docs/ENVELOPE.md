@@ -101,7 +101,9 @@ The Slice D heartbeat-glyph cleanup has landed — there is no periodic `:one: :
 
 ## Stage Detection
 
-Inner agent stages, derived from the sandcastle agent stream (the `onAgentStreamEvent` callback AFK fans into `agent.log.jsonl` + the firehose), not from a raw runner stdout pipe:
+Inner agent stages are derived from the sandcastle agent stream. AFK records the
+stream callback in the canonical Worker log and updates the live state; it does
+not require a second agent-only file or a raw runner stdout pipe:
 
 | stage | signal |
 |-------|--------|
@@ -146,7 +148,7 @@ Path: `.red/tmp/workers/{id}/{N}-a{n}/afk.state.json` — one snapshot per (work
   "worker_id": "wZ2R4",
   "pid": 12340,
   "pid_start_time": "123456789",
-  "log": ".red/tmp/workers/wZ2R4/142-a1/afk.log",
+  "log": ".red/tmp/workers/wZ2R4/worker.log.toonl",
   "started_at": "2026-05-16T12:00:00-03:00",
   "runner": "codex",
   "filter": { "kind": "prd|issues|all", "value": "42" },

@@ -43,6 +43,8 @@ export interface CastleLaneRecord {
   supervisor_id?: string;
   issue?: number;
   attempt?: number;
+  /** Human-readable narrative carried beside the structured event facts. */
+  msg?: string;
   payload?: Record<string, unknown>;
 }
 
@@ -150,6 +152,7 @@ export const CASTLE_PUBLISHED_CONTRACTS = [
       supervisor_id: true,
       issue: true,
       attempt: true,
+      msg: true,
       payload: true,
     },
   }),
