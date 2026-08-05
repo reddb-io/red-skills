@@ -27,6 +27,16 @@ import {
   type TransitionPlan,
 } from "@reddb-io/red-castle/engine";
 import {
+  LABEL_BASE_STALE,
+  LABEL_BUDGET,
+  LABEL_CI,
+  LABEL_CRASHED,
+  LABEL_GO_LANE,
+  LABEL_HOST_CONFIG,
+  LABEL_INFRA,
+  LABEL_MERGE_CONFLICT,
+  LABEL_POLICY,
+  LABEL_QUOTA,
   LABEL_READY,
   LABEL_HUMAN,
   LABEL_NEEDS_TRIAGE,
@@ -34,6 +44,15 @@ import {
   LABEL_RUNNING,
   LABEL_DEPENDENCY,
   LABEL_QUARANTINE,
+  LABEL_RUNNER_TRANSIENT,
+  LABEL_SCOUT_LANE,
+  LABEL_SIGNAL_KILLED,
+  LABEL_SPEC,
+  LABEL_STALLED,
+  LABEL_TRUNK_DIVERGED,
+  LABEL_VALIDATION,
+  LABEL_VALIDATION_INFRA,
+  LABEL_WALL_CLOCK_CAPPED,
 } from "./triage-labels.js";
 
 export {
@@ -60,6 +79,78 @@ export const HOST_STATE_TRANSITION_LABELS: StateTransitionLabels = {
   blockedPrefix: "blocked:",
   reqPrefix: "req:",
 };
+
+/** The complete host census of typed Park labels. Keep this declaration beside
+ * the transition vocabulary so every reader shares the planner's spellings. */
+export const BLOCKED_LABELS = [
+  LABEL_VALIDATION,
+  LABEL_VALIDATION_INFRA,
+  LABEL_STALLED,
+  LABEL_WALL_CLOCK_CAPPED,
+  LABEL_CRASHED,
+  LABEL_SIGNAL_KILLED,
+  LABEL_DEPENDENCY,
+  LABEL_SPEC,
+  LABEL_QUOTA,
+  LABEL_RUNNER_TRANSIENT,
+  LABEL_HOST_CONFIG,
+  LABEL_MERGE_CONFLICT,
+  LABEL_CI,
+  LABEL_POLICY,
+  LABEL_INFRA,
+  LABEL_TRUNK_DIVERGED,
+  LABEL_BASE_STALE,
+  LABEL_BUDGET,
+] as const;
+
+/** Blocker kinds a machine may treat as mechanically recoverable. */
+export const MECHANICAL_BLOCKER_KINDS: ReadonlySet<string> = new Set([
+  "stalled",
+  "crashed",
+  "merge-conflict",
+]);
+
+/** Return a typed Park label's kind, including kinds supplied by another repo. */
+export function blockedKindOf(label: string): string | null {
+  const prefix = HOST_STATE_TRANSITION_LABELS.blockedPrefix;
+  return label.startsWith(prefix) ? label.slice(prefix.length) : null;
+}
+
+/** The typed Park labels present in a label set (order preserved). */
+export function blockedLabelsIn(labels: readonly string[]): string[] {
+  return labels.filter((label) => blockedKindOf(label) !== null);
+}
+
+/** Whether a blocker kind belongs to the planner's mechanical allowlist. */
+export function isMechanicalBlockerKind(kind: string): boolean {
+  return MECHANICAL_BLOCKER_KINDS.has(kind);
+}
+
+/** Lane labels whose issues must never enter the shared executable queue. */
+export const LANE_ISOLATION_LABELS: readonly string[] = [LABEL_GO_LANE, LABEL_SCOUT_LANE];
+
+export class LaneIsolationViolationError extends Error {
+  constructor(
+    readonly origin: string,
+    readonly lane: string,
+  ) {
+    super(
+      `lane isolation refused "${origin}": cannot apply ${LABEL_READY} to an issue carrying ${lane} — ` +
+        `the ${lane} lane is isolated from the fleet's ${LABEL_READY} pool`,
+    );
+    this.name = "LaneIsolationViolationError";
+  }
+}
+
+/** Refuse a transition that would pair an isolated lane with the AFK queue. */
+export function laneIsolationRefusal(
+  origin: string,
+  labels: readonly string[],
+): LaneIsolationViolationError | null {
+  if (!labels.includes(LABEL_READY)) return null;
+  const lane = LANE_ISOLATION_LABELS.find((candidate) => labels.includes(candidate));
+  return lane === undefined ? null : new LaneIsolationViolationError(origin, lane);
+}
 
 /** Every label that counts as a STATE ROLE in this host's vocabulary. */
 export const STATE_ROLE_LABELS: readonly string[] = stateRoleLabels(

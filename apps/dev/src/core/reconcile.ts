@@ -57,7 +57,7 @@ import { parseCurrentBlocker } from "./blocker-state.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, promotionLaneNote, type DependentIssue } from "./boot-sweep.js";
 import { type RecoveryEnv } from "./recovery.js";
 import { dispose } from "./disposition.js";
-import { parkOrHuman, transitionLabels, type StateTransition } from "./state-transition.js";
+import { MECHANICAL_BLOCKER_KINDS, parkOrHuman, transitionLabels, type StateTransition } from "./state-transition.js";
 import type { AttemptStatus } from "./envelope.js";
 import type { HistoryClock } from "./history.js";
 import type { Runner } from "../types/runner.js";
@@ -78,8 +78,6 @@ import {
  * `spec` / `validation` / `dependency` block needs a human to change something,
  * so reconcile never auto-lands those.
  */
-const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"]);
-
 /**
  * Labels that DISQUALIFY an issue from reconcile outright — the human-decision
  * blocked classes. `blocked:spec` is the boundary the ADR calls out explicitly;

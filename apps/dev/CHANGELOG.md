@@ -1,5 +1,43 @@
 # @reddb-io/dev
 
+## 3.8.0
+
+### Patch Changes
+
+- @reddb-io/github@3.8.0
+- @reddb-io/shared@3.8.0
+- @reddb-io/build-info@3.8.0
+- @reddb-io/red-castle@3.8.0
+- @reddb-io/redskilled@3.8.0
+- @reddb-io/redskilled-render@3.8.0
+
+## 3.7.1
+
+### Patch Changes
+
+- 8eeb9db: Fix the AFK engine's push/re-park chain: an attempt-branch push rejected non-fast-forward now reconciles with --force-with-lease under claim ownership instead of parking; the push-failed blocker names the real cause (divergence vs access); requeue guidance can no longer evaporate on the adopt fast-path; and an identical-signature re-park within a short window escalates as a detected loop instead of rebirthing workers forever.
+  - @reddb-io/github@3.7.1
+  - @reddb-io/shared@3.7.1
+  - @reddb-io/build-info@3.7.1
+  - @reddb-io/red-castle@3.7.1
+  - @reddb-io/redskilled@3.7.1
+  - @reddb-io/redskilled-render@3.7.1
+
+## 3.7.0
+
+### Minor Changes
+
+- 5251532: Ship the unreleased span since v3.6.2: the release engine app skeleton with its pure clock-injected version core (semver, calver YYYY.M.MICRO, rc derivation — ADR 0139 S1), the vendored brand tokens package with ANSI/CSS derivation and the VS Code dashboard brand header (ADR 0137), the Park's single blocker-block owner with one requeue applier, the Queue Custodian owning the merge with vanished-intent repair, and the contract-phase deletion of deprecated verb aliases.
+
+### Patch Changes
+
+- @reddb-io/github@3.7.0
+- @reddb-io/shared@3.7.0
+- @reddb-io/build-info@3.7.0
+- @reddb-io/red-castle@3.7.0
+- @reddb-io/redskilled@3.7.0
+- @reddb-io/redskilled-render@3.7.0
+
 ## 3.6.2
 
 ### Patch Changes

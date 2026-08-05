@@ -60,6 +60,10 @@ plugins:
           think:
             model: gpt-5.6-sol   # design/routing — grouped with coding
             effort: high
+      labels:
+        hitl_types:
+          - wayfinder:grilling
+          - wayfinder:prototype
     # Adversarial review (ADR 0110, Spec #2205 — all slices landed 2026-07-19).
     # Folds to `review.*`. Review is the gate fold's third stage (ADR 0129): a
     # blocking finding draws the RESERVED review round of the Re-seed budget, and

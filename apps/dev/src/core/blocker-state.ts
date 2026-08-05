@@ -25,6 +25,20 @@ export interface CurrentBlocker {
   ref?: string;
   summary: string;
   next: string;
+  /**
+   * Epoch seconds at which THIS park was written (#3377). The re-park loop
+   * detector needs to know not just that the previous park carried the same
+   * blocker but WHEN — an identical park a month later is an issue nobody got
+   * to, and an identical park ten minutes later is a loop.
+   */
+  parkedAtEpoch?: number;
+  /**
+   * Set when this park repeated the previous one's signature inside the loop
+   * window (#3377). Its presence is the escalation: a human is told the engine
+   * has stopped making progress, instead of the issue being reborn Worker by
+   * Worker forever.
+   */
+  loopNote?: string;
   /** Present when a `status: blocked` record is active but needs repair. */
   defect?: BlockerStateDefect;
 }
@@ -55,12 +69,33 @@ interface BlockerCauseRule {
 }
 
 const BLOCKER_CAUSE_RULES: readonly BlockerCauseRule[] = [
+  // #3377 — a rejected push and an unreachable remote are DIFFERENT causes with
+  // opposite cures, and one rule answered for both: an orphaned origin tip was
+  // parked with "restore push access" and every subsequent Worker re-parked it,
+  // because access was never the problem and nobody was going to restore it.
+  // This rule is FIRST: a summary naming a divergence is a divergence even when
+  // it also says "push failed".
+  {
+    kind: "push-rejected",
+    names: /\bnon-fast-forward\b|\bremote tip diverged\b|\bfetch first\b|\bstale info\b|\bupdates were rejected\b/i,
+    next:
+      "Reconcile the diverged remote tip — nothing is broken and no access was lost: the branch on origin is not an " +
+      "ancestor of the worker tip. Fetch it and re-push the attempt branch (the claim holder may force-with-lease on " +
+      "the observed tip), then requeue.",
+  },
   {
     kind: "push-failed",
     names: /\bpush (?:failed|did not run|was rejected)\b|\bfailed to push\b|the true cause is the push/i,
     next: "Restore push access to the worker branch's remote, then requeue — there is no merge conflict to resolve.",
   },
 ];
+
+/** Look a cause rule up by the kind it records. */
+function causeRule(kind: string): BlockerCauseRule {
+  const rule = BLOCKER_CAUSE_RULES.find((r) => r.kind === kind);
+  if (!rule) throw new Error(`blocker-state: no cause rule for kind ${kind}`);
+  return rule;
+}
 
 /** Evidence that REFUTES a kind, without naming a replacement. A summary that
  * denies its own kind loses the kind rather than keeping a contradiction. */
@@ -72,7 +107,8 @@ const BLOCKER_KIND_REFUTED_BY: Readonly<Record<string, RegExp>> = {
  * cause it is derived from, so it is derived from the cause — never written
  * beside it. Kinds absent here keep the call site's own next-action. */
 const BLOCKER_NEXT_BY_KIND: Readonly<Record<string, string>> = {
-  "push-failed": BLOCKER_CAUSE_RULES[0]!.next,
+  "push-failed": causeRule("push-failed").next,
+  "push-rejected": causeRule("push-rejected").next,
   unclassified: "Read the summary and classify the real cause before choosing a recovery route.",
 };
 
@@ -105,6 +141,8 @@ export function makeBlocker(fields: {
   summary: string;
   next: string;
   ref?: string;
+  parkedAtEpoch?: number;
+  loopNote?: string;
 }): CurrentBlocker {
   const kind = reconcileBlockerKind(fields.kind, fields.summary);
   let next = BLOCKER_NEXT_BY_KIND[kind] ?? fields.next;
@@ -117,6 +155,8 @@ export function makeBlocker(fields: {
     ...(fields.ref !== undefined ? { ref: fields.ref } : {}),
     summary: fields.summary,
     next,
+    ...(fields.parkedAtEpoch !== undefined ? { parkedAtEpoch: fields.parkedAtEpoch } : {}),
+    ...(fields.loopNote !== undefined ? { loopNote: fields.loopNote } : {}),
   };
 }
 
@@ -143,6 +183,16 @@ function parseFields(block: string): Record<string, string> {
   return out;
 }
 
+/** A non-negative integer epoch, or undefined when the field is absent or junk.
+ * A malformed stamp is treated as NO stamp: the loop detector must never fire on
+ * a timestamp it cannot read. */
+function parseEpochField(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number(normalizeLine(value));
+  if (!Number.isInteger(parsed) || parsed < 0) return undefined;
+  return parsed;
+}
+
 export function parseCurrentBlocker(markdown: string): CurrentBlocker | null {
   const inner = readAnchoredRegion(markdown, BLOCKER_OPEN, BLOCKER_CLOSE);
   if (inner === null) return null;
@@ -158,6 +208,8 @@ export function parseCurrentBlocker(markdown: string): CurrentBlocker | null {
     ...(fields.ref ? { ref: safeField(fields.ref) } : {}),
     summary,
     next,
+    ...(parseEpochField(fields.parked_at) !== undefined ? { parkedAtEpoch: parseEpochField(fields.parked_at) } : {}),
+    ...(fields.loop_detected ? { loopNote: safeField(fields.loop_detected) } : {}),
     ...(missingFields.length > 0
       ? { defect: { name: MALFORMED_BLOCKER_STATE, missingFields } }
       : {}),
@@ -173,6 +225,8 @@ function formatBlockerFields(blocker: CurrentBlocker): string {
   if (blocker.ref) lines.push(`ref: ${safeField(blocker.ref)}`);
   lines.push(`summary: ${safeField(blocker.summary, "Unspecified blocker.")}`);
   lines.push(`next: ${safeField(blocker.next, "Human guidance required.")}`);
+  if (blocker.parkedAtEpoch !== undefined) lines.push(`parked_at: ${blocker.parkedAtEpoch}`);
+  if (blocker.loopNote) lines.push(`loop_detected: ${safeField(blocker.loopNote)}`);
   return `\n${lines.join("\n")}\n`;
 }
 
@@ -250,7 +304,9 @@ export function applyCurrentBlockerEdit(markdown: string, blocker: CurrentBlocke
     parsed.kind === blocker.kind &&
     parsed.summary === blocker.summary &&
     parsed.next === blocker.next &&
-    parsed.ref === blocker.ref;
+    parsed.ref === blocker.ref &&
+    parsed.parkedAtEpoch === blocker.parkedAtEpoch &&
+    parsed.loopNote === blocker.loopNote;
   return { body, changed, valid };
 }
 

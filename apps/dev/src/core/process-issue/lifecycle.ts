@@ -14,6 +14,8 @@ import {
   discoverResumableBranch,
   extractFailureReason,
   formatAdoptionNotice,
+  formatGuidanceOverrideNote,
+  hasUnconsumedGuidance,
   isExplicitRestartRequested,
   isGateGreenBranch,
   pullRequestMatchesAttempt,
@@ -122,11 +124,7 @@ import {
   LABEL_SPEC,
   LABEL_ORIGIN_EXTERNAL,
 } from "../triage-labels.js";
-import {
-  IllegalIssueLifecycleTransitionError,
-  validateIssueLifecycleTransition,
-  type IssueLifecycleEdge,
-} from "../issue-lifecycle.js";
+import { blockedLabelsIn, MECHANICAL_BLOCKER_KINDS } from "../state-transition.js";
 import {
   gateVerdict,
   type GateStageOutcome,
@@ -150,7 +148,7 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, refuseNoSandboxForUntrustedAuthor, resolveEnvironmentRoundCap, resolveGoVerifyRetries, resolveReseedGateBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, refuseNoSandboxForUntrustedAuthor, resolveEnvironmentRoundCap, resolveGoVerifyRetries, resolveReseedGateBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import type { ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
 import {
   recordReseedDraw,
@@ -463,12 +461,17 @@ export async function processIssue(
     .filter((pr) => pullRequestMatchesAttempt(pr, issue))
     .sort((a, b) => a.number - b.number);
   const adoptedPullRequest = selectAttemptPullRequest(matchingPullRequests, issue);
+  // #3377 — resolved BEFORE the census speaks, because the census is what tells a
+  // human which route this Worker took. Announcing "the no-agent gate" and then
+  // running an agent is the same kind of untrue record the loop was made of.
+  const guidanceUnconsumed = hasUnconsumedGuidance(comments);
   if (matchingPullRequests.length > 0) {
     await deps.gh.comment(
       issue,
       `🤖 /afk Attempt PRs for #${issue}: ${matchingPullRequests.map((pr) => `#${pr.number}`).join(", ")}. ` +
         (adoptedPullRequest
-          ? `Adopting #${adoptedPullRequest.number} from \`${adoptedPullRequest.headRefName}\` through the no-agent gate.`
+          ? `Adopting #${adoptedPullRequest.number} from \`${adoptedPullRequest.headRefName}\` through the ` +
+            (guidanceUnconsumed ? "agent, carrying the unexecuted requeue guidance." : "no-agent gate.")
           : "No adoptable head was found."),
     );
   }
@@ -510,9 +513,29 @@ export async function processIssue(
   const failureReason = extractFailureReason(prevFailureContext);
   const carriedValidationSignature = parseValidationFailureSignature(failureReason);
   const usesDeclaredValidationMoments = deps.validationMoments !== undefined;
-  const resumeIsGateGreen = adoptedPullRequest !== null ||
+  const fastPathIsGateGreen = adoptedPullRequest !== null ||
     (resumableBranch !== null && isGateGreenBranch(failureReason));
-  if (adoptedPullRequest) {
+  // #3377 — guidance nobody has run is guidance the fast path would evaporate.
+  // The no-agent path re-validates the SAME tree, so taking it here re-parks the
+  // issue with the requeue's Directive intact and unexecuted, and the Worker
+  // after that repeats it. One agent round with the guidance in the prompt is
+  // the whole cure; the refusal is announced rather than inferred from a
+  // missing log line.
+  const guidanceOverridesFastPath = fastPathIsGateGreen && guidanceUnconsumed;
+  const resumeIsGateGreen = fastPathIsGateGreen && !guidanceUnconsumed;
+  if (guidanceOverridesFastPath) {
+    const note = formatGuidanceOverrideNote(
+      issue,
+      adoptedPullRequest?.headRefName ?? resumableBranch?.branch ?? branch,
+    );
+    deps.appendIterLog(note);
+    await deps.gh.comment(issue, note);
+    deps.recordWorkerEvent?.("worker.fast_path_refused", {
+      issue,
+      reason: "unconsumed-requeue-guidance",
+    });
+  }
+  if (adoptedPullRequest && resumeIsGateGreen) {
     deps.appendIterLog(
       `🤖 /afk #${issue}: adopting open PR #${adoptedPullRequest.number} from \`${adoptedPullRequest.headRefName}\`; agent skipped.`,
     );
@@ -1940,6 +1963,10 @@ export async function processIssue(
       title: input.title,
       labels,
       nativeMergeQueue: deps.nativeMergeQueue,
+      // #3377 — the gate's push step may reconcile a diverged `afk/*` tip only
+      // while this Worker still OWNS the issue. `ownsCommentClaim` is that fact,
+      // not an assumption about how the Worker got here.
+      claimHeld: ownsCommentClaim,
     },
     {
       preMerge: () =>

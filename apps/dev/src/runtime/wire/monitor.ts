@@ -13,6 +13,7 @@ import type { WorkerProcessVerdict } from "../../core/worker-reclaim.js";
 import { readWorkerLivenessForTmpPath } from "../tmp-janitor.js";
 import { readHistoryRecords, type HistoryRecord } from "../../core/history.js";
 import { LABEL_HUMAN } from "../../core/triage-labels.js";
+import { blockedLabelsIn } from "../../core/state-transition.js";
 import {
   createEnginePaths,
   readCastleMonitorFleetState,
@@ -236,7 +237,7 @@ export async function reclaimDeadWorkers(
         const labels = await ghx.viewLabels({ cwd: root, repo }, issue);
         // Empty labels (gh failed) → conservative: keep the JSONL.
         if (labels.length === 0) return true;
-        return labels.some((l) => l === LABEL_HUMAN || l.startsWith("blocked:"));
+        return labels.includes(LABEL_HUMAN) || blockedLabelsIn(labels).length > 0;
       } catch {
         return true;
       }

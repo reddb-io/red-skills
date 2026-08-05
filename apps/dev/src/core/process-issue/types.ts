@@ -124,11 +124,6 @@ import {
   LABEL_LANDING_MANUAL,
   LABEL_SPEC,
 } from "../triage-labels.js";
-import {
-  IllegalIssueLifecycleTransitionError,
-  validateIssueLifecycleTransition,
-  type IssueLifecycleEdge,
-} from "../issue-lifecycle.js";
 export type ContainerSandboxMode = Exclude<SandboxMode, "none">;
 export interface ProcessGh {
   viewLabels(issue: number): Promise<string[]>;

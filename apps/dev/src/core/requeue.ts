@@ -23,7 +23,13 @@ import {
   parseCurrentBlocker,
   type CurrentBlocker,
 } from "./blocker-state.js";
-import { isRefused, planTransition } from "./state-transition.js";
+import {
+  blockedKindOf,
+  blockedLabelsIn,
+  isRefused,
+  MECHANICAL_BLOCKER_KINDS,
+  planTransition,
+} from "./state-transition.js";
 import { LABEL_READY } from "./triage-labels.js";
 
 /**
@@ -32,8 +38,6 @@ import { LABEL_READY } from "./triage-labels.js";
  * reconcile.ts — a requeue helper only has to clear a NON-mechanical active
  * blocker (the human-input kinds: validation, spec, decision, …).
  */
-export const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"]);
-
 /**
  * The only blocker kinds this operator path accepts. A `blocked:decision` or
  * any other human-input kind still requires `/hitl` (the interactive decision
@@ -178,7 +182,7 @@ export function isRequeueComplete(body: string, labels: readonly string[]): bool
 export function planRequeue(input: RequeueInput): RequeuePlan {
   const authority = input.authority ?? "machine";
   const activeBlocker = parseCurrentBlocker(input.body);
-  const blocked = input.labels.filter((label) => label.startsWith("blocked:"));
+  const blocked = blockedLabelsIn(input.labels);
   const hasHuman = input.labels.includes("ready-for-human");
 
   // "Parked" = something marks this issue as needing the human lane. Without an
@@ -194,13 +198,8 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
     );
   }
 
-  // Mixed blocked:* labels → label state is ambiguous; /hitl must reconcile.
-  // A no-op-mutation probe through validateIssueLifecycleTransition cannot
-  // express this: the `requeue-mixed-blocked-refusal` marker edge is
-  // `to: "illegal"`, so a legal (non-mixed) label set finds no matching row and
-  // throws "no legal row" instead of passing — the regression that turned every
-  // non-mixed requeue into an IllegalIssueLifecycleTransitionError. Detect the
-  // ambiguous state directly instead.
+  // Mixed blocked:* labels are an ambiguous Park, not a transition request.
+  // Refuse them before planning so /hitl can reconcile the competing reasons.
   if (blocked.length > 1) {
     return refuse(
       `mixed blocked:* labels [${blocked.join(", ")}]: label state is ambiguous — use /hitl to reconcile`,
@@ -211,7 +210,7 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   }
 
   // Derive the expected kind from the single blocked:* label, if present.
-  const labelKind = blocked.length === 1 ? blocked[0].slice("blocked:".length) : null;
+  const labelKind = blocked.length === 1 ? blockedKindOf(blocked[0]) : null;
 
   // Unsupported label kind → /hitl handles other human-input blocker types.
   if (authority === "machine" && labelKind !== null && !kindRequeueable(labelKind)) {

@@ -7,6 +7,7 @@ import { afkPaths, resolveRepoContext } from "../runtime/wire.js";
 import * as ghx from "../runtime/gh.js";
 import { createRedskilledBirthPort } from "../runtime/redskilled-birth.js";
 import { LABEL_HUMAN, LABEL_READY, LABEL_RUNNING } from "../core/triage-labels.js";
+import { blockedLabelsIn } from "../core/state-transition.js";
 
 async function readWorkerPid(pidFile: string): Promise<number | null> {
   try {
@@ -196,7 +197,7 @@ async function restoreClaimLabels(root: string, issue: number): Promise<boolean>
   const ctx = await resolveRepoContext(root);
   const ghCtx = { cwd: root, repo: ctx.repo };
   const labels = await ghx.viewLabels(ghCtx, issue);
-  const parked = labels.includes(LABEL_HUMAN) || labels.some((l) => l.startsWith("blocked:"));
+  const parked = labels.includes(LABEL_HUMAN) || blockedLabelsIn(labels).length > 0;
   if (!labels.includes(LABEL_RUNNING) || parked) return false;
   await ghx.editLabels(ghCtx, issue, [LABEL_RUNNING], [LABEL_READY]);
   return true;

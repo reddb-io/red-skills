@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/release",
-  "version": "3.6.2",
+  "version": "3.8.0",
   "private": true,
   "description": "RedSkills release engine — changeset-compatible version computation and release orchestration.",
   "license": "Apache-2.0",
@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
-    "@reddb-io/shared": "workspace:*"
+    "@reddb-io/shared": "workspace:*",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
