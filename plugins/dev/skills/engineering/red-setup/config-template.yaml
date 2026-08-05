@@ -89,7 +89,7 @@ plugins:
 #       format: cargo
 #     - path: VERSION.txt
 #       format: text
-#   sync_command: node scripts/sync-version.mjs
+#   sync_command: node scripts/sync-release-carriers.mjs
 #                                 # optional repo-owned propagation for exotic carriers;
 #                                 # receives the next version as RED_RELEASE_VERSION
 
