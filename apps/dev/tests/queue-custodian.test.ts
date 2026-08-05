@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { doLanding } from "../src/core/landing.js";
+import { harness } from "./landing.test-support.js";
+import { readsPull } from "./support/gh-rest-fixtures.js";
 import {
   createFileQueueCustodyStore,
   handoffQueueCustody,
@@ -25,6 +28,36 @@ function memoryStore(): QueueCustodyStore & { state: QueueCustodyState } {
 }
 
 describe("Queue Custodian", () => {
+  it("ends Landing at custody hand-off without a merge-poll tail", async () => {
+    const store = memoryStore();
+    const landing = harness({
+      locked: false,
+      openPr: true,
+      nativeMergeQueue: true,
+      queueOutcome: "pending",
+    });
+    landing.deps.queueCustody = (identity, armNativeIntent) => handoffQueueCustody(
+      {
+        store,
+        now: () => "2026-08-05T12:30:00.000Z",
+        armNativeIntent,
+      },
+      identity,
+    );
+
+    const result = await doLanding(landing.deps, landing.input, landing.hooks);
+
+    expect(result).toEqual({
+      ok: true,
+      locked: false,
+      custody: { prNumber: 42, outcome: "handed-off" },
+    });
+    expect(landing.mergeCalls.some((argv) => argv.includes("--auto"))).toBe(true);
+    expect(landing.mergeCalls.filter((argv) => readsPull(argv))).toHaveLength(0);
+    expect(landing.firedHooks).toEqual(["pre_merge"]);
+    expect(store.state.prs["42"]).toMatchObject({ ownerTicket: 9, status: "watching" });
+  });
+
   it("reloads custody from its durable AFK state lane", async () => {
     const root = await mkdtemp(join(tmpdir(), "queue-custody-"));
     try {
