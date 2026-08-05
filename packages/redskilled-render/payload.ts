@@ -119,6 +119,8 @@ export interface RedskilledRenderWorker {
   readonly project_label: string;
   readonly pid: number;
   readonly started_at: string;
+  /** Daemon-owned count from the Worker's granted fork to refreshed trunk. */
+  readonly base_commits_ahead?: number;
   readonly uptime_ms: number | null;
   readonly vitals: RedskilledRenderVitals;
   readonly budget: RedskilledRenderWorkerBudget;

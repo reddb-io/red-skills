@@ -204,7 +204,9 @@ import {
   type RedskilledWorkerSpec,
 } from "./worker-launch.js";
 import {
+  countRedskilledBaseMovement,
   refreshRedskilledTrunk,
+  type RedskilledBaseMovementCounter,
   type RedskilledTrunkRefresh,
   type RedskilledTrunkRefreshInput,
 } from "./trunk-mirror.js";
@@ -410,6 +412,8 @@ export interface RedskilledDaemonOptions {
   readonly launch?: (options: LaunchWorkerOptions) => LaunchedWorker;
   /** Daemon-owned git seam; injected by concurrency and unreachable-remote fixtures. */
   readonly refreshTrunk?: RedskilledTrunkRefresh;
+  /** Daemon-owned fork-to-refreshed-head counter; injected by moved-base fixtures. */
+  readonly countBaseMovement?: RedskilledBaseMovementCounter;
   /** The append-only host event lane; defaults to this session's own. */
   readonly eventLane?: RedskilledEventLane;
   /** The durable registration snapshot; defaults to this session's own. */
@@ -696,6 +700,8 @@ export interface RedskilledDaemon {
   /** The registrations this daemon holds, ordered by project label; lapsed ones swept. */
   registrations(): readonly RedskilledProjectRegistration[];
   hostState(): RedskilledHostState;
+  /** Run the background trunk-refresh body now; exposed so timer behavior is fixture-driven. */
+  refreshRegisteredTrunks(): Promise<void>;
   /**
    * The whole machine in one document, dated by the daemon's own last sample.
    *
@@ -851,6 +857,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const clock = options.clock ?? (() => new Date().toISOString());
   const launch = options.launch ?? launchWorker;
   const refreshTrunk = options.refreshTrunk ?? refreshRedskilledTrunk;
+  const countBaseMovement = options.countBaseMovement ?? countRedskilledBaseMovement;
   const ceiling = options.ceiling ?? resolveHostCeiling();
   // Before the lease, before the socket: a host whose repositories do not all
   // answer to one token has no arrangement to start with, and discovering that a
@@ -2192,10 +2199,19 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         void resolveObservedExit(worker, code, signal).catch(() => undefined);
       },
     });
-    workers.set(launched.worker.worker_id, launched.worker);
-    record("worker-birth", launched.worker, null);
+    const forkSha = grant.forkSha ?? launched.fork_sha ?? launched.worker.fork_sha;
+    const worker = forkSha == null || forkSha === ""
+      ? launched.worker
+      : { ...launched.worker, fork_sha: forkSha };
+    const tracked: LaunchedWorker = {
+      ...launched,
+      worker,
+      ...(forkSha == null || forkSha === "" ? {} : { fork_sha: forkSha }),
+    };
+    workers.set(worker.worker_id, worker);
+    record("worker-birth", worker, null);
     armIdleTimer();
-    return launched;
+    return tracked;
   }
 
   /**
@@ -2613,10 +2629,29 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     await Promise.allSettled(
       [...registrations.values()]
         .filter((registration) => registration.trunk != null)
-        .map((registration) => refreshFork({
-          workspace_path: registration.workspace_path,
-          trunk: registration.trunk!,
-        })),
+        .map(async (registration) => {
+          const headSha = await refreshFork({
+            workspace_path: registration.workspace_path,
+            trunk: registration.trunk!,
+          });
+          const live = [...workers.values()].filter((worker) =>
+            worker.project_label === registration.project_label && worker.fork_sha != null && worker.fork_sha !== ""
+          );
+          await Promise.allSettled(live.map(async (worker) => {
+            const commitsAhead = await countBaseMovement({
+              workspace_path: registration.workspace_path,
+              fork_sha: worker.fork_sha!,
+              head_sha: headSha,
+            });
+            const current = workers.get(worker.worker_id);
+            if (current == null || current.fork_sha !== worker.fork_sha) return;
+            workers.set(worker.worker_id, {
+              ...current,
+              base_head_sha: headSha,
+              base_commits_ahead: commitsAhead,
+            });
+          }));
+        }),
     );
   }
 
@@ -3053,6 +3088,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     deregisterProject,
     registrations: () => hostState().registrations ?? [],
     hostState,
+    refreshRegisteredTrunks,
     statuslinePayload,
     evaluateIdle,
     observePublishedVersion,

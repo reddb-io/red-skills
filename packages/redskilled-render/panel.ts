@@ -164,8 +164,8 @@ function workerRow(
 ): string {
   const cells = workerCells(worker, { mode }, generatedAt);
   const columns: readonly RedskilledDashboardColumn[] = isRepairWorker(worker)
-    ? ["wid", "org", "iss", "bar", "phase", "elapsed", "eta"]
-    : ["wid", "bar", "phase", "elapsed", "eta"];
+    ? ["wid", "org", "iss", "bar", "phase", "base", "elapsed", "eta"]
+    : ["wid", "bar", "phase", "base", "elapsed", "eta"];
   const parts = columns
     .filter((column) => cells[column] !== "")
     .map((column) => colourWorkerCell(column, cells[column]));

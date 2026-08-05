@@ -191,7 +191,7 @@ const LOCAL = { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" };
 describe("the dashboard carries the statusline's own fields", () => {
   it("renders one row per Worker with run, org, iss, phase, elapsed, heartbeat, loc and the vitals", () => {
     const dashboard = renderRedskilledDashboard(
-      payloadOf([worker()], { "w-1": display({ model: "claude-opus-4-8" }) }),
+      payloadOf([worker({ base_commits_ahead: 2 })], { "w-1": display({ model: "claude-opus-4-8" }) }),
       LOCAL,
     );
 
@@ -202,6 +202,7 @@ describe("the dashboard carries the statusline's own fields", () => {
     expect(cells.org).toBe("org=afk");
     expect(cells.iss).toBe("iss=3012");
     expect(cells.phase).toBe("coding·impl");
+    expect(cells.base).toBe("base +2");
     expect(cells.elapsed).toBe("1h0m");
     expect(cells.hb).toBe("hb=3s");
     expect(cells.loc).toBe("loc=+142 -36");
@@ -239,6 +240,7 @@ describe("the dashboard carries the statusline's own fields", () => {
       "iss",
       "bar",
       "phase",
+      "base",
       "elapsed",
       "eta",
       "hb",

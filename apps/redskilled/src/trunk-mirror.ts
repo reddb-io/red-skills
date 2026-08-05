@@ -11,6 +11,14 @@ export interface RedskilledTrunkRefreshInput {
 
 export type RedskilledTrunkRefresh = (input: RedskilledTrunkRefreshInput) => Promise<string>;
 
+export interface RedskilledBaseMovementInput {
+  readonly workspace_path: string;
+  readonly fork_sha: string;
+  readonly head_sha: string;
+}
+
+export type RedskilledBaseMovementCounter = (input: RedskilledBaseMovementInput) => Promise<number>;
+
 function git(cwd: string, args: readonly string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile("git", [...args], { cwd }, (error, stdout, stderr) => {
@@ -30,4 +38,12 @@ export async function refreshRedskilledTrunk(input: RedskilledTrunkRefreshInput)
   if (sha === "") throw new Error("the fetched trunk did not resolve to a commit");
   await git(input.workspace_path, ["update-ref", REDSKILLED_TRUNK_MIRROR_REF, sha]);
   return sha;
+}
+
+/** Count the refreshed trunk commits a live Worker's granted fork does not contain. */
+export async function countRedskilledBaseMovement(input: RedskilledBaseMovementInput): Promise<number> {
+  const raw = await git(input.workspace_path, ["rev-list", "--count", `${input.fork_sha}..${input.head_sha}`]);
+  const count = Number(raw);
+  if (!Number.isInteger(count) || count < 0) throw new Error(`git returned an invalid base movement count: ${raw}`);
+  return count;
 }
