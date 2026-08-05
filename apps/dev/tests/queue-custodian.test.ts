@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   handoffQueueCustody,
+  sweepQueueCustody,
   type QueueCustodyState,
   type QueueCustodyStore,
 } from "../src/core/queue-custodian.js";
@@ -56,5 +57,50 @@ describe("Queue Custodian", () => {
       handedOffAt: "2026-08-05T12:30:00.000Z",
       updatedAt: "2026-08-05T12:30:00.000Z",
     });
+  });
+
+  it("turns a daemon-observed vanished intent into one admission-born repair Worker", async () => {
+    const store = memoryStore();
+    await handoffQueueCustody(
+      {
+        store,
+        now: () => "2026-08-05T12:30:00.000Z",
+        armNativeIntent: async () => ({ ok: true }),
+      },
+      {
+        repo: "reddb-io/red-skills",
+        prNumber: 3334,
+        ownerTicket: 3333,
+        branch: "afk/3333-queue-custodian",
+        base: "main",
+      },
+    );
+    const admitRepairWorker = vi.fn(async () => ({ admitted: true as const, workerId: "repair-1" }));
+
+    const sweep = await sweepQueueCustody({
+      store,
+      now: () => "2026-08-05T12:45:00.000Z",
+      observePullRequests: async () => ({
+        "3334": {
+          state: "OPEN",
+          nativeIntent: false,
+          checks: "green",
+          mergeStateStatus: "CLEAN",
+          mergeable: "MERGEABLE",
+        },
+      }),
+      admitRepairWorker,
+    });
+
+    expect(sweep).toEqual({ merged: [], admitted: [{ prNumber: 3334, workerId: "repair-1" }] });
+    expect(admitRepairWorker).toHaveBeenCalledWith(
+      expect.objectContaining({
+        origin: "repair",
+        kind: "repair",
+        prNumber: 3334,
+        ownerTicket: 3333,
+      }),
+    );
+    expect(store.state.prs["3334"]?.status).toBe("repairing");
   });
 });
