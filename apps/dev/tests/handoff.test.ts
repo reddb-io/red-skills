@@ -4,6 +4,7 @@ import type { AttemptStatus } from "../src/core/envelope.js";
 import {
   buildHandoff,
   buildHumanGuidance,
+  buildIterationMoment,
   buildMergeGate,
   buildPreviousWorkers,
   buildThreadDiscussion,
@@ -619,6 +620,44 @@ describe("buildMergeGate", () => {
     expect(out).toContain("- npm run test");
     expect(out).toContain("- npm run lint");
     expect(out).not.toMatch(/^- $/m);
+  });
+});
+
+describe("buildIterationMoment", () => {
+  it("lists each operator-declared iteration command in order", () => {
+    const out = buildIterationMoment(["pnpm test", "pnpm typecheck"]);
+
+    expect(out).toContain("operator-declared iteration commands");
+    expect(out).toContain("- pnpm test");
+    expect(out).toContain("- pnpm typecheck");
+    expect(out.indexOf("pnpm test")).toBeLessThan(out.indexOf("pnpm typecheck"));
+  });
+
+  it("an undeclared iteration moment explicitly forbids heavy mid-write validation", () => {
+    const out = buildIterationMoment(undefined);
+
+    expect(out).toContain("iteration moment is undeclared");
+    expect(out).toContain("Run nothing heavy mid-write");
+    expect(out).toContain("leave validation to the declared moments");
+  });
+});
+
+describe("buildHandoff iteration", () => {
+  it("a declared iteration fixture carries its commands", () => {
+    const out = base({ iterationCommands: ["pnpm test", "pnpm typecheck"] });
+
+    expect(out).toContain("<iteration>");
+    expect(out).toContain("- pnpm test");
+    expect(out).toContain("- pnpm typecheck");
+    expect(out).toContain("</iteration>");
+  });
+
+  it("an undeclared iteration fixture carries the explicit nothing-heavy instruction", () => {
+    const out = base({});
+
+    expect(out).toContain("<iteration>");
+    expect(out).toContain("Run nothing heavy mid-write");
+    expect(out).toContain("leave validation to the declared moments");
   });
 });
 

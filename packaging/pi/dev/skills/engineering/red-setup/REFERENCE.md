@@ -15,6 +15,7 @@ Scaffold includes:
 - **Runtime launcher** — optionally install a host-level `red-skills-dev` shim so Claude Code, Codex, and opencode can invoke the same dev runtime without relying on CLI-specific plugin-root env vars
 - **Required host binaries** — install pinned `tq` (`TQ_VERSION=v0.13.0`) through the toon repo installer and record `host_binaries.tq.version` so `/red-doctor` can enforce the no-jq-fallback TOON/TOONL contract
 - **Execution daemon** — provision the host-scoped `redskilled` daemon (ADR 0130) by running `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision`, and optionally install the supervising user unit. The daemon's home `~/.red/redskilled/` is owned and created by `redskilled` itself, not by this skill
+- **Validation moments** — discover the repository harness from its package manifests, propose the ordered `iteration`, `post_done`, and `landing` command lists, and write the operator-confirmed schedule under `plugins.dev.afk.validation`
 - **Command guards** — configure the repo-owned `.red/config.yaml` policy that the globally-installed Claude Code, Codex, and opencode hook proxies enforce
 - **Development workflow** — teach agents the `.red/tmp` worktree rules, preserve the primary checkout for the human, and route one-off concrete work through `/go` (ADR 0081)
 
@@ -33,6 +34,7 @@ Look at the current repo to understand its starting state. Read whatever exists;
 - `.red/agents/` — does this skill's prior output already exist?
 - `.red/config.yaml` — does it exist? Which plugins are already enabled (`plugins.<name>.enabled: true`)? Is the canonical `plugins.dev.lock.primary-branch` flag already set? Is `command_guard` already configured, and under which scopes (`global`, `main`, `worktree`, or legacy `deny`)?
 - Worktree dependency setup — inspect root lockfiles, `package.json.packageManager`, Corepack metadata, and the root `prepare` plus dependencies/devDependencies for `lefthook` or `husky`; compare those facts with `plugins.dev.afk.setup` when already declared
+- Validation harness — inspect every tracked `package.json` and other package manifests selected by the repository's workspace declaration; record the package name/path and the exact `test`, `typecheck`, `lint`, and `build` scripts that exist. Also inspect CI/merge-queue configuration so the proposal can say which freshness checks already run after local `landing`; never infer a command whose script is absent
 - `tq --version` and `.red/config.yaml` `host_binaries.tq.version` — is the required host binary present and pinned to `0.13.0`?
 - `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --check` — is the daemon provisioned on this host, and if not, which of `home` / `daemon-entry` / `reach` is missing? (Read-only: it creates nothing and starts nothing.)
 - `AGENTS.md` and `CLAUDE.md` — does either already have a `## Development workflow` section?

@@ -132,7 +132,7 @@ repair) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
-`/afk` local validation authority (`plugins.dev.afk.feedback.commands`) ->
+`/afk` local validation authority (`plugins.dev.afk.validation.{iteration,post_done,landing}`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` baseline environment recovery (free environment-inconclusive rounds and
 the one-way `on_feedback_classify` override) ->
@@ -184,7 +184,9 @@ through `/memory:view`, `memory docs reference-graph`, and
   feature-work routes. `/red-setup` owns `.red/config.yaml` authoring through its
   shipped config template and post-write loader check, including inspection and
   human confirmation of `plugins.dev.afk.setup` when a repository's package or
-  hook manager determines how fresh AFK Worktrees install dependencies.
+  hook manager determines how fresh AFK Worktrees install dependencies, plus
+  package-manifest harness discovery and confirmation of the proposed
+  `plugins.dev.afk.validation` schedule.
 - Execution-daemon operation is a host route, not a feature-work one:
   diagnose through the castle MCP's read-only `host_provision_check` and other
   `host_*` tools first; no castle tool provisions or reclaims the host.

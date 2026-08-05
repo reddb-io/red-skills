@@ -1100,6 +1100,21 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     expect(trace.iterLogs).toContain("🤖 /afk validation moment landing skipped: undeclared.");
     expect(trace.envelopeBodies.at(-1) ?? "").toContain('"name":"validation:post_done","status":"skipped"');
     expect(trace.envelopeBodies.at(-1) ?? "").toContain('"name":"validation:landing","status":"skipped"');
+    expect(trace.runAgentCalls[0]?.handoffContent ?? "").toContain("Run nothing heavy mid-write");
+  });
+
+  it("carries declared iteration commands into the inner-agent handoff", async () => {
+    const { deps, input, trace } = harness({ outcome: "done", locked: false });
+    deps.validationMoments = {
+      iteration: ["pnpm test:unit", "pnpm typecheck"],
+    };
+
+    await processIssue(deps, input);
+
+    const handoff = trace.runAgentCalls[0]?.handoffContent ?? "";
+    expect(handoff).toContain("<iteration>");
+    expect(handoff).toContain("- pnpm test:unit");
+    expect(handoff).toContain("- pnpm typecheck");
   });
 
   it("runs declared post_done at the branch fork point even when the live base moves", async () => {
