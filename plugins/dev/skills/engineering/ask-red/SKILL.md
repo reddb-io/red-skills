@@ -133,6 +133,10 @@ structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` local validation authority (`plugins.dev.afk.validation.{iteration,post_done,landing}`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+`/afk` ADR 0136 ownership (Landing hands native intent to the Queue Custodian
+and ends, Verdict has no classification hook, and the Park exposes one
+authority-parameterized requeue door) ->
+`plugins/dev/skills/engineering/afk/SKILL.md`;
 `/afk` Verdict policy (one capped environment ledger, repeated-signature park,
 and the declared sub-second branch-fault escape beside Validation moments) ->
 `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md` and
