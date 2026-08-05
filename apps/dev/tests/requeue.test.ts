@@ -37,6 +37,13 @@ const baseStaleBlocker = {
   next: "Refresh the local base from origin, then requeue.",
 };
 
+const pushFailedBlocker = {
+  status: "blocked" as const,
+  kind: "push-failed",
+  summary: "The worker push failed after validation passed.",
+  next: "Restore remote access, then requeue.",
+};
+
 const parkedBody = `## Summary\nDo the thing.\n\n## Current blocker\n\n${formatCurrentBlocker(
   validationBlocker,
 )}\n\n## Acceptance\n- [ ] Done\n`;
@@ -244,6 +251,38 @@ describe("requeue — unsupported kinds refuse even under --adopt-branch", () =>
     expect(plan.requeueable).toBe(false);
     expect(plan.refuseForHitl).toBe(true);
     expect(plan.reason).toMatch(/not in the supported set/);
+  });
+});
+
+describe("requeue — one-door authority matrix", () => {
+  const pushFailedBody = `## Current blocker\n\n${formatCurrentBlocker(pushFailedBlocker)}\n`;
+
+  it("refuses a non-mechanical park under machine authority", () => {
+    const plan = planRequeue({
+      authority: "machine",
+      body: pushFailedBody,
+      labels: ["ready-for-human", "blocked:push-failed"],
+      guidance: "Remote access is restored.",
+    });
+
+    expect(plan.requeueable).toBe(false);
+    expect(plan.reason).toContain("machine authority");
+  });
+
+  it("accepts the same push-failed park under human authority", () => {
+    const plan = planRequeue({
+      authority: "human",
+      body: pushFailedBody,
+      labels: ["ready-for-human", "blocked:push-failed"],
+      guidance: "Remote access is restored.",
+    });
+
+    expect(plan.requeueable).toBe(true);
+    expect(plan.activeBlocker?.kind).toBe("push-failed");
+    expect(plan.body).toContain("## Resolved blockers");
+    expect(plan.removeLabels).toEqual(
+      expect.arrayContaining(["ready-for-human", "blocked:push-failed"]),
+    );
   });
 });
 

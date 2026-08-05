@@ -24,6 +24,7 @@ function makeDeps(labels: string[], conceded: string[] = [], body = ""): HitlRes
   releaseClaims: ReturnType<typeof vi.fn>;
   viewBody: ReturnType<typeof vi.fn>;
   editBody: ReturnType<typeof vi.fn>;
+  verifyBaseFreshness: ReturnType<typeof vi.fn>;
 } {
   let currentBody = body;
   return {
@@ -36,6 +37,7 @@ function makeDeps(labels: string[], conceded: string[] = [], body = ""): HitlRes
     editBody: vi.fn(async (_, newBody: string) => {
       currentBody = newBody;
     }),
+    verifyBaseFreshness: vi.fn(async () => ({ ok: true, evidence: "fresh" })),
   };
 }
 
@@ -50,7 +52,7 @@ describe("hitl_resolve decisions (#2369)", () => {
     });
 
     expect(deps.comment).toHaveBeenCalledTimes(1);
-    expect(String(deps.comment.mock.calls[0]![1])).toContain("HITL decision **requeue**");
+    expect(String(deps.comment.mock.calls[0]![1])).toContain('data-kind="directive"');
     expect(deps.releaseClaims).toHaveBeenCalledWith(2404);
     expect(deps.editLabels).toHaveBeenCalledTimes(1);
     const [, remove, add] = deps.editLabels.mock.calls[0]!;
@@ -141,12 +143,32 @@ describe("hitl_resolve decisions (#2369)", () => {
     });
 
     expect(deps.viewBody).toHaveBeenCalledWith(2428);
+    expect(deps.verifyBaseFreshness).toHaveBeenCalledWith(ACTIVE_BLOCKER_BODY);
     expect(deps.editBody).toHaveBeenCalledTimes(1);
     const writtenBody = deps.editBody.mock.calls[0]![1] as string;
     expect(parseCurrentBlocker(writtenBody)).toBeNull();
     expect(writtenBody).toContain("Resolved blockers");
     expect(result.actions.some((a) => a.includes("body blocker cleared"))).toBe(true);
     expect(result.actions.some((a) => a.includes("kind=runner"))).toBe(true);
+  });
+
+  it("requeues push-failed with human authority through freshness, claim sweep, directive, and one label edit", async () => {
+    const body = ACTIVE_BLOCKER_BODY.replace("kind: runner", "kind: push-failed");
+    const deps = makeDeps(["ready-for-human", "blocked:push-failed"], ["wOLD"], body);
+
+    const result = await resolveHitlDecision(deps, {
+      issue: 3334,
+      decision: "requeue",
+      rationale: "remote access restored",
+    });
+
+    expect(result.refused).toBeUndefined();
+    expect(deps.verifyBaseFreshness.mock.invocationCallOrder[0]!).toBeLessThan(
+      deps.releaseClaims.mock.invocationCallOrder[0]!,
+    );
+    expect(deps.releaseClaims).toHaveBeenCalledWith(3334);
+    expect(String(deps.comment.mock.calls[0]![1])).toContain('data-kind="directive"');
+    expect(deps.editLabels).toHaveBeenCalledTimes(1);
   });
 
   it("requeue: skips editBody when the issue has no active body blocker", async () => {

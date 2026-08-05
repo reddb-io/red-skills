@@ -18,6 +18,7 @@
 // out of the canonical state vocabulary (#2664).
 
 import { LABEL_DEPENDENCY, LABEL_HUMAN, LABEL_READY } from "./triage-labels.js";
+import { parseCurrentBlocker } from "./blocker-state.js";
 
 /** The stuck-pattern taxonomy. One entry per detected deadend class. */
 export type DeadendClass =
@@ -148,28 +149,6 @@ function reqTargets(labels: readonly string[]): number[] {
   return out;
 }
 
-/**
- * Whether the anchored Current-blocker region carries an active blocker. Kept
- * local (not importing blocker-state) so the detector stays IO- and
- * dependency-free; the collector normalizes the body before handing it in.
- */
-const BLOCKER_OPEN = "<!-- red:blocker-state v1 -->";
-const BLOCKER_CLOSE = "<!-- /red:blocker-state -->";
-
-function hasActiveBlocker(body: string): boolean {
-  const start = body.indexOf(BLOCKER_OPEN);
-  if (start < 0) return false;
-  const end = body.indexOf(BLOCKER_CLOSE, start + BLOCKER_OPEN.length);
-  if (end < 0) return false;
-  const inner = body.slice(start + BLOCKER_OPEN.length, end);
-  const fields: Record<string, string> = {};
-  for (const line of inner.split("\n")) {
-    const match = /^([a-z_]+):\s*(.*)$/.exec(line.trim());
-    if (match) fields[match[1]!] = match[2]!.trim();
-  }
-  return fields.status === "blocked" && Boolean(fields.summary) && Boolean(fields.next);
-}
-
 function danglingClaims(inputs: DeadendAuditInputs, live: ReadonlySet<string>): DeadendFinding[] {
   const findings: DeadendFinding[] = [];
   for (const claim of inputs.claims) {
@@ -236,12 +215,15 @@ function activeCurrentBlockers(inputs: DeadendAuditInputs): DeadendFinding[] {
   const findings: DeadendFinding[] = [];
   for (const issue of inputs.issues) {
     if (!issue.labels.includes(LABEL_READY)) continue;
-    if (!hasActiveBlocker(issue.body)) continue;
+    const blocker = parseCurrentBlocker(issue.body);
+    if (!blocker) continue;
     findings.push({
       deadendClass: "active_current_blocker",
       cure: CURE_BY_CLASS.active_current_blocker,
       subject: `#${issue.number}`,
-      detail: "ready-for-agent Ticket carries an active Current blocker",
+      detail: blocker.defect
+        ? `ready-for-agent Ticket carries an active Current blocker (${blocker.defect.name}: missing ${blocker.defect.missingFields.join(", ")})`
+        : "ready-for-agent Ticket carries an active Current blocker",
       healTarget: issue.number,
     });
   }

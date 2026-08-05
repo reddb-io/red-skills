@@ -23,11 +23,8 @@ import {
   parseCurrentBlocker,
   type CurrentBlocker,
 } from "./blocker-state.js";
-import {
-  blockedLabelsIn,
-  validateIssueLifecycleTransition,
-} from "./issue-lifecycle.js";
-import { LABEL_HUMAN, LABEL_READY } from "./triage-labels.js";
+import { isRefused, planTransition } from "./state-transition.js";
+import { LABEL_READY } from "./triage-labels.js";
 
 /**
  * Blocker kinds AFK preflight treats as mechanical (auto-recoverable) and so
@@ -50,6 +47,8 @@ export const REQUEUE_SUPPORTED_KINDS = new Set([
 ]);
 
 export interface RequeueInput {
+  /** Machine callers are restricted to the mechanical allowlist; human callers may resolve any blocker kind. */
+  authority?: RequeueAuthority;
   /** The current issue body markdown. */
   body: string;
   /** The labels the issue currently carries. */
@@ -59,6 +58,8 @@ export interface RequeueInput {
   /** True when paired with `--adopt-branch`: a maintainer has reviewed a hand-done branch and is landing it through the ADR-0055 no-agent lane. */
   adoptBranch?: boolean;
 }
+
+export type RequeueAuthority = "machine" | "human";
 
 /**
  * Is `kind` requeueable? The supported set is
@@ -88,6 +89,46 @@ export interface RequeuePlan {
   addLabels: string[];
   /** Labels to remove: stale `ready-for-human` plus every `blocked:*` present. */
   removeLabels: string[];
+}
+
+export interface RequeueFreshnessResult {
+  ok: boolean;
+  evidence: string;
+}
+
+export interface RequeueApplierDeps {
+  verifyBaseFreshness(body: string): Promise<RequeueFreshnessResult>;
+  releaseClaims(issue: number): Promise<string[]>;
+  editBody(issue: number, body: string): Promise<void>;
+  comment(issue: number, body: string): Promise<void>;
+  editLabels(issue: number, remove: string[], add: string[]): Promise<void>;
+}
+
+export interface ApplyRequeueInput extends RequeueInput {
+  issue: number;
+  authority: RequeueAuthority;
+}
+
+export interface ApplyRequeueResult {
+  plan: RequeuePlan;
+  applied: boolean;
+  reason?: string;
+  releasedClaims: string[];
+  freshness?: RequeueFreshnessResult;
+}
+
+/** The audit directive emitted by every successful requeue, regardless of caller. */
+export function formatRequeueDirective(plan: RequeuePlan, guidance: string): string {
+  return [
+    '<details data-kind="directive">',
+    "<summary>Requeue</summary>",
+    "",
+    "Human guidance:",
+    guidance.trim() || "(none recorded)",
+    "",
+    `Disposition:\nrequeued to ready-for-agent${plan.activeBlocker ? ` (cleared active blocker: ${plan.activeBlocker.kind})` : ""}`,
+    "</details>",
+  ].join("\n");
 }
 
 function refuse(
@@ -135,9 +176,10 @@ export function isRequeueComplete(body: string, labels: readonly string[]): bool
  * the caller to `/hitl` instead.
  */
 export function planRequeue(input: RequeueInput): RequeuePlan {
+  const authority = input.authority ?? "machine";
   const activeBlocker = parseCurrentBlocker(input.body);
-  const blocked = blockedLabelsIn(input.labels);
-  const hasHuman = input.labels.includes(LABEL_HUMAN);
+  const blocked = input.labels.filter((label) => label.startsWith("blocked:"));
+  const hasHuman = input.labels.includes("ready-for-human");
 
   // "Parked" = something marks this issue as needing the human lane. Without an
   // active blocker, a blocked:* label, or ready-for-human there is nothing to
@@ -172,9 +214,9 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   const labelKind = blocked.length === 1 ? blocked[0].slice("blocked:".length) : null;
 
   // Unsupported label kind → /hitl handles other human-input blocker types.
-  if (labelKind !== null && !kindRequeueable(labelKind)) {
+  if (authority === "machine" && labelKind !== null && !kindRequeueable(labelKind)) {
     return refuse(
-      `blocked:${labelKind} is not in the supported set (validation, spec, infra, base-stale): use /hitl`,
+      `blocked:${labelKind} is not in the supported set for machine authority (validation, spec, infra, base-stale): use /hitl for human authority`,
       true,
       activeBlocker,
       input.body,
@@ -184,11 +226,12 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
   // Active body blocker with an unsupported kind (no matching label to catch it above).
   if (
     activeBlocker !== null &&
+    authority === "machine" &&
     !MECHANICAL_BLOCKER_KINDS.has(activeBlocker.kind) &&
     !kindRequeueable(activeBlocker.kind)
   ) {
     return refuse(
-      `active blocker kind "${activeBlocker.kind}" is not in the supported set (validation, spec, infra, base-stale): use /hitl`,
+      `active blocker kind "${activeBlocker.kind}" is not in the supported set for machine authority (validation, spec, infra, base-stale): use /hitl for human authority`,
       true,
       activeBlocker,
       input.body,
@@ -212,14 +255,16 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
       })
     : input.body;
 
-  const removeLabels = [...(hasHuman ? [LABEL_HUMAN] : []), ...blocked];
-  const addLabels = [LABEL_READY];
-  validateIssueLifecycleTransition({
-    edge: "requeue",
-    fromLabels: input.labels,
-    removeLabels,
-    addLabels,
-  });
+  const hasReqEdges = input.labels.some((label) => label.startsWith("req:"));
+  const transition = planTransition(
+    input.labels,
+    { kind: authority === "human" && hasReqEdges ? "promote" : "queue" },
+  );
+  if (isRefused(transition)) {
+    return refuse(transition.reason, authority === "machine", activeBlocker, input.body);
+  }
+  const removeLabels = [...transition.remove];
+  const addLabels = [...transition.add];
 
   return {
     requeueable: true,
@@ -233,4 +278,42 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
     addLabels,
     removeLabels,
   };
+}
+
+/**
+ * Apply the complete requeue transition through the Park's single door. The
+ * authority matrix lives in {@link planRequeue}; every accepted caller then
+ * crosses the same freshness guard, claim sweep, body clear, directive audit,
+ * and label transition in that order.
+ */
+export async function applyRequeue(
+  deps: RequeueApplierDeps,
+  input: ApplyRequeueInput,
+): Promise<ApplyRequeueResult> {
+  const plan = planRequeue(input);
+  if (!plan.requeueable) {
+    return {
+      plan,
+      applied: false,
+      reason: plan.reason,
+      releasedClaims: [],
+    };
+  }
+
+  const freshness = await deps.verifyBaseFreshness(input.body);
+  if (!freshness.ok) {
+    return {
+      plan,
+      applied: false,
+      reason: `base freshness verification failed: ${freshness.evidence}`,
+      releasedClaims: [],
+      freshness,
+    };
+  }
+
+  const releasedClaims = await deps.releaseClaims(input.issue);
+  if (plan.bodyChanged) await deps.editBody(input.issue, plan.body);
+  await deps.comment(input.issue, formatRequeueDirective(plan, input.guidance ?? ""));
+  await deps.editLabels(input.issue, [...plan.removeLabels], [...plan.addLabels]);
+  return { plan, applied: true, releasedClaims, freshness };
 }

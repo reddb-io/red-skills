@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  MALFORMED_BLOCKER_STATE,
   clearCurrentBlocker,
   formatCurrentBlocker,
   parseCurrentBlocker,
@@ -25,6 +26,24 @@ describe("blocker-state", () => {
     expect(parseCurrentBlocker("<!-- red:blocker-state v1 -->\nstatus: resolved\n<!-- /red:blocker-state -->")).toBeNull();
   });
 
+  it("fails closed on a malformed active block and names the repair defect", () => {
+    const malformed = [
+      "<!-- red:blocker-state v1 -->",
+      "status: blocked",
+      "kind: push-failed",
+      "<!-- /red:blocker-state -->",
+    ].join("\n");
+
+    expect(parseCurrentBlocker(malformed)).toMatchObject({
+      status: "blocked",
+      kind: "push-failed",
+      defect: {
+        name: MALFORMED_BLOCKER_STATE,
+        missingFields: ["summary", "next"],
+      },
+    });
+  });
+
   it("upserts the Current blocker section without touching later sections", () => {
     const body = "## Summary\nDo this.\n\n## Current blocker\n\nOld text.\n\n## Acceptance\n- [ ] Done\n";
     const next = upsertCurrentBlocker(body, blocker);
@@ -48,4 +67,3 @@ describe("blocker-state", () => {
     expect(next).toContain("- [x] Phase 2 measured no decode-layer win. - Continue only after redesigning the decode path.");
   });
 });
-

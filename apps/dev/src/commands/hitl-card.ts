@@ -20,9 +20,9 @@ import { actorTrustSignals, type GhContext } from "../runtime/gh.js";
 import { loadConfig } from "../core/config.js";
 import { resolveConfigPath } from "./route-model-tier.js";
 import { parseCurrentBlocker } from "../core/blocker-state.js";
-import { planRequeue } from "../core/requeue.js";
+import { applyRequeue } from "../core/requeue.js";
+import { parseClaimRecords, renderClaimComment } from "../core/claim.js";
 import { LABEL_HUMAN } from "../core/triage-labels.js";
-import { isRefused, planTransition } from "../core/state-transition.js";
 import {
   renderCard,
   updateCardStatus,
@@ -42,6 +42,7 @@ import {
   type CardCommand,
 } from "../core/hitl-card.js";
 import { enrichIssueReferences as enrichTicketRefs } from "../core/issue-reference.js";
+import { verifyFreshBase } from "./requeue.js";
 
 const FLAG_SCHEMA = {
   issue: { kind: "value", coerce: (raw: string): number => Number(raw) },
@@ -418,30 +419,62 @@ async function executeRequeue(exec: Exec, repo: string, issue: IssueData, guidan
     return "⚠️ `/requeue` requires guidance text, e.g. `/requeue Please fix the type errors in src/foo.ts`.";
   }
 
-  const plan = planRequeue({ body: issue.body, labels: issue.labels, guidance });
-  if (!plan.requeueable) {
-    return `Cannot requeue: ${plan.reason}`;
+  const claims = parseClaimRecords(issue.comments.map((comment) => ({
+    id: comment.id,
+    body: comment.body,
+  })));
+  const latestClaims = new Map<string, { id: number; kind: "claim" | "concede" }>();
+  for (const claim of claims) {
+    const prior = latestClaims.get(claim.worker);
+    if (!prior || claim.commentId >= prior.id) {
+      latestClaims.set(claim.worker, { id: claim.commentId, kind: claim.kind });
+    }
   }
 
-  // Apply the requeue transition. `planRequeue` owns the REFUSAL gates (is the
-  // issue parked? are its blocked:* labels unambiguous?); since #2663 the LABEL
-  // DELTA comes from the ADR 0122 planner instead of planRequeue's hand-rolled
-  // sets, so the card's re-queue sheds every state role, the `running`
-  // projection, and every `blocked:*` reason in ONE proven edit. A refused plan
-  // (a `queue` while `req:*` edges survive) falls back to planRequeue's sets —
-  // the maintainer's directive still lands.
-  if (plan.bodyChanged) {
-    await exec(["gh", "issue", "edit", String(issue.number), ...repoArgs(repo), "--body", scrubOutbound(plan.body)]);
-  }
-  const queued = planTransition(issue.labels, { kind: "queue" });
-  const removeLabels = isRefused(queued) ? plan.removeLabels : [...queued.remove];
-  const addLabels = isRefused(queued) ? plan.addLabels : [...queued.add];
-  if (removeLabels.length > 0 || addLabels.length > 0) {
-    const editArgs = ["gh", "issue", "edit", String(issue.number), ...repoArgs(repo)];
-    for (const l of removeLabels) editArgs.push("--remove-label", l);
-    for (const l of addLabels) editArgs.push("--add-label", l);
-    await exec(editArgs);
-  }
+  const run = async (args: string[]): Promise<void> => {
+    const result = await exec(args);
+    if (result.code !== 0) throw new Error(result.stderr.trim() || result.stdout.trim());
+  };
+  const applied = await applyRequeue(
+    {
+      verifyBaseFreshness: (body) => verifyFreshBase(cwd, body),
+      releaseClaims: async (number) => {
+        const owners = [...latestClaims.entries()]
+          .filter(([, claim]) => claim.kind === "claim")
+          .map(([worker]) => worker)
+          .sort();
+        for (const worker of owners) {
+          await run([
+            "gh", "issue", "comment", String(number), ...repoArgs(repo),
+            "--body", renderClaimComment({ worker }, "concede"),
+          ]);
+        }
+        return owners;
+      },
+      editBody: (number, body) => run([
+        "gh", "issue", "edit", String(number), ...repoArgs(repo),
+        "--body", scrubOutbound(body),
+      ]),
+      comment: (number, body) => run([
+        "gh", "issue", "comment", String(number), ...repoArgs(repo),
+        "--body", scrubOutbound(body),
+      ]),
+      editLabels: (number, remove, add) => {
+        const args = ["gh", "issue", "edit", String(number), ...repoArgs(repo)];
+        for (const label of remove) args.push("--remove-label", label);
+        for (const label of add) args.push("--add-label", label);
+        return run(args);
+      },
+    },
+    {
+      issue: issue.number,
+      authority: "human",
+      body: issue.body,
+      labels: issue.labels,
+      guidance,
+    },
+  );
+  if (!applied.applied) return `Cannot requeue: ${applied.reason}`;
 
   return `Issue #${issue.number} requeued to ready-for-agent with guidance.`;
 }

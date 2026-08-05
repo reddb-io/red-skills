@@ -9,6 +9,15 @@ export const BLOCKER_HEADING = "Current blocker";
 export const RESOLVED_BLOCKERS_HEADING = "Resolved blockers";
 export const BLOCKER_OPEN = "<!-- red:blocker-state v1 -->";
 export const BLOCKER_CLOSE = "<!-- /red:blocker-state -->";
+export const MALFORMED_BLOCKER_STATE = "malformed-blocker-state";
+export const QUARANTINE_MARKER_PREFIX = "afk:quarantine v1 issue=#";
+
+export type BlockerRequiredField = "kind" | "summary" | "next";
+
+export interface BlockerStateDefect {
+  name: typeof MALFORMED_BLOCKER_STATE;
+  missingFields: BlockerRequiredField[];
+}
 
 export interface CurrentBlocker {
   status: "blocked";
@@ -16,6 +25,8 @@ export interface CurrentBlocker {
   ref?: string;
   summary: string;
   next: string;
+  /** Present when a `status: blocked` record is active but needs repair. */
+  defect?: BlockerStateDefect;
 }
 
 export interface ResolvedBlocker {
@@ -137,15 +148,19 @@ export function parseCurrentBlocker(markdown: string): CurrentBlocker | null {
   if (inner === null) return null;
   const fields = parseFields(inner);
   if (fields.status !== "blocked") return null;
-  const summary = safeField(fields.summary);
-  const next = safeField(fields.next);
-  if (!summary || !next) return null;
+  const required: readonly BlockerRequiredField[] = ["kind", "summary", "next"];
+  const missingFields = required.filter((field) => safeField(fields[field]).length === 0);
+  const summary = safeField(fields.summary, "Malformed blocker-state block.");
+  const next = safeField(fields.next, "Repair the malformed blocker-state block before requeueing.");
   return {
     status: "blocked",
     kind: safeField(fields.kind, "unknown"),
     ...(fields.ref ? { ref: safeField(fields.ref) } : {}),
     summary,
     next,
+    ...(missingFields.length > 0
+      ? { defect: { name: MALFORMED_BLOCKER_STATE, missingFields } }
+      : {}),
   };
 }
 
@@ -272,4 +287,21 @@ export function clearCurrentBlocker(markdown: string, resolved?: ResolvedBlocker
   }
   if (!resolved || !active) return next;
   return appendResolvedBlocker(next, resolved);
+}
+
+export function quarantineMarker(issue: number): string {
+  return `<!-- ${QUARANTINE_MARKER_PREFIX}${issue} -->`;
+}
+
+/** Append one idempotent quarantine diagnosis using the shared issue-body shape. */
+export function appendQuarantineDiagnosis(
+  markdown: string,
+  issue: number,
+  diagnosis: string,
+): string {
+  const marker = quarantineMarker(issue);
+  if (markdown.includes(marker)) return markdown;
+  const body = markdown.replace(/\s+$/, "");
+  const entry = diagnosis.includes(marker) ? diagnosis : `${marker}\n${diagnosis}`;
+  return `${body}${body ? "\n\n" : ""}## Quarantine diagnosis\n\n${entry.trim()}\n`;
 }

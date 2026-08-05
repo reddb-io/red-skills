@@ -106,7 +106,7 @@ import {
 import { readAllWorkerStates } from "./core/worker-state-reader.js";
 import { resolveProject } from "./commands/statusline.js";
 import { executeStopWorker } from "./commands/stop.js";
-import { executeRequeue } from "./commands/requeue.js";
+import { executeRequeue, verifyFreshBase } from "./commands/requeue.js";
 import { executeRetake } from "./commands/retake.js";
 import {
   dispatchGo,
@@ -812,6 +812,7 @@ export function createDefaultDevAfkMcpOperations(
           editBody: async (issue, body) => {
             await ghx.editBody(gh, issue, body);
           },
+          verifyBaseFreshness: (body) => verifyFreshBase(context.root, body),
         },
         input,
       );
