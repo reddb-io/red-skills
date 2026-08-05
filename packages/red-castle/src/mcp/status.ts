@@ -2,6 +2,14 @@ import { z } from "zod/v3";
 import type { HostDependencies } from "./host.js";
 import type { ObservabilityDependencies } from "./observability.js";
 import type { ProjectDependencies } from "./project.js";
+import {
+  CASTLE_MCP_CONTRACT_VERSION,
+  monitorOutputSchema,
+  projectStatusOutputSchema,
+  workerVitalsOutputSchema,
+  workerVitalsProjectedOutputSchema,
+  type CastleMcpOutputContract,
+} from "./contracts.js";
 import type { CastleMcpTool } from "./tool.js";
 import type { WorkerDependencies } from "./worker.js";
 
@@ -30,6 +38,74 @@ export interface DeprecatedStatusAliasOutput {
   };
   result: unknown;
 }
+
+const replacementSchema = z.object({
+  tool: z.literal("status"),
+  args: z.object({ scope: z.enum(["worker", "project", "host"]) }),
+});
+
+function aliasSchema(result: z.ZodTypeAny): z.ZodTypeAny {
+  return z.object({
+    deprecated: z.literal(true),
+    message: z.string().min(1),
+    replacement: replacementSchema,
+    result,
+  });
+}
+
+/** Preserve each absorbed tool's output validation around its alias envelope. */
+export function deprecatedStatusAliasContract(
+  source: CastleMcpOutputContract,
+): CastleMcpOutputContract {
+  return {
+    version: source.version,
+    schema: aliasSchema(source.schema),
+    ...(source.projection === undefined
+      ? {}
+      : {
+          projection: {
+            input: source.projection.input,
+            schema: aliasSchema(source.projection.schema),
+          },
+        }),
+  };
+}
+
+const workerStatusOutputSchema = z.object({
+  status: z.unknown(),
+  vitals: workerVitalsOutputSchema,
+  monitor: monitorOutputSchema,
+});
+
+const projectedWorkerStatusOutputSchema = z.object({
+  status: z.unknown(),
+  vitals: workerVitalsProjectedOutputSchema,
+  monitor: monitorOutputSchema,
+});
+
+const hostStatusOutputSchema = z.object({
+  state: z.unknown(),
+  dashboard: z.unknown(),
+  provision_check: z.unknown(),
+  unit_status: z.unknown(),
+});
+
+export const statusContract: CastleMcpOutputContract = {
+  version: CASTLE_MCP_CONTRACT_VERSION,
+  schema: z.union([
+    projectStatusOutputSchema,
+    workerStatusOutputSchema,
+    hostStatusOutputSchema,
+  ]),
+  projection: {
+    input: "fields",
+    schema: z.union([
+      projectStatusOutputSchema,
+      projectedWorkerStatusOutputSchema,
+      hostStatusOutputSchema,
+    ]),
+  },
+};
 
 /** Keep an absorbed verb useful during its one-release alias window. */
 export function deprecatedStatusAlias(
@@ -87,6 +163,7 @@ export function createStatusTools(deps: StatusDependencies): CastleMcpTool[] {
         live_only: z.boolean().default(true),
         fields: z.array(z.string().min(1)).optional(),
       },
+      outputContract: statusContract,
       invoke: (input) => readStatus(deps, input as unknown as StatusInput),
     },
   ];
