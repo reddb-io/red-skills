@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { main } from "../src/cli.js";
+import { main, releaseEventFromGithub } from "../src/cli.js";
 import { readChangesetQueue } from "../src/changeset-queue.js";
 import { computeReleaseStatus } from "../src/status.js";
 import type { ReleaseClock } from "../src/version-core.js";
@@ -68,5 +68,17 @@ describe("release status", () => {
       Pending changes: 0
       "
     `);
+  });
+});
+
+describe("release workflow event", () => {
+  it("maps generated workflow push and merged Version-PR events to engine events", () => {
+    expect(releaseEventFromGithub("push", {
+      head_commit: { author: { name: "Contributor" } },
+    })).toEqual({ kind: "push", commitAuthor: "Contributor" });
+    expect(releaseEventFromGithub("pull_request", {
+      number: 42,
+      pull_request: { merged: true },
+    })).toEqual({ kind: "version-pr-merged", number: 42 });
   });
 });
