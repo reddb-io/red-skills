@@ -20,6 +20,7 @@ export interface DeclaredVersionSurface {
 export interface ReleaseConfig {
   readonly scheme: VersionScheme;
   readonly trigger: ReleaseTrigger;
+  readonly prerelease: boolean;
   readonly versionSurfaces: readonly DeclaredVersionSurface[];
   readonly syncCommand?: string;
 }
@@ -81,6 +82,10 @@ export function readReleaseConfig(
   if (trigger !== "version-pr" && trigger !== "auto") {
     throw configError("release.trigger must be version-pr or auto");
   }
+  const prerelease = release.prerelease ?? false;
+  if (typeof prerelease !== "boolean") {
+    throw configError("release.prerelease must be true or false");
+  }
   const rawSurfaces = release.version_surfaces;
   if (!Array.isArray(rawSurfaces) || rawSurfaces.length === 0) {
     throw configError("release.version_surfaces must be a non-empty sequence");
@@ -110,6 +115,7 @@ export function readReleaseConfig(
   return {
     scheme,
     trigger,
+    prerelease,
     versionSurfaces,
     ...(typeof syncCommand === "string" ? { syncCommand } : {}),
   };
