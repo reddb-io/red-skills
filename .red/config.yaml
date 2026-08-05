@@ -22,7 +22,7 @@ plugins:
             - plugins/*/.codex-plugin/plugin.json
             - plugins/*/.gemini-plugin/plugin.json
             - packaging/pi/**
-          command: pnpm version:sync && pnpm generate-manifests && pnpm pi:packages:build
+          command: pnpm generate-manifests && pnpm pi:packages:build
         post_done:
           - pnpm -C apps/dev exec tsc --noEmit
       # Maintainer decision 2026-08-03: codex is this repo's executor.
@@ -91,3 +91,55 @@ rsp:
   ttlDays: 7
   byteBudget: 67108864
   heavyGitByteThreshold: 8192
+
+# ADR 0139 dogfood: the Release standard is the sole product-version writer.
+release:
+  scheme: semver
+  trigger: version-pr
+  prerelease: false
+  execution: pinned
+  version_surfaces:
+    - { path: package.json, format: npm }
+    - { path: apps/afk-container/package.json, format: npm }
+    - { path: apps/benchmark-code-understanding/package.json, format: npm }
+    - { path: apps/benchmark-memory/package.json, format: npm }
+    - { path: apps/brain/package.json, format: npm }
+    - { path: apps/code-nav/package.json, format: npm }
+    - { path: apps/dev/package.json, format: npm }
+    - { path: apps/herdr-plugin-red-skills/package.json, format: npm }
+    - { path: apps/memory/package.json, format: npm }
+    - { path: apps/opencode-host/package.json, format: npm }
+    - { path: apps/red-browser/package.json, format: npm }
+    - { path: apps/redskilled/package.json, format: npm }
+    - { path: apps/release/package.json, format: npm }
+    - { path: apps/rsp/package.json, format: npm }
+    - { path: apps/vscode-extension-red-skills/package.json, format: npm }
+    - { path: packages/brand-tokens/package.json, format: npm }
+    - { path: packages/browser-bridge/package.json, format: npm }
+    - { path: packages/build-info/package.json, format: npm }
+    - { path: packages/cdp-driver/package.json, format: npm }
+    - { path: packages/github/package.json, format: npm }
+    - { path: packages/red-castle/package.json, format: npm }
+    - { path: packages/redskilled-render/package.json, format: npm }
+    - { path: packages/shared/package.json, format: npm }
+    - { path: plugins/brain/package.json, format: npm }
+    - { path: plugins/dev/package.json, format: npm }
+    - { path: plugins/internal/package.json, format: npm }
+    - { path: plugins/memory/package.json, format: npm }
+    - { path: plugins/brain/.claude-plugin/plugin.json, format: npm }
+    - { path: plugins/brain/.codex-plugin/plugin.json, format: npm }
+    - { path: plugins/brain/.gemini-plugin/plugin.json, format: npm }
+    - { path: plugins/dev/.claude-plugin/plugin.json, format: npm }
+    - { path: plugins/dev/.codex-plugin/plugin.json, format: npm }
+    - { path: plugins/dev/.gemini-plugin/plugin.json, format: npm }
+    - { path: plugins/internal/.claude-plugin/plugin.json, format: npm }
+    - { path: plugins/internal/.codex-plugin/plugin.json, format: npm }
+    - { path: plugins/internal/.gemini-plugin/plugin.json, format: npm }
+    - { path: plugins/memory/.claude-plugin/plugin.json, format: npm }
+    - { path: plugins/memory/.codex-plugin/plugin.json, format: npm }
+    - { path: plugins/memory/.gemini-plugin/plugin.json, format: npm }
+    - { path: packaging/pi/brain/package.json, format: npm }
+    - { path: packaging/pi/dev/package.json, format: npm }
+    - { path: packaging/pi/internal/package.json, format: npm }
+    - { path: packaging/pi/memory/package.json, format: npm }
+  sync_command: node scripts/sync-release-exotics.mjs && pnpm generate-manifests && pnpm pi:packages:build
