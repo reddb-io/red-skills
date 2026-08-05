@@ -221,6 +221,11 @@
       "id": "apps/release/src/version-surfaces.ts#json-parse-file-read#4e3250e520ef",
       "classification": "external",
       "reason": "workspace package.json manifests are ecosystem JSON; version derivation reads them as-is"
+    },
+    {
+      "id": "apps/release/src/release-engine.ts#json-parse-file-read#87169b2357b0",
+      "classification": "external",
+      "reason": "the repo-root package.json is ecosystem JSON; the release engine reads the current version off it"
     }
   ]
 }
