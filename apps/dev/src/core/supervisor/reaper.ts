@@ -4,7 +4,6 @@ import { decideReaperSignal, deriveSnapshot } from "../reaper-signal.js";
 import { dispose } from "../disposition.js";
 import { parkOrHuman, transitionLabels, type StateTransition } from "../state-transition.js";
 import { workerIdentity } from "../host-identity.js";
-import { validateIssueLifecycleTransition } from "../issue-lifecycle.js";
 import {
   LABEL_CONTESTED,
   LABEL_HUMAN,
@@ -340,12 +339,6 @@ async function openReapContest(
   const deadlineEpoch = openedEpoch + windowS;
   const headAtReap = await branchHeadForContest(deps, info.branch);
 
-  validateIssueLifecycleTransition({
-    edge: "contest",
-    fromLabels: [LABEL_RUNNING],
-    removeLabels: [],
-    addLabels: [LABEL_CONTESTED],
-  });
   await deps.gh.editLabels(info.issue, [LABEL_CONTESTED], []);
   state.contest = {
     issue: info.issue,
@@ -383,12 +376,6 @@ export async function resolveReapContest(
     currentHead !== undefined &&
     currentHead !== contest.headAtReap
   ) {
-    validateIssueLifecycleTransition({
-      edge: "contest-reclaimed",
-      fromLabels: [LABEL_RUNNING, LABEL_CONTESTED],
-      removeLabels: [LABEL_CONTESTED],
-      addLabels: [],
-    });
     await deps.gh.editLabels(contest.issue, [], [LABEL_CONTESTED]);
     state.contest = null;
     logReapContest(deps, "reclaimed", {
@@ -403,12 +390,6 @@ export async function resolveReapContest(
 
   if (now < contest.deadlineEpoch) return "pending";
 
-  validateIssueLifecycleTransition({
-    edge: "contest-expired",
-    fromLabels: [LABEL_RUNNING, LABEL_CONTESTED],
-    removeLabels: [LABEL_RUNNING, LABEL_CONTESTED],
-    addLabels: [LABEL_READY],
-  });
   await deps.gh.editLabels(contest.issue, [LABEL_READY], [LABEL_RUNNING, LABEL_CONTESTED]);
   state.contest = null;
   logReapContest(deps, "expired", {
