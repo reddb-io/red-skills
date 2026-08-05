@@ -1,5 +1,16 @@
 # @reddb-io/rsp
 
+## 3.6.2
+
+### Patch Changes
+
+- 80f7681: Coalesce cold same-kind single-object reads into one aliased GraphQL query when their count exceeds a threshold derived from the live REST and GraphQL balances, while preserving conditional REST for warm reads.
+- Updated dependencies [80f7681]
+  - @reddb-io/github@3.6.2
+  - @reddb-io/red-castle@3.6.2
+  - @reddb-io/shared@3.6.2
+  - @reddb-io/build-info@3.6.2
+
 ## 3.6.1
 
 ### Patch Changes
