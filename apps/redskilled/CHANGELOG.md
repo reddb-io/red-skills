@@ -1,5 +1,14 @@
 # @reddb-io/redskilled
 
+## 3.5.1
+
+### Patch Changes
+
+- @reddb-io/github@3.5.1
+- @reddb-io/shared@3.5.1
+- @reddb-io/build-info@3.5.1
+- @reddb-io/redskilled-render@3.5.1
+
 ## 3.5.0
 
 ### Patch Changes

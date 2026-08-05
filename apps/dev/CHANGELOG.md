@@ -1,5 +1,20 @@
 # @reddb-io/dev
 
+## 3.5.1
+
+### Patch Changes
+
+- eea07fd: Retry failed feedback-baseline materialization and keep environment-inconclusive gate rounds outside the Re-seed budget.
+- cf91f41: Park branches that erase after-fork base work or silently shrink test source, with cited deletion declarations and an exact-file restoration command.
+- b480ede: Narrate Validation moment schedules at Worker boot and on castle status surfaces, report declaration/engine drift, and show live Validation gate occupancy in the statusline.
+- Updated dependencies [b480ede]
+  - @reddb-io/red-castle@3.5.1
+  - @reddb-io/github@3.5.1
+  - @reddb-io/shared@3.5.1
+  - @reddb-io/build-info@3.5.1
+  - @reddb-io/redskilled@3.5.1
+  - @reddb-io/redskilled-render@3.5.1
+
 ## 3.5.0
 
 ### Minor Changes

@@ -1,5 +1,13 @@
 # @ai-hero/sandcastle
 
+## 3.5.1
+
+### Patch Changes
+
+- b480ede: Narrate Validation moment schedules at Worker boot and on castle status surfaces, report declaration/engine drift, and show live Validation gate occupancy in the statusline.
+  - @reddb-io/github@3.5.1
+  - @reddb-io/shared@3.5.1
+
 ## 3.5.0
 
 ### Patch Changes

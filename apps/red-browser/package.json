@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/red-browser",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "private": true,
   "type": "module",
   "description": "Red Browser CLI surface — opens a local annotation bridge for HTML artifacts, long-polls human feedback, and enforces the layout-audit gate.",
