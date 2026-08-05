@@ -7,6 +7,7 @@
  * absence.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import { stripAnsi } from "@reddb-io/redskilled-render/format.js";
 import {
   dashboardRows,
   escapeHtml,
@@ -201,7 +202,9 @@ describe("the frame is drawn here, from the one document the daemon composed", (
     // bytes it already holds (ADR 0132 decisions 1 and 9).
     expect(daemon.served.get("statusline-payload")).toBe(1);
     expect(daemon.served.has("statusline-dashboard")).toBe(false);
-    expect(snapshot.dashboard?.header.line).toContain("» reddb-io/red-skills");
+    // The wire line is coloured by design (#3150/#3152); the identity is asserted
+    // through the same strip every ANSI-free reader applies at its boundary.
+    expect(stripAnsi(snapshot.dashboard?.header.line ?? "")).toContain("» reddb-io/red-skills");
     // The cells come from the shared render module, so a terminal pane standing
     // in the same directory draws this row character for character.
     expect(snapshot.dashboard?.rows[0]?.cells.bar).toBe("██▶░░░");

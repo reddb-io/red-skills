@@ -20,6 +20,7 @@ describe("the wine identity family, lifted rather than re-picked", () => {
     expect(params(palette.KEY)).toBe("38;2;255;214;214");
     expect(params(palette.VAL)).toBe("39");
     expect(params(palette.SOFT)).toBe("38;2;224;138;148");
+    expect(params(palette.GOLD)).toBe("38;2;240;200;120");
     expect(params(palette.DIM)).toBe("38;2;201;150;158");
     expect(params(palette.WHITE)).toBe("38;2;255;255;255");
   });

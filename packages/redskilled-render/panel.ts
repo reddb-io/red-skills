@@ -16,13 +16,14 @@
  *
  * PURE, like every other density: payload and options in, rows out.
  */
-import { clamp, formatBytes, formatDuration } from "./format.js";
+import { colourWorkerCell, workerCells, type RedskilledDashboardColumn } from "./dashboard.js";
+import { clamp, formatBytes } from "./format.js";
 import { BUDGET_BAND_MARK, BUDGET_SPENT_MARK, DEATH_MARK } from "./marks.js";
-import { workerElapsedMs, type RedskilledRenderPayload, type RedskilledStatuslineMode } from "./payload.js";
+import { KEY, NOBG, RESET, SOFT, VAL } from "./palette.js";
+import { type RedskilledRenderPayload, type RedskilledStatuslineMode } from "./payload.js";
 import {
   REDSKILLED_STATUSLINE_DEFAULTS,
   renderRedskilledStatusline,
-  workerName,
   type RedskilledStatuslineRender,
 } from "./line.js";
 import { selectRenderProjects, selectRenderWorkers } from "./select.js";
@@ -156,21 +157,16 @@ function workerRow(
   mode: RedskilledStatuslineMode,
   generatedAt: string,
 ): string {
-  const display = worker.display;
-  const phase = display == null
-    ? null
-    : [display.phase, display.step].filter((part): part is string => Boolean(part)).join("·");
+  const cells = workerCells(worker, { mode }, generatedAt);
+  const columns: readonly RedskilledDashboardColumn[] = ["wid", "bar", "phase", "elapsed", "eta"];
+  const parts = columns
+    .filter((column) => cells[column] !== "")
+    .map((column) => colourWorkerCell(column, cells[column]));
   const used = worker.vitals.rss_bytes;
-  const parts = [
-    workerName(worker, mode),
-    phase == null || phase === "" ? null : phase,
-    formatDuration(workerElapsedMs(worker, generatedAt)),
-    display?.eta == null ? null : `eta=${formatDuration(display.eta * 1000)}`,
-    // An unmeasured Worker says so. A zero here would read as an idle Worker, and
-    // "nothing measured it" and "it is using nothing" are opposite facts.
-    used == null ? "?" : formatBytes(used),
-  ].filter((part): part is string => part != null);
-  return parts.join(" ");
+  // An unmeasured Worker says so. A zero here would read as an idle Worker, and
+  // "nothing measured it" and "it is using nothing" are opposite facts.
+  parts.push(`${KEY}mem=${VAL}${used == null ? "?" : formatBytes(used)}${SOFT}`);
+  return `${NOBG}${SOFT}${parts.join(" ")}${RESET}`;
 }
 
 /**
