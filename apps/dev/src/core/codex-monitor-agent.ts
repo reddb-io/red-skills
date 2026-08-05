@@ -68,7 +68,6 @@ export function renderCodexMonitorAgentPrompt(options: CodexMonitorAgentPromptOp
     "",
     "Loop:",
     `1. Every ${intervalSeconds} seconds, read live state from the castle MCP: call the castle \`status\` tool with \`scope: worker\` for normalized worker state, vitals, and monitor inputs.`,
-    "   The castle `monitor` tool and `worker_vitals` remain answering deprecation aliases for that scoped status read; treat them as compatibility surface, not the primary route.",
     "2. When the castle MCP is not reachable from this host, say so once, then use the no-MCP fallback from the project root:",
     `   ${monitorCommand}`,
     "3. Report a concise progress update when live worker state changes, when a worker becomes stale/wedged, or at least every five minutes.",
