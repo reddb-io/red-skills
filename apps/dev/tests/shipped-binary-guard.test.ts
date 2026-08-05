@@ -99,6 +99,20 @@ describe("every shipped binary in the live tree answers --version (#2878)", () =
     ]);
   });
 
+  it("ships the release engine bundle behind the canonical npm binary", () => {
+    const release = binaries.find(
+      (entry) =>
+        entry.name === "red-skills-release" &&
+        entry.declaredIn === "packaging/npm/package.json",
+    );
+
+    expect(release).toBeDefined();
+    expect(resolveBinaryEntry(release!, files, bundles).hops).toEqual([
+      "packaging/npm/bin/red-skills-release.mjs",
+      "apps/release/src/cli.ts",
+    ]);
+  });
+
   it("checks each binary against its OWN version answer, not a neighbour's", () => {
     // The whole invariant would be decorative if one `renderVersion` call
     // anywhere in a package satisfied every binary that package ships.
