@@ -1,7 +1,7 @@
 // help.ts — the castle's one live source of operating choreography (ADR 0134).
 //
 // The answer is deliberately assembled from the same two socket-local reads an
-// operator already has: project_status and host_state. It never asks the issue
+// operator reaches through status {scope: project | host}. It never asks the issue
 // tracker for a fresher queue. The daemon's last registration poll and demand
 // refusal are the live facts, and every next action is rendered through the
 // shared repair composer so the prose cannot name a different mechanism.
@@ -51,16 +51,16 @@ function lastRefusal(hostState: unknown): string | null {
 
 function inspectAgain(why: string): RepairAction {
   return {
-    tool: "project_status",
-    args: {},
+    tool: "status",
+    args: { scope: "project" },
     why,
   };
 }
 
 function daemonRepair(): RepairAction {
   return {
-    tool: "host_provision_check",
-    args: {},
+    tool: "status",
+    args: { scope: "host" },
     why: "diagnose why the host daemon does not answer before changing registration",
   };
 }
@@ -76,8 +76,8 @@ function nextAction(
   }
   if (status.live_workers.length > 0 && refusal === null) {
     return {
-      tool: "worker_vitals",
-      args: {},
+      tool: "status",
+      args: { scope: "worker" },
       why: "observe the Workers already draining this project's queue",
     };
   }
@@ -110,7 +110,9 @@ function location(status: ProjectStatusOutput): string {
 function intentMap(tools: readonly CastleMcpTool[]): readonly HelpIntentGroup[] {
   return [{
     intent: "choose the capability that matches your intent",
-    tools: tools.map(({ name, title }) => ({ name, title })),
+    tools: tools
+      .filter((tool) => !tool.description.startsWith("DEPRECATED:"))
+      .map(({ name, title }) => ({ name, title })),
   }];
 }
 
