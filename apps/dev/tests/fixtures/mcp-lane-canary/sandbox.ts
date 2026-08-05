@@ -188,9 +188,22 @@ export async function createCanarySandbox(
   // TRACKER its queue lives in (#2974): the query the daemon polls with is built
   // from this remote, so a sandbox without one is a project the host could never
   // count — which is exactly the failure the canary exists to catch, not one it
-  // should stage.
+  // should stage. The origin is a LOCAL repo whose path ends in `acme/canary`,
+  // so the slug parser still reads the project as `acme/canary` while the
+  // daemon-owned trunk refresh (ADR 0138) has a `main` it can actually fetch —
+  // a URL-shaped fake remote would refuse every birth as unreachable trunk.
+  const upstreamRoot = await mkdtemp(join(tmpdir(), "mcp-canary-upstream-"));
+  sandboxes.push(upstreamRoot);
+  const upstream = join(upstreamRoot, "acme", "canary");
+  await mkdir(upstream, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: upstream, stdio: "ignore" });
+  execFileSync(
+    "git",
+    ["-c", "user.email=canary@acme.test", "-c", "user.name=canary", "commit", "-q", "--allow-empty", "-m", "seed"],
+    { cwd: upstream, stdio: "ignore" },
+  );
   execFileSync("git", ["init", "-q"], { cwd: root, stdio: "ignore" });
-  execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/canary.git"], {
+  execFileSync("git", ["remote", "add", "origin", upstream], {
     cwd: root,
     stdio: "ignore",
   });
