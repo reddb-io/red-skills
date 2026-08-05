@@ -14,6 +14,10 @@ import { encodeSnapshotToon } from "@reddb-io/shared/toon-migration.js";
 import type { RspExpiredHandle, RspElisionRecord } from "./elision-store.js";
 import { RspElisionStore } from "./elision-store.js";
 import { createResidentBrainStore } from "./resident-brain.js";
+import {
+  createRspResidentGithubClient,
+  type RspResidentGithubClient,
+} from "./resident-github.js";
 import type { RspResidentConfig, RspResidentRequest, RspResidentResponse } from "./resident-protocol.js";
 import {
   parseTelemetryEvent,
@@ -50,6 +54,7 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
   let storeState: ResidentStoreState = { kind: "opening", startedAt: process.hrtime.bigint() };
   let telemetryTimer: NodeJS.Timeout | undefined;
   let shuttingDown = false;
+  const github = createLazyResidentGithub(opts.rootDir ?? process.cwd());
 
   const idleMs = opts.idleMs ?? DEFAULT_RSP_IDLE_MS;
   let idleTimer: NodeJS.Timeout | undefined;
@@ -63,7 +68,13 @@ export async function runResidentServer(opts: ResidentServerOptions): Promise<vo
     touch();
     handleSocket(socket, async (request, reply) => {
       touch();
-      const value = await handleRequest(storeState, request, opts.storeUri, opts.residentVersion ?? "0.0.0-dev");
+      const value = await handleRequest(
+        storeState,
+        request,
+        opts.storeUri,
+        opts.residentVersion ?? "0.0.0-dev",
+        github,
+      );
       const response: RspResidentResponse = {
         id: request.id,
         ok: true,
@@ -800,6 +811,7 @@ async function handleRequest(
   request: RspResidentRequest,
   storeUri: string,
   residentVersion: string,
+  github: RspResidentGithubClient,
 ): Promise<unknown> {
   if (request.op === "handover") return { handover: true, version: residentVersion, clientVersion: request.clientVersion };
   if (state.kind === "opening") throw new Error("rsp resident store is not ready");
@@ -829,9 +841,34 @@ async function handleRequest(
     };
   }
   if (request.op === "get") return encodeRecord(await store.get(request.handle));
+  if (request.op === "github-read") {
+    return await github.read({
+      args: request.args,
+      path: request.path,
+      actor: request.actor,
+      ...(request.params ? { params: request.params } : {}),
+    });
+  }
   if (request.op === "memory") return await store.memory(request.action, request.payload);
   if (request.op === "brain") return await handleBrainRequest(store, storeUri, request.action, request.payload);
   throw new Error(`unsupported resident op: ${(request as { op?: string }).op ?? "unknown"}`);
+}
+
+function createLazyResidentGithub(rootDir: string): RspResidentGithubClient {
+  let client: RspResidentGithubClient | undefined;
+  return {
+    async read(input) {
+      if (!client) {
+        const token = String(execFileSync("gh", ["auth", "token"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        })).trim();
+        if (token === "") throw new Error("rsp resident could not obtain a GitHub credential from gh");
+        client = createRspResidentGithubClient({ rootDir, token });
+      }
+      return await client.read(input);
+    },
+  };
 }
 
 async function handleBrainRequest(
