@@ -10,6 +10,7 @@ import { parse } from "yaml";
 import type { VersionScheme } from "./version-core.js";
 
 export type ReleaseTrigger = "version-pr" | "auto";
+export type ReleaseExecution = "pinned" | "vendored";
 export type VersionSurfaceFormat = "npm" | "cargo" | "text";
 
 export interface DeclaredVersionSurface {
@@ -20,6 +21,7 @@ export interface DeclaredVersionSurface {
 export interface ReleaseConfig {
   readonly scheme: VersionScheme;
   readonly trigger: ReleaseTrigger;
+  readonly execution: ReleaseExecution;
   readonly prerelease: boolean;
   readonly versionSurfaces: readonly DeclaredVersionSurface[];
   readonly syncCommand?: string;
@@ -86,6 +88,10 @@ export function readReleaseConfig(
   if (typeof prerelease !== "boolean") {
     throw configError("release.prerelease must be true or false");
   }
+  const execution = release.execution ?? "pinned";
+  if (execution !== "pinned" && execution !== "vendored") {
+    throw configError("release.execution must be pinned or vendored");
+  }
   const rawSurfaces = release.version_surfaces;
   if (!Array.isArray(rawSurfaces) || rawSurfaces.length === 0) {
     throw configError("release.version_surfaces must be a non-empty sequence");
@@ -115,6 +121,7 @@ export function readReleaseConfig(
   return {
     scheme,
     trigger,
+    execution,
     prerelease,
     versionSurfaces,
     ...(typeof syncCommand === "string" ? { syncCommand } : {}),
