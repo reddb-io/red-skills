@@ -37,7 +37,7 @@ Scout mode is read-only and report-producing, so this Task+DoD gate does not app
 the demand with the `worker_dispatch` tool — `{demand, runner?, mode?}`, where
 `mode` is exactly the `--mode` selector below. Pass a per-dispatch inner-agent
 instruction with `worker_request` instead, and reach a run already in flight
-with `runner_steer`. Watch it with `worker_status` and `monitor`; a `/go` worker
+with `runner_steer`. Watch it with `status {scope: worker}`; a `/go` worker
 is stamped `origin=go` / `current.kind=go`, so it is distinguishable from fleet
 workers in every observability tool. The complete surface, host tool-name
 prefixing, and the mutation-mode contract are in
@@ -88,7 +88,7 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 
 **Dispatch survives the dispatcher.** Every `/go` — standard and `--scout` — is an ORDER, never the work: the host daemon owns the worker process, so a UI stop, a session teardown, or a closed terminal kills the launcher and leaves the run alive. The command returns as soon as the host grants the worker and answers with the two handles that outlive it — the worker id and its log lane:
 
-**Dispatch also skips the autonomous line.** Standard `/go` and `--scout` claim the host's bounded interactive reservation, so a saturated `/afk` target does not make a human-attached demand wait for an AFK Worker to finish. Nothing already running is stopped or resized: the daemon may admit the interactive Worker above the ordinary Worker ceiling, up to `REDSKILLED_INTERACTIVE_RESERVATION` extra Workers (default `1`). Host dashboard, project status, and monitor slot surfaces state that reservation beside their ordinary target, so `target+1` is policy rather than unexplained occupancy.
+**Dispatch also skips the autonomous line.** Standard `/go` and `--scout` claim the host's bounded interactive reservation, so a saturated `/afk` target does not make a human-attached demand wait for an AFK Worker to finish. Nothing already running is stopped or resized: the daemon may admit the interactive Worker above the ordinary Worker ceiling, up to `REDSKILLED_INTERACTIVE_RESERVATION` extra Workers (default `1`). The scoped host, project, and worker status answers state that reservation beside their ordinary target, so `target+1` is policy rather than unexplained occupancy.
 
 ```
 🔍 /go --scout dispatched disposable issue #4210 (origin=scout, kind=scout, lane:scout).
@@ -96,7 +96,7 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
    watch: .red/tmp/logs/2026-08-01/dispatch-2026-08-01T20-14-02-114Z-1f0c9d2e.log
 ```
 
-Follow it from those handles, never from the launcher's stdout: `worker_status`, the statusline, or the log path above. A dispatch the host refuses starts nothing and says so — it never falls back to running the engine here.
+Follow it from those handles, never from the launcher's stdout: `status {scope: worker}`, the statusline, or the log path above. A dispatch the host refuses starts nothing and says so — it never falls back to running the engine here.
 
 **Dispatch refuses a superseded engine.** Before anything is minted or born, the engine the dispatch would actually run is compared against the published dist-tag. Under the default `warn` policy a superseded engine dispatches loudly, naming both versions and the span of fixes it forfeits; set `plugins.dev.dispatch.engine_floor: refuse` to make it a hard stop that mints nothing, or `off` to silence it. A registry the host cannot reach always degrades to a warning and proceeds — offline dispatch must not die — and a source checkout or prerelease is never floored. `RED_DEV_ENGINE_FLOOR=warn|refuse|off` overrides the file for one run.
 
