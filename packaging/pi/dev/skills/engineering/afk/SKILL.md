@@ -159,8 +159,9 @@ Read the focused reference before touching that concern:
   [`runner-hermes.md`](./runner-hermes.md).
 - Liveness, stall protection, and lane-idle rules:
   [`docs/LIVENESS.md`](./docs/LIVENESS.md).
-- Config, env overrides, lifecycle hooks, sandbox/runner/model settings, and
-  backpressure commands: [`docs/CONFIG.md`](./docs/CONFIG.md).
+- Config, env overrides, lifecycle hooks, sandbox/runner/model settings, the
+  declared Validation moments, and their concurrency ceiling:
+  [`docs/CONFIG.md`](./docs/CONFIG.md).
 - Safety rules for shell and git actions: [`SAFETY.md`](SAFETY.md).
 
 ## Load-Bearing Rules
@@ -184,16 +185,20 @@ Read the focused reference before touching that concern:
   labels by hand.
 - The inner agent's canonical completion signals are
   `<promise>DONE</promise>` and `<promise>BLOCKED</promise>`.
-- The gate command is canonical. Feedback plus the operator's
-  `afk.backpressure` commands are the sole validation authority; workers run
-  those exact commands and never self-impose stricter flags, extra lint
-  restrictions, widened target sets, or a harder contract than the gate defines.
-  If an error appears only under an extra check, reconcile it against the real
-  gate command before reporting a red `main`.
-- A declared `plugins.dev.afk.feedback.commands` list replaces feedback script
-  discovery completely (including workspace and invariant suites); absent keeps
-  discovery unchanged. The Worker runs the declared list exactly and never runs
-  an omitted full suite locally. `afk.backpressure` remains additive.
+- `plugins.dev.afk.validation` is the sole local validation authority. Its
+  ordered `iteration`, `post_done`, and `landing` command lists are run only at
+  those named moments; an undeclared moment is skipped loudly and `[]` is an
+  explicit empty declaration. The engine never discovers or improvises a suite.
+- `iteration` is handed to the inner agent while it writes. `post_done` runs at
+  the branch's fork point after DONE, and a correction re-runs only its failed
+  subset before folding back to the full declaration. `landing` runs before
+  push/PR/queue. The merge queue is the CI-side final Validation moment and owns
+  freshness against the merged result.
+- Declared commands are canonical. Workers run the exact commands handed to
+  them and never self-impose stricter flags, extra lint restrictions, widened
+  target sets, or a harder contract. If an error appears only under an extra
+  check, reconcile it against the declared schedule before reporting a red
+  `main`.
 - `blocked:ci` leaves the completed PR open and escalates to `ready-for-human`;
   AFK does not re-run the inner agent for already-complete work waiting on CI.
 - On DONE, completion sweep reclaims all attempt directories for that issue
