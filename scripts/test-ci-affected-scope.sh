@@ -135,18 +135,50 @@ need(!/^\s*paths(-ignore)?:/m.test(trigger),
 need(/^\s{2}scope:/m.test(text), 'red-workspace-ci defines a scope job');
 need(/ci-affected-scope\.mjs/.test(text), 'the scope job runs the affected-cone scoper');
 
-for (const job of ['typecheck', 'test']) {
+const jobBody = (job) => {
   const start = text.indexOf(`\n  ${job}:`);
   need(start !== -1, `red-workspace-ci still defines the ${job} job`);
   const rest = text.slice(start + 1);
   const end = rest.search(/\n {2}[a-z][a-z0-9-]*:\n/);
-  const body = end === -1 ? rest : rest.slice(0, end);
+  return end === -1 ? rest : rest.slice(0, end);
+};
+
+// The narrowing jobs do the work. Each one always runs and shrinks itself from
+// the inside.
+for (const job of ['typecheck', 'test-shard', 'test-packages']) {
+  const body = jobBody(job);
   need(/needs:\s*(scope|\[[^\]]*scope)/.test(body), `${job} consumes the scope job`);
   need(/if:\s/.test(body), `${job} narrows its work with step-level conditions`);
   // A job-level `if:` would report as "skipped", which branch protection treats
   // as a missing conclusion for a required check.
   need(!/^ {4}if:/m.test(body), `${job} has no job-level if (it must always report)`);
 }
+
+// The apps/dev suite is the critical path, so it fans out across a shard matrix
+// rather than running as one serial step.
+const shard = jobBody('test-shard');
+need(/^\s+matrix:\n\s+shard: \[1, 2, 3, 4\]$/m.test(shard),
+  'test-shard fans the apps/dev suite out over a 4-way matrix');
+need(/--shard=\$\{\{ matrix\.shard \}\}\/4/.test(shard),
+  'test-shard passes its matrix index to vitest');
+// pnpm forwards a `--` separator VERBATIM, so vitest reads the flag behind it
+// as a filename filter and every shard runs the whole suite — four full runs
+// that all pass, which is what a broken split looks like from the outside.
+need(!/test\s+--\s+--shard=/.test(shard),
+  'test-shard passes the shard flag with no `--` separator for pnpm to forward');
+need(/fail-fast: false/.test(shard),
+  'test-shard reports every failing shard, not only the first');
+
+// `test` is the required check name. It survives the fan-out as an aggregate,
+// and it is the ONE job here that carries a job-level `if:` — `always()`, so a
+// failed dependency cannot skip it into a silent pass.
+const aggregate = jobBody('test');
+need(/needs:\s*\[[^\]]*test-shard[^\]]*\]/.test(aggregate), 'test aggregates the shard matrix');
+need(/needs:\s*\[[^\]]*test-packages[^\]]*\]/.test(aggregate), 'test aggregates the per-package suites');
+need(/^ {4}if: always\(\)$/m.test(aggregate), 'test always runs, so it always reports a conclusion');
+need(/contains\(needs\.\*\.result, 'failure'\)/.test(aggregate)
+  && /contains\(needs\.\*\.result, 'cancelled'\)/.test(aggregate),
+  'test fails when any dependency failed or was cancelled');
 NODE
 
 printf '\nAll CI affected-scope contract checks passed.\n'
