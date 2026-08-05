@@ -7,7 +7,7 @@ import {
   auditConfigLoad,
   CONFIG_DEFAULTS,
   DELETED_CONFIG_KEYS,
-  VALIDATION_MOMENT_ALIASES_LAST_RELEASE,
+  VALIDATION_MOMENT_ALIASES_REMOVED_IN,
   getConfig,
   loadConfig,
   MalformedConfigError,
@@ -974,8 +974,9 @@ describe("config — validation moments (ADR 0135, #3284)", () => {
     expect(
       ordinal(manifest.version),
       "remove the Validation moment aliases when advancing beyond their one-release window",
-    ).toBeLessThanOrEqual(ordinal(VALIDATION_MOMENT_ALIASES_LAST_RELEASE));
-    expect(ordinal("3.5.1")).toBeGreaterThan(ordinal(VALIDATION_MOMENT_ALIASES_LAST_RELEASE));
+    ).toBeLessThan(ordinal(VALIDATION_MOMENT_ALIASES_REMOVED_IN));
+    expect(ordinal("3.5.1")).toBeLessThan(ordinal(VALIDATION_MOMENT_ALIASES_REMOVED_IN));
+    expect(ordinal("3.6.0")).toBeGreaterThanOrEqual(ordinal(VALIDATION_MOMENT_ALIASES_REMOVED_IN));
   });
 });
 
