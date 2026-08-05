@@ -47,7 +47,7 @@
 // PURE, apart from `fetchGithubBalance` and `createGithubBalanceTransport`, whose
 // transport is injected.
 
-import type { GithubOperation, GithubRateBudget } from "./surface.js";
+import type { GithubApiSurface, GithubOperation, GithubRateBudget } from "./surface.js";
 
 /**
  * The gh argv this ask is equivalent to: `gh api rate_limit`.
@@ -227,6 +227,60 @@ export type GithubBalancePosture = "open" | "reserved" | "spent" | "unknown";
  * - `convenience` — a read that can be answered from cache, later, or not at all.
  */
 export type GithubCallCriticality = "essential" | "convenience";
+
+/** One stable rung of the preferred-to-fallback routing ramp. */
+export type GithubDiversionBand = "none" | "low" | "high" | "full";
+
+export interface GithubDiversionBandDefinition {
+  /** Source-pool pressure that enters this rung. */
+  readonly enter_pressure: number;
+  /** Lower pressure that must be crossed before leaving this rung. */
+  readonly leave_pressure: number;
+  /** Destination-budget share to spend before pricing the operation itself. */
+  readonly budget_share: number;
+}
+
+/**
+ * The routing ramp, expressed as budget shares rather than call shares.
+ *
+ * Entry and exit differ deliberately. A balance moving around 70% or 90% must
+ * not alternate surfaces on every ask and discard both surfaces' warm caches.
+ */
+export const GITHUB_DIVERSION_BANDS: Readonly<Record<GithubDiversionBand, GithubDiversionBandDefinition>> = {
+  none: { enter_pressure: 0, leave_pressure: 0, budget_share: 0 },
+  low: { enter_pressure: 0.7, leave_pressure: 0.65, budget_share: 0.25 },
+  high: { enter_pressure: 0.9, leave_pressure: 0.85, budget_share: 0.6 },
+  full: { enter_pressure: 1, leave_pressure: 0.98, budget_share: 1 },
+};
+
+/** GitHub's REST and GraphQL primary pools both reset on an hourly window. */
+const GITHUB_PRIMARY_RATE_WINDOW_MS = 60 * 60_000;
+
+export interface GithubDiversionInput {
+  readonly balance: GithubBalance | null;
+  readonly operation: GithubOperation;
+  /** The decision instant, explicit so replaying a Worker is deterministic. */
+  readonly now: string;
+  /** Stable identity of the concrete read, such as operation + repository. */
+  readonly routingKey: string;
+  /** Number of fallback-pool units this read is projected to consume. */
+  readonly projectedDestinationCost: number;
+  /** Last rung observed for this route, when a caller retains hysteresis state. */
+  readonly previousBand?: GithubDiversionBand;
+}
+
+export interface GithubDiversionDecision {
+  readonly surface: GithubApiSurface;
+  readonly preferred: GithubApiSurface;
+  readonly fallback: GithubApiSurface | null;
+  readonly diverted: boolean;
+  readonly band: GithubDiversionBand;
+  readonly source_pressure: number | null;
+  /** Call share after the destination cost has priced the budget share. */
+  readonly diversion_share: number;
+  readonly projected_destination_cost: number;
+  readonly reason: string;
+}
 
 /** One admission verdict, with everything an operator needs to argue with it. */
 export interface GithubAdmission {
@@ -489,6 +543,153 @@ export function admitGithubOperation(input: {
     criticality: input.criticality,
     ...(input.reservedFraction === undefined ? {} : { reservedFraction: input.reservedFraction }),
   });
+}
+
+/**
+ * Choose between a read's preferred surface and its declared fallback. PURE.
+ *
+ * Raw source pressure only opens a rung when the observed burn rate projects
+ * exhaustion before reset. A nearly-spent pool twenty seconds from reset
+ * therefore stays preferred, while the same balance early in its window starts
+ * spending the idle fallback. Partial rungs are priced in destination budget:
+ * a five-page REST collection gets one fifth the call share of a one-page read.
+ */
+export function githubDiversionDecision(input: GithubDiversionInput): GithubDiversionDecision {
+  const preferred = input.operation.surface;
+  const fallback = input.operation.fallback ?? null;
+  const base = {
+    preferred,
+    fallback,
+    projected_destination_cost: input.projectedDestinationCost,
+  } as const;
+  const stay = (
+    reason: string,
+    sourcePressure: number | null = null,
+  ): GithubDiversionDecision => ({
+    ...base,
+    surface: preferred,
+    diverted: false,
+    band: "none",
+    source_pressure: sourcePressure,
+    diversion_share: 0,
+    reason,
+  });
+
+  if (fallback == null) {
+    return stay(
+      `${input.operation.key} has no fallback surface, so balance cannot divert it`,
+    );
+  }
+  if (input.operation.kind !== "read" || input.operation.budget === "search") {
+    return stay(`${input.operation.key} is not eligible for diverted read traffic`);
+  }
+
+  const destinationPoolName = budgetForSurface(fallback);
+  const source = input.balance?.pools[input.operation.budget] ?? null;
+  const destination = input.balance?.pools[destinationPoolName] ?? null;
+  if (source == null || destination == null) {
+    return stay(
+      `the ${source == null ? input.operation.budget : destinationPoolName} pool is unknown; an unread ledger is not evidence of a free fallback`,
+    );
+  }
+
+  const sourcePressure = pressureOf(source);
+  if (!Number.isFinite(input.projectedDestinationCost) || input.projectedDestinationCost <= 0) {
+    return stay("the projected destination cost is not a positive finite budget amount", sourcePressure);
+  }
+  if (destination.remaining < input.projectedDestinationCost) {
+    return stay(
+      `the ${destinationPoolName} fallback has ${destination.remaining} left, below this read's projected cost of ${input.projectedDestinationCost}`,
+      sourcePressure,
+    );
+  }
+  if (pressureOf(destination) >= sourcePressure) {
+    return stay(
+      `the ${destinationPoolName} fallback is not healthier than the ${input.operation.budget} preferred pool`,
+      sourcePressure,
+    );
+  }
+
+  const spent = source.remaining <= 0 || sourcePressure >= 1;
+  if (!spent && !projectsExhaustionBeforeReset(source, input.now)) {
+    return stay(
+      `the ${input.operation.budget} pool does not project exhaustion before its reset at ${source.reset_at}`,
+      sourcePressure,
+    );
+  }
+
+  const band = diversionBand(sourcePressure, input.previousBand);
+  if (band === "none") {
+    return stay(
+      `the ${input.operation.budget} pool is below the first diversion entry band`,
+      sourcePressure,
+    );
+  }
+
+  const budgetShare = GITHUB_DIVERSION_BANDS[band].budget_share;
+  const diversionShare = band === "full"
+    ? 1
+    : Math.min(1, budgetShare / input.projectedDestinationCost);
+  const bucket = stableDiversionBucket(`${input.operation.key}\u0000${input.routingKey}`);
+  const diverted = bucket < diversionShare;
+  return {
+    ...base,
+    surface: diverted ? fallback : preferred,
+    diverted,
+    band,
+    source_pressure: sourcePressure,
+    diversion_share: diversionShare,
+    reason:
+      `${input.operation.budget} pressure ${sourcePressure.toFixed(3)} entered the ${band} ramp; ` +
+      `${input.projectedDestinationCost} projected ${destinationPoolName} budget unit(s) price ` +
+      `the ${budgetShare.toFixed(2)} budget share as a ${diversionShare.toFixed(3)} call share; ` +
+      `stable bucket ${bucket.toFixed(3)} ${diverted ? "selects" : "does not select"} the fallback`,
+  };
+}
+
+function budgetForSurface(surface: GithubApiSurface): GithubRateBudget {
+  return surface;
+}
+
+function pressureOf(pool: GithubPoolBalance): number {
+  if (pool.limit <= 0) return pool.remaining <= 0 ? 1 : 0;
+  return Math.max(0, Math.min(1, pool.used / pool.limit));
+}
+
+function projectsExhaustionBeforeReset(pool: GithubPoolBalance, now: string): boolean {
+  if (pool.remaining <= 0) return true;
+  if (pool.used <= 0) return false;
+  const nowMs = Date.parse(now);
+  const resetMs = Date.parse(pool.reset_at);
+  if (!Number.isFinite(nowMs) || !Number.isFinite(resetMs) || resetMs <= nowMs) return false;
+  const untilResetMs = Math.min(GITHUB_PRIMARY_RATE_WINDOW_MS, resetMs - nowMs);
+  const elapsedMs = Math.max(1, GITHUB_PRIMARY_RATE_WINDOW_MS - untilResetMs);
+  const projectedAdditionalSpend = (pool.used / elapsedMs) * untilResetMs;
+  return projectedAdditionalSpend >= pool.remaining;
+}
+
+function diversionBand(pressure: number, previous: GithubDiversionBand | undefined): GithubDiversionBand {
+  if (pressure >= GITHUB_DIVERSION_BANDS.full.enter_pressure) return "full";
+  if (previous === "full" && pressure >= GITHUB_DIVERSION_BANDS.full.leave_pressure) return "full";
+  if (pressure >= GITHUB_DIVERSION_BANDS.high.enter_pressure) return "high";
+  if (previous === "full" || previous === "high") {
+    if (pressure >= GITHUB_DIVERSION_BANDS.high.leave_pressure) return "high";
+  }
+  if (pressure >= GITHUB_DIVERSION_BANDS.low.enter_pressure) return "low";
+  if (previous !== undefined && previous !== "none") {
+    if (pressure >= GITHUB_DIVERSION_BANDS.low.leave_pressure) return "low";
+  }
+  return "none";
+}
+
+/** FNV-1a mapped to [0, 1), stable across processes and JavaScript runtimes. */
+function stableDiversionBucket(key: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < key.length; index += 1) {
+    hash ^= key.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) / 0x1_0000_0000;
 }
 
 /**

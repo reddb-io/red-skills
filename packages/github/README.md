@@ -143,6 +143,28 @@ So semi-offline stops being a mode discovered through a 403 and becomes a postur
 entered at a threshold an operator can see. `buildGithubBalanceReport` is what
 they see it on.
 
+## Routing is graduated too
+
+`githubDiversionDecision` gives the same balance a second axis: which declared
+surface should answer an eligible read. Below 70% source pressure the preferred
+surface decides alone. At 70% and 90%, progressively larger budget shares can
+move to the fallback; a spent preferred pool moves every eligible read. Each
+entry threshold has a lower exit threshold so small balance changes do not
+bounce a route between surfaces and cool both caches.
+
+Pressure alone does not arm the ramp. The observed spend must project exhaustion
+before the pool's hourly reset, so a pool with 7% left and twenty seconds to wait
+does not burn its healthy peer merely to avoid that wait. An unread source or
+destination balance diverts nothing, and a table entry with no fallback remains
+on its only surface.
+
+Partial diversion is denominated in destination budget, not call count. A read
+projected to cost five paginated REST requests receives one fifth the call share
+of a one-request fallback at the same rung. Selection uses a stable hash of the
+operation and concrete routing key, making identical decisions replayable rather
+than random. Full diversion is the exception to cost weighting: once the source
+is spent, its declared fallback is the only available route.
+
 ## A cache that carries its own age
 
 `createGithubCache` keeps counts, bodies and states, and every read comes back

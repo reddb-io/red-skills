@@ -63,6 +63,7 @@ export {
 
 export {
   GITHUB_BALANCE_CADENCE,
+  GITHUB_DIVERSION_BANDS,
   GITHUB_BALANCE_MIN_CADENCE_MS,
   GITHUB_BALANCE_STALENESS_FACTOR,
   GITHUB_POOLS,
@@ -78,6 +79,7 @@ export {
   fetchGithubBalance,
   githubBalanceCadenceMs,
   githubBalancePosture,
+  githubDiversionDecision,
   githubReservedFloor,
   isGithubBalanceReport,
   parseGithubBalance,
@@ -92,6 +94,10 @@ export {
   type GithubBalanceReport,
   type GithubBalanceTransport,
   type GithubCallCriticality,
+  type GithubDiversionBand,
+  type GithubDiversionBandDefinition,
+  type GithubDiversionDecision,
+  type GithubDiversionInput,
   type GithubPoolBalance,
 } from "./balance.js";
 
