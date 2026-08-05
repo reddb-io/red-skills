@@ -11,7 +11,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-WORKFLOW=".github/workflows/red-hitl-card.yml"
+WORKFLOW=".github/workflows/archive/red-hitl-card.yml"
 failures=0
 
 fail() {

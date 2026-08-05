@@ -48,7 +48,7 @@ grep -qF 'ref: ${{ github.event.pull_request.base.sha }}' .github/workflows/red-
 grep -qF 'ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}' .github/workflows/red-comment-respond.yml ||
   fail "red-comment-respond.yml must checkout a base-repo ref before running the launcher"
 
-grep -qF 'ref: ${{ github.event.pull_request.base.sha }}' .github/workflows/red-hitl-card.yml ||
+grep -qF 'ref: ${{ github.event.pull_request.base.sha }}' .github/workflows/archive/red-hitl-card.yml ||
   fail "red-hitl-card.yml must checkout the base PR SHA before running the launcher"
 
 for workflow in \
