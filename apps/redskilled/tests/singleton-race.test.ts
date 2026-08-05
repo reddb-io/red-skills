@@ -7,11 +7,14 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureRedskilledDaemon, readRedskilledHostState } from "../src/client.js";
 import { RedskilledAlreadyRunningError, socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
+import { createRedskilledMachineClaimStore } from "../src/machine-scope.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { sendRedskilledRequest } from "../src/protocol.js";
+import { createRedskilledLeaseStore } from "../src/session-lease.js";
 
 const require_ = createRequire(import.meta.url);
 const tsxLoader = require_.resolve("tsx");
@@ -88,6 +91,45 @@ describe("redskilled singleton", () => {
     const daemon = await startRedskilledDaemon({ paths });
     running.push(daemon);
     expect(await socketAnswers(paths.socketPath)).toBe(true);
+  });
+
+  it("reclaims an aged lease from a live socketless holder so a successor can bind", async () => {
+    const paths = await sessionPaths();
+    const holderStart = "2026-08-05T10:00:00.000Z";
+    const now = "2026-08-05T10:02:00.000Z";
+    const labels = {
+      machineIdHash: paths.machineIdHash,
+      sessionKeyHash: paths.sessionKeyHash,
+      socketPath: paths.socketPath,
+    };
+    const leaseStore = createRedskilledLeaseStore(paths.leasePath, labels, { clock: () => holderStart });
+    const claimStore = createRedskilledMachineClaimStore(paths.machineClaimPath, labels, { clock: () => holderStart });
+    const holder = { pid: process.pid, startTime: holderStart };
+    const machineHolder = {
+      ...holder,
+      uid: typeof process.getuid === "function" ? process.getuid() : -1,
+    };
+    await leaseStore.acquire(holder);
+    await claimStore.claim(machineHolder);
+
+    // This is the wedge: the recorded pid is alive and owns both records, but
+    // its socket has already been unlinked. Before #3401 the successor refused
+    // here with "a redskilled daemon already owns <socket>" until SIGKILL.
+    expect(isPidAlive(holder.pid)).toBe(true);
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
+
+    const successorOwner = { pid: process.pid + 100_000, startTime: now };
+    const successor = await startRedskilledDaemon({
+      paths,
+      clock: () => now,
+      owner: successorOwner,
+      machineOwner: { ...successorOwner, uid: machineHolder.uid },
+    });
+    running.push(successor);
+
+    expect(await socketAnswers(paths.socketPath)).toBe(true);
+    expect(successor.lease.pid).toBe(successorOwner.pid);
+    expect(isPidAlive(holder.pid)).toBe(true);
   });
 
   it("starts the daemon out of process through the shipped cli entry", async () => {
