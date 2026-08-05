@@ -32,33 +32,21 @@ plugins:
       #     registration that is already standing.
       default_runner: codex
       models:
-        # Maintainer decision 2026-07-28: the claude runner is pinned to Opus 5
-        # on EVERY tier — validate included — so the local fleet never falls back
-        # to the 4.x defaults (`claude-haiku-4-5` / `claude-sonnet-4-6` /
-        # `claude-opus-4-8`). `base` is the per-runner one-liner (ADR 0049): it
-        # auto-populates all four tiers, and each tier keeps its own default
-        # effort (validate low, simple high, complex medium, think high). Pin a
-        # single tier back by giving it its own `<tier>.model`.
+        # Maintainer decision 2026-08-05: exactly TWO runner/model combinations
+        # exist in this repo — claude is `claude-opus-5` at high and codex is
+        # `gpt-5.6-sol` at high, on EVERY tier including validate. `base` is the
+        # per-runner one-liner (ADR 0049): it auto-populates all four tiers with
+        # this model+effort pair, and no tier carries its own override because an
+        # explicit tier key would silently beat the base pair. This supersedes
+        # the 2026-07-28 claude pin (which left tier efforts on their defaults)
+        # and the validate-stays-on-5.5 codex choice.
         claude:
           base:
             model: claude-opus-5
-        # GPT-5.6 (released 2026-07-09) for coding tiers; `validate` — the
-        # fuzzy-validation / contract-review tier — deliberately stays on 5.5.
-        # `gpt-5.6-sol` is the flagship of the sol/terra/luna family and is
-        # verified working on this host (codex-cli 0.144.6), despite the still-open
-        # Linux report at openai/codex#31869 against 0.144.0.
-        codex:
-          validate:
-            model: gpt-5.5       # review lane — held on 5.5 by maintainer choice
-            effort: high         # raised from the `low` default
-          simple:
-            model: gpt-5.6-sol   # coding
             effort: high
-          complex:
-            model: gpt-5.6-sol   # coding
-            effort: high         # raised from the `medium` default
-          think:
-            model: gpt-5.6-sol   # design/routing — grouped with coding
+        codex:
+          base:
+            model: gpt-5.6-sol
             effort: high
       labels:
         hitl_types:
@@ -82,10 +70,10 @@ plugins:
       # under the claude fleet this codex slug is substituted for claude's own
       # review-tier default with a logged notice, never spawned. Pin
       # `runner: codex` here to make the reviewer actually run this model.
-      model: gpt-5.6-sol       # adversarial reviewer runs on the newer model...
-      effort: medium           # ...at medium effort — the review pass is bounded
-                               # to one iteration, so depth matters less than the
-                               # implementer tiers that run at high.
+      model: gpt-5.6-sol       # adversarial reviewer rides the codex combo —
+      effort: high             # the repo runs exactly two runner/model pairs
+                               # (2026-08-05), so review carries the same
+                               # gpt-5.6-sol/high pair as every codex tier.
   internal:
     enabled: true                # maintainer-only repo operations plugin (ADR 0067)
 
