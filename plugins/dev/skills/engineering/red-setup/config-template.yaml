@@ -71,6 +71,28 @@ plugins:
   # brain:
   #   enabled: true               # the agentic command-center context
 
+# Release standard (ADR 0139). /red-setup detects the workspace's Version
+# surfaces, proposes this entire block, and writes it only after operator
+# confirmation. The release engine re-derives npm/Cargo workspace members and
+# refuses drift from this declared contract while naming the orphan package.
+# release:
+#   scheme: semver                 # `semver` (default) or calver `YYYY.M.MICRO`
+#   trigger: version-pr            # `version-pr` (default) or `auto`
+#   prerelease: true               # default false; true enables RC graduation
+#   execution: pinned              # pinned npx (default) or `vendored` bundle
+#   version_surfaces:              # non-empty, one product version for the workspace
+#     - path: package.json
+#       format: npm                # `npm`, `cargo`, or `text`
+#     - path: packages/cli/package.json
+#       format: npm
+#     - path: Cargo.toml
+#       format: cargo
+#     - path: VERSION.txt
+#       format: text
+#   sync_command: node scripts/sync-version.mjs
+#                                 # optional repo-owned propagation for exotic carriers;
+#                                 # receives the next version as RED_RELEASE_VERSION
+
 # rsp hook activation and retention (ADR 0095 amended by ADR 0098). /red-setup
 # provisions `.red/state/red-skills.rdb`; the hook remains inert unless this
 # explicit flag is true.

@@ -251,6 +251,22 @@ Use that inventory and the repository's CI/merge-queue evidence to show a propos
 
 Show the complete YAML proposal, including ordered command lists, and ask the operator to confirm or edit it. Say plainly that `/red-setup` will write it only after explicit confirmation. This confirmation gate applies to a fresh or existing `.red/config.yaml`: without a yes, leave the validation schedule untouched. Legacy `afk.feedback.commands` and `afk.backpressure` entries may be reported as deprecated aliases of `post_done`, but never propose or add those aliases.
 
+**Release standard — choose, detect, propose, then confirm.** A release consumes the Validation moments just declared: only a revision that passed those checks should be tagged, and the release workflow can reuse the confirmed build commands. Explain that the Release standard keeps changesets-compatible files in `.changeset/`, puts the whole workspace on one product version, and publishes human notes plus JSON and TOON release manifests instead of committing a `CHANGELOG.md`.
+
+Walk the operator through these choices in order:
+
+1. **Scheme:** `semver` or `calver`. Calver is exactly `YYYY.M.MICRO` with no leading zeros (for example `2026.8.2`), so it stays semver-parseable. Under calver, a changeset's major/minor/patch value is an impact class for notes and manifest metadata, not version arithmetic.
+2. **Trigger:** `version-pr` (default) or `auto`. In `version-pr` mode the engine maintains one reviewable Version-PR and its merge triggers the stable tag. In `auto` mode the same queue is consumed directly on push.
+3. **Pre-release:** choose pre-release enablement or disable it (default disabled). When enabled, an RC is cut from the Version-PR's own branch as `X.Y.Z-rc.N`; merging that same branch graduates the tested bytes to stable.
+4. **Execution:** pinned npx (default, persisted as `pinned`) or `vendored`. Pinned execution keeps generated workflows thin and invokes the versioned release binary through the canonical npx form. Vendored execution emits the single-file engine bundle into the consumer repository for restricted CI and runs that file without a runtime package download.
+
+Then run the Version surfaces **detect, propose, then confirm** pass:
+
+1. Detect every workspace manifest that already carries the product version: root and workspace `package.json` files as `npm`, and root and member `Cargo.toml` files as `cargo`. Inspect an existing `release.version_surfaces` declaration too; do not lose an operator-declared exotic surface on rerun.
+2. Present the detected path and format for every surface. Separately ask whether the repository has extra carriers such as an extension manifest, embedded constant, or plain version file; propose each extra path with format `npm`, `cargo`, or `text`. When an exotic carrier needs repository-owned propagation logic, propose one optional `release.sync_command` instead.
+3. Show the complete proposed top-level `release.*` YAML block: `scheme`, `trigger`, `prerelease`, `execution`, the non-empty `version_surfaces` list, and optional `sync_command`. Explain that the release engine re-derives the real npm/Cargo workspace at release time and refuses drift while naming an orphan package.
+4. Ask the operator to confirm or edit every answer and surface. Say plainly that `/red-setup` writes the block only after explicit confirmation, for a fresh or existing `.red/config.yaml`; without a yes, leave `release.*` untouched.
+
 **Section G1 — Command guards (offer-only).**
 
 > Explainer: RedSkills ships the maximum practical shell-command hook coverage for each supported CLI (Claude Code, Codex, and opencode). Those hooks are **proxy guarantees**, not the policy source: they extract the command and cwd, find the repo root, read `.red/config.yaml`, then evaluate `command_guard`. This keeps AFK workers and the main interactive session on the same repo-owned policy, and it keeps per-CLI hook files as thin adapters instead of places where safety rules drift.

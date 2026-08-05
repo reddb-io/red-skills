@@ -142,6 +142,10 @@ structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` local validation authority (`plugins.dev.afk.validation.{iteration,post_done,landing}`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+`/red-setup` Release standard (`release.*` contract, including the detect–propose–confirm
+pass over Version surfaces) ->
+`plugins/dev/skills/engineering/red-setup/INTERVIEW.md` and
+`plugins/dev/skills/engineering/red-setup/config-template.yaml`;
 `/afk` ADR 0136 ownership (Landing hands native intent to the Queue Custodian
 and ends, Verdict has no classification hook, and the Park exposes one
 authority-parameterized requeue door) ->
@@ -195,10 +199,12 @@ through `/memory:view`, `memory docs reference-graph`, and
 - `/red-setup` and `/red-statusline` are setup/adoption routes, not
   feature-work routes. `/red-setup` owns `.red/config.yaml` authoring through its
   shipped config template and post-write loader check, including inspection and
-  human confirmation of `plugins.dev.afk.setup` when a repository's package or
-  hook manager determines how fresh AFK Worktrees install dependencies, plus
-  package-manifest harness discovery and confirmation of the proposed
-  `plugins.dev.afk.validation` schedule.
+   human confirmation of `plugins.dev.afk.setup` when a repository's package or
+   hook manager determines how fresh AFK Worktrees install dependencies, plus
+   package-manifest harness discovery and confirmation of the proposed
+   `plugins.dev.afk.validation` schedule. Immediately after that schedule it owns
+   the Release standard interview and the confirmed top-level `release.*` block;
+   runtime release behavior belongs to the release engine, not the router.
 - Execution-daemon operation is a host route, not a feature-work one:
   diagnose through the castle MCP's read-only `status {scope: host}` first; no
   castle tool provisions or reclaims the host.
