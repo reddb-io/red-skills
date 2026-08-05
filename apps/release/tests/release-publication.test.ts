@@ -225,7 +225,9 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 
-async function bodyText(body: BodyInit | null | undefined): Promise<string> {
+async function bodyText(
+  body: ConstructorParameters<typeof Response>[0] | undefined,
+): Promise<string> {
   if (body === undefined || body === null) return "";
   return await new Response(body).text();
 }
