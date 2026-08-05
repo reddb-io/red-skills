@@ -16,7 +16,7 @@ export interface QueueCustodyIdentity {
 }
 
 export interface QueueCustodyRecord extends QueueCustodyIdentity {
-  readonly status: "watching";
+  readonly status: "watching" | "repairing";
   readonly semanticBounces: readonly QueueCustodyFailure[];
   readonly handedOffAt: string;
   readonly updatedAt: string;
@@ -50,6 +50,39 @@ export interface QueueCustodyHandoffDeps {
   readonly armNativeIntent: () => Promise<QueueCustodyArmResult>;
   /** Test/telemetry seam invoked only after the atomic store write resolves. */
   readonly afterWrite?: (record: QueueCustodyRecord) => void | Promise<void>;
+}
+
+export interface QueueCustodyPullRequestView {
+  readonly state: "OPEN" | "MERGED" | "CLOSED";
+  readonly nativeIntent: boolean;
+  readonly checks: "green" | "pending" | "failing";
+  readonly mergeStateStatus: string;
+  readonly mergeable: string;
+}
+
+export interface QueueCustodyRepairAdmission extends QueueCustodyIdentity {
+  readonly origin: "repair";
+  readonly kind: "repair";
+  readonly mergeStateStatus: string;
+  readonly mergeable: string;
+}
+
+export interface QueueCustodySweepDeps {
+  readonly store: QueueCustodyStore;
+  readonly now: () => string;
+  /** One budget-aware, batchable read for every open custody record. */
+  readonly observePullRequests: (
+    records: readonly QueueCustodyRecord[],
+  ) => Promise<Readonly<Record<string, QueueCustodyPullRequestView>>>;
+  /** The daemon's ordinary admission boundary; no private spawn is permitted. */
+  readonly admitRepairWorker: (
+    repair: QueueCustodyRepairAdmission,
+  ) => Promise<{ readonly admitted: boolean; readonly workerId?: string }>;
+}
+
+export interface QueueCustodySweepResult {
+  readonly merged: readonly number[];
+  readonly admitted: readonly { readonly prNumber: number; readonly workerId: string }[];
 }
 
 export type QueueCustodyHandoffResult =
@@ -87,4 +120,53 @@ export async function handoffQueueCustody(
   });
   await deps.afterWrite?.(record);
   return { ok: true, prNumber: identity.prNumber, outcome: "handed-off" };
+}
+
+/**
+ * One daemon sweep over durable custody. A live native intent remains entirely
+ * GitHub's job. A vanished intent on an open PR crosses the host's normal
+ * admission boundary exactly once and becomes visible as a repair Worker.
+ */
+export async function sweepQueueCustody(
+  deps: QueueCustodySweepDeps,
+): Promise<QueueCustodySweepResult> {
+  const state = await deps.store.read();
+  const watching = Object.values(state.prs).filter((record) => record.status === "watching");
+  if (watching.length === 0) return { merged: [], admitted: [] };
+
+  const views = await deps.observePullRequests(watching);
+  const next = { ...state.prs };
+  const merged: number[] = [];
+  const admitted: { prNumber: number; workerId: string }[] = [];
+
+  for (const record of watching) {
+    const view = views[String(record.prNumber)];
+    if (view == null) continue;
+    if (view.state === "MERGED") {
+      delete next[String(record.prNumber)];
+      merged.push(record.prNumber);
+      continue;
+    }
+    if (view.state !== "OPEN" || view.nativeIntent) continue;
+
+    const birth = await deps.admitRepairWorker({
+      ...record,
+      origin: "repair",
+      kind: "repair",
+      mergeStateStatus: view.mergeStateStatus,
+      mergeable: view.mergeable,
+    });
+    if (!birth.admitted || birth.workerId == null) continue;
+    next[String(record.prNumber)] = {
+      ...record,
+      status: "repairing",
+      updatedAt: deps.now(),
+    };
+    admitted.push({ prNumber: record.prNumber, workerId: birth.workerId });
+  }
+
+  if (merged.length > 0 || admitted.length > 0) {
+    await deps.store.write({ version: 1, prs: next });
+  }
+  return { merged, admitted };
 }
