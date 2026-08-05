@@ -67,7 +67,13 @@ for section in ("panes", "actions", "startup", "build"):
         if entry.get("platforms") == ["windows"]:
             continue
         if "HERDR_PLUGIN_ROOT" in joined:
-            check("$HERDR_PLUGIN_ROOT" in joined, f"{section}: the plugin root must be read as a shell variable")
+            # Both spellings are a shell-variable read: the plain `$HERDR_PLUGIN_ROOT`
+            # and the build hook's `${HERDR_PLUGIN_ROOT:-.}` fallback (#3303 — some
+            # herdr versions do not inject the variable during the BUILD phase).
+            check(
+                "$HERDR_PLUGIN_ROOT" in joined or "${HERDR_PLUGIN_ROOT" in joined,
+                f"{section}: the plugin root must be read as a shell variable",
+            )
 
 # Every command must name an entry that is actually there. A pane whose command
 # points at a renamed file opens and closes again with nothing to read, which is
@@ -78,7 +84,7 @@ for section in ("panes", "actions", "startup", "build"):
         joined = " ".join(entry["command"])
         # `startup` and `build` entries carry no id; the section names them well enough.
         who = entry.get("id", section)
-        for match in re.finditer(r"HERDR_PLUGIN_ROOT[/\\]([\w./\\-]+\.mjs)", joined):
+        for match in re.finditer(r"HERDR_PLUGIN_ROOT(?::-\.)?\}?[/\\]([\w./\\-]+\.mjs)", joined):
             named = match.group(1).replace("\\", "/")
             check((ROOT / named).is_file(), f"{section} {who!r} runs {named!r}, which is not in this checkout")
 
