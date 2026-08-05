@@ -17,8 +17,6 @@ import { execTool, type ExecFn } from "../../runtime/exec.js";
 import {
   getConfig,
   loadConfig,
-  readBackpressure,
-  readFeedbackCommands,
   readPostWorkerFormat,
   readValidationMoments,
   readValidationResourceBudget,
@@ -277,11 +275,6 @@ export function buildProcessDeps({
   const notesLoop = resolveNotesLoopConfig(config);
   const outputShaping = resolveOutputShapingConfig(config);
 
-  const backpressureCommands = readBackpressure(config);
-  const mergedBackpressureCommands =
-    inlineVerifyCommand && inlineVerifyCommand.trim() !== ""
-      ? [...backpressureCommands, inlineVerifyCommand.trim()]
-      : backpressureCommands;
   const validationMoments = readValidationMoments(config);
   if (inlineVerifyCommand && inlineVerifyCommand.trim() !== "") {
     validationMoments.post_done = [
@@ -329,11 +322,9 @@ export function buildProcessDeps({
     // error instead of composing commands against a path that resolves nowhere.
     dirExists: realDirectoryProbe,
     layout: feedback.layout,
-    // Backpressure gate (#430, PRD #429): operator-declared `afk.backpressure`
-    // shell commands run against the same worker-branch checkout after feedback.
+    // Declared-command executor (ADR 0135): the shell port that runs the
+    // operator's Validation-moment commands against the worker-branch checkout.
     backpressure: feedback.backpressure,
-    feedbackCommands: readFeedbackCommands(config),
-    backpressureCommands: mergedBackpressureCommands,
     outputShaping,
     ...buildReviewPorts(ghCtx),
     adversarialReview,

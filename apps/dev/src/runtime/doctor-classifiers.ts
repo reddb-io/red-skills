@@ -7,9 +7,8 @@ import { newestCachedBundleVersion, redSkillsCacheDir, semverParts } from "../co
 import {
   getConfig,
   loadConfig,
-  readBackpressure,
-  readFeedbackCommands,
   readSetupCommands,
+  readValidationMoments,
   VALIDATION_MOMENTS,
   type ConfigValues,
 } from "../core/config.js";
@@ -163,6 +162,12 @@ export interface DoctorClassifierReports {
 
 const EMPTY_HOOK_REPORT: ValidationReport = { backpressure: [], hooks: [], unknownHooks: [] };
 
+/** Every command declared across the Validation-moment schedule, in order. */
+function declaredMomentCommands(config: ConfigValues): string[] {
+  const moments = readValidationMoments(config);
+  return [...(moments.iteration ?? []), ...(moments.post_done ?? []), ...(moments.landing ?? [])];
+}
+
 function configuredValidationMoments(config: ConfigValues): string[] {
   const moments = new Set<string>();
   for (const key of Object.keys(config)) {
@@ -272,7 +277,7 @@ function collectHookReport(
   };
 
   const report = validateHookConfig(
-    { backpressure: readBackpressure(config), hookCommands: commands, declaredHookNames: declared },
+    { backpressure: declaredMomentCommands(config), hookCommands: commands, declaredHookNames: declared },
     ctx,
   );
 
@@ -611,7 +616,7 @@ export async function collectDoctorClassifierReports(
   const worktreeSetup = collectWorktreeSetupReport(ctx.root, config);
 
   const trunk = getConfig(config, "dev.trunk")?.trim() || "main";
-  const feedbackCommands = readFeedbackCommands(config);
+  const feedbackCommands = readValidationMoments(config).post_done;
   let requiredChecks: readonly string[] | null = null;
   if (feedbackCommands !== undefined && ctx.repo) {
     try {
