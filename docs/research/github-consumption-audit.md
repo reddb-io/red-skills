@@ -70,23 +70,51 @@ All non-daemon spend in the host ledger is worker-attributed via the `gh` shim
   single-digit `label create`, `issue view`, `pr create`, `pr merge` (GraphQL),
   `issue close` (GraphQL), `pr view`, `pr edit` (GraphQL).
 
-**Per-lifecycle shape** (`apps/dev/src/core/merge.ts`): the engine's review-check
-wait polls `gh pr checks <n> --json name,state` every **10s, up to 30 polls**
-(5 min budget) per landing, and CI-aware merge polls
-`pr view --json mergeStateStatus,statusCheckRollup` until the PR settles. The
-top-burner worker `hZ77P` (318 requests in the busy hour) shows the resulting
-shape: a ~25-request burst every 5 minutes plus a ~2/min baseline —
-checks/merge polling plus periodic sweep listings dominate a worker's spend.
+**Per-lifecycle shape** (from `apps/dev/src`, verified in code):
 
-**rsp** (`.red/state/rsp/`): durable per-command ETag store on disk; its
-telemetry spool (Aug 2–5, interactive agents) shows the gh mix: `pr view` 237,
-`issue list` 192, `issue view` 173, `pr list` 124, `issue create` 101,
-`pr checks` 80, `pr merge` 74, `gh api` ~135, `label create` 61, `api rate` 46.
+- **Goal-predicate poll is the dominant per-worker cost**: `deps.gh.issueClosed`
+  → REST `GET /repos/{o}/{r}/issues/{n}` at `DEFAULT_GOAL_POLL_MS = 60_000`
+  (`apps/dev/src/core/execution/runtime.ts:147`) for the entire agent run,
+  unconditional and uncapped — ~1 request/minute/worker; `orphanState`
+  (`runtime/gh/sweeps.ts`) is the same read per drain iteration. That is the
+  ~2/min baseline visible on every worker in the ledger.
+- Claim + trust gate: ~5–12 requests (label read, claim comment POST, 1–3
+  read-back verifies, up to ~7 trust-gate reads — mixed REST/GraphQL).
+- Comments during the run: 3–6 `POST /issues/{n}/comments` + paginated guidance
+  reads.
+- PR create: 2–3 (`gh pr list` GraphQL + `pr create` + list again).
+- Check waits (`apps/dev/src/core/merge.ts`): review wait `gh pr checks --json`
+  ≤30 polls @10s (opt-in); **CI-aware wait `pr view --json
+  …statusCheckRollup` up to 180 polls @10s — GraphQL, and the rollup costs two
+  further server-side check/status requests** (`rest-plan.ts:151`); merge-queue
+  wait ≤180 polls @15s but REST-planned via `planGithubRestRead`.
+- Merge + stale-branch recovery: 1–8; close + cascade: 3 + 2 per dependent.
+- Reconcile sweep: 4 concurrent `gh issue list --label …` (GraphQL) + per-
+  candidate repairs — matching the ~25-request bursts every 5 minutes on the
+  top-burner worker `hZ77P` (318 requests in the busy hour).
+- `mergeExec` (`runtime/git.ts:814`) applies quota backoff but **bypasses the
+  reserved-band gate** — the landing path is the one path not band-admitted.
 
-**Actions-side**: 5 scheduled workflows (`red-brand-watch`, `red-mcp-lane-canary`,
-`red-upstream-watch`, `red-toon-watch` daily; `red-publish` retry cron) plus
-event-triggered CI. These spend the per-repo `GITHUB_TOKEN` Actions quota
-(1,000/hr, a separate budget), not the operator token measured above.
+**rsp** (`apps/rsp/src`, `.red/state/rsp/`): `rsp gh pr|issue|run list|view` is
+request-neutral (output shaping); `rsp gh issues|prs` batch N reads into aliased
+GraphQL; `rsp gh-api-json` is the request-reducing conditional path with a
+durable on-disk ETag store (`.red/state/rsp/gh-etag/`, 7 entries, 888 KB).
+**Critical finding: `gh-api-json` was self-disabled during the measured window**
+(`overhead-budget.toon`: 71 breaches / 85 invocations, `overhead-exceeds-savings`
++ `self-state-byte-ceiling` — one 776 KB ETag entry pushes self-state reads to
+2.31 MB against a 1 MB ceiling; `disabled_until 2026-08-05T01:15Z`). While
+disabled, `listCandidates` and the statusline search counts fall through to raw
+`gh issue list` / `gh api graphql`, and all 243 top-level `gh` rows in the
+telemetry spool are `passed, disabled`. `rsp wait pr` polls 3 conditional REST
+calls (`pulls/{n}`, `commits/{sha}/status`, `commits/{sha}/check-runs`) per
+cycle at 15s with backoff — the cheap version of the engine's CI-aware wait.
+
+**Actions-side** (`.github/workflows/`, separate per-repo `GITHUB_TOKEN` budget,
+1,000/hr): `red-reactive-mechanical` is heaviest per event (up to ~23 gh call
+sites; 3–8 per comment event); `red-publish` runs an **hourly** cron (1–4
+release-API calls per run); `red-{brand,toon,upstream}-watch` are daily (3–4
+calls each); `red-pr-review` and `red-issues-needs-triage` are per-PR/issue
+event (2–7). Scheduled floor ≈ 10/day daily + ≤96/day hourly publish retries.
 
 ## 3. REST vs GraphQL split (packages/github, ADR 0132/0133)
 
@@ -128,21 +156,34 @@ projects and ~8 concurrent workers.
 
 ## 5. Top-3 burners and the cheapest structural win for each
 
-1. **Workers' raw `gh api` (616/hr busy, 0% conditional).** Cheapest win: route
-   repeated same-path `gh api` reads through the shim into
-   `conditionalPaginate`/ETag storage the way the daemon poll already does — the
-   busy-hour shape (identical 5-minute bursts) is exactly the stable-poll shape
-   the conditional client was built for.
-2. **Workers' `issue list` (307/hr busy, charged every time).** Same listings
-   the daemon already polls conditionally. Cheapest win: serve worker queue/list
-   reads from the daemon's already-warm answer (it holds the collection plus
-   validator) instead of re-charging per worker — the daemon pays ~19/hr for
-   what workers re-buy ~307 times.
-3. **Engine checks/merge polling inside `api rest`/`pr checks` (10s interval,
-   30 polls per landing).** Cheapest win: conditional requests on the checks
-   endpoints (they return validators) or a coarser adaptive interval after the
-   first pending answer — a 10s fixed poll against an unchanged rollup is the
-   textbook 304 candidate.
+1. **Workers' raw `gh api` + goal poll (616/hr busy, 0% conditional).** The
+   engine's goal-predicate poll (`issueClosed`, REST issue read every 60s per
+   worker, uncapped) plus per-iteration `orphanState` are stable polls issued
+   unconditionally. Cheapest win: give the worker gh shim the same ETag
+   treatment the daemon poll already has — a repeated single-object read against
+   an unchanged issue is the textbook 304; the daemon proves the machinery works
+   (91–97% hit rate on the identical route family).
+2. **Workers' `issue list` (307/hr busy, charged every time) — largely a
+   regression, not a design cost.** rsp's request-reducing `gh-api-json`
+   conditional path was self-disabled during the window (`overhead-budget.toon`:
+   `self-state-byte-ceiling` breached by one 776 KB ETag entry), so
+   `listCandidates`, sweeps and statusline reads fell through to raw `gh issue
+   list`. Cheapest win: fix the overhead-budget breach (cap or split the
+   oversized ETag entry) so the already-built conditional path turns back on;
+   second, serve worker queue reads from the daemon's already-warm validator+
+   collection instead of re-buying per worker (~19/hr vs ~307/hr).
+3. **Engine checks/merge polling (`merge.ts`): the CI-aware wait polls `pr view
+   --json …statusCheckRollup` up to 180 times @10s — GraphQL, with the rollup
+   costing two further server-side checks/statuses requests per poll.** The
+   merge-queue wait beside it is already REST-planned, and `rsp wait pr`
+   already does the same job as 3 conditional REST calls @15s with backoff.
+   Cheapest win: route the CI-aware wait through the rsp-wait probe shape
+   (conditional `pulls/{n}` + `commits/{sha}/status` + `check-runs`) instead of
+   the GraphQL rollup view.
+
+Adjacent fix worth one line: `mergeExec` (`apps/dev/src/runtime/git.ts:814`)
+applies quota backoff but bypasses the reserved-band admission gate — the
+landing path is the only gh path not admitted through the band.
 
 One more structural note, not a burner today: the daemon's ETag store is
 memory-only by explicit TODO ("callers may provide a durable implementation
