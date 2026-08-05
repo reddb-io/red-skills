@@ -1,5 +1,12 @@
 # @reddb-io/redskilled-render
 
+## 3.6.0
+
+### Patch Changes
+
+- bb13751: Colour the dashboard and panel with the shared wine palette, including distinct healthy and failed Worker lifecycle cursors.
+  - @reddb-io/shared@3.6.0
+
 ## 3.5.1
 
 ### Patch Changes
