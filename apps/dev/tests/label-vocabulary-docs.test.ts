@@ -152,6 +152,30 @@ describe("label vocabulary docs", () => {
 });
 
 describe("red-setup docs", () => {
+  it("discovers package-manifest harness scripts and confirmation-gates the Validation moments block", async () => {
+    const reference = await readRepoFile("plugins/dev/skills/engineering/red-setup/REFERENCE.md");
+    const interview = await readRepoFile("plugins/dev/skills/engineering/red-setup/INTERVIEW.md");
+    const contract = await readRepoFile("plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md");
+    const template = await readRepoFile("plugins/dev/skills/engineering/red-setup/config-template.yaml");
+
+    expect(reference).toContain("package manifests");
+    for (const script of ["test", "typecheck", "lint", "build"]) {
+      expect(reference).toContain(`\`${script}\``);
+      expect(interview).toContain(`\`${script}\``);
+    }
+    expect(interview).toContain("proposed `plugins.dev.afk.validation` block");
+    expect(interview).toContain("write it only after explicit confirmation");
+    expect(contract).toContain("exact confirmed `plugins.dev.afk.validation` block");
+    expect(contract).toContain("fresh or existing `.red/config.yaml`");
+    expect(contract).toContain("Never write discovered commands without confirmation");
+    expect(template).toContain("#     validation:");
+    expect(template).toContain("#       iteration:");
+    expect(template).toContain("#       post_done:");
+    expect(template).toContain("#       landing:");
+    expect(template).toContain("merge queue is the CI-side final Validation moment");
+    expect(template).not.toContain("#   backpressure:");
+  });
+
   it("requires template-first config authoring and rejects folded accessor spellings", async () => {
     const contract = await readRepoFile("plugins/dev/skills/engineering/red-setup/WRITE-CONTRACT.md");
     const askRed = await readRepoFile("plugins/dev/skills/engineering/ask-red/SKILL.md");

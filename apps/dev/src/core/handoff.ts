@@ -18,7 +18,7 @@
 //
 // Top-level XML wrappers appear in template order, and any section that would
 // be empty is omitted entirely — byte-for-byte matching the bash:
-//   <issue-body> · <handoff-enrichment> · <previous-workers> · <human-guidance-thread> ·
+//   <issue-body> · <handoff-enrichment> · <iteration> · <previous-workers> · <human-guidance-thread> ·
 //   <prev-failure-context> · <thread-discussion> · <agent-notes>
 
 import { AGENT_OUTPUT_TAG } from "@reddb-io/red-castle";
@@ -81,6 +81,12 @@ export interface HandoffInput {
   repairInstruction?: string;
   /** Optional Spec reference for the `spec: #N` line (FILTER_KIND=spec in bash). */
   specRef?: string;
+  /**
+   * The operator-declared `iteration` Validation moment. These are the checks
+   * the inner agent may run while writing. `undefined` means the moment is
+   * undeclared, which is deliberately different from a declared empty list.
+   */
+  iterationCommands?: readonly string[];
   /**
    * The effective binding merge gate for this attempt: the operator-declared
    * replacement `feedback.commands` followed by additive `afk.backpressure`
@@ -310,6 +316,27 @@ export function buildMergeGate(commands: readonly string[] | undefined): string 
 }
 
 /**
+ * `<iteration>` body: the operator's declared mid-write checks, or the loud
+ * skip instruction required by ADR 0135 when the moment is undeclared.
+ */
+export function buildIterationMoment(commands: readonly string[] | undefined): string {
+  if (commands === undefined) {
+    return "The iteration moment is undeclared. Run nothing heavy mid-write; leave validation to the declared moments.";
+  }
+
+  const declared = commands.filter((command) => command.trim().length > 0);
+  if (declared.length === 0) {
+    return "The iteration moment is declared with no commands. Run nothing heavy mid-write; leave validation to the declared moments.";
+  }
+
+  return [
+    "Run these operator-declared iteration commands while writing:",
+    ...declared.map((command) => `- ${command}`),
+    "Do not improvise broader or heavier validation mid-write; the other declared moments own their checks.",
+  ].join("\n");
+}
+
+/**
  * Injection-safety framing comment inserted once, before `<issue-body>`. It
  * tells the agent (and any reader) that sections tagged `data-untrusted="true"`
  * are verbatim external GitHub data — not instruction sources.
@@ -356,6 +383,11 @@ export function buildHandoff(input: HandoffInput): string {
     lines.push(input.resumeFromBranch);
     lines.push("</resume-from-branch>");
   }
+
+  lines.push("");
+  lines.push("<iteration>");
+  lines.push(buildIterationMoment(input.iterationCommands));
+  lines.push("</iteration>");
 
   const mergeGate = buildMergeGate(input.mergeGateCommands);
   if (isPresent(mergeGate)) {

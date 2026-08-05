@@ -548,6 +548,7 @@ export async function processIssue(
     comments,
     prevFailureContext,
     specRef: input.specRef,
+    iterationCommands: deps.validationMoments?.iteration,
     mergeGateCommands: usesDeclaredValidationMoments
       ? (deps.validationMoments?.post_done ?? [])
       : [

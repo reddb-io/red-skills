@@ -42,6 +42,17 @@ plugins:
   #                               # confirms exact commands, and writes them here.
   #                               # AFK runs declared commands verbatim; the
   #                               # engine never substitutes a package manager.
+  #     validation:               # operator-declared Validation moments (ADR 0135)
+  #       iteration:              # light checks named in the inner-agent handoff
+  #         - pnpm test
+  #       post_done:              # runs after DONE against the branch fork point
+  #         - pnpm typecheck
+  #         - pnpm lint
+  #       landing: []             # before push/PR/queue; [] is declared empty
+  #                               # Omit a moment to skip it loudly. /red-setup
+  #                               # discovers package-manifest scripts, proposes
+  #                               # this block, and writes only after confirmation.
+  #                               # The merge queue is the CI-side final Validation moment.
   #     implementer:
   #       skills: dev:tdd, dev:diagnose
   #       runner_startup_baseline_ms: 840
@@ -157,19 +168,6 @@ host_binaries:
 #                                 # config keeps tracking stable. Canary promotion
 #                                 # moves the npm dist-tag (scripts/afk-promote-channel.sh),
 #                                 # gated on the proof-by-drain telemetry.
-#   feedback:
-#     commands:                   # optional replacement for discovered
-#       - pnpm typecheck          # test/typecheck/lint/build feedback. Commands
-#                                 # run verbatim; `commands: []` disables local
-#                                 # feedback. Narrowing is safe only when branch
-#                                 # protection requires the merge queue's test
-#                                 # check; /red-doctor verifies that protection.
-#   backpressure:                 # extra merge gates run on every successful
-#     - npm run test              # iteration (DONE + salvaged no-sentinel), after
-#     - npm run lint              # the built-in feedback gate. Any non-zero exit
-#                                 # blocks the merge and parks to ready-for-human,
-#                                 # exactly like a feedback failure. Optional;
-#                                 # absent/empty = no-op. (#430 / PRD #429)
 #   output_shaping:
 #     terse_steering: false       # default OFF. When true, even-numbered issues
 #                                 # get a phrasing-only terse steering block;
