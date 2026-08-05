@@ -121,7 +121,10 @@ export function deprecatedStatusAlias(
   };
 }
 
-async function readStatus(deps: StatusDependencies, input: StatusInput): Promise<unknown> {
+async function readStatus(
+  deps: StatusDependencies,
+  input: StatusInput,
+): Promise<unknown> {
   if (input.scope === "project") return deps.projectStatus();
 
   if (input.scope === "host") {
