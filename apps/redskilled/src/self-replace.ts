@@ -53,9 +53,9 @@ import { REDSKILLED_SUPERVISED_ENV } from "./supervision.js";
 /**
  * The exit code a self-replacing daemon leaves under a supervisor.
  *
- * NON-ZERO on purpose: the unit carries `Restart=on-failure`, so being revived is
- * what this exit asks for. A clean exit would be read as "it had nothing to do"
- * and the machine would stay on the old bundle with no daemon at all.
+ * NON-ZERO remains useful as an observable replacement signal. The unit carries
+ * `Restart=always`, so both this self-replacement and an unrelated clean internal
+ * shutdown return control to the supervisor.
  */
 export const REDSKILLED_REPLACE_EXIT_CODE = 75;
 

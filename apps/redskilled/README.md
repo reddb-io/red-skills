@@ -43,7 +43,7 @@ of it.
 | What the host has been promised | `src/budget-accounting.ts` — pure totals over the Worker set |
 | Reaching (and starting) the daemon | `src/client.ts` — auto-spawn, loser joins the winner |
 | Which file a spawn runs | `src/daemon-entry.ts` — the published bundle by name, never the caller's own entry |
-| Reviving a daemon nobody asked for | `src/supervision.ts` — the optional user unit, `Restart=on-failure` |
+| Reviving a daemon nobody asked for | `src/supervision.ts` — the optional user unit, `Restart=always` |
 | Becoming the version that is published | `src/self-replace.ts` — decide, find the successor, hand the session over |
 | The home, and the route to a reachable daemon | `src/provision.ts` — the ONE creator of `~/.red/redskilled/`, the pure provisioning audit, and the optional user unit |
 | Clearing the sessions that died | `src/reclaim.ts` — the lease decides, another tool's directory is left alone |
@@ -167,7 +167,7 @@ of it.
 - **Supervision is optional; auto-spawn is the floor.** The `unit install`
   command writes a user unit whose `ExecStart` is the very argv a client spawn builds —
   one builder, so a flag cannot reach one start path and miss the other — plus
-  `Restart=on-failure`, which is what revives a daemon that died *without a
+  `Restart=always`, which revives a daemon after either a failed or clean exit *without a
   client having to want work first*. A host that never installs it is a supported
   configuration and the status says so (`floor: "auto-spawn"`); the binary, the
   socket and the contract are identical either way.
@@ -175,7 +175,7 @@ of it.
   resolves the published version on its own tick and, when a newer one exists,
   finds a successor that runs *exactly that version*, flushes the lane, lets go
   of the socket and the lease, and starts it — or, under a supervisor, exits
-  non-zero so `Restart=on-failure` starts it. Workers are init-system units, so
+  with a distinct non-zero code before `Restart=always` starts it. Workers are init-system units, so
   this is a restart and not an evacuation: the successor re-adopts every one of
   them off the lane. A published bundle this host cannot reach costs the upgrade
   and nothing else, because the successor is found *before* anything is given up.
@@ -279,9 +279,10 @@ $RS provision --install-unit   # also write the optional supervising user unit
   **without spawning** the daemon it reports on. An absent home is two states,
   not one: absent-and-unneeded is `ok` with the declaration that says so, and
   only absent-and-needed is a finding.
-- **The optional unit is optional.** It adds `Restart=on-failure` over the same
+- **The optional unit is optional.** It adds `Restart=always` over the same
   binary, socket and contract auto-spawn uses (rule 7), and an absent unit is
-  reported as `ok`. An existing unit file is never rewritten.
+  reported as `ok`. An installed and enabled but inactive unit is reported as a
+  finding. An existing unit file is never rewritten.
 
 ### Host-wide daemon policy
 

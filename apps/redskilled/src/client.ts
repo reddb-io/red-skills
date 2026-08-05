@@ -2,7 +2,7 @@
  * client — how a project reaches `redskilled`, including starting it.
  *
  * ADR 0130 rule 7: start is auto-spawn. The first client that needs the daemon
- * starts it, and an optional user unit only adds `Restart=on-failure` on top —
+ * starts it, and an optional user unit only adds `Restart=always` on top —
  * one behaviour with an optional supervisor, never two spawn paths.
  *
  * The start race is resolved twice over, and deliberately so. The spawn lock
