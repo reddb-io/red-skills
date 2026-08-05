@@ -646,7 +646,7 @@ export async function runStop(
  *
  * Optional is the whole point (ADR 0130 rule 7): a host that never runs this
  * still gets a daemon, because auto-spawn is the floor and the unit only adds
- * `Restart=on-failure` on top. The status answer says so out loud, so an absent
+ * `Restart=always` on top. The status answer says so out loud, so an absent
  * unit reads as a supported configuration rather than as a broken machine.
  */
 export async function runUnit(

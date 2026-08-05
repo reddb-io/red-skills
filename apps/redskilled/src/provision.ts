@@ -336,7 +336,7 @@ function reachRow(facts: RedskilledProvisionFacts): RedskilledProvisionRow {
  */
 function supervisorRow(facts: RedskilledProvisionFacts): RedskilledProvisionRow {
   const evidence = facts.supervisorUnit === "installed"
-    ? "redskilled.service is installed (optional supervision, Restart=on-failure)"
+    ? "redskilled.service is installed (optional supervision, Restart=always)"
     : facts.supervisorUnit === "unsupported"
       ? "optional: this host has no systemd --user session; auto-spawn is the only start path"
       : "optional: not installed; auto-spawn already starts the daemon on first use";
@@ -416,7 +416,7 @@ export interface RedskilledUserUnitInput {
 /**
  * The optional supervising unit, as text.
  *
- * It adds `Restart=on-failure` to the identical binary, socket and contract the
+ * It adds `Restart=always` to the identical binary, socket and contract the
  * auto-spawn path uses (rule 7) — one behaviour with a supervisor, never a second
  * spawn path. Rendering it is separate from installing it because setup shows the
  * operator what it is about to write.
@@ -430,7 +430,7 @@ export function renderRedskilledUserUnit(input: RedskilledUserUnitInput): string
     "[Service]",
     "Type=simple",
     `ExecStart=${input.command} serve${socketFlag}`,
-    "Restart=on-failure",
+    "Restart=always",
     "RestartSec=2",
     "",
     "[Install]",

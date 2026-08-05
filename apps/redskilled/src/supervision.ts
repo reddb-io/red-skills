@@ -2,7 +2,7 @@
  * supervision — the optional user unit that revives a daemon nobody asked for.
  *
  * ADR 0130 rule 7 chose auto-spawn as the floor **plus** an optional user unit
- * with `Restart=on-failure`. Auto-spawn shipped alone, which left the one
+ * with `Restart=always`. Auto-spawn shipped alone, which left the one
  * component whose absence stops every project on the machine revived only when
  * some client next happens to want work. This module is the other half.
  *
@@ -14,12 +14,11 @@
  * rather than hand-written: a unit carrying its own idea of the argv would drift
  * from the client's the first time a flag moved.
  *
- * **Idle exit is a clean exit, so the supervisor lets it go.** `Restart=on-failure`
- * revives a daemon that died; it does not fight the daemon that left because it
- * had nothing to hold (ADR 0130 rule 7 keeps idle exit gated on the Worker set).
- * A self-replacement therefore exits NON-ZERO on purpose — see
- * {@link REDSKILLED_REPLACE_EXIT_CODE} — because being restarted is the whole
- * point of that exit.
+ * **Every daemon exit is supervised.** `Restart=always` also revives a daemon
+ * whose internal shutdown path exits zero. An explicit `systemctl stop` still
+ * stays stopped because systemd does not apply the restart policy to an
+ * operator-requested stop. A self-replacement keeps its distinct non-zero exit
+ * code for observability — see {@link REDSKILLED_REPLACE_EXIT_CODE}.
  *
  * PURE apart from the injected file and `systemctl` IO, so the unit text and the
  * install sequence are both provable on a host with no systemd at all.
@@ -114,7 +113,7 @@ function renderUnit(command: string, args: readonly string[], paths: RedskilledP
     `ExecStart=${[command, ...args].map(quoteUnitWord).join(" ")}`,
     // The whole reason the unit exists: a daemon that dies comes back without a
     // client having to want work first.
-    "Restart=on-failure",
+    "Restart=always",
     "RestartSec=1",
     `Environment="${REDSKILLED_SUPERVISED_ENV}=1"`,
     // The session the daemon serves, stated rather than derived: a unit started
@@ -225,8 +224,16 @@ export interface RedskilledUnitStatus {
   readonly installed: boolean;
   readonly enabled: boolean;
   readonly active: boolean;
+  /** Actionable supervision defects; an absent optional unit is not one. */
+  readonly findings: readonly RedskilledUnitFinding[];
   /** How a daemon starts when nothing supervises it. Always auto-spawn. */
   readonly floor: "auto-spawn";
+}
+
+export interface RedskilledUnitFinding {
+  readonly code: "enabled-but-inactive";
+  readonly evidence: string;
+  readonly fix: string;
 }
 
 export function readRedskilledUnitStatus(
@@ -236,15 +243,24 @@ export function readRedskilledUnitStatus(
   const run = io.run ?? defaultRun;
   const unitPath = redskilledUnitPath(io.env ?? process.env);
   const installed = exists(unitPath);
+  // Never probe systemd when the file is absent: its failure would collapse a
+  // supported optional configuration into the same answer as a broken unit.
+  const enabled = installed && run(["systemctl", "--user", "is-enabled", REDSKILLED_UNIT_NAME]).status === 0;
+  const active = installed && run(["systemctl", "--user", "is-active", REDSKILLED_UNIT_NAME]).status === 0;
+  const findings: RedskilledUnitFinding[] = enabled && !active
+    ? [{
+        code: "enabled-but-inactive",
+        evidence: `${REDSKILLED_UNIT_NAME} is installed and enabled but inactive`,
+        fix: `systemctl --user restart ${REDSKILLED_UNIT_NAME}`,
+      }]
+    : [];
   return {
     unitName: REDSKILLED_UNIT_NAME,
     unitPath,
     installed,
-    // Never asked when the file is absent: `is-enabled` on a unit that does not
-    // exist is a failure, and reporting it as "not enabled" would be the same
-    // answer for two different machines.
-    enabled: installed && run(["systemctl", "--user", "is-enabled", REDSKILLED_UNIT_NAME]).status === 0,
-    active: installed && run(["systemctl", "--user", "is-active", REDSKILLED_UNIT_NAME]).status === 0,
+    enabled,
+    active,
+    findings,
     floor: "auto-spawn",
   };
 }
