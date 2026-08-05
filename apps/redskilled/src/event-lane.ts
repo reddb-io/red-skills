@@ -1,7 +1,7 @@
 /**
  * event-lane — the daemon's own append-only memory of the Workers it birthed.
  *
- * **One lane, host facts: birth, death, budget kill, and demand refusal.** ADR 0130
+ * **One lane, host facts: Worker lifecycle and daemon decisions.** ADR 0130
  * gives the daemon exactly one thing no other authority holds — Worker-to-process
  * — and this lane is the durable form of it. The tracker already owns
  * issue-to-PR and git already owns branch-to-commits, so a per-Worker durable
@@ -31,19 +31,55 @@ import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
 /**
- * The five facts the lane carries. Nothing else is a host event.
+ * The stable vocabulary for records about a Worker (ADR 0138).
+ *
+ * Kept as data as well as a type so writers, readers, tests and query docs all
+ * share one closed set. Adding a spelling is a contract change, never an ad-hoc
+ * string at a call site.
+ */
+export type RedskilledWorkerEventKind =
+  | "worker-birth"
+  | "worker-activity"
+  | "worker-drift"
+  | "worker-heal"
+  | "worker-death"
+  | "worker-budget-kill";
+
+export const REDSKILLED_WORKER_EVENT_KINDS = [
+  "worker-birth",
+  "worker-activity",
+  "worker-drift",
+  "worker-heal",
+  "worker-death",
+  "worker-budget-kill",
+] as const as readonly [
+  "worker-birth",
+  "worker-activity",
+  "worker-drift",
+  "worker-heal",
+  "worker-death",
+  "worker-budget-kill",
+] & { includes(searchElement: RedskilledWorkerEventKind | "demand-refusal" | "daemon-stop"): boolean };
+
+/** The daemon-owned records that deliberately name no Worker. */
+export const REDSKILLED_DAEMON_EVENT_KINDS = ["demand-refusal", "daemon-stop"] as const;
+
+export type RedskilledDaemonEventKind = typeof REDSKILLED_DAEMON_EVENT_KINDS[number];
+
+/** Every kind the host event lane may contain. */
+export type RedskilledEventKind = RedskilledWorkerEventKind | RedskilledDaemonEventKind;
+
+/**
+ * Compatibility discriminator retained for readers shipped before ADR 0138.
  *
  * `daemon-stop` and `demand-refusal` are not about a Worker. The first is here because
  * its absence is what a successor otherwise has to guess at: a lane that ends
  * mid-life reads identically whether the daemon was asked to leave or was killed,
  * and only one of those is a fault worth reporting.
+ *
+ * New queries turn on `kind`; `event` remains byte-for-byte beside it for one
+ * release so existing replay and extension consumers do not lose their lane.
  */
-export type RedskilledEventKind =
-  | "worker-birth"
-  | "worker-death"
-  | "worker-budget-kill"
-  | "demand-refusal"
-  | "daemon-stop";
 
 /**
  * One host event, flat and total.
@@ -56,6 +92,9 @@ export type RedskilledEventKind =
 export interface RedskilledHostEvent {
   readonly version: 1;
   readonly ts: string;
+  /** Stable query discriminator. Every row has one; no Worker record is prose-only. */
+  readonly kind: RedskilledEventKind;
+  /** Legacy alias for {@link kind}. */
   readonly event: RedskilledEventKind;
   readonly worker_id: string;
   readonly project_label: string;
@@ -71,6 +110,16 @@ export interface RedskilledHostEvent {
   readonly memory_high: string | null;
   readonly memory_max: string | null;
   readonly cpu_weight: number | null;
+  /** The host verdict that permitted a birth. */
+  readonly admission_verdict: string | null;
+  /** Work phase and step on an activity transition. */
+  readonly phase: string | null;
+  readonly step: string | null;
+  /** Refreshed trunk head and its distance from the granted fork on a drift stamp. */
+  readonly base_head_sha: string | null;
+  readonly base_commits_ahead: number | null;
+  /** Mechanical cure applied on a heal record. */
+  readonly heal_kind: string | null;
   /** Why, for a death or a kill: an exit status, a signal, a budget verdict. */
   readonly detail: string | null;
   /**
@@ -110,6 +159,22 @@ export interface RecordEventInput {
   readonly reason?: string | null;
 }
 
+/** Typed Worker-event input; the only entry point for new ADR 0138 records. */
+export interface RecordWorkerEventInput {
+  readonly kind: RedskilledWorkerEventKind;
+  readonly worker: RedskilledWorkerView;
+  readonly ts: string;
+  readonly detail?: string | null;
+  readonly exitCode?: number | null;
+  readonly signal?: string | null;
+  readonly admissionVerdict?: string | null;
+  readonly phase?: string | null;
+  readonly step?: string | null;
+  readonly baseHeadSha?: string | null;
+  readonly baseCommitsAhead?: number | null;
+  readonly healKind?: string | null;
+}
+
 /**
  * One daemon leaving the session, and what it was holding when it did.
  *
@@ -135,12 +200,14 @@ export interface RecordDemandRefusalInput {
 }
 
 /** Build one event from a Worker view. PURE. */
-export function buildHostEvent(input: RecordEventInput): RedskilledHostEvent {
+export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput): RedskilledHostEvent {
   const budget = input.worker.budget ?? {};
+  const kind = "kind" in input ? input.kind : input.event;
   return {
     version: 1,
     ts: input.ts,
-    event: input.event,
+    kind,
+    event: kind,
     worker_id: input.worker.worker_id,
     project_label: input.worker.project_label,
     pid: input.worker.pid,
@@ -152,10 +219,16 @@ export function buildHostEvent(input: RecordEventInput): RedskilledHostEvent {
     memory_high: budget.memory_high ?? null,
     memory_max: budget.memory_max ?? null,
     cpu_weight: budget.cpu_weight ?? null,
+    admission_verdict: "admissionVerdict" in input ? input.admissionVerdict ?? null : null,
+    phase: "phase" in input ? input.phase ?? null : null,
+    step: "step" in input ? input.step ?? null : null,
+    base_head_sha: "baseHeadSha" in input ? input.baseHeadSha ?? null : null,
+    base_commits_ahead: "baseCommitsAhead" in input ? input.baseCommitsAhead ?? null : null,
+    heal_kind: "healKind" in input ? input.healKind ?? null : null,
     detail: input.detail ?? null,
     exit_code: input.exitCode ?? null,
     signal: input.signal ?? null,
-    reason: input.reason ?? null,
+    reason: "reason" in input ? input.reason ?? null : null,
   };
 }
 
@@ -167,6 +240,7 @@ export function buildDaemonStopEvent(input: RecordDaemonStopInput): RedskilledHo
   return {
     version: 1,
     ts: input.ts,
+    kind: "daemon-stop",
     event: "daemon-stop",
     worker_id: `${REDSKILLED_DAEMON_EVENT_PREFIX}${input.pid}`,
     project_label: "",
@@ -179,6 +253,12 @@ export function buildDaemonStopEvent(input: RecordDaemonStopInput): RedskilledHo
     memory_high: null,
     memory_max: null,
     cpu_weight: null,
+    admission_verdict: null,
+    phase: null,
+    step: null,
+    base_head_sha: null,
+    base_commits_ahead: null,
+    heal_kind: null,
     detail: input.detail,
     exit_code: null,
     signal: input.signal ?? null,
@@ -191,6 +271,7 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
   return {
     version: 1,
     ts: input.ts,
+    kind: "demand-refusal",
     event: "demand-refusal",
     worker_id: `demand:${input.projectLabel}`,
     project_label: input.projectLabel,
@@ -203,6 +284,12 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
     memory_high: null,
     memory_max: null,
     cpu_weight: null,
+    admission_verdict: null,
+    phase: null,
+    step: null,
+    base_head_sha: null,
+    base_commits_ahead: null,
+    heal_kind: null,
     detail: input.detail,
     exit_code: null,
     signal: null,
@@ -223,6 +310,8 @@ export interface RedskilledEventLane {
   readonly path: string;
   /** Append one event; resolves once the bytes are on the lane. */
   record(input: RecordEventInput): Promise<RedskilledHostEvent>;
+  /** Append one record from the closed Worker-event vocabulary. */
+  recordWorker(input: RecordWorkerEventInput): Promise<RedskilledHostEvent>;
   /** Append one demand decision that refused an otherwise birth-eligible project. */
   recordDemandRefusal(input: RecordDemandRefusalInput): Promise<RedskilledHostEvent>;
   /**
@@ -260,6 +349,7 @@ export function createRedskilledEventLane(path: string): RedskilledEventLane {
   return {
     path,
     record: (input) => append(buildHostEvent(input)),
+    recordWorker: (input) => append(buildHostEvent(input)),
     recordDemandRefusal: (input) => append(buildDemandRefusalEvent(input)),
     recordDaemonStop: (input) => append(buildDaemonStopEvent(input)),
     read: () => readRedskilledEvents(path),
@@ -361,9 +451,9 @@ export function rehydrateWorkers(events: readonly RedskilledHostEvent[]): Redski
   for (const event of events) {
     // A daemon's own stop retires nothing: the daemon left and every Worker it
     // held is still running, which is exactly what the successor replays to find.
-    if (event.event === "daemon-stop" || event.event === "demand-refusal") continue;
-    if (event.event === "worker-birth") alive.set(event.worker_id, toWorkerView(event));
-    else alive.delete(event.worker_id);
+    if (event.kind === "daemon-stop" || event.kind === "demand-refusal") continue;
+    if (event.kind === "worker-birth") alive.set(event.worker_id, toWorkerView(event));
+    else if (event.kind === "worker-death" || event.kind === "worker-budget-kill") alive.delete(event.worker_id);
   }
   return [...alive.values()];
 }
@@ -381,7 +471,7 @@ export function lastRedskilledDaemonStop(
 ): RedskilledHostEvent | null {
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index];
-    if (event?.event === "daemon-stop") return event;
+    if (event?.kind === "daemon-stop") return event;
   }
   return null;
 }
@@ -413,19 +503,20 @@ function toRow(event: RedskilledHostEvent): ToonlRecord {
 }
 
 function isHostEventRecord(record: ToonlRecord): boolean {
+  const kind = record.kind ?? record.event;
   return record.version === 1 &&
     typeof record.ts === "string" &&
     typeof record.worker_id === "string" &&
-    (record.event === "worker-birth" || record.event === "worker-death" ||
-      record.event === "worker-budget-kill" || record.event === "demand-refusal" ||
-      record.event === "daemon-stop");
+    ([...REDSKILLED_WORKER_EVENT_KINDS, ...REDSKILLED_DAEMON_EVENT_KINDS] as readonly unknown[]).includes(kind);
 }
 
 function fromRow(record: ToonlRecord): RedskilledHostEvent {
+  const kind = (record.kind ?? record.event) as RedskilledEventKind;
   return {
     version: 1,
     ts: String(record.ts),
-    event: record.event as RedskilledEventKind,
+    kind,
+    event: kind,
     worker_id: String(record.worker_id),
     project_label: text(record.project_label) ?? "",
     pid: Number(record.pid ?? 0),
@@ -437,6 +528,14 @@ function fromRow(record: ToonlRecord): RedskilledHostEvent {
     memory_high: text(record.memory_high),
     memory_max: text(record.memory_max),
     cpu_weight: record.cpu_weight == null || record.cpu_weight === "" ? null : Number(record.cpu_weight),
+    admission_verdict: text(record.admission_verdict),
+    phase: text(record.phase),
+    step: text(record.step),
+    base_head_sha: text(record.base_head_sha),
+    base_commits_ahead: record.base_commits_ahead == null || record.base_commits_ahead === ""
+      ? null
+      : Number(record.base_commits_ahead),
+    heal_kind: text(record.heal_kind),
     detail: text(record.detail),
     // A lane written before the exit facts existed reads them as absent rather
     // than as `0` — an exit code of zero is a CLEAN drain, and inventing one for
