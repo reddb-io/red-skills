@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  tokenToAnsiBackground,
+  tokenToAnsiForeground,
+} from "@reddb-io/brand-tokens";
+import {
   renderStatusline,
   type ClaudeInput,
   type RepoInput,
@@ -16,18 +20,18 @@ import {
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 
-const WINE = "\x1b[48;2;114;47;55m";
-const WINE2 = "\x1b[48;2;88;36;42m";
+const BRAND_BACKGROUND = tokenToAnsiBackground("brand.primary");
+const BRAND_INK = tokenToAnsiForeground("brand.on-primary");
+const MODEL_BACKGROUND = tokenToAnsiBackground("neutral.900");
+const PAPER = tokenToAnsiForeground("paper");
 const NOBG = "\x1b[49m";
-const SOFT = "\x1b[38;2;224;138;148m";
-const KEY = "\x1b[38;2;255;214;214m";
-const DIM = "\x1b[38;2;201;150;158m";
-const GREEN = "\x1b[38;2;96;214;128m";
-const RED = "\x1b[38;2;255;95;95m";
-const YELLOW = "\x1b[38;2;240;200;120m";
-const BAR_DONE = "\x1b[38;2;240;110;120m";
-const BAR_CURRENT = "\x1b[38;2;255;214;214m";
-const BAR_AHEAD = "\x1b[38;2;146;84;94m";
+const SOFT = tokenToAnsiForeground("neutral.400");
+const KEY = PAPER;
+const DIM = tokenToAnsiForeground("neutral.500");
+const SPOTLIGHT = tokenToAnsiForeground("red.500");
+const BAR_DONE = tokenToAnsiForeground("neutral.300");
+const BAR_CURRENT = tokenToAnsiForeground("neutral.0");
+const BAR_AHEAD = tokenToAnsiForeground("neutral.700");
 const BOLD = "\x1b[1m";
 const RESET = "\x1b[0m";
 
@@ -83,8 +87,8 @@ describe("statusline style — header line", () => {
     const h = renderHeaderLine(input.project, claude, repo, undefined, "full", undefined, input.docs);
     expect(h).not.toContain("\n");
     expect(h.endsWith(RESET)).toBe(true);
-    expect(h).toContain(WINE2); // project block bg
-    expect(h).toContain(WINE); // model block bg
+    expect(h).toContain(`${BRAND_BACKGROUND}${BRAND_INK}`); // project identity block
+    expect(h).toContain(`${MODEL_BACKGROUND}${PAPER}`); // receded model block
     expect(h).toContain(NOBG); // background drops to transparent after the model
     const t = stripAnsi(h);
     expect(t).toContain("» red-skills (main)");
@@ -156,7 +160,7 @@ describe("statusline style — header line", () => {
   it("drops model/ctx/usage/repo outside Claude Code with no repo stats", () => {
     const h = renderHeaderLine({ basename: "c3" }, undefined, undefined);
     expect(stripAnsi(h)).toBe(" » c3 ");
-    expect(h).not.toContain(WINE);
+    expect(h).not.toContain(MODEL_BACKGROUND);
   });
 
   it("short preset keeps only project identity, ctx, and iss", () => {
@@ -180,7 +184,7 @@ describe("statusline style — header line", () => {
       tokensSavedToday: 1320000,
       dollarsSavedTodayUsd: 1.625,
     });
-    expect(healthy).toContain(`${GREEN}rsp=↓1.32M${SOFT}`);
+    expect(healthy).toContain(`${SOFT}rsp=↓1.32M${SOFT}`);
     expect(stripAnsi(healthy)).toContain("rsp=↓1.32M");
     expect(stripAnsi(healthy)).not.toContain("$1.63");
 
@@ -189,7 +193,7 @@ describe("statusline style — header line", () => {
     expect(stripAnsi(warming)).toContain("rsp=…");
 
     const error = renderHeaderLine(input.project, claude, repo, undefined, "full", { state: "error" });
-    expect(error).toContain(`${RED}rsp=!${SOFT}`);
+    expect(error).toContain(`${SPOTLIGHT}rsp=!${SOFT}`);
     expect(stripAnsi(error)).toContain("rsp=!");
   });
 });
@@ -253,7 +257,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
       },
     });
 
-    expect(renderWorkerLine(w, NOW)).toContain(`${BAR_DONE}██${RED}▶${BAR_AHEAD}░░${SOFT}`);
+    expect(renderWorkerLine(w, NOW)).toContain(`${BAR_DONE}██${SPOTLIGHT}!${BAR_AHEAD}░░${SOFT}`);
   });
 
   it("renders the terse colored k=v line: bold-red wID, k=v tokens, iss=number, bare stage, elapsed, loc, tks, individual vitals", () => {
@@ -263,7 +267,7 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
     expect(line).toContain(SOFT); // soft-red tint
     expect(line).toContain(KEY); // k=v keys reuse line 1's light-red KEY colour
     expect(line).toContain(BOLD); // wID is bold
-    expect(line).not.toContain(WINE); // never a wine background on a worker line
+    expect(line).not.toContain(MODEL_BACKGROUND); // never an identity background on a worker line
     // wID renders bold, immediately (bold red).
     expect(line.startsWith(`${NOBG}${SOFT}${BOLD}w1`)).toBe(true);
     const t = stripAnsi(line);
@@ -529,6 +533,51 @@ describe("statusline style — terse per-worker line (issue #1175)", () => {
 });
 
 describe("statusline style — full themed assembly", () => {
+  it("derives every emitted truecolor escape from the named brand-token grammar", () => {
+    const healthy = styleStatusline(
+      { ...input, rsp: { state: "ready", tokensSavedToday: 12 } },
+      { workers: [worker({ state: { ...worker().state, current: { ...worker().state.current, phase: "validating" } } })], now: NOW },
+    );
+    const attention = styleStatusline(
+      { ...input, rsp: { state: "error" } },
+      { workers: [worker({ state: { ...worker().state, blocked: 1, current: { ...worker().state.current, phase: "validating" } } })], now: NOW },
+    );
+    const warming = styleStatusline({ ...input, rsp: { state: "warming" } });
+    const emitted = new Set(
+      `${healthy}\n${attention}\n${warming}`.match(/\x1b\[(?:38|48);2;\d+;\d+;\d+m/g) ?? [],
+    );
+
+    expect(emitted).toEqual(new Set([
+      BRAND_BACKGROUND,
+      BRAND_INK,
+      MODEL_BACKGROUND,
+      PAPER,
+      SOFT,
+      DIM,
+      SPOTLIGHT,
+      BAR_DONE,
+      BAR_CURRENT,
+      BAR_AHEAD,
+    ]));
+  });
+
+  it("keeps health, lifecycle, and attention distinctions after ANSI is stripped", () => {
+    const rspStates = [
+      { state: "ready" as const, tokensSavedToday: 12 },
+      { state: "warming" as const },
+      { state: "error" as const },
+    ].map((rsp) => renderHeaderLine(input.project, claude, repo, undefined, "full", rsp));
+    const workerStates = [
+      worker({ state: { ...worker().state, current: { ...worker().state.current, phase: "coding" } } }),
+      worker({ state: { ...worker().state, current: { ...worker().state.current, phase: "validating" } } }),
+      worker({ state: { ...worker().state, blocked: 1, current: { ...worker().state.current, phase: "validating" } } }),
+    ].map((entry) => renderWorkerLine(entry, NOW));
+    const colored = [...rspStates, ...workerStates];
+
+    expect(new Set(colored.map(stripAnsi)).size).toBe(colored.length);
+    expect(stripAnsi(workerStates[2])).toContain("██!░░");
+  });
+
   it("places the lifecycle bar between iss= and phase·activity in aligned worker rows", () => {
     const w = worker({
       state: {
