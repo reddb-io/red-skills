@@ -221,6 +221,12 @@ const BAR_FAILED = "✗";
 const BAR_AHEAD = "░";
 const LANDING_PHASES = new Set(["gate", "push-pr", "merge", "cascade"]);
 const NO_AGENT_ORIGINS = new Set(["requeue"]);
+const REPAIR_ORIGIN = "repair";
+
+/** Whether the already-published provenance identifies the mechanical repair lane. PURE. */
+export function isRepairWorker(worker: RedskilledRenderWorker): boolean {
+  return worker.display?.origin === REPAIR_ORIGIN;
+}
 
 /**
  * The finished dashboard. PURE — payload and options in, header and rows out.
@@ -292,16 +298,17 @@ export function workerCells(
   generatedAt: string,
 ): RedskilledDashboardCells {
   const display = worker.display ?? REDSKILLED_RENDER_DISPLAY_ABSENT;
+  const repair = isRepairWorker(worker);
   const run = [display.runner, display.model == null ? null : shortModel(display.model), display.effort]
     .filter((part): part is string => Boolean(part))
     .join(" ");
   const landing = display.phase != null && LANDING_PHASES.has(display.phase);
-  const noAgent = landing || (display.origin != null && NO_AGENT_ORIGINS.has(display.origin));
+  const noAgent = repair || landing || (display.origin != null && NO_AGENT_ORIGINS.has(display.origin));
   return {
     wid: options.mode === "global" ? `${worker.project_label}:${worker.worker_id}` : worker.worker_id,
-    run: run === "" ? "" : `run=${run}`,
-    org: landing ? "org=landing" : display.origin == null ? "" : `org=${display.origin}`,
-    iss: display.issue == null ? "" : `iss=${display.issue}`,
+    run: repair || run === "" ? "" : `run=${run}`,
+    org: repair ? "lane=repair" : landing ? "org=landing" : display.origin == null ? "" : `org=${display.origin}`,
+    iss: display.issue == null ? "" : repair ? `pr=#${display.issue.replace(/^#/, "")}` : `iss=${display.issue}`,
     bar: progressBar(display),
     phase: [display.phase, display.step].filter((part): part is string => Boolean(part)).join("·"),
     elapsed: formatDuration(workerElapsedMs(worker, generatedAt)),
@@ -408,7 +415,15 @@ function buildHeader(
   if (match === "unregistered" || match === "name-only") parts.push(UNREGISTERED_MARK);
   if (match === "lapsed") parts.push(LAPSED_MARK);
   if (model != null) parts.push(`${WINE}${WHITE}${model}${NOBG}${SOFT}`);
-  parts.push(colourKeyValues(`wrk=${selected.length}/${payload.host.worker_count}`));
+  const repairing = payload.workers.filter(isRepairWorker).length;
+  if (repairing > 0) {
+    const coding = Math.max(0, payload.host.worker_count - repairing);
+    parts.push(
+      `${colourKeyValues(`workers=${coding} coding +`)} ${WINE}${WHITE}${repairing} repairing${NOBG}${SOFT}`,
+    );
+  } else {
+    parts.push(colourKeyValues(`wrk=${selected.length}/${payload.host.worker_count}`));
+  }
   const slots = windows.worker_ceiling == null
     ? "slots=∞"
     : `slots=${windows.worker_count}/${windows.worker_ceiling}`;
@@ -665,6 +680,10 @@ function formatRow(
 /** One dashboard cell in the single palette role shared by every density. PURE. */
 export function colourWorkerCell(column: RedskilledDashboardColumn, raw: string): string {
   if (column === "wid") return `${BOLD}${raw}${NOBOLD}`;
+  if (column === "org" && raw.trim() === "lane=repair") {
+    const suffix = raw.slice(raw.trimEnd().length);
+    return `${WINE}${WHITE}${raw.trimEnd()}${NOBG}${SOFT}${suffix}`;
+  }
   if (column === "bar") {
     return raw
       .replace(/█+/g, (done) => `${BAR_DONE_TONE}${done}`)

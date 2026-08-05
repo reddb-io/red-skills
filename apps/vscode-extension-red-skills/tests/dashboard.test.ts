@@ -62,6 +62,26 @@ function withDisplay(payload: ReturnType<typeof statuslinePayload>): ReturnType<
   };
 }
 
+function withRepair(payload: ReturnType<typeof statuslinePayload>): ReturnType<typeof statuslinePayload> {
+  const published = withDisplay(payload);
+  return {
+    ...published,
+    workers: published.workers.map((entry) => ({
+      ...entry,
+      display: {
+        ...entry.display!,
+        runner: null,
+        model: null,
+        effort: null,
+        origin: "repair",
+        issue: "3291",
+        phase: "merging",
+        step: "regenerate",
+      },
+    })),
+  };
+}
+
 const daemons: FakeDaemon[] = [];
 
 afterEach(async () => {
@@ -208,6 +228,23 @@ describe("the frame is drawn here, from the one document the daemon composed", (
     // The cells come from the shared render module, so a terminal pane standing
     // in the same directory draws this row character for character.
     expect(snapshot.dashboard?.rows[0]?.cells.bar).toBe("██▶░░░");
+  });
+
+  it("shows the shared repair lane vocabulary in both editor surfaces", async () => {
+    const daemon = await fake({ payload: () => withRepair(statuslinePayload()) });
+    const snapshot = await readHostSnapshot({
+      client: createRedskilledReadClient({ socketPath: daemon.socketPath }),
+      eventLanePath: daemon.eventLanePath,
+      source: "the test pinned it",
+      sessionProject: "reddb-io/red-skills",
+      dashboardRender: { maxWidth: 180, maxRows: 9 },
+    });
+
+    expect(statusBarView(snapshot).text).toContain("workers=0 coding + 1 repairing");
+    const html = renderDashboardHtml(snapshot);
+    expect(html).toContain("lane=repair");
+    expect(html).toContain("pr=#3291");
+    expect(html).toContain("merging·regenerate");
   });
 
   it("shows why a process died, and the engine that answered, from the daemon's own frame", async () => {
