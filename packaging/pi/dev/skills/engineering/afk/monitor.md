@@ -12,8 +12,8 @@ command renders the same truth for a human terminal. See [`MCP.md`](./MCP.md).
 
 | Question | Tool |
 | --- | --- |
-| What are the workers, history events, and fleet inputs right now? | `monitor` |
-| Is a quiet worker actually alive? | `worker_vitals`, `worker_status` |
+| What are the workers, history events, and fleet inputs right now? | `status { scope: worker }` |
+| Is a quiet worker actually alive? | `status { scope: worker }` |
 | What is drainable, and what is parked for a human? | `queue_status` |
 | What happened over the last N days? | `dashboard` (`periodDays`), `history` |
 | What did one lane actually record? | `logs` |
@@ -33,7 +33,7 @@ non-empty `held_for_summon` bucket is still zero drainable work; release it with
 
 ## Dashboard
 
-`/afk monitor` is the readonly aggregated view across all live workers. **Call the castle `monitor` tool for the data, and pair it with `worker_vitals` when liveness is the question — do not reinvent the rendering in inline bash.** The bundle's `monitor` command renders the same truth for a human terminal and is the no-MCP fallback. Either way it:
+`/afk monitor` is the readonly aggregated view across all live workers. **Call the castle `status` tool with `scope: worker` for the data — do not reinvent the rendering in inline bash.** The bundle's `monitor` command renders the same truth for a human terminal and is the no-MCP fallback. Either way it:
 
 1. Globs `.red/tmp/workers/*/*/afk.state.json` and renders one section per active attempt.
 2. Verifies liveness via the orchestrator PID recorded in `afk.state.json` (`.pid` field), paired with `pid_start_time` when the platform exposes a stable process-start token. Attempts whose PID identity is dead or mismatched are flagged `stale`/`gone`; PID-live but agent-lane-quiet workers render `[quiet]` and are still counted as running.
@@ -168,7 +168,7 @@ supervisor under Codex:
 1. Fetch a sub-agent spawn primitive via `ToolSearch` (query:
    `spawn agent background monitor`).
 2. If unavailable, continue the worker launch and print:
-   `monitor loop unavailable in this runner; call the castle monitor tool (and worker_vitals for liveness); no-MCP fallback: run /dev:afk monitor or tail .red/tmp/workers/*/worker.log.toonl manually.`
+   `monitor loop unavailable in this runner; call castle status with scope: worker; no-MCP fallback: run /dev:afk monitor or tail .red/tmp/workers/*/worker.log.toonl manually.`
 3. If available, emit the canonical prompt from the bundle (use `--mode run` for a
    single worker, `--mode fleet` for a supervisor, so the read-only rules stay
    identical across launches):
@@ -176,12 +176,12 @@ supervisor under Codex:
    RED_AFK_RUNNER=codex npx -y -p @reddb-io/red-skills@<version> red-skills-dev codex-monitor-agent --project-root "$PWD" --mode run
    ```
    Spawn exactly one monitor agent with that prompt. The monitor agent is a
-   presentation consumer only: it periodically reads the castle `monitor` tool
-   (with `worker_vitals` for liveness), reports concise progress in the Codex
+   presentation consumer only: it periodically reads castle `status` with
+   `scope: worker`, reports concise progress in the Codex
    UI, and exits once no supervisor or live workers remain. Its prompt carries
    the `/dev:afk monitor --once` CLI form as the no-MCP fallback.
 4. Tell the user one line:
-   `Codex monitor agent spawned — auto-closes when AFK exits; manual monitor: the castle monitor tool, or /dev:afk monitor without the MCP.`
+   `Codex monitor agent spawned — auto-closes when AFK exits; manual monitor: castle status with scope: worker, or /dev:afk monitor without the MCP.`
 
 Hard boundaries for the monitor agent are non-negotiable: it must never edit
 files, claim issues, change labels, comment, stop workers, run validation, push,
