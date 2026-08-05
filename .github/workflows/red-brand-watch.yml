@@ -1,0 +1,98 @@
+name: red-brand-watch
+
+on:
+  schedule:
+    - cron: '20 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: red-brand-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Load recorded brand provenance
+        id: pin
+        run: |
+          set -euo pipefail
+          . ./packages/brand-tokens/.upstream
+
+          if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::brand provenance contains an invalid repository"
+            exit 1
+          fi
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::brand provenance contains an invalid SHA"
+            exit 1
+          fi
+
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch brand HEAD
+        id: head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ steps.pin.outputs.repo }}
+        run: |
+          set -euo pipefail
+          sha="$(gh api "repos/$REPO/commits/HEAD" --jq .sha)"
+          if ! [[ "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::brand HEAD did not resolve to a full SHA"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update drift issue
+        if: steps.head.outputs.sha != steps.pin.outputs.sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ steps.pin.outputs.repo }}
+          OLD: ${{ steps.pin.outputs.sha }}
+          NEW: ${{ steps.head.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          title="brand: refresh vendored tokens to ${NEW:0:7}"
+          existing="$(gh issue list --search '"brand: refresh vendored tokens" in:title' --state open --limit 100 --json number --jq '.[0].number')"
+          body_file="$(mktemp)"
+          trap 'rm -f "$body_file"' EXIT
+
+          {
+            printf 'The vendored brand tokens trail `%s` HEAD.\n\n' "$REPO"
+            printf -- '- recorded SHA: `%s`\n' "$OLD"
+            printf -- '- upstream HEAD: `%s`\n' "$NEW"
+            printf -- '- compare: https://github.com/%s/compare/%s...%s\n\n' "$REPO" "$OLD" "$NEW"
+            cat <<'BODY'
+          ## Agent brief
+
+          Refresh `packages/brand-tokens/tokens.json` from `tokens/tokens.json` at the upstream HEAD, then update `packages/brand-tokens/.upstream` to record that full SHA. Verify the brand-token package tests and preserve the vendored DTCG document as the only token source.
+
+          The watch workflow reports drift only; it does not change vendored source.
+          BODY
+          } > "$body_file"
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" \
+              --title "$title" \
+              --body-file "$body_file" \
+              --add-label upstream-drift \
+              --add-label type:task \
+              --add-label ready-for-agent
+          else
+            gh issue create \
+              --title "$title" \
+              --body-file "$body_file" \
+              --label upstream-drift \
+              --label type:task \
+              --label ready-for-agent
+          fi
