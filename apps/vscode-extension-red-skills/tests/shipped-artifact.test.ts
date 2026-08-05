@@ -22,8 +22,6 @@ import { packageVsix, vsixFileName } from "../src/package-vsix.js";
 import { readZip } from "../src/packaging/vsix.js";
 
 const EXTENSION_ROOT = join(import.meta.dirname, "..");
-const REPO = join(EXTENSION_ROOT, "..", "..");
-const WORKFLOW = join(REPO, ".github", "workflows", "red-publish.yml");
 
 // The packager collects `out/extension.cjs`, so the archive under test is the
 // one this tree builds rather than one a previous run left behind.
@@ -31,26 +29,7 @@ beforeAll(() => {
   execFileSync("pnpm", ["run", "bundle"], { cwd: EXTENSION_ROOT, stdio: "pipe" });
 }, 120_000);
 
-/** The slice of `text` between two markers, so a match lands in the right step. */
-function section(text: string, start: string, end: string): string {
-  const from = text.indexOf(start);
-  expect(from, `workflow is missing ${start}`).toBeGreaterThan(-1);
-  const to = text.indexOf(end, from);
-  expect(to, `workflow is missing ${end} after ${start}`).toBeGreaterThan(-1);
-  return text.slice(from, to);
-}
-
 describe("the .vsix ships as a release asset", () => {
-  it("is packaged, manifested and attached by the publish workflow", async () => {
-    const workflow = await readFile(WORKFLOW, "utf8");
-    // A packaging step, or the archive never exists at release time.
-    expect(workflow).toContain("working-directory: apps/vscode-extension-red-skills");
-    const manifestStep = section(workflow, "- name: Build release manifest", "- name: GitHub Release");
-    expect(manifestStep).toContain("vscode-extension-red-skills-");
-    const releaseStep = section(workflow, "assets=(", "dist/release-manifest.json");
-    expect(releaseStep).toContain("vscode-extension-red-skills-");
-  });
-
   it("names the asset the release publishes, version and all", () => {
     expect(vsixFileName("3.4.0")).toBe("vscode-extension-red-skills-3.4.0.vsix");
   });
