@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   GITHUB_BALANCE_CADENCE,
+  GITHUB_DIVERSION_BANDS,
   GITHUB_BALANCE_MIN_CADENCE_MS,
   GITHUB_RATE_LIMIT_ARGV,
   GITHUB_RESERVED_FRACTION,
@@ -11,6 +12,7 @@ import {
   fetchGithubBalance,
   githubBalanceCadenceMs,
   githubBalancePosture,
+  githubDiversionDecision,
   parseGithubBalance,
   unaskedGithubBalance,
 } from "./balance.js";
@@ -216,6 +218,84 @@ describe("the reserved band refuses convenience, never the claim", () => {
     expect(listing.admitted).toBe(true);
     expect(view.pool).toBe("rest");
     expect(view.admitted).toBe(true);
+  });
+});
+
+describe("graduated routing spends the fallback before the preferred pool is spent", () => {
+  const operation = routeGithubArgs(["label", "list"]);
+  const decision = (over: {
+    readonly graphqlRemaining?: number;
+    readonly restRemaining?: number;
+    readonly resetInMs?: number;
+    readonly projectedDestinationCost?: number;
+    readonly routingKey?: string;
+    readonly previousBand?: "none" | "low" | "high" | "full";
+  } = {}) => {
+    const now = Date.parse(ASKED_AT);
+    return githubDiversionDecision({
+      balance: parseGithubBalance(payload({
+        core: [5000, over.restRemaining ?? 5000],
+        graphql: [5000, over.graphqlRemaining ?? 500],
+        resetAt: Math.floor((now + (over.resetInMs ?? 55 * 60_000)) / 1000),
+      }), { askedAt: ASKED_AT }),
+      operation,
+      now: ASKED_AT,
+      projectedDestinationCost: over.projectedDestinationCost ?? 1,
+      routingKey: over.routingKey ?? "label list:acme/widgets",
+      ...(over.previousBand === undefined ? {} : { previousBand: over.previousBand }),
+    });
+  };
+
+  it("gates high raw pressure on projected exhaustion before reset", () => {
+    expect(decision({ resetInMs: 20_000 }).band).toBe("none");
+    expect(decision({ resetInMs: 55 * 60_000 }).band).toBe("high");
+  });
+
+  it("denominates a partial ramp in projected destination budget", () => {
+    const oneRestRequest = decision({ projectedDestinationCost: 1 });
+    const fiveRestPages = decision({ projectedDestinationCost: 5 });
+
+    expect(oneRestRequest.diversion_share).toBe(GITHUB_DIVERSION_BANDS.high.budget_share);
+    expect(fiveRestPages.diversion_share).toBeCloseTo(oneRestRequest.diversion_share / 5, 8);
+    expect(fiveRestPages.projected_destination_cost).toBe(5);
+  });
+
+  it("is deterministic and uses an exit band below the entry threshold", () => {
+    const first = decision();
+    expect(decision()).toEqual(first);
+
+    const belowEntry = decision({ graphqlRemaining: 1600, previousBand: "low" });
+    expect(belowEntry.source_pressure).toBeCloseTo(0.68, 8);
+    expect(belowEntry.band).toBe("low");
+  });
+
+  it("fully diverts a spent preferred pool regardless of pagination cost", () => {
+    const spent = decision({ graphqlRemaining: 0, projectedDestinationCost: 20 });
+
+    expect(spent.band).toBe("full");
+    expect(spent.diversion_share).toBe(1);
+    expect(spent.diverted).toBe(true);
+    expect(spent.surface).toBe("rest");
+  });
+
+  it("never treats an unread destination ledger as a free pool", () => {
+    const balance = parseGithubBalance({
+      resources: {
+        graphql: { limit: 5000, remaining: 0, used: 5000, reset: Date.parse(ASKED_AT) / 1000 + 3600 },
+      },
+    }, { askedAt: ASKED_AT });
+    const result = githubDiversionDecision({
+      balance,
+      operation,
+      now: ASKED_AT,
+      projectedDestinationCost: 1,
+      routingKey: "label list:acme/widgets",
+    });
+
+    expect(result.band).toBe("none");
+    expect(result.diverted).toBe(false);
+    expect(result.surface).toBe("graphql");
+    expect(result.reason).toContain("unknown");
   });
 });
 
