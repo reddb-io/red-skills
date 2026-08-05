@@ -123,11 +123,7 @@ import {
   LABEL_SPEC,
   LABEL_ORIGIN_EXTERNAL,
 } from "../triage-labels.js";
-import {
-  IllegalIssueLifecycleTransitionError,
-  validateIssueLifecycleTransition,
-  type IssueLifecycleEdge,
-} from "../issue-lifecycle.js";
+import { blockedLabelsIn, MECHANICAL_BLOCKER_KINDS } from "../state-transition.js";
 import {
   gateVerdict,
   type GateStageOutcome,
@@ -151,7 +147,7 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveReseedGateBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveReseedGateBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import type { ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
 import {
   recordReseedDraw,
