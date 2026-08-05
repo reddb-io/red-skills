@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseRecords } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
+import type { GithubBalance } from "@reddb-io/github";
 
 import { DEFAULT_RSP_BYTE_BUDGET, DEFAULT_RSP_TTL_DAYS } from "../src/config.js";
 import { ResidentRspElisionStore, resolveResidentPaths } from "../src/resident-client.js";
@@ -25,7 +26,63 @@ async function tempRoot(): Promise<string> {
   return root;
 }
 
+function pressuredBalance(): GithubBalance {
+  const pool = (name: "rest" | "graphql", remaining: number) => ({
+    pool: name,
+    resource: name === "rest" ? "core" : "graphql",
+    limit: 5_000,
+    remaining,
+    used: 5_000 - remaining,
+    reset_at: "2026-08-05T12:00:00.000Z",
+    fraction: remaining / 5_000,
+  });
+  return {
+    version: 1,
+    origin: "asked",
+    outcome: "asked",
+    source: "GET /rate_limit",
+    asked_at: "2026-08-05T11:00:00.000Z",
+    request_count: 1,
+    pools: { rest: pool("rest", 500), graphql: pool("graphql", 4_000), search: null },
+    unreported_pools: ["search"],
+    detail: "fixture",
+  };
+}
+
 describe("resident-owned GitHub reads", () => {
+  it("coalesces concurrent cold issue views at the live resident boundary", async () => {
+    const root = await tempRoot();
+    const seen: string[] = [];
+    const github = createRspResidentGithubClient({
+      rootDir: root,
+      token: "fixture-token",
+      baseUrl: "https://github.invalid/api/v3",
+      balance: () => pressuredBalance(),
+      retryCount: 0,
+      throttle: false,
+      fetchImpl: async (input) => {
+        seen.push(String(input));
+        return new Response(JSON.stringify({
+          data: {
+            r0: { object: { number: 41, state: "OPEN" } },
+            r1: { object: { number: 42, state: "CLOSED" } },
+            rateLimit: { cost: 2 },
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      },
+    });
+
+    const answers = await Promise.all([
+      github.read({ args: ["issue", "view", "41"], path: "repos/acme/widgets/issues/41", actor: "worker-a" }),
+      github.read({ args: ["issue", "view", "42"], path: "repos/acme/widgets/issues/42", actor: "worker-b" }),
+    ]);
+
+    expect(answers.map(({ surface }) => surface)).toEqual(["graphql", "graphql"]);
+    expect(answers.map(({ stdout }) => JSON.parse(stdout).number)).toEqual([41, 42]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("/graphql");
+  });
+
   it("keeps the ETag warm, routes the single object to REST, and attributes both calls", async () => {
     const root = await tempRoot();
     const seen: Array<{ url: string; etag: string | null }> = [];

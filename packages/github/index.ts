@@ -48,6 +48,7 @@ export {
   GithubCredentialError,
   createGithubClient,
   createMemoryGithubEtagStore,
+  githubSingleObjectCoalescingThreshold,
   isGithubRateLimitError,
   type CreateGithubClientOptions,
   type GithubClient,
@@ -59,6 +60,8 @@ export {
   type GithubPaginatedRestAnswer,
   type GithubResponseHeaders,
   type GithubRestAnswer,
+  type GithubSingleObjectAnswer,
+  type GithubSingleObjectRequest,
 } from "./conditional-client.js";
 
 export {

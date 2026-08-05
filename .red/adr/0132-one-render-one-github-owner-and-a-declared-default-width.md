@@ -98,3 +98,32 @@ With an authoritative balance in hand, decision 6's breaker stops being reactive
 So "semi-offline" is no longer a mode entered by discovering a 403. It is a posture entered deliberately, at a threshold an operator can see, with the cheap things degrading first.
 
 **A caveat, stated rather than assumed:** `GET /rate_limit` is free of *primary* quota. GitHub also enforces secondary limits on request rate and concurrency that apply to every endpoint. The adaptive cadence must stay a cadence — seconds, not a poll per operation — and that ceiling was deliberately not probed here.
+
+## Amendment 3 — cold single-object bursts are a newly observed cardinality
+
+Decision 4 remains the preferred route for an individual operation: one issue or
+pull request goes to REST. It must not be read as requiring k concurrent
+single-object reads to become k requests. Once same-kind cold reads coexist at
+the resident boundary, the client can observe a plural operation that no
+individual caller could name and issue one aliased GraphQL query for it.
+
+The change in surface belongs to the coalesced operation, not to a lone read.
+The group moves only when its count exceeds a threshold derived from the
+authoritative REST and GraphQL headroom; an unknown balance diverts nothing, and
+the threshold never falls below one. A read with a held ETag does not enter the
+group at all, because replacing a possible zero-cost `304` with a charged node
+would undo Amendment 2's largest saving.
+
+The economics stay explicit. Aliasing makes k objects flat in HTTP requests and
+not in GraphQL points. The query asks `rateLimit.cost`, and attribution preserves
+that returned total across the logical reads rather than pretending that one
+request cost one point. This amendment records Spec #3202's counter-rule and its
+implementation Ticket #3210; it does not turn the balance into a replacement for
+cardinality.
+
+The `rsp` resident introduced by #3311 is a declared execution owner rather than
+a caller through `redskilled`: proxied reads keep their cache, routing and spend
+lane there without daemon coupling. It therefore asks the same authoritative
+balance at the same adaptive package-owned cadence. “One poller” means one per
+declared execution owner, never one ask per operation; an unanswered ask still
+diverts nothing.

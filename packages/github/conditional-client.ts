@@ -10,7 +10,14 @@ import { retry } from "@octokit/plugin-retry";
 import { throttling } from "@octokit/plugin-throttling";
 import { Octokit as RestOctokit } from "@octokit/rest";
 
+import {
+  buildSingleObjectReadsQuery,
+  readSingleObjectRows,
+  type GithubAliasedSingleObjectRead,
+} from "./aliased-query.js";
 import type { GithubAttributionLedger, GithubAttributedOperation } from "./attribution.js";
+import type { GithubBalance } from "./balance.js";
+import type { GithubApiSurface } from "./surface.js";
 
 const Octokit = RestOctokit.plugin(retry, throttling);
 
@@ -69,11 +76,29 @@ export interface GithubPaginatedRestAnswer<T> extends GithubRestAnswer<readonly 
 export interface GithubClient {
   conditionalRest<T>(request: GithubConditionalRestRequest): Promise<GithubRestAnswer<T>>;
   conditionalPaginate<T>(request: GithubConditionalRestRequest): Promise<GithubPaginatedRestAnswer<T>>;
+  singleObject<T>(request: GithubSingleObjectRequest): Promise<GithubSingleObjectAnswer<T>>;
   graphql<T>(
     query: string,
     variables?: Readonly<Record<string, unknown>>,
     attribution?: GithubGraphqlAttribution,
   ): Promise<T>;
+}
+
+/** One issue or pull request read that may share a GraphQL request with its peers. */
+export interface GithubSingleObjectRequest extends GithubAliasedSingleObjectRead {
+  /** Stable conditional-REST identity. A held validator keeps this read on REST. */
+  readonly cacheKey: string;
+  readonly operation: GithubAttributedOperation;
+  readonly actor?: string;
+  /** Project REST and GraphQL payloads into one caller-visible object shape. */
+  readonly project?: (value: unknown, surface: GithubApiSurface) => unknown;
+}
+
+/** The common answer shape from either realization of a single-object read. */
+export interface GithubSingleObjectAnswer<T> {
+  readonly data: T;
+  readonly surface: GithubApiSurface;
+  readonly quotaFree: boolean;
 }
 
 export interface GithubGraphqlAttribution {
@@ -87,10 +112,35 @@ export interface CreateGithubClientOptions {
   readonly fetchImpl?: GithubRequestFetch;
   readonly etags?: GithubEtagStore;
   readonly attribution?: GithubAttributionLedger;
+  /** The last authoritative token-wide balance; an unknown balance never diverts. */
+  readonly balance?: () => GithubBalance | null | Promise<GithubBalance | null>;
   /** Transient retries; the plugin default in production, overridable in tests. */
   readonly retryCount?: number;
   /** Disable plugin pacing only for a caller-supplied transport test. */
   readonly throttle?: boolean;
+}
+
+/**
+ * The first batch size that stays on REST; a larger cold batch uses GraphQL.
+ *
+ * This is deliberately a function of BOTH pools' remaining fractions. When
+ * REST has eight times GraphQL's headroom the threshold is eight; when GraphQL
+ * is healthier it falls to one. A missing or spent GraphQL pool cannot absorb a
+ * batch and returns infinity. The threshold never falls below one: a lone
+ * object remains the REST-preferred rule, while only plural reads coalesce.
+ */
+export function githubSingleObjectCoalescingThreshold(balance: GithubBalance | null): number {
+  if (balance?.outcome !== "asked") return Number.POSITIVE_INFINITY;
+  const rest = balance.pools.rest;
+  const graphql = balance.pools.graphql;
+  if (rest === null || graphql === null || graphql.remaining <= 0 || graphql.fraction <= 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  if (rest.remaining <= 0 || rest.fraction <= 0) return 1;
+  if (!Number.isFinite(rest.fraction) || !Number.isFinite(graphql.fraction)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.max(1, Math.ceil(rest.fraction / graphql.fraction));
 }
 
 /** An expired credential stated in operator language rather than as a bare 401. */
@@ -112,7 +162,7 @@ export class GithubCredentialError extends Error {
  * `@octokit/rest` already composes `plugin-paginate-rest`; retry handles
  * transient server failures, while throttling serializes and classifies primary
  * and secondary limits. The callbacks decline a long in-call retry so the
- * daemon's existing poll cadence can pace the next cycle from the response.
+ * execution owner's existing poll cadence can pace the next cycle from the response.
  */
 export function createGithubClient(options: CreateGithubClientOptions): GithubClient {
   const etags = options.etags ?? createMemoryGithubEtagStore();
@@ -177,8 +227,132 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       }
     };
 
+  interface PendingSingleObjectRead {
+    readonly input: GithubSingleObjectRequest;
+    readonly resolve: (answer: GithubSingleObjectAnswer<unknown>) => void;
+    readonly reject: (error: unknown) => void;
+  }
+
+  const pendingSingleObjects = new Map<GithubSingleObjectRequest["kind"], PendingSingleObjectRead[]>();
+  let singleObjectFlushScheduled = false;
+
+  const readSingleObjectRest = async (
+    pending: PendingSingleObjectRead,
+  ): Promise<void> => {
+    const input = pending.input;
+    const pull = input.kind === "pr";
+    try {
+      const answer = await conditionalRest<unknown>({
+        cacheKey: input.cacheKey,
+        route: pull
+          ? "GET /repos/{owner}/{repo}/pulls/{pull_number}"
+          : "GET /repos/{owner}/{repo}/issues/{issue_number}",
+        parameters: {
+          owner: input.owner,
+          repo: input.repo,
+          ...(pull ? { pull_number: input.number } : { issue_number: input.number }),
+        },
+        operation: input.operation,
+        actor: input.actor,
+      });
+      pending.resolve({
+        data: input.project ? input.project(answer.data, "rest") : answer.data,
+        surface: "rest",
+        quotaFree: answer.quotaFree,
+      });
+    } catch (error) {
+      pending.reject(error);
+    }
+  };
+
+  const readSingleObjectBatch = async (
+    group: readonly PendingSingleObjectRead[],
+  ): Promise<void> => {
+    try {
+      const aliased = buildSingleObjectReadsQuery(group.map(({ input }) => input));
+      const answer = await octokit.graphql(aliased.query) as unknown;
+      const rows = readSingleObjectRows(aliased, answer);
+      const pointCost = graphqlPointCost(answer);
+      const first = group[0]!.input;
+      await options.attribution?.record({
+        operation: { key: first.operation.key, budget: "graphql" },
+        cost: pointCost,
+        actor: coalescedActor(group.map(({ input }) => input.actor)),
+      });
+      rows.forEach((row, index) => {
+        const pending = group[index]!;
+        if (row.value === null) {
+          pending.reject(new Error(
+            `GitHub returned no ${row.read.kind} #${row.read.number} from the coalesced query`,
+          ));
+        } else {
+          pending.resolve({
+            data: pending.input.project
+              ? pending.input.project(row.value, "graphql")
+              : row.value,
+            surface: "graphql",
+            quotaFree: false,
+          });
+        }
+      });
+    } catch (error) {
+      const translated = httpStatus(error) === 401 ? new GithubCredentialError({ cause: error }) : error;
+      group.forEach((pending) => pending.reject(translated));
+    }
+  };
+
+  const flushSingleObjects = async (): Promise<void> => {
+    let balance: GithubBalance | null = null;
+    try {
+      balance = await options.balance?.() ?? null;
+    } catch {
+      // An unanswered ask is unknown, never a reason to strand the queue or
+      // infer pressure. Unknown keeps the original single-object REST route.
+    }
+    const threshold = githubSingleObjectCoalescingThreshold(balance);
+    singleObjectFlushScheduled = false;
+    const groups = [...pendingSingleObjects.values()];
+    pendingSingleObjects.clear();
+    await Promise.all(groups.map(async (group) => {
+      if (group.length > threshold) await readSingleObjectBatch(group);
+      else await Promise.all(group.map(readSingleObjectRest));
+    }));
+  };
+
+  const singleObject = <T>(input: GithubSingleObjectRequest): Promise<GithubSingleObjectAnswer<T>> => {
+    // Rule 1 and its counter-rule stay together here: one object prefers REST,
+    // while enough COLD peers may coalesce. A held validator can answer 304 for
+    // zero primary quota, so it never gets traded for a charged GraphQL node.
+    if (etags.get(input.cacheKey) !== undefined) {
+      return new Promise<GithubSingleObjectAnswer<T>>((resolve, reject) => {
+        void readSingleObjectRest({
+          input,
+          resolve: resolve as (answer: GithubSingleObjectAnswer<unknown>) => void,
+          reject,
+        });
+      });
+    }
+    return new Promise<GithubSingleObjectAnswer<T>>((resolve, reject) => {
+      const group = pendingSingleObjects.get(input.kind) ?? [];
+      group.push({
+        input,
+        resolve: resolve as (answer: GithubSingleObjectAnswer<unknown>) => void,
+        reject,
+      });
+      pendingSingleObjects.set(input.kind, group);
+      if (!singleObjectFlushScheduled) {
+        singleObjectFlushScheduled = true;
+        // A zero-delay task collects reads started by adjacent promise jobs too;
+        // a microtask would flush before those concurrently scheduled callers
+        // had a chance to join the batch.
+        setTimeout(() => void flushSingleObjects(), 0);
+      }
+    });
+  };
+
   return {
     conditionalRest,
+    singleObject,
 
     async conditionalPaginate<T>(input: GithubConditionalRestRequest): Promise<GithubPaginatedRestAnswer<T>> {
       const data: T[] = [];
@@ -262,4 +436,24 @@ function header(headers: GithubResponseHeaders, name: string): string | undefine
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Preserve GitHub's observed point cost on the one request the ledger records. */
+function graphqlPointCost(answer: unknown): number {
+  const envelope = isRecord(answer) ? answer : {};
+  const root = isRecord(envelope.data) ? envelope.data : envelope;
+  const rateLimit = isRecord(root.rateLimit) ? root.rateLimit : {};
+  const observed = rateLimit.cost;
+  if (!Number.isSafeInteger(observed) || (observed as number) < 0) {
+    throw new Error("GitHub aliased query did not return a non-negative integer rateLimit.cost");
+  }
+  return observed as number;
+}
+
+/** Attribute a shared request exactly once while retaining every named caller. */
+function coalescedActor(actors: readonly (string | undefined)[]): string | undefined {
+  const named = [...new Set(actors.filter((actor): actor is string => actor !== undefined))].sort();
+  if (named.length === 0) return undefined;
+  if (named.length === 1) return named[0];
+  return `coalesced:${named.join("+")}`;
 }
