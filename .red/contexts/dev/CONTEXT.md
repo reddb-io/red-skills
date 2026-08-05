@@ -469,6 +469,10 @@ _Avoid_: manual tool, docs tool, static usage dump
 The machine-readable half of every castle refusal and empty-state: `repair: {tool, args, why}` — a cure the agent can invoke directly, beside the human sentence. The field exists so the stated cure and the executable cure cannot diverge: a message that names a label no code reads (the `triage:summon` incident) is impossible when the named cure IS the call. A refusal with no cure declares `repair: none` with its reason; a ratchet holds every new refusal to one or the other.
 _Avoid_: hint, suggestion, "see the error message"
 
+**Queue Custodian**:
+The one module that owns "this pull request ends merged": it arms the native intent, watches for the intent vanishing, heals the mechanical causes, and escalates only genuinely semantic failures to the owning Ticket. **Native primary, driver recovery**: GitHub's auto-merge holds the intent — so a merge survives a dead resident — and the driver-style loop wakes only when that intent has vanished (the ejection). Every other "make sure this PR is queued" site is a caller, never a second implementation.
+_Avoid_: merge helper, auto-merge wrapper, "the landing retry" (landing is the Worker's act; custody outlives the Worker)
+
 **Validation moment**:
 A named point in a Worker's lifecycle where operator-declared validation commands run — post-DONE, correction, landing, with the merge queue documented as the CI-side final moment. **The declaration defines the moment; an undeclared moment is skipped, loudly** — the engine never guesses a command and never refuses to run for lack of one; every surface that narrates the run states which moments ran, which were skipped, and why. Post-DONE validates the branch against its **fork point**; freshness against the live base belongs exclusively to the merge queue, and a queue ejection is healed by the repair lane, not by re-validating in every Worker.
 _Avoid_: gate stage (the gate is the semaphore, not the schedule), "the feedback loop", hardcoded default
