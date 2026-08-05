@@ -4,11 +4,8 @@
 #
 # The outage this pins: one changeset said `"red-skills"` (the ROOT manifest's
 # name, which is not a workspace package) where every other one says
-# `"@reddb-io/red-skills"`. `changeset version` does not skip a bad file — it
-# throws and abandons the whole release plan, so three consecutive red-release
-# runs failed at the version job and npm stayed on the previous version. Nothing
-# ran `changeset status` while the PR was open, so the defect was only
-# detectable after merge, at the one moment it was most expensive.
+# `"@reddb-io/red-skills"`. The release engine rejects that unresolved intent;
+# this catches it while the contributor PR is still open.
 
 set -euo pipefail
 
@@ -42,7 +39,6 @@ YAML
   printf '{"name":"@reddb-io/red-skills"}\n' > "$dir/apps/bundle/package.json"
   printf '{"name":"@reddb-io/shared"}\n' > "$dir/packages/shared/package.json"
   printf 'Changesets live here.\n' > "$dir/.changeset/README.md"
-  printf '{"baseBranch":"main"}\n' > "$dir/.changeset/config.json"
   printf '%s' "$dir"
 }
 
