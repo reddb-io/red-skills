@@ -12,7 +12,7 @@ The server is registered as `castle` in `plugins/dev/.mcp.json`, so a host that
 loaded the `dev` plugin already has it. **Hosts prefix MCP tool names — call the
 tool your host actually exposes, not the bare name.** Claude Code and Codex
 surface plugin MCP tools as `mcp__<server-slug>__<tool>` (for example
-`mcp__plugin_dev_castle__project_status` under Claude Code); the slug is derived
+`mcp__plugin_dev_castle__status` under Claude Code); the slug is derived
 from the server name, so it never contains a colon — codex rejects `:` in server
 names. Resolve the exact identifier with a tool search for the bare name in the
 table below before the first call, then reuse it for the rest of the session.
@@ -62,6 +62,12 @@ When the next castle call is unclear, call `help` and follow its structured
 `next` action. It is the sole runtime source of operating choreography; this
 document defines the protocol without copying its state-dependent routes.
 
+### Status — one scoped read intent
+
+| Tool | Mode | What it does |
+| --- | --- | --- |
+| `status` | read | With `scope: worker`, return normalized worker state, vitals, and monitor inputs; with `scope: project`, return registration, slots, latch, and live workers; with `scope: host`, return daemon state, the global dashboard, provisioning check, and unit status. Worker scope also accepts `worker`, `live_only`, and `fields`. |
+
 ### Fleet — named multi-fleet lifecycle
 
 **A project has exactly one producer.** The named fleet is gone (ADR 0130): the
@@ -73,26 +79,19 @@ remain available for specialized lifecycle operations during consolidation.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `project_status` | read | Supervisor pid, slots, churn, and live workers for this project. |
 | `drain` | mutating | Ensure the daemon is reachable and this project is registered at the requested runner and target. Repeated calls succeed with a four-dimension difference report; a runner change is refused with the explicit stop-then-drain repair. |
 | `project_start` | mutating | Register this project with the host daemon — a runner, a target width, and its work policy. It registers; it launches no process of the project's own. |
 | `project_resize` | mutating | Change the target width, runner, or work policy; sends the live directive. |
-| `project_reset` | mutating | Clear the named `project-birth-breaker` latch. Call it from `project_status.birth_latch.repair`; the structured repair supplies the exact args. |
+| `project_reset` | mutating | Clear the named `project-birth-breaker` latch. Call it from `status {scope: project}` at `birth_latch.repair`; the structured repair supplies the exact args. |
 | `project_stop` | mutating | Give this project's registration back and stop what it still holds; pass `force: true` to hard-stop only its attributed workers. |
 
 ### Host daemon diagnostics
 
-These reads describe the machine-wide `redskilled` daemon, not only the current
-project. They expose the daemon commands that already own these answers. No
-host-scoped mutation is available here: provisioning and reclaim remain operator
-commands, while the provisioning tool is the read-only `--check` half.
-
-| Tool | Mode | What it does |
-| --- | --- | --- |
-| `host_state` | read | Return every project and Worker the daemon holds on this machine. |
-| `host_dashboard` | read | Return the structured global dashboard across every project. |
-| `host_provision_check` | read | Audit whether the machine is ready and name missing prerequisites; creates and starts nothing. |
-| `host_unit_status` | read | Report whether the optional daemon supervisor unit is installed, enabled, and active. |
+`status {scope: host}` describes the machine-wide `redskilled` daemon, not only
+the current project. Its one answer contains every project and Worker, the
+global dashboard, the provisioning audit, and optional supervisor-unit state.
+No host-scoped mutation is available here: provisioning and reclaim remain
+operator commands.
 
 `selector` scopes what the producer drains — `{spec, lane, label, issues, tags,
 user}`. Graceful stop leaves in-flight detached workers to finish; force never
@@ -106,7 +105,7 @@ interface drained zero issues while the CLI lane kept working and no surface
 reported the difference (#2677). Run
 `castle-mcp __mcp-canary --root <scratch-repo>` to walk the shipped lane end to
 end — `project_start` → a registration the daemon holds → no process of the
-project's own → `project_status` → `project_stop`. It exits non-zero naming the
+project's own → `status {scope: project}` → `project_stop`. It exits non-zero naming the
 step that went inert.
 
 **The load-bearing assertion inverted with the lane.** The canary once refused
@@ -137,7 +136,6 @@ holds both halves of that in place.
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `worker_dispatch` | mutating | Run one tracked issue, or mint and run one disposable demand. |
-| `worker_status` | read | Liveness-qualified state for one worker or all of them. |
 | `worker_stop` | mutating | Terminate one worker process tree. |
 | `worker_recycle` | mutating | Terminate one fleet worker so its supervisor refills the slot. |
 | `worker_request` | mutating | Dispatch a worker with a special request injected at spawn time. |
@@ -231,9 +229,7 @@ state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `logs` | read | Raw `CastleLaneRecord` entries from one lane (`worker`/`supervisor`/`monitor`/`liveness`). |
-| `worker_vitals` | read | Liveness-qualified state of every local worker (includes `model` and `effort` per worker). |
 | `dashboard` | read | The operational dashboard over a `periodDays` window. |
-| `monitor` | read | Current workers, history events, and fleet monitor inputs. |
 | `history` | read | Structured castle history records, newest last. |
 | `statusline_aggregate` | read | Castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
 
@@ -257,7 +253,7 @@ pattern and the cure to apply, without mutating anything. The resident cron
 refreshes it and `/red-doctor` renders the same report.
 
 `events_since` is the incremental read surface: use it instead of re-calling
-`queue_status`, `worker_status`, or `project_status` on every polling tick. **Cost
+`queue_status` or `status` on every polling tick. **Cost
 guidance:** omit `cursor` on the first call to get a baseline cursor with no
 events; store that cursor; pass it on every subsequent tick to receive only
 what changed. The resident caches `queue_status`, `claim_status`, and
@@ -265,7 +261,7 @@ what changed. The resident caches `queue_status`, `claim_status`, and
 `events_since` for longer-running monitors where you need sub-second awareness
 of history completions and worker phase changes without polling GitHub directly.
 Unknown or expired cursors (> 7 days old) are refused with a terse `refused:
-true` response; re-baseline by calling `queue_status` and `worker_status` to
+true` response; re-baseline by calling `queue_status` and `status {scope: worker}` to
 rebuild state, then call `events_since` with no cursor to get a fresh handle.
 
 ### Wait — programmatic outcome polling

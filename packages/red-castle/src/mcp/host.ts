@@ -6,6 +6,7 @@
 // mutating `provision` or `reclaim` commands (ADR 0130, issue #3163).
 
 import type { CastleMcpTool } from "./tool.js";
+import { deprecatedStatusAlias } from "./status.js";
 
 export interface HostDependencies {
   hostState(): Promise<unknown>;
@@ -18,35 +19,51 @@ export function createHostTools(deps: HostDependencies): CastleMcpTool[] {
   return [
     {
       name: "host_state",
-      title: "Read daemon host state",
+      title: "Deprecated host state alias",
       description:
-        "Return every project and Worker the redskilled daemon holds on this machine.",
+        "DEPRECATED: use status { scope: host }. Returns daemon host state and names its replacement.",
       inputSchema: {},
-      invoke: async () => deps.hostState(),
+      invoke: async () =>
+        deprecatedStatusAlias("host_state", "host", await deps.hostState()),
     },
     {
       name: "host_dashboard",
-      title: "Read daemon host dashboard",
+      title: "Deprecated host dashboard alias",
       description:
-        "Return the structured global dashboard for every project's Workers on this machine.",
+        "DEPRECATED: use status { scope: host }. Returns the global dashboard and names its replacement.",
       inputSchema: {},
-      invoke: async () => deps.hostDashboard(),
+      invoke: async () =>
+        deprecatedStatusAlias(
+          "host_dashboard",
+          "host",
+          await deps.hostDashboard(),
+        ),
     },
     {
       name: "host_provision_check",
-      title: "Check daemon host provisioning",
+      title: "Deprecated host provisioning alias",
       description:
-        "Read whether this machine is ready to run redskilled and what is missing; creates and starts nothing.",
+        "DEPRECATED: use status { scope: host }. Returns the provisioning check and names its replacement.",
       inputSchema: {},
-      invoke: async () => deps.hostProvisionCheck(),
+      invoke: async () =>
+        deprecatedStatusAlias(
+          "host_provision_check",
+          "host",
+          await deps.hostProvisionCheck(),
+        ),
     },
     {
       name: "host_unit_status",
-      title: "Read daemon unit status",
+      title: "Deprecated host unit status alias",
       description:
-        "Return whether the optional redskilled supervisor unit is installed, enabled, and active.",
+        "DEPRECATED: use status { scope: host }. Returns the unit status and names its replacement.",
       inputSchema: {},
-      invoke: async () => deps.hostUnitStatus(),
+      invoke: async () =>
+        deprecatedStatusAlias(
+          "host_unit_status",
+          "host",
+          await deps.hostUnitStatus(),
+        ),
     },
   ];
 }

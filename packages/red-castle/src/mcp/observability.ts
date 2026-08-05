@@ -8,6 +8,10 @@ import {
   type WorkerVitalsOutput,
   type WorkerVitalsProjectedOutput,
 } from "./contracts.js";
+import {
+  deprecatedStatusAlias,
+  deprecatedStatusAliasContract,
+} from "./status.js";
 import type { CastleMcpTool } from "./tool.js";
 import { workSelectorShape, type WorkSelectorInput } from "./project.js";
 
@@ -63,19 +67,23 @@ export function createObservabilityTools(
     },
     {
       name: "worker_vitals",
-      title: "Read worker vitals",
+      title: "Deprecated worker vitals alias",
       description:
-        "Return the liveness-qualified state of local workers. Defaults to live workers only; pass `live_only: false` to include stopped/dead workers. Pass `fields` to project top-level keys.",
+        "DEPRECATED: use status { scope: worker }. Returns liveness-qualified worker state and names its replacement.",
       inputSchema: {
         live_only: z.boolean().default(true),
         fields: z.array(z.string().min(1)).optional(),
       },
-      outputContract: workerVitalsContract,
-      invoke: (input) =>
-        deps.workerVitals({
-          live_only: (input.live_only ?? true) as boolean,
-          fields: input.fields as string[] | undefined,
-        }),
+      outputContract: deprecatedStatusAliasContract(workerVitalsContract),
+      invoke: async (input) =>
+        deprecatedStatusAlias(
+          "worker_vitals",
+          "worker",
+          await deps.workerVitals({
+            live_only: (input.live_only ?? true) as boolean,
+            fields: input.fields as string[] | undefined,
+          }),
+        ),
     },
     {
       name: "dashboard",
@@ -90,12 +98,13 @@ export function createObservabilityTools(
     },
     {
       name: "monitor",
-      title: "Read AFK monitor",
+      title: "Deprecated worker monitor alias",
       description:
-        "Return the current workers, history events, and monitor inputs.",
+        "DEPRECATED: use status { scope: worker }. Returns worker monitor inputs and names its replacement.",
       inputSchema: {},
-      outputContract: monitorContract,
-      invoke: () => deps.monitor(),
+      outputContract: deprecatedStatusAliasContract(monitorContract),
+      invoke: async () =>
+        deprecatedStatusAlias("monitor", "worker", await deps.monitor()),
     },
     {
       name: "history",
