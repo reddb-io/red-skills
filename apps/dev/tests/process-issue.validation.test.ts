@@ -1637,6 +1637,38 @@ describe("processIssue — stale-base drift never spends the correction budget (
    * a probe that echoes it back means the base stood still. */
   const BASE_START_SHA = "origin/main-tip";
 
+  it("passes the daemon's ready base stamp to Verdict without re-deriving it from git", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      reseedGateBudget: 0,
+    });
+    input.forkSha = "granted-fork-sha";
+    deps.validationMoments = { post_done: ["pnpm test"] };
+    let validations = 0;
+    deps.backpressure = async () => ({
+      code: validations++ === 0 ? 1 : 0,
+      stdout: "",
+      stderr: "",
+    });
+    const factCalls: string[] = [];
+    deps.lookups.workerBaseMovement = async (workerId) => {
+      factCalls.push(workerId);
+      return {
+        startSha: "granted-fork-sha",
+        gateSha: "refreshed-head-sha",
+        commitsAhead: 2,
+        subjects: [],
+      };
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(factCalls).toEqual(["wAAAA"]);
+    expect(trace.baseMovementCalls).toEqual([]);
+    expect(trace.iterLogs.some((line) => line.includes("base +2"))).toBe(true);
+  });
+
   it("charges nothing to /go's budget and reruns only the gate when the base caused the failures", async () => {
     const { deps, input, trace } = harness({
       labels: ["lane:go"],

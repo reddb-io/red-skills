@@ -818,12 +818,21 @@ export async function processIssue(
         rounds: [{ cause: "prior-environment", signature: carriedValidationSignature }],
       }
     : emptyEnvironmentLedger(environmentRoundCap);
-  // Issue #2711 — the gate runs on the branch MERGED WITH the live base, so a
-  // base that moved under the attempt can redden a branch that is itself green.
-  // Ask git what the base did before charging the failure to anyone. A missing
-  // probe, an unresolved base sha, or a throwing lookup all yield `undefined`,
-  // which attributes the failure to the branch exactly as before.
-  const observeBaseMovement = async (): Promise<BaseMovement | undefined> => {
+  // The daemon's stamp is the ready environment fact (ADR 0138). The legacy git
+  // probe remains only for the one-release compatibility path: a missing or
+  // unreadable fact yields `undefined` instead of inventing movement.
+  const observeBaseMovement = async (allowLegacyProbe: boolean): Promise<BaseMovement | undefined> => {
+    const hostFact = deps.lookups.workerBaseMovement;
+    if (hostFact) {
+      try {
+        const movement = await hostFact(input.workerId);
+        if (movement != null && (!input.forkSha || movement.startSha === input.forkSha)) return movement;
+      } catch {
+        // Mixed-version or temporarily unreachable daemon: the legacy probe may
+        // still supply evidence during its one-release compatibility window.
+      }
+    }
+    if (!allowLegacyProbe) return undefined;
     const probe = deps.lookups.baseMovement;
     if (!probe || !baseResolution.sha) return undefined;
     try {
@@ -1085,7 +1094,7 @@ export async function processIssue(
     signature,
     history: { environment: environmentLedger, branchBudgetAvailable },
     environment: {
-      movement: driftEligible ? await observeBaseMovement() : undefined,
+      movement: await observeBaseMovement(driftEligible),
       subsecondFailuresAreBranchFault: deps.validationMoments?.subsecondFailuresAreBranchFault,
       generated: deps.validationMoments?.generated,
       mechanicalHealFailure,

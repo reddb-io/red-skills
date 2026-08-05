@@ -87,6 +87,7 @@ export const REDSKILLED_DASHBOARD_COLUMNS = [
   "iss",
   "bar",
   "phase",
+  "base",
   "elapsed",
   "eta",
   "hb",
@@ -311,6 +312,7 @@ export function workerCells(
     iss: display.issue == null ? "" : repair ? `pr=#${display.issue.replace(/^#/, "")}` : `iss=${display.issue}`,
     bar: progressBar(display),
     phase: [display.phase, display.step].filter((part): part is string => Boolean(part)).join("·"),
+    base: worker.base_commits_ahead == null ? "" : `base +${worker.base_commits_ahead}`,
     elapsed: formatDuration(workerElapsedMs(worker, generatedAt)),
     // A Worker whose project will not estimate gets NO cell — not `eta=—`, and
     // certainly not a figure this module could have extrapolated off the bar

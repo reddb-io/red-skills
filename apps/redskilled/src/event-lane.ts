@@ -61,6 +61,8 @@ export interface RedskilledHostEvent {
   readonly project_label: string;
   readonly pid: number;
   readonly workspace_path: string;
+  /** Granted fork point, null on legacy and non-trunk births. */
+  readonly fork_sha?: string | null;
   /** The log path the client gave at spawn, so a restart can recover a heartbeat. */
   readonly log_path: string | null;
   readonly isolated: boolean;
@@ -143,6 +145,7 @@ export function buildHostEvent(input: RecordEventInput): RedskilledHostEvent {
     project_label: input.worker.project_label,
     pid: input.worker.pid,
     workspace_path: input.worker.workspace_path,
+    fork_sha: input.worker.fork_sha ?? null,
     log_path: input.worker.log_path ?? null,
     isolated: input.worker.isolated,
     unit: input.worker.unit ?? null,
@@ -169,6 +172,7 @@ export function buildDaemonStopEvent(input: RecordDaemonStopInput): RedskilledHo
     project_label: "",
     pid: input.pid,
     workspace_path: input.socketPath,
+    fork_sha: null,
     log_path: null,
     isolated: false,
     unit: null,
@@ -192,6 +196,7 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
     project_label: input.projectLabel,
     pid: 0,
     workspace_path: "",
+    fork_sha: null,
     log_path: null,
     isolated: false,
     unit: null,
@@ -394,6 +399,7 @@ export function toWorkerView(event: RedskilledHostEvent): RedskilledWorkerView {
     pid: event.pid,
     started_at: event.ts,
     workspace_path: event.workspace_path,
+    ...(event.fork_sha != null ? { fork_sha: event.fork_sha } : {}),
     ...(event.log_path != null ? { log_path: event.log_path } : {}),
     isolated: event.isolated,
     ...(event.unit != null ? { unit: event.unit } : {}),
@@ -424,6 +430,7 @@ function fromRow(record: ToonlRecord): RedskilledHostEvent {
     project_label: text(record.project_label) ?? "",
     pid: Number(record.pid ?? 0),
     workspace_path: text(record.workspace_path) ?? "",
+    fork_sha: text(record.fork_sha),
     log_path: text(record.log_path),
     isolated: record.isolated === true || record.isolated === "true",
     unit: text(record.unit),
