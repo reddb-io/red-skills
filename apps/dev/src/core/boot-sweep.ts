@@ -26,8 +26,15 @@
 
 /** The literal `## Blocked by` heading line, allowing only trailing whitespace.
  * Mirrors awk `/^## Blocked by[[:space:]]*$/`. */
-import { LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT, LABEL_DEPENDENCY, LABEL_READY, LABEL_RUNNING, LABEL_HUMAN } from "./triage-labels.js";
-import { hostHitlTypesIn, isRefused, planTransition } from "./state-transition.js";
+import { LABEL_DEPENDENCY, LABEL_READY, LABEL_RUNNING, LABEL_HUMAN } from "./triage-labels.js";
+import {
+  blockedKindOf,
+  blockedLabelsIn,
+  hostHitlTypesIn,
+  isRefused,
+  MECHANICAL_BLOCKER_KINDS,
+  planTransition,
+} from "./state-transition.js";
 import {
   renderIssueReferenceList,
   resolveIssueReferences,
@@ -101,7 +108,7 @@ export function parseReqLabels(labels: readonly string[]): number[] {
 /** The S1 blocker-state vocabulary the promote rule consumes. CLOSED maps to
  * the literal `gh issue view --json state --jq .state` value; everything else
  * (OPEN, a 404, or a transient gh failure) is "not closed". */
-export type BlockerState = "CLOSED" | "open-or-unknown";
+export type DependencyClosureState = "CLOSED" | "open-or-unknown";
 
 /**
  * Promote rule: true iff there is at least one blocker AND every blocker is
@@ -109,7 +116,7 @@ export type BlockerState = "CLOSED" | "open-or-unknown";
  * to 0 on the first non-CLOSED ref, and the `[[ -z "$refs" ]] && continue`
  * guard means an empty ref set never reaches the promotion branch.
  */
-export function shouldPromote(blockerStates: readonly BlockerState[]): boolean {
+export function shouldPromote(blockerStates: readonly DependencyClosureState[]): boolean {
   if (blockerStates.length === 0) return false;
   return blockerStates.every((s) => s === "CLOSED");
 }
@@ -192,7 +199,7 @@ export function planCloseCascade(
 ): PromotionPlan[] {
   const plans: PromotionPlan[] = [];
   for (const dep of dependents) {
-    const states: BlockerState[] = dep.reqs.map((r) => (r.closed ? "CLOSED" : "open-or-unknown"));
+    const states: DependencyClosureState[] = dep.reqs.map((r) => (r.closed ? "CLOSED" : "open-or-unknown"));
     if (!shouldPromote(states)) continue;
     const reqs = dep.reqs.map((r) => r.n).sort((a, b) => a - b);
     const carried = hostHitlTypesIn(dep.labels ?? [], hitlTypes);
@@ -225,7 +232,7 @@ export interface UnblockCandidate {
  * number, return its raw `gh` state string ("OPEN" | "CLOSED"), or `undefined`
  * for a 404 / transient gh failure (treated as not-closed, matching bash where
  * a failed `gh issue view` yields an empty `r_state` that is `!= CLOSED`). */
-export type BlockerStateLookup = (issue: number) => Promise<string | undefined>;
+export type DependencyClosureLookup = (issue: number) => Promise<string | undefined>;
 
 /** One planned promotion: the issue to flip plus its audit comment. */
 export interface PromotionPlan {
@@ -262,7 +269,7 @@ export interface PromotionPlan {
  */
 export async function planUnblockSweep(
   candidates: readonly UnblockCandidate[],
-  fetchBlockerState: BlockerStateLookup,
+  fetchBlockerState: DependencyClosureLookup,
   hitlTypes: readonly string[] = [],
 ): Promise<PromotionPlan[]> {
   const plans: PromotionPlan[] = [];
@@ -278,7 +285,7 @@ export async function planUnblockSweep(
 
     // Prefer the structured req:* dependency labels when present.
     if (reqIds.length > 0) {
-      const states: BlockerState[] = [];
+      const states: DependencyClosureState[] = [];
       for (const id of reqIds) {
         const raw = await fetchBlockerState(id);
         states.push(raw === "CLOSED" ? "CLOSED" : "open-or-unknown");
@@ -301,7 +308,7 @@ export async function planUnblockSweep(
     const refs = parseBlockedBy(candidate.body);
     if (refs.length === 0) continue;
 
-    const states: BlockerState[] = [];
+    const states: DependencyClosureState[] = [];
     for (const ref of refs) {
       const id = refToNumber(ref);
       const raw = id === null ? undefined : await fetchBlockerState(id);
@@ -350,7 +357,7 @@ export interface UnblockSweepGh {
  */
 export async function executeUnblockSweep(
   candidates: readonly UnblockCandidate[],
-  fetchBlockerState: BlockerStateLookup,
+  fetchBlockerState: DependencyClosureLookup,
   gh: UnblockSweepGh,
   hitlTypes: readonly string[] = [],
 ): Promise<number[]> {
@@ -455,7 +462,7 @@ export function planMixedBlockedNormalize(
   for (const c of candidates) {
     const queuedOrActive = c.labels.includes(LABEL_READY) || c.labels.includes(LABEL_RUNNING);
     if (!queuedOrActive) continue;
-    const blocked = [...new Set(c.labels.filter((l) => l.startsWith("blocked:")))].sort();
+    const blocked = [...new Set(blockedLabelsIn(c.labels))].sort();
     if (blocked.length === 0) continue;
     plans.push({ number: c.number, remove: blocked });
   }
@@ -525,13 +532,14 @@ export function findOwnedBranch(branches: readonly string[], issue: number): str
  * crashed (`blocked:crashed`), or a land-time trunk conflict parked the branch
  * (`blocked:merge-conflict`, issue #1095). All three carry a branch that may
  * simply need re-landing on fresh trunk — never a human decision. */
-const PARKED_MECHANICAL_LABELS = new Set([LABEL_STALLED, LABEL_CRASHED, LABEL_MERGE_CONFLICT]);
-
 /**
  * True when the label set carries a parked-mechanical routing label. Pure.
  */
 export function isParkedMechanical(labels: readonly string[]): boolean {
-  return labels.some((l) => PARKED_MECHANICAL_LABELS.has(l));
+  return blockedLabelsIn(labels).some((label) => {
+    const kind = blockedKindOf(label);
+    return kind !== null && MECHANICAL_BLOCKER_KINDS.has(kind);
+  });
 }
 
 /** A parked-mechanical candidate the reconcile sweep examines. */
