@@ -39,10 +39,10 @@ import {
   resolveValidationTarget,
   suspectInfraSummary,
   targetMissingSummary,
-  VALIDATION_TARGET_MISSING_MARKER,
   type ValidationTarget,
   type ValidationTargetKind,
 } from "./validation-command.js";
+import { decideVerdict, emptyEnvironmentLedger } from "./verdict.js";
 
 /** Result of a single executed command. Mirrors a child-process completion. */
 export interface ExecResult {
@@ -438,111 +438,13 @@ export function formatValidationLine(record: ValidationRecord): string {
   return JSON.stringify(record);
 }
 
-// ---------- infra vs semantic failure classification ----------
-
 /**
- * AFK runner improvement: distinguish INFRA validation failures (the gate's
- * environment is broken — worktree add / submodule init / pnpm install / OOM /
- * ENOENT — the WORKER's code is fine) from SEMANTIC validation failures (the
- * worker's tests/typecheck/lint/build actually failed for a code reason).
- *
- * Infra failures route through the `validation-infra` recovery policy (bounded
- * retry, default cap 2) so a one-off submodule/OOM flake self-heals instead
- * of parking a green branch on every flaky day. Semantic failures stay
- * non-recoverable — the worker code really has a problem, page a human.
- *
- * The signal is in the failing check's `summary`: feedback-worktree.ts fails
- * closed on setup problems by rewriting the exec result to carry the literal
- * `feedback worktree setup failed for <branch>; validation blocked` (or the
- * `submodule init failed` / `install failed` variants) in `stderr`. A
- * `summary` containing one of those markers — or an exit-code-137 (SIGKILL,
- * the Linux OOM killer signature), or a `maxBuffer length exceeded` capture
- * overflow (a green-but-verbose suite Node killed for its OUTPUT size, not a
- * test failure), or a missing file below `node_modules` anywhere in the gate
- * output — flips this classifier to true.
- * The detection is substring-based on purpose: it has to survive pnpm's
- * error-wrapping, multi-line output, and minor message drift.
- */
-export function isInfraFeedbackFailure(feedback: RunFeedbackResult): boolean {
-  if (feedback.ok) return false;
-  return isInfraValidationFailure(feedback.checks);
-}
-
-/**
- * The minimum a check has to expose to be classified: its status plus the
- * `red.afk.validation.v1` record whose `summary` carries the evidence. Both
- * gates already emit exactly this — feedback's {@link FeedbackCheck} and
- * backpressure's `BackpressureCheck` — which is what lets ONE classifier serve
- * both instead of the feedback stage owning a guard the backpressure stage
- * silently lacked (#2964).
+ * The minimum a check exposes to the Verdict: status plus its validation record.
+ * Feedback and backpressure both satisfy this structural shape.
  */
 export interface ClassifiableCheck {
   status: ValidationStatus;
   record: ValidationRecord;
-}
-
-/**
- * INFRA-vs-SEMANTIC classification over any gate's checks — the stage-agnostic
- * core of {@link isInfraFeedbackFailure}. An operator-declared backpressure
- * command that never ran because the feedback worktree failed to materialise is
- * an infra failure by exactly the same evidence a feedback check is; routing it
- * as semantic charged three correction rounds against a branch whose gate had
- * not executed a single byte (#2964).
- */
-export function isInfraValidationFailure(checks: readonly ClassifiableCheck[]): boolean {
-  for (const check of checks) {
-    if (check.status !== "failed") continue;
-    const exitCode = check.record.exitCode;
-    if (exitCode === 0) continue;
-    // The validation command classifier has already proved that a sub-second
-    // suite failure did not run long enough to judge the branch. Preserve that
-    // environment verdict at round classification so it receives bounded infra
-    // recovery and cannot be charged (or overridden to semantic) downstream.
-    if (check.record.suspectInfra === true) return true;
-    if (check.record.infra === "stall") return true;
-    if (exitCode === 137) return true;
-    const summary = check.record.summary ?? "";
-    if (
-      summary.includes("feedback worktree setup failed") ||
-      summary.includes("feedback worktree submodule init failed") ||
-      summary.includes("feedback worktree install failed") ||
-      summary.includes("baseline environment failure") ||
-      summary.includes("the baseline could not be built") ||
-      // A command the gate could not even pose — its worktree directory does not
-      // exist (#3041). An unrunnable command judged nothing, so it is an
-      // infrastructure error and never the branch's red verdict.
-      summary.includes(VALIDATION_TARGET_MISSING_MARKER)
-    ) {
-      return true;
-    }
-    // OOM killer: pnpm or vitest parent was SIGKILLed.
-    if (summary.includes("SIGKILL") || /\b137\b/.test(summary)) {
-      return true;
-    }
-    // Output capture overflow: a green-but-verbose suite whose output exceeded
-    // the exec maxBuffer ceiling. The command may have SUCCEEDED — only its
-    // output was too large — so this is an environment/config problem, not a
-    // worker-code failure. Route through bounded validation-infra recovery.
-    if (summary.includes("maxBuffer length exceeded")) {
-      return true;
-    }
-    // A dependency tree that disappears after setup is an infrastructure
-    // failure even when the runner surfaces it from inside vitest. Limit the
-    // heuristic to node_modules paths so an application-owned missing fixture
-    // remains a semantic failure.
-    if (
-      summary.includes("node_modules") &&
-      (
-        summary.includes("ERR_MODULE_NOT_FOUND") ||
-        summary.includes("Cannot find module") ||
-        summary.includes("Cannot find package") ||
-        /ENOENT:[^\n]*no such file or directory/i.test(summary)
-      )
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 /** Strip ANSI SGR sequences so identity matching survives coloured runner output.
@@ -1235,9 +1137,17 @@ export async function runFeedback(exec: Exec, input: RunFeedbackInput): Promise<
     }
   }
 
-  // AFK runner improvement: baseline probe for pre-existing failures. Only
-  // triggered when the gate failed AND a baseline worktree was supplied.
-  if (failed && baselineWorktree && !isInfraValidationFailure(checks)) {
+  // Baseline comparison is meaningful only when Verdict sees no environment
+  // refusal in the check records. Verdict remains the sole fault classifier.
+  const checksFault = failed
+    ? decideVerdict({
+        checks,
+        signature: "",
+        history: { environment: emptyEnvironmentLedger(0), branchBudgetAvailable: true },
+        environment: {},
+      }).fault
+    : undefined;
+  if (failed && baselineWorktree && checksFault?.kind === "branch") {
     const failing = checks
       .filter((c) => c.status === "failed")
       .map((c) => ({ name: c.name, script: c.script, scope: c.scope, runScript: c.runScript }));

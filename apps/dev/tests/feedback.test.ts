@@ -3,7 +3,6 @@ import {
   buildValidationRecord,
   buildFeedbackSubprocessEnv,
   decideBaselineDiffGate,
-  isInfraFeedbackFailure,
   nearestPackageScope,
   namedFailures,
   outputSummary,
@@ -19,6 +18,17 @@ import {
   type RunFeedbackResult,
   type ValidationRecord,
 } from "../src/core/feedback.js";
+import { decideVerdict, emptyEnvironmentLedger } from "../src/core/verdict.js";
+
+function verdictIsEnvironment(result: RunFeedbackResult): boolean {
+  if (result.ok) return false;
+  return decideVerdict({
+    checks: result.checks,
+    signature: "test-signature",
+    history: { environment: emptyEnvironmentLedger(2), branchBudgetAvailable: true },
+    environment: {},
+  }).fault.kind !== "branch";
+}
 
 describe("buildFeedbackSubprocessEnv resource budget (#1758)", () => {
   it("adds bounded Node heap and Vitest worker env without leaking AFK routing vars", () => {
@@ -271,7 +281,7 @@ describe("runFeedback", () => {
     expect(check?.record.infra).toBe("stall");
     expect(check?.record.suspectInfra).toBeUndefined();
     expect(check?.record.summary).toContain("validation child stalled");
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
     expect(calls).toHaveLength(1);
   });
 
@@ -331,7 +341,7 @@ describe("runFeedback", () => {
     expect(result.checks.map((ch) => ch.name)).toEqual(["validation:worktree-missing"]);
     // The routing that matters: INFRA, so the lifecycle takes the bounded
     // recovery path instead of `blocked:validation`.
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
     expect(result.checks[0]?.record.summary).toContain(
       "validation worktree directory is missing",
     );
@@ -649,14 +659,14 @@ describe("decideBaselineDiffGate", () => {
   });
 });
 
-// AFK runner improvement: `isInfraFeedbackFailure` distinguishes a feedback
+// AFK runner improvement: `verdictIsEnvironment` distinguishes a feedback
 // gate failure with an INFRA root cause (worktree add / submodule init / pnpm
 // install / OOM / ENOENT — the gate's environment is broken, NOT the worker's
 // code) from a SEMANTIC failure (the worker's tests/typecheck/lint/build
 // actually failed for a code reason). The detection is substring-based on
 // purpose: it has to survive pnpm's error-wrapping, multi-line output, and
 // minor message drift.
-describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
+describe("verdictIsEnvironment — INFRA root cause detection", () => {
   function green(): RunFeedbackResult {
     return { ok: true, checks: [], sidecar: [], baselineInconclusive: [], quarantined: [] };
   }
@@ -677,27 +687,27 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
   }
 
   it("a green gate is never INFRA", () => {
-    expect(isInfraFeedbackFailure(green())).toBe(false);
+    expect(verdictIsEnvironment(green())).toBe(false);
   });
 
   it("a failed check with no infra marker is SEMANTIC (not INFRA)", () => {
     const result = failedCheck("test:apps/dev", "FAIL tests/foo.test.ts > bar\nexpected 1 to equal 2");
-    expect(isInfraFeedbackFailure(result)).toBe(false);
+    expect(verdictIsEnvironment(result)).toBe(false);
   });
 
   it("matches the worktree-setup failed marker", () => {
     const result = failedCheck("test:apps/dev", "feedback worktree setup failed for afk/wX/123-slug; validation blocked");
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
   });
 
   it("matches the submodule-init failed marker", () => {
     const result = failedCheck("test:apps/dev", "feedback worktree submodule init failed for afk/wX/123-slug (exit 1)");
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
   });
 
   it("matches the install-failed marker", () => {
     const result = failedCheck("test:apps/dev", "feedback worktree install failed for afk/wX/123-slug (exit 1)");
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
   });
 
   it("classifies dependency files vanishing mid-gate as INFRA", () => {
@@ -710,35 +720,35 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
       "Error: ENOENT: no such file or directory, open '/repo/node_modules/.pnpm/tinypool@1.1.1/node_modules/tinypool/dist/entry/process.js'",
     );
 
-    expect(isInfraFeedbackFailure(missingModule)).toBe(true);
-    expect(isInfraFeedbackFailure(missingFile)).toBe(true);
+    expect(verdictIsEnvironment(missingModule)).toBe(true);
+    expect(verdictIsEnvironment(missingFile)).toBe(true);
   });
 
   it("matches the OOM-killer signature (exit 137 / SIGKILL)", () => {
     const a = failedCheck("test:apps/dev", "vitest worker killed by SIGKILL");
     const b = failedCheck("test:apps/dev", "pnpm: signal SIGKILL");
     const c = failedCheck("test:apps/dev", "ELIFECYCLE  Command failed with exit code 137");
-    expect(isInfraFeedbackFailure(a)).toBe(true);
-    expect(isInfraFeedbackFailure(b)).toBe(true);
-    expect(isInfraFeedbackFailure(c)).toBe(true);
+    expect(verdictIsEnvironment(a)).toBe(true);
+    expect(verdictIsEnvironment(b)).toBe(true);
+    expect(verdictIsEnvironment(c)).toBe(true);
   });
 
   it("does NOT false-positive on the substring `137` inside a hex string", () => {
     // `\b137\b` requires word boundaries; an arbitrary hex token is a single
     // word and should NOT trip the OOM heuristic.
     const result = failedCheck("test:apps/dev", "hash 0x137abf computed correctly");
-    expect(isInfraFeedbackFailure(result)).toBe(false);
+    expect(verdictIsEnvironment(result)).toBe(false);
   });
 
   it("matches a maxBuffer capture overflow (green-but-verbose suite, not a test failure)", () => {
     // exec.ts surfaces the literal `maxBuffer length exceeded` for an output
     // overflow. The suite may have passed — only its output was too large — so
-    // it is an INFRA/config problem, routed through validation-infra recovery.
+    // Verdict reads it as an environment/config cause, never branch fault.
     const result = failedCheck(
       "test:apps/dev",
       "command output exceeded the capture ceiling (maxBuffer length exceeded); stdout maxBuffer length exceeded",
     );
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
   });
 
   it("trusts a clean structured exit over misleading infra-looking text", () => {
@@ -759,12 +769,12 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
       quarantined: [],
     };
 
-    expect(isInfraFeedbackFailure(result)).toBe(false);
+    expect(verdictIsEnvironment(result)).toBe(false);
   });
 
   it("preserves keyword fallback when no structured exit evidence exists", () => {
     const result = failedCheck("test:apps/dev", "feedback worktree install failed for afk/wX/123-slug (exit 1)");
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
   });
 
   it("only inspects FAILED checks (passed checks carry no verdict)", () => {
@@ -792,7 +802,7 @@ describe("isInfraFeedbackFailure — INFRA root cause detection", () => {
       baselineInconclusive: [],
       quarantined: [],
     };
-    expect(isInfraFeedbackFailure(result)).toBe(false);
+    expect(verdictIsEnvironment(result)).toBe(false);
   });
 });
 
@@ -952,7 +962,7 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
     expect(result.baselineVerdict).toBe("inconclusive");
     expect(result.baselineInconclusive).toEqual(["test:apps/dev"]);
     expect(result.ok).toBe(false);
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("failed");
     expect(testCheck.record.summary).toContain("baseline environment failure");
@@ -1036,7 +1046,7 @@ describe("runFeedback — baseline comparison classifies the branch verdict", ()
     expect(result.baselineProbeRan).toBe(true);
     expect(result.baselineVerdict).toBe("inconclusive");
     expect(result.baselineInconclusive).toEqual(["test:apps/dev"]);
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
     const testCheck = result.checks.find((c) => c.name === "test:apps/dev")!;
     expect(testCheck.status).toBe("failed");
     expect(testCheck.record.summary).toContain("the baseline could not be built");

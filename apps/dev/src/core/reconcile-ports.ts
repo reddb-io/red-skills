@@ -13,7 +13,6 @@ import { doLanding } from "./landing.js";
 import {
   buildValidationRecord,
   formatValidationLine,
-  isInfraFeedbackFailure,
   runFeedback,
 } from "./feedback.js";
 import { gateScopes } from "./validation-scope.js";
@@ -43,7 +42,6 @@ export const HOST_RECONCILE_PORTS: HostReconcilePorts = {
   feedback: {
     runFeedback,
     gateScopes,
-    isInfraFeedbackFailure,
     buildValidationRecord,
     formatValidationLine,
   },

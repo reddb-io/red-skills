@@ -87,10 +87,6 @@ export const HOOK_REGISTRY: Record<HookName, HookSpec> = {
     context: [ro("issue"), ro("workspace"), ro("ok"), ro("inconclusive[]")],
     exit: "continue",
   },
-  on_feedback_classify: {
-    context: [ro("issue"), ro("workspace"), mut("class")],
-    exit: "continue",
-  },
   post_feedback: {
     context: [mut("issue"), mut("workspace"), mut("result")],
     exit: "continue",

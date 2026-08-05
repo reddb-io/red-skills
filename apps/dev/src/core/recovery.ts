@@ -60,14 +60,6 @@ const RECOVERABLE: Record<string, RecoverableSpec> = {
   // `RecoveryReason` subset (recoveryReasonFor never returns "stalled"); only the
   // reaper asks for it, by the literal string.
   stalled: { knob: "RED_AFK_RETRY_STALLED", defaultCap: 3 },
-  // AFK runner improvement: feedback-gate failure with an INFRA root cause
-  // (worktree add / submodule init / pnpm install / OOM / ENOENT — the gate's
-  // environment is broken, NOT the worker's code). Bounded retry so a stuck
-  // infra issue still escalates, but a one-off submodule/OOM flake self-heals
-  // instead of parking a green branch on every flaky day. Detected by
-  // `isInfraFeedbackFailure`; the semantic counterpart `feedback-failed` stays
-  // non-recoverable (page a human — the worker code really has a problem).
-  "validation-infra": { knob: "RED_AFK_RETRY_VALIDATION_INFRA", defaultCap: 2 },
   // Companion-monitor drift correction (#921). The active monitor's bounded
   // re-enqueue budget: each detected drift on an attempt injects ONE bounded
   // correction (write-only, idempotent), and once the attempt count reaches this

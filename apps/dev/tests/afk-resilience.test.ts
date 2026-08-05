@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { isInfraFeedbackFailure, runFeedback, type Exec, type PackageLayout, type RunFeedbackResult, buildValidationRecord } from "../src/core/feedback.js";
+import { runFeedback, type Exec, type PackageLayout, type RunFeedbackResult, buildValidationRecord } from "../src/core/feedback.js";
 import { recoveryDecision, recoveryCap } from "../src/core/recovery.js";
 import { blockedLabelFor, recoveryReasonFor } from "../src/core/worker-outcome.js";
+import { decideVerdict, emptyEnvironmentLedger } from "../src/core/verdict.js";
+
+function verdictIsEnvironment(result: RunFeedbackResult): boolean {
+  if (result.ok) return false;
+  return decideVerdict({
+    checks: result.checks,
+    signature: "resilience-signature",
+    history: { environment: emptyEnvironmentLedger(2), branchBudgetAvailable: true },
+    environment: {},
+  }).fault.kind !== "branch";
+}
 
 // AFK resilience test harness — codifies the 7 failure patterns the workers
 // hit during the claude-minimax spike (June 2026) as deterministic, in-process
@@ -56,14 +67,7 @@ describe("Pattern 1 — submodule lifecycle in a fresh worktree", () => {
       baselineInconclusive: [],
       quarantined: [],
     };
-    expect(isInfraFeedbackFailure(result)).toBe(true);
-  });
-
-  it("routes the failure through validation-infra recovery (cap 2, retry under cap)", () => {
-    // recovery.ts contract: validation-infra retries while attemptN < 2.
-    expect(recoveryDecision("validation-infra", 1, {})).toBe("retry");
-    expect(recoveryDecision("validation-infra", 2, {})).toBe("escalate");
-    expect(recoveryCap("validation-infra", {})).toBe(2);
+    expect(verdictIsEnvironment(result)).toBe(true);
   });
 
   it("the post-checkout hook exists at scripts/git-hooks/post-checkout (tracked) so a fresh clone can install it", async () => {
@@ -178,7 +182,7 @@ describe("Pattern 3 — failures inherited from the base branch", () => {
 
 // Pattern 4: OOM under fleet=2 — vitest or pnpm parent gets SIGKILLed.
 // The OOM killer signature is exit code 137 / the literal `SIGKILL` in
-// the captured output. `isInfraFeedbackFailure` should catch it.
+// the captured output. `verdictIsEnvironment` should catch it.
 describe("Pattern 4 — OOM under fleet=2", () => {
   it("classifies an OOM-killed pnpm invocation as INFRA (auto-recoverable)", () => {
     const record = buildValidationRecord({
@@ -194,7 +198,7 @@ describe("Pattern 4 — OOM under fleet=2", () => {
       baselineInconclusive: [],
       quarantined: [],
     };
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
   });
 
   it("classifies a SIGKILL line in the output as INFRA (auto-recoverable)", () => {
@@ -211,7 +215,7 @@ describe("Pattern 4 — OOM under fleet=2", () => {
       baselineInconclusive: [],
       quarantined: [],
     };
-    expect(isInfraFeedbackFailure(result)).toBe(true);
+    expect(verdictIsEnvironment(result)).toBe(true);
   });
 });
 
@@ -252,12 +256,8 @@ describe("Pattern 5 — orchestrator process dying post-commit (now diagnosable)
   });
 });
 
-// Pattern 6: Feedback gate not retryable (the structural fix) — before the
-// AFK runner improvement, `validation` was NON-RECOVERABLE (always
-// escalate). The cap=0 default meant the worker branch was stranded the
-// first time the gate failed for any reason. The fix splits `validation`
-// into semantic (still non-recoverable) + INFRA (new `validation-infra`
-// with cap 2).
+// Pattern 6: the Verdict heals environment rounds in-process. Terminal
+// validation outcomes therefore have no second outer retry budget.
 describe("Pattern 6 — feedback gate retryability (the structural fix)", () => {
   it("`validation` (semantic) stays non-recoverable — a real worker bug still pages a human", () => {
     expect(recoveryCap("validation", {})).toBeNull();
@@ -265,22 +265,13 @@ describe("Pattern 6 — feedback gate retryability (the structural fix)", () => 
     expect(recoveryDecision("validation", 99, {})).toBe("escalate");
   });
 
-  it("`validation-infra` (infra) IS recoverable under its cap — a one-off flake self-heals", () => {
-    expect(recoveryCap("validation-infra", {})).toBe(2);
-    expect(recoveryDecision("validation-infra", 1, {})).toBe("retry");
-    expect(recoveryDecision("validation-infra", 2, {})).toBe("escalate");
-  });
-
-  it("the SEMANTIC outcome `feedback-failed` still maps to no recovery key (NOT to validation-infra)", () => {
-    // Regression guard: a sloppy refactor that mapped `feedback-failed` to
-    // the new recovery key would silently turn every test/code failure into
-    // an auto-retry, breaking the "page a human when code is bad" contract.
+  it("the branch outcome maps to no outer recovery key", () => {
     expect(recoveryReasonFor("feedback-failed")).toBeNull();
     expect(blockedLabelFor("feedback-failed")).toBe("blocked:validation");
   });
 
-  it("the INFRA outcome `feedback-failed-infra` maps to validation-infra + blocked:validation-infra", () => {
-    expect(recoveryReasonFor("feedback-failed-infra")).toBe("validation-infra");
+  it("the infra outcome parks after the Verdict ledger, with no rival recovery key", () => {
+    expect(recoveryReasonFor("feedback-failed-infra")).toBeNull();
     expect(blockedLabelFor("feedback-failed-infra")).toBe("blocked:validation-infra");
   });
 });
@@ -300,7 +291,6 @@ describe("Pattern 7 — claim race / cross-host stale-claim band-aid", () => {
       ["quota", 3, 1],
       ["runner-transient", 3, 1],
       ["policy", 1, 0], // cap 1 → attempt 1 escalates; no retry attempts exist
-      ["validation-infra", 2, 1],
       ["stalled", 3, 1],
     ];
     for (const [reason, cap, firstRetry] of cases) {
@@ -320,7 +310,6 @@ describe("Pattern 7 — claim race / cross-host stale-claim band-aid", () => {
       ["quota", "RED_AFK_RETRY_QUOTA"],
       ["runner-transient", "RED_AFK_RETRY_RUNNER_TRANSIENT"],
       ["policy", "RED_AFK_RETRY_POLICY"],
-      ["validation-infra", "RED_AFK_RETRY_VALIDATION_INFRA"],
       ["stalled", "RED_AFK_RETRY_STALLED"],
     ];
     for (const [reason, knob] of cases) {

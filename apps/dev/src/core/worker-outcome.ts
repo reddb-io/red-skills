@@ -137,7 +137,7 @@ export type WorkerOutcome =
  * recovery.ts keys its bounded retry-cap table on these. Outcomes outside this
  * subset are NON-recoverable (always escalate, see `recoveryReasonFor`).
  */
-export type RecoveryReason = "quota" | "runner-transient" | "merge-conflict" | "crashed" | "policy" | "validation-infra";
+export type RecoveryReason = "quota" | "runner-transient" | "merge-conflict" | "crashed" | "policy";
 
 /**
  * Does the terminal path itself DELETE this ending's per-worker workspace, so a
@@ -193,10 +193,9 @@ export function blockedLabelFor(o: WorkerOutcome): string | null {
     case "feedback-failed":
       return LABEL_VALIDATION;
     case "feedback-failed-infra":
-      // AFK runner improvement: a feedback gate failure with an INFRA root
-      // cause (worktree add / submodule init / pnpm install / OOM / ENOENT)
-      // — distinct from a semantic test failure. Auto-recoverable via
-      // `validation-infra` cap; the label is observability only.
+      // An environment-attributed gate failure whose one Verdict-owned ledger
+      // exhausted (or whose signature repeated). It parks as infra and never
+      // enters a second, outer recovery economy.
       return LABEL_VALIDATION_INFRA;
     case "no-sentinel":
       return LABEL_CRASHED;
@@ -318,12 +317,9 @@ export function envelopeStatusFor(o: WorkerOutcome): AttemptStatus {
  * `claim-lost`) returns null — those route straight to a human / carry no
  * recovery budget, preserving today's behaviour exactly.
  *
- * AFK runner improvement: `feedback-failed-infra` (the gate failed for an
- * INFRA reason — worktree add / submodule init / pnpm install / OOM / ENOENT,
- * detected by `isInfraFeedbackFailure`) maps to the new `validation-infra`
- * recovery key. That key is bounded (default cap 2) so a stuck infra issue
- * still escalates, but a one-off submodule/OOM flake now self-heals instead
- * of parking a green branch.
+ * Environment gate failures have already spent the Verdict-owned environment
+ * ledger before they become terminal. They are therefore non-recoverable here:
+ * a second outer retry policy would be a rival environment budget.
  */
 export function recoveryReasonFor(o: WorkerOutcome): RecoveryReason | null {
   switch (o) {
@@ -340,8 +336,6 @@ export function recoveryReasonFor(o: WorkerOutcome): RecoveryReason | null {
       return "policy";
     case "merge-conflict":
       return "merge-conflict";
-    case "feedback-failed-infra":
-      return "validation-infra";
     // ci-failed / ci-pending are NON-recoverable on purpose (#812): the work is
     // already complete on the open PR, so a bounded auto-retry would re-run the
     // whole inner agent and re-spend tokens for no reason. They escalate to a
@@ -351,6 +345,7 @@ export function recoveryReasonFor(o: WorkerOutcome): RecoveryReason | null {
     case "blocked":
     case "host-config":
     case "feedback-failed":
+    case "feedback-failed-infra":
     case "stalled":
     // wall-clock-capped carries no PER-ISSUE recovery budget, exactly like
     // `stalled`: the supervisor owns the bounded hand-forward (disposition's

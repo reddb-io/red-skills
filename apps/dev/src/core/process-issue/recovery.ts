@@ -21,7 +21,6 @@ import {
 } from "../execution.js";
 import {
   runFeedback,
-  isInfraFeedbackFailure,
   type Exec as PnpmExec,
   type PackageLayout,
 } from "../feedback.js";
@@ -98,10 +97,7 @@ import type { Runner } from "../../types/runner.js";
 import { runnerSupportsStructuredOutput, toAgentRunner } from "../runner-spec.js";
 import type { HistoryClock } from "../history.js";
 import { DEFAULT_GO_VERIFY_RETRIES, LABEL_GO_LANE } from "../go.js";
-import {
-  STALE_BASE_DRIFT_CORRECTIONS_ENV,
-  resolveStaleBaseDriftCorrections,
-} from "../stale-base-drift.js";
+import { ENVIRONMENT_ROUNDS_ENV, resolveEnvironmentRounds } from "../verdict.js";
 import { setActiveClaimFinalizer } from "../process-safety.js";
 import {
   LABEL_READY,
@@ -259,16 +255,6 @@ export function parseRecoveryDecision(contextJson: string): "retry" | "escalate"
     return null;
   }
 }
-export function parseFeedbackClass(contextJson: string): "infra" | "semantic" | null {
-  try {
-    const parsed: unknown = JSON.parse(contextJson);
-    if (typeof parsed !== "object" || parsed === null) return null;
-    const cls = (parsed as Record<string, unknown>).class;
-    return cls === "infra" || cls === "semantic" ? cls : null;
-  } catch {
-    return null;
-  }
-}
 export function resolveGoVerifyRetries(deps: ProcessIssueDeps): number {
   const raw = deps.recoveryEnv?.RED_GO_VERIFY_RETRIES;
   const parsed = raw === undefined ? NaN : Number(raw);
@@ -278,11 +264,9 @@ export function resolveGoVerifyRetries(deps: ProcessIssueDeps): number {
   }
   return DEFAULT_GO_VERIFY_RETRIES;
 }
-/** How many FREE (budget-exempt) stale-base correction cycles this attempt
- * chain may spend (#2711). Lane-agnostic: a base that moved under the run is
- * not the branch's fault in `/go` or in `/afk`. */
-export function resolveStaleBaseDriftCap(deps: ProcessIssueDeps): number {
-  return resolveStaleBaseDriftCorrections(deps.recoveryEnv?.[STALE_BASE_DRIFT_CORRECTIONS_ENV]);
+/** One cap for every environment-attributed gate round (ADR 0136). */
+export function resolveEnvironmentRoundCap(deps: ProcessIssueDeps): number {
+  return resolveEnvironmentRounds(deps.recoveryEnv?.[ENVIRONMENT_ROUNDS_ENV]);
 }
 /** No caller-supplied share means NO gate Re-seed. The shipped default lives in
  * `dev.reseed.afk.gate_budget` and reaches here through the run deps, so an

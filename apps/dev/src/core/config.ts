@@ -988,11 +988,13 @@ export function defaultTier(runner: string, taskClass: AfkModelTier = "think"): 
 
 export const VALIDATION_MOMENTS = ["iteration", "post_done", "landing"] as const;
 export type ValidationMoment = (typeof VALIDATION_MOMENTS)[number];
+export const SUBSECOND_BRANCH_FAULT_KEY = "subsecond_failures_are_branch_fault" as const;
 
 export const ValidationMomentsSchema = z.object({
   iteration: z.array(z.string()).optional(),
   post_done: z.array(z.string()).optional(),
   landing: z.array(z.string()).optional(),
+  subsecondFailuresAreBranchFault: z.boolean().optional(),
 });
 export type ValidationMoments = z.infer<typeof ValidationMomentsSchema>;
 
@@ -1007,6 +1009,16 @@ function validateValidationMomentShapes(values: ConfigValues, mappingContainers:
       if ((scalar !== undefined && scalar.trim() !== "[]") || !hasOnlyIndexedItems || emptyMapping) {
         throw new MalformedConfigError(`invalid config shape: \`${key}\` must be an ordered list of commands`);
       }
+    }
+    const declarationKey = `${root}.${SUBSECOND_BRANCH_FAULT_KEY}`;
+    const declaration = values[declarationKey];
+    const descendants = Object.keys(values).filter((candidate) => candidate.startsWith(`${declarationKey}.`));
+    if (
+      descendants.length > 0 ||
+      (declaration !== undefined && declaration !== "true" && declaration !== "false") ||
+      (mappingContainers.has(declarationKey) && declaration === undefined)
+    ) {
+      throw new MalformedConfigError(`invalid config shape: \`${declarationKey}\` must be a boolean`);
     }
   }
 }
@@ -1033,6 +1045,11 @@ export function readValidationMoments(values: ConfigValues): ValidationMoments {
       return commands === undefined ? [] : [[moment, commands]];
     }),
   ) as ValidationMoments;
+
+  const subsecondDeclaration = values[`afk.validation.${SUBSECOND_BRANCH_FAULT_KEY}`];
+  if (subsecondDeclaration !== undefined) {
+    schedule.subsecondFailuresAreBranchFault = subsecondDeclaration === "true";
+  }
 
   return ValidationMomentsSchema.parse(schedule);
 }

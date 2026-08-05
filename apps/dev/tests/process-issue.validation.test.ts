@@ -188,7 +188,7 @@ describe("processIssue — feedback fail", () => {
     expect(trace.closed).toEqual([]);
     expect(trace.postedEnvelopes).toEqual([{ issue: 9, status: "blocked" }]);
     // post_attempt fired (the run authored DONE); the feedback gate ran and
-    // FAILED (pre_feedback → on_baseline_probe → post_feedback → on_feedback_classify),
+    // FAILED (pre_feedback → on_baseline_probe → post_feedback),
     // so pre_merge was never reached and the worker branch was not pushed.
     expect(result.hooksFired).toEqual([
       "pre_worktree",
@@ -197,12 +197,11 @@ describe("processIssue — feedback fail", () => {
       "pre_feedback",
       "on_baseline_probe",
       "post_feedback",
-      "on_feedback_classify",
     ]);
     expect(trace.pushedAttempt).toEqual([]);
   });
 
-  it("treats an unbuildable baseline as free infra that a hook cannot charge", async () => {
+  it("treats an unbuildable baseline as free infra that cannot charge the branch", async () => {
     const baselineDefect =
       "feedback worktree setup failed for main; validation blocked " +
       "(worktree add failed: fatal: transient fetch failure)";
@@ -213,23 +212,12 @@ describe("processIssue — feedback fail", () => {
       baselineStderr: baselineDefect,
       reseedGateBudget: 1,
     });
-    const customDeps: ProcessIssueDeps = {
-      ...deps,
-      hooks: {
-        ...deps.hooks,
-        config: { "afk.hooks.on_feedback_classify": "cls" },
-        exec: async (command) =>
-          command === "cls"
-            ? { code: 0, stdout: JSON.stringify({ class: "semantic" }) }
-            : { code: 0, stdout: "" },
-      },
-    };
-
-    const result = await processIssue(customDeps, input);
+    const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("feedback-failed-infra");
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.workerEvents.filter((event) => event.kind === "worker.reseeded")).toEqual([]);
+    expect(trace.workerEvents.filter((event) => event.kind === "worker.gate_revalidation_requested")).toHaveLength(1);
     const evidence = trace.envelopeBodies.join("\n");
     expect(evidence).toContain("the baseline could not be built");
     expect(evidence).toContain("transient fetch failure");
@@ -433,17 +421,16 @@ describe("processIssue — backpressure fail (#430)", () => {
   // #2964 — six green branches on `reddb-io/brand` parked `blocked:validation`
   // carrying `backpressure:bash scripts/gate.sh … durationMs: 0`, and each was
   // re-instructed three times to repair a gate that never executed a byte. The
-  // report guessed at two candidates inside the FEEDBACK stage's classifier;
-  // neither fired. The cause is that the guard was never wired to the
-  // BACKPRESSURE stage at all — `isInfraFeedbackFailure` was consulted only in
-  // the feedback branch, so a backpressure check short-circuited by a failed
-  // `materialise()` fell straight through to `reseedAfterGate`.
+  // report guessed at two candidates inside the FEEDBACK stage's old
+  // classifier; neither fired. The cause was that classification never saw the
+  // BACKPRESSURE stage, so a check short-circuited by a failed `materialise()`
+  // fell straight through to `reseedAfterGate`.
   const WORKTREE_SETUP_FAILED =
     "feedback worktree setup failed for afk/w1/9-x; validation blocked " +
     "(pnpm install --frozen-lockfile failed (exit 1): ERR_PNPM_OUTDATED_LOCKFILE)";
 
   it("REGRESSION: a backpressure check the worktree setup blocked was charged as semantic", async () => {
-    // The failing fixture. With the guard wired to the feedback stage ONLY, this
+    // The failing fixture. With classification wired to the feedback stage ONLY, this
     // spent the whole gate share of the Re-seed budget (a second runAgent) and
     // parked as `feedback-failed`, exactly as the field report describes.
     const { deps, input, trace } = harness({
@@ -458,8 +445,7 @@ describe("processIssue — backpressure fail (#430)", () => {
 
     // No correction round is charged — the branch is never re-instructed.
     expect(trace.runAgentCalls).toHaveLength(1);
-    // And it parks under the BOUNDED validation-infra policy, not as a worker-
-    // code failure.
+    // And it parks as infra after the Verdict ledger, not as branch fault.
     expect(result.outcome).toBe("feedback-failed-infra");
   });
 
@@ -482,7 +468,7 @@ describe("processIssue — backpressure fail (#430)", () => {
     expect(bp.summary).toContain("ERR_PNPM_OUTDATED_LOCKFILE");
   });
 
-  it("does not let a hook convert a backpressure environment failure to semantic", async () => {
+  it("keeps a backpressure environment failure off the branch budget", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -491,24 +477,13 @@ describe("processIssue — backpressure fail (#430)", () => {
       backpressureStderr: WORKTREE_SETUP_FAILED,
       reseedGateBudget: 1,
     });
-    const customDeps: ProcessIssueDeps = {
-      ...deps,
-      hooks: {
-        ...deps.hooks,
-        config: { "afk.hooks.on_feedback_classify": "cls" },
-        exec: async (command) =>
-          command === "cls"
-            ? { code: 0, stdout: JSON.stringify({ class: "semantic" }) }
-            : { code: 0, stdout: "" },
-      },
-    };
-    const result = await processIssue(customDeps, input);
+    const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("feedback-failed-infra");
     expect(trace.runAgentCalls).toHaveLength(1);
     const envelope = trace.envelopeBodies.join("\n");
-    expect(envelope).toContain("environment failure remained `infra`");
-    expect(envelope).not.toContain("correction budget exhausted");
+    expect(envelope).toContain("parked as infra (setup)");
+    expect(envelope).toContain("branch repair budget was not charged");
   });
 
   it("merges + closes when feedback and backpressure both pass, sidecar carrying both", async () => {
@@ -1565,7 +1540,7 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
     expect(trace.runAgentCalls).toHaveLength(2);
     expect(trace.runAgentCalls[1]?.handoffContent).toContain("<afk-gate-correction>");
     expect(trace.runAgentCalls[1]?.handoffContent).toContain("bounded correction retry 1/1");
-    expect(trace.envelopeBodies.at(-1) ?? "").toContain("Post-DONE gate-correction budget exhausted");
+    expect(trace.envelopeBodies.at(-1) ?? "").toContain("Post-DONE branch repair budget exhausted");
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
     expect(trace.closed).toEqual([]);
   });
@@ -1599,7 +1574,7 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
     const retryHandoff = trace.runAgentCalls[1]?.handoffContent ?? "";
     expect(retryHandoff).toContain("<afk-gate-correction>");
     expect(retryHandoff).toContain("feedback machine gate failed after DONE");
-    expect(trace.envelopeBodies.at(-1) ?? "").toContain("Post-DONE gate-correction budget exhausted");
+    expect(trace.envelopeBodies.at(-1) ?? "").toContain("Post-DONE branch repair budget exhausted");
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
     expect(trace.closed).toEqual([]);
   });
@@ -1686,8 +1661,8 @@ describe("processIssue — stale-base drift never spends the correction budget (
       { baseRef: "red-trunk", sinceSha: BASE_START_SHA },
       { baseRef: "red-trunk", sinceSha: BASE_START_SHA },
     ]);
-    expect(trace.iterLogs.some((l) => l.includes("granting a free stale-base correction (1/2)"))).toBe(true);
-    expect(trace.iterLogs.some((l) => l.includes("budget untouched at 0/1"))).toBe(true);
+    expect(trace.iterLogs.some((l) => l.includes("base fault (stale-base-drift)"))).toBe(true);
+    expect(trace.iterLogs.some((l) => l.includes("without an agent or branch charge"))).toBe(true);
   });
 
   it("control: the SAME two failures park at the cap when the base never moved", async () => {
@@ -1754,7 +1729,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
     expect(result.outcome).toBe("done");
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.iterLogs.some((line) => line.includes(RELEASE_BUMP))).toBe(true);
-    expect(trace.iterLogs.some((line) => line.includes("re-running validation without re-seeding"))).toBe(true);
+    expect(trace.iterLogs.some((line) => line.includes("re-running validation without an agent or branch charge"))).toBe(true);
     expect(trace.closed).toEqual([9]);
   });
 
@@ -1779,9 +1754,8 @@ describe("processIssue — stale-base drift never spends the correction budget (
     // Two free gate-only cycles, then one charged Re-seed before the park.
     expect(trace.runAgentCalls).toHaveLength(2);
     const envelope = trace.envelopeBodies.at(-1) ?? "";
-    expect(envelope).toContain("Post-DONE gate-correction budget exhausted");
-    expect(envelope).toContain("1/1 charged");
-    expect(envelope).toContain("2 stale-base corrections that did not consume it");
+    expect(envelope).toContain("Post-DONE branch repair budget exhausted (1/1)");
+    expect(envelope).toContain("2/2 environment rounds consumed: 2× stale-base-drift");
     expect(trace.labelEdits.some((e) => e.add.includes("ready-for-human") && e.add.includes("blocked:validation"))).toBe(true);
     expect(trace.closed).toEqual([]);
   });
@@ -1792,15 +1766,15 @@ describe("processIssue — stale-base drift never spends the correction budget (
       laneLabel: "lane:go",
       outcome: "done",
       feedbackResults: [false],
-      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0", RED_GATE_STALE_BASE_CORRECTIONS: "1" },
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0", RED_GATE_ENVIRONMENT_ROUNDS: "1" },
       baseMovements: [{ head: "moving-forever", subjects: ["fix: churn"] }],
     });
 
     const result = await processIssue(deps, input);
 
-    expect(result.outcome).toBe("feedback-failed");
+    expect(result.outcome).toBe("feedback-failed-infra");
     expect(trace.runAgentCalls).toHaveLength(1);
-    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
+    expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation-infra"))).toBe(true);
   });
 
   it("applies the same class fix to /afk, whose correction budget defaults to zero", async () => {
@@ -1814,7 +1788,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
 
     expect(result.outcome).toBe("done");
     expect(trace.runAgentCalls).toHaveLength(1);
-    expect(trace.iterLogs.some((line) => line.includes("re-running validation without re-seeding"))).toBe(true);
+    expect(trace.iterLogs.some((line) => line.includes("re-running validation without an agent or branch charge"))).toBe(true);
     expect(trace.closed).toEqual([9]);
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
   });
@@ -1857,7 +1831,7 @@ describe("processIssue — an empty-diff DONE is never stale-base drift (#2711)"
 });
 
 describe("processIssue — suspect-infra is an environment-inconclusive round (#3301)", () => {
-  it("charges no correction and cannot be overridden to semantic by the classification hook", async () => {
+  it("spends one free environment round, then fast-parks the identical signature without charging the branch", async () => {
     const { deps, input, trace } = harness({
       labels: ["lane:go"],
       laneLabel: "lane:go",
@@ -1866,30 +1840,44 @@ describe("processIssue — suspect-infra is an environment-inconclusive round (#
       feedbackDurationsMs: [465],
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
     });
-    const customDeps: ProcessIssueDeps = {
-      ...deps,
-      hooks: {
-        ...deps.hooks,
-        config: { "afk.hooks.on_feedback_classify": "cls" },
-        exec: async (command) =>
-          command === "cls"
-            ? { code: 0, stdout: JSON.stringify({ class: "semantic" }) }
-            : { code: 0, stdout: "" },
-      },
-    };
 
-    const result = await processIssue(customDeps, input);
+    const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("feedback-failed-infra");
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.workerEvents.filter((event) => event.kind === "worker.reseeded")).toEqual([]);
-    expect(trace.workerEvents.filter((event) => event.kind === "worker.gate_revalidation_requested")).toEqual([]);
+    expect(trace.workerEvents.filter((event) => event.kind === "worker.gate_revalidation_requested")).toHaveLength(1);
     const evidence = trace.envelopeBodies.join("\n");
     expect(evidence).toContain("suspect-infra");
-    expect(evidence).toContain("environment failure");
-    expect(evidence).toContain("hook requested `semantic`, but environment verdicts cannot be overridden");
-    expect(evidence).not.toContain("correction budget exhausted");
-    expect(evidence).not.toContain("failure is the branch's");
+    expect(evidence).toContain("repeated signature");
+    expect(evidence).toContain("branch repair budget was not charged");
+    expect(trace.labelEdits.some((edit) => edit.add.includes("ready-for-human") && edit.add.includes("blocked:validation-infra"))).toBe(true);
+  });
+
+  it("treats a declared repo's legitimate sub-second failure as branch fault", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      reseedGateBudget: 1,
+      locked: false,
+    });
+    deps.validationMoments = {
+      post_done: ["pnpm test:fast"],
+      subsecondFailuresAreBranchFault: true,
+    };
+    let clock = 0;
+    deps.nowEpoch = () => (clock += 400);
+    deps.backpressure = async ({ command }) => {
+      trace.shellCommands.push(command);
+      return { code: 1, stdout: "fast suite failed", stderr: "" };
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("feedback-failed");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.workerEvents.filter((event) => event.kind === "worker.reseeded")).toHaveLength(1);
+    expect(trace.workerEvents.filter((event) => event.kind === "worker.gate_revalidation_requested")).toEqual([]);
+    expect(trace.envelopeBodies.join("\n")).toContain("branch repair budget exhausted");
   });
 
   it("still charges a genuinely failing branch check on a healthy environment", async () => {
@@ -1908,7 +1896,7 @@ describe("processIssue — suspect-infra is an environment-inconclusive round (#
     expect(trace.runAgentCalls).toHaveLength(2);
     expect(trace.iterLogs.some((line) => line.includes("correction retry 1/1"))).toBe(true);
     expect(trace.workerEvents.filter((event) => event.kind === "worker.reseeded")).toHaveLength(1);
-    expect(trace.envelopeBodies.join("\n")).toContain("gate-correction budget exhausted");
+    expect(trace.envelopeBodies.join("\n")).toContain("branch repair budget exhausted");
   });
 
   it("parks an identical carried INFRA signature instead of exhausting outer recovery (#3268)", async () => {
@@ -1934,11 +1922,11 @@ describe("processIssue — suspect-infra is an environment-inconclusive round (#
 
     const result = await processIssue(deps, input);
 
-    expect(result.outcome).toBe("feedback-failed");
-    expect(trace.iterLogs.some((line) => line.includes(`signature=${signature}`))).toBe(true);
+    expect(result.outcome).toBe("feedback-failed-infra");
+    expect(trace.iterLogs.some((line) => line.includes(`signature ${signature}`))).toBe(true);
     expect(
       trace.labelEdits.some(
-        (edit) => edit.add.includes("ready-for-human") && edit.add.includes("blocked:validation"),
+        (edit) => edit.add.includes("ready-for-human") && edit.add.includes("blocked:validation-infra"),
       ),
     ).toBe(true);
   });

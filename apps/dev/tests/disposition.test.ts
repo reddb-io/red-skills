@@ -28,13 +28,13 @@ const ROWS: Row[] = [
   { outcome: "hook-aborted", typedLabel: "blocked:policy", envelopeStatus: "blocked", policyKey: "policy", cap: 1 },
   { outcome: "exhausted", typedLabel: "blocked:quota", envelopeStatus: "blocked", policyKey: "quota", cap: 3 },
   { outcome: "runner-transient", typedLabel: "blocked:runner-transient", envelopeStatus: "blocked", policyKey: "runner-transient", cap: 3 },
-  { outcome: "feedback-failed-infra", typedLabel: "blocked:validation-infra", envelopeStatus: "blocked", policyKey: "validation-infra", cap: 2 },
   // the TOTAL-map addition: stalled is recoverable through the composer (#402),
   // even though the per-issue recoveryReasonFor view returns null for it.
   { outcome: "stalled", typedLabel: "blocked:stalled", envelopeStatus: "blocked", policyKey: "stalled", cap: 3 },
   // non-recoverable: always escalate, no retry budget
   { outcome: "blocked", typedLabel: "blocked:spec", envelopeStatus: "blocked", policyKey: null, cap: null },
   { outcome: "feedback-failed", typedLabel: "blocked:validation", envelopeStatus: "blocked", policyKey: null, cap: null },
+  { outcome: "feedback-failed-infra", typedLabel: "blocked:validation-infra", envelopeStatus: "blocked", policyKey: null, cap: null },
   { outcome: "host-config", typedLabel: "blocked:host-config", envelopeStatus: "blocked", policyKey: null, cap: null },
   { outcome: "infra", typedLabel: "blocked:infra", envelopeStatus: "blocked", policyKey: null, cap: null },
   { outcome: "done", typedLabel: null, envelopeStatus: "done", policyKey: null, cap: null },

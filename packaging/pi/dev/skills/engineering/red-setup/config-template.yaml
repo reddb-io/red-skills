@@ -43,6 +43,9 @@ plugins:
   #                               # AFK runs declared commands verbatim; the
   #                               # engine never substitutes a package manager.
   #     validation:               # operator-declared Validation moments (ADR 0135)
+  #       subsecond_failures_are_branch_fault: false
+  #                               # Set true only when the declared suite can
+  #                               # legitimately fail in under one second.
   #       iteration:              # light checks named in the inner-agent handoff
   #         - pnpm test
   #       post_done:              # runs after DONE against the branch fork point

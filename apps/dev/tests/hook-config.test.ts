@@ -222,7 +222,6 @@ describe("hook-config resolution", () => {
     const names = [
       "pre_feedback",
       "on_baseline_probe",
-      "on_feedback_classify",
       "post_feedback",
       "on_recovery_decision",
       "on_blocked",

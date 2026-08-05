@@ -65,7 +65,6 @@ describe("hook-dispatcher exit-code policy table", () => {
       post_attempt: "continue",
       pre_feedback: "abort",
       on_baseline_probe: "continue",
-      on_feedback_classify: "continue",
       post_feedback: "continue",
       pre_merge: "abort",
       post_merge: "continue",
@@ -404,7 +403,7 @@ describe("deriveHookEnv (documented per-event RED_AFK_* contract)", () => {
     expect(deriveHookEnv(base, JSON.stringify({ blocked_label: "blocked:policy" })).RED_AFK_BLOCKED_LABEL).toBe(
       "blocked:policy",
     );
-    expect(deriveHookEnv(base, JSON.stringify({ class: "infra" })).RED_AFK_FEEDBACK_CLASS).toBe("infra");
+    expect("RED_AFK_FEEDBACK_CLASS" in deriveHookEnv(base, JSON.stringify({ class: "infra" }))).toBe(false);
     expect(deriveHookEnv(base, JSON.stringify({ outcome: "landed" })).RED_AFK_RECONCILE_OUTCOME).toBe("landed");
   });
 

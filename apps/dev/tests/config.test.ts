@@ -822,6 +822,33 @@ describe("config — block sequences (#430)", () => {
 });
 
 describe("config — validation moments (ADR 0135, #3284)", () => {
+  it("reads the declared sub-second branch-fault escape beside the moments", () => {
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      validation:",
+        "        subsecond_failures_are_branch_fault: true",
+        "        post_done:",
+        "          - pnpm test",
+        "",
+      ].join("\n"),
+    });
+
+    expect(readValidationMoments(values)).toEqual({
+      subsecondFailuresAreBranchFault: true,
+      post_done: ["pnpm test"],
+    });
+  });
+
+  it("rejects a non-boolean sub-second declaration", () => {
+    expect(() => parseConfigYaml(
+      "plugins:\n  dev:\n    afk:\n      validation:\n        subsecond_failures_are_branch_fault: sometimes\n",
+    )).toThrow(/subsecond_failures_are_branch_fault.*boolean/);
+  });
+
   it("reads every declared moment in command order", () => {
     const text = [
       "plugins:",
