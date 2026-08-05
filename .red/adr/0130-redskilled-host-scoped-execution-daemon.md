@@ -73,7 +73,7 @@ project on the machine. The per-project MCP is its client.**
    hard — that is what rule 3 buys.
 
 7. **Start is auto-spawn, with optional supervision.** The first client that
-   needs the daemon starts it; an optional user unit adds `Restart=on-failure`.
+   needs the daemon starts it; an optional user unit adds `Restart=always`.
    This is one behaviour with an optional supervisor, not two spawn paths — the
    binary, the socket and the contract are identical either way. The daemon
    never idle-exits while a worker unit is alive.
@@ -306,7 +306,7 @@ on every pass instead of only when something already looks wrong.
 
 The same section offers the optional supervising unit rule 7 mentions, because
 setup is the one interactive, authorized installer in the system. The unit adds
-`Restart=on-failure` over the identical binary, socket and contract — still one
+`Restart=always` over the identical binary, socket and contract — still one
 behaviour with a supervisor, never a second spawn path — and an existing unit
 file is never rewritten, since an operator's edit to it is their configuration.
 
@@ -666,6 +666,20 @@ fresh positive queue observation may sustain it. Older records are ignored, a
 counted-empty project removes its recovered intent, and `project_stop` removes
 both current and recoverable forms. The daemon still interprets none of the
 selector, argv, environment or workspace it persists.
+
+## Amendment 10 — supervised clean exits restart (#3397)
+
+Rule 7 originally gave the optional user unit `Restart=on-failure`. That policy
+assumed every daemon-initiated recycle would exit non-zero, but an internal
+shutdown path can exit zero. systemd then leaves the enabled unit inactive while
+the next client silently falls back to an unsupervised auto-spawned daemon.
+
+**Decision: the shipped unit uses `Restart=always`.** The host daemon has no
+legitimate self-selected stay-dead state; every process exit returns supervision
+to systemd. An explicit `systemctl stop` remains an operator-owned stop and is
+not restarted by systemd. Unit status reports an installed and enabled but
+inactive service as a finding, so supervision drift is observable even on a host
+whose auto-spawn floor keeps requests working.
 
 ## Recovering from a bad two-player migration
 

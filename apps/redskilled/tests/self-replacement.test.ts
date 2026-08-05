@@ -423,7 +423,7 @@ describe("a daemon that has observed a newer published version", () => {
 
     expect(await daemon.checkForReplacement()).toMatchObject({ act: "replace", via: "supervisor-exit" });
 
-    // Nothing is started here: the unit's `Restart=on-failure` starts the new
+    // Nothing is started here: the unit's `Restart=always` starts the new
     // process, which is why the exit is non-zero.
     expect(spawns).toEqual([]);
     expect(exits).toEqual([REDSKILLED_REPLACE_EXIT_CODE]);
