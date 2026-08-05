@@ -199,6 +199,7 @@ function recordingLaunch(launched: LaunchWorkerOptions[]) {
         warnings: [],
       },
       admission: options.admission,
+      ...(options.forkSha == null ? {} : { fork_sha: options.forkSha }),
       warnings: [],
       plan: {
         backend: "none",
@@ -223,6 +224,60 @@ function registration(label: string, target: number, workspace: string) {
 }
 
 describe("the daemon drives the demand loop itself", () => {
+  it("refreshes one fork SHA for a burst and refuses an unreachable trunk before any Worker is born", async () => {
+    const launched: LaunchWorkerOptions[] = [];
+    const workspace = await scratch("redskilled-workspace-");
+    let fetches = 0;
+    let remoteReachable = true;
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      launch: recordingLaunch(launched),
+      refreshTrunk: async () => {
+        fetches += 1;
+        if (!remoteReachable) throw new Error("origin is unreachable");
+        return "fork-sha-123";
+      },
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([4]) },
+    });
+    running.push(daemon);
+
+    daemon.registerProject({
+      ...registration("acme/widgets", 3, workspace),
+      trunk: { remote: "origin", branch: "main" },
+    });
+    await daemon.pollQueueDiscovery();
+    const granted = await daemon.driveDemand();
+
+    expect(fetches).toBe(1);
+    expect(granted.granted.map((grant) => grant.fork_sha)).toEqual([
+      "fork-sha-123",
+      "fork-sha-123",
+      "fork-sha-123",
+    ]);
+    expect(launched.map((birth) => birth.forkSha)).toEqual([
+      "fork-sha-123",
+      "fork-sha-123",
+      "fork-sha-123",
+    ]);
+
+    daemon.releaseWorker("w1");
+    daemon.releaseWorker("w2");
+    daemon.releaseWorker("w3");
+    remoteReachable = false;
+    const refused = await daemon.driveDemand();
+    expect(refused.granted).toEqual([]);
+    expect(refused.refusal).toMatch(/refused-unreachable-trunk-remote/);
+    expect(launched).toHaveLength(3);
+
+    remoteReachable = true;
+    const retried = await daemon.driveDemand();
+    expect(retried.granted).toHaveLength(3);
+    expect(fetches).toBe(3);
+  });
+
   it("births Workers up to a registered project's target, with no process of the project's own", async () => {
     const launched: LaunchWorkerOptions[] = [];
     const workspace = await scratch("redskilled-workspace-");

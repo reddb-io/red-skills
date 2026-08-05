@@ -664,6 +664,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
         repo: c.issueTemplate.repo,
         repoDir: c.issueTemplate.repoDir,
         remote: c.issueTemplate.remote,
+        ...(process.env.RED_AFK_FORK_SHA?.trim()
+          ? { forkSha: process.env.RED_AFK_FORK_SHA.trim() }
+          : {}),
         baseInput: { issueBody: candidate.body },
         runMode: runModeForCandidate(candidate, flags.prePr ? "no-mistakes" : flags.runMode),
         // Lane-aware claim preflight (#1045): the pre-claim state-validity recheck

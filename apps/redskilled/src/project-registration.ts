@@ -98,6 +98,12 @@ export interface RedskilledQueuePollPlan {
   readonly creator?: string;
 }
 
+/** The remote branch whose fetched commit becomes every admitted Worker's fork. */
+export interface RedskilledTrunk {
+  readonly remote: string;
+  readonly branch: string;
+}
+
 /**
  * One project asking to be held, as it states itself.
  *
@@ -117,6 +123,8 @@ export interface RedskilledProjectRegistrationRequest {
   readonly argv: readonly string[];
   /** Where to run it — used verbatim as the Worker's working directory. */
   readonly workspace_path: string;
+  /** Explicit git coordinates; optional only for one-release client skew. */
+  readonly trunk?: RedskilledTrunk;
   /**
    * What to add to a Worker's environment at birth. Opaque, likewise.
    *
@@ -150,6 +158,7 @@ export interface RedskilledProjectRegistration {
   readonly queue_poll?: RedskilledQueuePollPlan;
   readonly argv: readonly string[];
   readonly workspace_path: string;
+  readonly trunk?: RedskilledTrunk;
   readonly env: Readonly<Record<string, string>>;
   /** The declared log-path template; absent when this project declared none. */
   readonly log_path?: string;
@@ -259,6 +268,12 @@ export function buildProjectRegistration(
     request.workspace_path,
     `a workspace path for project ${JSON.stringify(projectLabel)}`,
   );
+  const trunk = request.trunk == null
+    ? undefined
+    : {
+      remote: requireText(request.trunk.remote, `a trunk remote for project ${JSON.stringify(projectLabel)}`),
+      branch: requireText(request.trunk.branch, `a trunk branch for project ${JSON.stringify(projectLabel)}`),
+    };
   if (!Number.isInteger(request.target) || request.target < 0) {
     throw new Error(
       `redskilled needs a whole, non-negative target to register project ${JSON.stringify(projectLabel)}, not ` +
@@ -284,6 +299,7 @@ export function buildProjectRegistration(
     ...(queuePoll == null ? {} : { queue_poll: queuePoll }),
     argv,
     workspace_path: workspacePath,
+    ...(trunk == null ? {} : { trunk }),
     env,
     ...(logPath == null ? {} : { log_path: logPath }),
     target: request.target,
@@ -617,6 +633,7 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     Array.isArray(registration.argv) &&
     registration.argv.every((word) => typeof word === "string") &&
     typeof registration.workspace_path === "string" &&
+    (registration.trunk === undefined || isTrunkShape(registration.trunk)) &&
     Number.isInteger(registration.target) &&
     typeof registration.registered_at === "string" &&
     typeof registration.renew_within_ms === "number" &&
@@ -639,6 +656,13 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     (registration.sustained_by === undefined ||
       registration.sustained_by === "open-work" ||
       registration.sustained_by === "live-worker");
+}
+
+function isTrunkShape(value: unknown): value is RedskilledTrunk {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const trunk = value as Record<string, unknown>;
+  return typeof trunk.remote === "string" && trunk.remote.trim() !== "" &&
+    typeof trunk.branch === "string" && trunk.branch.trim() !== "";
 }
 
 function requireQueuePollPlan(value: unknown, projectLabel: string): RedskilledQueuePollPlan | undefined {

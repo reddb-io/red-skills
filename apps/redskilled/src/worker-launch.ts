@@ -27,6 +27,7 @@ import { pathWithEngineNode } from "@reddb-io/shared/engine-node.js";
 import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledJobObjectHandle } from "./job-object.js";
+import type { RedskilledTrunk } from "./project-registration.js";
 import {
   detectWorkerPlacementProbes,
   placementEnabled,
@@ -44,6 +45,8 @@ export interface RedskilledWorkerSpec {
   readonly project_label: string;
   /** Used verbatim as the Worker's working directory. */
   readonly workspace_path: string;
+  /** Explicit trunk coordinates for daemon-owned admission refresh. */
+  readonly trunk?: RedskilledTrunk;
   /**
    * Where this Worker will write its log, if the client wants it recoverable.
    *
@@ -90,6 +93,8 @@ export interface LaunchedWorker {
   readonly worker: RedskilledWorkerView;
   /** The verdict that allowed this birth, carried into the caller's reply. */
   readonly admission: RedskilledAdmissionVerdict;
+  /** The exact commit this birth was admitted to fork, absent only under skew. */
+  readonly fork_sha?: string;
   /** The same warnings the view carries, for a caller that reports them once. */
   readonly warnings: readonly string[];
   readonly plan: WorkerPlacementPlan;
@@ -108,6 +113,7 @@ export interface LaunchWorkerOptions {
   readonly spec: RedskilledWorkerSpec;
   /** The host-wide verdict admitting this birth. Required: no verdict, no Worker. */
   readonly admission: RedskilledAdmissionVerdict;
+  readonly forkSha?: string;
   readonly probes?: WorkerPlacementProbes;
   /**
    * The ceiling the host derived for this Worker (`deriveWorkerScopeCeiling`).
@@ -254,6 +260,9 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   // failed to pass on. `process.execPath` is that answer, already held.
   const workerEnv: Record<string, string> = {
     ...(spec.env ?? {}),
+    ...(options.forkSha == null || options.forkSha === ""
+      ? {}
+      : { RED_AFK_FORK_SHA: options.forkSha }),
     PATH: pathWithEngineNode(spec.env?.PATH ?? env.PATH, options.execPath ?? process.execPath),
   };
   const plan = planWorkerPlacement({
@@ -349,7 +358,15 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
       : {}),
     warnings,
   };
-  return { worker, admission, warnings, plan, child, ...(placed?.job != null ? { job: placed.job } : {}) };
+  return {
+    worker,
+    admission,
+    ...(options.forkSha == null || options.forkSha === "" ? {} : { fork_sha: options.forkSha }),
+    warnings,
+    plan,
+    child,
+    ...(placed?.job != null ? { job: placed.job } : {}),
+  };
 }
 
 /**

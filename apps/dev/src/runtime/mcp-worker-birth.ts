@@ -25,6 +25,8 @@ import { logsDir } from "@reddb-io/shared/red-paths.js";
 import type { RedskilledClientConfig } from "@reddb-io/redskilled/client";
 import type { RedskilledPaths } from "@reddb-io/redskilled/paths";
 import { publishedBundleArgv } from "./published-entry.js";
+import { getConfig, loadConfig } from "../core/config.js";
+import { afkPaths } from "./wire/paths.js";
 import {
   createRedskilledBirthPort,
   redskilledUnreachableAdvice,
@@ -45,6 +47,7 @@ export function dispatchLogPath(root: string, stampIso: string): string {
 export interface DispatchedWorkerBirth {
   readonly worker_id: string;
   readonly pid: number;
+  readonly fork_sha?: string;
   /** Post-mortem handle: where the host pointed this Worker's output. */
   readonly log: string;
   /** Warnings the host attached — a downgraded unit is running AND degraded. */
@@ -92,6 +95,8 @@ export async function requestWorkerBirth(
   }
   const stamp = options.stamp ?? `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`;
   const log = dispatchLogPath(root, stamp);
+  const config = loadConfig(afkPaths(root).configPath, { warn: () => undefined });
+  const trunk = getConfig(config, "dev.trunk") || "main";
 
   let granted;
   try {
@@ -101,6 +106,7 @@ export async function requestWorkerBirth(
       // would be a caller that could file another project's Worker (rule 11).
       project_label: "",
       workspace_path: root,
+      trunk: { remote: "origin", branch: trunk },
       log_path: log,
       command,
       args: [...head, "run", ...args],
@@ -116,6 +122,7 @@ export async function requestWorkerBirth(
   return {
     worker_id: granted.workerId,
     pid: granted.pid,
+    ...(granted.forkSha == null ? {} : { fork_sha: granted.forkSha }),
     log,
     warnings: granted.warnings,
     admission: granted.admission,
