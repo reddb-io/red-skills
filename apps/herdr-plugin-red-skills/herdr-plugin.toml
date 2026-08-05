@@ -37,13 +37,18 @@ description = "Watch the redskilled host daemon from herdr: live Workers and the
 #      it imports are not downloaded with it — so the hook fetches the release's
 #      single-file bundle and writes it over `bin/red-skills-herdr.mjs`, the path
 #      every pane, action and startup entry below already names.
+# `$HERDR_PLUGIN_ROOT` is not injected during some herdr versions' BUILD phase
+# (#3303: it resolved empty and node loaded "/scripts/…" off the filesystem
+# root), so the build commands fall back to the build's working directory —
+# which herdr guarantees is the plugin root. Runtime commands (services, panes,
+# actions) keep the plain variable: the injection gap is build-phase only.
 [[build]]
 platforms = ["linux", "macos"]
-command = ['sh', '-c', 'node --version >/dev/null 2>&1 || { echo "red-skills needs Node.js 20+ on PATH"; exit 1; }; exec node "$HERDR_PLUGIN_ROOT/scripts/materialize-entrypoint.mjs"']
+command = ['sh', '-c', 'node --version >/dev/null 2>&1 || { echo "red-skills needs Node.js 20+ on PATH"; exit 1; }; exec node "${HERDR_PLUGIN_ROOT:-.}/scripts/materialize-entrypoint.mjs"']
 
 [[build]]
 platforms = ["windows"]
-command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error "red-skills needs Node.js 20+ on PATH"; exit 1 }; & node "$env:HERDR_PLUGIN_ROOT\scripts\materialize-entrypoint.mjs"; exit $LASTEXITCODE']
+command = ['powershell', '-NoProfile', '-NonInteractive', '-Command', 'if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error "red-skills needs Node.js 20+ on PATH"; exit 1 }; $root = if ($env:HERDR_PLUGIN_ROOT) { $env:HERDR_PLUGIN_ROOT } else { "." }; & node "$root\scripts\materialize-entrypoint.mjs"; exit $LASTEXITCODE']
 
 # The notification watcher. herdr fires this once per enabled plugin after the
 # session is restored and its API socket is ready.
