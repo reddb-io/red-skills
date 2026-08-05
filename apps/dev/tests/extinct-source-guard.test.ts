@@ -433,6 +433,7 @@ describe("promoted into the normal check set (#2795)", () => {
 /** One line that must trip each declared source, so no entry can go dead. */
 function probeTextFor(id: string): string {
   const probes: Record<string, string> = {
+    "deprecated-status-alias": `const tools = [{ name: "worker_status", invoke: readWorkers }];`,
     "fleet-registry": `const p = await readFleetProfiles(path);`,
     "fleet-registry-lane": `const p = join(root, "fleets.toonl");`,
     "fleet-name": `const name = parseFleetFlag(argv) ?? env["RED_AFK_FLEET"];`,
