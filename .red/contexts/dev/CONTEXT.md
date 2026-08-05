@@ -420,6 +420,30 @@ _Avoid_: jq (for TOON/TOONL files), the toon CLI
 The automation that observes upstream `github:reddb-io/toon` releases and opens the RedSkills auto-bump PR for the toon toolchain. It updates the pnpm catalog version and every derived or guard-checked `tq`/`@reddb-io/toon` pin site together; the catalog remains the single version truth, and the watcher PR is the normal route for routine upstream releases.
 _Avoid_: manual version sweep, toon bump script, red-castle repinner
 
+**Release standard**:
+The formalized release flow `/red-setup` provisions for a consumer repository (decided and being designed): changesets accumulate on the trunk, a **Version-PR** consumes them, its merge triggers the tag, and the tag publishes a Release carrying generated human notes plus a **Release manifest**. One product version rides the whole workspace (single train); the scheme is semver or calendar (`YYYY.M.MICRO`, deliberately semver-parseable). The interview lives in `/red-setup` after the validation moments; the engine ships as its own binary, pinned in thin generated workflows, with a vendored single-file mode for restricted CI.
+_Avoid_: release pipeline (names any CI job, not this contract), changelog flow
+
+**Version-PR**:
+The open pull request the release engine maintains against the trunk: it consumes every pending changeset, bumps the declared **Version surfaces**, and renders the upcoming notes. Merging it IS the release trigger — the tag, the Release, and the assets follow from that merge. Under the `auto` trigger mode the same queue is consumed directly on push instead, with no PR ceremony.
+_Avoid_: Version Packages PR (the changesets/action artifact this generalizes), release branch
+
+**RC graduation**:
+The pre-release model of the **Release standard**: a release candidate is cut from the **Version-PR**'s own branch state (`X.Y.Z-rc.N` — same bump, same changesets), so the merge promotes byte-for-byte what the RC tested to the stable version. A pre-release never diverges from the release it precedes.
+_Avoid_: snapshot release (the continuous `-next.<sha>` firehose, a separate opt-in), pre mode
+
+**Release manifest**:
+The machine-readable asset attached to every published Release — version, date, impact-classified changes, authors, PRs — emitted as JSON (interop) and TOON (house) side by side. Together with the rendered Release notes it is the canonical changelog surface; no committed `CHANGELOG.md` exists under the standard.
+_Avoid_: CHANGELOG.md, committed release feed
+
+**Version surfaces**:
+The set of files that carry the product version in a consumer repository (workspace manifests, extra declared paths, or a repo-owned sync command for exotic carriers). `/red-setup` detects the set, the operator confirms it, and the confirmed list is saved in `.red/config.yaml`; at release time the engine re-derives the real workspace and refuses the release when it diverges from the declared list, naming the orphan.
+_Avoid_: sync targets, version files list
+
+**Impact class**:
+A changeset's declared bump type (`major`/`minor`/`patch`) read as change classification rather than arithmetic. Under semver it still drives the number; under calver the number comes from the date and the impact class only groups notes, flags breaking changes, and feeds the **Release manifest**. One changeset format stays valid under both schemes.
+_Avoid_: bump type (implies it always bumps), severity
+
 **Vendored source package**:
 A workspace package whose source tree is committed directly in this monorepo while preserving an upstream marker for provenance. `packages/red-castle` is the canonical example after ADR 0101: `.upstream` tracks the reviewed sandcastle upstream SHA, while the archived `reddb-io/red-castle` repo no longer supplies a live submodule pin.
 _Avoid_: submodule, pointer bump, two-repo flow
