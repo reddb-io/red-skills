@@ -17,8 +17,8 @@ and mutation modes.
 | --- | --- | --- |
 | launch | `project_start` | `{runner, target, selector?, config?, base?}` — hands the work policy to the host daemon as a registration; the project spawns nothing. |
 | resize / switch | `project_resize` | Same fields, all optional; restates the launch on the registration's renewal (Amendment 5). |
-| ground truth | `project_status` | The registration the host holds, its renewal and last poll, plus slots and live workers. |
-| reset birth latch | `project_reset` | Invoke the structured repair returned in `project_status.birth_latch`; clears only this project's birth breaker. |
+| ground truth | `status {scope: project}` | The registration the host holds, its renewal and last poll, plus slots and live workers. |
+| reset birth latch | `project_reset` | Invoke the structured repair returned in `status {scope: project}` at `birth_latch`; clears only this project's birth breaker. |
 | shutdown | `project_stop` | Asks the host to end this project's Workers, then gives the registration back. |
 | logs | `logs` | One structured lane per call (`supervisor` / `worker` / `monitor` / `liveness`). |
 
@@ -47,7 +47,7 @@ $ /dev:afk fleet 1   # every worker sees both vars
 
 Fleet mode is **runner-portable**: registering a project is plain host bookkeeping, not a Claude Code primitive. Claude Code, Codex, and bare terminals may all start and stop a project's workers when the normal AFK hard preconditions pass. Runner-specific observability degrades independently:
 
-- Claude Code: register the project. For manual monitoring, read the castle `monitor` and `project_status` tools; without the MCP, run `/dev:afk monitor`.
+- Claude Code: register the project. For manual monitoring, read `status {scope: worker}` and `status {scope: project}`; without the MCP, run `/dev:afk monitor`.
 - Codex: register with `RED_AFK_RUNNER=codex` and spawn one read-only Codex monitor agent from the bundle's `codex-monitor-agent --mode fleet` prompt when a sub-agent primitive is available. If no sub-agent primitive is available, register anyway and print the monitor status line below.
 - Bare terminal / unknown runner: register and print the manual-monitor guidance.
 
@@ -66,7 +66,7 @@ against, resolved from the PUBLISHED version rather than from the registering
 process's own. After any RedSkills release that changes AFK or
 castle engine behavior, stop and re-register the project before starting or
 counting a proving drain; otherwise the drain may still be executing on the
-pre-release engine. `monitor` and the statusline fleet cell show the running
+pre-release engine. `status {scope: worker}` and the statusline fleet cell show the running
 bundle version and mark skew against a newer locally cached bundle so a stale
 project is visible. Automatic drain-and-respawn on version change is a future enhancement,
 not part of the current fleet contract.
@@ -95,20 +95,20 @@ over, or read a pid file for. The steps below are the whole flow.
    A `target` change does not travel on a renewal and is reported as unapplied
    rather than silently dropped.
 4. **Attach the best available monitor surface.**
-   - Claude Code: no automatic monitor cron. Tell the user to read the castle
-     `monitor` tool (with `worker_vitals` for liveness), or — without the MCP —
+   - Claude Code: no automatic monitor cron. Tell the user to read
+     `status {scope: worker}`, or — without the MCP —
      to run `/dev:afk monitor` manually.
    - Codex: fetch a sub-agent spawn primitive via `ToolSearch` (query:
      `spawn agent background monitor`). If available, spawn exactly one read-only
      Codex monitor agent with `RED_AFK_RUNNER=codex red-skills-dev
      codex-monitor-agent --project-root "$PWD" --mode fleet`. Its task:
-     periodically read the castle `monitor` tool, report concise progress, and
+     periodically read `status {scope: worker}`, report concise progress, and
      auto-close when this project holds no registration and no `[live]` workers
      remain. It must never edit files, claim issues, stop workers, or run merges.
    - Bare/unknown: skip native monitor setup and use the manual-monitor line.
 5. **Report back.** Print the registration the daemon handed back — its project
    label, target, selector and renewal deadline — then the monitor line:
-   `monitor: call the castle monitor tool (and worker_vitals for liveness);
+   `monitor: call status {scope: worker};
    no-MCP fallback: run /dev:afk monitor.`
 
 ### Stopping — give the registration back
@@ -163,6 +163,6 @@ The safe fleet width for a given queue is the **degree of disjunction** — the 
 
 ### Refs
 
-- [`MCP.md`](./MCP.md) — the `castle` tool surface; `project_start`, `project_resize`, `project_status`, `project_reset`, `project_stop`, and `logs` are the primary interface.
+- [`MCP.md`](./MCP.md) — the `castle` tool surface; `status`, `project_start`, `project_resize`, `project_reset`, `project_stop`, and `logs` are the primary interface.
 - ADR 0130 Amendment 4 — why a project contributes a registration and holds no process of its own, and why the `fleet` launcher, the `__supervise` entrypoint and the self-heal watchdog were deleted rather than renamed.
 - [`monitor.md`](./monitor.md) — the readonly dashboard and native-task mirror.
