@@ -15,7 +15,7 @@ describe("release status", () => {
       main(
         [
           "status",
-          "--root",
+          "--changeset-dir",
           join(FIXTURES, "multiple"),
           "--current-version",
           "1.2.3",
@@ -57,7 +57,7 @@ describe("release status", () => {
     let output = "";
     expect(
       main(
-        ["status", "--root", join(FIXTURES, "empty"), "--current-version", "1.2.3"],
+        ["status", "--changeset-dir", join(FIXTURES, "empty"), "--current-version", "1.2.3"],
         { clock: CLOCK, write: (text) => { output += text; } },
       ),
     ).toBe(0);
