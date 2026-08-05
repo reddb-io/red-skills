@@ -18,7 +18,8 @@ export const CASTLE_MCP_PROMPTS: readonly CastleMcpPrompt[] = [
   {
     name: "drain",
     title: "Drain this project's queue",
-    description: "Find the next action for starting or continuing a project drain.",
+    description:
+      "Find the next action for starting or continuing a project drain.",
     body: HELP_DELEGATION,
   },
   {
