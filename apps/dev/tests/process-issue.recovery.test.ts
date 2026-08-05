@@ -459,31 +459,6 @@ describe("processIssue — new lifecycle checkpoints (#832)", () => {
     expect(ctx.vitals).toEqual(vitals);
   });
 
-  it("on_feedback_classify (mutable) overrides SEMANTIC→INFRA and suppresses the tier retry", async () => {
-    // A SEMANTIC simple-tier feedback failure normally retries once on the complex
-    // tier (a second runAgent). A hook that reclassifies it as INFRA suppresses
-    // that retry — a tier bump can't fix infra — so the agent runs exactly once.
-    const { deps, input, trace } = harness({
-      outcome: "done",
-      feedbackOk: false,
-      classifyIssue: async () => "simple",
-    });
-    const customDeps: ProcessIssueDeps = {
-      ...deps,
-      hooks: {
-        ...deps.hooks,
-        config: { "afk.hooks.on_feedback_classify": "cls" },
-        exec: async (command) =>
-          command === "cls"
-            ? { code: 0, stdout: JSON.stringify({ class: "infra" }) }
-            : { code: 0, stdout: "" },
-      },
-    };
-    const result = await processIssue(customDeps, input);
-    expect(trace.runAgentCalls).toHaveLength(1);
-    expect(result.outcome).toBe("feedback-failed-infra");
-  });
-
   it("on_recovery_decision (mutable) overrides retry→escalate", async () => {
     // pre_worktree abort routes through routeRecovery("hook-aborted"), bounded-
     // recoverable → RETRY under a raised cap. A hook returning {"decision":

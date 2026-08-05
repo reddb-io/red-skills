@@ -57,28 +57,6 @@ describe("recoveryDecision — non-recoverable reasons always escalate", () => {
   }
 });
 
-// AFK runner improvement: `validation-infra` distinguishes an INFRA feedback
-// failure (worktree add / submodule init / pnpm install / OOM / ENOENT) from
-// the SEMANTIC `validation` failure. The infra class is auto-recoverable with
-// a bounded cap (default 2) so a one-off submodule/OOM flake self-heals
-// instead of parking a green branch on every flaky day; the semantic class
-// stays non-recoverable and pages a human. Detected by `isInfraFeedbackFailure`.
-describe("recoveryDecision — validation-infra is bounded auto-recoverable", () => {
-  it("retries under the default cap of 2, escalates at/over it", () => {
-    expect(recoveryDecision("validation-infra", 1, {})).toBe("retry");
-    expect(recoveryDecision("validation-infra", 2, {})).toBe("escalate");
-    expect(recoveryDecision("validation-infra", 99, {})).toBe("escalate");
-  });
-
-  it("RED_AFK_RETRY_VALIDATION_INFRA overrides the cap; garbage falls back to default", () => {
-    expect(recoveryDecision("validation-infra", 4, { RED_AFK_RETRY_VALIDATION_INFRA: "5" })).toBe("retry");
-    expect(recoveryDecision("validation-infra", 5, { RED_AFK_RETRY_VALIDATION_INFRA: "5" })).toBe("escalate");
-    expect(recoveryDecision("validation-infra", 2, { RED_AFK_RETRY_VALIDATION_INFRA: "nope" })).toBe("escalate");
-    expect(recoveryCap("validation-infra", {})).toBe(2);
-    expect(recoveryCap("validation-infra", { RED_AFK_RETRY_VALIDATION_INFRA: "8" })).toBe(8);
-  });
-});
-
 describe("recoveryDecision — semantic `validation` stays non-recoverable (regression)", () => {
   // AFK runner improvement: ONLY the infra-classed failure is recoverable.
   // The semantic `validation` failure (the worker's tests actually failed)
@@ -86,7 +64,7 @@ describe("recoveryDecision — semantic `validation` stays non-recoverable (regr
   // has a broken test would loop forever.
   it("`validation` still returns null from recoveryCap (non-recoverable)", () => {
     expect(recoveryCap("validation", {})).toBeNull();
-    expect(recoveryCap("validation", { RED_AFK_RETRY_VALIDATION_INFRA: "10" })).toBeNull();
+    expect(recoveryCap("validation", {})).toBeNull();
   });
   it("`validation` still escalates at every attempt", () => {
     expect(recoveryDecision("validation", 1, {})).toBe("escalate");
@@ -138,7 +116,6 @@ describe("recoveryCap — resolves the effective cap for the escalation comment"
   it("returns null for non-recoverable reasons", () => {
     expect(recoveryCap("spec", {})).toBeNull();
     expect(recoveryCap("validation", {})).toBeNull();
-    // validation-infra IS recoverable — its cap is 2 (overridable via env).
-    expect(recoveryCap("validation-infra", {})).toBe(2);
+    expect(recoveryCap("validation-infra", {})).toBeNull();
   });
 });

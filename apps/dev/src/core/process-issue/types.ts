@@ -25,7 +25,6 @@ import {
 } from "../execution.js";
 import {
   runFeedback,
-  isInfraFeedbackFailure,
   type Exec as PnpmExec,
   type PackageLayout,
   type RunFeedbackResult,

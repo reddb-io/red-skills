@@ -119,6 +119,7 @@ plugins:
         skills: dev:tdd, dev:diagnose # optional exact worker allowlist; activation gates still apply
         runner_startup_baseline_ms: 840 # optional measured pre-projection historical baseline
       validation:
+        subsecond_failures_are_branch_fault: false
         iteration:
           - pnpm --filter @reddb-io/dev exec vitest run tests/config.test.ts
         post_done:
@@ -172,6 +173,13 @@ list and also skips loudly.
 | `plugins.dev.afk.validation.post_done` | The engine runs these commands after DONE against the branch's fork point. The Worker's `<merge-gate>` repeats the exact list. | A correction re-runs only the failed subset, then folds back to the full declaration after that subset passes. |
 | `plugins.dev.afk.validation.landing` | The engine runs these commands immediately before push, PR creation, and queue entry. | Last local verdict; it does not try to predict a moving base. |
 | Merge queue | The repository's required CI checks run on the merge group. This is configured at the forge, not in RedSkills. | The merge queue is the CI-side final Validation moment and owns freshness against the merged result. |
+
+`plugins.dev.afk.validation.subsecond_failures_are_branch_fault` is an optional
+boolean declaration beside that schedule. Leave it absent/`false` for the safe
+default: a failed suite command measured under one second is environment fault.
+Set it to `true` only when this repository's declared suite legitimately finishes
+that quickly; its fast failures are then branch fault. This declaration replaces
+the removed runtime classification hook.
 
 `setup` and `format` remain separate declarations rather than Validation
 moments. `/red-setup` inventories the repository's real scripts, proposes the
@@ -310,7 +318,6 @@ The full lifecycle table is defined in PRD #207. The hooks shipped so far:
 | `on_attempt_error` | When the attempt produced **no authored exit**: either an unhandled exception in the worker path (`run_inner` exited non-zero outside the quota branch — `runner-crash`), or the runner's pipe closed with **no `<promise>` sentinel** (EOF-without-sentinel — `no-sentinel`, ADR 0028; the issue routes through bounded `blocked:crashed` recovery). Distinct from `post_attempt` with `result.status=fail`, so hook authors do not have to demultiplex. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (the worktree), `RED_AFK_ISSUE`, `RED_AFK_ERROR_CLASS` (`runner-crash` \| `no-sentinel`) | `issue`, `workspace`, `error` (`{class, rc}`), `attempt_n` | non-zero is **logged** and the loop continues |
 | `pre_feedback`  | After a green attempt, before the scope-derived feedback gate (the merge gate, ADR 0008) runs (#832). The resolved scopes are on stdin so a guard can veto validation. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (the worktree), `RED_AFK_ISSUE` | `issue`, `workspace`, `scopes[]` | non-zero **aborts** the feedback gate; the attempt routes through the bounded `blocked:policy` (hook-aborted) recovery, branch/PR preserved |
 | `on_baseline_probe` | After the feedback gate **failed** and the "already failing on the base branch?" probe ran (ADR 0071). Fires only on a gate failure (the probe never runs on green). `inconclusive[]` lists checks the comparison could not attribute to the branch. A failure reproduced on a healthy baseline still blocks that branch. A baseline that OOMed, crashed, or could not be materialised makes the round environment-inconclusive instead: the baseline retries next round and the failure spends no Re-seed budget. The probe remains comparison-only (#2380): it files no repair issue and blocks no other landing. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE`, `RED_AFK_ISSUE` | `issue`, `workspace`, `ok` (always `false` here), `inconclusive[]` — read-only context | non-zero is **logged** and the loop continues |
-| `on_feedback_classify` | After a feedback failure is classified **INFRA vs SEMANTIC** (ADR 0071), before the recovery routing reads the verdict. **One-way mutable**: a hook may downgrade semantic to infra, but may not override environment evidence to semantic. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE`, `RED_AFK_ISSUE`, `RED_AFK_FEEDBACK_CLASS` (`infra` \| `semantic`) | `issue`, `workspace`, `class` (`infra` \| `semantic`) — return `{class:"infra"}` to downgrade semantic failures; `{class:"semantic"}` is ignored when the computed class is infra; any other value keeps the computed class | non-zero is **logged** and the computed class stands |
 | `post_feedback` | After the scope-derived feedback gate produced its verdict (#832), on both pass and fail, before the merge or the failure routing. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE`, `RED_AFK_ISSUE` | `issue`, `workspace`, `result` (`{status: pass\|fail}`) | non-zero is **logged** and the loop continues |
 | `pre_merge`     | Before the merge mechanism (`git merge --no-ff` into the pinned base). The diff between the merge base and the worker branch is on stdin so a guard hook can reject changes by size, file pattern, etc. The merge itself plus conflict resolution remain **mechanism** (ADR 0008) and sit between `pre_merge` and `post_merge` — never dispatched as a hook. | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (primary checkout), `RED_AFK_ISSUE`, `RED_AFK_MERGE_BASE` | `issue`, `workspace`, `diff` — `branch` is read-only context | non-zero **aborts the merge** for this issue; the failure surfaces as a worker-failure and routes through bounded `blocked:merge-conflict` recovery |
 | `post_merge`    | After a successful merge and push to origin/`{pinned}`. The merge commit already exists, so user notifiers can include the real merge commit URL. Does **not** fire when the merge was aborted (`pre_merge` rejection, conflict resolver exhausted, push rejected). | `RED_AFK_RUNNER`, `RED_AFK_WORKSPACE` (primary checkout), `RED_AFK_ISSUE`, `RED_AFK_MERGE_COMMIT` (full sha), `RED_AFK_MERGE_SHA` (short sha) | `issue`, `workspace`, `merge_commit` (`{sha, short}`) — extended by the built-in `validation` default with `result.{validation_status, validation_summary}` | non-zero is **logged** and the loop continues — the merge has already landed; a broken notifier or a flaky smoke test must never roll it back |
@@ -339,7 +346,6 @@ The stdin-JSON context each point receives, the **mutable slice** a hook may rew
 | `post_attempt` | `issue`, `workspace`, `result`, `attempt_n` | `issue`, `workspace`, `result`, `attempt_n` | non-zero **logged**, continues |
 | `pre_feedback` | `issue`, `workspace`, `scopes[]` | `issue`, `workspace`, `scopes[]` | non-zero **aborts** |
 | `on_baseline_probe` | `issue`, `workspace`, `ok`, `inconclusive[]` | _none (read-only)_ | non-zero **logged**, continues |
-| `on_feedback_classify` | `issue`, `workspace`, `class` | `class` | non-zero **logged**, continues |
 | `post_feedback` | `issue`, `workspace`, `result` | `issue`, `workspace`, `result` | non-zero **logged**, continues |
 | `pre_merge` | `issue`, `workspace`, `diff`, `branch` | `issue`, `workspace`, `diff` | non-zero **aborts** |
 | `post_merge` | `issue`, `workspace`, `merge_commit` | `issue`, `workspace`, `merge_commit` | non-zero **logged**, continues |

@@ -15,7 +15,6 @@
 // survives across rounds instead of being rebuilt from the last trigger.
 
 import { EMPTY_FAILURE_SIGNATURE } from "../failure-signature.js";
-import { type StaleBaseDriftNote, staleBaseDriftBlock } from "../stale-base-drift.js";
 
 /** The section tag naming WHAT ASKED for this round. The outstanding state
  * inside it is identical whichever one wraps it; the tag exists so a reader (and
@@ -52,7 +51,6 @@ export interface ReseedFinding {
 export interface ReseedGateState {
   readonly gate: "feedback" | "backpressure";
   readonly validation: string;
-  readonly drift?: StaleBaseDriftNote;
 }
 
 /** The review findings that are currently unfixed, with the diff they were
@@ -208,7 +206,6 @@ export function composeReseedHandoff(handoff: string, input: ComposeReseedHandof
     "",
     "<outstanding-state>",
   ];
-  if (gate?.drift) lines.push(...staleBaseDriftBlock(gate.drift), "");
   if (gate) {
     lines.push("<validation-tail>", tailLines(gate.validation, RESEED_TAIL_LINES), "</validation-tail>");
   }
@@ -229,20 +226,12 @@ export function composeReseedHandoff(handoff: string, input: ComposeReseedHandof
   return lines.join("\n");
 }
 
-/** The gate round's directives — either the historical bounded-retry line, or
- * the drift line that says plainly the budget was not touched (#2711). */
+/** The branch-owned gate round's bounded-retry directives. */
 export function gateReseedDirectives(opts: {
   gate: "feedback" | "backpressure";
   retry: number;
   cap: number;
-  drift?: StaleBaseDriftNote;
 }): string[] {
-  if (opts.drift) {
-    return [
-      `The ${opts.gate} machine gate failed after DONE, but the BASE moved under this run — this correction is FREE.`,
-      "Merge the base, regenerate anything the base's move invalidated, commit, then emit the required terminal sentinel.",
-    ];
-  }
   return [
     `The ${opts.gate} machine gate failed after DONE. This is bounded correction retry ${opts.retry}/${opts.cap}.`,
     "Fix the failure on the existing branch, run the relevant gate, commit only the needed changes, then emit the required terminal sentinel.",

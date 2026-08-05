@@ -128,8 +128,8 @@ describe("execTool", () => {
 
   // AFK runner improvement: a command whose OUTPUT exceeds the capture ceiling
   // gets a DISTINCT exit code + a stable `maxBuffer length exceeded` marker, so
-  // the feedback gate routes it through bounded validation-infra recovery
-  // instead of paging a human for a green-but-verbose suite.
+  // the Verdict records it as an environment cause instead of charging the
+  // branch for a green-but-verbose suite.
   it("reports a maxBuffer overflow as MAXBUFFER_EXIT_CODE with a stable marker, not a generic 127", async () => {
     // Emit more than the tiny maxBuffer can hold (the command itself exits 0).
     const r = await execTool("sh", ["-c", "yes x | head -c 5000; exit 0"], { maxBuffer: 256 });

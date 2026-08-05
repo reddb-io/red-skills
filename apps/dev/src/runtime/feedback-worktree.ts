@@ -628,9 +628,9 @@ export function makeFeedbackWorktree(
 
   /**
    * The blocked-validation message for a branch whose worktree never
-   * materialised. The literal prefix is frozen wire vocabulary — the INFRA
-   * classifier (`isInfraValidationFailure`) matches it as a substring — so the
-   * cause is appended after it rather than woven into it.
+   * materialised. The literal prefix is frozen wire vocabulary — the Verdict
+   * recognises it as an environment cause — so the cause is appended after it
+   * rather than woven into it.
    */
   function setupFailureMessage(branch: string, suffix = "validation blocked"): string {
     const reason = setupFailureReason.get(branch);

@@ -133,8 +133,8 @@ structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` local validation authority (`plugins.dev.afk.validation.{iteration,post_done,landing}`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
-`/afk` baseline environment recovery (free environment-inconclusive rounds and
-the one-way `on_feedback_classify` override) ->
+`/afk` Verdict policy (one capped environment ledger, repeated-signature park,
+and the declared sub-second branch-fault escape beside Validation moments) ->
 `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md` and
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` after-fork reversion/test-line intent finding

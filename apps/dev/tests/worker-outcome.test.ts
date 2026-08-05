@@ -43,11 +43,9 @@ const TABLE: Row[] = [
   // typed label, but NOT auto-recoverable (route straight to a human)
   { outcome: "blocked", label: "blocked:spec", recovery: null },
   { outcome: "feedback-failed", label: "blocked:validation", recovery: null },
-  // AFK runner improvement: feedback-failed-infra is the INFRA-classed feedback
-  // failure (worktree/submodule/pnpm/OOM) — it IS auto-recoverable via the
-  // `validation-infra` cap. The semantic `feedback-failed` above stays
-  // non-recoverable so a worker with a real broken test still pages a human.
-  { outcome: "feedback-failed-infra", label: "blocked:validation-infra", recovery: "validation-infra" },
+  // The Verdict already spent its one environment ledger before this terminal
+  // outcome, so no rival outer recovery budget is available here.
+  { outcome: "feedback-failed-infra", label: "blocked:validation-infra", recovery: null },
   { outcome: "stalled", label: "blocked:stalled", recovery: null },
   // #908: a budget abort carries the typed `blocked:budget` label and is NOT
   // auto-recoverable (escalate — a runaway is not a transient flake).
@@ -96,15 +94,12 @@ describe("worker-outcome — exhaustive outcome → (label, recovery) table", ()
   });
 
   it("recoveryReasonFor only ever returns the recoverable policy keys (or null)", () => {
-    // AFK runner improvement: `validation-infra` joins the recoverable set so
-    // an INFRA feedback failure auto-retries under its cap.
     const valid = new Set<RecoveryReason>([
       "quota",
       "runner-transient",
       "merge-conflict",
       "crashed",
       "policy",
-      "validation-infra",
     ]);
     for (const row of TABLE) {
       const r = recoveryReasonFor(row.outcome);

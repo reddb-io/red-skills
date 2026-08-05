@@ -42,12 +42,10 @@ export const CANONICAL_HOOK_NAMES = [
   // between a green attempt and the merge: `pre_feedback` brackets it (a pre_*
   // point — a non-zero exit VETOES the gate and routes the attempt to the
   // abort-after-claim terminal); `on_baseline_probe` fires when the "already
-  // failing on main?" probe ran (ADR 0071); `on_feedback_classify` is MUTABLE —
-  // a hook can override the INFRA-vs-SEMANTIC classification via stdout JSON;
-  // `post_feedback` reports the gate's verdict.
+  // failing on main?" probe ran (ADR 0071); `post_feedback` reports the gate's
+  // verdict. Classification itself is pure and has no hook (ADR 0136).
   "pre_feedback",
   "on_baseline_probe",
-  "on_feedback_classify",
   "post_feedback",
   "pre_merge",
   "post_merge",

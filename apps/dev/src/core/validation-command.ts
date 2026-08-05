@@ -35,8 +35,8 @@ import { statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 
 /**
- * Frozen wire vocabulary: `isInfraValidationFailure` matches these as
- * substrings, so a summary appends to them rather than weaving them in.
+ * Frozen wire vocabulary: the Verdict matches these as environment causes, so
+ * a summary appends to them rather than weaving them in.
  */
 export const VALIDATION_TARGET_MISSING_MARKER = "validation worktree directory is missing";
 /** @see VALIDATION_TARGET_MISSING_MARKER */

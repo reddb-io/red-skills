@@ -36,7 +36,6 @@ import {
   buildValidationRecord,
   formatValidationLine,
   runFeedback,
-  isInfraValidationFailure,
   type ClassifiableCheck,
   type Exec as PnpmExec,
   type PackageLayout,
@@ -151,7 +150,7 @@ import {
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
 import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
-import { MECHANICAL_BLOCKER_KINDS, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, parseFeedbackClass, refuseNoSandboxForUntrustedAuthor, resolveGoVerifyRetries, resolveReseedGateBudget, resolveStaleBaseDriftCap, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
+import { MECHANICAL_BLOCKER_KINDS, blockedLabelsIn, editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, refuseNoSandboxForUntrustedAuthor, resolveEnvironmentRoundCap, resolveGoVerifyRetries, resolveReseedGateBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import type { ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
 import {
   recordReseedDraw,
@@ -178,17 +177,14 @@ import {
 } from "./reseed-handoff.js";
 import { decideTierEscalation } from "./tier-escalation.js";
 import { failureSignature, parseValidationFailureSignature } from "../failure-signature.js";
+import type { BaseMovement } from "../stale-base-drift.js";
 import {
-  EMPTY_CORRECTION_LEDGER,
-  attributeGateFailure,
-  chargeCorrection,
-  correctionBudgetExhausted,
-  describeCorrectionLedger,
-  type BaseMovement,
-  type CorrectionLedger,
-  type GateFailureAttribution,
-  type StaleBaseDriftNote,
-} from "../stale-base-drift.js";
+  decideVerdict,
+  describeEnvironmentLedger,
+  emptyEnvironmentLedger,
+  type EnvironmentLedger,
+  type Verdict,
+} from "../verdict.js";
 import { abortAfterClaim, claimLost, emitBackpressureReview, emitDone, handoffForManualLanding, handoffForReview, hookContext, isRunnerRecoverableOutcome, landLockBackoff, mergeFailed, ciBlocked, prLandingBlocked, trunkDivergedBlocked, onErrorContext, parseHookEnv, postAttemptContext, recordOutcomeBestEffort, releaseOwnedClaim, runCascadeRebase, runCloseCascade, runnerRecoverable, terminalFailure, writeValidationSidecar, type StageCommon } from "./terminal.js";
 import { parseRecords } from "@reddb-io/toon";
 
@@ -679,7 +675,6 @@ export async function processIssue(
   let landingFeedbackScopes: string[] = ["."];
   let noSourceDiffWarning: string | undefined;
   let currentHandoff = handoff;
-  let correctionLedger: CorrectionLedger = EMPTY_CORRECTION_LEDGER;
   const validationBaseRef = usesDeclaredValidationMoments
     ? (baseResolution.sha || baseRef)
     : baseRef;
@@ -728,12 +723,6 @@ export async function processIssue(
     );
     return result;
   };
-  // Two consecutive identical suspect-infra readings on the gate-only rerun
-  // saw the same branch and the same environment. That is deterministic setup
-  // failure, not a flake worth another free cycle or outer recovery attempt.
-  let previousSuspectInfraSignature: string | undefined;
-  let deterministicInfraSignature: string | undefined;
-
   const evaluateBranchReversion = (
     stage: "base-merge" | "landing",
     geometry: BranchReversionGeometry,
@@ -780,7 +769,13 @@ export async function processIssue(
         }
       : deps.recordAgentEvent;
   const goVerifyRetryCap = resolveGoVerifyRetries(deps);
-  const staleBaseDriftCap = resolveStaleBaseDriftCap(deps);
+  const environmentRoundCap = resolveEnvironmentRoundCap(deps);
+  let environmentLedger: EnvironmentLedger = carriedValidationSignature && /\bfeedback-failed-infra\b/.test(failureReason ?? "")
+    ? {
+        cap: environmentRoundCap,
+        rounds: [{ cause: "prior-environment", signature: carriedValidationSignature }],
+      }
+    : emptyEnvironmentLedger(environmentRoundCap);
   // Issue #2711 — the gate runs on the branch MERGED WITH the live base, so a
   // base that moved under the attempt can redden a branch that is itself green.
   // Ask git what the base did before charging the failure to anyone. A missing
@@ -795,22 +790,6 @@ export async function processIssue(
     } catch {
       return undefined;
     }
-  };
-  /** Attribute one post-DONE gate failure and, when it is stale-base drift,
-   * build the handoff note that tells the agent to merge the base. */
-  const attributeGateFailureNow = async (driftEligible: boolean, suspectInfra: boolean): Promise<{
-    attribution: GateFailureAttribution;
-    drift?: StaleBaseDriftNote;
-  }> => {
-    const movement = driftEligible && !suspectInfra ? await observeBaseMovement() : undefined;
-    const attribution = attributeGateFailure({
-      movement,
-      suspectInfra,
-      refundsUsed: correctionLedger.refunded,
-      maxRefunds: staleBaseDriftCap,
-    });
-    if (attribution.cause !== "stale-base-drift" || !movement) return { attribution };
-    return { attribution, drift: { base, movement, attribution } };
   };
   const afkGateCap = resolveReseedGateBudget(deps);
   const isGoLane = input.laneLabel === LABEL_GO_LANE;
@@ -881,13 +860,6 @@ export async function processIssue(
     /** The raw `red.afk.validation.v1` sidecar lines behind `validation`, for
      * the failure signature that yields the history line's repeat count. */
     sidecar?: readonly string[];
-    /** False for the empty-diff rejection: a branch that carries no diff at all
-     * is unambiguously the branch's problem, and no amount of base movement can
-     * explain it away. */
-    driftEligible?: boolean;
-    /** True when the gate record already says the command failed too quickly to
-     * have started, so the cause belongs to the shared free-cycle pool. */
-    suspectInfra?: boolean;
     /** Tier escalation only — which tier failed and which one now runs. */
     tiers?: { from: string; to: string };
     /** Review only — the blocking findings and the diff they were raised
@@ -956,64 +928,13 @@ export async function processIssue(
    * bumps the round ordinal, appends to the handoff, fires `pre_attempt`, and
    * emits one worker event naming the trigger.
    *
-   * A drift-attributed failure exits before the Re-seed mechanics: it records a
-   * free ledger cycle and requests gate-only re-validation, because no
-   * implementer work changed (#3231). */
+   * Environment and base failures never enter this path: the Verdict grants
+   * their free gate-only round or parks them before branch Re-seed accounting. */
   const requestReseed = async (req: ReseedRequest): Promise<ReseedOutcome> => {
     const cause = reseedTriggerCause(req.trigger);
-    const { attribution, drift } =
-      cause === "gate"
-        ? await attributeGateFailureNow(req.driftEligible ?? false, req.suspectInfra ?? false)
-        : { attribution: undefined, drift: undefined };
     const signature = req.signature ?? roundSignature(req.sidecar);
-    if (attribution?.cause === "suspect-infra") {
-      if (previousSuspectInfraSignature === signature) {
-        deterministicInfraSignature = signature;
-        const gate = req.gate ?? "feedback";
-        const note =
-          `🤖 ${reseedLane}: ${gate} machine gate repeated deterministic suspect-infra ` +
-          `signature=${signature} on the unchanged branch/environment; parking immediately ` +
-          `without another free correction or recovery retry.`;
-        deps.appendIterLog(note);
-        deps.recordWorkerEvent?.("worker.gate_revalidation_refused", {
-          trigger: req.trigger,
-          cause: "deterministic-suspect-infra",
-          signature,
-          lane: reseedBudget.lane,
-        });
-        return "refused";
-      }
-      previousSuspectInfraSignature = signature;
-    } else {
-      previousSuspectInfraSignature = undefined;
-    }
-    if (attribution && attribution.cause !== "branch-fault") {
-      correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
-      gateRevalidationSkip = true;
-      const gate = req.gate ?? "feedback";
-      const releaseBumps = attribution.releaseBumps.length > 0
-        ? ` Release bump: ${attribution.releaseBumps.join("; ")}.`
-        : "";
-      const freeCause = attribution.cause === "stale-base-drift" ? "stale-base" : attribution.cause;
-      const note =
-        `🤖 ${reseedLane}: ${gate} machine gate failed after DONE, but ${attribution.reason}; ` +
-        `granting a free ${freeCause} correction (${correctionLedger.refunded}/${staleBaseDriftCap}), ` +
-        `re-running validation without re-seeding; budget untouched at ` +
-        `${reseedSpend.gate ?? 0}/${gateSubCap}.${releaseBumps}`;
-      deps.appendIterLog(note);
-      deps.recordWorkerEvent?.("worker.gate_revalidation_requested", {
-        trigger: req.trigger,
-        cause: attribution.cause,
-        lane: reseedBudget.lane,
-        free: true,
-        cycle: correctionLedger.refunded,
-        cap: staleBaseDriftCap,
-      });
-      return "granted";
-    }
     const draw = reseedDraw(reseedBudget, cause, reseedSpend);
     if (!draw.allowed) return "refused";
-    if (attribution) correctionLedger = chargeCorrection(correctionLedger, attribution.cause);
     reseedSpend = recordReseedDraw(reseedSpend, cause);
     roundOrdinal += 1;
     reseedRound += 1;
@@ -1025,7 +946,7 @@ export async function processIssue(
     reseedOutstanding = noteReseedSignature(
       req.review
         ? withReviewOutstanding(reseedOutstanding, req.review)
-        : withGateOutstanding(reseedOutstanding, { gate, validation: req.validation ?? "", drift }),
+        : withGateOutstanding(reseedOutstanding, { gate, validation: req.validation ?? "" }),
       signature,
     );
     const gateSpend = reseedSpend.gate ?? 0;
@@ -1089,72 +1010,60 @@ export async function processIssue(
     gate: "feedback" | "backpressure",
     validation: string,
     sidecar?: readonly string[],
-    suspectInfra: boolean = false,
   ): Promise<boolean> =>
     (await requestReseed({
       trigger,
       gate,
       validation,
       sidecar,
-      driftEligible: trigger === "gate-stage" && !usesDeclaredValidationMoments,
-      suspectInfra,
     })) ===
     "granted";
-  /** The park-note suffix naming the exhausted correction budget. It reports the
-   * CHARGED cycles against the lane's cap and, separately, the stale-base cycles
-   * that were absorbed for free — so a reader can tell a branch that really kept
-   * failing from a run that spent itself absorbing base drift (#2711). */
+  /** The branch and environment economies are narrated side by side but never
+   * charged into one another. */
   const correctionBudgetNote = (): string => {
-    if (correctionLedger.cycles.length === 0) return "";
-    if (!correctionBudgetExhausted(correctionLedger, gateSubCap)) return "";
-    return ` Post-DONE gate-correction budget exhausted (${describeCorrectionLedger(correctionLedger, gateSubCap)}).`;
+    if ((reseedSpend.gate ?? 0) < gateSubCap) return "";
+    return ` Post-DONE branch repair budget exhausted (${reseedSpend.gate ?? 0}/${gateSubCap}). ` +
+      `${describeEnvironmentLedger(environmentLedger)}.`;
   };
-  /**
-   * Classify a FAILED gate stage as INFRA or SEMANTIC, for EITHER stage (#2964).
-   *
-   * The guard used to live inline in the feedback branch alone, so a backpressure
-   * command that never executed — the feedback worktree failed to materialise and
-   * the executor short-circuited to exit 1 with `durationMs: 0` — was charged as
-   * a semantic failure and re-instructed three times against a gate that had run
-   * nothing. Both stages emit the same `red.afk.validation.v1` records, so both
-   * get the same classifier and the same `on_feedback_classify` hook. Hooks may
-   * downgrade semantic failures to infra, but environment evidence is
-   * authoritative: a hook cannot turn an unrunnable round into branch blame.
-   *
-   * A hook override is HONOURED and NAMED: the returned `note` states what the
-   * classifier said and what the hook made it, so a reclassification is visible
-   * in the record instead of silently rewriting the routing.
-   */
-  const classifyGateFailure = async (
-    stage: "feedback" | "backpressure",
+  /** Ask the pure Verdict once, after gathering the one asynchronous fact it
+   * consumes (whether the base moved). */
+  const decideGateVerdict = async (
     checks: readonly ClassifiableCheck[],
-  ): Promise<{ isInfra: boolean; note: string }> => {
-    const classified = isInfraValidationFailure(checks);
-    const classResult = await fireHookCtx(
-      "on_feedback_classify",
-      hookContext({
-        issue,
-        title: input.title,
-        workspace: branch,
-        class: classified ? "infra" : "semantic",
-      }),
-    );
-    const override = parseFeedbackClass(classResult.context);
-    if (override === null) return { isInfra: classified, note: "" };
-    if (classified && override === "semantic") {
-      return {
-        isInfra: true,
-        note:
-          `🤖 ${stage} environment failure remained \`infra\`; the ` +
-          `\`on_feedback_classify\` hook requested \`semantic\`, but environment verdicts cannot be overridden.`,
-      };
-    }
-    const isInfra = override === "infra";
+    signature: string,
+    branchBudgetAvailable: boolean,
+    driftEligible: boolean,
+  ): Promise<Verdict> => decideVerdict({
+    checks,
+    signature,
+    history: { environment: environmentLedger, branchBudgetAvailable },
+    environment: {
+      movement: driftEligible ? await observeBaseMovement() : undefined,
+      subsecondFailuresAreBranchFault: deps.validationMoments?.subsecondFailuresAreBranchFault,
+    },
+  });
+  /** Apply the one free-round budget effect. A true result means the caller
+   * should loop straight back through a freshly materialised gate. */
+  const grantEnvironmentRound = (
+    stage: "feedback" | "backpressure",
+    verdict: Verdict,
+  ): boolean => {
+    if (verdict.budgetEffect.kind !== "consume-environment") return false;
+    environmentLedger = verdict.budgetEffect.ledger;
+    gateRevalidationSkip = true;
+    const cause = verdict.fault.kind === "branch" ? "unknown" : verdict.fault.cause;
     const note =
-      `🤖 classification override: the \`on_feedback_classify\` hook set the ${stage} ` +
-      `failure to \`${override}\` (the classifier read it as ` +
-      `\`${classified ? "infra" : "semantic"}\`).`;
-    return { isInfra, note };
+      `🤖 ${reseedLane}: ${stage} ${verdict.fault.kind} fault (${cause}); ${verdict.reason}; ` +
+      `re-running validation without an agent or branch charge. ${describeEnvironmentLedger(environmentLedger)}.`;
+    deps.appendIterLog(note);
+    deps.recordWorkerEvent?.("worker.gate_revalidation_requested", {
+      trigger: "gate-stage",
+      cause,
+      lane: reseedBudget.lane,
+      free: true,
+      cycle: environmentLedger.rounds.length,
+      cap: environmentLedger.cap,
+    });
+    return true;
   };
   /** What the review stage decided, in the fold's own vocabulary plus what the
    * lifecycle must do next. */
@@ -1300,7 +1209,7 @@ export async function processIssue(
         gateRevalidationSkip = false;
         skippedAgentForGateOnly = true;
         deps.appendIterLog(
-          `🤖 ${reseedLane} #${issue}: stale-base fast path — re-validating \`${fastBranch}\`, agent skipped.`,
+          `🤖 ${reseedLane} #${issue}: environment fast path — re-validating \`${fastBranch}\`, agent skipped.`,
         );
       }
       run = { outcome: "done", branch: fastBranch, commits: [], stdout: "" };
@@ -1680,13 +1589,10 @@ export async function processIssue(
     );
     if (gateVerdict(gateStages).failedStage === "feedback") {
       await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
-      const classification = await classifyGateFailure("feedback", feedback.checks);
-      const isInfra = classification.isInfra;
       const scopeHeader = feedback.validationScope
         ? `${formatValidationScope(feedback.validationScope)}\n`
         : "";
-      const overrideFooter = classification.note === "" ? "" : `\n${classification.note}`;
-      const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}${overrideFooter}`;
+      const validationText = `${scopeHeader}${feedback.sidecar.join("\n")}`;
       // A REPEATED failure buys a HIGHER tier rather than another round at the
       // tier that just failed (ADR 0129 decision 6, #2729). The trigger is the
       // repeat, not the failure: a round that failed a different way is progress
@@ -1694,15 +1600,38 @@ export async function processIssue(
       // sub-cap, so gate correction keeps its own share — the mute this replaced
       // cost a Ticket its whole gate budget for one tier bump.
       const roundKey = roundSignature(feedback.sidecar);
-      const escalationDecision = isInfra
-        ? ({ escalate: false, refusal: "no-repeat" } as const)
-        : decideTierEscalation({
-            tier: activeTaskClass,
-            previousSignature: reseedOutstanding.signature,
-            signature: roundKey,
-            budget: reseedBudget,
-            spend: reseedSpend,
-          });
+      const escalationDecision = decideTierEscalation({
+        tier: activeTaskClass,
+        previousSignature: reseedOutstanding.signature,
+        signature: roundKey,
+        budget: reseedBudget,
+        spend: reseedSpend,
+      });
+      const verdict = await decideGateVerdict(
+        feedback.checks,
+        roundKey,
+        escalationDecision.escalate || reseedDraw(reseedBudget, "gate", reseedSpend).allowed,
+        !usesDeclaredValidationMoments,
+      );
+      if (grantEnvironmentRound("feedback", verdict)) continue;
+      if (verdict.fault.kind !== "branch") {
+        const cause = verdict.fault.cause;
+        deps.recordWorkerEvent?.("worker.gate_revalidation_refused", {
+          trigger: "gate-stage",
+          cause,
+          signature: roundKey,
+          lane: reseedBudget.lane,
+          reason: verdict.parkReason,
+        });
+        const notes =
+          `Feedback validation parked as infra (${cause}): ${verdict.reason}. ` +
+          `${describeEnvironmentLedger(environmentLedger)}. The branch repair budget was not charged.`;
+        deps.appendIterLog(`🤖 ${reseedLane}: ${notes}`);
+        return await terminalFailure(common, "feedback-failed-infra", "feedback", {
+          notes,
+          validation: validationText,
+        }, { validationSummary: feedback.sidecar.join("\n") });
+      }
       if (escalationDecision.escalate) {
         const escalation = await requestReseed({
           trigger: "tier-escalation",
@@ -1719,42 +1648,17 @@ export async function processIssue(
           continue;
         }
       }
-      const repeatedOuterInfra = isInfra && carriedValidationSignature === roundKey;
-      const outcome: ProcessOutcome = isInfra && !repeatedOuterInfra
-        ? "feedback-failed-infra"
-        : "feedback-failed";
-      let notes: string;
-      if (repeatedOuterInfra) {
-        notes =
-          `Feedback validation repeated deterministic INFRA signature ${roundKey} on the ` +
-          `unchanged gate environment — parked immediately without spending another recovery retry.`;
-        deps.appendIterLog(`🤖 /afk: deterministic validation infra signature=${roundKey} repeated across Workers; parking immediately.`);
-      } else if (isInfra) {
-        notes =
-          "Feedback validation could not judge the work because the gate environment failed " +
-          "(worktree/submodule/dependency install/OOM) — the environment recovery policy will retry up to its cap.";
-      } else if (salvaged) {
-        notes = "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged.";
-      } else {
-        notes = "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
-      }
-      if (classification.note !== "") notes += ` ${classification.note}`;
-      const suspectInfra = feedback.checks.some(
-        (check) => check.status === "failed" && check.record.suspectInfra === true,
-      );
-      if (!isInfra && (await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar, suspectInfra))) {
+      if (!verdict.parkNow && verdict.budgetEffect.kind === "charge-branch" && (
+        await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar)
+      )) {
         continue;
       }
-      if (deterministicInfraSignature) {
-        notes +=
-          ` Deterministic suspect-infra signature ${deterministicInfraSignature} repeated ` +
-          `on the unchanged gate environment; parked immediately without recovery retry.`;
-      }
-      if (!isInfra) {
-        notes += correctionBudgetNote();
-        await parkReseedTrail(validationText);
-      }
-      return await terminalFailure(common, outcome, "feedback", {
+      let notes = salvaged
+        ? "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged."
+        : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
+      notes += ` ${verdict.reason}.${correctionBudgetNote()}`;
+      await parkReseedTrail(validationText);
+      return await terminalFailure(common, "feedback-failed", "feedback", {
         notes,
         validation: validationText,
       }, { validationSummary: feedback.sidecar.join("\n") });
@@ -1774,46 +1678,44 @@ export async function processIssue(
       gateStages.push({ stage: "backpressure", ok: backpressure.ok });
       if (gateVerdict(gateStages).failedStage === "backpressure") {
         await writeValidationSidecar(deps, input.attemptDir, [...feedback.sidecar, ...backpressure.sidecar]);
-        // The backpressure stage is classified exactly like the feedback stage
-        // (#2964). It has to be: `bash scripts/gate.sh` failing at `durationMs:
-        // 0` because the feedback worktree never materialised is an environment
-        // failure, and charging it as semantic re-instructed six green branches
-        // three times each against a gate that never executed.
-        const bpClass = await classifyGateFailure("backpressure", backpressure.checks);
-        const bpInfra = bpClass.isInfra;
         const bpSignature = failureSignature({ sidecar: backpressure.sidecar });
-        const repeatedOuterInfra = bpInfra && carriedValidationSignature === bpSignature;
-        let bpNotes = repeatedOuterInfra
-          ? `Backpressure validation repeated deterministic INFRA signature ${bpSignature} on the unchanged gate environment — parked immediately without spending another recovery retry.`
-          : bpInfra
-          ? "Backpressure validation could not judge the work because the gate environment failed " +
-            "(worktree/submodule/dependency install/OOM) — the environment recovery policy will retry up to its cap."
-          : "Backpressure validation failed after the feedback gate passed. The worker branch was not merged.";
-        if (repeatedOuterInfra) {
-          deps.appendIterLog(`🤖 /afk: deterministic backpressure infra signature=${bpSignature} repeated across Workers; parking immediately.`);
-        }
-        if (bpClass.note !== "") bpNotes += ` ${bpClass.note}`;
-        const overrideFooter = bpClass.note === "" ? "" : `\n${bpClass.note}`;
-        const validationText = `${backpressure.sidecar.join("\n")}${overrideFooter}`;
-        const suspectInfra = backpressure.checks.some(
-          (check) => check.status === "failed" && check.record.suspectInfra === true,
+        const validationText = backpressure.sidecar.join("\n");
+        const verdict = await decideGateVerdict(
+          backpressure.checks,
+          bpSignature,
+          reseedDraw(reseedBudget, "gate", reseedSpend).allowed,
+          !usesDeclaredValidationMoments,
         );
-        if (!bpInfra && (
-          await reseedAfterGate("gate-stage", "backpressure", validationText, backpressure.sidecar, suspectInfra)
+        if (grantEnvironmentRound("backpressure", verdict)) continue;
+        if (verdict.fault.kind !== "branch") {
+          const cause = verdict.fault.cause;
+          const notes =
+            `Backpressure validation parked as infra (${cause}): ${verdict.reason}. ` +
+            `${describeEnvironmentLedger(environmentLedger)}. The branch repair budget was not charged.`;
+          deps.appendIterLog(`🤖 ${reseedLane}: ${notes}`);
+          deps.recordWorkerEvent?.("worker.gate_revalidation_refused", {
+            trigger: "gate-stage",
+            cause,
+            signature: bpSignature,
+            lane: reseedBudget.lane,
+            reason: verdict.parkReason,
+          });
+          return await terminalFailure(common, "feedback-failed-infra", "feedback", {
+            notes,
+            validation: validationText,
+          }, { validationSummary: validationText });
+        }
+        if (!verdict.parkNow && verdict.budgetEffect.kind === "charge-branch" && (
+          await reseedAfterGate("gate-stage", "backpressure", validationText, backpressure.sidecar)
         )) {
           continue;
         }
-        if (deterministicInfraSignature) {
-          bpNotes +=
-            ` Deterministic suspect-infra signature ${deterministicInfraSignature} repeated ` +
-            `on the unchanged gate environment; parked immediately without recovery retry.`;
-        }
-        if (!bpInfra) {
-          bpNotes += correctionBudgetNote();
-          await parkReseedTrail(validationText);
-        }
-        return await terminalFailure(common, bpInfra && !repeatedOuterInfra ? "feedback-failed-infra" : "feedback-failed", "feedback", {
-          notes: bpNotes,
+        const notes =
+          `Backpressure validation failed after the feedback gate passed. The worker branch was not merged. ` +
+          `${verdict.reason}.${correctionBudgetNote()}`;
+        await parkReseedTrail(validationText);
+        return await terminalFailure(common, "feedback-failed", "feedback", {
+          notes,
           validation: validationText,
         }, { validationSummary: validationText });
       }

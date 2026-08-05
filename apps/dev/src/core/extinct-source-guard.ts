@@ -70,6 +70,14 @@ export interface ExtinctSource {
  */
 export const EXTINCT_SOURCES: readonly ExtinctSource[] = [
   {
+    id: "feedback-classification-hook",
+    noun: "alias",
+    what: "the mutable feedback classification hook and its environment channel",
+    replacement:
+      "the pure Verdict plus `plugins.dev.afk.validation.subsecond_failures_are_branch_fault` for the one operator escape",
+    pattern: /\bon_feedback_classify\b|["']RED_AFK_FEEDBACK_CLASS["']/,
+  },
+  {
     id: "deprecated-status-alias",
     noun: "alias",
     what: "an expired status reader published as a separate MCP verb",

@@ -54,7 +54,6 @@ export const HOOK_EXIT_POLICY: Record<HookName, HookExitPolicy> = {
   // wedge the gate, so they log-and-continue.
   pre_feedback: "abort",
   on_baseline_probe: "continue",
-  on_feedback_classify: "continue",
   post_feedback: "continue",
   pre_merge: "abort",
   post_merge: "continue",
@@ -213,7 +212,6 @@ export function deriveHookEnv(base: Record<string, string>, contextJson: string)
   set("RED_AFK_RECOVERY_DECISION", ctx.decision); // on_recovery_decision (mutable)
   set("RED_AFK_RECOVERY_REASON", ctx.reason); // on_recovery_decision
   set("RED_AFK_BLOCKED_LABEL", ctx.blocked_label); // on_blocked
-  set("RED_AFK_FEEDBACK_CLASS", ctx.class); // on_feedback_classify (mutable)
   set("RED_AFK_RECONCILE_OUTCOME", ctx.outcome); // on_reconcile (landed/parked/skipped)
 
   // Worker vitals (ADR 0065/#832): the on_heartbeat context carries the full

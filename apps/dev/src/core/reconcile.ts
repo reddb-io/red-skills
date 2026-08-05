@@ -41,7 +41,6 @@ import type {
   buildValidationRecord,
   formatValidationLine,
   runFeedback,
-  isInfraFeedbackFailure,
   Exec as PnpmExec,
   FeedbackCommandExec,
   FeedbackCheck,
@@ -63,6 +62,14 @@ import type { AttemptStatus } from "./envelope.js";
 import type { HistoryClock } from "./history.js";
 import type { Runner } from "../types/runner.js";
 import type { TriageLabelConfig } from "./triage-labels.js";
+import { failureSignature } from "./failure-signature.js";
+import {
+  decideVerdict,
+  describeEnvironmentLedger,
+  emptyEnvironmentLedger,
+  ENVIRONMENT_ROUNDS_ENV,
+  resolveEnvironmentRounds,
+} from "./verdict.js";
 
 /**
  * The blocked-failure classes reconcile is allowed to act on: MECHANICAL ones
@@ -142,8 +149,8 @@ export interface ReconcileLandingPort {
   doLanding: typeof doLanding;
 }
 
-/** The feedback-gate port: `runFeedback` plus the four helpers reconcile reads
- * around it (scope resolution, the infra-root classifier, and the two
+/** The feedback-gate port: `runFeedback` plus the helpers reconcile reads
+ * around it (scope resolution and the two
  * validation-record formatters used by the post-merge sidecar line).
  * Scope resolution is `gateScopes`, NOT the raw nearest-package `relevantScopes`:
  * mapping a changed file to its nearest package sends the mandatory changeset to
@@ -151,7 +158,6 @@ export interface ReconcileLandingPort {
 export interface ReconcileFeedbackPort {
   runFeedback: typeof runFeedback;
   gateScopes: typeof gateScopes;
-  isInfraFeedbackFailure: typeof isInfraFeedbackFailure;
   buildValidationRecord: typeof buildValidationRecord;
   formatValidationLine: typeof formatValidationLine;
 }
@@ -294,14 +300,7 @@ export interface ReconcileDeps {
   /** History ledger path + clock for the terminal envelope (optional). */
   historyPath?: string;
   historyClock?: HistoryClock;
-  /**
-   * AFK runner improvement: env slice for the recovery policy lookup, threaded
-   * from the CLI's `process.env` so the bounded-retry cap on infra failures
-   * (default 2) is overridable per-deployment via RED_AFK_RETRY_VALIDATION_INFRA.
-   * When absent the caps resolve to their defaults exactly like process-issue's
-   * `recoveryEnv` does. Reconciliation infra-retry would otherwise have no
-   * signal that an attempt is over the cap.
-   */
+  /** Environment view for disposition and the Verdict-owned environment cap. */
   recoveryEnv?: RecoveryEnv;
 }
 
@@ -418,11 +417,8 @@ export type ReconcileResult =
   | { outcome: "landed"; mergeSha: string; locked: boolean; posted: boolean }
   | {
       outcome: "parked";
-      // AFK runner improvement: `feedback-failed-infra` is a new parked reason
-      // for an INFRA-rooted feedback failure (worktree/submodule/pnpm/OOM)
-      // that the `validation-infra` recovery policy re-queues (or escalates
-      // when the cap is exhausted). The original `feedback-failed` keeps its
-      // semantic meaning (the worker's code really has a problem, page human).
+      // `feedback-failed-infra` names an environment-attributed failure after
+      // Verdict's one ledger parks it; `feedback-failed` remains branch fault.
       // The landing refusals each park under their own reason (#2864), so
       // `merge-conflict` names a branch that really conflicts and nothing else.
       reason: ReconcileParkReason;
@@ -544,28 +540,47 @@ export async function reconcile(deps: ReconcileDeps, input: ReconcileInput): Pro
     // comparison probe can classify a branch failure that also reproduces on
     // the base as `inconclusive` rather than the branch's fault (#2380).
     // Mirrors the DONE path.
-    feedback = await deps.feedback.runFeedback(deps.pnpm, {
-      worktree: branch,
-      scopes: feedbackScopes,
-      layout: deps.layout,
-      now: deps.nowEpoch,
-      baselineWorktree: input.base,
-      ...(deps.feedbackCommands === undefined
-        ? {}
-        : { commands: deps.feedbackCommands, commandExec: deps.feedbackCommandExec }),
-    });
-    await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
+    let environmentLedger = emptyEnvironmentLedger(resolveEnvironmentRounds(
+      deps.recoveryEnv?.[ENVIRONMENT_ROUNDS_ENV],
+    ));
+    while (true) {
+      feedback = await deps.feedback.runFeedback(deps.pnpm, {
+        worktree: branch,
+        scopes: feedbackScopes,
+        layout: deps.layout,
+        now: deps.nowEpoch,
+        baselineWorktree: input.base,
+        ...(deps.feedbackCommands === undefined
+          ? {}
+          : { commands: deps.feedbackCommands, commandExec: deps.feedbackCommandExec }),
+      });
+      await writeValidationSidecar(deps, input.attemptDir, feedback.sidecar);
+      if (feedback.ok) break;
 
-    // ---- 4b. RED → ready-for-human with the real failing checks ----
-    // AFK runner improvement: an INFRA-rooted failure (worktree / submodule /
-    // pnpm install / OOM) is NOT a parked branch — it is a flaky environment
-    // and the recovery policy should retry it (bounded, default cap 2). Skip
-    // the park-to-human path; let `routeRecovery` re-queue or escalate the
-    // same way the DONE path does, so the green branch isn't stranded.
-    if (!feedback.ok && deps.feedback.isInfraFeedbackFailure(feedback)) {
-      return await parkInfraRetry(deps, input, feedback, startedEpoch);
-    }
-    if (!feedback.ok) {
+      const signature = failureSignature({ sidecar: feedback.sidecar });
+      const verdict = decideVerdict({
+        checks: feedback.checks,
+        signature,
+        history: { environment: environmentLedger, branchBudgetAvailable: false },
+        environment: {},
+      });
+      if (verdict.budgetEffect.kind === "consume-environment") {
+        environmentLedger = verdict.budgetEffect.ledger;
+        deps.appendIterLog(
+          `🤖 /afk reconcile #${issue}: ${verdict.reason}; free re-validation without a branch charge. ` +
+          `${describeEnvironmentLedger(environmentLedger)}.`,
+        );
+        continue;
+      }
+      if (verdict.fault.kind !== "branch") {
+        return await parkInfraVerdict(
+          deps,
+          input,
+          feedback,
+          startedEpoch,
+          `${verdict.reason}. ${describeEnvironmentLedger(environmentLedger)}.`,
+        );
+      }
       return await park(deps, input, feedback, startedEpoch);
     }
   }
@@ -784,65 +799,31 @@ async function park(
   return { outcome: "parked", reason: "feedback-failed", posted };
 }
 
-/**
- * AFK runner improvement: a feedback-failed with an INFRA root cause
- * (worktree / submodule / pnpm install / OOM / ENOENT — the gate's environment
- * is broken, NOT the worker code) is a FLAKY environment, not a parked branch.
- * Apply the same bounded-retry policy the DONE path uses: retry while the
- * `validation-infra` cap (default 2) has budget left, escalate to a human once
- * the budget is exhausted. The branch is preserved on the remote (deleteRemote
- * is NOT called) so the next attempt can re-validate it.
- */
-async function parkInfraRetry(
+/** Park only after the Verdict's one environment ledger says to park now. */
+async function parkInfraVerdict(
   deps: ReconcileDeps,
   input: ReconcileInput,
   feedback: RunFeedbackResult,
   startedEpoch: number,
+  verdictReason: string,
 ): Promise<ReconcileResult> {
   const { issue, labels } = input;
-  // The composer owns the retry-vs-escalate decision, the cap, the typed label,
-  // and the envelope status (core/disposition, validation-infra is bounded-
-  // recoverable). reconcile keeps its context-specific label removals + the
-  // failing-checks comments.
   const disp = dispose("feedback-failed-infra", input.attempt, deps.recoveryEnv ?? {});
   const typed = disp.typedLabel!;
-  const cap = disp.cap ?? 2;
   const failed = feedback.checks.filter((c) => c.status === "failed");
   const failedSummary = formatFailingChecks(failed);
-
-  if (disp.decision === "retry") {
-    // Re-queue: the planner drops `running` (already shed by the claim step)
-    // + every stale `blocked:*` reason (including the now-misleading
-    // `blocked:validation-infra` from a prior attempt) and adds
-    // `ready-for-agent` so the issue resurfaces. The branch is left on the
-    // remote (no deleteRemote) — the next attempt can re-validate it.
-    await applyReconcileTransition(deps, issue, labels, { kind: "queue" });
-    await deps.gh.comment(
-      issue,
-      `🤖 /afk reconcile #${issue}: feedback gate failed for an INFRA reason (worktree/submodule/pnpm install/OOM) on \`${input.branch}\` — auto-retrying (attempt ${input.attempt}/${cap}):\n${failedSummary}`,
-    );
-    const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
-      validation: feedback.sidecar.join("\n"),
-    });
-    deps.appendIterLog(
-      `🤖 /afk reconcile #${issue}: \`${input.branch}\` failed re-validation for INFRA reason (attempt ${input.attempt}/${cap}) — re-queued to ready-for-agent.`,
-    );
-    return { outcome: "parked", reason: "feedback-failed-infra", posted };
-  }
-
-  // Cap exhausted → escalate to ready-for-human (page a maintainer). The
-  // infra flake is sticky; the issue needs a human to look at the gate setup.
   await deps.gh.ensureLabel(typed);
   await applyReconcileTransition(deps, issue, labels, parkOrHuman(disp.typedLabel));
   await deps.gh.comment(
     issue,
-    `🤖 /afk reconcile #${issue}: feedback gate INFRA failure retry budget exhausted (attempt ${input.attempt}/${cap}) on \`${input.branch}\` — escalating to ready-for-human:\n${failedSummary}`,
+    `🤖 /afk reconcile #${issue}: feedback gate parked as infra on \`${input.branch}\` — ${verdictReason} ` +
+      `The branch budget was not charged:\n${failedSummary}`,
   );
   const posted = await emitFailure(deps, input, disp.envelopeStatus, startedEpoch, {
     validation: feedback.sidecar.join("\n"),
   });
   deps.appendIterLog(
-    `🤖 /afk reconcile #${issue}: \`${input.branch}\` failed re-validation for INFRA reason and the retry budget is exhausted (attempt ${input.attempt}/${cap}) — escalating.`,
+    `🤖 /afk reconcile #${issue}: \`${input.branch}\` parked as infra by Verdict; branch budget untouched.`,
   );
   return { outcome: "parked", reason: "feedback-failed-infra", posted };
 }

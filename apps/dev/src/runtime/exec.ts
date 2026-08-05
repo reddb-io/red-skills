@@ -208,11 +208,10 @@ const DEFAULT_MAX_BUFFER = 64 * 1024 * 1024;
  * Exit code reported when a command's output exceeds the maxBuffer ceiling.
  * Distinct from a real command failure (the command may have SUCCEEDED — the
  * tests all passed — and only its OUTPUT was too large). The feedback gate's
- * INFRA classifier (`isInfraFeedbackFailure`) matches the literal
- * `maxBuffer length exceeded` substring this carries on stderr, so a buffer
- * overflow routes through the bounded `validation-infra` recovery (a config
- * problem the operator fixes), NOT a semantic `blocked:validation` that pages
- * a human for a green suite. 126 mirrors the shell's "command found but not
+ * Verdict matches the literal `maxBuffer length exceeded` substring this
+ * carries on stderr, so a buffer overflow consumes the one environment ledger
+ * (a config problem the operator fixes), never the branch budget. 126 mirrors
+ * the shell's "command found but not
  * executable" slot — a code no normal test runner returns.
  */
 export const MAXBUFFER_EXIT_CODE = 126;

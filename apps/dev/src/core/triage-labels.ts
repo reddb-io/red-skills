@@ -78,10 +78,9 @@ export const LABEL_VALIDATION = "blocked:validation";
 // AFK runner improvement: distinguish INFRA validation failures (worktree
 // setup / pnpm install / OOM / ENOENT — the gate's environment is broken) from
 // SEMANTIC validation failures (the worker's tests actually failed for code
-// reasons). Infra failures are auto-recoverable via the `validation-infra`
-// recovery policy (default cap 2); semantic failures stay non-recoverable and
-// page a human. Observability-only label: the routing decision is made by
-// `routeRecovery` via the recovery cap, not by the label.
+// reasons). Verdict grants free environment rounds from one ledger; repetition
+// or exhaustion parks under this label without charging the branch. The label
+// is observability only; Verdict, not the label, owns routing.
 export const LABEL_VALIDATION_INFRA = "blocked:validation-infra";
 export const LABEL_STALLED = "blocked:stalled";
 // Wall-clock cap (#2701): the worker was cut off by the per-issue wall-clock

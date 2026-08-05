@@ -57,8 +57,8 @@ land block.
 
 ### Recover
 
-1. Let an environment-inconclusive round re-materialise the baseline and rerun
-   for free. If bounded infrastructure recovery still parks it, close that park
+1. Let Verdict spend one environment-ledger round to re-materialise the baseline
+   and rerun for free. If repetition or ledger exhaustion parks it, close that park
    only with concrete evidence: current `main` CI state, relevant release tag,
    and the exact gate command that passed.
 2. Link the probe-environment bug instead of blocking the validation lane on a
