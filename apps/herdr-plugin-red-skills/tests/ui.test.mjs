@@ -7,7 +7,7 @@ import { decodeKey } from "../src/ui/screen.mjs";
 
 test("displayWidth measures the visible text, not the bytes", () => {
   assert.equal(displayWidth(style.red("abc")), 3);
-  assert.equal(stripAnsi(style.bold(style.green("hi"))), "hi");
+  assert.equal(stripAnsi(style.bold(style.dim("hi"))), "hi");
 });
 
 test("padding aligns on visible width so styled columns stay square", () => {

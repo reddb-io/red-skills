@@ -20,9 +20,9 @@ function rule(label, columns) {
 
 /** Colour a log line by the level it announces, and by nothing else. PURE. */
 export function colourLogLine(line) {
-  if (/\b(error|fatal|refused|failed|panic)\b/i.test(line)) return style.brightRed(line);
-  if (/\b(warn|warning|degraded|stale|retry)\b/i.test(line)) return style.yellow(line);
-  if (/\b(ok|done|passed|merged|landed|green)\b/i.test(line)) return style.green(line);
+  if (/\b(error|fatal|refused|failed|panic)\b/i.test(line)) return style.red(line);
+  if (/\b(warn|warning|degraded|stale|retry)\b/i.test(line)) return style.bold(line);
+  if (/\b(ok|done|passed|merged|landed|green)\b/i.test(line)) return style.dim(line);
   return line;
 }
 
@@ -33,21 +33,21 @@ export function renderEventRow(record, { columns }) {
   const at = typeof record.ts === "string" ? record.ts.slice(11, 19) : "--:--:--";
   const kind =
     record.event === "worker-birth"
-      ? style.green(padEnd("birth", 12))
+      ? style.dim(padEnd("+ birth", 13))
       : record.event === "worker-budget-kill"
-        ? style.brightRed(padEnd("budget-kill", 12))
-        : style.yellow(padEnd("death", 12));
+        ? style.red(padEnd("! budget-kill", 13))
+        : style.bold(padEnd("† death", 13));
 
   const ending =
     record.event === "worker-birth"
       ? style.gray(`pid ${record.pid ?? "—"}${record.unit ? ` · ${record.unit}` : " · no unit"}`)
       : record.signal
-        ? style.brightRed(`signal ${record.signal}`)
+        ? style.red(`! signal ${record.signal}`)
         : record.exit_code === 0
-          ? style.green("exit 0")
+          ? style.dim("exit 0")
           : record.exit_code == null
             ? style.gray("exit —")
-            : style.brightRed(`exit ${record.exit_code}`);
+            : style.red(`! exit ${record.exit_code}`);
 
   const detail = record.detail ? ` ${style.gray("·")} ${style.dim(String(record.detail))}` : "";
 
@@ -68,7 +68,7 @@ export function renderEventRow(record, { columns }) {
 export function renderLogView({ title, subtitle, lines, offset, follow, size, empty, render = colourLogLine }) {
   const { columns, rows } = size;
   const head = [
-    truncate(` ${style.bold(style.brightRed("red-skills"))} ${style.gray("·")} ${style.bold(title)}`, columns),
+    truncate(` ${style.bold(style.identity("red-skills"))} ${style.gray("·")} ${style.bold(title)}`, columns),
     truncate(` ${style.gray(subtitle)}`, columns),
     rule(null, columns),
   ];
@@ -78,7 +78,7 @@ export function renderLogView({ title, subtitle, lines, offset, follow, size, em
   const foot = [
     rule(null, columns),
     truncate(
-      ` ${follow ? style.brightGreen("● following") : style.yellow("▲ paused")}` +
+      ` ${follow ? style.dim("● following") : style.red("▲ paused")}` +
         `  ${style.bold("q")} ${style.gray("back")}  ${style.bold("f")} ${style.gray(follow ? "unfollow" : "follow")}` +
         `  ${style.bold("j/k")} ${style.gray("scroll")}  ${style.bold("g/G")} ${style.gray("top/end")}` +
         `  ${style.bold("r")} ${style.gray("refresh")}`,
@@ -104,7 +104,7 @@ export function workerLogSubtitle(worker, tail) {
   const where = tail?.exists
     ? `${tail.path}${tail.truncated ? style.gray(" (tail)") : ""} · ${bytes(tail.size)}`
     : worker.workspace_path
-      ? style.yellow(`no readable log — the client declared ${tail?.path ? tail.path : "none"} at spawn`)
-      : style.yellow("no log path was declared for this Worker");
+      ? style.red(`⚠ no readable log — the client declared ${tail?.path ? tail.path : "none"} at spawn`)
+      : style.red("⚠ no log path was declared for this Worker");
   return `${worker.worker_id} · ${worker.project_label} · up ${duration(worker.uptime_ms)} · ${where}`;
 }

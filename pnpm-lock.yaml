@@ -226,6 +226,9 @@ importers:
 
   apps/herdr-plugin-red-skills:
     dependencies:
+      '@reddb-io/brand-tokens':
+        specifier: workspace:*
+        version: link:../../packages/brand-tokens
       '@reddb-io/build-info':
         specifier: workspace:*
         version: link:../../packages/build-info

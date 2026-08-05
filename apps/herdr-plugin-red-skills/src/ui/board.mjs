@@ -90,16 +90,16 @@ export function renderBoard({ dashboard, state, size, socketPath, error }) {
   const { columns } = size;
   if (!dashboard) {
     return [
-      ` ${style.bold(style.brightRed("redskilled"))} ${style.gray("·")} ${style.brightRed("no host answered")}`,
+      ` ${style.bold(style.identity("redskilled"))} ${style.gray("·")} ${style.red("! no host answered")}`,
       ...renderBoardAbsence({ columns, error, socketPath }),
       ...renderBoardFooter({ columns, state }),
     ];
   }
 
   const [header, ...rows] = dashboard.lines;
-  const badge = dashboard.stale ? style.brightYellow("● stale") : style.brightGreen("● live");
+  const badge = dashboard.stale ? style.red("▲ stale") : style.dim("● live");
   const lines = [
-    truncate(` ${style.bold(style.brightRed(header ?? ""))}`, columns),
+    truncate(` ${style.bold(style.identity(header ?? ""))}`, columns),
     truncate(` ${badge} ${style.gray(dashboard.generated_at)}`, columns),
     rule("WORKERS", columns),
   ];
@@ -112,7 +112,7 @@ export function renderBoard({ dashboard, state, size, socketPath, error }) {
     for (const row of rows) lines.push(truncate(` ${paintRow(row)}`, columns));
   }
 
-  if (state.message) lines.push(truncate(` ${style.brightCyan(state.message)}`, columns));
+  if (state.message) lines.push(truncate(` ${style.red(`! ${state.message}`)}`, columns));
   lines.push(...renderBoardFooter({ columns, state }));
   return lines;
 }

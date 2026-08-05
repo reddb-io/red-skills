@@ -28,6 +28,7 @@
     "doctor": "node bin/red-skills-herdr.mjs doctor"
   },
   "dependencies": {
+    "@reddb-io/brand-tokens": "workspace:*",
     "@reddb-io/build-info": "workspace:*",
     "@reddb-io/toon": "catalog:"
   },

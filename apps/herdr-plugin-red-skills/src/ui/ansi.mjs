@@ -6,6 +6,8 @@
  * table padded by byte length is a table that drifts one column further right
  * with every colour added to it.
  */
+import { tokenToAnsiForeground } from "@reddb-io/brand-tokens";
+
 const enabled = !process.env.NO_COLOR && process.env.TERM !== "dumb";
 
 const CODES = {
@@ -15,21 +17,9 @@ const CODES = {
   italic: 3,
   underline: 4,
   inverse: 7,
-  black: 30,
   red: 31,
-  green: 32,
-  yellow: 33,
-  blue: 34,
-  magenta: 35,
-  cyan: 36,
   white: 37,
   gray: 90,
-  brightRed: 91,
-  brightGreen: 92,
-  brightYellow: 93,
-  brightBlue: 94,
-  brightMagenta: 95,
-  brightCyan: 96,
 };
 
 /** The escape byte, written once here so no other module carries a raw one. */
@@ -42,7 +32,17 @@ function wrap(code) {
   return (text) => (enabled ? `\u001b[${code}m${text}\u001b[0m` : String(text));
 }
 
-export const style = Object.fromEntries(Object.entries(CODES).map(([name, code]) => [name, wrap(code)]));
+function wrapAnsi(open) {
+  return (text) => (enabled ? `${open}${text}\u001b[0m` : String(text));
+}
+
+export const style = {
+  ...Object.fromEntries(Object.entries(CODES).map(([name, code]) => [name, wrap(code)])),
+  // Identity is the only truecolor moment in a pane. The sequence and its value
+  // both come from the package; this surface owns neither a copied hex nor an
+  // ANSI derivation of its own.
+  identity: wrapAnsi(tokenToAnsiForeground("brand.primary")),
+};
 
 export const colorEnabled = enabled;
 
