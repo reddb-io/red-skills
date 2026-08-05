@@ -27,7 +27,7 @@ Only after the maintainer approves do you run the `go` bundle command. The appro
 
 This gate is always required. `+yolo` only raises in-run autonomy; it never skips Task+DoD approval. `--dod "<condition>"` may pre-fill the Definition of Done draft, but it still requires maintainer approval before dispatch.
 
-At approval time, check whether the repo has configured machine validation (`afk.backpressure` / the normal feedback harness). If no harness is configured, offer one ephemeral inline check with `--verify "<cmd>"`; that command runs as backpressure for this single dispatch only. If the maintainer declines an inline check, proceed best-effort; the engine applies a tightened iteration cap so a check-less dispatch fails fast instead of looping.
+At approval time, read the repo's declared `plugins.dev.afk.validation` schedule. If its `post_done` Validation moment is undeclared or explicitly empty, offer one ephemeral inline check with `--verify "<cmd>"`; `--verify` appends one command to `post_done` for this dispatch only. If the maintainer declines, proceed best-effort: the undeclared moment is skipped loudly and the engine applies a tightened iteration cap so a check-less dispatch fails fast instead of looping.
 
 Scout mode is read-only and report-producing, so this Task+DoD gate does not apply to `/go --scout`.
 
@@ -106,7 +106,7 @@ Follow it from those handles, never from the launcher's stdout: `worker_status`,
 
 **`--request "<instruction>"`** forwards a special per-dispatch instruction block to the inner agent prompt, matching `/afk --request`. It is not part of the approved Task and is not recorded on the disposable `lane:go` issue.
 
-**`--verify "<cmd>"`** adds a one-off inline machine check for this dispatch. Use it only when the repo lacks a configured harness/backpressure and the maintainer approved the command during the confirmation gate. A chain ending in a bare `git diff --exit-code` — the usual "regenerating leaves the tree clean" tail — is rewritten to `git add -A --intent-to-add . && git diff --exit-code` before it runs, because plain `git diff` reads tracked files only and would go green over a mirror the generator newly created. The verdict is unchanged: generated output the run has not committed still fails the check.
+**`--verify "<cmd>"`** adds a one-off inline machine check for this dispatch. `--verify` appends one command to `post_done`; use it only when that declared moment otherwise has no commands and the maintainer approved the command during the confirmation gate. A chain ending in a bare `git diff --exit-code` — the usual "regenerating leaves the tree clean" tail — is rewritten to `git add -A --intent-to-add . && git diff --exit-code` before it runs, because plain `git diff` reads tracked files only and would go green over a mirror the generator newly created. The verdict is unchanged: generated output the run has not committed still fails the check.
 
 **`--tags a,b`** stamps territory `tag:<value>` labels (bare values, comma-separated) on the minted disposable issue, so the dispatch is visible under the same territory filters `/afk --tags` uses. Missing `tag:<value>` labels are auto-created before the mint — never pre-create them by hand.
 
@@ -115,16 +115,16 @@ Follow it from those handles, never from the launcher's stdout: `worker_status`,
 1. **Mints a disposable tracking issue** in the isolated `lane:go` lane — labelled `lane:go` and **never** `ready-for-agent`, so a running fleet's candidate listing can never surface it. With `--tags`, the mint also stamps the requested `tag:<value>` territory labels (auto-created when missing). The issue is minted only after Task+DoD approval; its body carries the approved Task, the approved semantic Definition of Done, and the machine gate reference.
 2. **Spins a castle worker** under the shared `.red/tmp/workers/` root. It does not create a separate worker namespace; the worker state carries `origin=go` and `current.kind=go`, and observability surfaces use those stamps to keep `/go` distinct from the `/afk` fleet.
 3. **Processes the issue in an isolated worktree** created by the castle engine, using the stamped kind as provenance for monitor/statusline display.
-4. **Runs the shared validation gate** with the **interactive** (pause/ask) escalation sink: mechanical findings auto-apply + commit; an intent finding pauses and asks you to approve / fix / skip.
-5. **Runs bounded post-DONE machine-gate correction** for `/go`: if feedback/backpressure fails after the inner agent emits DONE, the engine re-seeds the agent with the failing validation tail under a small `RED_GO_VERIFY_RETRIES` cap, then deterministically parks to `ready-for-human` / `blocked:validation` when the cap is exhausted. **The cap counts causes, not attempts.** The gate runs on the branch merged with the live base, so a base that moves mid-run — most sharply a `chore(release): version packages` bump, which rewrites every generated package mirror — can redden a branch that is itself green. A gate failure observed while the base moved is attributed to stale-base drift and granted a **free** correction cycle: the agent is told to merge the base and regenerate, and the budget is untouched. Those free cycles are bounded by `RED_GATE_STALE_BASE_CORRECTIONS` (default 2), so a churning base cannot buy an unbounded run, and an already-spent counter can never park a branch whose latest validation passed.
-6. **Brings back a PR**; the disposable issue **auto-closes on merge** (the engine's PR body carries `Closes #N`).
+4. **Runs the shared review stage** with the **interactive** (pause/ask) escalation sink: mechanical findings auto-apply + commit; an intent finding pauses and asks you to approve / fix / skip.
+5. **Runs the declared `post_done` Validation moment at the branch's fork point.** If a command fails after the inner agent emits DONE, the engine re-seeds it with only the failing subset under the bounded `/go` Re-seed budget, then folds back to the full declaration after that subset passes. Exhaustion parks the Ticket at `ready-for-human` / `blocked:validation`. An undeclared or empty moment skips loudly; `--verify` is the one-dispatch addition described above.
+6. **Runs the declared `landing` Validation moment before push/PR/queue, then brings back a PR.** Freshness against the merged result belongs to the merge queue, the CI-side final Validation moment. The disposable issue **auto-closes on merge** (the engine's PR body carries `Closes #N`).
 
 **What `--scout` does differently:**
 
 1. **Mints a disposable issue** in the isolated `lane:scout` lane (never `ready-for-agent` or `lane:go`).
 2. **Spins a castle worker** under the shared `.red/tmp/workers/` root with `origin=scout`, `current.kind=scout`, and `run_mode=scout`.
 3. **Runs the agent in read-only mode** — the SCOUT_EXIT_PROTOCOL explicitly forbids commits. `continuousPush` is disabled so no branch is pushed during the run.
-4. **Skips push / feedback gate / PR / landing entirely** — the engine enforces this at the `run_mode=scout` check in `process-issue.ts`.
+4. **Skips local Validation moments, push, PR, and Landing entirely** — the engine enforces this at the `run_mode=scout` check in `process-issue.ts`.
 5. **Posts the agent's markdown report** as a comment on the disposable issue, then closes it. Nothing lands on main.
 
 **Hard rules:**
@@ -167,9 +167,9 @@ For failure-state playbooks, see [TROUBLESHOOTING.md](./TROUBLESHOOTING.md).
 - **Worker root:** the castle engine writes the worker and worktree under the shared `.red/tmp/workers/…` root. Legacy `.red/tmp/go-workers/…` entries may still appear in observability until they age out, but new `/go` runs do not use that root.
 - **Provenance:** `--origin go` is stamped once on the worker state as `origin=go` and `current.kind=go`, then never mutated.
 
-## Gate behaviour (standard /go — shared with `/afk`, ADR 0081)
+## Review behaviour (standard /go — shared with `/afk`, ADR 0081)
 
-The validation gate splits findings two ways:
+The shared review stage splits findings two ways:
 
 - **Mechanical** (closed allowlist: formatter, import-organizer, lint-fix, comment-typo, trailing-whitespace, trailing-newline) → auto-applied and committed, always.
 - **Intent** (anything else) → escalated. In `/go` the sink is **interactive**: it pauses and asks you to approve, fix, or skip.
