@@ -1,0 +1,32 @@
+{
+  "name": "@reddb-io/release",
+  "version": "3.6.2",
+  "private": true,
+  "description": "RedSkills release engine — changeset-compatible version computation and release orchestration.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "red-skills-release": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json && pnpm bundle",
+    "bundle": "node ../../scripts/bundle-app.mjs --entry src/cli.ts --outfile ../../dist/release.bundle.min.mjs --asset release.bundle.min.mjs --minify",
+    "test": "vitest run",
+    "dev": "node --import tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
