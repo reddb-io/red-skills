@@ -198,10 +198,16 @@ import {
 import {
   launchWorker,
   mintHostWorkerId,
+  RedskilledAdmissionError,
   type LaunchWorkerOptions,
   type LaunchedWorker,
   type RedskilledWorkerSpec,
 } from "./worker-launch.js";
+import {
+  refreshRedskilledTrunk,
+  type RedskilledTrunkRefresh,
+  type RedskilledTrunkRefreshInput,
+} from "./trunk-mirror.js";
 import {
   readLastLogLine,
   type RedskilledLogTailProbe,
@@ -402,6 +408,8 @@ export interface RedskilledDaemonOptions {
   readonly clock?: () => string;
   /** How a Worker is born; injected so a test can birth one without a spawn. */
   readonly launch?: (options: LaunchWorkerOptions) => LaunchedWorker;
+  /** Daemon-owned git seam; injected by concurrency and unreachable-remote fixtures. */
+  readonly refreshTrunk?: RedskilledTrunkRefresh;
   /** The append-only host event lane; defaults to this session's own. */
   readonly eventLane?: RedskilledEventLane;
   /** The durable registration snapshot; defaults to this session's own. */
@@ -842,6 +850,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const idleMs = options.idleMs ?? DEFAULT_REDSKILLED_IDLE_MS;
   const clock = options.clock ?? (() => new Date().toISOString());
   const launch = options.launch ?? launchWorker;
+  const refreshTrunk = options.refreshTrunk ?? refreshRedskilledTrunk;
   const ceiling = options.ceiling ?? resolveHostCeiling();
   // Before the lease, before the socket: a host whose repositories do not all
   // answer to one token has no arrangement to start with, and discovering that a
@@ -954,6 +963,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   const demandMs = options.demandMs ?? DEFAULT_REDSKILLED_DEMAND_MS;
   const demandBackoffMs = options.demandBackoffMs ?? REDSKILLED_DEMAND_BACKOFF_MS;
   const workers = new Map<string, RedskilledWorkerView>();
+  // Concurrent socket admissions for the same trunk join one in-flight fetch.
+  // A demand burst additionally retains its resolved promise for the whole tick.
+  const trunkRefreshes = new Map<string, Promise<string>>();
   // Re-attached Workers have no child handle to deliver an exit, so their death
   // is discovered by asking the host rather than by being told.
   const reattached = new Set<string>();
@@ -1537,6 +1549,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       });
 
       const granted: RedskilledDemandGrant[] = [];
+      const burstForks = new Map<string, Promise<string>>();
       let refusal: string | null = null;
       for (const birth of plan.births) {
         let launched: LaunchedWorker;
@@ -1559,16 +1572,34 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
           { project_label: birth.project_label },
         );
         try {
-          launched = startWorker(spec);
+          if (registration?.trunk == null) {
+            launched = startWorker(spec);
+          } else {
+            const trunk = { workspace_path: birth.workspace_path, trunk: registration.trunk };
+            const admission = admit(spec);
+            if (!admission.admitted) throw new RedskilledAdmissionError(admission.reason, admission);
+            const key = trunkRefreshKey(trunk);
+            let fork = burstForks.get(key);
+            if (fork == null) {
+              fork = refreshFork(trunk);
+              burstForks.set(key, fork);
+            }
+            launched = await admitAndStartWorker(spec, trunk, fork, admission);
+          }
         } catch (err) {
           refusal = err instanceof Error ? err.message : String(err);
-          demandBackoffUntilMs = (Number.isFinite(nowMs) ? nowMs : Date.now()) + demandBackoffMs;
+          const retryNextCycle = err instanceof RedskilledAdmissionError &&
+            err.admission?.verdict === "refused-unreachable-trunk-remote";
+          if (!retryNextCycle) {
+            demandBackoffUntilMs = (Number.isFinite(nowMs) ? nowMs : Date.now()) + demandBackoffMs;
+          }
           break;
         }
         granted.push({
           project_label: birth.project_label,
           worker_id: launched.worker.worker_id,
           pid: launched.worker.pid,
+          ...(launched.fork_sha == null ? {} : { fork_sha: launched.fork_sha }),
           // Loud where it used to be silent (#3079): a registration that declared
           // no log path produces a Worker no surface can ever show the output of,
           // and the four layers between here and that surface each read the
@@ -2065,6 +2096,61 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     });
   }
 
+  function trunkRefreshKey(input: RedskilledTrunkRefreshInput): string {
+    return `${input.workspace_path}\0${input.trunk.remote}\0${input.trunk.branch}`;
+  }
+
+  function refreshFork(input: RedskilledTrunkRefreshInput): Promise<string> {
+    const key = trunkRefreshKey(input);
+    const inFlight = trunkRefreshes.get(key);
+    if (inFlight != null) return inFlight;
+    const pending = refreshTrunk(input).finally(() => {
+      if (trunkRefreshes.get(key) === pending) trunkRefreshes.delete(key);
+    });
+    trunkRefreshes.set(key, pending);
+    return pending;
+  }
+
+  function unreachableTrunkRefusal(
+    admission: RedskilledAdmissionVerdict,
+    input: RedskilledTrunkRefreshInput,
+    error: unknown,
+  ): RedskilledAdmissionVerdict {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      ...admission,
+      admitted: false,
+      verdict: "refused-unreachable-trunk-remote",
+      reason:
+        `refused-unreachable-trunk-remote: redskilled refused this Worker because trunk remote ` +
+        `${JSON.stringify(input.trunk.remote)} could not refresh branch ${JSON.stringify(input.trunk.branch)}: ${detail}`,
+    };
+  }
+
+  async function admitAndStartWorker(
+    spec: RedskilledWorkerSpec,
+    trunk: RedskilledTrunkRefreshInput,
+    fork?: Promise<string>,
+    judgedAdmission?: RedskilledAdmissionVerdict,
+  ): Promise<LaunchedWorker> {
+    const admission = judgedAdmission ?? admit(spec);
+    if (!admission.admitted) throw new RedskilledAdmissionError(admission.reason, admission);
+    let forkSha: string;
+    try {
+      forkSha = await (fork ?? refreshFork(trunk));
+    } catch (error) {
+      const refusal = unreachableTrunkRefusal(admission, trunk, error);
+      throw new RedskilledAdmissionError(refusal.reason, refusal);
+    }
+    // The fetch is asynchronous. Re-judge against Workers born while it was in
+    // flight so concurrent socket admissions cannot all spend the same slot.
+    const finalAdmission = admit(spec);
+    if (!finalAdmission.admitted) {
+      throw new RedskilledAdmissionError(finalAdmission.reason, finalAdmission);
+    }
+    return startWorker(spec, { admission: finalAdmission, forkSha });
+  }
+
   /**
    * Birth one Worker.
    *
@@ -2075,7 +2161,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * host state learn about a Worker at the same instant the process exists —
    * a launch the daemon forgot to track would be an untracked budget.
    */
-  function startWorker(spec: RedskilledWorkerSpec): LaunchedWorker {
+  function startWorker(
+    spec: RedskilledWorkerSpec,
+    grant: { readonly admission?: RedskilledAdmissionVerdict; readonly forkSha?: string } = {},
+  ): LaunchedWorker {
     // The ceiling is the host's to state, not the client's to remember: it comes
     // out of the same accounting admission was judged against, so every Worker is
     // born inside a scope with a stated wall and a host-pressure kill lands on
@@ -2089,7 +2178,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     });
     const launched = launch({
       spec,
-      admission: admit(spec),
+      admission: grant.admission ?? admit(spec),
+      ...(grant.forkSha == null ? {} : { forkSha: grant.forkSha }),
       memoryCeiling,
       liveWorkerIds: workers.keys(),
       clock,
@@ -2505,7 +2595,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const schedule = (delayMs: number): void => {
       queueTimer = setTimeout(() => {
         queueTimer = undefined;
-        void pollQueueDiscovery()
+        void refreshRegisteredTrunks()
+          .then(() => pollQueueDiscovery())
           .catch(() => undefined)
           .finally(() => {
             if (stopping) return;
@@ -2516,6 +2607,17 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       queueTimer.unref();
     };
     schedule(queueMs);
+  }
+
+  async function refreshRegisteredTrunks(): Promise<void> {
+    await Promise.allSettled(
+      [...registrations.values()]
+        .filter((registration) => registration.trunk != null)
+        .map((registration) => refreshFork({
+          workspace_path: registration.workspace_path,
+          trunk: registration.trunk!,
+        })),
+    );
   }
 
   /**
@@ -2857,7 +2959,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       if (request.op === "worker-start") {
         const reach = authorize("worker-start", request.session_project, request.spec.project_label);
         if (!reach.permitted) return { id: request.id, ok: false, error: reach.reason };
-        const launched = startWorker(request.spec);
+        // A spec without trunk coordinates is an older client inside the same
+        // one-release compatibility window as a grant without `fork_sha`.
+        const launched = request.spec.trunk == null
+          ? startWorker(request.spec)
+          : await admitAndStartWorker(request.spec, {
+            workspace_path: request.spec.workspace_path,
+            trunk: request.spec.trunk,
+          });
         // The acknowledgement waits for the birth to reach the lane. A client told
         // "your Worker exists" by a daemon that is then replaced a millisecond
         // later — the ordinary operation — would otherwise leave a live Worker
@@ -2867,7 +2976,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         return {
           id: request.id,
           ok: true,
-          value: { worker: launched.worker, admission: launched.admission, warnings: launched.warnings },
+          value: {
+            worker: launched.worker,
+            admission: launched.admission,
+            fork_sha: launched.fork_sha,
+            warnings: launched.warnings,
+          },
         };
       }
       if (request.op === "shutdown") {

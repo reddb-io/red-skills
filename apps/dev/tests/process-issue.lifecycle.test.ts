@@ -14,6 +14,7 @@ import {
 } from "./process-issue.test-helpers.js";
 import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./process-issue.test-helpers.js";
 import { reseedParkMarker } from "../src/core/process-issue/reseed-trail.js";
+import { FORK_GRANT_FALLBACK_DELETE_RELEASE } from "../src/core/process-issue/types.js";
 import { encodeLines } from "@reddb-io/toon";
 import { vi } from "vitest";
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
@@ -1956,6 +1957,30 @@ describe("processIssue — trunk-mirror boot failure (#2436)", () => {
     // Park comment must not contain a live-branch link (branch was never pushed).
     const envelope = trace.envelopeBodies[0] ?? "";
     expect(envelope).not.toMatch(/live branch:/);
+  });
+});
+
+describe("processIssue — daemon-granted fork point (ADR 0138)", () => {
+  it("forks exactly the granted commit without fetching the trunk", async () => {
+    const fetchedBases: string[] = [];
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, fetchedBases });
+    input.forkSha = "granted-fork-sha";
+
+    await processIssue(deps, input);
+
+    expect(fetchedBases).toEqual([]);
+    expect(trace.freshWorkerBranchCalls[0]?.baseRef).toBe("granted-fork-sha");
+  });
+
+  it("keeps the one-release legacy fetch with a loud, tombstoned version-skew warning", async () => {
+    const fetchedBases: string[] = [];
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, fetchedBases });
+
+    await processIssue(deps, input);
+
+    expect(fetchedBases).toEqual(["main"]);
+    expect(trace.iterLogs).toContainEqual(expect.stringMatching(/redskilled <3\.7\.0.*@reddb-io\/dev >=3\.7\.0/));
+    expect(trace.iterLogs).toContainEqual(expect.stringContaining(FORK_GRANT_FALLBACK_DELETE_RELEASE));
   });
 });
 

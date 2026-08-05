@@ -112,6 +112,8 @@ export function resolveProjectIdentityForRoot(root: string): ProjectIdentity {
 export interface GrantedWorkerBirth {
   readonly workerId: string;
   readonly pid: number;
+  /** Exact daemon-fetched fork point; absent only for one-release daemon skew. */
+  readonly forkSha?: string;
   /** Warnings the host attached — a downgraded unit is running AND degraded. */
   readonly warnings: readonly string[];
   /** The host's own sentence about the ceiling that admitted this birth. */
@@ -314,6 +316,7 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
       return {
         workerId: started.worker.worker_id,
         pid: started.worker.pid,
+        ...(started.fork_sha == null ? {} : { forkSha: started.fork_sha }),
         warnings: started.warnings,
         admission: started.admission.reason,
       };

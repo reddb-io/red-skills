@@ -300,6 +300,8 @@ export interface RedskilledDemandGrant {
   readonly project_label: string;
   readonly worker_id: string;
   readonly pid: number;
+  /** Exact commit the daemon fetched before admitting this birth. */
+  readonly fork_sha?: string;
   /** Warnings the host attached — a downgraded unit is running AND degraded. */
   readonly warnings: readonly string[];
 }

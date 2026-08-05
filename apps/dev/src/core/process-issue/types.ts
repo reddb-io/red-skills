@@ -168,7 +168,7 @@ export interface WorkerBaseResolution {
   base: string;
   baseRef: string;
   sha: string;
-  source: "remote" | "local" | "mirror";
+  source: "remote" | "local" | "mirror" | "grant";
   remoteReachable: boolean;
   localSha?: string;
   localAhead?: number;
@@ -176,6 +176,15 @@ export interface WorkerBaseResolution {
   reason?: "base-stale";
   message?: string;
 }
+
+/**
+ * The first release that deletes the mixed-version worker-side trunk fetch.
+ *
+ * Kept beside the fallback's input so removing this constant is the mechanical
+ * tombstone that also finds every warning and test belonging to the compatibility
+ * window (ADR 0138).
+ */
+export const FORK_GRANT_FALLBACK_DELETE_RELEASE = "3.8.0";
 export interface ProcessLookups {
   base: ResolveBaseDeps;
   isLocked(): Promise<boolean>;
@@ -445,6 +454,8 @@ export interface ProcessIssueInput {
   repo: string;
   repoDir: string;
   remote: string;
+  /** The exact commit the daemon judged this Worker against (ADR 0138). */
+  forkSha?: string;
   baseInput: ResolveBaseInput;
   specRef?: string;
   runMode?: string;

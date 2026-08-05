@@ -58,7 +58,11 @@ describe("a Worker dispatched through the MCP is born by the daemon", () => {
   it("appears in host state under this project's label and on the event lane", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("mcp-dispatch-workspace-");
-    const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      refreshTrunk: async () => "dispatch-fork-sha",
+    });
     running.push(daemon);
 
     const granted = await requestWorkerBirth(workspace, ["--issues", "2976", "--once"], {
@@ -73,6 +77,7 @@ describe("a Worker dispatched through the MCP is born by the daemon", () => {
     // The host's own sentence about the ceiling that admitted this birth: a
     // dispatch that reported no verdict would be a dispatch nothing judged.
     expect(granted.admission.trim()).not.toBe("");
+    expect(granted.fork_sha).toBe("dispatch-fork-sha");
 
     const state = await readRedskilledHostState(paths, { readyTimeoutMs: 5_000 });
     const held = state.workers.find((worker) => worker.worker_id === granted.worker_id);
@@ -95,6 +100,7 @@ describe("a Worker dispatched through the MCP is born by the daemon", () => {
     const daemon = await startRedskilledDaemon({
       paths,
       idleMs: 60_000,
+      refreshTrunk: async () => "interactive-fork-sha",
       ceiling: { memory_bytes: null, worker_count: 1, interactive_reservation: 1, source: "declared" },
     });
     running.push(daemon);

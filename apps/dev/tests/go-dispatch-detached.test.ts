@@ -6,8 +6,8 @@
 // leaving no record anywhere. Detachment is therefore not a flag to assert but a
 // process fact to prove, which is why the second suite kills a real dispatcher.
 
-import { spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -37,6 +37,27 @@ async function scratch(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   roots.push(root);
   return root;
+}
+
+/**
+ * A workspace the daemon can admit: since the fork grant (ADR 0138) every birth
+ * refreshes `origin/main` in the dispatching checkout, so a bare temp dir is a
+ * dispatch the host correctly refuses. The origin is a local repo whose path
+ * ends in `acme/demo`, which is also what the slug parser reads as the project.
+ */
+async function gitWorkspace(prefix: string): Promise<string> {
+  const workspace = await scratch(prefix);
+  const upstream = join(await scratch(`${prefix}upstream-`), "acme", "demo");
+  await mkdir(upstream, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: upstream, stdio: "ignore" });
+  execFileSync(
+    "git",
+    ["-c", "user.email=demo@acme.test", "-c", "user.name=demo", "commit", "-q", "--allow-empty", "-m", "seed"],
+    { cwd: upstream, stdio: "ignore" },
+  );
+  execFileSync("git", ["init", "-q"], { cwd: workspace, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", upstream], { cwd: workspace, stdio: "ignore" });
+  return workspace;
 }
 
 /** Signal 0: does this pid exist? `EPERM` means it does, under another user. */
@@ -173,7 +194,7 @@ describe("a /go dispatch hands the work to the host instead of running it", () =
 describe("killing the dispatcher leaves the dispatched worker running", () => {
   it("survives a SIGKILL of the process that dispatched it", async () => {
     const host = await scratch("go-dispatch-host-");
-    const workspace = await scratch("go-dispatch-workspace-");
+    const workspace = await gitWorkspace("go-dispatch-workspace-");
     const env = {
       ...process.env,
       REDSKILLED_SESSION: `test:${host}`,

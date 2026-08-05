@@ -119,6 +119,7 @@ export type RedskilledAdmissionVerdictKind =
   | "refused-over-memory-ceiling"
   | "refused-over-worker-ceiling"
   | "refused-over-interactive-reservation"
+  | "refused-unreachable-trunk-remote"
   | "refused-unaccountable-budget";
 
 /**

@@ -1137,6 +1137,7 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
       queue_poll: buildRegistrationPollPlan({ repo, selector: input.selector }),
       argv: [...launch.argv],
       workspace_path: root,
+      trunk: { remote: "origin", branch: resolveConfiguredBase(root) },
       // Both halves of the env come from the ONE composer (#3081): the host's log
       // handle it carries through `registrationLaunchEnv`, and the per-birth facts
       // — the runner this start decided, the slot the host places the Worker on
@@ -1242,6 +1243,7 @@ async function drain(root: string, input: ProjectDrainInput) {
       ...(held.queue_poll == null ? {} : { queue_poll: held.queue_poll }),
       argv: [...held.argv],
       workspace_path: held.workspace_path,
+      ...(held.trunk == null ? {} : { trunk: held.trunk }),
       env: { ...held.env },
       ...(held.log_path == null ? {} : { log_path: held.log_path }),
       target: action.target,

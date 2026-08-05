@@ -34,7 +34,7 @@ function blank() {
 export function renderHeader(snapshot, { columns, now }) {
   if (!snapshot.reachable) {
     return [
-      ` ${style.bold(style.brightRed("redskilled"))} ${style.gray("·")} ${style.brightRed("no host answered")}`,
+      ` ${style.bold(style.identity("redskilled"))} ${style.gray("·")} ${style.red("! no host answered")}`,
       ` ${style.gray(truncate(snapshot.error?.message ?? "the daemon did not answer", columns - 2))}`,
     ];
   }
@@ -42,8 +42,8 @@ export function renderHeader(snapshot, { columns, now }) {
   const daemon = snapshot.payload.daemon;
   const staleness = snapshot.payload.staleness;
   const badge = staleness.stale
-    ? style.brightYellow("● stale")
-    : style.brightGreen("● live");
+    ? style.red("▲ stale")
+    : style.dim("● live");
   // The payload's engine block first, the host-state's upgrade only where the
   // block is absent: one read answers "is my engine current" now, and the second
   // read stays only so a daemon older than the block still renders (ADR 0130
@@ -52,7 +52,7 @@ export function renderHeader(snapshot, { columns, now }) {
   const upgrade = snapshot.hostState?.upgrade;
 
   const left =
-    ` ${style.bold(style.brightRed("redskilled"))} ${style.white(engine?.running_version ?? daemon.daemon_version)}` +
+    ` ${style.bold(style.identity("redskilled"))} ${style.white(engine?.running_version ?? daemon.daemon_version)}` +
     ` ${style.gray("·")} pid ${daemon.pid}` +
     ` ${style.gray("·")} up ${duration(Date.parse(now) - Date.parse(daemon.started_at))}` +
     ` ${style.gray("·")} proto ${daemon.protocol_version}`;
@@ -65,7 +65,7 @@ export function renderHeader(snapshot, { columns, now }) {
     ` ${style.gray("host")} ${daemon.machine_id_hash}` +
     ` ${style.gray("· session")} ${daemon.session_key_hash}` +
     (scope?.kind ? ` ${style.gray("· scope")} ${scope.kind}` : "") +
-    ` ${style.gray("·")} ${staleness.stale ? style.yellow(staleness.reason) : style.gray(`measured ${duration(staleness.age_ms)} ago`)}`;
+    ` ${style.gray("·")} ${staleness.stale ? style.red(staleness.reason) : style.gray(`measured ${duration(staleness.age_ms)} ago`)}`;
   lines.push(truncate(detail, columns));
 
   // A held major is the daemon saying out loud that it is deliberately behind.
@@ -74,7 +74,7 @@ export function renderHeader(snapshot, { columns, now }) {
   if (upgrade?.major_held) {
     lines.push(
       truncate(
-        ` ${style.brightYellow("⇡ held at major")} ${upgrade.major_hold?.held_major ?? "?"}` +
+        ` ${style.red("⇡ held at major")} ${upgrade.major_hold?.held_major ?? "?"}` +
           ` ${style.gray("·")} ${upgrade.major_hold?.action ?? "see redskilled"}`,
         columns,
       ),
@@ -84,7 +84,7 @@ export function renderHeader(snapshot, { columns, now }) {
     const published = upgrade?.published_version ?? engine?.published_version ?? "?";
     lines.push(
       truncate(
-        ` ${style.brightYellow("⇡ upgrade pending")} ${running} → ${published}` +
+        ` ${style.red("⇡ upgrade pending")} ${running} → ${published}` +
           (upgrade?.replacement ? ` ${style.gray(`(${upgrade.replacement})`)}` : ""),
         columns,
       ),
@@ -115,8 +115,8 @@ export function renderDeaths(deaths, { columns }) {
   for (const death of deaths.recent ?? []) {
     lines.push(
       truncate(
-        ` ${style.brightRed("†")} ${style.white(`${death.kind} ${death.id}`)}` +
-          ` ${style.gray("·")} ${style.brightYellow(death.sender_class)}/${death.confidence}` +
+        ` ${style.red("†")} ${style.white(`${death.kind} ${death.id}`)}` +
+          ` ${style.gray("·")} ${style.bold(death.sender_class)}/${death.confidence}` +
           ` ${style.gray("· phase")} ${death.last_phase}` +
           (death.signal ? ` ${style.gray("· signal")} ${death.signal}` : "") +
           (death.evidence ? ` ${style.gray("·")} ${style.gray(death.evidence)}` : ""),
@@ -140,7 +140,7 @@ export function renderHost(payload, { columns }) {
   const repairing = (payload.workers ?? []).filter((worker) => worker.display?.origin === "repair").length;
   const workers = repairing > 0
     ? `${style.bold(String(Math.max(0, host.worker_count - repairing)))} coding + ` +
-      style.brightMagenta(`${style.bold(String(repairing))} repairing`)
+      style.bold(`${style.bold(String(repairing))} repairing`)
     : `${style.bold(String(host.worker_count))} worker${host.worker_count === 1 ? "" : "s"}`;
   const projects = `${style.bold(String(host.project_count))} project${host.project_count === 1 ? "" : "s"}`;
   const declared = host.consumption?.memory_bytes ?? null;
@@ -174,7 +174,7 @@ export function renderHost(payload, { columns }) {
     const parts = [];
     if (unisolated.length > 0) parts.push(`${unisolated.length} unisolated`);
     if (unaccounted.length > 0) parts.push(`${unaccounted.length} unaccounted`);
-    lines.push(truncate(`        ${style.yellow(`⚠ ${parts.join(" · ")}`)} ${style.gray("— charged to the daemon, not to a unit")}`, columns));
+    lines.push(truncate(`        ${style.red(`⚠ ${parts.join(" · ")}`)} ${style.gray("— charged to the daemon, not to a unit")}`, columns));
   }
 
   return lines;
@@ -224,7 +224,7 @@ export function renderMetrics(payload, { columns }) {
     const window = metrics[key];
     if (window == null) continue;
     const unavailable = (window.unavailable ?? []).length > 0
-      ? style.yellow((window.unavailable ?? []).join(" · "))
+      ? style.bold((window.unavailable ?? []).join(" · "))
       : style.gray("—");
     lines.push(
       truncate(
@@ -300,25 +300,25 @@ export function shortProject(label, width) {
  * opened this pane for — while a shortened project name still reads.
  */
 export function workerLayout(columns) {
-  if (columns >= 108) return { id: 14, project: 26, state: 11, bar: 10, short: false };
-  if (columns >= 92) return { id: 12, project: 18, state: 11, bar: 8, short: false };
-  return { id: 10, project: 12, state: 5, bar: 6, short: true };
+  if (columns >= 108) return { id: 14, project: 26, state: 12, bar: 10, short: false };
+  if (columns >= 92) return { id: 12, project: 18, state: 12, bar: 8, short: false };
+  return { id: 10, project: 12, state: 6, bar: 6, short: true };
 }
 
 /** One Worker's row, plus the line it last published. PURE. */
 export function renderWorkerRow(worker, { columns, selected, verbose, localProject, layout = workerLayout(columns) }) {
-  const marker = selected ? style.brightRed(SELECTED) : " ";
+  const marker = selected ? style.red(SELECTED) : " ";
   const mine = localProject != null && worker.project_label === localProject;
   const repair = worker.display?.origin === "repair";
 
   const id = padEnd(truncate(worker.worker_id, layout.id), layout.id);
   const label = shortProject(worker.project_label, layout.project);
-  const project = padEnd(truncate(mine ? style.brightCyan(label) : label, layout.project), layout.project);
+  const project = padEnd(truncate(mine ? style.bold(label) : label, layout.project), layout.project);
   const reattached = worker.state === "reattached";
   const stateText = repair
-    ? layout.short ? "heal" : "repairing"
-    : layout.short ? (reattached ? "reatt" : "run") : reattached ? "reattached" : "running";
-  const state = (repair ? style.brightMagenta : reattached ? style.cyan : style.green)(padEnd(stateText, layout.state));
+    ? layout.short ? "⟳heal" : "⟳ repairing"
+    : layout.short ? (reattached ? "↪reat" : "▶ run") : reattached ? "↪ reattached" : "▶ running";
+  const state = (repair ? style.bold : reattached ? style.dim : String)(padEnd(stateText, layout.state));
   const uptime = padStart(duration(worker.uptime_ms), 6);
 
   const budget = worker.budget ?? {};
@@ -333,9 +333,9 @@ export function renderWorkerRow(worker, { columns, selected, verbose, localProje
   // RSS would be, and a second word saying the same thing is what pushes the
   // flags that are NOT redundant off the right edge of a narrow pane.
   const flags = [];
-  if (!worker.isolated) flags.push(style.yellow("⚠ no unit"));
-  if (vitals.rss_bytes != null && vitals.fresh === false) flags.push(style.yellow("⚠ stale sample"));
-  if ((worker.warnings ?? []).length > 0) flags.push(style.yellow(`⚠ ${worker.warnings.length}`));
+  if (!worker.isolated) flags.push(style.red("⚠ no unit"));
+  if (vitals.rss_bytes != null && vitals.fresh === false) flags.push(style.red("⚠ stale sample"));
+  if ((worker.warnings ?? []).length > 0) flags.push(style.red(`⚠ ${worker.warnings.length}`));
 
   const row = ` ${marker} ${id} ${project} ${state} ${uptime}  ${usage} ${bar} ${share}${flags.length ? `  ${flags.join(" ")}` : ""}`;
   const lines = [truncate(row, columns)];
@@ -345,7 +345,7 @@ export function renderWorkerRow(worker, { columns, selected, verbose, localProje
     const step = worker.display?.step ?? worker.display?.phase ?? "step unknown";
     lines.push(
       truncate(
-        `     ${style.brightMagenta("⟳ repair lane")} ${style.gray("·")} PR #${issue} ${style.gray("·")} ${step}`,
+        `     ${style.bold("⟳ repair lane")} ${style.gray("·")} PR #${issue} ${style.gray("·")} ${step}`,
         columns,
       ),
     );
@@ -421,11 +421,11 @@ export function renderProjects(payload, hostState, { columns, localProject, budg
   for (const label of shown) {
     const project = byLabel.get(label);
     const registration = registrations.find((entry) => entry.project_label === label);
-    const name = label === localProject ? style.brightCyan(label) : label;
+    const name = label === localProject ? style.bold(label) : label;
     const held = registration
       ? registration.renewal === "renewing"
-        ? style.green(`renewing · target ${registration.target}`)
-        : style.yellow(`running on · target ${registration.target}`)
+        ? style.bold(`↻ renewing · target ${registration.target}`)
+        : style.dim(`● running on · target ${registration.target}`)
       : style.gray("—");
     lines.push(
       truncate(
@@ -460,15 +460,15 @@ export function renderActivity(payload, { columns, localProject, budgetRows }) {
   const visible = report.projects.slice(0, Math.max(1, budgetRows));
   for (const project of visible) {
     const counts = project.counts;
-    const name = project.project_label === localProject ? style.brightCyan(project.repository) : project.repository;
+    const name = project.project_label === localProject ? style.bold(project.repository) : project.repository;
     const state =
       project.outcome === "counted"
         ? project.stale
-          ? style.yellow(`stale · ${duration(project.age_ms)} old`)
-          : style.gray(`${duration(project.age_ms)} ago`)
+          ? style.red(`▲ stale · ${duration(project.age_ms)} old`)
+          : style.dim(`● ${duration(project.age_ms)} ago`)
         : project.outcome === "rate-limited"
-          ? style.brightRed("rate-limited")
-          : style.brightRed("unreachable");
+          ? style.red("! rate-limited")
+          : style.red("× unreachable");
     lines.push(
       truncate(
         `   ${padEnd(truncate(name, 34), 34)} ${padStart(counts ? style.bold(String(counts.open_pull_requests)) : "—", 8)}` +
@@ -485,7 +485,7 @@ export function renderActivity(payload, { columns, localProject, budgetRows }) {
   const limit = report.rate_limit ?? {};
   if (limit.exhausted || limit.remaining != null) {
     const quota = limit.exhausted
-      ? style.brightRed("quota spent")
+      ? style.red("! quota spent")
       : `${style.gray("quota")} ${limit.remaining} left`;
     const reset = limit.reset_at ? ` ${style.gray("· resets")} ${limit.reset_at.slice(11, 16)}Z` : "";
     lines.push(truncate(`   ${quota}${reset} ${style.gray("· one request for every project (ADR 0130 Am. 1)")}`, columns));
@@ -614,7 +614,7 @@ export function renderDashboard({ snapshot, state, size, localProject, now = new
   lines.push(...renderProjects(payload, snapshot.hostState, { columns, localProject, budgetRows: projectRows }));
   lines.push(...renderActivity(payload, { columns, localProject, budgetRows: activityRows }));
 
-  if (state.message) lines.push(truncate(` ${style.brightCyan(state.message)}`, columns));
+  if (state.message) lines.push(truncate(` ${style.red(`! ${state.message}`)}`, columns));
 
   lines.push(...renderFooter({ columns, state }));
   return lines;
