@@ -12,8 +12,10 @@ plugins:
         - pnpm install --frozen-lockfile
       # Local AFK validation stays inside the per-Ticket budget. The merge
       # queue's required `test` check owns the full-suite verdict on the live tip.
-      feedback:
-        commands:
+      # Declared as the ADR 0135 Validation-moment schedule; the legacy
+      # feedback.commands/backpressure knobs are RETIRED at 3.6.0.
+      validation:
+        post_done:
           - pnpm -C apps/dev exec tsc --noEmit
       # Maintainer decision 2026-08-03: codex is this repo's executor.
       #

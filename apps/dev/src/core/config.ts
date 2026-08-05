@@ -327,7 +327,20 @@ export const DELETED_CONFIG_KEYS: ReadonlySet<string> = new Set([
   "plugins.dev.afk.attempt_timeout",
   "afk.stallConvergenceBudget",
   "plugins.dev.afk.stallConvergenceBudget",
+  // ADR 0135 legacy validation knobs, removed at 3.6.0: the moments schedule
+  // (`plugins.dev.afk.validation.*`) is the one declaration surface.
+  "afk.backpressure",
+  "plugins.dev.afk.backpressure",
+  "afk.feedback.commands",
+  "plugins.dev.afk.feedback.commands",
 ]);
+
+/** A key is retired when it or its list-item parent (`key.0`, `key.1`, …) is tombstoned. */
+function configKeyIsRetired(key: string): boolean {
+  if (DELETED_CONFIG_KEYS.has(key)) return true;
+  for (const deleted of DELETED_CONFIG_KEYS) if (key.startsWith(`${deleted}.`)) return true;
+  return false;
+}
 
 /**
  * The ADR 0067 activation key. A directory opts into the dev plugin ONLY by
@@ -483,7 +496,7 @@ export function parseConfigYaml(text: string): ConfigValues {
   const mappingContainers = new Set<string>();
   // Per-parent running index for block-sequence items (`- value`). A sequence
   // under the dotted parent path `p` materialises as `p.0`, `p.1`, … so the
-  // flat config map keeps its `dotted.key -> value` shape (see readBackpressure).
+  // flat config map keeps its `dotted.key -> value` shape (see readSetupCommands).
   const seqCounters: Record<string, number> = {};
 
   const lines = text.split("\n");
@@ -760,17 +773,6 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
     };
   }
 
-  const validationMomentAliases = ["afk.feedback.commands", "afk.backpressure"] as const;
-  for (const alias of validationMomentAliases) {
-    const spellings = [alias, `plugins.dev.${alias}`];
-    if (Object.keys(parsed).some((key) => spellings.some((spelling) => key === spelling || key.startsWith(`${spelling}.`)))) {
-      warn(
-        `[afk:config] warn: \`${alias}\` is deprecated; declare its commands under ` +
-          "`plugins.dev.afk.validation.post_done` instead",
-      );
-    }
-  }
-
   const misplacedHostKeys = Object.keys(parsed)
     .filter((key) => key === "plugins.dev.redskilled" || key.startsWith("plugins.dev.redskilled."))
     .sort();
@@ -785,7 +787,7 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
   // Retired keys are named, not silently carried (ADR 0117). Reported and warned
   // BEFORE the activation gate so a disabled directory still learns its config
   // is stale, and dropped below so no accessor can ever read one back.
-  const retiredKeys = Object.keys(parsed).filter((key) => DELETED_CONFIG_KEYS.has(key)).sort();
+  const retiredKeys = Object.keys(parsed).filter((key) => configKeyIsRetired(key)).sort();
   for (const key of retiredKeys) {
     warn(
       `[afk:config] warn: \`${key}\` is a RETIRED key — it no longer does anything; ` +
@@ -819,7 +821,7 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
   const values = configDefaults();
   const explicitAccessorKeys = new Set<string>();
   for (const [key, value] of Object.entries(parsed)) {
-    if (DELETED_CONFIG_KEYS.has(key)) continue;
+    if (configKeyIsRetired(key)) continue;
     values[key] = value;
     explicitAccessorKeys.add(key);
   }
@@ -831,7 +833,7 @@ export function auditConfigLoad(path: string, options: LoadConfigOptions = {}): 
     );
   }
   for (const [key, value] of Object.entries(parsed)) {
-    if (DELETED_CONFIG_KEYS.has(key)) continue;
+    if (configKeyIsRetired(key)) continue;
     const m = /^plugins\.dev\.(.+)$/.exec(key);
     if (!m) continue;
     const rest = m[1]!;
@@ -984,74 +986,8 @@ export function defaultTier(runner: string, taskClass: AfkModelTier = "think"): 
   };
 }
 
-/**
- * Read the operator-declared backpressure command list (`afk.backpressure`),
- * in declaration order (issue #430). The list form
- *
- *   afk:
- *     backpressure:
- *       - npm run test
- *       - npm run lint
- *
- * materialises as the indexed keys `afk.backpressure.0`, `afk.backpressure.1`, …
- * which this reads back in order until the first gap. The namespaced
- * `plugins.dev.afk.backpressure.*` location already folds down to the bare keys
- * in {@link loadConfig} (ADR 0042), so both locations are honoured with the
- * namespaced one winning. A single-line scalar (`afk.backpressure: npm run test`)
- * is accepted as a one-command list. Absent/empty → `[]` (the gate is a no-op).
- * Blank entries are dropped.
- */
-export function readBackpressure(values: ConfigValues): string[] {
-  const indexed: string[] = [];
-  for (let i = 0; ; i++) {
-    const v = values[`afk.backpressure.${i}`];
-    if (v === undefined) break;
-    if (v.trim() !== "") indexed.push(v);
-  }
-  if (indexed.length > 0) return indexed;
-  const scalar = values["afk.backpressure"];
-  return scalar && scalar.trim() !== "" ? [scalar] : [];
-}
-
-/**
- * Read the repository-owned replacement for the discovered feedback harness
- * (`plugins.dev.afk.feedback.commands`, #3276).
- *
- * `undefined` means undeclared and preserves script discovery exactly. A list
- * means the repository owns the stage and its commands run verbatim in order;
- * the scalar YAML spelling `commands: []` is an explicit empty replacement and
- * therefore disables local feedback rather than falling back to discovery.
- */
-export function readFeedbackCommands(values: ConfigValues): string[] | undefined {
-  const indexed: string[] = [];
-  let declared = false;
-  for (let i = 0; ; i++) {
-    const value = values[`afk.feedback.commands.${i}`];
-    if (value === undefined) break;
-    declared = true;
-    if (value.trim() !== "") indexed.push(value);
-  }
-  if (declared) return indexed;
-
-  const scalar = values["afk.feedback.commands"];
-  if (scalar === undefined) return undefined;
-  if (scalar.trim() === "[]" || scalar.trim() === "") return [];
-  return [scalar];
-}
-
 export const VALIDATION_MOMENTS = ["iteration", "post_done", "landing"] as const;
 export type ValidationMoment = (typeof VALIDATION_MOMENTS)[number];
-
-/**
- * The first product release that must NOT read the ADR 0135 legacy aliases.
- * The aliases shipped in 3.5.0, and "one release of coexistence" means the
- * whole 3.5.x series: operators upgrading anywhere in 3.5.x see the migration
- * warning, and 3.6.0 removes the aliases and their warnings together. A patch
- * ceiling of 3.5.0 made the window zero-length and blocked the very next
- * release train. Do not advance this constant past 3.6.0: the live-version
- * test deliberately fails when a 3.6.0 bump lands with the aliases present.
- */
-export const VALIDATION_MOMENT_ALIASES_REMOVED_IN = "3.6.0";
 
 export const ValidationMomentsSchema = z.object({
   iteration: z.array(z.string()).optional(),
@@ -1089,10 +1025,6 @@ function readValidationMoment(values: ConfigValues, moment: ValidationMoment): s
   return values[prefix]?.trim() === "[]" ? [] : undefined;
 }
 
-function hasConfigDeclaration(values: ConfigValues, key: string): boolean {
-  return Object.keys(values).some((candidate) => candidate === key || candidate.startsWith(`${key}.`));
-}
-
 /** Read the operator-declared Validation moment schedule (ADR 0135). */
 export function readValidationMoments(values: ConfigValues): ValidationMoments {
   const schedule = Object.fromEntries(
@@ -1102,15 +1034,6 @@ export function readValidationMoments(values: ConfigValues): ValidationMoments {
     }),
   ) as ValidationMoments;
 
-  const feedback = readFeedbackCommands(values);
-  const backpressureDeclared = hasConfigDeclaration(values, "afk.backpressure");
-  if (schedule.post_done !== undefined || feedback !== undefined || backpressureDeclared) {
-    schedule.post_done = [
-      ...(schedule.post_done ?? []),
-      ...(feedback ?? []),
-      ...(backpressureDeclared ? readBackpressure(values) : []),
-    ];
-  }
   return ValidationMomentsSchema.parse(schedule);
 }
 

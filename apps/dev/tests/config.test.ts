@@ -7,13 +7,10 @@ import {
   auditConfigLoad,
   CONFIG_DEFAULTS,
   DELETED_CONFIG_KEYS,
-  VALIDATION_MOMENT_ALIASES_REMOVED_IN,
   getConfig,
   loadConfig,
   MalformedConfigError,
   parseConfigYaml,
-  readBackpressure,
-  readFeedbackCommands,
   readValidationMoments,
   readSetupCommands,
   readHitlTypeLabels,
@@ -642,7 +639,6 @@ describe("config", () => {
       'dev:\n  lock:\n    primary-branch: true\nafk:\n  backpressure:\n    - "npm run test" # full suite\n    - npm run lint\n';
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "dev.lock.primary-branch")).toBe("true");
-    expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint"]);
   });
 
   it("injectable reader bypasses the filesystem", () => {
@@ -774,59 +770,36 @@ describe("config — the Trunk (`plugins.dev.trunk`, ADR 0083)", () => {
   });
 });
 
-describe("config — block sequences (afk.backpressure, #430)", () => {
+describe("config — block sequences (#430)", () => {
   it("parses a `- item` sequence into ordered indexed keys", () => {
-    const text = "afk:\n  backpressure:\n    - npm run test\n    - npm run lint\n";
+    const text = "afk:\n  validation:\n    post_done:\n      - npm run test\n      - npm run lint\n";
     expect(parseConfigYaml(text)).toEqual({
-      "afk.backpressure.0": "npm run test",
-      "afk.backpressure.1": "npm run lint",
+      "afk.validation.post_done.0": "npm run test",
+      "afk.validation.post_done.1": "npm run lint",
     });
   });
 
   it("keeps a sibling scalar key alongside a sequence", () => {
-    const text = "afk:\n  default_runner: codex\n  backpressure:\n    - npm test\n";
+    const text = "afk:\n  default_runner: codex\n  setup:\n    - npm install\n";
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "afk.default_runner")).toBe("codex");
-    expect(readBackpressure(values)).toEqual(["npm test"]);
+    expect(readSetupCommands(values)).toEqual(["npm install"]);
   });
 
   it("strips quotes from sequence items", () => {
-    const text = 'afk:\n  backpressure:\n    - "npm run test -- --reporter=dot"\n';
+    const text = 'afk:\n  validation:\n    post_done:\n      - "npm run test -- --reporter=dot"\n';
     expect(parseConfigYaml(text)).toEqual({
-      "afk.backpressure.0": "npm run test -- --reporter=dot",
+      "afk.validation.post_done.0": "npm run test -- --reporter=dot",
     });
   });
 
   it("strips inline comment after closing quote on a sequence item", () => {
-    const text = 'afk:\n  backpressure:\n    - "npm run test" # full suite\n';
-    expect(parseConfigYaml(text)).toEqual({ "afk.backpressure.0": "npm run test" });
+    const text = 'afk:\n  validation:\n    post_done:\n      - "npm run test" # full suite\n';
+    expect(parseConfigYaml(text)).toEqual({ "afk.validation.post_done.0": "npm run test" });
   });
 
   it("throws on a top-level sequence with no enclosing mapping", () => {
     expect(() => parseConfigYaml("- npm test\n")).toThrow(MalformedConfigError);
-  });
-
-  it("readBackpressure reads the list in order", () => {
-    const text = "afk:\n  backpressure:\n    - npm run test\n    - npm run lint\n    - npm run build\n";
-    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
-    expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint", "npm run build"]);
-  });
-
-  it("readBackpressure reads the namespaced location (ADR 0042)", () => {
-    const text = "plugins:\n  dev:\n    afk:\n      backpressure:\n        - npm run test\n        - npm run lint\n";
-    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
-    expect(readBackpressure(values)).toEqual(["npm run test", "npm run lint"]);
-  });
-
-  it("readBackpressure accepts a single-line scalar as a one-command list", () => {
-    const text = "afk:\n  backpressure: npm run test\n";
-    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
-    expect(readBackpressure(values)).toEqual(["npm run test"]);
-  });
-
-  it("readBackpressure returns [] when absent (the gate is a no-op)", () => {
-    const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => "afk:\n  default_runner: codex\n" });
-    expect(readBackpressure(values)).toEqual([]);
   });
 
   it("readHitlTypeLabels reads the declared HUMAN-ONLY types in order", () => {
@@ -845,42 +818,6 @@ describe("config — block sequences (afk.backpressure, #430)", () => {
   it("readHitlTypeLabels returns [] when the repo declares no HUMAN-ONLY type", () => {
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => "afk:\n  default_runner: codex\n" });
     expect(readHitlTypeLabels(values)).toEqual([]);
-  });
-});
-
-describe("config — feedback command authority (#3276)", () => {
-  it("reads namespaced feedback.commands in declaration order", () => {
-    const text = [
-      "plugins:",
-      "  dev:",
-      "    enabled: true",
-      "    afk:",
-      "      feedback:",
-      "        commands:",
-      "          - pnpm -C apps/dev exec tsc --noEmit",
-      "          - pnpm -C apps/dev lint",
-      "",
-    ].join("\n");
-    const values = loadConfig("/x/.red/config.yaml", { read: () => text });
-
-    expect(readFeedbackCommands(values)).toEqual([
-      "pnpm -C apps/dev exec tsc --noEmit",
-      "pnpm -C apps/dev lint",
-    ]);
-  });
-
-  it("distinguishes an absent declaration from an explicit empty replacement", () => {
-    const absent = loadConfig("/x/.red/config.yaml", {
-      ignoreActivationGate: true,
-      read: () => "afk:\n  default_runner: codex\n",
-    });
-    const disabled = loadConfig("/x/.red/config.yaml", {
-      ignoreActivationGate: true,
-      read: () => "afk:\n  feedback:\n    commands: []\n",
-    });
-
-    expect(readFeedbackCommands(absent)).toBeUndefined();
-    expect(readFeedbackCommands(disabled)).toEqual([]);
   });
 });
 
@@ -935,7 +872,7 @@ describe("config — validation moments (ADR 0135, #3284)", () => {
     expect(readValidationMoments(values)).toEqual({ iteration: ["   ", "echo ok"] });
   });
 
-  it("reads both legacy knobs as post_done contributions and warns with the moments key", () => {
+  it("names both retired legacy knobs as RETIRED and reads them into no moment", () => {
     const warnings: string[] = [];
     const text = [
       "plugins:",
@@ -954,30 +891,13 @@ describe("config — validation moments (ADR 0135, #3284)", () => {
       warn: (warning) => warnings.push(warning),
     });
 
-    expect(readValidationMoments(values)).toEqual({ post_done: ["pnpm test", "pnpm lint"] });
-    expect(warnings).toHaveLength(2);
-    expect(warnings[0]).toContain("plugins.dev.afk.validation.post_done");
-    expect(warnings[1]).toContain("plugins.dev.afk.validation.post_done");
-    expect(warnings.join("\n")).toContain("afk.feedback.commands");
-    expect(warnings.join("\n")).toContain("afk.backpressure");
+    expect(readValidationMoments(values)).toEqual({});
+    const joined = warnings.join("\n");
+    expect(joined).toContain("RETIRED");
+    expect(joined).toContain("afk.feedback.commands");
+    expect(joined).toContain("afk.backpressure");
   });
 
-  it("expires the legacy aliases after their one-release window", () => {
-    const manifest = JSON.parse(
-      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
-    ) as { version: string };
-    const ordinal = (version: string): number => {
-      const [major = 0, minor = 0, patch = 0] = version.split(".").map(Number);
-      return major * 1_000_000 + minor * 1_000 + patch;
-    };
-
-    expect(
-      ordinal(manifest.version),
-      "remove the Validation moment aliases when advancing beyond their one-release window",
-    ).toBeLessThan(ordinal(VALIDATION_MOMENT_ALIASES_REMOVED_IN));
-    expect(ordinal("3.5.1")).toBeLessThan(ordinal(VALIDATION_MOMENT_ALIASES_REMOVED_IN));
-    expect(ordinal("3.6.0")).toBeGreaterThanOrEqual(ordinal(VALIDATION_MOMENT_ALIASES_REMOVED_IN));
-  });
 });
 
 describe("config — declared AFK worktree setup (#3268)", () => {
@@ -1029,16 +949,17 @@ describe("config — literal block scalars (#1998)", () => {
       "  dev:",
       "    enabled: true",
       "    afk:",
-      "      backpressure:",
-      "        - |",
-      "          set -euo pipefail",
-      "          pnpm --filter @reddb-io/dev test -- config.test.ts",
+      "      validation:",
+      "        post_done:",
+      "          - |",
+      "            set -euo pipefail",
+      "            pnpm --filter @reddb-io/dev test -- config.test.ts",
       "",
-      "          if [ -f package.json ]; then",
-      "            pnpm --filter @reddb-io/dev typecheck",
-      "          fi",
-      "        - |-",
-      "          pnpm --filter @reddb-io/dev build",
+      "            if [ -f package.json ]; then",
+      "              pnpm --filter @reddb-io/dev typecheck",
+      "            fi",
+      "          - |-",
+      "            pnpm --filter @reddb-io/dev build",
       "      merge:",
       "        wait_for_review: true",
       "rsp:",
@@ -1048,7 +969,7 @@ describe("config — literal block scalars (#1998)", () => {
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
     expect(getConfig(values, "dev.trunk")).toBe("develop");
     expect(getConfig(values, "plugins.dev.enabled")).toBe("true");
-    expect(readBackpressure(values)).toEqual([
+    expect(readValidationMoments(values).post_done).toEqual([
       [
         "set -euo pipefail",
         "pnpm --filter @reddb-io/dev test -- config.test.ts",
@@ -1068,7 +989,7 @@ describe("config — literal block scalars (#1998)", () => {
     expect(() => parseConfigYaml("afk:\n  script: >\n    echo nope\n")).toThrow(
       /line 2: unsupported folded block scalar/,
     );
-    expect(() => parseConfigYaml("afk:\n  backpressure:\n    - >\n      echo nope\n")).toThrow(
+    expect(() => parseConfigYaml("afk:\n  setup:\n    - >\n      echo nope\n")).toThrow(
       /line 3: unsupported folded block scalar/,
     );
   });
