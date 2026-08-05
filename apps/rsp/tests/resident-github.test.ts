@@ -75,6 +75,39 @@ describe("resident-owned GitHub reads", () => {
     expect(result.stderr).toContain("search reads are never a fallback");
   });
 
+  it("routes a multi-node listing to GraphQL without falling into search", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rsp-resident-github-"));
+    const seen: string[] = [];
+    const github = createRspResidentGithubClient({
+      rootDir: root,
+      token: "fixture-token",
+      baseUrl: "https://github.invalid/api/v3",
+      fetchImpl: async (input) => {
+        seen.push(String(input));
+        return new Response(JSON.stringify({
+          data: {
+            repository: {
+              issues: { nodes: [{ number: 42, title: "budget", state: "OPEN", labels: { nodes: [] } }] },
+            },
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      },
+      retryCount: 0,
+      throttle: false,
+    });
+
+    const result = await github.read({
+      args: ["issue", "list"],
+      path: "repos/acme/widgets/issues",
+      params: { owner: "acme", repo: "widgets" },
+      actor: "session",
+    });
+
+    expect(result).toMatchObject({ status: 0, surface: "graphql", pool: "graphql" });
+    expect(seen).toEqual(["https://github.invalid/api/graphql"]);
+    expect(JSON.parse(result.stdout)).toMatchObject([{ number: 42, title: "budget", state: "open" }]);
+  });
+
   it("returns a structured repair when GitHub refuses the budget", async () => {
     const root = await mkdtemp(join(tmpdir(), "rsp-resident-github-"));
     const github = createRspResidentGithubClient({
