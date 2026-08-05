@@ -670,12 +670,12 @@ function projectsExhaustionBeforeReset(pool: GithubPoolBalance, now: string): bo
 
 function diversionBand(pressure: number, previous: GithubDiversionBand | undefined): GithubDiversionBand {
   if (pressure >= GITHUB_DIVERSION_BANDS.full.enter_pressure) return "full";
+  if (previous === "full" && pressure >= GITHUB_DIVERSION_BANDS.full.leave_pressure) return "full";
   if (pressure >= GITHUB_DIVERSION_BANDS.high.enter_pressure) return "high";
-  if (pressure >= GITHUB_DIVERSION_BANDS.low.enter_pressure) return "low";
-
   if (previous === "full" || previous === "high") {
     if (pressure >= GITHUB_DIVERSION_BANDS.high.leave_pressure) return "high";
   }
+  if (pressure >= GITHUB_DIVERSION_BANDS.low.enter_pressure) return "low";
   if (previous !== undefined && previous !== "none") {
     if (pressure >= GITHUB_DIVERSION_BANDS.low.leave_pressure) return "low";
   }
