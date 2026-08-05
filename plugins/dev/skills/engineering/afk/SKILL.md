@@ -194,6 +194,20 @@ Read the focused reference before touching that concern:
   subset before folding back to the full declaration. `landing` runs before
   push/PR/queue. The merge queue is the CI-side final Validation moment and owns
   freshness against the merged result.
+- The **Queue Custodian** owns an unlocked PR after Landing arms native merge
+  intent and records the custody hand-off. Landing then ends: the Worker does
+  not poll the merge, classify an ejection, or close the Ticket. A vanished
+  intent wakes the Custodian's repair Worker through ordinary admission.
+- The **Verdict** is the one pure failed-Validation decision. Checks, history,
+  and environment facts enter; fault, budget effect, and park-now leave. There
+  is no runtime classification hook: the sole operator escape is the declared
+  `plugins.dev.afk.validation.subsecond_failures_are_branch_fault` policy beside
+  the Validation moments.
+- The **Park** has one door. `blocker-state` alone parses, writes, and clears the
+  active blocker (malformed blocked records stay active and named), and every
+  return to `ready-for-agent` calls `applyRequeue` with `machine` or `human`
+  authority. Callers never reproduce its freshness, claim-sweep, Directive,
+  body, or label sequence.
 - The gate command is canonical. Workers run the exact commands handed to
   them and never self-impose stricter flags, extra lint restrictions, widened
   target sets, or a harder contract. If an error appears only under an extra
