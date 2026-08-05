@@ -203,6 +203,11 @@
       "moveKey": "e57f5cae7679"
     },
     {
+      "id": "apps/release/src/release-artifacts.ts#json-stringify-file-write#fda264d13ec5",
+      "classification": "external",
+      "reason": "Release manifest JSON is an interop asset for downstream CI/CD (ADR 0139)."
+    },
+    {
       "id": "apps/release/src/cli.ts#json-parse-file-read#06f60309d571",
       "classification": "external",
       "reason": "npm package.json manifests are an external JSON format the release engine must read as-is"

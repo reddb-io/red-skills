@@ -1,0 +1,69 @@
+{
+  "version": "2.0.0",
+  "date": "2026-08-05",
+  "changes": {
+    "major": [
+      {
+        "file": "calm-cats-dance.md",
+        "summary": "Replace the legacy release API.",
+        "body": "Replace the legacy release API.\n\nThe new API keeps every package on one version train.",
+        "packages": [
+          "@example/cli",
+          "@example/core"
+        ],
+        "authors": [
+          "@ada",
+          "@zoe"
+        ],
+        "pullRequests": [
+          319,
+          321
+        ]
+      }
+    ],
+    "minor": [
+      {
+        "file": "quiet-bears-wave.md",
+        "summary": "Add a read-only release status command.",
+        "body": "Add a read-only release status command.",
+        "packages": [
+          "@example/cli"
+        ],
+        "authors": [
+          "@lee"
+        ],
+        "pullRequests": [
+          320
+        ]
+      }
+    ],
+    "patch": [
+      {
+        "file": "bright-dogs-smile.md",
+        "summary": "Correct version rendering for release candidates.",
+        "body": "Correct version rendering for release candidates.",
+        "packages": [
+          "@example/core"
+        ],
+        "authors": [
+          "@sam"
+        ],
+        "pullRequests": [
+          318
+        ]
+      }
+    ]
+  },
+  "authors": [
+    "@ada",
+    "@lee",
+    "@sam",
+    "@zoe"
+  ],
+  "pullRequests": [
+    318,
+    319,
+    320,
+    321
+  ]
+}
