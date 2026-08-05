@@ -8,14 +8,14 @@
 //
 //   1. the unit's ExecStart is the PUBLISHED BUNDLE with this session's paths —
 //      the same argv a client spawns, never the caller's own entry;
-//   2. `Restart=on-failure` is declared, and the install actually enables it NOW;
-//   3. a killed daemon driven only by that ExecStart comes BACK, with no client
+//   2. `Restart=always` is declared, and the install actually enables it NOW;
+//   3. a cleanly self-stopped daemon driven only by that ExecStart comes BACK, with no client
 //      asking for work in between;
 //   4. a host with no unit still gets a daemon, and says so rather than reading
 //      as broken.
 //
 // The supervisor is stood in for rather than assumed: the test runs the unit's own
-// ExecStart when the process dies, which is exactly what `Restart=on-failure`
+// ExecStart when the process exits, which is exactly what `Restart=always`
 // does — and it proves the rendered argv works, which a systemd-only test on a
 // host without a user session could never do.
 import { spawn, type ChildProcess } from "node:child_process";
@@ -168,14 +168,14 @@ describe("the user unit that supervises the daemon", () => {
       expect(plan.text).toContain(flag);
     }
     // The whole reason the unit exists.
-    expect(plan.text).toContain("Restart=on-failure");
+    expect(plan.text).toContain("Restart=always");
     expect(plan.text).toContain(`Environment="${REDSKILLED_SUPERVISED_ENV}=1"`);
     expect(plan.text).toContain(`Environment="REDSKILLED_SESSION=${paths.sessionKey}"`);
     expect(plan.text).toContain("WantedBy=default.target");
     expect(plan.unitPath).toBe(redskilledUnitPath({ HOME: paths.runtimeDir }));
 
-    // A self-replacement leaves NON-ZERO precisely so `Restart=on-failure` catches
-    // it: a clean exit would leave the machine on the old bundle with no daemon.
+    // Self-replacement still uses a distinct exit code for observability, even
+    // though the unit now restarts every daemon exit.
     expect(REDSKILLED_REPLACE_EXIT_CODE).not.toBe(0);
   });
 
@@ -219,7 +219,7 @@ describe("the user unit that supervises the daemon", () => {
     expect(removed.steps.map((step) => step.step)).toEqual(["disable", "remove-unit", "daemon-reload"]);
   });
 
-  it("revives a killed daemon with no client asking for work", async () => {
+  it("revives a cleanly self-stopped daemon with no client asking for work", async () => {
     const { paths, config, launchLog } = await host();
     const plan = planRedskilledUnit(paths, {
       env: { HOME: paths.runtimeDir },
@@ -230,7 +230,7 @@ describe("the user unit that supervises the daemon", () => {
 
     // The stand-in supervisor: run the unit's own ExecStart, exactly as systemd
     // would. Nothing here is a client, and nothing here asks for work.
-    const startUnit = () => {
+    const startUnit = (): ChildProcess => {
       const child = spawn(plan.command, [...plan.args], {
         detached: true,
         stdio: "ignore",
@@ -238,18 +238,22 @@ describe("the user unit that supervises the daemon", () => {
       });
       children.push(child);
       child.unref();
+      return child;
     };
 
-    startUnit();
+    const firstUnitProcess = startUnit();
     expect(await until(() => socketAnswers(paths.socketPath))).toBe(true);
     const first = await daemonPid(paths.socketPath);
 
-    // The death the supervisor exists for: a hard kill, leaving the lease and the
-    // socket file behind exactly as a crash does.
-    process.kill(first, "SIGKILL");
+    // The regression: the daemon may decide to stop itself and exit zero. Under
+    // an on-failure policy this leaves an enabled unit inactive indefinitely.
+    const firstExit = new Promise<number | null>((resolveExit) => firstUnitProcess.once("exit", resolveExit));
+    await sendRedskilledRequest({ socketPath: paths.socketPath }, { id: "self-shutdown", op: "shutdown" });
     expect(await until(async () => !(await socketAnswers(paths.socketPath)))).toBe(true);
+    expect(await firstExit).toBe(0);
 
-    // `Restart=on-failure` fires. No client has reached the socket in between.
+    // `Restart=always` fires even for that clean exit. No client has reached the
+    // socket in between.
     startUnit();
     expect(await until(() => socketAnswers(paths.socketPath))).toBe(true);
 
@@ -289,4 +293,25 @@ describe("a host with no unit installed", () => {
     expect(await socketAnswers(paths.socketPath)).toBe(true);
     expect(launches(launchLog)).toHaveLength(1);
   }, 60_000);
+});
+
+describe("an installed user unit", () => {
+  it("surfaces an enabled-but-dead unit as a finding", async () => {
+    const { paths } = await host();
+    await mkdir(resolve(redskilledUnitPath({ HOME: paths.runtimeDir }), ".."), { recursive: true });
+    await writeFile(redskilledUnitPath({ HOME: paths.runtimeDir }), "[Service]\nRestart=always\n");
+    const probe = recordingRun({
+      [`systemctl --user is-enabled ${REDSKILLED_UNIT_NAME}`]: { status: 0 },
+      [`systemctl --user is-active ${REDSKILLED_UNIT_NAME}`]: { status: 3 },
+    });
+
+    const status = readRedskilledUnitStatus({ env: { HOME: paths.runtimeDir }, run: probe.run });
+
+    expect(status.installed).toBe(true);
+    expect(status.enabled).toBe(true);
+    expect(status.active).toBe(false);
+    expect(status.findings).toEqual([
+      expect.objectContaining({ code: "enabled-but-inactive" }),
+    ]);
+  });
 });

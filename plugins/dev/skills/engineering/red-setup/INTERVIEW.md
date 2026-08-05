@@ -197,7 +197,7 @@ $RS host-state             # the machine's Workers, from the daemon itself
 
 A `verdict: missing` names which of the four checks failed — `home`, `daemon-entry`, `reach`, `supervisor-unit` — and prints the exact command for each. A `home` finding appears only when a declared target actually reads the home; absent-and-unneeded is reported as `ok`. A `daemon-entry` finding means no published bundle was found on this host; it names every path probed, and re-running `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision` after the bundle is warmed is the cure. Do not work around it by pointing the daemon at a caller's own entry — a stale caller mints a staler daemon and the skew widens (#2736, #2677).
 
-**Optional supervising unit (default NO).** Auto-spawn already starts the daemon on first use; the user unit only adds `Restart=on-failure` over the identical binary, socket and contract (ADR 0130 rule 7). Offer it, defaulting to no, and only on a Linux host with a `systemd --user` session. On a yes:
+**Optional supervising unit (default NO).** Auto-spawn already starts the daemon on first use; the user unit only adds `Restart=always` over the identical binary, socket and contract (ADR 0130 rule 7). Offer it, defaulting to no, and only on a Linux host with a `systemd --user` session. On a yes:
 
 1. Run `npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled provision --install-unit`. It writes `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/redskilled.service` **only when absent** — an existing unit is the operator's configuration and is never rewritten.
 2. Tell the user the two commands that activate it; do not run them for them:

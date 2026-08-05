@@ -338,13 +338,13 @@ describe("provisioning a machine with no prior state", () => {
 });
 
 describe("the optional supervising unit", () => {
-  it("renders a user unit that restarts on failure and serves the session socket", () => {
+  it("renders a user unit that restarts after every exit and serves the session socket", () => {
     const unit = renderRedskilledUserUnit({
       command: "/usr/bin/node /bundles/redskilled.bundle.min.mjs",
       socketPath: "/run/user/1000/red-skills/redskilled.sock",
     });
 
-    expect(unit).toContain("Restart=on-failure");
+    expect(unit).toContain("Restart=always");
     expect(unit).toContain("ExecStart=/usr/bin/node /bundles/redskilled.bundle.min.mjs serve");
     expect(unit).toContain("--socket /run/user/1000/red-skills/redskilled.sock");
     expect(unit).toContain("WantedBy=default.target");
