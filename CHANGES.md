@@ -6,6 +6,27 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## redskilled, ask-red (engineering) — the numeric argument debugs a Worker (issue #3402)
+
+- **status**: modified
+- **upstream**: —
+- **why**: An operator asking "what is the Worker on #N doing, or why did it
+  never start?" had to hand-assemble the answer from four lanes and the castle
+  MCP, and a Worker the daemon refused at birth left no vitals row to read at
+  all — so the question with the most evidence behind it was the hardest to
+  answer.
+- **what changed**: Added a second entry to `/redskilled` keyed by a bare issue
+  number (`/redskilled 3351`, `/redskilled #3351`) that resolves the issue to
+  its Worker(s) — castle MCP first, documented lane scan as the fallback that
+  also finds refused and pre-daemon Workers — and writes a read-only dossier
+  (fiche, event sequence, log excerpts with full paths, self-serve diagnosis
+  naming the operator's next commands) to
+  `.red/tmp/diagnostics/redskilled-debug-<issue>-<timestamp>.md`; documented the
+  evidence lanes, the `worker.*` and daemon event vocabularies, and the dossier
+  template; recorded the known gap that no castle tool is issue-keyed; left the
+  daemon-operation flow unchanged; and routed the new question through
+  `/ask-red`.
+
 ## redskilled (engineering) — per-machine daemon operator cycle (issue #3249)
 
 - **status**: added
