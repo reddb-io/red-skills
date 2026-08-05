@@ -1,17 +1,11 @@
 import { z } from "zod/v3";
 import {
-  monitorContract,
   queueStatusContract,
-  workerVitalsContract,
   type MonitorOutput,
   type QueueStatusOutput,
   type WorkerVitalsOutput,
   type WorkerVitalsProjectedOutput,
 } from "./contracts.js";
-import {
-  deprecatedStatusAlias,
-  deprecatedStatusAliasContract,
-} from "./status.js";
 import type { CastleMcpTool } from "./tool.js";
 import { workSelectorShape, type WorkSelectorInput } from "./project.js";
 
@@ -66,26 +60,6 @@ export function createObservabilityTools(
       invoke: (input) => deps.logs(input as unknown as LogsInput),
     },
     {
-      name: "worker_vitals",
-      title: "Deprecated worker vitals alias",
-      description:
-        "DEPRECATED: use status { scope: worker }. Returns liveness-qualified worker state and names its replacement.",
-      inputSchema: {
-        live_only: z.boolean().default(true),
-        fields: z.array(z.string().min(1)).optional(),
-      },
-      outputContract: deprecatedStatusAliasContract(workerVitalsContract),
-      invoke: async (input) =>
-        deprecatedStatusAlias(
-          "worker_vitals",
-          "worker",
-          await deps.workerVitals({
-            live_only: (input.live_only ?? true) as boolean,
-            fields: input.fields as string[] | undefined,
-          }),
-        ),
-    },
-    {
       name: "dashboard",
       title: "Build AFK dashboard",
       description:
@@ -95,16 +69,6 @@ export function createObservabilityTools(
       },
       invoke: ({ periodDays }) =>
         deps.dashboard({ periodDays: periodDays as number }),
-    },
-    {
-      name: "monitor",
-      title: "Deprecated worker monitor alias",
-      description:
-        "DEPRECATED: use status { scope: worker }. Returns worker monitor inputs and names its replacement.",
-      inputSchema: {},
-      outputContract: deprecatedStatusAliasContract(monitorContract),
-      invoke: async () =>
-        deprecatedStatusAlias("monitor", "worker", await deps.monitor()),
     },
     {
       name: "history",
