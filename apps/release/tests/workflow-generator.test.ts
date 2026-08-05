@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { parse } from "yaml";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   RELEASE_WORKFLOW_PATH,
+  VENDORED_RELEASE_BUNDLE_PATH,
   generateReleaseWorkflows,
   renderReleaseWorkflow,
 } from "../src/workflow-generator.js";
@@ -21,20 +23,32 @@ afterEach(() => {
 
 describe("release workflow generator", () => {
   for (const trigger of ["version-pr", "auto"] as const) {
-    it(`pins the ${trigger} workflow golden file`, () => {
-      const generated = renderReleaseWorkflow({ trigger, engineVersion: ENGINE_VERSION });
-      const golden = readFileSync(join(FIXTURES, `${trigger}.yml`), "utf8");
+    for (const execution of ["pinned", "vendored"] as const) {
+      it(`pins the ${trigger} ${execution} workflow golden file`, () => {
+        const generated = renderReleaseWorkflow({
+          trigger,
+          execution,
+          engineVersion: ENGINE_VERSION,
+        });
+        const suffix = execution === "pinned" ? "" : "-vendored";
+        const golden = readFileSync(join(FIXTURES, `${trigger}${suffix}.yml`), "utf8");
 
-      expect(generated).toBe(golden);
-    });
+        expect(generated).toBe(golden);
+      });
+    }
   }
 
   it("uses only the default token, explicit least privilege, and the canonical pinned npx form", () => {
     const versionPullRequest = renderReleaseWorkflow({
       trigger: "version-pr",
+      execution: "pinned",
       engineVersion: ENGINE_VERSION,
     });
-    const auto = renderReleaseWorkflow({ trigger: "auto", engineVersion: ENGINE_VERSION });
+    const auto = renderReleaseWorkflow({
+      trigger: "auto",
+      execution: "pinned",
+      engineVersion: ENGINE_VERSION,
+    });
 
     for (const source of [versionPullRequest, auto]) {
       const workflow = parse(source) as {
@@ -55,8 +69,25 @@ describe("release workflow generator", () => {
     expect(auto).not.toContain("pull-requests: write");
   });
 
+  it("runs the vendored file with the same least-privilege workflow", () => {
+    const source = renderReleaseWorkflow({
+      trigger: "version-pr",
+      execution: "vendored",
+      engineVersion: ENGINE_VERSION,
+    });
+    const workflow = parse(source) as {
+      permissions: Record<string, never>;
+      jobs: Record<string, { permissions: Record<string, string> }>;
+    };
+
+    expect(workflow.permissions).toEqual({});
+    expect(Object.values(workflow.jobs).every((job) => job.permissions !== undefined)).toBe(true);
+    expect(source).toContain(`node ${VENDORED_RELEASE_BUNDLE_PATH} run`);
+    expect(source).not.toContain("npx");
+  });
+
   it("reads the trigger from config, refreshes only the pin, and then becomes a no-op", () => {
-    const repository = fixtureRepository("version-pr");
+    const repository = fixtureRepository("version-pr", "pinned");
 
     const first = generateReleaseWorkflows({ repoRoot: repository, engineVersion: "3.8.0" });
     const firstBytes = readFileSync(join(repository, RELEASE_WORKFLOW_PATH), "utf8");
@@ -71,16 +102,79 @@ describe("release workflow generator", () => {
     expect(repeated).toMatchObject({ changed: false, trigger: "version-pr", engineVersion: "3.8.1" });
     expect(readFileSync(join(repository, RELEASE_WORKFLOW_PATH), "utf8")).toBe(refreshedBytes);
   });
+
+  it("emits, refreshes, and deterministically pins the vendored single-file engine", () => {
+    const repository = fixtureRepository("auto", "vendored");
+    const sourceBundle = join(repository, "release-source.bundle.mjs");
+    writeStaticBundle(sourceBundle, "3.8.0", "first");
+
+    const first = generateReleaseWorkflows({
+      repoRoot: repository,
+      engineVersion: "3.8.0",
+      engineBundlePath: sourceBundle,
+    });
+    const emittedBundle = join(repository, VENDORED_RELEASE_BUNDLE_PATH);
+    const firstBytes = readFileSync(emittedBundle);
+    expect(first).toMatchObject({
+      changed: true,
+      trigger: "auto",
+      execution: "vendored",
+      engineVersion: "3.8.0",
+      bundlePath: emittedBundle,
+    });
+    expect(firstBytes).toEqual(readFileSync(sourceBundle));
+    expect(readFileSync(join(repository, RELEASE_WORKFLOW_PATH), "utf8")).toContain(
+      `node ${VENDORED_RELEASE_BUNDLE_PATH} run`,
+    );
+    expect(runBundle(emittedBundle, "--version")).toBe("red-skills-release 3.8.0 first\n");
+    expect(runBundle(emittedBundle, "--help")).toContain("Usage: red-skills-release");
+
+    writeStaticBundle(sourceBundle, "3.8.1", "second");
+    const refreshed = generateReleaseWorkflows({
+      repoRoot: repository,
+      engineVersion: "3.8.1",
+      engineBundlePath: sourceBundle,
+    });
+    const refreshedBytes = readFileSync(emittedBundle);
+    expect(refreshed).toMatchObject({ changed: true, engineVersion: "3.8.1" });
+    expect(refreshedBytes).toEqual(readFileSync(sourceBundle));
+    expect(refreshedBytes).not.toEqual(firstBytes);
+    expect(runBundle(emittedBundle, "--version")).toBe("red-skills-release 3.8.1 second\n");
+
+    const repeated = generateReleaseWorkflows({
+      repoRoot: repository,
+      engineVersion: "3.8.1",
+      engineBundlePath: sourceBundle,
+    });
+    expect(repeated).toMatchObject({ changed: false, engineVersion: "3.8.1" });
+    expect(readFileSync(emittedBundle)).toEqual(refreshedBytes);
+  });
 });
 
-function fixtureRepository(trigger: "version-pr" | "auto"): string {
+function fixtureRepository(
+  trigger: "version-pr" | "auto",
+  execution: "pinned" | "vendored",
+): string {
   const repository = mkdtempSync(join(tmpdir(), "release-workflow-"));
   temporaryDirectories.push(repository);
   mkdirSync(join(repository, ".red"));
   writeFileSync(join(repository, "package.json"), '{"name":"fixture","version":"1.2.3"}\n');
   writeFileSync(
     join(repository, ".red", "config.yaml"),
-    `release:\n  scheme: semver\n  trigger: ${trigger}\n  execution: pinned\n  version_surfaces:\n    - path: package.json\n      format: npm\n`,
+    `release:\n  scheme: semver\n  trigger: ${trigger}\n  execution: ${execution}\n  version_surfaces:\n    - path: package.json\n      format: npm\n`,
   );
   return repository;
+}
+
+function writeStaticBundle(path: string, version: string, sha: string): void {
+  writeFileSync(
+    path,
+    `#!/usr/bin/env node\nconst arg = process.argv[2];\nif (arg === "--version") process.stdout.write("red-skills-release ${version} ${sha}\\n");\nelse if (arg === "--help") process.stdout.write("Usage: red-skills-release <command>\\n");\n`,
+  );
+}
+
+function runBundle(path: string, argument: "--version" | "--help"): string {
+  const result = spawnSync(process.execPath, [path, argument], { encoding: "utf8" });
+  expect(result.status, result.stderr).toBe(0);
+  return result.stdout;
 }
