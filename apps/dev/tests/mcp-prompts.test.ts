@@ -18,10 +18,14 @@ describe("castle MCP intent prompts", () => {
   it("lists four thin doors that delegate only to help", async () => {
     const server = createCastleMcpServer();
     const client = new Client({ name: "castle-prompt-test", version: "1" });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    close.push(() => client.close(), () => server.close());
+    close.push(
+      () => client.close(),
+      () => server.close(),
+    );
 
     const listed = await client.listPrompts();
     expect(listed.prompts.map(({ name }) => name)).toEqual(PROMPT_NAMES);
