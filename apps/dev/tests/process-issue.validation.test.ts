@@ -1856,88 +1856,59 @@ describe("processIssue — an empty-diff DONE is never stale-base drift (#2711)"
   });
 });
 
-describe("processIssue — suspect-infra uses the bounded free correction pool (#3233)", () => {
-  it("re-runs only the gate without charging the branch when the record says suspect-infra", async () => {
+describe("processIssue — suspect-infra is an environment-inconclusive round (#3301)", () => {
+  it("charges no correction and cannot be overridden to semantic by the classification hook", async () => {
     const { deps, input, trace } = harness({
       labels: ["lane:go"],
       laneLabel: "lane:go",
       outcome: "done",
-      feedbackResults: [false, true],
-      feedbackDurationsMs: [465, 1000],
-      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0" },
-    });
-
-    const result = await processIssue(deps, input);
-
-    expect(result.outcome).toBe("done");
-    expect(trace.runAgentCalls).toHaveLength(1);
-    expect(trace.iterLogs.some((line) => line.includes("free suspect-infra correction (1/2)"))).toBe(true);
-    expect(trace.iterLogs.some((line) => line.includes("budget untouched at 0/0"))).toBe(true);
-    expect(trace.closed).toEqual([9]);
-  });
-
-  it("charges the next red gate when suspect-infra is no longer present", async () => {
-    const { deps, input, trace } = harness({
-      labels: ["lane:go"],
-      laneLabel: "lane:go",
-      outcome: "done",
-      feedbackResults: [false, false, true],
-      feedbackDurationsMs: [465, 1000, 1000],
+      feedbackOk: false,
+      feedbackDurationsMs: [465],
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
     });
+    const customDeps: ProcessIssueDeps = {
+      ...deps,
+      hooks: {
+        ...deps.hooks,
+        config: { "afk.hooks.on_feedback_classify": "cls" },
+        exec: async (command) =>
+          command === "cls"
+            ? { code: 0, stdout: JSON.stringify({ class: "semantic" }) }
+            : { code: 0, stdout: "" },
+      },
+    };
 
-    const result = await processIssue(deps, input);
+    const result = await processIssue(customDeps, input);
 
-    expect(result.outcome).toBe("done");
-    expect(trace.runAgentCalls).toHaveLength(2);
-    expect(trace.iterLogs.some((line) => line.includes("free suspect-infra correction (1/2)"))).toBe(true);
-    expect(trace.iterLogs.some((line) => line.includes("correction retry 1/1"))).toBe(true);
-    expect(trace.closed).toEqual([9]);
-  });
-
-  it("cannot buy unbounded gate runs while the environment stays suspect", async () => {
-    const { deps, input, trace } = harness({
-      labels: ["lane:go"],
-      laneLabel: "lane:go",
-      outcome: "done",
-      feedbackResults: [false],
-      feedbackDurationsMs: [465],
-      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0", RED_GATE_STALE_BASE_CORRECTIONS: "1" },
-    });
-
-    const result = await processIssue(deps, input);
-
-    expect(result.outcome).toBe("feedback-failed");
+    expect(result.outcome).toBe("feedback-failed-infra");
     expect(trace.runAgentCalls).toHaveLength(1);
-    expect(trace.iterLogs.filter((line) => line.includes("free suspect-infra correction"))).toHaveLength(1);
-    expect(trace.labelEdits.some((edit) => edit.add.includes("blocked:validation"))).toBe(true);
+    expect(trace.workerEvents.filter((event) => event.kind === "worker.reseeded")).toEqual([]);
+    expect(trace.workerEvents.filter((event) => event.kind === "worker.gate_revalidation_requested")).toEqual([]);
+    const evidence = trace.envelopeBodies.join("\n");
+    expect(evidence).toContain("suspect-infra");
+    expect(evidence).toContain("environment failure");
+    expect(evidence).toContain("hook requested `semantic`, but environment verdicts cannot be overridden");
+    expect(evidence).not.toContain("correction budget exhausted");
+    expect(evidence).not.toContain("failure is the branch's");
   });
 
-  it("parks the second identical suspect-infra signature without spending another retry (#3268)", async () => {
+  it("still charges a genuinely failing branch check on a healthy environment", async () => {
     const { deps, input, trace } = harness({
       labels: ["lane:go"],
       laneLabel: "lane:go",
       outcome: "done",
       feedbackResults: [false, false],
-      feedbackDurationsMs: [465, 465],
-      recoveryEnv: { RED_GO_VERIFY_RETRIES: "0" },
+      feedbackDurationsMs: [1000, 1000],
+      recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
     });
 
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("feedback-failed");
-    expect(trace.runAgentCalls).toHaveLength(1);
-    expect(trace.iterLogs.filter((line) => line.includes("free suspect-infra correction"))).toHaveLength(1);
-    expect(
-      trace.iterLogs.some(
-        (line) => line.includes("deterministic suspect-infra") && line.includes("signature="),
-      ),
-    ).toBe(true);
-    expect(
-      trace.labelEdits.some(
-        (edit) => edit.add.includes("ready-for-human") && edit.add.includes("blocked:validation"),
-      ),
-    ).toBe(true);
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.iterLogs.some((line) => line.includes("correction retry 1/1"))).toBe(true);
+    expect(trace.workerEvents.filter((event) => event.kind === "worker.reseeded")).toHaveLength(1);
+    expect(trace.envelopeBodies.join("\n")).toContain("gate-correction budget exhausted");
   });
 
   it("parks an identical carried INFRA signature instead of exhausting outer recovery (#3268)", async () => {
