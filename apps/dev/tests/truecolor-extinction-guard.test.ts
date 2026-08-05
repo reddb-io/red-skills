@@ -1,3 +1,4 @@
+// @ts-nocheck -- executable repo-invariant fixture; the guard module owns the typed contract.
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
