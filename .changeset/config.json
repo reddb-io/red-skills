@@ -20,6 +20,7 @@
       "@reddb-io/github",
       "@reddb-io/shared",
       "@reddb-io/build-info",
+      "@reddb-io/brand-tokens",
       "@reddb-io/red-skills",
       "@reddb-io/red-castle",
       "@reddb-io/red-browser",
