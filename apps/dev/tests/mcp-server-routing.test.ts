@@ -133,7 +133,7 @@ describe("dev:afk MCP entrypoint routing", () => {
       }),
     ).resolves.toBe(0);
 
-    expect(calls).toEqual(["curator", "merge-driver", "unblock", "self-update", "connect"]);
+    expect(calls).toEqual(["curator", "unblock", "self-update", "connect"]);
   });
 
   it("awaits resident cleanup after the MCP transport closes", async () => {
