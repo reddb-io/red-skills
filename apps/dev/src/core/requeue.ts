@@ -198,13 +198,8 @@ export function planRequeue(input: RequeueInput): RequeuePlan {
     );
   }
 
-  // Mixed blocked:* labels → label state is ambiguous; /hitl must reconcile.
-  // A no-op-mutation probe through validateIssueLifecycleTransition cannot
-  // express this: the `requeue-mixed-blocked-refusal` marker edge is
-  // `to: "illegal"`, so a legal (non-mixed) label set finds no matching row and
-  // throws "no legal row" instead of passing — the regression that turned every
-  // non-mixed requeue into an IllegalIssueLifecycleTransitionError. Detect the
-  // ambiguous state directly instead.
+  // Mixed blocked:* labels are an ambiguous Park, not a transition request.
+  // Refuse them before planning so /hitl can reconcile the competing reasons.
   if (blocked.length > 1) {
     return refuse(
       `mixed blocked:* labels [${blocked.join(", ")}]: label state is ambiguous — use /hitl to reconcile`,
