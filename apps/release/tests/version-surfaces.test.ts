@@ -76,6 +76,23 @@ writeFileSync("synced-version.txt", process.env.RED_RELEASE_VERSION + "\\n");
       .toBe(true);
     expect(read(root, "synced-version.txt")).toBe("2.0.0\n");
   });
+
+  it("writes confirmed npm surfaces outside the derived workspace", () => {
+    const root = workspaceFixture();
+    write(root, "plugins/example/plugin.json", `{
+  "name": "example-plugin",
+  "version": "1.2.3"
+}\n`);
+    const configPath = join(root, ".red/config.yaml");
+    writeFileSync(
+      configPath,
+      `${readFileSync(configPath, "utf8")}    - path: plugins/example/plugin.json\n      format: npm\n`,
+    );
+
+    expect(() => writeVersionSurfaces({ repoRoot: root, nextVersion: "2.0.0" }))
+      .not.toThrow();
+    expect(read(root, "plugins/example/plugin.json")).toContain('"version": "2.0.0"');
+  });
 });
 
 function workspaceFixture(options: { syncCommand?: string } = {}): string {
