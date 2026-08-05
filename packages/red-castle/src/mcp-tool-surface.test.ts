@@ -76,34 +76,6 @@ const SURFACE: ReadonlyArray<{
     schema: ["force", "fleet"],
   },
   {
-    name: "host_state",
-    title: "Deprecated host state alias",
-    description:
-      "DEPRECATED: use status { scope: host }. Returns daemon host state and names its replacement.",
-    schema: [],
-  },
-  {
-    name: "host_dashboard",
-    title: "Deprecated host dashboard alias",
-    description:
-      "DEPRECATED: use status { scope: host }. Returns the global dashboard and names its replacement.",
-    schema: [],
-  },
-  {
-    name: "host_provision_check",
-    title: "Deprecated host provisioning alias",
-    description:
-      "DEPRECATED: use status { scope: host }. Returns the provisioning check and names its replacement.",
-    schema: [],
-  },
-  {
-    name: "host_unit_status",
-    title: "Deprecated host unit status alias",
-    description:
-      "DEPRECATED: use status { scope: host }. Returns the unit status and names its replacement.",
-    schema: [],
-  },
-  {
     name: "logs",
     title: "Read Castle logs",
     description:
@@ -111,25 +83,11 @@ const SURFACE: ReadonlyArray<{
     schema: ["lane", "id", "limit", "kind"],
   },
   {
-    name: "worker_vitals",
-    title: "Deprecated worker vitals alias",
-    description:
-      "DEPRECATED: use status { scope: worker }. Returns liveness-qualified worker state and names its replacement.",
-    schema: ["live_only", "fields"],
-  },
-  {
     name: "dashboard",
     title: "Build AFK dashboard",
     description:
       "Build the structured operational dashboard from GitHub and local state.",
     schema: ["periodDays"],
-  },
-  {
-    name: "monitor",
-    title: "Deprecated worker monitor alias",
-    description:
-      "DEPRECATED: use status { scope: worker }. Returns worker monitor inputs and names its replacement.",
-    schema: [],
   },
   {
     name: "history",
@@ -165,13 +123,6 @@ const SURFACE: ReadonlyArray<{
     description:
       "MUTATING: run one tracked issue or mint and run one disposable demand through the AFK worker lifecycle.",
     schema: ["issue", "demand", "runner", "mode"],
-  },
-  {
-    name: "worker_status",
-    title: "Deprecated worker status alias",
-    description:
-      "DEPRECATED: use status { scope: worker }. Returns normalized worker state and names its replacement.",
-    schema: ["worker", "live_only", "fields"],
   },
   {
     name: "worker_stop",
