@@ -66,8 +66,8 @@ version = "2.0.0"
   });
 
   it("runs the optional repo-owned sync command with the next version", () => {
-    const root = workspaceFixture({ syncCommand: "node scripts/sync-version.mjs" });
-    write(root, "scripts/sync-version.mjs", `
+    const root = workspaceFixture({ syncCommand: "node scripts/sync-exotics.mjs" });
+    write(root, "scripts/sync-exotics.mjs", `
 import { writeFileSync } from "node:fs";
 writeFileSync("synced-version.txt", process.env.RED_RELEASE_VERSION + "\\n");
 `);
