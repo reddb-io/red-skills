@@ -16,7 +16,12 @@
  *
  * PURE, like every other density: payload and options in, rows out.
  */
-import { colourWorkerCell, workerCells, type RedskilledDashboardColumn } from "./dashboard.js";
+import {
+  colourWorkerCell,
+  isRepairWorker,
+  workerCells,
+  type RedskilledDashboardColumn,
+} from "./dashboard.js";
 import { clamp, formatBytes } from "./format.js";
 import { BUDGET_BAND_MARK, BUDGET_SPENT_MARK, DEATH_MARK } from "./marks.js";
 import { KEY, NOBG, RESET, SOFT, VAL } from "./palette.js";
@@ -158,7 +163,9 @@ function workerRow(
   generatedAt: string,
 ): string {
   const cells = workerCells(worker, { mode }, generatedAt);
-  const columns: readonly RedskilledDashboardColumn[] = ["wid", "bar", "phase", "elapsed", "eta"];
+  const columns: readonly RedskilledDashboardColumn[] = isRepairWorker(worker)
+    ? ["wid", "org", "iss", "bar", "phase", "elapsed", "eta"]
+    : ["wid", "bar", "phase", "elapsed", "eta"];
   const parts = columns
     .filter((column) => cells[column] !== "")
     .map((column) => colourWorkerCell(column, cells[column]));
