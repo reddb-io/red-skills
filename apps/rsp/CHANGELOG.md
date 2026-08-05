@@ -1,5 +1,14 @@
 # @reddb-io/rsp
 
+## 3.5.1
+
+### Patch Changes
+
+- Updated dependencies [b480ede]
+  - @reddb-io/red-castle@3.5.1
+  - @reddb-io/shared@3.5.1
+  - @reddb-io/build-info@3.5.1
+
 ## 3.5.0
 
 ### Patch Changes
