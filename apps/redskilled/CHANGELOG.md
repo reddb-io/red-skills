@@ -1,5 +1,15 @@
 # @reddb-io/redskilled
 
+## 3.6.0
+
+### Patch Changes
+
+- Updated dependencies [bb13751]
+  - @reddb-io/redskilled-render@3.6.0
+  - @reddb-io/github@3.6.0
+  - @reddb-io/shared@3.6.0
+  - @reddb-io/build-info@3.6.0
+
 ## 3.5.1
 
 ### Patch Changes

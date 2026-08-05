@@ -1,5 +1,23 @@
 # @reddb-io/dev
 
+## 3.6.0
+
+### Minor Changes
+
+- 0e7786d: Guide operators through package-manifest Validation moment declarations in red-setup, and carry the declared iteration checks—or an explicit nothing-heavy instruction—into every Worker handoff.
+
+### Patch Changes
+
+- e8a47cf: Consolidate Worker narration and process output into `worker.log.toonl`, and keep daemon events in its host-scoped `redskilled.log.toonl`.
+- e299cc8: Document the complete declared Validation moment schedule, the merge queue's CI-side final verdict, and the host-wide validation concurrency ceiling across the AFK and Go skills.
+- Updated dependencies [bb13751]
+  - @reddb-io/redskilled-render@3.6.0
+  - @reddb-io/redskilled@3.6.0
+  - @reddb-io/github@3.6.0
+  - @reddb-io/shared@3.6.0
+  - @reddb-io/build-info@3.6.0
+  - @reddb-io/red-castle@3.6.0
+
 ## 3.5.1
 
 ### Patch Changes
