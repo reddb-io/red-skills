@@ -177,6 +177,7 @@
     }
   },
   "dependencies": {
+    "@reddb-io/brand-tokens": "workspace:*",
     "@reddb-io/redskilled": "workspace:*",
     "@reddb-io/redskilled-render": "workspace:*",
     "@reddb-io/shared": "workspace:*"

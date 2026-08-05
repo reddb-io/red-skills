@@ -14,6 +14,7 @@
  * `views/dashboard-panel.ts` hold the `vscode` imports and nothing else.
  */
 import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
+import { tokenToCssHex } from "@reddb-io/brand-tokens";
 import { stripAnsi } from "@reddb-io/redskilled-render/format.js";
 import type { RedskilledDashboard } from "@reddb-io/redskilled/protocol";
 import type { HostSnapshot } from "./snapshot.js";
@@ -86,6 +87,8 @@ export function escapeHtml(text: string): string {
  */
 export function renderDashboardHtml(snapshot: HostSnapshot): string {
   const body = dashboardBody(snapshot);
+  const identityBackground = tokenToCssHex("brand.primary");
+  const identityForeground = tokenToCssHex("brand.on-primary");
   return [
     "<!DOCTYPE html>",
     '<html lang="en">',
@@ -93,10 +96,9 @@ export function renderDashboardHtml(snapshot: HostSnapshot): string {
     '<meta charset="UTF-8">',
     '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\';">',
     "<style>",
-    "body { font-family: var(--vscode-editor-font-family, monospace); color: var(--vscode-foreground); padding: 0.5rem; }",
+    "body { font-family: var(--vscode-editor-font-family, monospace); color: var(--vscode-foreground); background-color: var(--vscode-editor-background); padding: 0.5rem; }",
     "pre { font-family: var(--vscode-editor-font-family, monospace); font-size: var(--vscode-editor-font-size, 12px); margin: 0; white-space: pre; overflow-x: auto; }",
-    ".header { font-weight: 600; }",
-    ".stale { color: var(--vscode-editorWarning-foreground); }",
+    `.header { background-color: ${identityBackground}; color: ${identityForeground}; font-weight: 600; }`,
     ".absence { color: var(--vscode-descriptionForeground); }",
     "</style>",
     "</head>",
@@ -135,7 +137,7 @@ function dashboardBody(snapshot: HostSnapshot): string {
     ].join("\n");
   }
   return [
-    `<pre class="header${dashboard.stale ? " stale" : ""}">${escapeHtml(stripAnsi(dashboard.header.line))}</pre>`,
+    `<pre class="header">${escapeHtml(stripAnsi(dashboard.header.line))}</pre>`,
     ...(dashboard.rows.length === 0
       ? [
           '<pre class="absence">no Workers here — the machine is idle, and this is the daemon saying so</pre>',

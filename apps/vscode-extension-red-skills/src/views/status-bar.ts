@@ -27,11 +27,9 @@ export class RedskilledStatusBar {
     const view = statusBarView(snapshot);
     this.item.text = view.text;
     this.item.tooltip = view.tooltip;
-    // Only a warning is coloured. A background on every healthy frame would make
-    // the one frame that matters look like all the others.
-    this.item.backgroundColor = view.warning
-      ? new vscode.ThemeColor("statusBarItem.warningBackground")
-      : undefined;
+    // State is carried by the warning glyph and text. The status bar stays in
+    // the editor's own chrome rather than borrowing a green/yellow state slot.
+    this.item.backgroundColor = undefined;
   }
 
   dispose(): void {
