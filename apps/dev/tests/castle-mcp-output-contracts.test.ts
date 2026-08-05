@@ -151,7 +151,11 @@ describe("dev:afk observability output contracts", () => {
     // shape — the contract must not turn that supported input into an error.
     await expect(
       workerVitals.invoke({ live_only: true, fields: ["live", "liveness"] }),
-    ).resolves.toEqual([{ live: true, liveness: "active" }]);
+    ).resolves.toMatchObject({
+      deprecated: true,
+      replacement: { tool: "status", args: { scope: "worker" } },
+      result: [{ live: true, liveness: "active" }],
+    });
   });
 
   it("builds a queue_status payload that satisfies the declared contract", () => {

@@ -44,7 +44,7 @@ export type McpLaneCanaryStep =
   | "no_project_process"
   | "queue_polled"
   | "worker_born"
-  | "project_status"
+  | "status"
   | "project_stop";
 
 export const MCP_LANE_CANARY_STEPS: readonly McpLaneCanaryStep[] = [
@@ -54,14 +54,14 @@ export const MCP_LANE_CANARY_STEPS: readonly McpLaneCanaryStep[] = [
   "no_project_process",
   "queue_polled",
   "worker_born",
-  "project_status",
+  "status",
   "project_stop",
 ];
 
 /** The MCP tools the lane must expose before the canary can walk it at all. */
 export const MCP_LANE_CANARY_REQUIRED_TOOLS: readonly string[] = [
   "project_start",
-  "project_status",
+  "status",
   "project_stop",
 ];
 
@@ -474,15 +474,15 @@ export async function runMcpLaneCanary(
           `${born.workers.map((worker) => `${worker.workerId} (pid=${worker.pid})`).join(", ")}`,
       );
 
-      // ---- 7. project_status: the canonical reader runs no process of its own,
+      // ---- 7. status: the canonical reader runs no process of its own,
       // and RECOGNISES the Workers step 6 just watched the host birth ----
-      const observedStatus = await call("project_status", "project_status", {});
+      const observedStatus = await call("status", "status", { scope: "project" });
       const supervisor = asRecord(observedStatus.supervisor);
       const reportedPid = supervisor ? readPid(supervisor.pid) : null;
       if (supervisor && readBool(supervisor.alive)) {
         inert(
-          "project_status",
-          `project_status reports supervisor pid ${reportedPid ?? "none"} alive after a registration — ` +
+          "status",
+          `status {scope: project} reports supervisor pid ${reportedPid ?? "none"} alive after a registration — ` +
             `the lane's reader can still see a per-project process the start was supposed to have stopped creating`,
         );
       }
@@ -494,8 +494,8 @@ export async function runMcpLaneCanary(
       const busy = readCount(asRecord(observedStatus.slots)?.busy);
       if (busy !== born.workers.length) {
         inert(
-          "project_status",
-          `project_status reports slots.busy=${busy} while the host birthed ${born.workers.length} Worker(s) for this ` +
+          "status",
+          `status {scope: project} reports slots.busy=${busy} while the host birthed ${born.workers.length} Worker(s) for this ` +
             `project — the lane's reader and writer disagree about who is running`,
         );
       }
@@ -505,14 +505,14 @@ export async function runMcpLaneCanary(
       const statusWarnings = Array.isArray(observedStatus.warnings) ? observedStatus.warnings : [];
       if (statusWarnings.length > 0) {
         inert(
-          "project_status",
-          `project_status answered with ${statusWarnings.length} attribution warning(s): ${statusWarnings.join("; ")}`,
+          "status",
+          `status {scope: project} answered with ${statusWarnings.length} attribution warning(s): ${statusWarnings.join("; ")}`,
         );
       }
       record(
-        "project_status",
+        "status",
         "ok",
-        `project_status answers with no per-project supervisor and counts ${busy} busy slot(s) — the Worker(s) the ` +
+        `status {scope: project} answers with no per-project supervisor and counts ${busy} busy slot(s) — the Worker(s) the ` +
           `host birthed for this project`,
       );
     } finally {
@@ -564,7 +564,7 @@ export async function runMcpLaneCanary(
     ...(resolvedInert ? { inertStep: resolvedInert } : {}),
     summary: ok
       ? "MCP lane canary green: project_start → a registration the daemon holds → no process of the project's own → one poll covering it → " +
-        "a Worker the daemon birthed → project_status → project_stop all answered"
+        "a Worker the daemon birthed → status {scope: project} → project_stop all answered"
       : `MCP lane canary FAILED — the ${resolvedInert} step went inert: ${
         steps.find((entry) => entry.step === resolvedInert)?.detail ?? "no detail"
       }`,

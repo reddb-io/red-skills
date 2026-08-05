@@ -42,7 +42,7 @@ const USAGE = `Usage: castle-mcp __mcp-canary [options]
 
 Drives the shipped MCP lane end to end — project_start -> a registration the
 daemon holds -> no process of the project's own -> one poll covering it -> a
-Worker the daemon birthed -> project_status -> project_stop — and fails loudly
+Worker the daemon birthed -> status {scope: project} -> project_stop — and fails loudly
 naming the step that went inert.
 
   --entry <path>              MCP bundle entry (default: the castle-mcp bundle

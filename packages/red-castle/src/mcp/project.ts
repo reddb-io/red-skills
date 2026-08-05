@@ -15,6 +15,10 @@
 import { z } from "zod/v3";
 import { refuseFleetNaming } from "../engine/extinct-nouns.js";
 import { projectStatusContract, type ProjectStatusOutput } from "./contracts.js";
+import {
+  deprecatedStatusAlias,
+  deprecatedStatusAliasContract,
+} from "./status.js";
 import type { CastleMcpTool } from "./tool.js";
 import { DEFAULT_FLEET_WIDTH } from "@reddb-io/shared/default-fleet-width.js";
 
@@ -96,14 +100,18 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
   return [
     {
       name: "project_status",
-      title: "Get project worker status",
+      title: "Deprecated project status alias",
       description:
-        "Return this project's host registration, slots, and live-worker status.",
+        "DEPRECATED: use status { scope: project }. Returns the project answer and names its replacement.",
       inputSchema: { fleet: removedFleetName },
-      outputContract: projectStatusContract,
+      outputContract: deprecatedStatusAliasContract(projectStatusContract),
       invoke: async ({ fleet }) => {
         refuseFleetNaming(fleet);
-        return deps.projectStatus();
+        return deprecatedStatusAlias(
+          "project_status",
+          "project",
+          await deps.projectStatus(),
+        );
       },
     },
     {

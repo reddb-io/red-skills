@@ -69,12 +69,12 @@ describe("MCP-first suggestion compliance", () => {
     }
   });
 
-  it("makes the Codex monitor agent poll the castle monitor tool first", () => {
+  it("makes the Codex monitor agent poll scoped castle status first", () => {
     const prompt = renderCodexMonitorAgentPrompt({ projectRoot: "/repo", mode: "fleet" });
 
-    expect(prompt).toContain("castle `monitor` tool");
-    expect(prompt).toContain("`worker_vitals`");
-    expect(prompt.indexOf("castle `monitor` tool")).toBeLessThan(
+    expect(prompt).toContain("castle `status` tool");
+    expect(prompt).toContain("scope: worker");
+    expect(prompt.indexOf("castle `status` tool")).toBeLessThan(
       prompt.indexOf("red-skills-dev monitor --once"),
     );
     expect(prompt).toContain(NO_MCP_LABEL);

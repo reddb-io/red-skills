@@ -180,6 +180,7 @@ describe("castle MCP tools", () => {
   it("publishes the Fleet and Observability domains", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
       "help",
+      "status",
       "project_status",
       "drain",
       "project_start",
@@ -233,13 +234,70 @@ describe("castle MCP tools", () => {
     ]);
   });
 
-  it("returns structured project status without rendering command output", async () => {
+  it("answers project, worker, and host status through one intent tool", async () => {
+    const d = deps();
+    const status = createCastleMcpTools(d).find((tool) => tool.name === "status")!;
+
+    await expect(status.invoke({ scope: "project" })).resolves.toMatchObject({
+      registration: { held: true },
+      slots: { total: 2 },
+    });
+    await expect(status.invoke({ scope: "worker", worker: "worker-1", live_only: false })).resolves.toEqual({
+      status: [],
+      vitals: [],
+      monitor: { workers: [], events: [], fleet: null },
+    });
+    expect(d.workerStatus).toHaveBeenCalledWith({
+      worker: "worker-1",
+      live_only: false,
+      fields: undefined,
+    });
+    expect(d.workerVitals).toHaveBeenCalledWith({ live_only: false, fields: undefined });
+    await expect(status.invoke({ scope: "host" })).resolves.toEqual({
+      state: { pid: 42, workers: [] },
+      dashboard: { version: 1, mode: "global", rows: [] },
+      provision_check: { verdict: "ok", rows: [], findings: [] },
+      unit_status: {
+        installed: false,
+        enabled: false,
+        active: false,
+        floor: "auto-spawn",
+      },
+    });
+  });
+
+  it("keeps every absorbed verb as an answering deprecation alias", async () => {
+    const tools = createCastleMcpTools(deps());
+    const aliases = [
+      ["project_status", "project"],
+      ["worker_status", "worker"],
+      ["worker_vitals", "worker"],
+      ["monitor", "worker"],
+      ["host_state", "host"],
+      ["host_dashboard", "host"],
+      ["host_provision_check", "host"],
+      ["host_unit_status", "host"],
+    ] as const;
+
+    for (const [name, scope] of aliases) {
+      const answer = await tools.find((tool) => tool.name === name)!.invoke({});
+      expect(answer).toMatchObject({
+        deprecated: true,
+        replacement: { tool: "status", args: { scope } },
+      });
+      expect(answer).toHaveProperty("result");
+    }
+  });
+
+  it("keeps structured project status inside the deprecated alias answer", async () => {
     const tools = createCastleMcpTools(deps());
     const status = tools.find((tool) => tool.name === "project_status")!;
     await expect(status.invoke({})).resolves.toMatchObject({
-      registration: { held: true, renewal: "renewing", target: 2 },
-      slots: { total: 2 },
-      live_workers: [{ id: "worker-1" }],
+      result: {
+        registration: { held: true, renewal: "renewing", target: 2 },
+        slots: { total: 2 },
+        live_workers: [{ id: "worker-1" }],
+      },
     });
   });
 
@@ -270,19 +328,17 @@ describe("castle MCP tools", () => {
     const d = deps();
     const tools = createCastleMcpTools(d);
 
-    await expect(tools.find((tool) => tool.name === "host_state")!.invoke({})).resolves.toEqual({
-      pid: 42,
-      workers: [],
+    await expect(tools.find((tool) => tool.name === "host_state")!.invoke({})).resolves.toMatchObject({
+      result: { pid: 42, workers: [] },
     });
     await expect(tools.find((tool) => tool.name === "host_dashboard")!.invoke({})).resolves.toMatchObject({
-      version: 1,
-      mode: "global",
+      result: { version: 1, mode: "global" },
     });
     await expect(tools.find((tool) => tool.name === "host_provision_check")!.invoke({})).resolves.toMatchObject({
-      verdict: "ok",
+      result: { verdict: "ok" },
     });
     await expect(tools.find((tool) => tool.name === "host_unit_status")!.invoke({})).resolves.toMatchObject({
-      floor: "auto-spawn",
+      result: { floor: "auto-spawn" },
     });
   });
 
