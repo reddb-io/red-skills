@@ -2,7 +2,7 @@ import {
   LABEL_READY,
   LABEL_TYPE_SPEC,
 } from "../../core/triage-labels.js";
-import { laneIsolationRefusal } from "../../core/issue-lifecycle.js";
+import { laneIsolationRefusal } from "../../core/state-transition.js";
 import type { SpecSubIssueCandidate } from "../../core/spec-subissue-reconciler.js";
 import {
   boundedMap,
@@ -50,9 +50,8 @@ export async function listLabelNames(
  * invariant for every write that never declared a lifecycle edge (#2894): a
  * promotion to `ready-for-agent` reads the issue's REAL labels and is refused
  * when the issue sits in an isolated lane. The pure-model guard in
- * `validateIssueLifecycleTransition` cannot catch these, because most call
- * sites pass only the labels they intend to shed — a `lane:go` issue's retry
- * declares `from: [running]` and the lane never enters the model at all.
+ * Call sites commonly know only the labels they intend to shed, so this port
+ * checks the tracker's real resulting labels before a promotion is written.
  *
  * The extra read costs one `gh` call and only on a promotion. A read that fails
  * returns no labels and the write proceeds: this is a backstop for the typed
