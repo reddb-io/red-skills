@@ -98,6 +98,7 @@ import {
   collectStatuslineAfk,
   collectStatuslineDocs,
   collectStatuslineFleet,
+  collectStatuslineValidationGate,
   collectStatuslineRepo,
   inferGitHubRepoSlug,
   resolveRepoContext,
@@ -117,11 +118,12 @@ import { cleanupDisposableDispatchOnBootFailure } from "./commands/run/disposabl
 import {
   getConfig,
   loadConfig,
-  readValidationMoments,
   readHitlTypeLabels,
+  readValidationMoments,
   readValidationResourceBudget,
   readSetupCommands,
 } from "./core/config.js";
+import { describeValidationMoments } from "./core/validation-moments.js";
 import {
   evaluateClaimTrust,
   parseTrustPolicy,
@@ -930,6 +932,9 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
     pluginCacheVersion: newestInstalledPluginVersion(),
   });
   const target = held?.target ?? 0;
+  const validationSchedule = describeValidationMoments(readValidationMoments(
+    loadConfig(afkPaths(root).configPath, { warn: () => undefined }),
+  ));
   // The host's count, not the matched list's: a Worker born a moment ago holds
   // its slot before it has written any project-side state, and a `busy` that
   // waited for that file would read free while the daemon refused to fill it.
@@ -946,6 +951,7 @@ async function projectStatus(root: string): Promise<ProjectStatusOutput> {
           repair: registrationRepair(),
         });
   return {
+    validation_schedule: validationSchedule,
     registration: {
       held: held != null,
       daemon_reachable: registrationState !== undefined,
@@ -1743,7 +1749,7 @@ export async function collectStatuslineAggregate(root: string) {
     remote: "origin",
   };
 
-  const [project, repoStats, docs, afkBlock, fleetChip, fleet, workers] =
+  const [project, repoStats, docs, afkBlock, fleetChip, fleet, workers, validationGate] =
     await Promise.all([
       resolveProject(root),
       collectStatuslineRepo(repoCtx),
@@ -1752,6 +1758,7 @@ export async function collectStatuslineAggregate(root: string) {
       collectStatuslineFleet(repoCtx).catch(() => undefined),
       projectStatus(root).catch(() => null),
       workerVitals(root),
+      collectStatuslineValidationGate(root),
     ]);
 
   return {
@@ -1773,6 +1780,7 @@ export async function collectStatuslineAggregate(root: string) {
       cache_age_s: repoStats.cacheAgeS ?? null,
     },
     docs: { unlanded: docs?.count ?? 0 },
+    validation_gate: validationGate,
     fleet,
     /** The repo-summary fleet CHIP the header line renders: the two facts the
      * `fleet_status` snapshot does not carry (supervisor-reported queue depth

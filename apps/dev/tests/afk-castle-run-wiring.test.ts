@@ -15,4 +15,11 @@ describe("afk run castle engine flip", () => {
     expect(source).toContain("summary = await runCastleWorkerDrain(deps, sessionCtx)");
     expect(source).not.toContain("summary = await runSession(deps, sessionCtx)");
   });
+
+  it("boots the Worker lane with the resolved Validation moment schedule", () => {
+    const source = readFileSync(runCommandTs, "utf8");
+
+    expect(source).toContain("await createBootCastleWorkerLaneBridge({");
+    expect(source).toContain("}, readValidationMoments(config));");
+  });
 });

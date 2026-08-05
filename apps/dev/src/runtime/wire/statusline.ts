@@ -1,9 +1,18 @@
-import { readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { type JsonValue as ToonValue } from "@reddb-io/toon";
 import { encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
 import type { CompactWorker } from "../../core/monitor.js";
-import type { AfkInput, FleetInput, RepoInput } from "../../core/statusline.js";
+import type {
+  AfkInput,
+  FleetInput,
+  RepoInput,
+  ValidationGateInput,
+} from "../../core/statusline.js";
+import {
+  readRedskilledHostConfig,
+  resolveRedskilledHostSettings,
+} from "@reddb-io/redskilled/host-config";
 import type { WorkerVitals } from "../../types/state.js";
 import type { GhContext } from "../gh.js";
 import { readSupervisorLiveness } from "../liveness-anchor.js";
@@ -210,6 +219,27 @@ export async function collectStatuslineAfk(
 }
 
 const STATUSLINE_FLEET_MAX_AGE_S = 120;
+
+/** Read the host-wide Validation semaphore without acquiring or modifying it. */
+export async function collectStatuslineValidationGate(
+  root: string,
+  declaredCapacity?: number,
+): Promise<ValidationGateInput> {
+  const total = declaredCapacity ?? (
+    resolveRedskilledHostSettings({ config: await readRedskilledHostConfig() })
+      .ceiling.validation_count ?? 1
+  );
+  const capacity = Number.isSafeInteger(total) && total > 0 ? total : 1;
+  const base = join(root, ".red", "state", "validation-gate.lock");
+  let occupied = 0;
+  for (let index = 0; index < capacity; index += 1) {
+    const path = index === 0
+      ? base
+      : `${base.slice(0, -".lock".length)}.${index + 1}.lock`;
+    if (existsSync(path)) occupied += 1;
+  }
+  return { occupied, total: capacity };
+}
 
 /**
  * Repo-summary fleet segment input. It is intentionally independent of live

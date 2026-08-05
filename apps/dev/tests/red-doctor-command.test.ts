@@ -148,6 +148,37 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
     roots.length = 0;
   });
 
+  it("renders Validation declaration/engine drift from project config", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-doctor-validation-moments-"));
+    roots.push(root);
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), [
+      "plugins:",
+      "  dev:",
+      "    enabled: true",
+      "    afk:",
+      "      validation:",
+      "        correction:",
+      "          - pnpm test",
+      "",
+    ].join("\n"));
+    const writes: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      writes.push(String(chunk));
+      return true;
+    });
+    const { redDoctorCommand } = await import("../src/commands/red-doctor.js");
+
+    await expect(redDoctorCommand(["--root", root], root)).resolves.toBe(0);
+
+    const output = writes.join("");
+    expect(output).toContain("red-doctor Validation declaration vs engine");
+    expect(output).toContain("verdict: drift");
+    expect(output).toContain("unsupported-declaration correction");
+    expect(output).toContain("afk.validation.correction is declared but the engine has no such Validation moment");
+    stdout.mockRestore();
+  });
+
   it("lists ready-for-agent candidates and reports acceptance lint findings read-only", async () => {
     const root = await mkdtemp(join(tmpdir(), "red-doctor-command-"));
     roots.push(root);

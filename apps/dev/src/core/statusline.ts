@@ -174,6 +174,12 @@ export interface DocsInput {
   count: number;
 }
 
+/** Host-wide Validation semaphore occupancy from the shared lock slots. */
+export interface ValidationGateInput {
+  occupied: number;
+  total: number;
+}
+
 /** Repo-global fleet-supervisor segment, independent of live worker rows. */
 export interface FleetInput {
   /** Supervisor runner (`codex`, `claude`, `opencode`, ...). */
@@ -229,6 +235,7 @@ export interface StatuslineInput {
   claude?: ClaudeInput;
   repo?: RepoInput;
   docs?: DocsInput;
+  validationGate?: ValidationGateInput;
   fleet?: FleetInput;
   afk?: AfkInput;
   rsp?: RspStatusInput;
@@ -557,6 +564,15 @@ export function renderRspBlock(rsp: RspStatusInput | undefined): string | null {
   return "rsp=!";
 }
 
+export function renderValidationGateBlock(
+  gate: ValidationGateInput | undefined,
+): string | null {
+  if (!gate || gate.total <= 0 || gate.occupied <= 0) return null;
+  const total = Math.max(1, Math.floor(gate.total));
+  const occupied = Math.max(0, Math.min(total, Math.floor(gate.occupied)));
+  return `gate ${occupied}/${total}`;
+}
+
 /**
  * Block 4: the space-joined AFK token run in plain text. Null when there are no
  * live workers, matching the bash `(( total_workers > 0 ))` gate around the
@@ -623,6 +639,8 @@ export function renderStatuslineWithPreset(input: StatuslineInput, preset: Statu
   if (docs !== null) sections.push(docs);
   const fleet = renderFleetBlock(input.fleet);
   if (fleet !== null) sections.push(fleet);
+  const validationGate = renderValidationGateBlock(input.validationGate);
+  if (validationGate !== null) sections.push(validationGate);
   const rsp = renderRspBlock(input.rsp);
   if (rsp !== null) sections.push(rsp);
   const afk = renderAfkBlock(input.afk);

@@ -253,6 +253,7 @@ function renderClassifierSections(
   const {
     worktreeSetup,
     feedbackAuthority,
+    validationMoments,
     hooks,
     hookPoints,
     runtime,
@@ -288,6 +289,14 @@ function renderClassifierSections(
       (finding) => `  ${finding.verdict} ${finding.kind}: ${finding.reason}`,
     ),
     ...feedbackAuthority.findings.map((finding) => `  fix: ${finding.remediation}`),
+    "",
+    "red-doctor Validation declaration vs engine",
+    `verdict: ${validationMoments.verdict}`,
+    `findings: ${validationMoments.findings.length}`,
+    ...validationMoments.findings.map(
+      (finding) => `  ${finding.kind} ${finding.moment}: ${finding.reason}`,
+    ),
+    ...validationMoments.findings.map((finding) => `  fix: ${finding.remediation}`),
     "",
     "red-doctor AFK hook / backpressure static validation",
     `declared hook points: ${hookPoints.length}`,
@@ -684,6 +693,15 @@ function renderToon(
       findings: classifiers.feedbackAuthority.findings.map((finding) => ({
         kind: finding.kind,
         verdict: finding.verdict,
+        reason: finding.reason,
+        remediation: finding.remediation,
+      })),
+    },
+    validationMoments: {
+      verdict: classifiers.validationMoments.verdict,
+      findings: classifiers.validationMoments.findings.map((finding) => ({
+        kind: finding.kind,
+        moment: finding.moment,
         reason: finding.reason,
         remediation: finding.remediation,
       })),

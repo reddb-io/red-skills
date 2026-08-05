@@ -34,6 +34,7 @@ import {
   humanizeCount,
   humanizeTokens,
   renderFleetBlock,
+  renderValidationGateBlock,
   renderProjectVersionLabel,
   renderRspBlock,
   renderUnlandedDocsBlock,
@@ -45,6 +46,7 @@ import {
   type ProjectInput,
   type RepoInput,
   type RspStatusInput,
+  type ValidationGateInput,
   type StatuslinePreset,
   type StatuslineInput,
 } from "./statusline.js";
@@ -247,6 +249,11 @@ function docsKv(docs: DocsInput | undefined): string[] {
   return block ? [block] : [];
 }
 
+function validationGateKv(gate: ValidationGateInput | undefined): string[] {
+  const block = renderValidationGateBlock(gate);
+  return block ? [block] : [];
+}
+
 function rspKv(rsp: RspStatusInput | undefined): string[] {
   const block = renderRspBlock(rsp);
   if (!rsp || !block) return [];
@@ -264,6 +271,7 @@ export function renderHeaderLine(
   preset: StatuslinePreset = "full",
   rsp?: RspStatusInput,
   docs?: DocsInput,
+  validationGate?: ValidationGateInput,
 ): string {
   let s = `${WINE2}${WHITE} ${projectContent(project, preset === "full")} `;
   const model = modelContent(claude);
@@ -286,6 +294,7 @@ export function renderHeaderLine(
         ...localDiffKv(repo),
         ...docsKv(docs),
         ...fleetKv(fleet),
+        ...validationGateKv(validationGate),
         ...rspKv(rsp),
       ].filter((x): x is string => x !== null);
   if (tail.length) s += ` ${tail.join("  ")}`;
@@ -477,7 +486,16 @@ export interface StyleOptions {
  * → only the header line. */
 export function styleStatusline(input: StatuslineInput, opts: StyleOptions = {}): string {
   const preset = opts.preset ?? "full";
-  const lines = [renderHeaderLine(input.project, input.claude, input.repo, input.fleet, preset, input.rsp, input.docs)];
+  const lines = [renderHeaderLine(
+    input.project,
+    input.claude,
+    input.repo,
+    input.fleet,
+    preset,
+    input.rsp,
+    input.docs,
+    input.validationGate,
+  )];
   const now = opts.now ?? 0;
   lines.push(...renderWorkerLines(opts.workers ?? [], now, preset));
   return lines.join("\n");

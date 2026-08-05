@@ -373,6 +373,17 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("delegate to `/triage`");
   });
 
+  it("documents Validation declaration/engine drift as a read-only check", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("Validation declaration vs engine");
+    expect(skill).toContain("configured moment key");
+    expect(skill).toContain("ENGINE_VALIDATION_MOMENTS");
+    expect(skill).toContain("apps/dev/src/core/validation-moment-doctor.ts");
+    expect(skill).toContain("never run a Validation command");
+    expect(skill).toContain("Validation declaration/engine drift (check 31)");
+  });
+
   it("reports execution daemon provisioning read-only, with red-setup as the fix-home", async () => {
     const skill = await readDoctorSkill();
 

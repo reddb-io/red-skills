@@ -15,6 +15,8 @@ import { AFK_COSTED_PHASE_ORDER, macroPhase } from "./mirror.js";
 import { createPhaseDurationTracker, phaseDurationsPath, type PhaseDurationTracker } from "./phase-durations.js";
 import { workerDisplayFromState } from "./worker-display-record.js";
 import type { AfkState } from "../types/state.js";
+import type { ValidationMoments } from "./config.js";
+import { validationMomentLogPayload } from "./validation-moments.js";
 
 export type WorkerLifecycleKind =
   | "worker.claimed"
@@ -224,4 +226,20 @@ export function createCastleWorkerLaneBridge(
   }
 
   return { record, snapshot };
+}
+
+/**
+ * Construct the Worker's lane bridge and make the schedule its first record.
+ *
+ * This is the boot seam rather than a later lifecycle callback so even a
+ * Worker that fails before claiming a Ticket leaves the schedule it intended
+ * to obey as the opening structured log fixture.
+ */
+export async function createBootCastleWorkerLaneBridge(
+  options: CastleWorkerLaneBridgeOptions,
+  schedule: ValidationMoments,
+): Promise<CastleWorkerLaneBridge> {
+  const bridge = createCastleWorkerLaneBridge(options);
+  await bridge.record("worker.validation_schedule", validationMomentLogPayload(schedule));
+  return bridge;
 }

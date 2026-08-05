@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -88,6 +88,45 @@ function heldRegistration(root: string) {
 }
 
 describe("castle MCP help", () => {
+  it("narrates declared and skipped Validation moments in help and project_status", async () => {
+    const root = await scratch();
+    await mkdir(join(root, ".red"), { recursive: true });
+    await writeFile(join(root, ".red", "config.yaml"), [
+      "plugins:",
+      "  dev:",
+      "    enabled: true",
+      "    afk:",
+      "      validation:",
+      "        iteration:",
+      "          - pnpm test",
+      "        landing: []",
+      "",
+    ].join("\n"));
+    host.registrationState.mockResolvedValue({ held: null, lapse: null });
+    host.hostState.mockResolvedValue({ daemon_version: "3.5.0", demand: null });
+    const tools = createCastleMcpTools(createCastleMcpDependencies(root));
+    const help = tools.find((tool) => tool.name === "help")!;
+    const projectStatus = tools.find((tool) => tool.name === "project_status")!;
+    const expected = {
+      narration:
+        "Validation moments — iteration: declared [pnpm test]; " +
+        "post_done: skip (undeclared); landing: skip (empty declaration)",
+      moments: [
+        { moment: "iteration", state: "declared", declared: true, commands: ["pnpm test"] },
+        { moment: "post_done", state: "skip", declared: false, commands: [] },
+        { moment: "landing", state: "skip", declared: true, commands: [] },
+      ],
+    };
+
+    await expect(projectStatus.invoke({})).resolves.toMatchObject({
+      validation_schedule: expected,
+    });
+    await expect(help.invoke({})).resolves.toMatchObject({
+      state: { validation_schedule: expected },
+    });
+    expect(github.calls).toBe(0);
+  });
+
   it("answers an unregistered project with the composed, pasteable registration repair", async () => {
     const root = await scratch();
     host.registrationState.mockResolvedValue({ held: null, lapse: null });

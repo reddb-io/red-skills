@@ -7,6 +7,14 @@ import {
 function deps(): CastleMcpDependencies {
   return {
     projectStatus: vi.fn(async () => ({
+      validation_schedule: {
+        narration: "Validation moments — iteration: skip (undeclared); post_done: skip (undeclared); landing: skip (undeclared)",
+        moments: [
+          { moment: "iteration" as const, state: "skip" as const, declared: false, commands: [] },
+          { moment: "post_done" as const, state: "skip" as const, declared: false, commands: [] },
+          { moment: "landing" as const, state: "skip" as const, declared: false, commands: [] },
+        ],
+      },
       registration: {
         held: true,
         daemon_reachable: true,

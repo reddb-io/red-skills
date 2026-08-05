@@ -36,7 +36,13 @@ import * as ghx from "../../runtime/gh.js";
 import * as fsx from "../../runtime/fs.js";
 import { migrateLegacyDevPaths } from "../../runtime/red-path-migration.js";
 import type { GhContext } from "../../runtime/gh.js";
-import { getConfig, loadConfig, readSetupCommands, readValidationResourceBudget } from "../../core/config.js";
+import {
+  getConfig,
+  loadConfig,
+  readSetupCommands,
+  readValidationMoments,
+  readValidationResourceBudget,
+} from "../../core/config.js";
 import { resolveHooks, validateHookConfig, UnknownHookError, type HookName } from "../../core/hook-config.js";
 import { dispatchHooks } from "../../core/hook-dispatcher.js";
 import {
@@ -61,7 +67,7 @@ import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-reco
 import { dirname, join } from "node:path";
 import { workerIdentity } from "../../core/host-identity.js";
 import { initStateSync, readPidStartTime, updateState, workerStatePath, writeIdentitySync } from "../../core/state.js";
-import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
+import { createBootCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { createWorkerLogLinePublisher } from "../../runtime/redskilled-worker-log.js";
 import { HOST_CONFIG_EXIT_CODE, sweepDiscardsWorkspace } from "../../core/worker-outcome.js";
 import { LABEL_READY } from "../../core/triage-labels.js";
@@ -323,13 +329,13 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // (#3079). Null for a Worker the daemon did not birth, which is the whole gate:
   // a run invoked directly has no host record to address.
   const publishHostLogLine = createWorkerLogLinePublisher({ root: ctx.root });
-  const castleBridge = createCastleWorkerLaneBridge({
+  const castleBridge = await createBootCastleWorkerLaneBridge({
     redRoot: join(ctx.root, ".red"),
     workerId,
     attemptDir: () => current.attemptDir,
     supervisorLane: process.env[SUPERVISOR_LANE_ENV] || undefined,
     ...(publishHostLogLine == null ? {} : { publishHostLogLine }),
-  });
+  }, readValidationMoments(config));
   let gateWaitPublication: Promise<void> = Promise.resolve();
 
   // Feedback worktree manager — checks out the worker branch at its own tip.
