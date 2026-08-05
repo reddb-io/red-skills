@@ -1,0 +1,26 @@
+version: 2.0.0
+date: 2026-08-05
+changes:
+  major[1]:
+    - file: calm-cats-dance.md
+      summary: Replace the legacy release API.
+      body: "Replace the legacy release API.\n\nThe new API keeps every package on one version train."
+      packages[2]: @example/cli,@example/core
+      authors[2]: @ada,@zoe
+      pullRequests[2]: 319,321
+  minor[1]:
+    - file: quiet-bears-wave.md
+      summary: Add a read-only release status command.
+      body: Add a read-only release status command.
+      packages[1]: @example/cli
+      authors[1]: @lee
+      pullRequests[1]: 320
+  patch[1]:
+    - file: bright-dogs-smile.md
+      summary: Correct version rendering for release candidates.
+      body: Correct version rendering for release candidates.
+      packages[1]: @example/core
+      authors[1]: @sam
+      pullRequests[1]: 318
+authors[4]: @ada,@lee,@sam,@zoe
+pullRequests[4]: 318,319,320,321
