@@ -224,6 +224,42 @@ function registration(label: string, target: number, workspace: string) {
 }
 
 describe("the daemon drives the demand loop itself", () => {
+  it("stamps each live Worker with base movement from its granted fork SHA", async () => {
+    const workspace = await scratch("redskilled-workspace-");
+    const counts: Array<{ fork_sha: string; head_sha: string }> = [];
+    let head = "fork-sha-123";
+    const daemon = await startRedskilledDaemon({
+      paths: await sessionPaths(),
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      launch: recordingLaunch([]),
+      refreshTrunk: async () => head,
+      countBaseMovement: async ({ fork_sha, head_sha }) => {
+        counts.push({ fork_sha, head_sha });
+        return 3;
+      },
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([1]) },
+    });
+    running.push(daemon);
+
+    daemon.registerProject({
+      ...registration("acme/widgets", 1, workspace),
+      trunk: { remote: "origin", branch: "main" },
+    });
+    await daemon.pollQueueDiscovery();
+    await daemon.driveDemand();
+    head = "moved-head-sha";
+    await daemon.refreshRegisteredTrunks();
+
+    expect(counts).toEqual([{ fork_sha: "fork-sha-123", head_sha: "moved-head-sha" }]);
+    expect(daemon.hostState().workers[0]).toMatchObject({
+      fork_sha: "fork-sha-123",
+      base_head_sha: "moved-head-sha",
+      base_commits_ahead: 3,
+    });
+  });
+
   it("refreshes one fork SHA for a burst and refuses an unreachable trunk before any Worker is born", async () => {
     const launched: LaunchWorkerOptions[] = [];
     const workspace = await scratch("redskilled-workspace-");

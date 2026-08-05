@@ -58,6 +58,12 @@ export interface RedskilledWorkerView {
   readonly started_at: string;
   /** The path the client handed over, used verbatim as the Worker's workspace. */
   readonly workspace_path: string;
+  /** Exact trunk commit this Worker was granted at birth (ADR 0138). */
+  readonly fork_sha?: string;
+  /** Latest daemon-refreshed trunk head compared with {@link fork_sha}. */
+  readonly base_head_sha?: string;
+  /** Commits reachable from the refreshed head but not from {@link fork_sha}. */
+  readonly base_commits_ahead?: number;
   /**
    * Where this Worker's log is, when the client said so at spawn.
    *
@@ -508,6 +514,10 @@ export function isRedskilledWorkerView(value: unknown): value is RedskilledWorke
     Number.isInteger(worker.pid) &&
     typeof worker.started_at === "string" &&
     typeof worker.workspace_path === "string" &&
+    (worker.fork_sha === undefined || typeof worker.fork_sha === "string") &&
+    (worker.base_head_sha === undefined || typeof worker.base_head_sha === "string") &&
+    (worker.base_commits_ahead === undefined ||
+      (Number.isInteger(worker.base_commits_ahead) && Number(worker.base_commits_ahead) >= 0)) &&
     typeof worker.isolated === "boolean" &&
     Array.isArray(worker.warnings) &&
     // Checked only when present, exactly as the upgrade block is: a daemon that

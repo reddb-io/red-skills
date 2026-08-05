@@ -235,7 +235,9 @@ export function decideVerdict(input: VerdictInput): Verdict {
     : input.signature;
   const narration = fault.kind === "base" && input.environment.movement?.subjects.length
     ? `${cause} (${input.environment.movement.subjects.join("; ")})`
-    : cause;
+    : fault.kind === "base" && input.environment.movement?.commitsAhead != null
+      ? `${cause} (base +${input.environment.movement.commitsAhead})`
+      : cause;
   const previous = ledger.rounds.at(-1);
   if (signature !== "" && previous?.signature === signature) {
     return {

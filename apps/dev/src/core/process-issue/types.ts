@@ -235,6 +235,13 @@ export interface ProcessLookups {
     subjects: string[];
     files?: string[];
   }>;
+  /** Daemon-stamped base movement for this live Worker, read without fetching. */
+  workerBaseMovement?(workerId: string): Promise<{
+    startSha: string;
+    gateSha: string;
+    commitsAhead: number;
+    subjects: readonly string[];
+  } | undefined>;
   branchPresent?(branch: string): Promise<boolean>;
   branchMerged?(branch: string, base: string): Promise<boolean>;
   /** Discover all remote afk/* branches (issue #2397). Used to detect a prior
