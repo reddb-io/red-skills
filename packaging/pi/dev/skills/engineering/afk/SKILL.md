@@ -194,7 +194,7 @@ Read the focused reference before touching that concern:
   subset before folding back to the full declaration. `landing` runs before
   push/PR/queue. The merge queue is the CI-side final Validation moment and owns
   freshness against the merged result.
-- Declared commands are canonical. Workers run the exact commands handed to
+- The gate command is canonical. Workers run the exact commands handed to
   them and never self-impose stricter flags, extra lint restrictions, widened
   target sets, or a harder contract. If an error appears only under an extra
   check, reconcile it against the declared schedule before reporting a red
