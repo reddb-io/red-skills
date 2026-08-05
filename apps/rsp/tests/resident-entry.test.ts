@@ -154,7 +154,6 @@ describe("resident spawn target (#2736)", () => {
           wakeResident: () => {
             throw Object.assign(new Error("no rsp entry"), { code: RSP_ENTRY_UNRESOLVED });
           },
-          resolveBinary: () => true,
           rspInvocationPrefix: ["rsp"],
         },
       );
@@ -174,7 +173,6 @@ describe("resident spawn target (#2736)", () => {
       encoding: "utf8",
     }).status).toBe(0);
     await commitMany(root, 1);
-    const rspPath = await installRspShim(root);
 
     // A host that is not the rsp CLI: its own argv[1] never routes `warm-resident`.
     const host = join(root, "foreign-host.mjs");
@@ -191,17 +189,11 @@ describe("resident spawn target (#2736)", () => {
     await writeFile(rsp, "#!/bin/sh\nexit 0\n", "utf8");
     await chmod(rsp, 0o755);
 
-<<<<<<< HEAD
-    const env: NodeJS.ProcessEnv = { ...process.env, PATH: rspPath, RED_SKILLS_CACHE_DIR: emptyCache };
-||||||| 6464c9aea
-    const env: NodeJS.ProcessEnv = { ...process.env, RED_SKILLS_CACHE_DIR: emptyCache };
-=======
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PATH: `${binDir}:${process.env.PATH ?? ""}`,
       RED_SKILLS_CACHE_DIR: emptyCache,
     };
->>>>>>> origin/main
     for (const name of [
       "RSP_BIN",
       "RSP_DEBUG",

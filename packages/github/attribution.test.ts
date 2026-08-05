@@ -27,17 +27,17 @@ describe("the GitHub spend attribution ledger", () => {
     const firstProcess = createGithubAttributionLedger({ path });
 
     await firstProcess.record({
-      operation: routeGithubArgs(["pr", "list"]),
+      operation: routeGithubArgs(["label", "list"]),
       cost: 7,
       observedAt: "2026-08-03T12:10:00.000Z",
     });
     await firstProcess.record({
-      operation: routeGithubArgs(["pr", "list"]),
+      operation: routeGithubArgs(["label", "list"]),
       cost: 5,
       observedAt: "2026-08-03T12:20:00.000Z",
     });
     await firstProcess.record({
-      operation: routeGithubArgs(["issue", "list"]),
+      operation: routeGithubArgs(["api", "graphql"]),
       cost: 3,
       observedAt: "2026-08-03T12:30:00.000Z",
     });
@@ -47,7 +47,7 @@ describe("the GitHub spend attribution ledger", () => {
       observedAt: "2026-08-03T12:40:00.000Z",
     });
     await firstProcess.record({
-      operation: routeGithubArgs(["pr", "list"]),
+      operation: routeGithubArgs(["label", "list"]),
       cost: 99,
       observedAt: "2026-08-03T11:59:59.999Z",
     });
@@ -71,8 +71,8 @@ describe("the GitHub spend attribution ledger", () => {
     expect(report.total_count).toBe(3);
     expect(report.total_cost).toBe(15);
     expect(report.operations).toEqual([
-      { operation_key: "pr list", pool: "graphql", count: 2, cost: 12 },
-      { operation_key: "issue list", pool: "graphql", count: 1, cost: 3 },
+      { operation_key: "label list", pool: "graphql", count: 2, cost: 12 },
+      { operation_key: "api graphql", pool: "graphql", count: 1, cost: 3 },
     ]);
   });
 
@@ -81,7 +81,7 @@ describe("the GitHub spend attribution ledger", () => {
     const ledger = createGithubAttributionLedger({ path });
 
     await ledger.record({
-      operation: routeGithubArgs(["issue", "list"]),
+      operation: routeGithubArgs(["label", "list"]),
       cost: 4,
       observedAt: "2026-08-03T12:05:00.000Z",
     });
@@ -95,7 +95,7 @@ describe("the GitHub spend attribution ledger", () => {
 
     expect(report.pool).toBeNull();
     expect(report.operations).toEqual([
-      { operation_key: "issue list", pool: "graphql", count: 1, cost: 4 },
+      { operation_key: "label list", pool: "graphql", count: 1, cost: 4 },
       { operation_key: "issue view", pool: "rest", count: 1, cost: 1 },
     ]);
   });
@@ -120,8 +120,8 @@ describe("the GitHub spend attribution ledger", () => {
     const report = await ledger.report({ from: HOUR_START, to: HOUR_END });
 
     expect(report.operations).toEqual([
-      { operation_key: "issue list", pool: "graphql", actor: "worker:wONE", count: 1, cost: 8 },
-      { operation_key: "issue list", pool: "graphql", actor: "worker:wTWO", count: 1, cost: 3 },
+      { operation_key: "issue list", pool: "rest", actor: "worker:wONE", count: 1, cost: 8 },
+      { operation_key: "issue list", pool: "rest", actor: "worker:wTWO", count: 1, cost: 3 },
     ]);
   });
 });
