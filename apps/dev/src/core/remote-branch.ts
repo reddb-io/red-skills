@@ -127,6 +127,31 @@ export function pushAttemptArgs(repoDir: string, branch: string, remoteName: str
   return ["-C", repoDir, "push", "origin", `${branch}:refs/heads/${remoteName}`];
 }
 
+/** argv for the CLAIM-OWNED reconciliation push (#3377): the same refspec as
+ * {@link pushAttemptArgs}, leased on the tip the remote was OBSERVED to carry.
+ * The lease is what keeps this a reconciliation rather than a clobber — a tip
+ * that moves between the observation and the push loses the lease and fails. */
+export function pushAttemptForceWithLeaseArgs(
+  repoDir: string,
+  branch: string,
+  remoteName: string,
+  observedTip: string,
+): string[] {
+  return [
+    "-C",
+    repoDir,
+    "push",
+    `--force-with-lease=refs/heads/${remoteName}:${observedTip}`,
+    "origin",
+    `${branch}:refs/heads/${remoteName}`,
+  ];
+}
+
+/** argv fetching the remote tip before a leased re-push (#3377). */
+export function fetchRemoteBranchArgs(repoDir: string, remoteName: string): string[] {
+  return ["-C", repoDir, "fetch", "origin", `refs/heads/${remoteName}`];
+}
+
 /** argv resolving a local ref to its sha (push verification, #2811). */
 export function localShaArgs(repoDir: string, ref: string): string[] {
   return ["-C", repoDir, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`];
@@ -196,14 +221,94 @@ export async function deleteRemote(
   return { ok: true, ran: true, status: "pushed" };
 }
 
+/**
+ * Why a push was refused (#3377). The two classes need OPPOSITE cures and were
+ * being narrated with one sentence:
+ *
+ *   - `non-fast-forward` — the remote tip is not an ancestor of the local tip.
+ *     Nothing is broken; the branch diverged. The cure is mechanical.
+ *   - `access` — auth, permissions, DNS, transport. No amount of reconciliation
+ *     helps until someone restores access.
+ *   - `unknown` — git said something this classifier cannot read. Never guess.
+ */
+export type PushFailureClass = "non-fast-forward" | "access" | "unknown";
+
+/** Access/transport evidence. Checked FIRST: an auth failure never claims a
+ * non-fast-forward, so a haystack carrying both words is a rejection whose
+ * transport also complained, and the access cure is the wrong one to print. */
+const ACCESS_MARKERS = [
+  "permission denied",
+  "permission to",
+  "authentication failed",
+  "could not read from remote repository",
+  "invalid username or password",
+  "access denied",
+  "repository not found",
+  "terminal prompts disabled",
+  "could not resolve host",
+  "connection timed out",
+  "connection refused",
+  "network is unreachable",
+  "unable to access",
+  "http 401",
+  "http 403",
+  "error: 403",
+];
+
+/** Divergence evidence — the remote tip moved under the push. */
+const NON_FAST_FORWARD_MARKERS = [
+  "non-fast-forward",
+  "fetch first",
+  "stale info",
+  "behind its remote counterpart",
+  "tip of your current branch is behind",
+  "[rejected]",
+  "updates were rejected",
+];
+
+/**
+ * Classify a push refusal from git's stderr (#3377). An unreadable stderr is
+ * `unknown` rather than a guess: the whole point of the split is that each class
+ * prints a DIFFERENT cure, and printing the wrong one is what turned an orphaned
+ * origin tip into a park telling a human to restore access that was never lost.
+ */
+export function classifyPushFailure(stderr: string): PushFailureClass {
+  const haystack = (stderr ?? "").toLowerCase();
+  if (ACCESS_MARKERS.some((m) => haystack.includes(m))) return "access";
+  if (NON_FAST_FORWARD_MARKERS.some((m) => haystack.includes(m))) return "non-fast-forward";
+  return "unknown";
+}
+
+/** Options for {@link pushAttempt}. */
+export interface PushAttemptOptions {
+  /**
+   * True when THIS Worker holds the issue's claim. The `afk/<issue>-<slug>` head
+   * is attempt namespace and the claim grants exclusive ownership of it, so a
+   * diverged tip there is by definition a dead attempt's leftover — reconcilable
+   * with a leased force. Without the claim the same divergence is a live peer's
+   * work and the push stays a failure.
+   */
+  claimHeld?: boolean;
+}
+
 /** Push a live worker branch to another live worker ref. Returns ok:false
  * (caller warns) on a non-zero exec, never throws. Empty or non-live refs skip
- * the git call (ran:false). */
+ * the git call (ran:false).
+ *
+ * #3377 — a non-fast-forward refusal on a branch this Worker OWNS is reconciled
+ * rather than parked: fetch the tip origin actually carries and re-push leased
+ * on that exact sha. Three conditions gate the force and all three are checked
+ * here, never at a call site: the claim is held, both refs are in the `afk/*`
+ * attempt namespace (already asserted above), and the refusal really is a
+ * divergence. A lease LOST between the observation and the re-push is a real
+ * race — someone else is writing this branch — and stays a failure.
+ */
 export async function pushAttempt(
   git: GitExec,
   repoDir: string,
   branch: string,
   remoteName: string,
+  opts: PushAttemptOptions = {},
 ): Promise<RemoteBranchOutcome> {
   if (!branch || !remoteName) {
     return { ok: false, ran: false, status: "skipped", warn: "push_attempt called with empty branch or remote — skipping" };
@@ -211,8 +316,8 @@ export async function pushAttempt(
   if (!isValidRef(branch) || !isValidRef(remoteName)) {
     return { ok: false, ran: false, status: "skipped", warn: "push_attempt called with non-live branch or remote — skipping" };
   }
-  const { code } = await git(pushAttemptArgs(repoDir, branch, remoteName));
-  if (code !== 0) {
+  const first = await git(pushAttemptArgs(repoDir, branch, remoteName));
+  if (first.code !== 0) {
     // #2811: a non-zero push is EVIDENCE OF NOTHING until the remote ref is
     // read. A concurrent post-commit-hook push, a stale `--force-with-lease`
     // lease, or a transient forge hiccup on a ref that already advanced all
@@ -227,9 +332,81 @@ export async function pushAttempt(
         warn: `push to origin/${remoteName} exited non-zero but origin already carries ${verified.sha} — the push succeeded`,
       };
     }
-    return { ok: false, ran: true, status: "failed", warn: `failed to push attempt branch to origin/${remoteName}` };
+    const failure = classifyPushFailure(first.stderr ?? "");
+    if (failure === "non-fast-forward" && opts.claimHeld === true) {
+      const reconciled = await reconcileDivergedTip(git, repoDir, branch, remoteName, verified.remoteSha);
+      if (reconciled) return reconciled;
+    }
+    return {
+      ok: false,
+      ran: true,
+      status: "failed",
+      warn: describePushFailure(remoteName, failure, opts.claimHeld === true),
+    };
   }
   return { ok: true, ran: true, status: "pushed" };
+}
+
+/** The one-sentence diagnosis a park inherits. Each class names its own cure so
+ * the blocker's `next:` can be DERIVED from the cause instead of guessed. */
+function describePushFailure(remoteName: string, failure: PushFailureClass, claimHeld: boolean): string {
+  const head = `failed to push attempt branch to origin/${remoteName}`;
+  if (failure === "non-fast-forward") {
+    return claimHeld
+      ? `${head} — the remote tip diverged (non-fast-forward) and the leased reconciliation did not converge; ` +
+          `another writer holds this branch, so nothing was force-pushed`
+      : `${head} — the remote tip diverged (non-fast-forward) and this Worker does not hold the issue claim, ` +
+          `so the branch was left exactly as it is`;
+  }
+  if (failure === "access") {
+    return `${head} — push access to the remote failed (auth/network), so nothing reached origin`;
+  }
+  return `${head} — git refused the push for a reason this Worker could not classify`;
+}
+
+/**
+ * Re-push a claim-owned attempt branch leased on the tip origin was OBSERVED to
+ * carry. Returns the successful outcome, or `null` when the reconciliation did
+ * not converge (the caller then reports the ordinary failure). Never throws.
+ */
+async function reconcileDivergedTip(
+  git: GitExec,
+  repoDir: string,
+  branch: string,
+  remoteName: string,
+  observedFromVerify: string,
+): Promise<RemoteBranchOutcome | null> {
+  // The lease needs a tip, and a tip nobody read is a lease nobody can honour.
+  // `verifyPushed` already asked once; only re-ask when it came back empty.
+  let observed = observedFromVerify;
+  if (!observed) {
+    await git(fetchRemoteBranchArgs(repoDir, remoteName));
+    observed = (await shaOf(git, remoteShaArgs(repoDir, remoteName), (out) => out.split(/\s+/)[0] ?? "")).trim();
+  }
+  if (!observed) return null;
+  const leased = await git(pushAttemptForceWithLeaseArgs(repoDir, branch, remoteName, observed));
+  if (leased.code === 0) {
+    return {
+      ok: true,
+      ran: true,
+      status: "pushed",
+      warn:
+        `origin/${remoteName} carried a diverged tip ${observed.slice(0, 12)} from a dead attempt; ` +
+        `reconciled under this Worker's claim with --force-with-lease`,
+    };
+  }
+  // The leased push can still lose to a genuine race — or the tip may have moved
+  // to exactly our commit in the meantime, which is a success, not a failure.
+  const after = await verifyPushed(git, repoDir, branch, remoteName);
+  if (after.pushed) {
+    return {
+      ok: true,
+      ran: true,
+      status: "pushed",
+      warn: `leased re-push to origin/${remoteName} exited non-zero but origin now carries ${after.sha} — the push succeeded`,
+    };
+  }
+  return null;
 }
 
 /** Read a ref's sha, or "" when it does not resolve. */

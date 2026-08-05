@@ -163,9 +163,27 @@ export interface Opts {
   remoteTipSha?: string;
   /** sha the local `rev-parse` answers (#2811 verification). */
   localTipSha?: string;
+  /** stderr the opening `pushAttempt` emits, which classifies the refusal (#3377). */
+  pushAttemptStderr?: string;
+  /** True when the landing Worker holds the issue claim (#3377). */
+  claimHeld?: boolean;
+  /**
+   * rc the CLAIM-OWNED `--force-with-lease` reconciliation push returns (#3377).
+   * Defaults to 0 — the lease is honoured and the diverged tip converges. Set to
+   * non-zero to drive the lost-lease race.
+   */
+  leasedPushCode?: number;
+  /**
+   * sha `ls-remote` answers AFTER the leased re-push. Absent → the same
+   * `remoteTipSha` as before, so a lost lease stays a failure.
+   */
+  remoteTipShaAfterLease?: string;
 }
 
 export function harness(opts: Opts = {}): Harness {
+  // Flipped by a successful leased re-push so the post-push verification can
+  // read the tip the reconciliation just wrote (#3377).
+  let leasedPushed = false;
   const mergeCalls: string[][] = [];
   const pushedAttempt: string[][] = [];
   const firedHooks: string[] = [];
@@ -349,13 +367,22 @@ export function harness(opts: Opts = {}): Harness {
       const j = argv.join(" ");
       // #2811 push verification reads — recorded, but not counted as pushes.
       if (j.includes("ls-remote")) {
-        return { code: 0, stdout: opts.remoteTipSha ? `${opts.remoteTipSha}\trefs/heads/x\n` : "", stderr: "" };
+        const tip = leasedPushed ? (opts.remoteTipShaAfterLease ?? opts.remoteTipSha) : opts.remoteTipSha;
+        return { code: 0, stdout: tip ? `${tip}\trefs/heads/x\n` : "", stderr: "" };
       }
       if (j.includes("rev-parse")) {
         return { code: opts.localTipSha ? 0 : 1, stdout: opts.localTipSha ?? "", stderr: "" };
       }
       pushedAttempt.push(argv);
-      return { code: opts.pushAttemptCode ?? 0, stdout: "", stderr: "" };
+      // #3377 — the claim-owned reconciliation push is a DISTINCT outcome from
+      // the plain push it follows: the plain one is rejected, the leased one
+      // converges unless the test drives a lost lease.
+      if (j.includes("--force-with-lease")) {
+        const code = opts.leasedPushCode ?? 0;
+        if (code === 0) leasedPushed = true;
+        return { code, stdout: "", stderr: code === 0 ? "" : "! [rejected] (stale info)" };
+      }
+      return { code: opts.pushAttemptCode ?? 0, stdout: "", stderr: opts.pushAttemptStderr ?? "" };
     },
     async fireHook(name) {
       firedHooks.push(name);
@@ -437,6 +464,7 @@ export function harness(opts: Opts = {}): Harness {
     ...(opts.labels ? { labels: opts.labels } : {}),
     ...(opts.changedFiles ? { changedFiles: opts.changedFiles } : {}),
     nativeMergeQueue: opts.nativeMergeQueue,
+    ...(opts.claimHeld === undefined ? {} : { claimHeld: opts.claimHeld }),
   };
 
   const hooks: LandingHookContexts = {

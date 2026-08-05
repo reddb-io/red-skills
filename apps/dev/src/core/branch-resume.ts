@@ -7,6 +7,8 @@
 // bypasses the agent entirely (validate + land directly).
 
 import type { BranchRef } from "./branch-cleanup.js";
+import { classifyComment } from "./comment-classification.js";
+import { isTrustedSource, type SourceTrustLevel } from "./source-trust.js";
 
 const LIVE_REF_ISSUE_RE = /^afk\/(?:([0-9]+)-[a-z0-9-]+|[^/]+\/([0-9]+)-[a-z0-9-]+)$/;
 
@@ -176,6 +178,53 @@ export function isGateGreenBranch(failureReason: string | undefined): boolean {
   // Strip trailing colon (e.g. "feedback-failed: detail text") before lookup.
   const first = (failureReason.trim().split(/\s+/)[0] ?? "").replace(/:$/, "");
   return first.length > 0 && !GATE_STAGE_REASONS.has(first);
+}
+
+// ---------- unconsumed requeue guidance (#3377) ----------
+
+/** The minimum a comment must expose for {@link hasUnconsumedGuidance}. */
+export interface GuidanceComment {
+  body: string;
+  sourceTrust?: SourceTrustLevel;
+}
+
+/**
+ * True when the thread's newest TRUSTED directive is newer than its newest
+ * Worker envelope — i.e. guidance arrived after the last Worker reported, so no
+ * Worker has yet run with it in its prompt (#3377).
+ *
+ * This is the condition under which the gate-green fast path must NOT be taken.
+ * The forbidden case it exists to close: a requeue writes fresh guidance, the
+ * next Worker finds an adoptable branch, skips the agent entirely, re-validates
+ * the identical tree and re-parks — with the guidance still sitting in the
+ * thread, intact and unexecuted, for the Worker after that to also skip.
+ *
+ * Comments are read in the chronological order the projection supplies them, so
+ * "newest" is a position, not a parsed timestamp: a missing or malformed
+ * `createdAt` cannot silently reorder the decision.
+ */
+export function hasUnconsumedGuidance(comments: readonly GuidanceComment[]): boolean {
+  let lastGuidance = -1;
+  let lastEnvelope = -1;
+  comments.forEach((comment, index) => {
+    const category = classifyComment({ body: comment.body });
+    if (category === "envelope") lastEnvelope = index;
+    else if (category === "directive" && isTrustedSource(comment.sourceTrust)) lastGuidance = index;
+  });
+  return lastGuidance !== -1 && lastGuidance > lastEnvelope;
+}
+
+/**
+ * The note a Worker owes the record when unconsumed guidance overrides a
+ * no-agent fast path (#3377). Loud by design: the skip that was happening
+ * silently is exactly what made the loop invisible.
+ */
+export function formatGuidanceOverrideNote(issue: number, branch: string): string {
+  return (
+    `🤖 /afk #${issue}: fresh requeue guidance has not been executed by any Worker yet, so the no-agent fast path ` +
+    `over \`${branch}\` is REFUSED — running one agent round with the guidance in the prompt instead. ` +
+    `Re-validating the same tree would re-park this issue with the guidance still unexecuted.`
+  );
 }
 
 /**
