@@ -52,10 +52,13 @@ import {
   type RedskilledHostCeiling,
 } from "./admission.js";
 import {
+  buildHostEvent,
   createRedskilledEventLane,
   rehydrateWorkers,
   type RedskilledEventLane,
   type RedskilledHostEvent,
+  type RedskilledWorkerEventKind,
+  type RecordWorkerEventInput,
 } from "./event-lane.js";
 import {
   DEFAULT_REDSKILLED_DEMAND_MS,
@@ -1795,11 +1798,24 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // is the ordinary state of a host-scoped daemon (ADR 0130 rule 3).
     const display = request.display === undefined ? null : coerceWorkerDisplay(request.display);
     if (display != null) {
+      const previous = displays.get(request.worker_id)?.display;
       const stored = { display, published_at: publishedAt };
       displays.set(request.worker_id, stored);
       // Kept as well as stored: the map answers "what is it doing now" and the
       // history answers "how fast", and one cannot be recovered from the other.
       observeWorkerCounters(stored, request.worker_id);
+      if (display.phase !== previous?.phase || display.step !== previous?.step) {
+        record("worker-activity", target, null, { phase: display.phase, step: display.step });
+      }
+    }
+    if (request.mechanical_heal?.heal_kind === "mechanical-regeneration") {
+      record(
+        "worker-heal",
+        target,
+        `${request.mechanical_heal.cause}; cycle ${request.mechanical_heal.cycle}/${request.mechanical_heal.cap}; ` +
+          `free=${request.mechanical_heal.free}`,
+        { healKind: request.mechanical_heal.heal_kind },
+      );
     }
     return {
       version: 1,
@@ -2209,7 +2225,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       ...(forkSha == null || forkSha === "" ? {} : { fork_sha: forkSha }),
     };
     workers.set(worker.worker_id, worker);
-    record("worker-birth", worker, null);
+    record("worker-birth", worker, null, {
+      admissionVerdict: grant.admission?.verdict ?? launched.admission.verdict,
+    });
     armIdleTimer();
     return tracked;
   }
@@ -2222,14 +2240,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * holds the live Worker the event was about.
    */
   function record(
-    event: RedskilledHostEvent["event"],
+    kind: RedskilledWorkerEventKind,
     worker: RedskilledWorkerView,
     detail: string | null,
-    // The exit facts a project's policy turns on, when the daemon witnessed
-    // them. Absent for every event that is not an observed process exit.
-    exit: {
-      readonly exitCode?: number | null;
-      readonly signal?: NodeJS.Signals | null;
+    facts: Omit<RecordWorkerEventInput, "kind" | "worker" | "ts" | "detail"> & {
       readonly refusal?: string | null;
     } = {},
   ): void {
@@ -2240,27 +2254,13 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     const ts = clock();
     // The same instant the lane records, so the outcome rate and the lane never
     // describe the same ending at two different times.
-    if (event === "worker-death" || event === "worker-budget-kill") {
-      markWorkerOutcome({ worker_id: worker.worker_id, ts, outcome: event });
-      rememberObservedDeath({
-        version: 1,
-        ts,
-        event,
-        worker_id: worker.worker_id,
-        project_label: worker.project_label,
-        pid: worker.pid,
-        workspace_path: worker.workspace_path,
-        log_path: worker.log_path ?? null,
-        isolated: worker.isolated,
-        unit: worker.unit ?? null,
-        memory_high: worker.budget?.memory_high ?? null,
-        memory_max: worker.budget?.memory_max ?? null,
-        cpu_weight: worker.budget?.cpu_weight ?? null,
-        detail,
-        reason: null,
-        exit_code: exit.exitCode ?? null,
-        signal: exit.signal ?? null,
-      }, { startedAt: worker.started_at, ...(exit.refusal == null ? {} : { refusal: exit.refusal }) });
+    const input: RecordWorkerEventInput = { kind, worker, ts, detail, ...facts };
+    if (kind === "worker-death" || kind === "worker-budget-kill") {
+      markWorkerOutcome({ worker_id: worker.worker_id, ts, outcome: kind });
+      rememberObservedDeath(
+        buildHostEvent(input),
+        { startedAt: worker.started_at, ...(facts.refusal == null ? {} : { refusal: facts.refusal }) },
+      );
       // Every death reaches here, which is why the breaker folds here rather
       // than at the five call sites that end a Worker. What it reads is a
       // lifetime, never a cause: the daemon is not owed a reason (rule 3), and
@@ -2268,14 +2268,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       foldBirthHealth(worker.project_label, Date.parse(ts) - Date.parse(worker.started_at));
     }
     void eventLane
-      .record({
-        event,
-        worker,
-        ts,
-        detail,
-        ...(exit.exitCode !== undefined ? { exitCode: exit.exitCode } : {}),
-        ...(exit.signal !== undefined ? { signal: exit.signal } : {}),
-      })
+      .recordWorker(input)
       .catch(() => undefined);
   }
 
@@ -2645,11 +2638,18 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
             });
             const current = workers.get(worker.worker_id);
             if (current == null || current.fork_sha !== worker.fork_sha) return;
-            workers.set(worker.worker_id, {
+            const updated = {
               ...current,
               base_head_sha: headSha,
               base_commits_ahead: commitsAhead,
-            });
+            };
+            workers.set(worker.worker_id, updated);
+            if (current.base_head_sha !== headSha || current.base_commits_ahead !== commitsAhead) {
+              record("worker-drift", updated, null, {
+                baseHeadSha: headSha,
+                baseCommitsAhead: commitsAhead,
+              });
+            }
           }));
         }),
     );

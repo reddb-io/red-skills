@@ -28,10 +28,12 @@ function snapshotOf(overrides: Partial<HostSnapshot> = {}): HostSnapshot {
 }
 
 function event(overrides: Partial<RedskilledHostEvent>): RedskilledHostEvent {
+  const kind = overrides.kind ?? overrides.event ?? "worker-death";
   return {
     version: 1,
     ts: "2026-08-01T10:00:00.000Z",
-    event: "worker-death",
+    kind,
+    event: kind,
     worker_id: "wA1B2",
     project_label: "reddb-io/red-skills",
     pid: 4242,
@@ -42,6 +44,12 @@ function event(overrides: Partial<RedskilledHostEvent>): RedskilledHostEvent {
     memory_high: null,
     memory_max: null,
     cpu_weight: null,
+    admission_verdict: null,
+    phase: null,
+    step: null,
+    base_head_sha: null,
+    base_commits_ahead: null,
+    heal_kind: null,
     detail: null,
     reason: null,
     exit_code: 0,

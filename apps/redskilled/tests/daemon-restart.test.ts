@@ -18,6 +18,7 @@ import {
 import type { RedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import type { RedskilledWorkerSpec } from "../src/worker-launch.js";
+import { REDSKILLED_WORKER_DISPLAY_ABSENT } from "../src/worker-display.js";
 
 const running: RedskilledDaemon[] = [];
 const roots: string[] = [];
@@ -217,6 +218,44 @@ describe("the host event lane", () => {
     expect(daemon.hostState().budget_accounting.worker_count).toBe(1);
   });
 
+  it("records admitted births, activity transitions and mechanical heals as typed facts", async () => {
+    const paths = await sessionPaths();
+    const workspace = await scratch("redskilled-workspace-");
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      liveness: pidLiveness,
+      stopWorker: () => true,
+    });
+    running.push(daemon);
+
+    const born = daemon.startWorker(longLivedSpec(workspace));
+    spawnedPids.push(born.worker.pid);
+    daemon.publishWorkerHeartbeat({
+      worker_id: born.worker.worker_id,
+      last_log_line: "implementing",
+      display: { ...REDSKILLED_WORKER_DISPLAY_ABSENT, phase: "coding", step: "implementing" },
+      mechanical_heal: {
+        heal_kind: "mechanical-regeneration",
+        cause: "stale-base-drift",
+        cycle: 1,
+        cap: 2,
+        free: true,
+      },
+    });
+    await daemon.flushEvents();
+
+    const events = await readRedskilledEvents(paths.eventLanePath);
+    expect(events.map((event) => event.kind)).toEqual([
+      "worker-birth",
+      "worker-activity",
+      "worker-heal",
+    ]);
+    expect(events[0]).toMatchObject({ admission_verdict: "admitted" });
+    expect(events[1]).toMatchObject({ phase: "coding", step: "implementing" });
+    expect(events[2]).toMatchObject({ heal_kind: "mechanical-regeneration" });
+  });
+
   it("only ever appends: earlier bytes are never rewritten", async () => {
     const paths = await sessionPaths();
     const lane = createRedskilledEventLane(paths.eventLanePath);
@@ -359,6 +398,7 @@ function laneEvent(event: RedskilledHostEvent["event"], workerId: string): Redsk
   return {
     version: 1,
     ts: "2026-07-29T00:00:00.000Z",
+    kind: event,
     event,
     worker_id: workerId,
     project_label: "acme/widgets",
@@ -370,6 +410,12 @@ function laneEvent(event: RedskilledHostEvent["event"], workerId: string): Redsk
     memory_high: "512M",
     memory_max: null,
     cpu_weight: null,
+    admission_verdict: null,
+    phase: null,
+    step: null,
+    base_head_sha: null,
+    base_commits_ahead: null,
+    heal_kind: null,
     detail: null,
     exit_code: null,
     signal: null,
