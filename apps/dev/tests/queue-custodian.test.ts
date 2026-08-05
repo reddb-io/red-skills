@@ -129,7 +129,9 @@ describe("Queue Custodian", () => {
         store,
         now: () => "2026-08-05T12:30:00.000Z",
         armNativeIntent,
-        afterWrite: () => calls.push("custody-durable"),
+        afterWrite: () => {
+          calls.push("custody-durable");
+        },
       },
       {
         repo: "reddb-io/red-skills",
