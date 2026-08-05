@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/github": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/toon": "catalog:",
     "yaml": "^2.9.0"
