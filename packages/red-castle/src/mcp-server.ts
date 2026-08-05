@@ -34,6 +34,8 @@ import {
 } from "./mcp/worktree.js";
 
 export type { CastleMcpTool } from "./mcp/tool.js";
+export { CASTLE_MCP_PROMPTS } from "./mcp/prompt.js";
+export type { CastleMcpPrompt } from "./mcp/prompt.js";
 export type { DangerPosture } from "./mcp/posture.js";
 export {
   CASTLE_MCP_CONTRACT_VERSION,
