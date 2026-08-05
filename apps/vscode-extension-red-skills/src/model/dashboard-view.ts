@@ -14,6 +14,7 @@
  * `views/dashboard-panel.ts` hold the `vscode` imports and nothing else.
  */
 import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
+import { stripAnsi } from "@reddb-io/redskilled-render/format.js";
 import type { RedskilledDashboard } from "@reddb-io/redskilled/protocol";
 import type { HostSnapshot } from "./snapshot.js";
 
@@ -55,9 +56,12 @@ export function statusBarView(snapshot: HostSnapshot): StatusBarView {
     };
   }
   const header = snapshot.dashboard.header;
+  // The daemon colours its render unconditionally (#3150/#3152) and the editor
+  // status bar draws no ANSI, so this caller strips at its boundary — the rule
+  // the renderer states: the pipe decision belongs to the reader.
   return {
-    text: `${snapshot.dashboard.stale ? "$(warning)" : "$(server)"} ${header.line}`,
-    tooltip: snapshot.dashboard.lines.join("\n"),
+    text: stripAnsi(`${snapshot.dashboard.stale ? "$(warning)" : "$(server)"} ${header.line}`),
+    tooltip: snapshot.dashboard.lines.map(stripAnsi).join("\n"),
     warning: snapshot.dashboard.stale,
   };
 }
@@ -131,7 +135,7 @@ function dashboardBody(snapshot: HostSnapshot): string {
     ].join("\n");
   }
   return [
-    `<pre class="header${dashboard.stale ? " stale" : ""}">${escapeHtml(dashboard.header.line)}</pre>`,
+    `<pre class="header${dashboard.stale ? " stale" : ""}">${escapeHtml(stripAnsi(dashboard.header.line))}</pre>`,
     ...(dashboard.rows.length === 0
       ? [
           '<pre class="absence">no Workers here — the machine is idle, and this is the daemon saying so</pre>',
@@ -148,5 +152,5 @@ function dashboardBody(snapshot: HostSnapshot): string {
  * dropped by a panel that only knew about Workers.
  */
 export function dashboardRows(dashboard: RedskilledDashboard): readonly string[] {
-  return dashboard.lines.slice(1);
+  return dashboard.lines.slice(1).map(stripAnsi);
 }
