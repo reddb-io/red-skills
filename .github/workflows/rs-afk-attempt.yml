@@ -11,11 +11,9 @@
 # Auth: opencode + the org-level `MINIMAX_API_KEY` secret. Model: minimax/MiniMax-M3.
 # Trust gate: only issues authored AND labelled by an allowlisted login run.
 #
-# Runner: Blacksmith. We pass `runs_on: blacksmith-2vcpu-ubuntu-2404` (the
-# smallest Blacksmith tier — there is no "nano"; 2vcpu is the floor) to the
-# reusable, which exposes a `runs_on` input defaulting to `ubuntu-latest` for
-# adopters without Blacksmith. The Blacksmith GitHub App is installed on the org;
-# without it a Blacksmith label leaves the job queued forever.
+# Runner: GitHub-hosted Ubuntu. Standard runners are free for this public
+# repository, and the reusable already defaults to ubuntu-latest. Adopters can
+# still pass a Blacksmith runner label when faster paid compute is intentional.
 
 name: rs-afk-attempt
 
@@ -50,7 +48,7 @@ jobs:
       issue_number: ${{ github.event_name == 'workflow_dispatch' && inputs.issue_number || github.event.issue.number }}
       runner: opencode
       model: minimax/MiniMax-M3
-      runs_on: blacksmith-2vcpu-ubuntu-2404
+      runs_on: ubuntu-24.04
       enforce_trust_gate: ${{ 'true' }}
       allowlist_authors: "filipeforattini"
       allowlist_label_actors: "filipeforattini"

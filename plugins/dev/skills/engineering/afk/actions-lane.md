@@ -123,7 +123,7 @@ with:
 "nano"; 2 vCPU is the floor (other shapes: `-4vcpu-`, `-8vcpu-`, …). The
 **Blacksmith GitHub App must be installed on the org/repo** first — a Blacksmith
 label with no app installed leaves the job **queued forever**. red-skills' own
-`rs-afk-attempt.yml` caller runs on `blacksmith-2vcpu-ubuntu-2404`.
+`rs-afk-attempt.yml` caller uses `ubuntu-24.04` because the repository is public.
 
 ## Runner + auth
 
