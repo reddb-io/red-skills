@@ -56,16 +56,18 @@ MCP, and non-essential host hooks are absent from every projection.
 | `afk.claim_reaper.grace_s` | `RED_AFK_CLAIM_REAPER_GRACE_S` | `300` | Minimum claim age before the stale-claim sweep may recover a `running` issue, even if the stale window is configured aggressively. |
 | `afk.claim_reaper.recent_commit_s` | `RED_AFK_CLAIM_REAPER_RECENT_COMMIT_S` | `2700` | Sliding progress-protection window: a live `afk/*/<issue>-*` attempt branch with a commit this recent protects the claimed issue from stale-claim recovery. |
 | `afk.statusline_cache_ttl` | `RED_AFK_STATUSLINE_CACHE_TTL_S` | `180` | TTL (seconds) of every EXPENSIVE FETCHED statusline number — the GitHub-derived queue/human + open-PR/open-issue counts AND the repo-global local diffstat, cached in `.red/state/statusline/statusline-cache.toon` / `.red/state/statusline/statusline-repo-cache.toon` (issue #1178, #1217). The statusline renders on every prompt, so a per-render gh/git round-trip would freeze the TUI; the network cost is paid at most once per TTL. Also drives the monitor's stale-cache marker. Use the **flat** key — do **not** nest it under `afk.statusline` (that key is the boolean statusline opt-out; YAML cannot make one key both a boolean and a map). Typo-safe (env > config > default): a non-numeric / zero / negative value in **either** source falls through to the next and ultimately the 180 default — never 0 (a 0 TTL would refresh on every render, defeating the cache). |
-| `afk.backpressure` | — | _(empty)_ | Ordered list of shell commands run as an extra pre-merge gate on the DONE path (issue #430, PRD #429). |
 | `plugins.dev.afk.setup` | — | _(undeclared fallback)_ | Ordered repository-owned commands that prepare dependencies in fresh Worker/feedback Worktrees. Commands run verbatim through `sh -c`; AFK never changes a declared command. `/red-setup` detects and confirms this value, and `/red-doctor` checks it against package/hook managers (#3268). |
-| `afk.validation.node_max_old_space_mb` | — | `2048` | Node heap cap applied to feedback/backpressure validation subprocesses via `NODE_OPTIONS=--max-old-space-size=<mb>` (#1758). Keeps heavy Vitest/build validation bounded per worker. |
+| `plugins.dev.afk.validation.iteration` | — | _(undeclared; skip)_ | Ordered light checks handed to the inner agent for use while writing. |
+| `plugins.dev.afk.validation.post_done` | — | _(undeclared; skip)_ | Ordered branch checks run after DONE against the branch's fork point. |
+| `plugins.dev.afk.validation.landing` | — | _(undeclared; skip)_ | Ordered final local checks run before push, PR creation, and queue entry. |
+| `plugins.dev.afk.validation.node_max_old_space_mb` | — | `2048` | Node heap cap applied to Validation moment subprocesses via `NODE_OPTIONS=--max-old-space-size=<mb>` (#1758). Keeps heavy validation bounded per Worker. |
 | `afk.fleet.target` | — | `1` | How many Workers a project registers for when nothing states a number (ADR 0132 decision 7). **One** because a second Worker doubles GitHub polling against a budget metered per token — two spend ~2200 GraphQL points/hour of a 5000/hour window — and doubles memory against a host ceiling every Worker is already granted in full (#3080); that is worth choosing deliberately rather than inheriting. The daemon's host-scoped ceiling bounds it from above, because width is machine budget rather than project preference. The value is not the decision — the EQUALITY is: this number, the MCP `project_start` schema default and `CONFIG_DEFAULTS` all read one namer, and a test fails when they disagree. |
-| `afk.validation.vitest_max_workers` | — | `1` | Vitest worker fan-out cap exposed as `VITEST_MAX_WORKERS` to validation subprocesses (#1758). Repos with larger machines may raise it; the conservative default prevents width-2 fleets from multiplying heavy suites. |
-| `afk.validation.heavy_available_memory_mb` | — | `4096` | Minimum free-memory threshold for admitting known-heavy validation work (#1758). Heavy validation admission serializes when another heavy validation is active, and otherwise waits until this much memory is available. |
+| `plugins.dev.afk.validation.vitest_max_workers` | — | `1` | Vitest worker fan-out cap exposed as `VITEST_MAX_WORKERS` to validation subprocesses (#1758). Repos with larger machines may raise it; the conservative default prevents width-2 fleets from multiplying heavy suites. |
+| `plugins.dev.afk.validation.heavy_available_memory_mb` | — | `4096` | Minimum free-memory threshold for admitting known-heavy validation work (#1758). Heavy validation admission serializes when another heavy validation is active, and otherwise waits until this much memory is available. |
 | `afk.output_shaping.terse_steering` | — | `false` | Opt-in AFK output-shaping experiment (#1638). When true, even-numbered issues receive a phrasing-only terse steering block; odd-numbered issues are the holdout. The assignment is persisted in worker state beside heartbeat output-token counters and reported by `afk-output-shaping`. |
 | `afk.worktree_launches_pull_request` | — | `true` | Landing **mode**, decoupled from the branch-lock (ADR 0030 amended, #842). `true` (default) → the attempt lands via an **admin-merged PR** into the resolved base; `false` → a **direct merge** into that base (offline, no PR — only the post-commit push the worker already does). The branch-lock now only resolves the *target* base (lock > pin > main, ADR 0031); this flag decides PR-vs-direct **independently**. So: no lock + `true` → admin-PR to `main`; no lock + `false` → direct merge to `main`; lock=`X` + `true` → admin-PR to `X`; lock=`X` + `false` → direct merge to `X`. *How* a PR merges (admin vs `wait_for_review` vs `review_gate`) stays governed by `afk.merge.*`. **Migration:** the default `true` flips the old *locked* behaviour (which direct-merged) — a locked repo now gets an admin-PR to its lock branch; set `false` to keep the old offline/direct-promotion flow. |
 | `afk.landing.wait` | — | `merge` | Worker-slot release point across the PR landing tail (#2427): `merge` keeps today’s byte-compatible flow and releases only after merge + Ticket close; `ci` releases once required CI is green; `none` releases as soon as the PR opens. For `ci`/`none`, the background landing observer finishes merge + close. It uses the resident’s shared webhook lane when available and the established per-wait forwarder otherwise. **Trade-off:** earlier release pipelines more Tickets through each fleet slot, but leaves a larger asynchronous tail; if that observer dies, the open PR/running Ticket is an orphan for the deadend audit/healer instead of work the slot still owns. |
-| `afk.merge.wait_for_review` | — | `false` | Merge-gate policy (ADR 0048). When `false` (default), the unlocked admin-merge proceeds **ignoring advisory review checks** (e.g. CodeRabbit) — the binding gates are `drift-guard` (the `pre_merge` hook) + in-process backpressure/feedback. When `true`, the unlocked landing **waits** for the configured review check to conclude before merging, then merges regardless of its verdict (the review stays advisory). `drift-guard` is a hard gate either way. |
+| `afk.merge.wait_for_review` | — | `false` | Merge-gate policy (ADR 0048). When `false` (default), the unlocked admin-merge proceeds **ignoring advisory review checks** (e.g. CodeRabbit) — the binding local checks are the declared Validation moments plus `drift-guard` (the `pre_merge` hook). When `true`, the unlocked landing **waits** for the configured review check to conclude before merging, then merges regardless of its verdict (the review stays advisory). `drift-guard` is a hard gate either way. |
 | `afk.merge.review_check` | — | `CodeRabbit` | Name (case-insensitive substring) of the advisory review check `wait_for_review` polls via `gh pr checks`. Only consulted when `afk.merge.wait_for_review` is `true`. |
 | `afk.merge.ci_aware` | — | `false` | CI-aware merge (#812). When `false` (default), the unlocked admin-merge fires immediately — correct only on a base with **no** required status checks. When `true`, the unlocked landing first polls `gh pr view --json mergeStateStatus,statusCheckRollup` until the PR settles, then admin-merges **only** once it is genuinely ready (`CLEAN`, or `BLOCKED` solely by a required review `--admin` waives). Required for any `enforce_admins` base, where an admin-merge **cannot** bypass required checks: a real conflict / `DIRTY` / `BEHIND` → `blocked:merge-conflict`; a **failed** required check → `blocked:ci`; checks still **pending** at the timeout → `blocked:ci` with the open PR preserved (never re-runs the inner agent). |
 | `RED_AFK_MERGE_CI_TIMEOUT_S` | env | `1800` | CI-aware merge wait budget, in seconds (#812). The poll runs at a fixed 10s cadence until `mergeStateStatus` settles; on timeout the open, MERGEABLE PR is handed off (`ci-pending` → `blocked:ci`) instead of re-running the agent. Non-positive / unparseable → the 1800s default. Only consulted when `afk.merge.ci_aware` is `true`. |
@@ -116,6 +118,17 @@ plugins:
       implementer:
         skills: dev:tdd, dev:diagnose # optional exact worker allowlist; activation gates still apply
         runner_startup_baseline_ms: 840 # optional measured pre-projection historical baseline
+      validation:
+        iteration:
+          - pnpm --filter @reddb-io/dev exec vitest run tests/config.test.ts
+        post_done:
+          - pnpm --filter @reddb-io/dev test
+          - pnpm --filter @reddb-io/dev typecheck
+        landing:
+          - pnpm pi:packages:check
+        node_max_old_space_mb: 2048
+        vitest_max_workers: 1
+        heavy_available_memory_mb: 4096
 
 afk:
   worktree_launches_pull_request: true   # true → admin-PR landing; false → direct merge (offline). Decoupled from the lock (#842)
@@ -133,16 +146,6 @@ afk:
   sandbox: none
   max_iterations: 12      # override the default re-invocation ceiling here
   statusline_cache_ttl: 180   # statusline gh/git cache TTL (seconds); flat key, NOT under afk.statusline
-  feedback:
-    commands:             # declared → replaces discovery; [] disables locally
-      - pnpm -C apps/dev exec tsc --noEmit
-  backpressure:           # extra pre-merge gate, runs after the feedback gate
-    - npm run test
-    - npm run lint
-  validation:
-    node_max_old_space_mb: 2048
-    vitest_max_workers: 1
-    heavy_available_memory_mb: 4096
   output_shaping:
     terse_steering: false # true → even issues steered, odd issues holdout; report with afk-output-shaping
   merge:
@@ -156,21 +159,53 @@ afk:
 
 `RED_AFK_IDLE_TIMEOUT_S` is env-only (no `afk.*` config key); `sandbox`, `max_iterations`, and `statusline_cache_ttl` resolve env > config > default. The three runtime bounds — silence (`idleTimeoutSeconds`), re-invocation count (`maxIterations`), and the fixed no-commit-progress worker guard — are detailed under *Attempt Completion & Termination Bounds*.
 
-### Feedback command authority
+### Validation moments
 
-`plugins.dev.afk.feedback.commands` declares exactly what AFK runs for the feedback stage. When present, it **replaces** package-script discovery rather than extending it: the ordered shell strings run verbatim through `sh -c` at the validation Worktree root, and the discovered `test`/`typecheck`/`lint`/`build`, workspace typecheck, and invariant suites run nowhere locally. `commands: []` explicitly disables the local feedback stage. When the key is absent, discovery is byte-for-byte unchanged.
+`plugins.dev.afk.validation` is the single repository-owned schedule. Commands
+are ordered shell strings run verbatim; there is no discovered default. An
+omitted moment is skipped loudly, while `[]` is an explicitly declared empty
+list and also skips loudly.
 
-Narrowing local feedback moves the full-suite verdict to CI. That is sound only when branch protection requires the merge queue's `test` check; `/red-doctor` warns when it sees a replacement without that required check. Every declared feedback command is also placed verbatim in the Worker's `<merge-gate>` contract, before any additive backpressure commands, so the Worker runs the same command and must not invent a broader suite.
+| Moment | Owner and timing | Freshness contract |
+|---|---|---|
+| `plugins.dev.afk.validation.iteration` | The inner agent receives these light checks in its handoff and runs them while writing. | Confidence only; do not improvise a broader suite. |
+| `plugins.dev.afk.validation.post_done` | The engine runs these commands after DONE against the branch's fork point. The Worker's `<merge-gate>` repeats the exact list. | A correction re-runs only the failed subset, then folds back to the full declaration after that subset passes. |
+| `plugins.dev.afk.validation.landing` | The engine runs these commands immediately before push, PR creation, and queue entry. | Last local verdict; it does not try to predict a moving base. |
+| Merge queue | The repository's required CI checks run on the merge group. This is configured at the forge, not in RedSkills. | The merge queue is the CI-side final Validation moment and owns freshness against the merged result. |
 
-### Backpressure gate
+`setup` and `format` remain separate declarations rather than Validation
+moments. `/red-setup` inventories the repository's real scripts, proposes the
+three ordered lists, and writes them only after operator confirmation.
 
-`afk.backpressure` is an operator-declared, ordered list of shell commands that **supplements** the auto-derived feedback gate (it does not replace it). On a successful DONE attempt — after the scope-derived `test`/`typecheck`/`lint`/`build` feedback gate passes, before landing — AFK runs each backpressure command in order (`sh -c <command>`) against a checkout of the worker branch. If **any** command exits non-zero the merge is blocked and the issue is parked to `ready-for-human` with `blocked:validation`, exactly like a feedback failure: the failing command and its output tail land in the terminal envelope and in the `red.afk.validation.v1` validation sidecar (records named `backpressure:<command>`). An absent or empty block is a no-op (today's behaviour). The namespaced `plugins.dev.afk.backpressure` location is honoured with the legacy bare `afk.backpressure` fallback (ADR 0042).
+Validation is admitted through one host-wide semaphore shared by every project.
+Tune it with `plugins.dev.redskilled.validation_ceiling` in the machine's home
+config (or `REDSKILLED_VALIDATION_CEILING` for the process). The derived default
+is bounded by CPU, memory, and the Worker ceiling; `host-state` reports the
+resolved `ceiling.validation_count` and its source, while the statusline shows
+live occupancy as `gate N/M`. This host knob sits beside the schedule because a
+declared moment answers *what and when*, while the ceiling answers *how many may
+run concurrently*; it never changes or invents commands.
+
+```yaml
+# Machine home config, not the repository's .red/config.yaml
+plugins:
+  dev:
+    redskilled:
+      validation_ceiling: 2
+```
+
+#### Deprecated `post_done` aliases
+
+`plugins.dev.afk.feedback.commands` and `plugins.dev.afk.backpressure` are
+one-release migration aliases that contribute commands to `post_done` and warn
+with the canonical replacement. They are not separate stages, do not restore
+discovery, and must not be proposed for new configuration.
 
 `plugins.dev.afk.setup` is the dependency-install authority for every fresh AFK validation Worktree. `/red-setup` inspects lockfiles, `packageManager`, Corepack metadata, and `prepare`/dependencies for hook managers, then asks the maintainer to confirm exact commands such as `LEFTHOOK=0 pnpm install --frozen-lockfile`, `HUSKY=0 npm ci`, or `bun install --frozen-lockfile`. The engine executes the ordered strings verbatim and never appends flags or substitutes its detected package manager. This lets a repo keep lifecycle scripts that perform real builds while disabling only the hook installer that conflicts with AFK's intentional `core.hooksPath` redirect.
 
 For older undeclared repos only, AFK retains a hardened compatibility fallback: `pnpm install --frozen-lockfile` with `LEFTHOOK=0` and `HUSKY=0`. If stderr still names the custom-hooksPath refusal, AFK retries once with `--ignore-scripts`; a successful retry is recorded on each `red.afk.validation.v1` record as setup that skipped lifecycle scripts. Any unrelated install failure remains fatal without retry. `/red-doctor` reports an undeclared or mismatched setup so the fallback is migration scaffolding, not permanent guessed policy.
 
-**This is how maintainers tell an inner agent the exact gate it must satisfy — without ad-hoc `-r` retry guidance.** When `feedback.commands` or `afk.backpressure` is set, every inner-agent handoff carries a `<merge-gate>` section listing the configured commands verbatim, and the agent's exit-protocol completion contract instructs it to run and pass those commands *before* emitting `<promise>DONE</promise>` (issues #849 and #3276). The contract distinguishes two kinds of check: the **touched-package confidence checks** the agent runs while developing versus the **binding merge gate** the orchestrator enforces after DONE. The declared feedback list may intentionally be narrower than discovery; backpressure remains additive. On an automatic re-queue, the prior failure's summary remains visible through `<prev-failure-context>`, so the next agent can target the real blocker. The agent is told **not** to re-run an unbounded full repository suite after its final commit; the listed gate commands are the contract.
+**This is how maintainers tell an inner agent the exact checks it must satisfy — without ad-hoc `-r` retry guidance.** The handoff carries the `iteration` list and a `<merge-gate>` containing the declared `post_done` commands verbatim. The contract distinguishes the **touched-package confidence checks** the agent chooses while developing from the **declared moments** the orchestrator enforces. On an automatic re-queue, the prior failure's summary remains visible through `<prev-failure-context>`, so the next agent can target the real blocker. The agent is told **not** to re-run an unbounded full repository suite after its final commit; the declared commands are the contract.
 
 ### HUMAN-ONLY ticket types
 
