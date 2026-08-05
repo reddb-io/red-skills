@@ -235,7 +235,7 @@ function collectWriters(path: string, text: string): string[] {
       // A dispose set fed to the planner (or validated against it) is a plan,
       // not a write; only free-standing dispose literals are raw writers.
       const context = contextAt(lines, i);
-      if (/validateIssueLifecycleTransition\(|planTransition\(|transitionLabels\(/.test(context)) continue;
+      if (/planTransition\(|transitionLabels\(/.test(context)) continue;
     }
     found.push(`${path} :: ${statement}`);
   }

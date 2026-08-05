@@ -1,6 +1,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { LABEL_HUMAN } from "../core/triage-labels.js";
+import { blockedLabelsIn } from "../core/state-transition.js";
 import {
   activityReviewInterval,
   buildActivityReviewReport,
@@ -156,7 +157,7 @@ function shouldFetchIssueComments(issue: ActivityReviewIssue, start: Date, end: 
     dateInRange(issue.createdAt, start, end) ||
     dateInRange(issue.closedAt, start, end) ||
     labels.includes(LABEL_HUMAN) ||
-    labels.some((label) => label.startsWith("blocked:"))
+    blockedLabelsIn(labels).length > 0
   );
 }
 

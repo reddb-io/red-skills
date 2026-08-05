@@ -1,5 +1,6 @@
 import type { HistoryRecord } from "./history.js";
 import { LABEL_HUMAN } from "./triage-labels.js";
+import { blockedKindOf, blockedLabelsIn } from "./state-transition.js";
 import { encode as encodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 
 export type ActivityReviewKind = "daily" | "weekly";
@@ -166,7 +167,7 @@ function lowerLabels(labels: readonly string[]): string[] {
 function isHitlOrBlocked(issue: ActivityReviewIssue): boolean {
   const labels = lowerLabels(issue.labels);
   if (labels.includes(LABEL_HUMAN)) return true;
-  if (labels.some((label) => label.startsWith("blocked:"))) return true;
+  if (blockedLabelsIn(labels).length > 0) return true;
   const text = [
     issue.body ?? "",
     ...(issue.comments ?? []).map((comment) => comment.body),
@@ -185,7 +186,10 @@ function firstUsefulLine(text: string): string | null {
 }
 
 function challengeWhy(issue: ActivityReviewIssue, history: readonly HistoryRecord[]): string {
-  const labels = issue.labels.filter((label) => /^blocked:|ready-for-human$/i.test(label));
+  const labels = issue.labels.filter((label) => {
+    const normalized = label.toLowerCase();
+    return blockedKindOf(normalized) !== null || normalized === LABEL_HUMAN;
+  });
   const reasons = history
     .filter((record) => record.issue === issue.number && record.reason)
     .map((record) => record.reason as string);

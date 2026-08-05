@@ -18,7 +18,7 @@ import {
   shouldPromote,
   shouldWarnStragglers,
   stragglerCounts,
-  type BlockerState,
+  type DependencyClosureState,
   type DependentIssue,
   type ReconcileSweepCandidate,
   type StragglerCountLookup,
@@ -159,7 +159,7 @@ describe("shouldPromote", () => {
   });
 
   it("does not promote when any blocker is not closed", () => {
-    const mixed: BlockerState[] = ["CLOSED", "open-or-unknown"];
+    const mixed: DependencyClosureState[] = ["CLOSED", "open-or-unknown"];
     expect(shouldPromote(mixed)).toBe(false);
   });
 

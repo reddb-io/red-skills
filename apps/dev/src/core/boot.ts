@@ -42,7 +42,7 @@ import {
   planReconcileSweep,
   stragglerCounts,
   shouldWarnStragglers,
-  type BlockerStateLookup,
+  type DependencyClosureLookup,
   type MixedBlockedCandidate,
   type StragglerCountLookup,
   type StragglerCounts,
@@ -96,7 +96,7 @@ import type { WorkerProcessVerdict, WorkerReclaimPlan } from "./worker-reclaim.j
 import type { WorkerStateRecordReclaimPlan } from "./worker-state-reclaim.js";
 import { LABEL_HUMAN, LABEL_QUARANTINE, LABEL_READY, LABEL_RUNNING } from "./triage-labels.js";
 import { readHitlTypeLabels } from "./config.js";
-import { isRefused, planTransition, type StateTransition } from "./state-transition.js";
+import { blockedLabelsIn, isRefused, planTransition, type StateTransition } from "./state-transition.js";
 import {
   appendQuarantineDiagnosis,
   makeBlocker,
@@ -326,8 +326,8 @@ export interface BootLookups {
   }>;
   /** Branch-cleanup issue-state lookup (branch-cleanup.ts IssueLookup). */
   branchIssue: IssueLookup;
-  /** Unblock-sweep blocker-state lookup (boot-sweep.ts BlockerStateLookup). */
-  blockerState: BlockerStateLookup;
+  /** Unblock-sweep dependency-closure lookup. */
+  blockerState: DependencyClosureLookup;
   /** Straggler per-bucket count lookups (boot-sweep.ts StragglerCountLookup). */
   straggler: StragglerCountLookup;
   /** True when the issue's local claim lock (`.red/tmp/claims/{N}/pid`) names a
@@ -1305,7 +1305,7 @@ async function runStaleClaimSweep(deps: BootDeps): Promise<StaleClaimSweepResult
           );
         }
       }
-      const parked = currentLabels.includes(LABEL_HUMAN) || currentLabels.some((l) => l.startsWith("blocked:"));
+      const parked = currentLabels.includes(LABEL_HUMAN) || blockedLabelsIn(currentLabels).length > 0;
       if (parked) {
         // A parked issue only sheds the stale `running` projection — the park
         // itself is the authoritative state and must survive the sweep (#968).
@@ -1433,7 +1433,7 @@ async function runOrphanCleanup(
     if (claim.issue !== undefined) {
       try {
         const currentLabels = await deps.gh.viewLabels(claim.issue);
-        const parked = currentLabels.includes(LABEL_HUMAN) || currentLabels.some((l) => l.startsWith("blocked:"));
+        const parked = currentLabels.includes(LABEL_HUMAN) || blockedLabelsIn(currentLabels).length > 0;
         if (currentLabels.includes(LABEL_RUNNING) && !parked) {
           const plan = planTransition(currentLabels, { kind: "queue" });
           if (isRefused(plan)) {

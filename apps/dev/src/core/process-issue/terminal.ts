@@ -73,7 +73,7 @@ import {
   validationFailureMarker,
 } from "../failure-signature.js";
 import { cascadeAuditCommentFor, parseReqLabels, planCloseCascade, promotionLaneNote, type DependentIssue } from "../boot-sweep.js";
-import { isRefused, parkOrHuman, planTransition, transitionLabels } from "../state-transition.js";
+import { blockedKindOf, isRefused, parkOrHuman, planTransition, transitionLabels } from "../state-transition.js";
 import { deriveOutcomeRecord } from "../outcome-record.js";
 import type { OutcomeEvent } from "@reddb-io/shared/outcome-event.js";
 import { acquireClaim, renderClaimComment, type ClaimGh, type ClaimReconcileOptions, type ClaimDecision } from "../claim.js";
@@ -112,11 +112,6 @@ import {
   LABEL_LANDING_MANUAL,
   LABEL_SPEC,
 } from "../triage-labels.js";
-import {
-  IllegalIssueLifecycleTransitionError,
-  validateIssueLifecycleTransition,
-  type IssueLifecycleEdge,
-} from "../issue-lifecycle.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, ProcessOutcome, WorkerBaseResolution } from "./types.js";
 import { formatBaseResolution, markTerminalState, recoveryOrdinalFor } from "./types.js";
 import { recordIssueHeal } from "@reddb-io/red-castle/engine";
@@ -1318,7 +1313,7 @@ export function reconcileInputFor(
 ): ReconcileInput {
   const liveLabels = [
     LABEL_RUNNING,
-    ...claimLabels.filter((l) => l !== LABEL_READY && !l.startsWith("blocked:")),
+    ...claimLabels.filter((l) => l !== LABEL_READY && blockedKindOf(l) === null),
   ];
   return {
     issue: input.issue,

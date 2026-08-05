@@ -59,7 +59,12 @@ import {
 import { dispatchHooks, type HookExec } from "../hook-dispatcher.js";
 import { type RecoveryEnv } from "../recovery.js";
 import { dispose } from "../disposition.js";
-import { parkOrHuman, transitionLabels, type StateTransition } from "../state-transition.js";
+import {
+  blockedLabelsIn,
+  parkOrHuman,
+  transitionLabels,
+  type StateTransition,
+} from "../state-transition.js";
 import {
   envelopeStatusFor,
   type WorkerOutcome,
@@ -107,12 +112,6 @@ import {
   LABEL_LANDING_MANUAL,
   LABEL_SPEC,
 } from "../triage-labels.js";
-import {
-  IllegalIssueLifecycleTransitionError,
-  LaneIsolationViolationError,
-  validateIssueLifecycleTransition,
-  type IssueLifecycleEdge,
-} from "../issue-lifecycle.js";
 import { formatSandboxImageBuildCommand } from "../execution/sandbox-image.js";
 import type {
   ContainerSandboxMode,
@@ -121,9 +120,6 @@ import type {
   ProcessIssueResult,
   ProcessOutcome,
 } from "./types.js";
-export function blockedLabelsIn(labels: string[]): string[] {
-  return labels.filter((l) => l.startsWith("blocked:"));
-}
 function stripScoutDoneSignal(text: string): string {
   const escaped = DONE_SIGNAL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return text.replace(new RegExp(`\\s*${escaped}\\s*$`), "").trim();
@@ -138,7 +134,6 @@ export function scoutCapturedDone(run: RunAgentResult, chunks: readonly string[]
   const captured = chunks.join("").trim() || (run.stdout ?? "").trim();
   return captured.length > 0 && stripScoutDoneSignal(captured) !== captured;
 }
-export const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-conflict"]);
 /**
  * The STATE TRANSITION a lifecycle edge's `add` set expresses, or null when the
  * edge is not a state-role move at all (#2663). `claim` adds only `running` —
@@ -147,7 +142,7 @@ export const MECHANICAL_BLOCKER_KINDS = new Set(["stalled", "crashed", "merge-co
  */
 export function lifecycleTransitionFor(add: readonly string[]): StateTransition | null {
   if (add.includes(LABEL_READY)) return { kind: "queue" };
-  if (add.includes(LABEL_HUMAN)) return parkOrHuman(add.find((l) => l.startsWith("blocked:")) ?? null);
+  if (add.includes(LABEL_HUMAN)) return parkOrHuman(blockedLabelsIn(add)[0] ?? null);
   return null;
 }
 
@@ -161,6 +156,7 @@ export function lifecycleTransitionFor(add: readonly string[]): StateTransition 
 async function applyLifecycleLabelEdit(
   deps: ProcessIssueDeps,
   issue: number,
+  current: readonly string[],
   remove: string[],
   add: string[],
 ): Promise<boolean> {
@@ -168,11 +164,11 @@ async function applyLifecycleLabelEdit(
   // Claim machinery (ready → running) is not a state transition — the planner
   // would (correctly) refuse a target that leaves zero state roles.
   if (transition === null) return deps.gh.editLabels(issue, remove, add);
-  const typed = add.find((l) => l.startsWith("blocked:"));
+  const typed = blockedLabelsIn(add)[0];
   if (typed !== undefined) await deps.gh.ensureLabel(typed);
   const result = await transitionLabels(
     (r, a) => deps.gh.editLabels(issue, r, a),
-    remove,
+    current,
     transition,
   );
   if (result.applied) return result.ok;
@@ -188,32 +184,9 @@ export async function editIssueLifecycleLabels(
   fromLabels: readonly string[],
   remove: string[],
   add: string[],
-  edge: IssueLifecycleEdge,
+  _edge: string,
 ): Promise<boolean> {
-  try {
-    validateIssueLifecycleTransition({ edge, fromLabels, removeLabels: remove, addLabels: add });
-    return await applyLifecycleLabelEdit(deps, issue, remove, add);
-  } catch (err) {
-    // A lane-isolation refusal is NOT reconcilable: the best-effort park below
-    // would apply the very pairing the guard exists to refuse. Leave the labels
-    // untouched and name the edge that attempted it.
-    if (err instanceof LaneIsolationViolationError) {
-      deps.appendIterLog(`refused: #${issue} ${err.message}; labels left untouched.`);
-      return false;
-    }
-    if (!(err instanceof IllegalIssueLifecycleTransitionError)) throw err;
-    const shed = blockedLabelsIn([...fromLabels]).filter((l) => !add.includes(l));
-    const reconciledRemove = [...new Set([...remove, ...shed])];
-    try {
-      validateIssueLifecycleTransition({ edge, fromLabels, removeLabels: reconciledRemove, addLabels: add });
-    } catch (reErr) {
-      const reason = reErr instanceof Error ? reErr.message : String(reErr);
-      deps.appendIterLog(
-        `warn: lifecycle transition "${edge}" for #${issue} still malformed after reconcile (${reason}); applying best-effort park.`,
-      );
-    }
-    return await applyLifecycleLabelEdit(deps, issue, reconciledRemove, add);
-  }
+  return applyLifecycleLabelEdit(deps, issue, fromLabels, remove, add);
 }
 export async function routeRecovery(
   deps: ProcessIssueDeps,
