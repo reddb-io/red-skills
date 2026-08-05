@@ -234,6 +234,8 @@ export interface RedskilledWorkerStarted {
    * request never has to ask a second question to know how much room is left.
    */
   readonly admission: RedskilledAdmissionVerdict;
+  /** Exact admitted fork point; optional only for one-release daemon skew. */
+  readonly fork_sha?: string;
   readonly warnings: readonly string[];
 }
 
@@ -263,7 +265,8 @@ export function isRedskilledWorkerStarted(value: unknown): value is RedskilledWo
   const started = value as Record<string, unknown>;
   return Array.isArray(started.warnings) &&
     isRedskilledWorkerView(started.worker) &&
-    isRedskilledAdmissionVerdict(started.admission);
+    isRedskilledAdmissionVerdict(started.admission) &&
+    (started.fork_sha === undefined || (typeof started.fork_sha === "string" && started.fork_sha !== ""));
 }
 
 /**

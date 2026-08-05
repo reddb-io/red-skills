@@ -147,7 +147,7 @@ import {
   type AdversarialReviewFindings,
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
-import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
+import { FORK_GRANT_FALLBACK_DELETE_RELEASE, baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
 import { editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, refuseNoSandboxForUntrustedAuthor, resolveEnvironmentRoundCap, resolveGoVerifyRetries, resolveReseedGateBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import type { ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
 import {
@@ -610,9 +610,28 @@ export async function processIssue(
     return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
   }
   let baseResolution: WorkerBaseResolution;
-  if (deps.git.resolveFreshBase) {
+  const grantedForkSha = input.forkSha?.trim() ?? "";
+  const warnLegacyForkGrant = (): void => {
+    const warning =
+      `warning: fork-grant version skew: redskilled <3.7.0 omitted the fork SHA while ` +
+      `@reddb-io/dev >=3.7.0 expected it; using the legacy Worker-side trunk fetch. ` +
+      `This fallback is deleted in ${FORK_GRANT_FALLBACK_DELETE_RELEASE}.`;
+    deps.appendIterLog(warning);
+  };
+  if (grantedForkSha !== "") {
+    baseResolution = {
+      ok: true,
+      base,
+      baseRef: grantedForkSha,
+      sha: grantedForkSha,
+      source: "grant",
+      remoteReachable: true,
+    };
+  } else if (deps.git.resolveFreshBase) {
+    warnLegacyForkGrant();
     baseResolution = await deps.git.resolveFreshBase({ base, remote: input.remote });
   } else {
+    warnLegacyForkGrant();
     if (deps.git.fetchBase) await deps.git.fetchBase(base);
     baseResolution = {
       ok: true,
