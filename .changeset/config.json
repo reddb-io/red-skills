@@ -24,6 +24,7 @@
       "@reddb-io/red-skills",
       "@reddb-io/red-castle",
       "@reddb-io/red-browser",
+      "@reddb-io/release",
       "@reddb-io/rsp",
       "@reddb-io/redskilled",
       "@reddb-io/redskilled-render",
