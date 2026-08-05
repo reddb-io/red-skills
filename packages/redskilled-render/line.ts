@@ -30,6 +30,7 @@
  * erases the identities the operator came here to see.
  */
 import {
+  colourWorkerCell,
   REDSKILLED_DASHBOARD_COLUMNS,
   workerCells,
   type RedskilledDashboardCells,
@@ -45,7 +46,7 @@ import {
   REDSKILLED_RENDER_ABSENCE,
   UNREGISTERED_MARK,
 } from "./marks.js";
-import { BAR_AHEAD, BAR_CURRENT, BAR_DONE, BOLD, KEY, NOBG, NOBOLD, RED, RESET, SOFT, VAL } from "./palette.js";
+import { NOBG, RESET, SOFT } from "./palette.js";
 import type {
   RedskilledRenderPayload,
   RedskilledRenderProject,
@@ -563,20 +564,6 @@ function workerRowWidth(
   columns: readonly RedskilledDashboardColumn[],
 ): number {
   return columns.reduce((total, column) => total + widths[column], 0) + Math.max(0, columns.length - 1) * 2;
-}
-
-function colourWorkerCell(column: RedskilledDashboardColumn, raw: string): string {
-  if (column === "wid") return `${BOLD}${raw}${NOBOLD}`;
-  if (column === "bar") {
-    return raw
-      .replace(/█+/g, (done) => `${BAR_DONE}${done}`)
-      .replace("▶", `${BAR_CURRENT}▶`)
-      .replace("✗", `${RED}✗`)
-      .replace(/░+/g, (ahead) => `${BAR_AHEAD}${ahead}`) + SOFT;
-  }
-  const equals = raw.indexOf("=");
-  if (equals > 0) return `${KEY}${raw.slice(0, equals + 1)}${VAL}${raw.slice(equals + 1)}${SOFT}`;
-  return raw;
 }
 
 /**
