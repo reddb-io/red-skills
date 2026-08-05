@@ -1,12 +1,10 @@
 // surface.ts — the single owner of the GitHub API-surface decision (ADR 0132
 // decision 4).
 //
-// **The principle is cardinality, not frequency.** A single-object read goes to
-// REST; a multi-node listing or a multi-repository aggregate goes to GraphQL.
-// Cardinality is decidable statically and never changes for an operation, so the
-// table below is a fact about each call rather than a policy that has to be
-// re-tuned. A frequency or budget-symmetry policy would need per-operation
-// telemetry that does not exist, and would answer differently each release.
+// **Volatility first, cardinality second.** A stable poll prefers REST because a
+// conditional read can be free while its answer is unchanged. A one-shot read
+// uses cardinality: one object → REST, more than one → GraphQL. Each operation
+// also names the other surface it can use, or why no second method exists.
 //
 // **There are THREE budgets, not two.** REST is metered by request (5000/hr),
 // GraphQL by node points (5000/hr), Search by minute (30/min). ADR 0130's claim
@@ -74,6 +72,10 @@ export interface GithubOperation {
    */
   readonly surface: GithubApiSurface;
   readonly budget: GithubRateBudget;
+  /** The second client method to try, or `null` when no safe second path exists. */
+  readonly fallback?: GithubApiSurface | null;
+  /** Required when `fallback` is `null`; absent when a fallback exists. */
+  readonly noFallbackBecause?: string;
   /**
    * Set when only ONE API exposes the resource at all, so there is no routing
    * choice to make: GitHub's Actions and Releases resources have no GraphQL
@@ -94,21 +96,43 @@ export function surfaceForCardinality(cardinality: GithubCardinality): GithubApi
   return cardinality === "single-object" ? "rest" : "graphql";
 }
 
+/** The preferred client method for a read: volatility first, cardinality second. PURE. */
+export function preferredSurfaceForRead(
+  volatility: GithubReadVolatility,
+  cardinality: GithubCardinality,
+): GithubApiSurface {
+  return volatility === "stable-poll" ? "rest" : surfaceForCardinality(cardinality);
+}
+
+interface NoGithubFallback {
+  readonly none: string;
+}
+
+function noFallback(because: string): NoGithubFallback {
+  return { none: because };
+}
+
 function read(
   key: string,
   cardinality: GithubCardinality,
   volatility: GithubReadVolatility,
   budget: GithubRateBudget,
+  fallback: GithubApiSurface | NoGithubFallback,
   why: string,
   only?: GithubApiSurface,
 ): GithubOperation {
+  const fallbackDeclaration =
+    typeof fallback === "string"
+      ? { fallback }
+      : { fallback: null, noFallbackBecause: fallback.none };
   return {
     key,
     kind: "read",
     cardinality,
     volatility,
-    surface: only ?? surfaceForCardinality(cardinality),
+    surface: only ?? preferredSurfaceForRead(volatility, cardinality),
     budget,
+    ...fallbackDeclaration,
     ...(only ? { only } : {}),
     why,
   };
@@ -120,7 +144,16 @@ function write(
   budget: GithubRateBudget,
   why: string,
 ): GithubOperation {
-  return { key, kind: "write", cardinality: "single-object", surface, budget, why };
+  return {
+    key,
+    kind: "write",
+    cardinality: "single-object",
+    surface,
+    budget,
+    fallback: null,
+    noFallbackBecause: "a mutation has one observed GitHub API method",
+    why,
+  };
 }
 
 /**
@@ -132,31 +165,31 @@ function write(
  */
 export const GITHUB_OPERATIONS: readonly GithubOperation[] = [
   // ── single-object reads: the hot path, and the whole reason this module exists
-  read("issue view", "single-object", "stable-poll", "rest", "one issue by number, repeatedly polled while usually unchanged; REST answers in one request"),
-  read("pr view", "single-object", "stable-poll", "rest", "one pull request by number, polled per Worker per iteration"),
-  read("repo view", "single-object", "stable-poll", "rest", "one repository's own metadata, repeatedly read while usually unchanged"),
-  read("run view", "single-object", "stable-poll", "rest", "one Actions run repeatedly polled to terminal; Actions has no GraphQL surface"),
-  read("release view", "single-object", "stable-poll", "rest", "one release by tag, repeatedly checked while usually absent or unchanged"),
-  read("pr diff", "single-object", "one-shot", "rest", "one pull request's diff, read once for review and served by a REST media type"),
+  read("issue view", "single-object", "stable-poll", "rest", "graphql", "one issue by number, repeatedly polled while usually unchanged; REST answers in one request"),
+  read("pr view", "single-object", "stable-poll", "rest", "graphql", "one pull request by number, polled per Worker per iteration"),
+  read("repo view", "single-object", "stable-poll", "rest", "graphql", "one repository's own metadata, repeatedly read while usually unchanged"),
+  read("run view", "single-object", "stable-poll", "rest", noFallback("Actions runs have no GraphQL resource"), "one Actions run repeatedly polled to terminal"),
+  read("release view", "single-object", "stable-poll", "rest", noFallback("release lookup has no GraphQL client method"), "one release by tag, repeatedly checked while usually absent or unchanged"),
+  read("pr diff", "single-object", "one-shot", "rest", noFallback("the complete diff is exposed as a REST media type"), "one pull request's diff, read once for review"),
 
   // ── multi-node listings: a connection inside one repository
-  read("issue list", "multi-node", "stable-poll", "graphql", "a repeatedly polled, usually-unchanged issue connection; GraphQL avoids N REST pages"),
-  read("pr list", "multi-node", "stable-poll", "graphql", "a repeatedly polled, usually-unchanged pull-request connection; GraphQL avoids N REST pages"),
-  read("pr checks", "multi-node", "stable-poll", "graphql", "check contexts form a connection repeatedly polled while awaiting terminal state"),
-  read("release list", "multi-node", "stable-poll", "rest", "release waits poll a usually-unchanged list; Releases has no GraphQL connection gh reads", "rest"),
-  read("run list", "multi-node", "stable-poll", "rest", "run waits poll a usually-unchanged list; Actions has no GraphQL surface", "rest"),
-  read("label list", "multi-node", "one-shot", "graphql", "a label connection loaded once for the current operation"),
+  read("issue list", "multi-node", "stable-poll", "rest", "graphql", "a repeatedly polled, usually-unchanged issue collection; REST can make an unchanged poll free"),
+  read("pr list", "multi-node", "stable-poll", "rest", "graphql", "a repeatedly polled, usually-unchanged pull-request collection; REST can make an unchanged poll free"),
+  read("pr checks", "multi-node", "stable-poll", "rest", "graphql", "check contexts are repeatedly polled while awaiting terminal state"),
+  read("release list", "multi-node", "stable-poll", "rest", noFallback("Releases has no GraphQL collection client method"), "release waits poll a usually-unchanged list"),
+  read("run list", "multi-node", "stable-poll", "rest", noFallback("Actions has no GraphQL collection client method"), "run waits poll a usually-unchanged list"),
+  read("label list", "multi-node", "one-shot", "graphql", "rest", "a label connection loaded once for the current operation"),
 
   // ── search: a third pool, metered by the minute
-  read("issue list (search)", "multi-node", "stable-poll", "search", "queue discovery polls usually-unchanged search results through the 30/min search connection"),
-  read("pr list (search)", "multi-node", "stable-poll", "search", "PR discovery polls usually-unchanged search results through the 30/min search connection"),
-  read("search issues", "multi-repository", "one-shot", "search", "a one-shot cross-repository read through the REST search endpoint, metered 30/min", "rest"),
-  read("search prs", "multi-repository", "one-shot", "search", "a one-shot cross-repository read through the REST search endpoint, metered 30/min", "rest"),
-  read("search repos", "multi-repository", "one-shot", "search", "a one-shot cross-repository read through the REST search endpoint, metered 30/min", "rest"),
+  read("issue list (search)", "multi-node", "stable-poll", "search", noFallback("search is ineligible for diverted traffic"), "queue discovery polls usually-unchanged search results through the 30/min search connection"),
+  read("pr list (search)", "multi-node", "stable-poll", "search", noFallback("search is ineligible for diverted traffic"), "PR discovery polls usually-unchanged search results through the 30/min search connection"),
+  read("search issues", "multi-repository", "one-shot", "search", noFallback("search is ineligible for diverted traffic"), "a one-shot cross-repository read through the REST search endpoint, metered 30/min", "rest"),
+  read("search prs", "multi-repository", "one-shot", "search", noFallback("search is ineligible for diverted traffic"), "a one-shot cross-repository read through the REST search endpoint, metered 30/min", "rest"),
+  read("search repos", "multi-repository", "one-shot", "search", noFallback("search is ineligible for diverted traffic"), "a one-shot cross-repository read through the REST search endpoint, metered 30/min", "rest"),
 
   // ── the raw API escape hatches: the caller has already chosen
-  read("api graphql", "multi-node", "one-shot", "graphql", "the caller supplies one explicit GraphQL query rather than a routed poll"),
-  read("api rest", "single-object", "one-shot", "rest", "the caller supplies one explicit REST path rather than a routed poll"),
+  read("api graphql", "multi-node", "one-shot", "graphql", noFallback("the caller explicitly chose GraphQL"), "the caller supplies one explicit GraphQL query rather than a routed poll"),
+  read("api rest", "single-object", "one-shot", "rest", noFallback("the caller explicitly chose REST"), "the caller supplies one explicit REST path rather than a routed poll"),
 
   // ── writes: the surface is gh's, observed rather than chosen
   write("issue create", "graphql", "graphql", "gh files an issue with the createIssue mutation — an exhausted GraphQL pool blocks filing"),
@@ -263,7 +296,8 @@ export function githubSurfaceFor(args: readonly string[]): GithubApiSurface {
 
 /**
  * Refuse a table that contradicts itself: a duplicate key, an empty key, or a
- * READ whose declared surface is not the one its cardinality implies. Returns
+ * READ whose preferred surface contradicts volatility/cardinality, or an
+ * operation whose fallback declaration is missing or unsafe. Returns
  * the problems it found rather than throwing, so the pinning test can report all
  * of them at once. PURE.
  */
@@ -277,18 +311,51 @@ export function assertGithubRoutingTable(
     if (seen.has(operation.key)) problems.push(`duplicate operation key ${JSON.stringify(operation.key)}`);
     seen.add(operation.key);
     if (operation.why.trim() === "") problems.push(`${operation.key} states no reason`);
+    if (!("fallback" in operation)) {
+      problems.push(`${operation.key} states neither a fallback nor why none exists`);
+    } else if (operation.fallback === null) {
+      if (!operation.noFallbackBecause?.trim()) {
+        problems.push(`${operation.key} states no reason for having no fallback`);
+      }
+    } else {
+      if (operation.noFallbackBecause !== undefined) {
+        problems.push(`${operation.key} states both a fallback and why none exists`);
+      }
+      if ((operation.fallback as string) === "search") {
+        problems.push(`${operation.key} names search as a fallback`);
+      }
+      if (operation.fallback === operation.surface) {
+        problems.push(`${operation.key} repeats ${operation.surface} as its fallback`);
+      }
+      if (operation.only) {
+        problems.push(
+          `${operation.key} is exposed only on ${operation.only} and cannot fall back to ${operation.fallback}`,
+        );
+      }
+      if (operation.budget === "search") {
+        problems.push(`${operation.key} draws from search and cannot declare a fallback`);
+      }
+    }
     if (operation.kind !== "read") continue;
     if (operation.volatility === undefined) problems.push(`${operation.key} states no volatility`);
-    const implied = operation.only ?? surfaceForCardinality(operation.cardinality);
+    const implied =
+      operation.only ??
+      (operation.volatility === undefined
+        ? surfaceForCardinality(operation.cardinality)
+        : preferredSurfaceForRead(operation.volatility, operation.cardinality));
     if (operation.surface !== implied) {
       problems.push(
         `${operation.key} is a ${operation.cardinality} read declared on ${operation.surface}, ` +
           `but ${operation.only ? "the resource is exposed only by" : "cardinality implies"} ${implied}`,
       );
     }
-    if (operation.only && operation.only === surfaceForCardinality(operation.cardinality)) {
+    if (
+      operation.only &&
+      operation.volatility !== undefined &&
+      operation.only === preferredSurfaceForRead(operation.volatility, operation.cardinality)
+    ) {
       problems.push(
-        `${operation.key} names a one-API constraint that cardinality already implies; drop the constraint`,
+        `${operation.key} names a one-API constraint that volatility and cardinality already imply; drop the constraint`,
       );
     }
   }

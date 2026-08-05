@@ -122,8 +122,8 @@ describe("the Worker's gh PATH boundary", () => {
     expect(exec).toHaveBeenCalledTimes(2);
     expect(exec).toHaveBeenCalledWith("/usr/bin/gh", ["issue", "list", "--json", "number"], expect.any(Object));
     expect(records).toEqual([
-      { operation: expect.objectContaining({ key: "issue list", budget: "graphql" }), cost: 1, actor: "worker:wBOUND" },
-      { operation: expect.objectContaining({ key: "issue list", budget: "graphql" }), cost: 1, actor: "worker:wBOUND" },
+      { operation: expect.objectContaining({ key: "issue list", budget: "rest" }), cost: 1, actor: "worker:wBOUND" },
+      { operation: expect.objectContaining({ key: "issue list", budget: "rest" }), cost: 1, actor: "worker:wBOUND" },
     ]);
   });
 

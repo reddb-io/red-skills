@@ -90,7 +90,7 @@ describe("resident-owned GitHub reads", () => {
     expect(result.stderr).toContain("search reads are never a fallback");
   });
 
-  it("routes a multi-node listing to GraphQL without falling into search", async () => {
+  it("routes a stable-poll listing to REST (volatility first), never search", async () => {
     const root = await tempRoot();
     const seen: string[] = [];
     const github = createRspResidentGithubClient({
@@ -99,13 +99,9 @@ describe("resident-owned GitHub reads", () => {
       baseUrl: "https://github.invalid/api/v3",
       fetchImpl: async (input) => {
         seen.push(String(input));
-        return new Response(JSON.stringify({
-          data: {
-            repository: {
-              issues: { nodes: [{ number: 42, title: "budget", state: "OPEN", labels: { nodes: [] } }] },
-            },
-          },
-        }), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify(
+          [{ number: 42, title: "budget", state: "open", labels: [] }],
+        ), { status: 200, headers: { "content-type": "application/json" } });
       },
       retryCount: 0,
       throttle: false,
@@ -118,8 +114,8 @@ describe("resident-owned GitHub reads", () => {
       actor: "session",
     });
 
-    expect(result).toMatchObject({ status: 0, surface: "graphql", pool: "graphql" });
-    expect(seen).toEqual(["https://github.invalid/api/graphql"]);
+    expect(result).toMatchObject({ status: 0, surface: "rest", pool: "rest" });
+    expect(seen[0]).toContain("/repos/acme/widgets/issues");
     expect(JSON.parse(result.stdout)).toMatchObject([{ number: 42, title: "budget", state: "open" }]);
   });
 

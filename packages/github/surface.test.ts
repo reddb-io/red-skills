@@ -6,8 +6,8 @@ import {
   githubCommandPath,
   githubOperationKey,
   githubSurfaceFor,
+  preferredSurfaceForRead,
   routeGithubArgs,
-  surfaceForCardinality,
   tryRouteGithubArgs,
   type GithubOperation,
   type GithubReadVolatility,
@@ -27,46 +27,48 @@ const PINNED: ReadonlyArray<
     volatility: GithubReadVolatility | undefined,
     surface: string,
     budget: string,
+    fallback: string | null,
   ]
 > = [
-  ["issue view", "read", "single-object", "stable-poll", "rest", "rest"],
-  ["pr view", "read", "single-object", "stable-poll", "rest", "rest"],
-  ["repo view", "read", "single-object", "stable-poll", "rest", "rest"],
-  ["run view", "read", "single-object", "stable-poll", "rest", "rest"],
-  ["release view", "read", "single-object", "stable-poll", "rest", "rest"],
-  ["pr diff", "read", "single-object", "one-shot", "rest", "rest"],
-  ["issue list", "read", "multi-node", "stable-poll", "graphql", "graphql"],
-  ["pr list", "read", "multi-node", "stable-poll", "graphql", "graphql"],
-  ["pr checks", "read", "multi-node", "stable-poll", "graphql", "graphql"],
-  ["release list", "read", "multi-node", "stable-poll", "rest", "rest"],
-  ["run list", "read", "multi-node", "stable-poll", "rest", "rest"],
-  ["label list", "read", "multi-node", "one-shot", "graphql", "graphql"],
-  ["issue list (search)", "read", "multi-node", "stable-poll", "graphql", "search"],
-  ["pr list (search)", "read", "multi-node", "stable-poll", "graphql", "search"],
-  ["search issues", "read", "multi-repository", "one-shot", "rest", "search"],
-  ["search prs", "read", "multi-repository", "one-shot", "rest", "search"],
-  ["search repos", "read", "multi-repository", "one-shot", "rest", "search"],
-  ["api graphql", "read", "multi-node", "one-shot", "graphql", "graphql"],
-  ["api rest", "read", "single-object", "one-shot", "rest", "rest"],
-  ["issue create", "write", "single-object", undefined, "graphql", "graphql"],
-  ["issue edit", "write", "single-object", undefined, "graphql", "graphql"],
-  ["issue close", "write", "single-object", undefined, "graphql", "graphql"],
-  ["issue reopen", "write", "single-object", undefined, "graphql", "graphql"],
-  ["issue comment", "write", "single-object", undefined, "rest", "rest"],
-  ["issue develop", "write", "single-object", undefined, "graphql", "graphql"],
-  ["pr create", "write", "single-object", undefined, "rest", "rest"],
-  ["pr comment", "write", "single-object", undefined, "rest", "rest"],
-  ["pr merge", "write", "single-object", undefined, "graphql", "graphql"],
-  ["pr close", "write", "single-object", undefined, "graphql", "graphql"],
-  ["pr edit", "write", "single-object", undefined, "graphql", "graphql"],
-  ["pr ready", "write", "single-object", undefined, "graphql", "graphql"],
-  ["pr update-branch", "write", "single-object", undefined, "rest", "rest"],
-  ["label create", "write", "single-object", undefined, "rest", "rest"],
+  ["issue view", "read", "single-object", "stable-poll", "rest", "rest", "graphql"],
+  ["pr view", "read", "single-object", "stable-poll", "rest", "rest", "graphql"],
+  ["repo view", "read", "single-object", "stable-poll", "rest", "rest", "graphql"],
+  ["run view", "read", "single-object", "stable-poll", "rest", "rest", null],
+  ["release view", "read", "single-object", "stable-poll", "rest", "rest", null],
+  ["pr diff", "read", "single-object", "one-shot", "rest", "rest", null],
+  ["issue list", "read", "multi-node", "stable-poll", "rest", "rest", "graphql"],
+  ["pr list", "read", "multi-node", "stable-poll", "rest", "rest", "graphql"],
+  ["pr checks", "read", "multi-node", "stable-poll", "rest", "rest", "graphql"],
+  ["release list", "read", "multi-node", "stable-poll", "rest", "rest", null],
+  ["run list", "read", "multi-node", "stable-poll", "rest", "rest", null],
+  ["label list", "read", "multi-node", "one-shot", "graphql", "graphql", "rest"],
+  ["issue list (search)", "read", "multi-node", "stable-poll", "rest", "search", null],
+  ["pr list (search)", "read", "multi-node", "stable-poll", "rest", "search", null],
+  ["search issues", "read", "multi-repository", "one-shot", "rest", "search", null],
+  ["search prs", "read", "multi-repository", "one-shot", "rest", "search", null],
+  ["search repos", "read", "multi-repository", "one-shot", "rest", "search", null],
+  ["api graphql", "read", "multi-node", "one-shot", "graphql", "graphql", null],
+  ["api rest", "read", "single-object", "one-shot", "rest", "rest", null],
+  ["issue create", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["issue edit", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["issue close", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["issue reopen", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["issue comment", "write", "single-object", undefined, "rest", "rest", null],
+  ["issue develop", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["pr create", "write", "single-object", undefined, "rest", "rest", null],
+  ["pr comment", "write", "single-object", undefined, "rest", "rest", null],
+  ["pr merge", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["pr close", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["pr edit", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["pr ready", "write", "single-object", undefined, "graphql", "graphql", null],
+  ["pr update-branch", "write", "single-object", undefined, "rest", "rest", null],
+  ["label create", "write", "single-object", undefined, "rest", "rest", null],
 ];
 
 function row(
   operation: GithubOperation,
-): [string, string, string, GithubReadVolatility | undefined, string, string] {
+): [string, string, string, GithubReadVolatility | undefined, string, string, string | null | undefined] {
+  const declaration = operation as GithubOperation & { fallback?: string | null };
   return [
     operation.key,
     operation.kind,
@@ -74,6 +76,7 @@ function row(
     operation.volatility,
     operation.surface,
     operation.budget,
+    declaration.fallback,
   ];
 }
 
@@ -86,20 +89,20 @@ describe("the routing table", () => {
     expect(assertGithubRoutingTable()).toEqual([]);
   });
 
-  it("derives every unconstrained read's surface from cardinality alone", () => {
+  it("derives every unconstrained read's preferred surface from volatility then cardinality", () => {
     for (const operation of GITHUB_OPERATIONS) {
       if (operation.kind !== "read" || operation.only) continue;
       expect([operation.key, operation.surface]).toEqual([
         operation.key,
-        surfaceForCardinality(operation.cardinality),
+        preferredSurfaceForRead(operation.volatility!, operation.cardinality),
       ]);
     }
   });
 
-  it("names a one-API constraint wherever a read departs from cardinality", () => {
+  it("names a one-API constraint wherever a read departs from the preference rule", () => {
     for (const operation of GITHUB_OPERATIONS) {
       if (operation.kind !== "read") continue;
-      if (operation.surface === surfaceForCardinality(operation.cardinality)) continue;
+      if (operation.surface === preferredSurfaceForRead(operation.volatility!, operation.cardinality)) continue;
       expect(operation.only).toBe(operation.surface);
     }
   });
@@ -113,6 +116,8 @@ describe("the routing table", () => {
         volatility: "one-shot",
         surface: "graphql",
         budget: "graphql",
+        fallback: null,
+        noFallbackBecause: "fixture exercises only the preferred surface",
         why: "a single object sent to the node-point pool",
       },
     ]);
@@ -129,6 +134,8 @@ describe("the routing table", () => {
         cardinality: "single-object",
         surface: "rest",
         budget: "rest",
+        fallback: null,
+        noFallbackBecause: "fixture exercises only the volatility declaration",
         why: "one issue",
       },
     ]);
@@ -143,9 +150,64 @@ describe("the routing table", () => {
       volatility: "one-shot",
       surface: "rest",
       budget: "rest",
+      fallback: null,
+      noFallbackBecause: "fixture exercises only duplicate keys",
       why: "one issue",
     };
     expect(assertGithubRoutingTable([entry, entry])).toEqual(['duplicate operation key "issue view"']);
+  });
+
+  it("requires one usable fallback or one reason that none exists", () => {
+    const malformed = [
+      {
+        key: "missing",
+        kind: "read",
+        cardinality: "single-object",
+        volatility: "one-shot",
+        surface: "rest",
+        budget: "rest",
+        why: "no fallback declaration",
+      },
+      {
+        key: "unexplained",
+        kind: "read",
+        cardinality: "single-object",
+        volatility: "one-shot",
+        surface: "rest",
+        budget: "rest",
+        fallback: null,
+        noFallbackBecause: "",
+        why: "an unexplained dead end",
+      },
+      {
+        key: "absolute",
+        kind: "read",
+        cardinality: "single-object",
+        volatility: "one-shot",
+        surface: "graphql",
+        budget: "graphql",
+        only: "graphql",
+        fallback: "rest",
+        why: "a GraphQL-only resource",
+      },
+      {
+        key: "searched",
+        kind: "read",
+        cardinality: "multi-node",
+        volatility: "one-shot",
+        surface: "graphql",
+        budget: "search",
+        fallback: "rest",
+        why: "search cannot absorb diverted traffic",
+      },
+    ] as unknown as GithubOperation[];
+
+    expect(assertGithubRoutingTable(malformed)).toEqual([
+      "missing states neither a fallback nor why none exists",
+      "unexplained states no reason for having no fallback",
+      "absolute is exposed only on graphql and cannot fall back to rest",
+      "searched draws from search and cannot declare a fallback",
+    ]);
   });
 });
 
@@ -183,11 +245,11 @@ describe("githubOperationKey", () => {
 });
 
 describe("the router", () => {
-  it("routes a single-object read to REST and a listing to GraphQL", () => {
+  it("routes stable polls to REST before considering cardinality", () => {
     expect(githubSurfaceFor(["issue", "view", "42", "--json", "state,labels"])).toBe("rest");
     expect(githubSurfaceFor(["-R", "acme/widgets", "pr", "view", "7", "--json", "mergeable"])).toBe("rest");
-    expect(githubSurfaceFor(["issue", "list", "--json", "number"])).toBe("graphql");
-    expect(githubSurfaceFor(["pr", "list", "--state", "open", "--json", "number"])).toBe("graphql");
+    expect(githubSurfaceFor(["issue", "list", "--json", "number"])).toBe("rest");
+    expect(githubSurfaceFor(["pr", "list", "--state", "open", "--json", "number"])).toBe("rest");
   });
 
   it("routes the multi-repository aggregate to GraphQL", () => {

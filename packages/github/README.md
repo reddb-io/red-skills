@@ -13,17 +13,18 @@ Worker per iteration) was single-object reads issued against the pool metered by
 node points. Measured twice within one hour on one machine: GraphQL `0/5000`
 while REST sat at `4891/5000`.
 
-## The principle is cardinality, not frequency
+## Volatility first, cardinality second
 
-A **single-object** read goes to REST. A **multi-node** listing or a
-**multi-repository** aggregate goes to GraphQL. Cardinality is decidable
-statically and never changes for an operation; a frequency or budget-symmetry
-policy needs telemetry that does not exist and answers differently each release.
+A stable poll prefers REST because a conditional request can cost no primary
+quota while its answer is unchanged. A one-shot read then follows cardinality:
+a **single-object** read prefers REST, while a **multi-node** listing or a
+**multi-repository** aggregate prefers GraphQL.
 
-`surfaceForCardinality` is the whole rule, and `assertGithubRoutingTable`
-refuses a read entry that states anything else. The one exception is declared,
-not silent: `only` marks a resource that just one API exposes (Actions runs,
-Releases, the search endpoints), where there is no routing choice to make.
+Every operation also declares a fallback client method or states why none is
+safe. `assertGithubRoutingTable` enforces that pair. An `only` constraint remains
+absolute, and operations drawing from the minute-metered Search pool cannot be
+fallback targets. A single-object issue read is therefore REST-preferred with a
+GraphQL fallback, while an Actions read has no invented second path.
 
 ## Stable polls use conditional REST
 

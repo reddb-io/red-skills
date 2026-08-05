@@ -13,7 +13,7 @@ import {
   RSP_ENTRY_UNRESOLVED,
 } from "../src/resident-client.js";
 import { hookDecisionFromClaudePreExecJson, formatHookDecision } from "../src/intercept.js";
-import { cli, commitMany, enableRsp, initGitRepo, tempRoot, tsxLoader } from "./cli.helpers.js";
+import { cli, commitMany, enableRsp, initGitRepo, installRspShim, tempRoot, tsxLoader } from "./cli.helpers.js";
 
 /** Every ambient escape hatch cleared, so a lookup only sees what the test plants. */
 function bareEnv(cacheRoot: string): NodeJS.ProcessEnv {

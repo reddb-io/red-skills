@@ -212,8 +212,8 @@ describe("the reserved band refuses convenience, never the claim", () => {
       criticality: "convenience",
     });
 
-    expect(listing.pool).toBe("graphql");
-    expect(listing.admitted).toBe(false);
+    expect(listing.pool).toBe("rest");
+    expect(listing.admitted).toBe(true);
     expect(view.pool).toBe("rest");
     expect(view.admitted).toBe(true);
   });
