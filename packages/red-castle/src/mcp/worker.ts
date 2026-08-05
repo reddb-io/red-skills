@@ -5,7 +5,6 @@ import {
   noRepair,
   type RepairAction,
 } from "@reddb-io/shared/repair.js";
-import { deprecatedStatusAlias } from "./status.js";
 
 export interface WorkerDispatchInput {
   issue?: number;
@@ -93,27 +92,6 @@ export function createWorkerTools(deps: WorkerDependencies): CastleMcpTool[] {
         }
         return deps.workerDispatch(parsed);
       },
-    },
-    {
-      name: "worker_status",
-      title: "Deprecated worker status alias",
-      description:
-        "DEPRECATED: use status { scope: worker }. Returns normalized worker state and names its replacement.",
-      inputSchema: {
-        worker: z.string().min(1).optional(),
-        live_only: z.boolean().default(true),
-        fields: z.array(z.string().min(1)).optional(),
-      },
-      invoke: async ({ worker, live_only, fields }) =>
-        deprecatedStatusAlias(
-          "worker_status",
-          "worker",
-          await deps.workerStatus({
-            worker: worker as string | undefined,
-            live_only: (live_only ?? true) as boolean,
-            fields: fields as string[] | undefined,
-          }),
-        ),
     },
     {
       name: "worker_stop",
