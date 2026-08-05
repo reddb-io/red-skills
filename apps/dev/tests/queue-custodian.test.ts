@@ -62,6 +62,24 @@ describe("Queue Custodian", () => {
     expect(store.state.prs["42"]).toMatchObject({ ownerTicket: 9, status: "watching" });
   });
 
+  it("makes native custody the terminal hand-off regardless of legacy slot-release settings", async () => {
+    const store = memoryStore();
+    const landing = harness({ locked: false, openPr: true, nativeMergeQueue: true });
+    landing.deps.landingWait = "none";
+    landing.deps.queueCustody = (identity, armNativeIntent) => handoffQueueCustody(
+      { store, now: () => "2026-08-05T12:30:00.000Z", armNativeIntent },
+      identity,
+    );
+
+    const result = await doLanding(landing.deps, landing.input, landing.hooks);
+
+    expect(result).toMatchObject({
+      ok: true,
+      custody: { prNumber: 42, outcome: "handed-off" },
+    });
+    expect(result.ok && result.deferred).toBeUndefined();
+  });
+
   it("terminates the owning Worker without closing the Ticket at custody hand-off", async () => {
     const store = memoryStore();
     const { deps, input, trace } = processHarness({
