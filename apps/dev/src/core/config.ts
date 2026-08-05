@@ -1043,11 +1043,15 @@ export const VALIDATION_MOMENTS = ["iteration", "post_done", "landing"] as const
 export type ValidationMoment = (typeof VALIDATION_MOMENTS)[number];
 
 /**
- * The final product release allowed to read the ADR 0135 legacy aliases.
- * Do not advance this constant: the live-version test deliberately fails on
- * the next release so the aliases and their warnings are removed together.
+ * The first product release that must NOT read the ADR 0135 legacy aliases.
+ * The aliases shipped in 3.5.0, and "one release of coexistence" means the
+ * whole 3.5.x series: operators upgrading anywhere in 3.5.x see the migration
+ * warning, and 3.6.0 removes the aliases and their warnings together. A patch
+ * ceiling of 3.5.0 made the window zero-length and blocked the very next
+ * release train. Do not advance this constant past 3.6.0: the live-version
+ * test deliberately fails when a 3.6.0 bump lands with the aliases present.
  */
-export const VALIDATION_MOMENT_ALIASES_LAST_RELEASE = "3.5.0";
+export const VALIDATION_MOMENT_ALIASES_REMOVED_IN = "3.6.0";
 
 export const ValidationMomentsSchema = z.object({
   iteration: z.array(z.string()).optional(),
