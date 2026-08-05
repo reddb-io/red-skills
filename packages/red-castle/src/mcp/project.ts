@@ -14,8 +14,11 @@
 
 import { z } from "zod/v3";
 import { refuseFleetNaming } from "../engine/extinct-nouns.js";
-import type { ProjectStatusOutput } from "./contracts.js";
-import { deprecatedStatusAlias } from "./status.js";
+import { projectStatusContract, type ProjectStatusOutput } from "./contracts.js";
+import {
+  deprecatedStatusAlias,
+  deprecatedStatusAliasContract,
+} from "./status.js";
 import type { CastleMcpTool } from "./tool.js";
 import { DEFAULT_FLEET_WIDTH } from "@reddb-io/shared/default-fleet-width.js";
 
@@ -101,6 +104,7 @@ export function createProjectTools(deps: ProjectDependencies): CastleMcpTool[] {
       description:
         "DEPRECATED: use status { scope: project }. Returns the project answer and names its replacement.",
       inputSchema: { fleet: removedFleetName },
+      outputContract: deprecatedStatusAliasContract(projectStatusContract),
       invoke: async ({ fleet }) => {
         refuseFleetNaming(fleet);
         return deprecatedStatusAlias(
