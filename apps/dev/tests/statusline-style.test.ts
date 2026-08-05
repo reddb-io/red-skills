@@ -542,8 +542,9 @@ describe("statusline style — full themed assembly", () => {
       { ...input, rsp: { state: "error" } },
       { workers: [worker({ state: { ...worker().state, blocked: 1, current: { ...worker().state.current, phase: "validating" } } })], now: NOW },
     );
+    const warming = styleStatusline({ ...input, rsp: { state: "warming" } });
     const emitted = new Set(
-      `${healthy}\n${attention}`.match(/\x1b\[(?:38|48);2;\d+;\d+;\d+m/g) ?? [],
+      `${healthy}\n${attention}\n${warming}`.match(/\x1b\[(?:38|48);2;\d+;\d+;\d+m/g) ?? [],
     );
 
     expect(emitted).toEqual(new Set([
