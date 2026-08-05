@@ -289,13 +289,15 @@ describe("castle MCP tools", () => {
     }
   });
 
-  it("returns structured project status without rendering command output", async () => {
+  it("keeps structured project status inside the deprecated alias answer", async () => {
     const tools = createCastleMcpTools(deps());
     const status = tools.find((tool) => tool.name === "project_status")!;
     await expect(status.invoke({})).resolves.toMatchObject({
-      registration: { held: true, renewal: "renewing", target: 2 },
-      slots: { total: 2 },
-      live_workers: [{ id: "worker-1" }],
+      result: {
+        registration: { held: true, renewal: "renewing", target: 2 },
+        slots: { total: 2 },
+        live_workers: [{ id: "worker-1" }],
+      },
     });
   });
 
@@ -326,19 +328,17 @@ describe("castle MCP tools", () => {
     const d = deps();
     const tools = createCastleMcpTools(d);
 
-    await expect(tools.find((tool) => tool.name === "host_state")!.invoke({})).resolves.toEqual({
-      pid: 42,
-      workers: [],
+    await expect(tools.find((tool) => tool.name === "host_state")!.invoke({})).resolves.toMatchObject({
+      result: { pid: 42, workers: [] },
     });
     await expect(tools.find((tool) => tool.name === "host_dashboard")!.invoke({})).resolves.toMatchObject({
-      version: 1,
-      mode: "global",
+      result: { version: 1, mode: "global" },
     });
     await expect(tools.find((tool) => tool.name === "host_provision_check")!.invoke({})).resolves.toMatchObject({
-      verdict: "ok",
+      result: { verdict: "ok" },
     });
     await expect(tools.find((tool) => tool.name === "host_unit_status")!.invoke({})).resolves.toMatchObject({
-      floor: "auto-spawn",
+      result: { floor: "auto-spawn" },
     });
   });
 
