@@ -23,7 +23,6 @@ import { parseCurrentBlocker } from "../core/blocker-state.js";
 import { applyRequeue } from "../core/requeue.js";
 import { parseClaimRecords, renderClaimComment } from "../core/claim.js";
 import { LABEL_HUMAN } from "../core/triage-labels.js";
-import { isRefused, planTransition } from "../core/state-transition.js";
 import {
   renderCard,
   updateCardStatus,
