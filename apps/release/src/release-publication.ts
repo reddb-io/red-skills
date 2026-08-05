@@ -12,6 +12,8 @@ export interface PublishReleaseInput {
   readonly artifacts: WrittenReleaseArtifacts;
   readonly github: GithubReleaseAdapter;
   readonly remote?: string;
+  readonly commit?: string;
+  readonly prerelease?: boolean;
 }
 
 export interface PublishReleaseResult {
@@ -41,7 +43,10 @@ export async function publishRelease(
   const tag = `v${version}`;
   const remote = input.remote ?? "origin";
   assertTagName(input.repoRoot, tag);
-  const commit = git(input.repoRoot, ["rev-parse", "HEAD"]);
+  const commit = input.commit === undefined
+    ? git(input.repoRoot, ["rev-parse", "HEAD"])
+    : git(input.repoRoot, ["rev-parse", "--verify", `${input.commit}^{commit}`]);
+  const prerelease = input.prerelease ?? false;
   const tagCreated = ensureRemoteTag(input.repoRoot, remote, tag, commit);
   const notes = readFileSync(input.artifacts.notesPath, "utf8");
   const assets: readonly ManifestAsset[] = [
@@ -66,6 +71,7 @@ export async function publishRelease(
         targetCommitish: commit,
         name: tag,
         body: notes,
+        prerelease,
       });
       releaseCreated = true;
     } catch (error) {
@@ -75,7 +81,7 @@ export async function publishRelease(
       if (release === null) throw error;
     }
   }
-  assertReleaseMatches(release, { tag, commit, notes });
+  assertReleaseMatches(release, { tag, commit, notes, prerelease });
 
   const attached = uniqueAssetNames(release);
   const uploadedAssets: string[] = [];
@@ -97,7 +103,7 @@ export async function publishRelease(
       if (observed === null || !observed.assets.some(({ name }) => name === asset.name)) {
         throw error;
       }
-      assertReleaseMatches(observed, { tag, commit, notes });
+      assertReleaseMatches(observed, { tag, commit, notes, prerelease });
       attached.add(asset.name);
       uploadedAssets.push(asset.name);
     }
@@ -175,7 +181,12 @@ function assertSameTagTarget(
 
 function assertReleaseMatches(
   release: PublishedRelease,
-  expected: { readonly tag: string; readonly commit: string; readonly notes: string },
+  expected: {
+    readonly tag: string;
+    readonly commit: string;
+    readonly notes: string;
+    readonly prerelease: boolean;
+  },
 ): void {
   if (release.tag !== expected.tag) {
     throw new Error(`GitHub Release tag mismatch: ${release.tag} != ${expected.tag}`);
@@ -190,6 +201,9 @@ function assertReleaseMatches(
   }
   if (release.body !== expected.notes) {
     throw new Error(`GitHub Release ${expected.tag} notes do not match the rendered notes`);
+  }
+  if (release.prerelease !== expected.prerelease) {
+    throw new Error(`GitHub Release ${expected.tag} has unexpected prerelease marking`);
   }
 }
 

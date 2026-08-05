@@ -21,6 +21,7 @@ export type { ReleaseEngineGithub, VersionPullRequest, VersionPullRequestInput }
 
 export type ReleaseEngineEvent =
   | { readonly kind: "push"; readonly commitAuthor: string }
+  | { readonly kind: "release-candidate"; readonly number: number }
   | { readonly kind: "version-pr-merged"; readonly number: number };
 
 export interface RunReleaseEngineInput {
@@ -65,6 +66,13 @@ export async function runReleaseEngine(
     return { kind: "ignored", reason: "release-bump" };
   }
   const config = readReleaseConfig(input.repoRoot);
+  if (input.event.kind === "release-candidate") {
+    if (!config.prerelease) throw new Error("RC graduation is disabled by release.prerelease");
+    if (config.trigger !== "version-pr") {
+      throw new Error("RC graduation requires the version-pr release trigger");
+    }
+    return publishReleaseCandidate(input, input.event.number);
+  }
   if (input.event.kind === "version-pr-merged") {
     return publishMergedVersionPullRequest(input, input.event.number);
   }
@@ -168,9 +176,38 @@ async function publishMergedVersionPullRequest(
   return publishPlan(input, plan);
 }
 
+async function publishReleaseCandidate(
+  input: RunReleaseEngineInput,
+  number: number,
+): Promise<ReleaseEngineResult> {
+  const pullRequest = await input.github.findVersionPullRequest(number);
+  if (pullRequest === null) throw new Error(`Version PR #${number} was not found`);
+  if (pullRequest.merged) throw new Error(`Version PR #${number} has already merged`);
+
+  const remote = input.remote ?? "origin";
+  git(input.repoRoot, "fetch", remote, `refs/heads/${VERSION_PR_BRANCH}`);
+  const fetchedCommit = git(input.repoRoot, "rev-parse", "FETCH_HEAD");
+  if (fetchedCommit !== pullRequest.headCommit) {
+    throw new Error(
+      `Version PR #${number} names ${pullRequest.headCommit}, but ${VERSION_PR_BRANCH} is ${fetchedCommit}`,
+    );
+  }
+
+  const plan = parseVersionPullRequestBody(pullRequest.body);
+  const version = nextReleaseCandidateVersion(input.repoRoot, remote, plan.version);
+  return publishPlan(
+    input,
+    { ...plan, version },
+    pullRequest.headCommit,
+    true,
+  );
+}
+
 async function publishPlan(
   input: RunReleaseEngineInput,
   plan: ReleasePlan,
+  commit?: string,
+  prerelease = false,
 ): Promise<ReleaseEngineResult> {
   const artifactDirectory = mkdtempSync(join(tmpdir(), "red-release-artifacts-"));
   try {
@@ -190,6 +227,8 @@ async function publishPlan(
       artifacts,
       github: input.github,
       remote: input.remote,
+      commit,
+      prerelease,
     });
     return {
       kind: "published",
@@ -200,6 +239,20 @@ async function publishPlan(
   } finally {
     rmSync(artifactDirectory, { recursive: true, force: true });
   }
+}
+
+function nextReleaseCandidateVersion(repoRoot: string, remote: string, version: string): string {
+  const tagPrefix = `refs/tags/v${version}-rc.`;
+  const refs = git(repoRoot, "ls-remote", "--tags", "--refs", remote, `${tagPrefix}*`);
+  let latest = 0;
+  for (const line of refs.split("\n")) {
+    if (line === "") continue;
+    const ref = line.split(/\s+/, 2)[1];
+    if (ref === undefined || !ref.startsWith(tagPrefix)) continue;
+    const candidate = Number(ref.slice(tagPrefix.length));
+    if (Number.isSafeInteger(candidate) && candidate > latest) latest = candidate;
+  }
+  return `${version}-rc.${latest + 1}`;
 }
 
 function renderVersionPullRequestBody(plan: ReleasePlan): string {

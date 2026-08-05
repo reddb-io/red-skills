@@ -31,6 +31,57 @@ afterEach(() => {
 });
 
 describe("release engine", () => {
+  it("graduates successive RCs from the Version-PR revision before consuming its queue once", async () => {
+    const fixture = releaseFixture("version-pr", { prerelease: true });
+    fixture.addChangeset("patient-otters-build.md", "minor", "Graduate the tested release.");
+
+    await fixture.push();
+    const versionPullRequestCommit = fixture.github.pullRequests[0]!.headCommit;
+    const versionPullRequestTree = git(
+      fixture.repository,
+      "rev-parse", `${versionPullRequestCommit}^{tree}`,
+    );
+
+    await expect(fixture.releaseCandidate(1)).resolves.toMatchObject({
+      kind: "published",
+      version: "1.3.0-rc.1",
+      tag: "v1.3.0-rc.1",
+      commit: versionPullRequestCommit,
+    });
+    await expect(fixture.releaseCandidate(1)).resolves.toMatchObject({
+      kind: "published",
+      version: "1.3.0-rc.2",
+      tag: "v1.3.0-rc.2",
+      commit: versionPullRequestCommit,
+    });
+
+    expect(fixture.github.releases).toMatchObject([
+      { tag: "v1.3.0-rc.1", prerelease: true },
+      { tag: "v1.3.0-rc.2", prerelease: true },
+    ]);
+    expect(git(
+      fixture.repository,
+      "rev-parse", "refs/tags/v1.3.0-rc.2^{tree}",
+    )).toBe(versionPullRequestTree);
+    expect(fixture.versionOnRemoteBranch("main")).toBe("1.2.3");
+    expect(fixture.filesOnRemoteBranch("main")).toContain(
+      ".changeset/patient-otters-build.md",
+    );
+
+    const mergeCommit = fixture.mergeVersionPullRequest();
+    await fixture.merge(1);
+    await fixture.merge(1);
+
+    expect(git(fixture.repository, "rev-parse", `${mergeCommit}^{tree}`))
+      .toBe(versionPullRequestTree);
+    expect(fixture.versionOnRemoteBranch("main")).toBe("1.3.0");
+    expect(fixture.filesOnRemoteBranch("main")).not.toContain(
+      ".changeset/patient-otters-build.md",
+    );
+    expect(fixture.github.releases.filter(({ tag }) => tag === "v1.3.0"))
+      .toMatchObject([{ tag: "v1.3.0", prerelease: false }]);
+  });
+
   it("maintains one Version PR as the queue grows, then publishes its merged revision", async () => {
     const fixture = releaseFixture("version-pr");
     fixture.addChangeset("calm-cats-dance.md", "minor", "Add the release engine.");
@@ -155,7 +206,10 @@ describe("release engine", () => {
   });
 });
 
-function releaseFixture(trigger: "version-pr" | "auto") {
+function releaseFixture(
+  trigger: "version-pr" | "auto",
+  options: { readonly prerelease?: boolean } = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "red-release-engine-"));
   temporaryDirectories.push(root);
   const remote = join(root, "remote.git");
@@ -171,6 +225,7 @@ function releaseFixture(trigger: "version-pr" | "auto") {
   write(repository, ".red/config.yaml", `release:
   scheme: semver
   trigger: ${trigger}
+  prerelease: ${options.prerelease ?? false}
   version_surfaces:
     - path: package.json
       format: npm
@@ -196,6 +251,7 @@ function releaseFixture(trigger: "version-pr" | "auto") {
     },
     push: () => invoke({ kind: "push", commitAuthor: "fixture-maintainer" }),
     pushAs: (commitAuthor: string) => invoke({ kind: "push", commitAuthor }),
+    releaseCandidate: (number: number) => invoke({ kind: "release-candidate", number }),
     merge: (number: number) => invoke({ kind: "version-pr-merged", number }),
     mergeVersionPullRequest(): string {
       git(repository, "fetch", "origin", "red-release/version-pr");
@@ -221,10 +277,14 @@ type MutableVersionPullRequest = {
 
 class FakeGithub implements ReleaseEngineGithub {
   readonly pullRequests: MutableVersionPullRequest[] = [];
-  release: PublishedRelease | null = null;
-  private assets: Array<{ id: number; name: string }> = [];
+  readonly releases: PublishedRelease[] = [];
+  private readonly assets = new Map<number, Array<{ id: number; name: string }>>();
 
   constructor(private readonly repository: string) {}
+
+  get release(): PublishedRelease | null {
+    return this.releases.at(-1) ?? null;
+  }
 
   async upsertVersionPullRequest(input: VersionPullRequestInput) {
     const existing = this.pullRequests.find((pullRequest) => !pullRequest.merged);
@@ -257,16 +317,23 @@ class FakeGithub implements ReleaseEngineGithub {
   }
 
   async findByTag(tag: string): Promise<PublishedRelease | null> {
-    return this.release?.tag === tag ? { ...this.release, assets: this.assets } : null;
+    const release = this.releases.find((candidate) => candidate.tag === tag);
+    return release === undefined
+      ? null
+      : { ...release, assets: this.assets.get(release.id) ?? [] };
   }
 
   async create(input: CreateReleaseInput): Promise<PublishedRelease> {
-    this.release = { id: 1, ...input, assets: [] };
-    return this.release;
+    const release = { id: this.releases.length + 1, ...input, assets: [] };
+    this.releases.push(release);
+    this.assets.set(release.id, []);
+    return release;
   }
 
   async uploadAsset(input: UploadReleaseAssetInput): Promise<void> {
-    this.assets.push({ id: this.assets.length + 1, name: input.name });
+    const assets = this.assets.get(input.releaseId);
+    if (assets === undefined) throw new Error(`missing fixture release ${input.releaseId}`);
+    assets.push({ id: assets.length + 1, name: input.name });
   }
 }
 

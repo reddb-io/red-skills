@@ -14,6 +14,7 @@ export interface PublishedRelease {
   readonly targetCommitish: string;
   readonly name: string;
   readonly body: string;
+  readonly prerelease: boolean;
   readonly assets: readonly PublishedReleaseAsset[];
 }
 
@@ -22,6 +23,7 @@ export interface CreateReleaseInput {
   readonly targetCommitish: string;
   readonly name: string;
   readonly body: string;
+  readonly prerelease: boolean;
 }
 
 export interface UploadReleaseAssetInput {
@@ -207,7 +209,7 @@ export function createGithubReleaseAdapter(
           name: input.name,
           body: input.body,
           draft: false,
-          prerelease: false,
+          prerelease: input.prerelease,
         },
         operation: RELEASE_CREATE,
         actor,
@@ -272,6 +274,9 @@ function releaseFrom(value: unknown): PublishedRelease {
   if (!isRecord(value) || !positiveInteger(value.id)) {
     throw new Error("GitHub returned an invalid Release payload");
   }
+  if (typeof value.prerelease !== "boolean") {
+    throw new Error("GitHub returned an invalid Release prerelease marking");
+  }
   const assets = Array.isArray(value.assets)
     ? value.assets.map((asset): PublishedReleaseAsset => {
         if (!isRecord(asset) || !positiveInteger(asset.id) || typeof asset.name !== "string") {
@@ -286,6 +291,7 @@ function releaseFrom(value: unknown): PublishedRelease {
     targetCommitish: stringField(value, "target_commitish"),
     name: stringField(value, "name"),
     body: stringField(value, "body"),
+    prerelease: value.prerelease,
     assets,
   };
 }
