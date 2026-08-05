@@ -100,7 +100,11 @@ describe("every shipped binary in the live tree answers --version (#2878)", () =
   });
 
   it("ships the release engine bundle behind the canonical npm binary", () => {
-    const release = binaries.find((entry) => entry.name === "red-skills-release");
+    const release = binaries.find(
+      (entry) =>
+        entry.name === "red-skills-release" &&
+        entry.declaredIn === "packaging/npm/package.json",
+    );
 
     expect(release).toBeDefined();
     expect(resolveBinaryEntry(release!, files, bundles).hops).toEqual([
