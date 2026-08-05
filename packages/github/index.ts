@@ -54,6 +54,7 @@ export {
   type GithubConditionalRestRequest,
   type GithubEtagEntry,
   type GithubEtagStore,
+  type GithubGraphqlAttribution,
   type GithubRequestFetch,
   type GithubPaginatedRestAnswer,
   type GithubResponseHeaders,

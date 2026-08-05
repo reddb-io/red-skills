@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/rsp",
-  "version": "3.6.0",
+  "version": "3.6.1",
   "private": true,
   "description": "RedSkills neutral rsp binary: reversible elision retrieval over the repo-local RedDB store.",
   "license": "Apache-2.0",
@@ -27,6 +27,7 @@
   "dependencies": {
     "@reddb-io/toon": "catalog:",
     "@reddb-io/build-info": "workspace:*",
+    "@reddb-io/github": "workspace:*",
     "@reddb-io/red-castle": "workspace:*",
     "@reddb-io/shared": "workspace:*",
     "@reddb-io/sdk": "1.23.1",

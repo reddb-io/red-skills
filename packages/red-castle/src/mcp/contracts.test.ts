@@ -90,6 +90,7 @@ describe("observability output contracts", () => {
   it("declares a versioned contract on every observability tool", () => {
     const tools = createCastleMcpTools({} as CastleMcpDependencies);
     const contracted = [
+      "status",
       "project_status",
       "worker_vitals",
       "monitor",
@@ -177,6 +178,7 @@ describe("observability output contracts", () => {
   it("validates the observability payloads a live tool call returns", async () => {
     const deps = {
       projectStatus: vi.fn(async () => PROJECT_STATUS),
+      workerStatus: vi.fn(async () => []),
       workerVitals: vi.fn(async () => []),
       monitor: vi.fn(async () => ({ workers: [], events: [], fleet: null })),
       queueStatus: vi.fn(async () => ({
@@ -193,16 +195,22 @@ describe("observability output contracts", () => {
       })),
     } as unknown as CastleMcpDependencies;
     const tools = createCastleMcpTools(deps);
-    const invoke = (name: string) =>
-      tools.find((t) => t.name === name)!.invoke({});
+    const invoke = (name: string, input: Record<string, unknown> = {}) =>
+      tools.find((t) => t.name === name)!.invoke(input);
 
     expect(
-      projectStatusOutputSchema.safeParse(await invoke("project_status")).success,
+      projectStatusOutputSchema.safeParse(
+        await invoke("status", { scope: "project" }),
+      ).success,
     ).toBe(true);
+    const workers = await invoke("status", { scope: "worker" }) as {
+      vitals: unknown;
+      monitor: unknown;
+    };
     expect(
-      workerVitalsOutputSchema.safeParse(await invoke("worker_vitals")).success,
+      workerVitalsOutputSchema.safeParse(workers.vitals).success,
     ).toBe(true);
-    expect(monitorOutputSchema.safeParse(await invoke("monitor")).success).toBe(
+    expect(monitorOutputSchema.safeParse(workers.monitor).success).toBe(
       true,
     );
     expect(

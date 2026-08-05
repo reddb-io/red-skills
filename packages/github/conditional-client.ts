@@ -46,6 +46,8 @@ export interface GithubConditionalRestRequest {
   readonly parameters?: Readonly<Record<string, unknown>>;
   /** Durable spend attribution for this call. */
   readonly operation: GithubAttributedOperation;
+  /** Named caller for durable spend attribution when several clients share one transport. */
+  readonly actor?: string;
 }
 
 /**
@@ -55,6 +57,8 @@ export interface GithubConditionalRestRequest {
 export interface GithubRestAnswer<T> {
   readonly data: T;
   readonly headers: GithubResponseHeaders;
+  /** True when a 304 reused the held answer and consumed no REST request budget. */
+  readonly quotaFree: boolean;
 }
 
 export interface GithubPaginatedRestAnswer<T> extends GithubRestAnswer<readonly T[]> {
@@ -65,7 +69,16 @@ export interface GithubPaginatedRestAnswer<T> extends GithubRestAnswer<readonly 
 export interface GithubClient {
   conditionalRest<T>(request: GithubConditionalRestRequest): Promise<GithubRestAnswer<T>>;
   conditionalPaginate<T>(request: GithubConditionalRestRequest): Promise<GithubPaginatedRestAnswer<T>>;
-  graphql<T>(query: string, variables?: Readonly<Record<string, unknown>>): Promise<T>;
+  graphql<T>(
+    query: string,
+    variables?: Readonly<Record<string, unknown>>,
+    attribution?: GithubGraphqlAttribution,
+  ): Promise<T>;
+}
+
+export interface GithubGraphqlAttribution {
+  readonly operation: GithubAttributedOperation;
+  readonly actor?: string;
 }
 
 export interface CreateGithubClientOptions {
@@ -142,8 +155,8 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         const headers = response.headers as GithubResponseHeaders;
         const etag = header(headers, "etag");
         if (etag !== undefined) etags.set(input.cacheKey, { etag, data: response.data, headers });
-        await options.attribution?.record({ operation: input.operation, cost: 1 });
-        return { data: response.data as T, headers };
+        await options.attribution?.record({ operation: input.operation, cost: 1, actor: input.actor });
+        return { data: response.data as T, headers, quotaFree: false };
       } catch (error) {
         if (httpStatus(error) === 304) {
           if (held === undefined) {
@@ -156,8 +169,8 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
           const headers = { ...held.headers, ...responseHeaders };
           const etag = header(headers, "etag") ?? held.etag;
           etags.set(input.cacheKey, { etag, data: held.data, headers });
-          await options.attribution?.record({ operation: input.operation, cost: 0 });
-          return { data: held.data as T, headers };
+          await options.attribution?.record({ operation: input.operation, cost: 0, actor: input.actor });
+          return { data: held.data as T, headers, quotaFree: true };
         }
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
         throw error;
@@ -171,6 +184,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       const data: T[] = [];
       let headers: GithubResponseHeaders = {};
       let requestCount = 0;
+      let quotaFree = true;
       let page = 1;
       for (;;) {
         const answer = await conditionalRest<unknown>({
@@ -179,6 +193,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
           parameters: { ...(input.parameters ?? {}), per_page: 100, page },
         });
         requestCount += 1;
+        quotaFree = quotaFree && answer.quotaFree;
         if (!Array.isArray(answer.data)) {
           throw new Error(`GitHub returned a non-list body for ${JSON.stringify(input.cacheKey)} page ${page}`);
         }
@@ -187,12 +202,27 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         if (!hasNextPage(answer.headers)) break;
         page += 1;
       }
-      return { data, headers, requestCount };
+      return { data, headers, requestCount, quotaFree };
     },
 
-    async graphql<T>(query: string, variables: Readonly<Record<string, unknown>> = {}): Promise<T> {
+    async graphql<T>(
+      query: string,
+      variables: Readonly<Record<string, unknown>> = {},
+      attribution?: GithubGraphqlAttribution,
+    ): Promise<T> {
       try {
-        return await octokit.graphql(query, variables) as T;
+        const answer = await octokit.graphql(query, variables) as T;
+        if (attribution) {
+          // Generic GraphQL does not expose the response's point cost. One is
+          // the minimum observed spend; callers with a rateLimit.cost field can
+          // replace this with the exact transport observation later.
+          await options.attribution?.record({
+            operation: attribution.operation,
+            cost: 1,
+            actor: attribution.actor,
+          });
+        }
+        return answer;
       } catch (error) {
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
         throw error;

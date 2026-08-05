@@ -101,7 +101,7 @@ function harness(options: HarnessOptions = {}) {
     listTools: async () =>
       options.tools ?? [
         "project_start",
-        "project_status",
+        "status",
         "project_stop",
         "worker_vitals",
         "worker_status",
@@ -111,7 +111,7 @@ function harness(options: HarnessOptions = {}) {
       if (tool === "project_start") {
         return options.create ?? registered();
       }
-      if (tool === "project_status") {
+      if (tool === "status") {
         return (
           // One busy slot, because the default host read births one Worker: a
           // reader that counted 0 over a live fleet is the #3081 defect, not
@@ -184,7 +184,7 @@ describe("MCP lane canary — green lane", () => {
     // The real tool surface was driven, in lane order.
     expect(calls.map((call) => call.tool)).toEqual([
       "project_start",
-      "project_status",
+      "status",
       "project_stop",
     ]);
   });
@@ -225,7 +225,7 @@ describe("MCP lane canary — the registration is the whole presence (#2902)", (
     const byStep = new Map(result.steps.map((step) => [step.step, step.verdict]));
     expect(byStep.get("project_start")).toBe("ok");
     expect(byStep.get("registration_held")).toBe("ok");
-    expect(byStep.get("project_status")).toBe("skipped");
+    expect(byStep.get("status")).toBe("skipped");
     // An inert lane still gives its registration back.
     expect(byStep.get("project_stop")).toBe("ok");
   });
@@ -450,7 +450,7 @@ describe("MCP lane canary — the other inert steps", () => {
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
     expect(result.inertStep).toBe("connect");
-    expect(result.summary).toContain("project_start, project_status, project_stop");
+    expect(result.summary).toContain("project_start, status, project_stop");
     expect(result.steps.every((step) => step.verdict !== "ok")).toBe(true);
   });
 
@@ -466,18 +466,18 @@ describe("MCP lane canary — the other inert steps", () => {
     expect(result.summary).toContain("registration refused");
   });
 
-  it("fails at project_status when the reader still sees a per-project supervisor", async () => {
+  it("fails at status when the reader still sees a per-project supervisor", async () => {
     const { deps } = harness({
       status: { supervisor: { pid: STRAY_PID, alive: true }, slots: { busy: 1 } },
     });
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("project_status");
+    expect(result.inertStep).toBe("status");
     expect(result.summary).toContain(`supervisor pid ${STRAY_PID} alive`);
   });
 
-  it("fails at project_status when the reader cannot count the Worker the host birthed", async () => {
+  it("fails at status when the reader cannot count the Worker the host birthed", async () => {
     // The #3081 shape: the host birthed a Worker, the reader says the project
     // has nothing running. An empty fleet over a busy one is indistinguishable
     // from an idle repository, which is exactly why it must go inert here.
@@ -487,12 +487,12 @@ describe("MCP lane canary — the other inert steps", () => {
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("project_status");
+    expect(result.inertStep).toBe("status");
     expect(result.summary).toContain("slots.busy=0");
     expect(result.summary).toContain("birthed 1 Worker(s)");
   });
 
-  it("fails at project_status when the reader could not attribute its own Workers", async () => {
+  it("fails at status when the reader could not attribute its own Workers", async () => {
     // A warning here means the join between host ids and project ids came apart:
     // the reader answered, and its answer says it cannot recognise its own fleet.
     const { deps } = harness({
@@ -505,7 +505,7 @@ describe("MCP lane canary — the other inert steps", () => {
 
     const result = await runMcpLaneCanary(deps, OPTIONS);
 
-    expect(result.inertStep).toBe("project_status");
+    expect(result.inertStep).toBe("status");
     expect(result.summary).toContain("attribution warning(s)");
   });
 

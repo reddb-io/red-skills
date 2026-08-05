@@ -125,10 +125,9 @@ The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 
 Capability references registered by owner:
 `castle` MCP (the canonical project interface; start with its situational
-`help` tool, while `host_state`, `host_dashboard`, `host_provision_check`, and
-`host_unit_status` provide read-only host diagnostics, and a visible
-`project_status.birth_latch` routes through its structured `project_reset`
-repair) ->
+`help` tool, while `status {scope: worker | project | host}` provides scoped
+read-only diagnostics, and a visible project `birth_latch` routes through its
+structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/MCP.md`;
 `/afk` landing-tail throughput (`afk.landing.wait`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
@@ -188,8 +187,8 @@ through `/memory:view`, `memory docs reference-graph`, and
   package-manifest harness discovery and confirmation of the proposed
   `plugins.dev.afk.validation` schedule.
 - Execution-daemon operation is a host route, not a feature-work one:
-  diagnose through the castle MCP's read-only `host_provision_check` and other
-  `host_*` tools first; no castle tool provisions or reclaims the host.
+  diagnose through the castle MCP's read-only `status {scope: host}` first; no
+  castle tool provisions or reclaims the host.
   `/redskilled` owns provisioning, host policy, status, and lifecycle;
   `/red-doctor` (check 24) reports whether the host is provisioned. The daemon's
   home `~/.red/redskilled/` and host policy file `~/.red/config.yaml` belong to

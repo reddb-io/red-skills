@@ -15,6 +15,7 @@ function readRepoFile(path: string): Promise<string> {
 }
 
 const tools = createCastleMcpTools({} as CastleMcpDependencies);
+const intentTools = tools.filter((tool) => !tool.description.startsWith("DEPRECATED:"));
 
 interface DocumentedTool {
   readonly name: string;
@@ -29,18 +30,18 @@ function documentedTools(doc: string): DocumentedTool[] {
 }
 
 describe("castle MCP client docs contract", () => {
-  it("documents every castle MCP tool exactly once in MCP.md", async () => {
+  it("documents every canonical castle intent exactly once in MCP.md", async () => {
     const doc = await readRepoFile(MCP_DOC);
     const documented = documentedTools(doc).map((entry) => entry.name);
 
-    expect([...documented].sort()).toEqual([...tools.map((tool) => tool.name)].sort());
+    expect([...documented].sort()).toEqual([...intentTools.map((tool) => tool.name)].sort());
   });
 
-  it("marks each documented tool with the mutation mode its description declares", async () => {
+  it("marks each documented intent with the mutation mode its description declares", async () => {
     const doc = await readRepoFile(MCP_DOC);
     const modeByName = new Map(documentedTools(doc).map((entry) => [entry.name, entry.mode]));
 
-    for (const tool of tools) {
+    for (const tool of intentTools) {
       const expected = tool.description.startsWith("MUTATING:") ? "mutating" : "read";
       expect(modeByName.get(tool.name), `${tool.name} mode`).toBe(expected);
     }
@@ -59,9 +60,10 @@ describe("castle MCP client docs contract", () => {
 
     expect(skill).toContain("`castle` MCP");
     expect(skill).toContain("[`MCP.md`](./MCP.md)");
-    for (const tool of ["queue_status", "worker_dispatch", "project_status", "monitor"]) {
+    for (const tool of ["queue_status", "worker_dispatch"]) {
       expect(skill, `/afk should route through ${tool}`).toContain(`\`${tool}\``);
     }
+    expect(skill).toContain("`status {scope:");
   });
 
   it("makes /go dispatch through the same MCP surface", async () => {
@@ -78,7 +80,7 @@ describe("castle MCP client docs contract", () => {
       readRepoFile(`${AFK}/monitor.md`),
     ]);
 
-    for (const tool of ["project_start", "project_status", "project_resize", "project_reset", "project_stop", "logs"]) {
+    for (const tool of ["project_start", "status", "project_resize", "project_reset", "project_stop", "logs"]) {
       expect(fleet, `fleet.md should route through ${tool}`).toContain(`\`${tool}\``);
     }
     for (const tool of ["monitor", "worker_vitals", "queue_status"]) {

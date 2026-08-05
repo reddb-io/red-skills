@@ -88,7 +88,7 @@ function heldRegistration(root: string) {
 }
 
 describe("castle MCP help", () => {
-  it("narrates declared and skipped Validation moments in help and project_status", async () => {
+  it("narrates declared and skipped Validation moments in help and project status", async () => {
     const root = await scratch();
     await mkdir(join(root, ".red"), { recursive: true });
     await writeFile(join(root, ".red", "config.yaml"), [
@@ -106,7 +106,7 @@ describe("castle MCP help", () => {
     host.hostState.mockResolvedValue({ daemon_version: "3.5.0", demand: null });
     const tools = createCastleMcpTools(createCastleMcpDependencies(root));
     const help = tools.find((tool) => tool.name === "help")!;
-    const projectStatus = tools.find((tool) => tool.name === "project_status")!;
+    const status = tools.find((tool) => tool.name === "status")!;
     const expected = {
       narration:
         "Validation moments — iteration: declared [pnpm test]; " +
@@ -118,7 +118,7 @@ describe("castle MCP help", () => {
       ],
     };
 
-    await expect(projectStatus.invoke({})).resolves.toMatchObject({
+    await expect(status.invoke({ scope: "project" })).resolves.toMatchObject({
       validation_schedule: expected,
     });
     await expect(help.invoke({})).resolves.toMatchObject({
@@ -182,12 +182,13 @@ describe("castle MCP help", () => {
         workers: { busy: 0, live: 0, target: 2 },
         last_refusal: "host ceiling is temporarily full",
       },
-      next: { tool: "project_status", args: {} },
+      next: { tool: "status", args: { scope: "project" } },
     });
 
     const advertised = answer.intent_map.flatMap((group) => group.tools);
-    expect(advertised.map(({ name }) => name)).toEqual(tools.map(({ name }) => name));
-    expect(advertised.map(({ title }) => title)).toEqual(tools.map(({ title }) => title));
+    const intents = tools.filter((tool) => !tool.description.startsWith("DEPRECATED:"));
+    expect(advertised.map(({ name }) => name)).toEqual(intents.map(({ name }) => name));
+    expect(advertised.map(({ title }) => title)).toEqual(intents.map(({ title }) => title));
     expect(github.calls).toBe(0);
   });
 });

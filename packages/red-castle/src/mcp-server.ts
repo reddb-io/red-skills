@@ -24,6 +24,7 @@ import {
   createStatuslineTools,
   type StatuslineDependencies,
 } from "./mcp/statusline.js";
+import { createStatusTools } from "./mcp/status.js";
 import type { CastleMcpTool } from "./mcp/tool.js";
 import { applyDangerPosture, type DangerPosture } from "./mcp/posture.js";
 import { createWaitTools, type WaitDependencies } from "./mcp/wait.js";
@@ -37,6 +38,7 @@ export type { CastleMcpTool } from "./mcp/tool.js";
 export { CASTLE_MCP_PROMPTS } from "./mcp/prompt.js";
 export type { CastleMcpPrompt } from "./mcp/prompt.js";
 export type { DangerPosture } from "./mcp/posture.js";
+export type { StatusInput, StatusScope } from "./mcp/status.js";
 export {
   CASTLE_MCP_CONTRACT_VERSION,
   projectStatusOutputSchema,
@@ -134,6 +136,7 @@ export function createCastleMcpTools(
   let publishedTools: CastleMcpTool[] = [];
   const tools = [
     ...createHelpTools(deps, () => publishedTools),
+    ...createStatusTools(deps),
     ...createProjectTools(deps),
     ...createHostTools(deps),
     ...createObservabilityTools(deps),

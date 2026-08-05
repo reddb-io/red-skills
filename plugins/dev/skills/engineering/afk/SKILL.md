@@ -26,8 +26,8 @@ The usual shape of a drain:
 1. `queue_status` — what is drainable now, before anything is claimed.
 2. `runner_detect` — confirm the runner this host resolves to.
 3. `worker_dispatch` (one issue) or `project_start` (this project's workers) to start work.
-4. `monitor`, `worker_vitals`, `project_status` — read progress; never poll a
-   mutating tool for status.
+4. `status {scope: worker | project | host}` — read progress at the needed
+   boundary; never poll a mutating tool for status.
 5. `gate_run` → `land_branch` when a worker branch needs validation and landing
    outside the normal in-worker path.
 
@@ -99,7 +99,7 @@ CLI fallback for the same operation.
   unlimited queue drain.
 - `/afk --once` - single supervised iteration for debugging the prompt.
 - `/afk --boot-only` - run boot sweeps and prechecks without claiming work.
-- `/afk monitor` - read-only status board over `monitor`, `worker_vitals`, and
+- `/afk monitor` - read-only status board over `status {scope: worker}` and
   `queue_status`; read [`monitor.md`](./monitor.md) for the dashboard and
   native-task mirror contract.
 - `/afk dashboard [--period 30d] [--json]` - process dashboard for open work,
@@ -114,7 +114,7 @@ CLI fallback for the same operation.
 - `/afk fleet stop [--force]` - `project_stop`: gracefully stop this project's
   supervisor while in-flight workers drain; `--force` hard-stops only workers
   attributed to its lane.
-- `/afk fleet status` - `project_status`: read-only ground truth — supervisor pid, health verdict,
+- `/afk fleet status` - `status {scope: project}`: read-only ground truth — supervisor pid, health verdict,
   runner, slot occupancy, bundle version/skew, churn, live workers, and whether
   a watchdog respawn would fire. Answers "what is actually running?" without
   cross-referencing pid files and snapshots by hand.
