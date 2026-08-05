@@ -137,7 +137,11 @@ export function renderHost(payload, { columns }) {
   const ceiling = host.ceiling ?? {};
   const accounting = host.budget_accounting ?? {};
 
-  const workers = `${style.bold(String(host.worker_count))} worker${host.worker_count === 1 ? "" : "s"}`;
+  const repairing = (payload.workers ?? []).filter((worker) => worker.display?.origin === "repair").length;
+  const workers = repairing > 0
+    ? `${style.bold(String(Math.max(0, host.worker_count - repairing)))} coding + ` +
+      style.brightMagenta(`${style.bold(String(repairing))} repairing`)
+    : `${style.bold(String(host.worker_count))} worker${host.worker_count === 1 ? "" : "s"}`;
   const projects = `${style.bold(String(host.project_count))} project${host.project_count === 1 ? "" : "s"}`;
   const declared = host.consumption?.memory_bytes ?? null;
   const ceilingBytes = ceiling.memory_bytes ?? null;
@@ -305,13 +309,16 @@ export function workerLayout(columns) {
 export function renderWorkerRow(worker, { columns, selected, verbose, localProject, layout = workerLayout(columns) }) {
   const marker = selected ? style.brightRed(SELECTED) : " ";
   const mine = localProject != null && worker.project_label === localProject;
+  const repair = worker.display?.origin === "repair";
 
   const id = padEnd(truncate(worker.worker_id, layout.id), layout.id);
   const label = shortProject(worker.project_label, layout.project);
   const project = padEnd(truncate(mine ? style.brightCyan(label) : label, layout.project), layout.project);
   const reattached = worker.state === "reattached";
-  const stateText = layout.short ? (reattached ? "reatt" : "run") : reattached ? "reattached" : "running";
-  const state = (reattached ? style.cyan : style.green)(padEnd(stateText, layout.state));
+  const stateText = repair
+    ? layout.short ? "heal" : "repairing"
+    : layout.short ? (reattached ? "reatt" : "run") : reattached ? "reattached" : "running";
+  const state = (repair ? style.brightMagenta : reattached ? style.cyan : style.green)(padEnd(stateText, layout.state));
   const uptime = padStart(duration(worker.uptime_ms), 6);
 
   const budget = worker.budget ?? {};
@@ -332,6 +339,17 @@ export function renderWorkerRow(worker, { columns, selected, verbose, localProje
 
   const row = ` ${marker} ${id} ${project} ${state} ${uptime}  ${usage} ${bar} ${share}${flags.length ? `  ${flags.join(" ")}` : ""}`;
   const lines = [truncate(row, columns)];
+
+  if (repair) {
+    const issue = String(worker.display?.issue ?? "?").replace(/^#/, "");
+    const step = worker.display?.step ?? worker.display?.phase ?? "step unknown";
+    lines.push(
+      truncate(
+        `     ${style.brightMagenta("⟳ repair lane")} ${style.gray("·")} PR #${issue} ${style.gray("·")} ${step}`,
+        columns,
+      ),
+    );
+  }
 
   if (verbose) {
     const line = oneLine(worker.log?.last_line ?? "");

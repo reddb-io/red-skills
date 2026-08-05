@@ -86,6 +86,50 @@ describe("one module, three densities", () => {
       .toEqual(renderRedskilledStatusline(doc, LOCAL).lines);
   });
 
+  it("names a repair lane, its patient and step at every density", () => {
+    const coding = worker({ worker_id: "w-code", display: display() });
+    const repair = worker({
+      worker_id: "w-heal",
+      display: display({
+        runner: null,
+        model: null,
+        effort: null,
+        origin: "repair",
+        issue: "3291",
+        phase: "merging",
+        step: "regenerate",
+      }),
+    });
+    const doc = payload({
+      workers: [coding, repair],
+      host: { ...payload().host, worker_count: 2 },
+      projects: [{ ...payload().projects[0]!, worker_count: 2 }],
+    });
+
+    const line = renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 });
+    const panel = renderRedskilledPanel(doc, {
+      ...REDSKILLED_PANEL_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 240,
+    });
+    const table = renderRedskilledDashboard(doc, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 240,
+    });
+
+    for (const row of [line.lines[2]!, panel.worker_rows[1]!, table.rows[1]!.line]) {
+      expect(stripAnsi(row)).toContain("lane=repair");
+      expect(stripAnsi(row)).toContain("pr=#3291");
+      expect(stripAnsi(row)).toContain("merging·regenerate");
+      expect(row).toContain(`${WINE}${WHITE}lane=repair`);
+    }
+    expect(line.line).toContain("1 coding + 1 repairing");
+    expect(stripAnsi(table.header.line)).toContain("workers=1 coding + 1 repairing");
+    expect(stripAnsi(renderRedskilledDashboard(payload(), REDSKILLED_DASHBOARD_DEFAULTS).header.line))
+      .not.toContain("repairing");
+  });
+
   it("degrades cells from the right without dropping selected Workers", () => {
     const workers = Array.from({ length: 3 }, (_, index) =>
       worker({ worker_id: `w-${index}`, display: display({ issue: String(3100 + index) }) }));

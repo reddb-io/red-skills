@@ -42,6 +42,31 @@ test("the host row states the ceiling it was given, and the fraction with it", (
   assert.match(rendered, /1 unisolated/);
 });
 
+test("repair activity names its lane, patient and step from the display record", () => {
+  const payload = statuslinePayload();
+  payload.workers[0].display = {
+    origin: "repair",
+    issue: "3291",
+    phase: "merging",
+    step: "regenerate",
+  };
+  payload.workers[1].display = { origin: "afk" };
+
+  const host = text(renderHost(payload, SIZE));
+  const row = text(renderWorkerRow(payload.workers[0], {
+    columns: 120,
+    selected: false,
+    verbose: false,
+    localProject: null,
+  }));
+
+  assert.match(host, /1 coding \+ 1 repairing/);
+  assert.match(row, /repair lane/);
+  assert.match(row, /PR #3291/);
+  assert.match(row, /regenerate/);
+  assert.doesNotMatch(text(renderHost(statuslinePayload(), SIZE)), /repairing/);
+});
+
 test("a host with no ceiling says so instead of drawing a full bar", () => {
   const payload = statuslinePayload();
   payload.host.ceiling = { memory_bytes: null, worker_count: null, source: "declared" };
