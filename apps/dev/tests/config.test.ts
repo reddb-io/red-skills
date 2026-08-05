@@ -822,6 +822,43 @@ describe("config — block sequences (#430)", () => {
 });
 
 describe("config — validation moments (ADR 0135, #3284)", () => {
+  it("reads the generated-surface cure beside the Validation moments", () => {
+    const values = loadConfig("/x/.red/config.yaml", {
+      read: () => [
+        "plugins:",
+        "  dev:",
+        "    enabled: true",
+        "    afk:",
+        "      validation:",
+        "        generated:",
+        "          paths:",
+        "            - packaging/pi/**",
+        "            - plugins/*/package.json",
+        "          command: pnpm version:sync && pnpm pi:packages:build",
+        "        post_done:",
+        "          - pnpm test",
+        "",
+      ].join("\n"),
+    });
+
+    expect(readValidationMoments(values)).toEqual({
+      generated: {
+        paths: ["packaging/pi/**", "plugins/*/package.json"],
+        command: "pnpm version:sync && pnpm pi:packages:build",
+      },
+      post_done: ["pnpm test"],
+    });
+  });
+
+  it("rejects incomplete generated-surface declarations", () => {
+    expect(() => parseConfigYaml(
+      "plugins:\n  dev:\n    afk:\n      validation:\n        generated:\n          paths:\n            - packaging/pi/**\n",
+    )).toThrow(/afk\.validation\.generated\.command.*non-empty string/);
+    expect(() => parseConfigYaml(
+      "plugins:\n  dev:\n    afk:\n      validation:\n        generated:\n          command: pnpm version:sync\n",
+    )).toThrow(/afk\.validation\.generated\.paths.*non-empty ordered list/);
+  });
+
   it("reads the declared sub-second branch-fault escape beside the moments", () => {
     const values = loadConfig("/x/.red/config.yaml", {
       read: () => [

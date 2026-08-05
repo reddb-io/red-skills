@@ -828,7 +828,12 @@ export async function processIssue(
     if (!probe || !baseResolution.sha) return undefined;
     try {
       const seen = await probe(baseRef, baseResolution.sha);
-      return { startSha: baseResolution.sha, gateSha: seen.head, subjects: seen.subjects };
+      return {
+        startSha: baseResolution.sha,
+        gateSha: seen.head,
+        subjects: seen.subjects,
+        files: seen.files,
+      };
     } catch {
       return undefined;
     }
@@ -1074,6 +1079,7 @@ export async function processIssue(
     signature: string,
     branchBudgetAvailable: boolean,
     driftEligible: boolean,
+    mechanicalHealFailure?: string,
   ): Promise<Verdict> => decideVerdict({
     checks,
     signature,
@@ -1081,6 +1087,8 @@ export async function processIssue(
     environment: {
       movement: driftEligible ? await observeBaseMovement() : undefined,
       subsecondFailuresAreBranchFault: deps.validationMoments?.subsecondFailuresAreBranchFault,
+      generated: deps.validationMoments?.generated,
+      mechanicalHealFailure,
     },
   });
   /** Apply the one free-round budget effect. A true result means the caller
@@ -1649,14 +1657,63 @@ export async function processIssue(
         budget: reseedBudget,
         spend: reseedSpend,
       });
-      const verdict = await decideGateVerdict(
+      const branchBudgetAvailable = escalationDecision.escalate || reseedDraw(reseedBudget, "gate", reseedSpend).allowed;
+      let verdict = await decideGateVerdict(
         feedback.checks,
         roundKey,
-        escalationDecision.escalate || reseedDraw(reseedBudget, "gate", reseedSpend).allowed,
-        !usesDeclaredValidationMoments,
+        branchBudgetAvailable,
+        true,
       );
+      let correctionValidationText = validationText;
+      if (verdict.remediation?.kind === "mechanical-regeneration-skipped") {
+        deps.appendIterLog(
+          `🤖 ${reseedLane}: mechanical regeneration skipped: undeclared; ${verdict.reason}.`,
+        );
+      } else if (verdict.remediation?.kind === "mechanical-regeneration") {
+        if (verdict.budgetEffect.kind === "consume-environment") {
+          environmentLedger = verdict.budgetEffect.ledger;
+        }
+        const declaration = verdict.remediation.declaration;
+        const healed = deps.mechanicalRegenerate
+          ? await deps.mechanicalRegenerate({
+              issue,
+              branch: workerBranch,
+              baseRef,
+              remote: input.remote,
+              paths: declaration.paths,
+              command: declaration.command,
+            })
+          : { ok: false, evidence: "mechanical regeneration executor is unavailable" };
+        if (healed.ok) {
+          gateRevalidationSkip = true;
+          const note =
+            `🤖 ${reseedLane}: mechanical regeneration cure completed; ${verdict.reason}; ` +
+            `re-validating with zero agent iterations. ${describeEnvironmentLedger(environmentLedger)}.`;
+          deps.appendIterLog(note);
+          deps.recordWorkerEvent?.("worker.mechanical_regeneration_cure", {
+            trigger: "gate-stage",
+            cause: "stale-base-drift",
+            lane: reseedBudget.lane,
+            free: true,
+            cycle: environmentLedger.rounds.length,
+            cap: environmentLedger.cap,
+          });
+          continue;
+        }
+        deps.appendIterLog(`🤖 ${reseedLane}: mechanical regeneration failed: ${healed.evidence}`);
+        verdict = await decideGateVerdict(
+          feedback.checks,
+          roundKey,
+          branchBudgetAvailable,
+          true,
+          healed.evidence,
+        );
+      }
+      if (verdict.remediation?.kind === "agent-correction") {
+        correctionValidationText = `${validationText}\nVerdict: ${verdict.reason}.`;
+      }
       if (grantEnvironmentRound("feedback", verdict)) continue;
-      if (verdict.fault.kind !== "branch") {
+      if (verdict.fault.kind !== "branch" && verdict.remediation?.kind !== "agent-correction") {
         const cause = verdict.fault.cause;
         deps.recordWorkerEvent?.("worker.gate_revalidation_refused", {
           trigger: "gate-stage",
@@ -1677,7 +1734,7 @@ export async function processIssue(
       if (escalationDecision.escalate) {
         const escalation = await requestReseed({
           trigger: "tier-escalation",
-          validation: validationText,
+          validation: correctionValidationText,
           sidecar: feedback.sidecar,
           signature: roundKey,
           tiers: { from: escalationDecision.from, to: escalationDecision.to },
@@ -1691,7 +1748,7 @@ export async function processIssue(
         }
       }
       if (!verdict.parkNow && verdict.budgetEffect.kind === "charge-branch" && (
-        await reseedAfterGate("gate-stage", "feedback", validationText, feedback.sidecar)
+        await reseedAfterGate("gate-stage", "feedback", correctionValidationText, feedback.sidecar)
       )) {
         continue;
       }
@@ -1699,10 +1756,10 @@ export async function processIssue(
         ? "Salvaged a no-sentinel branch (it carried work), but feedback validation failed — the branch was not merged."
         : "Feedback validation failed after the inner agent emitted DONE. The worker branch was not merged.";
       notes += ` ${verdict.reason}.${correctionBudgetNote()}`;
-      await parkReseedTrail(validationText);
+      await parkReseedTrail(correctionValidationText);
       return await terminalFailure(common, "feedback-failed", "feedback", {
         notes,
-        validation: validationText,
+        validation: correctionValidationText,
       }, { validationSummary: feedback.sidecar.join("\n") });
     }
     const backpressureCommands = usesDeclaredValidationMoments ? [] : (deps.backpressureCommands ?? []);

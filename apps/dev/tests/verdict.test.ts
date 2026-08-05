@@ -101,6 +101,57 @@ describe("decideVerdict — one fault, budget effect, and park decision", () => 
     });
   });
 
+  it("owns the generated-drift cure truth table", () => {
+    const movement = {
+      startSha: "before",
+      gateSha: "after",
+      subjects: ["chore(release): version packages"],
+      files: ["packaging/pi/dev/package.json"],
+    } as const;
+    const generated = {
+      paths: ["packaging/pi/**"],
+      command: "pnpm version:sync && pnpm pi:packages:build",
+    } as const;
+    const input = {
+      checks: [failedCheck()],
+      signature: SIGNATURE,
+      history: { environment: emptyEnvironmentLedger(2), branchBudgetAvailable: true },
+      environment: { movement, generated },
+    } as const;
+
+    expect(decideVerdict(input)).toMatchObject({
+      fault: { kind: "base", cause: "stale-base-drift" },
+      budgetEffect: { kind: "consume-environment" },
+      remediation: { kind: "mechanical-regeneration", declaration: generated },
+      parkNow: false,
+    });
+    expect(decideVerdict({
+      ...input,
+      environment: {
+        movement: { ...movement, files: [...movement.files, "apps/dev/src/core/verdict.ts"] },
+        generated,
+      },
+    })).toMatchObject({
+      budgetEffect: { kind: "charge-branch" },
+      remediation: { kind: "agent-correction", reason: "mixed-drift" },
+      parkNow: false,
+    });
+    expect(decideVerdict({ ...input, environment: { movement } })).toMatchObject({
+      remediation: { kind: "mechanical-regeneration-skipped", reason: "undeclared" },
+    });
+    expect(decideVerdict({
+      ...input,
+      environment: { movement, generated, mechanicalHealFailure: "generator exited 1" },
+    })).toMatchObject({
+      budgetEffect: { kind: "charge-branch" },
+      remediation: {
+        kind: "agent-correction",
+        reason: "mechanical-regeneration-failed",
+        evidence: "generator exited 1",
+      },
+    });
+  });
+
   it("keeps every environment cause off the branch budget, including exhaustion", () => {
     const cases: ReadonlyArray<{ cause: EnvironmentCause; checks: ClassifiableCheck[]; movement?: {
       startSha: string;

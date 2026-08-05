@@ -15,6 +15,14 @@ plugins:
       # Declared as the ADR 0135 Validation-moment schedule; the legacy
       # feedback.commands/backpressure knobs are RETIRED at 3.6.0.
       validation:
+        generated:
+          paths:
+            - plugins/*/package.json
+            - plugins/*/.claude-plugin/plugin.json
+            - plugins/*/.codex-plugin/plugin.json
+            - plugins/*/.gemini-plugin/plugin.json
+            - packaging/pi/**
+          command: pnpm version:sync && pnpm generate-manifests && pnpm pi:packages:build
         post_done:
           - pnpm -C apps/dev exec tsc --noEmit
       # Maintainer decision 2026-08-03: codex is this repo's executor.
