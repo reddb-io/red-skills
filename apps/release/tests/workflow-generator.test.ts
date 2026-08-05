@@ -1,5 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -148,6 +155,22 @@ describe("release workflow generator", () => {
     });
     expect(repeated).toMatchObject({ changed: false, engineVersion: "3.8.1" });
     expect(readFileSync(emittedBundle)).toEqual(refreshedBytes);
+  });
+
+  it("refuses a vendored bundle whose static version does not match before writing", () => {
+    const repository = fixtureRepository("auto", "vendored");
+    const sourceBundle = join(repository, "release-source.bundle.mjs");
+    writeStaticBundle(sourceBundle, "3.8.0", "stale");
+
+    expect(() =>
+      generateReleaseWorkflows({
+        repoRoot: repository,
+        engineVersion: "3.8.1",
+        engineBundlePath: sourceBundle,
+      }),
+    ).toThrow("vendored release bundle reports 3.8.0, expected 3.8.1");
+    expect(existsSync(join(repository, RELEASE_WORKFLOW_PATH))).toBe(false);
+    expect(existsSync(join(repository, VENDORED_RELEASE_BUNDLE_PATH))).toBe(false);
   });
 });
 
