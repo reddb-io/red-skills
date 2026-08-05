@@ -147,7 +147,7 @@ The bound on how many **Re-seed** rounds one **Worker** may spend. A single ceil
 _Avoid_: correction budget, convergence budget, stall convergence budget (the `afk.stallConvergenceBudget` key names the retired shape), heal ledger (that is the per-Ticket repair history, a different object), attempt ledger, per-attempt budget (the rounds are events inside one running **Worker**, never a new unit of work)
 
 **Worker kind**:
-The castle engine provenance stamp that distinguishes why a **Worker** exists while all new workers share `.red/tmp/workers/`: `current.kind=afk` for the **Demand producer**'s queue-draining work, `current.kind=go` for approved one-off `/go` dispatch, and `current.kind=scout` for read-only `/go --scout` investigations. The legacy `.red/tmp/go-workers/` and `.red/tmp/scout-workers/` roots are read only as transitional observability inputs until they age out; they are not the live isolation contract.
+The castle engine provenance stamp that distinguishes why a **Worker** exists while all new workers share `.red/tmp/workers/`: `current.kind=afk` for the **Demand producer**'s queue-draining work, `current.kind=go` for approved one-off `/go` dispatch, `current.kind=scout` for read-only `/go --scout` investigations, and `current.kind=repair` for the mechanical merge-queue lane that merges the fresh base, regenerates declared mirrors, publishes, and re-queues without waking the owning Worker. The legacy `.red/tmp/go-workers/` and `.red/tmp/scout-workers/` roots are read only as transitional observability inputs until they age out; they are not the live isolation contract.
 _Avoid_: worker namespace, go-workers root, scout-workers root
 
 **Worker state reader**:
