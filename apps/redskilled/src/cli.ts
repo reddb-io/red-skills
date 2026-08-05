@@ -952,6 +952,11 @@ const invokedDirectly = process.argv[1] != null &&
 if (invokedDirectly) {
   runRedskilledCli(process.argv.slice(2)).then(
     (code) => {
+      // `serve` has one terminal boundary: daemon.closed resolves only after the
+      // event lane is flushed and the socket, lease and machine claim are gone.
+      // Workers deliberately outlive that boundary, so no residual handle they
+      // left behind may turn a completed stop into a process that still exists.
+      if (process.argv[2] === "serve") process.exit(code);
       process.exitCode = code;
     },
     (err: unknown) => {

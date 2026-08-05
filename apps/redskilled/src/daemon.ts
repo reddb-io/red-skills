@@ -307,6 +307,14 @@ export const DEFAULT_REDSKILLED_SAMPLE_MS = 15_000;
 export const DEFAULT_REDSKILLED_LEASE_RENEW_MS = 30_000;
 
 /**
+ * How old a frozen lease must be before an unowned socket disproves it.
+ *
+ * Two missed renewals keep an ordinary start race authoritative while bounding
+ * recovery from a live process that has already unlinked its socket.
+ */
+export const REDSKILLED_SOCKETLESS_LEASE_REAP_MS = DEFAULT_REDSKILLED_LEASE_RENEW_MS * 2;
+
+/**
  * How often the daemon re-evaluates registration liveness.
  *
  * Registration liveness has its own belt: tracker cost may change the queue
@@ -882,6 +890,41 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     createRedskilledMachineClaimStore(paths.machineClaimPath, claimLabels, { clock });
 
   await mkdir(dirname(paths.socketPath), { recursive: true, mode: 0o700 });
+
+  // A pid alone is not a daemon. If both ownership records name the same live
+  // process, its lease has missed two renewals, and the kernel says nothing owns
+  // its socket, the records describe the shutdown wedge from #3401 rather than a
+  // singleton. Release them as their recorded owner so the successor can bind;
+  // a fresh startup lease remains authoritative throughout its grace window.
+  const [heldLease, heldClaim] = await Promise.all([
+    leaseStore.read().catch(() => undefined),
+    machineClaimStore.read().catch(() => undefined),
+  ]);
+  const nowMs = Date.parse(clock());
+  const renewedAtMs = heldLease == null ? Number.NaN : Date.parse(heldLease.renewed_at);
+  const socketlessOwner = heldLease != null &&
+    heldClaim != null &&
+    heldLease.pid === heldClaim.pid &&
+    heldLease.start_time === heldClaim.start_time &&
+    heldLease.socket_path === paths.socketPath &&
+    heldClaim.socket_path === paths.socketPath &&
+    Number.isFinite(nowMs) &&
+    Number.isFinite(renewedAtMs) &&
+    nowMs - renewedAtMs >= REDSKILLED_SOCKETLESS_LEASE_REAP_MS &&
+    await probeSocketOwnership(paths.socketPath) === "unowned";
+  if (socketlessOwner) {
+    const releasedLease = await leaseStore.release({
+      pid: heldLease.pid,
+      startTime: heldLease.start_time,
+    }).catch(() => false);
+    if (releasedLease) {
+      await machineClaimStore.release({
+        pid: heldClaim.pid,
+        startTime: heldClaim.start_time,
+        uid: heldClaim.uid,
+      }).catch(() => false);
+    }
+  }
 
   // The machine before the runtime directory: a daemon that bound a socket and
   // then discovered another user already holds the machine would have been the
@@ -2806,14 +2849,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // Worker it holds a budget for and no record of.
     await eventLane.flush().catch(() => undefined);
     await registrationIntentStore.flush().catch(() => undefined);
+    // Ownership records go first while the socket still proves this daemon is
+    // reachable. If either release stalls or fails, the old daemon stays bound
+    // and no successor mistakes a live, socketless pid for the singleton.
+    await leaseStore.release(owner);
+    await machineClaimStore.release(machineOwner);
     server.close();
     for (const socket of activeSockets) socket.destroy();
     await new Promise<void>((resolve) => server.once("close", () => resolve()));
     await rm(paths.socketPath, { force: true });
-    await leaseStore.release(owner).catch(() => undefined);
-    // Released last, in the reverse order it was taken: the machine is free only
-    // once nothing of this daemon is left holding it.
-    await machineClaimStore.release(machineOwner).catch(() => undefined);
     resolveClosed();
     return await closed;
   }
@@ -2911,7 +2955,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       // The report is written to the caller BEFORE the daemon leaves: a stop that
       // took the socket down first would be indistinguishable, from the operator's
       // side, from a daemon that died while being asked.
-      if (request.op === "shutdown") setImmediate(() => void stop({ reason: "requested" }));
+      if (request.op === "shutdown") {
+        setImmediate(() => void stop({ reason: "requested" }).catch(() => undefined));
+      }
     });
   });
 
