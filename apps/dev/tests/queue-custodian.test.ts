@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
+  createFileQueueCustodyStore,
   handoffQueueCustody,
   repairQueueCustody,
   sweepQueueCustody,
@@ -21,6 +25,35 @@ function memoryStore(): QueueCustodyStore & { state: QueueCustodyState } {
 }
 
 describe("Queue Custodian", () => {
+  it("reloads custody from its durable AFK state lane", async () => {
+    const root = await mkdtemp(join(tmpdir(), "queue-custody-"));
+    try {
+      const path = join(root, ".red", "state", "afk", "queue-custody.toon");
+      const store = createFileQueueCustodyStore(path);
+      await handoffQueueCustody(
+        {
+          store,
+          now: () => "2026-08-05T12:30:00.000Z",
+          armNativeIntent: async () => ({ ok: true }),
+        },
+        {
+          repo: "reddb-io/red-skills",
+          prNumber: 3334,
+          ownerTicket: 3333,
+          branch: "afk/3333-queue-custodian",
+          base: "main",
+        },
+      );
+
+      expect((await createFileQueueCustodyStore(path).read()).prs["3334"]).toMatchObject({
+        status: "watching",
+        ownerTicket: 3333,
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("arms native merge intent before durably accepting custody", async () => {
     const store = memoryStore();
     const calls: string[] = [];
