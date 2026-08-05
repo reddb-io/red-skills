@@ -267,6 +267,9 @@ describe("graduated routing spends the fallback before the preferred pool is spe
     const belowEntry = decision({ graphqlRemaining: 1600, previousBand: "low" });
     expect(belowEntry.source_pressure).toBeCloseTo(0.68, 8);
     expect(belowEntry.band).toBe("low");
+
+    expect(decision({ graphqlRemaining: 550, previousBand: "high" }).band).toBe("high");
+    expect(decision({ graphqlRemaining: 50, previousBand: "full" }).band).toBe("full");
   });
 
   it("fully diverts a spent preferred pool regardless of pagination cost", () => {
