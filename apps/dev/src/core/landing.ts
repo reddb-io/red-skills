@@ -43,6 +43,10 @@ import {
 } from "./merge.js";
 import { resolveLandSerialization, type LandLock } from "./land-lock.js";
 import { pushAttempt, type GitExec } from "./remote-branch.js";
+import type {
+  QueueCustodyHandoffResult,
+  QueueCustodyIdentity,
+} from "./queue-custodian.js";
 
 /** Everything the landing needs, all side effects injected — mirroring how
  * process-issue called each of these inline. */
@@ -132,6 +136,14 @@ export interface LandingDeps {
    * synchronous landing. `ci` and `none` return a deferred tail to the caller.
    */
   landingWait?: "merge" | "ci" | "none";
+  /**
+   * Native merge-queue custody. The callback arms the supplied forge intent,
+   * persists the hand-off, and returns only after both are established.
+   */
+  queueCustody?: (
+    identity: QueueCustodyIdentity,
+    armNativeIntent: () => Promise<{ readonly ok: boolean; readonly reason?: string }>,
+  ) => Promise<QueueCustodyHandoffResult>;
   /**
    * Non-blocking observability hook (issue #1279): invoked by the PR landing path
    * the moment the PR number is RESOLVED (open-or-reused, before the merge), so
@@ -329,6 +341,7 @@ export type LandingResult =
       mergeSha?: string;
       postMergeValidation?: LandingPostMergeValidation;
       deferred?: DeferredLandingTail;
+      custody?: { readonly prNumber: number; readonly outcome: "handed-off" };
     }
   | {
       ok: false;
@@ -506,6 +519,7 @@ export async function doLanding(
     await release?.();
   }
   if (!landed.ok) return landed;
+  if (landed.custody) return landed;
   if (landed.deferred) {
     const deferred = landed.deferred;
     return {
@@ -596,6 +610,21 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
       // #2986: the enqueue is not the merge. This budget owns the hold between
       // `--auto` exiting 0 and the forge reporting `merged: true`.
       mergeQueueWait: decorateMergeQueueWait(deps, input),
+      ...(deps.queueCustody
+        ? {
+            queueHandoff: (prNumber: number, armNativeIntent: () => Promise<{ ok: boolean; reason?: string }>) =>
+              deps.queueCustody!(
+                {
+                  repo: input.repo,
+                  prNumber,
+                  ownerTicket: input.issue,
+                  branch: input.branch,
+                  base: input.base,
+                },
+                armNativeIntent,
+              ),
+          }
+        : {}),
       // #3030: the confirmation's ONE repair for a PR the queue can never accept.
       // The pre-merge rebase worktree is already provisioned and already on this
       // branch, so the repair is the same integration step run once more against
@@ -643,6 +672,9 @@ async function landAdminPr(deps: LandingDeps, input: LandingInput): Promise<Land
         return {
           ok: true,
           locked: input.locked,
+          ...(result.custody && result.prNumber != null
+            ? { custody: { prNumber: result.prNumber, outcome: "handed-off" as const } }
+            : {}),
           ...(result.mergeSha ? { mergeSha: result.mergeSha } : {}),
           ...(postMergeValidation ? { postMergeValidation } : {}),
         };

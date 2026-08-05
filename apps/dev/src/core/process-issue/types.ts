@@ -59,6 +59,10 @@ import {
   type DeferredLandingTail,
   type LandingResult,
 } from "../landing.js";
+import type {
+  QueueCustodyHandoffResult,
+  QueueCustodyIdentity,
+} from "../queue-custodian.js";
 import { reconcile, type ReconcileInput } from "../reconcile.js";
 import { markProcessSafetyStep } from "../process-safety.js";
 import {
@@ -362,6 +366,11 @@ export interface ProcessIssueDeps {
   mergeQueueWait?: MergeQueueWaitInput;
   /** Slot-release boundary across the PR landing tail (#2427). */
   landingWait?: "merge" | "ci" | "none";
+  /** Durable native-queue hand-off; when present Landing arms and terminates. */
+  queueCustody?: (
+    identity: QueueCustodyIdentity,
+    armNativeIntent: () => Promise<{ readonly ok: boolean; readonly reason?: string }>,
+  ) => Promise<QueueCustodyHandoffResult>;
   /**
    * Shared tail observer. The call starts observation and returns the eventual
    * landing verdict; processIssue deliberately does not await it so the worker

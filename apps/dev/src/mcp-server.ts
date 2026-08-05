@@ -410,7 +410,10 @@ export async function main(
     return 2;
   }
   await dependencies.startCurator();
-  await dependencies.startMergeDriver();
+  // ADR 0136: the session-bound merge loop is retired. Native auto-merge holds
+  // the durable intent and the Queue Custodian invokes the merge-driver state
+  // machine only as a recovery arm after an observed ejection; opening an MCP
+  // session must not create a second watcher.
   // Started BEFORE the transport (#3014): its first pass is the session-boot
   // clearer, and it is detached inside, so a slow tracker delays no handshake.
   await dependencies.startUnblockSweep?.();

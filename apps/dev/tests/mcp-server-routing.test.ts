@@ -86,7 +86,7 @@ describe("dev:afk MCP entrypoint routing", () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
-  it("starts the issue curator in the castle resident before opening stdio", async () => {
+  it("starts the issue curator without reviving the retired session-bound merge driver", async () => {
     const calls: string[] = [];
 
     await expect(
@@ -103,7 +103,7 @@ describe("dev:afk MCP entrypoint routing", () => {
       }),
     ).resolves.toBe(0);
 
-    expect(calls).toEqual(["curator", "merge-driver", "connect"]);
+    expect(calls).toEqual(["curator", "connect"]);
   });
 
   // #3014: on a repo operated through live sessions only, the resident is the
@@ -133,7 +133,7 @@ describe("dev:afk MCP entrypoint routing", () => {
       }),
     ).resolves.toBe(0);
 
-    expect(calls).toEqual(["curator", "merge-driver", "unblock", "self-update", "connect"]);
+    expect(calls).toEqual(["curator", "unblock", "self-update", "connect"]);
   });
 
   it("awaits resident cleanup after the MCP transport closes", async () => {

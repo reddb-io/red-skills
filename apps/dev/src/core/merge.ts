@@ -1156,6 +1156,15 @@ export interface LandPrInput {
    */
   mergeQueue?: boolean;
   /**
+   * Queue Custodian hand-off (ADR 0136). When present on a native queue, this
+   * owns arming the supplied native intent and durably accepting custody. A
+   * successful hand-off ends Landing; no merge-confirmation poll is started.
+   */
+  queueHandoff?: (
+    prNumber: number,
+    armNativeIntent: () => Promise<{ readonly ok: boolean; readonly reason?: string }>,
+  ) => Promise<{ readonly ok: boolean; readonly reason?: string }>;
+  /**
    * Budget for the merge confirmation every landing ends with (#2986). Absent →
    * {@link waitForQueuedMerge}'s defaults, and with no injected clock a single
    * probe — enough to answer a synchronous merge, never enough to claim a queued
@@ -1212,6 +1221,8 @@ export interface LandPrResult {
   mergeSha?: string;
   /** Fresh green CI evidence observed immediately before merge, when usable. */
   ciEvidence?: CiGreenEvidence;
+  /** Native intent was armed and durable custody now owns the asynchronous tail. */
+  custody?: boolean;
   /** Set on `ok:false` — the distinct failure mode (#812). */
   reason?: LandPrFailReason;
   /** Set on `reason: "merge-failed"` — the OBSERVED rejection cause and the one
@@ -2117,6 +2128,38 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     const mergeArgs = ["gh", "-R", repo, "pr", "merge", String(prNumber), "--merge"];
     if (mergeQueue) mergeArgs.push("--auto");
     if (mergeTitle) mergeArgs.push("--subject", mergeTitle);
+    if (mergeQueue && input.queueHandoff) {
+      const custody = await input.queueHandoff(prNumber, async () => {
+        const rejected = await mergeWithStaleBranchRecovery(exec, {
+          repo,
+          gitRepo,
+          remote,
+          target,
+          prNumber,
+          mergeArgs,
+          ...(ciAwait ? { ciAwait } : {}),
+        });
+        return rejected == null
+          ? { ok: true }
+          : {
+              ok: false,
+              reason: rejected.mergeFailure?.summary ?? rejected.reason ?? "native merge intent was refused",
+            };
+      });
+      if (!custody.ok) {
+        return {
+          ok: false,
+          prNumber,
+          reason: "merge-failed",
+          mergeFailure: {
+            cause: "unknown",
+            summary: custody.reason ?? "the Queue Custodian could not arm native merge intent",
+            retryable: false,
+          },
+        };
+      }
+      return { ok: true, prNumber, custody: true };
+    }
     const rejected = await mergeWithStaleBranchRecovery(exec, {
       repo,
       gitRepo,
@@ -2197,6 +2240,15 @@ export async function landPr(exec: Exec, input: LandPrInput): Promise<LandPrResu
     }
     return mergeAfterCi(ciEvidence);
   };
+
+  // ADR 0136: a native queue with durable custody has no resident-owned tail.
+  // The legacy slot-release settings controlled where that tail detached; once
+  // custody owns it there is nothing to detach. Advisory review still concludes
+  // before the intent is armed, while freshness/CI belong to the queue itself.
+  if (mergeQueue && input.queueHandoff) {
+    if (waitForReview) await waitForReviewCheck(exec, repo, prNumber, waitForReview);
+    return mergeAfterCi();
+  }
 
   if (releaseAt === "none") {
     return {

@@ -1946,6 +1946,7 @@ export async function processIssue(
       ciAwait: deps.ciAwait,
       mergeQueueWait: deps.mergeQueueWait,
       landingWait: deps.landingWait,
+      queueCustody: deps.queueCustody,
       makeLandingWorktree: deps.makeLandingWorktree,
       removeLandingWorktree: deps.removeLandingWorktree,
       makeRebaseWorktree: deps.makeRebaseWorktree,
@@ -2111,6 +2112,25 @@ export async function processIssue(
       swept: true,
     };
   };
+  if (landing.ok && landing.custody) {
+    await releaseClaim();
+    deps.recordWorkerEvent?.("worker.landing_handed_off", {
+      issue,
+      pr_number: landing.custody.prNumber,
+      owner: "queue-custodian",
+    });
+    markTerminalState(deps, "done");
+    return {
+      outcome: "done",
+      issue,
+      branch: workerBranch,
+      base,
+      locked,
+      hooksFired,
+      preserved: true,
+      swept: false,
+    };
+  }
   if (landing.ok && landing.deferred) {
     const deferred = landing.deferred;
     if (!deps.landingTailObserver) {

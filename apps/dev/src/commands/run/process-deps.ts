@@ -61,6 +61,10 @@ import { resolveImplementerPluginRoots } from "../../runtime/implementer-environ
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { createWorkerLogLinePublisher } from "../../runtime/redskilled-worker-log.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
+import {
+  createFileQueueCustodyStore,
+  handoffQueueCustody,
+} from "../../core/queue-custodian.js";
 
 import type { CurrentAttempt } from "./attempt.js";
 import { deriveActivity } from "./activity.js";
@@ -129,6 +133,9 @@ export function buildProcessDeps({
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo, exec };
   const gitCtx: GitContext = { cwd: ctx.root, exec, ghProbeTimeoutMs: LANDING_GH_PROBE_TIMEOUT_MS };
   const paths = afkPaths(ctx.root);
+  const queueCustodyStore = createFileQueueCustodyStore(
+    join(ctx.root, ".red", "state", "afk", "queue-custody.toon"),
+  );
   // The same beat reaches the host here too (#3079); null when this Worker was
   // not born by the daemon, so a direct `run` publishes nothing.
   const publishHostLogLine = createWorkerLogLinePublisher({ root: ctx.root });
@@ -364,6 +371,14 @@ export function buildProcessDeps({
     waitForReview,
     ciAwait,
     landingWait,
+    queueCustody: (identity, armNativeIntent) => handoffQueueCustody(
+      {
+        store: queueCustodyStore,
+        now: () => new Date().toISOString(),
+        armNativeIntent,
+      },
+      identity,
+    ),
     landingTailObserver:
       landingWait === "merge"
         ? undefined
