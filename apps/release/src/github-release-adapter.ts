@@ -38,6 +38,28 @@ export interface GithubReleaseAdapter {
   uploadAsset(input: UploadReleaseAssetInput): Promise<void>;
 }
 
+export interface VersionPullRequestInput {
+  readonly base: string;
+  readonly head: string;
+  readonly title: string;
+  readonly body: string;
+}
+
+export interface VersionPullRequest {
+  readonly number: number;
+  readonly body: string;
+  readonly headCommit: string;
+  readonly merged: boolean;
+  readonly mergeCommit: string | null;
+}
+
+export interface ReleaseEngineGithub extends GithubReleaseAdapter {
+  upsertVersionPullRequest(
+    input: VersionPullRequestInput,
+  ): Promise<{ readonly number: number; readonly created: boolean }>;
+  findVersionPullRequest(number: number): Promise<VersionPullRequest | null>;
+}
+
 export interface CreateGithubReleaseAdapterOptions {
   readonly client: GithubClient;
   readonly owner: string;
@@ -57,20 +79,106 @@ const RELEASE_ASSET_UPLOAD: GithubAttributedOperation = {
   key: "release asset upload",
   budget: "rest",
 };
+const VERSION_PR_LIST: GithubAttributedOperation = {
+  key: "release version-pr list",
+  budget: "rest",
+};
+const VERSION_PR_CREATE: GithubAttributedOperation = {
+  key: "release version-pr create",
+  budget: "rest",
+};
+const VERSION_PR_UPDATE: GithubAttributedOperation = {
+  key: "release version-pr update",
+  budget: "rest",
+};
+const VERSION_PR_VIEW: GithubAttributedOperation = {
+  key: "release version-pr view",
+  budget: "rest",
+};
 
 /**
- * Adapt Release REST calls onto the house GitHub client so retries,
- * credentials, and durable request attribution stay at one transport boundary.
+ * Adapt Version-PR and Release REST calls onto the house GitHub client so
+ * retries, credentials, and durable attribution stay at one transport boundary.
  */
 export function createGithubReleaseAdapter(
   options: CreateGithubReleaseAdapterOptions,
-): GithubReleaseAdapter {
+): ReleaseEngineGithub {
   const owner = required(options.owner, "GitHub owner");
   const repository = required(options.repository, "GitHub repository");
   const actor = options.actor ?? "release-engine";
   const repositoryKey = `${owner}/${repository}`;
 
   return {
+    async upsertVersionPullRequest(input) {
+      const answer = await options.client.conditionalRest<unknown>({
+        cacheKey: `release-version-pr-list:${repositoryKey}:${input.base}:${input.head}`,
+        route: "GET /repos/{owner}/{repo}/pulls",
+        parameters: {
+          owner,
+          repo: repository,
+          state: "open",
+          base: input.base,
+          head: `${owner}:${input.head}`,
+          per_page: 2,
+        },
+        operation: VERSION_PR_LIST,
+        actor,
+      });
+      const existing = pullRequestList(answer.data);
+      if (existing.length > 1) {
+        throw new Error(`repository has multiple open Version PRs for ${input.head}`);
+      }
+      if (existing.length === 1) {
+        const pullRequest = existing[0]!;
+        const updated = await options.client.conditionalRest<unknown>({
+          cacheKey: `release-version-pr-update:${repositoryKey}:${pullRequest.number}`,
+          route: "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+          parameters: {
+            owner,
+            repo: repository,
+            pull_number: pullRequest.number,
+            title: input.title,
+            body: input.body,
+          },
+          operation: VERSION_PR_UPDATE,
+          actor,
+        });
+        return { number: pullRequestFrom(updated.data).number, created: false };
+      }
+
+      const created = await options.client.conditionalRest<unknown>({
+        cacheKey: `release-version-pr-create:${repositoryKey}:${input.head}`,
+        route: "POST /repos/{owner}/{repo}/pulls",
+        parameters: {
+          owner,
+          repo: repository,
+          title: input.title,
+          body: input.body,
+          head: input.head,
+          base: input.base,
+        },
+        operation: VERSION_PR_CREATE,
+        actor,
+      });
+      return { number: pullRequestFrom(created.data).number, created: true };
+    },
+
+    async findVersionPullRequest(number) {
+      try {
+        const answer = await options.client.conditionalRest<unknown>({
+          cacheKey: `release-version-pr:${repositoryKey}:${number}`,
+          route: "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+          parameters: { owner, repo: repository, pull_number: number },
+          operation: VERSION_PR_VIEW,
+          actor,
+        });
+        return pullRequestFrom(answer.data);
+      } catch (error) {
+        if (httpStatus(error) === 404) return null;
+        throw error;
+      }
+    },
+
     async findByTag(tag): Promise<PublishedRelease | null> {
       try {
         const answer = await options.client.conditionalRest<unknown>({
@@ -126,6 +234,37 @@ export function createGithubReleaseAdapter(
         actor,
       });
     },
+  };
+}
+
+function pullRequestList(value: unknown): Array<{ readonly number: number }> {
+  if (!Array.isArray(value)) throw new Error("GitHub returned an invalid Version PR list");
+  return value.map((item) => {
+    if (!isRecord(item) || !positiveInteger(item.number)) {
+      throw new Error("GitHub returned an invalid Version PR list");
+    }
+    return { number: item.number };
+  });
+}
+
+function pullRequestFrom(value: unknown): VersionPullRequest {
+  if (!isRecord(value) || !positiveInteger(value.number) || !isRecord(value.head)) {
+    throw new Error("GitHub returned an invalid Version PR payload");
+  }
+  if (typeof value.body !== "string" || typeof value.head.sha !== "string" ||
+      typeof value.merged !== "boolean") {
+    throw new Error("GitHub returned an invalid Version PR payload");
+  }
+  const mergeCommit = value.merge_commit_sha;
+  if (mergeCommit !== null && typeof mergeCommit !== "string") {
+    throw new Error("GitHub returned an invalid Version PR merge commit");
+  }
+  return {
+    number: value.number,
+    body: value.body,
+    headCommit: value.head.sha,
+    merged: value.merged,
+    mergeCommit,
   };
 }
 
