@@ -2,8 +2,8 @@
  * package-vsix — collect the shipped files and write the installable archive.
  *
  * Run through `pnpm -C apps/vscode-extension-red-skills package`, which builds `out/`
- * first. It writes to the repo's gitignored `dist/`, and `red-publish` attaches
- * that file to every GitHub Release (issue #3060). It still **never publishes to
+ * first. It writes to the repo's gitignored `dist/` for direct installation.
+ * It still **never publishes to
  * a marketplace**: that is not a destination this repo has, and a script that
  * could push there is one an accident can run. A release asset is the opposite
  * shape — nothing is pushed anywhere, and the file is downloaded by whoever wants
