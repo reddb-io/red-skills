@@ -990,13 +990,30 @@ export const VALIDATION_MOMENTS = ["iteration", "post_done", "landing"] as const
 export type ValidationMoment = (typeof VALIDATION_MOMENTS)[number];
 export const SUBSECOND_BRANCH_FAULT_KEY = "subsecond_failures_are_branch_fault" as const;
 
+export interface GeneratedSurfaceDeclaration {
+  readonly paths: readonly string[];
+  readonly command: string;
+}
+
+export const GeneratedSurfaceDeclarationSchema = z.object({
+  paths: z.array(z.string().min(1)).min(1),
+  command: z.string().min(1),
+});
+
 export const ValidationMomentsSchema = z.object({
   iteration: z.array(z.string()).optional(),
   post_done: z.array(z.string()).optional(),
   landing: z.array(z.string()).optional(),
   subsecondFailuresAreBranchFault: z.boolean().optional(),
+  generated: GeneratedSurfaceDeclarationSchema.optional(),
 });
-export type ValidationMoments = z.infer<typeof ValidationMomentsSchema>;
+export interface ValidationMoments {
+  iteration?: string[];
+  post_done?: string[];
+  landing?: string[];
+  subsecondFailuresAreBranchFault?: boolean;
+  generated?: GeneratedSurfaceDeclaration;
+}
 
 function validateValidationMomentShapes(values: ConfigValues, mappingContainers: ReadonlySet<string>): void {
   for (const root of ["afk.validation", "plugins.dev.afk.validation"]) {
@@ -1020,6 +1037,39 @@ function validateValidationMomentShapes(values: ConfigValues, mappingContainers:
     ) {
       throw new MalformedConfigError(`invalid config shape: \`${declarationKey}\` must be a boolean`);
     }
+
+    const generatedRoot = `${root}.generated`;
+    const generatedKeys = Object.keys(values).filter((candidate) => candidate.startsWith(`${generatedRoot}.`));
+    const generatedDeclared = mappingContainers.has(generatedRoot) || generatedKeys.length > 0;
+    if (!generatedDeclared) continue;
+
+    const commandKey = `${generatedRoot}.command`;
+    const command = values[commandKey];
+    if (!command || command.trim() === "" || Object.keys(values).some((key) => key.startsWith(`${commandKey}.`))) {
+      throw new MalformedConfigError(`invalid config shape: \`${commandKey}\` must be a non-empty string`);
+    }
+
+    const pathsKey = `${generatedRoot}.paths`;
+    const pathKeys = Object.keys(values).filter((candidate) => candidate.startsWith(`${pathsKey}.`));
+    const paths = pathKeys
+      .filter((candidate) => /^\d+$/.test(candidate.slice(pathsKey.length + 1)))
+      .sort((a, b) => Number(a.slice(pathsKey.length + 1)) - Number(b.slice(pathsKey.length + 1)));
+    const pathsAreContiguous = paths.every((key, index) => key === `${pathsKey}.${index}`);
+    if (
+      values[pathsKey] !== undefined ||
+      paths.length === 0 ||
+      paths.length !== pathKeys.length ||
+      !pathsAreContiguous ||
+      paths.some((key) => values[key]?.trim() === "")
+    ) {
+      throw new MalformedConfigError(`invalid config shape: \`${pathsKey}\` must be a non-empty ordered list`);
+    }
+
+    const allowed = new Set([commandKey, ...paths]);
+    const unknown = generatedKeys.find((key) => !allowed.has(key));
+    if (unknown) {
+      throw new MalformedConfigError(`invalid config shape: unsupported generated-surface key \`${unknown}\``);
+    }
   }
 }
 
@@ -1037,6 +1087,19 @@ function readValidationMoment(values: ConfigValues, moment: ValidationMoment): s
   return values[prefix]?.trim() === "[]" ? [] : undefined;
 }
 
+function readGeneratedSurfaceDeclaration(values: ConfigValues): GeneratedSurfaceDeclaration | undefined {
+  const prefix = "afk.validation.generated.paths";
+  const paths: string[] = [];
+  for (let i = 0; ; i++) {
+    const path = values[`${prefix}.${i}`];
+    if (path === undefined) break;
+    paths.push(path);
+  }
+  const command = values["afk.validation.generated.command"];
+  if (paths.length === 0 || command === undefined) return undefined;
+  return GeneratedSurfaceDeclarationSchema.parse({ paths, command });
+}
+
 /** Read the operator-declared Validation moment schedule (ADR 0135). */
 export function readValidationMoments(values: ConfigValues): ValidationMoments {
   const schedule = Object.fromEntries(
@@ -1050,6 +1113,8 @@ export function readValidationMoments(values: ConfigValues): ValidationMoments {
   if (subsecondDeclaration !== undefined) {
     schedule.subsecondFailuresAreBranchFault = subsecondDeclaration === "true";
   }
+  const generated = readGeneratedSurfaceDeclaration(values);
+  if (generated) schedule.generated = generated;
 
   return ValidationMomentsSchema.parse(schedule);
 }

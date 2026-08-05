@@ -77,6 +77,7 @@ import { buildFsPort } from "./ports/fs.js";
 import { buildHooks } from "./ports/hooks.js";
 import { buildEnvelopePort } from "./ports/envelope.js";
 import { buildLookups } from "./ports/lookups.js";
+import { makeMechanicalRegenerator } from "./ports/mechanical-regeneration.js";
 import { realDirectoryProbe } from "../../core/validation-command.js";
 import {
   castleWorktreeUnder,
@@ -324,6 +325,7 @@ export function buildProcessDeps({
     requireBranchReversionSafety: true,
     validationResourceBudget: readValidationResourceBudget(config),
     validationMoments,
+    mechanicalRegenerate: makeMechanicalRegenerator(() => current.attemptDir, exec),
     // The gate's proof that a declared validation worktree is really there
     // (#3041): a landing worktree that vanished refuses as an infrastructure
     // error instead of composing commands against a path that resolves nowhere.
