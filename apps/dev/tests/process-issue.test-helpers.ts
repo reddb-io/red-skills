@@ -93,6 +93,14 @@ export interface Trace {
   /** Every `lookups.worktreeDiff` read the review stage made (#2730). */
   worktreeDiffCalls: Array<{ branch: string; base: string }>;
   baseMovementCalls: Array<{ baseRef: string; sinceSha: string }>;
+  mechanicalRegenerations: Array<{
+    issue: number;
+    branch: string;
+    baseRef: string;
+    remote: string;
+    paths: readonly string[];
+    command: string;
+  }>;
   /** Raw pnpm argv vectors emitted by the feedback/backpressure fakes. */
   pnpmArgs: string[][];
   /** Operator-declared shell commands emitted by feedback/backpressure stages. */
@@ -211,7 +219,7 @@ export interface HarnessOptions {
    * Absent → no probe at all, and every gate failure stays branch-fault exactly
    * as it did before the drift accounting existed.
    */
-  baseMovements?: Array<{ head: string; subjects: string[] }>;
+  baseMovements?: Array<{ head: string; subjects: string[]; files?: string[] }>;
   changedFilesByBase?: Record<string, string[]>;
   packageScopes?: string[];
   /** FIX E: result of the worker-branch presence check. Defaults to true
@@ -353,6 +361,7 @@ export function harness(opts: HarnessOptions = {}): {
     cascadeRebaseAttempts: [],
     changedFileCalls: [],
     baseMovementCalls: [],
+    mechanicalRegenerations: [],
     pnpmArgs: [],
     shellCommands: [],
     handoffs: [],
@@ -845,7 +854,7 @@ export function harness(opts: HarnessOptions = {}): {
               trace.baseMovementCalls.push({ baseRef, sinceSha });
               const seq = opts.baseMovements!;
               const idx = trace.baseMovementCalls.length - 1;
-              return seq[idx] ?? seq.at(-1) ?? { head: sinceSha, subjects: [] };
+              return seq[idx] ?? seq.at(-1) ?? { head: sinceSha, subjects: [], files: [] };
             },
           }
         : {}),

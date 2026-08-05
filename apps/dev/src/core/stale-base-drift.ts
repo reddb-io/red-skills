@@ -10,6 +10,8 @@ export interface BaseMovement {
   readonly gateSha: string;
   /** Subjects of commits gained in between, oldest to newest. */
   readonly subjects: readonly string[];
+  /** Repository-relative paths changed by the gained base commits. */
+  readonly files?: readonly string[];
 }
 
 /** Missing or incomplete evidence never invents movement. */

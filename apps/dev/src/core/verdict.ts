@@ -7,6 +7,8 @@
 // affect, and whether the branch must park now.
 
 import type { ClassifiableCheck } from "./feedback.js";
+import type { GeneratedSurfaceDeclaration } from "./config.js";
+import { onlyGeneratedPaths } from "./generated-surfaces.js";
 import { VALIDATION_TARGET_MISSING_MARKER } from "./validation-command.js";
 import { baseMoved, type BaseMovement } from "./stale-base-drift.js";
 
@@ -63,11 +65,21 @@ export type VerdictParkReason =
   | "environment-exhausted"
   | "branch-exhausted";
 
+export type VerdictRemediation =
+  | { readonly kind: "mechanical-regeneration"; readonly declaration: GeneratedSurfaceDeclaration }
+  | { readonly kind: "mechanical-regeneration-skipped"; readonly reason: "undeclared" }
+  | {
+      readonly kind: "agent-correction";
+      readonly reason: "mixed-drift" | "mechanical-regeneration-failed";
+      readonly evidence?: string;
+    };
+
 export interface Verdict {
   readonly fault: VerdictFault;
   readonly budgetEffect: VerdictBudgetEffect;
   readonly parkNow: boolean;
   readonly parkReason?: VerdictParkReason;
+  readonly remediation?: VerdictRemediation;
   readonly reason: string;
 }
 
@@ -83,6 +95,8 @@ export interface VerdictInput {
     readonly movement?: BaseMovement;
     /** Explicit repository declaration beside the Validation moments. */
     readonly subsecondFailuresAreBranchFault?: boolean;
+    readonly generated?: GeneratedSurfaceDeclaration;
+    readonly mechanicalHealFailure?: string;
   };
 }
 
@@ -146,12 +160,53 @@ function environmentCauseOf(fault: VerdictFault): EnvironmentCause | undefined {
   return fault.kind === "branch" ? undefined : fault.cause;
 }
 
+function remediationFor(input: VerdictInput, fault: VerdictFault): VerdictRemediation | undefined {
+  if (fault.kind !== "base") return undefined;
+  if (input.environment.mechanicalHealFailure !== undefined) {
+    return {
+      kind: "agent-correction",
+      reason: "mechanical-regeneration-failed",
+      evidence: input.environment.mechanicalHealFailure,
+    };
+  }
+  const declaration = input.environment.generated;
+  if (!declaration) return { kind: "mechanical-regeneration-skipped", reason: "undeclared" };
+  if (onlyGeneratedPaths(input.environment.movement?.files ?? [], declaration.paths)) {
+    return { kind: "mechanical-regeneration", declaration };
+  }
+  return { kind: "agent-correction", reason: "mixed-drift" };
+}
+
 /**
  * Decide one failed round. Environment attribution is sticky: exhaustion can
  * only park that environment fault, never transmute it into branch blame.
  */
 export function decideVerdict(input: VerdictInput): Verdict {
   const fault = faultFor(input);
+  const remediation = remediationFor(input, fault);
+  if (remediation?.kind === "agent-correction") {
+    if (!input.history.branchBudgetAvailable) {
+      return {
+        fault,
+        remediation,
+        budgetEffect: { kind: "none" },
+        parkNow: true,
+        parkReason: "branch-exhausted",
+        reason: remediation.reason === "mixed-drift"
+          ? "mixed stale-base drift requires an agent correction, but the branch repair budget is exhausted"
+          : `mechanical regeneration failed and requires an agent correction, but the branch repair budget is exhausted: ${remediation.evidence ?? "no evidence"}`,
+      };
+    }
+    return {
+      fault,
+      remediation,
+      budgetEffect: { kind: "charge-branch" },
+      parkNow: false,
+      reason: remediation.reason === "mixed-drift"
+        ? "mixed stale-base drift requires one agent correction"
+        : `mechanical regeneration failed; falling through to agent correction with evidence: ${remediation.evidence ?? "no evidence"}`,
+    };
+  }
   const cause = environmentCauseOf(fault);
   if (cause === undefined) {
     if (!input.history.branchBudgetAvailable) {
@@ -185,6 +240,7 @@ export function decideVerdict(input: VerdictInput): Verdict {
   if (signature !== "" && previous?.signature === signature) {
     return {
       fault,
+      ...(remediation ? { remediation } : {}),
       budgetEffect: { kind: "none" },
       parkNow: true,
       parkReason: "repeated-signature",
@@ -194,6 +250,7 @@ export function decideVerdict(input: VerdictInput): Verdict {
   if (ledger.rounds.length >= ledger.cap) {
     return {
       fault,
+      ...(remediation ? { remediation } : {}),
       budgetEffect: { kind: "none" },
       parkNow: true,
       parkReason: "environment-exhausted",
@@ -207,6 +264,7 @@ export function decideVerdict(input: VerdictInput): Verdict {
   };
   return {
     fault,
+    ...(remediation ? { remediation } : {}),
     budgetEffect: { kind: "consume-environment", ledger: nextLedger },
     parkNow: false,
     reason: `${narration} consumed environment round ${nextLedger.rounds.length}/${nextLedger.cap}`,

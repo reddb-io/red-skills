@@ -1807,6 +1807,123 @@ describe("processIssue — stale-base drift never spends the correction budget (
   });
 });
 
+describe("processIssue — generated stale-base drift heals mechanically (#3352)", () => {
+  const generated = {
+    paths: ["packaging/pi/**"],
+    command: "pnpm version:sync && pnpm pi:packages:build",
+  } as const;
+
+  function declareGeneratedGate(deps: ProcessIssueDeps, results: readonly boolean[]): void {
+    deps.validationMoments = { post_done: ["pnpm generated:check"], generated };
+    let call = 0;
+    deps.backpressure = async () => {
+      const ok = results[call] ?? results.at(-1) ?? true;
+      call += 1;
+      return { code: ok ? 0 : 1, stdout: ok ? "" : "generated mirror stale", stderr: "" };
+    };
+  }
+
+  it("merges, regenerates, commits, and re-validates with zero agent iterations", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      reseedGateBudget: 1,
+      baseMovements: [{
+        head: "bumped",
+        subjects: ["chore(release): version packages"],
+        files: ["packaging/pi/dev/package.json"],
+      }],
+    });
+    declareGeneratedGate(deps, [false, true]);
+    deps.mechanicalRegenerate = async (request) => {
+      trace.mechanicalRegenerations.push(request);
+      return { ok: true, evidence: "merged base; generator passed; committed and pushed" };
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(1);
+    expect(trace.mechanicalRegenerations).toEqual([expect.objectContaining({
+      branch: "afk/9-fix-the-thing",
+      command: generated.command,
+      paths: generated.paths,
+    })]);
+    expect(trace.workerEvents).toContainEqual(expect.objectContaining({
+      kind: "worker.mechanical_regeneration_cure",
+      payload: expect.objectContaining({ free: true, cycle: 1 }),
+    }));
+  });
+
+  it("routes mixed drift to an agent correction without invoking the generator", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      reseedGateBudget: 1,
+      baseMovements: [{
+        head: "mixed",
+        subjects: ["fix: base changed code and mirrors"],
+        files: ["packaging/pi/dev/package.json", "apps/dev/src/core/verdict.ts"],
+      }],
+    });
+    declareGeneratedGate(deps, [false, true]);
+    deps.mechanicalRegenerate = async (request) => {
+      trace.mechanicalRegenerations.push(request);
+      return { ok: true, evidence: "should not run" };
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.mechanicalRegenerations).toEqual([]);
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("mixed stale-base drift");
+  });
+
+  it("skips the undeclared cure loudly", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      reseedGateBudget: 1,
+      baseMovements: [{
+        head: "bumped",
+        subjects: ["chore(release): version packages"],
+        files: ["packaging/pi/dev/package.json"],
+      }],
+    });
+    deps.validationMoments = { post_done: ["pnpm generated:check"] };
+    let call = 0;
+    deps.backpressure = async () => ({ code: call++ === 0 ? 1 : 0, stdout: "", stderr: "" });
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.iterLogs.some((line) => line.includes("mechanical regeneration skipped: undeclared"))).toBe(true);
+    expect(trace.mechanicalRegenerations).toEqual([]);
+  });
+
+  it("falls through to agent correction with failed-heal evidence", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      reseedGateBudget: 1,
+      baseMovements: [{
+        head: "bumped",
+        subjects: ["chore(release): version packages"],
+        files: ["packaging/pi/dev/package.json"],
+      }],
+    });
+    declareGeneratedGate(deps, [false, true]);
+    deps.mechanicalRegenerate = async (request) => {
+      trace.mechanicalRegenerations.push(request);
+      return { ok: false, evidence: "generator exited 1: mirror source missing" };
+    };
+
+    const result = await processIssue(deps, input);
+
+    expect(result.outcome).toBe("done");
+    expect(trace.runAgentCalls).toHaveLength(2);
+    expect(trace.runAgentCalls[1]?.handoffContent).toContain("generator exited 1: mirror source missing");
+    expect(trace.iterLogs.some((line) => line.includes("mechanical regeneration failed"))).toBe(true);
+  });
+});
+
 describe("processIssue — an empty-diff DONE is never stale-base drift (#2711)", () => {
   it("charges the empty-diff rejection to the branch even while the base is moving", async () => {
     const { deps, input, trace } = harness({

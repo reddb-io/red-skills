@@ -108,6 +108,7 @@ import type { AttemptStatus } from "../envelope.js";
 import type { Runner } from "../../types/runner.js";
 import { runnerSupportsStructuredOutput, toAgentRunner } from "../runner-spec.js";
 import type { HistoryClock } from "../history.js";
+import type { MechanicalRegenerator } from "../generated-surfaces.js";
 import { DEFAULT_GO_VERIFY_RETRIES, LABEL_GO_LANE } from "../go.js";
 import { setActiveClaimFinalizer } from "../process-safety.js";
 import type {
@@ -229,7 +230,11 @@ export interface ProcessLookups {
    * instead of charging it to the correction budget. Optional: absent, every
    * gate failure stays `branch-fault`, exactly as before.
    */
-  baseMovement?(baseRef: string, sinceSha: string): Promise<{ head: string; subjects: string[] }>;
+  baseMovement?(baseRef: string, sinceSha: string): Promise<{
+    head: string;
+    subjects: string[];
+    files?: string[];
+  }>;
   branchPresent?(branch: string): Promise<boolean>;
   branchMerged?(branch: string, base: string): Promise<boolean>;
   /** Discover all remote afk/* branches (issue #2397). Used to detect a prior
@@ -310,6 +315,8 @@ export interface ProcessIssueDeps {
   validationResourceBudget?: { nodeMaxOldSpaceMb?: number; vitestMaxWorkers?: number };
   /** Resolved declaration schedule; lifecycle consumption lands in the dependent slice. */
   validationMoments?: ValidationMoments;
+  /** Mechanical stale-base cure selected by Verdict for generated-only drift. */
+  mechanicalRegenerate?: MechanicalRegenerator;
   /**
    * Directory probe the gate uses to PROVE a declared validation worktree
    * exists (#3041). Wired to the real filesystem in production; absent in a
