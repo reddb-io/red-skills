@@ -102,13 +102,13 @@ if checkout_version is not None:
 
 # The plugin states its version twice — here, and in the package.json the release
 # train bumps. Nothing compared them, which is how the manifest sat at 0.1.0
-# while the package said 0.1.11 (issue #3082). scripts/sync-version.mjs writes
-# both from the product version; this refuses the pair that disagrees.
+# while the package said 0.1.11 (issue #3082). The Release standard writes both
+# from the product version; this refuses the pair that disagrees.
 package_version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
 check(
     package_version == manifest["version"],
     f"package.json is {package_version!r} but the manifest is {manifest['version']!r} "
-    "(run `pnpm version:sync`)",
+    "(repair through the Release-standard Version-PR)",
 )
 
 if failures:
