@@ -1,5 +1,17 @@
 # @reddb-io/dev
 
+## 3.7.1
+
+### Patch Changes
+
+- 8eeb9db: Fix the AFK engine's push/re-park chain: an attempt-branch push rejected non-fast-forward now reconciles with --force-with-lease under claim ownership instead of parking; the push-failed blocker names the real cause (divergence vs access); requeue guidance can no longer evaporate on the adopt fast-path; and an identical-signature re-park within a short window escalates as a detected loop instead of rebirthing workers forever.
+  - @reddb-io/github@3.7.1
+  - @reddb-io/shared@3.7.1
+  - @reddb-io/build-info@3.7.1
+  - @reddb-io/red-castle@3.7.1
+  - @reddb-io/redskilled@3.7.1
+  - @reddb-io/redskilled-render@3.7.1
+
 ## 3.7.0
 
 ### Minor Changes

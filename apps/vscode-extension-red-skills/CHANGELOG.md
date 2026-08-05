@@ -1,5 +1,14 @@
 # vscode-extension-red-skills
 
+## 3.7.1
+
+### Patch Changes
+
+- @reddb-io/shared@3.7.1
+- @reddb-io/brand-tokens@3.7.1
+- @reddb-io/redskilled@3.7.1
+- @reddb-io/redskilled-render@3.7.1
+
 ## 3.7.0
 
 ### Patch Changes
