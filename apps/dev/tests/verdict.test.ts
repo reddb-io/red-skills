@@ -110,7 +110,7 @@ describe("decideVerdict — one fault, budget effect, and park decision", () => 
     } as const;
     const generated = {
       paths: ["packaging/pi/**"],
-      command: "pnpm version:sync && pnpm pi:packages:build",
+      command: "pnpm generate-manifests && pnpm pi:packages:build",
     } as const;
     const input = {
       checks: [failedCheck()],
