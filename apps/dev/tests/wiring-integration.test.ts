@@ -383,7 +383,6 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
       },
       { cmd: "gh", args: ["issue", "view", "42", "--repo", "acme/widgets", "--json", "comments"], cwd: root },
       { cmd: "gh", args: ["api", "repos/acme/widgets/issues/42"], cwd: root },
-      { cmd: "git", args: ["fetch", "origin", "main"], cwd: root },
       { cmd: "git", args: ["-C", root, "push", "origin", `${branch}:refs/heads/${branch}`], cwd: root },
       { cmd: "git", args: ["-C", root, "merge", "--ff-only", "origin/main"], cwd: root },
       { cmd: "git", args: ["rev-parse", "--short", "HEAD"], cwd: root },
