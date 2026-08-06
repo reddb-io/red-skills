@@ -14,6 +14,7 @@ import { HOST_RECONCILE_PORTS } from "../src/core/reconcile-ports.js";
 import { DEFAULT_TRIAGE_LABELS } from "../src/core/triage-labels.js";
 import { upsertCurrentBlocker } from "../src/core/blocker-state.js";
 import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
+import { githubMergeReadFromExec } from "./support/github-merge-read.js";
 
 // Everything injected is a fake — no real gh / git / pnpm / fs ever runs. The
 // harness records the side-effect sequence (label edits, comments, close, sweep,
@@ -287,7 +288,6 @@ function harness(opts: HarnessOptions = {}): {
     makeRebaseWorktree: async () => "/rwt",
     removeRebaseWorktree: async () => {},
     nowEpoch: () => (nowEpoch += 1000),
-    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     appendIterLog: (line) => {
       trace.iterLogs.push(line);
     },
@@ -313,6 +313,9 @@ function harness(opts: HarnessOptions = {}): {
     runner: "claude",
   };
 
+  if (opts.ciAware) {
+    deps.ciAwait = { github: githubMergeReadFromExec(deps.mergeExec), sleep: async () => {}, maxPolls: 2 };
+  }
   return { deps, input, trace };
 }
 

@@ -17,6 +17,7 @@ import { installProcessSafety, noopSafetyLogger } from "../src/core/process-safe
 import type { AdversarialReviewFindings } from "../src/core/adversarial-review.js";
 import type { LandLock } from "../src/core/land-lock.js";
 import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
+import { githubMergeReadFromExec } from "./support/github-merge-read.js";
 
 export {
   SCOUT_EXIT_PROTOCOL,
@@ -758,7 +759,6 @@ export function harness(opts: HarnessOptions = {}): {
     worktreeLaunchesPr: opts.worktreeLaunchesPr ?? !(opts.locked ?? false),
     reviewGate: opts.reviewGate,
     reviewGateLabel: "ready-for-review",
-    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     // #2986: always injected so no queue landing under test reaches a real timer.
     mergeQueueWait: { sleep: async () => {}, maxPolls: 3 },
     fallbackRunner: opts.fallbackRunner ?? false,
@@ -950,6 +950,9 @@ export function harness(opts: HarnessOptions = {}): {
     laneLabel: opts.laneLabel,
   };
 
+  if (opts.ciAware) {
+    deps.ciAwait = { github: githubMergeReadFromExec(deps.mergeExec), sleep: async () => {}, maxPolls: 2 };
+  }
   return { deps, input, trace };
 }
 

@@ -60,6 +60,7 @@ import { createActivityMeter } from "../../core/activity-meter.js";
 import { resolveImplementerPluginRoots } from "../../runtime/implementer-environment.js";
 import { createCastleWorkerLaneBridge } from "../../core/castle-worker-lane-bridge.js";
 import { createWorkerLogLinePublisher } from "../../runtime/redskilled-worker-log.js";
+import { createDevGithubMergeRead } from "../../runtime/github-merge-read.js";
 import { makeStaleClaimPredicate, resolveClaimStalenessConfig } from "../../core/claim-staleness.js";
 import {
   createFileQueueCustodyStore,
@@ -189,6 +190,8 @@ export function buildProcessDeps({
     configured: getConfig(config, "afk.sandbox_image"),
     envOverride: process.env.RED_AFK_SANDBOX_IMAGE,
   });
+  let githubMergeRead: ReturnType<typeof createDevGithubMergeRead> | undefined;
+  const routedGithub = () => githubMergeRead ??= createDevGithubMergeRead(ctx.root, `worker:${workerId}`);
 
   // Merge-gate policy (ADR 0048). Default off → the unlocked admin-merge ignores
   // advisory review checks (drift-guard + in-process backpressure stay the
@@ -199,6 +202,7 @@ export function buildProcessDeps({
     getConfig(config, "afk.merge.wait_for_review") === "true"
       ? {
           check: getConfig(config, "afk.merge.review_check") || "CodeRabbit",
+          github: routedGithub(),
           sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
           probeTimeoutMs: LANDING_GH_PROBE_TIMEOUT_MS,
         }
@@ -221,6 +225,7 @@ export function buildProcessDeps({
   const ciAwait =
     getConfig(config, "afk.merge.ci_aware") === "true" || landingWait !== "merge"
       ? {
+          github: routedGithub(),
           sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
           intervalMs: 10_000,
           maxPolls: Math.max(1, Math.ceil(resolveCiTimeoutSeconds(process.env) / 10)),
