@@ -53,14 +53,28 @@ import { resolveProjectLabel } from "./redskilled-birth.js";
 export const REDSKILLED_HOST_WORKER_ID_ENV = "REDSKILLED_WORKER_ID";
 
 /**
- * Where a registration-lane Worker's output goes, as a template. PURE.
+ * Where a Worker's output goes, as a template — WHATEVER ITS ORIGIN. PURE.
  *
- * `{{worker_id}}` is the daemon's own fact, so one registration serves every
+ * `{{worker_id}}` is the daemon's own fact, so one declaration serves every
  * Worker it ever births and no two of them are handed one file. This is the
  * Worker's disposable structured lane (ADR 0098), so a reader never has to guess
  * between a dated process capture and the lifecycle log.
+ *
+ * **One namer, because two namers were two lanes** (#3440). `/afk` registered
+ * this path while `/go` stamped a dated plain-text file of its own under
+ * `.red/tmp/logs/`, so the same Worker shape reached observability in two
+ * formats depending on who asked for it. Provenance is a stamp on the worker
+ * state — `origin=go`, `current.kind=go` — never a directory name, so nothing
+ * about telling the two apart depends on where the bytes land.
+ *
+ * **Undated on purpose.** The template used to take a `date` it did not read, a
+ * fossil of the migration away from date partitioning. A path resolved against
+ * the day a long-held registration was BORN is a path that ages — this project's
+ * registration has been renewed over 23,900 times — and the Worker that died on
+ * 2026-08-06 named a date-dir from 2026-08-05 that the janitor was already
+ * reclaiming.
  */
-export function registrationLogPathTemplate(root: string, _date: string): string {
+export function workerLogPathTemplate(root: string): string {
   return join(workersDir(root), RED_AFK_WORKER_ID_PLACEHOLDER, "worker.log.toonl");
 }
 
