@@ -146,15 +146,15 @@ export function describeToleratedDirt(tree: DirtyTreeClassification): string {
   return `tolerated ${tree.dirty.length} dirty path(s) after collision check (${renderDirtyPathList(tree.dirty.map((entry) => entry.path))})`;
 }
 
-/** The `.red/tmp/` lane a superseded setup-owned file is moved to, never deleted:
- * the local copy is replaced by a tracked one, and the operator can still diff. */
-export const SUPERSEDED_SETUP_DIRT_LANE = ".red/tmp/superseded-setup-dirt";
+/** The backup lane for superseded untracked dirt. Its legacy name stays stable
+ * so existing backups and cleanup classification remain valid. */
+export const SUPERSEDED_DIRT_LANE = ".red/tmp/superseded-setup-dirt";
 
 /**
  * How dirty primary-checkout paths meet the commits that are about to land.
  * Only paths the incoming commits actually touch can block the merge.
  */
-export interface SetupDirtCollision {
+export interface DirtCollision {
   /** Untracked locally, tracked in the incoming commits — the local copy is stale by definition. */
   readonly superseded: readonly string[];
   /** Tracked and locally edited, and the incoming commits touch it too — real content, never moved. */
@@ -166,10 +166,10 @@ export interface SetupDirtCollision {
  * exactly the test `git merge --ff-only` performs a moment later, run early so
  * the verdict and the merge can never disagree (#3155).
  */
-export function classifySetupDirtCollision(
+export function classifyDirtCollision(
   tree: DirtyTreeClassification,
   incomingPaths: readonly string[],
-): SetupDirtCollision {
+): DirtCollision {
   const incoming = new Set(incomingPaths);
   const superseded: string[] = [];
   const conflicting: string[] = [];
@@ -183,20 +183,20 @@ export function classifySetupDirtCollision(
 }
 
 /** The evidence for dirt the guard moved aside so the fast-forward could land. */
-export function describeSupersededSetupDirt(paths: readonly string[]): string {
-  return `superseded ${paths.length} untracked /red-setup file(s) now tracked upstream (${renderDirtyPathList(paths)}) — backed up under ${SUPERSEDED_SETUP_DIRT_LANE}/`;
+export function describeSupersededDirt(paths: readonly string[]): string {
+  return `superseded ${paths.length} untracked dirty path(s) now tracked upstream (${renderDirtyPathList(paths)}) — backed up under ${SUPERSEDED_DIRT_LANE}/`;
 }
 
 /**
  * The honest refusal for the half that cannot be resolved: the operator's own
- * edit to a now-tracked setup file. Names the blocking path and the repair, so
+ * edit to a tracked file. Names the blocking path and the repair, so
  * the verdict reads the way the aborted merge would have.
  */
-export function describeSetupDirtCollisionRefusal(
+export function describeDirtCollisionRefusal(
   paths: readonly string[],
   ref: string,
 ): string {
-  return `condition failed: dirt-collision (${paths.length} locally-modified tolerated path(s) also changed by ${ref}: ${renderDirtyPathList(paths)}) — commit or stash them, then the fast-forward can land`;
+  return `condition failed: dirt-collision (${paths.length} tracked dirty path(s) also changed by ${ref}: ${renderDirtyPathList(paths)}) — commit or stash them, then the fast-forward can land`;
 }
 
 /**
