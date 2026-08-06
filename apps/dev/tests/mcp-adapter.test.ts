@@ -68,6 +68,7 @@ function granted(pid: number): DispatchedWorkerBirth {
   return {
     worker_id: "wHOST",
     pid,
+    fork_sha: "granted-fork-sha",
     log: join("/repo", ".red", "tmp", "logs", "2026-08-01", "dispatch-test.log"),
     warnings: [],
     admission: "within the host ceiling",
