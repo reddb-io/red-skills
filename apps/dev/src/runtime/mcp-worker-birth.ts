@@ -19,9 +19,6 @@
 // bundle nor the spawn is decided here. What it owns is the one translation the
 // dispatch needs — an engine argv becomes a host worker spec.
 
-import { randomUUID } from "node:crypto";
-import { join } from "node:path";
-import { logsDir } from "@reddb-io/shared/red-paths.js";
 import type { RedskilledClientConfig } from "@reddb-io/redskilled/client";
 import type { RedskilledPaths } from "@reddb-io/redskilled/paths";
 import { publishedBundleArgv } from "./published-entry.js";
@@ -31,25 +28,22 @@ import {
   createRedskilledBirthPort,
   redskilledUnreachableAdvice,
 } from "./redskilled-birth.js";
-
-/** Where a dispatched Worker's stdout/stderr is persisted, in the disposable
- * logs lane (ADR 0098). A Worker that dies before it writes its own state used
- * to leave nothing but `worker.pid` — three silent deaths in a row with zero
- * evidence anywhere (#2385, #2376). The dispatch keeps the bytes; since #2976
- * the daemon is the one that opens the file, because the daemon owns the
- * process whose descriptors those are. */
-export function dispatchLogPath(root: string, stampIso: string): string {
-  const safe = stampIso.replace(/[:.]/g, "-");
-  return join(logsDir(root, stampIso.slice(0, 10)), `dispatch-${safe}.log`);
-}
+import { workerLogPathTemplate } from "./redskilled-worker-log.js";
 
 /** A Worker the host granted to a dispatch, in the facts the caller reports. */
 export interface DispatchedWorkerBirth {
   readonly worker_id: string;
   readonly pid: number;
   readonly fork_sha: string;
-  /** Post-mortem handle: where the host pointed this Worker's output. */
-  readonly log: string;
+  /**
+   * Post-mortem handle: the log the host actually opened, or null when none.
+   *
+   * The dispatch DECLARES `.red/tmp/workers/{{worker_id}}/worker.log.toonl` and
+   * the host resolves it, so this is the one fact only the host can state — and
+   * a null is a Worker the operator must follow on its heartbeat instead of a
+   * filename pointing at a file nobody created (#3440).
+   */
+  readonly log: string | null;
   /** Warnings the host attached — a downgraded unit is running AND degraded. */
   readonly warnings: readonly string[];
   /** The host's own sentence about the ceiling that admitted this birth. */
@@ -63,8 +57,6 @@ export interface WorkerBirthOptions {
   readonly projectLabel?: string;
   /** The published bundle argv head — resolved from the published entry by default. */
   readonly entry?: readonly string[];
-  /** The stamp naming the log file; defaults to now plus a short uniquifier. */
-  readonly stamp?: string;
   /** Host capacity claimed by `/go` and `/go --scout`; ordinary AFK omits it. */
   readonly reservation?: "interactive";
 }
@@ -93,8 +85,15 @@ export async function requestWorkerBirth(
   if (command === undefined) {
     throw new Error("cannot dispatch worker: the published bundle resolved to an empty argv");
   }
-  const stamp = options.stamp ?? `${new Date().toISOString()}-${randomUUID().slice(0, 8)}`;
-  const log = dispatchLogPath(root, stamp);
+  // The SAME lane every Worker writes to, stated with the same placeholder the
+  // registration lane uses (#3440). The dispatcher cannot name `workers/<id>/`
+  // because the host mints the id — which is why this used to stamp a dated
+  // plain-text file of its own — but the daemon has substituted `{{worker_id}}`
+  // at birth since Amendment 5, so the chicken-and-egg the detour existed for
+  // was already solved. `/go` stays distinguishable by `origin=go` and
+  // `current.kind=go` on the worker state: provenance is a stamp, never a
+  // directory name.
+  const log = workerLogPathTemplate(root);
   const config = loadConfig(afkPaths(root).configPath, { warn: () => undefined });
   const trunk = getConfig(config, "dev.trunk") || "main";
 
@@ -123,7 +122,10 @@ export async function requestWorkerBirth(
     worker_id: granted.workerId,
     pid: granted.pid,
     fork_sha: granted.forkSha,
-    log,
+    // The host's answer, not the declaration: `log` above still holds
+    // `{{worker_id}}`, and reporting a template as a path is how an operator
+    // comes to `cat` a filename with braces in it.
+    log: granted.logPath,
     warnings: granted.warnings,
     admission: granted.admission,
   };
