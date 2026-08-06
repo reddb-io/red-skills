@@ -23,8 +23,8 @@ import {
   describeCleanTreeRefusal,
   describeSetupDirtCollisionRefusal,
   describeSupersededSetupDirt,
-  describeToleratedSetupDirt,
-  isSetupOwnedDirtOnly,
+  describeToleratedDirt,
+  isToleratedDirtOnly,
   SUPERSEDED_SETUP_DIRT_LANE,
 } from "./setup-owned-dirt.js";
 
@@ -1668,6 +1668,7 @@ export type FastForwardLocalTargetRefusal =
   | "not-ancestor"
   | "superseded-commits"
   | "dirt-collision"
+  | "index-lock"
   | "supersede-failed"
   | "reconcile-failed"
   | "merge-failed";
@@ -1684,7 +1685,7 @@ export interface FastForwardLocalTargetGuardResult {
   readonly currentBranch?: string;
   readonly failed?: FastForwardLocalTargetRefusal;
   readonly failedCondition?: "on-trunk" | "clean-tree" | "fetch" | "ancestor" | "superseded-commits" | "dirt-collision" | "merge";
-  /** Setup-owned dirty paths the clean-tree condition tolerated (#3106). */
+  /** Reconciliation-owned dirty paths the clean-tree condition tolerated. */
   readonly toleratedDirt?: readonly string[];
   /** Tolerated dirt the incoming commits carry as tracked files, so the local
    * untracked copy is stale: moved aside before the merge, never merged over (#3155). */
@@ -1843,12 +1844,10 @@ export async function evaluateFastForwardLocalTarget(
     };
   }
   // 2. A dirty primary keeps pending WIP — never write over it (#1019). The one
-  // exception is dirt our OWN setup authored: `/red-setup` writes
-  // `.red/config.yaml`, `.red/.gitignore` and hook scripts it is forbidden to
-  // `git add`, so a fresh repo is dirty by contract and could never boot a
-  // Worker (#3106). Tolerating that named class costs nothing the guard was
-  // protecting — `merge --ff-only` still refuses on its own if the incoming
-  // commits would clobber one of those files.
+  // exceptions are named reconciliation-owned sets: output `/red-setup` leaves
+  // uncommitted (#3106), and docs `/start` holds dirty until ADR 0092 landing
+  // (#3349). Tolerating them costs nothing the guard protects because an
+  // incoming edit to the same path is classified as a real collision below.
   const status = await exec(["git", "-C", gitRepo, "status", "--porcelain"]);
   if (status.code !== 0) {
     return {
@@ -1873,7 +1872,7 @@ export async function evaluateFastForwardLocalTarget(
       evidence: describeCleanTreeRefusal(tree),
     };
   }
-  const toleratedDirt = isSetupOwnedDirtOnly(tree) ? describeToleratedSetupDirt(tree) : undefined;
+  const toleratedDirt = isToleratedDirtOnly(tree) ? describeToleratedDirt(tree) : undefined;
   // Refresh the remote ref so the ancestry test and the FF see the merge.
   const fetch = await exec(["git", "-C", gitRepo, "fetch", "--quiet", remote, target]);
   if (fetch.code !== 0) {
@@ -1907,10 +1906,10 @@ export async function evaluateFastForwardLocalTarget(
         target,
         remote,
         currentBranch,
-        toleratedDirt: tree.setupOwned,
+        toleratedDirt: tree.tolerated,
         failed: "dirty-tree",
         failedCondition: "clean-tree",
-        evidence: `condition failed: clean-tree (superseded-commit reconciliation requires no dirty paths; ${tree.setupOwned.join(", ")})`,
+        evidence: `condition failed: clean-tree (superseded-commit reconciliation requires no dirty paths; ${tree.tolerated.join(", ")})`,
       };
     }
     const classified = await classifySupersededCommits(exec, {
@@ -1949,10 +1948,10 @@ export async function evaluateFastForwardLocalTarget(
         target,
         remote,
         currentBranch,
-        toleratedDirt: tree.setupOwned,
+        toleratedDirt: tree.tolerated,
         failed: "dirt-collision",
         failedCondition: "dirt-collision",
-        evidence: `condition failed: dirt-collision (could not read the incoming path list for ${remoteRef} while ${tree.setupOwned.length} /red-setup file(s) are dirty)`,
+        evidence: `condition failed: dirt-collision (could not read the incoming path list for ${remoteRef} while ${tree.tolerated.length} tolerated path(s) are dirty)`,
       };
     }
     const collision = classifySetupDirtCollision(
@@ -1965,7 +1964,7 @@ export async function evaluateFastForwardLocalTarget(
         target,
         remote,
         currentBranch,
-        toleratedDirt: tree.setupOwned,
+        toleratedDirt: tree.tolerated,
         failed: "dirt-collision",
         failedCondition: "dirt-collision",
         evidence: describeSetupDirtCollisionRefusal(collision.conflicting, remoteRef),
@@ -1979,7 +1978,7 @@ export async function evaluateFastForwardLocalTarget(
     target,
     remote,
     currentBranch,
-    ...(toleratedDirt ? { toleratedDirt: tree.setupOwned } : {}),
+    ...(toleratedDirt ? { toleratedDirt: tree.tolerated } : {}),
     ...(supersededDirt.length > 0 ? { supersededDirt } : {}),
     ...(supersededCommits.length > 0 ? { supersededCommits } : {}),
     evidence: `guard passed: on-trunk clean-tree ${lineageEvidence}${toleratedDirt ? `; ${toleratedDirt}` : ""}${supersededNote ? `; ${supersededNote}` : ""}`,
@@ -2013,6 +2012,81 @@ async function supersedeSetupOwnedDirt(
   return { ok: true, evidence: "" };
 }
 
+interface IndexLockRetry {
+  readonly result: ExecResult;
+  readonly reclaimed: boolean;
+  readonly refusal?: string;
+}
+
+function failedOnIndexLock(result: ExecResult): boolean {
+  return result.code !== 0 && /(?:^|[/\\])index\.lock(?:['":\s]|$)/i.test(`${result.stderr}\n${result.stdout}`);
+}
+
+/**
+ * Retry one index-writing Git command after the only safe lock reclamation:
+ * the lock is zero bytes and `fuser` reports that no live process has it open.
+ * `fuser` is the kernel-backed ownership answer; an absent tool or ambiguous
+ * result refuses closed. A new Git process cannot race the unlink by adopting
+ * this existing lock — Git acquires it with exclusive creation.
+ */
+async function retryAfterOrphanedIndexLock(
+  exec: Exec,
+  gitRepo: string,
+  args: string[],
+): Promise<IndexLockRetry> {
+  const first = await exec(args);
+  if (!failedOnIndexLock(first)) return { result: first, reclaimed: false };
+
+  const lockPath = `${gitRepo}/.git/index.lock`;
+  const measured = await exec(["stat", "-c", "%s", lockPath]);
+  if (measured.code !== 0) {
+    // The owner may have completed between Git's refusal and inspection. With
+    // no lock left to reclaim, one bounded retry is safe and avoids a false halt.
+    return { result: await exec(args), reclaimed: false };
+  }
+  const size = measured.stdout.trim();
+  if (!/^\d+$/.test(size)) {
+    return {
+      result: first,
+      reclaimed: false,
+      refusal: "condition failed: index-lock (could not determine .git/index.lock size)",
+    };
+  }
+  if (size !== "0") {
+    return {
+      result: first,
+      reclaimed: false,
+      refusal: `condition failed: index-lock (non-empty .git/index.lock has ${size} byte(s))`,
+    };
+  }
+
+  const held = await exec(["fuser", "--silent", lockPath]);
+  if (held.code === 0) {
+    return {
+      result: first,
+      reclaimed: false,
+      refusal: "condition failed: index-lock (empty .git/index.lock is held by a live process)",
+    };
+  }
+  if (held.code !== 1) {
+    return {
+      result: first,
+      reclaimed: false,
+      refusal: "condition failed: index-lock (could not prove .git/index.lock is unheld)",
+    };
+  }
+
+  const removed = await exec(["rm", "--", lockPath]);
+  if (removed.code !== 0) {
+    return {
+      result: first,
+      reclaimed: false,
+      refusal: "condition failed: index-lock (could not reclaim empty unheld .git/index.lock)",
+    };
+  }
+  return { result: await exec(args), reclaimed: true };
+}
+
 export async function fastForwardLocalTarget(
   exec: Exec,
   input: { gitRepo: string; remote: string; target: string },
@@ -2038,8 +2112,22 @@ export async function fastForwardLocalTarget(
   // patch landed. The clean-tree + one-to-one patch proof above makes moving the
   // pointer to the fetched tip safe; the pair list remains in the receipt.
   if ((guard.supersededCommits?.length ?? 0) > 0) {
-    const reset = await exec(["git", "-C", input.gitRepo, "reset", "--hard", `${input.remote}/${input.target}`]);
-    if (reset.code !== 0) {
+    const reset = await retryAfterOrphanedIndexLock(
+      exec,
+      input.gitRepo,
+      ["git", "-C", input.gitRepo, "reset", "--hard", `${input.remote}/${input.target}`],
+    );
+    if (reset.refusal) {
+      return {
+        ...guard,
+        guard: "refused",
+        action: "noop",
+        failed: "index-lock",
+        failedCondition: "merge",
+        evidence: reset.refusal,
+      };
+    }
+    if (reset.result.code !== 0) {
       return {
         ...guard,
         guard: "refused",
@@ -2052,13 +2140,27 @@ export async function fastForwardLocalTarget(
     return {
       ...guard,
       action: "fast-forward",
-      evidence: `reconciled superseded commits and moved ${input.target} to ${input.remote}/${input.target}: ${describeSupersededCommits(guard.supersededCommits ?? [])}`,
+      evidence: `${reset.reclaimed ? "reclaimed empty unheld .git/index.lock; " : ""}reconciled superseded commits and moved ${input.target} to ${input.remote}/${input.target}: ${describeSupersededCommits(guard.supersededCommits ?? [])}`,
     };
   }
   // 4c. Advance the ordinary behind-only pointer. ff-only can only succeed as a
   // pure fast-forward.
-  const ff = await exec(["git", "-C", input.gitRepo, "merge", "--ff-only", `${input.remote}/${input.target}`]);
-  if (ff.code !== 0) {
+  const ff = await retryAfterOrphanedIndexLock(
+    exec,
+    input.gitRepo,
+    ["git", "-C", input.gitRepo, "merge", "--ff-only", `${input.remote}/${input.target}`],
+  );
+  if (ff.refusal) {
+    return {
+      ...guard,
+      guard: "refused",
+      action: "noop",
+      failed: "index-lock",
+      failedCondition: "merge",
+      evidence: ff.refusal,
+    };
+  }
+  if (ff.result.code !== 0) {
     return {
       ...guard,
       guard: "refused",
@@ -2068,7 +2170,11 @@ export async function fastForwardLocalTarget(
       evidence: `condition failed: merge (ff-only merge of ${input.remote}/${input.target} failed)`,
     };
   }
-  return { ...guard, action: "fast-forward", evidence: `fast-forwarded ${input.target} to ${input.remote}/${input.target}` };
+  return {
+    ...guard,
+    action: "fast-forward",
+    evidence: `${ff.reclaimed ? "reclaimed empty unheld .git/index.lock; " : ""}fast-forwarded ${input.target} to ${input.remote}/${input.target}`,
+  };
 }
 
 /**

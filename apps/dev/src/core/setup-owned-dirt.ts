@@ -33,6 +33,10 @@ export const SETUP_OWNED_FILES: readonly string[] = [".red/config.yaml", ".red/.
 /** The trees `/red-setup` seeds scripts into, none of them `git add`ed (INTERVIEW.md hooks section). */
 export const SETUP_OWNED_PREFIXES: readonly string[] = [".red/hooks/"];
 
+/** Documentation `/start` edits inline and ADR 0092 lands as one session-owned set. */
+export const DOC_LANDING_FILES: readonly string[] = [".red/CONTEXT.md", ".red/CONTEXT-MAP.md"];
+export const DOC_LANDING_PREFIXES: readonly string[] = [".red/contexts/", ".red/adr/"];
+
 /** The one spelling of the repair, so the guard, the doctor and the skill agree. */
 export const SETUP_OWNED_DIRT_REMEDIATION =
   "commit the /red-setup-generated files (git add .red/config.yaml .red/.gitignore .red/hooks && git commit) or ignore them";
@@ -48,13 +52,17 @@ export interface DirtyPath {
   /** The two-character porcelain XY code (`" M"`, `"??"`, `"R "`, …). */
   readonly status: string;
   readonly setupOwned: boolean;
+  /** Safe for a pure fast-forward when the incoming commits do not touch it. */
+  readonly tolerated: boolean;
 }
 
 export interface DirtyTreeClassification {
   readonly dirty: readonly DirtyPath[];
   /** Dirty paths `/red-setup` wrote, in porcelain order. */
   readonly setupOwned: readonly string[];
-  /** Every other dirty path — the operator's own work, in porcelain order. */
+  /** Every path the trunk guard may preserve across a non-conflicting fast-forward. */
+  readonly tolerated: readonly string[];
+  /** Every non-tolerated dirty path — the operator's own work, in porcelain order. */
   readonly foreign: readonly string[];
 }
 
@@ -86,6 +94,17 @@ export function isSetupOwnedPath(path: string): boolean {
   return SETUP_OWNED_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
+/** True for the exact doc set `/start` holds dirty until ADR 0092 landing. */
+export function isDocLandingPath(path: string): boolean {
+  if (DOC_LANDING_FILES.includes(path)) return true;
+  return DOC_LANDING_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
+
+/** The complete named tolerance; everything outside it remains protected WIP. */
+export function isToleratedDirtyPath(path: string): boolean {
+  return isSetupOwnedPath(path) || isDocLandingPath(path);
+}
+
 /** Strip git's quoting from a porcelain path. Setup-owned paths are ASCII, so the
  * common escapes are enough — an exotic name simply classifies as foreign dirt. */
 function unquote(raw: string): string {
@@ -109,12 +128,18 @@ export function classifyDirtyTree(porcelain: string): DirtyTreeClassification {
     if (arrow !== -1) path = path.slice(arrow + 4);
     path = unquote(path.trim());
     if (path === "") continue;
-    dirty.push({ path, status, setupOwned: isSetupOwnedPath(path) });
+    dirty.push({
+      path,
+      status,
+      setupOwned: isSetupOwnedPath(path),
+      tolerated: isToleratedDirtyPath(path),
+    });
   }
   return {
     dirty,
     setupOwned: dirty.filter((entry) => entry.setupOwned).map((entry) => entry.path),
-    foreign: dirty.filter((entry) => !entry.setupOwned).map((entry) => entry.path),
+    tolerated: dirty.filter((entry) => entry.tolerated).map((entry) => entry.path),
+    foreign: dirty.filter((entry) => !entry.tolerated).map((entry) => entry.path),
   };
 }
 
@@ -129,6 +154,11 @@ export function renderDirtyPathList(paths: readonly string[], limit = EVIDENCE_P
 
 /** True when the whole tree's dirt is `/red-setup`'s own uncommitted output. */
 export function isSetupOwnedDirtOnly(tree: DirtyTreeClassification): boolean {
+  return tree.dirty.length > 0 && tree.dirty.every((entry) => entry.setupOwned);
+}
+
+/** True when every dirty path belongs to a reconciliation-owned tolerance. */
+export function isToleratedDirtOnly(tree: DirtyTreeClassification): boolean {
   return tree.dirty.length > 0 && tree.foreign.length === 0;
 }
 
@@ -146,6 +176,11 @@ export function describeCleanTreeRefusal(tree: DirtyTreeClassification): string 
 /** The evidence for a guard that PASSED over tolerated setup-owned dirt. */
 export function describeToleratedSetupDirt(tree: DirtyTreeClassification): string {
   return `tolerated ${tree.setupOwned.length} /red-setup-owned dirty path(s) (${renderDirtyPathList(tree.setupOwned)})`;
+}
+
+/** Evidence for the complete named class the trunk guard preserved. */
+export function describeToleratedDirt(tree: DirtyTreeClassification): string {
+  return `tolerated ${tree.tolerated.length} reconciliation-owned dirty path(s) (${renderDirtyPathList(tree.tolerated)})`;
 }
 
 /** The `.red/tmp/` lane a superseded setup-owned file is moved to, never deleted:
@@ -176,7 +211,7 @@ export function classifySetupDirtCollision(
   const superseded: string[] = [];
   const conflicting: string[] = [];
   for (const entry of tree.dirty) {
-    if (!entry.setupOwned || !incoming.has(entry.path)) continue;
+    if (!entry.tolerated || !incoming.has(entry.path)) continue;
     // `??` is git's untracked code; anything else means the path is tracked here.
     if (entry.status === "??") superseded.push(entry.path);
     else conflicting.push(entry.path);
@@ -198,7 +233,7 @@ export function describeSetupDirtCollisionRefusal(
   paths: readonly string[],
   ref: string,
 ): string {
-  return `condition failed: dirt-collision (${paths.length} locally-modified /red-setup file(s) also changed by ${ref}: ${renderDirtyPathList(paths)}) — commit or stash them, then the fast-forward can land`;
+  return `condition failed: dirt-collision (${paths.length} locally-modified tolerated path(s) also changed by ${ref}: ${renderDirtyPathList(paths)}) — commit or stash them, then the fast-forward can land`;
 }
 
 /**
