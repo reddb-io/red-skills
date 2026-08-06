@@ -334,7 +334,7 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     const branch = "afk/w1/42-fix-thing";
 
     // ---- replay the DONE close path's gh/git side effects, in order ----
-    // (process-issue.ts: claim → handoff lookups → fetchBase → push →
+    // (process-issue.ts: claim → handoff lookups → granted fork → push →
     //  integrate/land → close → cleanup → cascade). We invoke the closures the
     //  real assembly produced; the trace records what each one issued.
 
@@ -348,16 +348,13 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
     await deps.lookups.comments(issue);
     await deps.lookups.issueUrl(issue);
 
-    // 3. fetch the resolved base before sandcastle forks (step 4)
-    await deps.git.fetchBase!(base);
-
-    // 4. push the worker branch (step 6) — exact pushAttempt argv shape
+    // 3. push the worker branch (step 6) — exact pushAttempt argv shape
     await deps.remoteGit(["-C", root, "push", "origin", `${branch}:refs/heads/${branch}`]);
 
-    // 5. integrate origin/base (step 6) via mergeExec — fast-forward path argv
+    // 4. integrate origin/base (step 6) via mergeExec — fast-forward path argv
     await deps.mergeExec(["git", "-C", root, "merge", "--ff-only", `origin/${base}`]);
 
-    // 6. read the merge sha (step 7)
+    // 5. read the merge sha (step 7)
     const sha = await deps.git.headShortSha();
     expect(sha).toBe("abc1234");
 
