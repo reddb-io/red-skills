@@ -28,14 +28,18 @@ Each question is formatted like so — the emoji are load-bearing, because a rou
 
 ```
 ❓ **Q##** — <the question, ONE line, ending in a question mark>
+
 **Branches:**
   (a) <option A>
   (b) <option B>
   (c) <option C>
+
 ➡️ **(<letter>)** — <one-sentence reason>
 ```
 
 **One line per thing to read: the question is a line, and each branch is a line of its own.** A round is read by scanning, and both failures break the scan — a question that swells into a paragraph loses the reader's place, and branches run together on one line make the reader parse separators to find the option they want. Keep the question to a single line that ends in a question mark, and put every branch on its own indented line.
+
+**Blank lines around the branch block.** The ask, the options and the recommendation are three things the eye lands on separately, so let whitespace separate them rather than making the reader find the boundary.
 
 **Evidence goes above the round, never inside a question.** Whatever the user needs in order to answer — what you found in the code, the numbers, the trade-off you are weighing — belongs in prose *before* the first `❓`, written once for the whole round. A question is the ask alone.
 
@@ -65,10 +69,12 @@ The argument is optional. Treat it as the plan or context to grill.
 - **Empty argument** → open with the literal `Q01` as a one-question round:
 
   > ❓ **Q01** — What plan are we grilling?
+  >
   > **Branches:**
   >   (a) paste it inline
   >   (b) share a URL or file path
   >   (c) describe it in a sentence
+  >
   > ➡️ **(a)** — inline context lets us start grilling immediately.
 
 After successful ingestion, emit a **single-line receipt** then open the first round:
