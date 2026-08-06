@@ -114,6 +114,16 @@ export interface GrantedWorkerBirth {
   readonly pid: number;
   /** Exact daemon-fetched fork point. */
   readonly forkSha: string;
+  /**
+   * The log the host ACTUALLY opened, or null when it opened none (#3440).
+   *
+   * Reported back rather than recomputed by the caller, because the caller is
+   * precisely the party that cannot know it: the path it declared names
+   * `{{worker_id}}` and the id is the daemon's to mint. A null here is a Worker
+   * running with nothing but its heartbeat to show, and the reason rides
+   * `warnings`.
+   */
+  readonly logPath: string | null;
   /** Warnings the host attached — a downgraded unit is running AND degraded. */
   readonly warnings: readonly string[];
   /** The host's own sentence about the ceiling that admitted this birth. */
@@ -320,6 +330,7 @@ export function createRedskilledBirthPort(options: CreateRedskilledBirthOptions)
         workerId: started.worker.worker_id,
         pid: started.worker.pid,
         forkSha: started.fork_sha,
+        logPath: started.worker.log_path ?? null,
         warnings: started.warnings,
         admission: started.admission.reason,
       };

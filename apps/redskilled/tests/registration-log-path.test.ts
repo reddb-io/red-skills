@@ -110,11 +110,11 @@ function registration(label: string, workspace: string, logPath?: string) {
 describe("a launch template states where its Worker logs", () => {
   it("expands the per-birth facts into the log path, exactly as it does the argv", () => {
     const expanded = expandLaunchTemplate(
-      { argv: ["/bin/run"], log_path: "{{workspace_path}}/.red/tmp/logs/worker-{{worker_id}}.log" },
+      { argv: ["/bin/run"], log_path: "{{workspace_path}}/.red/tmp/workers/{{worker_id}}/worker.log.toonl" },
       { worker_id: "wAAAA", slot: 3, workspace_path: "/repo" },
     );
 
-    expect(expanded.log_path).toBe("/repo/.red/tmp/logs/worker-wAAAA.log");
+    expect(expanded.log_path).toBe("/repo/.red/tmp/workers/wAAAA/worker.log.toonl");
   });
 
   it("gives two Workers of one project two files, because one template serves both", () => {
@@ -164,7 +164,7 @@ describe("the daemon writes its own facts into a registration's log path", () =>
     running.push(daemon);
 
     daemon.registerProject(
-      registration("acme/widgets", workspace, `${workspace}/.red/tmp/logs/worker-{{worker_id}}.log`),
+      registration("acme/widgets", workspace, `${workspace}/.red/tmp/workers/{{worker_id}}/worker.log.toonl`),
     );
     await daemon.pollQueueDiscovery();
     const tick = await daemon.driveDemand();
@@ -173,7 +173,7 @@ describe("the daemon writes its own facts into a registration's log path", () =>
     const spec = launched[0]!.spec;
     const workerId = tick.granted[0]!.worker_id;
     expect(workerId).toMatch(/^h[A-Z0-9]{4}$/);
-    expect(spec.log_path).toBe(`${workspace}/.red/tmp/logs/worker-${workerId}.log`);
+    expect(spec.log_path).toBe(`${workspace}/.red/tmp/workers/${workerId}/worker.log.toonl`);
     // The record the surfaces read carries it too — the whole point of stating it.
     expect(daemon.hostState().workers[0]!.log_path).toBe(spec.log_path);
     expect(tick.granted[0]!.warnings).toEqual([]);

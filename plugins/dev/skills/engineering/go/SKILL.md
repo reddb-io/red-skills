@@ -93,7 +93,7 @@ Set `RED_AFK_RUNNER` to your own host runner (`claude` from Claude Code, `codex`
 ```
 🔍 /go --scout dispatched disposable issue #4210 (origin=scout, kind=scout, lane:scout).
    worker 8cb3eafdcbd2 (pid 41207) — detached from this session; stopping the dispatcher does not stop it.
-   watch: .red/tmp/logs/2026-08-01/dispatch-2026-08-01T20-14-02-114Z-1f0c9d2e.log
+   watch: .red/tmp/workers/8cb3eafdcbd2/worker.log.toonl
 ```
 
 Follow it from those handles, never from the launcher's stdout: `status {scope: worker}`, the statusline, or the log path above. A dispatch the host refuses starts nothing and says so — it never falls back to running the engine here.

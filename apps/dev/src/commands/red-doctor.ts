@@ -158,11 +158,9 @@ function rel(root: string, path: string): string {
 
 function flattenExpired(report: TmpJanitorReport): string[] {
   return [
-    ...report.plan.logs.reclaim,
     ...report.plan.scratch.reclaim,
     ...report.plan.diagnostics.reclaim,
     ...report.plan.feedbackWorktrees.reclaim,
-    ...report.plan.legacySlotLogs.reclaim,
   ].map((entry) => entry.path);
 }
 

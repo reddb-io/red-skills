@@ -189,3 +189,30 @@ in `worker.log.toonl`; a dated capture is not a second Worker log.
 - **Rules and naming only.** Rejected because existing loose tmp files prove documentation without detection and lanes will regress.
 - **Repo-root shared store.** Rejected as superseded by the lifecycle split: durable machine data belongs under `.red/state/`.
 - **Shared store in tmp.** Rejected because rebuilding a large local RedDB store is costly; calling it disposable is dishonest.
+
+## Amendment 2 — the dated logs lane is retired (2026-08-06)
+
+`.red/tmp/logs/<yyyy-mm-dd>/` is gone, and with it the last place a Worker's
+output landed somewhere other than its own lane.
+
+The lane existed because a dispatch could not name `workers/<id>/` before the
+host had minted the id — so `/go` stamped a timestamp instead and wrote plain
+text, while `/afk` wrote TOONL under the Worker. Two lanes, two formats, one
+subject. The workaround was already unnecessary: the daemon substitutes a
+`{{worker_id}}` placeholder at birth, which is exactly how the registration lane
+names its path. `/go` now declares the same
+`.red/tmp/workers/{{worker_id}}/worker.log.toonl`, and origin stays a stamp on
+the Worker state (`origin=go`) rather than a directory name.
+
+Two consequences worth stating, because both bit us:
+
+- **A date in a path is a date that goes stale.** A registration renewed across
+  midnight kept handing out the day it was born, so a Worker wrote today's log
+  into a past day's directory — one the janitor's TTL was concurrently
+  reclaiming. Paths are resolved at birth now, never carried from the record.
+- **The janitor's `logs` lane and its TTL go with the lane.** A tier nobody
+  writes is a tier nobody should sweep.
+
+A stray `afk-supervisor-slot-<n>.log` left at the tmp root from before this
+amendment is reported by the unknown-roots audit and never deleted, which is
+what that audit is for.

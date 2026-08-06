@@ -358,12 +358,6 @@ export function diagnosticsDir(root: string): string {
   return join(tmpDir(root), "diagnostics");
 }
 
-/** Date-partitioned session logs: `.red/tmp/logs/<yyyy-mm-dd>`. */
-export function logsDir(root: string, date: string): string {
-  if (!date) throw new Error("date is required (yyyy-mm-dd)");
-  return join(tmpDir(root), "logs", date);
-}
-
 // ── Tmp-tier worktree lanes (ADR 0098 §2) ───────────────────────────────────
 
 /** Parent of every temporary worktree lane: `.red/tmp/worktrees`. */

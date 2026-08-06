@@ -2,7 +2,6 @@
 // supervisor's SupervisorFs surface.
 //
 // Mirrors the slot→worker→iter-dir resolution chain in supervisor.sh:
-//   parse_worker_ids_from_log  (slot log → worker IDs)
 //   find_slot_iter_dir         (slot pid → worker dir → newest attempt dir)
 //   workerLivenessFor          (iter dir → liveness lane → evaluator verdict)
 //   iter_dirs_for_worker       (worker dir → every attempt dir)
@@ -16,7 +15,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseRecords } from "@reddb-io/toon";
-import type { IterDirInfo, SweepWork, SweepWorker } from "../core/supervisor.js";
+import type { IterDirInfo, SweepWork } from "../core/supervisor.js";
 import { buildRef } from "../core/remote-branch.js";
 import {
   parseReapableWorkerWorktreePath,
@@ -33,64 +32,6 @@ import {
   LIVENESS_LANE_FILENAME,
   type LivenessVerdict,
 } from "@reddb-io/red-castle";
-
-function logDate(at: Date): string {
-  return at.toISOString().slice(0, 10);
-}
-
-/** Dated tmp logs lane for fleet slot spawn diagnostics. */
-export function slotLogDir(tmpDir: string, at: Date = new Date()): string {
-  return join(tmpDir, "logs", logDate(at));
-}
-
-/** Absolute path of a slot's per-worker stdout/stderr log inside the dated
- * tmp logs lane. Mirrors spawn_slot's slot_log. */
-export function slotLogPath(tmpDir: string, slot: number, logDir: string = slotLogDir(tmpDir)): string {
-  return join(logDir, `afk-supervisor-slot-${slot}.log`);
-}
-
-/** Legacy tmp-root slot log path. Kept as a read fallback only for the logs TTL
- * aging window; the tmp janitor reclaims these root files as legacy logs. */
-export function legacySlotLogPath(tmpDir: string, slot: number): string {
-  return join(tmpDir, `afk-supervisor-slot-${slot}.log`);
-}
-
-function slotLogReadPaths(tmpDir: string, slot: number, logDir?: string): string[] {
-  const primary = slotLogPath(tmpDir, slot, logDir);
-  const legacy = legacySlotLogPath(tmpDir, slot);
-  return primary === legacy ? [primary] : [primary, legacy];
-}
-
-/**
- * Parse each unique worker ID from a slot log's boot-stamp lines, first-seen
- * order preserved. Mirrors parse_worker_ids_from_log's awk over
- * `[afk] worker: <id>` lines. A missing / unreadable file → [].
- *
- * The id grammar is the worker-directory grammar (`[A-Za-z0-9_-]+`), not the
- * minted `wXXXX` shape: a Worker born through the daemon ADOPTS the id the host
- * assigned it (#3081), and a pattern that only matched a minted id would drop
- * every daemon-born Worker out of the parked-slot sweep.
- */
-export function parseWorkerIdsFromLog(path: string): string[] {
-  let text: string;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch {
-    return [];
-  }
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const line of text.split("\n")) {
-    const m = line.match(/^\[afk\] worker: ([A-Za-z0-9_-]+)$/);
-    if (!m) continue;
-    const wid = m[1]!;
-    if (!seen.has(wid)) {
-      seen.add(wid);
-      out.push(wid);
-    }
-  }
-  return out;
-}
 
 /** Every attempt dir (`workers/{wid}/{issue}-a{n}`) for a worker, absolute
  * paths. Mirrors iter_dirs_for_worker. Missing worker dir → []. */
@@ -372,47 +313,26 @@ export function resolveIterDirInfo(
  * parkedSlotWork backing: resolve every worker that occupied a parked slot and
  * the claimed issues they held. Mirrors the sweep_parked_slot collection.
  *
- * Two resolution paths, tried in order:
- *   1. Slot log: parse `[afk] worker: wXXXX` boot-stamp lines from the
- *      per-slot log file.  Each worker emits this stamp to stdout immediately
- *      after generating its worker ID (before any I/O that could fail); the
- *      supervisor routes the child's stdout/stderr to the slot log so the stamp
- *      is captured even when the worker fast-dies before writing worker.pid.
- *      This is the primary path for the native fleet.
- *   2. PID fallback (lastPid): when the log yields no workers (e.g. a slot log
- *      that predates the stamp or was rotated), resolve the slot's last worker
- *      via its `worker.pid` file (findSlotIterDir).
+ * Resolution is by PID: the slot's last worker is the one whose `worker.pid`
+ * matches (findSlotIterDir), and its attempt dirs carry the issues it claimed.
  *
- * Empty workers list when neither path finds a worker → no-op sweep upstream.
+ * **The slot-log boot-stamp path is gone with the lane it read** (#3440). It
+ * parsed `[afk] worker: wXXXX` out of `.red/tmp/logs/<yyyy-mm-dd>/`, a lane
+ * whose writer was the shell supervisor's `spawn_slot` — and since ADR 0130 the
+ * daemon owns birth and every Worker's output is TOONL in
+ * `.red/tmp/workers/{id}/worker.log.toonl`. The parse had been reading a file
+ * nothing had written since, so it resolved nothing and fell through to the PID
+ * path on every call.
+ *
+ * Empty workers list when the PID resolves nothing → no-op sweep upstream.
  */
 export function parkedSlotWorkFor(
   tmpDir: string,
   slot: number,
   lastPid: number | null = null,
-  // The main supervisor firehose lives in the singleton tmp supervisor lane;
-  // per-slot logs are disposable spawn diagnostics in the dated tmp logs lane.
+  // The main supervisor firehose lives in the singleton tmp supervisor lane.
   supervisorLogPath: string = join(tmpDir, "supervisors", "default", "supervisor.log.toonl"),
-  slotLogsDir: string = slotLogDir(tmpDir),
 ): SweepWork {
-
-  // Path 1: slot log boot-stamp parse.
-  let wids: string[] = [];
-  for (const path of slotLogReadPaths(tmpDir, slot, slotLogsDir)) {
-    wids = parseWorkerIdsFromLog(path);
-    if (wids.length > 0) break;
-  }
-  if (wids.length > 0) {
-    const workers: SweepWorker[] = wids.map((wid) => ({
-      workerId: wid,
-      pairs: iterDirsForWorker(tmpDir, wid).map((dir) => ({
-        dir,
-        issue: iterDirIssueNumber(dir),
-      })),
-    }));
-    return { workers, supervisorLogPath };
-  }
-
-  // Path 2: PID-based fallback — resolve the last worker via worker.pid match.
   const iterDir = findSlotIterDir(tmpDir, lastPid);
   if (iterDir === null) return { workers: [], supervisorLogPath };
 

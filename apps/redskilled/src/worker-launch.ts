@@ -28,6 +28,7 @@ import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledJobObjectHandle } from "./job-object.js";
 import type { RedskilledTrunk } from "./project-registration.js";
+import { expandWorkerLogPath } from "./launch-template.js";
 import {
   detectWorkerPlacementProbes,
   placementEnabled,
@@ -53,6 +54,12 @@ export interface RedskilledWorkerSpec {
    * Optional, and opaque: the daemon opens it only to rehydrate a heartbeat it
    * lost to a restart. A client that gives none keeps the whole mechanism on the
    * heartbeat, which is the normal path anyway.
+   *
+   * May state `{{worker_id}}` and `{{workspace_path}}`, resolved at birth by
+   * `expandWorkerLogPath`. That is how a DISPATCH names a per-Worker file: the
+   * dispatcher cannot know the id the daemon is about to mint, and the workaround
+   * it used instead — a dated path stamped by the caller — is what put `/go` and
+   * `/afk` on two different lanes in two different formats (#3440).
    */
   readonly log_path?: string;
   readonly command: string;
@@ -163,14 +170,40 @@ export function mintHostWorkerId(
   throw new RedskilledWorkerSpecError("redskilled exhausted the host Worker id space");
 }
 
-/** Prepare a Worker's structured log, or return false when it cannot be opened. */
-function prepareWorkerLog(logPath: string | undefined): boolean {
-  if (logPath == null || logPath.trim() === "") return false;
+/** What preparing a Worker's log actually did, and what to say when it failed. */
+interface WorkerLogPreparation {
+  /** Whether the daemon may pipe this Worker's output into the file. */
+  readonly ready: boolean;
+  /** Named when the log could not be opened; absent when none was declared. */
+  readonly warning?: string;
+}
+
+/**
+ * Prepare a Worker's structured log, and SAY SO when it cannot be opened.
+ *
+ * **A Worker born without a log is acceptable; one born without a log in silence
+ * is not** (#3440). The `catch { return false }` this replaced recreated the
+ * exact regression the comment at the call site claims to have fixed: the launch
+ * skipped `attachWorkerLog`, the Worker ran with no log at all, and nothing
+ * anywhere said why — the "three silent deaths with zero evidence" shape of
+ * #2385/#2376, one layer down. The path and the errno are the two facts an
+ * operator needs to repair it, so the warning carries both.
+ */
+function prepareWorkerLog(logPath: string | undefined): WorkerLogPreparation {
+  if (logPath == null || logPath.trim() === "") return { ready: false };
+  const dir = dirname(logPath);
   try {
-    mkdirSync(dirname(logPath), { recursive: true });
-    return true;
-  } catch {
-    return false;
+    mkdirSync(dir, { recursive: true });
+    return { ready: true };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    return {
+      ready: false,
+      warning:
+        `redskilled could not create the log directory ${JSON.stringify(dir)} for ${JSON.stringify(logPath)}` +
+        `${code == null ? "" : ` (${code})`}: ${reason(err)}. This Worker runs with NO log at all, so nothing but ` +
+        `its heartbeat can show what it did`,
+    };
   }
 }
 
@@ -247,11 +280,24 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   const workerId = (spec.worker_id ?? options.workerId)?.trim()
     || mintHostWorkerId(options.liveWorkerIds ?? []);
   const probes = options.probes ?? detectWorkerPlacementProbes(env);
+  // Resolved HERE, at the instant this Worker exists, and never earlier (#3440).
+  // A client that cannot know the id the daemon is about to mint declares
+  // `{{worker_id}}` and gets the file this birth actually writes to; a client
+  // that stated a literal path gets the string it stated back. The demand lane
+  // has already expanded its own template by now, so this is a second pass over
+  // a path with nothing left in it — which is exactly why one lane's log path
+  // can no longer be a different KIND of thing from the other's.
+  const logPath = expandWorkerLogPath(spec.log_path, {
+    worker_id: workerId,
+    workspace_path: spec.workspace_path,
+  });
   // The Worker's own output is the project's log, so the daemon opens the file
   // the client named and hands the descriptor to the process it owns. Failing to
   // open it degrades to a silent Worker rather than a refused launch: a log is
-  // evidence, and losing evidence must never cost the work.
-  const logReady = options.openLog === false ? false : prepareWorkerLog(spec.log_path);
+  // evidence, and losing evidence must never cost the work — but it is a LOUD
+  // degradation, because a silent one is the failure it was meant to prevent.
+  const log: WorkerLogPreparation = options.openLog === false ? { ready: false } : prepareWorkerLog(logPath);
+  const logReady = log.ready;
   // The daemon hands its own node down instead of hoping the Worker's PATH
   // holds one (#3064). Under a transient unit the Worker's PATH is the init
   // system's canonical `/usr/bin`-shaped one, so on a version-manager host
@@ -298,7 +344,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
       ? { ...env }
       : { ...env, ...workerEnv, ...plan.environment },
   });
-  if (logReady && spec.log_path != null) attachWorkerLog(child, spec.log_path);
+  if (logReady && logPath != null) attachWorkerLog(child, logPath);
 
   if (child.pid == null) {
     child.once("error", () => undefined);
@@ -327,7 +373,7 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
   child.unref();
 
   const isolated = plan.job != null ? placed?.job != null : plan.isolated;
-  const warnings = [plan.warning, placed?.warning, plan.budgetWarning].filter(
+  const warnings = [plan.warning, placed?.warning, plan.budgetWarning, log.warning].filter(
     (warning): warning is string => warning != null,
   );
   const worker: RedskilledWorkerView = {
@@ -336,7 +382,13 @@ export function launchWorker(options: LaunchWorkerOptions): LaunchedWorker {
     pid: child.pid,
     started_at: clock(),
     workspace_path: spec.workspace_path,
-    ...(spec.log_path != null ? { log_path: spec.log_path } : {}),
+    // Reported only when the daemon ACTUALLY opened it (#3440). A view carrying
+    // a path nothing ever created is what made a worker-death event name a file
+    // that was not there, and the absence read as a deleted directory rather
+    // than as a log that was never created — a real diagnosis spent on a fact
+    // the record itself had invented. The failure is not lost: it rides
+    // `warnings`, where the operator who asked for the Worker is already reading.
+    ...(logReady && logPath != null ? { log_path: logPath } : {}),
     isolated,
     ...(plan.unit != null ? { unit: plan.unit } : {}),
     ...(spec.budget != null ? { budget: spec.budget } : {}),

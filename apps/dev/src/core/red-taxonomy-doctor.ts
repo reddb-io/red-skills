@@ -52,7 +52,6 @@ const KNOWN_TMP_LANES = new Set([
   "claims",
   "waits",
   "worktrees",
-  "logs",
   "scratch",
   "diagnostics",
   // Ephemeral rsp guards (resident wake lock) — registered by the ADR 0098

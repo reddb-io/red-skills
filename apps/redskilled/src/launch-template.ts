@@ -163,6 +163,40 @@ export function expandLaunchTemplate(
 }
 
 /**
+ * Resolve a declared log path against the facts of THIS birth — at birth. PURE.
+ *
+ * **A declaration is long-lived; a path is not.** A registration is renewed for
+ * days and the launch it carries is restated on a beat, so a `log_path` computed
+ * once at declaration time is a string that ages: #3440's worker died on
+ * 2026-08-06 still reporting a path the registration had minted on 2026-08-05,
+ * into a directory the janitor's TTL was concurrently reclaiming. Substituting
+ * here — at the one instant the Worker actually comes into existence — is what
+ * makes "the declared path" and "the path this Worker writes to" the same fact.
+ *
+ * Two facts and no more, because two are the ones a DIRECTLY-started Worker has:
+ * the id, minted for this birth, and the workspace it was handed. A slot belongs
+ * to a placement the direct lane never makes, so a template that names one is
+ * refused rather than answered with a fabricated zero — the demand lane, which
+ * does own a slot, has already substituted it by the time a spec reaches here.
+ */
+export function expandWorkerLogPath(
+  logPath: string | undefined,
+  facts: { readonly worker_id: string; readonly workspace_path: string },
+): string | undefined {
+  if (logPath == null || logPath.trim() === "") return undefined;
+  return logPath.replace(PLACEHOLDER, (_match, name: string) => {
+    switch (name) {
+      case "worker_id":
+        return facts.worker_id;
+      case "workspace_path":
+        return facts.workspace_path;
+      default:
+        throw new RedskilledLaunchFactError(name, "the log path");
+    }
+  });
+}
+
+/**
  * Turn one project's standing launch into the spec for ONE Worker. PURE.
  *
  * This is the composition site the per-project process used to be: the argv's

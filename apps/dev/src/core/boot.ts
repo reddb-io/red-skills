@@ -1149,11 +1149,9 @@ async function runTmpJanitorSweep(
   }
 
   const expired = [
-    ...sweep.plan.logs.reclaim,
     ...sweep.plan.scratch.reclaim,
     ...sweep.plan.diagnostics.reclaim,
     ...sweep.plan.feedbackWorktrees.reclaim,
-    ...sweep.plan.legacySlotLogs.reclaim,
   ];
   const feedbackPaths = new Set(sweep.plan.feedbackWorktrees.reclaim.map((entry) => entry.path));
   // Counted apart from `expiredLanes`, which also holds logs and scratch: only a

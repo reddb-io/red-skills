@@ -33,7 +33,7 @@ import {
   type SupervisorLiveness,
   type SweepWork,
 } from "../src/core/supervisor.js";
-import { parkedSlotWorkFor, slotLogDir, slotLogPath } from "../src/runtime/supervisor-fs.js";
+import { parkedSlotWorkFor } from "../src/runtime/supervisor-fs.js";
 import type { ProcessSnapshotEntry } from "../src/core/reaper-signal.js";
 import type { LivenessVerdict } from "@reddb-io/red-castle";
 
@@ -67,8 +67,6 @@ export {
   evaluateValidationAdmission,
   guardedTick,
   parkedSlotWorkFor,
-  slotLogDir,
-  slotLogPath,
 };
 
 export type {

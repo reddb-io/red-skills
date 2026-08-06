@@ -3,7 +3,6 @@
 // PURE: all inputs are pre-stat'd by the caller. No I/O, no process/date reads.
 //
 // Lanes covered by this sweep:
-//   tmp/logs/<yyyy-mm-dd>/   — short TTL; date-dirs older than LOGS_TTL_S are reclaimed
 //   tmp/scratch/             — short TTL; entries older than SCRATCH_TTL_S are reclaimed
 //   tmp/diagnostics/         — age cap; entries older than DIAGNOSTICS_TTL_S are reclaimed
 //   tmp/worktrees/feedback/  — mtime TTL on top of existing SHA invalidation;
@@ -34,9 +33,6 @@ export function pathIsInsideTmp(tmpDir: string, path: string): boolean {
 
 // ---------- TTL constants (ADR 0098 §3) ----------
 
-/** Short TTL for session log date-dirs under tmp/logs/<yyyy-mm-dd>/. */
-export const LOGS_TTL_S = 7 * 86400;
-
 /** Short TTL for entries under tmp/scratch/. */
 export const SCRATCH_TTL_S = 3 * 86400;
 
@@ -60,16 +56,9 @@ export const KNOWN_TMP_LANES = new Set([
   "claims",
   "waits",
   "worktrees",
-  "logs",
   "scratch",
   "diagnostics",
 ]);
-
-const LEGACY_SLOT_LOG_RE = /^afk-supervisor-slot-\d+\.log$/;
-
-export function isLegacySlotLogName(name: string): boolean {
-  return LEGACY_SLOT_LOG_RE.test(name);
-}
 
 // ---------- types ----------
 
@@ -88,15 +77,6 @@ export interface JanitorLanePlan {
 }
 
 // ---------- per-lane planners ----------
-
-/** Decide which log date-dirs to reclaim.
- * Reclaims dirs whose (nowS - mtimeS) strictly exceeds LOGS_TTL_S. */
-export function planLogsJanitor(
-  entries: readonly JanitorEntry[],
-  nowS: number,
-): JanitorLanePlan {
-  return splitByTtl(entries, nowS, LOGS_TTL_S);
-}
 
 /** Decide which scratch entries to reclaim.
  * Reclaims entries whose (nowS - mtimeS) strictly exceeds SCRATCH_TTL_S. */
@@ -156,7 +136,6 @@ export interface TmpRootAudit {
 export function auditTmpRoot(names: readonly string[]): TmpRootAudit {
   const unknown: string[] = [];
   for (const name of names) {
-    if (isLegacySlotLogName(name)) continue;
     if (!KNOWN_TMP_LANES.has(name)) unknown.push(name);
   }
   return { unknown };
@@ -182,26 +161,20 @@ export function removableUnknownTmpRoots(names: readonly string[]): string[] {
 export interface TmpJanitorInput {
   /** Current epoch seconds (injected so the planner stays pure). */
   nowS: number;
-  /** Stat'd entries under tmp/logs/ (the date-dir level). */
-  logEntries: readonly JanitorEntry[];
   /** Stat'd entries under tmp/scratch/. */
   scratchEntries: readonly JanitorEntry[];
   /** Stat'd entries under tmp/diagnostics/. */
   diagnosticsEntries: readonly JanitorEntry[];
   /** Stat'd entries under tmp/worktrees/feedback/. */
   feedbackEntries: readonly JanitorEntry[];
-  /** Legacy supervisor slot logs once written as loose tmp-root files. */
-  legacySlotLogEntries: readonly JanitorEntry[];
   /** Names (not full paths) present directly under the tmp root. */
   tmpRootNames: readonly string[];
 }
 
 export interface TmpJanitorPlan {
-  logs: JanitorLanePlan;
   scratch: JanitorLanePlan;
   diagnostics: JanitorLanePlan;
   feedbackWorktrees: JanitorLanePlan;
-  legacySlotLogs: JanitorLanePlan;
   /** Names at the tmp root not in KNOWN_TMP_LANES: reported, never deleted. */
   unknownTmpRoots: string[];
 }
@@ -210,11 +183,9 @@ export interface TmpJanitorPlan {
 export function planTmpJanitor(input: TmpJanitorInput): TmpJanitorPlan {
   const { nowS } = input;
   return {
-    logs: planLogsJanitor(input.logEntries, nowS),
     scratch: planScratchJanitor(input.scratchEntries, nowS),
     diagnostics: planDiagnosticsJanitor(input.diagnosticsEntries, nowS),
     feedbackWorktrees: planFeedbackWorktreeJanitor(input.feedbackEntries, nowS),
-    legacySlotLogs: planLogsJanitor(input.legacySlotLogEntries, nowS),
     unknownTmpRoots: auditTmpRoot(input.tmpRootNames).unknown,
   };
 }
