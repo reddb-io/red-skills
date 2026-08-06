@@ -358,6 +358,41 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
     expect(c).toContain("git -C /repo merge --ff-only origin/main");
   });
 
+  it("fast-forwards over ordinary dirty paths disjoint from the incoming commits (#3439)", async () => {
+    const { exec, calls } = fakeExec([
+      onTarget,
+      { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: " M CHANGES.md\n" } },
+      {
+        match: (a) => a.join(" ").includes("diff --name-only main origin/main"),
+        result: { stdout: "apps/dev/src/core/merge.ts\n" },
+      },
+    ]);
+
+    const result = await fastForwardLocalTarget(exec, base);
+
+    expect(result.action).toBe("fast-forward");
+    expect(result.evidence).toContain("CHANGES.md");
+    expect(joined(calls)).toContain("git -C /repo merge --ff-only origin/main");
+  });
+
+  it("refuses a tracked local edit that the incoming commits also touch (#3439)", async () => {
+    const { exec, calls } = fakeExec([
+      onTarget,
+      { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: " M CHANGES.md\n" } },
+      {
+        match: (a) => a.join(" ").includes("diff --name-only main origin/main"),
+        result: { stdout: "CHANGES.md\napps/dev/src/core/merge.ts\n" },
+      },
+    ]);
+
+    const result = await fastForwardLocalTarget(exec, base);
+
+    expect(result.action).toBe("noop");
+    expect(result.failedCondition).toBe("dirt-collision");
+    expect(result.evidence).toContain("CHANGES.md");
+    expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
+  });
+
   it("no-ops when the primary is NOT on <target> (human moved HEAD)", async () => {
     const { exec, calls } = fakeExec([
       { match: (a) => a.join(" ").includes("symbolic-ref --short HEAD"), result: { stdout: "some-feature\n" } },
