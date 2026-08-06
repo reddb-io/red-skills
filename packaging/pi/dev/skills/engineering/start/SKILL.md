@@ -27,12 +27,18 @@ A round is as small as the tree makes it. One critical question that unblocks ev
 Each question is formatted like so — the emoji are load-bearing, because a round of five questions is read by scanning for them:
 
 ```
-❓ **Q##** — **<question title>**: <question body, may be several sentences>
+❓ **Q##** — <the question, ONE line, ending in a question mark>
 **Branches:** (a) <option A> · (b) <option B> · (c) <option C>
 ➡️ **(<letter>)** — <one-sentence reason>
 ```
 
-**Enumerate the branches whenever the decision space is finite.** They give the user a stable handle — "ok (b) but with X tweak" — and force the skill to make the choice space explicit instead of gesturing at it. Omit `Branches:` only when the question is genuinely open-ended; `➡️` then recommends in prose.
+**Three lines per question, and the question itself is one of them.** A round is read by scanning, and a question that swells into a paragraph stops being scannable — the reader loses which line they are answering. Keep the question to a single line that ends in a question mark.
+
+**Evidence goes above the round, never inside a question.** Whatever the user needs in order to answer — what you found in the code, the numbers, the trade-off you are weighing — belongs in prose *before* the first `❓`, written once for the whole round. A question is the ask alone.
+
+Separate consecutive questions with a blank line, so each `❓` starts its own visual block.
+
+**Enumerate the branches whenever the decision space is finite.** They give the user a stable handle — "ok (b) but with X tweak" — and force the skill to make the choice space explicit instead of gesturing at it. Keep each branch to a short phrase; a branch needing a sentence of explanation is evidence that belongs above the round. Omit `Branches:` only when the question is genuinely open-ended; `➡️` then recommends in prose.
 
 Close each round with a one-line invitation to answer, redirect, or push back.
 
@@ -55,7 +61,7 @@ The argument is optional. Treat it as the plan or context to grill.
 - **Prose** (short description) → no fetch, the prose is the plan.
 - **Empty argument** → open with the literal `Q01` as a one-question round:
 
-  > ❓ **Q01** — **What plan are we grilling?**: I need the material before the tree has a root.
+  > ❓ **Q01** — What plan are we grilling?
   > **Branches:** (a) paste it inline · (b) share a URL or file path · (c) describe it in a sentence
   > ➡️ **(a)** — inline context lets us start grilling immediately.
 
@@ -85,6 +91,7 @@ When the frontier is empty — or the user stops — run the shared end-of-sessi
 **Hard rules — do not break these:**
 
 - ❌ Do **not** ask a question whose answer depends on another question open in the same round — it belongs to the next round, once its prerequisite is settled.
+- ❌ Do **not** let a question run past one line. The evidence behind it goes above the round, where it is written once and read once.
 - ❌ Do **not** implement, write code, or run commands beyond read-only codebase exploration, except for the end-of-session doc-landing finalizer.
 - ❌ Do **not** summarise the user's answers back at them. They know what they said.
 - ❌ Do **not** propose a final plan, design doc, or Spec. This skill ends in shared understanding, not artefacts.
