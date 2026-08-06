@@ -6,7 +6,8 @@
 // socket. A mock would answer whatever the assertion wanted, and the fact worth
 // proving here is precisely that a second process now does the launching.
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,6 +33,26 @@ async function scratch(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   roots.push(root);
   return root;
+}
+
+/**
+ * A workspace the daemon can grant a fork SHA for. Birth now names the fork
+ * point the host resolved, so the daemon fetches the workspace's trunk before
+ * it starts anything — a bare temp dir has no remote to fetch and is refused.
+ */
+async function gitWorkspace(prefix: string): Promise<string> {
+  const workspace = await scratch(prefix);
+  const upstream = join(await scratch(`${prefix}upstream-`), "acme", "widgets");
+  await mkdir(upstream, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: upstream, stdio: "ignore" });
+  execFileSync(
+    "git",
+    ["-c", "user.email=demo@acme.test", "-c", "user.name=demo", "commit", "-q", "--allow-empty", "-m", "seed"],
+    { cwd: upstream, stdio: "ignore" },
+  );
+  execFileSync("git", ["init", "-q"], { cwd: workspace, stdio: "ignore" });
+  execFileSync("git", ["remote", "add", "origin", upstream], { cwd: workspace, stdio: "ignore" });
+  return workspace;
 }
 
 async function sessionPaths(): Promise<RedskilledPaths> {
@@ -90,7 +111,7 @@ describe("a project's Worker is born by the daemon", () => {
 
   it("runs in the workspace the project named and appears in host state under its label", async () => {
     const paths = await sessionPaths();
-    const workspace = await scratch("dev-birth-workspace-");
+    const workspace = await gitWorkspace("dev-birth-workspace-");
     const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
     running.push(daemon);
 
@@ -99,6 +120,7 @@ describe("a project's Worker is born by the daemon", () => {
       worker_id: "wTEST",
       project_label: "",
       workspace_path: workspace,
+      trunk: { remote: "origin", branch: "main" },
       log_path: join(workspace, "worker.log"),
       command: process.execPath,
       args: ["-e", "console.log('[afk] worker: wTEST'); require('node:fs').writeFileSync('proof.txt', process.cwd());"],
@@ -123,7 +145,7 @@ describe("a project's Worker is born by the daemon", () => {
 
   it("reports the Worker's death to the project with the exit status the host witnessed", async () => {
     const paths = await sessionPaths();
-    const workspace = await scratch("dev-birth-death-");
+    const workspace = await gitWorkspace("dev-birth-death-");
     const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
     running.push(daemon);
 
@@ -132,6 +154,7 @@ describe("a project's Worker is born by the daemon", () => {
       worker_id: "wDEAD",
       project_label: "",
       workspace_path: workspace,
+      trunk: { remote: "origin", branch: "main" },
       command: process.execPath,
       args: ["-e", "process.exit(78);"],
     });
@@ -149,7 +172,7 @@ describe("a project's Worker is born by the daemon", () => {
 
   it("drains each host event exactly once, so a death is never counted twice", async () => {
     const paths = await sessionPaths();
-    const workspace = await scratch("dev-birth-drain-");
+    const workspace = await gitWorkspace("dev-birth-drain-");
     const daemon = await startRedskilledDaemon({ paths, idleMs: 60_000 });
     running.push(daemon);
 
@@ -158,6 +181,7 @@ describe("a project's Worker is born by the daemon", () => {
       worker_id: "wONCE",
       project_label: "",
       workspace_path: workspace,
+      trunk: { remote: "origin", branch: "main" },
       command: process.execPath,
       args: ["-e", "process.exit(0);"],
     });
