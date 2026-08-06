@@ -21,6 +21,11 @@ plugins:
             - plugins/*/.claude-plugin/plugin.json
             - plugins/*/.codex-plugin/plugin.json
             - plugins/*/.gemini-plugin/plugin.json
+            # The SOURCE the mirror is generated FROM, not just the mirror. A
+            # branch that adds or edits a skill touched none of the paths above,
+            # so the regeneration moment never fired and the staleness surfaced
+            # in CI instead — four times over (#3403, #3419, #3436, #3445).
+            - plugins/*/skills/**
             - packaging/pi/**
           command: pnpm generate-manifests && pnpm pi:packages:build
         post_done:
