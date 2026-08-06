@@ -1,0 +1,5 @@
+interface:
+  display_name: "Ask Red"
+  short_description: "Ask which RedSkills flow fits the current situation. Use when the operator asks what to do now, which command to run, or how to route a task through RedSkills."
+policy:
+  allow_implicit_invocation: false

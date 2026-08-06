@@ -1,0 +1,3 @@
+interface:
+  display_name: "Context Status"
+  short_description: "Report the project context stack posture without mutating anything. Use when checking whether agent rules, domain docs, ADRs, Memory graph/telemetry, and LLM Wiki are ready before a large task or self-improvement loop."

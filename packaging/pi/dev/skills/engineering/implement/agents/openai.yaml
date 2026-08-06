@@ -1,0 +1,5 @@
+interface:
+  display_name: "Implement"
+  short_description: "Implement a Spec or set of issues interactively - guided, human-driven counterpart to the autonomous /afk fleet."
+policy:
+  allow_implicit_invocation: false
