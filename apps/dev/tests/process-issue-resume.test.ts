@@ -180,8 +180,11 @@ describe("branch-resume: no prior branch (issue #2397)", () => {
       m.processIssue(deps, { ...input, workerId: "wOTHER" }),
     );
 
+    // The base is the fork the HOST granted, not a ref this worker fetched for
+    // itself: the worker-side trunk fetch is gone, so `red-trunk` no longer
+    // exists to cut from.
     expect(trace.freshWorkerBranchCalls).toEqual([
-      { branch: "afk/9-fix-the-thing", baseRef: "red-trunk", force: false },
+      { branch: "afk/9-fix-the-thing", baseRef: "granted-fork-sha", force: false },
     ]);
     expect(trace.runAgentCalls[0]?.branch).toBe("afk/9-fix-the-thing");
   });
