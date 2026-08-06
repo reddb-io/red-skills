@@ -13,7 +13,7 @@
 //      name: frontmatter, English-only, orphaned bundled files. Each is a
 //      pass/warn/fail FACT, never a gate.
 //   2. SEMANTIC — the LLM judge scores the nine sentence-level techniques from
-//      write-a-skill plus trigger clarity, deletion-test bloat, and
+//      writing-for-agents plus trigger clarity, deletion-test bloat, and
 //      <what-to-do>/<supporting-info> placement. Its shape + validator live
 //      here; core/skill-audit-extract.ts drives sandcastle to fill it.
 //
@@ -308,7 +308,7 @@ export function mechanicalScore(checks: readonly MechanicalCheck[]): number {
 // Semantic sub-score (the LLM judge). Shape + validator; extract module fills it.
 // ---------------------------------------------------------------------------
 
-/** The scored dimensions: the nine write-a-skill techniques + three structural
+/** The scored dimensions: the nine writing-for-agents techniques + three structural
  * dimensions. Every value is 0 (absent/broken) … 10 (exemplary). */
 export const AUDIT_DIMENSIONS = [
   "boldLeadIn",
