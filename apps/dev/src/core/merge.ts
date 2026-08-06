@@ -19,13 +19,13 @@ import { planGithubRestRead } from "@reddb-io/github";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import {
   classifyDirtyTree,
-  classifySetupDirtCollision,
+  classifyDirtCollision,
   describeCleanTreeRefusal,
-  describeSetupDirtCollisionRefusal,
-  describeSupersededSetupDirt,
+  describeDirtCollisionRefusal,
+  describeSupersededDirt,
   describeToleratedDirt,
   renderDirtyPathList,
-  SUPERSEDED_SETUP_DIRT_LANE,
+  SUPERSEDED_DIRT_LANE,
 } from "./setup-owned-dirt.js";
 
 const FLEET_TRUNK_REF = "refs/heads/red-trunk";
@@ -1941,7 +1941,7 @@ export async function evaluateFastForwardLocalTarget(
         evidence: `condition failed: dirt-collision (could not read the incoming path list for ${remoteRef} while judging ${tree.dirty.length} dirty path(s): ${renderDirtyPathList(dirtyPaths)})`,
       };
     }
-    const collision = classifySetupDirtCollision(
+    const collision = classifyDirtCollision(
       tree,
       incoming.stdout.split("\n").map((line) => line.trim()).filter((line) => line !== ""),
     );
@@ -1954,12 +1954,12 @@ export async function evaluateFastForwardLocalTarget(
         toleratedDirt: dirtyPaths,
         failed: "dirt-collision",
         failedCondition: "dirt-collision",
-        evidence: describeSetupDirtCollisionRefusal(collision.conflicting, remoteRef),
+        evidence: describeDirtCollisionRefusal(collision.conflicting, remoteRef),
       };
     }
     supersededDirt = collision.superseded;
   }
-  const supersededNote = supersededDirt.length > 0 ? describeSupersededSetupDirt(supersededDirt) : undefined;
+  const supersededNote = supersededDirt.length > 0 ? describeSupersededDirt(supersededDirt) : undefined;
   return {
     guard: "passed",
     target,
@@ -1974,26 +1974,26 @@ export async function evaluateFastForwardLocalTarget(
 
 /**
  * Move each superseded untracked setup-owned file into the
- * {@link SUPERSEDED_SETUP_DIRT_LANE} backup lane, preserving its repo-relative
+ * {@link SUPERSEDED_DIRT_LANE} backup lane, preserving its repo-relative
  * path, so `merge --ff-only` can write the tracked copy in its place. A failure
  * to move ANY of them aborts the fast-forward rather than letting the merge
  * discover the same collision one command later.
  */
-async function supersedeSetupOwnedDirt(
+async function supersedeDirtyPaths(
   exec: Exec,
   gitRepo: string,
   paths: readonly string[],
 ): Promise<{ ok: boolean; evidence: string }> {
   for (const path of paths) {
-    const destination = `${gitRepo}/${SUPERSEDED_SETUP_DIRT_LANE}/${path}`;
+    const destination = `${gitRepo}/${SUPERSEDED_DIRT_LANE}/${path}`;
     const parent = destination.slice(0, destination.lastIndexOf("/"));
     const made = await exec(["mkdir", "-p", parent]);
     if (made.code !== 0) {
-      return { ok: false, evidence: `condition failed: dirt-collision (could not create the backup lane ${SUPERSEDED_SETUP_DIRT_LANE}/ for ${path})` };
+      return { ok: false, evidence: `condition failed: dirt-collision (could not create the backup lane ${SUPERSEDED_DIRT_LANE}/ for ${path})` };
     }
     const moved = await exec(["mv", "-f", `${gitRepo}/${path}`, destination]);
     if (moved.code !== 0) {
-      return { ok: false, evidence: `condition failed: dirt-collision (could not move the superseded ${path} into ${SUPERSEDED_SETUP_DIRT_LANE}/)` };
+      return { ok: false, evidence: `condition failed: dirt-collision (could not move the superseded ${path} into ${SUPERSEDED_DIRT_LANE}/)` };
     }
   }
   return { ok: true, evidence: "" };
@@ -2084,7 +2084,7 @@ export async function fastForwardLocalTarget(
   // tracked files. Moved, never deleted: the two differed only in a comment
   // header on the host that found this, but that is the operator's call to make
   // afterwards, not ours to erase (#3155).
-  const supersede = await supersedeSetupOwnedDirt(exec, input.gitRepo, guard.supersededDirt ?? []);
+  const supersede = await supersedeDirtyPaths(exec, input.gitRepo, guard.supersededDirt ?? []);
   if (!supersede.ok) {
     return {
       ...guard,
@@ -2160,7 +2160,7 @@ export async function fastForwardLocalTarget(
   return {
     ...guard,
     action: "fast-forward",
-    evidence: `${ff.reclaimed ? "reclaimed empty unheld .git/index.lock; " : ""}fast-forwarded ${input.target} to ${input.remote}/${input.target}`,
+    evidence: `${ff.reclaimed ? "reclaimed empty unheld .git/index.lock; " : ""}fast-forwarded ${input.target} to ${input.remote}/${input.target}${guard.toleratedDirt ? `; tolerated ${guard.toleratedDirt.length} dirty path(s) after collision check (${renderDirtyPathList(guard.toleratedDirt)})` : ""}`,
   };
 }
 
