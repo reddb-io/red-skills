@@ -127,7 +127,7 @@ describe("branchReversionBaseline", () => {
   });
 });
 
-describe("resolveFreshBase (worker base freshness)", () => {
+describe("resolveFreshBase (manual requeue base refresh)", () => {
   it("fetches the base, advances the fleet mirror, and returns that mirror as the worktree base", async () => {
     const { exec, calls } = recordingExec((_cmd, args) => {
       const joined = args.join(" ");

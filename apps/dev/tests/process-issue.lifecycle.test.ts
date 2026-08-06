@@ -14,7 +14,6 @@ import {
 } from "./process-issue.test-helpers.js";
 import type { AttemptProgressInfo, ConfigValues, ProcessIssueDeps } from "./process-issue.test-helpers.js";
 import { reseedParkMarker } from "../src/core/process-issue/reseed-trail.js";
-import { FORK_GRANT_FALLBACK_DELETE_RELEASE } from "../src/core/process-issue/types.js";
 import { encodeLines } from "@reddb-io/toon";
 import { vi } from "vitest";
 describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", () => {
@@ -133,7 +132,6 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
   });
 
   it("pre-cleans a merge-conflict retry branch before sandcastle can reuse a stale worktree", async () => {
-    const fetchedBases: string[] = [];
     const prevFailureContext = [
       "prev-envelope: https://github.com/o/r/issues/9",
       "prev-failure-reason:",
@@ -142,7 +140,6 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     const { deps, input, trace } = harness({
       attempt: 2,
       prevFailureContext,
-      fetchedBases,
       outcome: "done",
       feedbackOk: true,
     });
@@ -150,15 +147,14 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
-    expect(fetchedBases).toEqual(["main"]);
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
         branch: "afk/9-fix-the-thing",
-        baseRef: "red-trunk",
+        baseRef: "granted-fork-sha",
         force: true,
       },
     ]);
-    expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
+    expect(trace.runAgentCalls[0]?.base).toBe("granted-fork-sha");
     expect(trace.handoffs[0]?.content).toContain("prev-envelope: https://github.com/o/r/issues/9");
     expect(trace.handoffs[0]?.content).toContain("prev-failure-reason:\nmerge-conflict");
   });
@@ -182,7 +178,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
         branch: "afk/9-fix-the-thing",
-        baseRef: "red-trunk",
+        baseRef: "granted-fork-sha",
         force: false,
       },
     ]);
@@ -1122,7 +1118,6 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
     const command = "pnpm test:fork-point";
     const { deps, input, trace } = harness({
       outcome: "done",
-      baseMovements: [{ head: "new-main", subjects: ["chore: moved base"] }],
       locked: false,
     });
     deps.validationMoments = { post_done: [command] };
@@ -1131,8 +1126,8 @@ describe("processIssue — no-sentinel (run ended without a <promise>)", () => {
 
     expect(result.outcome).toBe("done");
     expect(trace.shellCommands).toEqual([command]);
-    expect(trace.baseMovementCalls).toEqual([]);
-    expect(trace.changedFileCalls[0]?.base).toBe("origin/main-tip");
+    expect(trace.workerBaseMovementCalls).toEqual([]);
+    expect(trace.changedFileCalls[0]?.base).toBe("granted-fork-sha");
   });
 
   it("re-runs only the failed post_done subset, then folds back to the full declaration", async () => {
@@ -1376,8 +1371,8 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
     expect(result.outcome).toBe("done");
     // The stage read the branch against the merge base, and read it BEFORE any
     // PR existed — so `gh pr diff` was never called at all.
-    expect(trace.worktreeDiffCalls).toEqual([{ branch: "afk/9-fix-the-thing", base: "red-trunk" }]);
-    expect(trace.adversarialReviewContexts[0]).toMatchObject({ base: "red-trunk" });
+    expect(trace.worktreeDiffCalls).toEqual([{ branch: "afk/9-fix-the-thing", base: "granted-fork-sha" }]);
+    expect(trace.adversarialReviewContexts[0]).toMatchObject({ base: "granted-fork-sha" });
     expect(trace.adversarialReviewContexts[0]?.diff).toContain("const fromWorktree = true;");
     expect(trace.mergeCalls.some((argv) => argv.includes("pr") && argv.includes("diff"))).toBe(false);
   });
@@ -1937,50 +1932,14 @@ describe("processIssue — active Current blocker preflight", () => {
   });
 });
 
-describe("processIssue — trunk-mirror boot failure (#2436)", () => {
-  it("parks as runner-transient (not base-stale) when resolveFreshBase fails", async () => {
-    // Regression: attempts on issues with prose like "branch: when the PR lands"
-    // in their body caused parseBranchPin to extract "when" as the branch pin,
-    // which made resolveFreshBase({ base: "when" }) fail.  The issue was then
-    // parked as base-stale (non-recoverable → human), misrepresenting an
-    // unstarted issue as finished work awaiting merge.  The fix classifies this
-    // as runner-transient so the fleet auto-retries up to the bounded cap.
-    const { deps, input, trace } = harness({ freshBaseFail: true });
-
-    const result = await processIssue(deps, input);
-
-    expect(result.outcome).toBe("runner-transient");
-    // No agent work ran — no runAgent calls.
-    expect(trace.runAgentCalls).toEqual([]);
-    // No fresh branch was prepared — the branch was never pushed.
-    expect(trace.freshWorkerBranchCalls).toEqual([]);
-    // Park comment must not contain a live-branch link (branch was never pushed).
-    const envelope = trace.envelopeBodies[0] ?? "";
-    expect(envelope).not.toMatch(/live branch:/);
-  });
-});
-
 describe("processIssue — daemon-granted fork point (ADR 0138)", () => {
   it("forks exactly the granted commit without fetching the trunk", async () => {
-    const fetchedBases: string[] = [];
-    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, fetchedBases });
-    input.forkSha = "granted-fork-sha";
+    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
 
     await processIssue(deps, input);
 
-    expect(fetchedBases).toEqual([]);
     expect(trace.freshWorkerBranchCalls[0]?.baseRef).toBe("granted-fork-sha");
-  });
-
-  it("keeps the one-release legacy fetch with a loud, tombstoned version-skew warning", async () => {
-    const fetchedBases: string[] = [];
-    const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true, fetchedBases });
-
-    await processIssue(deps, input);
-
-    expect(fetchedBases).toEqual(["main"]);
-    expect(trace.iterLogs).toContainEqual(expect.stringMatching(/redskilled <3\.7\.0.*@reddb-io\/dev >=3\.7\.0/));
-    expect(trace.iterLogs).toContainEqual(expect.stringContaining(FORK_GRANT_FALLBACK_DELETE_RELEASE));
+    expect(trace.iterLogs.some((line) => line.includes("version skew"))).toBe(false);
   });
 });
 

@@ -14,10 +14,9 @@
 //   3. else the Trunk — the repo's configured focal branch
 //      (`plugins.dev.trunk`, default `main`; ADR 0083).
 //
-// The resolver returns a branch NAME. Consumers must read it as its
-// fresh-fetched remote ref (`origin/<branch>` after `fetchBase`), never as the
-// local working-tree branch (ADR 0083 — the local branch may be stale or carry
-// foreign WIP).
+// The resolver returns a branch NAME. The daemon resolves that name to the
+// exact fork SHA it grants each Worker; consumers never derive the birth ref
+// from the local working-tree branch (ADR 0083, ADR 0138).
 //
 // Pure composition, no side effects of its own: it touches neither git nor the
 // filesystem directly. All real IO (the lock file read, the gh body fetch) is

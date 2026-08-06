@@ -1399,26 +1399,20 @@ describe("processIssue — fatal host configuration", () => {
 });
 
 
-describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
-  it("fetches the resolved base and forks the worker branch off it (not HEAD)", async () => {
-    const fetchedBases: string[] = [];
+describe("processIssue — granted base reaches sandcastle (ADR 0138)", () => {
+  it("forks the worker branch from the daemon grant (not HEAD)", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
       locked: true, // lock value "main" → base resolves to main
-      fetchedBases,
     });
     const result = await processIssue(deps, input);
 
     expect(result.base).toBe("main");
-    // the base ref is fetched current before the run (ADR 0031 caller contract).
-    expect(fetchedBases).toEqual(["main"]);
-    // runAgent receives the remote-tracking ref so sandcastle forks from the
-    // freshly-fetched ref, not the potentially-stale local branch.
-    expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
+    expect(trace.runAgentCalls[0]?.base).toBe("granted-fork-sha");
   });
 
-  it("resolves feedback scopes from the fetched origin base, not a stale local base", async () => {
+  it("resolves feedback scopes from the granted base, not a stale local base", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -1426,7 +1420,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
       packageScopes: ["packages/stale", "packages/fresh"],
       changedFilesByBase: {
         main: ["packages/stale/src/old.ts"],
-        "red-trunk": ["packages/fresh/src/new.ts"],
+        "granted-fork-sha": ["packages/fresh/src/new.ts"],
       },
     });
     const result = await processIssue(deps, input);
@@ -1434,7 +1428,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(result.outcome).toBe("done");
     expect(trace.changedFileCalls).toContainEqual({
       branch: "afk/9-fix-the-thing",
-      base: "red-trunk",
+      base: "granted-fork-sha",
     });
     const pnpmDirs = trace.pnpmArgs
       .map((args) => {
@@ -1446,22 +1440,17 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(pnpmDirs).not.toContain("afk/9-fix-the-thing/packages/stale");
   });
 
-  it("resolves an unlocked, pinless issue to the configured Trunk and forks off red-trunk", async () => {
-    const fetchedBases: string[] = [];
+  it("resolves an unlocked, pinless issue to the configured Trunk and forks from the grant", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
       locked: false,
       configTrunk: "develop",
-      fetchedBases,
     });
     const result = await processIssue(deps, input);
 
     expect(result.base).toBe("develop");
-    // the trunk is fetched current before the run and projected through the
-    // fleet-owned mirror, never the primary checkout's local branch.
-    expect(fetchedBases).toEqual(["develop"]);
-    expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
+    expect(trace.runAgentCalls[0]?.base).toBe("granted-fork-sha");
   });
 });
 
@@ -1633,16 +1622,14 @@ describe("processIssue — /afk post-DONE gate-correction convergence (#2285)", 
 
 describe("processIssue — stale-base drift never spends the correction budget (#2711)", () => {
   const RELEASE_BUMP = "chore(release): version packages";
-  /** The base head the harness's `resolveFreshBase` reports at attempt start —
-   * a probe that echoes it back means the base stood still. */
-  const BASE_START_SHA = "origin/main-tip";
+  /** A daemon stamp that echoes the granted fork means the base stood still. */
+  const BASE_START_SHA = "granted-fork-sha";
 
   it("passes the daemon's ready base stamp to Verdict without re-deriving it from git", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       reseedGateBudget: 0,
     });
-    input.forkSha = "granted-fork-sha";
     deps.validationMoments = { post_done: ["pnpm test"] };
     let validations = 0;
     deps.backpressure = async () => ({
@@ -1665,7 +1652,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
 
     expect(result.outcome).toBe("done");
     expect(factCalls).toEqual(["wAAAA"]);
-    expect(trace.baseMovementCalls).toEqual([]);
+    expect(trace.workerBaseMovementCalls).toEqual([]);
     expect(trace.iterLogs.some((line) => line.includes("base +2"))).toBe(true);
   });
 
@@ -1676,7 +1663,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
       outcome: "done",
       feedbackResults: [false, false, true],
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
-      baseMovements: [
+      workerBaseMovements: [
         { head: "moved-1", subjects: [RELEASE_BUMP] },
         { head: "moved-2", subjects: ["fix: another main-side change"] },
       ],
@@ -1689,10 +1676,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
     expect(result.outcome).toBe("done");
     expect(trace.runAgentCalls).toHaveLength(1);
     expect(trace.closed).toEqual([9]);
-    expect(trace.baseMovementCalls).toEqual([
-      { baseRef: "red-trunk", sinceSha: BASE_START_SHA },
-      { baseRef: "red-trunk", sinceSha: BASE_START_SHA },
-    ]);
+    expect(trace.workerBaseMovementCalls).toEqual(["wAAAA", "wAAAA"]);
     expect(trace.iterLogs.some((l) => l.includes("base fault (stale-base-drift)"))).toBe(true);
     expect(trace.iterLogs.some((l) => l.includes("without an agent or branch charge"))).toBe(true);
   });
@@ -1704,7 +1688,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
       outcome: "done",
       feedbackResults: [false, false, true],
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
-      baseMovements: [{ head: BASE_START_SHA, subjects: [] }],
+      workerBaseMovements: [{ head: BASE_START_SHA, subjects: [] }],
     });
 
     const result = await processIssue(deps, input);
@@ -1722,7 +1706,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
       outcome: "done",
       feedbackResults: [false, false, true],
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
-      baseMovements: [
+      workerBaseMovements: [
         // Failure 1: the base stood still — a genuine failure that spends 1/1.
         { head: BASE_START_SHA, subjects: [] },
         // Failure 2: the base moved. The counter is already spent, but a branch
@@ -1751,7 +1735,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
       changedFiles: ["packaging/pi/dev/package.json", "apps/dev/src/core/go.ts"],
       feedbackResults: [false, true],
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "0" },
-      baseMovements: [{ head: "bumped", subjects: ["fix: earlier", RELEASE_BUMP] }],
+      workerBaseMovements: [{ head: "bumped", subjects: ["fix: earlier", RELEASE_BUMP] }],
     });
 
     const result = await processIssue(deps, input);
@@ -1772,7 +1756,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
       outcome: "done",
       feedbackResults: [false],
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
-      baseMovements: [
+      workerBaseMovements: [
         { head: "moved-1", subjects: [RELEASE_BUMP] },
         { head: "moved-2", subjects: ["fix: more main-side churn"] },
         // The base finally stands still: the branch is simply red.
@@ -1799,7 +1783,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
       outcome: "done",
       feedbackResults: [false],
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "0", RED_GATE_ENVIRONMENT_ROUNDS: "1" },
-      baseMovements: [{ head: "moving-forever", subjects: ["fix: churn"] }],
+      workerBaseMovements: [{ head: "moving-forever", subjects: ["fix: churn"] }],
     });
 
     const result = await processIssue(deps, input);
@@ -1813,7 +1797,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackResults: [false, true],
-      baseMovements: [{ head: "bumped", subjects: [RELEASE_BUMP] }],
+      workerBaseMovements: [{ head: "bumped", subjects: [RELEASE_BUMP] }],
     });
 
     const result = await processIssue(deps, input);
@@ -1825,7 +1809,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(false);
   });
 
-  it("stays branch-fault when no base-movement probe is wired at all", async () => {
+  it("stays branch-fault when no daemon base-movement fact is wired at all", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackResults: [false],
@@ -1835,7 +1819,7 @@ describe("processIssue — stale-base drift never spends the correction budget (
 
     expect(result.outcome).toBe("feedback-failed");
     expect(trace.runAgentCalls).toHaveLength(1);
-    expect(trace.baseMovementCalls).toEqual([]);
+    expect(trace.workerBaseMovementCalls).toEqual([]);
   });
 });
 
@@ -1859,7 +1843,7 @@ describe("processIssue — generated stale-base drift heals mechanically (#3352)
     const { deps, input, trace } = harness({
       outcome: "done",
       reseedGateBudget: 1,
-      baseMovements: [{
+      workerBaseMovements: [{
         head: "bumped",
         subjects: ["chore(release): version packages"],
         files: ["packaging/pi/dev/package.json"],
@@ -1890,7 +1874,7 @@ describe("processIssue — generated stale-base drift heals mechanically (#3352)
     const { deps, input, trace } = harness({
       outcome: "done",
       reseedGateBudget: 1,
-      baseMovements: [{
+      workerBaseMovements: [{
         head: "mixed",
         subjects: ["fix: base changed code and mirrors"],
         files: ["packaging/pi/dev/package.json", "apps/dev/src/core/verdict.ts"],
@@ -1914,7 +1898,7 @@ describe("processIssue — generated stale-base drift heals mechanically (#3352)
     const { deps, input, trace } = harness({
       outcome: "done",
       reseedGateBudget: 1,
-      baseMovements: [{
+      workerBaseMovements: [{
         head: "bumped",
         subjects: ["chore(release): version packages"],
         files: ["packaging/pi/dev/package.json"],
@@ -1935,7 +1919,7 @@ describe("processIssue — generated stale-base drift heals mechanically (#3352)
     const { deps, input, trace } = harness({
       outcome: "done",
       reseedGateBudget: 1,
-      baseMovements: [{
+      workerBaseMovements: [{
         head: "bumped",
         subjects: ["chore(release): version packages"],
         files: ["packaging/pi/dev/package.json"],
@@ -1965,16 +1949,16 @@ describe("processIssue — an empty-diff DONE is never stale-base drift (#2711)"
       changedFilesSequence: [[], []],
       feedbackOk: true,
       recoveryEnv: { RED_GO_VERIFY_RETRIES: "1" },
-      baseMovements: [{ head: "moved-1", subjects: ["chore(release): version packages"] }],
+      workerBaseMovements: [{ head: "moved-1", subjects: ["chore(release): version packages"] }],
     });
 
     const result = await processIssue(deps, input);
 
     // No diff at all is unambiguously the branch's problem — the base cannot
-    // explain it, so the probe is never even consulted and the cap still binds.
+    // explain it, so the daemon fact is never even consulted and the cap still binds.
     expect(result.outcome).toBe("feedback-failed");
     expect(trace.runAgentCalls).toHaveLength(2);
-    expect(trace.baseMovementCalls).toEqual([]);
+    expect(trace.workerBaseMovementCalls).toEqual([]);
     expect(trace.labelEdits.some((e) => e.add.includes("blocked:validation"))).toBe(true);
   });
 });

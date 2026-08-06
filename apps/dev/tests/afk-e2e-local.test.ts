@@ -354,10 +354,6 @@ async function setup(opts: {
         return (await gitAt(repoDir, ["rev-parse", "--short", "HEAD"])).stdout.trim();
       },
       async deleteLocalBranch() {},
-      async resolveFreshBase({ base, remote }) {
-        // Fork point is the resolved base; the worker branch descends from it.
-        return { ok: true, base, baseRef: base, sha: `${remote}/${base}`, source: "remote", remoteReachable: true };
-      },
       async prepareFreshWorkerBranch() {
         return true;
       },
@@ -473,6 +469,7 @@ async function setup(opts: {
     repo: "o/r",
     repoDir,
     remote: "origin",
+    forkSha: initialMainSha,
     baseInput: { issueBody: "## Agent brief\nDo it." },
   };
 

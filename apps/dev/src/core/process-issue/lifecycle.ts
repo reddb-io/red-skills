@@ -147,7 +147,7 @@ import {
   type AdversarialReviewFindings,
 } from "../adversarial-review.js";
 import type { ProcessIssueDeps, ProcessIssueInput, ProcessIssueResult, WorkerBaseResolution, ProcessOutcome } from "./types.js";
-import { FORK_GRANT_FALLBACK_DELETE_RELEASE, baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
+import { baseResolutionStatePatch, formatBaseResolution, isMergeConflictRetry, markTerminalState, recoveryOrdinalFor, remoteTrackingBaseRef, resolveSpawnTier } from "./types.js";
 import { editIssueLifecycleLabels, formatNoSourceChangeWarning, hasLikelySourceChanges, refuseNoSandboxForUntrustedAuthor, resolveEnvironmentRoundCap, resolveGoVerifyRetries, resolveReseedGateBudget, resolveUntrustedAuthorSandbox, scoutCapturedDone, scoutReportFrom } from "./recovery.js";
 import type { ReseedSpend, ReseedTrigger } from "./reseed-budget.js";
 import {
@@ -609,69 +609,19 @@ export async function processIssue(
   ) {
     return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
   }
-  let baseResolution: WorkerBaseResolution;
-  const grantedForkSha = input.forkSha?.trim() ?? "";
-  const warnLegacyForkGrant = (): void => {
-    const warning =
-      `warning: fork-grant version skew: redskilled <3.7.0 omitted the fork SHA while ` +
-      `@reddb-io/dev >=3.7.0 expected it; using the legacy Worker-side trunk fetch. ` +
-      `This fallback is deleted in ${FORK_GRANT_FALLBACK_DELETE_RELEASE}.`;
-    deps.appendIterLog(warning);
+  const grantedForkSha = input.forkSha.trim();
+  if (grantedForkSha === "") {
+    throw new Error("redskilled granted this Worker no fork SHA");
+  }
+  const baseResolution: WorkerBaseResolution = {
+    ok: true,
+    base,
+    baseRef: grantedForkSha,
+    sha: grantedForkSha,
+    source: "grant",
+    remoteReachable: true,
   };
-  if (grantedForkSha !== "") {
-    baseResolution = {
-      ok: true,
-      base,
-      baseRef: grantedForkSha,
-      sha: grantedForkSha,
-      source: "grant",
-      remoteReachable: true,
-    };
-  } else if (deps.git.resolveFreshBase) {
-    warnLegacyForkGrant();
-    baseResolution = await deps.git.resolveFreshBase({ base, remote: input.remote });
-  } else {
-    warnLegacyForkGrant();
-    if (deps.git.fetchBase) await deps.git.fetchBase(base);
-    baseResolution = {
-      ok: true,
-      base,
-      baseRef: remoteTrackingBaseRef(input.remote, base),
-      sha: "",
-      source: "remote",
-      remoteReachable: true,
-    };
-  }
   deps.markState?.(baseResolutionStatePatch(baseResolution));
-  if (!baseResolution.ok) {
-    const staleCommon: StageCommon = {
-      deps,
-      input,
-      branch,
-      base,
-      slug,
-      hooksFired,
-      startedEpoch,
-      issueType: deriveIssueType(labels),
-      modelTier: taskClass,
-      model: deps.model,
-      effort: deps.effort,
-      resolvedBase: baseResolution,
-      // The worker branch was never pushed — suppress the live-branch link.
-      noBranchLink: true,
-    };
-    const message = baseResolution.message ?? "could not refresh fleet trunk mirror; remote unreachable or ref missing.";
-    // Classify as runner-transient (infrastructure / network failure), not
-    // base-stale.  base-stale implies the base ref exists but the local copy is
-    // behind; a mirror-refresh failure at boot (origin/when, network down, etc.)
-    // is an infra transient that clears on the next attempt.  base-stale is
-    // non-recoverable (escalates to human); runner-transient auto-retries up to
-    // the bounded cap, which is the right policy here.
-    return await terminalFailure(staleCommon, "runner-transient", "runner-transient", {
-      notes: message,
-      log: message,
-    });
-  }
   const baseRef = baseResolution.baseRef;
   // Skip branch preparation when resuming from a prior pushed branch: the branch
   // already exists on origin and must not be deleted or reset (issue #2397).
@@ -818,34 +768,19 @@ export async function processIssue(
         rounds: [{ cause: "prior-environment", signature: carriedValidationSignature }],
       }
     : emptyEnvironmentLedger(environmentRoundCap);
-  // The daemon's stamp is the ready environment fact (ADR 0138). The legacy git
-  // probe remains only for the one-release compatibility path: a missing or
-  // unreadable fact yields `undefined` instead of inventing movement.
-  const observeBaseMovement = async (allowLegacyProbe: boolean): Promise<BaseMovement | undefined> => {
+  // The daemon's stamp is the ready environment fact (ADR 0138). A missing or
+  // unreadable fact yields `undefined` instead of the Worker re-deriving it.
+  const observeBaseMovement = async (): Promise<BaseMovement | undefined> => {
     const hostFact = deps.lookups.workerBaseMovement;
     if (hostFact) {
       try {
         const movement = await hostFact(input.workerId);
-        if (movement != null && (!input.forkSha || movement.startSha === input.forkSha)) return movement;
+        if (movement != null && movement.startSha === input.forkSha) return movement;
       } catch {
-        // Mixed-version or temporarily unreachable daemon: the legacy probe may
-        // still supply evidence during its one-release compatibility window.
+        return undefined;
       }
     }
-    if (!allowLegacyProbe) return undefined;
-    const probe = deps.lookups.baseMovement;
-    if (!probe || !baseResolution.sha) return undefined;
-    try {
-      const seen = await probe(baseRef, baseResolution.sha);
-      return {
-        startSha: baseResolution.sha,
-        gateSha: seen.head,
-        subjects: seen.subjects,
-        files: seen.files,
-      };
-    } catch {
-      return undefined;
-    }
+    return undefined;
   };
   const afkGateCap = resolveReseedGateBudget(deps);
   const isGoLane = input.laneLabel === LABEL_GO_LANE;
@@ -1087,14 +1022,14 @@ export async function processIssue(
     checks: readonly ClassifiableCheck[],
     signature: string,
     branchBudgetAvailable: boolean,
-    driftEligible: boolean,
+    _driftEligible: boolean,
     mechanicalHealFailure?: string,
   ): Promise<Verdict> => decideVerdict({
     checks,
     signature,
     history: { environment: environmentLedger, branchBudgetAvailable },
     environment: {
-      movement: await observeBaseMovement(driftEligible),
+      movement: await observeBaseMovement(),
       subsecondFailuresAreBranchFault: deps.validationMoments?.subsecondFailuresAreBranchFault,
       generated: deps.validationMoments?.generated,
       mechanicalHealFailure,

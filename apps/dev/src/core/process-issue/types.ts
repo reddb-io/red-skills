@@ -160,8 +160,6 @@ export interface ProcessFs {
 export interface ProcessGit {
   headShortSha(): Promise<string>;
   deleteLocalBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string } | void>;
-  fetchBase?(base: string): Promise<void>;
-  resolveFreshBase?(input: { base: string; remote: string }): Promise<WorkerBaseResolution>;
   prepareFreshWorkerBranch?(input: { branch: string; baseRef: string; force: boolean }): Promise<boolean | void>;
 }
 export interface WorkerBaseResolution {
@@ -178,14 +176,6 @@ export interface WorkerBaseResolution {
   message?: string;
 }
 
-/**
- * The first release that deletes the mixed-version worker-side trunk fetch.
- *
- * Kept beside the fallback's input so removing this constant is the mechanical
- * tombstone that also finds every warning and test belonging to the compatibility
- * window (ADR 0138).
- */
-export const FORK_GRANT_FALLBACK_DELETE_RELEASE = "3.8.0";
 export interface ProcessLookups {
   base: ResolveBaseDeps;
   isLocked(): Promise<boolean>;
@@ -469,7 +459,7 @@ export interface ProcessIssueInput {
   repoDir: string;
   remote: string;
   /** The exact commit the daemon judged this Worker against (ADR 0138). */
-  forkSha?: string;
+  forkSha: string;
   baseInput: ResolveBaseInput;
   specRef?: string;
   runMode?: string;

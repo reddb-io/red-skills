@@ -340,11 +340,11 @@ async function localAheadBehind(
 }
 
 /**
- * Resolve the concrete commit a new AFK worker should branch from.
+ * Refresh the concrete base a manual requeue inspects.
  *
  * Online: fetch `<remote> <base>`, advance the fleet-owned `red-trunk` mirror
- * ref to that tip, and fork workers from the mirror. The mirror is never checked
- * out or committed to directly; it is just an owned ref updated with
+ * ref to that tip. The mirror is never checked out or committed to directly;
+ * it is just an owned ref updated with
  * `git update-ref`. If upstream history was rewritten, the mirror is reset to
  * the fetched remote tip because it holds no unique commits.
  *

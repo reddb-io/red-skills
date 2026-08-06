@@ -113,15 +113,6 @@ describe("buildReviewPorts", () => {
 });
 
 describe("buildGitPorts", () => {
-  it("fetches the base from the remote it was built with", async () => {
-    const { exec, trace } = makeFakeExec();
-    const { git } = buildGitPorts(gitContext(exec), "upstream");
-
-    await git.fetchBase?.("main");
-
-    expect(trace).toEqual([{ cmd: "git", args: ["fetch", "upstream", "main"], cwd: "/repo" }]);
-  });
-
   it("binds mergeExec and remoteGit to the same git context", async () => {
     const { exec, trace } = makeFakeExec();
     const { mergeExec, remoteGit } = buildGitPorts(gitContext(exec, "/checkout"), "origin");

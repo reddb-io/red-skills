@@ -73,6 +73,7 @@ function isAlive(pid: number): boolean {
 const GRANTED: DispatchedWorkerBirth = {
   worker_id: "worker-3027",
   pid: 424_242,
+  fork_sha: "granted-fork-sha",
   log: "/tmp/red/logs/2026-08-01/dispatch-3027.log",
   warnings: [],
   admission: "admitted: 1 of 3 workers",

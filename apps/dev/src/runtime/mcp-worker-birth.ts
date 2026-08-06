@@ -47,7 +47,7 @@ export function dispatchLogPath(root: string, stampIso: string): string {
 export interface DispatchedWorkerBirth {
   readonly worker_id: string;
   readonly pid: number;
-  readonly fork_sha?: string;
+  readonly fork_sha: string;
   /** Post-mortem handle: where the host pointed this Worker's output. */
   readonly log: string;
   /** Warnings the host attached — a downgraded unit is running AND degraded. */
@@ -122,7 +122,7 @@ export async function requestWorkerBirth(
   return {
     worker_id: granted.workerId,
     pid: granted.pid,
-    ...(granted.forkSha == null ? {} : { fork_sha: granted.forkSha }),
+    fork_sha: granted.forkSha,
     log,
     warnings: granted.warnings,
     admission: granted.admission,
