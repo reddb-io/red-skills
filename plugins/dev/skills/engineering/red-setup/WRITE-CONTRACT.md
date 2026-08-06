@@ -175,7 +175,7 @@ Script content for each signal type (all open with `#!/usr/bin/env bash` + `set 
 **Run this immediately before the recap: this skill leaves the tree dirty on purpose, so it must say so.** Setup writes `.red/config.yaml`, `.red/.gitignore` and any accepted `.red/hooks/**` scripts and is forbidden to `git add` them — that is the operator's decision, not this skill's. Nothing else closes the loop, so before #3106 a fresh repository looked set up, reported success, and then died at first `/afk` boot with a message about git ancestry that never mentioned setup.
 
 1. **Name every file, exactly as written.** List each path this run created or merged and mark it `uncommitted`. Do not print a count; a count sends the reader to `git status` for something this run already knows.
-2. **Say what stays open until they decide.** The trunk-freshness guard tolerates dirt in exactly these paths, so `/afk` boots either way — but the files stay outside git, so a teammate cloning the repo gets no RedSkills activation, and `/red-doctor` check 28 keeps reporting them.
+2. **Say what stays open until they decide.** The trunk-freshness guard does not special-case these paths: it preserves any dirty path disjoint from the incoming commits and refuses a tracked edit that collides, naming the paths either way. The files still stay outside git, so a teammate cloning the repo gets no RedSkills activation, and `/red-doctor` check 28 keeps reporting them.
 3. **Offer the commit; never run it.** Give the exact command and stop there:
 
     ```bash

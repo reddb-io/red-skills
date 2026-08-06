@@ -1,8 +1,8 @@
 import { encode as encodeToon } from "@reddb-io/toon";
 
 /**
- * setup-owned-dirt.ts — the single owner of "which dirty working-tree paths did
- * `/red-setup` write, and never commit".
+ * setup-owned-dirt.ts — working-tree dirt classification shared by red-doctor
+ * and the trunk-freshness guard.
  *
  * Two individually-correct rules used to brick every fresh repository (#3106).
  * The setup contract forbids `git add` on the files setup generates, so setup
@@ -11,31 +11,21 @@ import { encode as encodeToon } from "@reddb-io/toon";
  * closed the loop, so the first Worker died at boot with a message about git
  * ancestry that never mentioned setup.
  *
- * The reconciliation is a NAMED class, not a widened rule: dirt confined to the
- * paths setup owns is tolerated by the guard, dirt anywhere else refuses exactly
- * as before, and either way the evidence names the paths.
+ * The trunk guard does not use a path allowlist (#3439): every dirty path is safe
+ * across a pure fast-forward when the incoming commits do not touch it. The
+ * setup-owned list remains solely for red-doctor check 28, which must identify
+ * uncommitted `/red-setup` output and explain how to commit or ignore it.
  *
- * The tolerance extends to the operation it guards (#3155). It used to stop at
- * the verdict — "tolerated" was immediately overruled by `merge --ff-only`
- * refusing to clobber the same file, and that is the GUARANTEED end state of a
- * maturing repo: setup writes `.red/.gitignore` untracked, trunk eventually
- * carries it tracked, and the two collide forever. A verdict of tolerated that
- * the next command overrules is not a tolerance, it is a delayed refusal with a
- * misleading receipt. So the collision is now classified before the merge runs:
- * an UNTRACKED local copy the incoming commits carry as tracked is superseded by
- * definition — moved aside, then fast-forwarded — and a TRACKED local edit the
- * incoming commits also touch is real content, so the guard refuses honestly.
+ * A collision is classified before `merge --ff-only`: an UNTRACKED local copy
+ * the incoming commits carry is moved aside, while a TRACKED local edit the
+ * incoming commits also touch is real content and refuses honestly (#3155).
  */
 
-/** The files `/red-setup` writes and is forbidden to `git add` (WRITE-CONTRACT.md steps 5, 8). */
+/** Retained for red-doctor check 28, not as a trunk-freshness allowlist. */
 export const SETUP_OWNED_FILES: readonly string[] = [".red/config.yaml", ".red/.gitignore"];
 
-/** The trees `/red-setup` seeds scripts into, none of them `git add`ed (INTERVIEW.md hooks section). */
+/** Retained for red-doctor check 28, not as a trunk-freshness allowlist. */
 export const SETUP_OWNED_PREFIXES: readonly string[] = [".red/hooks/"];
-
-/** Documentation `/start` edits inline and ADR 0092 lands as one session-owned set. */
-export const DOC_LANDING_FILES: readonly string[] = [".red/CONTEXT.md", ".red/CONTEXT-MAP.md"];
-export const DOC_LANDING_PREFIXES: readonly string[] = [".red/contexts/", ".red/adr/"];
 
 /** The one spelling of the repair, so the guard, the doctor and the skill agree. */
 export const SETUP_OWNED_DIRT_REMEDIATION =
@@ -52,17 +42,13 @@ export interface DirtyPath {
   /** The two-character porcelain XY code (`" M"`, `"??"`, `"R "`, …). */
   readonly status: string;
   readonly setupOwned: boolean;
-  /** Safe for a pure fast-forward when the incoming commits do not touch it. */
-  readonly tolerated: boolean;
 }
 
 export interface DirtyTreeClassification {
   readonly dirty: readonly DirtyPath[];
   /** Dirty paths `/red-setup` wrote, in porcelain order. */
   readonly setupOwned: readonly string[];
-  /** Every path the trunk guard may preserve across a non-conflicting fast-forward. */
-  readonly tolerated: readonly string[];
-  /** Every non-tolerated dirty path — the operator's own work, in porcelain order. */
+  /** Every path not written by setup — the operator's own work, in porcelain order. */
   readonly foreign: readonly string[];
 }
 
@@ -94,17 +80,6 @@ export function isSetupOwnedPath(path: string): boolean {
   return SETUP_OWNED_PREFIXES.some((prefix) => path.startsWith(prefix));
 }
 
-/** True for the exact doc set `/start` holds dirty until ADR 0092 landing. */
-export function isDocLandingPath(path: string): boolean {
-  if (DOC_LANDING_FILES.includes(path)) return true;
-  return DOC_LANDING_PREFIXES.some((prefix) => path.startsWith(prefix));
-}
-
-/** The complete named tolerance; everything outside it remains protected WIP. */
-export function isToleratedDirtyPath(path: string): boolean {
-  return isSetupOwnedPath(path) || isDocLandingPath(path);
-}
-
 /** Strip git's quoting from a porcelain path. Setup-owned paths are ASCII, so the
  * common escapes are enough — an exotic name simply classifies as foreign dirt. */
 function unquote(raw: string): string {
@@ -132,14 +107,12 @@ export function classifyDirtyTree(porcelain: string): DirtyTreeClassification {
       path,
       status,
       setupOwned: isSetupOwnedPath(path),
-      tolerated: isToleratedDirtyPath(path),
     });
   }
   return {
     dirty,
     setupOwned: dirty.filter((entry) => entry.setupOwned).map((entry) => entry.path),
-    tolerated: dirty.filter((entry) => entry.tolerated).map((entry) => entry.path),
-    foreign: dirty.filter((entry) => !entry.tolerated).map((entry) => entry.path),
+    foreign: dirty.filter((entry) => !entry.setupOwned).map((entry) => entry.path),
   };
 }
 
@@ -157,11 +130,6 @@ export function isSetupOwnedDirtOnly(tree: DirtyTreeClassification): boolean {
   return tree.dirty.length > 0 && tree.dirty.every((entry) => entry.setupOwned);
 }
 
-/** True when every dirty path belongs to a reconciliation-owned tolerance. */
-export function isToleratedDirtOnly(tree: DirtyTreeClassification): boolean {
-  return tree.dirty.length > 0 && tree.foreign.length === 0;
-}
-
 /**
  * The clean-tree refusal, spelled so the reader learns the cause from the line.
  * `clean-tree (3 dirty path(s))` sent an operator to git history for a state our
@@ -173,25 +141,20 @@ export function describeCleanTreeRefusal(tree: DirtyTreeClassification): string 
   return `${head}; ${tree.setupOwned.length} written by /red-setup and never committed (${renderDirtyPathList(tree.setupOwned)}) — ${SETUP_OWNED_DIRT_REMEDIATION}`;
 }
 
-/** The evidence for a guard that PASSED over tolerated setup-owned dirt. */
-export function describeToleratedSetupDirt(tree: DirtyTreeClassification): string {
-  return `tolerated ${tree.setupOwned.length} /red-setup-owned dirty path(s) (${renderDirtyPathList(tree.setupOwned)})`;
-}
-
-/** Evidence for the complete named class the trunk guard preserved. */
+/** Evidence for dirty paths preserved because incoming commits do not overwrite them. */
 export function describeToleratedDirt(tree: DirtyTreeClassification): string {
-  return `tolerated ${tree.tolerated.length} reconciliation-owned dirty path(s) (${renderDirtyPathList(tree.tolerated)})`;
+  return `tolerated ${tree.dirty.length} dirty path(s) after collision check (${renderDirtyPathList(tree.dirty.map((entry) => entry.path))})`;
 }
 
-/** The `.red/tmp/` lane a superseded setup-owned file is moved to, never deleted:
- * the local copy is replaced by a tracked one, and the operator can still diff. */
-export const SUPERSEDED_SETUP_DIRT_LANE = ".red/tmp/superseded-setup-dirt";
+/** The backup lane for superseded untracked dirt. Its legacy name stays stable
+ * so existing backups and cleanup classification remain valid. */
+export const SUPERSEDED_DIRT_LANE = ".red/tmp/superseded-setup-dirt";
 
 /**
- * How a tolerated setup-owned dirty path meets the commits that are about to
- * land. Only paths the incoming commits actually touch can block the merge.
+ * How dirty primary-checkout paths meet the commits that are about to land.
+ * Only paths the incoming commits actually touch can block the merge.
  */
-export interface SetupDirtCollision {
+export interface DirtCollision {
   /** Untracked locally, tracked in the incoming commits — the local copy is stale by definition. */
   readonly superseded: readonly string[];
   /** Tracked and locally edited, and the incoming commits touch it too — real content, never moved. */
@@ -199,19 +162,19 @@ export interface SetupDirtCollision {
 }
 
 /**
- * Split the tolerated dirt against the paths the incoming commits carry. This is
+ * Split all dirt against the paths the incoming commits carry. This is
  * exactly the test `git merge --ff-only` performs a moment later, run early so
  * the verdict and the merge can never disagree (#3155).
  */
-export function classifySetupDirtCollision(
+export function classifyDirtCollision(
   tree: DirtyTreeClassification,
   incomingPaths: readonly string[],
-): SetupDirtCollision {
+): DirtCollision {
   const incoming = new Set(incomingPaths);
   const superseded: string[] = [];
   const conflicting: string[] = [];
   for (const entry of tree.dirty) {
-    if (!entry.tolerated || !incoming.has(entry.path)) continue;
+    if (!incoming.has(entry.path)) continue;
     // `??` is git's untracked code; anything else means the path is tracked here.
     if (entry.status === "??") superseded.push(entry.path);
     else conflicting.push(entry.path);
@@ -220,20 +183,20 @@ export function classifySetupDirtCollision(
 }
 
 /** The evidence for dirt the guard moved aside so the fast-forward could land. */
-export function describeSupersededSetupDirt(paths: readonly string[]): string {
-  return `superseded ${paths.length} untracked /red-setup file(s) now tracked upstream (${renderDirtyPathList(paths)}) — backed up under ${SUPERSEDED_SETUP_DIRT_LANE}/`;
+export function describeSupersededDirt(paths: readonly string[]): string {
+  return `superseded ${paths.length} untracked dirty path(s) now tracked upstream (${renderDirtyPathList(paths)}) — backed up under ${SUPERSEDED_DIRT_LANE}/`;
 }
 
 /**
  * The honest refusal for the half that cannot be resolved: the operator's own
- * edit to a now-tracked setup file. Names the blocking path and the repair, so
+ * edit to a tracked file. Names the blocking path and the repair, so
  * the verdict reads the way the aborted merge would have.
  */
-export function describeSetupDirtCollisionRefusal(
+export function describeDirtCollisionRefusal(
   paths: readonly string[],
   ref: string,
 ): string {
-  return `condition failed: dirt-collision (${paths.length} locally-modified tolerated path(s) also changed by ${ref}: ${renderDirtyPathList(paths)}) — commit or stash them, then the fast-forward can land`;
+  return `condition failed: dirt-collision (${paths.length} tracked dirty path(s) also changed by ${ref}: ${renderDirtyPathList(paths)}) — commit or stash them, then the fast-forward can land`;
 }
 
 /**

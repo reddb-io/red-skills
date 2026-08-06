@@ -746,7 +746,7 @@ describe("operational probe registry", () => {
     }
   });
 
-  it("refuses the gated base-freshness fix when the primary trunk is dirty", async () => {
+  it("tolerates dirt the incoming commits do not touch, whatever its path (#3439)", async () => {
     const { root, repo } = await makeBaseFreshnessRepo();
     try {
       await writeFile(join(repo, "scratch.txt"), "dirty\n", "utf8");
@@ -760,8 +760,12 @@ describe("operational probe registry", () => {
 
       expect(fixes).toContainEqual({
         probeId: "afk.base-freshness",
-        status: "noop",
-        evidence: "guard refused: condition failed: clean-tree (1 dirty path(s): scratch.txt)",
+        status: "applied",
+        // `scratch.txt` is on no allowlist and never needed one: the fast-forward
+        // does not write it, so it cannot threaten the operation. Judging dirt by
+        // collision rather than by a list of paths somebody already met is the
+        // whole point of #3439.
+        evidence: "fast-forwarded main to origin/main; tolerated 1 dirty path(s) after collision check (scratch.txt)",
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -787,7 +791,9 @@ describe("operational probe registry", () => {
       expect(fixes).toContainEqual({
         probeId: "afk.base-freshness",
         status: "applied",
-        evidence: "fast-forwarded main to origin/main",
+        // Still applied, and now the evidence says WHY it was safe: the two files
+        // setup owns are not files the fast-forward writes.
+        evidence: "fast-forwarded main to origin/main; tolerated 2 dirty path(s) after collision check (.red/config.yaml, .red/.gitignore)",
       });
       expect(git(repo, "rev-parse", "main").trim()).toBe(git(repo, "rev-parse", "origin/main").trim());
     } finally {

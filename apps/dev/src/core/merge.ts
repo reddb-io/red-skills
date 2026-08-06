@@ -19,13 +19,13 @@ import { planGithubRestRead } from "@reddb-io/github";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import {
   classifyDirtyTree,
-  classifySetupDirtCollision,
+  classifyDirtCollision,
   describeCleanTreeRefusal,
-  describeSetupDirtCollisionRefusal,
-  describeSupersededSetupDirt,
+  describeDirtCollisionRefusal,
+  describeSupersededDirt,
   describeToleratedDirt,
-  isToleratedDirtOnly,
-  SUPERSEDED_SETUP_DIRT_LANE,
+  renderDirtyPathList,
+  SUPERSEDED_DIRT_LANE,
 } from "./setup-owned-dirt.js";
 
 const FLEET_TRUNK_REF = "refs/heads/red-trunk";
@@ -1685,7 +1685,7 @@ export interface FastForwardLocalTargetGuardResult {
   readonly currentBranch?: string;
   readonly failed?: FastForwardLocalTargetRefusal;
   readonly failedCondition?: "on-trunk" | "clean-tree" | "fetch" | "ancestor" | "superseded-commits" | "dirt-collision" | "merge";
-  /** Reconciliation-owned dirty paths the clean-tree condition tolerated. */
+  /** Dirty paths preserved because the incoming commits do not overwrite them. */
   readonly toleratedDirt?: readonly string[];
   /** Tolerated dirt the incoming commits carry as tracked files, so the local
    * untracked copy is stale: moved aside before the merge, never merged over (#3155). */
@@ -1843,11 +1843,9 @@ export async function evaluateFastForwardLocalTarget(
       evidence: `condition failed: on-trunk (current=${currentBranch || "unknown"} expected=${target})`,
     };
   }
-  // 2. A dirty primary keeps pending WIP — never write over it (#1019). The one
-  // exceptions are named reconciliation-owned sets: output `/red-setup` leaves
-  // uncommitted (#3106), and docs `/start` holds dirty until ADR 0092 landing
-  // (#3349). Tolerating them costs nothing the guard protects because an
-  // incoming edit to the same path is classified as a real collision below.
+  // 2. Read the primary's dirt, but do not judge it by path name (#3439). A pure
+  // fast-forward leaves a dirty path intact unless the incoming commits touch
+  // that same path; the collision is classified after fetch below.
   const status = await exec(["git", "-C", gitRepo, "status", "--porcelain"]);
   if (status.code !== 0) {
     return {
@@ -1861,18 +1859,8 @@ export async function evaluateFastForwardLocalTarget(
     };
   }
   const tree = classifyDirtyTree(status.stdout);
-  if (tree.foreign.length > 0) {
-    return {
-      guard: "refused",
-      target,
-      remote,
-      currentBranch,
-      failed: "dirty-tree",
-      failedCondition: "clean-tree",
-      evidence: describeCleanTreeRefusal(tree),
-    };
-  }
-  const toleratedDirt = isToleratedDirtOnly(tree) ? describeToleratedDirt(tree) : undefined;
+  const dirtyPaths = tree.dirty.map((entry) => entry.path);
+  const toleratedDirt = tree.dirty.length > 0 ? describeToleratedDirt(tree) : undefined;
   // Refresh the remote ref so the ancestry test and the FF see the merge.
   const fetch = await exec(["git", "-C", gitRepo, "fetch", "--quiet", remote, target]);
   if (fetch.code !== 0) {
@@ -1896,20 +1884,19 @@ export async function evaluateFastForwardLocalTarget(
   let supersededCommits: readonly SupersededCommitPair[] = [];
   let lineageEvidence = `ancestor (${target} -> ${remoteRef})`;
   if (ancestor.code !== 0) {
-    // The setup-owned exception is safe for an ff-only merge because Git leaves
-    // unrelated edits in place. Divergence reconciliation uses reset --hard, so
-    // its clean-tree contract is literal: even our own tolerated dirt must stop
-    // before any patch-equivalence proof can authorize the pointer move.
+    // Divergence reconciliation uses reset --hard rather than a pure FF, so any
+    // dirt is threatened and must stop before patch-equivalence can authorize
+    // the pointer move.
     if (toleratedDirt) {
       return {
         guard: "refused",
         target,
         remote,
         currentBranch,
-        toleratedDirt: tree.tolerated,
+        toleratedDirt: dirtyPaths,
         failed: "dirty-tree",
         failedCondition: "clean-tree",
-        evidence: `condition failed: clean-tree (superseded-commit reconciliation requires no dirty paths; ${tree.tolerated.join(", ")})`,
+        evidence: `${describeCleanTreeRefusal(tree)}; superseded-commit reconciliation requires no dirty paths`,
       };
     }
     const classified = await classifySupersededCommits(exec, {
@@ -1934,7 +1921,7 @@ export async function evaluateFastForwardLocalTarget(
     supersededCommits = classified.pairs;
     lineageEvidence = `superseded-commits (${describeSupersededCommits(supersededCommits)})`;
   }
-  // 4. A tolerated path the incoming commits also carry would abort the very
+  // 4. A dirty path the incoming commits also carry would abort the very
   // merge this guard just approved (#3155), so decide it HERE: `guard=passed`
   // must imply the merge succeeds, or the verdict must not be `passed`.
   let supersededDirt: readonly string[] = [];
@@ -1948,13 +1935,13 @@ export async function evaluateFastForwardLocalTarget(
         target,
         remote,
         currentBranch,
-        toleratedDirt: tree.tolerated,
+        toleratedDirt: dirtyPaths,
         failed: "dirt-collision",
         failedCondition: "dirt-collision",
-        evidence: `condition failed: dirt-collision (could not read the incoming path list for ${remoteRef} while ${tree.tolerated.length} tolerated path(s) are dirty)`,
+        evidence: `condition failed: dirt-collision (could not read the incoming path list for ${remoteRef} while judging ${tree.dirty.length} dirty path(s): ${renderDirtyPathList(dirtyPaths)})`,
       };
     }
-    const collision = classifySetupDirtCollision(
+    const collision = classifyDirtCollision(
       tree,
       incoming.stdout.split("\n").map((line) => line.trim()).filter((line) => line !== ""),
     );
@@ -1964,21 +1951,21 @@ export async function evaluateFastForwardLocalTarget(
         target,
         remote,
         currentBranch,
-        toleratedDirt: tree.tolerated,
+        toleratedDirt: dirtyPaths,
         failed: "dirt-collision",
         failedCondition: "dirt-collision",
-        evidence: describeSetupDirtCollisionRefusal(collision.conflicting, remoteRef),
+        evidence: describeDirtCollisionRefusal(collision.conflicting, remoteRef),
       };
     }
     supersededDirt = collision.superseded;
   }
-  const supersededNote = supersededDirt.length > 0 ? describeSupersededSetupDirt(supersededDirt) : undefined;
+  const supersededNote = supersededDirt.length > 0 ? describeSupersededDirt(supersededDirt) : undefined;
   return {
     guard: "passed",
     target,
     remote,
     currentBranch,
-    ...(toleratedDirt ? { toleratedDirt: tree.tolerated } : {}),
+    ...(toleratedDirt ? { toleratedDirt: dirtyPaths } : {}),
     ...(supersededDirt.length > 0 ? { supersededDirt } : {}),
     ...(supersededCommits.length > 0 ? { supersededCommits } : {}),
     evidence: `guard passed: on-trunk clean-tree ${lineageEvidence}${toleratedDirt ? `; ${toleratedDirt}` : ""}${supersededNote ? `; ${supersededNote}` : ""}`,
@@ -1987,26 +1974,26 @@ export async function evaluateFastForwardLocalTarget(
 
 /**
  * Move each superseded untracked setup-owned file into the
- * {@link SUPERSEDED_SETUP_DIRT_LANE} backup lane, preserving its repo-relative
+ * {@link SUPERSEDED_DIRT_LANE} backup lane, preserving its repo-relative
  * path, so `merge --ff-only` can write the tracked copy in its place. A failure
  * to move ANY of them aborts the fast-forward rather than letting the merge
  * discover the same collision one command later.
  */
-async function supersedeSetupOwnedDirt(
+async function supersedeDirtyPaths(
   exec: Exec,
   gitRepo: string,
   paths: readonly string[],
 ): Promise<{ ok: boolean; evidence: string }> {
   for (const path of paths) {
-    const destination = `${gitRepo}/${SUPERSEDED_SETUP_DIRT_LANE}/${path}`;
+    const destination = `${gitRepo}/${SUPERSEDED_DIRT_LANE}/${path}`;
     const parent = destination.slice(0, destination.lastIndexOf("/"));
     const made = await exec(["mkdir", "-p", parent]);
     if (made.code !== 0) {
-      return { ok: false, evidence: `condition failed: dirt-collision (could not create the backup lane ${SUPERSEDED_SETUP_DIRT_LANE}/ for ${path})` };
+      return { ok: false, evidence: `condition failed: dirt-collision (could not create the backup lane ${SUPERSEDED_DIRT_LANE}/ for ${path})` };
     }
     const moved = await exec(["mv", "-f", `${gitRepo}/${path}`, destination]);
     if (moved.code !== 0) {
-      return { ok: false, evidence: `condition failed: dirt-collision (could not move the superseded ${path} into ${SUPERSEDED_SETUP_DIRT_LANE}/)` };
+      return { ok: false, evidence: `condition failed: dirt-collision (could not move the superseded ${path} into ${SUPERSEDED_DIRT_LANE}/)` };
     }
   }
   return { ok: true, evidence: "" };
@@ -2097,7 +2084,7 @@ export async function fastForwardLocalTarget(
   // tracked files. Moved, never deleted: the two differed only in a comment
   // header on the host that found this, but that is the operator's call to make
   // afterwards, not ours to erase (#3155).
-  const supersede = await supersedeSetupOwnedDirt(exec, input.gitRepo, guard.supersededDirt ?? []);
+  const supersede = await supersedeDirtyPaths(exec, input.gitRepo, guard.supersededDirt ?? []);
   if (!supersede.ok) {
     return {
       ...guard,
@@ -2173,7 +2160,7 @@ export async function fastForwardLocalTarget(
   return {
     ...guard,
     action: "fast-forward",
-    evidence: `${ff.reclaimed ? "reclaimed empty unheld .git/index.lock; " : ""}fast-forwarded ${input.target} to ${input.remote}/${input.target}`,
+    evidence: `${ff.reclaimed ? "reclaimed empty unheld .git/index.lock; " : ""}fast-forwarded ${input.target} to ${input.remote}/${input.target}${guard.toleratedDirt ? `; tolerated ${guard.toleratedDirt.length} dirty path(s) after collision check (${renderDirtyPathList(guard.toleratedDirt)})` : ""}`,
   };
 }
 
