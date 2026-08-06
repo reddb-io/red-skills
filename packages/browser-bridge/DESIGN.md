@@ -191,7 +191,7 @@ satisfies the ordering constraint and unblocks both halves.
    human decision; do not graduate a second review skill. Re-point the
    `browser-review` entry points (`/report-bug`, `/prototype`, `/impeccable`,
    `/verify`) at `/review`. Register per repo Rule 1 (README + plugin manifests);
-   say in the commit what was removed and why.
+   record the removal in `CHANGES.md`.
 
 > **Corrects #992's plan.** `apps/red-browser/DESIGN.md` slice 6 proposes
 > *"graduate `browser-review`"* as a separate skill and pushes `annotate → TOON`

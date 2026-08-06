@@ -390,6 +390,7 @@ describe("classification parity — the gate and CI share one taxonomy", () => {
     ".claude-plugin/marketplace.json",
     ".agents/plugins/marketplace.json",
     "README.md",
+    "CHANGES.md",
     "package.json",
     "pnpm-lock.yaml",
     "turbo.json",

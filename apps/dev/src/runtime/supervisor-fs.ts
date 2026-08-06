@@ -2,7 +2,6 @@
 // supervisor's SupervisorFs surface.
 //
 // Mirrors the slot→worker→iter-dir resolution chain in supervisor.sh:
-//   parse_worker_ids_from_log  (slot log → worker IDs)
 //   find_slot_iter_dir         (slot pid → worker dir → newest attempt dir)
 //   workerLivenessFor          (iter dir → liveness lane → evaluator verdict)
 //   iter_dirs_for_worker       (worker dir → every attempt dir)
@@ -16,7 +15,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseRecords } from "@reddb-io/toon";
-import type { IterDirInfo, SweepWork, SweepWorker } from "../core/supervisor.js";
+import type { IterDirInfo, SweepWork } from "../core/supervisor.js";
 import { buildRef } from "../core/remote-branch.js";
 import {
   parseReapableWorkerWorktreePath,

@@ -126,7 +126,7 @@ const DOC_PREFIXES = [".red/"];
 const MANIFEST_INPUT_PREFIXES = ["plugins/", ".claude-plugin/", ".agents/", "packaging/pi/"];
 
 /** Root-level docs the suite reads (README/CLAUDE/CHANGES are asserted). */
-const ROOT_DOC_FILES = new Set(["README.md", "CLAUDE.md", "NOTICE", "LICENSE"]);
+const ROOT_DOC_FILES = new Set(["README.md", "CLAUDE.md", "CHANGES.md", "NOTICE", "LICENSE"]);
 
 /**
  * The verdict for one changed path.

@@ -115,7 +115,7 @@ const DOC_PREFIXES = ['.red/'];
 const MANIFEST_INPUT_PREFIXES = ['plugins/', '.claude-plugin/', '.agents/', 'packaging/pi/'];
 
 /** Root-level docs that the suite reads (README/CLAUDE/CHANGES are asserted). */
-const ROOT_DOC_FILES = new Set(['README.md', 'CLAUDE.md', 'NOTICE', 'LICENSE']);
+const ROOT_DOC_FILES = new Set(['README.md', 'CLAUDE.md', 'CHANGES.md', 'NOTICE', 'LICENSE']);
 
 /** Source-file extensions — anything else inside a package is docs/fixtures. */
 const TYPED_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.mjs', '.cjs', '.json'];

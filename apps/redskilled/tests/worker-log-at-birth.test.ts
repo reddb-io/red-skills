@@ -53,7 +53,12 @@ function exitingSpec(workspacePath: string, overrides: Partial<RedskilledWorkerS
 function admittedLaunch(spec: RedskilledWorkerSpec) {
   return launchWorker({
     spec,
-    admission: evaluateWorkerAdmission({ ceiling: UNBOUNDED_HOST_CEILING, workers: [], spec }),
+    admission: evaluateWorkerAdmission({
+      ceiling: UNBOUNDED_HOST_CEILING,
+      workers: [],
+      ...(spec.budget === undefined ? {} : { budget: spec.budget }),
+      ...(spec.project_label === undefined ? {} : { projectLabel: spec.project_label }),
+    }),
   });
 }
 
