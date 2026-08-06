@@ -188,14 +188,6 @@ export async function runCommand(options: RunOptions): Promise<number> {
     pid: process.pid,
     pidStartTime,
     runner,
-    routeOverrides: {
-      env: routeEnv,
-      ...(projectStartPin
-        ? { projectStartRunner: projectStartPin }
-        : explicitRunnerFlag
-          ? { flagRunner: explicitRunnerFlag }
-          : {}),
-    },
     origin: dispatchIdentity.origin,
     kind: dispatchIdentity.kind,
     model: settings.model,
@@ -476,6 +468,14 @@ export async function runCommand(options: RunOptions): Promise<number> {
     current,
     fallbackRunner: flags.fallbackRunner,
     runner,
+    routeOverrides: {
+      env: routeEnv,
+      ...(projectStartPin
+        ? { projectStartRunner: projectStartPin }
+        : explicitRunnerFlag
+          ? { flagRunner: explicitRunnerFlag }
+          : {}),
+    },
     maxIterations: settings.maxIterations,
     laneIdle: settings.laneIdle,
     inlineVerifyCommand: flags.verifyCommand,
