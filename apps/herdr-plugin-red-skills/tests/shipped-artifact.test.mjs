@@ -34,7 +34,6 @@ import { rejectionReason, workspaceDependenciesResolve } from "../scripts/materi
 const ROOT = join(import.meta.dirname, "..");
 const REPO = join(ROOT, "..", "..");
 const BUNDLE_ASSET = "herdr-plugin-red-skills.bundle.min.mjs";
-const WORKFLOW = join(REPO, ".github", "workflows", "red-publish.yml");
 const ENTRY_NAME = "red-skills-herdr.mjs";
 
 /** The slice of `text` between two markers, so a match lands in the right step. */
@@ -72,15 +71,6 @@ test("the install-time build hook materializes the entry on both platforms", () 
       "a build hook that only preflights Node leaves an install that cannot run",
     );
   }
-});
-
-test("is built and released by the publish workflow", () => {
-  const workflow = readFileSync(WORKFLOW, "utf8");
-  assert.ok(workflow.includes("working-directory: apps/herdr-plugin-red-skills"), "no build step: the artifact never exists at release time");
-  const manifestStep = section(workflow, "- name: Build release manifest", "- name: GitHub Release");
-  assert.ok(manifestStep.includes(`dist/${BUNDLE_ASSET}`), "absent from the release manifest");
-  const releaseStep = section(workflow, "assets=(", "dist/release-manifest.json");
-  assert.ok(releaseStep.includes(`dist/${BUNDLE_ASSET}`), "absent from the Release assets — the build hook would download a 404");
 });
 
 test("the README documents the install that needs no checkout", () => {

@@ -20,8 +20,7 @@ import {
   findScopeViolations,
   findVersionDrift,
   readAnchorVersion,
-  readChangesetCoverage,
-  readVersionBearingFiles,
+  readReleaseCoverage,
   readWorkspaceGlobs,
   type WorkspaceManifest,
 } from "../src/core/version-train-guard.js";
@@ -74,16 +73,14 @@ describe("version-train detection", () => {
 
   it("flags a manifest no train writes — the herdr-plugin failure, exactly", () => {
     const gaps = findCoverageGaps([manifest({ name: "@reddb-io/orphan" })], {
-      fixedNames: ["@reddb-io/dev"],
-      ignoredNames: [],
-      versionBearingFiles: ["package.json"],
+      versionSurfaces: ["package.json"],
     });
 
     expect(gaps).toHaveLength(1);
     expect(gaps[0].name).toBe("@reddb-io/orphan");
   });
 
-  it("counts a package as covered by the fixed group OR by the sync script", () => {
+  it("counts a package as covered when the Release standard declares its manifest", () => {
     const both = [
       manifest({ name: "@reddb-io/bumped" }),
       manifest({ name: "@reddb-io/written", relativePath: "plugins/written/package.json" }),
@@ -91,21 +88,12 @@ describe("version-train detection", () => {
 
     expect(
       findCoverageGaps(both, {
-        fixedNames: ["@reddb-io/bumped"],
-        ignoredNames: [],
-        versionBearingFiles: ["plugins/written/package.json"],
+        versionSurfaces: [
+          "apps/bumped/package.json",
+          "plugins/written/package.json",
+        ],
       }),
     ).toEqual([]);
-  });
-
-  it("treats `ignore` as the opposite of coverage — an aligned-today ignored package still fails", () => {
-    const gaps = findCoverageGaps([manifest({ name: "@reddb-io/ignored" })], {
-      fixedNames: [],
-      ignoredNames: ["@reddb-io/ignored"],
-      versionBearingFiles: [],
-    });
-
-    expect(gaps).toHaveLength(1);
   });
 
   it("flags an unscoped workspace, and honours a stated exemption", () => {
@@ -126,8 +114,7 @@ describe("version-train detection", () => {
     );
 
     expect(message).toContain("apps/x/package.json");
-    expect(message).toContain("pnpm version:sync");
-    expect(message).toContain("VERSION_BEARING_FILES");
+    expect(message).toContain("release.version_surfaces");
     expect(message).toContain("SCOPE_EXEMPTIONS");
   });
 });
@@ -158,36 +145,27 @@ describe("the live tree", () => {
     expect(drift, describeVersionTrainFailures(anchorVersion, drift, [], [])).toEqual([]);
   });
 
-  it("puts every workspace on a release train that will carry it forward", async () => {
+  it("puts every workspace on the Release standard train", () => {
     const manifests = collectWorkspaceManifests(REPO_ROOT);
-    const changesets = readChangesetCoverage(REPO_ROOT);
-    const gaps = findCoverageGaps(manifests, {
-      ...changesets,
-      versionBearingFiles: await readVersionBearingFiles(REPO_ROOT),
-    });
+    const gaps = findCoverageGaps(manifests, readReleaseCoverage(REPO_ROOT));
 
     expect(gaps, describeVersionTrainFailures("", [], gaps, [])).toEqual([]);
   });
 
-  it("writes the marketplace-visible surfaces through the sync script", async () => {
-    const files = await readVersionBearingFiles(REPO_ROOT);
+  it("declares marketplace-visible manifests as standard Version surfaces", () => {
+    const files = readReleaseCoverage(REPO_ROOT).versionSurfaces;
 
     // The field the VS Code marketplace and the .vsix show.
     expect(files).toContain("apps/vscode-extension-red-skills/package.json");
-    // The herdr plugin's own manifest — the version herdr installs by.
-    expect(files).toContain("apps/herdr-plugin-red-skills/herdr-plugin.toml");
+    expect(files).toContain("plugins/dev/.claude-plugin/plugin.json");
   });
 
-  it("keeps the anchor a fixed-group member, so changesets writes it first", () => {
+  it("uses the root manifest the Release standard reads as its version anchor", () => {
     const manifests = collectWorkspaceManifests(REPO_ROOT);
     const anchor = manifests.find((found) => found.relativePath === VERSION_ANCHOR);
 
     expect(anchor, `the anchor ${VERSION_ANCHOR} is not a discovered workspace`).toBeDefined();
-    expect(readChangesetCoverage(REPO_ROOT).fixedNames).toContain(anchor!.name);
-  });
-
-  it("leaves nothing in changesets `ignore` — an ignored package is one off the train", () => {
-    expect(readChangesetCoverage(REPO_ROOT).ignoredNames).toEqual([]);
+    expect(VERSION_ANCHOR).toBe("package.json");
   });
 
   it("names every workspace under the @reddb-io scope", () => {

@@ -834,7 +834,7 @@ describe("config — validation moments (ADR 0135, #3284)", () => {
         "          paths:",
         "            - packaging/pi/**",
         "            - plugins/*/package.json",
-        "          command: pnpm version:sync && pnpm pi:packages:build",
+        "          command: pnpm generate-manifests && pnpm pi:packages:build",
         "        post_done:",
         "          - pnpm test",
         "",
@@ -844,7 +844,7 @@ describe("config — validation moments (ADR 0135, #3284)", () => {
     expect(readValidationMoments(values)).toEqual({
       generated: {
         paths: ["packaging/pi/**", "plugins/*/package.json"],
-        command: "pnpm version:sync && pnpm pi:packages:build",
+        command: "pnpm generate-manifests && pnpm pi:packages:build",
       },
       post_done: ["pnpm test"],
     });
@@ -855,7 +855,7 @@ describe("config — validation moments (ADR 0135, #3284)", () => {
       "plugins:\n  dev:\n    afk:\n      validation:\n        generated:\n          paths:\n            - packaging/pi/**\n",
     )).toThrow(/afk\.validation\.generated\.command.*non-empty string/);
     expect(() => parseConfigYaml(
-      "plugins:\n  dev:\n    afk:\n      validation:\n        generated:\n          command: pnpm version:sync\n",
+      "plugins:\n  dev:\n    afk:\n      validation:\n        generated:\n          command: pnpm generate-manifests\n",
     )).toThrow(/afk\.validation\.generated\.paths.*non-empty ordered list/);
   });
 

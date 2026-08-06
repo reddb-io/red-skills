@@ -226,6 +226,11 @@
       "id": "apps/release/src/release-engine.ts#json-parse-file-read#87169b2357b0",
       "classification": "external",
       "reason": "the repo-root package.json is ecosystem JSON; the release engine reads the current version off it"
+    },
+    {
+      "id": "apps/release/src/cli.ts#json-parse-file-read#3e7a30013c46",
+      "classification": "external",
+      "reason": "GitHub Actions event payloads (GITHUB_EVENT_PATH) are GitHub's own JSON format, read as-is"
     }
   ]
 }

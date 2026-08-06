@@ -16,7 +16,7 @@ if (!args.entry || !args.outfile || !args.asset) {
 const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
 
 // The product has ONE version anchor — the same `apps/dev/package.json` that
-// scripts/sync-version.mjs calls SOURCE — and every bundle carries it.
+// The Release standard updates SOURCE — and every bundle carries it.
 //
 // Reading the *cwd's* package.json instead was wrong for the bundles that ship
 // inside the product without being published on their own: `rsp` sat at 2.23.1

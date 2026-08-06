@@ -87,9 +87,8 @@ curl -fsSLO "https://github.com/reddb-io/red-skills/releases/download/v${version
 code --install-extension "vscode-extension-red-skills-${version}.vsix"
 ```
 
-The archive is attached to **every** GitHub Release and stamped with that
-release's version, so the next one installs over this one instead of being
-refused as already installed.
+The archive is stamped with the product version, so a locally packaged successor
+installs over the previous one instead of being refused as already installed.
 
 ### Building it yourself
 
@@ -105,7 +104,7 @@ The `.vsix` reaches **no marketplace** — that is not a destination this repo h
 and a script that could push there is one an accident can run. It was for a while
 attached to nothing either, which made a clone of the monorepo the only way to
 install a finished extension; the maintainer reversed that in issue #3060, and
-`red-publish` now packages the archive and attaches it to the Release.
+the package command now provides the installable archive directly.
 
 It is built by `src/packaging/vsix.ts` rather than by `@vscode/vsce`: the archive
 is a well-specified OPC zip, and the alternative was 290 packages and 130 MB in

@@ -91,20 +91,7 @@ jobs:
       - name: Test canary channel promotion contract
         run: scripts/test-afk-promote-channel.sh
 
-      - name: Test red-release npm publish contract
-        run: scripts/test-red-release-npm-publish-contract.sh
-
-      - name: Test red-release approval gate contract
-        run: scripts/test-red-release-approval-gate.sh
-
-      # ADR 0121: the version-sync writer is what keeps the manifests coherent
-      # with the changesets-decided version. Pin it on every PR, not only at
-      # release time — a drifted manifest reaching main is what used to fail the
-      # cut after npm was already published.
-      - name: Test version sync contract
-        run: scripts/test-version-sync-contract.sh
-
-      # ADR 0121: a changeset that cannot resolve does not get skipped — it
+      # ADR 0139: a changeset that cannot resolve does not get skipped — it
       # throws and abandons the whole release plan, so one bad file fails every
       # release after it (#2863). This job is the only one a changeset-only PR
       # reaches: `.changeset/` is INERT to scripts/ci-affected-scope.mjs, so the

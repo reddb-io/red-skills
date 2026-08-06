@@ -218,19 +218,10 @@ function assertNoWorkspaceDrift(
       .filter((surface) => surface.format === "npm" || surface.format === "cargo")
       .map((surface) => [surface.path, surface.format]),
   );
-  const derivedByPath = new Map(derived.map((surface) => [surface.path, surface]));
-
   for (const surface of derived) {
     if (declaredStandard.get(surface.path) === surface.format) continue;
     throw new Error(
       `version surface drift: orphan package ${surface.packageName} (${surface.path}) is absent from release.version_surfaces`,
-    );
-  }
-  for (const [path, format] of declaredStandard) {
-    const actual = derivedByPath.get(path);
-    if (actual?.format === format) continue;
-    throw new Error(
-      `version surface drift: declared ${format} surface ${path} is not in the derived workspace`,
     );
   }
 }

@@ -22,7 +22,6 @@ import { socketAnswers } from "../src/daemon.js";
 const APP = resolve(__dirname, "..");
 const ROOT = resolve(APP, "..", "..");
 const BUNDLE = join(ROOT, "dist", REDSKILLED_BUNDLE_ASSET);
-const WORKFLOW = join(ROOT, ".github", "workflows", "red-publish.yml");
 const PREPARE = join(ROOT, "packaging", "npm", "scripts", "prepare.mjs");
 const PACKAGING_PKG = join(ROOT, "packaging", "npm", "package.json");
 const SHIM = join(ROOT, "packaging", "npm", "bin", "red-skills-redskilled.mjs");
@@ -57,21 +56,6 @@ describe("redskilled ships as a bundled artifact", () => {
     expect(pkg.bin?.["red-skills-redskilled"]).toBe("bin/red-skills-redskilled.mjs");
     expect(existsSync(SHIM)).toBe(true);
     expect(readFileSync(SHIM, "utf8")).toContain(REDSKILLED_BUNDLE_ASSET);
-  });
-
-  it("is built, packed, manifested and released by the publish workflow", () => {
-    const workflow = readFileSync(WORKFLOW, "utf8");
-    // A build step, or the artifact never exists at pack time.
-    expect(workflow).toContain("working-directory: apps/redskilled");
-    // The tarball checklist, or a bin ships without the bundle it execs.
-    expect(workflow).toContain(`package/dist/${REDSKILLED_BUNDLE_ASSET}`);
-    // The release manifest + the Release asset list, or a published release
-    // carries nothing for the daemon — the exact silence #2842 closed.
-    expect(workflow).toContain(`dist/${REDSKILLED_BUNDLE_ASSET}`);
-    const manifestStep = section(workflow, "- name: Build release manifest", "- name: GitHub Release");
-    expect(manifestStep).toContain(`dist/${REDSKILLED_BUNDLE_ASSET}`);
-    const releaseStep = section(workflow, "assets=(", "dist/release-manifest.json");
-    expect(releaseStep).toContain(`dist/${REDSKILLED_BUNDLE_ASSET}`);
   });
 
   it("names the bundle as the daemon entry a spawn invokes, never the caller's own file", () => {
@@ -170,10 +154,3 @@ async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 20_000): P
 }
 
 /** The slice of `text` between two markers — so a match must land in the right step. */
-function section(text: string, start: string, end: string): string {
-  const from = text.indexOf(start);
-  expect(from, `workflow is missing ${start}`).toBeGreaterThan(-1);
-  const to = text.indexOf(end, from);
-  expect(to, `workflow is missing ${end} after ${start}`).toBeGreaterThan(-1);
-  return text.slice(from, to);
-}
