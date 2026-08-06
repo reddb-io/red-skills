@@ -132,7 +132,6 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
   });
 
   it("pre-cleans a merge-conflict retry branch before sandcastle can reuse a stale worktree", async () => {
-    const fetchedBases: string[] = [];
     const prevFailureContext = [
       "prev-envelope: https://github.com/o/r/issues/9",
       "prev-failure-reason:",
@@ -141,7 +140,6 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     const { deps, input, trace } = harness({
       attempt: 2,
       prevFailureContext,
-      fetchedBases,
       outcome: "done",
       feedbackOk: true,
     });
@@ -149,15 +147,14 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     const result = await processIssue(deps, input);
 
     expect(result.outcome).toBe("done");
-    expect(fetchedBases).toEqual(["main"]);
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
         branch: "afk/9-fix-the-thing",
-        baseRef: "red-trunk",
+        baseRef: "granted-fork-sha",
         force: true,
       },
     ]);
-    expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
+    expect(trace.runAgentCalls[0]?.base).toBe("granted-fork-sha");
     expect(trace.handoffs[0]?.content).toContain("prev-envelope: https://github.com/o/r/issues/9");
     expect(trace.handoffs[0]?.content).toContain("prev-failure-reason:\nmerge-conflict");
   });
