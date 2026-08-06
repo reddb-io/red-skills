@@ -29,7 +29,7 @@ Two sub-scores compose into one 0-100 composite (60% semantic + 40% mechanical; 
 - `name:` frontmatter presence and the description budget (soft 500 / hard 1024 chars) with the literal `"Use when"` trigger (model-invocable skills only; `disable-model-invocation: true` is exempt).
 - `<what-to-do>` on bodies over 100 lines, a bold-imperative first content line, English-only, and orphaned bundled markdown files.
 
-**Semantic (the LLM judge)** — scores the nine write-a-skill sentence-level techniques plus trigger clarity, deletion-test bloat, and `<what-to-do>`/`<supporting-info>` placement, with concrete `suggestions[]`.
+**Semantic (the LLM judge)** — scores the nine writing-for-agents sentence-level techniques plus trigger clarity, deletion-test bloat, and `<what-to-do>`/`<supporting-info>` placement, with concrete `suggestions[]`.
 
 ## Injection guard
 
