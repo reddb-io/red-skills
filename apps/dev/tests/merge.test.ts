@@ -404,6 +404,29 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
     expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(true);
   });
 
+  it("fast-forwards when only the ADR 0092 documentation set is dirty (#3349)", async () => {
+    const { exec, calls } = fakeExec([
+      onTarget,
+      {
+        match: (a) => a.join(" ").includes("status --porcelain"),
+        result: {
+          stdout: " M .red/CONTEXT.md\n M .red/CONTEXT-MAP.md\n M .red/contexts/dev/CONTEXT.md\n?? .red/adr/0132-trunk.md\n",
+        },
+      },
+    ]);
+
+    const result = await fastForwardLocalTarget(exec, base);
+
+    expect(result.action).toBe("fast-forward");
+    expect(result.toleratedDirt).toEqual([
+      ".red/CONTEXT.md",
+      ".red/CONTEXT-MAP.md",
+      ".red/contexts/dev/CONTEXT.md",
+      ".red/adr/0132-trunk.md",
+    ]);
+    expect(joined(calls)).toContain("git -C /repo merge --ff-only origin/main");
+  });
+
   it("still refuses when setup-owned dirt sits beside the operator's own WIP (#3106)", async () => {
     const { exec, calls } = fakeExec([
       onTarget,
@@ -418,6 +441,88 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
     // The refusal says which half our own tooling authored.
     expect(result.evidence).toContain("/red-setup");
     expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
+  });
+
+  it("still refuses an ordinary source edit beside tolerated documentation dirt (#3349)", async () => {
+    const { exec, calls } = fakeExec([
+      onTarget,
+      {
+        match: (a) => a.join(" ").includes("status --porcelain"),
+        result: { stdout: " M .red/CONTEXT.md\n M apps/dev/src/x.ts\n" },
+      },
+    ]);
+
+    const result = await fastForwardLocalTarget(exec, base);
+
+    expect(result.action).toBe("noop");
+    expect(result.failedCondition).toBe("clean-tree");
+    expect(result.evidence).toContain("apps/dev/src/x.ts");
+    expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
+  });
+
+  describe("orphaned primary index lock (#3349)", () => {
+    const lockFailure = { code: 128, stderr: "fatal: Unable to create '/repo/.git/index.lock': File exists.\n" };
+
+    it("reclaims an empty lock no live process holds, logs it in the receipt, and retries the fast-forward", async () => {
+      let mergeAttempts = 0;
+      const { exec, calls } = fakeExec([
+        onTarget,
+        {
+          match: (a) => a.join(" ").includes("merge --ff-only") && ++mergeAttempts === 1,
+          result: lockFailure,
+        },
+        { match: (a) => a[0] === "stat", result: { stdout: "0\n" } },
+        { match: (a) => a[0] === "fuser", result: { code: 1 } },
+      ]);
+
+      const result = await fastForwardLocalTarget(exec, base);
+
+      expect(result.action).toBe("fast-forward");
+      expect(result.evidence).toContain("reclaimed empty unheld .git/index.lock");
+      expect(joined(calls)).toContain("rm -- /repo/.git/index.lock");
+      expect(mergeAttempts).toBe(2);
+    });
+
+    it("refuses a non-empty lock without removing it or retrying", async () => {
+      let mergeAttempts = 0;
+      const { exec, calls } = fakeExec([
+        onTarget,
+        {
+          match: (a) => a.join(" ").includes("merge --ff-only") && ++mergeAttempts === 1,
+          result: lockFailure,
+        },
+        { match: (a) => a[0] === "stat", result: { stdout: "12\n" } },
+      ]);
+
+      const result = await fastForwardLocalTarget(exec, base);
+
+      expect(result.action).toBe("noop");
+      expect(result.failed).toBe("index-lock");
+      expect(result.evidence).toContain("non-empty .git/index.lock");
+      expect(joined(calls).some((x) => x.startsWith("rm "))).toBe(false);
+      expect(mergeAttempts).toBe(1);
+    });
+
+    it("refuses an empty lock held by a live process without removing it or retrying", async () => {
+      let mergeAttempts = 0;
+      const { exec, calls } = fakeExec([
+        onTarget,
+        {
+          match: (a) => a.join(" ").includes("merge --ff-only") && ++mergeAttempts === 1,
+          result: lockFailure,
+        },
+        { match: (a) => a[0] === "stat", result: { stdout: "0\n" } },
+        { match: (a) => a[0] === "fuser", result: { code: 0 } },
+      ]);
+
+      const result = await fastForwardLocalTarget(exec, base);
+
+      expect(result.action).toBe("noop");
+      expect(result.failed).toBe("index-lock");
+      expect(result.evidence).toContain("held by a live process");
+      expect(joined(calls).some((x) => x.startsWith("rm "))).toBe(false);
+      expect(mergeAttempts).toBe(1);
+    });
   });
 
   /**
