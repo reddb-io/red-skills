@@ -1,0 +1,3 @@
+interface:
+  display_name: "Ingest"
+  short_description: "Walk a repo (or a subtree) and populate the memory graph from its code and markdown - symbols, files, headings, concepts, and the edges between them. Use when the user says \"index this repo\", \"ingest the codebase into memory\", \"/memory:ingest ...\", or when you want recall to know about the project's structure before working in it. Requires memory init --mode graph to have run."

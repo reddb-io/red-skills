@@ -1,0 +1,3 @@
+interface:
+  display_name: "Wiki"
+  short_description: "Operate the LLM Wiki - ingest a source (URL or file), query the wiki and optionally file the answer back as a page, or lint for contradictions/orphans/stale claims. Requires /wiki-init to have run. Use when ingesting a doc, asking a question against the knowledge base, or checking the wiki for contradictions and orphans."

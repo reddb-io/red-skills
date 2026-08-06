@@ -1,9 +1,10 @@
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { REPO_INVARIANT_SUITES } from "../src/core/repo-invariants.js";
 
 const execFileAsync = promisify(execFile);
 const ROOT = join(import.meta.dirname, "..", "..", "..");
@@ -11,6 +12,30 @@ const generator = join(ROOT, "scripts/generate-codex-manifests.mjs");
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function writeSkill(
+  root: string,
+  name: string,
+  description: string,
+  disableModelInvocation = false,
+): Promise<string> {
+  const skillRoot = join(root, "plugins/example/skills/core", name);
+  await mkdir(skillRoot, { recursive: true });
+  await writeFile(
+    join(skillRoot, "SKILL.md"),
+    [
+      "---",
+      `name: ${name}`,
+      `description: ${description}`,
+      ...(disableModelInvocation ? ["disable-model-invocation: true"] : []),
+      "---",
+      "",
+      `# ${name}`,
+      "",
+    ].join("\n"),
+  );
+  return skillRoot;
 }
 
 describe("Codex manifest generator", () => {
@@ -149,5 +174,85 @@ describe("Codex manifest generator", () => {
     await expect(execFileAsync("node", [generator, "--root", root, "--check"])).rejects.toMatchObject({
       stderr: expect.stringContaining("Codex manifests are stale"),
     });
+  });
+
+  it("generates a Codex sidecar from every skill's frontmatter", async () => {
+    const root = await mkdtemp(join(tmpdir(), "red-skills-codex-sidecars-"));
+
+    await mkdir(join(root, ".claude-plugin"), { recursive: true });
+    await mkdir(join(root, "plugins/example/.claude-plugin"), { recursive: true });
+    await writeJson(join(root, ".claude-plugin/marketplace.json"), {
+      name: "red-skills",
+      plugins: [{ name: "example", source: "./plugins/example", description: "Example." }],
+    });
+    await writeJson(join(root, "plugins/example/.claude-plugin/plugin.json"), {
+      name: "example",
+      version: "9.9.9",
+      description: "Example.",
+      skills: ["./skills/core/visible"],
+    });
+    const visible = await writeSkill(root, "visible-skill", "A visible skill — with smart punctuation.");
+    const userInvoked = await writeSkill(root, "user-invoked", "Run only when named.", true);
+
+    await execFileAsync("node", [generator, "--root", root]);
+
+    expect(await readFile(join(visible, "agents/openai.yaml"), "utf8")).toBe(
+      'interface:\n  display_name: "Visible Skill"\n  short_description: "A visible skill - with smart punctuation."\n',
+    );
+    expect(await readFile(join(userInvoked, "agents/openai.yaml"), "utf8")).toBe(
+      'interface:\n  display_name: "User Invoked"\n  short_description: "Run only when named."\npolicy:\n  allow_implicit_invocation: false\n',
+    );
+  });
+
+  it.each([
+    {
+      defect: "missing",
+      mutate: async (skillRoot: string) => rm(join(skillRoot, "agents/openai.yaml")),
+    },
+    {
+      defect: "stale against frontmatter",
+      mutate: async (skillRoot: string) => {
+        await writeFile(
+          join(skillRoot, "SKILL.md"),
+          "---\nname: guarded-skill\ndescription: Changed at the source.\n---\n",
+        );
+      },
+    },
+    {
+      defect: "hand-edited",
+      mutate: async (skillRoot: string) => {
+        await writeFile(join(skillRoot, "agents/openai.yaml"), "# hand edited\n");
+      },
+    },
+  ])("fails --check, naming the skill, when a sidecar is $defect", async ({ mutate }) => {
+    const root = await mkdtemp(join(tmpdir(), "red-skills-codex-sidecar-check-"));
+
+    await mkdir(join(root, ".claude-plugin"), { recursive: true });
+    await mkdir(join(root, "plugins/example/.claude-plugin"), { recursive: true });
+    await writeJson(join(root, ".claude-plugin/marketplace.json"), {
+      name: "red-skills",
+      plugins: [{ name: "example", source: "./plugins/example", description: "Example." }],
+    });
+    await writeJson(join(root, "plugins/example/.claude-plugin/plugin.json"), {
+      name: "example",
+      version: "9.9.9",
+      description: "Example.",
+      skills: [],
+    });
+    const skillRoot = await writeSkill(root, "guarded-skill", "Original description.");
+    await execFileAsync("node", [generator, "--root", root]);
+    await mutate(skillRoot);
+
+    await expect(execFileAsync("node", [generator, "--root", root, "--check"])).rejects.toMatchObject({
+      stderr: expect.stringContaining("plugins/example/skills/core/guarded-skill/agents/openai.yaml"),
+    });
+  });
+
+  it("keeps every live skill sidecar generated and runs its guard in every cone", async () => {
+    await execFileAsync("node", [generator, "--root", ROOT, "--check"]);
+
+    expect(REPO_INVARIANT_SUITES.map((suite) => suite.name)).toContain(
+      "invariants:codex-skill-sidecars",
+    );
   });
 });

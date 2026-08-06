@@ -1,0 +1,5 @@
+interface:
+  display_name: "Create Plugin"
+  short_description: "Use when a RedSkills maintainer needs to scaffold a new repository plugin that is born compliant with the marketplace, skill, README, CHANGES, and structural-smoke contracts."
+policy:
+  allow_implicit_invocation: false
