@@ -2,7 +2,7 @@
 
 Records every change made to skills inherited from [`mattpocock/skills`](https://github.com/mattpocock/skills), plus new skills created by reddb.io. See the rules in [CLAUDE.md](./CLAUDE.md).
 
-Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (reviewed 33 commits after v1.1.0; see `.upstream`).
+Upstream base: `mattpocock/skills@8b36d4fb2635b3c21998dcd8144439c9e5ba7302` (reviewed 100 commits after `66898f6`; see `.upstream`).
 
 ---
 
@@ -23,6 +23,43 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
     keeping RedSkills' sentence-level examples in `WRITING-STYLE.md` and its
     section-level `<what-to-do>`/`<supporting-info>` rule unchanged.
 
+## wait-what, wizard, to-questionnaire (productivity/engineering) — three upstream skills join the house set (issue #3432)
+
+- **status**: added
+- **upstream**: `8b36d4f` (v1.2.2)
+- **why**: The reviewed span contains three behaviors RedSkills did not have:
+  re-pitching an explanation in glossary-grounded Simplified Technical English,
+  packaging human-only setup as an interactive wizard, and sending a bounded
+  decision questionnaire to a third party.
+- **what changed**:
+  - Added `/wait-what`, adapted to ASD-STE100 and the active `.red/` domain
+    glossary instead of upstream's generic simplification prompt.
+  - Added `/wizard` with upstream's `template.sh`, keeping credentials,
+    dashboards, provisioning, migrations, and cutovers in an explicit human
+    lane.
+  - Added `/to-questionnaire`, including the rule to grill the send rather than
+    pre-answering the subject for its recipient.
+  - Registered and routed all three through the Claude, Codex, Pi, README, and
+    `/ask-red` surfaces; their generated Codex sidecars follow the invocation
+    policy adopted in #3431.
+
+## all skills (cross-plugin) — Codex invocation policy is generated beside every skill (issue #3431)
+
+- **status**: modified
+- **upstream**: `8b36d4f` (v1.2.2)
+- **why**: Claude's `disable-model-invocation: true` frontmatter does not reach
+  Codex. Without upstream's `agents/openai.yaml` policy, user-invoked skill
+  descriptions were implicitly invocable and consumed every Codex Worker's
+  context without producing an error.
+- **what changed**:
+  - The Codex manifest generator now emits an `agents/openai.yaml` sidecar for
+    every skill and maps `disable-model-invocation: true` to
+    `policy.allow_implicit_invocation: false`.
+  - The generator check ratchets the complete sidecar set, so a newly registered
+    skill inherits the obligation immediately and hand-authored drift fails.
+  - Regenerated the canonical plugin trees and Pi mirrors from that one source;
+    no per-skill Codex policy is maintained by hand.
+
 ## start, wayfinder (engineering) — the interview asks the frontier, not one question
 
 - **status**: modified
@@ -35,9 +72,9 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
     whose prerequisites are settled — and a question depending on one still open
     in this round waits for the next. That rule is what keeps a batch from
     asking the user to guess.
-  - Adopted upstream's scannable question format (`❓ **Q##**` + `➡️`
-    recommendation) and kept our enumerated `Branches:`, which upstream has
-    no equivalent for and which gives the user a stable handle to answer with.
+  - Upstream's question format alone was deliberately NOT adopted. We took its
+    scannable shape (`❓ **Q##**` + `➡️` recommendation), but kept our enumerated `Branches:`
+    because upstream has no equivalent and the labels give users stable answer handles.
   - **One line per thing to read.** A round is read by scanning, and both
     failures break the scan: a question that swells into a paragraph loses the
     reader's place, and branches run together on one line make the reader parse
@@ -48,10 +85,10 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
   - Wiki integration moved to the end of `<supporting-info>` and retitled
     "if enabled by Memory plugin" — it is the one section that depends on
     another plugin being on, so it reads last rather than first.
-  - Fact-finding is stated as the agent's job, with the non-blocking rule made
-    explicit: a fact still being fetched is an unsettled prerequisite, so only
-    the questions downstream of it wait. We keep read-only inline exploration
-    rather than upstream's subagent dispatch.
+  - Subagent fact dispatch was deliberately NOT adopted. Fact-finding remains
+    the agent's job under the non-blocking rule: a fact still being fetched is
+    an unsettled prerequisite, so only the questions downstream of it wait. We
+    keep read-only inline exploration rather than upstream's subagent dispatch.
   - Exit bound sharpened from "every reachable branch resolved" to **"the
     frontier is empty"** — checkable rather than fuzzy — and it still runs the
     doc-landing finalizer (ADR 0092), which upstream has no equivalent for.
