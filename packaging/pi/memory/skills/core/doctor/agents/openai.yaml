@@ -1,0 +1,5 @@
+interface:
+  display_name: "Doctor"
+  short_description: "Inspect and maintain the memory graph - list stale nodes (long-unaccessed and never recalled) and, only after explicit confirmation, prune them. Use when the user says \"memory doctor\", \"clean up memory\", \"what's stale in memory\", \"prune old memory\", or wants a health check of the graph. Graph mode only."
+policy:
+  allow_implicit_invocation: false

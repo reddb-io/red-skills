@@ -1,0 +1,5 @@
+interface:
+  display_name: "Bootstrap"
+  short_description: "Placeholder maintainer-only internal skill. Use to confirm the internal plugin installed and that the current repo explicitly opted in with plugins.internal.enabled."
+policy:
+  allow_implicit_invocation: false

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { join } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   jsonBytes,
@@ -81,6 +82,109 @@ function maybeSet(target, key, value) {
   if (value !== undefined) target[key] = value;
 }
 
+function parseYamlScalar(value, field, relativePath) {
+  if (value.startsWith('"')) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      throw new Error(`${relativePath}: ${field} is not a valid quoted scalar`);
+    }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) {
+    return value.slice(1, -1).replace(/''/g, "'");
+  }
+  return value;
+}
+
+/** Parse the three SKILL.md frontmatter fields projected into Codex's sidecar. */
+export function parseCodexSkillFrontmatter(source, relativePath = "SKILL.md") {
+  const lines = source.split(/\r?\n/);
+  if (lines[0] !== "---") throw new Error(`${relativePath}: missing YAML frontmatter`);
+  const end = lines.indexOf("---", 1);
+  if (end === -1) throw new Error(`${relativePath}: unterminated YAML frontmatter`);
+
+  const values = new Map();
+  for (let index = 1; index < end; index += 1) {
+    const match = /^([a-z][a-z0-9-]*):(?:\s*(.*))?$/.exec(lines[index]);
+    if (!match) continue;
+    const [, key, rawValue = ""] = match;
+    if (rawValue === ">-" || rawValue === ">" || rawValue === "|-" || rawValue === "|") {
+      const continuation = [];
+      while (index + 1 < end && /^(?:\s+|$)/.test(lines[index + 1])) {
+        index += 1;
+        continuation.push(lines[index].trim());
+      }
+      values.set(key, continuation.join(rawValue.startsWith(">") ? " " : "\n").trim());
+      continue;
+    }
+    values.set(key, parseYamlScalar(rawValue.trim(), key, relativePath));
+  }
+
+  const name = values.get("name");
+  const description = values.get("description");
+  if (typeof name !== "string" || name.trim() === "") {
+    throw new Error(`${relativePath}: frontmatter has no name`);
+  }
+  if (typeof description !== "string" || description.trim() === "") {
+    throw new Error(`${relativePath}: frontmatter has no description`);
+  }
+  return {
+    name,
+    description,
+    disableModelInvocation: values.get("disable-model-invocation") === "true",
+  };
+}
+
+/** Codex accepts JSON string scalars in YAML, keeping escaping dependency-free. */
+export function buildCodexSkillSidecar(frontmatter) {
+  const lines = [
+    "interface:",
+    `  display_name: ${JSON.stringify(titleCaseName(frontmatter.name))}`,
+    `  short_description: ${JSON.stringify(normalizeText(frontmatter.description))}`,
+  ];
+  if (frontmatter.disableModelInvocation) {
+    lines.push("policy:", "  allow_implicit_invocation: false");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+async function walkSkillFiles(directory) {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    throw error;
+  }
+
+  const files = [];
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await walkSkillFiles(path));
+    else if (entry.isFile() && entry.name === "SKILL.md") files.push(path);
+  }
+  return files;
+}
+
+/** Derive the sidecar obligation from every plugin's skills tree, never a hand-kept list. */
+export async function discoverCodexSkillFiles(root) {
+  const pluginsRoot = join(root, "plugins");
+  let plugins;
+  try {
+    plugins = await readdir(pluginsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error && error.code === "ENOENT") return [];
+    throw error;
+  }
+
+  const files = [];
+  for (const plugin of plugins.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (!plugin.isDirectory()) continue;
+    files.push(...await walkSkillFiles(join(pluginsRoot, plugin.name, "skills")));
+  }
+  return files;
+}
+
 export function buildCodexMarketplace(claudeMarketplace) {
   return {
     name: claudeMarketplace.name,
@@ -152,6 +256,17 @@ export async function generateCodexManifests({ root, check = false }) {
     await writeGenerated(
       join(pluginRoot, ".codex-plugin/plugin.json"),
       jsonBytes(buildCodexPluginManifest(claudePlugin)),
+      check,
+      mismatches,
+    );
+  }
+
+  for (const skillPath of await discoverCodexSkillFiles(root)) {
+    const relativePath = relative(root, skillPath).replaceAll("\\", "/");
+    const frontmatter = parseCodexSkillFrontmatter(await readFile(skillPath, "utf8"), relativePath);
+    await writeGenerated(
+      join(dirname(skillPath), "agents/openai.yaml"),
+      buildCodexSkillSidecar(frontmatter),
       check,
       mismatches,
     );

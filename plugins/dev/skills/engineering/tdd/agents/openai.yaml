@@ -1,0 +1,3 @@
+interface:
+  display_name: "Tdd"
+  short_description: "Test-driven development with a red → green loop. Use when user wants to build features or fix bugs using TDD, mentions \"red-green\", wants integration tests, or asks for test-first development."

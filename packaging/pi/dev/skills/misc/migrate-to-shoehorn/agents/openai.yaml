@@ -1,0 +1,3 @@
+interface:
+  display_name: "Migrate To Shoehorn"
+  short_description: "Migrate test files from as type assertions to @total-typescript/shoehorn. Use when user mentions shoehorn, wants to replace as in tests, or needs partial test data."
