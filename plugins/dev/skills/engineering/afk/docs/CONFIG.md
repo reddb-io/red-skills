@@ -38,14 +38,15 @@ MCP, and non-essential host hooks are absent from every projection.
 | Config key | Env override | Default | Meaning |
 |---|---|---|---|
 | `afk.default_runner` | `RED_AFK_RUNNER` | `claude` | Caller runner identity/default backend consumed before ambient sniffing. |
+| `plugins.dev.afk.routes.<tier>.runner` | `--runner` / `RED_AFK_RUNNER` / `project_start.runner` | `afk.default_runner` | Runner selected after Ticket classification for `validate`, `simple`, `complex`, or `think`. Unmapped tiers preserve the scalar fallback. |
+| `plugins.dev.afk.routes.<tier>.model` | `--model` / `RED_AFK_MODEL` | selected runner's tier table | Optional model pin beside the task-class runner. |
+| `plugins.dev.afk.routes.<tier>.effort` | `--effort` / `RED_AFK_EFFORT` | selected runner's tier table | Optional effort pin beside the task-class runner. |
 | `plugins.dev.afk.implementer.skills` | — | implementer profile | Optional comma-separated exact allowlist of `plugin:skill` entries for inner workers. It replaces the trimmed dev implementer profile (so it can widen or narrow it), while ADR 0067 activation remains authoritative: a skill from a disabled plugin is never exposed. |
 | `plugins.dev.afk.implementer.runner_startup_baseline_ms` | — | _(unset)_ | Optional historical unprojected runner-startup baseline (invocation to first stream event). When present, each worker artifact and dashboard report compare it with the actual projected startup sample; when absent, the first projected sample self-baselines with a zero delta and is marked `unavailable`. |
 | `afk.model` | — | runner-specific | Legacy global model override. Prefer tiered `afk.models.<runner>.<tier>.model` so Codex never receives a Claude-only model. |
 | `afk.models.<runner>` | — | runner-specific | Legacy per-runner scalar model override. Used only when no explicit tier model is set. |
-| `afk.models.claude.<tier>.model` | — | tier-specific | Claude Code model id for `validate`, `simple`, `complex`, or `think`. |
-| `afk.models.claude.<tier>.effort` | — | tier-specific | Claude Code effort for that tier. |
-| `afk.models.codex.<tier>.model` | — | tier-specific | Codex model id for `validate`, `simple`, `complex`, or `think`. |
-| `afk.models.codex.<tier>.effort` | — | tier-specific | Codex effort for that tier. |
+| `afk.models.<runner>.<tier>.model` | — | tier-specific | Suggested model id for every supported runner (`claude`, `codex`, `hermes`, `opencode`, `claude-minimax`). No runner inherits another runner's table. |
+| `afk.models.<runner>.<tier>.effort` | — | tier-specific | Suggested provider-valid effort. `claude-minimax` is deliberately `low` on every tier because MiniMax-M3 rejects the thinking mode enabled by `high`. |
 | `afk.sandbox` | `RED_AFK_SANDBOX` | `none` | Isolation backend (`none` \| `docker` \| `podman`, ADR 0033). |
 | — | `RED_AFK_HOST_ENV_ALLOW` | runner-aware allowlist | Comma-separated exact names or `*`-suffixed prefixes appended to the no-sandbox worker's default host-env allowlist. Codex workers omit `CLAUDE*`, `BASH_ENV`, and `ENV` by default so a Claude host's shell-snapshot state cannot reach Codex; Claude workers retain the existing defaults. Explicit entries may re-admit those variables, and the literal `*` restores full host-environment inheritance. |
 | `afk.sandbox_image` | `RED_AFK_SANDBOX_IMAGE` | `sandcastle:<repo-dir>` | Container image the `docker`/`podman` backend runs (issue #2340). Resolved off the **repo root**, so one prebuilt image serves every worker, issue, and attempt — never off the per-worker worktree, which produced an unbuildable `sandcastle:<issue-number>` tag and crashed every forced-isolation attempt. Build it once with `sandcastle docker build-image --image-name <image>`; when it is missing, the untrusted-author isolation policy parks the issue `ready-for-human` naming that exact command instead of burning the retry budget on a mid-run crash. |
@@ -87,8 +88,10 @@ MCP, and non-essential host hooks are absent from every projection.
 
 ### Tier routing
 
-AFK classifies each claimed Ticket before spawning its runner and resolves the
-selected tier through `afk.models.<runner>.<tier>.{model,effort}`. The default
+AFK classifies each claimed Ticket before spawning its runner. It first resolves
+the runner through `afk.routes.<tier>.runner`, falling back to
+`afk.default_runner`, then resolves the pair through an optional model/effort in
+that route and the selected runner's `afk.models.<runner>.<tier>` table. The default
 router uses cheap Ticket metadata: type and mechanical labels, referenced paths
 and scope count in the body, risk/design keywords, and `spec:<number>` family
 membership. Docs/validation-only work routes to `validate`, ordinary
@@ -96,6 +99,13 @@ single-scope implementation routes to the standard `simple` tier, cross-scope or
 risk-sensitive work routes to `complex`, and explicit design/routing work routes
 to `think`. If classification is unavailable or unknown, AFK continues on
 `simple`; classification never blocks a Worker.
+
+Runner precedence is one contract: explicit `--runner` > `RED_AFK_RUNNER` > a
+runner named in `project_start` > `afk.routes.<tier>.runner` >
+`afk.default_runner` > the shipped default. `/red-doctor` prints the effective
+runner, model, effort, and origin for all four tiers and warns when a runtime pin
+currently shadows a value written in the file. Model and effort use the same
+flag > env > route > selected-runner-table shape.
 
 An explicit `tier:validate`, `tier:simple`, `tier:complex`, or `tier:think`
 Ticket label always wins over inferred signals. Repository overrides remain the
