@@ -293,6 +293,7 @@ describe("the dispatch-time reading", () => {
 const GRANTED: DispatchedWorkerBirth = {
   worker_id: "worker-3031",
   pid: 424_242,
+  fork_sha: "granted-fork-sha",
   log: "/tmp/red/logs/2026-08-02/dispatch-3031.log",
   warnings: [],
   admission: "admitted: 1 of 3 workers",
