@@ -47,6 +47,7 @@ import { startResidentSelfUpdate } from "./resident-self-update.js";
 import { createRedskilledBirthPort } from "./runtime/redskilled-birth.js";
 import { publishedBundleArgv } from "./runtime/published-entry.js";
 import { renewRegistrationDelivery } from "./runtime/registration-delivery.js";
+import { workerLogPathTemplate } from "./runtime/redskilled-worker-log.js";
 import {
   newestInstalledPluginVersion,
   refreshPublishedBundleVersion,
@@ -75,6 +76,7 @@ export function startResidentRegistrationDelivery(root: string): { stop(): void 
         resolvePublished: () => version,
       }),
       pluginCacheVersion: () => newestInstalledPluginVersion(),
+      logPath: workerLogPathTemplate(root),
     });
   };
   void tick().catch(() => undefined);

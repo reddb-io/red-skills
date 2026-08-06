@@ -7,6 +7,7 @@ import {
   type RegistrationDeliveryPort,
 } from "./registration-delivery.js";
 import { createRedskilledBirthPort } from "./redskilled-birth.js";
+import { workerLogPathTemplate } from "./redskilled-worker-log.js";
 
 export interface ReconcileEngineDeliveryOptions {
   readonly root: string;
@@ -40,6 +41,7 @@ export async function reconcileEngineDelivery(
     port: options.port ?? createRedskilledBirthPort({ root: options.root }),
     publishedVersion: async () => options.version,
     publishedArgv: () => [options.execPath ?? process.execPath, bundlePath],
+    logPath: workerLogPathTemplate(options.root),
   });
   return {
     version: options.version,
