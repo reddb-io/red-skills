@@ -404,24 +404,24 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
     expect(c.some((x) => x.includes("fetch"))).toBe(false);
   });
 
-  it("no-ops on a DIRTY primary — pending WIP is sacred (#1019)", async () => {
+  it("preserves disjoint pending WIP while fast-forwarding (#3439)", async () => {
     const { exec, calls } = fakeExec([
       onTarget,
       { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: " M apps/dev/src/x.ts\n" } },
     ]);
     await fastForwardLocalTarget(exec, base);
     const c = joined(calls);
-    expect(c.some((x) => x.includes("merge --ff-only"))).toBe(false);
-    expect(c.some((x) => x.includes("fetch"))).toBe(false);
+    expect(c.some((x) => x.includes("merge --ff-only"))).toBe(true);
+    expect(c.some((x) => x.includes("fetch"))).toBe(true);
   });
 
-  it("names the dirty paths in the refusal instead of only counting them (#3106)", async () => {
+  it("names every dirty path in the tolerance instead of only counting them (#3439)", async () => {
     const { exec } = fakeExec([
       onTarget,
       { match: (a) => a.join(" ").includes("status --porcelain"), result: { stdout: " M apps/dev/src/x.ts\n?? notes.md\n" } },
     ]);
     const result = await fastForwardLocalTarget(exec, base);
-    expect(result.action).toBe("noop");
+    expect(result.action).toBe("fast-forward");
     expect(result.evidence).toContain("apps/dev/src/x.ts");
     expect(result.evidence).toContain("notes.md");
   });
@@ -462,7 +462,7 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
     expect(joined(calls)).toContain("git -C /repo merge --ff-only origin/main");
   });
 
-  it("still refuses when setup-owned dirt sits beside the operator's own WIP (#3106)", async () => {
+  it("tolerates setup output beside operator WIP when both are disjoint (#3439)", async () => {
     const { exec, calls } = fakeExec([
       onTarget,
       {
@@ -471,14 +471,13 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
       },
     ]);
     const result = await fastForwardLocalTarget(exec, base);
-    expect(result.action).toBe("noop");
-    expect(result.failedCondition).toBe("clean-tree");
-    // The refusal says which half our own tooling authored.
-    expect(result.evidence).toContain("/red-setup");
-    expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
+    expect(result.action).toBe("fast-forward");
+    expect(result.evidence).toContain(".red/config.yaml");
+    expect(result.evidence).toContain("apps/dev/src/x.ts");
+    expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(true);
   });
 
-  it("still refuses an ordinary source edit beside tolerated documentation dirt (#3349)", async () => {
+  it("needs no special documentation allowlist when all dirt is disjoint (#3439)", async () => {
     const { exec, calls } = fakeExec([
       onTarget,
       {
@@ -489,10 +488,10 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
 
     const result = await fastForwardLocalTarget(exec, base);
 
-    expect(result.action).toBe("noop");
-    expect(result.failedCondition).toBe("clean-tree");
+    expect(result.action).toBe("fast-forward");
+    expect(result.evidence).toContain(".red/CONTEXT.md");
     expect(result.evidence).toContain("apps/dev/src/x.ts");
-    expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(false);
+    expect(joined(calls).some((x) => x.includes("merge --ff-only"))).toBe(true);
   });
 
   describe("orphaned primary index lock (#3349)", () => {
@@ -560,14 +559,8 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
     });
   });
 
-  /**
-   * #3155 — `SETUP_OWNED_FILES` are exactly the files a maturing repo ends up
-   * COMMITTING, so the tolerated untracked copy meets a tracked incoming one and
-   * `merge --ff-only` aborts under a verdict that said `passed`. Committing the
-   * files is what CAUSES it, so the collision is the guaranteed end state, not an
-   * edge case: one untracked file bricked a queue for a day.
-   */
-  describe("setup-owned dirt that the incoming commits carry (#3155)", () => {
+  /** #3155/#3439 — classify every dirty path before `merge --ff-only`. */
+  describe("dirty paths that the incoming commits carry", () => {
     const incoming = (paths: string) => ({
       match: (a: string[]) => a.join(" ").includes("diff --name-only main origin/main"),
       result: { stdout: paths },
