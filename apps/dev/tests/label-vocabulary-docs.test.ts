@@ -477,10 +477,10 @@ describe("wayfinder docs", () => {
   });
 });
 
-describe("write-a-skill docs", () => {
+describe("writing-for-agents docs", () => {
   it("keeps Steering glossary concepts in the extracted writing-style reference", async () => {
-    const skill = await readRepoFile("plugins/dev/skills/productivity/write-a-skill/SKILL.md");
-    const style = await readRepoFile("plugins/dev/skills/productivity/write-a-skill/WRITING-STYLE.md");
+    const skill = await readRepoFile("plugins/dev/skills/productivity/writing-for-agents/SKILL.md");
+    const style = await readRepoFile("plugins/dev/skills/productivity/writing-for-agents/WRITING-STYLE.md");
 
     expect(skill).toContain("[WRITING-STYLE.md](WRITING-STYLE.md)");
     expect(style).toContain("Leading Word");

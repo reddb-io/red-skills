@@ -1,6 +1,6 @@
 # /go Troubleshooting
 
-Use these playbooks when `/go` or `/go --scout` reaches a confusing terminal state. Follow the `write-a-skill` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
+Use these playbooks when `/go` or `/go --scout` reaches a confusing terminal state. Follow the `writing-for-agents` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
 ## Crashed-scout salvage
 

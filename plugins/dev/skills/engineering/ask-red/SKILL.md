@@ -45,6 +45,9 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   loop and `/code-review` before handing the branch to `/retake`.
 - **Validation or visible confirmation** -> `/verify`; for browser-visible state,
   pair it with `/ground-truth`.
+- **Writing or editing an agent-read document** -> `/writing-for-agents`,
+  including a `SKILL.md`, `AGENTS.md`, `CLAUDE.md`, or reference reached through
+  a context pointer.
 - **Operations state** -> `/dashboard`, `/daily-review`, `/red-gains`, `/audit-skills`, or
   `/context` depending on whether the question is queue health, period review,
   rsp usage gains, skill quality, or repository context. For operational
@@ -137,7 +140,7 @@ The router must mention every published dev skill so `/red-doctor` can flag drif
 `/redskilled`, `/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
 `/resolving-merge-conflicts`, `/branch-lock`, `/git-guardrails-claude-code`,
 `/migrate-to-shoehorn`, `/setup-pre-commit`, `/research`, `/ff`, `/reflect`,
-`/wait-what`, `/to-questionnaire`, `/handoff`, `/write-a-skill`, `/wizard`.
+`/wait-what`, `/to-questionnaire`, `/handoff`, `/writing-for-agents`, `/wizard`.
 
 The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.

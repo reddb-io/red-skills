@@ -145,9 +145,12 @@ Some constraints span the whole repo but live in one package. They run in **ever
 
 When you change a skill under `plugins/dev/skills/` that came from `mattpocock/skills`, say in the commit what diverged and why. When bumping the SHA in `.upstream`, say in that commit which span was reviewed and what was deliberately refused, and close the matching `upstream-drift` issue.
 
-## Creating a new (non-Matt) skill
+## Writing documents for agents
 
-Use `/write-a-skill`. Say in the commit that it is original to reddb.io, so a later reader does not go looking for an upstream counterpart.
+Use `/writing-for-agents` when creating or editing a skill, `AGENTS.md`,
+`CLAUDE.md`, or a document reached through a context pointer. For a new
+non-Matt skill, say in the commit that it is original to reddb.io, so a later
+reader does not go looking for an upstream counterpart.
 
 ## SKILL.md body convention
 
@@ -162,7 +165,7 @@ Never reorder priorities so that documentation/side-effect work in `<supporting-
 
 ### SKILL.md writing style (sentence-level)
 
-The body convention above is **section-level** — it decides *where* a sentence goes. Underneath it sits the **sentence-level** writing convention: nine techniques (bold lead-in + gloss; maxim/slogan compression; prohibition + reason inline; literal phrasing in quotes; vocabulary hygiene; numbered taxonomy; self-demonstrating voice; precondition-carrying headers; leading words) that decide *how each sentence reads*. It is **additive — it complements the `<what-to-do>`/`<supporting-info>` split, it does not replace it.** When writing or editing any RedSkills SKILL.md, apply both. The full list with before → after examples lives in `plugins/dev/skills/productivity/write-a-skill/WRITING-STYLE.md`.
+The body convention above is **section-level** — it decides *where* a sentence goes. Underneath it sits the **sentence-level** writing convention: nine techniques (bold lead-in + gloss; maxim/slogan compression; prohibition + reason inline; literal phrasing in quotes; vocabulary hygiene; numbered taxonomy; self-demonstrating voice; precondition-carrying headers; leading words) that decide *how each sentence reads*. It is **additive — it complements the `<what-to-do>`/`<supporting-info>` split, it does not replace it.** When writing or editing any RedSkills SKILL.md, apply both. The full list with before → after examples lives in `plugins/dev/skills/productivity/writing-for-agents/WRITING-STYLE.md`.
 
 ## Agent skills
 

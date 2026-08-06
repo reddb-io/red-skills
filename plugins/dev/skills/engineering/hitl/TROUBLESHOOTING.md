@@ -1,6 +1,6 @@
 # /hitl Troubleshooting
 
-Use this reference when a `ready-for-human` park looks stale, inconsistent, or recoverable through the HITL card contract. Follow the `write-a-skill` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
+Use this reference when a `ready-for-human` park looks stale, inconsistent, or recoverable through the HITL card contract. Follow the `writing-for-agents` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
 ## Verify-before-trusting
 

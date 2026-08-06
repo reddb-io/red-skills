@@ -387,7 +387,7 @@ describe("manager S7 acceptance journey harness", () => {
   it("dogfood scenario: Manager tracks a real RedSkills effort from intent to completion", async () => {
     // This scenario mimics the operator dogfood run (acceptance criterion 3).
     // The effort is representative of a real low-risk RedSkills task: adding a
-    // new skill doc to the /write-a-skill writing convention guide.
+    // new skill doc to the /writing-for-agents writing convention guide.
     const root = await makeRoot();
     const out: string[] = [];
     const err: string[] = [];

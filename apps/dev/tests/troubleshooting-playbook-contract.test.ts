@@ -46,7 +46,7 @@ async function readRepoFile(path: string): Promise<string> {
 
 describe("TROUBLESHOOTING playbook contract (#1867)", () => {
   it("documents the fixed playbook and docs-contract conventions once", async () => {
-    const skill = await readRepoFile("plugins/dev/skills/productivity/write-a-skill/SKILL.md");
+    const skill = await readRepoFile("plugins/dev/skills/productivity/writing-for-agents/SKILL.md");
 
     expect(skill).toContain("Symptom -> Confirm -> Recover -> Root fix");
     expect(skill).toContain("Docs-contract tests for TROUBLESHOOTING references");
@@ -72,7 +72,7 @@ describe("TROUBLESHOOTING playbook contract (#1867)", () => {
 
       expect(skillDoc).toContain("TROUBLESHOOTING.md");
       expect(troubleshootingDoc).toContain("Symptom -> Confirm -> Recover -> Root fix");
-      expect(troubleshootingDoc).toContain("write-a-skill");
+      expect(troubleshootingDoc).toContain("writing-for-agents");
 
       for (const heading of ["### Symptom", "### Confirm", "### Recover", "### Root fix"]) {
         expect(troubleshootingDoc).toContain(heading);

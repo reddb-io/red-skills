@@ -30,7 +30,7 @@ import {
 import { makeExtractSkillAudit, skillAuditSchema } from "../core/skill-audit-extract.js";
 
 /** The meta-skill is self-exempt from its own rules — never audit it. */
-const SELF_EXEMPT = new Set(["write-a-skill"]);
+const SELF_EXEMPT = new Set(["writing-for-agents"]);
 
 interface AuditFlags {
   format: "toon" | "json" | "human";
