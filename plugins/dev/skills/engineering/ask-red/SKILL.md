@@ -152,6 +152,10 @@ structured `project_reset` repair) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/afk` local validation authority (`plugins.dev.afk.validation.{iteration,post_done,landing}`) ->
 `plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
+`/afk` task-class runner routes (`plugins.dev.afk.routes.{validate,simple,complex,think}`),
+their override precedence, and `/red-setup` interview ->
+`plugins/dev/skills/engineering/red-setup/INTERVIEW.md` and
+`plugins/dev/skills/engineering/afk/docs/CONFIG.md`;
 `/red-setup` Release standard (`release.*` contract, including the detect–propose–confirm
 pass over Version surfaces) ->
 `plugins/dev/skills/engineering/red-setup/INTERVIEW.md` and
