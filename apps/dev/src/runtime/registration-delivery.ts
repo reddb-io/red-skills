@@ -75,6 +75,16 @@ export function planRegistrationDeliveryRenewal(input: {
   readonly publishedVersion: string;
   readonly publishedArgv: readonly string[];
   readonly pluginCacheVersion?: string | null;
+  /**
+   * Where this project's NEXT Worker logs, as the namer states it TODAY (#3440).
+   *
+   * Stated by the caller rather than carried from the registration, because the
+   * registration's copy is whatever it said when it was first registered and a
+   * registration is renewed for days. Carrying it forward is how a repoint that
+   * exists to heal a stale registration went on re-stating the one stale fact it
+   * held.
+   */
+  readonly logPath: string;
 }): RegistrationDeliveryRenewal {
   const lanes = registrationDeliveryLanes({
     registrationArgv: input.registration.argv,
@@ -101,7 +111,7 @@ export function planRegistrationDeliveryRenewal(input: {
     launch: {
       argv: [...input.publishedArgv, ...input.registration.argv.slice(workIndex)],
       env: input.registration.env,
-      ...(input.registration.log_path == null ? {} : { log_path: input.registration.log_path }),
+      log_path: input.logPath,
     },
   };
 }
@@ -126,6 +136,8 @@ export async function renewRegistrationDelivery(input: {
   readonly publishedVersion: () => Promise<string | null | undefined>;
   readonly publishedArgv: (version: string) => readonly string[];
   readonly pluginCacheVersion?: () => string | null | undefined;
+  /** Where this project's next Worker logs, as the namer states it today. */
+  readonly logPath: string;
 }): Promise<RegistrationDeliveryRenewal | null> {
   const registration = await input.port.registration();
   if (registration == null) return null;
@@ -147,6 +159,7 @@ export async function renewRegistrationDelivery(input: {
     publishedVersion: published,
     publishedArgv: input.publishedArgv(published),
     pluginCacheVersion: input.pluginCacheVersion?.(),
+    logPath: input.logPath,
   });
   if (plan.action === "repoint") await input.port.restateLaunch(plan.launch);
   else await input.port.renew();
