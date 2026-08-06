@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   auditSetupOwnedDirt,
   classifyDirtyTree,
-  classifySetupDirtCollision,
+  classifyDirtCollision,
   describeCleanTreeRefusal,
-  describeSetupDirtCollisionRefusal,
-  describeSupersededSetupDirt,
+  describeDirtCollisionRefusal,
+  describeSupersededDirt,
   isSetupOwnedPath,
   renderSetupOwnedDirtToon,
   SETUP_OWNED_DIRT_REMEDIATION,
@@ -15,9 +15,9 @@ import {
  * #3106 — `/red-setup` writes `.red/config.yaml`, `.red/.gitignore` and hook
  * scripts it is forbidden to `git add`, and the boot probe refused to
  * fast-forward the local trunk on ANY dirty tree. Every fresh repository was
- * therefore bricked at first boot. These tests pin the reconciliation: dirt in
- * paths setup owns is tolerated, everything else still refuses, and a refusal
- * names the paths instead of sending the reader to git history.
+ * therefore bricked at first boot. Setup ownership now exists only for the
+ * red-doctor finding; trunk freshness judges every dirty path by collision with
+ * incoming commits (#3439).
  */
 describe("isSetupOwnedPath", () => {
   it("owns the three files the setup contract forbids committing", () => {
@@ -62,33 +62,19 @@ describe("classifyDirtyTree", () => {
     expect(tree.foreign).toEqual([]);
   });
 
-  it("tolerates exactly the ADR 0092 documentation set without calling it setup-owned (#3349)", () => {
+  it("does not call the former ADR 0092 documentation set setup-owned (#3439)", () => {
     const tree = classifyDirtyTree(
       " M .red/CONTEXT.md\n M .red/CONTEXT-MAP.md\n M .red/contexts/dev/CONTEXT.md\n?? .red/adr/0132-trunk.md\n M apps/dev/src/x.ts\n",
     );
 
-    expect(tree.tolerated).toEqual([
+    expect(tree.foreign).toEqual([
       ".red/CONTEXT.md",
       ".red/CONTEXT-MAP.md",
       ".red/contexts/dev/CONTEXT.md",
       ".red/adr/0132-trunk.md",
-    ]);
-    expect(tree.setupOwned).toEqual([]);
-    expect(tree.foreign).toEqual(["apps/dev/src/x.ts"]);
-  });
-
-  it("does not dissolve the guard for paths merely adjacent to the documentation set (#3349)", () => {
-    const tree = classifyDirtyTree(
-      " M .red/CONTEXT.md.bak\n M .red/contexts-old/x.md\n M .red/adr-old/0132.md\n M apps/dev/src/x.ts\n",
-    );
-
-    expect(tree.tolerated).toEqual([]);
-    expect(tree.foreign).toEqual([
-      ".red/CONTEXT.md.bak",
-      ".red/contexts-old/x.md",
-      ".red/adr-old/0132.md",
       "apps/dev/src/x.ts",
     ]);
+    expect(tree.setupOwned).toEqual([]);
   });
 });
 
@@ -142,14 +128,12 @@ describe("auditSetupOwnedDirt (red-doctor check)", () => {
 });
 
 /**
- * #3155 — the tolerance stopped at the verdict. `SETUP_OWNED_FILES` are exactly
- * the files a maturing repo eventually COMMITS, so the untracked copy setup
- * wrote and the tracked copy trunk now carries collide by definition, and the
- * `--ff-only` merge aborted under a `guard=passed` receipt.
+ * #3155/#3439 — collision classification must agree with the following
+ * `--ff-only` merge for every path, without an ownership allowlist.
  */
-describe("classifySetupDirtCollision", () => {
+describe("classifyDirtCollision", () => {
   it("calls an untracked local copy the incoming commits track SUPERSEDED", () => {
-    const collision = classifySetupDirtCollision(classifyDirtyTree("?? .red/.gitignore\n"), [
+    const collision = classifyDirtCollision(classifyDirtyTree("?? .red/.gitignore\n"), [
       ".red/.gitignore",
       "apps/dev/src/x.ts",
     ]);
@@ -158,34 +142,34 @@ describe("classifySetupDirtCollision", () => {
   });
 
   it("calls a tracked, locally-edited path the incoming commits touch CONFLICTING", () => {
-    const collision = classifySetupDirtCollision(classifyDirtyTree(" M .red/config.yaml\n"), [".red/config.yaml"]);
+    const collision = classifyDirtCollision(classifyDirtyTree(" M .red/config.yaml\n"), [".red/config.yaml"]);
     expect(collision.conflicting).toEqual([".red/config.yaml"]);
     expect(collision.superseded).toEqual([]);
   });
 
-  it("ignores tolerated dirt the incoming commits never touch — nothing collides", () => {
-    const collision = classifySetupDirtCollision(
+  it("ignores dirt the incoming commits never touch — nothing collides", () => {
+    const collision = classifyDirtCollision(
       classifyDirtyTree("?? .red/.gitignore\n M .red/config.yaml\n"),
       ["apps/dev/src/x.ts"],
     );
     expect(collision).toEqual({ superseded: [], conflicting: [] });
   });
 
-  it("never classifies foreign dirt — the clean-tree condition already refused it", () => {
-    const collision = classifySetupDirtCollision(classifyDirtyTree("?? notes.md\n"), ["notes.md"]);
-    expect(collision).toEqual({ superseded: [], conflicting: [] });
+  it("classifies ordinary paths instead of consulting an allowlist (#3439)", () => {
+    const collision = classifyDirtCollision(classifyDirtyTree("?? notes.md\n M CHANGES.md\n"), ["notes.md", "CHANGES.md"]);
+    expect(collision).toEqual({ superseded: ["notes.md"], conflicting: ["CHANGES.md"] });
   });
 });
 
 describe("collision evidence", () => {
   it("says where a superseded file went, so nothing reads as deleted", () => {
-    const evidence = describeSupersededSetupDirt([".red/.gitignore"]);
+    const evidence = describeSupersededDirt([".red/.gitignore"]);
     expect(evidence).toContain(".red/.gitignore");
     expect(evidence).toContain(".red/tmp/superseded-setup-dirt");
   });
 
   it("names the blocking path and the repair in the refusal", () => {
-    const evidence = describeSetupDirtCollisionRefusal([".red/config.yaml"], "origin/main");
+    const evidence = describeDirtCollisionRefusal([".red/config.yaml"], "origin/main");
     expect(evidence).toContain("dirt-collision");
     expect(evidence).toContain(".red/config.yaml");
     expect(evidence).toContain("origin/main");
