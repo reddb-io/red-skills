@@ -21,11 +21,16 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
   - Adopted upstream's scannable question format (`❓ **Q##**` + `➡️`
     recommendation) and kept our enumerated `Branches:`, which upstream has
     no equivalent for and which gives the user a stable handle to answer with.
-  - **The question is one line.** A round is read by scanning, and a question
-    that swells into a paragraph stops being scannable — the reader loses which
-    line they are answering. Evidence is written once above the round, never
-    inside a question; a branch needing a sentence of explanation is evidence
-    in the wrong place.
+  - **One line per thing to read.** A round is read by scanning, and both
+    failures break the scan: a question that swells into a paragraph loses the
+    reader's place, and branches run together on one line make the reader parse
+    separators to find the option they want. The question is one line ending in
+    a question mark; each branch is its own indented line. Evidence is written
+    once above the round, never inside a question; a branch needing a sentence
+    of explanation is evidence in the wrong place.
+  - Wiki integration moved to the end of `<supporting-info>` and retitled
+    "if enabled by Memory plugin" — it is the one section that depends on
+    another plugin being on, so it reads last rather than first.
   - Fact-finding is stated as the agent's job, with the non-blocking rule made
     explicit: a fact still being fetched is an unsettled prerequisite, so only
     the questions downstream of it wait. We keep read-only inline exploration
