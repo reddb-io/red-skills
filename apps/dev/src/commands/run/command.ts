@@ -90,12 +90,16 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // RED_AFK_MODEL/RED_AFK_EFFORT through to workers — not in PASSTHROUGH_DENYLIST).
   if (flags.model) process.env.RED_AFK_MODEL = flags.model;
   if (flags.effort) process.env.RED_AFK_EFFORT = flags.effort;
+  const explicitRunnerFlag = flags.runnerFlag ?? parseRunnerFlag(options.args);
   const detection = detectRunner({
-    flag: flags.runnerFlag ?? parseRunnerFlag(options.args),
+    flag: explicitRunnerFlag,
     processTree: callerProcessTreeNative(),
     scriptPath: process.argv[1],
   });
   const runner: Runner = isRunner(detection.runner) ? detection.runner : "claude";
+  const projectStartPin = process.env.RED_AFK_RUNNER_ORIGIN === "project_start" ? runner : undefined;
+  const routeEnv = { ...process.env };
+  if (projectStartPin) delete routeEnv.RED_AFK_RUNNER;
 
   const ctx = await resolveRepoContext(cwd);
   const settings = resolveRunSettings(cwd, process.env, runner);
@@ -184,6 +188,14 @@ export async function runCommand(options: RunOptions): Promise<number> {
     pid: process.pid,
     pidStartTime,
     runner,
+    routeOverrides: {
+      env: routeEnv,
+      ...(projectStartPin
+        ? { projectStartRunner: projectStartPin }
+        : explicitRunnerFlag
+          ? { flagRunner: explicitRunnerFlag }
+          : {}),
+    },
     origin: dispatchIdentity.origin,
     kind: dispatchIdentity.kind,
     model: settings.model,
