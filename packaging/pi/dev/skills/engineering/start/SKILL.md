@@ -28,11 +28,14 @@ Each question is formatted like so — the emoji are load-bearing, because a rou
 
 ```
 ❓ **Q##** — <the question, ONE line, ending in a question mark>
-**Branches:** (a) <option A> · (b) <option B> · (c) <option C>
+**Branches:**
+  (a) <option A>
+  (b) <option B>
+  (c) <option C>
 ➡️ **(<letter>)** — <one-sentence reason>
 ```
 
-**Three lines per question, and the question itself is one of them.** A round is read by scanning, and a question that swells into a paragraph stops being scannable — the reader loses which line they are answering. Keep the question to a single line that ends in a question mark.
+**One line per thing to read: the question is a line, and each branch is a line of its own.** A round is read by scanning, and both failures break the scan — a question that swells into a paragraph loses the reader's place, and branches run together on one line make the reader parse separators to find the option they want. Keep the question to a single line that ends in a question mark, and put every branch on its own indented line.
 
 **Evidence goes above the round, never inside a question.** Whatever the user needs in order to answer — what you found in the code, the numbers, the trade-off you are weighing — belongs in prose *before* the first `❓`, written once for the whole round. A question is the ask alone.
 
@@ -62,7 +65,10 @@ The argument is optional. Treat it as the plan or context to grill.
 - **Empty argument** → open with the literal `Q01` as a one-question round:
 
   > ❓ **Q01** — What plan are we grilling?
-  > **Branches:** (a) paste it inline · (b) share a URL or file path · (c) describe it in a sentence
+  > **Branches:**
+  >   (a) paste it inline
+  >   (b) share a URL or file path
+  >   (c) describe it in a sentence
   > ➡️ **(a)** — inline context lets us start grilling immediately.
 
 After successful ingestion, emit a **single-line receipt** then open the first round:
@@ -108,19 +114,6 @@ When the frontier is empty — or the user stops — run the shared end-of-sessi
 </what-to-do>
 
 <supporting-info>
-
-## Wiki integration
-
-External references (URL, PDF, md/txt) flow through the `/wiki` skill so every fetched source is cached at `.red/wiki/raw/<slug>.md` and reusable across sessions and other skills (`/diagnose`, `/afk`, `/tdd`).
-
-Behaviour summary (full contract in [`/wiki`](../../../../memory/skills/core/wiki/SKILL.md)):
-
-- URL → `WebFetch` → `.red/wiki/raw/<slug>.md` with YAML header (`url`, `fetched`, `title`).
-- Local PDF → `pdftotext` → `.red/wiki/raw/<slug>.txt`, original kept alongside.
-- Local md/txt → copied to `.red/wiki/raw/<slug>.md` if not already there.
-- Every ingest is logged at `.red/wiki/log.md`.
-
-When `.red/wiki/` is missing, `/start` prompts once to run `/wiki-init`. Decline path: plain `WebFetch`/`Read` into context, no caching, receipt marked `(not cached)`.
 
 ## Domain awareness
 
@@ -196,5 +189,18 @@ Only offer to create an ADR when all three are true:
 3. **The result of a real trade-off** — there were genuine alternatives and you picked one for specific reasons
 
 If any of the three is missing, skip the ADR. Use the format in [ADR-FORMAT.md](./ADR-FORMAT.md).
+
+## Wiki integration (if enabled by Memory plugin)
+
+External references (URL, PDF, md/txt) flow through the `/wiki` skill so every fetched source is cached at `.red/wiki/raw/<slug>.md` and reusable across sessions and other skills (`/diagnose`, `/afk`, `/tdd`).
+
+Behaviour summary (full contract in [`/wiki`](../../../../memory/skills/core/wiki/SKILL.md)):
+
+- URL → `WebFetch` → `.red/wiki/raw/<slug>.md` with YAML header (`url`, `fetched`, `title`).
+- Local PDF → `pdftotext` → `.red/wiki/raw/<slug>.txt`, original kept alongside.
+- Local md/txt → copied to `.red/wiki/raw/<slug>.md` if not already there.
+- Every ingest is logged at `.red/wiki/log.md`.
+
+When `.red/wiki/` is missing, `/start` prompts once to run `/wiki-init`. Decline path: plain `WebFetch`/`Read` into context, no caching, receipt marked `(not cached)`.
 
 </supporting-info>
