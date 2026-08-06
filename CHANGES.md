@@ -18,9 +18,14 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
     whose prerequisites are settled — and a question depending on one still open
     in this round waits for the next. That rule is what keeps a batch from
     asking the user to guess.
-  - Adopted upstream's scannable question format (`❓ **Q##** — **title**` +
-    `➡️` recommendation) and kept our enumerated `Branches:`, which upstream has
+  - Adopted upstream's scannable question format (`❓ **Q##**` + `➡️`
+    recommendation) and kept our enumerated `Branches:`, which upstream has
     no equivalent for and which gives the user a stable handle to answer with.
+  - **The question is one line.** A round is read by scanning, and a question
+    that swells into a paragraph stops being scannable — the reader loses which
+    line they are answering. Evidence is written once above the round, never
+    inside a question; a branch needing a sentence of explanation is evidence
+    in the wrong place.
   - Fact-finding is stated as the agent's job, with the non-blocking rule made
     explicit: a fact still being fetched is an unsettled prerequisite, so only
     the questions downstream of it wait. We keep read-only inline exploration
