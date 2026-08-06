@@ -178,7 +178,7 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.freshWorkerBranchCalls).toEqual([
       {
         branch: "afk/9-fix-the-thing",
-        baseRef: "red-trunk",
+        baseRef: "granted-fork-sha",
         force: false,
       },
     ]);
@@ -1371,8 +1371,8 @@ describe("processIssue — review is the gate fold's third stage (#2730)", () =>
     expect(result.outcome).toBe("done");
     // The stage read the branch against the merge base, and read it BEFORE any
     // PR existed — so `gh pr diff` was never called at all.
-    expect(trace.worktreeDiffCalls).toEqual([{ branch: "afk/9-fix-the-thing", base: "red-trunk" }]);
-    expect(trace.adversarialReviewContexts[0]).toMatchObject({ base: "red-trunk" });
+    expect(trace.worktreeDiffCalls).toEqual([{ branch: "afk/9-fix-the-thing", base: "granted-fork-sha" }]);
+    expect(trace.adversarialReviewContexts[0]).toMatchObject({ base: "granted-fork-sha" });
     expect(trace.adversarialReviewContexts[0]?.diff).toContain("const fromWorktree = true;");
     expect(trace.mergeCalls.some((argv) => argv.includes("pr") && argv.includes("diff"))).toBe(false);
   });
