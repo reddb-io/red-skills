@@ -6,6 +6,39 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## start, wayfinder (engineering) — the interview asks the frontier, not one question
+
+- **status**: modified
+- **upstream**: `8b36d4f` (v1.2.2)
+- **why**: One question per turn spends a turn on every easy leaf, so the tail of
+  a session is the user typing "yes" five times. Upstream v1.2.0 replaced that
+  with rounds over a frontier; the mechanic is worth adopting on its own merits.
+- **what changed**:
+  - `/start` asks the **whole frontier** each round — every unresolved decision
+    whose prerequisites are settled — and a question depending on one still open
+    in this round waits for the next. That rule is what keeps a batch from
+    asking the user to guess.
+  - Adopted upstream's scannable question format (`❓ **Q##** — **title**` +
+    `➡️` recommendation) and kept our enumerated `Branches:`, which upstream has
+    no equivalent for and which gives the user a stable handle to answer with.
+  - Fact-finding is stated as the agent's job, with the non-blocking rule made
+    explicit: a fact still being fetched is an unsettled prerequisite, so only
+    the questions downstream of it wait. We keep read-only inline exploration
+    rather than upstream's subagent dispatch.
+  - Exit bound sharpened from "every reachable branch resolved" to **"the
+    frontier is empty"** — checkable rather than fuzzy — and it still runs the
+    doc-landing finalizer (ADR 0092), which upstream has no equivalent for.
+  - `/wayfinder`'s `Grilling` ticket type no longer says "one question at a
+    time"; it inherits the same round mechanic.
+  - Kept whole: `/wiki` boot ingest and receipts, `--tags`, the side-effect
+    triggers, and the `.red/` glossary and ADR paths.
+  - Composition deliberately NOT adopted: upstream split the interview into a
+    `grilling` primitive plus a `domain-modeling` writer, with `grill-me` and
+    `grill-with-docs` as one-line delegations. Their own docs report the cost —
+    partial loading of the two dependencies yields "a good interview with no
+    paper trail", the most-reported failure of that skill. `/start` stays one
+    file, so the interview and the paper trail cannot load apart.
+
 ## redskilled, ask-red (engineering) — the numeric argument debugs a Worker (issue #3402)
 
 - **status**: modified
