@@ -6,6 +6,23 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
+## writing-for-agents (productivity) — agent-read documents share one information-design skill (issue #3433)
+
+- **status**: renamed-from-write-a-skill
+- **upstream**: `8b36d4f` (v1.2.2)
+- **why**: A name limited to skills never fired while an agent edited
+  `AGENTS.md`, `CLAUDE.md`, or a document behind a pointer, even though those
+  surfaces use the same load, hierarchy, completion, and pruning decisions.
+- **what changed**:
+  - Renamed the skill and every registered, generated, routed, and historical
+    reference to `writing-for-agents`.
+  - Widened its trigger and process to skills, always-loaded agent instructions,
+    and disclosed references.
+  - Adapted upstream's context pointer, two loads, information hierarchy,
+    completion criteria, leading words, Negation, and pruning vocabulary while
+    keeping RedSkills' sentence-level examples in `WRITING-STYLE.md` and its
+    section-level `<what-to-do>`/`<supporting-info>` rule unchanged.
+
 ## start, wayfinder (engineering) — the interview asks the frontier, not one question
 
 - **status**: modified
@@ -428,12 +445,12 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
-## write-a-skill (productivity) - progressive-disclosure split and structural-tag lint hardening (issue #1358)
+## writing-for-agents (productivity) - progressive-disclosure split and structural-tag lint hardening (issue #1358)
 
 - **status**: modified
 - **upstream**: `d574778` (v1.1.0)
-- **why**: `write-a-skill/SKILL.md` carried the full sentence-level technique catalog and Steering failure-mode material in the hot path, and the body-tag linters accepted `<what-to-do>` inside fenced examples as if it were a real structural split.
-- **what changed**: Moved the nine writing-style techniques plus Negation and Negative Space Steering failure modes into `plugins/dev/skills/productivity/write-a-skill/WRITING-STYLE.md` behind a hot-path pointer, added real structural tags to `SKILL.md`, retargeted the CLAUDE.md style pointer, hardened the shell and TypeScript linters to count only standalone tags outside fenced code blocks, widened orphan-reference checks to sibling markdown reference docs, and linked AFK's fallback `runner-hermes.md` from the AFK runner reference list so the widened sweep has no runner-doc orphan.
+- **why**: The writing meta-skill carried the full sentence-level technique catalog and Steering failure-mode material in the hot path, and the body-tag linters accepted `<what-to-do>` inside fenced examples as if it were a real structural split.
+- **what changed**: Moved the nine writing-style techniques plus Negation and Negative Space Steering failure modes into `plugins/dev/skills/productivity/writing-for-agents/WRITING-STYLE.md` behind a hot-path pointer, added real structural tags to `SKILL.md`, retargeted the CLAUDE.md style pointer, hardened the shell and TypeScript linters to count only standalone tags outside fenced code blocks, widened orphan-reference checks to sibling markdown reference docs, and linked AFK's fallback `runner-hermes.md` from the AFK runner reference list so the widened sweep has no runner-doc orphan.
 
 ---
 
@@ -473,12 +490,12 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
-## write-a-skill (productivity) - Steering glossary import: leading word, completion criterion, premature completion (issue #1350)
+## writing-for-agents (productivity) - Steering glossary import: leading word, completion criterion, premature completion (issue #1350)
 
 - **status**: modified
 - **upstream**: `d574778` (v1.1.0)
 - **why**: The RedSkills writing-style framework had adopted sentence-level techniques but had not yet woven in the remaining upstream Steering glossary concepts that explain how those techniques steer runtime behavior.
-- **what changed**: Integrated Leading Word, Completion Criterion, and Premature Completion into the existing ninth writing-style technique in `plugins/dev/skills/productivity/write-a-skill/SKILL.md`, keeping the guidance as part of the nine-technique framework instead of appending a loose glossary dump. Added a docs-contract assertion pinning the imported terms.
+- **what changed**: Integrated Leading Word, Completion Criterion, and Premature Completion into the existing ninth writing-style technique in `plugins/dev/skills/productivity/writing-for-agents/SKILL.md`, keeping the guidance as part of the nine-technique framework instead of appending a loose glossary dump. Added a docs-contract assertion pinning the imported terms.
 
 ---
 
@@ -628,7 +645,7 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
-## setup-red-skills, triage, hitl, requeue, retake, afk, doctor, implement, go, dashboard, adr-editor, urgent, code-review, start, write-a-skill (engineering/productivity) — Spec/Ticket label vocabulary (issue #1293)
+## setup-red-skills, triage, hitl, requeue, retake, afk, doctor, implement, go, dashboard, adr-editor, urgent, code-review, start, writing-for-agents (engineering/productivity) — Spec/Ticket label vocabulary (issue #1293)
 
 - **status**: modified
 - **upstream**: `272f99b` (where applicable; RedSkills-original skills: —)
@@ -646,7 +663,7 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 
 ---
 
-## write-a-skill (productivity) — adopt Negation + Negative Space steering failure modes (issue #1290)
+## writing-for-agents (productivity) — adopt Negation + Negative Space steering failure modes (issue #1290)
 
 - **status**: modified
 - **upstream**: —
@@ -716,7 +733,7 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **status**: added
 - **upstream**: —
 - **why**: original to reddb.io — a read-only skill-quality auditor that scores every shipped SKILL.md against the house style (issue #1167).
-- **what changed**: new user-invoked `dev audit-skills` subcommand + `disable-model-invocation: true` skill. Mechanical sub-score ports the report-only lint (description budget + 1024-char hard cap, literal "Use when", `<what-to-do>` on long bodies, bold first line, `name:` presence, English-only, orphaned bundled files); semantic sub-score is an LLM judge on the dev review engine (sandcastle structured output, injection-guarded) scoring the nine write-a-skill techniques + trigger clarity + deletion-test bloat + section placement. Ranks worst-first with a best-effort memory-telemetry overlay; scorecard-only, zero side effects. Also aligned CLAUDE.md's "eight techniques" to nine (added "leading words").
+- **what changed**: new user-invoked `dev audit-skills` subcommand + `disable-model-invocation: true` skill. Mechanical sub-score ports the report-only lint (description budget + 1024-char hard cap, literal "Use when", `<what-to-do>` on long bodies, bold first line, `name:` presence, English-only, orphaned bundled files); semantic sub-score is an LLM judge on the dev review engine (sandcastle structured output, injection-guarded) scoring the nine writing-for-agents techniques + trigger clarity + deletion-test bloat + section placement. Ranks worst-first with a best-effort memory-telemetry overlay; scorecard-only, zero side effects. Also aligned CLAUDE.md's "eight techniques" to nine (added "leading words").
 
 ## craft/productivity/misc skills — pruning sweep B: no-op deletion, house tags, single-home rules (issue #1148)
 
@@ -837,7 +854,7 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **why**: PRD #1132 trigger-wave — `handoff` is an operational command always fired explicitly by the user; flipping removes its description from session context.
 - **what changed**: Added `disable-model-invocation: true` to frontmatter.
 
-## write-a-skill (productivity) — absorb the four-dimension skill-quality checklist (issue #1133)
+## writing-for-agents (productivity) — absorb the four-dimension skill-quality checklist (issue #1133)
 
 - **status**: modified
 - **upstream**: —
@@ -1079,8 +1096,8 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **why**: `red-upstream-watch` flagged ~30 upstream commits past the pinned SHA (#744). Reviewed the full compare, recorded the disposition below, and bumped `.upstream` to `6eeb81b`.
 - **what changed**:
   - **Adopting (house-style ports, tracked as separate issues):** `resolving-merge-conflicts` (#807, net-new), `implement` — interactive PRD execution distinct from the autonomous `/afk` (#808), `codebase-design` deep-module vocabulary — reconcile with `improve-codebase-architecture` (#809). Each lands its own `status: added` entry when it merges.
-  - **Kept despite upstream removal (deliberate divergence):** `write-a-skill` — upstream replaced it with `writing-great-skills`; ours evolved further under PRD #776. `zoom-out` — part of our context stack (`/context` references graph-aware zoom-out).
-  - **Skipped:** `ask-matt` (Matt-specific); `domain-modeling` / `grilling` / `grill-me` / `grill-with-docs` (folded into our `start` + the `.red/` multi-context glossary); `writing-great-skills` (superseded by our `write-a-skill` + the 8-technique convention); `decision-mapping` (upstream in-progress draft); `teach` / `edit-article` / `caveman` (not in our set); `setup-matt-pocock-skills` (we have `setup-red-skills`); all release/changeset/package/CHANGELOG infra (we use `red-release`); and refinements to `triage` / `tdd` / `to-issues` / `to-prd` / `prototype` / `handoff` / `review` / `improve-codebase-architecture` (already rewritten under the PRD #776 convention sweep — adopting upstream diffs would conflict).
+  - **Kept despite upstream removal (deliberate divergence):** `writing-for-agents` — upstream replaced its predecessor with `writing-great-skills`; ours evolved further under PRD #776. `zoom-out` — part of our context stack (`/context` references graph-aware zoom-out).
+  - **Skipped:** `ask-matt` (Matt-specific); `domain-modeling` / `grilling` / `grill-me` / `grill-with-docs` (folded into our `start` + the `.red/` multi-context glossary); `writing-great-skills` (superseded by our writing meta-skill and the 8-technique convention); `decision-mapping` (upstream in-progress draft); `teach` / `edit-article` / `caveman` (not in our set); `setup-matt-pocock-skills` (we have `setup-red-skills`); all release/changeset/package/CHANGELOG infra (we use `red-release`); and refinements to `triage` / `tdd` / `to-issues` / `to-prd` / `prototype` / `handoff` / `review` / `improve-codebase-architecture` (already rewritten under the PRD #776 convention sweep — adopting upstream diffs would conflict).
 
 ## runner-claude-minimax (engineering/afk) — fourth AFK runner targeting MiniMax Anthropic-compatible endpoint
 
@@ -1115,12 +1132,12 @@ Upstream base: `mattpocock/skills@66898f60e8c744e269f8ce06c2b2b99ce7660d5f` (rev
 - **why**: `plugins/brain/dist-bundle/{brain-cli,brain-mcp}.mjs` (786 KB) was checked into git, but the brain entrypoint (`scripts/bootstrap.mjs`) resolves the runtime from a version-keyed `~/.cache` populated from the Release asset, falling back only to `dist/` or the TS source — it never reads `plugins/brain/dist-bundle/*`. The committed bundle was dead weight contradicting ADR 0038's fetch-the-release-asset model, and `plugins/brain/` had no `.gitignore` (unlike `plugins/memory/`).
 - **what changed**: `git rm` the two committed bundles and added `plugins/brain/.gitignore` (mirrors `plugins/memory/.gitignore`: `dist/`, `dist-bundle/`, `node_modules/`, `*.tsbuildinfo`) so they can never be re-committed. Also removed stale local-only build artifacts (`plugins/memory/dist*`, root `./dist`) from the working tree — they were already git-ignored, no git change.
 
-## write-a-skill (productivity) — document the eight-technique SKILL.md writing convention + dogfood it
+## writing-for-agents (productivity) — document the eight-technique SKILL.md writing convention + dogfood it
 
 - **status**: modified
 - **upstream**: —
 - **why**: RedSkills had a *section-level* SKILL.md convention (`<what-to-do>`/`<supporting-info>`) but no *sentence-level* writing guidance, so skill authors had no canonical reference for how each sentence should read. PRD #776 / #777 establishes the eight sentence-level techniques borrowed from `anthropics/launch-your-agent` and makes them discoverable.
-- **what changed**: Added a "SKILL.md writing style" section to `write-a-skill` enumerating all eight techniques (bold lead-in + gloss; maxim/slogan compression; prohibition + reason inline; literal phrasing in quotes; vocabulary hygiene; numbered taxonomy; self-demonstrating voice; precondition-carrying headers), each with a one-line before → after. Rewrote the skill's own body to follow the convention (imperative bold lead-ins, prohibitions carrying their reason, precondition in the Review header) so the generator both teaches and follows the style. Added a sentence-level pointer to `CLAUDE.md` beside the existing "SKILL.md body convention" section, framed as additive (it complements, does not replace, the section-level split). Docs-only — no behavioural/runtime change to any bundle, hook, or CLI.
+- **what changed**: Added a "SKILL.md writing style" section to `writing-for-agents` enumerating all eight techniques (bold lead-in + gloss; maxim/slogan compression; prohibition + reason inline; literal phrasing in quotes; vocabulary hygiene; numbered taxonomy; self-demonstrating voice; precondition-carrying headers), each with a one-line before → after. Rewrote the skill's own body to follow the convention (imperative bold lead-ins, prohibitions carrying their reason, precondition in the Review header) so the generator both teaches and follows the style. Added a sentence-level pointer to `CLAUDE.md` beside the existing "SKILL.md body convention" section, framed as additive (it complements, does not replace, the section-level split). Docs-only — no behavioural/runtime change to any bundle, hook, or CLI.
 
 ## doctor (engineering) — enforce `plugins.dev.*` config namespacing + migrate legacy top-level keys
 
