@@ -282,6 +282,8 @@ export interface HarnessOptions {
   laneLabel?: string;
   /** Optional ADR 0049 tier resolver injected by the production wiring. */
   resolveTier?: ProcessIssueDeps["resolveTier"];
+  /** Optional complete task-class route injected by the production wiring. */
+  resolveRoute?: ProcessIssueDeps["resolveRoute"];
   /** Optional ADR 0049 issue classifier injected by the production wiring. */
   classifyIssue?: ProcessIssueDeps["classifyIssue"];
   /** PR review gate (ADR 0064 §10, #749). When set, processIssue may hand the
@@ -753,6 +755,7 @@ export function harness(opts: HarnessOptions = {}): {
         }
       : undefined,
     resolveTier: opts.resolveTier,
+    resolveRoute: opts.resolveRoute,
     // Landing mode is decoupled from the lock (#842); default to the pre-#842
     // coupling so existing locked/unlocked path tests keep their behaviour.
     worktreeLaunchesPr: opts.worktreeLaunchesPr ?? !(opts.locked ?? false),
