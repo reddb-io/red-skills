@@ -20,11 +20,9 @@ type JanitorSweep = NonNullable<NonNullable<Parameters<typeof options>[0]>["tmpJ
 
 function emptyJanitorPlan(): JanitorSweep["plan"] {
   return {
-    logs: { reclaim: [], spare: [] },
     scratch: { reclaim: [], spare: [] },
     diagnostics: { reclaim: [], spare: [] },
     feedbackWorktrees: { reclaim: [], spare: [] },
-    legacySlotLogs: { reclaim: [], spare: [] },
     unknownTmpRoots: [],
   };
 }
@@ -138,10 +136,8 @@ describe("runBoot tmp janitor", () => {
     (deps.fs as BootDeps["fs"] & { reapProcessGroup: typeof reapProcessGroup }).reapProcessGroup = reapProcessGroup;
     const result = await runBoot(deps, options({
       tmpJanitor: {
-        plan: {
-          logs: { reclaim: [], spare: [] }, scratch: { reclaim: [], spare: [] },
-          diagnostics: { reclaim: [], spare: [] }, feedbackWorktrees: { reclaim: [], spare: [] },
-          legacySlotLogs: { reclaim: [], spare: [] }, unknownTmpRoots: [],
+        plan: { scratch: { reclaim: [], spare: [] },
+          diagnostics: { reclaim: [], spare: [] }, feedbackWorktrees: { reclaim: [], spare: [] }, unknownTmpRoots: [],
         },
         staleWorkers: { reclaim: [], spare: [] },
         orphanTestRunners: [{
@@ -162,11 +158,9 @@ describe("runBoot tmp janitor", () => {
       options({
         tmpJanitor: {
           plan: {
-            logs: { reclaim: [{ path: "/p/.red/tmp/logs/old", mtimeS: NOW - 99 }], spare: [] },
             scratch: { reclaim: [{ path: "/p/.red/tmp/scratch/old", mtimeS: NOW - 99 }], spare: [] },
             diagnostics: { reclaim: [], spare: [] },
             feedbackWorktrees: { reclaim: [], spare: [] },
-            legacySlotLogs: { reclaim: [], spare: [] },
             unknownTmpRoots: ["work-old"],
           },
           staleWorkers: {
@@ -184,13 +178,12 @@ describe("runBoot tmp janitor", () => {
     );
 
     expect(fsCalls.removeDir).toEqual([
-      "/p/.red/tmp/logs/old",
       "/p/.red/tmp/scratch/old",
       "/p/.red/tmp/workers/wOLD",
       "/p/.red/tmp/work-old",
     ]);
     expect(result.tmpJanitor).toEqual({
-      expiredLanes: ["/p/.red/tmp/logs/old", "/p/.red/tmp/scratch/old"],
+      expiredLanes: ["/p/.red/tmp/scratch/old"],
       staleWorkers: ["/p/.red/tmp/workers/wOLD"],
       unknownTmpRoots: ["/p/.red/tmp/work-old"],
       protectedLiveWorkers: [],
@@ -202,7 +195,6 @@ describe("runBoot tmp janitor", () => {
       protectedLiveWorkerStateRecords: [],
       refusedOutsideTmp: [],
       removals: [
-        { path: "/p/.red/tmp/logs/old", livenessVerdict: "not-worker-workspace" },
         { path: "/p/.red/tmp/scratch/old", livenessVerdict: "not-worker-workspace" },
         { path: "/p/.red/tmp/workers/wOLD", livenessVerdict: "worker-dead" },
         { path: "/p/.red/tmp/work-old", livenessVerdict: "not-worker-workspace" },
@@ -244,7 +236,6 @@ describe("runBoot tmp janitor", () => {
         tmpJanitor: {
           plan: {
             ...emptyJanitorPlan(),
-            logs: { reclaim: [{ path: "/p/.red/tmp/logs/old", mtimeS: NOW - 99 }], spare: [] },
           },
           staleWorkers: { reclaim: [], spare: [] },
         },
@@ -260,11 +251,9 @@ describe("runBoot tmp janitor", () => {
       options({
         tmpJanitor: {
           plan: {
-            logs: { reclaim: [], spare: [] },
             scratch: { reclaim: [], spare: [] },
             diagnostics: { reclaim: [], spare: [] },
             feedbackWorktrees: { reclaim: [], spare: [] },
-            legacySlotLogs: { reclaim: [], spare: [] },
             // A plan from an older bundle (pre-lane-registry) misclassified the
             // live supervisors lane; the apply path must still spare it.
             unknownTmpRoots: [...KNOWN_TMP_LANES, "work-old"],
@@ -286,11 +275,9 @@ describe("runBoot tmp janitor", () => {
       options({
         tmpJanitor: {
           plan: {
-            logs: { reclaim: [], spare: [] },
             scratch: { reclaim: [], spare: [] },
             diagnostics: { reclaim: [], spare: [] },
             feedbackWorktrees: { reclaim: [], spare: [] },
-            legacySlotLogs: { reclaim: [], spare: [] },
             unknownTmpRoots: [],
           },
           staleWorkers: {
@@ -320,11 +307,9 @@ describe("runBoot tmp janitor", () => {
       options({
         tmpJanitor: {
           plan: {
-            logs: { reclaim: [], spare: [] },
             scratch: { reclaim: [], spare: [] },
             diagnostics: { reclaim: [], spare: [] },
             feedbackWorktrees: { reclaim: [{ path: feedback, mtimeS: 1 }], spare: [] },
-            legacySlotLogs: { reclaim: [], spare: [] },
             unknownTmpRoots: [],
           },
           staleWorkers: { reclaim: [], spare: [] },

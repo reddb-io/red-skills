@@ -85,7 +85,6 @@ describe("auditRedTaxonomy — ADR 0098 lane registry", () => {
       entry(".red/tmp/waits"),
       entry(".red/tmp/worktrees"),
       entry(".red/tmp/worktrees/manual"),
-      entry(".red/tmp/logs"),
       entry(".red/tmp/scratch"),
       entry(".red/tmp/diagnostics"),
       entry(".red/researches"),

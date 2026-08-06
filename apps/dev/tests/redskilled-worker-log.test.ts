@@ -21,7 +21,6 @@ import {
   REDSKILLED_HOST_WORKER_ID_ENV,
   createWorkerLogLinePublisher,
   registrationLaunchEnv,
-  registrationLogPathTemplate,
 } from "../src/runtime/redskilled-worker-log.js";
 
 const roots: string[] = [];
@@ -35,27 +34,6 @@ async function scratch(): Promise<string> {
   roots.push(root);
   return root;
 }
-
-describe("what a registration declares", () => {
-  it("names the Worker's canonical structured log", () => {
-    const path = registrationLogPathTemplate("/repo", "2026-08-02");
-
-    expect(path).toBe("/repo/.red/tmp/workers/{{worker_id}}/worker.log.toonl");
-  });
-
-  it("does not mint a dated raw capture beside the Worker log", () => {
-    expect(registrationLogPathTemplate("/repo", "2026-08-02")).not.toContain("/logs/");
-    expect(registrationLogPathTemplate("/repo", "2026-08-02")).not.toContain("2026-08-02");
-  });
-
-  it("hands each Worker the host's own handle for it, without renaming the work's", () => {
-    expect(registrationLaunchEnv()).toEqual({
-      REDSKILLED_WORKER_ID: "{{worker_id}}",
-      RED_AFK_SLOT: "{{slot}}",
-    });
-    expect(Object.keys(registrationLaunchEnv())).not.toContain("RED_AFK_WORKER_ID");
-  });
-});
 
 describe("what a Worker publishes", () => {
   it("publishes nothing at all when the daemon did not birth it", async () => {

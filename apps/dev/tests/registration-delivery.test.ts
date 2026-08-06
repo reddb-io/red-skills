@@ -24,6 +24,9 @@ const registration = {
   log_path: "/logs/{{worker_id}}.log",
 };
 
+/** The path the delivery restates on every renewal, resolved fresh at birth. */
+const LOG_PATH = "/repo/.red/tmp/workers/{{worker_id}}/worker.log.toonl";
+
 describe("registration delivery reconciliation", () => {
   it("reads the engine version from both cached-bundle and pinned-dispatch argv", () => {
     expect(registrationBundleVersion(registration.argv)).toBe(OLD);
@@ -56,13 +59,17 @@ describe("registration delivery reconciliation", () => {
       registration,
       publishedVersion: PUBLISHED,
       publishedArgv: nextHead,
+      logPath: LOG_PATH,
     });
 
     expect(plan.action).toBe("repoint");
+    // The log path is RESTATED from the namer, never carried from the record the
+    // registration has been holding: a registration renewed for days would
+    // otherwise keep handing out the path it was born with.
     expect(plan.launch).toEqual({
       argv: [...nextHead, ...registration.argv.slice(2)],
       env: registration.env,
-      log_path: registration.log_path,
+      log_path: LOG_PATH,
     });
     expect(plan.lanes.bundle_version).toBe(OLD);
     expect(plan.lanes.published_version).toBe(PUBLISHED);
@@ -72,6 +79,7 @@ describe("registration delivery reconciliation", () => {
     const plan = planRegistrationDeliveryRenewal({
       registration: { ...registration, argv: ["/usr/bin/node", `/cache/dev-${PUBLISHED}.bundle.min.mjs`, ...registration.argv.slice(2)] },
       publishedVersion: PUBLISHED,
+      logPath: LOG_PATH,
       publishedArgv: ["unused"],
     });
 
@@ -88,6 +96,7 @@ describe("registration delivery reconciliation", () => {
         restateLaunch: async (launch) => { calls.push(`repoint:${launch.argv[1]}`); },
       },
       publishedVersion: async () => PUBLISHED,
+      logPath: LOG_PATH,
       publishedArgv: (version) => ["/usr/bin/node", `/cache/dev-${version}.bundle.min.mjs`],
       pluginCacheVersion: () => "3.3.21",
     });

@@ -29,8 +29,6 @@ import {
   evaluateValidationAdmission,
   guardedTick,
   parkedSlotWorkFor,
-  slotLogDir,
-  slotLogPath,
   stalledVerdict,
   wallClockVerdict,
   aliveVerdict,
@@ -561,111 +559,6 @@ describe("circuit trip and sweep", () => {
     io.removeDir.mockClear();
     await sweepParkedSlot(0, slot, deps, config());
     expect(io.removeDir).not.toHaveBeenCalled();
-  });
-});
-
-describe("circuit trip — real FS integration (slot-log boot-stamp path)", () => {
-  it("restores the claimed issue and posts a discard envelope with the correct fast-death count", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "afk-sup-int-"));
-    try {
-      const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
-      mkdirSync(logs, { recursive: true });
-      // Two workers ran in slot 0 across successive fast deaths; both emit the
-      // boot-stamp so the slot log records them. Only the second claimed an issue.
-      writeFileSync(slotLogPath(tmp, 0, logs), "[afk] worker: wAAA1\n[afk] worker: wBBB2\n", "utf8");
-
-      // wAAA1 — died before claiming (no afk.state.toon → issue null).
-      const dir1 = join(tmp, "workers", "wAAA1", "9-a1");
-      mkdirSync(dir1, { recursive: true });
-
-      // wBBB2 — claimed issue #99 before fast-dying.
-      const dir2 = join(tmp, "workers", "wBBB2", "99-a1");
-      mkdirSync(dir2, { recursive: true });
-      writeFileSync(
-        join(dir2, "afk.state.toon"),
-        JSON.stringify({ current: { number: 99 } }),
-        "utf8",
-      );
-
-      // Build deps with real parkedSlotWorkFor (not mocked) and mocked gh.
-      const { deps, io } = makeDeps({
-        parkedSlotWork: (slot: number, lastPid: number | null) =>
-          parkedSlotWorkFor(tmp, slot, lastPid, undefined, logs),
-      });
-
-      // Slot state at trip: 5 fast deaths (circuitK=5), last pid irrelevant
-      // for the slot-log path but still threaded through for Path 2 fallback.
-      const state = initSupervisorState(1);
-      const slot = state.slots[0]!;
-      slot.pid = 7777;
-      slot.deaths = [NOW - 40, NOW - 30, NOW - 20, NOW - 10];
-      slot.spawnEpoch = NOW - 5; // lifetime 5s < fastDeathThresholdS(30)
-
-      const { parked } = await handleDeadSlot(0, slot, deps, config());
-
-      expect(parked).toBe(true);
-      expect(slot.parked).toBe(true);
-
-      // Discard envelope posted only for the worker that held a claim (#99).
-      expect(io.comment).toHaveBeenCalledTimes(2);
-      const [issue, body] = io.comment.mock.calls.find((call) =>
-        String(call[1]).includes('data-attempt-status="discarded"'),
-      )!;
-      expect(issue).toBe(99);
-      expect(body).toContain('data-attempt-status="discarded"');
-      expect(io.comment.mock.calls.some((call) => String(call[1]).includes("kind=concede"))).toBe(true);
-      // Fast-death count must reflect the circuit ring (5 deaths), not 0.
-      expect(body).toContain("fast deaths: 5");
-      expect(body).toContain("slot parked after 5 fast deaths");
-
-      // Labels restored for the claimed issue.
-      expect(io.editLabels).toHaveBeenCalledWith(
-        99,
-        ["ready-for-agent", "runner-error"],
-        ["ready-for-human", "running"],
-      );
-      expect(io.ensureRunnerErrorLabel).toHaveBeenCalledOnce();
-
-      // The pre-claim worker dir is also cleaned up (issue null → no envelope,
-      // no label edit, but removeDir still fires for the iter dir).
-      const removedDirs = io.removeDir.mock.calls.map((c: unknown[]) => c[0]);
-      expect(removedDirs).toContain(dir1);
-      expect(removedDirs).toContain(dir2);
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("no-ops cleanly when the slot log is empty (no stamp yet) and lastPid yields nothing", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "afk-sup-int-"));
-    try {
-      const logs = slotLogDir(tmp, new Date("2026-07-17T12:00:00.000Z"));
-      mkdirSync(logs, { recursive: true });
-      // Slot log exists but has no boot-stamp lines (pre-fix scenario or very
-      // early crash before the stamp was emitted). No worker.pid file either.
-      writeFileSync(slotLogPath(tmp, 0, logs), "some unrelated output\n", "utf8");
-
-      const { deps, io } = makeDeps({
-        parkedSlotWork: (slot: number, lastPid: number | null) =>
-          parkedSlotWorkFor(tmp, slot, lastPid, undefined, logs),
-      });
-
-      const state = initSupervisorState(1);
-      const slot = state.slots[0]!;
-      slot.pid = null; // no last PID → Path 2 also yields nothing
-      slot.deaths = [NOW - 40, NOW - 30, NOW - 20, NOW - 10];
-      slot.spawnEpoch = NOW - 5;
-
-      const { parked } = await handleDeadSlot(0, slot, deps, config());
-
-      expect(parked).toBe(true);
-      // No workers resolved → sweep no-ops: no envelope, no label edits.
-      expect(io.comment).not.toHaveBeenCalled();
-      expect(io.editLabels).not.toHaveBeenCalled();
-      expect(io.removeDir).not.toHaveBeenCalled();
-    } finally {
-      rmSync(tmp, { recursive: true, force: true });
-    }
   });
 });
 

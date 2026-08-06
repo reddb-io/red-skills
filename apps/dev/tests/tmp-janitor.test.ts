@@ -4,11 +4,9 @@ import {
   DIAGNOSTICS_TTL_S,
   FEEDBACK_TTL_S,
   KNOWN_TMP_LANES,
-  LOGS_TTL_S,
   parseFeedbackWorktreeWorkerSlug,
   planDiagnosticsJanitor,
   planFeedbackWorktreeJanitor,
-  planLogsJanitor,
   planOrphanFeedbackWorktreeSweep,
   planScratchJanitor,
   planSupervisorLaneJanitor,
@@ -30,35 +28,6 @@ function entry(path: string, ageS: number): JanitorEntry {
 }
 
 // ---------- planLogsJanitor ----------
-
-describe("planLogsJanitor", () => {
-  it("returns empty plans when there are no entries", () => {
-    expect(planLogsJanitor([], NOW)).toEqual({ reclaim: [], spare: [] });
-  });
-
-  it("reclaims a log dir strictly older than the TTL", () => {
-    const e = entry("/red/tmp/logs/2020-01-01", LOGS_TTL_S + 1);
-    expect(planLogsJanitor([e], NOW)).toEqual({ reclaim: [e], spare: [] });
-  });
-
-  it("spares a log dir younger than the TTL", () => {
-    const e = entry("/red/tmp/logs/2020-01-08", LOGS_TTL_S - 1);
-    expect(planLogsJanitor([e], NOW)).toEqual({ reclaim: [], spare: [e] });
-  });
-
-  it("spares a log dir whose age equals the TTL exactly (not strictly greater)", () => {
-    const e = entry("/red/tmp/logs/2020-01-08", LOGS_TTL_S);
-    expect(planLogsJanitor([e], NOW)).toEqual({ reclaim: [], spare: [e] });
-  });
-
-  it("partitions a mixed set of log dirs", () => {
-    const old = entry("/red/tmp/logs/old", LOGS_TTL_S + 1);
-    const fresh = entry("/red/tmp/logs/fresh", LOGS_TTL_S - 1);
-    const plan = planLogsJanitor([old, fresh], NOW);
-    expect(plan.reclaim).toEqual([old]);
-    expect(plan.spare).toEqual([fresh]);
-  });
-});
 
 // ---------- planScratchJanitor ----------
 
@@ -182,8 +151,11 @@ describe("auditTmpRoot", () => {
     expect(auditTmpRoot(["debug.log"]).unknown).toEqual(["debug.log"]);
   });
 
-  it("does not flag legacy supervisor slot logs while they age out", () => {
-    expect(auditTmpRoot(["afk-supervisor-slot-0.log", "debug.log"]).unknown).toEqual(["debug.log"]);
+  it("flags a stray supervisor slot log now that the logs lane is retired", () => {
+    // Reported, never deleted: the lane that owned these files is gone, so a
+    // leftover at the tmp root is exactly what the unknown-roots audit is for.
+    expect(auditTmpRoot(["afk-supervisor-slot-0.log", "debug.log"]).unknown)
+      .toEqual(["afk-supervisor-slot-0.log", "debug.log"]);
   });
 
   it("passes known lanes through without flagging them", () => {
@@ -206,89 +178,6 @@ describe("auditTmpRoot", () => {
 });
 
 // ---------- planTmpJanitor (combined) ----------
-
-describe("planTmpJanitor", () => {
-  it("returns empty plans and no unknowns for a clean state", () => {
-    const plan = planTmpJanitor({
-      nowS: NOW,
-      logEntries: [],
-      scratchEntries: [],
-      diagnosticsEntries: [],
-      feedbackEntries: [],
-      legacySlotLogEntries: [],
-      tmpRootNames: [...KNOWN_TMP_LANES],
-    });
-    expect(plan.logs).toEqual({ reclaim: [], spare: [] });
-    expect(plan.scratch).toEqual({ reclaim: [], spare: [] });
-    expect(plan.diagnostics).toEqual({ reclaim: [], spare: [] });
-    expect(plan.feedbackWorktrees).toEqual({ reclaim: [], spare: [] });
-    expect(plan.unknownTmpRoots).toEqual([]);
-  });
-
-  it("plans across all lanes and surfaces unknown tmp root entries", () => {
-    const oldLog = entry("/red/tmp/logs/2020-01-01", LOGS_TTL_S + 1);
-    const freshLog = entry("/red/tmp/logs/2020-01-08", 1);
-    const oldScratch = entry("/red/tmp/scratch/old.txt", SCRATCH_TTL_S + 1);
-    const freshDiag = entry("/red/tmp/diagnostics/recent.log", 1);
-    const oldFeedback = entry("/red/tmp/worktrees/feedback/stale", FEEDBACK_TTL_S + 1);
-    const freshFeedback = entry("/red/tmp/worktrees/feedback/current", 1);
-
-    const plan = planTmpJanitor({
-      nowS: NOW,
-      logEntries: [oldLog, freshLog],
-      scratchEntries: [oldScratch],
-      diagnosticsEntries: [freshDiag],
-      feedbackEntries: [oldFeedback, freshFeedback],
-      legacySlotLogEntries: [],
-      tmpRootNames: ["workers", "logs", "rogue-dir", "scratch"],
-    });
-
-    expect(plan.logs.reclaim).toEqual([oldLog]);
-    expect(plan.logs.spare).toEqual([freshLog]);
-    expect(plan.scratch.reclaim).toEqual([oldScratch]);
-    expect(plan.scratch.spare).toEqual([]);
-    expect(plan.diagnostics.reclaim).toEqual([]);
-    expect(plan.diagnostics.spare).toEqual([freshDiag]);
-    expect(plan.feedbackWorktrees.reclaim).toEqual([oldFeedback]);
-    expect(plan.feedbackWorktrees.spare).toEqual([freshFeedback]);
-    expect(plan.unknownTmpRoots).toEqual(["rogue-dir"]);
-  });
-
-  it("reclaims legacy tmp-root supervisor slot logs on the logs TTL", () => {
-    const oldSlotLog = entry("/red/tmp/afk-supervisor-slot-0.log", LOGS_TTL_S + 1);
-    const freshSlotLog = entry("/red/tmp/afk-supervisor-slot-1.log", LOGS_TTL_S - 1);
-
-    const plan = planTmpJanitor({
-      nowS: NOW,
-      logEntries: [],
-      scratchEntries: [],
-      diagnosticsEntries: [],
-      feedbackEntries: [],
-      legacySlotLogEntries: [oldSlotLog, freshSlotLog],
-      tmpRootNames: ["afk-supervisor-slot-0.log", "afk-supervisor-slot-1.log", "debug.log"],
-    });
-
-    expect(plan.legacySlotLogs.reclaim).toEqual([oldSlotLog]);
-    expect(plan.legacySlotLogs.spare).toEqual([freshSlotLog]);
-    expect(plan.unknownTmpRoots).toEqual(["debug.log"]);
-  });
-
-  it("does not reclaim entries in unmanaged lanes (workers, claims, waits, worktrees)", () => {
-    // The janitor only acts on its four lanes. Known lanes at the tmp root
-    // do not produce unknownTmpRoots entries even though their contents
-    // are outside this sweep's scope.
-    const plan = planTmpJanitor({
-      nowS: NOW,
-      logEntries: [],
-      scratchEntries: [],
-      diagnosticsEntries: [],
-      feedbackEntries: [],
-      legacySlotLogEntries: [],
-      tmpRootNames: ["workers", "go-workers", "claims", "waits", "worktrees"],
-    });
-    expect(plan.unknownTmpRoots).toEqual([]);
-  });
-});
 
 describe("planWorkerDirJanitor", () => {
   function worker(over: Partial<WorkerDirJanitorEntry>): WorkerDirJanitorEntry {

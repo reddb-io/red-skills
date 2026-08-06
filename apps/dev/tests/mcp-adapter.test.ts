@@ -17,7 +17,6 @@ import {
   buildMcpLandingFireHook,
   createDefaultDevAfkMcpOperations,
   createCastleMcpDependencies,
-  dispatchLogPath,
   resolveRspCliBundle,
   type DevAfkMcpOperations,
 } from "../src/mcp-adapter.js";
@@ -83,11 +82,6 @@ describe("castle MCP host adapter", () => {
 
   // Three consecutive dispatches died silently leaving only `worker.pid` — the
   // spawn discarded stdout/stderr, so a boot death left zero evidence (#2385).
-  it("parks worker boot output in the dated logs lane", () => {
-    const path = dispatchLogPath("/repo", "2026-07-21T19:18:38.920Z-abc12345");
-    expect(path).toBe(join("/repo", ".red", "tmp", "logs", "2026-07-21", "dispatch-2026-07-21T19-18-38-920Z-abc12345.log"));
-  });
-
   it("returns raw CastleLaneRecord entries and rejects lane-root escapes", async () => {
     const cwd = await root();
     const paths = createEnginePaths(join(cwd, ".red"));
