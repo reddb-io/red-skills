@@ -1,0 +1,5 @@
+interface:
+  display_name: "To Questionnaire"
+  short_description: "Turn knowledge the user cannot supply into a Markdown questionnaire for the person who can. Use only when the user invokes this skill."
+policy:
+  allow_implicit_invocation: false

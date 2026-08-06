@@ -36,6 +36,7 @@
     "./skills/engineering/to-spec",
     "./skills/engineering/zoom-out",
     "./skills/engineering/prototype",
+    "./skills/engineering/wizard",
     "./skills/engineering/verify",
     "./skills/engineering/code-review",
     "./skills/engineering/resolving-merge-conflicts",
@@ -46,6 +47,8 @@
     "./skills/knowledge/research",
     "./skills/productivity/ff",
     "./skills/productivity/reflect",
+    "./skills/productivity/wait-what",
+    "./skills/productivity/to-questionnaire",
     "./skills/productivity/handoff",
     "./skills/productivity/write-a-skill"
   ]
