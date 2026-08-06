@@ -1,5 +1,13 @@
 # @reddb-io/release
 
+## 3.9.0
+
+### Patch Changes
+
+- @reddb-io/github@3.9.0
+- @reddb-io/shared@3.9.0
+- @reddb-io/build-info@3.9.0
+
 ## 3.8.0
 
 ### Minor Changes
