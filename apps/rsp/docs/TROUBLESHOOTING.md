@@ -1,6 +1,6 @@
 # rsp Troubleshooting
 
-Use this reference when rsp hook routing, resident service behavior, or elision storage looks silent, stale, or unbounded. Follow the `write-a-skill` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
+Use this reference when rsp hook routing, resident service behavior, or elision storage looks silent, stale, or unbounded. Follow the `writing-for-agents` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
 **Diagnose the resident first.** The resident is the core and the CLI, the wrappers, the pre-exec hook, the proxy, and the MCP server are peer clients of it (ADR 0126) — one unreachable resident makes every surface look independently broken. Start at `## Resident unreachable`; only once the resident answers is a surface-specific symptom (hook silence, store growth) worth chasing.
 
