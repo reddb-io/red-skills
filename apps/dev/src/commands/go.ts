@@ -159,7 +159,9 @@ export function detachedDispatchAnswer(
     headline,
     `   worker ${granted.worker_id} (pid ${granted.pid}) — detached from this session; ` +
       `stopping the dispatcher does not stop it.`,
-    `   watch: ${granted.log}`,
+    granted.log == null
+      ? `   watch: no log — the host opened none for this Worker; follow it on its heartbeat`
+      : `   watch: ${granted.log}`,
     ...granted.warnings.map((warning) => `   ⚠ ${warning}`),
     "",
   ].join("\n");
