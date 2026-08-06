@@ -108,48 +108,47 @@ describe("routeModelTier — scope", () => {
 });
 
 describe("routeModelTier — rewrite (path a)", () => {
-  it("clamps a mis-tiered validate dispatch (opus) back to the haiku tier", () => {
-    const action = routeModelTier(task({ subagent_type: "validate", model: "opus", prompt: "p" }), defaults());
+  it("clamps a mis-tiered validate dispatch to the maintainer-pinned model", () => {
+    const action = routeModelTier(task({ subagent_type: "validate", model: "haiku", prompt: "p" }), defaults());
     expect(action.kind).toBe("rewrite");
     if (action.kind !== "rewrite") return;
     expect(action.tier).toBe("validate");
-    expect(action.model).toBe("claude-haiku-4-5");
-    expect(action.effort).toBe("low");
+    expect(action.model).toBe("claude-opus-5");
+    expect(action.effort).toBe("high");
     // full input preserved, model and effort overridden
-    expect(action.updatedInput).toEqual({ subagent_type: "validate", model: "claude-haiku-4-5", prompt: "p", effort: "low" });
+    expect(action.updatedInput).toEqual({ subagent_type: "validate", model: "claude-opus-5", prompt: "p", effort: "high" });
   });
 
   it("injects the config model when a tier-agent dispatch leaves model unset", () => {
     const action = routeModelTier(task({ subagent_type: "simple-code", prompt: "p" }), defaults());
     expect(action.kind).toBe("rewrite");
     if (action.kind !== "rewrite") return;
-    expect(action.model).toBe("claude-sonnet-4-6");
-    expect(action.updatedInput.model).toBe("claude-sonnet-4-6");
+    expect(action.model).toBe("claude-opus-5");
+    expect(action.updatedInput.model).toBe("claude-opus-5");
   });
 
-  it("clamps simple-code dispatched on opus down to the simple tier (savings enforced)", () => {
-    const action = routeModelTier(task({ subagent_type: "simple-code", model: "claude-opus-4-8" }), defaults());
-    expect(action.kind === "rewrite" && action.model).toBe("claude-sonnet-4-6");
+  it("applies the same maintainer pin to simple-code", () => {
+    const action = routeModelTier(task({ subagent_type: "simple-code", model: "haiku" }), defaults());
+    expect(action.kind === "rewrite" && action.model).toBe("claude-opus-5");
   });
 });
 
 describe("routeModelTier — explicit pin vs legacy scalar", () => {
   it("does not upgrade a correctly-cheap dispatch when an explicit tier pin equals the default", () => {
-    // validate tier default = claude-haiku-4-5; legacy afk.model = claude-sonnet-4-6.
-    // An explicit validate.model = claude-haiku-4-5 must beat the legacy scalar
-    // (resolveTier bug #583), so a haiku dispatch to validate remains a noop.
+    // validate tier default = claude-opus-5; legacy afk.model = claude-sonnet-4-6.
+    // An explicit validate.model = claude-opus-5 must beat the legacy scalar.
     const config = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true,
       read: () =>
-        "afk:\n  model: claude-sonnet-4-6\n  models:\n    claude:\n      validate:\n        model: claude-haiku-4-5\n",
+        "afk:\n  model: claude-sonnet-4-6\n  models:\n    claude:\n      validate:\n        model: claude-opus-5\n",
     });
-    expect(routeModelTier(task({ subagent_type: "validate", model: "haiku" }), config)).toEqual({ kind: "noop" });
+    expect(routeModelTier(task({ subagent_type: "validate", model: "opus" }), config)).toEqual({ kind: "noop" });
   });
 
   it("enforces the resolved effort in updatedInput alongside the model", () => {
-    const action = routeModelTier(task({ subagent_type: "validate", model: "opus" }), defaults());
+    const action = routeModelTier(task({ subagent_type: "validate", model: "haiku" }), defaults());
     expect(action.kind).toBe("rewrite");
     if (action.kind !== "rewrite") return;
-    expect(action.updatedInput).toMatchObject({ effort: "low" });
+    expect(action.updatedInput).toMatchObject({ effort: "high" });
   });
 });
 
@@ -168,13 +167,13 @@ describe("routeModelTier — single config source", () => {
 
 describe("routeModelTier — capability degrade ladder", () => {
   it("blocks (deny-and-retry) when the host can only decide", () => {
-    const action = routeModelTier(task({ subagent_type: "validate", model: "opus" }), defaults(), "block");
+    const action = routeModelTier(task({ subagent_type: "validate", model: "haiku" }), defaults(), "block");
     expect(action.kind).toBe("block");
     if (action.kind !== "block") return;
-    expect(action.model).toBe("claude-haiku-4-5");
+    expect(action.model).toBe("claude-opus-5");
   });
   it("audits (allow + nudge) when the host can neither rewrite nor block", () => {
-    const action = routeModelTier(task({ subagent_type: "validate", model: "opus" }), defaults(), "audit");
+    const action = routeModelTier(task({ subagent_type: "validate", model: "haiku" }), defaults(), "audit");
     expect(action.kind).toBe("audit");
   });
 });
@@ -182,7 +181,7 @@ describe("routeModelTier — capability degrade ladder", () => {
 describe("routeModelTier — bandit advice", () => {
   it("surfaces a brain bandit recommendation without changing a correctly-tiered route", () => {
     const action = routeModelTier(
-      task({ subagent_type: "validate", model: "haiku" }),
+      task({ subagent_type: "validate", model: "opus" }),
       defaults(),
       "rewrite",
       { advice: banditAdvice },
@@ -202,12 +201,12 @@ describe("routeModelTier — bandit advice", () => {
     expect(action.kind).toBe("rewrite");
     if (action.kind !== "rewrite") return;
     expect(action.tier).toBe("complex");
-    expect(action.model).toBe("claude-opus-4-8");
+    expect(action.model).toBe("claude-opus-5");
     expect(action.advice).toBe(banditAdvice);
     expect(action.updatedInput).toMatchObject({
       subagent_type: "validate",
-      model: "claude-opus-4-8",
-      effort: "medium",
+      model: "claude-opus-5",
+      effort: "high",
     });
   });
 });
@@ -240,16 +239,16 @@ describe("routeModelTierCommand — IO", () => {
   it("emits updatedInput for a mis-tiered Claude dispatch", async () => {
     const out = await runCommand([], {
       tool_name: "Task",
-      tool_input: { subagent_type: "validate", model: "opus", prompt: "p" },
+      tool_input: { subagent_type: "validate", model: "haiku", prompt: "p" },
     });
     const decision = JSON.parse(out) as { hookSpecificOutput?: { updatedInput?: { model?: string } } };
-    expect(decision.hookSpecificOutput?.updatedInput?.model).toBe("claude-haiku-4-5");
+    expect(decision.hookSpecificOutput?.updatedInput?.model).toBe("claude-opus-5");
   });
 
   it("emits an empty object for a correctly-tiered dispatch", async () => {
     const out = await runCommand([], {
       tool_name: "Task",
-      tool_input: { subagent_type: "validate", model: "haiku" },
+      tool_input: { subagent_type: "validate", model: "opus" },
     });
     expect(JSON.parse(out)).toEqual({});
   });
