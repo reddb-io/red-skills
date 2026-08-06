@@ -1399,26 +1399,20 @@ describe("processIssue — fatal host configuration", () => {
 });
 
 
-describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
-  it("fetches the resolved base and forks the worker branch off it (not HEAD)", async () => {
-    const fetchedBases: string[] = [];
+describe("processIssue — granted base reaches sandcastle (ADR 0138)", () => {
+  it("forks the worker branch from the daemon grant (not HEAD)", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
       locked: true, // lock value "main" → base resolves to main
-      fetchedBases,
     });
     const result = await processIssue(deps, input);
 
     expect(result.base).toBe("main");
-    // the base ref is fetched current before the run (ADR 0031 caller contract).
-    expect(fetchedBases).toEqual(["main"]);
-    // runAgent receives the remote-tracking ref so sandcastle forks from the
-    // freshly-fetched ref, not the potentially-stale local branch.
-    expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
+    expect(trace.runAgentCalls[0]?.base).toBe("granted-fork-sha");
   });
 
-  it("resolves feedback scopes from the fetched origin base, not a stale local base", async () => {
+  it("resolves feedback scopes from the granted base, not a stale local base", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
@@ -1426,7 +1420,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
       packageScopes: ["packages/stale", "packages/fresh"],
       changedFilesByBase: {
         main: ["packages/stale/src/old.ts"],
-        "red-trunk": ["packages/fresh/src/new.ts"],
+        "granted-fork-sha": ["packages/fresh/src/new.ts"],
       },
     });
     const result = await processIssue(deps, input);
@@ -1434,7 +1428,7 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(result.outcome).toBe("done");
     expect(trace.changedFileCalls).toContainEqual({
       branch: "afk/9-fix-the-thing",
-      base: "red-trunk",
+      base: "granted-fork-sha",
     });
     const pnpmDirs = trace.pnpmArgs
       .map((args) => {
@@ -1446,22 +1440,17 @@ describe("processIssue — base reaches sandcastle (ADR 0031)", () => {
     expect(pnpmDirs).not.toContain("afk/9-fix-the-thing/packages/stale");
   });
 
-  it("resolves an unlocked, pinless issue to the configured Trunk and forks off red-trunk", async () => {
-    const fetchedBases: string[] = [];
+  it("resolves an unlocked, pinless issue to the configured Trunk and forks from the grant", async () => {
     const { deps, input, trace } = harness({
       outcome: "done",
       feedbackOk: true,
       locked: false,
       configTrunk: "develop",
-      fetchedBases,
     });
     const result = await processIssue(deps, input);
 
     expect(result.base).toBe("develop");
-    // the trunk is fetched current before the run and projected through the
-    // fleet-owned mirror, never the primary checkout's local branch.
-    expect(fetchedBases).toEqual(["develop"]);
-    expect(trace.runAgentCalls[0]?.base).toBe("red-trunk");
+    expect(trace.runAgentCalls[0]?.base).toBe("granted-fork-sha");
   });
 });
 
