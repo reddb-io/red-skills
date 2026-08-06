@@ -91,6 +91,16 @@ back into `/start`, `/to-spec`, `/to-tickets`, `/afk`, or `/hitl`.
   dispatch still land on `/afk`, `/go`, and the planning on-ramps.
 - **Design uncertainty** -> `/prototype`; if the uncertainty is too broad for
   one throwaway answer, use `/wayfinder`.
+- **The last reply did not land** -> `/wait-what`. It re-pitches that reply in
+  Simplified Technical English and the owning `.red/contexts/<name>/CONTEXT.md`
+  vocabulary without starting a new investigation.
+- **The needed knowledge belongs to another person** -> `/to-questionnaire`.
+  It asks who will receive the questionnaire and what must come back, then writes
+  the questions for that recipient; it does not interview the user about the
+  missing subject knowledge.
+- **A setup or cutover has human-only steps** -> `/wizard`. The agent performs
+  the automatable work directly and generates an interactive Bash guide for
+  browser actions, credentials, secrets, or confirmations only a human can do.
 - **Corpus knowledge graph requests** -> memory plugin surfaces. For "build a
   knowledge graph of this repo", "query the graph of these docs", or similar,
   use `/memory:init` in graph mode when needed, then `/memory:ingest` to graph
@@ -127,7 +137,7 @@ The router must mention every published dev skill so `/red-doctor` can flag drif
 `/redskilled`, `/to-spec`, `/zoom-out`, `/prototype`, `/verify`, `/code-review`,
 `/resolving-merge-conflicts`, `/branch-lock`, `/git-guardrails-claude-code`,
 `/migrate-to-shoehorn`, `/setup-pre-commit`, `/research`, `/ff`, `/reflect`,
-`/handoff`, `/write-a-skill`.
+`/wait-what`, `/to-questionnaire`, `/handoff`, `/write-a-skill`, `/wizard`.
 
 The LLM Wiki routes ship with the `memory` plugin as `/memory:wiki-init` and
 `/memory:wiki`, not with `dev`, so they stay out of this inventory.
