@@ -33,6 +33,7 @@ Skills I use daily for code work.
 - **[to-spec](./to-spec/SKILL.md)** — Turn the current conversation context into a Spec and submit it as a GitHub issue.
 - **[zoom-out](./zoom-out/SKILL.md)** — Map-first Codebase understanding for unfamiliar code; graph-aware when Memory Graph mode is ready and read-only when it is not.
 - **[prototype](./prototype/SKILL.md)** — Build a throwaway prototype to flesh out a design — either a runnable terminal app for state/business-logic questions, or several radically different UI variations toggleable from one route.
+- **[wizard](./wizard/SKILL.md)** — Generate an interactive Bash wizard for credentials, CI secrets, third-party dashboards, provisioning, migrations, or cutovers that need human action.
 - **[verify](./verify/SKILL.md)** — Verify that a code change does what it's supposed to by driving a live app with the CDP driver and checking ground-truth snapshots. Every visible-state claim must be backed by a `red-browser snapshot` result; no snapshot, no success claim.
 - **[code-review](./code-review/SKILL.md)** — Two-axis diff review (Standards + Spec) via parallel sub-agents. Standards axis includes the always-on Fowler smell baseline; Spec axis verifies the diff against the originating issue/Spec.
 - **[resolving-merge-conflicts](./resolving-merge-conflicts/SKILL.md)** — Guided merge-conflict resolution: inspect state, find each side's original intent, resolve every hunk preserving both intents, then run the project's automated checks. Never abort.
