@@ -222,6 +222,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
     return runReconcileWorker(flags.reconcileIssue, runner, ctx, paths, workerId);
   }
 
+  const forkSha = process.env.RED_AFK_FORK_SHA?.trim();
+  if (!forkSha) {
+    process.stderr.write("[afk] redskilled granted this Worker no fork SHA — refusing unadmitted birth\n");
+    return HOST_CONFIG_EXIT_CODE;
+  }
+
   const facts = await collectBootPrecheckFacts(ctx, {
     log: (line) => process.stdout.write(`[afk] ${line}\n`),
   });
@@ -664,9 +670,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
         repo: c.issueTemplate.repo,
         repoDir: c.issueTemplate.repoDir,
         remote: c.issueTemplate.remote,
-        ...(process.env.RED_AFK_FORK_SHA?.trim()
-          ? { forkSha: process.env.RED_AFK_FORK_SHA.trim() }
-          : {}),
+        forkSha,
         baseInput: { issueBody: candidate.body },
         runMode: runModeForCandidate(candidate, flags.prePr ? "no-mistakes" : flags.runMode),
         // Lane-aware claim preflight (#1045): the pre-claim state-validity recheck
@@ -734,9 +738,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const trunk = getConfig(config, "dev.trunk") || "main";
   const orphans = await censusOrphanedWork({
     lookups: processDeps.lookups,
-    fetchBase: processDeps.git.fetchBase?.bind(processDeps.git),
     issues: summary.processed.map((p) => p.issue),
-    trunk,
     // Against the FRESH REMOTE trunk, never the local branch (ADR 0083): a
     // stale local `main` does not carry what already landed, so every merged
     // branch would read as commits ahead and the check would accuse the work it
@@ -777,18 +779,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
  */
 async function censusOrphanedWork(input: {
   lookups: ProcessIssueDeps["lookups"];
-  fetchBase: ((base: string) => Promise<void>) | undefined;
   issues: readonly number[];
-  trunk: string;
   base: string;
 }): Promise<OrphanBranch[]> {
   if (input.issues.length === 0) return [];
   const { lookups } = input;
   try {
-    // Refresh the remote trunk first: the census is only as true as the base it
-    // counts against, and a ref last fetched when the attempt started reads the
-    // work this very run landed as still ahead.
-    await input.fetchBase?.(input.trunk).catch(() => {});
     const refs = await lookups.discoverBranches?.() ?? [];
     const scope = new Set(input.issues);
     const mine = refs.filter((ref) => {
