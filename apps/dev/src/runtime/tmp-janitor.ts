@@ -1,7 +1,6 @@
 import { readdir, readlink, rm, stat, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
-  isLegacySlotLogName,
   pathIsInsideTmp,
   planTmpJanitor,
   planWorkerDirJanitor,
@@ -551,11 +550,9 @@ export async function collectTmpJanitorReport(
     }),
     { nowMs: nowS * 1000 },
   );
-  const [tmpRootNames, tmpRootEntries, logEntries, scratchEntries, diagnosticsEntries, feedbackEntries, workers, orphanFeedbackData, supervisorEntries] =
+  const [tmpRootNames, scratchEntries, diagnosticsEntries, feedbackEntries, workers, orphanFeedbackData, supervisorEntries] =
     await Promise.all([
       listNames(tmpDir),
-      listEntries(tmpDir),
-      listEntries(join(tmpDir, "logs")),
       listEntries(join(tmpDir, "scratch")),
       listEntries(join(tmpDir, "diagnostics")),
       listEntries(join(tmpDir, "worktrees", "feedback")),
@@ -563,7 +560,6 @@ export async function collectTmpJanitorReport(
       collectOrphanFeedbackEntries(tmpDir, liveness),
       collectSupervisorEntries(tmpDir),
     ]);
-  const legacySlotLogEntries = tmpRootEntries.filter((entry) => isLegacySlotLogName(basename(entry.path)));
   const orphanFeedback = planOrphanFeedbackWorktreeSweep(orphanFeedbackData.entries, orphanFeedbackData.anyWorkerAlive);
   const orphanTestRunners = await collectOrphanTestRunners(tmpDir);
   const feedbackSafeToAge = new Set(orphanFeedback.reclaim.map((entry) => entry.path));
@@ -571,13 +567,11 @@ export async function collectTmpJanitorReport(
   return {
     plan: planTmpJanitor({
       nowS,
-      logEntries,
       scratchEntries,
       diagnosticsEntries,
       // TTL must never overrule owner liveness. The owner-aware orphan plan is
       // the authority for which feedback worktrees are safe even to consider.
       feedbackEntries: feedbackEntries.filter((entry) => feedbackSafeToAge.has(entry.path)),
-      legacySlotLogEntries,
       tmpRootNames,
     }),
     workerReclaim,
@@ -606,11 +600,9 @@ export async function applyTmpJanitorReport(
     await collectWorkerEvidence(tmpDir),
   );
   const expired = [
-    ...report.plan.logs.reclaim,
     ...report.plan.scratch.reclaim,
     ...report.plan.diagnostics.reclaim,
     ...report.plan.feedbackWorktrees.reclaim,
-    ...report.plan.legacySlotLogs.reclaim,
   ];
   const result: TmpJanitorApplyResult = {
     expiredLanes: [],
