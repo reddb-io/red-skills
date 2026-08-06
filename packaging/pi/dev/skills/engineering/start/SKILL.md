@@ -6,21 +6,45 @@ argument-hint: "[plan to grill: prose, URL, path, or empty] [--tags a,b]"
 
 <what-to-do>
 
-**Run a relentless one-Q-at-a-time grilling session until every branch of the decision tree is resolved — shared understanding is the only exit condition.** Ask one question, include a recommendation with one-sentence reasoning, wait for the reply, re-evaluate, then move to the next branch.
+**Interview the user relentlessly until you reach a shared understanding — that understanding is the only exit condition.** Map the work as a **design tree**: every decision branches into the decisions hanging off it.
 
-Walk down each branch of the design tree, resolving dependencies between decisions one at a time.
+Work the tree in **rounds**. The **frontier** is every unresolved decision whose prerequisites are already settled — the questions answerable *now*, without guessing at answers you have not heard yet. Ask the whole frontier as one round, then wait. Each round's answers reshape the tree: a settled decision pushes the frontier outward and unblocks what depended on it. Recompute the frontier and ask the next round, always pushing as fast as the tree allows.
+
+**A question whose answer depends on another question open in this round belongs to the NEXT round.** That single rule is what makes a round safe — it is why a batch of questions never asks the user to guess at an answer they have not given yet.
+
+A round is as small as the tree makes it. One critical question that unblocks everything downstream is a complete round.
 
 **The loop:**
 
-1. Pick the next unresolved branch of the decision tree.
-2. Ask **one** question. Include your recommended answer with one-sentence reasoning.
-3. Wait for the user's reply. Do not stack questions, do not preempt the next one.
-4. When their answer changes the tree, re-evaluate before asking the next question.
-5. Stop when the user says stop, or when every reachable branch is resolved.
+1. Compute the frontier — every unresolved decision whose prerequisites are settled.
+2. Ask that whole frontier as one numbered round, each question carrying its branches and your recommendation.
+3. Wait for the user's answers. They may answer by number, in bulk, or push back on the framing.
+4. Re-evaluate the tree against what they answered before computing the next frontier.
+5. Stop when the frontier is empty, or when the user says stop.
 
-## End-of-session doc-landing finalizer
+## Question format
 
-When the grilling session ends (the user stops or every reachable branch is resolved), run the shared end-of-session doc-landing finalizer in [DOC-LANDING-FINALIZER.md](./DOC-LANDING-FINALIZER.md) before exiting.
+Each question is formatted like so — the emoji are load-bearing, because a round of five questions is read by scanning for them:
+
+```
+❓ **Q##** — **<question title>**: <question body, may be several sentences>
+**Branches:** (a) <option A> · (b) <option B> · (c) <option C>
+➡️ **(<letter>)** — <one-sentence reason>
+```
+
+**Enumerate the branches whenever the decision space is finite.** They give the user a stable handle — "ok (b) but with X tweak" — and force the skill to make the choice space explicit instead of gesturing at it. Omit `Branches:` only when the question is genuinely open-ended; `➡️` then recommends in prose.
+
+Close each round with a one-line invitation to answer, redirect, or push back.
+
+Number every question `Q01`, `Q02`, … `Q10`, … zero-padded to 2 digits, **continuous across rounds**. The counter is session-scoped — never reset on a new round, never on a user redirect.
+
+## Finding facts is your job, never the user's
+
+**Look facts up; put decisions to the human.** What the code does, what names exist, how something is wired, what a doc already says — read it. Asking the human for what the repo already answers spends their turn on your legwork.
+
+**A fact still being fetched is an unsettled prerequisite — never a blocked round.** Ask everything not downstream of that fact now, and let the question that needs it fall into the next round, exactly as any other dependency would.
+
+Explore read-only. This skill reads the codebase; it does not change it.
 
 ## Boot behavior (turn 1 — first invocation only)
 
@@ -29,14 +53,13 @@ The argument is optional. Treat it as the plan or context to grill.
 - **External reference** (URL or file path) → eager ingest via `/wiki ingest <ref>`. If `.red/wiki/` is not initialised, ask **once**: `Initialise /wiki to cache fetches across sessions? (y/N)`. On `y`, run `/wiki-init` then proceed. On `n`, fall back to plain `WebFetch`/`Read` into context and note in the receipt that the material is **not cached**.
 - **Inline document** (text pasted in the argument) → already in context, no fetch.
 - **Prose** (short description) → no fetch, the prose is the plan.
-- **Empty argument** → open with the literal Q01:
+- **Empty argument** → open with the literal `Q01` as a one-question round:
 
-  > **Q01:** What plan are we grilling?
-  > **Branches:** (a) paste it inline  (b) share a URL or file path  (c) describe it in a sentence
-  > **Recommend:** (a), because inline context lets us start grilling immediately.
-  > *(answer, redirect, or push back — I'll wait)*
+  > ❓ **Q01** — **What plan are we grilling?**: I need the material before the tree has a root.
+  > **Branches:** (a) paste it inline · (b) share a URL or file path · (c) describe it in a sentence
+  > ➡️ **(a)** — inline context lets us start grilling immediately.
 
-After successful ingestion, emit a **single-line receipt** then proceed to `Q01`:
+After successful ingestion, emit a **single-line receipt** then open the first round:
 
 | Source | Receipt |
 |---|---|
@@ -44,46 +67,36 @@ After successful ingestion, emit a **single-line receipt** then proceed to `Q01`
 | File (md/txt) | `Read <path> → wiki/raw/<slug>.md.` |
 | File (PDF) | `Read <path> → wiki/raw/<slug>.txt (<N> pages).` |
 | Inline doc | `Got <N> words inline.` |
-| Prose | _(no receipt — proceed to Q01 immediately)_ |
+| Prose | _(no receipt — open the first round immediately)_ |
 
 When wiki is **not cached** (user declined `/wiki-init`), append ` (not cached)` to the receipt.
 
-On ingestion **failure**, do not start `Q01`. Ask for an alternative:
+On ingestion **failure**, do not open the first round. Ask for an alternative:
 
 ```
 Couldn't read <ref>: <reason>.
 Paste the content, point to another path, or say "skip" and we'll grill on what you describe.
 ```
 
+## End-of-session doc-landing finalizer
+
+When the frontier is empty — or the user stops — run the shared end-of-session doc-landing finalizer in [DOC-LANDING-FINALIZER.md](./DOC-LANDING-FINALIZER.md) before exiting. An empty frontier is a checkable bound; the finalizer is what turns it into a landed paper trail rather than an open-ended goodbye.
+
 **Hard rules — do not break these:**
 
+- ❌ Do **not** ask a question whose answer depends on another question open in the same round — it belongs to the next round, once its prerequisite is settled.
 - ❌ Do **not** implement, write code, or run commands beyond read-only codebase exploration, except for the end-of-session doc-landing finalizer.
 - ❌ Do **not** summarise the user's answers back at them. They know what they said.
 - ❌ Do **not** propose a final plan, design doc, or Spec. This skill ends in shared understanding, not artefacts.
-- ❌ Do **not** ask more than one question per turn.
-- ❌ Do **not** fetch URLs the user only **mentions** in passing. A ref becomes a fetch only when the user explicitly asks ("look at this", "ingest X") or the next question requires its content.
+- ❌ Do **not** fetch URLs the user only **mentions** in passing. A ref becomes a fetch only when the user explicitly asks ("look at this", "ingest X") or a frontier question requires its content.
 - ❌ Do **not** answer a decision yourself — an agent that answers its own questions has broken the interview.
-- ✅ **Do** look up facts in the codebase (what the code does, what names exist, how something is wired) instead of asking the human for information that is already readable in the code.
+- ✅ **Do** look up facts in the codebase (what the code does, what names exist, how something is wired) instead of asking the human for information already readable in the code.
 - ✅ **Do** put every decision to the human and wait for the answer. Facts can be looked up; decisions belong to the human.
 - ✅ **Do** challenge contradictions immediately — between user statements, between user and code, between user and `.red/CONTEXT.md`.
-- ✅ **Do** update `.red/CONTEXT.md` inline the moment a term is resolved (one term → one edit → next question). This is a side effect of the interview, not a separate phase.
+- ✅ **Do** update `.red/CONTEXT.md` inline the moment a term is resolved (one term → one edit → next round). This is a side effect of the interview, not a separate phase.
 - ✅ **Do** offer an ADR only when the three-condition test in `<supporting-info>` passes.
-- ✅ **Do** treat mid-grilling refs symmetrically to boot refs: when the user introduces a URL or file path at any turn, ingest via `/wiki ingest`, emit the same receipt line, then continue with the next question.
+- ✅ **Do** treat mid-grilling refs symmetrically to boot refs: when the user introduces a URL or file path at any turn, ingest via `/wiki ingest`, emit the same receipt line, then continue with the next round.
 - ✅ **Do** record a `--tags a,b` argument as a session decision ("this work belongs to territory tags a, b") so a downstream `/to-spec` applies the `tag:<value>` labels on publish. `/start` itself still creates no issues and no labels — the tags only travel forward.
-
-**Question format template:**
-
-> **Q##:** [the question]
-> **Branches:** _(omit only when the question is genuinely open-ended)_
->  (a) [answer option A]
->  (b) [answer option B]
->  [if more options, add more branches]
-> **Recommend:** (a), because [one-sentence reason].
-> *(answer, redirect, or push back — I'll wait)*
-
-Prefer enumerated branches whenever the decision space is finite — they give the user a stable handle ("ok (b) but with X tweak") and force the skill to make the choice space explicit instead of hand-waving. `Recommend:` references a branch letter when branches are listed, prose otherwise.
-
-Number every question `Q01`, `Q02`, … `Q10`, … zero-padded to 2 digits. Counter is **session-scoped** — reset on each `/start` invocation, never on user redirects.
 
 </what-to-do>
 
@@ -139,11 +152,11 @@ Create files lazily — only when you have something to write. If no `.red/CONTE
 
 ## Side-effect triggers during the interview
 
-These fire **as a consequence of grilling**. They never replace the interview loop — finish writing, then ask the next question.
+These fire **as a consequence of grilling**. They never replace the interview loop — finish writing, then ask the next round.
 
 ### Trigger: user introduces an external reference
 
-URL or file path appears in the user's message **with intent to ingest** ("look at this", "olha esse", "ingest …", or the next question clearly needs it). Hand off to `/wiki ingest <ref>`, emit the standard receipt line as a brief acknowledgement, then proceed to the next `Q##:`. Mid-grilling refs follow the same rules as boot refs — no extra opt-in once `/wiki` is initialised.
+URL or file path appears in the user's message **with intent to ingest** ("look at this", "olha esse", "ingest …", or a frontier question clearly needs it). Hand off to `/wiki ingest <ref>`, emit the standard receipt line as a brief acknowledgement, then proceed to the next round. Mid-grilling refs follow the same rules as boot refs — no extra opt-in once `/wiki` is initialised.
 
 ### Trigger: term conflicts with the glossary
 
