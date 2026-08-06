@@ -1215,7 +1215,7 @@ export async function processIssue(
       run = { outcome: "done", branch: fastBranch, commits: [], stdout: "" };
     } else {
       const baseAgentInput: RunAgentInput = {
-        runner: activeRunner,
+        runner: toAgentRunner(activeRunner),
         model: initialTier.model,
         effort: initialTier.effort,
         handoffPath,
