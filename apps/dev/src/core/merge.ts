@@ -24,7 +24,7 @@ import {
   describeSetupDirtCollisionRefusal,
   describeSupersededSetupDirt,
   describeToleratedDirt,
-  isToleratedDirtOnly,
+  renderDirtyPathList,
   SUPERSEDED_SETUP_DIRT_LANE,
 } from "./setup-owned-dirt.js";
 
@@ -1685,7 +1685,7 @@ export interface FastForwardLocalTargetGuardResult {
   readonly currentBranch?: string;
   readonly failed?: FastForwardLocalTargetRefusal;
   readonly failedCondition?: "on-trunk" | "clean-tree" | "fetch" | "ancestor" | "superseded-commits" | "dirt-collision" | "merge";
-  /** Reconciliation-owned dirty paths the clean-tree condition tolerated. */
+  /** Dirty paths preserved because the incoming commits do not overwrite them. */
   readonly toleratedDirt?: readonly string[];
   /** Tolerated dirt the incoming commits carry as tracked files, so the local
    * untracked copy is stale: moved aside before the merge, never merged over (#3155). */
@@ -1843,11 +1843,9 @@ export async function evaluateFastForwardLocalTarget(
       evidence: `condition failed: on-trunk (current=${currentBranch || "unknown"} expected=${target})`,
     };
   }
-  // 2. A dirty primary keeps pending WIP — never write over it (#1019). The one
-  // exceptions are named reconciliation-owned sets: output `/red-setup` leaves
-  // uncommitted (#3106), and docs `/start` holds dirty until ADR 0092 landing
-  // (#3349). Tolerating them costs nothing the guard protects because an
-  // incoming edit to the same path is classified as a real collision below.
+  // 2. Read the primary's dirt, but do not judge it by path name (#3439). A pure
+  // fast-forward leaves a dirty path intact unless the incoming commits touch
+  // that same path; the collision is classified after fetch below.
   const status = await exec(["git", "-C", gitRepo, "status", "--porcelain"]);
   if (status.code !== 0) {
     return {
@@ -1861,18 +1859,8 @@ export async function evaluateFastForwardLocalTarget(
     };
   }
   const tree = classifyDirtyTree(status.stdout);
-  if (tree.foreign.length > 0) {
-    return {
-      guard: "refused",
-      target,
-      remote,
-      currentBranch,
-      failed: "dirty-tree",
-      failedCondition: "clean-tree",
-      evidence: describeCleanTreeRefusal(tree),
-    };
-  }
-  const toleratedDirt = isToleratedDirtOnly(tree) ? describeToleratedDirt(tree) : undefined;
+  const dirtyPaths = tree.dirty.map((entry) => entry.path);
+  const toleratedDirt = tree.dirty.length > 0 ? describeToleratedDirt(tree) : undefined;
   // Refresh the remote ref so the ancestry test and the FF see the merge.
   const fetch = await exec(["git", "-C", gitRepo, "fetch", "--quiet", remote, target]);
   if (fetch.code !== 0) {
@@ -1896,20 +1884,19 @@ export async function evaluateFastForwardLocalTarget(
   let supersededCommits: readonly SupersededCommitPair[] = [];
   let lineageEvidence = `ancestor (${target} -> ${remoteRef})`;
   if (ancestor.code !== 0) {
-    // The setup-owned exception is safe for an ff-only merge because Git leaves
-    // unrelated edits in place. Divergence reconciliation uses reset --hard, so
-    // its clean-tree contract is literal: even our own tolerated dirt must stop
-    // before any patch-equivalence proof can authorize the pointer move.
+    // Divergence reconciliation uses reset --hard rather than a pure FF, so any
+    // dirt is threatened and must stop before patch-equivalence can authorize
+    // the pointer move.
     if (toleratedDirt) {
       return {
         guard: "refused",
         target,
         remote,
         currentBranch,
-        toleratedDirt: tree.tolerated,
+        toleratedDirt: dirtyPaths,
         failed: "dirty-tree",
         failedCondition: "clean-tree",
-        evidence: `condition failed: clean-tree (superseded-commit reconciliation requires no dirty paths; ${tree.tolerated.join(", ")})`,
+        evidence: `${describeCleanTreeRefusal(tree)}; superseded-commit reconciliation requires no dirty paths`,
       };
     }
     const classified = await classifySupersededCommits(exec, {
@@ -1934,7 +1921,7 @@ export async function evaluateFastForwardLocalTarget(
     supersededCommits = classified.pairs;
     lineageEvidence = `superseded-commits (${describeSupersededCommits(supersededCommits)})`;
   }
-  // 4. A tolerated path the incoming commits also carry would abort the very
+  // 4. A dirty path the incoming commits also carry would abort the very
   // merge this guard just approved (#3155), so decide it HERE: `guard=passed`
   // must imply the merge succeeds, or the verdict must not be `passed`.
   let supersededDirt: readonly string[] = [];
@@ -1948,10 +1935,10 @@ export async function evaluateFastForwardLocalTarget(
         target,
         remote,
         currentBranch,
-        toleratedDirt: tree.tolerated,
+        toleratedDirt: dirtyPaths,
         failed: "dirt-collision",
         failedCondition: "dirt-collision",
-        evidence: `condition failed: dirt-collision (could not read the incoming path list for ${remoteRef} while ${tree.tolerated.length} tolerated path(s) are dirty)`,
+        evidence: `condition failed: dirt-collision (could not read the incoming path list for ${remoteRef} while judging ${tree.dirty.length} dirty path(s): ${renderDirtyPathList(dirtyPaths)})`,
       };
     }
     const collision = classifySetupDirtCollision(
@@ -1964,7 +1951,7 @@ export async function evaluateFastForwardLocalTarget(
         target,
         remote,
         currentBranch,
-        toleratedDirt: tree.tolerated,
+        toleratedDirt: dirtyPaths,
         failed: "dirt-collision",
         failedCondition: "dirt-collision",
         evidence: describeSetupDirtCollisionRefusal(collision.conflicting, remoteRef),
@@ -1978,7 +1965,7 @@ export async function evaluateFastForwardLocalTarget(
     target,
     remote,
     currentBranch,
-    ...(toleratedDirt ? { toleratedDirt: tree.tolerated } : {}),
+    ...(toleratedDirt ? { toleratedDirt: dirtyPaths } : {}),
     ...(supersededDirt.length > 0 ? { supersededDirt } : {}),
     ...(supersededCommits.length > 0 ? { supersededCommits } : {}),
     evidence: `guard passed: on-trunk clean-tree ${lineageEvidence}${toleratedDirt ? `; ${toleratedDirt}` : ""}${supersededNote ? `; ${supersededNote}` : ""}`,
