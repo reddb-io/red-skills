@@ -61,6 +61,35 @@ describe("classifyDirtyTree", () => {
     expect(tree.setupOwned).toEqual([]);
     expect(tree.foreign).toEqual([]);
   });
+
+  it("tolerates exactly the ADR 0092 documentation set without calling it setup-owned (#3349)", () => {
+    const tree = classifyDirtyTree(
+      " M .red/CONTEXT.md\n M .red/CONTEXT-MAP.md\n M .red/contexts/dev/CONTEXT.md\n?? .red/adr/0132-trunk.md\n M apps/dev/src/x.ts\n",
+    );
+
+    expect(tree.tolerated).toEqual([
+      ".red/CONTEXT.md",
+      ".red/CONTEXT-MAP.md",
+      ".red/contexts/dev/CONTEXT.md",
+      ".red/adr/0132-trunk.md",
+    ]);
+    expect(tree.setupOwned).toEqual([]);
+    expect(tree.foreign).toEqual(["apps/dev/src/x.ts"]);
+  });
+
+  it("does not dissolve the guard for paths merely adjacent to the documentation set (#3349)", () => {
+    const tree = classifyDirtyTree(
+      " M .red/CONTEXT.md.bak\n M .red/contexts-old/x.md\n M .red/adr-old/0132.md\n M apps/dev/src/x.ts\n",
+    );
+
+    expect(tree.tolerated).toEqual([]);
+    expect(tree.foreign).toEqual([
+      ".red/CONTEXT.md.bak",
+      ".red/contexts-old/x.md",
+      ".red/adr-old/0132.md",
+      "apps/dev/src/x.ts",
+    ]);
+  });
 });
 
 describe("describeCleanTreeRefusal", () => {
