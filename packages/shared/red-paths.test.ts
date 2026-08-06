@@ -27,7 +27,6 @@ import {
   goWorkersDir,
   landingWorktreesDir,
   legacyAfkStateDir,
-  logsDir,
   manualWorktreesDir,
   MANAGER_ROOT_ENV,
   managerDir,
@@ -200,10 +199,6 @@ describe("tmp tier lanes", () => {
     expect(adoptWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/adopt");
     expect(reconcileWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/reconcile");
     expect(docsWorktreesDir(ROOT)).toBe("/repo/.red/tmp/worktrees/docs");
-  });
-
-  it("derives a date-partitioned logs lane", () => {
-    expect(logsDir(ROOT, "2026-07-15")).toBe("/repo/.red/tmp/logs/2026-07-15");
   });
 });
 
