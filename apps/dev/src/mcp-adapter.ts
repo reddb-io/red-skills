@@ -81,7 +81,7 @@ import {
   createRedskilledBirthPort,
   redskilledRegistrationRefusal,
 } from "./runtime/redskilled-birth.js";
-import { registrationLogPathTemplate } from "./runtime/redskilled-worker-log.js";
+import { workerLogPathTemplate } from "./runtime/redskilled-worker-log.js";
 import { registrationLaunch } from "./runtime/registration-launch.js";
 import { registrationDeliveryLanes } from "./runtime/registration-delivery.js";
 import { attributeProjectWorkers } from "./core/project-attribution.js";
@@ -249,12 +249,11 @@ function dispatchArgs(input: DispatchOperationInput): string[] {
   return args;
 }
 
-// The dispatch surface starts nothing itself: `dispatchLogPath` and the birth
-// request live in `runtime/mcp-worker-birth.ts`, and the rsp-wait spawn — which
-// is not a Worker — lives in `runtime/rsp-wait-launch.ts`. Both are re-exported
-// here because this module is a declared `host-owns-birth` site (#2976), and
-// that ratchet reads whether a MODULE can create a process at all.
-export { dispatchLogPath } from "./runtime/mcp-worker-birth.js";
+// The dispatch surface starts nothing itself: the birth request lives in
+// `runtime/mcp-worker-birth.ts`, and the rsp-wait spawn — which is not a Worker
+// — lives in `runtime/rsp-wait-launch.ts`. Re-exported here because this module
+// is a declared `host-owns-birth` site (#2976), and that ratchet reads whether a
+// MODULE can create a process at all.
 export { resolveRspCliBundle } from "./runtime/rsp-wait-launch.js";
 
 
@@ -1112,7 +1111,7 @@ async function projectStart(root: string, rawInput: ProjectStartInput) {
   // that states neither births Workers whose logs no surface can show, which is
   // exactly how the herdr plugin, the VS Code extension and the verbose
   // statusline all came to report a Worker with nothing to say.
-  const logPathTemplate = registrationLogPathTemplate(root, new Date().toISOString().slice(0, 10));
+  const logPathTemplate = workerLogPathTemplate(root);
 
   // What runs when a Worker is born for this project — resolved from the
   // PUBLISHED bundle rather than from this process's own entry (#2808), so a
@@ -1336,11 +1335,18 @@ async function projectResize(root: string, rawInput: ProjectResizeInput) {
     // the registration used (#3081) — a resize that rebuilt the argv by hand and
     // carried the old env forward is how a launch came to be half-composed, and
     // a restatement that omitted the log path would clear it outright.
+    //
+    // RESTATED from the namer, never carried from `held` (#3440): the held path
+    // is whatever this registration said when it was first registered, and this
+    // project's has been renewed over 23,900 times since. Preferring it is how a
+    // registration goes on handing out a path from the day it was born — the
+    // exact way a Worker that died on 2026-08-06 named a 2026-08-05 date-dir the
+    // janitor was already reclaiming.
     await port.restateLaunch(
       registrationLaunch({
         runner: input.runner,
         selector: input.selector,
-        logPath: held.log_path ?? registrationLogPathTemplate(root, new Date().toISOString().slice(0, 10)),
+        logPath: workerLogPathTemplate(root),
       }),
     );
     directive = "restated";
