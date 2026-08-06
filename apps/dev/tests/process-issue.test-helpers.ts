@@ -92,7 +92,7 @@ export interface Trace {
   changedFileCalls: Array<{ branch: string; base: string }>;
   /** Every `lookups.worktreeDiff` read the review stage made (#2730). */
   worktreeDiffCalls: Array<{ branch: string; base: string }>;
-  baseMovementCalls: Array<{ baseRef: string; sinceSha: string }>;
+  workerBaseMovementCalls: string[];
   mechanicalRegenerations: Array<{
     issue: number;
     branch: string;
@@ -219,7 +219,7 @@ export interface HarnessOptions {
    * Absent → no probe at all, and every gate failure stays branch-fault exactly
    * as it did before the drift accounting existed.
    */
-  baseMovements?: Array<{ head: string; subjects: string[]; files?: string[] }>;
+  workerBaseMovements?: Array<{ head: string; subjects: string[]; files?: string[] }>;
   changedFilesByBase?: Record<string, string[]>;
   packageScopes?: string[];
   /** FIX E: result of the worker-branch presence check. Defaults to true
@@ -230,11 +230,6 @@ export interface HarnessOptions {
    * false (default) → a foreign lander closed it (claim-lost). */
   branchMerged?: boolean;
   fallbackRunner?: boolean;
-  /** Records each git fetch-base call (the ADR 0031 start-point fetch). */
-  fetchedBases?: string[];
-  /** When true, resolveFreshBase returns ok:false (simulating a boot-time
-   * mirror refresh failure — the regression path for #2436). */
-  freshBaseFail?: boolean;
   /** Restart-informed context block returned by the attempt ledger lookup. */
   prevFailureContext?: string;
   /** The configured Trunk (`plugins.dev.trunk`, ADR 0083) injected into base resolution. */
@@ -360,7 +355,7 @@ export function harness(opts: HarnessOptions = {}): {
     statePatches: [],
     cascadeRebaseAttempts: [],
     changedFileCalls: [],
-    baseMovementCalls: [],
+    workerBaseMovementCalls: [],
     mechanicalRegenerations: [],
     pnpmArgs: [],
     shellCommands: [],
@@ -489,32 +484,6 @@ export function harness(opts: HarnessOptions = {}): {
         return "abc1234";
       },
       async deleteLocalBranch() {},
-      async resolveFreshBase({ base, remote }) {
-        if (opts.fetchedBases) opts.fetchedBases.push(base);
-        if (opts.freshBaseFail) {
-          return {
-            ok: false,
-            base,
-            baseRef: `${remote}/${base}`,
-            sha: "",
-            source: "mirror" as const,
-            remoteReachable: false,
-            reason: "base-stale" as const,
-            message: `could not refresh fleet trunk mirror red-trunk from ${remote}/${base}`,
-          };
-        }
-        return {
-          ok: true,
-          base,
-          baseRef: "red-trunk",
-          sha: `${remote}/${base}-tip`,
-          source: "mirror" as const,
-          remoteReachable: true,
-        };
-      },
-      async fetchBase(base) {
-        if (opts.fetchedBases) opts.fetchedBases.push(base);
-      },
       async prepareFreshWorkerBranch(input) {
         trace.freshWorkerBranchCalls.push(input);
         return true;
@@ -848,13 +817,20 @@ export function harness(opts: HarnessOptions = {}): {
       async prevFailureContext() {
         return opts.prevFailureContext;
       },
-      ...(opts.baseMovements
+      ...(opts.workerBaseMovements
         ? {
-            async baseMovement(baseRef: string, sinceSha: string) {
-              trace.baseMovementCalls.push({ baseRef, sinceSha });
-              const seq = opts.baseMovements!;
-              const idx = trace.baseMovementCalls.length - 1;
-              return seq[idx] ?? seq.at(-1) ?? { head: sinceSha, subjects: [], files: [] };
+            async workerBaseMovement(workerId: string) {
+              trace.workerBaseMovementCalls.push(workerId);
+              const seq = opts.workerBaseMovements!;
+              const idx = trace.workerBaseMovementCalls.length - 1;
+              const movement = seq[idx] ?? seq.at(-1) ?? { head: "granted-fork-sha", subjects: [], files: [] };
+              return {
+                startSha: "granted-fork-sha",
+                gateSha: movement.head,
+                commitsAhead: movement.head === "granted-fork-sha" ? 0 : 1,
+                subjects: movement.subjects,
+                files: movement.files ?? [],
+              };
             },
           }
         : {}),
@@ -967,6 +943,7 @@ export function harness(opts: HarnessOptions = {}): {
     repo: "o/r",
     repoDir: "/repo",
     remote: "origin",
+    forkSha: "granted-fork-sha",
     baseInput: { issueBody: opts.body ?? "## Agent brief\nDo it." },
     specRef: undefined,
     runMode: opts.runMode,
