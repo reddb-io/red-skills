@@ -1,6 +1,6 @@
 # /afk Troubleshooting
 
-Use these playbooks when `/afk` reaches a confusing terminal state. Follow the `write-a-skill` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
+Use these playbooks when `/afk` reaches a confusing terminal state. Follow the `writing-for-agents` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
 ## Gate census when ready-for-agent is empty
 
