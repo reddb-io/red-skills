@@ -42,7 +42,14 @@ export function registrationLaunch(input: RegistrationLaunchInput): RedskilledLa
     // rather than instead of it: a heartbeat is addressed with the daemon's
     // string, and every project-side surface is filed under the same one now
     // that the Worker adopts what the host assigned.
-    workerEnv: registrationLaunchEnv(),
+    // Preserve the source of this pin. The launch builder also writes
+    // RED_AFK_RUNNER, but without this marker the Worker could report only
+    // "env"/"flag" and a project_start registration would override task
+    // routes invisibly for its whole lifetime.
+    workerEnv: {
+      ...registrationLaunchEnv(),
+      RED_AFK_RUNNER_ORIGIN: "project_start",
+    },
     ...(input.logPath == null ? {} : { logPath: input.logPath }),
   });
 }
