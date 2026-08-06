@@ -1,5 +1,7 @@
 # @reddb-io/browser-bridge
 
+## 3.9.0
+
 ## 3.8.0
 
 ## 3.7.1
