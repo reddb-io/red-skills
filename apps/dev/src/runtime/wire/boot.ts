@@ -485,7 +485,6 @@ export async function buildBootDeps(
   return {
     fs: {
       ensureDir: fsx.ensureDir,
-      ensureGitignoreLine: fsx.ensureGitignoreLine,
       writeWorkerPid: fsx.writeWorkerPid,
       removeDir: fsx.removeDir,
       // Both guards ask the DAEMON, which owns process death by construction,
@@ -658,7 +657,6 @@ export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
   return {
     fs: {
       ensureDir: fsx.ensureDir,
-      ensureGitignoreLine: fsx.ensureGitignoreLine,
       writeWorkerPid: fsx.writeWorkerPid,
       removeDir: fsx.removeDir,
     },

@@ -195,10 +195,9 @@ describe("runBoot precheck short-circuit", () => {
         "boot operational probe auto-fix applied: afk.base-freshness before=111111111111 after=222222222222",
       ),
     );
-    expect(calls.slice(0, 3)).toEqual([
+    expect(calls.slice(0, 2)).toEqual([
       "fs.ensureDir:/p/.red/tmp",
       "fs.ensureDir:/p/.red/state",
-      "fs.gitignore:.red/tmp/",
     ]);
   });
 
@@ -493,7 +492,7 @@ describe("runBoot Docs Sweep", () => {
 });
 
 describe("runBoot bootstrap", () => {
-  it("ensures dirs, gitignore lines, and writes worker.pid", async () => {
+  it("ensures dirs and writes worker.pid", async () => {
     const { deps, fsCalls } = makeDeps();
     await runBoot(deps, options());
     expect(fsCalls.ensureDir).toEqual([
@@ -501,7 +500,6 @@ describe("runBoot bootstrap", () => {
       "/p/.red/state",
       "/p/.red/tmp/workers/wAAA",
     ]);
-    expect(fsCalls.gitignore).toEqual([".red/tmp/", ".red/state/"]);
     expect(fsCalls.workerPid).toEqual([
       { path: "/p/.red/tmp/workers/wAAA/worker.pid", pid: 4242 },
     ]);
@@ -525,7 +523,7 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
       }),
     );
 
-    // Bootstrap still ran (dirs + gitignore + worker.pid).
+    // Bootstrap still ran (dirs + worker.pid).
     expect(fsCalls.ensureDir).toEqual([
       "/p/.red/tmp",
       "/p/.red/state",

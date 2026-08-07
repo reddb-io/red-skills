@@ -65,7 +65,6 @@ export function makeDeps(over: Partial<{
   const calls: string[] = [];
   const fsCalls = {
     ensureDir: [] as string[],
-    gitignore: [] as string[],
     workerPid: [] as Array<{ path: string; pid: number }>,
     removeDir: [] as string[],
   };
@@ -86,10 +85,6 @@ export function makeDeps(over: Partial<{
       async ensureDir(p) {
         calls.push(`fs.ensureDir:${p}`);
         fsCalls.ensureDir.push(p);
-      },
-      async ensureGitignoreLine(_gi, line) {
-        calls.push(`fs.gitignore:${line}`);
-        fsCalls.gitignore.push(line);
       },
       async writeWorkerPid(path, pid) {
         calls.push(`fs.workerPid:${path}`);
@@ -190,7 +185,6 @@ export function options(over: Partial<BootOptions> = {}): BootOptions {
     bootstrap: {
       tmpDir: "/p/.red/tmp",
       stateDir: "/p/.red/state",
-      gitignorePath: "/p/.gitignore",
       workerDir: "/p/.red/tmp/workers/wAAA",
       workerPidFile: "/p/.red/tmp/workers/wAAA/worker.pid",
       workerPid: 4242,

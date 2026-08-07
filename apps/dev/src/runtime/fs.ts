@@ -37,20 +37,6 @@ export async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-/** Append `line` to `.gitignore` iff not already present (grep -qxF guard). */
-export async function ensureGitignoreLine(gitignorePath: string, line: string): Promise<void> {
-  let current = "";
-  try {
-    current = await readFile(gitignorePath, "utf8");
-  } catch {
-    current = "";
-  }
-  const lines = current.split("\n").map((l) => l.replace(/\r$/, ""));
-  if (lines.includes(line)) return;
-  const sep = current.length === 0 || current.endsWith("\n") ? "" : "\n";
-  await mkdir(dirname(gitignorePath), { recursive: true });
-  await appendFile(gitignorePath, `${sep}${line}\n`, "utf8");
-}
 
 export async function writeWorkerPid(pidFile: string, pid: number): Promise<void> {
   await mkdir(dirname(pidFile), { recursive: true });
