@@ -233,18 +233,28 @@ RS="npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled"
 | `$RS statusline --max-width 60` | the same, under a narrower line |
 | `$RS statusline --verbose` | each listed Worker plus a second line: the last line it logged |
 | `$RS statusline global --verbose` | the same, machine-wide, each second line naming its Worker's owner |
-| `$RS dashboard` | the same read at terminal density — the local project's Workers as a table |
-| `$RS dashboard global` | every project's Workers, each naming its owner |
+| `$RS dashboard` | the live terminal view for the local project; a pipe receives one snapshot |
+| `$RS dashboard global` | the live machine view, each Worker naming its owner; a pipe receives one snapshot |
 | `$RS dashboard --max-width 100` | the same table under a narrower ceiling |
+| `$RS dashboard global --verbose` | expand recent death receipts; the default keeps one diagnostic summary |
 
 **`dashboard` is the statusline's taller sibling, not a second renderer** (#3098,
 ADR 0132 decision 1). It asks the daemon for the same payload and draws it with
 the same render the herdr plugin and the VS Code extension use — a **density
 argument**, so a terminal with no plugin installed reads the host view the UIs
-read. Vitals and log lines ride along by default, because a dashboard that
-dropped them would just be a taller statusline. It obeys the statusline's own
-honesty rule: it always writes something and always exits 0, since a dashboard
-that printed nothing is indistinguishable from a host with no Workers.
+read. In a TTY it redraws one stable screen every second, wakes immediately on
+resize, obeys the current width and height, and restores the cursor on SIGINT or
+SIGTERM. In a pipe or redirected file it writes exactly one snapshot. `NO_COLOR`
+removes styling in either mode.
+
+Read the hierarchy top-down: current tokens/hour and Tickets/hour with trend;
+two UTC-hour series of 48 points (or the reason data is absent); active Workers
+with their published progress and activity; slots and memory; then diagnostics.
+The daemon reconstructs the 48-hour series after restart from `worker-metrics`
+records in its canonical `redskilled.log.toonl` lane. Deaths remain one summary
+line by default; use dashboard `--verbose` when individual receipts are needed.
+The command always states an unreachable daemon and exits 0, since a blank
+dashboard is indistinguishable from a host with no Workers.
 
 **The second line comes from the Worker, never from its log file.** With `--verbose` each listed Worker gets one extra line carrying the last line it logged. The Worker **publishes** that line on the beat its castle lane bridge already keeps (`createWorkerLogLinePublisher`, addressed with the `REDSKILLED_WORKER_ID` the daemon handed it at birth) and the daemon stores it as an opaque string — so a verbose global view is still one read and opens no other project's files. A statusline that read each Worker's log directly would cost a disk read per Worker per render and cross a project boundary on every tick. A Worker that has logged nothing renders no second line, and the annotation disappears entirely once the line degrades past the Worker entries — a second line belongs to a Worker entry, and an aggregate row has no Worker to be the second line of.
 
