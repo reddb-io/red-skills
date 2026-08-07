@@ -17,13 +17,8 @@ import { deathLaneFileIn, installDeathRecorder } from "@reddb-io/shared/death-re
 import { formatDeathAttributions, runBootDeathReaper } from "@reddb-io/shared/death-attribution.js";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import {
-  readDeclaredProjectName,
-  resolveProjectLabelForDir,
-} from "@reddb-io/shared/project-identity-resolve.js";
-import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
-  readRedskilledDashboardRender,
   readRedskilledStatuslineRender,
   stopRedskilledDaemon,
   type RedskilledClientConfig,
@@ -60,15 +55,9 @@ import {
   parseRedskilledStatuslineFlags,
   resolveRedskilledStatuslineOptions,
 } from "./statusline-config.js";
-import {
-  renderRedskilledStatuslineAbsence,
-  stripAnsi,
-  type RedskilledDashboardOptions,
-} from "@reddb-io/redskilled-render";
-import {
-  runRedskilledDashboardTui,
-  type RedskilledDashboardTuiOptions,
-} from "./dashboard-tui.js";
+import { renderRedskilledStatuslineAbsence } from "@reddb-io/redskilled-render";
+import { runDashboard } from "./dashboard-command.js";
+import { readStatuslineProject } from "./statusline-project.js";
 import {
   installRedskilledUnit,
   planRedskilledUnit,
@@ -913,24 +902,6 @@ function configHome(): string {
 }
 
 /**
- * The calling directory's project label, and the config that carries its taste.
- *
- * **Resolved through the SAME authority that labels a Worker at birth**, which is
- * the whole of the fix for #2928. Reading only a declared `project.name` here
- * meant a repository that declares none — most of them — asked the daemon about
- * `null` while every one of its Workers was filed under the label the remote
- * gave, so the local mode reported an idle zero from a host holding three.
- */
-function readStatuslineProject(cwd: string): { configText?: string; label: string | null } {
-  const declared = readDeclaredProjectName(cwd);
-  // No `.red/config.yaml` anywhere above is a directory outside any RedSkills
-  // project: it has no taste to read and no project to be, and guessing a label
-  // from git alone would file a stray shell under a repository it is only near.
-  if (declared.configText == null) return { label: null };
-  return { configText: declared.configText, label: resolveProjectLabelForDir(cwd) };
-}
-
-/**
  * The serve paths: flags first, the session derivation only for what is absent.
  *
  * A supervisor unit passes everything; a hand-run `redskilled serve` passes
@@ -977,111 +948,4 @@ if (invokedDirectly) {
   );
 }
 
-/**
- * `redskilled dashboard [global] [--max-width N]` — the host view in a terminal.
- *
- * **The same payload and the same render as the statusline, at a taller
- * density** (#3098, ADR 0132 decision 1). Layout moved out of the daemon so four
- * surfaces could differ in HEIGHT without differing in content; this is the
- * terminal one, and it asks for a density rather than importing a second
- * renderer. A host that drew its own dashboard would be the drift the decision
- * exists to prevent.
- *
- * **It always writes something and always exits 0**, for the same reason the
- * statusline does: a dashboard that printed nothing is indistinguishable from a
- * host with no Workers, and an operator reaching for it is usually already
- * trying to find out why something is quiet.
- */
-export async function runDashboard(
-  args: readonly string[],
-  io: {
-    readonly cwd?: string;
-    readonly paths?: RedskilledPaths;
-    readonly write?: (line: string) => void;
-    readonly warn?: (line: string) => void;
-    readonly client?: RedskilledClientConfig;
-    readonly now?: () => string;
-    readonly env?: NodeJS.ProcessEnv;
-    /** `null` forces snapshot mode; omitted discovers the real stdout TTY. */
-    readonly terminal?: true | null;
-    readonly readDashboard?: typeof readRedskilledDashboardRender;
-    readonly runTui?: (options: RedskilledDashboardTuiOptions) => Promise<void>;
-  } = {},
-): Promise<number> {
-  const write = io.write ?? ((line: string) => process.stdout.write(line));
-  const warn = io.warn ?? ((line: string) => process.stderr.write(line));
-
-  // The statusline's own flag parse, so `global` and `--max-width` mean here
-  // exactly what they mean there — two spellings of one scope is how a second
-  // vocabulary starts.
-  const parsed = parseRedskilledStatuslineFlags(args);
-  const project = readStatuslineProject(io.cwd ?? process.cwd());
-  const resolved = resolveRedskilledStatuslineOptions({
-    ...(project.configText == null ? {} : { configText: project.configText }),
-    project: project.label,
-    flags: parsed.flags,
-  });
-  for (const warning of [...resolved.warnings, ...parsed.warnings]) {
-    warn(`redskilled dashboard: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);
-  }
-
-  const paths = io.paths ?? resolveRedskilledPaths();
-  const readDashboard = io.readDashboard ?? readRedskilledDashboardRender;
-  const interactive = io.terminal === undefined ? process.stdout.isTTY === true : io.terminal === true;
-  const noColor = (io.env ?? process.env).NO_COLOR !== undefined;
-  const baseOptions: Partial<RedskilledDashboardOptions> = {
-    ...(resolved.options.project == null ? {} : { project: resolved.options.project }),
-    mode: resolved.options.mode,
-    showDeathDetails: resolved.options.verbose,
-  };
-
-  const readFrame = async (
-    options: Partial<RedskilledDashboardOptions>,
-    warnOnFailure = true,
-  ): Promise<readonly string[]> => {
-    try {
-      const render = await readDashboard(
-        paths,
-        options,
-        {
-          ...(io.client ?? {}),
-          ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
-        },
-      );
-      return noColor ? render.lines.map(stripAnsi) : render.lines;
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      if (warnOnFailure) warn(`redskilled dashboard: ${reason}\n`);
-      return [`redskilled unreachable — ${reason}`];
-    }
-  };
-
-  if (!interactive) {
-    const lines = await readFrame({
-      ...baseOptions,
-      ...(resolved.options.maxWidth == null ? {} : { maxWidth: resolved.options.maxWidth }),
-    });
-    write(`${lines.join("\n")}\n`);
-    return 0;
-  }
-
-  // Tuiuiu owns the terminal lifecycle and paints one alternate screen. The
-  // callback still asks the shared pure renderer for every frame, so this is a
-  // terminal adapter rather than a second dashboard implementation.
-  await (io.runTui ?? runRedskilledDashboardTui)({
-    initialShowDeathDetails: resolved.options.verbose,
-    noColor,
-    readFrame: async ({ columns, rows, showDeathDetails }) => {
-      const maxWidth = Math.max(1, Math.min(resolved.options.maxWidth ?? columns, columns));
-      const maxHeight = Math.max(1, rows);
-      return await readFrame({
-        ...baseOptions,
-        maxWidth,
-        maxHeight,
-        maxRows: Math.max(0, maxHeight - 5),
-        showDeathDetails,
-      }, false);
-    },
-  });
-  return 0;
-}
+export { runDashboard } from "./dashboard-command.js";

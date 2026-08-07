@@ -33,6 +33,7 @@ import {
   type ResolvedRedskilledEntry,
 } from "./daemon-entry.js";
 import { requireRedskilledEntryWithFetch } from "./entry-fetch.js";
+import { redskilledDashboardRequest } from "./dashboard-request.js";
 import { socketAnswers } from "./daemon.js";
 import {
   describeRedskilledPresence,
@@ -68,7 +69,6 @@ import {
   type RedskilledStatuslineRender,
   type RedskilledStatuslineRenderRequest,
   type RedskilledDashboard,
-  type RedskilledDashboardRenderRequest,
   type RedskilledWorkerDisplay,
   type RedskilledWorkerCommandRequest,
   type RedskilledWorkerCommandResult,
@@ -671,24 +671,12 @@ export async function readRedskilledDashboard(
     {
       op: "statusline-dashboard",
       ...(config.sessionProject != null ? { session_project: config.sessionProject } : {}),
-      ...(options == null ? {} : { dashboard: dashboardRequest(options) }),
+      ...(options == null ? {} : { dashboard: redskilledDashboardRequest(options) }),
     },
     config,
   );
   if (!isRedskilledDashboard(value)) throw new Error("redskilled daemon returned a malformed dashboard");
   return value;
-}
-
-/** The wire shape of decided dashboard options. PURE. */
-function dashboardRequest(options: Partial<RedskilledDashboardOptions>): RedskilledDashboardRenderRequest {
-  return {
-    ...(options.mode == null ? {} : { mode: options.mode }),
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.maxWidth == null ? {} : { max_width: options.maxWidth }),
-    ...(options.maxRows == null ? {} : { max_rows: options.maxRows }),
-    ...(options.maxHeight == null ? {} : { max_height: options.maxHeight }),
-    ...(options.showDeathDetails == null ? {} : { show_death_details: options.showDeathDetails }),
-  };
 }
 
 /** The wire shape of decided render options. PURE. */

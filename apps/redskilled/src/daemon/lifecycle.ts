@@ -6,6 +6,10 @@ import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
 import { RedskilledAlreadyRunningError } from "./errors.js";
 import {
+  appendRedskilledMetricObservation,
+  replayRedskilledMetricObservations,
+} from "./metric-history.js";
+import {
   deriveWorkerScopeCeiling,
   evaluateWorkerAdmission,
   resolveHostCeiling,
@@ -708,30 +712,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     published: RedskilledWorkerDisplayRecord,
     worker: RedskilledWorkerView,
   ): void {
-    const observation: RedskilledWorkerMetricObservation = {
-      worker_id: worker.worker_id,
-      observed_at: published.published_at,
-      tokens: published.display.tokens,
-      tools: published.display.tools,
-      runner: published.display.runner,
-      model: published.display.model,
-    };
-    observations = pruneRedskilledMetricHistory(
-      [...observations, observation],
-      (observation) => observation.observed_at,
-      { now: clock() },
-    );
+    const appended = appendRedskilledMetricObservation(observations, published, worker, clock());
+    observations = appended.observations;
     // The host event lane is the daemon's one durable history. Persist the
     // projection needed for rates there, never in a metrics sidecar.
-    void eventLane.recordWorker({
-      kind: "worker-metrics",
-      worker,
-      ts: observation.observed_at,
-      tokens: observation.tokens,
-      tools: observation.tools,
-      runner: observation.runner,
-      model: observation.model,
-    }).catch(() => undefined);
+    void eventLane.recordWorker(appended.record).catch(() => undefined);
   }
 
   /** Keep one Worker's ending, so the outcome rate rests on the same facts the lane does. */
@@ -2253,20 +2238,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     (mark) => mark.ts,
     { now: clock() },
   );
-  observations = pruneRedskilledMetricHistory(
-    laneEvents
-      .filter((event) => event.kind === "worker-metrics")
-      .map((event) => ({
-        worker_id: event.worker_id,
-        observed_at: event.ts,
-        tokens: event.tokens ?? null,
-        tools: event.tools ?? null,
-        runner: event.runner ?? null,
-        model: event.model ?? null,
-      })),
-    (observation) => observation.observed_at,
-    { now: clock() },
-  );
+  observations = replayRedskilledMetricObservations(laneEvents, clock());
   const replayed = rehydrateWorkers(laneEvents);
   const reattachment = await reattachWorkers(replayed, liveness);
   for (const worker of reattachment.alive) {
@@ -2515,5 +2487,3 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     stop,
   };
 }
-
-// Socket helpers extracted to ./daemon/socket.ts — re-exports keep backward compat

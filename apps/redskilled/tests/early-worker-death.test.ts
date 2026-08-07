@@ -116,7 +116,16 @@ describe("a Worker that exits before its first write", () => {
       mode: "local",
       project: "acme/widgets",
     });
-    expect(dashboard.lines.some((entry) => entry.includes("w-early"))).toBe(true);
+    expect(dashboard.lines.some((entry) => entry.includes("1 posed death(s)"))).toBe(true);
+    expect(dashboard.lines.some((entry) => entry.includes("w-early"))).toBe(false);
+
+    const detailed = renderRedskilledDashboard(payload, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      mode: "local",
+      project: "acme/widgets",
+      showDeathDetails: true,
+    });
+    expect(detailed.lines.some((entry) => entry.includes("w-early"))).toBe(true);
   });
 
   it("remains visible when a successor daemon replays the host event lane", async () => {
