@@ -276,7 +276,14 @@ prepare_source() {
     trap 'rm -rf "$tmp"' RETURN
     log "downloading $url"
     curl -fsSL "$url" -o "$archive"
-    tar -xzf "$archive" -C "$tmp"
+    # Extracted twice on purpose, and only the second failure counts.
+    # The archive carries an AGENTS.md -> CLAUDE.md symlink, and Git
+    # Bash's tar emulates symlink() as a copy of the target — which
+    # fails on the first pass when the link precedes its target in
+    # archive order, and succeeds on the second because by then the
+    # target exists on disk. Unix extracts clean on the first pass and
+    # never reaches the retry.
+    tar -xzf "$archive" -C "$tmp" 2>/dev/null || tar -xzf "$archive" -C "$tmp"
     extracted="$(find "$tmp" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
     [[ -n "$extracted" ]] || die "archive did not contain a source directory"
     rm -rf "$dest.tmp"
