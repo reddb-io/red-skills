@@ -19,7 +19,7 @@ import {
 } from "../src/workflow-generator.js";
 
 const FIXTURES = join(import.meta.dirname, "fixtures", "workflows");
-const ENGINE_VERSION = "3.8.0";
+const ENGINE_VERSION = "3.9.0";
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -93,20 +93,33 @@ describe("release workflow generator", () => {
     expect(source).not.toContain("npx");
   });
 
+  it("floors the pin at the version that introduced the binary", () => {
+    // The generator stamps the version the repo is AT, which is one behind the
+    // feature the first time it runs: a repo on 3.8.0 generated a workflow
+    // invoking `red-skills-release`, a binary 3.8.0 does not contain, and the
+    // release died with `red-skills-release: not found`. An instruction may not
+    // point at its own precondition.
+    const repository = fixtureRepository("version-pr", "pinned");
+    generateReleaseWorkflows({ repoRoot: repository, engineVersion: "3.8.0" });
+    const text = readFileSync(join(repository, RELEASE_WORKFLOW_PATH), "utf8");
+    expect(text).toContain("@reddb-io/red-skills@3.9.0 red-skills-release run");
+    expect(text).not.toContain("@reddb-io/red-skills@3.8.0");
+  });
+
   it("reads the trigger from config, refreshes only the pin, and then becomes a no-op", () => {
     const repository = fixtureRepository("version-pr", "pinned");
 
-    const first = generateReleaseWorkflows({ repoRoot: repository, engineVersion: "3.8.0" });
+    const first = generateReleaseWorkflows({ repoRoot: repository, engineVersion: "3.9.0" });
     const firstBytes = readFileSync(join(repository, RELEASE_WORKFLOW_PATH), "utf8");
-    expect(first).toMatchObject({ changed: true, trigger: "version-pr", engineVersion: "3.8.0" });
+    expect(first).toMatchObject({ changed: true, trigger: "version-pr", engineVersion: "3.9.0" });
 
-    const refreshed = generateReleaseWorkflows({ repoRoot: repository, engineVersion: "3.8.1" });
+    const refreshed = generateReleaseWorkflows({ repoRoot: repository, engineVersion: "3.9.1" });
     const refreshedBytes = readFileSync(join(repository, RELEASE_WORKFLOW_PATH), "utf8");
-    expect(refreshed).toMatchObject({ changed: true, trigger: "version-pr", engineVersion: "3.8.1" });
-    expect(refreshedBytes).toBe(firstBytes.replaceAll("@3.8.0", "@3.8.1"));
+    expect(refreshed).toMatchObject({ changed: true, trigger: "version-pr", engineVersion: "3.9.1" });
+    expect(refreshedBytes).toBe(firstBytes.replaceAll("@3.9.0", "@3.9.1"));
 
-    const repeated = generateReleaseWorkflows({ repoRoot: repository, engineVersion: "3.8.1" });
-    expect(repeated).toMatchObject({ changed: false, trigger: "version-pr", engineVersion: "3.8.1" });
+    const repeated = generateReleaseWorkflows({ repoRoot: repository, engineVersion: "3.9.1" });
+    expect(repeated).toMatchObject({ changed: false, trigger: "version-pr", engineVersion: "3.9.1" });
     expect(readFileSync(join(repository, RELEASE_WORKFLOW_PATH), "utf8")).toBe(refreshedBytes);
   });
 
