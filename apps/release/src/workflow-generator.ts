@@ -9,6 +9,23 @@ export const VENDORED_RELEASE_BUNDLE_PATH = ".github/red-skills/release.bundle.m
 
 const CHECKOUT_ACTION = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5";
 const SETUP_NODE_ACTION = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020";
+
+/**
+ * The repository's own package manager, made available to the release job.
+ *
+ * `sync_command` is declared by the OPERATOR and may reach anything the repo
+ * normally uses — this workspace's runs `pnpm generate-manifests`. A job that
+ * installs only Node dies with `pnpm: not found` at the first sync, which is a
+ * release refusing on the toolchain rather than on the release. Corepack takes
+ * the version from `packageManager`, so the job matches the repo without a
+ * second place to keep that number.
+ */
+const TOOLCHAIN_STEPS: readonly string[] = [
+  "      - name: Enable the repository package manager",
+  "        run: corepack enable",
+  "      - name: Install workspace dependencies",
+  "        run: pnpm install --frozen-lockfile",
+];
 const RELEASE_BOT = "red-skills-release[bot]";
 
 export interface RenderReleaseWorkflowInput {
@@ -192,6 +209,7 @@ function renderVersionPullRequestWorkflow(invocation: string): string {
     `      - uses: ${SETUP_NODE_ACTION}`,
     "        with:",
     "          node-version: 22",
+    ...TOOLCHAIN_STEPS,
     "      - name: Maintain Version PR",
     "        env:",
     "          GITHUB_TOKEN: ${{ github.token }}",
@@ -210,6 +228,7 @@ function renderVersionPullRequestWorkflow(invocation: string): string {
     `      - uses: ${SETUP_NODE_ACTION}`,
     "        with:",
     "          node-version: 22",
+    ...TOOLCHAIN_STEPS,
     "      - name: Publish Release",
     "        env:",
     "          GITHUB_TOKEN: ${{ github.token }}",
@@ -242,6 +261,7 @@ function renderAutoWorkflow(invocation: string): string {
     `      - uses: ${SETUP_NODE_ACTION}`,
     "        with:",
     "          node-version: 22",
+    ...TOOLCHAIN_STEPS,
     "      - name: Publish Release",
     "        env:",
     "          GITHUB_TOKEN: ${{ github.token }}",
