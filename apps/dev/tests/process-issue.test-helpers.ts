@@ -17,6 +17,7 @@ import { installProcessSafety, noopSafetyLogger } from "../src/core/process-safe
 import type { AdversarialReviewFindings } from "../src/core/adversarial-review.js";
 import type { LandLock } from "../src/core/land-lock.js";
 import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
+import { githubMergeReadFromExec } from "./support/github-merge-read.js";
 
 export {
   SCOUT_EXIT_PROTOCOL,
@@ -761,7 +762,6 @@ export function harness(opts: HarnessOptions = {}): {
     worktreeLaunchesPr: opts.worktreeLaunchesPr ?? !(opts.locked ?? false),
     reviewGate: opts.reviewGate,
     reviewGateLabel: "ready-for-review",
-    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     // #2986: always injected so no queue landing under test reaches a real timer.
     mergeQueueWait: { sleep: async () => {}, maxPolls: 3 },
     fallbackRunner: opts.fallbackRunner ?? false,
@@ -953,6 +953,17 @@ export function harness(opts: HarnessOptions = {}): {
     laneLabel: opts.laneLabel,
   };
 
+  if (opts.ciAware) {
+    // Forward LAZILY: a test that wraps `deps.mergeExec` after this line (to
+    // record calls) must be seen by the port too. Passing `deps.mergeExec`
+    // directly snapshots the pre-wrap function and silently escapes the
+    // instrumentation.
+    deps.ciAwait = {
+      github: githubMergeReadFromExec((args) => deps.mergeExec(args)),
+      sleep: async () => {},
+      maxPolls: 2,
+    };
+  }
   return { deps, input, trace };
 }
 

@@ -10,6 +10,7 @@ import {
 } from "../src/core/process-issue.js";
 import { classifyMergeState } from "../src/core/merge.js";
 import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
+import { githubMergeReadFromExec } from "./support/github-merge-read.js";
 
 // AFK end-to-end lifecycle harness against a REAL local git repo.
 //
@@ -378,7 +379,7 @@ async function setup(opts: {
     worktreeLaunchesPr: true,
     // CI-aware merge (#812): drives the `gh pr view` merge-state poll where the
     // BEHIND regression lives. No-op sleep so the poll runs synchronously.
-    ciAwait: { sleep: async () => {}, maxPolls: 5, intervalMs: 1 },
+    ciAwait: { github: githubMergeReadFromExec(mergeExec), sleep: async () => {}, maxPolls: 5, intervalMs: 1 },
     // Pre-merge rebase runs in an isolated detached worktree on the worker branch
     // (#1006) — a mandatory PR-path precondition (#1212). Real worktrees so a real
     // `git rebase origin/main` decides the conflict.

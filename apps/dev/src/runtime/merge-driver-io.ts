@@ -1,4 +1,5 @@
 import type { MergeDriverIo, MergeDriverPrView } from "@reddb-io/red-castle/engine";
+import type { GithubMergeRead } from "../core/github-merge-read.js";
 import { apiPath, runGh, type GhContext } from "./gh/common.js";
 
 interface CheckRow {
@@ -31,21 +32,13 @@ export function foldChecks(rollup: readonly CheckRow[]): MergeDriverPrView["chec
   return pending ? "pending" : "green";
 }
 
-/** The dev-host implementation of the castle merge driver's IO port: `gh pr
- * view` for ground truth, the REST update-branch endpoint when BEHIND, and
+/** The dev-host implementation of the castle merge driver's IO port: a routed
+ * conditional REST read for ground truth, the REST update-branch endpoint when BEHIND, and
  * `gh pr merge --merge` — the merge-commit strategy, never `--admin`. */
-export function createMergeDriverIo(ctx: GhContext): MergeDriverIo {
+export function createMergeDriverIo(ctx: GhContext, github: GithubMergeRead): MergeDriverIo {
   return {
     async viewPr(pr) {
-      const r = await runGh(ctx, [
-        "pr",
-        "view",
-        String(pr),
-        "--json",
-        "state,mergeStateStatus,statusCheckRollup",
-      ]);
-      if (r.code !== 0) throw new Error(`gh pr view #${pr} failed: ${r.stderr.trim()}`);
-      const parsed = JSON.parse(r.stdout) as {
+      const parsed = JSON.parse(await github.driverPr(ctx.repo, pr)) as {
         state?: string;
         mergeStateStatus?: string;
         statusCheckRollup?: CheckRow[] | null;

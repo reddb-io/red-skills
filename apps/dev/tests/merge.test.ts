@@ -1,5 +1,15 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createGithubAttributionLedger,
+  createGithubClient,
+  type GithubRequestFetch,
+} from "@reddb-io/github";
 import { describe, expect, it } from "vitest";
 import { readsPull, restPullBody } from "./support/gh-rest-fixtures.js";
+import { createGithubMergeRead } from "../src/core/github-merge-read.js";
+import type { GithubMergeRead } from "../src/core/github-merge-read.js";
 import {
   fastForwardLocalTarget,
   integrateOrigin,
@@ -49,6 +59,28 @@ function fakeExec(
     return { code: 0, stdout: "", stderr: "" };
   };
   return { exec, calls };
+}
+
+/** Preserve the old argv-shaped fixtures while production polling uses the client. */
+function githubFromExec(exec: Exec): GithubMergeRead {
+  const stdout = async (args: string[]): Promise<string> => {
+    const result = await exec(args);
+    if (result.code !== 0) throw new Error(result.stderr || `fixture GitHub read exited ${result.code}`);
+    return result.stdout;
+  };
+  return {
+    reviewChecks: (repo, pr) => stdout(["gh", "-R", repo, "pr", "checks", String(pr), "--json", "name,state"]),
+    mergeState: (repo, pr) => stdout([
+      "gh", "-R", repo, "pr", "view", String(pr), "--json",
+      "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
+    ]),
+    driverPr: (repo, pr) => stdout([
+      "gh", "-R", repo, "pr", "view", String(pr), "--json", "state,mergeStateStatus,statusCheckRollup",
+    ]),
+    requiredCheckContexts: (repo, branch) => stdout([
+      "gh", "api", `repos/${repo}/branches/${encodeURIComponent(branch)}/protection/required_status_checks/contexts`,
+    ]),
+  };
 }
 
 /** The REST body of a PR the forge merged on the spot (#2986). The confirmation
@@ -752,7 +784,7 @@ describe("waitForReviewCheck (afk.merge.wait_for_review)", () => {
       JSON.stringify([{ name: "CodeRabbit", state: "PENDING" }]),
       JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }]),
     ]);
-    const r = await waitForReviewCheck(exec, "o/r", 77, { check: "CodeRabbit", sleep: noSleep });
+    const r = await waitForReviewCheck(exec, "o/r", 77, { github: githubFromExec(exec), check: "CodeRabbit", sleep: noSleep });
     expect(r).toBe("concluded");
     // two polls: pending then success; no third poll after conclusion.
     expect(calls.filter((c) => c.join(" ").includes("pr checks 77")).length).toBe(2);
@@ -760,7 +792,7 @@ describe("waitForReviewCheck (afk.merge.wait_for_review)", () => {
 
   it("concludes on a FAILURE state too — the wait never gates on the verdict", async () => {
     const { exec } = pollExec([JSON.stringify([{ name: "CodeRabbit", state: "FAILURE" }])]);
-    const r = await waitForReviewCheck(exec, "o/r", 77, { check: "coderabbit", sleep: noSleep });
+    const r = await waitForReviewCheck(exec, "o/r", 77, { github: githubFromExec(exec), check: "coderabbit", sleep: noSleep });
     expect(r).toBe("concluded");
   });
 
@@ -768,7 +800,7 @@ describe("waitForReviewCheck (afk.merge.wait_for_review)", () => {
     const { exec } = pollExec([
       JSON.stringify([{ name: "CodeRabbit / review", state: "SUCCESS" }]),
     ]);
-    const r = await waitForReviewCheck(exec, "o/r", 1, { check: "coderabbit", sleep: noSleep });
+    const r = await waitForReviewCheck(exec, "o/r", 1, { github: githubFromExec(exec), check: "coderabbit", sleep: noSleep });
     expect(r).toBe("concluded");
   });
 
@@ -776,6 +808,7 @@ describe("waitForReviewCheck (afk.merge.wait_for_review)", () => {
     let sleeps = 0;
     const { exec, calls } = pollExec([JSON.stringify([{ name: "CodeRabbit", state: "PENDING" }])]);
     const r = await waitForReviewCheck(exec, "o/r", 9, {
+      github: githubFromExec(exec),
       check: "CodeRabbit",
       sleep: async () => { sleeps++; },
       maxPolls: 3,
@@ -788,14 +821,77 @@ describe("waitForReviewCheck (afk.merge.wait_for_review)", () => {
 
   it("reports absent when the check never registers", async () => {
     const { exec } = pollExec([JSON.stringify([{ name: "other-ci", state: "PENDING" }])]);
-    const r = await waitForReviewCheck(exec, "o/r", 9, { check: "CodeRabbit", sleep: noSleep, maxPolls: 2 });
+    const r = await waitForReviewCheck(exec, "o/r", 9, { github: githubFromExec(exec), check: "CodeRabbit", sleep: noSleep, maxPolls: 2 });
     expect(r).toBe("absent");
   });
 
   it("tolerates non-JSON / empty stdout and keeps polling", async () => {
     const { exec } = pollExec(["", "not json", JSON.stringify([{ name: "CodeRabbit", state: "SUCCESS" }])]);
-    const r = await waitForReviewCheck(exec, "o/r", 9, { check: "CodeRabbit", sleep: noSleep });
+    const r = await waitForReviewCheck(exec, "o/r", 9, { github: githubFromExec(exec), check: "CodeRabbit", sleep: noSleep });
     expect(r).toBe("concluded");
+  });
+});
+
+describe("routed GitHub merge polling (#3451)", () => {
+  it("completes on REST without spending GraphQL and attributes the PR read", async () => {
+    const requests: string[] = [];
+    const fetchImpl: GithubRequestFetch = async (url) => {
+      const href = String(url);
+      requests.push(href);
+      const body = href.includes("/pulls/77")
+        ? {
+            number: 77,
+            state: "open",
+            merged: false,
+            mergeable: true,
+            mergeable_state: "clean",
+            base: { sha: "base-sha" },
+            head: { sha: "head-sha" },
+          }
+        : href.includes("/check-runs")
+          ? { total_count: 1, check_runs: [{ name: "test", status: "completed", conclusion: "success" }] }
+          : href.includes("/status")
+            ? { statuses: [] }
+            : ["test"];
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json", etag: `\"${requests.length}\"` },
+      });
+    };
+    const root = await mkdtemp(join(tmpdir(), "dev-merge-github-"));
+    const ledger = createGithubAttributionLedger({ path: join(root, "spend.toonl") });
+    const github = createGithubClient({
+      token: "test-token",
+      fetchImpl,
+      attribution: ledger,
+      retryCount: 0,
+      throttle: false,
+    });
+    const read = createGithubMergeRead(github, "test-merge");
+    const exec: Exec = async (argv) => {
+      throw new Error(`GraphQL CLI transport returned to merge polling: ${argv.join(" ")}`);
+    };
+
+    await expect(waitForMergeReadyWithEvidence(exec, "o/r", 77, {
+      github: read,
+      sleep: async () => {},
+      baseBranch: "main",
+      expectedBaseOid: "base-sha",
+    })).resolves.toEqual({
+      readiness: "merge",
+      ciEvidence: { checkCount: 1, requiredCheckCount: 1, summary: "1 required check(s) green" },
+    });
+
+    expect(requests.filter((url) => url.includes("/graphql"))).toHaveLength(0);
+    expect(requests.filter((url) => !url.includes("/graphql")).length).toBeGreaterThan(0);
+    const report = await ledger.report({
+      from: "2000-01-01T00:00:00.000Z",
+      to: "2100-01-01T00:00:00.000Z",
+      pool: "rest",
+    });
+    expect(report.operations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation_key: "pr view", actor: "test-merge" }),
+    ]));
   });
 });
 
@@ -827,7 +923,7 @@ describe("landPr wait_for_review wiring", () => {
       target: "main",
       n: 9,
       title: "t",
-      waitForReview: { check: "CodeRabbit", sleep: async () => {} },
+      waitForReview: { github: githubFromExec(exec), check: "CodeRabbit", sleep: async () => {} },
     });
     expect(result.ok).toBe(true);
     expect(checksPolled).toBe(true);
@@ -1085,7 +1181,7 @@ describe("waitForMergeReady (#812 poll loop)", () => {
 
   it("polls until the PR goes CLEAN, then returns merge", async () => {
     const { exec, calls } = pollExec([v("UNKNOWN"), v("BLOCKED", [{ status: "IN_PROGRESS" }]), v("CLEAN")]);
-    const r = await waitForMergeReady(exec, "o/r", 77, { sleep: noSleep });
+    const r = await waitForMergeReady(exec, "o/r", 77, { github: githubFromExec(exec), sleep: noSleep });
     expect(r).toBe("merge");
     expect(calls.filter((c) => c.join(" ").includes("pr view 77")).length).toBe(3);
     expect(calls.find((c) => c.includes("pr") && c.includes("view"))?.join(" ")).toContain("--json mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup");
@@ -1101,6 +1197,7 @@ describe("waitForMergeReady (#812 poll loop)", () => {
       }),
     ]);
     await expect(waitForMergeReadyWithEvidence(exec, "o/r", 77, {
+      github: githubFromExec(exec),
       sleep: noSleep,
       baseBranch: "main",
       expectedBaseOid: "base-sha",
@@ -1120,6 +1217,7 @@ describe("waitForMergeReady (#812 poll loop)", () => {
       }),
     ]);
     await expect(waitForMergeReadyWithEvidence(exec, "o/r", 77, {
+      github: githubFromExec(exec),
       sleep: noSleep,
       baseBranch: "main",
       expectedBaseOid: "base-sha",
@@ -1130,20 +1228,20 @@ describe("waitForMergeReady (#812 poll loop)", () => {
 
   it("returns ci-failed immediately on a failed required check (no further polls)", async () => {
     const { exec, calls } = pollExec([v("BLOCKED", [{ state: "FAILURE" }])]);
-    const r = await waitForMergeReady(exec, "o/r", 1, { sleep: noSleep });
+    const r = await waitForMergeReady(exec, "o/r", 1, { github: githubFromExec(exec), sleep: noSleep });
     expect(r).toBe("ci-failed");
     expect(calls.filter((c) => c.join(" ").includes("pr view 1")).length).toBe(1);
   });
 
   it("returns conflict on DIRTY", async () => {
     const { exec } = pollExec([v("DIRTY")]);
-    expect(await waitForMergeReady(exec, "o/r", 1, { sleep: noSleep })).toBe("conflict");
+    expect(await waitForMergeReady(exec, "o/r", 1, { github: githubFromExec(exec), sleep: noSleep })).toBe("conflict");
   });
 
   it("times out to pending when checks never settle", async () => {
     let sleeps = 0;
     const { exec, calls } = pollExec([v("BLOCKED", [{ status: "QUEUED" }])]);
-    const r = await waitForMergeReady(exec, "o/r", 9, { sleep: async () => { sleeps++; }, maxPolls: 3 });
+    const r = await waitForMergeReady(exec, "o/r", 9, { github: githubFromExec(exec), sleep: async () => { sleeps++; }, maxPolls: 3 });
     expect(r).toBe("pending");
     expect(calls.filter((c) => c.join(" ").includes("pr view")).length).toBe(3);
     expect(sleeps).toBe(2);
@@ -1158,6 +1256,7 @@ describe("waitForMergeReady (#812 poll loop)", () => {
       return { code: 0, stdout: "", stderr: "" };
     };
     const r = await waitForMergeReadyWithEvidence(exec, "o/r", 9, {
+      github: githubFromExec(exec),
       sleep: noSleep,
       maxPolls: 1,
       probeTimeoutMs: 1,
@@ -1215,7 +1314,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     };
     const r = await landPr(exec, {
       repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
-      ciAwait: { sleep: async () => {} },
+      ciAwait: { github: githubFromExec(exec), sleep: async () => {} },
     });
     expect(r.ok).toBe(true);
     expect(viewed).toBe(true);
@@ -1235,7 +1334,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     };
     const r = await landPr(exec, {
       repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
-      ciAwait: { sleep: async () => {}, maxPolls: 2 },
+      ciAwait: { github: githubFromExec(exec), sleep: async () => {}, maxPolls: 2 },
     });
     expect(r).toEqual({ ok: false, prNumber: 5, reason: "ci-failed" });
     expect(calls.some((c) => c.join(" ").includes("pr merge"))).toBe(false);
@@ -1252,7 +1351,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     };
     const r = await landPr(exec, {
       repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
-      ciAwait: { sleep: async () => {}, maxPolls: 2 },
+      ciAwait: { github: githubFromExec(exec), sleep: async () => {}, maxPolls: 2 },
     });
     expect(r).toEqual({ ok: false, prNumber: 5, reason: "ci-pending" });
   });
@@ -1286,7 +1385,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       };
       const r = await landPr(exec, {
         repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
-        ciAwait: { sleep: async () => {}, maxPolls: 2 },
+        ciAwait: { github: githubFromExec(exec), sleep: async () => {}, maxPolls: 2 },
       });
       // never `merge-failed` — that is the reason the landing parks as blocked:ci
       expect(r).toEqual({ ok: false, prNumber: 5, reason: "ci-pending" });
@@ -1320,7 +1419,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       };
       const r = await landPr(exec, {
         repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
-        ciAwait: { sleep: async () => {}, maxPolls: 4 },
+        ciAwait: { github: githubFromExec(exec), sleep: async () => {}, maxPolls: 4 },
       });
       expect(r.ok).toBe(true);
       expect(polls).toBe(2);
@@ -1339,7 +1438,7 @@ describe("landPr CI-aware wiring (#812)", () => {
     };
     const r = await landPr(exec, {
       repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
-      ciAwait: { sleep: async () => {} },
+      ciAwait: { github: githubFromExec(exec), sleep: async () => {} },
     });
     expect(r).toEqual({ ok: false, prNumber: 5, reason: "conflict" });
   });
@@ -1391,7 +1490,7 @@ describe("landPr CI-aware wiring (#812)", () => {
       };
       const r = await landPr(exec, {
         repo: "o/r", gitRepo: "/repo", remote: "origin", branch: "afk/wX/9-x", target: "main", n: 9, title: "t",
-        ciAwait: { sleep: async () => {}, maxPolls: 3 },
+        ciAwait: { github: githubFromExec(exec), sleep: async () => {}, maxPolls: 3 },
       });
       expect(r.ok).toBe(true);
       expect(merges).toBe(2);
