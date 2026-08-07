@@ -8,6 +8,11 @@ export type HostBinaryFindingKind = "missing" | "toolchain-drift";
 export interface HostBinaryFacts {
   readonly name: string;
   readonly catalog: CatalogToonVersion;
+  /**
+   * The repo's recorded pin, when it has one. It is the floor an ADOPTER repo
+   * has: `readCatalogToonVersion` only answers inside this workspace, so a repo
+   * that installed the plugin carries its floor here or nowhere.
+   */
   readonly recordedVersion?: string;
   readonly observedVersion?: string;
 }
@@ -23,6 +28,7 @@ export interface HostBinaryFinding {
 export interface HostBinaryRow {
   readonly binary: string;
   readonly catalog: string;
+  /** Reported so a reader can see it; never a verdict input on its own. */
   readonly recorded: string;
   readonly observed: string;
   readonly verdict: HostBinaryVerdict;
@@ -40,11 +46,56 @@ function canonicalInstallerFix(name: string, catalog: CatalogToonVersion): strin
   return `install pinned ${name} version ${catalog.version}`;
 }
 
+/**
+ * Compare two `x.y.z` versions. Returns <0, 0, or >0 like a sort comparator.
+ *
+ * A non-numeric or short segment reads as 0, so a prerelease or a build suffix
+ * never makes a host look NEWER than it is — the safe way to be wrong here is
+ * to under-count, because under-counting reddens and over-counting hides.
+ */
+function compareVersions(left: string, right: string): number {
+  const parts = (value: string): number[] =>
+    value.trim().replace(/^v/, "").split(/[.+-]/).slice(0, 3).map((part) => Number(part) || 0);
+  const [a, b] = [parts(left), parts(right)];
+  for (let i = 0; i < 3; i += 1) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) - (b[i] ?? 0);
+  }
+  return 0;
+}
+
+/**
+ * The catalog version is a FLOOR, not an equality.
+ *
+ * The danger this check exists for runs one way only: `tq` OLDER than the
+ * library cannot read what the library writes, and ADR 0097 §3 removed the jq
+ * fallback precisely so that state is loud instead of silently degraded. A `tq`
+ * NEWER than the library reads everything — that is how the format ships, new
+ * readers over old files.
+ *
+ * Demanding equality could not tell those two apart: it reddened on an operator
+ * whose only sin was running the current release, and its remediation told them
+ * to DOWNGRADE to match a catalog the watcher had failed to advance (#3466).
+ * A floor makes "keep the toolchain current" the correct behaviour rather than
+ * drift, and leaves the one guarantee worth keeping.
+ *
+ * The recorded config pin stops being a SECOND axis for the same reason. ADR
+ * 0097 Amendment 1 §1 says every site is derived from the catalog, so a repo
+ * whose recorded pin trails the catalog by one watcher PR is behind on
+ * paperwork, not blind to its logs — and the check that reddened on it was
+ * reporting the watcher's lateness as the operator's fault. It keeps its real
+ * job: in an adopter repo, where `readCatalogToonVersion` cannot answer, the
+ * recorded pin IS the floor. Here it is reported and not judged.
+ */
 function auditHostBinary(facts: HostBinaryFacts): { finding?: HostBinaryFinding; row: HostBinaryRow } {
   const binary = facts.name;
   const catalog = facts.catalog.version;
   const recorded = facts.recordedVersion ?? "missing";
   const observed = facts.observedVersion ?? "missing";
+  // The higher of the two known floors: whichever surface is ahead states the
+  // format this host must be able to read.
+  const floor = facts.recordedVersion !== undefined && compareVersions(facts.recordedVersion, catalog) > 0
+    ? facts.recordedVersion
+    : catalog;
 
   const finding = (
     kind: HostBinaryFindingKind,
@@ -57,19 +108,19 @@ function auditHostBinary(facts: HostBinaryFacts): { finding?: HostBinaryFinding;
     remediation: canonicalInstallerFix(binary, facts.catalog),
   });
 
-  if (facts.recordedVersion !== catalog || (facts.observedVersion !== undefined && facts.observedVersion !== catalog)) {
+  if (facts.observedVersion === undefined) {
     return {
-      finding: finding(
-        "toolchain-drift",
-        `required host binary ${binary} toolchain drift: catalog pin ${catalog}, config pin ${recorded}, observed ${binary} ${observed}`,
-      ),
+      finding: finding("missing", `required host binary ${binary} is missing`),
       row: { binary, catalog, recorded, observed, verdict: "error" },
     };
   }
 
-  if (!facts.observedVersion) {
+  if (compareVersions(facts.observedVersion, floor) < 0) {
     return {
-      finding: finding("missing", `required host binary ${binary} is missing`),
+      finding: finding(
+        "toolchain-drift",
+        `required host binary ${binary} ${observed} is older than the floor ${floor}, so it cannot read what this workspace writes`,
+      ),
       row: { binary, catalog, recorded, observed, verdict: "error" },
     };
   }
