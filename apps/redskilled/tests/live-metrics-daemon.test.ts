@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import { publishRedskilledWorkerLogLine, readRedskilledStatuslinePayload } from "../src/client.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
+import { createRedskilledEventLane } from "../src/event-lane.js";
 import type { RedskilledWorkerView } from "../src/host-state.js";
 import { REDSKILLED_WORKER_DISPLAY_ABSENT } from "../src/worker-display.js";
 import { resolveRedskilledPaths } from "../src/paths.js";
@@ -37,6 +38,52 @@ function view(overrides: Partial<RedskilledWorkerView> = {}): RedskilledWorkerVi
 }
 
 describe("the daemon's live metrics", () => {
+  it("replays the canonical TOONL observations after a daemon restart", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-metrics-"));
+    roots.push(root);
+    const paths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
+      runtimeDir: root,
+    });
+    const lane = createRedskilledEventLane(paths.eventLanePath);
+    const worker = view();
+    await lane.recordWorker({ kind: "worker-birth", worker, ts: "2026-08-02T10:00:00.000Z" });
+    await lane.recordWorker({
+      kind: "worker-metrics",
+      worker,
+      ts: "2026-08-02T10:00:00.000Z",
+      tokens: 0,
+      tools: 0,
+      runner: "codex",
+      model: "gpt-5.6",
+    });
+    await lane.recordWorker({
+      kind: "worker-metrics",
+      worker,
+      ts: "2026-08-02T11:00:00.000Z",
+      tokens: 1_200,
+      tools: 4,
+      runner: "codex",
+      model: "gpt-5.6",
+    });
+
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      sampleMs: 0,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      stopWorker: () => true,
+      liveness: () => true,
+      clock: () => "2026-08-02T11:30:00.000Z",
+    });
+    running.push(daemon);
+
+    const payload = await readRedskilledStatuslinePayload(paths, { sessionProject: "acme/widgets" });
+    expect(payload.metrics?.history_48h).toBeDefined();
+    expect(payload.metrics?.history_48h?.tokens_per_hour.buckets.at(-2)?.value).toBe(1_200);
+    expect(payload.metrics?.day.tokens_per_min.value).toBe(20);
+  });
+
   it("derives its rates from the heartbeats it received and the outcomes it recorded", async () => {
     const root = await mkdtemp(join(tmpdir(), "redskilled-metrics-"));
     roots.push(root);

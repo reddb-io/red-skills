@@ -40,6 +40,7 @@ import type { RedskilledWorkerBudget } from "./worker-placement.js";
 export type RedskilledWorkerEventKind =
   | "worker-birth"
   | "worker-activity"
+  | "worker-metrics"
   | "worker-drift"
   | "worker-heal"
   | "worker-death"
@@ -48,6 +49,7 @@ export type RedskilledWorkerEventKind =
 export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-birth",
   "worker-activity",
+  "worker-metrics",
   "worker-drift",
   "worker-heal",
   "worker-death",
@@ -55,6 +57,7 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
 ] as const as readonly [
   "worker-birth",
   "worker-activity",
+  "worker-metrics",
   "worker-drift",
   "worker-heal",
   "worker-death",
@@ -115,6 +118,11 @@ export interface RedskilledHostEvent {
   /** Work phase and step on an activity transition. */
   readonly phase: string | null;
   readonly step: string | null;
+  /** Cumulative counters and attribution on a durable metric observation. */
+  readonly tokens?: number | null;
+  readonly tools?: number | null;
+  readonly runner?: string | null;
+  readonly model?: string | null;
   /** Refreshed trunk head and its distance from the granted fork on a drift stamp. */
   readonly base_head_sha: string | null;
   readonly base_commits_ahead: number | null;
@@ -170,6 +178,10 @@ export interface RecordWorkerEventInput {
   readonly admissionVerdict?: string | null;
   readonly phase?: string | null;
   readonly step?: string | null;
+  readonly tokens?: number | null;
+  readonly tools?: number | null;
+  readonly runner?: string | null;
+  readonly model?: string | null;
   readonly baseHeadSha?: string | null;
   readonly baseCommitsAhead?: number | null;
   readonly healKind?: string | null;
@@ -222,6 +234,10 @@ export function buildHostEvent(input: RecordEventInput | RecordWorkerEventInput)
     admission_verdict: "admissionVerdict" in input ? input.admissionVerdict ?? null : null,
     phase: "phase" in input ? input.phase ?? null : null,
     step: "step" in input ? input.step ?? null : null,
+    tokens: "tokens" in input ? input.tokens ?? null : null,
+    tools: "tools" in input ? input.tools ?? null : null,
+    runner: "runner" in input ? input.runner ?? null : null,
+    model: "model" in input ? input.model ?? null : null,
     base_head_sha: "baseHeadSha" in input ? input.baseHeadSha ?? null : null,
     base_commits_ahead: "baseCommitsAhead" in input ? input.baseCommitsAhead ?? null : null,
     heal_kind: "healKind" in input ? input.healKind ?? null : null,
@@ -256,6 +272,10 @@ export function buildDaemonStopEvent(input: RecordDaemonStopInput): RedskilledHo
     admission_verdict: null,
     phase: null,
     step: null,
+    tokens: null,
+    tools: null,
+    runner: null,
+    model: null,
     base_head_sha: null,
     base_commits_ahead: null,
     heal_kind: null,
@@ -287,6 +307,10 @@ export function buildDemandRefusalEvent(input: RecordDemandRefusalInput): Redski
     admission_verdict: null,
     phase: null,
     step: null,
+    tokens: null,
+    tools: null,
+    runner: null,
+    model: null,
     base_head_sha: null,
     base_commits_ahead: null,
     heal_kind: null,
@@ -531,6 +555,10 @@ function fromRow(record: ToonlRecord): RedskilledHostEvent {
     admission_verdict: text(record.admission_verdict),
     phase: text(record.phase),
     step: text(record.step),
+    tokens: record.tokens == null || record.tokens === "" ? null : Number(record.tokens),
+    tools: record.tools == null || record.tools === "" ? null : Number(record.tools),
+    runner: text(record.runner),
+    model: text(record.model),
     base_head_sha: text(record.base_head_sha),
     base_commits_ahead: record.base_commits_ahead == null || record.base_commits_ahead === ""
       ? null

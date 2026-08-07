@@ -44,6 +44,40 @@ import { display, payload, worker } from "./fixture.js";
 const LOCAL = { ...REDSKILLED_STATUSLINE_DEFAULTS, project: "acme/widgets" };
 
 describe("one module, three densities", () => {
+  it("collapses old deaths by default and bounds verbose receipts by terminal height", () => {
+    const death = {
+      kind: "worker",
+      id: "w-dead-0",
+      pid: 9000,
+      ts: "2026-08-03T00:01:00.000Z",
+      last_seen: "2026-08-03T00:00:59.000Z",
+      last_phase: "boot",
+      sender_class: "oomd",
+      confidence: "high",
+      signal: "SIGKILL",
+      evidence: "memory pressure",
+    } as const;
+    const deaths = Array.from({ length: 30 }, (_unused, index) => ({
+      ...death,
+      id: `w-dead-${index}`,
+      pid: death.pid + index,
+    }));
+    const doc = payload({ deaths: { count: 30, recent: deaths, latest: deaths[29]!, reaped_at: death.ts } });
+
+    const collapsed = renderRedskilledDashboard(doc, REDSKILLED_DASHBOARD_DEFAULTS);
+    expect(collapsed.lines.filter((line) => stripAnsi(line).includes("use --verbose for receipts"))).toHaveLength(1);
+    expect(collapsed.lines.some((line) => stripAnsi(line).includes("pid=9000"))).toBe(false);
+
+    const verbose = renderRedskilledDashboard(doc, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      showDeathDetails: true,
+      maxHeight: 8,
+    });
+    expect(verbose.lines).toHaveLength(8);
+    expect(verbose.lines.some((line) => stripAnsi(line).includes("pid=9000"))).toBe(true);
+    expect(stripAnsi(verbose.lines.at(-1)!)).toContain("terminal height");
+  });
+
   it("renders the daemon's base-movement stamp at every Worker-row density", () => {
     const doc = payload({
       workers: [worker({ base_commits_ahead: 4, display: display() })],

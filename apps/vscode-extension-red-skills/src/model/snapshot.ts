@@ -58,7 +58,11 @@ export interface ReadSnapshotOptions {
   readonly source: string;
   readonly sessionProject?: string;
   /** The size the panel has; the render is clamped to it on this side. */
-  readonly dashboardRender?: { readonly maxWidth?: number; readonly maxRows?: number };
+  readonly dashboardRender?: {
+    readonly maxWidth?: number;
+    readonly maxRows?: number;
+    readonly showDeathDetails?: boolean;
+  };
   readonly now?: () => string;
 }
 
@@ -88,6 +92,9 @@ export async function readHostSnapshot(options: ReadSnapshotOptions): Promise<Ho
       project: options.sessionProject ?? null,
       ...(options.dashboardRender?.maxWidth == null ? {} : { maxWidth: options.dashboardRender.maxWidth }),
       ...(options.dashboardRender?.maxRows == null ? {} : { maxRows: options.dashboardRender.maxRows }),
+      ...(options.dashboardRender?.showDeathDetails == null
+        ? {}
+        : { showDeathDetails: options.dashboardRender.showDeathDetails }),
     });
     return {
       reachable: true,

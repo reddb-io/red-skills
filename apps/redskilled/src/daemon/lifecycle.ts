@@ -6,6 +6,10 @@ import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { bindExclusive, handleSocket, probeSocketOwnership } from "./socket.js";
 import { RedskilledAlreadyRunningError } from "./errors.js";
 import {
+  appendRedskilledMetricObservation,
+  replayRedskilledMetricObservations,
+} from "./metric-history.js";
+import {
   deriveWorkerScopeCeiling,
   evaluateWorkerAdmission,
   resolveHostCeiling,
@@ -704,19 +708,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    * instants, and the map keeps one. The history is bounded by age and by count
    * on every append, because an unbounded one is a leak measured in days.
    */
-  function observeWorkerCounters(published: RedskilledWorkerDisplayRecord, workerId: string): void {
-    observations = pruneRedskilledMetricHistory(
-      [...observations, {
-        worker_id: workerId,
-        observed_at: published.published_at,
-        tokens: published.display.tokens,
-        tools: published.display.tools,
-        runner: published.display.runner,
-        model: published.display.model,
-      }],
-      (observation) => observation.observed_at,
-      { now: clock() },
-    );
+  function observeWorkerCounters(
+    published: RedskilledWorkerDisplayRecord,
+    worker: RedskilledWorkerView,
+  ): void {
+    const appended = appendRedskilledMetricObservation(observations, published, worker, clock());
+    observations = appended.observations;
+    // The host event lane is the daemon's one durable history. Persist the
+    // projection needed for rates there, never in a metrics sidecar.
+    void eventLane.recordWorker(appended.record).catch(() => undefined);
   }
 
   /** Keep one Worker's ending, so the outcome rate rests on the same facts the lane does. */
@@ -1092,6 +1092,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       project: render?.project ?? REDSKILLED_DASHBOARD_DEFAULTS.project,
       maxWidth: render?.max_width ?? REDSKILLED_DASHBOARD_DEFAULTS.maxWidth,
       maxRows: render?.max_rows ?? REDSKILLED_DASHBOARD_DEFAULTS.maxRows,
+      maxHeight: render?.max_height ?? REDSKILLED_DASHBOARD_DEFAULTS.maxHeight,
+      showDeathDetails: render?.show_death_details ?? REDSKILLED_DASHBOARD_DEFAULTS.showDeathDetails,
     });
   }
 
@@ -1187,7 +1189,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       displays.set(request.worker_id, stored);
       // Kept as well as stored: the map answers "what is it doing now" and the
       // history answers "how fast", and one cannot be recovered from the other.
-      observeWorkerCounters(stored, request.worker_id);
+      observeWorkerCounters(stored, target);
       if (display.phase !== previous?.phase || display.step !== previous?.step) {
         record("worker-activity", target, null, { phase: display.phase, step: display.step });
       }
@@ -2236,6 +2238,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     (mark) => mark.ts,
     { now: clock() },
   );
+  observations = replayRedskilledMetricObservations(laneEvents, clock());
   const replayed = rehydrateWorkers(laneEvents);
   const reattachment = await reattachWorkers(replayed, liveness);
   for (const worker of reattachment.alive) {
@@ -2484,6 +2487,3 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     stop,
   };
 }
-
-// Socket helpers extracted to ./daemon/socket.ts — re-exports keep backward compat
-

@@ -17,13 +17,8 @@ import { deathLaneFileIn, installDeathRecorder } from "@reddb-io/shared/death-re
 import { formatDeathAttributions, runBootDeathReaper } from "@reddb-io/shared/death-attribution.js";
 import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import {
-  readDeclaredProjectName,
-  resolveProjectLabelForDir,
-} from "@reddb-io/shared/project-identity-resolve.js";
-import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
-  readRedskilledDashboardRender,
   readRedskilledStatuslineRender,
   stopRedskilledDaemon,
   type RedskilledClientConfig,
@@ -61,6 +56,8 @@ import {
   resolveRedskilledStatuslineOptions,
 } from "./statusline-config.js";
 import { renderRedskilledStatuslineAbsence } from "@reddb-io/redskilled-render";
+import { runDashboard } from "./dashboard-command.js";
+import { readStatuslineProject } from "./statusline-project.js";
 import {
   installRedskilledUnit,
   planRedskilledUnit,
@@ -132,9 +129,11 @@ decision 1) — a density argument, never a second renderer.
 
   global          every project's Workers, each naming its owner
   --max-width N   hard ceiling in characters
+  --verbose       expand recent death receipts
 
-It always writes something and always exits 0: a dashboard that printed nothing
-is indistinguishable from a host with no Workers.`,
+In a TTY it refreshes one stable screen and follows resize; in a pipe it writes
+one snapshot. Press q to quit, r to refresh now, or v to toggle death details.
+It always states an unreachable host and exits 0.`,
   "github-spend": `Usage: redskilled github-spend [--pool <pool|all>] [--hours <n>]
 
 Reports what this host observed itself spending from GitHub's API budget,
@@ -903,24 +902,6 @@ function configHome(): string {
 }
 
 /**
- * The calling directory's project label, and the config that carries its taste.
- *
- * **Resolved through the SAME authority that labels a Worker at birth**, which is
- * the whole of the fix for #2928. Reading only a declared `project.name` here
- * meant a repository that declares none — most of them — asked the daemon about
- * `null` while every one of its Workers was filed under the label the remote
- * gave, so the local mode reported an idle zero from a host holding three.
- */
-function readStatuslineProject(cwd: string): { configText?: string; label: string | null } {
-  const declared = readDeclaredProjectName(cwd);
-  // No `.red/config.yaml` anywhere above is a directory outside any RedSkills
-  // project: it has no taste to read and no project to be, and guessing a label
-  // from git alone would file a stray shell under a repository it is only near.
-  if (declared.configText == null) return { label: null };
-  return { configText: declared.configText, label: resolveProjectLabelForDir(cwd) };
-}
-
-/**
  * The serve paths: flags first, the session derivation only for what is absent.
  *
  * A supervisor unit passes everything; a hand-run `redskilled serve` passes
@@ -967,70 +948,4 @@ if (invokedDirectly) {
   );
 }
 
-/**
- * `redskilled dashboard [global] [--max-width N]` — the host view in a terminal.
- *
- * **The same payload and the same render as the statusline, at a taller
- * density** (#3098, ADR 0132 decision 1). Layout moved out of the daemon so four
- * surfaces could differ in HEIGHT without differing in content; this is the
- * terminal one, and it asks for a density rather than importing a second
- * renderer. A host that drew its own dashboard would be the drift the decision
- * exists to prevent.
- *
- * **It always writes something and always exits 0**, for the same reason the
- * statusline does: a dashboard that printed nothing is indistinguishable from a
- * host with no Workers, and an operator reaching for it is usually already
- * trying to find out why something is quiet.
- */
-export async function runDashboard(
-  args: readonly string[],
-  io: {
-    readonly cwd?: string;
-    readonly paths?: RedskilledPaths;
-    readonly write?: (line: string) => void;
-    readonly warn?: (line: string) => void;
-    readonly client?: RedskilledClientConfig;
-    readonly now?: () => string;
-  } = {},
-): Promise<number> {
-  const write = io.write ?? ((line: string) => process.stdout.write(line));
-  const warn = io.warn ?? ((line: string) => process.stderr.write(line));
-
-  // The statusline's own flag parse, so `global` and `--max-width` mean here
-  // exactly what they mean there — two spellings of one scope is how a second
-  // vocabulary starts.
-  const parsed = parseRedskilledStatuslineFlags(args);
-  const project = readStatuslineProject(io.cwd ?? process.cwd());
-  const resolved = resolveRedskilledStatuslineOptions({
-    ...(project.configText == null ? {} : { configText: project.configText }),
-    project: project.label,
-    flags: parsed.flags,
-  });
-  for (const warning of [...resolved.warnings, ...parsed.warnings]) {
-    warn(`redskilled dashboard: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);
-  }
-
-  try {
-    const render = await readRedskilledDashboardRender(
-      io.paths ?? resolveRedskilledPaths(),
-      {
-        ...(resolved.options.project == null ? {} : { project: resolved.options.project }),
-        // `mode` is the shared vocabulary for scope — `local` or `global` — and
-        // the statusline's resolver already decided it from config and flags.
-        mode: resolved.options.mode,
-        ...(resolved.options.maxWidth == null ? {} : { maxWidth: resolved.options.maxWidth }),
-      },
-      {
-        ...(io.client ?? {}),
-        ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
-      },
-    );
-    write(`${render.lines.join("\n")}\n`);
-  } catch (err) {
-    // A stated absence, never silence. The operator asked what the host is
-    // doing; "I could not ask" is an answer and an empty screen is not.
-    warn(`redskilled dashboard: ${err instanceof Error ? err.message : String(err)}\n`);
-    write("redskilled unreachable — the host was not asked, so its Workers are unknown\n");
-  }
-  return 0;
-}
+export { runDashboard } from "./dashboard-command.js";

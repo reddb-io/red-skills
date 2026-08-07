@@ -42,7 +42,8 @@
     "@reddb-io/github": "workspace:*",
     "@reddb-io/redskilled-render": "workspace:*",
     "@reddb-io/shared": "workspace:*",
-    "@reddb-io/toon": "catalog:"
+    "@reddb-io/toon": "catalog:",
+    "tuiuiu.js": "1.0.75"
   },
   "devDependencies": {
     "@types/node": "catalog:",
