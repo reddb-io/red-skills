@@ -315,6 +315,7 @@ jobs:
         working-directory: apps/memory
         env:
           NEXT: ${{ steps.target.outputs.tag }}
+          PREVIOUS: ${{ steps.target.outputs.previous }}
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
           RED_BUILD_GIT_SHA: ${{ steps.target.outputs.sha }}
           RED_BUILD_TIME: ${{ steps.target.outputs.built_at }}
@@ -348,9 +349,20 @@ jobs:
           // live from the new tag. Carrying them across a bump is how a dead pointer
           // survived unnoticed: reddb aged out the pinned release, the live .sha256
           // 404'd, and the stale checksums were copied forward release after release.
+          // Named explicitly, never via `releases/latest`. The release engine
+          // publishes the Release before this job attaches anything to it, so
+          // `latest` is THIS release — empty — and reading it 404s on the very
+          // manifest we are about to write. The previous release is what "the
+          // manifest we might carry forward from" has always meant.
           async function previousRedAssets() {
-            const url = 'https://github.com/reddb-io/red-skills/releases/latest/download/memory-runtime-manifest.json';
+            const previousTag = process.env.PREVIOUS ?? '';
+            if (previousTag === '') return {};
+            const url = `https://github.com/reddb-io/red-skills/releases/download/${previousTag}/memory-runtime-manifest.json`;
             const response = await fetch(url, { redirect: 'follow' });
+            // A previous release without this manifest is not a failure: with no
+            // checksums to carry, every asset resolves live from the pinned tag,
+            // which is the safe path the pin-bump case already takes.
+            if (response.status === 404) return {};
             if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
             const previous = await response.json();
             if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) return {};
@@ -395,6 +407,7 @@ jobs:
         working-directory: apps/brain
         env:
           NEXT: ${{ steps.target.outputs.tag }}
+          PREVIOUS: ${{ steps.target.outputs.previous }}
           RED_BUILD_VERSION: ${{ steps.target.outputs.tag }}
           RED_BUILD_GIT_SHA: ${{ steps.target.outputs.sha }}
           RED_BUILD_TIME: ${{ steps.target.outputs.built_at }}
@@ -420,10 +433,15 @@ jobs:
             'macos-aarch64': 'red-macos-aarch64',
             'windows-x86_64': 'red-windows-x86_64.exe',
           };
-          // No fallback across a pin bump — see the memory manifest step above.
+          // No fallback across a pin bump, and the PREVIOUS release named
+          // explicitly rather than `releases/latest` — see the memory manifest
+          // step above for both reasons.
           async function previousRedAssets() {
-            const url = 'https://github.com/reddb-io/red-skills/releases/latest/download/brain-runtime-manifest.json';
+            const previousTag = process.env.PREVIOUS ?? '';
+            if (previousTag === '') return {};
+            const url = `https://github.com/reddb-io/red-skills/releases/download/${previousTag}/brain-runtime-manifest.json`;
             const response = await fetch(url, { redirect: 'follow' });
+            if (response.status === 404) return {};
             if (!response.ok) throw new Error(`GET ${url} -> ${response.status}`);
             const previous = await response.json();
             if (previous?.reddb?.sdk !== sdk || previous?.reddb?.tag !== reddb.tag) return {};
