@@ -49,6 +49,8 @@ function workerEvent(kind: RecordWorkerEventInput["kind"]): RecordWorkerEventInp
       return { ...common, admissionVerdict: "admitted" };
     case "worker-activity":
       return { ...common, phase: "coding", step: "implementing" };
+    case "worker-metrics":
+      return { ...common, tokens: 42_000, tools: 31, runner: "codex", model: "gpt-5.6" };
     case "worker-drift":
       return { ...common, baseHeadSha: "bbbb2222", baseCommitsAhead: 3 };
     case "worker-heal":
@@ -75,6 +77,12 @@ describe("queryable daemon worker-event log", () => {
     expect(workerEvents.find((event) => event.kind === "worker-birth")).toMatchObject({
       admission_verdict: "admitted",
       fork_sha: "aaaa1111",
+    });
+    expect(workerEvents.find((event) => event.kind === "worker-metrics")).toMatchObject({
+      tokens: 42_000,
+      tools: 31,
+      runner: "codex",
+      model: "gpt-5.6",
     });
   });
 
