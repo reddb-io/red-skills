@@ -954,7 +954,15 @@ export function harness(opts: HarnessOptions = {}): {
   };
 
   if (opts.ciAware) {
-    deps.ciAwait = { github: githubMergeReadFromExec(deps.mergeExec), sleep: async () => {}, maxPolls: 2 };
+    // Forward LAZILY: a test that wraps `deps.mergeExec` after this line (to
+    // record calls) must be seen by the port too. Passing `deps.mergeExec`
+    // directly snapshots the pre-wrap function and silently escapes the
+    // instrumentation.
+    deps.ciAwait = {
+      github: githubMergeReadFromExec((args) => deps.mergeExec(args)),
+      sleep: async () => {},
+      maxPolls: 2,
+    };
   }
   return { deps, input, trace };
 }
