@@ -686,6 +686,8 @@ function dashboardRequest(options: Partial<RedskilledDashboardOptions>): Redskil
     ...(options.project === undefined ? {} : { project: options.project }),
     ...(options.maxWidth == null ? {} : { max_width: options.maxWidth }),
     ...(options.maxRows == null ? {} : { max_rows: options.maxRows }),
+    ...(options.maxHeight == null ? {} : { max_height: options.maxHeight }),
+    ...(options.showDeathDetails == null ? {} : { show_death_details: options.showDeathDetails }),
   };
 }
 
