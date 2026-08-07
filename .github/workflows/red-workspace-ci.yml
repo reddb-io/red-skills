@@ -91,6 +91,17 @@ jobs:
       - name: Test canary channel promotion contract
         run: scripts/test-afk-promote-channel.sh
 
+      # These two ran only inside red-publish.yml, which is to say only at
+      # publish time — after the last chance to fix anything. That is how a
+      # refactor deleted five scripts the publish workflow calls and no check
+      # went red: the only thing that reads the publish workflow was the publish
+      # workflow. Reading it on every PR is the point.
+      - name: Test red-release npm publish contract
+        run: scripts/test-red-release-npm-publish-contract.sh
+
+      - name: Test red-release reddb asset contract
+        run: scripts/test-red-release-reddb-assets-contract.sh
+
       # ADR 0139: a changeset that cannot resolve does not get skipped — it
       # throws and abandons the whole release plan, so one bad file fails every
       # release after it (#2863). This job is the only one a changeset-only PR
