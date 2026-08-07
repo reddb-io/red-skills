@@ -93,7 +93,7 @@ The measurement is a first-class deliverable of the rollout, reported per slice,
 
 ## Consequences
 
-- **New agent-facing CLIs start AXI-shaped.** The ten principles are the checklist a new surface is designed against, not a retrofit. `/write-a-skill` and CLI authorship reference this ADR and the [doctrine doc](../contexts/dev/axi-toon-doctrine.md).
+- **New agent-facing CLIs start AXI-shaped.** The ten principles are the checklist a new surface is designed against, not a retrofit. `/writing-for-agents` and CLI authorship reference this ADR and the [doctrine doc](../contexts/dev/axi-toon-doctrine.md).
 - **Existing surfaces converge incrementally.** `monitor` → `dashboard` → `daily-review` → `statusline`, one measured slice at a time (first = #918). No big-bang rewrite; no surface is blocked on the others.
 - **Output shrinks at the source, not only at the proxy.** RTK stays the safety net for output RedSkills does not control (raw `git`, `gh`, `vitest`, `tsc`); AXI removes the need for it on RedSkills' own CLIs. The two do not conflict — a TOON-emitting monitor piped through RTK simply has less left to compress. *(superseded by Amendment 1 — RTK is retired by ADR 0095; the `rsp` elision layer covers output RedSkills does not control)*
 - **Fewer round-trips.** Pre-computed aggregates, definitive empty states, and contextual next-step suggestions each remove a follow-up call the agent would otherwise make — a saving larger than the byte-level TOON win on interactive flows.

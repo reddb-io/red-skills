@@ -156,9 +156,12 @@ Format:
 
 When bumping the SHA in `.upstream`, review `CHANGES.md`, close the matching `upstream-drift` issue, and update recorded SHAs if we cherry-picked anything.
 
-## Creating a new (non-Matt) skill
+## Writing documents for agents
 
-Use `/write-a-skill`. Mark it in `CHANGES.md` as `status: added` with `upstream: —` to make clear it's original to reddb.io.
+Use `/writing-for-agents` when creating or editing a skill, `AGENTS.md`,
+`CLAUDE.md`, or a document reached through a context pointer. For a new
+non-Matt skill, mark it in `CHANGES.md` as `status: added` with `upstream: —`
+to make clear it is original to reddb.io.
 
 ## SKILL.md body convention
 
@@ -173,7 +176,7 @@ Never reorder priorities so that documentation/side-effect work in `<supporting-
 
 ### SKILL.md writing style (sentence-level)
 
-The body convention above is **section-level** — it decides *where* a sentence goes. Underneath it sits the **sentence-level** writing convention: nine techniques (bold lead-in + gloss; maxim/slogan compression; prohibition + reason inline; literal phrasing in quotes; vocabulary hygiene; numbered taxonomy; self-demonstrating voice; precondition-carrying headers; leading words) that decide *how each sentence reads*. It is **additive — it complements the `<what-to-do>`/`<supporting-info>` split, it does not replace it.** When writing or editing any RedSkills SKILL.md, apply both. The full list with before → after examples lives in `plugins/dev/skills/productivity/write-a-skill/WRITING-STYLE.md`.
+The body convention above is **section-level** — it decides *where* a sentence goes. Underneath it sits the **sentence-level** writing convention: nine techniques (bold lead-in + gloss; maxim/slogan compression; prohibition + reason inline; literal phrasing in quotes; vocabulary hygiene; numbered taxonomy; self-demonstrating voice; precondition-carrying headers; leading words) that decide *how each sentence reads*. It is **additive — it complements the `<what-to-do>`/`<supporting-info>` split, it does not replace it.** When writing or editing any RedSkills SKILL.md, apply both. The full list with before → after examples lives in `plugins/dev/skills/productivity/writing-for-agents/WRITING-STYLE.md`.
 
 ## Agent skills
 

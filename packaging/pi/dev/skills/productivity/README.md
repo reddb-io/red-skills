@@ -7,4 +7,4 @@ General workflow tools, not code-specific.
 - **[wait-what](./wait-what/SKILL.md)** — Re-pitch a reply that did not land in Simplified Technical English and the owning context's ubiquitous language.
 - **[to-questionnaire](./to-questionnaire/SKILL.md)** — Turn missing knowledge into a Markdown questionnaire for the person who holds it.
 - **[handoff](./handoff/SKILL.md)** — Compact the current conversation into a handoff document so another agent can continue the work.
-- **[write-a-skill](./write-a-skill/SKILL.md)** — Create new skills with proper structure, progressive disclosure, and bundled resources.
+- **[writing-for-agents](./writing-for-agents/SKILL.md)** — Design skills, always-loaded agent instructions, and disclosed references around deliberate load and completion criteria.
