@@ -1107,6 +1107,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       project: render?.project ?? REDSKILLED_DASHBOARD_DEFAULTS.project,
       maxWidth: render?.max_width ?? REDSKILLED_DASHBOARD_DEFAULTS.maxWidth,
       maxRows: render?.max_rows ?? REDSKILLED_DASHBOARD_DEFAULTS.maxRows,
+      maxHeight: render?.max_height ?? REDSKILLED_DASHBOARD_DEFAULTS.maxHeight,
+      showDeathDetails: render?.show_death_details ?? REDSKILLED_DASHBOARD_DEFAULTS.showDeathDetails,
     });
   }
 
