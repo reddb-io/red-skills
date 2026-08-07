@@ -9,6 +9,7 @@ import {
 } from "@reddb-io/github";
 import {
   RELEASE_BOT_AUTHOR,
+  RELEASE_BOT_EMAIL,
   runReleaseEngine,
   type ReleaseEngineGithub,
   type VersionPullRequest,
@@ -158,6 +159,25 @@ describe("release engine", () => {
     expect(git(fixture.repository, "rev-parse", "origin/main")).toBe(releasedHead);
     expect(fixture.github.pullRequests).toEqual([]);
     expect(fixture.github.release?.tag).toBe("v1.2.4");
+  });
+
+  it("authors the release commit as an account GitHub can resolve, and still breaks its own loop", async () => {
+    const fixture = releaseFixture("version-pr");
+    fixture.addChangeset("steady-larks-sing.md", "minor", "Attribute the release commit.");
+    await fixture.push();
+
+    const branch = "origin/red-release/version-pr";
+    // GitHub resolves commit -> account by EMAIL. An unresolvable address makes
+    // the release commit authorless, so a `first_time_contributors` approval
+    // policy holds every Version PR's checks at `action_required` and the train
+    // ends by asking a human to click Approve.
+    expect(git(fixture.repository, "log", "-1", "--format=%ae", branch))
+      .toBe(RELEASE_BOT_EMAIL);
+    expect(RELEASE_BOT_EMAIL).toMatch(/@users\.noreply\.github\.com$/);
+    // The NAME carries the other role: the generated workflow's `if:` reads it
+    // to skip the run its own bump commit would trigger.
+    expect(git(fixture.repository, "log", "-1", "--format=%an", branch))
+      .toBe(RELEASE_BOT_AUTHOR);
   });
 
   it("routes Version-PR create, update, and merge reads through the house GitHub adapter", async () => {
