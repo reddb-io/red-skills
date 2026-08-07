@@ -16,7 +16,7 @@ function capture() {
 }
 
 function rendered(line: string): RedskilledDashboard {
-  return { lines: [line] } as RedskilledDashboard;
+  return { lines: [line] } as unknown as RedskilledDashboard;
 }
 
 describe("the dashboard is reachable before anything works", () => {
@@ -63,7 +63,7 @@ describe("the dashboard always answers", () => {
         next: async () => frame++ === 0 ? "resize" : "stop",
       },
       readDashboard: async (_paths, options) => {
-        asked.push(options);
+        asked.push(options ?? {});
         return rendered(`frame-${asked.length}`);
       },
     });
