@@ -242,10 +242,11 @@ RS="npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled"
 ADR 0132 decision 1). It asks the daemon for the same payload and draws it with
 the same render the herdr plugin and the VS Code extension use — a **density
 argument**, so a terminal with no plugin installed reads the host view the UIs
-read. In a TTY it redraws one stable screen every second, wakes immediately on
-resize, obeys the current width and height, and restores the cursor on SIGINT or
-SIGTERM. In a pipe or redirected file it writes exactly one snapshot. `NO_COLOR`
-removes styling in either mode.
+read. In a TTY Tuiuiu owns one alternate screen, redraws every second, reflows on
+resize, obeys the current width and height, and restores the terminal on exit.
+Press `q` to quit, `r` to refresh immediately, and `v` to toggle death receipts.
+In a pipe or redirected file it writes exactly one snapshot. `NO_COLOR` removes
+styling in either mode.
 
 Read the hierarchy top-down: current tokens/hour and Tickets/hour with trend;
 two UTC-hour series of 48 points (or the reason data is absent); active Workers
