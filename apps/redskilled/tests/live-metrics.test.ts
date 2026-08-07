@@ -242,15 +242,17 @@ describe("live metrics over rolling windows", () => {
   it("drops everything older than the widest window it will ever answer for", () => {
     const kept = pruneRedskilledMetricHistory(
       [
-        observation({ observed_at: ago(25 * 60) }),
-        observation({ observed_at: ago(23 * 60) }),
+        observation({ observed_at: ago(50 * 60) }),
+        // One seed hour before the 48 drawn buckets lets the first bucket retain
+        // a counter delta that crossed its left edge.
+        observation({ observed_at: ago(48 * 60) }),
         observation({ observed_at: ago(1) }),
       ],
       (entry) => entry.observed_at,
       { now: NOW },
     );
 
-    expect(kept.map((entry) => entry.observed_at)).toEqual([ago(23 * 60), ago(1)]);
+    expect(kept.map((entry) => entry.observed_at)).toEqual([ago(48 * 60), ago(1)]);
   });
 
   it("keeps the newest entries when a burst outruns the retention limit", () => {
