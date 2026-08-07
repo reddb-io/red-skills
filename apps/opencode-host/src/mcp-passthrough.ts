@@ -19,7 +19,7 @@
  * No filesystem IO happens here beyond the `.mcp.json` read. The
  * planner is pure; the emit step is the thin shell that writes.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -114,6 +114,22 @@ export function resolveScriptPath(
   return { path: null, candidate: candidates[0] ?? null };
 }
 
+/** Resolve explicit `$HOME/...` launchers from a source shell fallback. */
+export function resolveHomeScriptPath(
+  body: string,
+  home: string = homedir(),
+): string | null {
+  for (const match of body.matchAll(/\$HOME\/([\w./-]+)/g)) {
+    const candidate = join(home, match[1]!);
+    try {
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      // Try the next explicit home-relative candidate.
+    }
+  }
+  return null;
+}
+
 /** Rewrite a single Claude/Codex `mcpServers` entry to opencode's
  *  `mcp:` shape. The rewrite has three branches:
  *    - `command: "sh"` + `args: ["-c", "<body>"]` (the common
@@ -196,12 +212,14 @@ function rewriteShC(
     }
   }
 
-  let resolvedPath: string | null = null;
-  for (const rel of candidates) {
-    const { path } = resolveScriptPath(pluginsRoot, plugin, rel);
-    if (path) {
-      resolvedPath = path;
-      break;
+  let resolvedPath = resolveHomeScriptPath(body);
+  if (!resolvedPath) {
+    for (const rel of candidates) {
+      const { path } = resolveScriptPath(pluginsRoot, plugin, rel);
+      if (path) {
+        resolvedPath = path;
+        break;
+      }
     }
   }
 
@@ -238,7 +256,7 @@ function rewriteShC(
   // for the bootstrap, `< $tmp` style stdin redirects are not
   // expressible in the opencode command array — the bootstrap
   // reads its own stdin if needed).
-  const trailing = body.match(/mcp(?=['"\s]|$)/) ? ["mcp"] : [];
+  const trailing = body.match(/mcp(?=['"\s;|&]|$)/) ? ["mcp"] : [];
 
   const entry: McpEntry = {
     type: "local",
