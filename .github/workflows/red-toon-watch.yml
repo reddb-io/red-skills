@@ -105,7 +105,13 @@ jobs:
         run: |
           set -euo pipefail
           pnpm -C apps/dev dev toon-bump "$TARGET_VERSION"
-          pnpm install --lockfile-only
+          # `--no-frozen-lockfile` is not a loosening: pnpm turns frozen ON by
+          # itself when CI=true, so the one command whose whole job is to WRITE
+          # the lockfile ran forbidden from writing it. The bump had never been
+          # exercised — three green days in a row were days with no release, and
+          # the first real one died on `no entry for '@reddb-io/toon@0.13.2'`,
+          # the version the previous line had just written into the catalog.
+          pnpm install --lockfile-only --no-frozen-lockfile
           # The pi skill mirrors restate the derived pin sites, so `pi:packages:check` reddens on
           # any bump that does not regenerate them.
           pnpm pi:packages:build
