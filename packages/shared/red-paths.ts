@@ -154,6 +154,47 @@ export function castleStateDir(root: string): string {
   return join(stateDir(root), "castle");
 }
 
+/**
+ * What legitimately lives at the root of `.red/state/castle`, and why.
+ *
+ * The lane's auditor judged by a hand-kept allowlist of three filenames and two
+ * directories, so anything else was reported as "a live supervisor artifact"
+ * purely by ABSENCE FROM A LIST — including the residents' own durable state.
+ * Its printed cure named a migration whose plan does not contain those paths,
+ * so following the instruction changed nothing and the row stayed red forever
+ * (#3466). The allowlist had already been widened once with a hand-written
+ * justification, which is the shape of a list that will need widening again.
+ *
+ * A member belongs here when losing it would lose something no rerun can
+ * rebuild. The heal ledger is the clearest case: it bounds repeated healing
+ * across a 24h window, so a ledger that resets when the disposable tier is
+ * reclaimed stops bounding anything at all.
+ *
+ * Live control state — pids, stop files, cursors, leases the process rebuilds
+ * on boot — belongs in `.red/tmp/supervisors/default` and is deliberately
+ * absent. Adding a member is one line here, next to the helper that names the
+ * lane the writer already imports.
+ */
+export const CASTLE_STATE_MEMBERS: Readonly<Record<string, string>> = {
+  "history.toonl": "the engine's durable event history",
+  "validation.toonl": "the durable gate-verdict record",
+  "phase-durations.toonl": "measured per-phase cost; every ETA is derived from it",
+  "singleton-events.toonl": "the ordered resident event lane supervisors, waits and views all read",
+  "heal-ledger.toon": "the per-issue 24h heal budget; it bounds repeated healing across time",
+  "issue-curator.toon": "the issue-state curator resident's carried-forward state",
+  "merge-driver.toon": "the merge driver resident's carried-forward state",
+  "pr-medic.toon": "the PR medic resident's carried-forward state",
+  workers: "per-worker durable snapshots",
+  supervisors: "per-supervisor durable snapshots",
+  singletons: "which resident holds which singleton lease across restarts",
+  crons: "resident cron schedules and their last-run marks",
+};
+
+/** Whether a `.red/state/castle` root entry is a declared durable member. */
+export function isCastleStateMember(name: string): boolean {
+  return Object.hasOwn(CASTLE_STATE_MEMBERS, name);
+}
+
 /** Legacy AFK supervisor state lane, kept only as a migration input. */
 export function legacyAfkStateDir(root: string): string {
   return join(stateDir(root), "afk");
