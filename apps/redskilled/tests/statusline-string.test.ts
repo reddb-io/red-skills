@@ -333,8 +333,12 @@ describe("one renderer, machine-wide", () => {
     "apps/redskilled/src/statusline-render.ts",
     "apps/redskilled/src/dashboard-render.ts",
     "apps/redskilled/src/statusline-payload.ts",
-    // The implementation, not the façade `daemon.ts`, which forwards only.
+    // The implementation, not the façade `daemon.ts`, which forwards only. The
+    // daemon's payload types and its intervals live beside it, so all three are
+    // consumers — the split moved the code, not the consumption.
     "apps/redskilled/src/daemon/lifecycle.ts",
+    "apps/redskilled/src/daemon/types.ts",
+    "apps/redskilled/src/daemon/tunables.ts",
     "apps/redskilled/src/protocol.ts",
     "apps/redskilled/src/client.ts",
   ]);

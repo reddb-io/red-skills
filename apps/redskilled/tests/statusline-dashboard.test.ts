@@ -13,6 +13,8 @@ import { publishRedskilledWorkerLogLine, readRedskilledDashboard } from "../src/
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import {
   REDSKILLED_DASHBOARD_COLUMNS,
+  stripAnsi,
+  width,
   REDSKILLED_DASHBOARD_DEFAULTS,
   progressBar,
   renderRedskilledDashboard,
@@ -286,10 +288,10 @@ describe("the dashboard carries the statusline's own fields", () => {
     expect(header.version).toBe("0.1.0");
     expect(header.model).toBe("claude·opus·high");
     expect(header.counts).toMatchObject({ open_pull_requests: 3, open_issues: 24, recently_closed: 7 });
-    expect(header.line).toContain("» acme/widgets v0.1.0");
-    expect(header.line).toContain("prs=3");
-    expect(header.line).toContain("cpr=7");
-    expect(header.line).toContain("iss=24");
+    expect(stripAnsi(header.line)).toContain("» acme/widgets v0.1.0");
+    expect(stripAnsi(header.line)).toContain("prs=3");
+    expect(stripAnsi(header.line)).toContain("cpr=7");
+    expect(stripAnsi(header.line)).toContain("iss=24");
   });
 
   it("prints the header first and one line per row, so a surface prints and splits nothing", () => {
@@ -341,9 +343,9 @@ describe("the header carries the rates the daemon derived", () => {
       LOCAL,
     );
 
-    expect(dashboard.header.line).toContain("tk/m=1.2k");
-    expect(dashboard.header.line).toContain("tl/m=8.4");
-    expect(dashboard.header.line).toContain("claude=67%");
+    expect(stripAnsi(dashboard.header.line)).toContain("tk/m=1.2k");
+    expect(stripAnsi(dashboard.header.line)).toContain("tl/m=8.4");
+    expect(stripAnsi(dashboard.header.line)).toContain("claude=67%");
     // The whole block travels beside the line, so a surface with room draws both
     // windows and both dimensions without a second read.
     expect(dashboard.header.metrics?.day.model_share.shares.map((share) => share.key)).toEqual(["opus", "sonnet"]);
@@ -367,9 +369,12 @@ describe("the header carries the rates the daemon derived", () => {
       { ...LOCAL, maxWidth: 96 },
     );
 
-    expect(narrow.header.line.length).toBeLessThanOrEqual(96);
+    // Measured as a terminal measures it. `.length` counts the colour escapes
+    // too, so a line that fits in 96 columns read as 433 and the assertion was
+    // about bytes, not about the one line a status bar shows.
+    expect(width(narrow.header.line)).toBeLessThanOrEqual(96);
     expect(narrow.header.line).not.toContain("tk/m");
-    expect(narrow.header.line).toContain("wrk=1/1");
+    expect(stripAnsi(narrow.header.line)).toContain("wrk=1/1");
     // Dropped from the LINE, never from the answer: the block a surface reads
     // structurally does not shrink because a status bar is narrow.
     expect(narrow.header.metrics).not.toBeNull();
