@@ -18,6 +18,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { stripAnsi } from "@reddb-io/redskilled-render";
 import { UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import {
   publishRedskilledWorkerLogLine,
@@ -185,7 +186,7 @@ describe("a published display reaches the payload", () => {
     expect(row?.cells.bar).toBe("██▶░░");
     expect(row?.cells.hb).toBe("hb=3s");
     // And the row a reader actually sees is the one that carried a UUID and an age.
-    expect(row?.line).toContain("iss=3144");
+    expect(stripAnsi(row?.line ?? "")).toContain("iss=3144");
     expect(row?.line).toContain("coding·tests");
   });
 

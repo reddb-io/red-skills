@@ -18,7 +18,12 @@ afterEach(async () => {
 });
 
 describe("redskilled github-spend", () => {
-  it("reports the last hour's GraphQL spend from a restarted durable ledger", async () => {
+  // Asks for the REST pool, because that is where these reads now live. Polling
+  // collection reads were routed to REST deliberately — an unchanged poll can
+  // come back free there — so a GraphQL-only assertion over `issue list` was
+  // asserting a routing decision the surface had already reversed, and read as
+  // "the ledger lost the record" instead of "the record went to another pool".
+  it("reports the last hour's spend from a restarted durable ledger", async () => {
     const root = await mkdtemp(join(tmpdir(), "redskilled-github-spend-"));
     roots.push(root);
     const path = join(root, "spend.toonl");
@@ -44,7 +49,7 @@ describe("redskilled github-spend", () => {
 
     let printed = "";
     const restarted = createGithubAttributionLedger({ path });
-    const code = await runGithubSpend([], {
+    const code = await runGithubSpend(["--pool", "rest"], {
       ledger: restarted,
       now: () => "2026-08-04T19:00:00.000Z",
       write: (text) => { printed += text; },
@@ -58,16 +63,23 @@ describe("redskilled github-spend", () => {
         from: "2026-08-04T18:00:00.000Z",
         to: "2026-08-04T19:00:00.000Z",
       },
-      pool: "graphql",
-      total_count: 1,
-      total_cost: 7,
+      pool: "rest",
+      total_count: 2,
+      total_cost: 8,
       operations: [
         {
           operation_key: "issue list",
-          pool: "graphql",
+          pool: "rest",
           actor: "worker:wONE",
           count: 1,
           cost: 7,
+        },
+        {
+          operation_key: "issue view",
+          pool: "rest",
+          actor: "worker:wONE",
+          count: 1,
+          cost: 1,
         },
       ],
       unreadable_records: 0,
