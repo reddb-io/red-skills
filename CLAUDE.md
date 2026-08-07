@@ -139,29 +139,18 @@ Some constraints span the whole repo but live in one package. They run in **ever
 - **A doc that tells an operator to run a shipped binary gives the form that works.** Our binaries are not on an operator's PATH, and where a shim exists it may be a stale pin, so the canonical invocation is ADR 0091's `npx -y -p @reddb-io/red-skills@<version> <binary>` — a PATH shim is a warm-cache optimization and may be mentioned as one, never as the primary form. The dead end this closes is #2961's shape: `/red-setup` told an operator to run `redskilled provision`, the binary that only exists after the thing it installs, so the instruction pointed at its own precondition. The guard (`apps/dev/tests/bare-invocation-guard.test.ts`, #3071) sweeps the root README, `docs/`, `plugins/*/skills/`, `apps/*/README.md`, `apps/*/docs/` and the generated `packaging/pi/*/skills/` mirrors, and its whole discrimination is **binary token followed by another token**: naming a binary (`` `redskilled` ``) is prose, a line somebody pastes is not. `rsp` is deliberately absent — it is a repo-local surface by design — contributor docs reach `pnpm`/`node` and never a shipped binary, and `CHANGELOG.md` is a record rather than an instruction. Code-emitted operator hints spell the same form through one namer, `canonicalInvocation` (`packages/shared/canonical-invocation.ts`), because four hand-written spellings of one repair drift into four different repairs.
 - **Every workspace rides ONE product version, and the package set is derived, never hand-kept.** The number a package.json carries is what registries and marketplaces show, independent of `--version`'s build stamp. The Release standard writes every confirmed `release.version_surfaces` entry; its optional sync command is limited to exotic carriers. The ratchet (`apps/dev/tests/version-train-guard.test.ts`) derives the package set from the pnpm workspace globs plus `plugins/*`, so **a new app inherits the obligation the moment its package.json lands** and fails if its manifest drifts, is absent from the confirmed Version surfaces, or uses an unstated package-name exemption. Two scope exemptions are stated in `SCOPE_EXEMPTIONS` (`apps/dev/src/core/version-train-guard.ts`) with the reason the scope cannot be spelled there, and only a PRIVATE package may carry one.
 
-## Change report vs upstream
+## Divergence from upstream
 
-**Whenever you modify, add, or remove a skill that came from `mattpocock/skills`, record it in `CHANGES.md`**.
+**The commit that changes an upstream-derived skill is the record of why.** We used to keep a parallel ledger in `CHANGES.md`; it grew to 3083 lines describing changes git already described, and every entry was one more thing to write, review and let go stale. The commit message and the PR body carry the reason now — written once, at the moment the reason is known, next to the diff it explains.
 
-Format:
-
-```markdown
-## <skill-name> (<bucket>)
-
-- **status**: modified | added | removed | renamed-from-<original>
-- **upstream**: `<short SHA if applicable>`
-- **why**: <one-line reason>
-- **what changed**: <short bullets>
-```
-
-When bumping the SHA in `.upstream`, review `CHANGES.md`, close the matching `upstream-drift` issue, and update recorded SHAs if we cherry-picked anything.
+When you change a skill under `plugins/dev/skills/` that came from `mattpocock/skills`, say in the commit what diverged and why. When bumping the SHA in `.upstream`, say in that commit which span was reviewed and what was deliberately refused, and close the matching `upstream-drift` issue.
 
 ## Writing documents for agents
 
 Use `/writing-for-agents` when creating or editing a skill, `AGENTS.md`,
 `CLAUDE.md`, or a document reached through a context pointer. For a new
-non-Matt skill, mark it in `CHANGES.md` as `status: added` with `upstream: —`
-to make clear it is original to reddb.io.
+non-Matt skill, say in the commit that it is original to reddb.io, so a later
+reader does not go looking for an upstream counterpart.
 
 ## SKILL.md body convention
 

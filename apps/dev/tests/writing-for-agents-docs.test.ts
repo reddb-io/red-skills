@@ -56,18 +56,22 @@ describe("writing-for-agents docs contract (#3433)", () => {
     expect(skill).toContain("[WRITING-STYLE.md](WRITING-STYLE.md)");
   });
 
-  it("leaves the previous name only in the required rename status", async () => {
-    const changes = await readRepoFile("CHANGES.md");
-    expect(changes).toContain(`status**: renamed-from-${PREVIOUS_NAME}`);
-    expect(changes).toContain("upstream**: `8b36d4f`");
-
-    const hits = execFileSync("git", ["grep", "-l", PREVIOUS_NAME, "--", "."], {
-      cwd: ROOT,
-      encoding: "utf8",
-    })
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    expect(hits).toEqual(["CHANGES.md"]);
+  it("leaves the previous name nowhere in the tree", () => {
+    // The rename was recorded in the commit, not in a ledger: `CHANGES.md` was
+    // retired for describing what git already describes. So the old name must
+    // survive in NO tracked file — `git grep` exiting 1 is the pass.
+    let hits: string[] = [];
+    try {
+      hits = execFileSync("git", ["grep", "-l", PREVIOUS_NAME, "--", "."], {
+        cwd: ROOT,
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+    } catch {
+      // `git grep` exits non-zero when nothing matches — the state we want.
+    }
+    expect(hits).toEqual([]);
   });
 });
