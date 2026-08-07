@@ -65,6 +65,7 @@ import {
   REDSKILLED_RENDER_DISPLAY_ABSENT,
   type RedskilledRenderDeaths,
   type RedskilledRenderEngine,
+  type RedskilledRenderHourlySeries,
   type RedskilledRenderMetrics,
   type RedskilledRenderMetricsWindow,
   type RedskilledRenderPayload,
@@ -206,6 +207,10 @@ export interface RedskilledDashboardOptions {
   readonly maxWidth: number;
   /** How many Worker rows may be drawn before the rest are counted instead. */
   readonly maxRows: number;
+  /** How many terminal rows the complete dashboard may occupy. */
+  readonly maxHeight: number;
+  /** Expand individual death receipts; the default keeps only the diagnosis. */
+  readonly showDeathDetails: boolean;
 }
 
 export const REDSKILLED_DASHBOARD_DEFAULTS: RedskilledDashboardOptions = {
@@ -213,6 +218,8 @@ export const REDSKILLED_DASHBOARD_DEFAULTS: RedskilledDashboardOptions = {
   project: null,
   maxWidth: 200,
   maxRows: 16,
+  maxHeight: 40,
+  showDeathDetails: false,
 };
 
 const GUTTER = "  ";
@@ -257,7 +264,7 @@ export function renderRedskilledDashboard(
 
   const header = buildHeader(payload, options, selected, match);
   const hidden = selected.length - visible.length;
-  const lines = [header.line, ...rows.map((row) => row.line)];
+  const lines = [header.line, ...throughputLines(payload, options), ...rows.map((row) => row.line)];
   if (hidden > 0) {
     lines.push(clamp(`… ${hidden} more Worker(s) — the row budget is short, not the host`, options.maxWidth));
   }
@@ -272,6 +279,17 @@ export function renderRedskilledDashboard(
   // same empty table and must not produce the same screen (#3095).
   lines.push(...balanceLines(payload, options));
 
+  const maxHeight = Math.max(1, Math.floor(options.maxHeight ?? REDSKILLED_DASHBOARD_DEFAULTS.maxHeight));
+  const omittedByHeight = Math.max(0, lines.length - maxHeight);
+  const visibleLines = omittedByHeight === 0
+    ? lines
+    : maxHeight === 1
+      ? [header.line]
+      : [
+        ...lines.slice(0, maxHeight - 1),
+        clamp(`… ${omittedByHeight + 1} more row(s) — terminal height is ${maxHeight}`, options.maxWidth),
+      ];
+
   return {
     version: 1,
     generated_at: payload.generated_at,
@@ -280,7 +298,7 @@ export function renderRedskilledDashboard(
     columns: REDSKILLED_DASHBOARD_COLUMNS,
     header,
     rows,
-    lines,
+    lines: visibleLines,
     hidden_row_count: Math.max(0, hidden),
     stale: payload.staleness.stale,
   };
@@ -416,7 +434,8 @@ function buildHeader(
   )];
   if (match === "unregistered" || match === "name-only") parts.push(UNREGISTERED_MARK);
   if (match === "lapsed") parts.push(LAPSED_MARK);
-  if (model != null) parts.push(`${WINE}${WHITE}${model}${NOBG}${SOFT}`);
+  const liveRates = metrics?.history_48h == null ? null : hourlyHeadline(metrics.history_48h);
+  if (liveRates != null) parts.push(colourKeyValues(liveRates));
   const repairing = payload.workers.filter(isRepairWorker).length;
   if (repairing > 0) {
     const coding = Math.max(0, payload.host.worker_count - repairing);
@@ -431,6 +450,7 @@ function buildHeader(
     : `slots=${windows.worker_count}/${windows.worker_ceiling}`;
   parts.push(colourKeyValues(`${slots} reserve=${windows.interactive_reservation} interactive`));
   parts.push(colourKeyValues(memoryWindow(windows)));
+  if (model != null) parts.push(`${WINE}${WHITE}${model}${NOBG}${SOFT}`);
   if (counts.open_pull_requests != null) parts.push(colourKeyValues(`prs=${counts.open_pull_requests}`));
   if (counts.recently_closed != null) parts.push(colourKeyValues(`cpr=${counts.recently_closed}`));
   if (counts.open_issues != null) parts.push(colourKeyValues(`iss=${counts.open_issues}`));
@@ -570,6 +590,13 @@ function deathLines(
 ): readonly string[] {
   const deaths = payload.deaths;
   if (deaths == null || deaths.count <= 0) return [];
+  if (!options.showDeathDetails) {
+    const latest = deaths.latest;
+    const diagnosis = latest == null
+      ? `${deaths.count} posed death(s)`
+      : `${deaths.count} posed death(s) · latest ${latest.sender_class}/${latest.confidence} ${latest.last_phase}`;
+    return [clamp(`${DEATH_MARK} ${diagnosis} · use --verbose for receipts`, options.maxWidth)];
+  }
   const lines = deaths.recent.map((death) =>
     clamp(
       `${DEATH_MARK} ${death.kind} ${death.id} pid=${death.pid}` +
@@ -584,6 +611,69 @@ function deathLines(
     lines.push(clamp(`… ${hidden} more posed death(s) — the lane holds them all`, options.maxWidth));
   }
   return lines;
+}
+
+/** The two current rates, ordered exactly as the operational hierarchy. PURE. */
+function hourlyHeadline(history: NonNullable<RedskilledRenderMetrics["history_48h"]>): string | null {
+  const tokens = history.tokens_per_hour.current.value;
+  const tickets = history.tickets_per_hour.current.value;
+  const parts: string[] = [];
+  if (tokens != null) parts.push(`tk/h=${formatRate(tokens)} ${trendMark(history.tokens_per_hour.trend)}`.trim());
+  if (tickets != null) parts.push(`Tickets/h=${formatRate(tickets)} ${trendMark(history.tickets_per_hour.trend)}`.trim());
+  return parts.length === 0 ? null : parts.join(" ");
+}
+
+/** The two 48-point series, or an explicit version/measurement absence. PURE. */
+function throughputLines(
+  payload: RedskilledRenderPayload,
+  options: RedskilledDashboardOptions,
+): readonly string[] {
+  const metrics = payload.metrics;
+  if (metrics == null) {
+    return [clamp("48h throughput unavailable — daemon payload carries no live metrics", options.maxWidth)];
+  }
+  if (metrics.history_48h == null) {
+    return [clamp("48h throughput unavailable — daemon payload predates hourly history", options.maxWidth)];
+  }
+  return [
+    hourlySeriesLine("tokens", metrics.history_48h.tokens_per_hour, options),
+    hourlySeriesLine("Tickets", metrics.history_48h.tickets_per_hour, options),
+  ];
+}
+
+const SPARK = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"] as const;
+
+function hourlySeriesLine(
+  label: "tokens" | "Tickets",
+  series: RedskilledRenderHourlySeries,
+  options: RedskilledDashboardOptions,
+): string {
+  const unit = label === "tokens" ? "tokens" : "Tickets";
+  const current = series.current.value;
+  const missing = series.buckets.filter((bucket) => bucket.value == null);
+  const reason = missing[0]?.absent_reason ?? null;
+  const currentText = current == null
+    ? `now unavailable (${series.current.absent_reason ?? "no current sample"})`
+    : `now=${formatRate(current)}/h ${trendMark(series.trend)}`.trim();
+  if (options.maxWidth < 72) {
+    return clamp(`${unit} 48h unavailable at width ${options.maxWidth} — 48 hourly points need 72 columns`, options.maxWidth);
+  }
+  const missingText = missing.length === 0 ? "" : ` · ${missing.length} missing (${reason ?? "unmeasured"})`;
+  return clamp(`${unit} 48h ${sparkline(series)} · ${currentText}${missingText}`, options.maxWidth);
+}
+
+function sparkline(series: RedskilledRenderHourlySeries): string {
+  const values = series.buckets.flatMap((bucket) => bucket.value == null ? [] : [Math.max(0, bucket.value)]);
+  const max = Math.max(0, ...values);
+  return series.buckets.map((bucket) => {
+    if (bucket.value == null) return "·";
+    if (max === 0) return SPARK[0];
+    return SPARK[Math.min(SPARK.length - 1, Math.floor((Math.max(0, bucket.value) / max) * (SPARK.length - 1)))]!;
+  }).join("");
+}
+
+function trendMark(trend: RedskilledRenderHourlySeries["trend"]): string {
+  return trend === "up" ? "↑" : trend === "down" ? "↓" : trend === "flat" ? "→" : "?";
 }
 
 /** `mem=1.2G/8G 15%`, or the observed figure alone when nothing caps it. PURE. */
