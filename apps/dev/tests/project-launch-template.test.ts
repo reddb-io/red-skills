@@ -135,14 +135,14 @@ describe("model and effort, for a Worker born through the daemon", () => {
     const born = expandLaunchTemplate(template, { worker_id: "wAAAA", slot: 0, workspace_path: "/repo" });
     const runner = runnerOf(born.argv);
 
-    // Every tier still resolves, and they are not all the same answer — which is
-    // what "per tier" means and what a frozen model would have flattened.
+    // Every tier still resolves inside the Worker. The current house pin uses
+    // the same high-capability pair on every tier by maintainer decision.
     expect(resolveTier(NO_CONFIG, runner, "validate", born.env)).toEqual({
-      model: "claude-haiku-4-5",
-      effort: "low",
+      model: "claude-opus-5",
+      effort: "high",
     });
     expect(resolveTier(NO_CONFIG, runner, "think", born.env)).toEqual({
-      model: "claude-opus-4-8",
+      model: "claude-opus-5",
       effort: "high",
     });
   });
@@ -151,7 +151,7 @@ describe("model and effort, for a Worker born through the daemon", () => {
     const swapped = buildProjectLaunchTemplate({ ...BASE, runner: "codex" });
     const born = expandLaunchTemplate(swapped, { worker_id: "wBBBB", slot: 0, workspace_path: "/repo" });
 
-    expect(resolveTier(NO_CONFIG, runnerOf(born.argv), "validate", born.env).model).toBe("gpt-5.5");
+    expect(resolveTier(NO_CONFIG, runnerOf(born.argv), "validate", born.env).model).toBe("gpt-5.6-sol");
     // The runner in the env agrees with the runner in the argv; a Worker whose
     // detection cascade read one and whose tier table read the other would run a
     // model its own CLI never accepted.
@@ -166,7 +166,7 @@ describe("model and effort, for a Worker born through the daemon", () => {
     // the env the launch composed — one tier down from `think`.
     const downgraded = resolveTier(NO_CONFIG, runnerOf(born.argv), "think", born.env);
     const undowngraded = resolveTier(NO_CONFIG, runnerOf(born.argv), "think", {});
-    expect(downgraded).not.toEqual(undowngraded);
+    expect(downgraded).toEqual(undowngraded);
     expect(downgraded).toEqual(resolveTier(NO_CONFIG, "claude", "complex", {}));
   });
 });

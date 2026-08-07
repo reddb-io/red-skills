@@ -20,10 +20,12 @@ import {
   readPostWorkerFormat,
   readValidationMoments,
   readValidationResourceBudget,
+  resolveTaskRoute,
   resolveTier,
   resolveCiTimeoutSeconds,
   resolveMergeQueueTimeoutSeconds,
 } from "../../core/config.js";
+import type { TaskRouteOverrides } from "../../core/config.js";
 import {
   makeExtractAdversarialReview,
   resolveAdversarialReviewConfig,
@@ -109,6 +111,7 @@ export interface BuildProcessDepsOptions {
   current: CurrentAttempt;
   fallbackRunner: boolean;
   runner: Runner;
+  routeOverrides?: TaskRouteOverrides;
   exec?: ExecFn;
   maxIterations?: number;
   laneIdle?: LaneIdleStallConfig;
@@ -125,6 +128,7 @@ export function buildProcessDeps({
   current,
   fallbackRunner,
   runner,
+  routeOverrides,
   exec,
   maxIterations,
   laneIdle,
@@ -373,6 +377,7 @@ export function buildProcessDeps({
     },
     model,
     classifyIssue: makeIssueClassifier(config, runner, ctx.root, exec),
+    resolveRoute: (taskClass = "think") => resolveTaskRoute(config, taskClass, routeOverrides),
     resolveTier: (activeRunner, taskClass = "think") => resolveTier(config, activeRunner, taskClass, process.env),
     fallbackRunner,
     waitForReview,
