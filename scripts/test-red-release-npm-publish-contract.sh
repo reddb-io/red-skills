@@ -272,6 +272,22 @@ else
   fail "asset upload must converge on retry while major-tag reconciliation still runs"
 fi
 
+# The standalone installer downloads the RSP bundle into the source snapshot
+# used by OpenCode. Building it only for the npm tarball is insufficient: the
+# GitHub Release upload list is the installer's public artifact contract.
+github_release_step="$(mktemp)"
+trap 'rm -f "$github_release_step"' EXIT
+awk '
+  $0 == "      - name: GitHub Release" { in_step = 1 }
+  in_step && /^      - name:/ && $0 != "      - name: GitHub Release" { exit }
+  in_step { print }
+' "$WORKFLOW" >"$github_release_step"
+if grep -qF 'dist/rsp.bundle.min.mjs' "$github_release_step"; then
+  pass "GitHub Release publishes the RSP bundle consumed by the installer"
+else
+  fail "GitHub Release must upload dist/rsp.bundle.min.mjs for standalone installs"
+fi
+
 # The fleet-activity deferral was REMOVED (2026-07-22): red-publish never
 # touches main and running workers pin their bundle at spawn, so publishing
 # during a fleet is safe; the old gate repeatedly held releases hostage to
