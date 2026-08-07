@@ -466,10 +466,12 @@ describe("wiring integration — real buildProcessDeps over a fake exec", () => 
         cmd: "codex",
         args: [
           "exec",
+          // The shipped codex table is one pair on EVERY tier now, validate
+          // included — the maintainer pin, not a per-tier ladder.
           "--model",
-          "gpt-5.5",
+          "gpt-5.6-sol",
           "-c",
-          "model_reasoning_effort=low",
+          "model_reasoning_effort=high",
           "-C",
           root,
           "--sandbox",
