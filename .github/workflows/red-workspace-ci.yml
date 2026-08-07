@@ -187,9 +187,11 @@ jobs:
       # checkout and nothing else, so every `pnpm` was `command not found` and
       # the contract read that as manifest drift.
       - name: Test bundle-app contract
+        if: env.RUN_ANY == 'true'
         run: scripts/test-bundle-app-contract.sh
 
       - name: Test generate-manifests contract
+        if: env.RUN_ANY == 'true'
         run: scripts/test-generate-manifests-contract.sh
 
       - name: Lint workspace (oxlint, import + correctness)
