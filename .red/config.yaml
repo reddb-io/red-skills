@@ -102,7 +102,7 @@ release:
   scheme: semver
   trigger: version-pr
   prerelease: false
-  execution: pinned
+  execution: vendored
   version_surfaces:
     - { path: package.json, format: npm }
     - { path: apps/afk-container/package.json, format: npm }
