@@ -283,6 +283,29 @@ export interface RedskilledRenderMetrics {
   readonly generated_at: string;
   readonly hour: RedskilledRenderMetricsWindow;
   readonly day: RedskilledRenderMetricsWindow;
+  /** Optional for payloads composed by daemons shipped before hourly history. */
+  readonly history_48h?: RedskilledRenderHourlyHistory;
+}
+
+export interface RedskilledRenderHourlyBucket {
+  readonly hour: string;
+  readonly value: number | null;
+  readonly absent_reason: string | null;
+}
+
+export interface RedskilledRenderHourlySeries {
+  readonly buckets: readonly RedskilledRenderHourlyBucket[];
+  readonly current: RedskilledRenderMetricValue;
+  readonly trend: "up" | "down" | "flat" | null;
+  readonly trend_absent_reason: string | null;
+}
+
+export interface RedskilledRenderHourlyHistory {
+  readonly hours: 48;
+  readonly from: string;
+  readonly to: string;
+  readonly tokens_per_hour: RedskilledRenderHourlySeries;
+  readonly tickets_per_hour: RedskilledRenderHourlySeries;
 }
 
 /** One project's repository counts; `null` for every outcome but a count. */
