@@ -681,6 +681,41 @@ not restarted by systemd. Unit status reports an installed and enabled but
 inactive service as a finding, so supervision drift is observable even on a host
 whose auto-spawn floor keeps requests working.
 
+## Amendment 11 — runtime drift rendezvous and one supervised birth authority (#3481)
+
+A live incident exposed four individually valid mechanisms composing into an
+outage: shells with and without `XDG_RUNTIME_DIR` resolved different sockets;
+the machine claim refused the second path instead of joining it; registration
+intent lived beside that movable socket; and a stale `Restart=always` unit raced
+client auto-spawn while an in-major replacement was trying to take over. The
+singleton stayed safe, but the queue stopped draining and systemd retried the
+obsolete entry indefinitely.
+
+**Decision: the machine claim is a same-user rendezvous and a cross-user
+refusal.** When its live owner has the caller's uid, clients route socket-local
+operations to the claim's socket even if their own runtime derivation differs.
+A live claim owned by another uid remains a hard refusal: joining it would run
+Workers with the wrong credentials.
+
+**Registration intent is host state.** Its atomic `0600` snapshot lives in the
+host-scoped daemon home, beside the durable event lane, not in either runtime
+directory. Socket, spawn lock and lease remain runtime-local. `project_stop`
+still durably removes intent, so relocating the snapshot adds no resurrection
+path; it only lets a successor rehydrate the one canonical live set after XDG
+drift or replacement.
+
+**An installed user unit is the sole birth authority.** A cold client asks
+systemd to start that unit and never directly auto-spawns a rival. Auto-spawn
+remains the supported floor only when no unit is installed. Before a supervised
+in-major replacement releases the socket, the daemon resolves the exact
+successor, atomically writes an `ExecStart` drop-in and successfully reloads
+systemd. Failure leaves the old daemon serving. Only then does it exit for
+`Restart=always` to revive the resolved entry.
+
+The shipped unit also bounds restart bursts to five starts per 60 seconds. This
+is a circuit breaker, not recovery: a stale holder becomes a visible failed unit
+instead of consuming the host in an unbounded singleton collision loop.
+
 ## Recovering from a bad two-player migration
 
 The way back, for an operator whose machine the migration left confusing. Every

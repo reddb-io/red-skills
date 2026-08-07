@@ -1875,7 +1875,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     // The successor is found FIRST. A published bundle this host cannot reach
     // costs the upgrade and nothing else: the throw leaves this daemon serving,
     // still holding every Worker, still reporting the version it actually runs.
-    const prepared = prepareRedskilledReplacement(decision, replacementIO);
+    const prepared = prepareRedskilledReplacement(decision, replacementIO, paths, idleMs);
     replacementState = "in-progress";
     await eventLane.flush().catch(() => undefined);
     await registrationIntentStore.flush().catch(() => undefined);

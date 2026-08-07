@@ -72,7 +72,7 @@ describe("redskilled machine scope", () => {
     expect(await socketAnswers(b.socketPath)).toBe(false);
   });
 
-  it("refuses a client that would auto-spawn a second daemon, without spawning it", async () => {
+  it("joins the live daemon when the same uid resolves another runtime socket", async () => {
     const machineDir = await machineRoot();
     const a = await sessionOnMachine(machineDir, "a");
     const b = await sessionOnMachine(machineDir, "b");
@@ -80,8 +80,30 @@ describe("redskilled machine scope", () => {
     const first = await startRedskilledDaemon({ paths: a });
     running.push(first);
 
-    await expect(ensureRedskilledDaemon(b)).rejects.toBeInstanceOf(RedskilledMachineHeldError);
+    await expect(ensureRedskilledDaemon(b)).resolves.toBe("joined");
+    await expect(readRedskilledHostState(b)).resolves.toMatchObject({
+      pid: first.hostState().pid,
+      scope: { socket_path: a.socketPath, owner_uid: currentMachineOwner().uid },
+    });
     expect(await socketAnswers(b.socketPath)).toBe(false);
+  });
+
+  it("still refuses a live machine claim owned by another uid", async () => {
+    const machineDir = await machineRoot();
+    const paths = await sessionOnMachine(machineDir, "foreign");
+    const store = createRedskilledMachineClaimStore(paths.machineClaimPath, {
+      machineIdHash: paths.machineIdHash,
+      sessionKeyHash: "foreign-session",
+      socketPath: "/tmp/foreign/redskilled.sock",
+    });
+    await store.claim({
+      pid: process.pid,
+      startTime: "2026-08-07T00:00:00.000Z",
+      uid: currentMachineOwner().uid + 1,
+    });
+
+    await expect(ensureRedskilledDaemon(paths)).rejects.toBeInstanceOf(RedskilledMachineHeldError);
+    expect(await socketAnswers(paths.socketPath)).toBe(false);
   });
 
   it("does not let a runtime directory full of dead leases admit a second daemon", async () => {

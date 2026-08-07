@@ -228,6 +228,55 @@ describe("a registration outlives its window while the project still drains", ()
     });
   });
 
+  it("survives replacement onto another runtime directory without project_start", async () => {
+    const home = await scratch("redskilled-home-");
+    const machine = await scratch("redskilled-machine-");
+    const firstRuntime = await scratch("redskilled-runtime-a-");
+    const secondRuntime = await scratch("redskilled-runtime-b-");
+    const machineClaimPath = join(machine, "redskilled.machine.claim.toon");
+    const firstPaths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: "runtime-a", REDSKILLED_MACHINE_DIR: machine },
+      runtimeDir: firstRuntime,
+      homeDir: home,
+      machineClaimPath,
+    });
+    const secondPaths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: "runtime-b", REDSKILLED_MACHINE_DIR: machine },
+      runtimeDir: secondRuntime,
+      homeDir: home,
+      machineClaimPath,
+    });
+    expect(firstPaths.registrationIntentPath).toBe(secondPaths.registrationIntentPath);
+
+    const first = await startRedskilledDaemon({
+      paths: firstPaths,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      launch: recordingLaunch([]),
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([3]) },
+    });
+    running.push(first);
+    first.registerProject(request());
+    await first.pollQueueDiscovery();
+    await first.stop({ reason: "replaced" });
+
+    const successor = await startRedskilledDaemon({
+      paths: secondPaths,
+      ceiling: UNBOUNDED_HOST_CEILING,
+      sampleMs: 0,
+      demandMs: 0,
+      launch: recordingLaunch([]),
+      queueDiscovery: { intervalMs: 0, transport: async () => answer([3]) },
+    });
+    running.push(successor);
+
+    expect(successor.hostState().registrations?.[0]).toMatchObject({
+      project_label: "acme/widgets",
+      target: 1,
+    });
+  });
+
   it("keeps holding a project with open work past its deadline, with no session at all", async () => {
     const clock = testClock();
     const daemon = await startRedskilledDaemon({

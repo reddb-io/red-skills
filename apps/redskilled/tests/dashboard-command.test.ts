@@ -94,7 +94,12 @@ describe("the dashboard always answers", () => {
     // find out why something is quiet.
     const io = capture();
     const code = await runDashboard([], {
-      paths: resolveRedskilledPaths({ env: { XDG_RUNTIME_DIR: "/nonexistent-for-this-test" } }),
+      paths: resolveRedskilledPaths({
+        env: {
+          XDG_RUNTIME_DIR: "/nonexistent-for-this-test",
+          REDSKILLED_MACHINE_DIR: "/nonexistent-for-this-test-machine",
+        },
+      }),
       write: io.write,
       warn: io.warn,
       // No spawn, no wait: this test is about what the command WRITES when
@@ -110,7 +115,12 @@ describe("the dashboard always answers", () => {
   it("says why on stderr while still writing to stdout", async () => {
     const io = capture();
     await runDashboard([], {
-      paths: resolveRedskilledPaths({ env: { XDG_RUNTIME_DIR: "/nonexistent-for-this-test" } }),
+      paths: resolveRedskilledPaths({
+        env: {
+          XDG_RUNTIME_DIR: "/nonexistent-for-this-test",
+          REDSKILLED_MACHINE_DIR: "/nonexistent-for-this-test-machine",
+        },
+      }),
       write: io.write,
       warn: io.warn,
       // No spawn, no wait: this test is about what the command WRITES when

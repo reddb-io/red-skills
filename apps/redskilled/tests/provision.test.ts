@@ -345,6 +345,8 @@ describe("the optional supervising unit", () => {
     });
 
     expect(unit).toContain("Restart=always");
+    expect(unit).toContain("StartLimitIntervalSec=60");
+    expect(unit).toContain("StartLimitBurst=5");
     expect(unit).toContain("ExecStart=/usr/bin/node /bundles/redskilled.bundle.min.mjs serve");
     expect(unit).toContain("--socket /run/user/1000/red-skills/redskilled.sock");
     expect(unit).toContain("WantedBy=default.target");

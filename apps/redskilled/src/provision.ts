@@ -417,8 +417,8 @@ export interface RedskilledUserUnitInput {
  * The optional supervising unit, as text.
  *
  * It adds `Restart=always` to the identical binary, socket and contract the
- * auto-spawn path uses (rule 7) — one behaviour with a supervisor, never a second
- * spawn path. Rendering it is separate from installing it because setup shows the
+ * auto-spawn path uses (rule 7); once installed it becomes the sole birth
+ * authority rather than a second spawn path. Rendering it is separate from installing it because setup shows the
  * operator what it is about to write.
  */
 export function renderRedskilledUserUnit(input: RedskilledUserUnitInput): string {
@@ -426,6 +426,8 @@ export function renderRedskilledUserUnit(input: RedskilledUserUnitInput): string
   return [
     "[Unit]",
     "Description=redskilled — the host-scoped execution daemon (ADR 0130)",
+    "StartLimitIntervalSec=60",
+    "StartLimitBurst=5",
     "",
     "[Service]",
     "Type=simple",

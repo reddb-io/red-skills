@@ -166,18 +166,22 @@ of it.
   what a `.red/config.yaml` is — so only decided values cross the socket. A
   malformed value is named on stderr and ignored, never fatal: this line renders
   on every turn, and a blank statusline is the harder failure to diagnose.
-- **Supervision is optional; auto-spawn is the floor.** The `unit install`
+- **Supervision is optional; auto-spawn is the floor only without it.** The `unit install`
   command writes a user unit whose `ExecStart` is the very argv a client spawn builds —
   one builder, so a flag cannot reach one start path and miss the other — plus
   `Restart=always`, which revives a daemon after either a failed or clean exit *without a
-  client having to want work first*. A host that never installs it is a supported
+  client having to want work first*. Once installed, the unit is the sole birth
+  authority: a cold client asks systemd to start it instead of racing it with a
+  direct spawn. Restart bursts are bounded (`5` starts per `60` seconds), so a
+  stale holder becomes a visible failed unit rather than an unbounded storm. A host that never installs it is a supported
   configuration and the status says so (`floor: "auto-spawn"`); the binary, the
   socket and the contract are identical either way.
 - **A superseded daemon replaces itself, and a Worker never notices.** The daemon
   resolves the published version on its own tick and, when a newer one exists,
   finds a successor that runs *exactly that version*, flushes the lane, lets go
-  of the socket and the lease, and starts it — or, under a supervisor, exits
-  with a distinct non-zero code before `Restart=always` starts it. Workers are init-system units, so
+  of the socket and the lease, and starts it. Under a supervisor it first writes
+  and reloads an atomic `ExecStart` drop-in for that resolved successor, then exits
+  with a distinct non-zero code so `Restart=always` cannot revive a stale entry. Workers are init-system units, so
   this is a restart and not an evacuation: the successor re-adopts every one of
   them off the lane. A published bundle this host cannot reach costs the upgrade
   and nothing else, because the successor is found *before* anything is given up.
@@ -256,9 +260,11 @@ $RS provision --workspace host # a lane under the home: provision the home too
 $RS provision --install-unit   # also write the optional supervising user unit
 ```
 
-- **The daemon owns its state home.** The socket and lease stay in the session
-  runtime directory; the durable event/narrative lane is the host-scoped
-  `~/.red/redskilled/redskilled.log.toonl`. The daemon creates that private home
+- **The daemon owns its state home.** The socket, spawn lock and lease stay in the session
+  runtime directory; the durable event/narrative lane and registration-intent
+  snapshot are host-scoped under `~/.red/redskilled/`. A successor therefore
+  restores the same project drains even if XDG availability changes its socket
+  directory. The daemon creates that private home
   on first append, and `provision` may create it earlier. Host policy remains in
   the sibling `~/.red/config.yaml`. A workspace lane rooted inside the home
   (`plugins.dev.workspace.target: host`, or a custom parent under it) uses the
@@ -282,9 +288,11 @@ $RS provision --install-unit   # also write the optional supervising user unit
   not one: absent-and-unneeded is `ok` with the declaration that says so, and
   only absent-and-needed is a finding.
 - **The optional unit is optional.** It adds `Restart=always` over the same
-  binary, socket and contract auto-spawn uses (rule 7), and an absent unit is
+  binary, socket and contract auto-spawn uses (rule 7), and becomes the only
+  start authority while installed. An absent unit is
   reported as `ok`. An installed and enabled but inactive unit is reported as a
-  finding. An existing unit file is never rewritten.
+  finding. An existing unit file is never rewritten by provisioning; an in-major
+  self-replacement atomically overrides only `ExecStart` through a managed drop-in.
 
 ### Host-wide daemon policy
 

@@ -30,7 +30,7 @@ import {
   REDSKILLED_BUNDLE_ASSET,
   type RedskilledClientConfig,
 } from "../src/client.js";
-import { socketAnswers } from "../src/daemon.js";
+import { socketAnswers, startRedskilledDaemon } from "../src/daemon.js";
 import { RedskilledDaemonEntryError } from "../src/daemon-entry.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { sendRedskilledRequest } from "../src/protocol.js";
@@ -39,7 +39,9 @@ import {
   installRedskilledUnit,
   planRedskilledUnit,
   readRedskilledUnitStatus,
+  redskilledReplacementDropInPath,
   redskilledUnitPath,
+  repointRedskilledUnitForReplacement,
   REDSKILLED_SUPERVISED_ENV,
   REDSKILLED_UNIT_NAME,
   uninstallRedskilledUnit,
@@ -169,6 +171,8 @@ describe("the user unit that supervises the daemon", () => {
     }
     // The whole reason the unit exists.
     expect(plan.text).toContain("Restart=always");
+    expect(plan.text).toContain("StartLimitIntervalSec=60");
+    expect(plan.text).toContain("StartLimitBurst=5");
     expect(plan.text).toContain(`Environment="${REDSKILLED_SUPERVISED_ENV}=1"`);
     expect(plan.text).toContain(`Environment="REDSKILLED_SESSION=${paths.sessionKey}"`);
     expect(plan.text).toContain("WantedBy=default.target");
@@ -198,12 +202,16 @@ describe("the user unit that supervises the daemon", () => {
       env: unitEnv,
       ...(config.entryLookup == null ? {} : { entryLookup: config.entryLookup }),
     });
+    const oldReplacement = redskilledReplacementDropInPath(unitEnv);
+    await mkdir(resolve(oldReplacement, ".."), { recursive: true });
+    await writeFile(oldReplacement, "[Service]\nExecStart=/obsolete-entry\n");
     const install = recordingRun();
 
     const installed = await installRedskilledUnit(plan, { run: install.run });
 
     expect(installed.installed).toBe(true);
     expect(readFileSync(plan.unitPath, "utf8")).toBe(plan.text);
+    expect(existsSync(oldReplacement)).toBe(false);
     expect(install.calls).toEqual([
       ["systemctl", "--user", "daemon-reload"],
       // `--now`: an install that only registered the unit would leave the machine
@@ -211,12 +219,33 @@ describe("the user unit that supervises the daemon", () => {
       ["systemctl", "--user", "enable", "--now", REDSKILLED_UNIT_NAME],
     ]);
 
+    await writeFile(oldReplacement, "[Service]\nExecStart=/obsolete-entry\n");
     const uninstall = recordingRun();
     const removed = await uninstallRedskilledUnit({ run: uninstall.run, env: unitEnv });
 
     expect(existsSync(plan.unitPath)).toBe(false);
+    expect(existsSync(oldReplacement)).toBe(false);
     expect(uninstall.calls[0]).toEqual(["systemctl", "--user", "disable", "--now", REDSKILLED_UNIT_NAME]);
     expect(removed.steps.map((step) => step.step)).toEqual(["disable", "remove-unit", "daemon-reload"]);
+  });
+
+  it("atomically repoints the supervised restart to the resolved successor", async () => {
+    const { paths, publishedBundle } = await host();
+    const env = { HOME: paths.runtimeDir };
+    const reload = recordingRun();
+
+    const path = repointRedskilledUnitForReplacement(
+      { command: process.execPath, args: [publishedBundle] },
+      paths,
+      { env, idleMs: 60_000, run: reload.run },
+    );
+
+    expect(path).toBe(redskilledReplacementDropInPath(env));
+    const dropIn = readFileSync(path, "utf8");
+    expect(dropIn).toContain("ExecStart=\n");
+    expect(dropIn).toContain(publishedBundle);
+    expect(dropIn).toContain(paths.socketPath);
+    expect(reload.calls).toEqual([["systemctl", "--user", "daemon-reload"]]);
   });
 
   it("revives a cleanly self-stopped daemon with no client asking for work", async () => {
@@ -264,6 +293,39 @@ describe("the user unit that supervises the daemon", () => {
     expect(launches(launchLog)).toHaveLength(2);
     expect(launches(launchLog).every((launch) => launch.version === PUBLISHED_VERSION)).toBe(true);
   }, 90_000);
+
+  it("routes a cold client through the installed supervisor instead of auto-spawning a rival", async () => {
+    const { paths, config, launchLog, root } = await host();
+    // The unit was installed from one environment, while this client resolved a
+    // different runtime directory. There is no live claim until systemd starts
+    // the unit, so the rendezvous has to be discovered during the wait.
+    const clientPaths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: "other-runtime", REDSKILLED_MACHINE_DIR: root },
+      runtimeDir: join(root, "other-runtime"),
+      homeDir: root,
+      machineClaimPath: paths.machineClaimPath,
+    });
+    let supervisorStarts = 0;
+    const outcome = await ensureRedskilledDaemon(clientPaths, {
+      ...config,
+      readyTimeoutMs: 300,
+      supervisor: {
+        installed: () => true,
+        start: async () => {
+          supervisorStarts += 1;
+          await startRedskilledDaemon({ paths, idleMs: 60_000 });
+        },
+      },
+    });
+    started.push(paths.socketPath);
+
+    expect(outcome).toBe("joined");
+    expect(supervisorStarts).toBe(1);
+    await expect(ensureRedskilledDaemon(clientPaths)).resolves.toBe("joined");
+    // The launch log belongs to the client's published-bundle auto-spawn path.
+    // Empty proves only the supervisor created the daemon.
+    expect(launches(launchLog)).toEqual([]);
+  });
 });
 
 describe("a host with no unit installed", () => {

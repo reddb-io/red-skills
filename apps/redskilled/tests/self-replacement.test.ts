@@ -407,9 +407,10 @@ describe("a daemon that has observed a newer published version", () => {
   });
 
   it("hands over by exiting when a supervisor will revive it", async () => {
-    const { paths, env } = await session();
+    const { paths, env, publishedBundle } = await session();
     const exits: number[] = [];
     const spawns: string[] = [];
+    const repoints: string[] = [];
     const daemon = await startRedskilledDaemon({
       paths,
       idleMs: 60_000,
@@ -417,14 +418,27 @@ describe("a daemon that has observed a newer published version", () => {
       daemonVersion: RUNNING_VERSION,
       supervised: true,
       publishedVersion: async () => PUBLISHED_VERSION,
-      replacementIO: { env, exit: (code) => exits.push(code), spawnSuccessor: (entry) => spawns.push(entry.command) },
+      replacementIO: {
+        env,
+        resolveEntry: () => ({
+          command: process.execPath,
+          args: [publishedBundle],
+          version: PUBLISHED_VERSION,
+          source: "bundle-cache",
+          searched: [publishedBundle],
+        }),
+        repointSupervisor: (entry) => repoints.push(entry.version),
+        exit: (code) => exits.push(code),
+        spawnSuccessor: (entry) => spawns.push(entry.command),
+      },
     });
     running.push(daemon);
 
     expect(await daemon.checkForReplacement()).toMatchObject({ act: "replace", via: "supervisor-exit" });
 
-    // Nothing is started here: the unit's `Restart=always` starts the new
-    // process, which is why the exit is non-zero.
+    // The unit is repointed BEFORE the old daemon releases the socket. Only then
+    // does `Restart=always` start the new process from the published entry.
+    expect(repoints).toEqual([PUBLISHED_VERSION]);
     expect(spawns).toEqual([]);
     expect(exits).toEqual([REDSKILLED_REPLACE_EXIT_CODE]);
     // And it let go first: the socket is free for the successor to bind.
