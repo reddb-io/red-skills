@@ -1,6 +1,6 @@
 {
   "name": "@reddb-io/red-skills-memory",
-  "version": "3.11.0",
+  "version": "3.11.1",
   "private": true,
   "description": "reddb.io memory plugin - governed operational memory for code agents that lives on top of dev. Supports markdown notes, RedDB graph memory, zero-token governed recall, context packs, claim checks, readiness, optional lifecycle hooks, MCP/HTTP read surfaces, Workbench diagnostics, and Skill telemetry for self-improvement.",
   "license": "Apache-2.0",
