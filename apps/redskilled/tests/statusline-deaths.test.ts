@@ -222,6 +222,7 @@ describe("the dashboard carries the receipt the head has no room for", () => {
       project: "acme/widgets",
       maxWidth: 200,
       maxRows: 16,
+      showDeathDetails: true,
     });
     expect(dashboard.header.line).toContain("†1 oomd");
     expect(dashboard.header.deaths?.count).toBe(1);
@@ -271,7 +272,11 @@ describe("a live daemon serves both answers over the socket", () => {
     expect(render.line).toContain("v3.2.1");
     expect(render.line).toContain("†1 oomd");
 
-    const dashboard = await readRedskilledDashboard(paths, { mode: "local", project: "acme/widgets" });
+    const dashboard = await readRedskilledDashboard(paths, {
+      mode: "local",
+      project: "acme/widgets",
+      showDeathDetails: true,
+    });
     expect(dashboard.header.line).toContain("†1 oomd");
     expect(dashboard.lines.some((line) => line.includes("worker:w-9"))).toBe(true);
   });
