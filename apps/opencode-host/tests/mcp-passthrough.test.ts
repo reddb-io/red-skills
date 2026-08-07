@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   planPluginMcp,
   readMcpJson,
+  resolveHomeScriptPath,
   resolveScriptPath,
   rewriteServer,
 } from "../src/mcp-passthrough.js";
@@ -62,6 +63,38 @@ describe("resolveScriptPath (Slice 3 search order)", () => {
     writeFile("dev/hooks/red-fetch.mjs", "console.log(1)");
     const r = resolveScriptPath(root, "dev", "hooks/red-fetch.mjs");
     expect(r.path).toContain("dev/hooks/red-fetch.mjs");
+  });
+});
+
+describe("resolveHomeScriptPath", () => {
+  it("resolves a launcher installed under the user's home", () => {
+    writeFile("home/.red-skills/current/packaging/npm/bin/rsp.mjs", "console.log(1)");
+    const body =
+      'if [ -f "$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs" ]; then exec node "$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs" mcp; fi';
+
+    expect(resolveHomeScriptPath(body, join(root, "home"))).toBe(
+      join(root, "home/.red-skills/current/packaging/npm/bin/rsp.mjs"),
+    );
+  });
+
+  it("keeps the mcp argument before a shell command separator", () => {
+    writeFile("home/.red-skills/current/packaging/npm/bin/rsp.mjs", "console.log(1)");
+    const launcher = join(root, "home/.red-skills/current/packaging/npm/bin/rsp.mjs");
+    const previousHome = process.env.HOME;
+    process.env.HOME = join(root, "home");
+    try {
+      const { entry, warnings } = rewriteServer(root, "dev", "rsp", {
+        command: "sh",
+        args: [
+          "-c",
+          'if [ -f "$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs" ]; then exec node "$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs" mcp; fi',
+        ],
+      });
+      expect(warnings).toEqual([]);
+      expect(entry.command).toEqual(["node", launcher, "mcp"]);
+    } finally {
+      process.env.HOME = previousHome;
+    }
   });
 });
 
@@ -150,6 +183,12 @@ describe("planPluginMcp against the real source tree", () => {
     expect(castle).toBeDefined();
     expect(castle!.entry.type).toBe("local");
     expect(castle!.entry.command[1]).toMatch(/castle-mcp\.sh$/);
+  });
+
+  it("keeps the installed RedSkills rsp launcher in the runtime fallback chain", () => {
+    const raw = readMcpJson(REAL_PLUGINS, "dev")!;
+    const body = raw.mcpServers!.rsp!.args![1]!;
+    expect(body).toContain('$HOME/.red-skills/current/packaging/npm/bin/rsp.mjs');
   });
 
   it("plans the memory plugin's red-memory and red-ui MCPs", () => {
