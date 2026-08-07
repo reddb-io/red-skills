@@ -20,11 +20,12 @@ import { registrationLaunch } from "../src/runtime/registration-launch.js";
 const BUNDLE_ARGV = ["/usr/bin/node", "/published/bundle.mjs"] as const;
 
 /** The launch a `project_start` hands the daemon, with no host in the test. */
-function launch(runner = "claude") {
+function launch(runner = "claude", path = "/published/node_modules/.bin:/usr/bin") {
   return registrationLaunch({
     runner,
     bundleArgv: BUNDLE_ARGV,
     logPath: "/repo/.red/tmp/logs/2026-08-03/worker-{{worker_id}}.log",
+    path,
   });
 }
 
@@ -57,13 +58,22 @@ describe("the launch a registration states", () => {
     expect(launch().env?.REDSKILLED_WORKER_ID).toBe("{{worker_id}}");
   });
 
-  it("delivers all four to the process, with the daemon's facts written in", () => {
+  it("carries the registering runtime's tool path to the detached Worker (#3493)", () => {
+    // The handoff explicitly tells the implementer to use `rsp`. Registrations
+    // outlive the MCP process that resolved that shipped binary, so the path to
+    // the published package must be stated in the launch rather than inferred
+    // later from the daemon's smaller service environment.
+    expect(launch("codex").env?.PATH).toBe("/published/node_modules/.bin:/usr/bin");
+  });
+
+  it("delivers the identity and tool-path facts to the process", () => {
     const { expanded } = born("2aa48bea-81a5-409d-9310-ab0a9805", 1, "codex");
 
     expect(expanded.env.RED_AFK_WORKER_ID).toBe("2aa48bea-81a5-409d-9310-ab0a9805");
     expect(expanded.env.RED_AFK_SLOT).toBe("1");
     expect(expanded.env.RED_AFK_RUNNER).toBe("codex");
     expect(expanded.env.REDSKILLED_WORKER_ID).toBe("2aa48bea-81a5-409d-9310-ab0a9805");
+    expect(expanded.env.PATH).toBe("/published/node_modules/.bin:/usr/bin");
     // The argv half always arrived, which is why the loss stayed invisible.
     expect(expanded.argv).toEqual([...BUNDLE_ARGV, "run", "--once", "--runner", "codex"]);
   });
