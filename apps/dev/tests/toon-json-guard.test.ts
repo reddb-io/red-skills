@@ -195,7 +195,16 @@ describe("toon JSON file I/O guard", () => {
     expect(formatToonJsonGuardViolations({ findings, allowlist })).toEqual([]);
   });
 
-  it("stays test-only — no runtime src imports the guard or typescript (keeps the compiler out of the bundle)", () => {
+  it("stays test-only — no runtime src imports a compiler guard or typescript (keeps the compiler out of the bundle)", () => {
+    // A guard that reads code needs the compiler, and the compiler must not reach
+    // the bundle — so a guard may import it and nothing else may. Declared as a
+    // SET rather than one hardcoded filename: the second guard to need an AST
+    // (`github-read-route-guard`, #3451) failed this check for existing, which is
+    // a rule that cannot grow refusing the growth it was written to allow.
+    const COMPILER_GUARDS = ["toon-json-guard.ts", "github-read-route-guard.ts"];
+    const guardImport = new RegExp(
+      `from ["'][^"']*(${COMPILER_GUARDS.map((g) => g.replace(".ts", "")).join("|")})(\\.js)?["']`,
+    );
     const offenders: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -204,9 +213,9 @@ describe("toon JSON file I/O guard", () => {
           walk(p);
           continue;
         }
-        if (!entry.name.endsWith(".ts") || entry.name.includes(".test.") || entry.name === "toon-json-guard.ts") continue;
+        if (!entry.name.endsWith(".ts") || entry.name.includes(".test.") || COMPILER_GUARDS.includes(entry.name)) continue;
         const text = readFileSync(p, "utf8");
-        if (/from ["'][^"']*toon-json-guard(\.js)?["']/.test(text) || /from ["']typescript["']/.test(text)) {
+        if (guardImport.test(text) || /from ["']typescript["']/.test(text)) {
           offenders.push(relative(ROOT, p));
         }
       }

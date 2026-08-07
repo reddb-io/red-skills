@@ -1,5 +1,6 @@
 import { doLanding, type LandingDeps, type LandingInput, type LandingHookContexts } from "../src/core/landing.js";
 import { createFileLandLock, type LandLock, type LandLockDeps, type LandLockFs } from "../src/core/land-lock.js";
+import { githubMergeReadFromExec } from "./support/github-merge-read.js";
 
 export { doLanding, createFileLandLock, type LandLock, type LandLockDeps, type LandLockFs };
 import type { ExecResult } from "../src/core/merge.js";
@@ -394,8 +395,6 @@ export function harness(opts: Opts = {}): Harness {
           if (opts.conflictResolve === "resolve") mergeResolved = true;
         }
       : undefined,
-    waitForReview: opts.waitForReview ? { check: "CodeRabbit", sleep: async () => {} } : undefined,
-    ciAwait: opts.ciAware ? { sleep: async () => {}, maxPolls: 2 } : undefined,
     // #2986: always injected so no queue landing under test can reach a real timer.
     // A blind confirmation needs a budget LARGER than the blind-probe threshold,
     // or `pending` would win the race and hide the outcome under test (#3160).
@@ -471,6 +470,10 @@ export function harness(opts: Opts = {}): Harness {
     preMerge: () => "pre_merge-ctx",
     postMerge: () => "post_merge-ctx",
   };
+
+  const github = githubMergeReadFromExec(deps.mergeExec);
+  deps.waitForReview = opts.waitForReview ? { github, check: "CodeRabbit", sleep: async () => {} } : undefined;
+  deps.ciAwait = opts.ciAware ? { github, sleep: async () => {}, maxPolls: 2 } : undefined;
 
   return {
     deps,

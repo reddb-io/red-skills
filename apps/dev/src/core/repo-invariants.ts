@@ -98,6 +98,12 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     why: "the GitHub balance must be asked, never accumulated (#3095, ADR 0132 Amendment 2); the swept code spans packages/github, apps/redskilled and apps/dev, the suite lives in apps/dev",
   },
   {
+    name: "invariants:github-read-routing",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "raw GitHub reads must shrink toward @reddb-io/github across apps/dev, apps/redskilled and packages/red-castle (#3451); the inventory suite lives in apps/dev",
+  },
+  {
     name: "invariants:toon-catalog-pin",
     scope: "apps/dev",
     script: "test:invariants",

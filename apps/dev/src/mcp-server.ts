@@ -29,6 +29,7 @@ import {
 import { HOST_STATE_TRANSITION_LABELS } from "./core/state-transition.js";
 import { parseCurrentBlocker } from "./core/blocker-state.js";
 import { createMergeDriverIo } from "./runtime/merge-driver-io.js";
+import { createDevGithubMergeRead } from "./runtime/github-merge-read.js";
 import { createMedicIo } from "./runtime/medic-io.js";
 import { createFileMedicStore, runMedicPass } from "./core/pr-medic.js";
 import { resolveRepoContext, resolveRepoSlug } from "./runtime/wire.js";
@@ -240,6 +241,7 @@ export async function startResidentMergeDriver(root = process.cwd()): Promise<vo
   if (!lease.acquired) return;
 
   const store = createFileMergeDriverStore(paths);
+  let githubMergeRead: ReturnType<typeof createDevGithubMergeRead> | undefined;
   let running = false;
   const pass = async (): Promise<void> => {
     if (running) return;
@@ -249,8 +251,9 @@ export async function startResidentMergeDriver(root = process.cwd()): Promise<vo
       const armed = Object.values(state.prs).some((record) => record.status === "armed");
       if (armed) {
         const context = await resolveRepoContext(root);
+        githubMergeRead ??= createDevGithubMergeRead(root, "resident:merge-driver");
         const entries = await runMergeDriverPass(
-          createMergeDriverIo({ cwd: context.root, repo: context.repo }),
+          createMergeDriverIo({ cwd: context.root, repo: context.repo }, githubMergeRead),
           store,
           { nowEpoch: Math.floor(Date.now() / 1000) },
         );

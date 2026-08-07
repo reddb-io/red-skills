@@ -17,6 +17,7 @@
 
 import { planGithubRestRead } from "@reddb-io/github";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
+import type { GithubMergeRead } from "./github-merge-read.js";
 import {
   classifyDirtyTree,
   classifyDirtCollision,
@@ -512,6 +513,8 @@ export interface WaitForReviewInput {
   intervalMs?: number;
   /** Max time for one GitHub probe before treating that poll as pending. */
   probeTimeoutMs?: number;
+  /** Routed, conditional GitHub reads for the poll. */
+  github: GithubMergeRead;
 }
 
 /** Why {@link waitForReviewCheck} stopped waiting. All three proceed to merge —
@@ -620,10 +623,13 @@ export async function waitForReviewCheck(
       ...(input.probeTimeoutMs ? { probeTimeoutMs: input.probeTimeoutMs } : {}),
       check: input.check,
     });
-    const res = await boundedProbe(
-      () => exec(["gh", "-R", repo, "pr", "checks", String(prNumber), "--json", "name,state"]),
-      input.probeTimeoutMs,
-    );
+    const res = await boundedProbe(async () => {
+      try {
+        return { code: 0, stdout: await input.github.reviewChecks(repo, prNumber), stderr: "" };
+      } catch (error) {
+        return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
+      }
+    }, input.probeTimeoutMs);
     const match = parsePrChecks(res.stdout).find((c) => c.name.toLowerCase().includes(needle));
     if (match !== undefined) {
       everSeen = true;
@@ -689,6 +695,8 @@ export interface CiAwaitInput {
   baseBranch?: string;
   /** Current fetched base SHA; CI evidence is usable only when GitHub sees this base. */
   expectedBaseOid?: string;
+  /** Routed, conditional GitHub reads for the poll. */
+  github: GithubMergeRead;
 }
 
 interface RollupEntry {
@@ -820,18 +828,19 @@ export function parseMergeStateView(stdout: string): MergeStateView {
 }
 
 async function requiredCheckContexts(
-  exec: Exec,
+  github: GithubMergeRead,
   repo: string,
   baseBranch: string | undefined,
   probeTimeoutMs: number | undefined,
 ): Promise<string[]> {
   if (!baseBranch) return [];
-  const res = await boundedProbe(
-    () => exec([
-      "gh", "api", `repos/${repo}/branches/${encodeURIComponent(baseBranch)}/protection/required_status_checks/contexts`,
-    ]),
-    probeTimeoutMs,
-  );
+  const res = await boundedProbe(async () => {
+    try {
+      return { code: 0, stdout: await github.requiredCheckContexts(repo, baseBranch), stderr: "" };
+    } catch (error) {
+      return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
+    }
+  }, probeTimeoutMs);
   if (res.code !== 0) return [];
   try {
     const parsed: unknown = JSON.parse(res.stdout);
@@ -1066,7 +1075,7 @@ export async function waitForMergeReadyWithEvidence(
 ): Promise<MergeReadinessResult> {
   const maxPolls = input.maxPolls ?? 60;
   const intervalMs = input.intervalMs ?? 10_000;
-  const requiredChecks = await requiredCheckContexts(exec, repo, input.baseBranch, input.probeTimeoutMs);
+  const requiredChecks = await requiredCheckContexts(input.github, repo, input.baseBranch, input.probeTimeoutMs);
 
   for (let attempt = 0; attempt < maxPolls; attempt++) {
     await input.onPoll?.({
@@ -1077,12 +1086,13 @@ export async function waitForMergeReadyWithEvidence(
       intervalMs,
       ...(input.probeTimeoutMs ? { probeTimeoutMs: input.probeTimeoutMs } : {}),
     });
-    const res = await boundedProbe(
-      () => exec([
-        "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
-      ]),
-      input.probeTimeoutMs,
-    );
+    const res = await boundedProbe(async () => {
+      try {
+        return { code: 0, stdout: await input.github.mergeState(repo, prNumber), stderr: "" };
+      } catch (error) {
+        return { code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
+      }
+    }, input.probeTimeoutMs);
     const view = parseMergeStateView(res.stdout);
     const verdict = classifyMergeState(view, { requiredChecks });
     if (verdict !== "pending") {
@@ -1569,12 +1579,25 @@ const PR_BODY_PREFIX = "Automated AFK landing for #";
  * loop would just chase the trunk. */
 const STALE_BRANCH_MERGE_ROUNDS = 2;
 
-async function readMergeStateView(exec: Exec, repo: string, prNumber: number): Promise<MergeStateView> {
-  const res = await exec([
-    "gh", "-R", repo, "pr", "view", String(prNumber), "--json", "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
-  ]);
-  if (res.code !== 0) return emptyMergeStateView();
-  return parseMergeStateView(res.stdout);
+async function readMergeStateView(
+  exec: Exec,
+  github: GithubMergeRead | undefined,
+  repo: string,
+  prNumber: number,
+): Promise<MergeStateView> {
+  try {
+    if (github) return parseMergeStateView(await github.mergeState(repo, prNumber));
+    // Compatibility for non-polling callers not yet supplied the routed read
+    // port. This one-shot rejection diagnosis remains in the shrink-only
+    // inventory; the two repeated wait paths never reach it.
+    const result = await exec([
+      "gh", "-R", repo, "pr", "view", String(prNumber), "--json",
+      "mergeStateStatus,mergeable,baseRefOid,headRefOid,statusCheckRollup",
+    ]);
+    return result.code === 0 ? parseMergeStateView(result.stdout) : emptyMergeStateView();
+  } catch {
+    return emptyMergeStateView();
+  }
 }
 
 /**
@@ -1604,7 +1627,7 @@ async function mergeWithStaleBranchRecovery(
   for (let round = 0; ; round += 1) {
     const merge = await exec(mergeArgs);
     if (merge.code === 0) return undefined;
-    const diagnosis = diagnoseMergeRejection(await readMergeStateView(exec, repo, prNumber));
+    const diagnosis = diagnoseMergeRejection(await readMergeStateView(exec, ciAwait?.github, repo, prNumber));
     if (!diagnosis.retryable || round >= STALE_BRANCH_MERGE_ROUNDS) {
       return { ok: false, prNumber, reason: "merge-failed", mergeFailure: diagnosis };
     }

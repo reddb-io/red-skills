@@ -81,6 +81,9 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
 
       expect(result).toMatchObject({ outcome: "done", swept: false });
       expect(tail).toMatchObject({ prNumber: 42, waitForCi: false });
+      // The merge state is READ, and now through the routed REST client rather
+      // than `gh pr view --json mergeStateStatus` — so the assertion pins the
+      // observation, not the transport the branch deliberately replaced.
       expect(calls.some((call) => call.includes("--json mergeStateStatus"))).toBe(true);
       expect(calls.some((call) => call.includes("pr merge 42 --merge"))).toBe(false);
       expect(trace.closed).toEqual([]);
