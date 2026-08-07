@@ -15,6 +15,23 @@ import { computeNextVersion, type ReleaseClock } from "./version-core.js";
 import { readReleaseConfig, writeVersionSurfaces } from "./version-surfaces.js";
 
 export const RELEASE_BOT_AUTHOR = "red-skills-release[bot]";
+
+/**
+ * The commit author email, which must resolve to a real GitHub account.
+ *
+ * GitHub attributes a commit to an account by its author EMAIL, not its name.
+ * An unresolvable address left the version PR's commit attributed to nobody, so
+ * a repo whose approval policy is `first_time_contributors` classified every
+ * release commit as exactly that and held the PR's checks at `action_required`
+ * — the autonomous train ended by asking a human to click Approve. This is the
+ * Actions bot's own noreply address, the identity the token already pushes and
+ * opens the PR as. The NAME stays `red-skills-release[bot]`: it is what the
+ * generated workflow's `if:` reads to break the release-commit push loop, so
+ * the two roles are carried by two fields and neither can quietly become the
+ * other.
+ */
+export const RELEASE_BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
+
 export const VERSION_PR_BRANCH = "red-release/version-pr";
 
 export type { ReleaseEngineGithub, VersionPullRequest, VersionPullRequestInput };
@@ -151,7 +168,7 @@ function createReleaseCommit(repoRoot: string, plan: ReleasePlan, queue: Changes
   git(
     repoRoot,
     "-c", `user.name=${RELEASE_BOT_AUTHOR}`,
-    "-c", "user.email=release-bot@example.invalid",
+    "-c", `user.email=${RELEASE_BOT_EMAIL}`,
     "commit", "-m", `chore(release): ${plan.version}`,
   );
   return git(repoRoot, "rev-parse", "HEAD");
