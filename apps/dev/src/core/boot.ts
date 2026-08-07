@@ -235,8 +235,6 @@ export function formatPreconditionFailure(result: Extract<PrecheckResult, { ok: 
 export interface BootFs {
   /** mkdir -p */
   ensureDir(path: string): Promise<void>;
-  /** Append a line to .gitignore iff not already present (grep -qxF guard). */
-  ensureGitignoreLine(gitignorePath: string, line: string): Promise<void>;
   /** Write the per-worker `worker.pid` (printf '%s' $$ > worker.pid). */
   writeWorkerPid(pidFile: string, pid: number): Promise<void>;
   /** rm -rf an orphaned attempt dir. */
@@ -693,8 +691,6 @@ export interface BootstrapInput {
   tmpDir: string;
   /** .red/state dir (mkdir -p). */
   stateDir: string;
-  /** Primary checkout .gitignore path. */
-  gitignorePath: string;
   /** Per-worker dir (mkdir -p). */
   workerDir: string;
   /** Per-worker worker.pid path. */
@@ -1020,8 +1016,16 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   const b = options.bootstrap;
   await deps.fs.ensureDir(b.tmpDir);
   await deps.fs.ensureDir(b.stateDir);
-  await deps.fs.ensureGitignoreLine(b.gitignorePath, ".red/tmp/");
-  await deps.fs.ensureGitignoreLine(b.gitignorePath, ".red/state/");
+  // The ignore rules are `.red/.gitignore`'s, and `/red-setup` writes it.
+  //
+  // Boot used to append `.red/tmp/` and `.red/state/` to the repo-root
+  // `.gitignore`, which put two writers on one rule and left the reader asking
+  // which one was authoritative. It cannot be both, and it does not need to be:
+  // boot only runs where `plugins.dev.enabled: true`, and `/red-setup` is the
+  // only thing authorized to write that flag (ADR 0067) — so wherever boot
+  // runs, setup has already run and already written the directory's own
+  // self-ignore. A rule the directory carries also travels with it, which the
+  // root spelling never did.
   await deps.fs.ensureDir(b.workerDir);
   await deps.fs.writeWorkerPid(b.workerPidFile, b.workerPid);
 

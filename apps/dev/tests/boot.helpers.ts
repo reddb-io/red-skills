@@ -87,10 +87,6 @@ export function makeDeps(over: Partial<{
         calls.push(`fs.ensureDir:${p}`);
         fsCalls.ensureDir.push(p);
       },
-      async ensureGitignoreLine(_gi, line) {
-        calls.push(`fs.gitignore:${line}`);
-        fsCalls.gitignore.push(line);
-      },
       async writeWorkerPid(path, pid) {
         calls.push(`fs.workerPid:${path}`);
         fsCalls.workerPid.push({ path, pid });
@@ -190,7 +186,6 @@ export function options(over: Partial<BootOptions> = {}): BootOptions {
     bootstrap: {
       tmpDir: "/p/.red/tmp",
       stateDir: "/p/.red/state",
-      gitignorePath: "/p/.gitignore",
       workerDir: "/p/.red/tmp/workers/wAAA",
       workerPidFile: "/p/.red/tmp/workers/wAAA/worker.pid",
       workerPid: 4242,

@@ -94,7 +94,6 @@ export function buildProjectBootSweeps(
     const bootstrap: BootstrapInput = {
       tmpDir: paths.tmpDir,
       stateDir: paths.stateDir,
-      gitignorePath: paths.gitignorePath,
       workerDir: paths.tmpDir,
       workerPidFile: join(dirname(paths.supervisorPidPath), "afk-supervisor-boot.pid"),
       workerPid: process.pid,

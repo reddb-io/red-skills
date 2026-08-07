@@ -75,7 +75,6 @@ export interface AfkPaths {
   feedbackWorktreesDir: string;
   adoptWorktreesDir: string;
   reconcileWorktreesDir: string;
-  gitignorePath: string;
   configPath: string;
 }
 
@@ -122,7 +121,6 @@ export function afkPaths(root: string): AfkPaths {
     feedbackWorktreesDir: rp.feedbackWorktreesDir(root),
     adoptWorktreesDir: rp.adoptWorktreesDir(root),
     reconcileWorktreesDir: rp.reconcileWorktreesDir(root),
-    gitignorePath: join(root, ".gitignore"),
     configPath: join(rp.redDir(root), "config.yaml"),
   };
 }
