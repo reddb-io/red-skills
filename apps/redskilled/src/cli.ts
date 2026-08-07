@@ -60,7 +60,11 @@ import {
   parseRedskilledStatuslineFlags,
   resolveRedskilledStatuslineOptions,
 } from "./statusline-config.js";
-import { renderRedskilledStatuslineAbsence } from "@reddb-io/redskilled-render";
+import {
+  renderRedskilledStatuslineAbsence,
+  stripAnsi,
+  type RedskilledDashboardOptions,
+} from "@reddb-io/redskilled-render";
 import {
   installRedskilledUnit,
   planRedskilledUnit,
@@ -991,6 +995,10 @@ export async function runDashboard(
     readonly warn?: (line: string) => void;
     readonly client?: RedskilledClientConfig;
     readonly now?: () => string;
+    readonly env?: NodeJS.ProcessEnv;
+    /** `null` forces snapshot mode; omitted discovers the real stdout TTY. */
+    readonly terminal?: RedskilledDashboardTerminal | null;
+    readonly readDashboard?: typeof readRedskilledDashboardRender;
   } = {},
 ): Promise<number> {
   const write = io.write ?? ((line: string) => process.stdout.write(line));
@@ -1010,27 +1018,91 @@ export async function runDashboard(
     warn(`redskilled dashboard: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);
   }
 
+  const paths = io.paths ?? resolveRedskilledPaths();
+  const readDashboard = io.readDashboard ?? readRedskilledDashboardRender;
+  const terminal = io.terminal === undefined ? systemDashboardTerminal() : io.terminal;
+  const noColor = (io.env ?? process.env).NO_COLOR !== undefined;
+  const baseOptions: Partial<RedskilledDashboardOptions> = {
+    ...(resolved.options.project == null ? {} : { project: resolved.options.project }),
+    mode: resolved.options.mode,
+    showDeathDetails: resolved.options.verbose,
+  };
+
+  const readFrame = async (options: Partial<RedskilledDashboardOptions>): Promise<readonly string[]> => {
+    try {
+      const render = await readDashboard(
+        paths,
+        options,
+        {
+          ...(io.client ?? {}),
+          ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
+        },
+      );
+      return noColor ? render.lines.map(stripAnsi) : render.lines;
+    } catch (err) {
+      warn(`redskilled dashboard: ${err instanceof Error ? err.message : String(err)}\n`);
+      return ["redskilled unreachable — the host was not asked, so its Workers are unknown"];
+    }
+  };
+
+  if (terminal == null) {
+    const lines = await readFrame({
+      ...baseOptions,
+      ...(resolved.options.maxWidth == null ? {} : { maxWidth: resolved.options.maxWidth }),
+    });
+    write(`${lines.join("\n")}\n`);
+    return 0;
+  }
+
+  // Stable screen: redraw from home, erase the old tail, and leave the cursor
+  // visible on every exit path. Resize wakes the loop immediately; the timer
+  // keeps the facts live when the terminal itself is quiet.
+  write("\x1b[?25l\x1b[2J");
   try {
-    const render = await readRedskilledDashboardRender(
-      io.paths ?? resolveRedskilledPaths(),
-      {
-        ...(resolved.options.project == null ? {} : { project: resolved.options.project }),
-        // `mode` is the shared vocabulary for scope — `local` or `global` — and
-        // the statusline's resolver already decided it from config and flags.
-        mode: resolved.options.mode,
-        ...(resolved.options.maxWidth == null ? {} : { maxWidth: resolved.options.maxWidth }),
-      },
-      {
-        ...(io.client ?? {}),
-        ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
-      },
-    );
-    write(`${render.lines.join("\n")}\n`);
-  } catch (err) {
-    // A stated absence, never silence. The operator asked what the host is
-    // doing; "I could not ask" is an answer and an empty screen is not.
-    warn(`redskilled dashboard: ${err instanceof Error ? err.message : String(err)}\n`);
-    write("redskilled unreachable — the host was not asked, so its Workers are unknown\n");
+    for (;;) {
+      const size = terminal.size();
+      const maxWidth = Math.max(1, Math.min(resolved.options.maxWidth ?? size.columns, size.columns));
+      const maxHeight = Math.max(1, size.rows);
+      const lines = await readFrame({
+        ...baseOptions,
+        maxWidth,
+        maxHeight,
+        maxRows: Math.max(0, maxHeight - 5),
+      });
+      write(`\x1b[H${lines.join("\n")}\n\x1b[J`);
+      if (await terminal.next(1_000) === "stop") break;
+    }
+  } finally {
+    write("\x1b[?25h");
   }
   return 0;
+}
+
+export interface RedskilledDashboardTerminal {
+  readonly size: () => { readonly columns: number; readonly rows: number };
+  readonly next: (refreshMs: number) => Promise<"refresh" | "resize" | "stop">;
+}
+
+/** The process-owned TTY signals, kept outside the pure renderer. */
+function systemDashboardTerminal(): RedskilledDashboardTerminal | null {
+  if (process.stdout.isTTY !== true) return null;
+  return {
+    size: () => ({ columns: process.stdout.columns || 200, rows: process.stdout.rows || 40 }),
+    next: (refreshMs) => new Promise((resolve) => {
+      let timer: NodeJS.Timeout;
+      const finish = (event: "refresh" | "resize" | "stop") => {
+        clearTimeout(timer);
+        process.stdout.off("resize", resized);
+        process.off("SIGINT", stopped);
+        process.off("SIGTERM", stopped);
+        resolve(event);
+      };
+      const resized = () => finish("resize");
+      const stopped = () => finish("stop");
+      timer = setTimeout(() => finish("refresh"), refreshMs);
+      process.stdout.once("resize", resized);
+      process.once("SIGINT", stopped);
+      process.once("SIGTERM", stopped);
+    }),
+  };
 }
