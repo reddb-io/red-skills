@@ -9,7 +9,7 @@ import {
   validateCastleStateSnapshot,
   type CastleValidationRecord,
 } from "@reddb-io/red-castle/engine";
-import { PHASE_DURATIONS_FILENAME } from "./phase-durations.js";
+import { isCastleStateMember } from "@reddb-io/shared/red-paths.js";
 
 export type CastleStateFindingKind =
   | "castle-history-invalid"
@@ -215,12 +215,13 @@ async function auditCastleRootSplit(root: string, paths: ReturnType<typeof creat
   // `phase-durations.toonl` is durable state, not a live artifact: it is the
   // measured cost of each pipeline phase (#3097), which is what an ETA is derived
   // from and is worth exactly as much as the history beside it.
-  const allowedRootFiles = new Set(["history.toonl", "validation.toonl", PHASE_DURATIONS_FILENAME]);
-  const allowedRootDirs = new Set(["workers", "supervisors"]);
   const findings: CastleStateFinding[] = [];
   for (const entry of await childEntries(paths.castleStateRoot)) {
-    if (entry.isFile && allowedRootFiles.has(entry.name)) continue;
-    if (entry.isDirectory && allowedRootDirs.has(entry.name)) continue;
+    // Membership is declared beside the helper that names the lane, so a new
+    // resident inherits the classification from the same place its writer
+    // resolves the path — rather than turning red until someone notices its
+    // name is missing from a list kept somewhere else.
+    if (isCastleStateMember(entry.name)) continue;
     findings.push(
       finding(
         root,

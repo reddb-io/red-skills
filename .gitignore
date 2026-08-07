@@ -1,8 +1,11 @@
 # Claude Code local state
 .claude/
+# Worktrees a host CLI mints for itself (`--worktree`). Registered with git, so
+# the parent status hides them — until one is pruned with its directory left in
+# place and hundreds of MB become stageable.
+.muse/
 
 # Per-repo agent ephemera (never committed)
-.red/tmp/
 .red/wiki/
 **/.red/tmp/
 
@@ -23,7 +26,6 @@ node_modules/
 
 # OS
 .DS_Store
-.red/state/
 
 # Per-plugin build outputs — shipped as GitHub Release assets, fetched dynamically (ADR 0034)
 dist/

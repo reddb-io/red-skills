@@ -15,6 +15,7 @@ import { runCommand } from "./commands/run.js";
 import { reapCommand } from "./commands/reap.js";
 import { orphanBranchesCommand } from "./commands/orphan-branches.js";
 import { redDoctorCommand } from "./commands/red-doctor.js";
+import { worktreeCommand } from "./commands/worktree.js";
 import { redactSweepCommand } from "./commands/redact-sweep.js";
 import { relabelSweepCommand } from "./commands/relabel-sweep.js";
 import { requeueCommand } from "./commands/requeue.js";
@@ -48,6 +49,7 @@ export type CliCommand =
   | "reap"
   | "orphan-branches"
   | "red-doctor"
+  | "worktree"
   | "redact-sweep"
   | "relabel-sweep"
   | "requeue"
@@ -99,6 +101,7 @@ const CLI_ROUTER: RouterSchema<CliCommand> = {
     reap: {},
     "orphan-branches": {},
     "red-doctor": {},
+    worktree: {},
     "redact-sweep": {},
     "relabel-sweep": {},
     requeue: {},
@@ -150,7 +153,7 @@ export const CLI_USAGE = `Usage: red-skills-dev <command> [options]
 Commands: run (default), monitor, stop, go, manager, dashboard,
   daily-review, weekly-review, reap, orphan-branches, requeue, retake, review,
   respond, triage,
-  red-doctor, reconcile-engine, statusline, version, …
+  red-doctor, worktree, reconcile-engine, statusline, version, …
 
 Flag-led invocations route to the run surface: --issues N, --spec N,
   --selector <json>, --runner <r>, -n <count>, --once, --boot-only.
@@ -252,6 +255,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "reap") return reapCommand(parsed.args);
   if (parsed.command === "orphan-branches") return orphanBranchesCommand(parsed.args);
   if (parsed.command === "red-doctor") return redDoctorCommand(parsed.args);
+  if (parsed.command === "worktree") return worktreeCommand(parsed.args);
   if (parsed.command === "redact-sweep") return redactSweepCommand(parsed.args);
   if (parsed.command === "relabel-sweep") return relabelSweepCommand(parsed.args);
   if (parsed.command === "requeue") return requeueCommand(parsed.args);

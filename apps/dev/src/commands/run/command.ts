@@ -291,7 +291,6 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const bootstrap: BootstrapInput = {
     tmpDir: paths.tmpDir,
     stateDir: paths.stateDir,
-    gitignorePath: paths.gitignorePath,
     workerDir: workerDirPath(paths.tmpDir, workerId),
     workerPidFile: workerPidFile(paths.tmpDir, workerId),
     workerPid: process.pid,
