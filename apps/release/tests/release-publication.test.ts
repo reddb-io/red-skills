@@ -164,8 +164,14 @@ function publicationFixture(options: { readonly failOnceFor?: string } = {}) {
   };
 }
 
+/** github.com serves asset upload from `uploads.github.com`; the fixture mirrors
+ * that split so the API host and the upload host are not the same origin. */
+const UPLOAD_ORIGIN = "https://uploads.github.invalid";
+const UPLOAD_URL = `${UPLOAD_ORIGIN}/repos/example/widgets/releases/1/assets{?name,label}`;
+
 interface FakeRelease {
   readonly id: number;
+  readonly upload_url: string;
   readonly tag_name: string;
   readonly target_commitish: string;
   readonly name: string;
@@ -194,6 +200,15 @@ class FakeReleaseApi {
       const url = new URL(String(input));
       const method = init?.method ?? "GET";
       const path = url.pathname.replace(/^\/api\/v3/, "");
+      const onUploadHost = url.origin === UPLOAD_ORIGIN;
+
+      // Asset upload is the one Release call GitHub does not serve from the API
+      // host, so the fixture does not either. A uploader that builds the route
+      // relative to the client's base URL gets the 404 the real host gives —
+      // the whole failure this file exists to catch.
+      if (method === "POST" && !onUploadHost && path.endsWith("/assets")) {
+        return json({ message: "Not Found" }, 404);
+      }
 
       if (method === "GET" && path === "/repos/example/widgets/releases/tags/v2.0.0") {
         if (this.release === null) return json({ message: "Not Found" }, 404);
@@ -201,11 +216,14 @@ class FakeReleaseApi {
       }
       if (method === "POST" && path === "/repos/example/widgets/releases") {
         this.createCalls += 1;
-        const payload = JSON.parse(await bodyText(init?.body)) as Omit<FakeRelease, "id" | "assets">;
-        this.release = { id: 1, ...payload, assets: [] };
+        const payload = JSON.parse(await bodyText(init?.body)) as Omit<
+          FakeRelease,
+          "id" | "assets" | "upload_url"
+        >;
+        this.release = { id: 1, ...payload, assets: [], upload_url: UPLOAD_URL };
         return json(this.release, 201);
       }
-      if (method === "POST" && path === "/repos/example/widgets/releases/1/assets") {
+      if (method === "POST" && onUploadHost && path === "/repos/example/widgets/releases/1/assets") {
         const name = url.searchParams.get("name") ?? "";
         if (name === this.failOnceFor && !this.failed) {
           this.failed = true;
