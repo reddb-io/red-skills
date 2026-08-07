@@ -1,6 +1,6 @@
 {
   "name": "internal",
-  "version": "3.12.3",
+  "version": "3.12.4",
   "description": "reddb.io internal plugin - maintainer-only skills for operating the red-skills repository.",
   "skills": [
     "./skills/maintainer/bootstrap",
