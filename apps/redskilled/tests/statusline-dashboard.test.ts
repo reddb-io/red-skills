@@ -432,6 +432,18 @@ describe("the header carries the rates the daemon derived", () => {
     expect(dashboard.header.line).not.toContain("tk/m");
     expect(dashboard.header.line).not.toContain("0%");
   });
+
+  it("explains hourly history absence on an older daemon payload", () => {
+    const { history_48h: _newField, ...legacyMetrics } = metricsOf();
+    const legacy = renderRedskilledDashboard(
+      payloadOf([worker()], { "w-1": display() }, legacyMetrics as RedskilledStatuslineMetrics),
+      LOCAL,
+    );
+
+    expect(stripAnsi(legacy.lines[1]!)).toContain("payload predates hourly history");
+    // The older rolling metrics remain readable instead of invalidating the payload.
+    expect(stripAnsi(legacy.header.line)).toContain("tk/m=1.2k");
+  });
 });
 
 describe("the pipeline bar is two integers, not a vocabulary", () => {
