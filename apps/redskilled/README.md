@@ -37,7 +37,7 @@ of it.
 | Where a Worker's resources are charged | `src/worker-placement.ts` — pure planner over injected probes |
 | Birth itself | `src/worker-launch.ts` — plan, spawn once, report the downgrade |
 | The host-wide read | `src/host-state.ts` — total shape, Workers plus the budget total |
-| What the daemon remembers across a restart | `src/event-lane.ts` — append-only TOONL: birth, death, budget-kill, and the daemon's own stop |
+| What the daemon remembers across a restart | `src/event-lane.ts` — append-only TOONL: Worker lifecycle, metric observations, and the daemon's own stop |
 | What a stop is giving up | `src/daemon-stop.ts` — the pure report: what is held, what survives, why it stopped |
 | Finding the Workers a restart left running | `src/reattach.ts` — the unit name first, the pid only as fallback |
 | What the host has been promised | `src/budget-accounting.ts` — pure totals over the Worker set |
@@ -109,9 +109,11 @@ of it.
   machine-wide claim sweeps — a second instance adopting the arbiter's Workers
   would be the same accounting hole from the other side — and
   `REDSKILLED_UNIT_DISCOVERY=off` declines the sweep outright.
-- **Three facts on the lane, and no per-Worker durable record.** Birth, death and
-  budget-kill are the daemon's own — issue-to-PR belongs to the tracker and
-  branch-to-commits to git, and a third copy of those would only drift.
+- **Host facts share one lane.** Worker lifecycle and cumulative metric
+  observations are daemon-owned and live in the same append-only TOONL lane.
+  The observations retain enough counter history to reconstruct the dashboard's
+  48 UTC-hour token and Ticket series after restart; issue-to-PR stays with the
+  tracker and branch-to-commits stays with git.
 - **A crash costs the event in flight, never the lane.** An unterminated final
   line is read as absent (TOONL's own rule for a truncated open tail) and dropped
   before the next append, so a half-written record can never fuse onto the next.
