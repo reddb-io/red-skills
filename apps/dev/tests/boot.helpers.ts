@@ -65,7 +65,6 @@ export function makeDeps(over: Partial<{
   const calls: string[] = [];
   const fsCalls = {
     ensureDir: [] as string[],
-    gitignore: [] as string[],
     workerPid: [] as Array<{ path: string; pid: number }>,
     removeDir: [] as string[],
   };
