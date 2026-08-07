@@ -100,8 +100,36 @@ function display(overrides: Partial<RedskilledWorkerDisplay> = {}): RedskilledWo
  * out entirely rather than print a rate nobody measured.
  */
 function metricsOf(): RedskilledStatuslineMetrics {
+  const hour = (index: number) => new Date(Date.parse("2026-07-27T02:00:00.000Z") + index * 3_600_000).toISOString();
+  const tokenBuckets = Array.from({ length: 48 }, (_unused, index) => ({
+    hour: hour(index),
+    value: index < 46 ? null : index === 46 ? 820 : 1_240,
+    absent_reason: index < 46 ? "no token samples span this hour" : null,
+  }));
+  const ticketBuckets = Array.from({ length: 48 }, (_unused, index) => ({
+    hour: hour(index),
+    value: index < 46 ? null : index === 46 ? 2 : 4,
+    absent_reason: index < 46 ? "no Worker outcome history is available for this hour" : null,
+  }));
   return {
     generated_at: "2026-07-29T01:00:05.000Z",
+    history_48h: {
+      hours: 48,
+      from: tokenBuckets[0]!.hour,
+      to: "2026-07-29T01:00:05.000Z",
+      tokens_per_hour: {
+        buckets: tokenBuckets,
+        current: { value: 1_240, absent_reason: null, samples: 2 },
+        trend: "up",
+        trend_absent_reason: null,
+      },
+      tickets_per_hour: {
+        buckets: ticketBuckets,
+        current: { value: 4, absent_reason: null, samples: 2 },
+        trend: "up",
+        trend_absent_reason: null,
+      },
+    },
     hour: {
       window: "hour",
       window_ms: 3_600_000,
@@ -337,6 +365,22 @@ describe("an unpublished field is an absence, never a zero", () => {
 });
 
 describe("the header carries the rates the daemon derived", () => {
+  it("puts live throughput and both 48-point series before Worker detail", () => {
+    const workers = [worker(), worker({ worker_id: "w-2" }), worker({ worker_id: "w-3" })];
+    const dashboard = renderRedskilledDashboard(
+      payloadOf(workers, { "w-1": display(), "w-2": display(), "w-3": display() }, metricsOf()),
+      { ...LOCAL, maxWidth: 200, maxHeight: 5 },
+    );
+    const plain = dashboard.lines.map(stripAnsi);
+
+    expect(plain).toHaveLength(5);
+    expect(plain[0]).toMatch(/tk\/h=1\.2k ↑.*Tickets\/h=4 ↑.*wrk=3\/3.*slots=.*mem=/);
+    expect(plain[1]).toMatch(/^tokens 48h .{48} · now=1\.2k\/h ↑ · 46 missing \(no token samples/);
+    expect(plain[2]).toMatch(/^Tickets 48h .{48} · now=4\/h ↑ · 46 missing \(no Worker outcome/);
+    expect(plain[3]).toContain("w-1");
+    expect(plain[4]).toContain("terminal height");
+  });
+
   it("puts the hour's rates and the leading runner share in the one line a status bar shows", () => {
     const dashboard = renderRedskilledDashboard(
       payloadOf([worker()], { "w-1": display() }, metricsOf()),
