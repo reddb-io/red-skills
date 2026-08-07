@@ -268,7 +268,7 @@ describe("check 13 — per-plugin runtime distribution", () => {
 });
 
 describe("check 18 — required host binary pins", () => {
-  it("names catalog, config, and observed versions on tq toolchain drift", async () => {
+  it("red-flags a tq below the floor, naming what it cannot do", async () => {
     const root = await poseRoot("doctor-host-binary-");
     await write(root, "pnpm-workspace.yaml", "catalog:\n  '@reddb-io/toon': 0.3.0\n");
     await write(
@@ -287,7 +287,8 @@ describe("check 18 — required host binary pins", () => {
         binary: "tq",
         kind: "toolchain-drift",
         verdict: "error",
-        reason: "required host binary tq toolchain drift: catalog pin 0.3.0, config pin 0.2.0, observed tq 0.0.9",
+        reason:
+          "required host binary tq 0.0.9 is older than the floor 0.3.0, so it cannot read what this workspace writes",
         remediation:
           "install pinned tq with: TQ_VERSION=v0.3.0 curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/v0.3.0/install.sh | sh",
       },

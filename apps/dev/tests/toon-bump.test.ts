@@ -94,7 +94,7 @@ The installed version must be \`${version}\`.
     root,
     "plugins/dev/skills/engineering/red-setup/REFERENCE.md",
     `TQ_VERSION=v${version}
-host binary is pinned to \`${version}\`.
+host binary is at or above the \`${version}\` floor.
 `,
   );
   await write(
@@ -120,7 +120,7 @@ host_binaries:
   await write(
     root,
     "plugins/dev/skills/engineering/red-doctor/SKILL.md",
-    `host_binaries.tq.version\` (pin \`${version}\`)
+    `host_binaries.tq.version\` (floor \`${version}\`)
 TQ_VERSION=v${version}
 curl https://raw.githubusercontent.com/reddb-io/toon/v${version}/install.sh
 `,
