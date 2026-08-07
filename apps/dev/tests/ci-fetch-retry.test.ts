@@ -181,3 +181,14 @@ describe("CI setup network fetches", () => {
     }
   });
 });
+
+describe("CI narrowed typecheck job", () => {
+  it.each(["Test bundle-app contract", "Test generate-manifests contract"])(
+    "does not run %s when the scope skipped checkout (#3495)",
+    async (name) => {
+      const step = stepBody(await readWorkflow("red-workspace-ci.yml"), name);
+
+      expect(step).toContain("if: env.RUN_ANY == 'true'");
+    },
+  );
+});
