@@ -28,6 +28,7 @@ export type RedskilledMetricWindowName = "hour" | "day";
 
 export const REDSKILLED_METRIC_HOUR_MS = 3_600_000;
 export const REDSKILLED_METRIC_DAY_MS = 86_400_000;
+export const REDSKILLED_METRIC_HISTORY_HOURS = 48;
 
 /**
  * How long the daemon keeps a fact it will later derive a rate from.
@@ -36,7 +37,8 @@ export const REDSKILLED_METRIC_DAY_MS = 86_400_000;
  * window can change no answer, and keeping it would grow the history without
  * ever being read.
  */
-export const REDSKILLED_METRIC_RETENTION_MS = REDSKILLED_METRIC_DAY_MS;
+export const REDSKILLED_METRIC_RETENTION_MS =
+  (REDSKILLED_METRIC_HISTORY_HOURS + 1) * REDSKILLED_METRIC_HOUR_MS;
 
 /**
  * How many entries a history holds before the oldest are dropped.
@@ -141,6 +143,30 @@ export interface RedskilledStatuslineMetrics {
   readonly generated_at: string;
   readonly hour: RedskilledMetricsWindow;
   readonly day: RedskilledMetricsWindow;
+  readonly history_48h: RedskilledHourlyHistory;
+}
+
+export interface RedskilledHourlyMetricBucket {
+  readonly hour: string;
+  readonly value: number | null;
+  readonly absent_reason: string | null;
+}
+
+export type RedskilledMetricTrend = "up" | "down" | "flat";
+
+export interface RedskilledHourlyMetricSeries {
+  readonly buckets: readonly RedskilledHourlyMetricBucket[];
+  readonly current: RedskilledMetricValue;
+  readonly trend: RedskilledMetricTrend | null;
+  readonly trend_absent_reason: string | null;
+}
+
+export interface RedskilledHourlyHistory {
+  readonly hours: 48;
+  readonly from: string;
+  readonly to: string;
+  readonly tokens_per_hour: RedskilledHourlyMetricSeries;
+  readonly tickets_per_hour: RedskilledHourlyMetricSeries;
 }
 
 export interface DeriveRedskilledLiveMetricsInput {
@@ -157,6 +183,119 @@ export function deriveRedskilledLiveMetrics(
     generated_at: input.now,
     hour: buildWindow("hour", REDSKILLED_METRIC_HOUR_MS, input),
     day: buildWindow("day", REDSKILLED_METRIC_DAY_MS, input),
+    history_48h: buildHourlyHistory(input),
+  };
+}
+
+/** Forty-eight UTC-aligned hourly points for the operational dashboard. PURE. */
+function buildHourlyHistory(input: DeriveRedskilledLiveMetricsInput): RedskilledHourlyHistory {
+  const nowMs = instant(input.now);
+  const currentHour = nowMs == null ? null : Math.floor(nowMs / REDSKILLED_METRIC_HOUR_MS) * REDSKILLED_METRIC_HOUR_MS;
+  const firstHour = currentHour == null
+    ? null
+    : currentHour - (REDSKILLED_METRIC_HISTORY_HOURS - 1) * REDSKILLED_METRIC_HOUR_MS;
+  const hours = Array.from({ length: REDSKILLED_METRIC_HISTORY_HOURS }, (_unused, index) =>
+    firstHour == null ? null : firstHour + index * REDSKILLED_METRIC_HOUR_MS);
+
+  const tokenRates = hourlyTokenRates(input.observations, hours, nowMs);
+  const tokenBuckets = hours.map((hour, index): RedskilledHourlyMetricBucket => ({
+    hour: hour == null ? input.now : new Date(hour).toISOString(),
+    value: tokenRates[index] ?? null,
+    absent_reason: tokenRates[index] == null ? "no token samples span this hour" : null,
+  }));
+
+  const outcomes = input.outcomes
+    .map((outcome) => instant(outcome.ts))
+    .filter((at): at is number =>
+      at != null && firstHour != null && nowMs != null && at >= firstHour && at <= nowMs);
+  const ticketBuckets = hours.map((hour): RedskilledHourlyMetricBucket => {
+    const value = hour == null || outcomes.length === 0
+      ? null
+      : outcomes.filter((at) => at >= hour && at < hour + REDSKILLED_METRIC_HOUR_MS).length;
+    return {
+      hour: hour == null ? input.now : new Date(hour).toISOString(),
+      value,
+      absent_reason: value == null ? "no Worker outcome history is available for the last 48 hours" : null,
+    };
+  });
+
+  return {
+    hours: REDSKILLED_METRIC_HISTORY_HOURS,
+    from: firstHour == null ? input.now : new Date(firstHour).toISOString(),
+    to: input.now,
+    tokens_per_hour: hourlySeries(tokenBuckets),
+    tickets_per_hour: hourlySeries(ticketBuckets),
+  };
+}
+
+/**
+ * Convert cumulative Worker counters into an hourly rate per Worker, then sum.
+ * A segment crossing an hour contributes only its overlapping duration; a
+ * partial current hour is therefore normalised to an hourly rate.
+ */
+function hourlyTokenRates(
+  observations: readonly RedskilledWorkerMetricObservation[],
+  hours: readonly (number | null)[],
+  nowMs: number | null,
+): readonly (number | null)[] {
+  if (nowMs == null || hours.some((hour) => hour == null)) return hours.map(() => null);
+  const byWorker = new Map<string, { at: number; count: number }[]>();
+  for (const observation of observations) {
+    const at = instant(observation.observed_at);
+    if (at == null || observation.tokens == null || !Number.isFinite(observation.tokens)) continue;
+    const series = byWorker.get(observation.worker_id) ?? [];
+    series.push({ at, count: observation.tokens });
+    byWorker.set(observation.worker_id, series);
+  }
+
+  const totals = hours.map(() => 0);
+  const measured = hours.map(() => false);
+  for (const series of byWorker.values()) {
+    series.sort((left, right) => left.at - right.at);
+    const allocated = hours.map(() => ({ tokens: 0, duration: 0 }));
+    for (let index = 1; index < series.length; index += 1) {
+      const previous = series[index - 1];
+      const current = series[index];
+      if (previous == null || current == null || current.at <= previous.at || current.count < previous.count) continue;
+      const duration = current.at - previous.at;
+      const delta = current.count - previous.count;
+      for (let bucketIndex = 0; bucketIndex < hours.length; bucketIndex += 1) {
+        const start = hours[bucketIndex]!;
+        const end = Math.min(start + REDSKILLED_METRIC_HOUR_MS, nowMs);
+        const overlap = Math.max(0, Math.min(current.at, end) - Math.max(previous.at, start));
+        if (overlap === 0) continue;
+        allocated[bucketIndex]!.tokens += delta * (overlap / duration);
+        allocated[bucketIndex]!.duration += overlap;
+      }
+    }
+    for (let index = 0; index < allocated.length; index += 1) {
+      const bucket = allocated[index]!;
+      if (bucket.duration <= 0) continue;
+      totals[index]! += bucket.tokens / (bucket.duration / REDSKILLED_METRIC_HOUR_MS);
+      measured[index] = true;
+    }
+  }
+  return totals.map((value, index) => measured[index] ? value : null);
+}
+
+function hourlySeries(buckets: readonly RedskilledHourlyMetricBucket[]): RedskilledHourlyMetricSeries {
+  const currentBucket = buckets.at(-1);
+  const previousBucket = buckets.at(-2);
+  const value = currentBucket?.value ?? null;
+  const samples = buckets.filter((bucket) => bucket.value != null).length;
+  let trend: RedskilledMetricTrend | null = null;
+  if (value != null && previousBucket?.value != null) {
+    trend = value === previousBucket.value ? "flat" : value > previousBucket.value ? "up" : "down";
+  }
+  return {
+    buckets,
+    current: {
+      value,
+      absent_reason: currentBucket?.absent_reason ?? "the current hourly bucket is unavailable",
+      samples,
+    },
+    trend,
+    trend_absent_reason: trend == null ? "the current and previous hourly buckets are not both measured" : null,
   };
 }
 
@@ -391,7 +530,29 @@ export function isRedskilledStatuslineMetrics(value: unknown): value is Redskill
   const metrics = value as Record<string, unknown>;
   return typeof metrics.generated_at === "string" &&
     isMetricsWindow(metrics.hour) &&
-    isMetricsWindow(metrics.day);
+    isMetricsWindow(metrics.day) &&
+    (metrics.history_48h === undefined || isHourlyHistory(metrics.history_48h));
+}
+
+function isHourlyHistory(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const history = value as Record<string, unknown>;
+  return history.hours === REDSKILLED_METRIC_HISTORY_HOURS &&
+    isHourlySeries(history.tokens_per_hour) &&
+    isHourlySeries(history.tickets_per_hour);
+}
+
+function isHourlySeries(value: unknown): boolean {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const series = value as Record<string, unknown>;
+  return Array.isArray(series.buckets) && series.buckets.length === REDSKILLED_METRIC_HISTORY_HOURS &&
+    series.buckets.every((bucket) => {
+      if (bucket === null || typeof bucket !== "object" || Array.isArray(bucket)) return false;
+      const point = bucket as Record<string, unknown>;
+      return typeof point.hour === "string" &&
+        (point.value === null || typeof point.value === "number") &&
+        (point.absent_reason === null || typeof point.absent_reason === "string");
+    });
 }
 
 function isMetricsWindow(value: unknown): boolean {
