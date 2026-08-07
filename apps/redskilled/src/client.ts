@@ -16,10 +16,9 @@
  * never a quiet local fallback — for a launcher, failing open costs the machine.
  */
 import { randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname } from "node:path";
 import {
   acquireSpawnLock,
   describeSpawnLockHolder,
@@ -44,13 +43,7 @@ import {
 import { readRedskilledLeaseFile } from "./session-lease.js";
 import { buildRedskilledNotRunningStop, type RedskilledDaemonStopped } from "./daemon-stop.js";
 import { isRedskilledHostState, type RedskilledHostState } from "./host-state.js";
-import {
-  createRedskilledMachineClaimStore,
-  currentMachineOwner,
-  REDSKILLED_MACHINE_DIR_ENV,
-  resolveMachineClaimPath,
-  RedskilledMachineHeldError,
-} from "./machine-scope.js";
+import { RedskilledMachineHeldError } from "./machine-scope.js";
 import type { RedskilledLaunchTemplate } from "./launch-template.js";
 import type { RedskilledPaths } from "./paths.js";
 import type { RedskilledProjectRegistrationRequest } from "./project-registration.js";
@@ -96,7 +89,7 @@ import type { RedskilledStatuslineExtrasRequest } from "./statusline-payload.js"
 import { clampPublishedWorkerDisplay } from "./worker-display.js";
 import { clampPublishedLogLine } from "./worker-log.js";
 import type { RedskilledWorkerSpec } from "./worker-launch.js";
-import { redskilledUnitPath, REDSKILLED_UNIT_NAME } from "./supervision.js";
+import { refuseWhenMachineIsHeld, resolveRedskilledClientEndpoint, startThroughInstalledSupervisor } from "./client-rendezvous.js";
 
 // The entry resolver is re-exported here because reaching the daemon and
 // resolving what to spawn are one story for a caller, and a second import path
@@ -295,45 +288,6 @@ export async function ensureRedskilledDaemon(
   }
 }
 
-/**
- * Resolve the machine claim as a rendezvous for this OS user.
- *
- * The claim used to be consulted only to refuse a second socket. That is right
- * for a foreign uid and wrong for two environments of the SAME uid: both carry
- * the same credentials and worker ownership, so refusing the live socket turns
- * an XDG/fallback difference into an outage. Only runtime-local paths move;
- * host state and the machine claim retain their canonical homes.
- */
-async function resolveRedskilledClientEndpoint(
-  paths: RedskilledPaths,
-): Promise<{ readonly paths: RedskilledPaths; readonly joined: boolean }> {
-  const store = createRedskilledMachineClaimStore(paths.machineClaimPath, {
-    machineIdHash: paths.machineIdHash,
-    sessionKeyHash: paths.sessionKeyHash,
-    socketPath: paths.socketPath,
-  });
-  const claim = await store.read().catch(() => undefined);
-  if (
-    claim == null ||
-    claim.socket_path === paths.socketPath ||
-    claim.uid !== currentMachineOwner().uid ||
-    !isPidAlive(claim.pid)
-  ) {
-    return { paths, joined: false };
-  }
-  const runtimeDir = dirname(claim.socket_path);
-  return {
-    joined: true,
-    paths: {
-      ...paths,
-      runtimeDir,
-      socketPath: claim.socket_path,
-      lockPath: join(runtimeDir, basename(paths.lockPath)),
-      leasePath: join(runtimeDir, basename(paths.leasePath)),
-    },
-  };
-}
-
 async function reachRedskilledDaemon(
   paths: RedskilledPaths,
   config: RedskilledClientConfig,
@@ -357,7 +311,7 @@ async function reachRedskilledDaemon(
   // Once a unit is installed it is the one birth authority. During a restart
   // the socket and claim are briefly absent; direct auto-spawn in that window
   // races systemd and turns singleton protection into a restart storm.
-  if (await startThroughInstalledSupervisor(paths, config)) return "joined";
+  if (await startThroughInstalledSupervisor(paths, config, DEFAULT_REDSKILLED_READY_TIMEOUT_MS)) return "joined";
 
   const lock = await acquireSpawnLock(paths.lockPath, {
     ...(config.spawnLockMaxAgeMs == null ? {} : { maxAgeMs: config.spawnLockMaxAgeMs }),
@@ -381,69 +335,6 @@ async function reachRedskilledDaemon(
     return "spawned";
   } finally {
     await releaseSpawnLock(lock);
-  }
-}
-
-async function startThroughInstalledSupervisor(
-  paths: RedskilledPaths,
-  config: RedskilledClientConfig,
-): Promise<boolean> {
-  const env = config.env ?? process.env;
-  const injectedInstalled = config.supervisor?.installed?.();
-  const pinnedMachineDir = env[REDSKILLED_MACHINE_DIR_ENV]?.trim();
-  // A caller may intentionally construct isolated paths (tests, diagnostics,
-  // or an explicit secondary host model). The real user unit owns only the
-  // canonical machine claim, so never route those synthetic endpoints through
-  // the ambient host's systemd unit. An injected seam remains authoritative.
-  if (
-    injectedInstalled == null &&
-    ((pinnedMachineDir != null && pinnedMachineDir !== "") ||
-      paths.machineClaimPath !== resolveMachineClaimPath({ env, machineIdHash: paths.machineIdHash }))
-  ) {
-    return false;
-  }
-  const installed = injectedInstalled ?? existsSync(redskilledUnitPath(env));
-  if (!installed) return false;
-  if (config.supervisor?.start != null) {
-    await config.supervisor.start();
-  } else {
-    const started = spawnSync("systemctl", ["--user", "start", REDSKILLED_UNIT_NAME], {
-      encoding: "utf8",
-      env,
-    });
-    if (started.error != null || started.status !== 0) {
-      throw new Error(
-        `redskilled found the installed ${REDSKILLED_UNIT_NAME}, but systemd did not start it: ` +
-          `${started.error?.message ?? (started.stderr || started.stdout || `status ${started.status}`).trim()}`,
-      );
-    }
-  }
-  await waitForSupervisedDaemon(paths, config);
-  return true;
-}
-
-/**
- * Wait for systemd's endpoint, which may not be the socket this shell derived.
- *
- * During a cold XDG transition there is no claim to follow before `start`.
- * Once the unit binds, its same-user machine claim becomes the rendezvous. A
- * fixed-socket wait would miss that healthy daemon and report a false outage.
- */
-async function waitForSupervisedDaemon(
-  paths: RedskilledPaths,
-  config: RedskilledClientConfig,
-): Promise<void> {
-  const deadline = Date.now() + (config.readyTimeoutMs ?? DEFAULT_REDSKILLED_READY_TIMEOUT_MS);
-  for (;;) {
-    const endpoint = await resolveRedskilledClientEndpoint(paths);
-    if (await socketAnswers(endpoint.paths.socketPath)) return;
-    if (Date.now() >= deadline) {
-      throw new Error(
-        `the installed ${REDSKILLED_UNIT_NAME} did not expose a same-user daemon within the ready window ` +
-          `(client socket ${JSON.stringify(paths.socketPath)})`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
 
@@ -501,30 +392,6 @@ async function waitOutTheLeaseHolder(
         `${settled.holder?.pid ?? "unknown"} still holds this socket`,
     ),
   );
-}
-
-/**
- * Refuse a spawn the machine already has an answer for.
- *
- * The claim is only consulted to REFUSE, never to admit: a machine whose claim is
- * absent, stale or unreadable falls through to the ordinary start, where the
- * daemon's own claim, lease and exclusive bind decide. Reading it here buys one
- * thing the daemon cannot — the second daemon is never spawned at all, so a
- * foreign user gets a message instead of a process that lives for a heartbeat.
- */
-async function refuseWhenMachineIsHeld(paths: RedskilledPaths): Promise<void> {
-  const store = createRedskilledMachineClaimStore(paths.machineClaimPath, {
-    machineIdHash: paths.machineIdHash,
-    sessionKeyHash: paths.sessionKeyHash,
-    socketPath: paths.socketPath,
-  });
-  const claim = await store.read().catch(() => undefined);
-  if (claim == null) return;
-  // Our own machine's daemon, on our own socket: that is the daemon this client
-  // wants, and it is simply not answering yet.
-  if (claim.socket_path === paths.socketPath) return;
-  if (!isPidAlive(claim.pid)) return;
-  throw new RedskilledMachineHeldError(paths.machineClaimPath, "held", claim);
 }
 
 /**
