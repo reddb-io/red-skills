@@ -95,7 +95,7 @@ import {
   type ActorTrustSignals,
 } from "../trust-gate.js";
 import { getConfig } from "../config.js";
-import type { AfkModelTier, ConfigValues, ValidationMoments } from "../config.js";
+import type { AfkModelTier, ConfigValues, ResolvedTaskRoute, ValidationMoments } from "../config.js";
 import { runNotesLoop, notesPath, type NotesLoopConfig } from "../notes-loop.js";
 import {
   buildIssueClassificationMetadata,
@@ -353,6 +353,8 @@ export interface ProcessIssueDeps {
     model: string;
     effort: AgentEffort;
   };
+  /** Complete task-class route. Runtime runner pins are already folded into it. */
+  resolveRoute?(taskClass?: AfkModelTier): ResolvedTaskRoute;
   hooks: ProcessHooks;
   lookups: ProcessLookups;
   fallbackRunner?: boolean;
@@ -442,6 +444,8 @@ export function resolveSpawnTier(
   runner: Runner,
   taskClass: AfkModelTier,
 ): { model: string; effort?: AgentEffort } {
+  const route = deps.resolveRoute?.(taskClass);
+  if (route?.runner === runner) return { model: route.model, effort: route.effort };
   return deps.resolveTier?.(runner, taskClass) ?? { model: deps.model, effort: deps.effort };
 }
 export interface ProcessIssueInput {

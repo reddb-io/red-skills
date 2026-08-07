@@ -220,6 +220,29 @@ describe("processIssue — DONE + green + merged (unlocked, admin-PR landing)", 
     expect(trace.released).toEqual([9]);
   });
 
+  it("lets the classified task route choose the implementer runner and pair", async () => {
+    const { deps, input, trace } = harness({
+      outcome: "done",
+      feedbackOk: true,
+      classifyIssue: async () => "simple",
+      resolveRoute: (taskClass = "think") => ({
+        taskClass,
+        runner: "codex",
+        model: "gpt-5.6-sol",
+        effort: "high",
+        origins: { runner: "file", model: "default", effort: "default" },
+      }),
+    });
+
+    await processIssue(deps, input);
+
+    expect(trace.runAgentCalls[0]).toMatchObject({
+      runner: "codex",
+      model: "gpt-5.6-sol",
+      effort: "high",
+    });
+  });
+
   it("keeps a successful landing done and surfaces a local branch cleanup failure", async () => {
     const { deps, input, trace } = harness({ outcome: "done", feedbackOk: true });
     deps.git.deleteLocalBranch = async () => ({ ok: false, error: "cleanup failed" }) as never;

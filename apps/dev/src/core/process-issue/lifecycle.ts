@@ -601,10 +601,12 @@ export async function processIssue(
       )
       .catch(() => undefined)) ?? "simple"
     : "think";
+  const initialRoute = deps.resolveRoute?.(taskClass);
+  const routedRunner = initialRoute?.runner ?? input.runner;
   if (
     !(await fireHook(
       "pre_attempt",
-      hookContext({ issue, title: input.title, workspace: branch, runner: input.runner, attempt_n: input.attempt }),
+      hookContext({ issue, title: input.title, workspace: branch, runner: routedRunner, attempt_n: input.attempt }),
     ))
   ) {
     return await abortAfterClaim(deps, input, branch, base, hooksFired, "pre_attempt");
@@ -632,7 +634,11 @@ export async function processIssue(
       force: isMergeConflictRetry(prevFailureContext),
     });
   }
-  let activeRunner: Runner = toAgentRunner(input.runner);
+  // The Worker's bootstrap runner is only the fallback. Once the task class is
+  // known, the route contract chooses the provider-facing runner. Keep Hermes
+  // as Hermes here so its own model table is consulted; the execution boundary
+  // alone projects it onto its Claude-compatible implementer.
+  let activeRunner: Runner = routedRunner;
   // The ROUND ordinal, not the attempt ordinal ADR 0103 retired: every bump
   // below happens inside ONE Worker — same Worker, same Worktree, same branch.
   // It is still carried on the legacy `attempt`/`attempt_n` fields because those
@@ -1209,7 +1215,7 @@ export async function processIssue(
       run = { outcome: "done", branch: fastBranch, commits: [], stdout: "" };
     } else {
       const baseAgentInput: RunAgentInput = {
-        runner: activeRunner,
+        runner: toAgentRunner(activeRunner),
         model: initialTier.model,
         effort: initialTier.effort,
         handoffPath,
