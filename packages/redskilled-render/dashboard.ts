@@ -208,19 +208,19 @@ export interface RedskilledDashboardOptions {
   /** How many Worker rows may be drawn before the rest are counted instead. */
   readonly maxRows: number;
   /** How many terminal rows the complete dashboard may occupy. */
-  readonly maxHeight: number;
+  readonly maxHeight?: number;
   /** Expand individual death receipts; the default keeps only the diagnosis. */
-  readonly showDeathDetails: boolean;
+  readonly showDeathDetails?: boolean;
 }
 
-export const REDSKILLED_DASHBOARD_DEFAULTS: RedskilledDashboardOptions = {
+export const REDSKILLED_DASHBOARD_DEFAULTS = {
   mode: "local",
   project: null,
   maxWidth: 200,
   maxRows: 16,
   maxHeight: 40,
   showDeathDetails: false,
-};
+} as const satisfies RedskilledDashboardOptions;
 
 const GUTTER = "  ";
 const BAR_DONE = "█";
