@@ -16,7 +16,6 @@ import type {
   HitlResolveInput,
   DailyReviewInput,
   LandBranchInput,
-  QueueStatusInput,
   RequeueToolInput,
   RespondToolInput,
   RetakeToolInput,

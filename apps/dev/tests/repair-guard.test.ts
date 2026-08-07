@@ -142,12 +142,12 @@ describe("every castle refusal and empty state is declared (#3261)", () => {
         surface: "empty-state",
       },
       {
-        path: "apps/dev/src/mcp-adapter.ts",
+        path: "apps/dev/src/mcp/project.ts",
         fn: "projectStatus",
         surface: "empty-state",
       },
       {
-        path: "apps/dev/src/mcp-adapter.ts",
+        path: "apps/dev/src/mcp/events.ts",
         fn: "cursorRefusal",
         surface: "refusal",
       },

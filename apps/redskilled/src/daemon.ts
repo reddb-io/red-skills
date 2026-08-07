@@ -38,9 +38,12 @@
  * nothing — so an exit is resolved against the unit before it is believed, and a
  * start additionally asks the host for the Worker units no lane accounts for.
  */
-// Barrel — god file split (PR C)
-// All implementation lives in ./daemon/lifecycle.ts, ./daemon/socket.ts, ./daemon/errors.ts
-// This file re-exports everything so `from "./daemon.js"` keeps working.
+// The public façade over `./daemon/`. A barrel earns its place when several
+// modules stand behind it; it earned nothing when it forwarded to one file
+// holding the whole daemon. The file-size ratchet is what keeps that from
+// growing back.
+export * from "./daemon/tunables.js";
+export * from "./daemon/types.js";
 export * from "./daemon/lifecycle.js";
 export * from "./daemon/socket.js";
 export * from "./daemon/errors.js";

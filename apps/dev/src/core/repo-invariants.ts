@@ -32,6 +32,12 @@ export interface RepoInvariantSuite {
  */
 export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
   {
+    name: "invariants:file-size",
+    scope: "apps/dev",
+    script: "test:invariants",
+    why: "the file-size ratchet constrains every source file under apps/ and packages/, so a god file growing back in any package must redden the cone-scoped gate that touched it",
+  },
+  {
     name: "invariants:toon-json-io",
     scope: "apps/dev",
     script: "test:invariants",
