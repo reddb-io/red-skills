@@ -48,7 +48,10 @@ import {
   redskilledServeArgv,
   type RedskilledServeTarget,
 } from "./daemon-entry.js";
-import { REDSKILLED_SUPERVISED_ENV } from "./supervision.js";
+import {
+  REDSKILLED_SUPERVISED_ENV,
+  repointRedskilledUnitForReplacement,
+} from "./supervision.js";
 
 /**
  * The exit code a self-replacing daemon leaves under a supervisor.
@@ -340,6 +343,12 @@ export interface RedskilledReplacementIO {
   readonly resolveEntry?: (version: string) => ResolvedRedskilledReplacementEntry;
   /** Starts the successor, detached; a real spawn by default. */
   readonly spawnSuccessor?: (entry: ResolvedRedskilledReplacementEntry, argv: readonly string[]) => void;
+  /** Repoints a supervising unit before the old daemon releases its socket. */
+  readonly repointSupervisor?: (
+    entry: ResolvedRedskilledReplacementEntry,
+    target: RedskilledServeTarget,
+    idleMs?: number,
+  ) => void;
   /** Ends this process so its supervisor revives it; `process.exit` by default. */
   readonly exit?: (code: number) => void;
   readonly env?: NodeJS.ProcessEnv;
@@ -349,8 +358,8 @@ export interface RedskilledReplacementIO {
 export interface PreparedRedskilledReplacement {
   readonly via: RedskilledReplacementVia;
   readonly to: string;
-  /** What will run the new version; absent when a supervisor starts it. */
-  readonly entry?: ResolvedRedskilledReplacementEntry;
+  /** What will run the new version, resolved before the old daemon lets go. */
+  readonly entry: ResolvedRedskilledReplacementEntry;
 }
 
 export interface RedskilledReplacementOutcome extends PreparedRedskilledReplacement {
@@ -368,11 +377,22 @@ export interface RedskilledReplacementOutcome extends PreparedRedskilledReplacem
 export function prepareRedskilledReplacement(
   decision: Extract<RedskilledReplacementDecision, { act: "replace" }>,
   io: RedskilledReplacementIO = {},
+  target?: RedskilledServeTarget,
+  idleMs?: number,
 ): PreparedRedskilledReplacement {
-  if (decision.via === "supervisor-exit") return { via: decision.via, to: decision.to };
   const resolve = io.resolveEntry ??
     ((version: string) => requireRedskilledReplacementEntry(version, io.env == null ? {} : { env: io.env }));
-  return { via: decision.via, to: decision.to, entry: resolve(decision.to) };
+  const entry = resolve(decision.to);
+  if (decision.via === "supervisor-exit") {
+    const repoint = io.repointSupervisor ?? ((resolved: ResolvedRedskilledReplacementEntry, serve: RedskilledServeTarget, ms?: number) =>
+      repointRedskilledUnitForReplacement(resolved, serve, {
+        ...(io.env == null ? {} : { env: io.env }),
+        ...(ms == null ? {} : { idleMs: ms }),
+      }));
+    if (target == null) throw new Error("a supervised redskilled replacement needs its serve target before exit");
+    repoint(entry, target, idleMs);
+  }
+  return { via: decision.via, to: decision.to, entry };
 }
 
 /**
@@ -389,7 +409,7 @@ export function completeRedskilledReplacement(
   options: { readonly idleMs?: number; readonly io?: RedskilledReplacementIO } = {},
 ): RedskilledReplacementOutcome {
   const io = options.io ?? {};
-  if (prepared.via === "supervisor-exit" || prepared.entry == null) {
+  if (prepared.via === "supervisor-exit") {
     (io.exit ?? defaultExit)(REDSKILLED_REPLACE_EXIT_CODE);
     return { ...prepared, exitCode: REDSKILLED_REPLACE_EXIT_CODE };
   }

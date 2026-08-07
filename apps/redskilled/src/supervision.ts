@@ -6,11 +6,11 @@
  * component whose absence stops every project on the machine revived only when
  * some client next happens to want work. This module is the other half.
  *
- * **The unit adds a supervisor, never a second spawn path.** Its `ExecStart` is
+ * **The unit becomes the birth authority, never a second spawn path.** Its `ExecStart` is
  * the same resolved published bundle a client would spawn, given the same session
  * paths on the same flags, so a host with the unit and a host without it run
- * identical code against an identical contract — the difference is only who
- * notices the death. That is why the unit is *rendered from* the entry resolver
+ * identical code against an identical contract — the difference is who starts
+ * it and notices the death. That is why the unit is *rendered from* the entry resolver
  * rather than hand-written: a unit carrying its own idea of the argv would drift
  * from the client's the first time a flag moved.
  *
@@ -24,8 +24,9 @@
  * install sequence are both provable on a host with no systemd at all.
  */
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -33,6 +34,7 @@ import {
   requireRedskilledEntry,
   type RedskilledEntryLookup,
   type RedskilledEntryOverride,
+  type RedskilledServeTarget,
 } from "./daemon-entry.js";
 import type { RedskilledPaths } from "./paths.js";
 
@@ -107,6 +109,10 @@ function renderUnit(command: string, args: readonly string[], paths: RedskilledP
     "[Unit]",
     "Description=redskilled — the host-scoped execution daemon (ADR 0130)",
     `Documentation=${REDSKILLED_UNIT_DOCUMENTATION}`,
+    // A stale or manually-started holder must not turn singleton protection
+    // into an unbounded restart storm.
+    "StartLimitIntervalSec=60",
+    "StartLimitBurst=5",
     "",
     "[Service]",
     "Type=simple",
@@ -126,6 +132,58 @@ function renderUnit(command: string, args: readonly string[], paths: RedskilledP
     "WantedBy=default.target",
     "",
   ].join("\n");
+}
+
+/** The drop-in a supervised in-major replacement writes before it exits. */
+export function redskilledReplacementDropInPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(`${redskilledUnitPath(env)}.d`, "10-current-entry.conf");
+}
+
+function replacementDropInForUnit(unitPath: string): string {
+  return join(`${unitPath}.d`, "10-current-entry.conf");
+}
+
+/**
+ * Atomically repoint the installed unit to the already-resolved successor.
+ *
+ * This runs before the old daemon releases its socket. If either the write or
+ * daemon-reload fails, the replacement throws and the serving daemon stays up;
+ * an upgrade may be delayed, but it cannot become a restart loop on the old
+ * ExecStart.
+ */
+export function repointRedskilledUnitForReplacement(
+  entry: { readonly command: string; readonly args: readonly string[] },
+  target: RedskilledServeTarget,
+  options: {
+    readonly env?: NodeJS.ProcessEnv;
+    readonly idleMs?: number;
+    readonly run?: (argv: readonly string[]) => RedskilledUnitRunResult;
+  } = {},
+): string {
+  const path = redskilledReplacementDropInPath(options.env ?? process.env);
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const argv = [
+    entry.command,
+    ...entry.args,
+    ...redskilledServeArgv(target, options.idleMs == null ? {} : { idleMs: options.idleMs }),
+  ];
+  const text = [
+    "[Service]",
+    "ExecStart=",
+    `ExecStart=${argv.map(quoteUnitWord).join(" ")}`,
+    "",
+  ].join("\n");
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(temporary, text, { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, path);
+  const reloaded = (options.run ?? defaultRun)(["systemctl", "--user", "daemon-reload"]);
+  if (reloaded.status !== 0) {
+    throw new Error(
+      `redskilled wrote the supervised replacement drop-in ${path}, but systemd did not reload it: ` +
+        `${(reloaded.stderr ?? reloaded.stdout ?? `status ${reloaded.status}`).trim()}`,
+    );
+  }
+  return path;
 }
 
 /** A word for `ExecStart`: quoted only when it would otherwise split or escape. */
@@ -178,10 +236,15 @@ export async function installRedskilledUnit(
   io: RedskilledUnitIO = {},
 ): Promise<RedskilledUnitInstallation> {
   const write = io.writeFile ?? defaultWriteFile;
+  const remove = io.removeFile ?? defaultRemoveFile;
   const run = io.run ?? defaultRun;
   const steps: RedskilledUnitStep[] = [];
 
   await write(plan.unitPath, plan.text);
+  // An explicit install (including a major upgrade) owns the new base
+  // ExecStart. A managed in-major replacement drop-in must not silently keep
+  // overriding that freshly installed entry.
+  await remove(replacementDropInForUnit(plan.unitPath));
   steps.push({ step: "write-unit", ok: true, detail: plan.unitPath });
   steps.push(runStep("daemon-reload", run, ["systemctl", "--user", "daemon-reload"]));
   steps.push(runStep("enable", run, ["systemctl", "--user", "enable", "--now", plan.unitName]));
@@ -206,6 +269,7 @@ export async function uninstallRedskilledUnit(
     runStep("disable", run, ["systemctl", "--user", "disable", "--now", REDSKILLED_UNIT_NAME]),
   ];
   await remove(unitPath);
+  await remove(replacementDropInForUnit(unitPath));
   steps.push({ step: "remove-unit", ok: true, detail: unitPath });
   steps.push(runStep("daemon-reload", run, ["systemctl", "--user", "daemon-reload"]));
   return { unitPath, installed: false, steps };

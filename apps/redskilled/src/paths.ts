@@ -128,7 +128,10 @@ export function resolveRedskilledPaths(options: ResolveRedskilledPathsOptions = 
     lockPath: join(runtimeDir, "redskilled.spawn.lock"),
     leasePath: join(runtimeDir, "redskilled.lease.toon"),
     eventLanePath: join(redskilledHomeDir(homeDir), REDSKILLED_EVENT_LANE_FILE),
-    registrationIntentPath: join(runtimeDir, "redskilled.registrations.toon"),
+    // A registration is host intent, not a socket artifact. Keeping it beside
+    // the socket stranded every drain when one process resolved XDG_RUNTIME_DIR
+    // and its successor used the uid fallback (or vice versa).
+    registrationIntentPath: join(redskilledHomeDir(homeDir), "redskilled.registrations.toon"),
     machineClaimPath: options.machineClaimPath ??
       resolveMachineClaimPath({ env: options.env, machineIdHash, platform: options.platform }),
   };
