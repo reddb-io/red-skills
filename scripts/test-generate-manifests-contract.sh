@@ -61,6 +61,17 @@ else
 fi
 
 # 6 — Idempotence: running generators twice produces no diff (no --check failure when already fresh)
+# A missing toolchain is not drift. This ran in a job that carries only a
+# checkout, so every `pnpm` was `command not found` and each one was reported as
+# "manifests drift — run pnpm generate-manifests": an environment fault dressed
+# as a content fault, sending the reader to regenerate files that were already
+# fresh. Say which it is before asking anyone to fix anything.
+if ! command -v pnpm >/dev/null 2>&1; then
+  fail "pnpm is not on PATH — this contract needs the workspace toolchain, not a bare checkout"
+  printf '\n%d failure(s)\n' "$failures" >&2
+  exit 1
+fi
+
 set +e
 pnpm codex:manifests:check >/tmp/codex-check.log 2>&1; codex_rc=$?
 pnpm gemini:manifests:check >/tmp/gemini-check.log 2>&1; gemini_rc=$?

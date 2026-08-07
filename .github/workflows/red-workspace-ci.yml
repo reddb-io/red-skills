@@ -136,11 +136,7 @@ jobs:
       - name: Test MCP lane canary schedule contract
         run: scripts/test-mcp-lane-canary-schedule.sh
 
-      - name: Test bundle-app contract
-        run: scripts/test-bundle-app-contract.sh
 
-      - name: Test generate-manifests contract
-        run: scripts/test-generate-manifests-contract.sh
 
   typecheck:
     runs-on: ubuntu-latest
@@ -185,6 +181,16 @@ jobs:
       - name: Check generated Pi npm packages
         if: needs.scope.outputs.run_manifest_checks == 'true'
         run: pnpm pi:packages:check
+
+      # These need the installed workspace: they spawn the bundler and the
+      # manifest generators. They rode in `workflow-security`, which carries a
+      # checkout and nothing else, so every `pnpm` was `command not found` and
+      # the contract read that as manifest drift.
+      - name: Test bundle-app contract
+        run: scripts/test-bundle-app-contract.sh
+
+      - name: Test generate-manifests contract
+        run: scripts/test-generate-manifests-contract.sh
 
       - name: Lint workspace (oxlint, import + correctness)
         if: needs.scope.outputs.run_typecheck == 'true'
