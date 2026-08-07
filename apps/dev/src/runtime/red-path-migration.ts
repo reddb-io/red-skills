@@ -87,7 +87,7 @@ export async function migrateLegacyDevPaths(root: string): Promise<DevPathMigrat
   }
   for (const name of entries) {
     if (!name.startsWith(logPrefix)) continue;
-    if (name !== "afk-supervisor.log.toonl" && name !== "afk-supervisor.log.toonl") continue;
+    if (name !== "afk-supervisor.log.toonl") continue;
     const currentName = "supervisor.log.toonl";
     if (await moveIfSafe(join(legacyDir, name), join(currentDir, currentName))) moved.push(name);
   }

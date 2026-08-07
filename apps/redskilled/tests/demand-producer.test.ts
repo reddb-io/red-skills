@@ -517,7 +517,7 @@ describe("the seam holds in both directions", () => {
   });
 
   it("keeps the selector/work-policy breaker out of the daemon's half", () => {
-    for (const file of ["daemon.ts", "protocol.ts", "host-state.ts", "admission.ts", "event-lane.ts"]) {
+    for (const file of ["daemon/lifecycle.ts", "protocol.ts", "host-state.ts", "admission.ts", "event-lane.ts"]) {
       const source = readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
       const code = source.replace(/\/\*\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
       expect(code, `${file} must hold no selector circuit policy`).not.toMatch(
@@ -532,10 +532,10 @@ describe("the seam holds in both directions", () => {
     // and re-asking into a full machine is the busy loop the hold exists to
     // prevent. What must NOT follow it is the breaker: a policy keyed to which
     // selector's Workers keep dying is work knowledge, and the daemon has none.
-    const code = readFileSync(new URL("../src/daemon.ts", import.meta.url), "utf8")
+    const code = readFileSync(new URL("../src/daemon/lifecycle.ts", import.meta.url), "utf8")
       .replace(/\/\*\*[\s\S]*?\*\//g, "")
       .replace(/^\s*\/\/.*$/gm, "");
     expect(code).toMatch(/demandBackoff/);
-    expect(code, "daemon.ts must key no policy to a selector").not.toMatch(/selector_id|selectorId/);
+    expect(code, "the daemon lifecycle must key no policy to a selector").not.toMatch(/selector_id|selectorId/);
   });
 });

@@ -51,12 +51,12 @@ export const DECLARED_REPAIR_SITES: readonly DeclaredRepairSite[] = [
     surface: "empty-state",
   },
   {
-    path: "apps/dev/src/mcp-adapter.ts",
+    path: "apps/dev/src/mcp/project.ts",
     fn: "projectStatus",
     surface: "empty-state",
   },
   {
-    path: "apps/dev/src/mcp-adapter.ts",
+    path: "apps/dev/src/mcp/events.ts",
     fn: "cursorRefusal",
     surface: "refusal",
   },
@@ -75,9 +75,14 @@ export type RepairDeclarationViolation =
   | ({ readonly kind: "stale" } & DeclaredRepairSite)
   | ({ readonly kind: "invalid-repair" } & RepairViolation);
 
+/**
+ * Scanned as a DIRECTORY, not as one file. `mcp-adapter.ts` used to hold the
+ * whole surface; it is a façade now, and naming it here would scan a file that
+ * declares nothing while the refusals it forwards to went unread.
+ */
 export const REPAIR_SCAN_ROOTS = [
   "packages/red-castle/src/mcp",
-  "apps/dev/src/mcp-adapter.ts",
+  "apps/dev/src/mcp",
 ] as const;
 
 export function readRepairScanFiles(

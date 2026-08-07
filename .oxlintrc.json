@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["import", "typescript", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "off",
+    "perf": "off",
+    "style": "off",
+    "pedantic": "off",
+    "restriction": "off",
+    "nursery": "off"
+  },
+  "rules": {
+    "no-unused-vars": "off",
+    "no-unused-expressions": "off",
+    "no-useless-escape": "off",
+    "no-control-regex": "off",
+    "require-yield": "off",
+    "no-cond-assign": "off",
+    "no-const-assign": "off",
+    "no-constant-condition": "off",
+    "no-unassigned-vars": "off",
+    "erasing-op": "off",
+    "const-comparisons": "off",
+    "only-used-in-recursion": "off"
+  },
+  "ignorePatterns": ["dist/", "node_modules/", ".red/tmp/", ".red/state/", "coverage/", "*.min.mjs", "plugins/**/dist/", "packaging/pi/**", "plugins/dev/skills/engineering/afk/bin/**", "plugins/dev/hooks/red-fetch.mjs", ".github/red-skills/**"],
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.mjs", "**/tests/**/*.ts"],
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
+}

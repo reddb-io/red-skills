@@ -60,7 +60,9 @@ describe("the redskilled session lease is renewed while the daemon serves", () =
   }, 30_000);
 
   it("keeps `.renew()` wired — a mechanism with zero callers is a mechanism that is off", async () => {
-    const daemonSource = await readFile(resolve(__dirname, "..", "src", "daemon.ts"), "utf8");
+    // Reads the IMPLEMENTATION, not the façade: `daemon.ts` re-exports `./daemon/*`,
+    // so grepping it for a call site finds only forwarding.
+    const daemonSource = await readFile(resolve(__dirname, "..", "src", "daemon", "lifecycle.ts"), "utf8");
     // Named at the call site, not merely defined: this is the exact grep that came
     // back empty in #3092 while the field it feeds sat five hours stale.
     expect(daemonSource).toMatch(/leaseStore\.renew\(/);
