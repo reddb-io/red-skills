@@ -16,7 +16,7 @@ import {
   auditValidationMomentDrift,
   type ValidationMomentDriftReport,
 } from "../core/validation-moment-doctor.js";
-import { ENGINE_VALIDATION_MOMENTS } from "../core/validation-moments.js";
+import { ENGINE_VALIDATION_MOMENTS, isValidationSettingKey } from "../core/validation-moments.js";
 import { HOOK_DEFAULT_NAMES } from "../core/hook-config.js";
 import { HOOK_REGISTRY, type ExitPolicy } from "../core/hook-registry.js";
 import {
@@ -168,11 +168,19 @@ function declaredMomentCommands(config: ConfigValues): string[] {
   return [...(moments.iteration ?? []), ...(moments.post_done ?? []), ...(moments.landing ?? [])];
 }
 
+/**
+ * The moment keys a project declares — settings excluded.
+ *
+ * `afk.validation` holds two kinds of key, and scraping the block for names
+ * conflates them: a moment schedules commands, a setting tunes how they run.
+ * Declared settings are named in `VALIDATION_SETTING_KEYS` beside the readers
+ * that resolve them.
+ */
 function configuredValidationMoments(config: ConfigValues): string[] {
   const moments = new Set<string>();
   for (const key of Object.keys(config)) {
     const match = /^afk\.validation\.([^.]+)(?:\.|$)/.exec(key);
-    if (match?.[1]) moments.add(match[1]);
+    if (match?.[1] && !isValidationSettingKey(match[1])) moments.add(match[1]);
   }
   return [...moments].sort();
 }
