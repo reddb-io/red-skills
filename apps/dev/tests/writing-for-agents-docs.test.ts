@@ -62,7 +62,10 @@ describe("writing-for-agents docs contract (#3433)", () => {
     // survive in NO tracked file — `git grep` exiting 1 is the pass.
     let hits: string[] = [];
     try {
-      hits = execFileSync("git", ["grep", "-l", PREVIOUS_NAME, "--", "."], {
+      // `.changeset/` is exempt: a release note explaining a rename must NAME
+      // what was renamed. That is a record of history, like an ADR describing a
+      // removed surface — not a pointer some reader could still follow.
+      hits = execFileSync("git", ["grep", "-l", PREVIOUS_NAME, "--", ".", ":(exclude).changeset"], {
         cwd: ROOT,
         encoding: "utf8",
       })

@@ -130,9 +130,30 @@ function prepareVendoredBundle(
   return { path, source, changed };
 }
 
+/**
+ * The first published version that ships the `red-skills-release` binary.
+ *
+ * The generator stamps the version the repo is AT, which is one version behind
+ * the feature the first time it runs: a repo on 3.8.0 generated a workflow
+ * invoking a binary 3.8.0 does not contain, and the release died with
+ * `red-skills-release: not found`. Same shape as the `/red-setup` dead end the
+ * house invariants record — an instruction pointing at its own precondition.
+ */
+const RELEASE_BINARY_SINCE = "3.9.0";
+
 function pinnedInvocation(engineVersion: string): string {
-  const version = normalizedEngineVersion(engineVersion);
+  const version = atLeast(normalizedEngineVersion(engineVersion), RELEASE_BINARY_SINCE);
   return `npx -y -p @reddb-io/red-skills@${version} red-skills-release run`;
+}
+
+/** The later of two `x.y.z` versions, so a pin can never name a build without the binary. */
+function atLeast(version: string, floor: string): string {
+  const parts = (value: string): number[] => value.split(".").map(Number);
+  const [a, b] = [parts(version), parts(floor)];
+  for (let i = 0; i < 3; i += 1) {
+    if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0) ? version : floor;
+  }
+  return version;
 }
 
 function normalizedEngineVersion(value: string): string {

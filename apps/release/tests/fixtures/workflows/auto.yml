@@ -23,4 +23,4 @@ jobs:
       - name: Publish Release
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: npx -y -p @reddb-io/red-skills@3.8.0 red-skills-release run
+        run: npx -y -p @reddb-io/red-skills@3.9.0 red-skills-release run
