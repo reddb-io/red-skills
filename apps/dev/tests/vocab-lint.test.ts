@@ -6,7 +6,7 @@
  *   - `AttemptStatus` / `CastleAttemptStatus` type names (refer to that attribute)
  *   - `attempt_number` / `attemptNumber` count fields
  *   - `attemptCount` (learning-debt repetition counter)
- *   - Historical `.red/adr/` files and `CHANGES.md`
+ *   - Historical `.red/adr/` files
  *   - Plain comments / prose that reference the old term for context
  *
  * When this test fails, either:
