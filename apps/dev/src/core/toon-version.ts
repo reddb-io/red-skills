@@ -78,7 +78,9 @@ export const TOON_PIN_SITES: readonly ToonPinSite[] = [
     name: "red-setup.reference.host-binary-check",
     path: "plugins/dev/skills/engineering/red-setup/REFERENCE.md",
     form: "version",
-    pattern: /pinned to `(\d+\.\d+\.\d+)`/,
+    // The number is still derived from the catalog; only the words around it
+    // changed when the check became a floor rather than an equality.
+    pattern: /the `(\d+\.\d+\.\d+)` floor/,
   },
   {
     name: "red-setup.write-contract.host-binary-record",
@@ -120,7 +122,7 @@ export const TOON_PIN_SITES: readonly ToonPinSite[] = [
     name: "red-doctor.skill.host-binary-pin",
     path: "plugins/dev/skills/engineering/red-doctor/SKILL.md",
     form: "version",
-    pattern: /host_binaries\.tq\.version` \(pin `(\d+\.\d+\.\d+)`\)/,
+    pattern: /host_binaries\.tq\.version` \(floor `(\d+\.\d+\.\d+)`\)/,
   },
   {
     name: "red-doctor.skill.remediation-env",

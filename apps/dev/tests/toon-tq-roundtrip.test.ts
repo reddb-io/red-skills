@@ -21,15 +21,25 @@ afterAll(async () => {
 });
 
 /**
- * The bundled encoder and the host `tq` reader are pinned to one catalog version precisely so the
- * reader can never drift from the writer (ADR 0097). These tests are the empirical half of that
- * pin: they encode with the bundled library and decode with the installed binary, so a format
- * break between the two shows up as a red test rather than as an operator blind to their own logs.
+ * The host `tq` reader must never fall BEHIND the bundled encoder (ADR 0097). These tests are the
+ * empirical half of that floor: they encode with the bundled library and decode with the installed
+ * binary, so a format break between the two shows up as a red test rather than as an operator
+ * blind to their own logs.
+ *
+ * A floor, not an equality — the danger runs one way only. A newer `tq` reads what an older
+ * library wrote, which is how the format ships; demanding equality reddened on an operator whose
+ * only act was to run the current release (#3466).
  */
 describe("bundled toon encoder round-trips through pinned tq", () => {
-  it("runs the tq pinned by the catalog", async () => {
+  it("runs a tq at or above the catalog floor", async () => {
     const { stdout } = await execFileAsync("tq", ["--version"]);
-    expect(stdout.trim()).toBe(`tq ${readCatalogToonVersion(ROOT).version}`);
+    const observed = stdout.trim().replace(/^tq\s+/, "");
+    const floor = readCatalogToonVersion(ROOT).version;
+    const parts = (value: string): number[] =>
+      value.split(/[.+-]/).slice(0, 3).map((part) => Number(part) || 0);
+    const [a, b] = [parts(observed), parts(floor)];
+    const behind = [0, 1, 2].reduce<number>((acc, i) => acc || (a[i] ?? 0) - (b[i] ?? 0), 0) < 0;
+    expect(behind, `tq ${observed} is below the catalog floor ${floor}`).toBe(false);
   });
 
   it("reads back every field of an encoder-written TOONL lane", async () => {
