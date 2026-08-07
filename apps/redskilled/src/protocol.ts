@@ -189,6 +189,8 @@ export interface RedskilledDashboardRenderRequest {
   readonly project?: string | null;
   readonly max_width?: number;
   readonly max_rows?: number;
+  readonly max_height?: number;
+  readonly show_death_details?: boolean;
 }
 
 export type RedskilledRequest =
