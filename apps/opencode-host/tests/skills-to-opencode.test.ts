@@ -11,6 +11,7 @@ import {
   parseFrontmatter,
   planPluginSkills,
   planSkill,
+  skillRelativeParts,
 } from "../src/skills-to-opencode.js";
 
 let root: string;
@@ -75,6 +76,19 @@ describe("listSkillFiles", () => {
 });
 
 describe("planSkill (ADR 0076 §1 name validation)", () => {
+  it("accepts the path separators emitted by both POSIX and Windows", () => {
+    expect(skillRelativeParts("engineering/afk/SKILL.md")).toEqual([
+      "engineering",
+      "afk",
+      "SKILL.md",
+    ]);
+    expect(skillRelativeParts("engineering\\afk\\SKILL.md")).toEqual([
+      "engineering",
+      "afk",
+      "SKILL.md",
+    ]);
+  });
+
   it("accepts a valid lowercase-hyphenated name", () => {
     writeSkill("afk", "---\nname: afk\ndescription: x\n---\n");
     const files = listSkillFiles(root, "dev");

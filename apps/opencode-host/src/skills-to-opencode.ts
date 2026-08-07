@@ -65,6 +65,11 @@ const DESCRIPTION_MAX = 1024;
 /** Buckets the generator skips — drafts only. */
 const SKIP_BUCKETS = new Set(["in-progress"]);
 
+/** Split a path returned by node:path.relative on either host family. */
+export function skillRelativeParts(path: string): string[] {
+  return path.split(/[\\/]/);
+}
+
 /**
  * Parse a RedSkills `SKILL.md` and return the `name` and `description`
  * from the YAML frontmatter. The RedSkills SKILL.md uses a constrained
@@ -151,7 +156,7 @@ export function planSkill(source: string, pluginsRoot: string, plugin: string): 
   // Expected layout: <bucket>/<name>/SKILL.md. The bucket must NOT be
   // `in-progress/` (filtered earlier) and must NOT be a flat SKILL.md
   // at the skills/ root.
-  const parts = rel.split("/");
+  const parts = skillRelativeParts(rel);
   if (parts.length !== 3 || parts[2] !== "SKILL.md") {
     errors.push({
       path: source,
