@@ -136,9 +136,10 @@ decision 1) — a density argument, never a second renderer.
 
   global          every project's Workers, each naming its owner
   --max-width N   hard ceiling in characters
+  --verbose       expand recent death receipts
 
-It always writes something and always exits 0: a dashboard that printed nothing
-is indistinguishable from a host with no Workers.`,
+In a TTY it refreshes one stable screen and follows resize; in a pipe it writes
+one snapshot. It always states an unreachable host and exits 0.`,
   "github-spend": `Usage: redskilled github-spend [--pool <pool|all>] [--hours <n>]
 
 Reports what this host observed itself spending from GitHub's API budget,
