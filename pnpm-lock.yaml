@@ -353,6 +353,9 @@ importers:
       '@reddb-io/toon':
         specifier: 'catalog:'
         version: 0.13.0
+      tuiuiu.js:
+        specifier: 1.0.75
+        version: 1.0.75
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -2785,6 +2788,11 @@ packages:
     engines: {node: '>=18.0.0'}
     hasBin: true
 
+  tuiuiu.js@1.0.75:
+    resolution: {integrity: sha512-QQCbz22sDi12OV/CMxMutn7eJ2IwS3eJFbW3nQTQqwsgjD5bbHX2NRT+Insu56p8WbpJLWnerADhEnsQxlIa5A==}
+    engines: {node: '>=22.12'}
+    hasBin: true
+
   turbo@2.10.5:
     resolution: {integrity: sha512-07Y/C7OUp23l4P92PJoYtFNbHjLhftrZH5Ce7dbczS4kX2Re+wtbXvZLoxn/pUtzgsQaRCBaRuZPJp4zmAn0WQ==}
     hasBin: true
@@ -4826,6 +4834,8 @@ snapshots:
       esbuild: 0.28.1
     optionalDependencies:
       fsevents: 2.3.3
+
+  tuiuiu.js@1.0.75: {}
 
   turbo@2.10.5:
     optionalDependencies:

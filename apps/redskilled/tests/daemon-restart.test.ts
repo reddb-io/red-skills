@@ -218,7 +218,7 @@ describe("the host event lane", () => {
     expect(daemon.hostState().budget_accounting.worker_count).toBe(1);
   });
 
-  it("records admitted births, activity transitions and mechanical heals as typed facts", async () => {
+  it("records admitted births, metrics, activity transitions and mechanical heals as typed facts", async () => {
     const paths = await sessionPaths();
     const workspace = await scratch("redskilled-workspace-");
     const daemon = await startRedskilledDaemon({
@@ -248,12 +248,14 @@ describe("the host event lane", () => {
     const events = await readRedskilledEvents(paths.eventLanePath);
     expect(events.map((event) => event.kind)).toEqual([
       "worker-birth",
+      "worker-metrics",
       "worker-activity",
       "worker-heal",
     ]);
     expect(events[0]).toMatchObject({ admission_verdict: "admitted" });
-    expect(events[1]).toMatchObject({ phase: "coding", step: "implementing" });
-    expect(events[2]).toMatchObject({ heal_kind: "mechanical-regeneration" });
+    expect(events[1]).toMatchObject({ tokens: null, tools: null });
+    expect(events[2]).toMatchObject({ phase: "coding", step: "implementing" });
+    expect(events[3]).toMatchObject({ heal_kind: "mechanical-regeneration" });
   });
 
   it("only ever appends: earlier bytes are never rewritten", async () => {

@@ -66,6 +66,10 @@ import {
   type RedskilledDashboardOptions,
 } from "@reddb-io/redskilled-render";
 import {
+  runRedskilledDashboardTui,
+  type RedskilledDashboardTuiOptions,
+} from "./dashboard-tui.js";
+import {
   installRedskilledUnit,
   planRedskilledUnit,
   readRedskilledUnitStatus,
@@ -139,7 +143,8 @@ decision 1) — a density argument, never a second renderer.
   --verbose       expand recent death receipts
 
 In a TTY it refreshes one stable screen and follows resize; in a pipe it writes
-one snapshot. It always states an unreachable host and exits 0.`,
+one snapshot. Press q to quit, r to refresh now, or v to toggle death details.
+It always states an unreachable host and exits 0.`,
   "github-spend": `Usage: redskilled github-spend [--pool <pool|all>] [--hours <n>]
 
 Reports what this host observed itself spending from GitHub's API budget,
@@ -998,8 +1003,9 @@ export async function runDashboard(
     readonly now?: () => string;
     readonly env?: NodeJS.ProcessEnv;
     /** `null` forces snapshot mode; omitted discovers the real stdout TTY. */
-    readonly terminal?: RedskilledDashboardTerminal | null;
+    readonly terminal?: true | null;
     readonly readDashboard?: typeof readRedskilledDashboardRender;
+    readonly runTui?: (options: RedskilledDashboardTuiOptions) => Promise<void>;
   } = {},
 ): Promise<number> {
   const write = io.write ?? ((line: string) => process.stdout.write(line));
@@ -1021,7 +1027,7 @@ export async function runDashboard(
 
   const paths = io.paths ?? resolveRedskilledPaths();
   const readDashboard = io.readDashboard ?? readRedskilledDashboardRender;
-  const terminal = io.terminal === undefined ? systemDashboardTerminal() : io.terminal;
+  const interactive = io.terminal === undefined ? process.stdout.isTTY === true : io.terminal === true;
   const noColor = (io.env ?? process.env).NO_COLOR !== undefined;
   const baseOptions: Partial<RedskilledDashboardOptions> = {
     ...(resolved.options.project == null ? {} : { project: resolved.options.project }),
@@ -1029,7 +1035,10 @@ export async function runDashboard(
     showDeathDetails: resolved.options.verbose,
   };
 
-  const readFrame = async (options: Partial<RedskilledDashboardOptions>): Promise<readonly string[]> => {
+  const readFrame = async (
+    options: Partial<RedskilledDashboardOptions>,
+    warnOnFailure = true,
+  ): Promise<readonly string[]> => {
     try {
       const render = await readDashboard(
         paths,
@@ -1041,12 +1050,13 @@ export async function runDashboard(
       );
       return noColor ? render.lines.map(stripAnsi) : render.lines;
     } catch (err) {
-      warn(`redskilled dashboard: ${err instanceof Error ? err.message : String(err)}\n`);
-      return ["redskilled unreachable — the host was not asked, so its Workers are unknown"];
+      const reason = err instanceof Error ? err.message : String(err);
+      if (warnOnFailure) warn(`redskilled dashboard: ${reason}\n`);
+      return [`redskilled unreachable — ${reason}`];
     }
   };
 
-  if (terminal == null) {
+  if (!interactive) {
     const lines = await readFrame({
       ...baseOptions,
       ...(resolved.options.maxWidth == null ? {} : { maxWidth: resolved.options.maxWidth }),
@@ -1055,55 +1065,23 @@ export async function runDashboard(
     return 0;
   }
 
-  // Stable screen: redraw from home, erase the old tail, and leave the cursor
-  // visible on every exit path. Resize wakes the loop immediately; the timer
-  // keeps the facts live when the terminal itself is quiet.
-  write("\x1b[?25l\x1b[2J");
-  try {
-    for (;;) {
-      const size = terminal.size();
-      const maxWidth = Math.max(1, Math.min(resolved.options.maxWidth ?? size.columns, size.columns));
-      const maxHeight = Math.max(1, size.rows);
-      const lines = await readFrame({
+  // Tuiuiu owns the terminal lifecycle and paints one alternate screen. The
+  // callback still asks the shared pure renderer for every frame, so this is a
+  // terminal adapter rather than a second dashboard implementation.
+  await (io.runTui ?? runRedskilledDashboardTui)({
+    initialShowDeathDetails: resolved.options.verbose,
+    noColor,
+    readFrame: async ({ columns, rows, showDeathDetails }) => {
+      const maxWidth = Math.max(1, Math.min(resolved.options.maxWidth ?? columns, columns));
+      const maxHeight = Math.max(1, rows);
+      return await readFrame({
         ...baseOptions,
         maxWidth,
         maxHeight,
         maxRows: Math.max(0, maxHeight - 5),
-      });
-      write(`\x1b[H${lines.join("\n")}\n\x1b[J`);
-      if (await terminal.next(1_000) === "stop") break;
-    }
-  } finally {
-    write("\x1b[?25h");
-  }
+        showDeathDetails,
+      }, false);
+    },
+  });
   return 0;
-}
-
-export interface RedskilledDashboardTerminal {
-  readonly size: () => { readonly columns: number; readonly rows: number };
-  readonly next: (refreshMs: number) => Promise<"refresh" | "resize" | "stop">;
-}
-
-/** The process-owned TTY signals, kept outside the pure renderer. */
-function systemDashboardTerminal(): RedskilledDashboardTerminal | null {
-  if (process.stdout.isTTY !== true) return null;
-  return {
-    size: () => ({ columns: process.stdout.columns || 200, rows: process.stdout.rows || 40 }),
-    next: (refreshMs) => new Promise((resolve) => {
-      let timer: NodeJS.Timeout;
-      const finish = (event: "refresh" | "resize" | "stop") => {
-        clearTimeout(timer);
-        process.stdout.off("resize", resized);
-        process.off("SIGINT", stopped);
-        process.off("SIGTERM", stopped);
-        resolve(event);
-      };
-      const resized = () => finish("resize");
-      const stopped = () => finish("stop");
-      timer = setTimeout(() => finish("refresh"), refreshMs);
-      process.stdout.once("resize", resized);
-      process.once("SIGINT", stopped);
-      process.once("SIGTERM", stopped);
-    }),
-  };
 }

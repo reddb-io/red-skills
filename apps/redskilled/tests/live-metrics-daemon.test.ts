@@ -79,7 +79,8 @@ describe("the daemon's live metrics", () => {
     running.push(daemon);
 
     const payload = await readRedskilledStatuslinePayload(paths, { sessionProject: "acme/widgets" });
-    expect(payload.metrics?.history_48h.tokens_per_hour.buckets.at(-2)?.value).toBe(1_200);
+    expect(payload.metrics?.history_48h).toBeDefined();
+    expect(payload.metrics?.history_48h?.tokens_per_hour.buckets.at(-2)?.value).toBe(1_200);
     expect(payload.metrics?.day.tokens_per_min.value).toBe(20);
   });
 

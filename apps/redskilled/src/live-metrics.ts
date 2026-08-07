@@ -143,6 +143,12 @@ export interface RedskilledStatuslineMetrics {
   readonly generated_at: string;
   readonly hour: RedskilledMetricsWindow;
   readonly day: RedskilledMetricsWindow;
+  /** Absent on daemon payloads produced before the 48-hour history contract. */
+  readonly history_48h?: RedskilledHourlyHistory;
+}
+
+/** The complete block emitted by this daemon version, rather than decoded legacy input. */
+export interface RedskilledDerivedStatuslineMetrics extends RedskilledStatuslineMetrics {
   readonly history_48h: RedskilledHourlyHistory;
 }
 
@@ -178,7 +184,7 @@ export interface DeriveRedskilledLiveMetricsInput {
 /** Both windows, derived from the facts the daemon holds. PURE. */
 export function deriveRedskilledLiveMetrics(
   input: DeriveRedskilledLiveMetricsInput,
-): RedskilledStatuslineMetrics {
+): RedskilledDerivedStatuslineMetrics {
   return {
     generated_at: input.now,
     hour: buildWindow("hour", REDSKILLED_METRIC_HOUR_MS, input),

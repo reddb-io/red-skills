@@ -49,33 +49,30 @@ describe("the dashboard always answers", () => {
     expect(io.out.join("")).toBe("snapshot-1\n");
   });
 
-  it("keeps one stable TTY frame, reacts to resize, and restores the cursor", async () => {
+  it("hands one live TTY session to Tuiuiu and preserves renderer budgets", async () => {
     const io = capture();
-    const sizes = [{ columns: 100, rows: 8 }, { columns: 72, rows: 5 }];
     const asked: Partial<RedskilledDashboardOptions>[] = [];
-    let frame = 0;
     await runDashboard(["global", "--verbose"], {
       write: io.write,
       warn: io.warn,
       cwd: "/",
-      terminal: {
-        size: () => sizes[Math.min(frame, sizes.length - 1)]!,
-        next: async () => frame++ === 0 ? "resize" : "stop",
-      },
+      terminal: true,
       readDashboard: async (_paths, options) => {
         asked.push(options ?? {});
         return rendered(`frame-${asked.length}`);
       },
+      runTui: async (options) => {
+        expect(options.initialShowDeathDetails).toBe(true);
+        await options.readFrame({ columns: 100, rows: 7, showDeathDetails: true });
+        await options.readFrame({ columns: 72, rows: 4, showDeathDetails: false });
+      },
     });
 
     expect(asked).toEqual([
-      expect.objectContaining({ mode: "global", maxWidth: 100, maxHeight: 8, maxRows: 3, showDeathDetails: true }),
-      expect.objectContaining({ mode: "global", maxWidth: 72, maxHeight: 5, maxRows: 0, showDeathDetails: true }),
+      expect.objectContaining({ mode: "global", maxWidth: 100, maxHeight: 7, maxRows: 2, showDeathDetails: true }),
+      expect.objectContaining({ mode: "global", maxWidth: 72, maxHeight: 4, maxRows: 0, showDeathDetails: false }),
     ]);
-    const output = io.out.join("");
-    expect(output).toContain("\x1b[?25l\x1b[2J");
-    expect(output.match(/\x1b\[Hframe-/g)).toHaveLength(2);
-    expect(output).toMatch(/\x1b\[\?25h$/);
+    expect(io.out).toEqual([]);
   });
 
   it("strips renderer colour when NO_COLOR is present", async () => {

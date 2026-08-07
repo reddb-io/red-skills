@@ -47,6 +47,9 @@ export function activate(context: vscode.ExtensionContext): void {
         client: createRedskilledReadClient({ socketPath: paths.socketPath }),
         eventLanePath: paths.eventLanePath,
         source: paths.source,
+        // Death receipts stay collapsed in the status bar's background poll.
+        // Opening the scrollable panel is the explicit request for detail.
+        dashboardRender: { showDeathDetails: dashboardPanel.open() },
       }),
     preferences: () => settings.notifications,
     renotifyMs: () => settings.renotifyMs,

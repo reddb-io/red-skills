@@ -277,6 +277,7 @@ describe("the frame is drawn here, from the one document the daemon composed", (
       eventLanePath: daemon.eventLanePath,
       source: "the test pinned it",
       sessionProject: "reddb-io/red-skills",
+      dashboardRender: { showDeathDetails: true },
     });
 
     // The bar: the count and the class, because "why did it die" must survive
