@@ -88,20 +88,14 @@ jobs:
           # remain retryable. A major ref at this release OR a newer release in
           # the same major means this tag's tail was reconciled successfully.
           major_reaches() {
-            local candidate="$1" major major_sha pointed pointed_version candidate_version
+            local candidate="$1" major major_sha
             major="$(major_for "$candidate")"
             major_sha="$(git rev-parse -q --verify "refs/tags/${major}^{commit}" 2>/dev/null || true)"
             [ -n "$major_sha" ] || return 1
-            candidate_version="${candidate#v}"
-            while IFS= read -r pointed; do
-              [ -n "$pointed" ] || continue
-              [ "$(major_for "$pointed")" = "$major" ] || continue
-              pointed_version="${pointed#v}"
-              if [ "$(printf '%s\n%s\n' "$candidate_version" "$pointed_version" | sort -V | tail -n1)" = "$pointed_version" ]; then
-                echo "::notice::$candidate has a GitHub Release and $major ref already reaches $pointed"
-                return 0
-              fi
-            done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --points-at "$major_sha")
+            if git merge-base --is-ancestor "refs/tags/${candidate}^{commit}" "$major_sha"; then
+              echo "::notice::$candidate has a GitHub Release and $major ref already reaches it"
+              return 0
+            fi
             return 1
           }
 
@@ -131,7 +125,7 @@ jobs:
                  [ "$(printf '%s\n%s\n' "$candidate_version" "$pointed_version" | sort -V | tail -n1)" = "$pointed_version" ]; then
                 return 0
               fi
-            done < <(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --points-at "$major_sha")
+            done < <(git tag --merged "$major_sha" --list "${major}.[0-9]*.[0-9]*")
             return 1
           }
 

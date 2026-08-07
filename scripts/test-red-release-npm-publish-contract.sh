@@ -189,6 +189,66 @@ else
   fail "a GitHub Release alone must not suppress major-tag reconciliation"
 fi
 
+# A moving major ref is an install channel, not necessarily an alias of the
+# exact release commit. A hotfix may advance `v2` one commit past `v2.88.0`;
+# the FIFO resolver must still recognise that the channel reaches v2.88.0,
+# otherwise every historical v2 release becomes pending again and blocks v3.
+resolver_fixture="$(mktemp -d)"
+trap 'rm -rf "$resolver_fixture"' EXIT
+
+mkdir -p "$resolver_fixture/bin" "$resolver_fixture/repo"
+git -C "$resolver_fixture/repo" init -q
+git -C "$resolver_fixture/repo" config user.name "Release Contract"
+git -C "$resolver_fixture/repo" config user.email "release-contract@example.invalid"
+
+git -C "$resolver_fixture/repo" commit --allow-empty -qm "release v2.88.0"
+git -C "$resolver_fixture/repo" tag v2.88.0
+git -C "$resolver_fixture/repo" commit --allow-empty -qm "v2 install-channel hotfix"
+git -C "$resolver_fixture/repo" tag v2
+git -C "$resolver_fixture/repo" switch -qc historical-v3.1.2
+git -C "$resolver_fixture/repo" commit --allow-empty -qm "divergent release v3.1.2"
+git -C "$resolver_fixture/repo" tag v3.1.2
+git -C "$resolver_fixture/repo" switch -q -
+git -C "$resolver_fixture/repo" commit --allow-empty -qm "release v3.10.1"
+git -C "$resolver_fixture/repo" tag v3.10.1
+git -C "$resolver_fixture/repo" tag v3
+git -C "$resolver_fixture/repo" commit --allow-empty -qm "release v3.11.0"
+git -C "$resolver_fixture/repo" tag v3.11.0
+
+cat > "$resolver_fixture/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = "release" ] && [ "${2:-}" = "view" ]; then
+  case "${3:-}" in
+    v2.88.0 | v3.1.2 | v3.10.1 | v3.11.0) exit 0 ;;
+  esac
+fi
+exit 1
+EOF
+chmod +x "$resolver_fixture/bin/gh"
+
+awk '
+  $0 == "      - name: Resolve the release tag" { in_step = 1; next }
+  in_step && $0 == "        run: |" { capture = 1; next }
+  capture && /^      - name:/ { exit }
+  capture { sub(/^          /, ""); print }
+' "$WORKFLOW" > "$resolver_fixture/resolve-release-tag.sh"
+
+if (
+  cd "$resolver_fixture/repo"
+  PATH="$resolver_fixture/bin:$PATH" \
+    EVENT_NAME=workflow_dispatch \
+    REF_NAME= \
+    INPUT_TAG=v3.11.0 \
+    GITHUB_OUTPUT="$resolver_fixture/github-output" \
+    bash "$resolver_fixture/resolve-release-tag.sh"
+) > "$resolver_fixture/stdout" 2>&1 &&
+   grep -q '^publish=true$' "$resolver_fixture/github-output" &&
+   grep -q '^tag=v3.11.0$' "$resolver_fixture/github-output"; then
+  pass "a moving major ref may carry a descendant hotfix without reopening its release line"
+else
+  fail "a descendant hotfix on a moving major ref must not block the next release"
+fi
+
 # One Release, one owner. The release engine creates it and re-reads the body it
 # wrote; a Release created here with generated notes would fail the engine's own
 # publish, and the tag push that starts this job is the same event that starts
