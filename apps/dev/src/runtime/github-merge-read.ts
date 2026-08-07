@@ -35,19 +35,35 @@ export function createDevGithubMergeRead(
   options: CreateDevGithubMergeReadOptions = {},
 ): GithubMergeRead {
   const env = options.env ?? process.env;
-  const token = (
-    env.REDSKILLED_HOST_TOKEN ??
-    env.GITHUB_TOKEN ??
-    env.GH_TOKEN ??
-    options.readTrackerToken?.() ??
-    readTrackerToken() ??
-    ""
-  ).trim();
-  if (token === "") {
-    throw new Error("GitHub merge reads require an authenticated tracker credential");
-  }
   const attribution = createGithubAttributionLedger({
     path: join(stateDir(root), "github", "spend.toonl"),
   });
-  return createGithubMergeRead(createGithubClient({ token, attribution }), actor);
+
+  // The credential is resolved PER READ, not at construction. Wiring the deps is
+  // not a GitHub operation: demanding a token to build the port made every
+  // wiring test require a real credential, which passed on a developer machine
+  // with `gh` logged in and failed in CI where that context has none. Auth is a
+  // precondition of reading, so the refusal belongs at the read.
+  const client = () => {
+    const token = (
+      env.REDSKILLED_HOST_TOKEN ??
+      env.GITHUB_TOKEN ??
+      env.GH_TOKEN ??
+      options.readTrackerToken?.() ??
+      readTrackerToken() ??
+      ""
+    ).trim();
+    if (token === "") {
+      throw new Error("GitHub merge reads require an authenticated tracker credential");
+    }
+    return createGithubClient({ token, attribution });
+  };
+
+  const routed = (): GithubMergeRead => createGithubMergeRead(client(), actor);
+  return {
+    reviewChecks: (repo, pr) => routed().reviewChecks(repo, pr),
+    mergeState: (repo, pr) => routed().mergeState(repo, pr),
+    driverPr: (repo, pr) => routed().driverPr(repo, pr),
+    requiredCheckContexts: (repo, branch) => routed().requiredCheckContexts(repo, branch),
+  };
 }
