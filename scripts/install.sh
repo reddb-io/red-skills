@@ -229,6 +229,20 @@ download_release_asset_if_available() {
       warn "optional release asset $generated_asset is unavailable for $tag; OpenCode install may generate from source"
     fi
   fi
+
+  local rsp_asset="rsp.bundle.min.mjs"
+  local rsp_out="$source/packaging/npm/dist/$rsp_asset"
+  local rsp_url="https://github.com/$REPO/releases/download/$tag/$rsp_asset"
+  mkdir -p "$source/packaging/npm/dist"
+  if [[ "$REFRESH" == "true" || ! -f "$rsp_out" ]]; then
+    if curl_file "$rsp_url" "$rsp_out.tmp"; then
+      mv "$rsp_out.tmp" "$rsp_out"
+      log "downloaded optional release asset $rsp_asset"
+    else
+      rm -f "$rsp_out.tmp"
+      warn "optional release asset $rsp_asset is unavailable for $tag; RSP may build from source"
+    fi
+  fi
 }
 
 prepare_source() {
@@ -295,9 +309,9 @@ prepare_source() {
     log "using cached source $dest"
   fi
 
+  download_release_asset_if_available "$tag" "$dest"
   rm -f "$current"
   ln -s "$dest" "$current"
-  download_release_asset_if_available "$tag" "$dest"
   SOURCE_DIR="$current"
   log "current source -> $dest"
 }
