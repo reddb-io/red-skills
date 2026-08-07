@@ -119,10 +119,10 @@ export interface RedskilledHostEvent {
   readonly phase: string | null;
   readonly step: string | null;
   /** Cumulative counters and attribution on a durable metric observation. */
-  readonly tokens: number | null;
-  readonly tools: number | null;
-  readonly runner: string | null;
-  readonly model: string | null;
+  readonly tokens?: number | null;
+  readonly tools?: number | null;
+  readonly runner?: string | null;
+  readonly model?: string | null;
   /** Refreshed trunk head and its distance from the granted fork on a drift stamp. */
   readonly base_head_sha: string | null;
   readonly base_commits_ahead: number | null;
