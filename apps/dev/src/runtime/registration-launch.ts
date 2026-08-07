@@ -30,10 +30,13 @@ export interface RegistrationLaunchInput {
   readonly logPath?: string | null;
   /** The leading argv; defaults to the published bundle's, an input for tests. */
   readonly bundleArgv?: readonly string[];
+  /** Tool lookup path owned by the registering runtime, not the host daemon (#3493). */
+  readonly path?: string;
 }
 
 /** Compose the launch a registration or a renewal states. */
 export function registrationLaunch(input: RegistrationLaunchInput): RedskilledLaunchTemplate {
+  const path = input.path === undefined ? process.env.PATH : input.path;
   return buildProjectLaunchTemplate({
     bundleArgv: input.bundleArgv ?? publishedBundleArgv(),
     runner: input.runner,
@@ -49,6 +52,13 @@ export function registrationLaunch(input: RegistrationLaunchInput): RedskilledLa
     workerEnv: {
       ...registrationLaunchEnv(),
       RED_AFK_RUNNER_ORIGIN: "project_start",
+      // The handoff tells implementers to use shipped companion tools such as
+      // `rsp` (#3493). Those binaries are resolved by the registering runtime (often an
+      // npm/npx package), while the detached Worker is born later by a systemd
+      // daemon with a deliberately smaller PATH. State the lookup path here so
+      // the daemon does not have to rediscover project-owned tools it never
+      // resolved. Its launcher still prepends the exact Node engine directory.
+      ...(path == null || path === "" ? {} : { PATH: path }),
     },
     ...(input.logPath == null ? {} : { logPath: input.logPath }),
   });
