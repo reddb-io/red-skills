@@ -36,6 +36,41 @@ function outcome(ts: string, worker_id = "wAAAA"): RedskilledWorkerOutcomeMark {
 }
 
 describe("live metrics over rolling windows", () => {
+  it("renders 48 hourly token and Ticket buckets with a current value and trend", () => {
+    const now = "2026-08-02T12:30:00.000Z";
+    const metrics = deriveRedskilledLiveMetrics({
+      now,
+      observations: [
+        observation({ observed_at: "2026-08-02T10:00:00.000Z", tokens: 0 }),
+        observation({ observed_at: "2026-08-02T11:00:00.000Z", tokens: 1_000 }),
+        observation({ observed_at: "2026-08-02T12:00:00.000Z", tokens: 3_000 }),
+        observation({ observed_at: "2026-08-02T12:30:00.000Z", tokens: 4_000 }),
+      ],
+      outcomes: [
+        outcome("2026-08-02T10:30:00.000Z", "wA"),
+        outcome("2026-08-02T11:10:00.000Z", "wB"),
+        outcome("2026-08-02T11:20:00.000Z", "wC"),
+        outcome("2026-08-02T12:10:00.000Z", "wD"),
+      ],
+    });
+
+    expect(metrics.history_48h.hours).toBe(48);
+    expect(metrics.history_48h.tokens_per_hour.buckets).toHaveLength(48);
+    expect(metrics.history_48h.tickets_per_hour.buckets).toHaveLength(48);
+    expect(metrics.history_48h.tokens_per_hour.buckets.slice(-3)).toEqual([
+      { hour: "2026-08-02T10:00:00.000Z", value: 1_000, absent_reason: null },
+      { hour: "2026-08-02T11:00:00.000Z", value: 2_000, absent_reason: null },
+      { hour: "2026-08-02T12:00:00.000Z", value: 2_000, absent_reason: null },
+    ]);
+    expect(metrics.history_48h.tickets_per_hour.buckets.slice(-3).map((bucket) => bucket.value))
+      .toEqual([1, 2, 1]);
+    expect(metrics.history_48h.tokens_per_hour.current.value).toBe(2_000);
+    expect(metrics.history_48h.tokens_per_hour.trend).toBe("flat");
+    expect(metrics.history_48h.tickets_per_hour.current.value).toBe(1);
+    expect(metrics.history_48h.tickets_per_hour.trend).toBe("down");
+    expect(metrics.history_48h.tokens_per_hour.buckets[0]?.absent_reason).toContain("token samples");
+  });
+
   it("derives tokens/min and tools/min from the deltas of the vitals it holds", () => {
     const metrics = deriveRedskilledLiveMetrics({
       now: NOW,
