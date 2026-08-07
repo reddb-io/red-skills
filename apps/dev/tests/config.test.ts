@@ -447,7 +447,7 @@ describe("config", () => {
       taskClass: "complex",
     });
     // codex can run neither the implementer's claude model nor its `max` effort.
-    expect(resolved).toMatchObject({ runner: "codex", model: "gpt-5.5", effort: "medium" });
+    expect(resolved).toMatchObject({ runner: "codex", model: "gpt-5.6-sol", effort: "high" });
     expect(resolved.notices).toHaveLength(2);
     expect(resolved.notices?.[1]).toContain("does not accept effort 'max'");
   });
@@ -1173,8 +1173,8 @@ describe("config — afk.worktree_launches_pull_request (ADR 0030 amended, #842)
 describe("config — AFK model tier table (ADR 0049)", () => {
   it("defaults the unclassified AFK tier to think per runner", () => {
     const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
-    expect(resolveTier(values, "claude")).toEqual({ model: "claude-opus-4-8", effort: "high" });
-    expect(resolveTier(values, "codex")).toEqual({ model: "gpt-5.5", effort: "high" });
+    expect(resolveTier(values, "claude")).toEqual({ model: "claude-opus-5", effort: "high" });
+    expect(resolveTier(values, "codex")).toEqual({ model: "gpt-5.6-sol", effort: "high" });
   });
 
   it("lets RED_AFK_MODEL / RED_AFK_EFFORT override every tier (flag pre-sets the env)", () => {
@@ -1189,12 +1189,12 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     ).toEqual({ model: "minimax/MiniMax-M2", effort: "high" });
     // An empty override is treated as unset — config/default stays in charge.
     expect(resolveTier(values, "opencode", "simple", { RED_AFK_MODEL: "" })).toEqual({
-      model: "openrouter/anthropic/claude-sonnet-4",
+      model: "openrouter/anthropic/claude-sonnet-5",
       effort: "high",
     });
     // No env arg (e.g. the interactive model-tier route) → never overridden.
     expect(resolveTier(values, "opencode", "simple")).toEqual({
-      model: "openrouter/anthropic/claude-sonnet-4",
+      model: "openrouter/anthropic/claude-sonnet-5",
       effort: "high",
     });
   });
@@ -1206,47 +1206,47 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     expect(downgradeAfkModelTier("simple")).toBe("validate");
     expect(downgradeAfkModelTier("validate")).toBe("validate");
     expect(resolveTier(values, "claude", "think", { RED_AFK_TASK_TIER_DOWNGRADE: "1" })).toEqual({
-      model: "claude-opus-4-8",
-      effort: "medium",
+      model: "claude-opus-5",
+      effort: "high",
     });
     expect(resolveTier(values, "claude", "simple", { RED_AFK_TASK_TIER_DOWNGRADE: "1" })).toEqual({
-      model: "claude-haiku-4-5",
-      effort: "low",
+      model: "claude-opus-5",
+      effort: "high",
     });
   });
 
   it("resolves every Claude tier from the default table", () => {
     const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
-    expect(resolveTier(values, "claude", "validate")).toEqual({ model: "claude-haiku-4-5", effort: "low" });
-    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
-    expect(resolveTier(values, "claude", "complex")).toEqual({ model: "claude-opus-4-8", effort: "medium" });
-    expect(resolveTier(values, "claude", "think")).toEqual({ model: "claude-opus-4-8", effort: "high" });
+    expect(resolveTier(values, "claude", "validate")).toEqual({ model: "claude-opus-5", effort: "high" });
+    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-opus-5", effort: "high" });
+    expect(resolveTier(values, "claude", "complex")).toEqual({ model: "claude-opus-5", effort: "high" });
+    expect(resolveTier(values, "claude", "think")).toEqual({ model: "claude-opus-5", effort: "high" });
   });
 
   it("resolves every Codex tier from the default gpt-5.x table", () => {
     const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
-    expect(resolveTier(values, "codex", "validate")).toEqual({ model: "gpt-5.5", effort: "low" });
-    expect(resolveTier(values, "codex", "simple")).toEqual({ model: "gpt-5.5", effort: "high" });
-    expect(resolveTier(values, "codex", "complex")).toEqual({ model: "gpt-5.5", effort: "medium" });
-    expect(resolveTier(values, "codex", "think")).toEqual({ model: "gpt-5.5", effort: "high" });
+    expect(resolveTier(values, "codex", "validate")).toEqual({ model: "gpt-5.6-sol", effort: "high" });
+    expect(resolveTier(values, "codex", "simple")).toEqual({ model: "gpt-5.6-sol", effort: "high" });
+    expect(resolveTier(values, "codex", "complex")).toEqual({ model: "gpt-5.6-sol", effort: "high" });
+    expect(resolveTier(values, "codex", "think")).toEqual({ model: "gpt-5.6-sol", effort: "high" });
   });
 
   it("resolves every OpenCode tier from the default openrouter table (ADR 0059)", () => {
     const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
     expect(resolveTier(values, "opencode", "validate")).toEqual({
-      model: "openrouter/anthropic/claude-3.5-haiku",
+      model: "openrouter/anthropic/claude-haiku-4.5",
       effort: "low",
     });
     expect(resolveTier(values, "opencode", "simple")).toEqual({
-      model: "openrouter/anthropic/claude-sonnet-4",
+      model: "openrouter/anthropic/claude-sonnet-5",
       effort: "high",
     });
     expect(resolveTier(values, "opencode", "complex")).toEqual({
-      model: "openrouter/anthropic/claude-opus-4",
-      effort: "medium",
+      model: "openrouter/anthropic/claude-opus-5",
+      effort: "high",
     });
     expect(resolveTier(values, "opencode", "think")).toEqual({
-      model: "openrouter/anthropic/claude-opus-4",
+      model: "openrouter/anthropic/claude-opus-5",
       effort: "high",
     });
   });
@@ -1269,7 +1269,7 @@ describe("config — AFK model tier table (ADR 0049)", () => {
 
   it("claude-minimax does not bleed into the claude table — runners stay isolated (#792)", () => {
     const values = loadConfig("/nonexistent/.red/config.yaml", { ignoreActivationGate: true, warn: () => {} });
-    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
+    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-opus-5", effort: "high" });
     expect(resolveTier(values, "claude-minimax", "simple")).toEqual({ model: "MiniMax-M3", effort: "low" });
   });
 
@@ -1294,16 +1294,16 @@ describe("config — AFK model tier table (ADR 0049)", () => {
     // a specialized tier overrides the base model; its effort still inherits from base
     expect(resolveTier(values, "opencode", "think")).toEqual({ model: "minimax/MiniMax-M2-thinking", effort: "medium" });
     // base does not leak across runners — claude keeps its own table
-    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
+    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-opus-5", effort: "high" });
   });
 
   it("`base.model` alone uniformly sets the model but leaves each tier's default effort", () => {
     const text =
       "plugins:\n  dev:\n    afk:\n      models:\n        opencode:\n          base:\n            model: minimax/MiniMax-M2\n";
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
-    // model is uniform from base; effort stays at each tier's table default (low/high/medium/high)
+    // model is uniform from base; effort stays at each tier's table default.
     expect(resolveTier(values, "opencode", "validate")).toEqual({ model: "minimax/MiniMax-M2", effort: "low" });
-    expect(resolveTier(values, "opencode", "complex")).toEqual({ model: "minimax/MiniMax-M2", effort: "medium" });
+    expect(resolveTier(values, "opencode", "complex")).toEqual({ model: "minimax/MiniMax-M2", effort: "high" });
     expect(resolveTier(values, "opencode", "think")).toEqual({ model: "minimax/MiniMax-M2", effort: "high" });
   });
 
@@ -1315,21 +1315,21 @@ describe("config — AFK model tier table (ADR 0049)", () => {
   });
 
   it("an explicit tier pin equal to the default beats a stale legacy scalar (bug #583)", () => {
-    // simple tier default = claude-sonnet-4-6; legacy afk.model = custom-model.
-    // An explicit simple.model = claude-sonnet-4-6 (same as the default) must
+    // simple tier default = claude-opus-5; legacy afk.model = custom-model.
+    // An explicit simple.model = claude-opus-5 (same as the default) must
     // still win — the old tierModel !== defaultModel guard silently dropped it.
-    const text = "afk:\n  model: custom-model\n  models:\n    claude:\n      simple:\n        model: claude-sonnet-4-6\n";
+    const text = "afk:\n  model: custom-model\n  models:\n    claude:\n      simple:\n        model: claude-opus-5\n";
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
-    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-sonnet-4-6", effort: "high" });
+    expect(resolveTier(values, "claude", "simple")).toEqual({ model: "claude-opus-5", effort: "high" });
   });
 
   it("an explicit tier effort pin equal to the default beats a base effort override (bug #583)", () => {
-    // validate tier default effort = low; base effort = medium.
-    // An explicit validate.effort = low (same as the default) must still win.
+    // validate tier default effort = high; base effort = medium.
+    // An explicit validate.effort = high (same as the default) must still win.
     const text =
-      "plugins:\n  dev:\n    afk:\n      models:\n        claude:\n          base:\n            effort: medium\n          validate:\n            effort: low\n";
+      "plugins:\n  dev:\n    afk:\n      models:\n        claude:\n          base:\n            effort: medium\n          validate:\n            effort: high\n";
     const values = loadConfig("/x/.red/config.yaml", { ignoreActivationGate: true, read: () => text });
-    expect(resolveTier(values, "claude", "validate")).toEqual({ model: "claude-haiku-4-5", effort: "low" });
+    expect(resolveTier(values, "claude", "validate")).toEqual({ model: "claude-opus-5", effort: "high" });
   });
 
   it("falls back to legacy per-runner and global scalar model keys", () => {

@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import type { AgentEffort } from "./execution.js";
-import { toAgentRunner } from "./runner-spec.js";
-import type { Runner } from "../types/runner.js";
+import { isRunner, type Runner } from "../types/runner.js";
 
 /**
  * config.ts — TypeScript port of scripts/config.sh.
@@ -55,25 +54,36 @@ export const CONFIG_DEFAULTS = {
   // unscoped, which the launcher then warns about rather than doing silently.
   "afk.fleet.scope.enabled": "true",
   "afk.fleet.scope.memory_high": "70%",
-  // AFK model-tier table (ADR 0049). The default task class is `think`, so a
-  // repo with no config still runs Claude Code on opus/high, matching today's
-  // behaviour while making the model+effort pair overrideable per runner/tier.
-  "afk.models.claude.validate.model": "claude-haiku-4-5",
-  "afk.models.claude.validate.effort": "low",
-  "afk.models.claude.simple.model": "claude-sonnet-4-6",
+  // AFK model-tier table (ADR 0049). These are suggested runnable pairs, not
+  // operator pins. Every supported runner owns a complete table so adding a
+  // runner can never silently inherit another provider's policy.
+  "afk.models.claude.validate.model": "claude-opus-5",
+  "afk.models.claude.validate.effort": "high",
+  "afk.models.claude.simple.model": "claude-opus-5",
   "afk.models.claude.simple.effort": "high",
-  "afk.models.claude.complex.model": "claude-opus-4-8",
-  "afk.models.claude.complex.effort": "medium",
-  "afk.models.claude.think.model": "claude-opus-4-8",
+  "afk.models.claude.complex.model": "claude-opus-5",
+  "afk.models.claude.complex.effort": "high",
+  "afk.models.claude.think.model": "claude-opus-5",
   "afk.models.claude.think.effort": "high",
-  "afk.models.codex.validate.model": "gpt-5.5",
-  "afk.models.codex.validate.effort": "low",
-  "afk.models.codex.simple.model": "gpt-5.5",
+  "afk.models.codex.validate.model": "gpt-5.6-sol",
+  "afk.models.codex.validate.effort": "high",
+  "afk.models.codex.simple.model": "gpt-5.6-sol",
   "afk.models.codex.simple.effort": "high",
-  "afk.models.codex.complex.model": "gpt-5.5",
-  "afk.models.codex.complex.effort": "medium",
-  "afk.models.codex.think.model": "gpt-5.5",
+  "afk.models.codex.complex.model": "gpt-5.6-sol",
+  "afk.models.codex.complex.effort": "high",
+  "afk.models.codex.think.model": "gpt-5.6-sol",
   "afk.models.codex.think.effort": "high",
+  // Hermes is runner-neutral at execution time, but its policy is deliberately
+  // explicit. It currently launches the Claude implementer; it must not inherit
+  // Claude's table merely because `toAgentRunner("hermes")` happens to do so.
+  "afk.models.hermes.validate.model": "claude-opus-5",
+  "afk.models.hermes.validate.effort": "high",
+  "afk.models.hermes.simple.model": "claude-opus-5",
+  "afk.models.hermes.simple.effort": "high",
+  "afk.models.hermes.complex.model": "claude-opus-5",
+  "afk.models.hermes.complex.effort": "high",
+  "afk.models.hermes.think.model": "claude-opus-5",
+  "afk.models.hermes.think.effort": "high",
   // OpenCode tiers (ADR 0059). The model is OpenCode's own
   // `<provider>/<model>` slug — the leading segment tells OpenCode which
   // OpenAI-compatible endpoint to dispatch to (`openrouter/...`, `openai/...`,
@@ -85,17 +95,21 @@ export const CONFIG_DEFAULTS = {
   // repo under `plugins.dev.afk.models.opencode.<tier>.*` to point at any
   // OpenAI-compatible endpoint (e.g. `openai/gpt-4o-mini`,
   // `minimax/MiniMax-M3`).
-  "afk.models.opencode.validate.model": "openrouter/anthropic/claude-3.5-haiku",
+  // Proposed OpenRouter catalog ids, verified against OpenCode's
+  // `provider/model` reference contract. Keep the provider prefix: OpenCode
+  // splits on the first slash and the upstream model id contains the second.
+  "afk.models.opencode.validate.model": "openrouter/anthropic/claude-haiku-4.5",
   "afk.models.opencode.validate.effort": "low",
-  "afk.models.opencode.simple.model": "openrouter/anthropic/claude-sonnet-4",
+  "afk.models.opencode.simple.model": "openrouter/anthropic/claude-sonnet-5",
   "afk.models.opencode.simple.effort": "high",
-  "afk.models.opencode.complex.model": "openrouter/anthropic/claude-opus-4",
-  "afk.models.opencode.complex.effort": "medium",
-  "afk.models.opencode.think.model": "openrouter/anthropic/claude-opus-4",
+  "afk.models.opencode.complex.model": "openrouter/anthropic/claude-opus-5",
+  "afk.models.opencode.complex.effort": "high",
+  "afk.models.opencode.think.model": "openrouter/anthropic/claude-opus-5",
   "afk.models.opencode.think.effort": "high",
-  // claude-minimax runner: every tier resolves to MiniMax-M3 via the Anthropic-compat
-  // endpoint (execution.ts forces the model + caps effort to "low" regardless of what
-  // the tier table says; the table entries keep RED_AFK_MODEL override semantics intact).
+  // MiniMax-M3 rejects the thinking mode that `high` enables. The runner spec
+  // therefore accepts only `low`, and runtime caps every other request back to
+  // that value. Keeping `low` here is the honest provider contract, not a
+  // quality compromise or a tier ladder to revisit.
   "afk.models.claude-minimax.validate.model": "MiniMax-M3",
   "afk.models.claude-minimax.validate.effort": "low",
   "afk.models.claude-minimax.simple.model": "MiniMax-M3",
@@ -384,6 +398,26 @@ export function downgradeAfkModelTier(tier: AfkModelTier): AfkModelTier {
 export interface ResolvedTier {
   model: string;
   effort: AgentEffort;
+}
+
+export type TaskRouteOrigin = "flag" | "env" | "project_start" | "file" | "default";
+
+export interface ResolvedTaskRoute extends ResolvedTier {
+  taskClass: AfkModelTier;
+  runner: Runner;
+  origins: {
+    runner: TaskRouteOrigin;
+    model: Exclude<TaskRouteOrigin, "project_start">;
+    effort: Exclude<TaskRouteOrigin, "project_start">;
+  };
+}
+
+export interface TaskRouteOverrides {
+  env?: NodeJS.ProcessEnv;
+  flagRunner?: string;
+  flagModel?: string;
+  flagEffort?: string;
+  projectStartRunner?: string;
 }
 
 const AGENT_EFFORTS: readonly AgentEffort[] = ["low", "medium", "high", "xhigh", "max"];
@@ -912,16 +946,18 @@ export function resolveTier(
   taskClass: AfkModelTier = "think",
   env: NodeJS.ProcessEnv = {},
 ): ResolvedTier {
-  // The runner whose tier table to read. claude/codex/opencode/claude-minimax each
-  // ship a full table (CONFIG_DEFAULTS); any other runner (e.g. the runner-neutral
-  // hermes) falls back to the claude table via the shared `toAgentRunner` seam.
-  const tierRunner = toAgentRunner(runner as Runner);
+  // Read the requested runner's own table. A missing declaration is an error,
+  // because silently borrowing another runner's provider policy is never safe.
+  const tierRunner = runner;
   const requestedTier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
   const tier = env.RED_AFK_TASK_TIER_DOWNGRADE === "1"
     ? downgradeAfkModelTier(requestedTier)
     : requestedTier;
-  const modelKey = defaultTierKey(tierRunner, tier, "model")!;
-  const effortKey = defaultTierKey(tierRunner, tier, "effort")!;
+  const modelKey = defaultTierKey(tierRunner, tier, "model");
+  const effortKey = defaultTierKey(tierRunner, tier, "effort");
+  if (modelKey === undefined || effortKey === undefined) {
+    throw new Error(`runner ${JSON.stringify(runner)} has no suggested model table for task class ${JSON.stringify(tier)}`);
+  }
   const defaultModel = CONFIG_DEFAULTS[modelKey];
   const defaultEffort = CONFIG_DEFAULTS[effortKey] as AgentEffort;
   const tierModel = getConfig(values, modelKey);
@@ -969,20 +1005,134 @@ export function resolveTier(
   };
 }
 
+function explicitConfigKeys(values: ConfigValues): ReadonlySet<string> {
+  return new Set((values["\0explicit"] ?? "").split("\x01").filter(Boolean));
+}
+
+function isFileValue(values: ConfigValues, key: string, defaultValue = ""): boolean {
+  const value = getConfig(values, key);
+  return value !== "" && (value !== defaultValue || explicitConfigKeys(values).has(key));
+}
+
+function assertRunner(value: string, origin: string): Runner {
+  if (!isRunner(value)) throw new Error(`${origin} names unsupported runner ${JSON.stringify(value)}`);
+  return value;
+}
+
+/**
+ * Resolve the complete task-class route in one place.
+ *
+ * Runner precedence is the public contract:
+ * explicit `--runner` flag > `RED_AFK_RUNNER` > runner named by `project_start`
+ * > `afk.routes.<tier>.runner` > `afk.default_runner` > shipped default.
+ * Model and effort use the corresponding flag/env override, then an optional
+ * value in the same route block, then the selected runner's existing tier-table
+ * precedence. The origin fields make every winning layer observable.
+ */
+export function resolveTaskRoute(
+  values: ConfigValues,
+  taskClass: AfkModelTier = "think",
+  overrides: TaskRouteOverrides = {},
+): ResolvedTaskRoute {
+  const env = overrides.env ?? {};
+  const requestedTier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
+  const tier = env.RED_AFK_TASK_TIER_DOWNGRADE === "1"
+    ? downgradeAfkModelTier(requestedTier)
+    : requestedTier;
+  const routeRoot = `afk.routes.${tier}`;
+  const routeRunner = getConfig(values, `${routeRoot}.runner`).trim();
+  const configuredDefault = getConfig(values, "afk.default_runner").trim() || CONFIG_DEFAULTS["afk.default_runner"];
+  const flagRunner = (overrides.flagRunner ?? "").trim();
+  const envRunner = (env.RED_AFK_RUNNER ?? "").trim();
+  const projectStartRunner = (overrides.projectStartRunner ?? "").trim();
+
+  let runner: Runner;
+  let runnerOrigin: TaskRouteOrigin;
+  if (flagRunner) {
+    runner = assertRunner(flagRunner, "--runner");
+    runnerOrigin = "flag";
+  } else if (envRunner) {
+    runner = assertRunner(envRunner, "RED_AFK_RUNNER");
+    runnerOrigin = "env";
+  } else if (projectStartRunner) {
+    runner = assertRunner(projectStartRunner, "project_start");
+    runnerOrigin = "project_start";
+  } else if (routeRunner) {
+    runner = assertRunner(routeRunner, `${routeRoot}.runner`);
+    runnerOrigin = "file";
+  } else {
+    runner = assertRunner(configuredDefault, "afk.default_runner");
+    runnerOrigin = isFileValue(values, "afk.default_runner", CONFIG_DEFAULTS["afk.default_runner"])
+      ? "file"
+      : "default";
+  }
+
+  const modelKey = defaultTierKey(runner, tier, "model");
+  const effortKey = defaultTierKey(runner, tier, "effort");
+  if (modelKey === undefined || effortKey === undefined) {
+    throw new Error(`runner ${JSON.stringify(runner)} has no suggested model table for task class ${JSON.stringify(tier)}`);
+  }
+  const defaultModel = CONFIG_DEFAULTS[modelKey];
+  const defaultEffort = CONFIG_DEFAULTS[effortKey] as AgentEffort;
+  const flagModel = (overrides.flagModel ?? "").trim();
+  const flagEffort = (overrides.flagEffort ?? "").trim();
+  const envModel = (env.RED_AFK_MODEL ?? "").trim();
+  const envEffort = (env.RED_AFK_EFFORT ?? "").trim();
+  const routeModel = getConfig(values, `${routeRoot}.model`).trim();
+  const routeEffort = getConfig(values, `${routeRoot}.effort`).trim();
+  const tableTier = resolveTier(values, runner, tier, {});
+  const tableModelFromFile = [
+    modelKey,
+    `afk.models.${runner}.base.model`,
+    `afk.models.${runner}`,
+    "afk.model",
+  ].some((key) => isFileValue(values, key, key === modelKey ? defaultModel : ""));
+  const tableEffortFromFile = [
+    effortKey,
+    `afk.models.${runner}.base.effort`,
+  ].some((key) => isFileValue(values, key, key === effortKey ? defaultEffort : ""));
+
+  const effortCandidate = flagEffort || envEffort || routeEffort || tableTier.effort;
+  const effort = readEffort(effortCandidate, defaultEffort);
+  const model = flagModel || envModel || routeModel || tableTier.model;
+  return {
+    taskClass: tier,
+    runner,
+    model,
+    effort,
+    origins: {
+      runner: runnerOrigin,
+      model: flagModel ? "flag" : envModel ? "env" : routeModel || tableModelFromFile ? "file" : "default",
+      effort:
+        flagEffort && effort === flagEffort
+          ? "flag"
+          : envEffort && effort === envEffort
+            ? "env"
+            : (routeEffort && effort === routeEffort) || tableEffortFromFile
+              ? "file"
+              : "default",
+    },
+  };
+}
+
 /**
  * The tier table's OWN default model/effort for a runner — the shipped pair,
  * with no file overrides, no legacy scalars, and no env applied. Every runner
  * ships a full table, so this pair is always runnable on that runner: it is the
  * last-resort substitute when an operator pins a model the runner's CLI cannot
  * dispatch (#2352). An unknown runner folds onto the claude table via
- * `toAgentRunner`, exactly as {@link resolveTier} does.
+ * Missing runner tables refuse loudly rather than inheriting another runner.
  */
 export function defaultTier(runner: string, taskClass: AfkModelTier = "think"): ResolvedTier {
-  const tierRunner = toAgentRunner(runner as Runner);
   const tier = (AFK_MODEL_TIERS as readonly string[]).includes(taskClass) ? taskClass : "think";
+  const modelKey = defaultTierKey(runner, tier, "model");
+  const effortKey = defaultTierKey(runner, tier, "effort");
+  if (modelKey === undefined || effortKey === undefined) {
+    throw new Error(`runner ${JSON.stringify(runner)} has no suggested model table for task class ${JSON.stringify(tier)}`);
+  }
   return {
-    model: CONFIG_DEFAULTS[defaultTierKey(tierRunner, tier, "model")!],
-    effort: CONFIG_DEFAULTS[defaultTierKey(tierRunner, tier, "effort")!] as AgentEffort,
+    model: CONFIG_DEFAULTS[modelKey],
+    effort: CONFIG_DEFAULTS[effortKey] as AgentEffort,
   };
 }
 

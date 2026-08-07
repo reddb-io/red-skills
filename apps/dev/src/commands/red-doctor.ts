@@ -28,7 +28,13 @@ import {
   REDSKILLED_PROVISION_FIX,
   type RedskilledProvisionReport,
 } from "@reddb-io/redskilled/provision";
-import { getConfig, loadConfig } from "../core/config.js";
+import {
+  AFK_MODEL_TIERS,
+  getConfig,
+  loadConfig,
+  resolveTaskRoute,
+  type ResolvedTaskRoute,
+} from "../core/config.js";
 import { auditExecutableAcceptanceCriteria, type ExecutableAcceptanceDoctorReport } from "../core/executable-acceptance-doctor.js";
 import {
   applyHitlTypeDeclarationFix,
@@ -162,6 +168,42 @@ function flattenExpired(report: TmpJanitorReport): string[] {
     ...report.plan.diagnostics.reclaim,
     ...report.plan.feedbackWorktrees.reclaim,
   ].map((entry) => entry.path);
+}
+
+export interface DoctorTaskRoute {
+  readonly route: ResolvedTaskRoute;
+  readonly overriddenFileKeys: readonly string[];
+}
+
+/** The read-only effective runner/model contract rendered by red-doctor. */
+export function effectiveTaskRoutesForDoctor(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): readonly DoctorTaskRoute[] {
+  const values = loadConfig(join(root, ".red", "config.yaml"), { warn: () => undefined });
+  const projectStartRunner = env.RED_AFK_RUNNER_ORIGIN === "project_start"
+    ? env.RED_AFK_RUNNER
+    : undefined;
+  const routeEnv = { ...env };
+  if (projectStartRunner) delete routeEnv.RED_AFK_RUNNER;
+  const explicitKeys = new Set((values["\0explicit"] ?? "").split("\x01").filter(Boolean));
+
+  return AFK_MODEL_TIERS.map((taskClass) => {
+    const route = resolveTaskRoute(values, taskClass, { env: routeEnv, projectStartRunner });
+    const routeRoot = `afk.routes.${taskClass}`;
+    const overriddenFileKeys: string[] = [];
+    if (route.origins.runner === "env" || route.origins.runner === "project_start") {
+      if (explicitKeys.has(`${routeRoot}.runner`)) overriddenFileKeys.push(`${routeRoot}.runner`);
+      else if (explicitKeys.has("afk.default_runner")) overriddenFileKeys.push("afk.default_runner");
+    }
+    if (route.origins.model === "env" && explicitKeys.has(`${routeRoot}.model`)) {
+      overriddenFileKeys.push(`${routeRoot}.model`);
+    }
+    if (route.origins.effort === "env" && explicitKeys.has(`${routeRoot}.effort`)) {
+      overriddenFileKeys.push(`${routeRoot}.effort`);
+    }
+    return { route, overriddenFileKeys };
+  });
 }
 
 async function readOptional(path: string): Promise<string | undefined> {
@@ -411,12 +453,22 @@ function renderHuman(
   const workers = report.staleWorkers.reclaim.map((entry) => rel(root, entry.path));
   const unknown = report.plan.unknownTmpRoots.map((name) => `.red/tmp/${name}`);
   const reclaimPlan = report.workerReclaim;
+  const taskRoutes = effectiveTaskRoutesForDoctor(root);
   const lines = [
     "red-doctor host toolchain",
     ...hostReport.rows.map((row) => `  ${row.verdict === "ok" ? "✅" : "❌"} ${row.tool} ${row.version} (required ${row.required}; manager ${row.manager})`),
     ...hostReport.findings.map((finding) => `  ${finding.reason}`),
     ...hostReport.findings.map((finding) => `  fix: ${finding.remediation}`),
     ...hostFixes.map((fix) => `  fix ${fix.tool}: ${fix.status} (${fix.reason})`),
+    "",
+    "red-doctor effective task routes",
+    "precedence: flag > env > project_start > file route > default_runner > default table",
+    ...taskRoutes.map(({ route }) =>
+      `  ${route.taskClass}: runner=${route.runner} (${route.origins.runner}) model=${route.model} (${route.origins.model}) effort=${route.effort} (${route.origins.effort})`,
+    ),
+    ...taskRoutes.flatMap(({ route, overriddenFileKeys }) =>
+      overriddenFileKeys.map((key) => `  ⚠️ ${key} is overridden for ${route.taskClass}`),
+    ),
     "",
     "red-doctor operational probes",
     `probes: ${probeReport.probes.length}`,
@@ -529,7 +581,18 @@ function renderToon(
   hitlTypeFix?: HitlTypeDeclarationFixReceipt,
   marketplaceFixes: readonly MarketplaceSourceFixReceipt[] = [],
 ): string {
+  const taskRoutes = effectiveTaskRoutesForDoctor(root);
   return encodeToon({
+    effectiveTaskRoutes: taskRoutes.map(({ route, overriddenFileKeys }) => ({
+      taskClass: route.taskClass,
+      runner: route.runner,
+      model: route.model,
+      effort: route.effort,
+      runnerOrigin: route.origins.runner,
+      modelOrigin: route.origins.model,
+      effortOrigin: route.origins.effort,
+      overriddenFileKeys: [...overriddenFileKeys],
+    })),
     hostToolchain: {
       binaries: hostReport.rows.map((row) => ({
         tool: row.tool,
