@@ -141,39 +141,65 @@ host_binaries:
 #                                 # NOTE: default true means a locked repo now gets
 #                                 # an admin-PR to the lock branch; set false to keep
 #                                 # the old offline/direct-promotion flow.
-#   models:                       # per-runner AFK tier table (ADR 0049)
+#   routes:                       # optional task-class runner + pair (flag/env/project_start pins win)
+#     validate:
+#       runner: codex             # omitted tier → default_runner
+#       model: gpt-5.6-sol        # omitted value → selected runner's tier table
+#       effort: high
+#     simple:
+#       runner: codex
+#     complex:
+#       runner: claude
+#     think:
+#       runner: claude
+#   models:                       # suggested fallback table for every supported runner
 #     claude:
 #       validate:
-#         model: claude-haiku-4-5
-#         effort: low
+#         model: claude-opus-5
+#         effort: high
 #       simple:
-#         model: claude-sonnet-4-6
+#         model: claude-opus-5
 #         effort: high
 #       complex:
-#         model: claude-opus-4-8
-#         effort: medium
-#       think:                    # default until the AFK classifier lands
-#         model: claude-opus-4-8
+#         model: claude-opus-5
+#         effort: high
+#       think:
+#         model: claude-opus-5
 #         effort: high
 #     codex:
 #       validate:
-#         model: gpt-5.5
-#         effort: low
+#         model: gpt-5.6-sol
+#         effort: high
 #       simple:
-#         model: gpt-5.5
+#         model: gpt-5.6-sol
 #         effort: high
 #       complex:
-#         model: gpt-5.5
-#         effort: medium
-#       think:
-#         model: gpt-5.5
+#         model: gpt-5.6-sol
 #         effort: high
-#     opencode:                   # ADR 0059 — endpoint-agnostic; slug = <provider>/<model>
-#       base:                     # auto-populates EVERY tier of this runner. Set the model
-#         model: minimax/MiniMax-M3   # once to point the whole runner at one provider/model;
-#         effort: medium          # `base.effort` is optional (omit it to keep per-tier defaults).
-#       think:                    # specialize a single tier — overrides `base` for that tier only
-#         model: minimax/MiniMax-M3
+#       think:
+#         model: gpt-5.6-sol
+#         effort: high
+#     hermes:                     # explicit: never silently inherits Claude's table
+#       base:
+#         model: claude-opus-5
+#         effort: high
+#     opencode:                   # proposed current OpenRouter ids; OpenCode syntax is provider/model
+#       validate:
+#         model: openrouter/anthropic/claude-haiku-4.5
+#         effort: low
+#       simple:
+#         model: openrouter/anthropic/claude-sonnet-5
+#         effort: high
+#       complex:
+#         model: openrouter/anthropic/claude-opus-5
+#         effort: high
+#       think:
+#         model: openrouter/anthropic/claude-opus-5
+#         effort: high
+#     claude-minimax:             # MiniMax-M3 rejects high/thinking; runtime accepts low only
+#       base:
+#         model: MiniMax-M3
+#         effort: low             # honest provider constraint, not a quality compromise
 #   fleet:
 #     target: 2                   # default supervisor worker target
 #     scope:                      # cgroup isolation for the fleet (#2697)
