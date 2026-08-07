@@ -47,6 +47,11 @@ import {
   type AskRedRouterCoverageReport,
 } from "../core/ask-red-router-doctor.js";
 import {
+  auditWorktreeLanes,
+  parseWorktreePorcelain,
+  type WorktreeLaneReport,
+} from "../core/worktree-lane-doctor.js";
+import {
   auditRedTaxonomy,
   type RedTaxonomyEntry,
   type RedTaxonomyReport,
@@ -152,6 +157,8 @@ export interface DoctorClassifierReports {
   readonly askRedRouter: AskRedRouterCoverageReport;
   /** Check 19 — `.red` lifecycle taxonomy. */
   readonly redTaxonomy: RedTaxonomyReport;
+  /** Check 19b — every git worktree of this repo, judged against the lane registry. */
+  readonly worktreeLanes: WorktreeLaneReport;
   /** Check 21 — unlanded `.red/` docs. */
   readonly unlandedDocs: UnlandedDocsDoctorReport;
   /** Check 28 — `/red-setup` output still sitting uncommitted in the tree (#3106). */
@@ -576,6 +583,8 @@ export interface DoctorClassifierOptions {
   readonly listDependencyEdges?: typeof listDependencyEdgeTickets;
   /** Injected for tests; defaults to observing `tq --version` on this host. */
   readonly readToolVersion?: (tool: string) => Promise<string | undefined>;
+  /** Injected for tests; defaults to this repo's own `git worktree list --porcelain`. */
+  readonly readWorktreePorcelain?: (root: string) => Promise<string>;
   /** Injected for tests; defaults to listing each host CLI's marketplaces. */
   readonly readMarketplaceList?: (host: MarketplaceHost) => Promise<MarketplaceListProbe>;
   /** Injected for tests; defaults to this repo's own `git status --porcelain`. */
@@ -759,6 +768,16 @@ export async function collectDoctorClassifierReports(
     notes.push(`.red taxonomy audit unavailable: ${message(error)}`);
   }
 
+  // Git owns the worktree inventory, so a lane a host CLI minted for itself is
+  // in this answer whether or not our own tree knows the directory exists.
+  let worktreeLanes: WorktreeLaneReport = { verdict: "ok", checked: 0, findings: [] };
+  try {
+    const listed = await (options.readWorktreePorcelain ?? readWorktreePorcelain)(ctx.root);
+    worktreeLanes = auditWorktreeLanes(ctx.root, parseWorktreePorcelain(listed));
+  } catch (error) {
+    notes.push(`worktree lane audit unavailable: ${message(error)}`);
+  }
+
   const base = trunk;
   let unlandedDocs: UnlandedDocsDoctorReport = auditUnlandedDocs({ base, files: [] });
   try {
@@ -799,6 +818,7 @@ export async function collectDoctorClassifierReports(
     dependencyEdgesUnread,
     askRedRouter,
     redTaxonomy,
+    worktreeLanes,
     unlandedDocs,
     setupOwnedDirt,
     notes,
@@ -857,6 +877,14 @@ async function readHostMarketplaceList(host: MarketplaceHost): Promise<Marketpla
   if (result.code === 127) return { present: false };
   if (result.code !== 0) return { present: true };
   return { present: true, output: result.stdout };
+}
+
+/** Ask git for its own worktree inventory. Read-only; creates and removes nothing. */
+async function readWorktreePorcelain(root: string): Promise<string> {
+  const { execTool } = await import("./exec.js");
+  const result = await execTool("git", ["worktree", "list", "--porcelain"], { cwd: root });
+  if (result.code !== 0) throw new Error(`git worktree list exited ${result.code}`);
+  return result.stdout;
 }
 
 /** Observe an installed host binary's version. Never installs or upgrades it. */
