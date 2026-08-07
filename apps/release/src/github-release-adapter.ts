@@ -16,6 +16,17 @@ export interface PublishedRelease {
   readonly body: string;
   readonly prerelease: boolean;
   readonly assets: readonly PublishedReleaseAsset[];
+  /**
+   * Where THIS host wants the Release's assets, as the Release itself answered.
+   *
+   * Asset upload is the one Release call that does not live on the API host:
+   * github.com serves it from `uploads.github.com`, and an Enterprise install
+   * answers with its own. A route spelled relative to the client's base URL
+   * therefore resolves to a path that exists nowhere and comes back 404. The
+   * environment is the source of truth for its own address, so the uploader
+   * reads it here rather than reconstructing it.
+   */
+  readonly uploadUrl: string;
 }
 
 export interface CreateReleaseInput {
@@ -28,6 +39,8 @@ export interface CreateReleaseInput {
 
 export interface UploadReleaseAssetInput {
   readonly releaseId: number;
+  /** The owning Release's `uploadUrl` — see {@link PublishedRelease.uploadUrl}. */
+  readonly uploadUrl: string;
   readonly name: string;
   readonly contentType: string;
   readonly data: Uint8Array;
@@ -220,11 +233,8 @@ export function createGithubReleaseAdapter(
     async uploadAsset(input): Promise<void> {
       await options.client.conditionalRest<unknown>({
         cacheKey: `release-asset:${repositoryKey}:${input.releaseId}:${input.name}`,
-        route: "POST /repos/{owner}/{repo}/releases/{release_id}/assets{?name}",
+        route: assetUploadRoute(input.uploadUrl),
         parameters: {
-          owner,
-          repo: repository,
-          release_id: input.releaseId,
           name: input.name,
           data: input.data,
           headers: {
@@ -293,7 +303,24 @@ function releaseFrom(value: unknown): PublishedRelease {
     body: stringField(value, "body"),
     prerelease: value.prerelease,
     assets,
+    uploadUrl: stringField(value, "upload_url"),
   };
+}
+
+/**
+ * The upload endpoint from a Release's `upload_url` RFC 6570 template.
+ *
+ * GitHub answers `https://uploads.github.com/…/assets{?name,label}`. The
+ * variable list is dropped and re-declared as `{?name}`: the caller supplies a
+ * name and never a label, and leaving `label` in the template would make the
+ * client expand a parameter nothing passes.
+ */
+function assetUploadRoute(uploadUrl: string): string {
+  const endpoint = uploadUrl.split("{")[0] ?? "";
+  if (!/^https?:\/\/\S+\/assets$/.test(endpoint)) {
+    throw new Error(`GitHub returned an unusable Release upload_url: ${uploadUrl}`);
+  }
+  return `POST ${endpoint}{?name}`;
 }
 
 function stringField(value: Record<string, unknown>, key: string): string {

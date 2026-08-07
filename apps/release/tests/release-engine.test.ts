@@ -324,7 +324,13 @@ class FakeGithub implements ReleaseEngineGithub {
   }
 
   async create(input: CreateReleaseInput): Promise<PublishedRelease> {
-    const release = { id: this.releases.length + 1, ...input, assets: [] };
+    const id = this.releases.length + 1;
+    const release = {
+      id,
+      ...input,
+      assets: [],
+      uploadUrl: `https://uploads.github.invalid/releases/${id}/assets{?name,label}`,
+    };
     this.releases.push(release);
     this.assets.set(release.id, []);
     return release;

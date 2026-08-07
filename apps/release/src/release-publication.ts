@@ -90,6 +90,7 @@ export async function publishRelease(
     try {
       await input.github.uploadAsset({
         releaseId: release.id,
+        uploadUrl: release.uploadUrl,
         name: asset.name,
         contentType: asset.contentType,
         data: asset.data,
