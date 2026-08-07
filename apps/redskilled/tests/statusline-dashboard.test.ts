@@ -322,13 +322,14 @@ describe("the dashboard carries the statusline's own fields", () => {
     expect(stripAnsi(header.line)).toContain("iss=24");
   });
 
-  it("prints the header first and one line per row, so a surface prints and splits nothing", () => {
+  it("prints the header and throughput before one line per Worker", () => {
     const dashboard = renderRedskilledDashboard(
       payloadOf([worker(), worker({ worker_id: "w-2" })], { "w-1": display(), "w-2": display() }),
       LOCAL,
     );
     expect(dashboard.lines[0]).toBe(dashboard.header.line);
-    expect(dashboard.lines.slice(1)).toEqual(dashboard.rows.map((row) => row.line));
+    expect(dashboard.lines[1]).toContain("48h throughput unavailable");
+    expect(dashboard.lines.slice(-2)).toEqual(dashboard.rows.map((row) => row.line));
   });
 
   it("says how many Workers the row budget left out rather than dropping them in silence", () => {
