@@ -9,7 +9,6 @@
  */
 import {
   Box,
-  Spacer,
   Text,
   render,
   useApp,
@@ -20,6 +19,11 @@ import {
   useTerminalSize,
   type VNode,
 } from "tuiuiu.js/minimal";
+import { Table, type TableColumn } from "tuiuiu.js/molecules";
+import {
+  stripAnsi,
+  type RedskilledDashboard,
+} from "@reddb-io/redskilled-render";
 
 export interface RedskilledDashboardViewport {
   readonly columns: number;
@@ -31,7 +35,7 @@ export interface RedskilledDashboardViewport {
 export interface RedskilledDashboardTuiOptions {
   readonly readFrame: (
     viewport: RedskilledDashboardViewport,
-  ) => Promise<readonly string[]>;
+  ) => Promise<RedskilledDashboardTuiFrame>;
   readonly initialShowDeathDetails: boolean;
   readonly refreshMs?: number;
   readonly noColor?: boolean;
@@ -39,12 +43,58 @@ export interface RedskilledDashboardTuiOptions {
   readonly stdout?: NodeJS.WriteStream;
 }
 
-export interface RedskilledDashboardFrameOptions {
+export interface RedskilledDashboardTuiFrame {
   readonly lines: readonly string[];
+  readonly dashboard?: RedskilledDashboard;
+}
+
+export interface RedskilledDashboardFrameOptions {
+  readonly frame: RedskilledDashboardTuiFrame;
   readonly columns: number;
   readonly rows: number;
   readonly showDeathDetails: boolean;
   readonly noColor?: boolean;
+}
+
+function paintedLine(line: string, noColor: boolean): VNode {
+  return Text({ wrap: "truncate-end" }, noColor ? stripAnsi(line) : line);
+}
+
+function dashboardBody(
+  dashboard: RedskilledDashboard,
+  columns: number,
+  noColor: boolean,
+): VNode[] {
+  if (dashboard.rows.length === 0 || dashboard.table == null) {
+    return dashboard.lines.map((line) => paintedLine(line, noColor));
+  }
+
+  const firstWorkerIndex = dashboard.lines.indexOf(dashboard.rows[0]!.line);
+  const lastWorkerIndex = dashboard.lines.lastIndexOf(dashboard.rows.at(-1)!.line);
+  const before = firstWorkerIndex < 0 ? dashboard.lines : dashboard.lines.slice(0, firstWorkerIndex);
+  const after = lastWorkerIndex < 0 ? [] : dashboard.lines.slice(lastWorkerIndex + 1);
+  const tableColumns: TableColumn[] = dashboard.table.columns.map((column) => ({ ...column }));
+  const tableRows = dashboard.table.rows.map((row) => Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [key, noColor ? stripAnsi(value) : value]),
+  ));
+
+  return [
+    ...before.map((line) => paintedLine(line, noColor)),
+    Table({
+      columns: tableColumns,
+      data: tableRows,
+      borderStyle: "round",
+      availableWidth: Math.max(1, columns - 1),
+      maxWidth: Math.max(1, columns - 1),
+      compact: true,
+      rowSeparator: false,
+      borderColor: noColor ? "" : "gray",
+      headerStyle: { bold: !noColor, color: noColor ? "" : "cyan" },
+      accessibilityLabel: `redskilled Workers — ${dashboard.table.variant} table`,
+      striped: !noColor,
+    }),
+    ...after.map((line) => paintedLine(line, noColor)),
+  ];
 }
 
 /** One complete frame, independently renderable for fixture tests. PURE. */
@@ -55,6 +105,10 @@ export function redskilledDashboardFrame(
   const rows = Math.max(1, Math.floor(options.rows));
   const bodyRows = Math.max(0, rows - 1);
   const footer = `q quit · r refresh · v deaths: ${options.showDeathDetails ? "details" : "summary"} · live 1s`;
+  const noColor = options.noColor === true;
+  const body = options.frame.dashboard == null
+    ? options.frame.lines.map((line) => paintedLine(line, noColor))
+    : dashboardBody(options.frame.dashboard, columns, noColor);
 
   return Box(
     {
@@ -63,11 +117,16 @@ export function redskilledDashboardFrame(
       height: rows,
       overflow: "hidden",
     },
-    ...options.lines
-      .slice(0, bodyRows)
-      .map((line, index) => Text({ key: index, wrap: "truncate-end" }, line)),
-    Spacer({ flex: 1 }),
-    Text({ dim: options.noColor !== true, wrap: "truncate-end" }, footer),
+    Box(
+      {
+        flexDirection: "column",
+        width: columns,
+        height: bodyRows,
+        overflow: "hidden",
+      },
+      ...body,
+    ),
+    Text({ dim: !noColor, wrap: "truncate-end" }, footer),
   );
 }
 
@@ -86,7 +145,9 @@ export async function runRedskilledDashboardTui(
   function App(): VNode {
     const app = useApp();
     const size = useTerminalSize();
-    const [lines, setLines] = useState<readonly string[]>(["redskilled · connecting to host…"]);
+    const [frame, setFrame] = useState<RedskilledDashboardTuiFrame>({
+      lines: ["redskilled · connecting to host…"],
+    });
     const [showDeathDetails, setShowDeathDetails] = useState(options.initialShowDeathDetails);
 
     const refresh = (): void => {
@@ -98,11 +159,11 @@ export async function runRedskilledDashboardTui(
           rows: Math.max(1, (size.rows || 24) - 1),
           showDeathDetails: showDeathDetails(),
         })
-        .then(setLines)
+        .then(setFrame)
         .catch((error: unknown) => {
-          setLines([
-            `redskilled dashboard failed — ${error instanceof Error ? error.message : String(error)}`,
-          ]);
+          setFrame({
+            lines: [`redskilled dashboard failed — ${error instanceof Error ? error.message : String(error)}`],
+          });
         })
         .finally(() => {
           inFlight = false;
@@ -135,7 +196,7 @@ export async function runRedskilledDashboardTui(
     });
 
     return redskilledDashboardFrame({
-      lines: lines(),
+      frame: frame(),
       columns: size.columns || 80,
       rows: size.rows || 24,
       showDeathDetails: showDeathDetails(),

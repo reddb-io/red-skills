@@ -111,6 +111,7 @@ export {
   REDSKILLED_DASHBOARD_COLUMNS,
   REDSKILLED_DASHBOARD_DEFAULTS,
   renderRedskilledDashboard,
+  dashboardTable,
   type RedskilledDashboard,
   type RedskilledDashboardCells,
   type RedskilledDashboardColumn,
@@ -118,6 +119,9 @@ export {
   type RedskilledDashboardHeader,
   type RedskilledDashboardOptions,
   type RedskilledDashboardRow,
+  type RedskilledDashboardTable,
+  type RedskilledDashboardTableColumn,
+  type RedskilledDashboardTableVariant,
   type RedskilledDashboardWindows,
 } from "./dashboard.js";
 

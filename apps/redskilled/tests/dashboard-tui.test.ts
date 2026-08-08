@@ -2,6 +2,15 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { renderOnce } from "tuiuiu.js/minimal";
 import {
+  renderRedskilledDashboard,
+  REDSKILLED_DASHBOARD_DEFAULTS,
+} from "@reddb-io/redskilled-render";
+import {
+  display,
+  payload,
+  worker,
+} from "../../../packages/redskilled-render/tests/fixture.js";
+import {
   redskilledDashboardFrame,
   runRedskilledDashboardTui,
 } from "../src/dashboard-tui.js";
@@ -10,7 +19,7 @@ describe("the dashboard TUI frame", () => {
   it("keeps the operating data above a persistent command footer", () => {
     const frame = renderOnce(
       redskilledDashboardFrame({
-        lines: ["tk/h=12k  Tickets/h=4", "tokens 48h ▁▂▃", "Workers", "hE215 coding"],
+        frame: { lines: ["tk/h=12k  Tickets/h=4", "tokens 48h ▁▂▃", "Workers", "hE215 coding"] },
         columns: 80,
         rows: 5,
         showDeathDetails: false,
@@ -31,7 +40,7 @@ describe("the dashboard TUI frame", () => {
   it("clips the body before it can overwrite the footer", () => {
     const frame = renderOnce(
       redskilledDashboardFrame({
-        lines: ["one", "two", "three", "four"],
+        frame: { lines: ["one", "two", "three", "four"] },
         columns: 20,
         rows: 3,
         showDeathDetails: true,
@@ -44,6 +53,60 @@ describe("the dashboard TUI frame", () => {
     expect(frame).toContain("two");
     expect(frame).toContain("q quit");
     expect(frame).not.toContain("three");
+  });
+
+  it("paints the shared operational table on a wide terminal", () => {
+    const dashboard = renderRedskilledDashboard(
+      payload({
+        workers: [worker({
+          display: display({ runner: "codex", issue: "3495", phase: "validating", step: "tests" }),
+          log: { last_line: "running focused checks", published_at: "2026-08-03T00:02:00.000Z" },
+        })],
+      }),
+      { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets", maxWidth: 120 },
+    );
+    const frame = renderOnce(
+      redskilledDashboardFrame({
+        frame: { lines: dashboard.lines, dashboard },
+        columns: 120,
+        rows: 12,
+        showDeathDetails: false,
+        noColor: true,
+      }),
+      120,
+    );
+
+    expect(frame).toContain("Worker");
+    expect(frame).toContain("Issue");
+    expect(frame).toContain("Runner");
+    expect(frame).toContain("Phase");
+    expect(frame).toContain("Activity");
+    expect(frame).toContain("running foc");
+    expect(frame).not.toContain("run=codex");
+    expect(frame).not.toContain("\x1b[");
+  });
+
+  it("paints the grouped table on a narrow terminal", () => {
+    const dashboard = renderRedskilledDashboard(
+      payload({ workers: [worker({ display: display({ issue: "3495", phase: "validating" }) })] }),
+      { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets", maxWidth: 80 },
+    );
+    const frame = renderOnce(
+      redskilledDashboardFrame({
+        frame: { lines: dashboard.lines, dashboard },
+        columns: 80,
+        rows: 12,
+        showDeathDetails: false,
+        noColor: true,
+      }),
+      80,
+    );
+
+    expect(frame).toContain("Worker");
+    expect(frame).toContain("Work");
+    expect(frame).toContain("State");
+    expect(frame).toContain("Latest activity");
+    expect(frame).not.toContain("Runner");
   });
 });
 
@@ -62,7 +125,7 @@ describe("the dashboard TUI lifecycle", () => {
     });
     const chunks: string[] = [];
     stdout.on("data", (chunk) => chunks.push(chunk.toString()));
-    const readFrame = vi.fn(async () => ["frame"]);
+    const readFrame = vi.fn(async () => ({ lines: ["frame"] }));
 
     const running = runRedskilledDashboardTui({
       stdin,

@@ -146,6 +146,10 @@ of it.
   purpose and the loss is stated (`detail`, `degraded`) rather than left to be
   detected by re-parsing the line. The full picture stays with the dashboard and
   the monitor.
+- **The live TTY is a real responsive table.** The shared renderer publishes an
+  operational column hierarchy on terminals at least 110 columns wide and a
+  grouped Worker/Work/State/Activity hierarchy below that. Tuiuiu paints the
+  declared table; pipe output stays the stable one-shot text snapshot.
 - **`--verbose` adds a second line per Worker, and the Worker supplies it.** The
   Worker publishes its last logged line on its heartbeat (`worker-heartbeat`) as an
   opaque string; the daemon stores and returns it without ever parsing it, so the
