@@ -8,9 +8,12 @@
  * record would be a third copy of facts two authorities already keep, and the
  * only thing a third copy reliably does is drift.
  *
- * **Append-only, never rewritten.** A restarted daemon rehydrates by replaying
- * the lane, so a writer that rewrote a record would be editing the past out from
- * under a reader mid-replay. Every event is a whole line appended in one call.
+ * **Append-only within one bounded generation.** Every event is a whole line
+ * appended in one call. Once the generation reaches its byte ceiling, the
+ * writer atomically replaces it with a compact generation containing every
+ * live Worker's birth plus the newest history that fits. A reader holding the
+ * previous inode can therefore name rotation instead of mistaking a new byte
+ * offset for uninterrupted history.
  *
  * **A crash mid-append costs the tail, never the lane.** The writer's process can
  * die between the `write` and the newline, which leaves a half-encoded row on
@@ -24,7 +27,7 @@
  * so one segment header covers a whole writer's session and a reader never
  * special-cases an event kind's row.
  */
-import { appendFile, mkdir, open, readFile, stat, truncate } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 import type { RedskilledWorkerView } from "./host-state.js";
@@ -176,6 +179,9 @@ export type RedskilledPublicHostEvent = RedskilledHostEvent & {
 
 /** The daemon's one structured log, inside its host-scoped home. */
 export const REDSKILLED_EVENT_LANE_FILE = "redskilled.log.toonl";
+
+/** The most history one daemon generation asks every successor to replay. */
+export const DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES = 1024 * 1024;
 
 export interface RecordEventInput {
   readonly event: RedskilledEventKind;
@@ -372,8 +378,17 @@ export interface RedskilledEventLane {
   flush(): Promise<void>;
 }
 
-export function createRedskilledEventLane(path: string): RedskilledEventLane {
-  const emitter = encodeLines({ trailer: false });
+export interface RedskilledEventLaneOptions {
+  /** Override the production ceiling; exposed so tests can rotate tiny lanes. */
+  readonly maxBytes?: number;
+}
+
+export function createRedskilledEventLane(
+  path: string,
+  options: RedskilledEventLaneOptions = {},
+): RedskilledEventLane {
+  const maxBytes = options.maxBytes ?? DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES;
+  let emitter = encodeLines({ trailer: false });
   // Appends are serialised through one chain: two concurrent `appendFile` calls
   // could interleave a header and a row, and a header the reader sees mid-row is
   // exactly the corruption this lane promises not to produce.
@@ -384,6 +399,12 @@ export function createRedskilledEventLane(path: string): RedskilledEventLane {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       await dropIncompleteTail(path);
       await appendFile(path, emitter.push(toRow(event)), { encoding: "utf8", mode: 0o600 });
+      if ((await stat(path)).size > maxBytes) {
+        await rotateEventLane(path, maxBytes);
+        // The compact generation has its own header. A new emitter makes the
+        // next append a complete segment even when its schema changes later.
+        emitter = encodeLines({ trailer: false });
+      }
     });
     tail = write.catch(() => undefined);
     await write;
@@ -401,6 +422,72 @@ export function createRedskilledEventLane(path: string): RedskilledEventLane {
       await tail;
     },
   };
+}
+
+/** Atomically replace an oversized generation with the boot-complete suffix. */
+async function rotateEventLane(path: string, maxBytes: number): Promise<void> {
+  const events = await readRedskilledEvents(path);
+  const compact = compactEventLane(events, maxBytes);
+  const temporary = `${path}.rotate-${process.pid}`;
+  try {
+    await writeFile(temporary, encodeEventLane(compact), { encoding: "utf8", mode: 0o600 });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
+/**
+ * Retain the newest history that fits, pinning every birth needed at boot.
+ *
+ * A suffix alone can strand a live Worker when its birth sits just before the
+ * cut. Those births are the compact generation's baseline. Every other daemon
+ * boot projection already tolerates a bounded history and reports absence when
+ * its rolling window no longer has a sample.
+ */
+export function compactEventLane(
+  events: readonly RedskilledHostEvent[],
+  maxBytes: number,
+): RedskilledHostEvent[] {
+  const liveIds = new Set(rehydrateWorkers(events).map((worker) => worker.worker_id));
+  const pinnedIndices = new Set<number>();
+  for (let index = events.length - 1; index >= 0 && liveIds.size > 0; index -= 1) {
+    const event = events[index]!;
+    if (event.kind !== "worker-birth" || !liveIds.has(event.worker_id)) continue;
+    pinnedIndices.add(index);
+    liveIds.delete(event.worker_id);
+  }
+
+  const optionalIndices = events.map((_event, index) => index).filter((index) => !pinnedIndices.has(index));
+  let low = 0;
+  let high = optionalIndices.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = selectedEvents(events, pinnedIndices, optionalIndices.slice(middle));
+    if (Buffer.byteLength(encodeEventLane(candidate)) <= maxBytes) high = middle;
+    else low = middle + 1;
+  }
+
+  const compact = selectedEvents(events, pinnedIndices, optionalIndices.slice(low));
+  if (Buffer.byteLength(encodeEventLane(compact)) > maxBytes) {
+    throw new Error(`redskilled event-lane baseline exceeds its ${maxBytes}-byte ceiling`);
+  }
+  return compact;
+}
+
+function selectedEvents(
+  events: readonly RedskilledHostEvent[],
+  pinnedIndices: ReadonlySet<number>,
+  optionalIndices: readonly number[],
+): RedskilledHostEvent[] {
+  const selected = new Set([...pinnedIndices, ...optionalIndices]);
+  return events.filter((_event, index) => selected.has(index));
+}
+
+function encodeEventLane(events: readonly RedskilledHostEvent[]): string {
+  if (events.length === 0) return "";
+  const emitter = encodeLines({ trailer: false });
+  return events.map((event) => emitter.push(toRow(event))).join("");
 }
 
 /**
