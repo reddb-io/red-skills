@@ -20,18 +20,12 @@
  *
  * PURE: the host state, the ceiling, the reading and both instants are inputs.
  */
-import type {
-  AttributionConfidence,
-  DeathAttribution,
-  DeathSenderClass,
-} from "@reddb-io/shared/death-attribution.js";
 import {
   buildGithubBalanceReport,
   isGithubBalanceReport,
   type GithubBalance,
   type GithubBalanceReport,
 } from "@reddb-io/github";
-import type { ProcessDeathKind } from "@reddb-io/shared/death-record.js";
 import { measureHostConsumption, type RedskilledHostCeiling, type RedskilledHostConsumption } from "./admission.js";
 import type { RedskilledBudgetAccounting } from "./budget-accounting.js";
 import type { RedskilledHostState, RedskilledRssSource, RedskilledWorkerView } from "./host-state.js";
@@ -44,6 +38,13 @@ import {
   type RedskilledRepositoryActivity,
 } from "./repository-activity.js";
 import type { RedskilledWorkerDisplay, RedskilledWorkerDisplayRecord } from "./worker-display.js";
+import {
+  buildDeaths,
+  REDSKILLED_RECENT_DEATH_LIMIT,
+  isStatuslineDeaths,
+  type RedskilledDeathObservation,
+  type RedskilledStatuslineDeaths,
+} from "./statusline-deaths.js";
 import type { RedskilledWorkerLogLine } from "./worker-log.js";
 
 /**
@@ -55,17 +56,20 @@ import type { RedskilledWorkerLogLine } from "./worker-log.js";
  */
 export const REDSKILLED_STALENESS_MS = 30_000;
 
-/** A Worker dead by this age never reached work; repeated refusals are a boot loop. */
-export const REDSKILLED_BOOT_REFUSAL_MAX_UPTIME_S = 2;
-/** One refusal can be incidental and two can be a retry; three establishes repetition. */
-export const REDSKILLED_BOOT_LOOP_MIN_DEATHS = 3;
-
-/** Host-observed facts that enrich a generic death attribution when they exist. */
-export interface RedskilledDeathObservation extends DeathAttribution {
-  readonly project_label?: string;
-  readonly uptime_s?: number;
-  readonly detail?: string | null;
-}
+// The death block's own judgements — what counts as a death, which subset a head
+// prints, when repetition is a boot loop — live in `./statusline-deaths.js`. They
+// are re-exported below because this module's payload interface NAMES them, so a
+// consumer typing a payload reaches them from the module it already imports.
+export {
+  isStatuslineDeaths,
+  type RedskilledDeathObservation,
+  REDSKILLED_BOOT_LOOP_MIN_DEATHS,
+  REDSKILLED_BOOT_REFUSAL_MAX_UPTIME_S,
+  REDSKILLED_RECENT_DEATH_LIMIT,
+  type RedskilledStatuslineBootLoop,
+  type RedskilledStatuslineDeath,
+  type RedskilledStatuslineDeaths,
+} from "./statusline-deaths.js";
 
 /** What a Worker is doing, as the daemon knows it. */
 export type RedskilledWorkerState = "running" | "reattached";
@@ -211,64 +215,6 @@ export interface RedskilledStatuslineDaemon {
 }
 
 /**
- * One posed death, reduced to what a surface prints.
- *
- * The lane's verdict carries its whole receipt — every source consulted, every
- * line of evidence — and none of that fits a statusline. What survives here is
- * the answer to "why did it die": who ended it, how sure the reaper is, and the
- * one piece of evidence the verdict rests on. The receipt stays on the lane, and
- * `id` is the handle that reaches it.
- */
-export interface RedskilledStatuslineDeath {
-  readonly kind: ProcessDeathKind;
-  readonly id: string;
-  readonly pid: number;
-  /** When the reaper concluded — NOT when the process died, which nobody saw. */
-  readonly ts: string;
-  /** The last moment the dead process is known to have lived. */
-  readonly last_seen: string;
-  readonly last_phase: string;
-  readonly sender_class: DeathSenderClass;
-  readonly confidence: AttributionConfidence;
-  /** The signal, when a source NAMED one; never inferred from the class alone. */
-  readonly signal: string | null;
-  /** The first fact the verdict rests on; `null` exactly when the class is unknown. */
-  readonly evidence: string | null;
-}
-
-/**
- * What this host could not explain, as of the last reaping.
- *
- * `count` is stated beside `recent` rather than left to a consumer's `.length`,
- * because the list is capped: a statusline that printed `†2` from a truncated
- * array would under-report a machine that killed a dozen processes, and "how many
- * died" is the number that decides whether an operator looks further.
- *
- * An empty block is a REAPING THAT FOUND NOTHING and is never the same fact as an
- * absent one, which is a daemon that never reaped — the distinction #3028 exists
- * to keep, carried the one hop to the surfaces.
- */
-export interface RedskilledStatuslineDeaths {
-  readonly count: number;
-  /** The newest verdicts first, capped — `count` is the whole number. */
-  readonly recent: readonly RedskilledStatuslineDeath[];
-  /** The newest verdict, or `null` when the reaping attributed nothing. */
-  readonly latest: RedskilledStatuslineDeath | null;
-  /** When the reaper concluded; `null` when it attributed nothing. */
-  readonly reaped_at: string | null;
-  /** A repeated same-project boot refusal, absent when the deaths do not establish one. */
-  readonly boot_loop?: RedskilledStatuslineBootLoop;
-}
-
-/** The actionable shape hidden by a flat death count. */
-export interface RedskilledStatuslineBootLoop {
-  readonly project_label: string;
-  readonly count: number;
-  readonly span_ms: number;
-  readonly latest_refusal: string;
-}
-
-/**
  * Which engine is answering, and whether it is the current one.
  *
  * Two versions, never one: `running` is the code answering this read and
@@ -293,9 +239,6 @@ export interface RedskilledStatuslineEngine {
   /** True/false when the published answer is known; `null` when it never resolved. */
   readonly current: boolean | null;
 }
-
-/** How many verdicts a payload carries before the rest are counted instead. */
-export const REDSKILLED_RECENT_DEATH_LIMIT = 4;
 
 export interface RedskilledStatuslinePayload {
   readonly version: 1;
@@ -657,75 +600,6 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
   };
 }
 
-/** The death block a surface prints, newest verdict first. PURE. */
-function buildDeaths(
-  attributions: readonly RedskilledDeathObservation[],
-  limit: number,
-): RedskilledStatuslineDeaths {
-  const ordered = [...attributions].sort((a, b) => (instant(b.ts) ?? 0) - (instant(a.ts) ?? 0));
-  const recent = ordered.slice(0, Math.max(0, Math.floor(limit))).map(
-    (attribution): RedskilledStatuslineDeath => ({
-      kind: attribution.kind,
-      id: attribution.id,
-      pid: attribution.pid,
-      ts: attribution.ts,
-      last_seen: attribution.last_seen,
-      last_phase: attribution.last_phase,
-      sender_class: attribution.sender_class,
-      confidence: attribution.confidence,
-      signal: attribution.signal,
-      evidence: attribution.evidence[0] ?? null,
-    }),
-  );
-  const bootLoop = buildBootLoop(ordered);
-  return {
-    count: ordered.length,
-    recent,
-    latest: recent[0] ?? null,
-    reaped_at: recent[0]?.ts ?? null,
-    ...(bootLoop == null ? {} : { boot_loop: bootLoop }),
-  };
-}
-
-/** Reduce the rolling death window to its strongest same-project boot loop. PURE. */
-function buildBootLoop(
-  ordered: readonly RedskilledDeathObservation[],
-): RedskilledStatuslineBootLoop | null {
-  const byProject = new Map<string, RedskilledDeathObservation[]>();
-  for (const death of ordered) {
-    if (
-      death.sender_class !== "boot-refused" ||
-      death.uptime_s == null ||
-      death.uptime_s > REDSKILLED_BOOT_REFUSAL_MAX_UPTIME_S ||
-      death.project_label == null ||
-      death.project_label === "" ||
-      instant(death.ts) == null
-    ) continue;
-    const grouped = byProject.get(death.project_label) ?? [];
-    grouped.push(death);
-    byProject.set(death.project_label, grouped);
-  }
-
-  const loops = [...byProject.entries()]
-    .filter(([, deaths]) => deaths.length >= REDSKILLED_BOOT_LOOP_MIN_DEATHS)
-    .map(([projectLabel, deaths]): RedskilledStatuslineBootLoop | null => {
-      const newest = deaths[0]!;
-      const newestAt = instant(newest.ts)!;
-      const oldestAt = Math.min(...deaths.map((death) => instant(death.ts)!));
-      const refusal = newest.detail?.trim() || newest.evidence[0]?.trim();
-      if (refusal == null || refusal === "") return null;
-      return {
-        project_label: projectLabel,
-        count: deaths.length,
-        span_ms: Math.max(0, newestAt - oldestAt),
-        latest_refusal: refusal,
-      };
-    })
-    .filter((loop): loop is RedskilledStatuslineBootLoop => loop != null)
-    .sort((left, right) => right.count - left.count || right.span_ms - left.span_ms);
-  return loops[0] ?? null;
-}
-
 /**
  * The engine block, from the version state the daemon already holds. PURE.
  *
@@ -980,12 +854,6 @@ function isStatuslineStop(value: unknown): boolean {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const stopped = value as Record<string, unknown>;
   return typeof stopped.project_label === "string" && typeof stopped.at === "string";
-}
-
-function isStatuslineDeaths(value: unknown): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const deaths = value as Record<string, unknown>;
-  return Number.isInteger(deaths.count) && Array.isArray(deaths.recent);
 }
 
 function isStatuslineEngine(value: unknown): boolean {

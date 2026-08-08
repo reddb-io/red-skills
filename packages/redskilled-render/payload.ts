@@ -220,8 +220,12 @@ export interface RedskilledRenderDeath {
 /** What this host could not explain, as of the last reaping. */
 export interface RedskilledRenderDeaths {
   readonly count: number;
+  /** Optional for payloads composed before the daemon stated the sender-attributed subset. */
+  readonly sender_attributed_count?: number;
   readonly recent: readonly RedskilledRenderDeath[];
   readonly latest: RedskilledRenderDeath | null;
+  /** Optional for the same rolling-upgrade window as `sender_attributed_count`. */
+  readonly latest_sender_attributed?: RedskilledRenderDeath | null;
   readonly reaped_at: string | null;
   readonly boot_loop?: RedskilledRenderBootLoop;
 }

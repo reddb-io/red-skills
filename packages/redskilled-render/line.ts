@@ -305,11 +305,11 @@ function renderHead(
   unmatched: string,
 ): string {
   const parts: string[] = [];
-  const unmatchedProject = match !== "matched" && match !== "name-only";
+  const unmatchedProject = match !== "matched" && match !== "unregistered" && match !== "name-only";
   if (options.mode === "global") {
     parts.push(`host ${workerActivity(payload.workers, payload.host.worker_count)}/${payload.host.project_count}p`);
     parts.push(memoryFigure(payload, options));
-  } else if (match === "matched") {
+  } else if (match === "matched" || match === "unregistered") {
     parts.push(`${options.project} ${workerActivity(workers, workers.length)}`);
     parts.push(memoryFigure(payload, options));
     if (workers.length === 0) parts.push("idle");
@@ -408,14 +408,21 @@ function budgetMark(payload: RedskilledRenderPayload): string | null {
  */
 function deathMark(payload: RedskilledRenderPayload): string | null {
   const deaths = payload.deaths;
-  if (deaths == null || deaths.count <= 0 || deaths.latest == null) return null;
+  if (deaths == null) return null;
+  // Older daemons did not state the sender-attributed subset. Preserve their
+  // wire meaning without re-deriving it; current daemons are the sole authority.
+  const count = deaths.sender_attributed_count ?? deaths.count;
+  const latest = deaths.sender_attributed_count === undefined
+    ? deaths.latest
+    : deaths.latest_sender_attributed ?? null;
+  if (count <= 0 || latest == null) return null;
   const loop = deaths.boot_loop;
   if (loop != null) {
     const refusal = flattenPublishedLine(loop.latest_refusal);
-    return `${DEATH_MARK}${deaths.count} boot-refused ×${loop.count} in ${compactLoopSpan(loop.span_ms)}` +
+    return `${DEATH_MARK}${count} boot-refused ×${loop.count} in ${compactLoopSpan(loop.span_ms)}` +
       (refusal == null ? "" : ` — ${refusal}`);
   }
-  return `${DEATH_MARK}${deaths.count} ${deaths.latest.sender_class}`;
+  return `${DEATH_MARK}${count} ${latest.sender_class}`;
 }
 
 /** A loop span without zero-valued trailing units (`4m`, not `4m0s`). PURE. */
@@ -427,12 +434,11 @@ function compactLoopSpan(spanMs: number): string {
 }
 
 /**
- * The head for a directory this host knows no project for. PURE.
+ * The head for a directory that is not currently matched to a registration. PURE.
  *
- * `project unknown` appears HERE and nowhere else, and it always carries the
- * reason: the two mismatches are fixed by different actions — one wants a
- * `project.name` or a git remote, the other wants the project registered — and a
- * line that named neither would leave the operator with a word and no next step.
+ * `unregistered` is ordinary idleness: no drain declared intent, so there is no
+ * defect or repair to narrate. Every other branch represents prior intent or an
+ * unresolved identity and keeps its explicit reason and actionability.
  */
 function unmatchedHead(
   payload: RedskilledRenderPayload,
@@ -443,12 +449,7 @@ function unmatchedHead(
   readonly repair?: RepairAction | "none";
   readonly repair_reason?: string;
 } {
-  if (match === "unregistered") {
-    return composeRepair({
-      state: `project unknown — ${project} was never registered on this host`,
-      repair: registrationRepair(),
-    });
-  }
+  if (match === "unregistered") return { prose: "" };
   if (match === "orphaned") {
     return composeRepair({
       state: `project unknown — ${project} is registered on a daemon this socket does not reach`,

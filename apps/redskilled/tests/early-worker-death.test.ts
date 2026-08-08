@@ -77,6 +77,35 @@ function spec(overrides: Partial<RedskilledWorkerSpec> = {}): RedskilledWorkerSp
 }
 
 describe("a Worker that exits before its first write", () => {
+  it("keeps a clean completion on the event lane without presenting it as a death", async () => {
+    const paths = await sessionPaths();
+    const launched: { exit?: (code: number) => void } = {};
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      clock: () => "2026-08-03T16:47:09.000Z",
+      launch: earlyExitLaunch(launched),
+      unitInventory: () => [],
+    });
+    running.push(daemon);
+
+    daemon.startWorker(spec());
+    launched.exit?.(0);
+    await daemon.flushEvents();
+
+    const events = await readRedskilledEvents(paths.eventLanePath);
+    expect(events.map((event) => event.event)).toEqual(["worker-birth", "worker-death"]);
+    expect(events[1]).toMatchObject({ worker_id: "w-early", exit_code: 0, signal: null });
+
+    const payload = daemon.statuslinePayload();
+    expect(payload.deaths).toBeUndefined();
+    const line = renderRedskilledStatusline(payload, {
+      ...REDSKILLED_STATUSLINE_DEFAULTS,
+      project: "acme/widgets",
+    });
+    expect(line.line).not.toContain("†");
+  });
+
   it("leaves a host-written death and renders as a loss, not quiet idleness", async () => {
     const paths = await sessionPaths();
     const launched: { exit?: (code: number) => void } = {};

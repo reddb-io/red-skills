@@ -194,8 +194,14 @@ export function statuslinePayload(overrides: PayloadOverrides = {}): RedskilledS
     // in no Worker row, which is the whole reason it has to ride on the header.
     deaths: {
       count: 1,
+      // The canned verdict names systemd-oomd, so it is sender-attributed and
+      // rides the head. The two counts coincide here on purpose: this fixture
+      // proves the surface prints an ATTRIBUTED death, and a fixture whose only
+      // death were un-narrated would prove the head prints nothing.
+      sender_attributed_count: 1,
       recent: [CANNED_DEATH],
       latest: CANNED_DEATH,
+      latest_sender_attributed: CANNED_DEATH,
       reaped_at: CANNED_DEATH.ts,
     },
     engine: {

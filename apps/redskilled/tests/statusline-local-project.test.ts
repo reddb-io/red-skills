@@ -202,18 +202,16 @@ describe("`project unknown`", () => {
     expect(render.line).toContain("idle");
   });
 
-  it("names the mismatch when the directory resolved to a project this host never heard of", () => {
+  it("renders healthy idleness when the directory's project has no drain registration", () => {
     const render = renderRedskilledStatusline(
       payloadOf([worker({ project_label: "acme/other" })]),
       options({ project: "acme/widgets" }),
     );
 
     expect(render.project_match).toBe("unregistered");
-    expect(render.line).toContain("project unknown");
-    expect(render.line).toContain("acme/widgets was never registered on this host");
-    // No idle zero to read as calm — the host may be busy for someone else.
-    expect(render.line).not.toContain("0w");
-    expect(render.line).not.toContain("idle");
+    expect(render.line).toBe("acme/widgets 0w 0B idle v0.1.0");
+    expect(render.repair).toBeUndefined();
+    expect(render.repair_reason).toBeUndefined();
   });
 
   it("says so plainly when the directory resolved to no project at all", () => {

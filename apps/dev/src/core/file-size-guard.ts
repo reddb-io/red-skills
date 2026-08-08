@@ -78,7 +78,7 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   { path: "apps/redskilled/src/daemon/lifecycle.ts", lines: 2489 },
   { path: "apps/redskilled/src/cli.ts", lines: 1036 },
   { path: "apps/redskilled/src/client.ts", lines: 1003 },
-  { path: "apps/redskilled/src/statusline-payload.ts", lines: 996 },
+  { path: "apps/redskilled/src/statusline-payload.ts", lines: 864 },
   { path: "apps/rsp/src/resident-server.ts", lines: 931 },
   { path: "apps/rsp/src/two-axis-benchmark.ts", lines: 878 },
   { path: "apps/rsp/tests/cli.helpers.ts", lines: 828 },
