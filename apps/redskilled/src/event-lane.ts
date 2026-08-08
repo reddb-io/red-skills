@@ -64,6 +64,20 @@ export const REDSKILLED_WORKER_EVENT_KINDS = [
   "worker-budget-kill",
 ] & { includes(searchElement: RedskilledWorkerEventKind | "demand-refusal" | "daemon-stop"): boolean };
 
+/**
+ * The host-event kinds external consumers may rely on (ADR 0140).
+ *
+ * Kinds absent from this declaration are internal telemetry. They may be added,
+ * removed or reshaped without widening this public contract.
+ */
+export const REDSKILLED_PUBLIC_HOST_EVENT_KINDS = [
+  "worker-birth",
+  "worker-death",
+  "worker-budget-kill",
+] as const satisfies readonly RedskilledWorkerEventKind[];
+
+export type RedskilledPublicHostEventKind = typeof REDSKILLED_PUBLIC_HOST_EVENT_KINDS[number];
+
 /** The daemon-owned records that deliberately name no Worker. */
 export const REDSKILLED_DAEMON_EVENT_KINDS = ["demand-refusal", "daemon-stop"] as const;
 
@@ -153,6 +167,12 @@ export interface RedskilledHostEvent {
   /** The signal that ended the Worker, when one did. */
   readonly signal: string | null;
 }
+
+/** A host-event record whose discriminator carries the public stability promise. */
+export type RedskilledPublicHostEvent = RedskilledHostEvent & {
+  readonly kind: RedskilledPublicHostEventKind;
+  readonly event: RedskilledPublicHostEventKind;
+};
 
 /** The daemon's one structured log, inside its host-scoped home. */
 export const REDSKILLED_EVENT_LANE_FILE = "redskilled.log.toonl";
