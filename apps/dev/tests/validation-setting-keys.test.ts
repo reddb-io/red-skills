@@ -6,6 +6,7 @@ import {
   VALIDATION_SETTING_KEYS,
   isValidationSettingKey,
 } from "../src/core/validation-moments.js";
+import { loadConfig, readValidationMoments } from "../src/core/config.js";
 
 const REPO_ROOT = resolve(import.meta.dirname, "..", "..", "..");
 
@@ -47,5 +48,15 @@ describe("validation setting keys (#3466)", () => {
       expect(isValidationSettingKey(setting), `${setting} is a setting, not a moment`).toBe(true);
     }
     expect(isValidationSettingKey("post_done")).toBe(false);
+  });
+
+  it("reproves workspace types and repo invariants before a Worker reports DONE (#3509)", () => {
+    const configPath = join(REPO_ROOT, ".red", "config.yaml");
+    const values = loadConfig(configPath);
+
+    expect(readValidationMoments(values).post_done).toEqual([
+      "pnpm typecheck",
+      "pnpm -C apps/dev test:invariants",
+    ]);
   });
 });
