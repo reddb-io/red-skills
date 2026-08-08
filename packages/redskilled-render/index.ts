@@ -121,6 +121,13 @@ export {
   type RedskilledDashboardWindows,
 } from "./dashboard.js";
 
+export {
+  dashboardTable,
+  type RedskilledDashboardTable,
+  type RedskilledDashboardTableColumn,
+  type RedskilledDashboardTableVariant,
+} from "./dashboard-table.js";
+
 import { decodeRedskilledPayload } from "./decode.js";
 import {
   REDSKILLED_DASHBOARD_DEFAULTS,

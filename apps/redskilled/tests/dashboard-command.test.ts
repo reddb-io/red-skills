@@ -63,13 +63,14 @@ describe("the dashboard always answers", () => {
       },
       runTui: async (options) => {
         expect(options.initialShowDeathDetails).toBe(true);
-        await options.readFrame({ columns: 100, rows: 7, showDeathDetails: true });
+        const frame = await options.readFrame({ columns: 100, rows: 7, showDeathDetails: true });
+        expect(frame.dashboard).toBeDefined();
         await options.readFrame({ columns: 72, rows: 4, showDeathDetails: false });
       },
     });
 
     expect(asked).toEqual([
-      expect.objectContaining({ mode: "global", maxWidth: 100, maxHeight: 7, maxRows: 2, showDeathDetails: true }),
+      expect.objectContaining({ mode: "global", maxWidth: 100, maxHeight: 7, maxRows: 0, showDeathDetails: true }),
       expect.objectContaining({ mode: "global", maxWidth: 72, maxHeight: 4, maxRows: 0, showDeathDetails: false }),
     ]);
     expect(io.out).toEqual([]);

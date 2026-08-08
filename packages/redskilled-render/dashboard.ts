@@ -79,6 +79,10 @@ import {
   selectRenderWorkers,
   type RedskilledStatuslineProjectMatch,
 } from "./select.js";
+import {
+  dashboardTable,
+  type RedskilledDashboardTable,
+} from "./dashboard-table.js";
 
 /** The row columns, in the order the statusline's per-worker line prints them. */
 export const REDSKILLED_DASHBOARD_COLUMNS = [
@@ -186,6 +190,8 @@ export interface RedskilledDashboard {
   readonly columns: readonly RedskilledDashboardColumn[];
   readonly header: RedskilledDashboardHeader;
   readonly rows: readonly RedskilledDashboardRow[];
+  /** Responsive column hierarchy, derived here so every surface shares it. */
+  readonly table?: RedskilledDashboardTable;
   /**
    * Every line to print, the header first.
    *
@@ -261,6 +267,7 @@ export function renderRedskilledDashboard(
     cells: cells[index]!,
     line: clamp(formatRow(cells[index]!, widths), options.maxWidth),
   }));
+  const table = dashboardTable(rows, visible, options.maxWidth);
 
   const header = buildHeader(payload, options, selected, match);
   const hidden = selected.length - visible.length;
@@ -298,6 +305,7 @@ export function renderRedskilledDashboard(
     columns: REDSKILLED_DASHBOARD_COLUMNS,
     header,
     rows,
+    table,
     lines: visibleLines,
     hidden_row_count: Math.max(0, hidden),
     stale: payload.staleness.stale,

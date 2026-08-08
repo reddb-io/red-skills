@@ -3,7 +3,11 @@ import {
   readRedskilledDashboardRender,
   type RedskilledClientConfig,
 } from "./client.js";
-import { runRedskilledDashboardTui, type RedskilledDashboardTuiOptions } from "./dashboard-tui.js";
+import {
+  runRedskilledDashboardTui,
+  type RedskilledDashboardTuiFrame,
+  type RedskilledDashboardTuiOptions,
+} from "./dashboard-tui.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 import { readStatuslineProject } from "./statusline-project.js";
 import {
@@ -65,26 +69,29 @@ export async function runDashboard(
   const readFrame = async (
     options: Partial<RedskilledDashboardOptions>,
     warnOnFailure = true,
-  ): Promise<readonly string[]> => {
+  ): Promise<RedskilledDashboardTuiFrame> => {
     try {
       const render = await readDashboard(paths, options, {
         ...(io.client ?? {}),
         ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
       });
-      return noColor ? render.lines.map(stripAnsi) : render.lines;
+      return {
+        dashboard: render,
+        lines: noColor ? render.lines.map(stripAnsi) : render.lines,
+      };
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       if (warnOnFailure) warn(`redskilled dashboard: ${reason}\n`);
-      return [`redskilled unreachable — ${reason}`];
+      return { lines: [`redskilled unreachable — ${reason}`] };
     }
   };
 
   if (!interactive) {
-    const lines = await readFrame({
+    const frame = await readFrame({
       ...baseOptions,
       ...(resolved.options.maxWidth == null ? {} : { maxWidth: resolved.options.maxWidth }),
     });
-    write(`${lines.join("\n")}\n`);
+    write(`${frame.lines.join("\n")}\n`);
     return 0;
   }
 
@@ -98,7 +105,9 @@ export async function runDashboard(
         ...baseOptions,
         maxWidth,
         maxHeight,
-        maxRows: Math.max(0, maxHeight - 5),
+        // Header + throughput + Table chrome + diagnostics consume eight rows
+        // before the first Worker; the renderer must budget the remainder.
+        maxRows: Math.max(0, maxHeight - 8),
         showDeathDetails,
       }, false);
     },

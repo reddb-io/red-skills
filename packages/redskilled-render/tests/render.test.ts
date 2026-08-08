@@ -119,6 +119,49 @@ describe("one module, three densities", () => {
     expect(stripAnsi(table.header.line)).toContain("wrk=1/1");
   });
 
+  it("publishes an operational table for wide terminals and a grouped table for narrow ones", () => {
+    const doc = payload({
+      workers: [worker({
+        display: display({ runner: "codex", issue: "3495", phase: "validating", step: "tests" }),
+        log: { last_line: "running focused checks", published_at: "2026-08-03T00:02:00.000Z" },
+      })],
+    });
+
+    const wide = renderRedskilledDashboard(doc, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 120,
+    });
+    expect(wide.table).toBeDefined();
+    const wideTable = wide.table!;
+    expect(wideTable.variant).toBe("operational");
+    expect(wideTable.columns.map((column) => column.header)).toEqual([
+      "Worker", "Issue", "Runner", "Phase", "Progress", "Elapsed", "ETA", "Activity",
+    ]);
+    expect(wideTable.rows[0]).toEqual(expect.objectContaining({
+      issue: "3495",
+      runner: "codex opus high",
+      phase: "validating·tests",
+      activity: "hb=3s · running focused checks",
+    }));
+
+    const narrow = renderRedskilledDashboard(doc, {
+      ...REDSKILLED_DASHBOARD_DEFAULTS,
+      project: "acme/widgets",
+      maxWidth: 80,
+    });
+    expect(narrow.table).toBeDefined();
+    const narrowTable = narrow.table!;
+    expect(narrowTable.variant).toBe("compact");
+    expect(narrowTable.columns.map((column) => column.header)).toEqual([
+      "Worker", "Work", "State", "Latest activity",
+    ]);
+    expect(narrowTable.rows[0]).toEqual(expect.objectContaining({
+      work: "3495 · validating·tests",
+      activity: "hb=3s · running focused checks",
+    }));
+  });
+
   it("attributes target-plus-one slot usage to the interactive reservation", () => {
     const base = payload();
     const doc = payload({
