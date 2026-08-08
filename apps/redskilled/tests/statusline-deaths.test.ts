@@ -135,7 +135,14 @@ describe("the aggregate carries what could not be explained", () => {
     // Absent is a daemon with no reaper — the block is not there to be read.
     expect(payloadWith(undefined).deaths).toBeUndefined();
     // Empty is a reaping that concluded: a real answer, and a count of zero.
-    expect(payloadWith([]).deaths).toEqual({ count: 0, recent: [], latest: null, reaped_at: null });
+    expect(payloadWith([]).deaths).toEqual({
+      count: 0,
+      sender_attributed_count: 0,
+      recent: [],
+      latest: null,
+      latest_sender_attributed: null,
+      reaped_at: null,
+    });
   });
 
   it("caps the listed verdicts and still states how many there were", () => {
@@ -145,6 +152,42 @@ describe("the aggregate carries what could not be explained", () => {
     const payload = payloadWith(many);
     expect(payload.deaths?.count).toBe(9);
     expect(payload.deaths?.recent.length).toBeLessThan(9);
+  });
+
+  it("states the sender-attributed subset without dropping bookkeeping gaps", () => {
+    const gap = attribution({
+      id: "worker:w-gap",
+      ts: "2026-07-29T00:59:30.000Z",
+      sender_class: "unknown",
+      confidence: "none",
+      signal: null,
+      evidence: [],
+      checked: ["the host no longer confirms this Worker"],
+    });
+    const payload = payloadWith([attribution(), gap]);
+
+    expect(payload.deaths).toMatchObject({
+      count: 2,
+      sender_attributed_count: 1,
+      latest_sender_attributed: { id: "worker:w-9", sender_class: "oomd" },
+    });
+    expect(payload.deaths?.recent.map((death) => death.id)).toContain("worker:w-gap");
+
+    const line = renderRedskilledStatusline(payload, {
+      ...REDSKILLED_STATUSLINE_DEFAULTS,
+      project: "acme/widgets",
+    });
+    expect(line.line).toContain("†1 oomd");
+    expect(line.line).not.toContain("unknown");
+
+    const dashboard = renderRedskilledDashboard(payload, {
+      mode: "local",
+      project: "acme/widgets",
+      maxWidth: 200,
+      maxRows: 16,
+      showDeathDetails: true,
+    });
+    expect(dashboard.lines.some((entry) => entry.includes("worker:w-gap"))).toBe(true);
   });
 });
 
