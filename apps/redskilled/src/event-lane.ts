@@ -30,6 +30,11 @@
 import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import {
+  readPositionedEventLane,
+  type EventLanePosition,
+  type PositionedEventRead,
+} from "./event-lane-position.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import type { RedskilledWorkerBudget } from "./worker-placement.js";
 
@@ -552,80 +557,15 @@ export async function readRedskilledEvents(path: string): Promise<RedskilledHost
   return parseEventLane(raw);
 }
 
-/** Opaque-enough file identity and byte boundary held by a tailing consumer. */
-export interface RedskilledEventLanePosition {
-  /** File identity plus creation instant, preventing inode-reuse ABA after several rotations. */
-  readonly generation: string;
-  readonly offset: number;
-}
+export type RedskilledEventLanePosition = EventLanePosition;
+export type RedskilledPositionedEventRead = PositionedEventRead<RedskilledHostEvent>;
 
-export interface RedskilledPositionedEventRead {
-  readonly status: "current" | "rebaseline-required";
-  readonly exists: boolean;
-  /** Everything visible after a current position, or the whole visible generation after rotation. */
-  readonly events: readonly RedskilledHostEvent[];
-  readonly position: RedskilledEventLanePosition | null;
-}
-
-/**
- * Read from one observed generation without confusing a reused offset for history.
- *
- * A stale reader still receives every event the current bounded lane can show.
- * The status is separate because those events are not a replacement for the
- * missing prefix; stateful consumers must re-baseline before following again.
- */
+/** Read from one generation, reporting the current bounded lane after rotation. */
 export async function readRedskilledEventsFrom(
   path: string,
   position?: RedskilledEventLanePosition | null,
 ): Promise<RedskilledPositionedEventRead> {
-  let handle;
-  try {
-    handle = await open(path, "r");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return {
-        status: position == null ? "current" : "rebaseline-required",
-        exists: false,
-        events: [],
-        position: null,
-      };
-    }
-    throw error;
-  }
-
-  try {
-    const metadata = await handle.stat({ bigint: true });
-    const raw = await handle.readFile();
-    const nextPosition: RedskilledEventLanePosition = {
-      generation: `${metadata.dev}:${metadata.ino}:${metadata.birthtimeNs}`,
-      offset: raw.byteLength,
-    };
-    const rotated = position != null &&
-      (position.generation !== nextPosition.generation ||
-        position.offset > raw.byteLength);
-    const all = parseEventLane(raw.toString("utf8"));
-    if (position == null || rotated) {
-      return {
-        status: rotated ? "rebaseline-required" : "current",
-        exists: true,
-        events: all,
-        position: nextPosition,
-      };
-    }
-
-    // Positions are handed out only at complete append boundaries. Parsing the
-    // prefix through the same public decoder keeps segment headers out of the
-    // count and avoids inventing a second TOONL parser for cursor reads.
-    const seen = parseEventLane(raw.subarray(0, position.offset).toString("utf8")).length;
-    return {
-      status: "current",
-      exists: true,
-      events: all.slice(seen),
-      position: nextPosition,
-    };
-  } finally {
-    await handle.close();
-  }
+  return await readPositionedEventLane(path, position, parseEventLane);
 }
 
 export type RedskilledPublicEventFollow<TBaseline> =
