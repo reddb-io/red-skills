@@ -181,7 +181,7 @@ export type RedskilledPublicHostEvent = RedskilledHostEvent & {
 export const REDSKILLED_EVENT_LANE_FILE = "redskilled.log.toonl";
 
 /** The most history one daemon generation asks every successor to replay. */
-export const DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES = 1024 * 1024;
+export const DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES = 4 * 1024 * 1024;
 
 export interface RecordEventInput {
   readonly event: RedskilledEventKind;
