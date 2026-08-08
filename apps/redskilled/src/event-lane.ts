@@ -552,6 +552,129 @@ export async function readRedskilledEvents(path: string): Promise<RedskilledHost
   return parseEventLane(raw);
 }
 
+/** Opaque-enough file identity and byte boundary held by a tailing consumer. */
+export interface RedskilledEventLanePosition {
+  /** File identity plus creation instant, preventing inode-reuse ABA after several rotations. */
+  readonly generation: string;
+  readonly offset: number;
+}
+
+export interface RedskilledPositionedEventRead {
+  readonly status: "current" | "rebaseline-required";
+  readonly exists: boolean;
+  /** Everything visible after a current position, or the whole visible generation after rotation. */
+  readonly events: readonly RedskilledHostEvent[];
+  readonly position: RedskilledEventLanePosition | null;
+}
+
+/**
+ * Read from one observed generation without confusing a reused offset for history.
+ *
+ * A stale reader still receives every event the current bounded lane can show.
+ * The status is separate because those events are not a replacement for the
+ * missing prefix; stateful consumers must re-baseline before following again.
+ */
+export async function readRedskilledEventsFrom(
+  path: string,
+  position?: RedskilledEventLanePosition | null,
+): Promise<RedskilledPositionedEventRead> {
+  let handle;
+  try {
+    handle = await open(path, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {
+        status: position == null ? "current" : "rebaseline-required",
+        exists: false,
+        events: [],
+        position: null,
+      };
+    }
+    throw error;
+  }
+
+  try {
+    const metadata = await handle.stat({ bigint: true });
+    const raw = await handle.readFile();
+    const nextPosition: RedskilledEventLanePosition = {
+      generation: `${metadata.dev}:${metadata.ino}:${metadata.birthtimeNs}`,
+      offset: raw.byteLength,
+    };
+    const rotated = position != null &&
+      (position.generation !== nextPosition.generation ||
+        position.offset > raw.byteLength);
+    const all = parseEventLane(raw.toString("utf8"));
+    if (position == null || rotated) {
+      return {
+        status: rotated ? "rebaseline-required" : "current",
+        exists: true,
+        events: all,
+        position: nextPosition,
+      };
+    }
+
+    // Positions are handed out only at complete append boundaries. Parsing the
+    // prefix through the same public decoder keeps segment headers out of the
+    // count and avoids inventing a second TOONL parser for cursor reads.
+    const seen = parseEventLane(raw.subarray(0, position.offset).toString("utf8")).length;
+    return {
+      status: "current",
+      exists: true,
+      events: all.slice(seen),
+      position: nextPosition,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+export type RedskilledPublicEventFollow<TBaseline> =
+  | {
+      readonly status: "events";
+      readonly events: readonly RedskilledPublicHostEvent[];
+      readonly position: RedskilledEventLanePosition | null;
+    }
+  | {
+      readonly status: "baseline";
+      readonly reason: "initial" | "position-rotated";
+      readonly baseline: TBaseline;
+      readonly events: readonly [];
+      readonly position: RedskilledEventLanePosition | null;
+    };
+
+/**
+ * Follow only public host events, replacing a missing prefix with current state.
+ *
+ * The position is captured before `readBaseline` runs. An event racing the host
+ * read is therefore either already reflected by that state or appears again on
+ * the next follow; it is never silently skipped between the two authorities.
+ */
+export async function followRedskilledPublicEvents<TBaseline>(
+  path: string,
+  position: RedskilledEventLanePosition | null | undefined,
+  readBaseline: () => Promise<TBaseline>,
+): Promise<RedskilledPublicEventFollow<TBaseline>> {
+  const read = await readRedskilledEventsFrom(path, position);
+  if (position == null || read.status === "rebaseline-required") {
+    return {
+      status: "baseline",
+      reason: position == null ? "initial" : "position-rotated",
+      baseline: await readBaseline(),
+      events: [],
+      position: read.position,
+    };
+  }
+  return {
+    status: "events",
+    events: read.events.filter(isPublicHostEvent),
+    position: read.position,
+  };
+}
+
+function isPublicHostEvent(event: RedskilledHostEvent): event is RedskilledPublicHostEvent {
+  return (REDSKILLED_PUBLIC_HOST_EVENT_KINDS as readonly RedskilledEventKind[]).includes(event.kind);
+}
+
 /**
  * Decode a lane's text into events, dropping a crash-truncated tail. PURE.
  *
