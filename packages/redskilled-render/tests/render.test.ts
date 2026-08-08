@@ -410,7 +410,7 @@ describe("an unknown project's registration history (#3191)", () => {
     ceiling_used_fraction: 0,
   };
 
-  it("carries the pasteable registration repair beside the unregistered head", () => {
+  it("renders an unregistered project as ordinary healthy idleness", () => {
     const rendered = renderRedskilledStatusline(
       payload({
         host: emptyHost,
@@ -422,30 +422,13 @@ describe("an unknown project's registration history (#3191)", () => {
       { ...LOCAL, maxWidth: 400 },
     );
 
-    expect(rendered.repair).toEqual({
-      tool: "project_start",
-      args: { runner: "claude", target: 1 },
-      why: "register this project with the host so its queue can drain",
-    });
-    expect(rendered.line).toBe(
-      "project unknown — acme/widgets was never registered on this host; repair: call `project_start` with " +
-      "`{\"runner\":\"claude\",\"target\":1}` because register this project with the host so its queue can drain v3.3.11",
-    );
+    expect(rendered.project_match).toBe("unregistered");
+    expect(rendered.repair).toBeUndefined();
+    expect(rendered.repair_reason).toBeUndefined();
+    expect(rendered.line).toBe("acme/widgets 0w 0B idle v3.3.11");
   });
 
   it.each([
-    [
-      "was never registered",
-      payload({
-        host: emptyHost,
-        projects: [],
-        workers: [],
-        known_projects: [],
-        registered_projects: [],
-      }),
-      "project unknown — acme/widgets was never registered on this host; repair: call `project_start` with " +
-        "`{\"runner\":\"claude\",\"target\":1}` because register this project with the host so its queue can drain v3.3.11",
-    ],
     [
       "lapsed",
       payload({
