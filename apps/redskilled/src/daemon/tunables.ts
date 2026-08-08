@@ -103,8 +103,10 @@ export function observedWorkerDeath(
   context: { readonly startedAt?: string; readonly refusal?: string } = {},
 ): RedskilledDeathObservation | null {
   if (event.event !== "worker-death" && event.event !== "worker-budget-kill") return null;
+  if (event.event === "worker-death" && event.exit_code === 0) return null;
   const hostEndedWorker = event.event === "worker-budget-kill";
   const bootRefused = !hostEndedWorker && context.refusal != null;
+  const signalled = !hostEndedWorker && !bootRefused && event.signal != null;
   const observation = context.refusal ?? event.detail ??
     `redskilled observed exit code=${event.exit_code ?? "null"} signal=${event.signal ?? "null"}`;
   const startedAt = context.startedAt == null ? null : Date.parse(context.startedAt);
@@ -122,18 +124,19 @@ export function observedWorkerDeath(
     // finer heartbeat or phase, and inventing either would be worse than saying so.
     last_seen: event.ts,
     last_phase: bootRefused ? "boot-refused" : "unreported",
-    sender_class: hostEndedWorker ? "teardown" : bootRefused ? "boot-refused" : "unknown",
-    confidence: hostEndedWorker || bootRefused ? "high" : "none",
+    sender_class: hostEndedWorker ? "teardown" : bootRefused ? "boot-refused" : signalled ? "user-signal" : "unknown",
+    confidence: hostEndedWorker || bootRefused || signalled ? "high" : "none",
     signal: event.signal,
     host_boot_changed: false,
     // A budget kill is the daemon's own act and therefore evidence. A spontaneous
     // exit has an observation but no known sender; keep that receipt under
     // `checked` so `unknown` remains honest rather than becoming a guessed cause.
-    evidence: hostEndedWorker || bootRefused ? [observation] : [],
+    evidence: hostEndedWorker || bootRefused || signalled ? [observation] : [],
     checked: bootRefused ? ["Worker log tail"] : [`redskilled host event: ${observation}`],
     project_label: event.project_label,
     ...(uptimeS === undefined ? {} : { uptime_s: uptimeS }),
     detail: context.refusal ?? event.detail,
+    observed_exit: event.exit_code != null || event.signal != null,
   };
 }
 
