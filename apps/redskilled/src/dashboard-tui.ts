@@ -77,19 +77,24 @@ function dashboardBody(
   const tableRows = dashboard.table.rows.map((row) => Object.fromEntries(
     Object.entries(row).map(([key, value]) => [key, noColor ? stripAnsi(value) : value]),
   ));
+  // Table's width calculation reserves N+1 rule columns even for the `none`
+  // border. Add that phantom width to the existing columns-1 content budget so
+  // removing the rules gives their space back to the flex columns.
+  const tableWidthBudget = Math.max(1, columns + tableColumns.length);
 
   return [
     ...before.map((line) => paintedLine(line, noColor)),
     Table({
       columns: tableColumns,
       data: tableRows,
-      borderStyle: "round",
-      availableWidth: Math.max(1, columns - 1),
-      maxWidth: Math.max(1, columns - 1),
-      compact: true,
+      borderStyle: "none",
+      availableWidth: tableWidthBudget,
+      maxWidth: tableWidthBudget,
+      compact: false,
+      padding: 1,
       rowSeparator: false,
       borderColor: noColor ? "" : "gray",
-      headerStyle: { bold: !noColor, color: noColor ? "" : "cyan" },
+      headerStyle: { bold: true, color: noColor ? "" : "cyan" },
       accessibilityLabel: `redskilled Workers — ${dashboard.table.variant} table`,
       striped: !noColor,
     }),

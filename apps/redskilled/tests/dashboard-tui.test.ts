@@ -15,6 +15,24 @@ import {
   runRedskilledDashboardTui,
 } from "../src/dashboard-tui.js";
 
+const BOX_DRAWING_CHARACTER = /[\u2500-\u257f]/u;
+
+function expectBorderlessTable(
+  frame: string,
+  columns: number,
+  header: RegExp,
+  row: RegExp,
+): void {
+  const plain = frame.replace(/\x1b\[[0-9;]*m/g, "");
+  const lines = plain.split("\n");
+  const headerIndex = lines.findIndex((line) => header.test(line));
+  const rowIndex = lines.findIndex((line) => row.test(line));
+  expect(plain).not.toMatch(BOX_DRAWING_CHARACTER);
+  expect(headerIndex).toBe(2);
+  expect(rowIndex).toBe(headerIndex + 1);
+  expect(lines.every((line) => line.length <= columns)).toBe(true);
+}
+
 describe("the dashboard TUI frame", () => {
   it("keeps the operating data above a persistent command footer", () => {
     const frame = renderOnce(
@@ -65,9 +83,25 @@ describe("the dashboard TUI frame", () => {
       }),
       { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets", maxWidth: 120 },
     );
+    const markedDashboard = {
+      ...dashboard,
+      table: {
+        ...dashboard.table!,
+        rows: [{
+          worker: "A",
+          issue: "B",
+          runner: "C",
+          phase: "D",
+          progress: "E",
+          elapsed: "F",
+          eta: "G",
+          activity: "H",
+        }],
+      },
+    };
     const frame = renderOnce(
       redskilledDashboardFrame({
-        frame: { lines: dashboard.lines, dashboard },
+        frame: { lines: dashboard.lines, dashboard: markedDashboard },
         columns: 120,
         rows: 12,
         showDeathDetails: false,
@@ -81,9 +115,14 @@ describe("the dashboard TUI frame", () => {
     expect(frame).toContain("Runner");
     expect(frame).toContain("Phase");
     expect(frame).toContain("Activity");
-    expect(frame).toContain("running foc");
     expect(frame).not.toContain("run=codex");
-    expect(frame).not.toContain("\x1b[");
+    expect(frame).toContain("\x1b[1m");
+    expectBorderlessTable(
+      frame,
+      120,
+      /Worker +Issue +Runner +Phase +Progress +Elapsed +ETA +Activity/u,
+      /A +B +C +D +E +F +G +H/u,
+    );
   });
 
   it("paints the grouped table on a narrow terminal", () => {
@@ -91,9 +130,16 @@ describe("the dashboard TUI frame", () => {
       payload({ workers: [worker({ display: display({ issue: "3495", phase: "validating" }) })] }),
       { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets", maxWidth: 80 },
     );
+    const markedDashboard = {
+      ...dashboard,
+      table: {
+        ...dashboard.table!,
+        rows: [{ worker: "A", work: "B", state: "C", activity: "D" }],
+      },
+    };
     const frame = renderOnce(
       redskilledDashboardFrame({
-        frame: { lines: dashboard.lines, dashboard },
+        frame: { lines: dashboard.lines, dashboard: markedDashboard },
         columns: 80,
         rows: 12,
         showDeathDetails: false,
@@ -107,6 +153,13 @@ describe("the dashboard TUI frame", () => {
     expect(frame).toContain("State");
     expect(frame).toContain("Latest activity");
     expect(frame).not.toContain("Runner");
+    expect(frame).toContain("\x1b[1m");
+    expectBorderlessTable(
+      frame,
+      80,
+      /Worker +Work +State +Latest activity/u,
+      /A +B +C +D/u,
+    );
   });
 });
 
