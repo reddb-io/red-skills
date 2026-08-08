@@ -21,6 +21,33 @@ daemon does not belong inside it either. It lives here and consumes the shared
 resident infrastructure (`packages/shared/resident-core.ts`) rather than a copy
 of it.
 
+## Public host-event contract
+
+An external program may watch `~/.red/redskilled/redskilled.log.toonl` for
+exactly three public event kinds: `worker-birth`, `worker-death`, and
+`worker-budget-kill`. Their kind membership and emitted field set are stable;
+changing either is a public contract change guarded by
+`tests/public-host-event-contract.test.ts`. Every other kind on the lane is
+internal telemetry and may be added, removed, or reshaped without notice. A
+consumer must ignore kinds outside the public set.
+
+Each public record is flat and total. It contains the following fields, with
+`null` used where a field does not apply:
+
+```text
+admission_verdict  base_commits_ahead  base_head_sha  cpu_weight  detail
+event  exit_code  fork_sha  heal_kind  isolated  kind  log_path  memory_high
+memory_max  model  phase  pid  project_label  reason  runner  signal  step
+tokens  tools  ts  unit  version  worker_id  workspace_path
+```
+
+`kind` is the discriminator; `event` carries the same value as its compatibility
+alias. All three kinds carry the Worker's identity and placement fields, so a
+consumer can handle a death or budget kill even after the corresponding birth
+has rotated out of the lane. Kind-specific facts are `admission_verdict` on a
+birth and `detail`, `exit_code`, `signal`, and `reason` on a death or budget
+kill.
+
 ## What it owns
 
 | Concern | Where it lives |
