@@ -262,6 +262,8 @@ Walk the operator through these choices in order:
 3. **Pre-release:** choose pre-release enablement or disable it (default disabled). When enabled, an RC is cut from the Version-PR's own branch as `X.Y.Z-rc.N`; merging that same branch graduates the tested bytes to stable.
 4. **Execution:** pinned npx (default, persisted as `pinned`) or `vendored`. Pinned execution keeps generated workflows thin and invokes the versioned release binary through the canonical npx form. Vendored execution emits the single-file engine bundle into the consumer repository for restricted CI and runs that file without a runtime package download.
 
+Explain the release credential prerequisite before proposing the config: the generated tag-cutting job requires a repository secret named `RELEASE_PAT`, containing a credential that can write repository contents and whose pushes may start downstream workflows. The workflow keeps API calls on `GITHUB_TOKEN` and uses `RELEASE_PAT` only as the checkout-persisted Git push identity. Ask the operator to provision it before the first release; when it is absent, the job fails at checkout before creating a tag or GitHub Release.
+
 Then run the Version surfaces **detect, propose, then confirm** pass:
 
 1. Detect every workspace manifest that already carries the product version: root and workspace `package.json` files as `npm`, and root and member `Cargo.toml` files as `cargo`. Inspect an existing `release.version_surfaces` declaration too; do not lose an operator-declared exotic surface on rerun.
