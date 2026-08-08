@@ -34,6 +34,7 @@ import {
   renderRedskilledUserUnit,
 } from "./provision.js";
 import {
+  RedskilledAlreadyRunningError,
   startRedskilledDaemon,
   type RedskilledBalanceRegistration,
   type RedskilledQueueArming,
@@ -456,32 +457,42 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       id: `daemon:${process.pid}`,
       phase: "serving",
     });
-    const daemon = await startRedskilledDaemon({
-      paths: servePaths(values),
-      idleMs: hostSettings.idleMs,
-      ceiling: hostSettings.ceiling,
-      // The artifact states what it IS. Absent, the daemon reports the version
-      // baked into this build rather than a placeholder, because "what version is
-      // answering" is the first fact a skew investigation needs.
-      daemonVersion: values["daemon-version"] ?? readBuildInfo("redskilled").version,
-      // The verdicts reach the statusline and both dashboards from here, because
-      // this is the only moment they exist in memory: the reaper clears the
-      // anchors it read, so a surface asking later would find a lane it would
-      // have to re-derive them from (Spec #3022, slice #3032).
-      deaths: reaped.attributions,
-      // The two halves of the loop ADR 0130 Amendment 4 moved in here: what the
-      // tracker says exists, and how often this host decides what it can afford.
-      // Absent flags take the modules' own windows; an absent token leaves the
-      // poller unarmed — carrying the reason, so an unconfigured poll is
-      // REPORTED on every registration instead of passing for a drained queue.
-      queueDiscovery,
-      // The one poller that asks the token what it has left (ADR 0132 Amendment
-      // 2). Absent when no credential names a tracker for this host — and absent
-      // is `unknown`, never a full budget, because a full budget is the one
-      // answer that admits every call.
-      ...(githubBalance == null ? {} : { githubBalance }),
-      ...(values["demand-ms"] == null ? {} : { demandMs: values["demand-ms"] }),
-    });
+    let daemon;
+    try {
+      daemon = await startRedskilledDaemon({
+        paths: servePaths(values),
+        idleMs: hostSettings.idleMs,
+        ceiling: hostSettings.ceiling,
+        // The artifact states what it IS. Absent, the daemon reports the version
+        // baked into this build rather than a placeholder, because "what version is
+        // answering" is the first fact a skew investigation needs.
+        daemonVersion: values["daemon-version"] ?? readBuildInfo("redskilled").version,
+        // The verdicts reach the statusline and both dashboards from here, because
+        // this is the only moment they exist in memory: the reaper clears the
+        // anchors it read, so a surface asking later would find a lane it would
+        // have to re-derive them from (Spec #3022, slice #3032).
+        deaths: reaped.attributions,
+        // The two halves of the loop ADR 0130 Amendment 4 moved in here: what the
+        // tracker says exists, and how often this host decides what it can afford.
+        // Absent flags take the modules' own windows; an absent token leaves the
+        // poller unarmed — carrying the reason, so an unconfigured poll is
+        // REPORTED on every registration instead of passing for a drained queue.
+        queueDiscovery,
+        // The one poller that asks the token what it has left (ADR 0132 Amendment
+        // 2). Absent when no credential names a tracker for this host — and absent
+        // is `unknown`, never a full budget, because a full budget is the one
+        // answer that admits every call.
+        ...(githubBalance == null ? {} : { githubBalance }),
+        ...(values["demand-ms"] == null ? {} : { demandMs: values["demand-ms"] }),
+      });
+    } catch (error) {
+      if (!(error instanceof RedskilledAlreadyRunningError)) throw error;
+      // The candidate learned why it must leave from the singleton itself. It
+      // stood down; uninstalling also clears the presence anchor so the next boot
+      // does not invent an unexplained disappearance for this orderly refusal.
+      deaths.uninstall();
+      return 0;
+    }
     // A signalled daemon LETS GO rather than being cut off: the stop path flushes
     // the event lane, releases the lease and unlinks the socket, so the successor
     // inherits a complete record instead of whatever had reached disk by the time

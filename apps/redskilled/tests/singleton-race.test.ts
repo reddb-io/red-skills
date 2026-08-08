@@ -3,14 +3,19 @@
 // resolves with an exclusive bind plus a session lease — the failure mode being
 // guarded is two daemons that both believe they own the socket.
 import type { ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { deathLaneFileIn, readProcessDeathLane } from "@reddb-io/shared/death-record.js";
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureRedskilledDaemon, readRedskilledHostState } from "../src/client.js";
 import { RedskilledAlreadyRunningError, socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
+import { redskilledServeArgv } from "../src/daemon-entry.js";
 import { createRedskilledMachineClaimStore } from "../src/machine-scope.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { sendRedskilledRequest } from "../src/protocol.js";
@@ -54,6 +59,34 @@ describe("redskilled singleton", () => {
 
     await expect(startRedskilledDaemon({ paths })).rejects.toBeInstanceOf(RedskilledAlreadyRunningError);
     expect(await socketAnswers(paths.socketPath)).toBe(true);
+  });
+
+  it("lets a shipped candidate stand down without recording a daemon death", async () => {
+    const paths = await sessionPaths();
+    const first = await startRedskilledDaemon({ paths, idleMs: 60_000 });
+    running.push(first);
+    const home = paths.runtimeDir;
+    const candidate = spawn(
+      process.execPath,
+      ["--import", tsxLoader, cliEntry, ...redskilledServeArgv(paths, { idleMs: 60_000 })],
+      {
+        stdio: "ignore",
+        env: {
+          ...process.env,
+          HOME: home,
+          REDSKILLED_SESSION: `test:${paths.runtimeDir}`,
+          REDSKILLED_MACHINE_DIR: paths.runtimeDir,
+        },
+      },
+    );
+    children.push(candidate);
+
+    const [code, signal] = await once(candidate, "exit");
+
+    expect({ code, signal }).toEqual({ code: 0, signal: null });
+    expect(
+      readProcessDeathLane(deathLaneFileIn(join(redskilledHomeDir(home), "state"))),
+    ).toEqual([]);
   });
 
   it("resolves two concurrent auto-spawns into one daemon the loser joins", async () => {
