@@ -26,6 +26,7 @@ describe("red-setup release standard docs (ADR 0139, #3372)", () => {
     expect(interview).toContain("pre-release");
     expect(interview).toContain("pinned npx");
     expect(interview).toContain("vendored");
+    expect(interview).toContain("repository secret named `RELEASE_PAT`");
     expect(interview).toContain("detect, propose, then confirm");
     expect(interview).toContain("`release.version_surfaces`");
     expect(interview).toContain("only after explicit confirmation");
@@ -54,6 +55,7 @@ describe("red-setup release standard docs (ADR 0139, #3372)", () => {
     }
     expect(contract).toContain("exact confirmed `release.*` block");
     expect(contract).toContain("Never write detected Version surfaces without confirmation");
+    expect(contract).toContain("repository secret named `RELEASE_PAT`");
     expect(contract).toContain("fresh or existing `.red/config.yaml`");
     expect(reference).toContain("**Release standard**");
     expect(setup).toContain("Release standard");
