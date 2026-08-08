@@ -65,6 +65,8 @@ export interface RedskilledDeathObservation extends DeathAttribution {
   readonly project_label?: string;
   readonly uptime_s?: number;
   readonly detail?: string | null;
+  /** The daemon witnessed an exit status or signal, rather than discovering absence in a later sweep. */
+  readonly observed_exit?: boolean;
 }
 
 /** What a Worker is doing, as the daemon knows it. */
@@ -250,10 +252,14 @@ export interface RedskilledStatuslineDeath {
  */
 export interface RedskilledStatuslineDeaths {
   readonly count: number;
+  /** Deaths in the window whose evidence names a sender; this is the statusline head's count. */
+  readonly sender_attributed_count: number;
   /** The newest verdicts first, capped — `count` is the whole number. */
   readonly recent: readonly RedskilledStatuslineDeath[];
   /** The newest verdict, or `null` when the reaping attributed nothing. */
   readonly latest: RedskilledStatuslineDeath | null;
+  /** The newest verdict whose evidence names a sender, independent of the capped receipt list. */
+  readonly latest_sender_attributed: RedskilledStatuslineDeath | null;
   /** When the reaper concluded; `null` when it attributed nothing. */
   readonly reaped_at: string | null;
   /** A repeated same-project boot refusal, absent when the deaths do not establish one. */
@@ -663,27 +669,37 @@ function buildDeaths(
   limit: number,
 ): RedskilledStatuslineDeaths {
   const ordered = [...attributions].sort((a, b) => (instant(b.ts) ?? 0) - (instant(a.ts) ?? 0));
-  const recent = ordered.slice(0, Math.max(0, Math.floor(limit))).map(
-    (attribution): RedskilledStatuslineDeath => ({
-      kind: attribution.kind,
-      id: attribution.id,
-      pid: attribution.pid,
-      ts: attribution.ts,
-      last_seen: attribution.last_seen,
-      last_phase: attribution.last_phase,
-      sender_class: attribution.sender_class,
-      confidence: attribution.confidence,
-      signal: attribution.signal,
-      evidence: attribution.evidence[0] ?? null,
-    }),
+  const recent = ordered.slice(0, Math.max(0, Math.floor(limit))).map(statuslineDeath);
+  const senderAttributed = ordered.filter(
+    (attribution) =>
+      attribution.observed_exit === true ||
+      (attribution.sender_class !== "unknown" && attribution.confidence !== "none"),
   );
   const bootLoop = buildBootLoop(ordered);
   return {
     count: ordered.length,
+    sender_attributed_count: senderAttributed.length,
     recent,
     latest: recent[0] ?? null,
+    latest_sender_attributed: senderAttributed[0] == null ? null : statuslineDeath(senderAttributed[0]),
     reaped_at: recent[0]?.ts ?? null,
     ...(bootLoop == null ? {} : { boot_loop: bootLoop }),
+  };
+}
+
+/** Reduce one full attribution to the receipt every rendering density shares. PURE. */
+function statuslineDeath(attribution: RedskilledDeathObservation): RedskilledStatuslineDeath {
+  return {
+    kind: attribution.kind,
+    id: attribution.id,
+    pid: attribution.pid,
+    ts: attribution.ts,
+    last_seen: attribution.last_seen,
+    last_phase: attribution.last_phase,
+    sender_class: attribution.sender_class,
+    confidence: attribution.confidence,
+    signal: attribution.signal,
+    evidence: attribution.evidence[0] ?? null,
   };
 }
 
