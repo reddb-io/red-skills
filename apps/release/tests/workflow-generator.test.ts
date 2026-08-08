@@ -45,7 +45,7 @@ describe("release workflow generator", () => {
     }
   }
 
-  it("uses only the default token, explicit least privilege, and the canonical pinned npx form", () => {
+  it("uses a triggering push identity only for release publication", () => {
     const versionPullRequest = renderReleaseWorkflow({
       trigger: "version-pr",
       execution: "pinned",
@@ -68,10 +68,12 @@ describe("release workflow generator", () => {
         `npx -y -p @reddb-io/red-skills@${ENGINE_VERSION} red-skills-release run`,
       );
       expect(source).toContain("GITHUB_TOKEN: ${{ github.token }}");
-      expect(source.toLowerCase()).not.toContain("pat");
+      expect(source).toContain("token: ${{ secrets.RELEASE_PAT }}");
       expect(source).toContain("red-skills-release[bot]");
     }
 
+    expect(versionPullRequest.match(/token: \$\{\{ secrets\.RELEASE_PAT \}\}/g)).toHaveLength(1);
+    expect(auto.match(/token: \$\{\{ secrets\.RELEASE_PAT \}\}/g)).toHaveLength(1);
     expect(versionPullRequest).toContain("pull-requests: write");
     expect(auto).not.toContain("pull-requests: write");
   });
