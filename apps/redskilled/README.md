@@ -31,6 +31,22 @@ changing either is a public contract change guarded by
 internal telemetry and may be added, removed, or reshaped without notice. A
 consumer must ignore kinds outside the public set.
 
+The lane is append-only within a generation and rotates atomically at 4 MiB.
+Compaction keeps every live Worker's birth and the newest history that fits, so
+daemon boot replays a fixed upper bound without losing a process it must
+re-attach. A reader may start at the new generation's head: every public death
+and budget-kill repeats the Worker's identity and can be understood without its
+birth.
+
+A stateful consumer should use `readRedskilledEventsFrom` positions (or preserve
+the same generation-and-offset semantics in another language). A position from
+the replaced generation returns `rebaseline-required` together with everything
+the current generation can show; it never silently treats the old byte offset as
+current history. `followRedskilledPublicEvents` performs the recovery contract:
+on first attach or a rotated position it captures the new position, asks
+`host-state` for the current picture, and resumes event following from there.
+The missing prefix is never replayed or guessed.
+
 Each public record is flat and total. It contains the following fields, with
 `null` used where a field does not apply:
 
@@ -64,7 +80,7 @@ kill.
 | Where a Worker's resources are charged | `src/worker-placement.ts` — pure planner over injected probes |
 | Birth itself | `src/worker-launch.ts` — plan, spawn once, report the downgrade |
 | The host-wide read | `src/host-state.ts` — total shape, Workers plus the budget total |
-| What the daemon remembers across a restart | `src/event-lane.ts` — append-only TOONL: Worker lifecycle, metric observations, and the daemon's own stop |
+| What the daemon remembers across a restart | `src/event-lane.ts` — bounded TOONL generations: Worker lifecycle, metric observations, and the daemon's own stop |
 | What a stop is giving up | `src/daemon-stop.ts` — the pure report: what is held, what survives, why it stopped |
 | Finding the Workers a restart left running | `src/reattach.ts` — the unit name first, the pid only as fallback |
 | What the host has been promised | `src/budget-accounting.ts` — pure totals over the Worker set |
