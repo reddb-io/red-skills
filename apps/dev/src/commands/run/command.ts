@@ -492,7 +492,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     ProcessIssueResult,
     SessionIssueTemplate
   > = {
-    gh: { listCandidates: () => ghx.listCandidates(ghCtx, consultedQueue) },
+    gh: { listCandidates: () => ghx.resolveDispatchCandidates(ghCtx, flags.filter, consultedQueue) },
     classifyEligibility: async (candidate) => {
       queueTrustPolicy ??= parseTrustPolicy(
         config,
