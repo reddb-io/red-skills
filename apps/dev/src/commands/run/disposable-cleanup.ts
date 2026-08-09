@@ -22,6 +22,15 @@ export type DisposableDispatchCleanupResult =
   | { action: "not-disposable" }
   | { action: "closed"; issue: number; commentFailed?: true };
 
+function publishableDiagnostic(
+  diagnostic: DisposableDispatchBootFailure["retainedDiagnostic"],
+): NonNullable<DisposableDispatchBootFailure["retainedDiagnostic"]> | undefined {
+  if (diagnostic === undefined) return undefined;
+  if (!/^\.red\/tmp\/diagnostics\/[A-Za-z0-9._-]+$/.test(diagnostic.path)) return undefined;
+  if (!Number.isSafeInteger(diagnostic.retentionDays) || diagnostic.retentionDays < 1) return undefined;
+  return diagnostic;
+}
+
 function disposableTarget(input: DisposableDispatchBootFailure): number | undefined {
   if (input.declaredLane !== LABEL_GO_LANE && input.declaredLane !== LABEL_SCOUT_LANE) {
     return undefined;
@@ -45,7 +54,7 @@ export async function cleanupDisposableDispatchOnBootFailure(
   if (issue === undefined) return { action: "not-disposable" };
 
   let commentFailed = false;
-  const diagnostic = input.retainedDiagnostic;
+  const diagnostic = publishableDiagnostic(input.retainedDiagnostic);
   const diagnosticLine = diagnostic === undefined
     ? "No local diagnostics were retained for this pre-lane failure."
     : `Detailed diagnostics: \`${diagnostic.path}\` (retained for ${diagnostic.retentionDays} days).`;
