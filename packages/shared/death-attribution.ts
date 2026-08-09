@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 import { deathAttributionFileIn, deathLaneFileIn, deathPresenceDirIn } from "./red-paths.js";
 import {
+  compactProcessDeathLane,
   decodeProcessDeathRecords,
   readProcessDeathLane,
   type ProcessDeathKind,
@@ -449,6 +450,7 @@ export function runBootDeathReaper(options: BootDeathReaperOptions): BootDeathRe
   const presenceDir = deathPresenceDirIn(options.stateRoot);
   const attributionPath = deathAttributionFileIn(options.stateRoot);
   const now = options.now ?? (() => new Date().toISOString());
+  const reapedAt = now();
   const evidence =
     options.evidence ??
     collectHostDeathEvidence({ procRoot: options.procRoot, journalPaths: options.journalPaths });
@@ -472,10 +474,12 @@ export function runBootDeathReaper(options: BootDeathReaperOptions): BootDeathRe
       clearProcessPresence(presenceDir, presence);
       continue;
     }
-    attributions.push(attributeDeath(presence, evidence, deaths, now()));
+    attributions.push(attributeDeath(presence, evidence, deaths, reapedAt));
     clearProcessPresence(presenceDir, presence);
   }
 
+  const reapedAtMs = Date.parse(reapedAt);
+  if (Number.isFinite(reapedAtMs)) compactProcessDeathLane(deathLaneFileIn(options.stateRoot), reapedAtMs);
   if (attributions.length > 0) appendAttributions(attributionPath, attributions);
 
   return {

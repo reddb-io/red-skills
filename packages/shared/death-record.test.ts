@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseRecords } from "@reddb-io/toon";
 import {
   DEATH_PHASE_UNSTARTED,
+  PROCESS_DEATH_LANE_RETENTION_MS,
   activeDeathRecorder,
   appendProcessDeathRecord,
   buildProcessDeathRecord,
@@ -338,6 +339,29 @@ describe("death-record", () => {
     const records = readProcessDeathLane(lanePath);
     expect(records.map((r) => r.id)).toEqual(["mcp", "w1"]);
     expect(records.map((r) => r.kind)).toEqual(["launcher", "worker"]);
+  });
+
+  it("keeps fourteen days of deaths and drops older history when the lane advances", () => {
+    const now = Date.parse("2026-08-08T20:00:00.000Z");
+    const recordAt = (id: string, at: number) =>
+      buildProcessDeathRecord(
+        {
+          ts: new Date(at).toISOString(),
+          kind: "worker",
+          id,
+          pid: at,
+          exit_path: "exit",
+          exit_code: 0,
+          last_phase: "done",
+        },
+        sampleProcessResources(poseHost()),
+      );
+
+    appendProcessDeathRecord(lanePath, recordAt("too-old", now - PROCESS_DEATH_LANE_RETENTION_MS - 1));
+    appendProcessDeathRecord(lanePath, recordAt("cutoff", now - PROCESS_DEATH_LANE_RETENTION_MS));
+    appendProcessDeathRecord(lanePath, recordAt("recent", now));
+
+    expect(readProcessDeathLane(lanePath).map((record) => record.id)).toEqual(["cutoff", "recent"]);
   });
 
   it("answers the process-wide phase marker and lets go on uninstall", () => {

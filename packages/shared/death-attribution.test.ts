@@ -21,10 +21,12 @@ import {
   type ProcessPresence,
 } from "./death-attribution.js";
 import {
+  PROCESS_DEATH_LANE_RETENTION_MS,
   appendProcessDeathRecord,
   buildProcessDeathRecord,
   deathLaneFileIn,
   installDeathRecorder,
+  readProcessDeathLane,
   type DeathRecorderHost,
   type ProcessResourceSample,
 } from "./death-record.js";
@@ -335,6 +337,38 @@ describe("the boot reaper", () => {
     expect(result.self_recorded.map((p) => p.pid)).toEqual([4242]);
     // The stale anchor still goes: the death it stood for is explained.
     expect(readProcessPresences(dir)).toEqual([]);
+  });
+
+  it("attributes anchors before removing deaths outside the retention window", () => {
+    const stateRoot = scratch();
+    const dir = deathPresenceDirIn(stateRoot);
+    const reapedAt = Date.parse("2026-08-08T20:00:00.000Z");
+    writeProcessPresence(dir, presence());
+    appendProcessDeathRecord(
+      deathLaneFileIn(stateRoot),
+      buildProcessDeathRecord(
+        {
+          ts: new Date(reapedAt - PROCESS_DEATH_LANE_RETENTION_MS - 1).toISOString(),
+          kind: "worker",
+          id: "wOLFU",
+          pid: 4242,
+          exit_path: "signal",
+          signal: "SIGTERM",
+          last_phase: "gate",
+        },
+        SAMPLE,
+      ),
+    );
+
+    const result = runBootDeathReaper({
+      stateRoot,
+      evidence: collectHostDeathEvidence({ procRoot: poseProc("boot-a", [1]), journalPaths: [] }),
+      now: () => new Date(reapedAt).toISOString(),
+    });
+
+    expect(result.attributions).toEqual([]);
+    expect(result.self_recorded.map((anchor) => anchor.pid)).toEqual([4242]);
+    expect(readProcessDeathLane(deathLaneFileIn(stateRoot))).toEqual([]);
   });
 
   it("reports its verdicts on one line, and says so when there are none", () => {

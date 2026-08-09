@@ -27,7 +27,7 @@
  * in flight when the process leaves is the very silence the record exists to
  * break.
  */
-import { appendFileSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 import { UNSCOPED_PROCESS, readWorkerScopeFacts, type WorkerScopeFacts } from "./worker-scope.js";
@@ -47,6 +47,13 @@ export { UNSCOPED_PROCESS, readWorkerScopeFacts, type WorkerScopeFacts } from ".
 
 /** The record shape's version; bumped only when a field's meaning changes. */
 export const PROCESS_DEATH_RECORD_VERSION = 1;
+
+/**
+ * Deaths remain useful for fourteen days. Older host history no longer explains
+ * the processes and anchors present today, so every writer advances the lane to
+ * this explicit age window before appending its own record.
+ */
+export const PROCESS_DEATH_LANE_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
 
 /**
  * Which of the engine's three process classes died.
@@ -218,6 +225,8 @@ export interface DeathLaneIo {
   /** True when the lane is absent or already ends on a line boundary. */
   endsClean(path: string): boolean;
   append(path: string, text: string): void;
+  /** Atomically replace a complete lane after retention has removed old rows. */
+  replace(path: string, text: string): void;
   read(path: string): string;
 }
 
@@ -245,6 +254,16 @@ export const nodeDeathLaneIo: DeathLaneIo = {
   append(path, text) {
     appendFileSync(path, text, { encoding: "utf8", mode: 0o600 });
   },
+  replace(path, text) {
+    const temporary = `${path}.retaining-${process.pid}`;
+    try {
+      writeFileSync(temporary, text, { encoding: "utf8", mode: 0o600 });
+      renameSync(temporary, path);
+    } catch (error) {
+      rmSync(temporary, { force: true });
+      throw error;
+    }
+  },
   read(path) {
     return readFileSync(path, "utf8");
   },
@@ -271,11 +290,45 @@ export function appendProcessDeathRecord(
   record: ProcessDeathRecord,
   io: DeathLaneIo = nodeDeathLaneIo,
 ): ProcessDeathRecord {
+  const recordedAt = Date.parse(record.ts);
+  if (Number.isFinite(recordedAt)) compactProcessDeathLane(lanePath, recordedAt, io);
   const line = encodeLines({ trailer: false }).push(toRow(record));
   io.mkdir(dirname(lanePath));
   if (!io.endsClean(lanePath)) io.append(lanePath, "\n");
   io.append(lanePath, line);
   return record;
+}
+
+/**
+ * Remove deaths outside the stated retention window, returning what remains.
+ *
+ * Unknown timestamps are preserved: retention may discard history proven old,
+ * never a record whose age cannot be established. The replacement is one whole
+ * TOONL segment, so a reader never observes a lane without its schema header.
+ */
+export function compactProcessDeathLane(
+  lanePath: string,
+  nowMs: number = Date.now(),
+  io: DeathLaneIo = nodeDeathLaneIo,
+): ProcessDeathRecord[] {
+  let records: ProcessDeathRecord[];
+  try {
+    records = decodeProcessDeathRecords(io.read(lanePath));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+
+  const cutoff = nowMs - PROCESS_DEATH_LANE_RETENTION_MS;
+  const retained = records.filter((record) => {
+    const timestamp = Date.parse(record.ts);
+    return !Number.isFinite(timestamp) || timestamp >= cutoff;
+  });
+  if (retained.length === records.length) return retained;
+
+  const encoder = encodeLines({ trailer: false });
+  io.replace(lanePath, retained.map((record) => encoder.push(toRow(record))).join(""));
+  return retained;
 }
 
 /**
