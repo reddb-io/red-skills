@@ -27,6 +27,7 @@ import { afkPaths } from "./wire/paths.js";
 import {
   createRedskilledBirthPort,
   redskilledUnreachableAdvice,
+  type RedskilledBirthPort,
 } from "./redskilled-birth.js";
 import { workerLogPathTemplate } from "./redskilled-worker-log.js";
 
@@ -59,7 +60,23 @@ export interface WorkerBirthOptions {
   readonly entry?: readonly string[];
   /** Host capacity claimed by `/go` and `/go --scout`; ordinary AFK omits it. */
   readonly reservation?: "interactive";
+  /** The host boundary; injected only when replaying a dispatch in tests. */
+  readonly port?: WorkerBirthPort;
 }
+
+/** The narrow host boundary a detached dispatch crosses. */
+export interface WorkerBirthPort {
+  readonly socketPath: string;
+  readonly reach: RedskilledBirthPort["reach"];
+  readonly start: RedskilledBirthPort["start"];
+  readonly drainEvents: () => Promise<readonly WorkerBirthEvent[]>;
+}
+
+/** The only event facts a dispatcher needs to attribute a failed birth. */
+export type WorkerBirthEvent = Pick<
+  Awaited<ReturnType<RedskilledBirthPort["drainEvents"]>>[number],
+  "kind" | "worker_id" | "detail"
+>;
 
 /**
  * Ask the host for one dispatched Worker, or refuse and start nothing.
@@ -75,7 +92,7 @@ export async function requestWorkerBirth(
   args: readonly string[],
   options: WorkerBirthOptions = {},
 ): Promise<DispatchedWorkerBirth> {
-  const port = createRedskilledBirthPort({
+  const port = options.port ?? createRedskilledBirthPort({
     root,
     ...(options.projectLabel !== undefined ? { projectLabel: options.projectLabel } : {}),
     ...(options.paths !== undefined ? { paths: options.paths } : {}),
@@ -98,8 +115,14 @@ export async function requestWorkerBirth(
   const trunk = getConfig(config, "dev.trunk") || "main";
 
   let granted;
+  let freshEventWindow = false;
   try {
     await port.reach();
+    // Establish the cursor before asking for a Worker. Only events after this
+    // read can describe this dispatch; an old boot refusal must never overwrite
+    // a current transport failure with a more convenient story.
+    await port.drainEvents();
+    freshEventWindow = true;
     granted = await port.start({
       // The port states the project label itself; a caller that could name it
       // would be a caller that could file another project's Worker (rule 11).
@@ -112,9 +135,18 @@ export async function requestWorkerBirth(
       ...(options.reservation == null ? {} : { reservation: options.reservation }),
     });
   } catch (err) {
-    // Named, and it starts nothing: an operator reading this needs to know that
-    // no Worker exists, and which of "start the daemon" / "fix the client that
-    // stopped asking it" is their repair.
+    const events = freshEventWindow
+      ? await port.drainEvents().catch(() => [])
+      : [];
+    const refusal = bootRefusalAfterGrant(events);
+    if (refusal != null) {
+      throw new Error(
+        `Worker ${refusal.workerId} was granted and then refused at boot. ` +
+          `Daemon evidence: ${refusal.evidence}`,
+      );
+    }
+    // No fresh host evidence contradicted the transport failure. Keep the
+    // existing unreachability detail and its cause-specific repair unchanged.
     throw new Error(redskilledUnreachableAdvice(port.socketPath, err));
   }
 
@@ -129,4 +161,25 @@ export async function requestWorkerBirth(
     warnings: granted.warnings,
     admission: granted.admission,
   };
+}
+
+/** A fresh birth followed by the daemon's explicit session-error refusal. */
+function bootRefusalAfterGrant(
+  events: readonly WorkerBirthEvent[],
+): { readonly workerId: string; readonly evidence: string } | null {
+  const births = new Set<string>();
+  for (const event of events) {
+    if (event.kind === "worker-birth") {
+      births.add(event.worker_id);
+      continue;
+    }
+    if (
+      event.kind === "worker-death" &&
+      births.has(event.worker_id) &&
+      event.detail?.startsWith("session-error:")
+    ) {
+      return { workerId: event.worker_id, evidence: event.detail };
+    }
+  }
+  return null;
 }
