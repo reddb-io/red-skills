@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SpawnOptions } from "node:child_process";
@@ -115,7 +115,21 @@ describe("castle MCP host adapter", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
     try {
-      await recordBootError(workerDir, "session-error", new Error("bundle coherence halted dispatch"));
+      const retained = await recordBootError(
+        workerDir,
+        "session-error",
+        new Error("bundle coherence halted dispatch"),
+      );
+      expect(retained).toEqual({
+        path: ".red/tmp/diagnostics/wER01-session-error.log",
+        retentionDays: 30,
+      });
+
+      // Replay the 2026-08-09 failure: the closed disposable Ticket causes the
+      // Worker's runtime lane to be reclaimed before a human opens the comment.
+      await rm(workerDir, { recursive: true, force: true });
+      await expect(readFile(join(cwd, retained.path), "utf8"))
+        .resolves.toContain("bundle coherence halted dispatch");
     } finally {
       stderr.mockRestore();
     }
