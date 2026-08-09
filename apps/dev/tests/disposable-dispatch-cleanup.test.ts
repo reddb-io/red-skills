@@ -13,6 +13,10 @@ describe("cleanupDisposableDispatchOnBootFailure", () => {
         consultedQueue: "ready-for-agent",
         filter: { kind: "issues", numbers: [66] },
         failureType: "session-error",
+        retainedDiagnostic: {
+          path: ".red/tmp/diagnostics/wFAIL-session-error.log",
+          retentionDays: 30,
+        },
       },
     );
 
@@ -22,7 +26,27 @@ describe("cleanupDisposableDispatchOnBootFailure", () => {
     expect(comment.mock.calls[0]![1]).toContain("declared lane: `lane:go`");
     expect(comment.mock.calls[0]![1]).toContain("consulted queue: `ready-for-agent`");
     expect(comment.mock.calls[0]![1]).toContain("failed during Worker boot");
+    expect(comment.mock.calls[0]![1]).toContain(
+      "`.red/tmp/diagnostics/wFAIL-session-error.log` (retained for 30 days)",
+    );
     expect(close).toHaveBeenCalledWith(66);
+  });
+
+  it("says plainly when a pre-lane failure retained no readable diagnosis", async () => {
+    const comment = vi.fn(async (_issue: number, _body: string) => undefined);
+
+    await cleanupDisposableDispatchOnBootFailure(
+      { comment, close: vi.fn(async () => undefined) },
+      {
+        declaredLane: "lane:go",
+        consultedQueue: "lane:go",
+        filter: { kind: "issues", numbers: [3524] },
+        failureType: "boot-error",
+      },
+    );
+
+    expect(comment.mock.calls[0]![1]).toContain("No local diagnostics were retained");
+    expect(comment.mock.calls[0]![1]).not.toContain("remain in the local Worker error lane");
   });
 
   it("still closes the disposable Ticket when its explanatory comment fails", async () => {
