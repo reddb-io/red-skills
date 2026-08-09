@@ -10,6 +10,7 @@ import { initStateSync, workerStatePath, writeIdentitySync } from "../../core/st
 import { decodeDevSnapshotSniff, encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
 import type { LocMemo } from "../../core/loc-memo.js";
 import { LivenessLane, LIVENESS_LANE_FILENAME } from "@reddb-io/red-castle";
+import { DIAGNOSTICS_TTL_S } from "../../core/tmp-janitor.js";
 
 const DEFAULT_RUNNER_TRANSIENT_COOLDOWN_S = 300;
 
@@ -100,7 +101,17 @@ export function encodeBootErrorPayload(payload: {
   return encodeDevSnapshotToon(payload);
 }
 
-export async function recordBootError(workerDir: string, type: "boot-error" | "session-error", err: unknown): Promise<void> {
+export interface RetainedBootDiagnostic {
+  /** Repository-relative path safe to publish in a Ticket comment. */
+  path: string;
+  retentionDays: number;
+}
+
+export async function recordBootError(
+  workerDir: string,
+  type: "boot-error" | "session-error",
+  err: unknown,
+): Promise<RetainedBootDiagnostic> {
   const message = err instanceof Error ? err.message : String(err);
   const stack = err instanceof Error ? err.stack : undefined;
   const payload: {
@@ -114,16 +125,25 @@ export async function recordBootError(workerDir: string, type: "boot-error" | "s
     message,
     stack,
   };
+  const encoded = encodeBootErrorPayload(payload);
   await fsx.ensureDir(workerDir);
-  await writeFile(join(workerDir, `${type}.log`), encodeBootErrorPayload(payload), "utf8");
+  await writeFile(join(workerDir, `${type}.log`), encoded, "utf8");
   const workerId = basename(workerDir);
   const redRoot = dirname(dirname(dirname(workerDir)));
+  const retainedName = `${workerId}-${type}.log`;
+  const retainedDir = join(redRoot, "tmp", "diagnostics");
+  await fsx.ensureDir(retainedDir);
+  await writeFile(join(retainedDir, retainedName), encoded, "utf8");
   await createCastleLaneWriters(createEnginePaths(redRoot)).worker(workerId).append({
     kind: `worker.${type}`,
     worker_id: workerId,
     payload: { type, at: payload.at, message },
   });
   process.stderr.write(`[afk] ${type}: ${message}\n`);
+  return {
+    path: `.red/tmp/diagnostics/${retainedName}`,
+    retentionDays: DIAGNOSTICS_TTL_S / 86400,
+  };
 }
 
 function runnerCircuitPath(circuitDir: string, runner: Runner): string {
