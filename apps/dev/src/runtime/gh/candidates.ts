@@ -3,13 +3,14 @@ import {
   LABEL_HUMAN,
   LABEL_READY,
 } from "../../core/triage-labels.js";
-import type { IssueCandidate } from "../../core/session.js";
+import type { IssueCandidate, SelectionFilter } from "../../core/session.js";
 import type { HitlCandidate } from "../../core/hitl-selection.js";
 import type {
   QueueVisibilityTransportFailure,
   QueueVisibilityTransportSurface,
 } from "../../core/operational-probes.js";
 import { isRecord, repoArgs, runGh, runRsp, type GhContext } from "./common.js";
+import { readSingleObject } from "./single-object.js";
 
 interface RspIssueListItem {
   number: number;
@@ -127,6 +128,54 @@ export async function listCandidates(
       author,
     };
   });
+}
+
+/**
+ * Resolve the candidate pool for one Worker dispatch.
+ *
+ * Explicit issue targets are point reads, not queue searches: `/go` has just
+ * minted its target and GitHub's label-search index may not contain it yet.
+ * The point read still enforces the queue contract the label listing supplied
+ * implicitly — the Ticket must be open and carry the consulted lane label — so
+ * a targeted fleet Worker cannot reach into `lane:go`, and a stale/absent
+ * target remains missing for the existing selection refusal to explain.
+ */
+export async function resolveDispatchCandidates(
+  ctx: GhContext,
+  filter: SelectionFilter,
+  consultedQueue: string = LABEL_READY,
+): Promise<IssueCandidate[]> {
+  if (filter.kind !== "issues") return listCandidates(ctx, consultedQueue);
+
+  const rows = await Promise.all(
+    filter.numbers.map(async (issue): Promise<IssueCandidate | null> => {
+      const read = await readSingleObject(ctx, "issue", issue, [
+        "number",
+        "title",
+        "body",
+        "state",
+        "labels",
+      ]);
+      if (read.row === null) return null;
+      const number = Number(read.row.number ?? 0);
+      const state = String(read.row.state ?? "").toUpperCase();
+      const labels = Array.isArray(read.row.labels)
+        ? read.row.labels
+            .map((label) => (isRecord(label) ? String(label.name ?? "") : ""))
+            .filter(Boolean)
+        : [];
+      if (number !== issue || state !== "OPEN" || !labels.includes(consultedQueue)) {
+        return null;
+      }
+      return {
+        number,
+        title: String(read.row.title ?? ""),
+        body: String(read.row.body ?? ""),
+        labels,
+      };
+    }),
+  );
+  return rows.filter((row): row is IssueCandidate => row !== null);
 }
 
 /** List the ready-for-human candidate pool projected to HitlCandidate[].
