@@ -72,6 +72,18 @@ describe("the live engine declares every wait it holds (#3024)", () => {
     expect(keys).toContain("apps/dev/src/core/merge.ts waitForReviewCheck");
   });
 
+  it("declares the synchronous daemon hook as bounded and fail-open", () => {
+    const hookWait = DECLARED_WAITS.find(
+      (wait) => wait.path === "apps/redskilled/src/project-hook.ts" && wait.fn === "waitForSyncHook",
+    );
+
+    expect(hookWait?.subject).toContain("project hook process");
+    expect(hookWait?.deadline).toContain("deadline_ms");
+    expect(hookWait?.deadline).not.toBe("unbounded");
+    expect(hookWait?.escalation).toContain("records");
+    expect(hookWait?.escalation).toContain("proceeds");
+  });
+
   it("names an escalation for every declared wait — a wait with none is a hang with extra steps", () => {
     for (const wait of DECLARED_WAITS) {
       expect(wait.subject.length, `${wait.path} ${wait.fn}`).toBeGreaterThan(0);
@@ -81,7 +93,7 @@ describe("the live engine declares every wait it holds (#3024)", () => {
   });
 
   it("scans the engine packages, and says which", () => {
-    expect(WAIT_SCAN_ROOTS).toEqual(["apps/dev/src", "packages/red-castle/src"]);
+    expect(WAIT_SCAN_ROOTS).toEqual(["apps/dev/src", "apps/redskilled/src", "packages/red-castle/src"]);
   });
 });
 

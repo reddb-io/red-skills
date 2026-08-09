@@ -182,6 +182,48 @@ describe("a project-scoped daemon hook", () => {
     ]);
   });
 
+  it("expires a sync hook onto the lane and releases another project's Worker birth", async () => {
+    const root = await scratch("redskilled-project-hook-");
+    const workspace = await scratch("redskilled-project-hook-workspace-");
+    const otherWorkspace = await scratch("redskilled-project-hook-other-");
+    const paths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root },
+      runtimeDir: root,
+    });
+    const launched: LaunchWorkerOptions[] = [];
+    const daemon = await startRedskilledDaemon({ paths, launch: recordingLaunch(launched), sampleMs: 0 });
+    running.push(daemon);
+    daemon.registerProject({
+      ...registration(workspace, ["notify"]),
+      hooks: {
+        "worker-birth": { argv: ["notify"], mode: "sync", deadline_ms: 20 },
+      },
+    });
+
+    const startedAt = Date.now();
+    daemon.startWorker(source(workspace));
+    await daemon.flushEvents();
+    daemon.startWorker({
+      worker_id: "other-source",
+      project_label: "acme/gadgets",
+      workspace_path: otherWorkspace,
+      command: "work",
+    });
+    await daemon.flushEvents();
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(launched.map((entry) => entry.spec.project_label)).toEqual([
+      PROJECT,
+      PROJECT,
+      "acme/gadgets",
+    ]);
+    const expiry = (await readRedskilledEvents(paths.eventLanePath)).find(
+      (event) => event.kind === "demand-refusal" && event.project_label === PROJECT,
+    );
+    expect(expiry?.detail).toContain("sync worker-birth hook exceeded its declared 20ms deadline");
+    expect(expiry?.detail).toContain("stopped waiting and proceeded");
+  });
+
   it("leaves an unregistered project byte-for-byte on the existing event path", async () => {
     const root = await scratch("redskilled-project-hook-");
     const workspace = await scratch("redskilled-project-hook-workspace-");

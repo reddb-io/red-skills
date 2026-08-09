@@ -87,6 +87,7 @@ export interface DeclaredWait {
  */
 export const WAIT_SCAN_ROOTS: readonly string[] = [
   "apps/dev/src",
+  "apps/redskilled/src",
   "packages/red-castle/src",
 ];
 
@@ -674,6 +675,51 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     escalation:
       "returns false; the caller must NOT tear down the worktree an uninterruptible-sleep worker still sits in",
     heartbeat: { silent: "a seconds-long drain whose boolean return is the report" },
+  },
+  {
+    path: "apps/redskilled/src/client-rendezvous.ts",
+    fn: "waitForSupervisedDaemon",
+    subject: "the installed supervisor's daemon answering on its same-user client socket",
+    deadline: "`readyTimeoutMs`, or the client's bounded default ready window",
+    escalation: "throws that the installed unit did not expose a daemon inside the ready window",
+    heartbeat: { silent: "a 25ms local socket rendezvous whose terminal throw names the socket" },
+  },
+  {
+    path: "apps/redskilled/src/client.ts",
+    fn: "waitOutTheLeaseHolder",
+    subject: "the live daemon named by the existing lease beginning to answer its socket",
+    deadline: "`readyTimeoutMs`, default `DEFAULT_REDSKILLED_READY_TIMEOUT_MS`",
+    escalation:
+      "re-probes the holder, then returns when it exited or throws `RedskilledDaemonHeldError` without spawning a rival",
+    heartbeat: { silent: "a 25ms local socket rendezvous whose typed terminal result is the report" },
+  },
+  {
+    path: "apps/redskilled/src/client.ts",
+    fn: "<module>",
+    subject: "the stopping daemon releasing its socket, lease and external pid",
+    deadline: "the caller's `settleTimeoutMs`, default 5 seconds",
+    escalation: "returns `complete: false` with the deadline and every anchor still pending",
+    heartbeat: { silent: "a five-second local teardown drain whose returned pending list is the report" },
+  },
+  {
+    path: "apps/redskilled/src/client.ts",
+    fn: "waitForDaemon",
+    subject: "the spawned or concurrently starting daemon answering its socket",
+    deadline: "`readyTimeoutMs`, default `DEFAULT_REDSKILLED_READY_TIMEOUT_MS`",
+    escalation: "throws the spawn failure, the held spawn-lock owner, or the daemon's missed ready window",
+    heartbeat: { silent: "a 25ms local socket rendezvous whose terminal throw names what did not start" },
+  },
+  {
+    path: "apps/redskilled/src/project-hook.ts",
+    fn: "waitForSyncHook",
+    subject: "the admitted project hook process reaching a terminal Worker event",
+    deadline: "the registering project's mandatory finite, positive `deadline_ms`",
+    escalation:
+      "records the expiry on the host event lane, stops waiting, and proceeds with Worker birth for every project",
+    heartbeat: {
+      silent:
+        "the wait is per admitted hook, polls at most every 10ms, and its terminal expiry is the durable lane record",
+    },
   },
   {
     path: "packages/red-castle/src/Orchestrator.ts",
