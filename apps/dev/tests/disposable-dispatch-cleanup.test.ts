@@ -49,6 +49,24 @@ describe("cleanupDisposableDispatchOnBootFailure", () => {
     expect(comment.mock.calls[0]![1]).not.toContain("remain in the local Worker error lane");
   });
 
+  it("never publishes an absolute diagnostic path", async () => {
+    const comment = vi.fn(async (_issue: number, _body: string) => undefined);
+
+    await cleanupDisposableDispatchOnBootFailure(
+      { comment, close: vi.fn(async () => undefined) },
+      {
+        declaredLane: "lane:go",
+        consultedQueue: "lane:go",
+        filter: { kind: "issues", numbers: [3525] },
+        failureType: "boot-error",
+        retainedDiagnostic: { path: "/private/worker/boot-error.log", retentionDays: 30 },
+      },
+    );
+
+    expect(comment.mock.calls[0]![1]).toContain("No local diagnostics were retained");
+    expect(comment.mock.calls[0]![1]).not.toContain("/private/worker");
+  });
+
   it("still closes the disposable Ticket when its explanatory comment fails", async () => {
     const close = vi.fn(async (_issue: number) => undefined);
     const result = await cleanupDisposableDispatchOnBootFailure(
