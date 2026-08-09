@@ -229,6 +229,19 @@ describe("redskilled project registration", () => {
     expect(defaulted.renew_by).toBe(new Date(Date.parse(NOW) + REDSKILLED_REGISTRATION_TTL_MS).toISOString());
   });
 
+  it("refuses a synchronous project hook without its mandatory deadline at registration", () => {
+    expect(() =>
+      buildProjectRegistration(
+        request({
+          hooks: {
+            "worker-birth": { argv: ["notify"], mode: "sync" },
+          },
+        }),
+        { now: NOW },
+      )
+    ).toThrow(/sync.*worker-birth.*deadline_ms/i);
+  });
+
   it("accepts an older daemon's answer that carries no registrations block", async () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({ paths });
