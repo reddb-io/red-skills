@@ -2,6 +2,40 @@
 
 Use these playbooks when `/go` or `/go --scout` reaches a confusing terminal state. Follow the `writing-for-agents` TROUBLESHOOTING convention: Symptom -> Confirm -> Recover -> Root fix.
 
+## Disposable dispatch closed during Worker boot
+
+### Symptom
+
+A disposable `/go` or scout Ticket closes automatically because its Worker
+failed during boot, before processing began.
+
+### Confirm
+
+1. Read the closing comment. When the Worker opened a diagnosis, the comment
+   names its repository-relative path as
+   `.red/tmp/diagnostics/<worker-id>-<failure-class>.log` and states the bound.
+2. Open that exact file from the repository root. Boot diagnoses in this lane
+   are retained for **30 days**; the tmp janitor reclaims them only after that
+   age cap.
+3. When the failure happened before any diagnostic lane could open, require the
+   comment to say `No local diagnostics were retained`. Treat any comment that
+   points at an absent file as a reporting defect.
+
+### Recover
+
+1. Read the retained TOON payload for its failure class, timestamp, message,
+   and stack.
+2. Repair the named admission, configuration, or boot precondition, then issue
+   a fresh `/go` dispatch. The closed Ticket stays disposable history.
+3. If the 30-day bound elapsed, reconstruct from the host event/death lanes and
+   record that the local diagnosis expired; do not imply that it still exists.
+
+### Root fix
+
+Boot failures copy their detailed payload out of the reclaimable Worker lane
+before the disposable Ticket closes. The copy lives in the bounded diagnostics
+lane, while successful Workers keep the existing immediate completion sweep.
+
 ## Crashed-scout salvage
 
 ### Symptom
