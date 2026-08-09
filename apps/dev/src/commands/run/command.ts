@@ -76,7 +76,14 @@ import { evaluateClaimTrust, parseTrustPolicy } from "../../core/trust-gate.js";
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
 import { makeBootReconcileRunner, runReconcileWorker } from "./reconcile.js";
-import { initBootWorkerState, openRunnerCircuit, recordBootError, requeueOrdinalSync, runnerCircuitOpen } from "./state.js";
+import {
+  initBootWorkerState,
+  openRunnerCircuit,
+  recordBootError,
+  requeueOrdinalSync,
+  runnerCircuitOpen,
+  type RetainedBootDiagnostic,
+} from "./state.js";
 import { cleanupDisposableDispatchOnBootFailure } from "./disposable-cleanup.js";
 
 export async function runCommand(options: RunOptions): Promise<number> {
@@ -109,6 +116,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Kept as a separate fact from the declaration so any future transport
   // mismatch can name both sides instead of blaming only the queue (#3175).
   const consultedQueue = dispatchIdentity.lane ?? LABEL_READY;
+  let retainedBootDiagnostic: RetainedBootDiagnostic | undefined;
   const cleanupBootFailure = async (failureType: "boot-error" | "session-error") => {
     try {
       await cleanupDisposableDispatchOnBootFailure(
@@ -121,6 +129,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
           consultedQueue,
           filter: flags.filter,
           failureType,
+          ...(retainedBootDiagnostic === undefined
+            ? {}
+            : { retainedDiagnostic: retainedBootDiagnostic }),
         },
       );
     } catch (error) {
@@ -228,7 +239,16 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   const forkSha = process.env.RED_AFK_FORK_SHA?.trim();
   if (!forkSha) {
-    process.stderr.write("[afk] redskilled granted this Worker no fork SHA — refusing unadmitted birth\n");
+    const error = new Error("redskilled granted this Worker no fork SHA — refusing unadmitted birth");
+    retainedBootDiagnostic = await recordBootError(
+      workerDirPath(paths.tmpDir, workerId),
+      "boot-error",
+      error,
+    ).catch(() => {
+      process.stderr.write(`[afk] boot-error: ${error.message}\n`);
+      return undefined;
+    });
+    await cleanupBootFailure("boot-error");
     return HOST_CONFIG_EXIT_CODE;
   }
 
@@ -318,8 +338,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
       bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
     }
   } catch (err) {
-    await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => {
+    retainedBootDiagnostic = await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => {
       process.stderr.write(`[afk] boot-error: ${err instanceof Error ? err.message : String(err)}\n`);
+      return undefined;
     });
     await cleanupBootFailure("boot-error");
     return 1;
@@ -444,6 +465,7 @@ export async function runCommand(options: RunOptions): Promise<number> {
     if (retireFile) {
       try { writeFileSync(retireFile, ""); } catch { /* best-effort */ }
     }
+    retainedBootDiagnostic = await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => undefined);
     await cleanupBootFailure("boot-error");
     return 1;
   }
@@ -699,8 +721,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
   try {
     summary = await runCastleWorkerDrain(deps, sessionCtx);
   } catch (err) {
-    await recordBootError(bootstrap.workerDir, "session-error", err).catch(() => {
+    retainedBootDiagnostic = await recordBootError(bootstrap.workerDir, "session-error", err).catch(() => {
       process.stderr.write(`[afk] session-error: ${err instanceof Error ? err.message : String(err)}\n`);
+      return undefined;
     });
     await cleanupBootFailure("session-error");
     return 1;
@@ -711,6 +734,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   if (!summary.boot.precheck.ok) {
     const failed = summary.boot.precheck.failed;
     process.stderr.write(`[afk] precheck failed: ${failed}\n`);
+    retainedBootDiagnostic = await recordBootError(
+      bootstrap.workerDir,
+      "boot-error",
+      new Error(`precheck failed: ${failed}`),
+    ).catch(() => undefined);
     await cleanupBootFailure("boot-error");
     return 1;
   }
