@@ -124,7 +124,6 @@ describe("castle MCP host adapter", () => {
         path: ".red/tmp/diagnostics/wER01-session-error.log",
         retentionDays: 30,
       });
-
     } finally {
       stderr.mockRestore();
     }
