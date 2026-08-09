@@ -419,10 +419,16 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     liveWorkerIds: () => workers.keys(),
     admit,
     start: (spec, admission) => startWorker(spec, { admission, hook: true }).worker,
-    refuse: (projectLabel, detail) => {
-      void eventLane.recordDemandRefusal({ ts: clock(), projectLabel, detail }).catch(() => undefined);
-    },
+    refuse: (projectLabel, detail) => void eventLane.recordDemandRefusal({ ts: clock(), projectLabel, detail }).catch(() => undefined),
+    recordExpiry: (projectLabel, detail) => void eventLane.recordDemandRefusal({ ts: clock(), projectLabel, detail }).catch(() => undefined),
   });
+  let workerBirthTail: Promise<void> = Promise.resolve();
+  function startAfterProjectHooks<T>(start: () => T | Promise<T>): Promise<T> {
+    const turn = workerBirthTail.then(async () => { await projectHooks.waitForSettled(); const result = await start();
+      await projectHooks.waitForSettled(); return result; });
+    workerBirthTail = turn.then(() => undefined, () => undefined);
+    return turn;
+  }
   const activeSockets = new Set<Socket>();
   // The last thing the sampler measured, kept so a read is dated rather than
   // dating itself: staleness belongs to the daemon that took the measurement.
@@ -461,9 +467,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // host-wide because the ceiling that produced it is — a refusal aimed at one
   // project would let the next one walk into the same wall.
   let lastDemand: RedskilledDemandTick | null = null;
-  // The registrations this daemon dropped, newest last. Kept because a lapse is
-  // otherwise only an absence, and an absence is what let a stopped drain read as
-  // a healthy one (#2973).
+  // Registrations dropped by this daemon, retained so a stopped drain is not a healthy-looking absence (#2973).
   const lapses: RedskilledRegistrationLapse[] = [];
   // A deliberate stop is not a lapse and not an absence nobody can explain.
   // Retained on the same bounded tail as lapses so `project_stop` remains visible
@@ -979,7 +983,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         );
         try {
           if (registration?.trunk == null) {
-            launched = startWorker(spec);
+            launched = await startAfterProjectHooks(() => startWorker(spec));
           } else {
             const trunk = { workspace_path: birth.workspace_path, trunk: registration.trunk };
             const admission = admit(spec);
@@ -990,7 +994,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
               fork = refreshFork(trunk);
               burstForks.set(key, fork);
             }
-            launched = await admitAndStartWorker(spec, trunk, fork, admission);
+            launched = await startAfterProjectHooks(() => admitAndStartWorker(spec, trunk, fork, admission));
           }
         } catch (err) {
           refusal = err instanceof Error ? err.message : String(err);
@@ -1677,8 +1681,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /**
-   * Ask the host about EVERY Worker it holds, and retire the ones it no longer
-   * confirms. Returns the Workers that were retired.
+   * Ask the host about every Worker it holds; return and retire those no longer confirmed.
    *
    * **Every record, not just the re-attached ones (#3123).** The narrow sweep
    * trusted a child handle to deliver each birth's death, and a record whose
@@ -2384,12 +2387,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         if (!reach.permitted) return { id: request.id, ok: false, error: reach.reason };
         // A spec without trunk coordinates is an older client inside the same
         // one-release compatibility window as a grant without `fork_sha`.
-        const launched = request.spec.trunk == null
+        const launched = await startAfterProjectHooks(() => request.spec.trunk == null
           ? startWorker(request.spec)
-          : await admitAndStartWorker(request.spec, {
-            workspace_path: request.spec.workspace_path,
-            trunk: request.spec.trunk,
-          });
+          : admitAndStartWorker(request.spec, {
+            workspace_path: request.spec.workspace_path, trunk: request.spec.trunk,
+          }));
         // The acknowledgement waits for the birth to reach the lane. A client told
         // "your Worker exists" by a daemon that is then replaced a millisecond
         // later — the ordinary operation — would otherwise leave a live Worker
@@ -2453,7 +2455,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     sweepWorkerLiveness,
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
-    flushEvents: () => eventLane.flush(),
+    flushEvents: async () => { await workerBirthTail; await projectHooks.waitForSettled(); await eventLane.flush(); },
     trackWorker(worker) {
       workers.set(worker.worker_id, worker);
       record("worker-birth", worker, null);
