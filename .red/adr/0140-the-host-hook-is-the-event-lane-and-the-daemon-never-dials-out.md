@@ -66,3 +66,56 @@ ADR refuses, and the refusal is the whole reason the record exists.
   same unbounded-growth fix the death lane needs.
 - The daemon acquires WSL awareness it has never had — there is currently no occurrence of
   `wsl` anywhere in `apps/redskilled/src/`.
+
+## Amendment 1 — the daemon may call out, scoped to the project that registered the hook
+
+Decision 2 above is stronger than the invariant that supports it, and the
+maintainer rejected it the same day it was written. What follows is the reasoning
+of the turn, because the reasoning is the part worth keeping.
+
+**The error.** Decision 2 argues the daemon must never execute a registered
+command because that would put "processes on the machine that no admission
+verdict judged — outside the host budget, absent from the host event lane,
+reported by no surface". That sentence conflates two different prohibitions:
+*must not create an unaccounted third-party process* with *must not create a
+process*. The daemon births Workers continuously; creating processes is precisely
+the authority ADR 0130 gives it exclusively. The real invariant was never that
+the daemon does not spawn — it is that **everything it creates is admitted,
+budgeted, and on the lane**. A hook that goes through admission satisfies that
+invariant rather than violating it, and the original decision mistook one
+sufficient way of honouring the rule for the rule itself.
+
+**A hook is scoped to the registering project.** Declared inside the project's
+registration, it has an owner, it is charged to that project's budget, and it is
+refusable when the host has no headroom — the same three properties that make a
+Worker legitimate rather than a stray process. A hook nobody registered is still
+refused; what changes is that a project may now ask for one.
+
+**Its shape is a `RedskilledLaunchTemplate` keyed by event kind.** An argv and an
+env with `{{…}}` placeholders, where the daemon substitutes the facts only it
+knows and **refuses an unknown placeholder rather than starting**, exactly as it
+already does at Worker birth (Amendment 5 of ADR 0130). This reuses the path that
+exists instead of opening a parallel one, and it preserves the frozen contract:
+the daemon reads no word of the command and still does not know what a runner is.
+
+**`async` is the default**, carrying the doctrine the demand producer already
+states in code — *a hook is a notification, never a veto*. The daemon does not
+wait, and a consumer that throws, hangs, or dies changes nothing about the work.
+
+**`sync` is a WAIT, and the daemon is one per machine.** A stalled hook stalls
+Worker birth for *every* project on the host, not only for the project that
+registered it — the single point in this design where the cost of a mistake does
+not land on whoever made it. A sync hook therefore requires a mandatory (never
+optional) deadline, an entry in `DECLARED_WAITS` naming its subject, deadline and
+escalation, and an expiry that proceeds and records rather than continuing to
+wait. `unbounded` is legal elsewhere under the declared-wait contract; here it is
+not.
+
+**A project-scoped webhook is the same mechanism under a different transport** —
+a URL where the launch template carries an argv. Same scoping, same admission,
+same wait rule. It is not a second design and must not grow one.
+
+Decisions 1 and 3 through 7 stand unchanged. The lane remains the outbound
+mechanism for an external consumer that registers nothing; daemon hooks are a
+**second** extension point for a project that does, never a replacement for the
+first.
