@@ -1,5 +1,6 @@
 /** Daemon-owned refresh of one project's trunk mirror (ADR 0138). */
 import { execFile } from "node:child_process";
+import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledTrunk } from "./project-registration.js";
 
 export const REDSKILLED_TRUNK_MIRROR_REF = "refs/heads/red-trunk";
@@ -10,6 +11,26 @@ export interface RedskilledTrunkRefreshInput {
 }
 
 export type RedskilledTrunkRefresh = (input: RedskilledTrunkRefreshInput) => Promise<string>;
+
+export function redskilledTrunkRefreshKey(input: RedskilledTrunkRefreshInput): string {
+  return `${input.workspace_path}\0${input.trunk.remote}\0${input.trunk.branch}`;
+}
+
+export function unreachableTrunkAdmission(
+  admission: RedskilledAdmissionVerdict,
+  input: RedskilledTrunkRefreshInput,
+  error: unknown,
+): RedskilledAdmissionVerdict {
+  const detail = error instanceof Error ? error.message : String(error);
+  return {
+    ...admission,
+    admitted: false,
+    verdict: "refused-unreachable-trunk-remote",
+    reason:
+      `refused-unreachable-trunk-remote: redskilled refused this Worker because trunk remote ` +
+      `${JSON.stringify(input.trunk.remote)} could not refresh branch ${JSON.stringify(input.trunk.branch)}: ${detail}`,
+  };
+}
 
 export interface RedskilledBaseMovementInput {
   readonly workspace_path: string;
