@@ -125,11 +125,6 @@ describe("castle MCP host adapter", () => {
         retentionDays: 30,
       });
 
-      // Replay the 2026-08-09 failure: the closed disposable Ticket causes the
-      // Worker's runtime lane to be reclaimed before a human opens the comment.
-      await rm(workerDir, { recursive: true, force: true });
-      await expect(readFile(join(cwd, retained.path), "utf8"))
-        .resolves.toContain("bundle coherence halted dispatch");
     } finally {
       stderr.mockRestore();
     }
@@ -154,6 +149,13 @@ describe("castle MCP host adapter", () => {
         }),
       }),
     ]);
+
+    // Replay the 2026-08-09 failure: the closed disposable Ticket causes the
+    // Worker's runtime lane to be reclaimed before a human opens the comment.
+    const retainedPath = join(cwd, ".red/tmp/diagnostics/wER01-session-error.log");
+    await rm(workerDir, { recursive: true, force: true });
+    await expect(readFile(retainedPath, "utf8"))
+      .resolves.toContain("bundle coherence halted dispatch");
   });
 
   it("bounds logs reads by limit and filters by kind before the limit", async () => {
