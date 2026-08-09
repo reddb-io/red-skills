@@ -52,7 +52,16 @@ import {
   requireLaunchLogPath,
   type RedskilledLaunchTemplate,
 } from "./launch-template.js";
+import {
+  REDSKILLED_PUBLIC_HOST_EVENT_KINDS,
+  type RedskilledPublicHostEventKind,
+} from "./event-lane.js";
 import type { RedskilledQueueOutcome } from "./queue-discovery.js";
+
+/** Async launch templates a project asks the daemon to fire for public host events. */
+export type RedskilledProjectHooks = Partial<
+  Readonly<Record<RedskilledPublicHostEventKind, RedskilledLaunchTemplate>>
+>;
 
 /**
  * Default window a registration survives without renewal.
@@ -144,6 +153,8 @@ export interface RedskilledProjectRegistrationRequest {
    * registration for stating no path.
    */
   readonly log_path?: string;
+  /** Project-scoped, async notifications keyed by the public host-event vocabulary. */
+  readonly hooks?: RedskilledProjectHooks;
   /** How many Workers this project wants; the host still decides how many it gets. */
   readonly target: number;
   /** How long this registration stands without renewal; the default when absent. */
@@ -162,6 +173,8 @@ export interface RedskilledProjectRegistration {
   readonly env: Readonly<Record<string, string>>;
   /** The declared log-path template; absent when this project declared none. */
   readonly log_path?: string;
+  /** Project-scoped, async notifications keyed by the public host-event vocabulary. */
+  readonly hooks?: RedskilledProjectHooks;
   readonly target: number;
   /** The daemon's own clock, at the instant it accepted this registration. */
   readonly registered_at: string;
@@ -261,6 +274,7 @@ export function buildProjectRegistration(
   const argv = requireLaunchArgv(request.argv, projectLabel);
   const env = requireLaunchEnv(request.env, projectLabel);
   const logPath = requireLaunchLogPath(request.log_path, projectLabel);
+  const hooks = requireProjectHooks(request.hooks, projectLabel);
   // Same shape check, same reason as the argv: a registration the host could
   // never start a Worker for is a client bug the daemon can see without reading
   // anything about what the path names.
@@ -302,6 +316,7 @@ export function buildProjectRegistration(
     ...(trunk == null ? {} : { trunk }),
     env,
     ...(logPath == null ? {} : { log_path: logPath }),
+    ...(hooks == null ? {} : { hooks }),
     target: request.target,
     registered_at: new Date(nowMs).toISOString(),
     renew_within_ms: renewWithinMs,
@@ -647,6 +662,7 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     (registration.session_renewals === undefined || Number.isInteger(registration.session_renewals)) &&
     (registration.env === undefined || isLaunchEnvShape(registration.env)) &&
     (registration.log_path === undefined || typeof registration.log_path === "string") &&
+    (registration.hooks === undefined || isProjectHooksShape(registration.hooks)) &&
     (registration.launch_revision === undefined || Number.isInteger(registration.launch_revision)) &&
     // Optional for the same reason, one amendment later: a daemon older than the
     // sustain holds no such fields, and a client that failed its records closed
@@ -656,6 +672,53 @@ export function isRedskilledProjectRegistration(value: unknown): value is Redski
     (registration.sustained_by === undefined ||
       registration.sustained_by === "open-work" ||
       registration.sustained_by === "live-worker");
+}
+
+function requireProjectHooks(value: unknown, projectLabel: string): RedskilledProjectHooks | undefined {
+  if (value == null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(
+      `redskilled needs project hooks to be a map keyed by public host event kind for project ` +
+        `${JSON.stringify(projectLabel)}`,
+    );
+  }
+  const hooks: Partial<Record<RedskilledPublicHostEventKind, RedskilledLaunchTemplate>> = {};
+  for (const [kind, launch] of Object.entries(value as Record<string, unknown>)) {
+    if (!REDSKILLED_PUBLIC_HOST_EVENT_KINDS.includes(kind as RedskilledPublicHostEventKind)) {
+      throw new Error(
+        `redskilled cannot register project hook ${JSON.stringify(kind)} for project ${JSON.stringify(projectLabel)}: ` +
+          `public host event kinds are ${REDSKILLED_PUBLIC_HOST_EVENT_KINDS.join(", ")}`,
+      );
+    }
+    if (launch === null || typeof launch !== "object" || Array.isArray(launch)) {
+      throw new Error(
+        `redskilled needs hook ${JSON.stringify(kind)} for project ${JSON.stringify(projectLabel)} to be a launch template`,
+      );
+    }
+    const template = launch as Record<string, unknown>;
+    hooks[kind as RedskilledPublicHostEventKind] = {
+      argv: requireLaunchArgv(template.argv, projectLabel),
+      env: requireLaunchEnv(template.env, projectLabel),
+      ...(template.log_path == null
+        ? {}
+        : { log_path: requireLaunchLogPath(template.log_path, projectLabel) }),
+    };
+  }
+  return hooks;
+}
+
+function isProjectHooksShape(value: unknown): value is RedskilledProjectHooks {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.entries(value as Record<string, unknown>).every(([kind, launch]) => {
+    if (!REDSKILLED_PUBLIC_HOST_EVENT_KINDS.includes(kind as RedskilledPublicHostEventKind)) return false;
+    if (launch === null || typeof launch !== "object" || Array.isArray(launch)) return false;
+    const template = launch as Record<string, unknown>;
+    return Array.isArray(template.argv) &&
+      template.argv.length > 0 &&
+      template.argv.every((word) => typeof word === "string" && word !== "") &&
+      (template.env === undefined || isLaunchEnvShape(template.env)) &&
+      (template.log_path === undefined || (typeof template.log_path === "string" && template.log_path !== ""));
+  });
 }
 
 function isTrunkShape(value: unknown): value is RedskilledTrunk {
