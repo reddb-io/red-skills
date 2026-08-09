@@ -22,6 +22,32 @@ export type DisposableDispatchCleanupResult =
   | { action: "not-disposable" }
   | { action: "closed"; issue: number; commentFailed?: true };
 
+type DisposableDispatchContext = Omit<
+  DisposableDispatchBootFailure,
+  "failureType" | "retainedDiagnostic"
+>;
+
+export function createDisposableBootFailureCleanup(
+  deps: DisposableDispatchCleanupDeps,
+  context: DisposableDispatchContext,
+  reportFailure: (error: unknown) => void,
+): (
+  failureType: DisposableDispatchBootFailure["failureType"],
+  retainedDiagnostic?: DisposableDispatchBootFailure["retainedDiagnostic"],
+) => Promise<void> {
+  return async (failureType, retainedDiagnostic) => {
+    try {
+      await cleanupDisposableDispatchOnBootFailure(deps, {
+        ...context,
+        failureType,
+        ...(retainedDiagnostic === undefined ? {} : { retainedDiagnostic }),
+      });
+    } catch (error) {
+      reportFailure(error);
+    }
+  };
+}
+
 function publishableDiagnostic(
   diagnostic: DisposableDispatchBootFailure["retainedDiagnostic"],
 ): NonNullable<DisposableDispatchBootFailure["retainedDiagnostic"]> | undefined {
@@ -42,9 +68,8 @@ function disposableTarget(input: DisposableDispatchBootFailure): number | undefi
 /**
  * Close a disposable dispatch Ticket when its Worker dies before processing it.
  *
- * The public comment deliberately carries only routing facts and a generic
- * failure class. The detailed exception stays in the local Worker error lane,
- * where hostnames and filesystem paths cannot leak into the Issue tracker.
+ * The public comment carries routing facts, a generic failure class, and only
+ * the validated repository-relative path of a bounded retained diagnosis.
  */
 export async function cleanupDisposableDispatchOnBootFailure(
   deps: DisposableDispatchCleanupDeps,
