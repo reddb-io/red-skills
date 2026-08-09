@@ -63,6 +63,7 @@ const EXPECTED_GH_EXPORTS = [
   "readIssueBody",
   "readIssueComments",
   "repoVisibility",
+  "resolveDispatchCandidates",
   "resolveSelectorUser",
   "resolveViewerLogin",
   "viewIssueFull",
