@@ -131,14 +131,14 @@ export async function recordBootError(
   const workerId = basename(workerDir);
   const redRoot = dirname(dirname(dirname(workerDir)));
   const retainedName = `${workerId}-${type}.log`;
-  const retainedDir = join(redRoot, "tmp", "diagnostics");
-  await fsx.ensureDir(retainedDir);
-  await writeFile(join(retainedDir, retainedName), encoded, "utf8");
   await createCastleLaneWriters(createEnginePaths(redRoot)).worker(workerId).append({
     kind: `worker.${type}`,
     worker_id: workerId,
     payload: { type, at: payload.at, message },
   });
+  const retainedDir = join(redRoot, "tmp", "diagnostics");
+  await fsx.ensureDir(retainedDir);
+  await writeFile(join(retainedDir, retainedName), encoded, "utf8");
   process.stderr.write(`[afk] ${type}: ${message}\n`);
   return {
     path: `.red/tmp/diagnostics/${retainedName}`,
