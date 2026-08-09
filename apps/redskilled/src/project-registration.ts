@@ -58,9 +58,15 @@ import {
 } from "./event-lane.js";
 import type { RedskilledQueueOutcome } from "./queue-discovery.js";
 
-/** Async launch templates a project asks the daemon to fire for public host events. */
+/** One project-owned notification, asynchronous unless it declares a bounded wait. */
+export type RedskilledProjectHook = RedskilledLaunchTemplate & {
+  readonly mode?: "async" | "sync";
+  readonly deadline_ms?: number;
+};
+
+/** Launch templates a project asks the daemon to fire for public host events. */
 export type RedskilledProjectHooks = Partial<
-  Readonly<Record<RedskilledPublicHostEventKind, RedskilledLaunchTemplate>>
+  Readonly<Record<RedskilledPublicHostEventKind, RedskilledProjectHook>>
 >;
 
 /**
@@ -153,7 +159,7 @@ export interface RedskilledProjectRegistrationRequest {
    * registration for stating no path.
    */
   readonly log_path?: string;
-  /** Project-scoped, async notifications keyed by the public host-event vocabulary. */
+  /** Project-scoped notifications keyed by the public host-event vocabulary. */
   readonly hooks?: RedskilledProjectHooks;
   /** How many Workers this project wants; the host still decides how many it gets. */
   readonly target: number;
@@ -173,7 +179,7 @@ export interface RedskilledProjectRegistration {
   readonly env: Readonly<Record<string, string>>;
   /** The declared log-path template; absent when this project declared none. */
   readonly log_path?: string;
-  /** Project-scoped, async notifications keyed by the public host-event vocabulary. */
+  /** Project-scoped notifications keyed by the public host-event vocabulary. */
   readonly hooks?: RedskilledProjectHooks;
   readonly target: number;
   /** The daemon's own clock, at the instant it accepted this registration. */
@@ -682,7 +688,7 @@ function requireProjectHooks(value: unknown, projectLabel: string): RedskilledPr
         `${JSON.stringify(projectLabel)}`,
     );
   }
-  const hooks: Partial<Record<RedskilledPublicHostEventKind, RedskilledLaunchTemplate>> = {};
+  const hooks: Partial<Record<RedskilledPublicHostEventKind, RedskilledProjectHook>> = {};
   for (const [kind, launch] of Object.entries(value as Record<string, unknown>)) {
     if (!REDSKILLED_PUBLIC_HOST_EVENT_KINDS.includes(kind as RedskilledPublicHostEventKind)) {
       throw new Error(
@@ -696,12 +702,30 @@ function requireProjectHooks(value: unknown, projectLabel: string): RedskilledPr
       );
     }
     const template = launch as Record<string, unknown>;
+    const mode = template.mode ?? "async";
+    if (mode !== "async" && mode !== "sync") {
+      throw new Error(
+        `redskilled needs hook ${JSON.stringify(kind)} for project ${JSON.stringify(projectLabel)} mode to be ` +
+          `"async" or "sync", not ${JSON.stringify(mode)}`,
+      );
+    }
+    if (mode === "sync" &&
+      (typeof template.deadline_ms !== "number" ||
+        !Number.isFinite(template.deadline_ms) ||
+        template.deadline_ms <= 0)) {
+      throw new Error(
+        `redskilled cannot register sync ${kind} hook for project ${JSON.stringify(projectLabel)} without a ` +
+          `finite, positive deadline_ms: ${JSON.stringify(template.deadline_ms)} is not a bounded deadline`,
+      );
+    }
     hooks[kind as RedskilledPublicHostEventKind] = {
       argv: requireLaunchArgv(template.argv, projectLabel),
       env: requireLaunchEnv(template.env, projectLabel),
       ...(template.log_path == null
         ? {}
         : { log_path: requireLaunchLogPath(template.log_path, projectLabel) }),
+      ...(template.mode == null ? {} : { mode }),
+      ...(mode === "sync" ? { deadline_ms: template.deadline_ms as number } : {}),
     };
   }
   return hooks;
@@ -717,7 +741,12 @@ function isProjectHooksShape(value: unknown): value is RedskilledProjectHooks {
       template.argv.length > 0 &&
       template.argv.every((word) => typeof word === "string" && word !== "") &&
       (template.env === undefined || isLaunchEnvShape(template.env)) &&
-      (template.log_path === undefined || (typeof template.log_path === "string" && template.log_path !== ""));
+      (template.log_path === undefined || (typeof template.log_path === "string" && template.log_path !== "")) &&
+      (template.mode === undefined || template.mode === "async" || template.mode === "sync") &&
+      (template.mode !== "sync" ||
+        (typeof template.deadline_ms === "number" &&
+          Number.isFinite(template.deadline_ms) &&
+          template.deadline_ms > 0));
   });
 }
 
