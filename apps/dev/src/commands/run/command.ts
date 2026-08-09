@@ -84,7 +84,7 @@ import {
   runnerCircuitOpen,
   type RetainedBootDiagnostic,
 } from "./state.js";
-import { cleanupDisposableDispatchOnBootFailure } from "./disposable-cleanup.js";
+import { createDisposableBootFailureCleanup } from "./disposable-cleanup.js";
 
 export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
@@ -117,32 +117,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // mismatch can name both sides instead of blaming only the queue (#3175).
   const consultedQueue = dispatchIdentity.lane ?? LABEL_READY;
   let retainedBootDiagnostic: RetainedBootDiagnostic | undefined;
-  const cleanupBootFailure = async (failureType: "boot-error" | "session-error") => {
-    try {
-      await cleanupDisposableDispatchOnBootFailure(
-        {
-          comment: (issue, body) => ghx.comment(ghCtx, issue, body),
-          close: (issue) => ghx.closeIssue(ghCtx, issue),
-        },
-        {
-          declaredLane,
-          consultedQueue,
-          filter: flags.filter,
-          failureType,
-          ...(retainedBootDiagnostic === undefined
-            ? {}
-            : { retainedDiagnostic: retainedBootDiagnostic }),
-        },
-      );
-    } catch (error) {
-      // The original boot failure remains primary, but a refused close is loud:
-      // otherwise the dispatch would silently leave the tracker litter #3175
-      // exists to prevent.
-      process.stderr.write(
-        `[afk] disposable cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
-    }
-  };
+  const cleanupBootFailure = createDisposableBootFailureCleanup(
+    { comment: (issue, body) => ghx.comment(ghCtx, issue, body), close: (issue) => ghx.closeIssue(ghCtx, issue) },
+    { declaredLane, consultedQueue, filter: flags.filter },
+    (error) => process.stderr.write(`[afk] disposable cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`),
+  );
 
   // One-time boot migration: relocate any legacy `.red/tmp` durable artifacts to
   // canonical state or supervisor tmp lanes before this worker reads/writes supervisor/circuit state
@@ -186,6 +165,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
     process.env.RED_AFK_WORKER_ID,
     (id) => existing.has(id),
   );
+  const retainBootFailure = (type: "boot-error" | "session-error", error: unknown) =>
+    recordBootError(workerDirPath(paths.tmpDir, workerId), type, error).catch(() => {
+      process.stderr.write(`[afk] ${type}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return undefined;
+    });
   const pidStartTime = readPidStartTime(process.pid) ?? "";
   // Emit the per-slot boot-stamp immediately so the supervisor's slot log
   // captures this worker's ID before any failure. The circuit-trip sweep
@@ -240,15 +224,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
   const forkSha = process.env.RED_AFK_FORK_SHA?.trim();
   if (!forkSha) {
     const error = new Error("redskilled granted this Worker no fork SHA — refusing unadmitted birth");
-    retainedBootDiagnostic = await recordBootError(
-      workerDirPath(paths.tmpDir, workerId),
-      "boot-error",
-      error,
-    ).catch(() => {
-      process.stderr.write(`[afk] boot-error: ${error.message}\n`);
-      return undefined;
-    });
-    await cleanupBootFailure("boot-error");
+    retainedBootDiagnostic = await retainBootFailure("boot-error", error);
+    await cleanupBootFailure("boot-error", retainedBootDiagnostic);
     return HOST_CONFIG_EXIT_CODE;
   }
 
@@ -338,11 +315,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
       bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
     }
   } catch (err) {
-    retainedBootDiagnostic = await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => {
-      process.stderr.write(`[afk] boot-error: ${err instanceof Error ? err.message : String(err)}\n`);
-      return undefined;
-    });
-    await cleanupBootFailure("boot-error");
+    retainedBootDiagnostic = await retainBootFailure("boot-error", err);
+    await cleanupBootFailure("boot-error", retainedBootDiagnostic);
     return 1;
   }
 
@@ -465,8 +439,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
     if (retireFile) {
       try { writeFileSync(retireFile, ""); } catch { /* best-effort */ }
     }
-    retainedBootDiagnostic = await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => undefined);
-    await cleanupBootFailure("boot-error");
+    retainedBootDiagnostic = await retainBootFailure("boot-error", err);
+    await cleanupBootFailure("boot-error", retainedBootDiagnostic);
     return 1;
   }
 
@@ -721,11 +695,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
   try {
     summary = await runCastleWorkerDrain(deps, sessionCtx);
   } catch (err) {
-    retainedBootDiagnostic = await recordBootError(bootstrap.workerDir, "session-error", err).catch(() => {
-      process.stderr.write(`[afk] session-error: ${err instanceof Error ? err.message : String(err)}\n`);
-      return undefined;
-    });
-    await cleanupBootFailure("session-error");
+    retainedBootDiagnostic = await retainBootFailure("session-error", err);
+    await cleanupBootFailure("session-error", retainedBootDiagnostic);
     return 1;
   } finally {
     await feedback.cleanup();
@@ -734,12 +705,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
   if (!summary.boot.precheck.ok) {
     const failed = summary.boot.precheck.failed;
     process.stderr.write(`[afk] precheck failed: ${failed}\n`);
-    retainedBootDiagnostic = await recordBootError(
-      bootstrap.workerDir,
-      "boot-error",
-      new Error(`precheck failed: ${failed}`),
-    ).catch(() => undefined);
-    await cleanupBootFailure("boot-error");
+    retainedBootDiagnostic = await retainBootFailure("boot-error", new Error(`precheck failed: ${failed}`));
+    await cleanupBootFailure("boot-error", retainedBootDiagnostic);
     return 1;
   }
 
