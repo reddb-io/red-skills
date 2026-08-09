@@ -11,6 +11,11 @@ export interface DisposableDispatchBootFailure {
   consultedQueue: string;
   filter: SelectionFilter;
   failureType: "boot-error" | "session-error";
+  retainedDiagnostic?: {
+    /** Repo-relative path safe to publish in the Ticket comment. */
+    path: string;
+    retentionDays: number;
+  };
 }
 
 export type DisposableDispatchCleanupResult =
@@ -40,6 +45,10 @@ export async function cleanupDisposableDispatchOnBootFailure(
   if (issue === undefined) return { action: "not-disposable" };
 
   let commentFailed = false;
+  const diagnostic = input.retainedDiagnostic;
+  const diagnosticLine = diagnostic === undefined
+    ? "No local diagnostics were retained for this pre-lane failure."
+    : `Detailed diagnostics: \`${diagnostic.path}\` (retained for ${diagnostic.retentionDays} days).`;
   try {
     await deps.comment(
       issue,
@@ -50,7 +59,7 @@ export async function cleanupDisposableDispatchOnBootFailure(
         `- consulted queue: \`${input.consultedQueue}\``,
         `- failure class: \`${input.failureType}\``,
         "",
-        "Detailed diagnostics remain in the local Worker error lane.",
+        diagnosticLine,
       ].join("\n"),
     );
   } catch {
