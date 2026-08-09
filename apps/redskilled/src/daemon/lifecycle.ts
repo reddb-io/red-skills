@@ -78,6 +78,7 @@ import {
   type RedskilledProjectRegistration,
   type RedskilledProjectRegistrationRequest,
 } from "../project-registration.js";
+import { createRedskilledProjectHookRuntime } from "../project-hook.js";
 import {
   detectUnitMainPid,
   detectWorkerLiveness,
@@ -157,7 +158,9 @@ import {
 import {
   countRedskilledBaseMovement,
   refreshRedskilledTrunk,
+  redskilledTrunkRefreshKey,
   type RedskilledTrunkRefreshInput,
+  unreachableTrunkAdmission,
 } from "../trunk-mirror.js";
 import {
   readLastLogLine,
@@ -411,6 +414,15 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       recoverableRegistrations.set(restored.project_label, restored);
     }
   }
+  const projectHooks = createRedskilledProjectHookRuntime({
+    registration: (label) => registrations.get(label),
+    liveWorkerIds: () => workers.keys(),
+    admit,
+    start: (spec, admission) => startWorker(spec, { admission, hook: true }).worker,
+    refuse: (projectLabel, detail) => {
+      void eventLane.recordDemandRefusal({ ts: clock(), projectLabel, detail }).catch(() => undefined);
+    },
+  });
   const activeSockets = new Set<Socket>();
   // The last thing the sampler measured, kept so a read is dated rather than
   // dating itself: staleness belongs to the daemon that took the measurement.
@@ -972,7 +984,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
             const trunk = { workspace_path: birth.workspace_path, trunk: registration.trunk };
             const admission = admit(spec);
             if (!admission.admitted) throw new RedskilledAdmissionError(admission.reason, admission);
-            const key = trunkRefreshKey(trunk);
+            const key = redskilledTrunkRefreshKey(trunk);
             let fork = burstForks.get(key);
             if (fork == null) {
               fork = refreshFork(trunk);
@@ -1505,12 +1517,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     });
   }
 
-  function trunkRefreshKey(input: RedskilledTrunkRefreshInput): string {
-    return `${input.workspace_path}\0${input.trunk.remote}\0${input.trunk.branch}`;
-  }
-
   function refreshFork(input: RedskilledTrunkRefreshInput): Promise<string> {
-    const key = trunkRefreshKey(input);
+    const key = redskilledTrunkRefreshKey(input);
     const inFlight = trunkRefreshes.get(key);
     if (inFlight != null) return inFlight;
     const pending = refreshTrunk(input).finally(() => {
@@ -1518,22 +1526,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     });
     trunkRefreshes.set(key, pending);
     return pending;
-  }
-
-  function unreachableTrunkRefusal(
-    admission: RedskilledAdmissionVerdict,
-    input: RedskilledTrunkRefreshInput,
-    error: unknown,
-  ): RedskilledAdmissionVerdict {
-    const detail = error instanceof Error ? error.message : String(error);
-    return {
-      ...admission,
-      admitted: false,
-      verdict: "refused-unreachable-trunk-remote",
-      reason:
-        `refused-unreachable-trunk-remote: redskilled refused this Worker because trunk remote ` +
-        `${JSON.stringify(input.trunk.remote)} could not refresh branch ${JSON.stringify(input.trunk.branch)}: ${detail}`,
-    };
   }
 
   async function admitAndStartWorker(
@@ -1548,7 +1540,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     try {
       forkSha = await (fork ?? refreshFork(trunk));
     } catch (error) {
-      const refusal = unreachableTrunkRefusal(admission, trunk, error);
+      const refusal = unreachableTrunkAdmission(admission, trunk, error);
       throw new RedskilledAdmissionError(refusal.reason, refusal);
     }
     // The fetch is asynchronous. Re-judge against Workers born while it was in
@@ -1572,7 +1564,11 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    */
   function startWorker(
     spec: RedskilledWorkerSpec,
-    grant: { readonly admission?: RedskilledAdmissionVerdict; readonly forkSha?: string } = {},
+    grant: {
+      readonly admission?: RedskilledAdmissionVerdict;
+      readonly forkSha?: string;
+      readonly hook?: boolean;
+    } = {},
   ): LaunchedWorker {
     // The ceiling is the host's to state, not the client's to remember: it comes
     // out of the same accounting admission was judged against, so every Worker is
@@ -1611,6 +1607,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       ...(forkSha == null || forkSha === "" ? {} : { fork_sha: forkSha }),
     };
     workers.set(worker.worker_id, worker);
+    if (grant.hook === true) projectHooks.track(worker.worker_id);
     record("worker-birth", worker, null, {
       admissionVerdict: grant.admission?.verdict ?? launched.admission.verdict,
     });
@@ -1656,6 +1653,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     void eventLane
       .recordWorker(input)
       .catch(() => undefined);
+    projectHooks.onEvent(kind, worker);
   }
 
   /** Put one host-observed loss on every surface, newest observation winning. */
