@@ -11,11 +11,51 @@ export interface DisposableDispatchBootFailure {
   consultedQueue: string;
   filter: SelectionFilter;
   failureType: "boot-error" | "session-error";
+  retainedDiagnostic?: {
+    /** Repo-relative path safe to publish in the Ticket comment. */
+    path: string;
+    retentionDays: number;
+  };
 }
 
 export type DisposableDispatchCleanupResult =
   | { action: "not-disposable" }
   | { action: "closed"; issue: number; commentFailed?: true };
+
+type DisposableDispatchContext = Omit<
+  DisposableDispatchBootFailure,
+  "failureType" | "retainedDiagnostic"
+>;
+
+export function createDisposableBootFailureCleanup(
+  deps: DisposableDispatchCleanupDeps,
+  context: DisposableDispatchContext,
+  reportFailure: (error: unknown) => void,
+): (
+  failureType: DisposableDispatchBootFailure["failureType"],
+  retainedDiagnostic?: DisposableDispatchBootFailure["retainedDiagnostic"],
+) => Promise<void> {
+  return async (failureType, retainedDiagnostic) => {
+    try {
+      await cleanupDisposableDispatchOnBootFailure(deps, {
+        ...context,
+        failureType,
+        ...(retainedDiagnostic === undefined ? {} : { retainedDiagnostic }),
+      });
+    } catch (error) {
+      reportFailure(error);
+    }
+  };
+}
+
+function publishableDiagnostic(
+  diagnostic: DisposableDispatchBootFailure["retainedDiagnostic"],
+): NonNullable<DisposableDispatchBootFailure["retainedDiagnostic"]> | undefined {
+  if (diagnostic === undefined) return undefined;
+  if (!/^\.red\/tmp\/diagnostics\/[A-Za-z0-9._-]+$/.test(diagnostic.path)) return undefined;
+  if (!Number.isSafeInteger(diagnostic.retentionDays) || diagnostic.retentionDays < 1) return undefined;
+  return diagnostic;
+}
 
 function disposableTarget(input: DisposableDispatchBootFailure): number | undefined {
   if (input.declaredLane !== LABEL_GO_LANE && input.declaredLane !== LABEL_SCOUT_LANE) {
@@ -28,9 +68,8 @@ function disposableTarget(input: DisposableDispatchBootFailure): number | undefi
 /**
  * Close a disposable dispatch Ticket when its Worker dies before processing it.
  *
- * The public comment deliberately carries only routing facts and a generic
- * failure class. The detailed exception stays in the local Worker error lane,
- * where hostnames and filesystem paths cannot leak into the Issue tracker.
+ * The public comment carries routing facts, a generic failure class, and only
+ * the validated repository-relative path of a bounded retained diagnosis.
  */
 export async function cleanupDisposableDispatchOnBootFailure(
   deps: DisposableDispatchCleanupDeps,
@@ -40,6 +79,10 @@ export async function cleanupDisposableDispatchOnBootFailure(
   if (issue === undefined) return { action: "not-disposable" };
 
   let commentFailed = false;
+  const diagnostic = publishableDiagnostic(input.retainedDiagnostic);
+  const diagnosticLine = diagnostic === undefined
+    ? "No local diagnostics were retained for this pre-lane failure."
+    : `Detailed diagnostics: \`${diagnostic.path}\` (retained for ${diagnostic.retentionDays} days).`;
   try {
     await deps.comment(
       issue,
@@ -50,7 +93,7 @@ export async function cleanupDisposableDispatchOnBootFailure(
         `- consulted queue: \`${input.consultedQueue}\``,
         `- failure class: \`${input.failureType}\``,
         "",
-        "Detailed diagnostics remain in the local Worker error lane.",
+        diagnosticLine,
       ].join("\n"),
     );
   } catch {

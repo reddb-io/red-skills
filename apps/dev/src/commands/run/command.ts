@@ -76,8 +76,15 @@ import { evaluateClaimTrust, parseTrustPolicy } from "../../core/trust-gate.js";
 import { checkBootGuard, isNamespacedDispatch, parseRunFlags, resolveRunDispatchIdentity, shouldSkipBootSweeps, type RunOptions } from "./flags.js";
 import { buildProcessDeps, parseSlot, type CurrentAttempt } from "./process-deps.js";
 import { makeBootReconcileRunner, runReconcileWorker } from "./reconcile.js";
-import { initBootWorkerState, openRunnerCircuit, recordBootError, requeueOrdinalSync, runnerCircuitOpen } from "./state.js";
-import { cleanupDisposableDispatchOnBootFailure } from "./disposable-cleanup.js";
+import {
+  initBootWorkerState,
+  openRunnerCircuit,
+  recordBootError,
+  requeueOrdinalSync,
+  runnerCircuitOpen,
+  type RetainedBootDiagnostic,
+} from "./state.js";
+import { createDisposableBootFailureCleanup } from "./disposable-cleanup.js";
 
 export async function runCommand(options: RunOptions): Promise<number> {
   const cwd = options.cwd ?? process.cwd();
@@ -109,29 +116,12 @@ export async function runCommand(options: RunOptions): Promise<number> {
   // Kept as a separate fact from the declaration so any future transport
   // mismatch can name both sides instead of blaming only the queue (#3175).
   const consultedQueue = dispatchIdentity.lane ?? LABEL_READY;
-  const cleanupBootFailure = async (failureType: "boot-error" | "session-error") => {
-    try {
-      await cleanupDisposableDispatchOnBootFailure(
-        {
-          comment: (issue, body) => ghx.comment(ghCtx, issue, body),
-          close: (issue) => ghx.closeIssue(ghCtx, issue),
-        },
-        {
-          declaredLane,
-          consultedQueue,
-          filter: flags.filter,
-          failureType,
-        },
-      );
-    } catch (error) {
-      // The original boot failure remains primary, but a refused close is loud:
-      // otherwise the dispatch would silently leave the tracker litter #3175
-      // exists to prevent.
-      process.stderr.write(
-        `[afk] disposable cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`,
-      );
-    }
-  };
+  let retainedBootDiagnostic: RetainedBootDiagnostic | undefined;
+  const cleanupBootFailure = createDisposableBootFailureCleanup(
+    { comment: (issue, body) => ghx.comment(ghCtx, issue, body), close: (issue) => ghx.closeIssue(ghCtx, issue) },
+    { declaredLane, consultedQueue, filter: flags.filter },
+    (error) => process.stderr.write(`[afk] disposable cleanup failed: ${error instanceof Error ? error.message : String(error)}\n`),
+  );
 
   // One-time boot migration: relocate any legacy `.red/tmp` durable artifacts to
   // canonical state or supervisor tmp lanes before this worker reads/writes supervisor/circuit state
@@ -175,6 +165,11 @@ export async function runCommand(options: RunOptions): Promise<number> {
     process.env.RED_AFK_WORKER_ID,
     (id) => existing.has(id),
   );
+  const retainBootFailure = (type: "boot-error" | "session-error", error: unknown) =>
+    recordBootError(workerDirPath(paths.tmpDir, workerId), type, error).catch(() => {
+      process.stderr.write(`[afk] ${type}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return undefined;
+    });
   const pidStartTime = readPidStartTime(process.pid) ?? "";
   // Emit the per-slot boot-stamp immediately so the supervisor's slot log
   // captures this worker's ID before any failure. The circuit-trip sweep
@@ -228,7 +223,9 @@ export async function runCommand(options: RunOptions): Promise<number> {
 
   const forkSha = process.env.RED_AFK_FORK_SHA?.trim();
   if (!forkSha) {
-    process.stderr.write("[afk] redskilled granted this Worker no fork SHA — refusing unadmitted birth\n");
+    const error = new Error("redskilled granted this Worker no fork SHA — refusing unadmitted birth");
+    retainedBootDiagnostic = await retainBootFailure("boot-error", error);
+    await cleanupBootFailure("boot-error", retainedBootDiagnostic);
     return HOST_CONFIG_EXIT_CODE;
   }
 
@@ -318,10 +315,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
       bootDeps = await buildBootDeps(ctx, bootOptions, nowS);
     }
   } catch (err) {
-    await recordBootError(bootstrap.workerDir, "boot-error", err).catch(() => {
-      process.stderr.write(`[afk] boot-error: ${err instanceof Error ? err.message : String(err)}\n`);
-    });
-    await cleanupBootFailure("boot-error");
+    retainedBootDiagnostic = await retainBootFailure("boot-error", err);
+    await cleanupBootFailure("boot-error", retainedBootDiagnostic);
     return 1;
   }
 
@@ -444,7 +439,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
     if (retireFile) {
       try { writeFileSync(retireFile, ""); } catch { /* best-effort */ }
     }
-    await cleanupBootFailure("boot-error");
+    retainedBootDiagnostic = await retainBootFailure("boot-error", err);
+    await cleanupBootFailure("boot-error", retainedBootDiagnostic);
     return 1;
   }
 
@@ -699,10 +695,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
   try {
     summary = await runCastleWorkerDrain(deps, sessionCtx);
   } catch (err) {
-    await recordBootError(bootstrap.workerDir, "session-error", err).catch(() => {
-      process.stderr.write(`[afk] session-error: ${err instanceof Error ? err.message : String(err)}\n`);
-    });
-    await cleanupBootFailure("session-error");
+    retainedBootDiagnostic = await retainBootFailure("session-error", err);
+    await cleanupBootFailure("session-error", retainedBootDiagnostic);
     return 1;
   } finally {
     await feedback.cleanup();
@@ -711,7 +705,8 @@ export async function runCommand(options: RunOptions): Promise<number> {
   if (!summary.boot.precheck.ok) {
     const failed = summary.boot.precheck.failed;
     process.stderr.write(`[afk] precheck failed: ${failed}\n`);
-    await cleanupBootFailure("boot-error");
+    retainedBootDiagnostic = await retainBootFailure("boot-error", new Error(`precheck failed: ${failed}`));
+    await cleanupBootFailure("boot-error", retainedBootDiagnostic);
     return 1;
   }
 

@@ -176,6 +176,8 @@ and the declared sub-second branch-fault escape beside Validation moments) ->
 `plugins/dev/skills/engineering/afk/TROUBLESHOOTING.md`;
 `/go` interactive admission (`REDSKILLED_INTERACTIVE_RESERVATION`) ->
 `plugins/dev/skills/engineering/go/SKILL.md`;
+`/go` disposable boot-failure diagnosis and its 30-day local retention ->
+`plugins/dev/skills/engineering/go/TROUBLESHOOTING.md`;
 the host view a terminal can read (the `redskilled` daemon's `dashboard`
 command, and the `statusline` line it shares a render with) ->
 `plugins/dev/skills/engineering/red-statusline/HOST-NOTES.md`;
