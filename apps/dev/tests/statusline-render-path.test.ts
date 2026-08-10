@@ -20,7 +20,7 @@ const { directCollector, runStatusline } = vi.hoisted(() => ({
   }),
 }));
 
-vi.mock("@reddb-io/redskilled/cli", () => ({ runStatusline }));
+vi.mock("@reddb-io/redskilled/statusline-command", () => ({ runStatusline }));
 
 vi.mock("../src/runtime/wire.js", () => ({
   collectStatuslineAfk: directCollector,
