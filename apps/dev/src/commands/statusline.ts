@@ -15,7 +15,10 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
-import { runStatusline as runRedskilledStatusline } from "@reddb-io/redskilled/cli";
+// From the COMMAND module, never the CLI: cli.ts ends in a self-invocation
+// guard that is always true inside a single-file bundle, so importing it ships
+// a second argv-reading CLI inside every dev binary (#3546, canary catch).
+import { runStatusline as runRedskilledStatusline } from "@reddb-io/redskilled/statusline-command";
 import { configFile } from "@reddb-io/shared/red-paths.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { decode } from "@reddb-io/toon";
