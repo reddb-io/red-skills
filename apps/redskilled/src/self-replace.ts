@@ -39,7 +39,7 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
 import { fetchPublishedVersionHorizon } from "@reddb-io/shared/bundle-fetch.js";
 import { compareSemver, parseSemver } from "@reddb-io/shared/self-update.js";
@@ -289,7 +289,7 @@ export class RedskilledReplacementEntryError extends Error {
   constructor(version: string, searched: readonly string[]) {
     super(
       `${REDSKILLED_REPLACEMENT_ENTRY_UNRESOLVED}: the published redskilled bundle ${version} exists on no ` +
-        `reachable path and the version-pinned dispatch is disabled\nsearched:\n${
+        `reachable path and the version-pinned dispatch is disabled or resolves no absolute npx\nsearched:\n${
           searched.map((path) => `  ${path}`).join("\n")
         }`,
     );
@@ -329,13 +329,52 @@ export function requireRedskilledReplacementEntry(
     if (exists(path)) return { command: execPath, args: [path], version, source, searched };
   }
   if (env.RED_SKILLS_NO_PINNED_DISPATCH === "1") throw new RedskilledReplacementEntryError(version, searched);
+  // The command must be ABSOLUTE: this entry is also what a supervised
+  // replacement writes into the unit's ExecStart, and systemd resolves that
+  // binary with the MANAGER's PATH — system directories only on hosts whose
+  // node comes from a version manager, where a bare `npx` is 203/EXEC on every
+  // start until a human runs `reset-failed` (#3554). An unresolvable npx costs
+  // the upgrade, never the machine.
+  const npx = resolveAbsoluteNpx(env, exists, execPath, searched);
+  if (npx == null) throw new RedskilledReplacementEntryError(version, searched);
   return {
-    command: env.RED_SKILLS_NPX || "npx",
+    command: npx,
     args: ["-y", "-p", `@reddb-io/red-skills@${version}`, "red-skills-redskilled"],
     version,
     source: "pinned-dispatch",
     searched,
   };
+}
+
+/**
+ * An absolute path to `npx`, or null when the host offers none.
+ *
+ * An absolute `RED_SKILLS_NPX` is honored as stated; a relative one names the
+ * binary to find rather than where it is. The search is the resolving
+ * process's own view — the directory beside its node first, because every node
+ * install ships an `npx` sibling, then its PATH — and every miss lands in
+ * `searched` so the refusal names where it looked.
+ */
+function resolveAbsoluteNpx(
+  env: NodeJS.ProcessEnv,
+  exists: (path: string) => boolean,
+  execPath: string,
+  searched: string[],
+): string | null {
+  const stated = env.RED_SKILLS_NPX?.trim();
+  if (stated && isAbsolute(stated)) return stated;
+  const names = process.platform === "win32"
+    ? [stated || "npx.cmd", "npx.cmd", "npx.exe", "npx"]
+    : [stated || "npx"];
+  const directories = [dirname(execPath), ...(env.PATH ?? "").split(delimiter).filter((dir) => dir.length > 0)];
+  for (const name of new Set(names)) {
+    for (const directory of directories) {
+      const candidate = join(directory, name);
+      searched.push(candidate);
+      if (exists(candidate)) return candidate;
+    }
+  }
+  return null;
 }
 
 export interface RedskilledReplacementIO {

@@ -36,6 +36,7 @@ import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { sendRedskilledRequest } from "../src/protocol.js";
 import { REDSKILLED_REPLACE_EXIT_CODE } from "../src/self-replace.js";
 import {
+  healRedskilledUnitDropIn,
   installRedskilledUnit,
   planRedskilledUnit,
   readRedskilledUnitStatus,
@@ -246,6 +247,94 @@ describe("the user unit that supervises the daemon", () => {
     expect(dropIn).toContain(publishedBundle);
     expect(dropIn).toContain(paths.socketPath);
     expect(reload.calls).toEqual([["systemctl", "--user", "daemon-reload"]]);
+  });
+
+  it("refuses to repoint the unit to a relative command before writing anything — 203/EXEC is never installed", async () => {
+    const { paths } = await host();
+    const env = { HOME: paths.runtimeDir };
+    const reload = recordingRun();
+
+    // systemd resolves ExecStart with the MANAGER's PATH, so a bare `npx` is
+    // unresolvable on hosts whose node comes from a version manager (#3554).
+    expect(() =>
+      repointRedskilledUnitForReplacement(
+        { command: "npx", args: ["-y", "-p", "@reddb-io/red-skills@9.9.9", "red-skills-redskilled"] },
+        paths,
+        { env, run: reload.run },
+      ),
+    ).toThrow(/relative command "npx"/);
+
+    // Nothing was written and systemd was never reloaded: the serving daemon
+    // stays up on its current ExecStart, the upgrade merely waits.
+    expect(existsSync(redskilledReplacementDropInPath(env))).toBe(false);
+    expect(reload.calls).toEqual([]);
+  });
+
+  it("heals a drop-in poisoned with a relative command into this process's own absolute invocation", async () => {
+    const { paths } = await host();
+    const env = { HOME: paths.runtimeDir };
+    const dropIn = redskilledReplacementDropInPath(env);
+    await mkdir(resolve(dropIn, ".."), { recursive: true });
+    await writeFile(
+      dropIn,
+      `[Service]\nExecStart=\nExecStart=npx -y -p @reddb-io/red-skills@9.9.9 red-skills-redskilled serve --socket ${paths.socketPath}\n`,
+    );
+    const reload = recordingRun();
+
+    const report = healRedskilledUnitDropIn({
+      env,
+      socketPath: paths.socketPath,
+      execPath: "/fake/toolchain/node-lts/bin/node",
+      argv: ["/fake/bundle/redskilled.bundle.min.mjs", "serve", "--socket", paths.socketPath],
+      run: reload.run,
+    });
+
+    expect(report).toEqual({ path: dropIn, status: "healed", command: "npx" });
+    const healed = readFileSync(dropIn, "utf8");
+    expect(healed).toContain("ExecStart=\n");
+    expect(healed).toContain(
+      `ExecStart=/fake/toolchain/node-lts/bin/node /fake/bundle/redskilled.bundle.min.mjs serve --socket ${paths.socketPath}`,
+    );
+    expect(reload.calls).toEqual([["systemctl", "--user", "daemon-reload"]]);
+  });
+
+  it("never rewrites a drop-in that serves some other session's socket — a test or foreign process has no claim", async () => {
+    const { paths } = await host();
+    const env = { HOME: paths.runtimeDir };
+    const dropIn = redskilledReplacementDropInPath(env);
+    const poisoned =
+      "[Service]\nExecStart=\nExecStart=npx -y -p @reddb-io/red-skills@9.9.9 red-skills-redskilled serve --socket /run/someone-else.sock\n";
+    await mkdir(resolve(dropIn, ".."), { recursive: true });
+    await writeFile(dropIn, poisoned);
+    const reload = recordingRun();
+
+    const report = healRedskilledUnitDropIn({ env, socketPath: paths.socketPath, run: reload.run });
+
+    expect(report).toEqual({ path: dropIn, status: "foreign", command: "npx" });
+    expect(readFileSync(dropIn, "utf8")).toBe(poisoned);
+    expect(reload.calls).toEqual([]);
+  });
+
+  it("leaves an absolute drop-in byte-for-byte untouched, and reports an absent one without inventing it", async () => {
+    const { paths } = await host();
+    const env = { HOME: paths.runtimeDir };
+    const dropIn = redskilledReplacementDropInPath(env);
+
+    expect(healRedskilledUnitDropIn({ env, run: recordingRun().run })).toEqual({
+      path: dropIn,
+      status: "absent",
+    });
+
+    const absolute = "[Service]\nExecStart=\nExecStart=/usr/bin/node /opt/redskilled.bundle.min.mjs serve\n";
+    await mkdir(resolve(dropIn, ".."), { recursive: true });
+    await writeFile(dropIn, absolute);
+    const reload = recordingRun();
+
+    const report = healRedskilledUnitDropIn({ env, run: reload.run });
+
+    expect(report).toEqual({ path: dropIn, status: "absolute", command: "/usr/bin/node" });
+    expect(readFileSync(dropIn, "utf8")).toBe(absolute);
+    expect(reload.calls).toEqual([]);
   });
 
   it("revives a cleanly self-stopped daemon with no client asking for work", async () => {

@@ -26,9 +26,9 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import {
   redskilledServeArgv,
   requireRedskilledEntry,
@@ -160,6 +160,18 @@ export function repointRedskilledUnitForReplacement(
     readonly run?: (argv: readonly string[]) => RedskilledUnitRunResult;
   } = {},
 ): string {
+  // systemd resolves the ExecStart binary with the MANAGER's PATH, which the
+  // unit's own Environment=PATH never touches — a relative command here is
+  // 203/EXEC on every restart until a human runs `reset-failed` (#3554). The
+  // refusal happens before any write, so the serving daemon stays up on its
+  // current ExecStart: an upgrade may be delayed, a unit is never poisoned.
+  if (!isAbsolute(entry.command)) {
+    throw new Error(
+      `redskilled refused to write the relative command "${entry.command}" into the supervisor drop-in: ` +
+        "systemd resolves ExecStart with the manager's PATH, so a relative command dies with 203/EXEC " +
+        "on hosts whose node comes from a version manager (#3554)",
+    );
+  }
   const path = redskilledReplacementDropInPath(options.env ?? process.env);
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const argv = [
@@ -184,6 +196,95 @@ export function repointRedskilledUnitForReplacement(
     );
   }
   return path;
+}
+
+/** What healing the current-entry drop-in found and did. */
+export interface RedskilledUnitHealReport {
+  readonly path: string;
+  /**
+   * `absent` — no drop-in to heal; `absolute` — already healthy, untouched;
+   * `healed` — relative command rewritten to this process's own absolute
+   * invocation; `unparsed` — no readable ExecStart, left alone; `foreign` —
+   * the drop-in serves some other session's socket, never ours to rewrite.
+   */
+  readonly status: "absent" | "absolute" | "healed" | "unparsed" | "foreign";
+  /** The ExecStart command the drop-in carried, when one was readable. */
+  readonly command?: string;
+}
+
+/**
+ * Heal a current-entry drop-in whose `ExecStart` names a relative command.
+ *
+ * The recovery half of the #3554 fix: hosts that already carry a relative
+ * `npx` drop-in are dead on every systemd start — but the SAME daemon still
+ * comes up through client auto-spawn or an operator's hand-start, and a
+ * supervised boot proves the running invocation works. So a daemon booting
+ * supervised rewrites the poisoned drop-in with its own absolute invocation
+ * (`process.execPath`, its own entry, its live argv) and reloads systemd,
+ * converging the host without manual surgery. An absolute drop-in is left
+ * byte-for-byte untouched, and so is one that does not name `socketPath` —
+ * the drop-in describes ONE session's daemon, and only that daemon, proven by
+ * serving the same socket, may rewrite it: a test or foreign-session process
+ * that healed it would poison the unit with an argv it never served.
+ */
+export function healRedskilledUnitDropIn(
+  options: {
+    readonly env?: NodeJS.ProcessEnv;
+    /** The socket THIS process serves — its claim to the drop-in. */
+    readonly socketPath?: string;
+    /** This process's absolute node; `process.execPath` by default. */
+    readonly execPath?: string;
+    /** This process's entry and everything after it; `process.argv.slice(1)` by default. */
+    readonly argv?: readonly string[];
+    readonly readFile?: (path: string) => string;
+    readonly run?: (argv: readonly string[]) => RedskilledUnitRunResult;
+  } = {},
+): RedskilledUnitHealReport {
+  const path = redskilledReplacementDropInPath(options.env ?? process.env);
+  let text: string;
+  try {
+    text = (options.readFile ?? ((p: string) => readFileSync(p, "utf8")))(path);
+  } catch {
+    return { path, status: "absent" };
+  }
+  const words = execStartWordsOf(text);
+  const command = words?.[0];
+  if (words == null || command == null) return { path, status: "unparsed" };
+  if (isAbsolute(command)) return { path, status: "absolute", command };
+  if (options.socketPath == null || !words.includes(options.socketPath)) {
+    return { path, status: "foreign", command };
+  }
+  const execPath = options.execPath ?? process.execPath;
+  const argv = [execPath, ...(options.argv ?? process.argv.slice(1))];
+  const healed = [
+    "[Service]",
+    "ExecStart=",
+    `ExecStart=${argv.map(quoteUnitWord).join(" ")}`,
+    "",
+  ].join("\n");
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, healed, { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, path);
+  // A failed reload is not undone: the file on disk is already correct, and
+  // systemd reads it on its own next reload or login — later beats never.
+  (options.run ?? defaultRun)(["systemctl", "--user", "daemon-reload"]);
+  return { path, status: "healed", command };
+}
+
+/** The words of the LAST non-empty `ExecStart=` line, unquoted. */
+function execStartWordsOf(unitText: string): readonly string[] | undefined {
+  let words: string[] | undefined;
+  for (const line of unitText.split("\n")) {
+    const value = line.trim().startsWith("ExecStart=") ? line.trim().slice("ExecStart=".length).trim() : undefined;
+    if (!value) continue;
+    words = value.split(/\s+/).map(
+      (word) =>
+        word.startsWith('"') && word.endsWith('"') && word.length > 1
+          ? word.slice(1, -1).replace(/\\\\/g, "\\").replace(/\\"/g, '"')
+          : word,
+    );
+  }
+  return words;
 }
 
 /** A word for `ExecStart`: quoted only when it would otherwise split or escape. */

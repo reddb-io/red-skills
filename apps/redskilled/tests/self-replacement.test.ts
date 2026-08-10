@@ -26,7 +26,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readRedskilledHostState } from "../src/client.js";
 import { socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
@@ -314,6 +314,9 @@ describe("the successor entry", () => {
     const dispatch = requireRedskilledReplacementEntry("2.7.0", { env: missing, callerEntry: "" });
     expect(dispatch.source).toBe("pinned-dispatch");
     expect(dispatch.args).toEqual(["-y", "-p", "@reddb-io/red-skills@2.7.0", "red-skills-redskilled"]);
+    // Never a bare `npx`: this command also lands in a systemd ExecStart, which
+    // the manager resolves with ITS PATH — relative there is 203/EXEC (#3554).
+    expect(isAbsolute(dispatch.command)).toBe(true);
 
     const error = (() => {
       try {
@@ -331,6 +334,58 @@ describe("the successor entry", () => {
     expect((error as RedskilledReplacementEntryError).searched.join("\n")).toContain(
       "redskilled-2.7.0.bundle.min.mjs",
     );
+  });
+
+  it("resolves the pinned dispatch to the npx beside its own node, through the process's view", async () => {
+    const { env } = await session();
+    const npx = "/fake/toolchain/node-lts/bin/npx";
+
+    const dispatch = requireRedskilledReplacementEntry("2.7.0", {
+      env: { ...env, RED_SKILLS_NPX: "npx", PATH: "/usr/bin:/bin" },
+      callerEntry: "",
+      execPath: "/fake/toolchain/node-lts/bin/node",
+      exists: (path) => path === npx,
+    });
+
+    expect(dispatch.source).toBe("pinned-dispatch");
+    expect(dispatch.command).toBe(npx);
+  });
+
+  it("honors an absolute RED_SKILLS_NPX exactly as stated", async () => {
+    const { env } = await session();
+
+    const dispatch = requireRedskilledReplacementEntry("2.7.0", {
+      env: { ...env, RED_SKILLS_NPX: "/opt/tools/npx" },
+      callerEntry: "",
+      exists: () => false,
+    });
+
+    expect(dispatch.command).toBe("/opt/tools/npx");
+  });
+
+  it("refuses the pinned dispatch when no npx resolves to an absolute path — the upgrade waits, the unit is never poisoned", async () => {
+    const { env } = await session();
+
+    const error = (() => {
+      try {
+        requireRedskilledReplacementEntry("2.7.0", {
+          env: { ...env, PATH: "/usr/bin:/bin" },
+          callerEntry: "",
+          execPath: "/fake/toolchain/node-lts/bin/node",
+          exists: () => false,
+        });
+        return null;
+      } catch (err) {
+        return err;
+      }
+    })();
+
+    expect(error).toBeInstanceOf(RedskilledReplacementEntryError);
+    // The refusal names where it looked for npx, beside the bundle paths.
+    expect((error as RedskilledReplacementEntryError).searched.join("\n")).toContain(
+      join("/fake/toolchain/node-lts/bin", "npx"),
+    );
+    expect((error as RedskilledReplacementEntryError).searched.join("\n")).toContain(join("/usr/bin", "npx"));
   });
 });
 
