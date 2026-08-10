@@ -63,6 +63,7 @@ import {
   type RedskilledUnitIO,
 } from "./supervision.js";
 import { isRedskilledSupervised } from "./self-replace.js";
+import { stabilizeRedskilledEntry } from "./stable-bundle.js";
 
 /**
  * Usage, as a CONSTANT — the answer owes nothing to the machine it is asked on.
@@ -498,7 +499,12 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     // boot that would serve clients; the next supervised boot tries again.
     if (isRedskilledSupervised()) {
       try {
-        healRedskilledUnitDropIn({ socketPath: paths.socketPath });
+        healRedskilledUnitDropIn({
+          socketPath: paths.socketPath,
+          // The running version, so the rewrite can also stabilize the entry
+          // into the daemon home — the copy nothing on the host prunes.
+          version: values["daemon-version"] ?? readBuildInfo("redskilled").version,
+        });
       } catch {
         // The drop-in stays as it is.
       }
@@ -774,11 +780,17 @@ export async function runProvision(
       ? {}
       : { entryOverride: { serverCommand: io.client.serverCommand, serverArgs: io.client.serverArgs } }),
   });
-  const unit = values["install-unit"] && isResolvedRedskilledEntry(facts.entry)
+  // Stabilized when possible (#3554 closure): the installed unit outlives every
+  // cache, so its ExecStart points at the daemon-home copy when the resolved
+  // bundle's name states its version; anything else installs as resolved.
+  const unitEntry = isResolvedRedskilledEntry(facts.entry)
+    ? stabilizeRedskilledEntry(facts.entry, { homeDir })
+    : undefined;
+  const unit = values["install-unit"] && unitEntry != null
     ? await installRedskilledUserUnit({
         configHome: io.configHome ?? configHome(),
         unit: renderRedskilledUserUnit({
-          command: [facts.entry.command, ...facts.entry.args].join(" "),
+          command: [unitEntry.command, ...unitEntry.args].join(" "),
           socketPath: paths.socketPath,
         }),
       })

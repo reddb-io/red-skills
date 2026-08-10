@@ -37,6 +37,7 @@ import {
   type RedskilledServeTarget,
 } from "./daemon-entry.js";
 import type { RedskilledPaths } from "./paths.js";
+import { stabilizeRedskilledEntry, stableBundleHomeOf } from "./stable-bundle.js";
 
 /** The unit's name — one per machine, matching the daemon's own scope. */
 export const REDSKILLED_UNIT_NAME = "redskilled.service";
@@ -90,7 +91,14 @@ export function planRedskilledUnit(
   options: PlanRedskilledUnitOptions = {},
 ): RedskilledUnitPlan {
   const env = options.env ?? process.env;
-  const entry = requireRedskilledEntry(options.override ?? {}, options.entryLookup ?? {});
+  // Stabilized when the bundle's name already states its version: the unit
+  // outlives every cache, so its ExecStart should too (#3554 closure). An
+  // unversioned or shim entry is used as resolved — durability is an upgrade,
+  // never a precondition.
+  const entry = stabilizeRedskilledEntry(
+    requireRedskilledEntry(options.override ?? {}, options.entryLookup ?? {}),
+    { homeDir: stableBundleHomeOf(env) },
+  );
   const args = [
     ...entry.args,
     ...redskilledServeArgv(paths, options.idleMs == null ? {} : { idleMs: options.idleMs }),
@@ -236,6 +244,12 @@ export function healRedskilledUnitDropIn(
     readonly execPath?: string;
     /** This process's entry and everything after it; `process.argv.slice(1)` by default. */
     readonly argv?: readonly string[];
+    /**
+     * The version this process reports itself as. Stated, it lets the rewrite
+     * stabilize the running entry into the daemon home first, so the healed
+     * `ExecStart` points at the copy nothing on the host prunes.
+     */
+    readonly version?: string;
     readonly readFile?: (path: string) => string;
     readonly run?: (argv: readonly string[]) => RedskilledUnitRunResult;
   } = {},
@@ -255,7 +269,18 @@ export function healRedskilledUnitDropIn(
     return { path, status: "foreign", command };
   }
   const execPath = options.execPath ?? process.execPath;
-  const argv = [execPath, ...(options.argv ?? process.argv.slice(1))];
+  const tail = options.argv ?? process.argv.slice(1);
+  // The healed target should also be the DURABLE one: the running entry is
+  // copied into the daemon home when its version is certain, so the rewrite
+  // does not trade a relative command for an absolute path into a GC'd cache.
+  const stabilized = tail.length === 0 ? undefined : stabilizeRedskilledEntry(
+    { command: execPath, args: tail, entry: tail[0] },
+    {
+      homeDir: stableBundleHomeOf(options.env ?? process.env),
+      ...(options.version == null ? {} : { version: options.version }),
+    },
+  );
+  const argv = [execPath, ...(stabilized?.args ?? tail)];
   const healed = [
     "[Service]",
     "ExecStart=",
