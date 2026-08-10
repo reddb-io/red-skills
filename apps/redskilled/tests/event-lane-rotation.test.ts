@@ -30,6 +30,42 @@ function worker(workerId: string): RedskilledWorkerView {
 }
 
 describe("the bounded host event lane", () => {
+  it("amortizes compaction across steady-state appends after the lane fills", async () => {
+    const root = await mkdtemp(join(tmpdir(), "redskilled-compaction-cost-"));
+    roots.push(root);
+    const maxBytes = 8_192;
+    const lane = createRedskilledEventLane(join(root, "redskilled.log.toonl"), { maxBytes });
+
+    await lane.recordWorker({
+      kind: "worker-birth",
+      worker: worker("w-live"),
+      ts: "2026-08-08T09:00:00.000Z",
+    });
+    for (let index = 0; index < 80; index += 1) {
+      await lane.recordDemandRefusal({
+        ts: new Date(Date.parse("2026-08-08T09:01:00.000Z") + index).toISOString(),
+        projectLabel: "acme/widgets",
+        detail: `warmup-${index}-${"x".repeat(120)}`,
+      });
+    }
+
+    let position = (await readRedskilledEventsFrom(lane.path)).position!;
+    let replacements = 0;
+    for (let index = 0; index < 40; index += 1) {
+      await lane.recordDemandRefusal({
+        ts: new Date(Date.parse("2026-08-08T10:00:00.000Z") + index).toISOString(),
+        projectLabel: "acme/widgets",
+        detail: `steady-${index}-${"x".repeat(120)}`,
+      });
+      const next = (await readRedskilledEventsFrom(lane.path)).position!;
+      if (next.generation !== position.generation) replacements += 1;
+      position = next;
+      expect((await stat(lane.path)).size).toBeLessThanOrEqual(maxBytes);
+    }
+
+    expect(replacements).toBeLessThanOrEqual(8);
+  });
+
   it("rotates before the lane can make boot replay unbounded and retains live Worker births", async () => {
     const root = await mkdtemp(join(tmpdir(), "redskilled-rotation-"));
     roots.push(root);
