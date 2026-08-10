@@ -539,6 +539,7 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
         },
         { match: (a) => a[0] === "stat", result: { stdout: "0\n" } },
         { match: (a) => a[0] === "fuser", result: { code: 1 } },
+        { match: (a) => a[0] === "find", result: { stdout: "/repo/.git/index.lock\n" } },
       ]);
 
       const result = await fastForwardLocalTarget(exec, base);
@@ -546,6 +547,54 @@ describe("fastForwardLocalTarget (post-merge primary promotion, ADR 0083 §2 ame
       expect(result.action).toBe("fast-forward");
       expect(result.evidence).toContain("reclaimed empty unheld .git/index.lock");
       expect(joined(calls)).toContain("rm -- /repo/.git/index.lock");
+      expect(mergeAttempts).toBe(2);
+    });
+
+    // `fuser` answers "open NOW", and a lock Git created microseconds ago is
+    // zero bytes and not yet open — identical to an orphan by size and ownership.
+    // Removing it makes the racing Worker die on `could not write new index
+    // file`, which is how a concurrent boot loses to a cleanup meant for corpses.
+    it("refuses an empty unheld lock that is too young to be abandoned", async () => {
+      let mergeAttempts = 0;
+      const { exec, calls } = fakeExec([
+        onTarget,
+        {
+          match: (a) => a.join(" ").includes("merge --ff-only") && ++mergeAttempts === 1,
+          result: lockFailure,
+        },
+        { match: (a) => a[0] === "stat", result: { stdout: "0\n" } },
+        { match: (a) => a[0] === "fuser", result: { code: 1 } },
+        { match: (a) => a[0] === "find", result: { stdout: "\n" } },
+      ]);
+
+      const result = await fastForwardLocalTarget(exec, base);
+
+      expect(result.action).toBe("noop");
+      expect(result.failed).toBe("index-lock");
+      expect(result.evidence).toContain("younger than");
+      expect(joined(calls).some((x) => x.startsWith("rm "))).toBe(false);
+      expect(mergeAttempts).toBe(1);
+    });
+
+    // The other end of the same contention: Git names no lock when its own lock
+    // is taken away mid-write, so matching only "index.lock" left this failure
+    // with no route to the retry that cures it.
+    it("recognizes the victim's error, which names no lock at all", async () => {
+      let mergeAttempts = 0;
+      const { exec } = fakeExec([
+        onTarget,
+        {
+          match: (a) => a.join(" ").includes("merge --ff-only") && ++mergeAttempts === 1,
+          result: { code: 128, stderr: "fatal: Could not write new index file.\n" },
+        },
+        { match: (a) => a[0] === "stat", result: { stdout: "0\n" } },
+        { match: (a) => a[0] === "fuser", result: { code: 1 } },
+        { match: (a) => a[0] === "find", result: { stdout: "/repo/.git/index.lock\n" } },
+      ]);
+
+      const result = await fastForwardLocalTarget(exec, base);
+
+      expect(result.action).toBe("fast-forward");
       expect(mergeAttempts).toBe(2);
     });
 
