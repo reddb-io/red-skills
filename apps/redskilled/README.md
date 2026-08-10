@@ -34,9 +34,19 @@ consumer must ignore kinds outside the public set.
 The lane is append-only within a generation and rotates atomically at 4 MiB.
 Compaction keeps every live Worker's birth and the newest history that fits, so
 daemon boot replays a fixed upper bound without losing a process it must
-re-attach. A reader may start at the new generation's head: every public death
-and budget-kill repeats the Worker's identity and can be understood without its
-birth.
+re-attach. Ordinary compaction targets 2 MiB, leaving about 2 MiB for subsequent
+appends before another replacement. In steady state that is approximately one
+byte rewritten by compaction per newly appended encoded byte, plus the append
+itself, instead of a 4 MiB rewrite per event. A live-Worker birth baseline larger
+than 2 MiB necessarily reduces that headroom but may never cross the 4 MiB hard
+ceiling.
+
+`tests/event-lane-rotation.test.ts` measures generation replacements rather than
+wall-clock timing: after warmup, its representative 8 KiB lane and 120-byte
+refusal details previously replaced the generation 40 times for 40 appends; the
+regression bound is at most 8 replacements for those 40 appends. A reader may
+start at the new generation's head: every public death and budget-kill repeats
+the Worker's identity and can be understood without its birth.
 
 A stateful consumer should use `readRedskilledEventsFrom` positions (or preserve
 the same generation-and-offset semantics in another language). A position from
