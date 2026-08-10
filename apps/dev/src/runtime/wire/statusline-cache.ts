@@ -72,6 +72,15 @@ export interface StatuslineRefreshSpawnOptions {
   spawn?: DetachedSpawn;
   nowS?: number;
   argv1?: string;
+  /**
+   * The base ref whose repo stats the same detached process should refresh.
+   *
+   * One child rather than two: both caches expire on the same render and both
+   * are refreshed from the same repository, so a second process would double the
+   * spawn cost and the lock bookkeeping to save nothing. Absent, the child
+   * refreshes only the counts, exactly as before.
+   */
+  baseRef?: string;
 }
 
 export function statuslineCountCachePath(root: string): string {
@@ -261,6 +270,7 @@ export function startDetachedStatuslineCountRefresh(
       repo,
       "--lock",
       lockPath,
+      ...(options.baseRef ? ["--base-ref", options.baseRef] : []),
     ], {
       detached: true,
       stdio: "ignore",

@@ -610,10 +610,41 @@ function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
  * pays one bounded refresh (issue #1178 — never a per-render git diff). Every
  * field is fail-open: any gh/git error leaves it 0.
  */
+/**
+ * Rewrite the repo-stats cache from the network. Used by the DETACHED refresher.
+ *
+ * It exists so the render path never has to: a short-lived statusline process
+ * that awaited this was putting `gh` latency in front of a terminal prompt.
+ */
+export async function refreshStatuslineRepoCache(
+  ctx: RepoContext,
+  baseRef: string,
+): Promise<void> {
+  const cachePath = afkPaths(ctx.root).statuslineRepoCachePath;
+  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo || inferGitHubRepoSlug(ctx.root) };
+  const [openPrs, todayPrs, openIssues, diff] = await Promise.all([
+    ghx.countOpenPrs(ghCtx),
+    ghx.countPrsCreatedToday(ghCtx),
+    ghx.countOpenIssues(ghCtx),
+    gitx.diffstatShortstat({ cwd: ctx.root }, baseRef),
+  ]);
+  writeRepoStatsCacheAtomic(cachePath, {
+    baseRef,
+    openPrs,
+    todayPrs,
+    openIssues,
+    localAdded: diff.added,
+    localRemoved: diff.removed,
+    ts: Math.floor(Date.now() / 1000),
+  });
+}
+
 export async function collectStatuslineRepo(
   ctx: RepoContext,
   cacheTtlS: number = STATUSLINE_CACHE_TTL_S,
   baseRef = "origin/main",
+  /** Spawn injection for tests; production callers omit it. */
+  refreshSpawn: StatuslineRefreshSpawnOptions = {},
 ): Promise<RepoInput> {
   const paths = afkPaths(ctx.root);
   const cachePath = paths.statuslineRepoCachePath;
@@ -627,7 +658,6 @@ export async function collectStatuslineRepo(
   let localRemoved = cacheMatchesBase ? (cached?.localRemoved ?? 0) : 0;
 
   const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
-  let repoRefreshSucceeded = false;
   const refresh = async (): Promise<void> => {
     // The local branch diff (committed + uncommitted) vs the resolved base ref
     // is folded into the same refresh as the gh counts — diffstatShortstat
@@ -645,7 +675,6 @@ export async function collectStatuslineRepo(
     openIssues = i;
     localAdded = diff.added;
     localRemoved = diff.removed;
-    repoRefreshSucceeded = true;
     writeRepoStatsCacheAtomic(cachePath, {
       baseRef,
       openPrs: p,
@@ -660,12 +689,19 @@ export async function collectStatuslineRepo(
   if (!cached || !cacheMatchesBase) {
     await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
   } else if (nowS - cached.ts >= cacheTtlS) {
-    // Stale: await a bounded refresh so the cache is rewritten before the
-    // process exits. Shows the previous value on timeout (fail-open). When
-    // refresh fails, mark the age so the renderer can signal staleness.
-    const staleAgeS = nowS - cached.ts;
-    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
-    if (!repoRefreshSucceeded) repoCacheAgeS = staleAgeS;
+    // Stale: serve the previous value NOW and let a detached child rewrite the
+    // cache for the next render — the shape `collectStatuslineAfk` above has
+    // used all along. Awaiting the refresh here put up to
+    // STATUSLINE_GH_COLD_TIMEOUT_MS of network on the path that redraws a
+    // terminal prompt, and the whole render measured 8s against a 15-minute TTL:
+    // once every TTL, a prompt froze while three `gh` calls ran. The age travels
+    // out so the renderer can say the counts are old, which is the honest answer
+    // and costs nothing.
+    repoCacheAgeS = nowS - cached.ts;
+    startDetachedStatuslineCountRefresh(
+      { ...ctx, repo: ghCtx.repo },
+      { ...refreshSpawn, nowS, baseRef },
+    );
   }
 
   return { openPrs, todayPrs, openIssues, localAdded, localRemoved, cacheAgeS: repoCacheAgeS };

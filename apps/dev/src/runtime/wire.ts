@@ -40,6 +40,7 @@ export {
   collectStatuslineValidationGate,
   collectStatuslineWorkers,
   collectStatuslineRepo,
+  refreshStatuslineRepoCache,
 } from "./wire/statusline.js";
 
 export { collectStatuslineDocs, collectDocsSweepInput, landDocsSweep } from "./wire/docs.js";

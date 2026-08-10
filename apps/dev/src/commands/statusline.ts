@@ -40,6 +40,7 @@ import {
   collectStatuslineWorkers,
   inferGitHubRepoSlug,
   refreshStatuslineCountCache,
+  refreshStatuslineRepoCache,
   resolveStatuslineCacheTtl,
 } from "../runtime/wire.js";
 import * as gitx from "../runtime/git.js";
@@ -407,14 +408,22 @@ export async function statuslineRefreshCountsCommand(args: string[], cwd = proce
   const root = args[0] ?? cwd;
   let repo = "";
   let lock = "";
+  let baseRef = "";
   for (let i = 1; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--repo") {
       repo = args[++i] ?? "";
     } else if (arg === "--lock") {
       lock = args[++i] ?? "";
+    } else if (arg === "--base-ref") {
+      baseRef = args[++i] ?? "";
     }
   }
   await refreshStatuslineCountCache(root, repo || inferGitHubRepoSlug(root), lock || undefined);
+  // Same child, second cache: the repo stats expire on the same render as the
+  // counts, and a second detached process would buy nothing but a second lock.
+  if (baseRef !== "") {
+    await refreshStatuslineRepoCache({ root, repo, remote: "origin" }, baseRef).catch(() => undefined);
+  }
   return 0;
 }
