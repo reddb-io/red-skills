@@ -27,7 +27,7 @@ const BINARY = "red-skills-herdr";
  * as a broken install rather than as an unbundled one. `scripts/check-manifest.py`
  * asserts this constant still equals the manifest's version.
  */
-const CHECKOUT_VERSION = "3.12.11";
+const CHECKOUT_VERSION = "3.12.12";
 
 const USAGE = `Usage: red-skills-herdr <command> [options]
 
