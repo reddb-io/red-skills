@@ -26,7 +26,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readRedskilledHostState } from "../src/client.js";
 import { socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
@@ -106,7 +106,10 @@ child.on("exit", (code) => process.exit(code ?? 0));
     paths: resolveRedskilledPaths({ env: { REDSKILLED_SESSION: `test:${root}`, REDSKILLED_MACHINE_DIR: root }, runtimeDir: root }),
     cacheDir,
     publishedBundle,
-    env: { ...process.env, RED_SKILLS_CACHE_DIR: cacheDir },
+    // HOME is scoped to the fixture: entry stabilization files bundles under
+    // the env's home, and a test env reaching the REAL ~/.red/redskilled/
+    // would poison the operator's stable-bundle directory with fake versions.
+    env: { ...process.env, HOME: root, RED_SKILLS_CACHE_DIR: cacheDir },
   };
 }
 
@@ -590,7 +593,10 @@ describe("the idle boundary, the only check a quiet host ever reaches", () => {
 
     // One read, at the boundary, and the successor runs the published version.
     expect(probes).toBe(1);
-    expect(spawns[0]).toContain(publishedBundle);
+    // The successor may run the stable-home copy of the published bundle —
+    // same bytes, the directory nothing prunes — so the pin is the VERSIONED
+    // basename, which both locations share and no other version can wear.
+    expect(spawns[0].join(" ")).toContain(basename(publishedBundle));
     expect(daemon.hostState().upgrade.replacement).toBe("in-progress");
     // It let go first, so the successor can take the session.
     expect(await socketAnswers(paths.socketPath)).toBe(false);
@@ -765,7 +771,10 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
     expect(daemon.evaluateIdle()).toBe("held-by-registrations");
     expect(await until(async () => spawns.length > 0, 5_000)).toBe(true);
 
-    expect(spawns[0]).toContain(publishedBundle);
+    // The successor may run the stable-home copy of the published bundle —
+    // same bytes, the directory nothing prunes — so the pin is the VERSIONED
+    // basename, which both locations share and no other version can wear.
+    expect(spawns[0].join(" ")).toContain(basename(publishedBundle));
     expect(daemon.hostState().upgrade.replacement).toBe("in-progress");
     expect(daemon.hostState().upgrade.checks).toBeGreaterThan(0);
     // It let go of the session first, exactly as the idle route does.
@@ -791,7 +800,10 @@ describe("the working daemon, which reaches no idle boundary at all", () => {
     hold(daemon, paths.runtimeDir);
 
     expect(await until(async () => spawns.length > 0, 5_000)).toBe(true);
-    expect(spawns[0]).toContain(publishedBundle);
+    // The successor may run the stable-home copy of the published bundle —
+    // same bytes, the directory nothing prunes — so the pin is the VERSIONED
+    // basename, which both locations share and no other version can wear.
+    expect(spawns[0].join(" ")).toContain(basename(publishedBundle));
   });
 
   it("owes a successor no boot look, so a mis-resolving one cannot spin", async () => {
@@ -954,7 +966,10 @@ describe("a read the registry never answers", () => {
     running.push(daemon);
 
     expect(await daemon.checkForReplacement()).toMatchObject({ act: "replace", to: PUBLISHED_VERSION });
-    expect(spawns[0]).toContain(publishedBundle);
+    // The successor may run the stable-home copy of the published bundle —
+    // same bytes, the directory nothing prunes — so the pin is the VERSIONED
+    // basename, which both locations share and no other version can wear.
+    expect(spawns[0].join(" ")).toContain(basename(publishedBundle));
   });
 
   it("stays unknown when the host holds nothing either", async () => {

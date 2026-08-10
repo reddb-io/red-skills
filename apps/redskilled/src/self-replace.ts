@@ -41,6 +41,11 @@ import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalInvocation } from "@reddb-io/shared/canonical-invocation.js";
+import {
+  redskilledStableBundleDir,
+  stabilizeRedskilledEntry,
+  stableBundleHomeOf,
+} from "./stable-bundle.js";
 import { fetchPublishedVersionHorizon } from "@reddb-io/shared/bundle-fetch.js";
 import { compareSemver, parseSemver } from "@reddb-io/shared/self-update.js";
 import {
@@ -261,6 +266,7 @@ export function isRedskilledSupervised(env: NodeJS.ProcessEnv = process.env): bo
 
 /** Which candidate produced the successor — carried for diagnosis, never for logic. */
 export type RedskilledReplacementEntrySource =
+  | "stable-home"
   | "bundle-cache"
   | "caller-sibling-bundle"
   | "pinned-dispatch";
@@ -268,6 +274,8 @@ export type RedskilledReplacementEntrySource =
 export interface ResolvedRedskilledReplacementEntry {
   readonly command: string;
   readonly args: readonly string[];
+  /** The bundle file the command runs, absent for an npx dispatch. */
+  readonly entry?: string;
   readonly version: string;
   readonly source: RedskilledReplacementEntrySource;
   readonly searched: readonly string[];
@@ -320,13 +328,30 @@ export function requireRedskilledReplacementEntry(
   const bundle = `redskilled-${version}.bundle.min.mjs`;
 
   const searched: string[] = [];
-  const candidates: Array<[string, RedskilledReplacementEntrySource]> = [
-    [join(redskilledBundleCacheRoot(env), bundle), "bundle-cache"],
-  ];
+  // The stable home is probed FIRST: it is the one directory nothing on the
+  // host prunes, so a copy there outranks the same bytes in a GC'd cache. A
+  // cache or sibling hit is stabilized INTO the home on the way out, so the
+  // ExecStart a supervised repoint writes never depends on cache retention.
+  // An env that names no HOME scopes both away — it describes a host whose
+  // operator home this resolution has no business reaching.
+  const home = stableBundleHomeOf(env);
+  const candidates: Array<[string, RedskilledReplacementEntrySource]> = [];
+  if (home != null) candidates.push([join(redskilledStableBundleDir(home), bundle), "stable-home"]);
+  candidates.push([join(redskilledBundleCacheRoot(env), bundle), "bundle-cache"]);
   if (callerEntry) candidates.push([join(dirname(resolve(callerEntry)), bundle), "caller-sibling-bundle"]);
   for (const [path, source] of candidates) {
     searched.push(path);
-    if (exists(path)) return { command: execPath, args: [path], version, source, searched };
+    if (exists(path)) {
+      return {
+        ...stabilizeRedskilledEntry(
+          { command: execPath, args: [path], entry: path },
+          { version, homeDir: home, exists },
+        ),
+        version,
+        source,
+        searched,
+      };
+    }
   }
   if (env.RED_SKILLS_NO_PINNED_DISPATCH === "1") throw new RedskilledReplacementEntryError(version, searched);
   // The command must be ABSOLUTE: this entry is also what a supervised
