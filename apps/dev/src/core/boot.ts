@@ -90,6 +90,7 @@ import {
   type QueueVisibilityProbeData,
 } from "./operational-probes.js";
 import { runHostPrerequisiteProbe } from "./operational-probes/host-prerequisites.js";
+import { isWorkerExemptBaseFreshnessFinding } from "./operational-probes/base-freshness.js";
 import { pathIsInsideTmp, removableUnknownTmpRoots } from "./tmp-janitor.js";
 import type { TmpJanitorPlan, WorkerDirJanitorPlan } from "./tmp-janitor.js";
 import type { WorkerProcessVerdict, WorkerReclaimPlan } from "./worker-reclaim.js";
@@ -672,16 +673,6 @@ async function tryBootAutoApplyLabelBodyCoherence(
 /** True when this base-freshness finding is safe to downgrade for worker boot.
  * Worker sessions (skipSweeps) can skip the fatal halt for this case because they branch from
  * origin/main directly — a behind local main does not affect their work. */
-function isWorkerExemptBaseFreshnessFinding(
-  finding: OperationalProbeReport["findings"][number],
-): boolean {
-  if (finding.id !== BASE_FRESHNESS_PROBE_ID) return false;
-  const data = finding.data as Partial<BaseFreshnessProbeData> | undefined;
-  if (data?.finding !== "local-trunk-behind-origin") return false;
-  if (data.guard?.guard === "passed") return true;
-  return data.guard?.failedCondition === "clean-tree";
-}
-
 // ---------- step inputs ----------
 
 /** Bootstrap paths, pre-resolved by the caller from worker-paths.ts so this

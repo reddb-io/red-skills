@@ -635,6 +635,48 @@ describe("runBoot skipSweeps — supervisor-owned boot (#623)", () => {
     expect(fsCalls.ensureDir).toContain("/p/.red/tmp");
   });
 
+  // 2026-08-08: two dirty files in the primary checkout killed three Workers at
+  // boot in seventeen seconds and opened the birth breaker for ten minutes. The
+  // exemption above covered `clean-tree` and this shape is the same fact — the
+  // operator has uncommitted work — said more precisely, because a dirty path
+  // also moved upstream. Neither reaches a Worker branching from its granted fork.
+  it("does NOT halt when the primary WIP collides with upstream changes", async () => {
+    const { deps } = makeDeps();
+
+    const result = await runBoot(
+      deps,
+      options({
+        skipSweeps: true,
+        operationalProbes: {
+          remoteUrls: [],
+          baseFreshness: {
+            trunk: "main",
+            remote: "origin",
+            localSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+            remoteSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ahead: 0,
+            behind: 11,
+            remoteReachable: true,
+            guard: {
+              guard: "refused",
+              target: "main",
+              remote: "origin",
+              currentBranch: "main",
+              failed: "dirt-collision",
+              failedCondition: "dirt-collision",
+              evidence:
+                "condition failed: dirt-collision (2 tracked dirty path(s) also changed by origin/main: .red/adr/INDEX.md, .red/contexts/dev/CONTEXT.md)",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(result.bootstrap).toEqual({ ok: true });
+    expect(result.operationalProbes?.findings).toHaveLength(1);
+    expect(result.operationalProbes?.findings[0]?.evidence).toContain("dirt-collision");
+  });
+
   it.each([
     [
       "off-trunk",

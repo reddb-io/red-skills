@@ -33,7 +33,7 @@ export const FILE_SIZE_BASELINE: readonly FileSizeBaselineEntry[] = [
   { path: "apps/dev/src/commands/run/command.ts", lines: 819 },
   { path: "apps/dev/src/commands/run/process-deps.ts", lines: 1005 },
   { path: "apps/dev/src/core/adr-triage.ts", lines: 821 },
-  { path: "apps/dev/src/core/boot.ts", lines: 1615 },
+  { path: "apps/dev/src/core/boot.ts", lines: 1606 },
   { path: "apps/dev/src/core/config.ts", lines: 1401 },
   { path: "apps/dev/src/core/execution/runtime.ts", lines: 1266 },
   { path: "apps/dev/src/core/feedback.ts", lines: 1206 },
