@@ -19,7 +19,6 @@ import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
-  readRedskilledStatuslineRender,
   stopRedskilledDaemon,
   type RedskilledClientConfig,
 } from "./client.js";
@@ -52,13 +51,9 @@ import {
   type RedskilledReclaimOptions,
 } from "./reclaim.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
-import {
-  parseRedskilledStatuslineFlags,
-  resolveRedskilledStatuslineOptions,
-} from "./statusline-config.js";
-import { renderRedskilledStatuslineAbsence } from "@reddb-io/redskilled-render";
 import { runDashboard } from "./dashboard-command.js";
-import { readStatuslineProject } from "./statusline-project.js";
+import { runStatusline } from "./statusline-command.js";
+export { runStatusline } from "./statusline-command.js";
 import {
   installRedskilledUnit,
   planRedskilledUnit,
@@ -685,73 +680,6 @@ export async function runUnit(
     return 0;
   }
   throw new Error(`unsupported redskilled unit action ${JSON.stringify(action)}: expected install, uninstall or status`);
-}
-
-/**
- * `redskilled statusline [global] [--verbose] [--flags]` — the whole of an agent
- * host's job.
- *
- * The host runs this and prints the one line it writes; it decides nothing about
- * shape, order, width or degradation, because the layout belongs to
- * `@reddb-io/redskilled-render` and to nothing else (ADR 0132 decision 1). The
- * PAYLOAD crosses the socket and the line is drawn here (decision 9): a
- * `statusLine` entry is a shell command, not an MCP client, and what keeps this
- * surface from drifting away from the MCP one is shared code rather than a
- * shared string. Config is read HERE, on the client side, and only decided
- * values reach the render.
- *
- * **It always writes a line and always exits 0.** A statusline that printed
- * nothing when the daemon was down would be indistinguishable from a machine
- * with no Workers — the operator would read an outage as calm — so an
- * unreachable host renders as a stated absence and the diagnosis goes to stderr,
- * where a host's statusline plumbing does not put it on screen.
- */
-export async function runStatusline(
-  args: readonly string[],
-  io: {
-    readonly cwd?: string;
-    /** The session's socket; derived from the environment when absent. */
-    readonly paths?: RedskilledPaths;
-    readonly write?: (line: string) => void;
-    readonly warn?: (line: string) => void;
-    /** How to reach the daemon; injected so a test can pose as a dead host. */
-    readonly client?: RedskilledClientConfig;
-    /** The clock, for the one instant no daemon supplies: an absence's own. */
-    readonly now?: () => string;
-  } = {},
-): Promise<number> {
-  const write = io.write ?? ((line: string) => process.stdout.write(line));
-  const warn = io.warn ?? ((line: string) => process.stderr.write(line));
-
-  const parsed = parseRedskilledStatuslineFlags(args);
-  const project = readStatuslineProject(io.cwd ?? process.cwd());
-  const resolved = resolveRedskilledStatuslineOptions({
-    ...(project.configText == null ? {} : { configText: project.configText }),
-    project: project.label,
-    flags: parsed.flags,
-  });
-  for (const warning of [...resolved.warnings, ...parsed.warnings]) {
-    warn(`redskilled statusline: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);
-  }
-
-  let render;
-  try {
-    render = await readRedskilledStatuslineRender(io.paths ?? resolveRedskilledPaths(), resolved.options, {
-      ...(io.client ?? {}),
-      ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
-    });
-  } catch (err) {
-    warn(`redskilled statusline: ${err instanceof Error ? err.message : String(err)}\n`);
-    render = renderRedskilledStatuslineAbsence({
-      options: resolved.options,
-      generated_at: (io.now ?? (() => new Date().toISOString()))(),
-    });
-  }
-  // Every line the shared render produced, in order — one write, whatever the
-  // taste. With `--verbose` that is the Worker line plus a second line per
-  // Worker; the host still decides nothing about shape.
-  write(`${render.lines.join("\n")}\n`);
-  return 0;
 }
 
 const PROVISION_FLAGS = {

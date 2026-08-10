@@ -314,7 +314,15 @@ describe("statusline command — pure helpers", () => {
   });
 });
 
-describe("statusline command — rendered line", () => {
+// Retired by #3546. These fixtures deliberately run with no daemon and assert
+// that the command reconstructs a line from project files, tracker caches and
+// local Worker state. That fallback is now the defect: it is how `gh issue
+// list`, `gh api .../events` and `gh run view --log-failed` reached every prompt
+// render. The live command contract is pinned in statusline-render-path.test.ts;
+// the shared daemon payload/render details stay pinned in apps/redskilled and
+// packages/redskilled-render. Keep this block as migration history until the
+// legacy collector exports are removed, but never run it as a statusline test.
+describe.skip("statusline command — retired project-collector renderer", () => {
   let root: string;
   let oldNoColor: string | undefined;
 
