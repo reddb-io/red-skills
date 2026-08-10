@@ -55,12 +55,14 @@ import { runDashboard } from "./dashboard-command.js";
 import { runStatusline } from "./statusline-command.js";
 export { runStatusline } from "./statusline-command.js";
 import {
+  healRedskilledUnitDropIn,
   installRedskilledUnit,
   planRedskilledUnit,
   readRedskilledUnitStatus,
   uninstallRedskilledUnit,
   type RedskilledUnitIO,
 } from "./supervision.js";
+import { isRedskilledSupervised } from "./self-replace.js";
 
 /**
  * Usage, as a CONSTANT — the answer owes nothing to the machine it is asked on.
@@ -452,10 +454,11 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       id: `daemon:${process.pid}`,
       phase: "serving",
     });
+    const paths = servePaths(values);
     let daemon;
     try {
       daemon = await startRedskilledDaemon({
-        paths: servePaths(values),
+        paths,
         idleMs: hostSettings.idleMs,
         ceiling: hostSettings.ceiling,
         // The artifact states what it IS. Absent, the daemon reports the version
@@ -487,6 +490,18 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       // does not invent an unexplained disappearance for this orderly refusal.
       deaths.uninstall();
       return 0;
+    }
+    // A supervised boot proves the running invocation works — the one moment a
+    // drop-in poisoned with a relative ExecStart command (#3554) can be
+    // converged to this process's own absolute invocation. Best-effort by
+    // design: a heal that cannot read or write the drop-in must not cost the
+    // boot that would serve clients; the next supervised boot tries again.
+    if (isRedskilledSupervised()) {
+      try {
+        healRedskilledUnitDropIn({ socketPath: paths.socketPath });
+      } catch {
+        // The drop-in stays as it is.
+      }
     }
     // A signalled daemon LETS GO rather than being cut off: the stop path flushes
     // the event lane, releases the lease and unlinks the socket, so the successor
