@@ -1,14 +1,11 @@
-// commands/statusline.ts — native port of scripts/statusline.sh (the /afk
-// statusline aggregator for Claude Code).
+// commands/statusline.ts — the project command adapter for the host-scoped
+// redskilled statusline.
 //
-// This is the IO half: it reads the Claude Code statusline JSON payload from
-// stdin (cwd, model, effort, context window), resolves the project root, honours
-// the per-project `.red/config.yaml` opt-out, reads the git branch, aggregates
-// the live /afk worker state (with a 180 s / 3 min GitHub-count cache, configurable
-// via RED_AFK_STATUSLINE_CACHE_TTL_S / afk.statusline_cache_ttl), and feeds it all
-// into the PURE renderer in core/statusline.ts. The render assembly itself —
-// block order, optional-drop, ` · ` joins, token humanizing — lives entirely in
-// core/statusline.ts and is exercised by tests/statusline.test.ts.
+// The render path resolves the project root and opt-out, then delegates to the
+// daemon client. It performs one local socket read and never runs a project
+// collector, tracker client, or CI-log client. The legacy collector helpers stay
+// exported below for non-render consumers during their migration, but the prompt
+// path cannot reach them (#3546).
 //
 // Invocation: `node bin/afk.mjs statusline "<project-root>"` with the payload on
 // stdin. The root arg wins when it is a real directory (wire it as
@@ -18,30 +15,21 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
+import { runStatusline as runRedskilledStatusline } from "@reddb-io/redskilled/cli";
 import { configFile } from "@reddb-io/shared/red-paths.js";
 import { readBuildInfo } from "@reddb-io/build-info";
 import { decode } from "@reddb-io/toon";
-import { resolveBase } from "../core/base-resolver.js";
 import { readDevBundleCacheState } from "../core/bundle-version.js";
-import { type ClaudeInput, type ProjectInput, type RspStatusInput, type StatuslinePreset } from "../core/statusline.js";
+import { type ProjectInput, type RspStatusInput, type StatuslinePreset } from "../core/statusline.js";
 import { renderStatuslineLegend } from "../core/statusline-legend.js";
-import { renderStatuslineThemed } from "../core/statusline-style.js";
 import { loadConfig, getConfig } from "../core/config.js";
-import { branchLockPath, readLockedBranch } from "../runtime/lock.js";
 import { git as gitExec } from "../runtime/exec.js";
 import { resolveRspConfig } from "../../../rsp/src/config.js";
 import { resolveResidentPaths } from "../../../rsp/src/resident-client.js";
 import {
-  collectStatuslineAfk,
-  collectStatuslineDocs,
-  collectStatuslineFleet,
-  collectStatuslineValidationGate,
-  collectStatuslineRepo,
-  collectStatuslineWorkers,
   inferGitHubRepoSlug,
   refreshStatuslineCountCache,
   refreshStatuslineRepoCache,
-  resolveStatuslineCacheTtl,
 } from "../runtime/wire.js";
 import * as gitx from "../runtime/git.js";
 
@@ -280,45 +268,11 @@ async function resolveRepoBasename(root: string): Promise<string> {
   return basename(dirname(gitCommonDir)) || fallback;
 }
 
-/** Project the Claude Code payload into the renderer's block-2/3 input. */
-function resolveClaude(payload: ClaudePayload): ClaudeInput | undefined {
-  const model = payload.model?.display_name;
-  const effort = payload.effort?.level;
-  const tokens = payload.context_window?.total_input_tokens;
-  const pct = payload.context_window?.used_percentage;
-  // Rate-limit windows (Pro/Max only, after the first API response): pass through
-  // only when present so the renderer stays graceful for non-Pro/Max sessions.
-  const usage5h = payload.rate_limits?.five_hour?.used_percentage;
-  const usage7d = payload.rate_limits?.seven_day?.used_percentage;
-  if (
-    model === undefined &&
-    tokens === undefined &&
-    usage5h === undefined &&
-    usage7d === undefined
-  ) {
-    return undefined;
-  }
-  return {
-    model: model || undefined,
-    effort: effort || undefined,
-    contextTokens: tokens,
-    contextPercent: pct,
-    usage5h,
-    usage7d,
-  };
-}
-
 /**
- * `statusline "<project-root>" [--no-workers]` — read the Claude Code payload on
- * stdin, resolve the root, honour the opt-out, and emit ONE compact line via the
- * pure renderer. Emits nothing (and exits 0) when the per-project opt-out is set.
- *
- * **`--no-workers` renders the repo header and no Worker rows.** The daemon owns
- * the Worker line (ADR 0130 rule 10) and serves it finished, so a host that wants
- * both facts asks each producer for the one it owns rather than letting this
- * command format Workers a second time (#2928). The flag is additive: absent, the
- * command behaves exactly as it did, which keeps the Codex footer and every
- * non-daemon host on one call.
+ * `statusline "<project-root>"` — resolve the root and opt-out, then print the
+ * shared redskilled render. Emits nothing (and exits 0) only when the project
+ * opted out. An unreachable daemon emits its explicit absence line and still
+ * exits 0; it never falls back to project collectors or the tracker.
  */
 export async function statuslineCommand(
   args: string[],
@@ -330,78 +284,31 @@ export async function statuslineCommand(
     stdout.write(`${renderStatuslineLegend()}\n`);
     return 0;
   }
-  const withoutWorkers = args.includes("--no-workers");
-
-  // The first NON-flag word, so a caller may put `--no-workers` before the root
-  // without the flag being resolved as a directory.
-  const rootArg = args.find((arg) => !arg.startsWith("--"));
+  // A real directory is the legacy positional root. Other non-flag words (for
+  // example redskilled's `global` mode) belong to the daemon renderer.
+  const rootArg = args.find((arg) => !arg.startsWith("--") && isDir(arg));
   const text = await readStdin(stdin);
   const payload = parsePayload(text);
   const root = resolveRoot(rootArg, payload, cwd);
 
   if (!statuslineEnabled(root)) return 0;
 
-  const project = await resolveProject(root);
-  const claude = resolveClaude(payload);
-
-  // No `gh repo view` round-trip: like statusline.sh, the gh probes run from the
-  // project root and let gh infer the repo from cwd (repo slug ""). The repo
-  // header stats (line 1) render ALWAYS; the AFK block (line 2) only with live
-  // workers, so both collectors run every render (each cheap + cached).
-  const repoCtx = { root, repo: inferGitHubRepoSlug(root), remote: "origin" };
-  // Resolve the cache TTL ONCE here (env > afk.statusline_cache_ttl config > 180,
-  // #1217) and thread it into both collectors — the hot render path never loads
-  // config a second time per collector.
-  const cfg = loadConfig(configFile(root), { warn: () => undefined });
-  const preset = resolveStatuslinePreset(cfg);
-  const cacheTtlS = resolveStatuslineCacheTtl(process.env, (key) => getConfig(cfg, key));
-  const base = await resolveBase(
-    { issueBody: "" },
-    {
-      readLockedBranch: () => readLockedBranch(branchLockPath(root)),
-      configLockedBranch: getConfig(cfg, "dev.lock.branch"),
-      configTrunk: getConfig(cfg, "dev.trunk"),
-      fetchIssueBody: async () => undefined,
+  // One local socket read, one shared renderer. The daemon document already
+  // carries the Worker rows, repository activity, quota posture, liveness and
+  // staleness; asking project collectors for any of those facts here would put
+  // tracker and CI clients back in the terminal-prompt path (#3546).
+  //
+  // `--no-workers` belonged to the retired two-producer adapter. Once the daemon
+  // line reached Worker-row parity (#3151), suppressing its rows would discard
+  // the document's most useful information, so the compatibility spelling is a
+  // no-op. All other flags are taste owned by the redskilled renderer.
+  const daemonArgs = args.filter((arg) => arg !== rootArg && arg !== "--no-workers");
+  return runRedskilledStatusline(daemonArgs, {
+    cwd: root,
+    write: (line) => {
+      stdout.write(line);
     },
-  );
-  const repoLocBaseRef = `origin/${base}`;
-  // The aggregate AFK block feeds the plain single-line form (NO_COLOR / Codex);
-  // the per-worker records feed the themed multi-line form (Claude Code). Both
-  // read the same worker states — cheap file reads — so the two forms stay in
-  // sync while each renders its own layout.
-  const [repo, docs, afk, rawFleet, workers, rsp, validationGate] = await Promise.all([
-    collectStatuslineRepo(repoCtx, cacheTtlS, repoLocBaseRef),
-    collectStatuslineDocs(repoCtx, base),
-    collectStatuslineAfk(repoCtx, cacheTtlS).then((a) => a ?? undefined),
-    collectStatuslineFleet(repoCtx),
-    // Not merely dropped from the render: not COLLECTED. The rows this produces
-    // are the daemon's to serve, and a collector that still walked every
-    // worker's state file per tick would be paying for a second renderer's
-    // input after the second renderer was taken off the line.
-    withoutWorkers ? Promise.resolve([]) : collectStatuslineWorkers(repoCtx),
-    resolveStatuslineRsp(root),
-    collectStatuslineValidationGate(root),
-  ]);
-  const fleet =
-    rawFleet && rawFleet.bundleVersion !== undefined
-      ? { ...rawFleet, latestBundleVersion: project.latestCachedVersion ?? project.version, pointerVersion: project.pointerVersion }
-      : rawFleet;
-
-  // Theme on by default (the multi-line wine layout: a repo-global header line
-  // then one line per live worker); honour NO_COLOR for plain consumers (the
-  // single-line aggregate — the Codex-footer form), matching the de-facto colour
-  // opt-out. Claude Code exports $COLUMNS (v2.1.153+) as the width budget.
-  const color = !process.env.NO_COLOR;
-  const columns = Number.parseInt(process.env.COLUMNS ?? "", 10);
-  const nowS = Math.floor(Date.now() / 1000);
-  const line = renderStatuslineThemed({ project, claude, repo, docs, fleet, afk, rsp, validationGate }, color, {
-    columns: Number.isFinite(columns) && columns > 0 ? columns : undefined,
-    workers,
-    now: nowS,
-    preset,
   });
-  stdout.write(`${line}\n`);
-  return 0;
 }
 
 export async function statuslineRefreshCountsCommand(args: string[], cwd = process.cwd()): Promise<number> {
