@@ -230,3 +230,71 @@ describe("statusline refresh lock — TOON round-trip seam", () => {
     }
   });
 });
+
+// The repo collector used to AWAIT its stale refresh, putting up to 5s of `gh`
+// on the path that redraws a terminal prompt — measured at 8s per render against
+// a 15-minute TTL. Stale now means: serve the old value, date it, and hand the
+// network to the same detached child the AFK collector has always used.
+describe("collectStatuslineRepo — stale cache never blocks the render (#3546)", () => {
+  const seedRepoCache = (root: string, ts: number, baseRef: string): void => {
+    const cachePath = afkPaths(root).statuslineRepoCachePath;
+    mkdirSync(dirname(cachePath), { recursive: true });
+    writeFileSync(
+      cachePath,
+      encode({ baseRef, openPrs: 3, todayPrs: 1, openIssues: 7, localAdded: 4, localRemoved: 2, ts }),
+      "utf8",
+    );
+  };
+
+  it("serves the stale counts immediately and spawns the detached refresh with the base ref", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
+    try {
+      const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 60;
+      seedRepoCache(root, staleTs, "origin/main");
+      const rec = detachedSpawnRecorder();
+
+      const started = Date.now();
+      const repo = await collectStatuslineRepo(
+        { root, repo: "o/r", remote: "origin" },
+        STATUSLINE_CACHE_TTL_S,
+        "origin/main",
+        { spawn: rec.spawn, argv1: "/tmp/afk.mjs" },
+      );
+      const elapsedMs = Date.now() - started;
+
+      // The old values render now; their age travels out instead of a wait.
+      expect(repo.openPrs).toBe(3);
+      expect(repo.openIssues).toBe(7);
+      expect(repo.cacheAgeS).toBeGreaterThanOrEqual(STATUSLINE_CACHE_TTL_S);
+      // One detached child, carrying the base ref so it can rewrite BOTH caches.
+      expect(rec.calls).toHaveLength(1);
+      expect(rec.calls[0]?.args).toContain("--base-ref");
+      expect(rec.calls[0]?.args).toContain("origin/main");
+      // No network wait on the render path: far under the 5s cold budget.
+      expect(elapsedMs).toBeLessThan(1000);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("a fresh cache spawns nothing and reports no age", async () => {
+    const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
+    try {
+      seedRepoCache(root, nowS(), "origin/main");
+      const rec = detachedSpawnRecorder();
+
+      const repo = await collectStatuslineRepo(
+        { root, repo: "o/r", remote: "origin" },
+        STATUSLINE_CACHE_TTL_S,
+        "origin/main",
+        { spawn: rec.spawn, argv1: "/tmp/afk.mjs" },
+      );
+
+      expect(repo.openPrs).toBe(3);
+      expect(repo.cacheAgeS).toBeUndefined();
+      expect(rec.calls).toHaveLength(0);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
