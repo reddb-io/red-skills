@@ -133,3 +133,46 @@ export const baseFreshnessProbe: OperationalProbe = {
   run: runBaseFreshnessProbe,
   applyFix: applyBaseFreshnessFix,
 };
+
+/**
+ * The guard refusals a Worker session may ignore: the operator's own WIP.
+ *
+ * Both name one fact — the primary checkout holds uncommitted work — and differ
+ * only in how much the guard could say about it. `clean-tree` is the tree it
+ * could not read or found merely dirty; `dirt-collision` is the sharper reading,
+ * where a dirty path also moved upstream. Neither reaches a Worker, which
+ * branches from the fork SHA the host granted (ADR 0138) and never from the
+ * operator's local trunk.
+ *
+ * Listing only `clean-tree` cost four Workers and a ten-minute birth-breaker
+ * cooldown on 2026-08-08: two dirty files in the primary checkout, on a branch
+ * none of those Workers would touch, killed three of them at boot in seventeen
+ * seconds. The exemption already claimed to cover "the primary has uncommitted
+ * WIP"; it just did not name the second way the guard says so.
+ *
+ * Deliberately NOT here: `on-trunk`, `ancestor`, `superseded-commits`, `fetch`
+ * and `merge`. Those are not WIP, and widening past the stated intent is how an
+ * exemption stops meaning anything.
+ */
+const WORKER_EXEMPT_GUARD_CONDITIONS: ReadonlySet<string> = new Set([
+  "clean-tree",
+  "dirt-collision",
+]);
+
+/**
+ * May a Worker session proceed past this red base-freshness finding? PURE.
+ *
+ * It lives beside the probe rather than inside `boot.ts` because it is a fact
+ * about base freshness, not about booting: the probe owns what the finding means
+ * and therefore owns which readings of it a Worker may ignore.
+ */
+export function isWorkerExemptBaseFreshnessFinding(finding: {
+  readonly id: string;
+  readonly data?: unknown;
+}): boolean {
+  if (finding.id !== BASE_FRESHNESS_PROBE_ID) return false;
+  const data = finding.data as Partial<BaseFreshnessProbeData> | undefined;
+  if (data?.finding !== "local-trunk-behind-origin") return false;
+  if (data.guard?.guard === "passed") return true;
+  return WORKER_EXEMPT_GUARD_CONDITIONS.has(data.guard?.failedCondition ?? "");
+}

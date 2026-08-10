@@ -18,6 +18,7 @@
 import { planGithubRestRead } from "@reddb-io/github";
 import { scrubOutbound } from "../runtime/outbound-redaction.js";
 import type { GithubMergeRead } from "./github-merge-read.js";
+import { retryAfterOrphanedIndexLock } from "./index-lock.js";
 import {
   classifyDirtyTree,
   classifyDirtCollision,
@@ -2020,81 +2021,6 @@ async function supersedeDirtyPaths(
     }
   }
   return { ok: true, evidence: "" };
-}
-
-interface IndexLockRetry {
-  readonly result: ExecResult;
-  readonly reclaimed: boolean;
-  readonly refusal?: string;
-}
-
-function failedOnIndexLock(result: ExecResult): boolean {
-  return result.code !== 0 && /(?:^|[/\\])index\.lock(?:['":\s]|$)/i.test(`${result.stderr}\n${result.stdout}`);
-}
-
-/**
- * Retry one index-writing Git command after the only safe lock reclamation:
- * the lock is zero bytes and `fuser` reports that no live process has it open.
- * `fuser` is the kernel-backed ownership answer; an absent tool or ambiguous
- * result refuses closed. A new Git process cannot race the unlink by adopting
- * this existing lock — Git acquires it with exclusive creation.
- */
-async function retryAfterOrphanedIndexLock(
-  exec: Exec,
-  gitRepo: string,
-  args: string[],
-): Promise<IndexLockRetry> {
-  const first = await exec(args);
-  if (!failedOnIndexLock(first)) return { result: first, reclaimed: false };
-
-  const lockPath = `${gitRepo}/.git/index.lock`;
-  const measured = await exec(["stat", "-c", "%s", lockPath]);
-  if (measured.code !== 0) {
-    // The owner may have completed between Git's refusal and inspection. With
-    // no lock left to reclaim, one bounded retry is safe and avoids a false halt.
-    return { result: await exec(args), reclaimed: false };
-  }
-  const size = measured.stdout.trim();
-  if (!/^\d+$/.test(size)) {
-    return {
-      result: first,
-      reclaimed: false,
-      refusal: "condition failed: index-lock (could not determine .git/index.lock size)",
-    };
-  }
-  if (size !== "0") {
-    return {
-      result: first,
-      reclaimed: false,
-      refusal: `condition failed: index-lock (non-empty .git/index.lock has ${size} byte(s))`,
-    };
-  }
-
-  const held = await exec(["fuser", "--silent", lockPath]);
-  if (held.code === 0) {
-    return {
-      result: first,
-      reclaimed: false,
-      refusal: "condition failed: index-lock (empty .git/index.lock is held by a live process)",
-    };
-  }
-  if (held.code !== 1) {
-    return {
-      result: first,
-      reclaimed: false,
-      refusal: "condition failed: index-lock (could not prove .git/index.lock is unheld)",
-    };
-  }
-
-  const removed = await exec(["rm", "--", lockPath]);
-  if (removed.code !== 0) {
-    return {
-      result: first,
-      reclaimed: false,
-      refusal: "condition failed: index-lock (could not reclaim empty unheld .git/index.lock)",
-    };
-  }
-  return { result: await exec(args), reclaimed: true };
 }
 
 export async function fastForwardLocalTarget(
