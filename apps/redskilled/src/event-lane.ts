@@ -188,6 +188,9 @@ export const REDSKILLED_EVENT_LANE_FILE = "redskilled.log.toonl";
 /** The most history one daemon generation asks every successor to replay. */
 export const DEFAULT_REDSKILLED_EVENT_LANE_MAX_BYTES = 4 * 1024 * 1024;
 
+/** Keep half a generation free so a full lane amortizes its next rewrite. */
+const REDSKILLED_EVENT_LANE_COMPACTION_TARGET_RATIO = 0.5;
+
 export interface RecordEventInput {
   readonly event: RedskilledEventKind;
   readonly worker: RedskilledWorkerView;
@@ -403,9 +406,11 @@ export function createRedskilledEventLane(
     const write = tail.then(async () => {
       await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       await dropIncompleteTail(path);
-      await appendFile(path, emitter.push(toRow(event)), { encoding: "utf8", mode: 0o600 });
-      if ((await stat(path)).size > maxBytes) {
-        await rotateEventLane(path, maxBytes);
+      const encoded = emitter.push(toRow(event));
+      if (await appendFits(path, encoded, maxBytes)) {
+        await appendFile(path, encoded, { encoding: "utf8", mode: 0o600 });
+      } else {
+        await rotateEventLane(path, maxBytes, event);
         // The compact generation has its own header. A new emitter makes the
         // next append a complete segment even when its schema changes later.
         emitter = encodeLines({ trailer: false });
@@ -429,10 +434,33 @@ export function createRedskilledEventLane(
   };
 }
 
-/** Atomically replace an oversized generation with the boot-complete suffix. */
-async function rotateEventLane(path: string, maxBytes: number): Promise<void> {
-  const events = await readRedskilledEvents(path);
-  const compact = compactEventLane(events, maxBytes);
+/** Whether one encoded append stays inside the hard generation ceiling. */
+async function appendFits(path: string, encoded: string, maxBytes: number): Promise<boolean> {
+  let currentBytes = 0;
+  try {
+    currentBytes = (await stat(path)).size;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return currentBytes + Buffer.byteLength(encoded) <= maxBytes;
+}
+
+/** Atomically replace a full generation, including the append that filled it. */
+async function rotateEventLane(
+  path: string,
+  maxBytes: number,
+  incoming: RedskilledHostEvent,
+): Promise<void> {
+  const events = [...await readRedskilledEvents(path), incoming];
+  const requiredIndices = new Set([events.length - 1]);
+  const targetBytes = Math.floor(maxBytes * REDSKILLED_EVENT_LANE_COMPACTION_TARGET_RATIO);
+  let compact: RedskilledHostEvent[];
+  try {
+    compact = compactEventLane(events, targetBytes, requiredIndices);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith("redskilled event-lane baseline exceeds")) throw error;
+    compact = compactEventLane(events, maxBytes, requiredIndices);
+  }
   const temporary = `${path}.rotate-${process.pid}`;
   try {
     await writeFile(temporary, encodeEventLane(compact), { encoding: "utf8", mode: 0o600 });
@@ -453,9 +481,10 @@ async function rotateEventLane(path: string, maxBytes: number): Promise<void> {
 export function compactEventLane(
   events: readonly RedskilledHostEvent[],
   maxBytes: number,
+  requiredIndices: ReadonlySet<number> = new Set(),
 ): RedskilledHostEvent[] {
   const liveIds = new Set(rehydrateWorkers(events).map((worker) => worker.worker_id));
-  const pinnedIndices = new Set<number>();
+  const pinnedIndices = new Set(requiredIndices);
   for (let index = events.length - 1; index >= 0 && liveIds.size > 0; index -= 1) {
     const event = events[index]!;
     if (event.kind !== "worker-birth" || !liveIds.has(event.worker_id)) continue;
