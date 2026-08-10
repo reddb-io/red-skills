@@ -496,7 +496,11 @@ describe("statusline repo slug inference", () => {
 // ---------------------------------------------------------------------------
 
 describe("collectStatuslineRepo — cache discipline", () => {
-  it("stale cache: awaits gh + rewrites cache before returning", async () => {
+  // #3546 changed the stale contract: the render serves the old value and a
+  // DETACHED child rewrites the cache. The render process itself must leave the
+  // file untouched — awaiting the rewrite here is exactly the prompt freeze the
+  // change removed (8s measured, once per TTL, per session).
+  it("stale cache: serves the old value and leaves the rewrite to the detached child", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
     try {
       const tmpDir = join(root, ".red", "tmp");
@@ -507,12 +511,23 @@ describe("collectStatuslineRepo — cache discipline", () => {
       const staleTs = nowS() - STATUSLINE_CACHE_TTL_S - 10;
       writeFileSync(cachePath, JSON.stringify({ openPrs: 3, openIssues: 5, ts: staleTs }), "utf8");
 
-      await withFakeGh(() => collectStatuslineRepo({ root, repo: "", remote: "origin" }));
+      const rec = detachedSpawnRecorder();
+      const repo = await withFakeGh(() =>
+        collectStatuslineRepo({ root, repo: "o/r", remote: "origin" }, undefined, "origin/main", {
+          spawn: rec.spawn,
+          argv1: "/tmp/afk.mjs",
+        }),
+      );
 
-      const raw = readFileSync(cachePath, "utf8");
-      expect(raw.trimStart().startsWith("{")).toBe(false);
-      const cache = decode(raw) as { openPrs: number; openIssues: number; ts: number };
-      expect(cache.ts).toBeGreaterThan(staleTs); // ts advanced beyond the stale value
+      // Old values render now, dated; the file is untouched by the render process.
+      expect(repo.openPrs).toBe(3);
+      expect(repo.cacheAgeS).toBeGreaterThanOrEqual(STATUSLINE_CACHE_TTL_S);
+      // Still the exact JSON we seeded: the render process never rewrote it.
+      const cache = JSON.parse(readFileSync(cachePath, "utf8")) as { ts: number };
+      expect(cache.ts).toBe(staleTs);
+      // Exactly one child, carrying the base ref so it rewrites BOTH caches.
+      expect(rec.calls).toHaveLength(1);
+      expect(rec.calls[0]?.args).toContain("--base-ref");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -622,7 +637,10 @@ describe("collectStatuslineRepo — cache discipline", () => {
     }
   });
 
-  it("stale cache: folds the local diffstat into the same refresh (#1178)", async () => {
+  // #1178 folded the diffstat into the network refresh; #3546 moved that whole
+  // refresh into the detached child. The fold is preserved there: one child,
+  // one refresh, counts and diffstat together (`refreshStatuslineRepoCache`).
+  it("stale cache: the diffstat travels with the refresh, in the child (#1178, #3546)", async () => {
     const root = mkdtempSync(join(tmpdir(), "afk-sl-repo-"));
     try {
       const tmpDir = join(root, ".red", "tmp");
@@ -637,18 +655,21 @@ describe("collectStatuslineRepo — cache discipline", () => {
         "utf8",
       );
 
-      await withFakeGh(() => collectStatuslineRepo({ root, repo: "", remote: "origin" }));
+      const rec = detachedSpawnRecorder();
+      const repo = await withFakeGh(() =>
+        collectStatuslineRepo({ root, repo: "o/r", remote: "origin" }, undefined, "origin/main", {
+          spawn: rec.spawn,
+          argv1: "/tmp/afk.mjs",
+        }),
+      );
 
-      const cache = readToonCache<{
-        localAdded: number;
-        localRemoved: number;
-        ts: number;
-      }>(cachePath);
-      expect(cache.ts).toBeGreaterThan(staleTs); // refreshed
-      // The diff fields are rewritten by the same refresh (root is not a git
-      // repo → freshly-measured 0/0, overwriting the stale 99/11).
-      expect(cache.localAdded).toBe(0);
-      expect(cache.localRemoved).toBe(0);
+      // The stale diff fields render as-is; the child owns the re-measure.
+      expect(repo.localAdded).toBe(99);
+      expect(repo.localRemoved).toBe(11);
+      expect(rec.calls).toHaveLength(1);
+      // The child gets the base ref, which is what the diffstat is measured against.
+      const argv = rec.calls[0]?.args ?? [];
+      expect(argv[argv.indexOf("--base-ref") + 1]).toBe("origin/main");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
