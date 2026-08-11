@@ -145,6 +145,38 @@ describe("the orphan reaper process census", () => {
 });
 
 describe("stamped orphan teardown", () => {
+  it("does not let an injected census authorize a non-arbiter daemon", async () => {
+    const root = await scratch("redskilled-orphan-authority-");
+    const paths = resolveRedskilledPaths({
+      env: { REDSKILLED_SESSION: `test:${root}` },
+      runtimeDir: root,
+      machineClaimPath: join(root, "sandbox-machine-claim.toon"),
+    });
+    const mutations = { census: 0, adopt: 0, kill: 0 };
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      unitInventory: () => [],
+      orphanReaperMs: 0,
+      orphanCensus: async () => {
+        mutations.census += 1;
+        return [processRow()];
+      },
+      orphanStarttime: () => {
+        mutations.adopt += 1;
+        return "1200";
+      },
+      orphanKillGroup: async () => {
+        mutations.kill += 1;
+        return true;
+      },
+    });
+    daemons.push(daemon);
+
+    await expect(daemon.sweepOrphanProcesses()).resolves.toEqual({ adopted: 0, reaped: 0, suspects: 0 });
+    expect(mutations).toEqual({ census: 0, adopt: 0, kill: 0 });
+  });
+
   it("refuses to signal when the leader starttime changed after the census", async () => {
     const signalled: number[] = [];
     await expect(reapStampedOrphan(processRow(), {
