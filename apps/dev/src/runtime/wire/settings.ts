@@ -259,7 +259,7 @@ export function makeRunAgent(
       branch: input.branch,
       attemptDir: laneAttemptDir,
     });
-    return runWithQuiescentWorkerLogTrim(input.logPath, () => runAgent(deps, {
+    const invoke = () => runAgent(deps, {
       ...input,
       sandboxMode: effectiveSandbox,
       // Stable container image (#2340). Per-call input wins (the untrusted-author
@@ -289,6 +289,9 @@ export function makeRunAgent(
             inspectTree: () => inspectProcessTreeNative(process.pid),
           }
         : {}),
-    }));
+    });
+    return input.logPath === undefined
+      ? invoke()
+      : runWithQuiescentWorkerLogTrim(input.logPath, invoke);
   };
 }
