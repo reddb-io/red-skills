@@ -6,6 +6,7 @@ import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { createRedskilledEventLane, readRedskilledEvents } from "../src/event-lane.js";
 import {
   censusRedskilledProcesses,
+  createRedskilledOrphanReaperRuntime,
   DEFAULT_REDSKILLED_ORPHAN_REAPER_MS,
   reapStampedOrphan,
   redskilledOrphanReaperMode,
@@ -145,6 +146,46 @@ describe("the orphan reaper process census", () => {
 });
 
 describe("stamped orphan teardown", () => {
+  it("keeps report mode free of daemon-map, signal and event-lane mutations", async () => {
+    const mutations = { adopt: 0, kill: 0, laneWrites: 0 };
+    const runtime = createRedskilledOrphanReaperRuntime({
+      authorized: true,
+      interval_ms: 0,
+      mode: "report",
+      census: () => [
+        processRow(),
+        processRow({ worker_id: "hLIVE", pid: 4_243, pgid: 4_243, age_ms: 1_000 }),
+      ],
+      clock: () => "2026-08-11T10:10:00.000Z",
+      held_worker_ids: () => [],
+      live_births: () => [{
+        worker_id: "hLIVE",
+        project_label: "acme/widgets",
+        pid: 4_000,
+        started_at: "2026-08-11T10:00:00.000Z",
+        workspace_path: "/old/workspace",
+        isolated: true,
+        warnings: [],
+      }],
+      read_starttime: () => "1200",
+      kill_group: async () => {
+        mutations.kill += 1;
+        return true;
+      },
+      report: () => undefined,
+      adopt: (_worker, recordBirth) => {
+        mutations.adopt += 1;
+        if (recordBirth) mutations.laneWrites += 1;
+      },
+      record_reaped: () => {
+        mutations.laneWrites += 1;
+      },
+    });
+
+    await expect(runtime.sweep()).resolves.toEqual({ adopted: 0, reaped: 0, suspects: 0 });
+    expect(mutations).toEqual({ adopt: 0, kill: 0, laneWrites: 0 });
+  });
+
   it("does not let an injected census authorize a non-arbiter daemon", async () => {
     const root = await scratch("redskilled-orphan-authority-");
     const paths = resolveRedskilledPaths({
