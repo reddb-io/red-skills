@@ -22,7 +22,7 @@ import { randomInt } from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { encodeLines } from "@reddb-io/toon";
+import { encodeToonlLines } from "@reddb-io/toon";
 import { pathWithEngineNode } from "@reddb-io/shared/engine-node.js";
 import type { RedskilledAdmissionVerdict } from "./admission.js";
 import type { RedskilledWorkerView } from "./host-state.js";
@@ -213,7 +213,7 @@ function attachWorkerLog(child: ChildProcess, logPath: string): void {
     let pending = "";
     const flush = (line: string): void => {
       try {
-        appendFileSync(logPath, encodeLines().push({ at: new Date().toISOString(), kind, msg: line }), "utf8");
+        appendFileSync(logPath, encodeToonlLines().push({ at: new Date().toISOString(), kind, msg: line }), "utf8");
       } catch {
         // Losing evidence must never cost the Worker.
       }
