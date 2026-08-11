@@ -1,8 +1,15 @@
 import { randomUUID, createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { rspStateDir } from "@reddb-io/shared/red-paths.js";
+import {
+  DEFAULT_LANE_RETENTION_TARGET_RATIO,
+  LANE_RETENTION_REGISTRY,
+  laneOverCeilingSync,
+  replaceLaneAtomicallySync,
+  type LaneRetentionPolicy,
+} from "@reddb-io/shared/lane-retention.js";
 import { encodeLines, parseRecords, type ToonlLineEmitter } from "@reddb-io/toon";
 import {
   RSP_ACCOUNTING_EVENTS_COLLECTION,
@@ -67,20 +74,37 @@ export function telemetrySpoolCorrectionsPath(rootDir: string): string {
   return join(rspStateDir(rootDir), RSP_TELEMETRY_SPOOL_CORRECTIONS_FILE);
 }
 
-export async function appendTelemetryEvent(rootDir: string, event: RspTelemetryEvent): Promise<void> {
-  appendTelemetryEventSync(rootDir, event);
+export async function appendTelemetryEvent(
+  rootDir: string,
+  event: RspTelemetryEvent,
+  retention: LaneRetentionPolicy = LANE_RETENTION_REGISTRY["rsp-telemetry-spool"],
+): Promise<void> {
+  appendTelemetryEventSync(rootDir, event, retention);
 }
 
-export function appendTelemetryEventSync(rootDir: string, event: RspTelemetryEvent): void {
+export function appendTelemetryEventSync(
+  rootDir: string,
+  event: RspTelemetryEvent,
+  retention: LaneRetentionPolicy = LANE_RETENTION_REGISTRY["rsp-telemetry-spool"],
+): void {
   try {
     const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
     if (!resolvedRoot) return;
     const path = telemetrySpoolPath(resolvedRoot);
     mkdirSync(dirname(path), { recursive: true });
-    appendFileSync(path, formatSpoolRow({
+    const line = formatSpoolRow({
       spool_id: randomUUID(),
       event: compactTelemetryEventForSpool(event),
-    }), { encoding: "utf8", mode: 0o600 });
+    });
+    const droppedBytes = trimLaneBeforeAppend(
+      path,
+      line,
+      retention,
+      parseSpoolEntries,
+      formatSpoolRow,
+    );
+    appendFileSync(path, line, { encoding: "utf8", mode: 0o600 });
+    if (droppedBytes > 0) appendRetentionCorrection(resolvedRoot, "telemetry spool retention", droppedBytes);
   } catch {}
 }
 
@@ -248,24 +272,100 @@ function formatSpoolRow(row: RspTelemetrySpoolEntry): string {
   return spoolEmitter.push(spoolEntryToToonlRow(row));
 }
 
-function appendCorrection(rootDir: string, correction: RspTelemetryCorrectionRow): void {
+function appendCorrection(rootDir: string, correction: RspTelemetryCorrectionRow, reportRetention = true): void {
   try {
     const resolvedRoot = resolveRootForTelemetryWrite(rootDir);
     if (!resolvedRoot) return;
     const path = telemetrySpoolCorrectionsPath(resolvedRoot);
     mkdirSync(dirname(path), { recursive: true });
-    const correctionEmitter: ToonlLineEmitter = encodeLines();
-    appendFileSync(path, correctionEmitter.push({
-      correction_id: correction.correction_id,
-      target_spool_id: correction.target_spool_id,
-      action: correction.action,
-      created_at: correction.created_at,
-      event_json: correction.event_json ?? null,
-    }), {
+    const line = formatCorrectionRow(correction);
+    const droppedBytes = trimLaneBeforeAppend(
+      path,
+      line,
+      LANE_RETENTION_REGISTRY["rsp-telemetry-corrections"],
+      parseCorrectionRows,
+      formatCorrectionRow,
+    );
+    appendFileSync(path, line, {
       encoding: "utf8",
       mode: 0o600,
     });
+    if (reportRetention && droppedBytes > 0) {
+      appendRetentionCorrection(resolvedRoot, "telemetry corrections retention", droppedBytes, false);
+    }
   } catch {}
+}
+
+function appendRetentionCorrection(
+  rootDir: string,
+  reason: string,
+  bytes: number,
+  reportRetention = true,
+): void {
+  const spoolId = randomUUID();
+  appendCorrection(rootDir, {
+    correction_id: randomUUID(),
+    target_spool_id: spoolId,
+    action: "retry",
+    created_at: new Date().toISOString(),
+    event_json: JSON.stringify({
+      collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+      id: spoolId,
+      created_at: new Date().toISOString(),
+      reason,
+      bytes,
+    } satisfies RspTelemetryEvent),
+  }, reportRetention);
+}
+
+function formatCorrectionRow(correction: RspTelemetryCorrectionRow): string {
+  const correctionEmitter: ToonlLineEmitter = encodeLines();
+  return correctionEmitter.push({
+    correction_id: correction.correction_id,
+    target_spool_id: correction.target_spool_id,
+    action: correction.action,
+    created_at: correction.created_at,
+    event_json: correction.event_json ?? null,
+  });
+}
+
+function trimLaneBeforeAppend<Row>(
+  path: string,
+  incoming: string,
+  policy: LaneRetentionPolicy,
+  parse: (text: string) => Row[],
+  format: (row: Row) => string,
+): number {
+  const incomingBytes = Buffer.byteLength(incoming);
+  if (!laneOverCeilingSync(path, incomingBytes, policy)) return 0;
+
+  let original: string;
+  try {
+    original = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
+
+  const maxBytes = policy.maxBytes;
+  if (maxBytes === undefined) return 0;
+  const targetBytes = Math.max(
+    0,
+    Math.floor(maxBytes * (policy.targetRatio ?? DEFAULT_LANE_RETENTION_TARGET_RATIO)) - incomingBytes,
+  );
+  const rows = parse(original);
+  const kept: string[] = [];
+  let keptBytes = 0;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const encoded = format(rows[index]!);
+    const encodedBytes = Buffer.byteLength(encoded);
+    if (keptBytes + encodedBytes > targetBytes) break;
+    kept.unshift(encoded);
+    keptBytes += encodedBytes;
+  }
+  const replacement = kept.join("");
+  replaceLaneAtomicallySync(path, replacement);
+  return Math.max(0, Buffer.byteLength(original) - Buffer.byteLength(replacement));
 }
 
 async function renameActiveSpools(rootDir: string): Promise<string[]> {

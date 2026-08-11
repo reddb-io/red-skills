@@ -88,6 +88,35 @@ describe("rsp telemetry spool", () => {
     })).resolves.toBeUndefined();
   });
 
+  it("trims an overflowing spool and corrects the drain with the dropped byte count", async () => {
+    const root = await tempRoot();
+    const retention = { maxBytes: 1_024 };
+
+    for (let index = 0; index < 12; index += 1) {
+      await appendTelemetryEvent(root, {
+        collection: RSP_TELEMETRY_INVOCATIONS_COLLECTION,
+        id: `bounded-${index}`,
+        command: `git log ${"x".repeat(120)}`,
+      }, retention);
+    }
+
+    const rows = await readSpoolRows(root);
+    expect(rows.some((row) => row.event && (row.event as { id?: string }).id === "bounded-0")).toBe(false);
+    expect(rows.at(-1)).toMatchObject({ event: { id: "bounded-11" } });
+    expect(Buffer.byteLength(await readFile(telemetrySpoolPath(root), "utf8"))).toBeLessThanOrEqual(retention.maxBytes);
+    await expect(readCorrectionRows(root)).resolves.toContainEqual(expect.objectContaining({
+      action: "retry",
+      event: expect.objectContaining({
+        collection: RSP_TELEMETRY_DEGRADATIONS_COLLECTION,
+        reason: "telemetry spool retention",
+        bytes: expect.any(Number),
+      }),
+    }));
+    const correction = (await readCorrectionRows(root)).find((row) => row.event !== undefined);
+    if (correction === undefined) throw new Error("no correction row carrying an event was written");
+    expect((correction.event as { bytes?: number }).bytes).toBeGreaterThan(0);
+  });
+
   it("keeps spool lines that do not drain durably", async () => {
     const root = await tempRoot();
     await appendTelemetryEvent(root, {
