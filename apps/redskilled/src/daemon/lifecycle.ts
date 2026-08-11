@@ -770,6 +770,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         return queueTransport;
       },
       now: clock(),
+      previous: lastActivity,
     });
   }
 
