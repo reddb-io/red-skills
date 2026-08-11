@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
 import { join } from "node:path";
-import { createGithubAttributionLedger, createGithubClient } from "@reddb-io/github";
+import { createGithubAttributionLedger, createGithubBalanceStore, createGithubClient } from "@reddb-io/github";
 import { stateDir } from "@reddb-io/shared/red-paths.js";
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 
 import { createGithubMergeRead, type GithubMergeRead } from "../core/github-merge-read.js";
 
@@ -38,6 +40,9 @@ export function createDevGithubMergeRead(
   const attribution = createGithubAttributionLedger({
     path: join(stateDir(root), "github", "spend.toonl"),
   });
+  const balance = createGithubBalanceStore({
+    path: join(redskilledHomeDir(homedir()), "state", "github", "balance.toon"),
+  });
 
   // The credential is resolved PER READ, not at construction. Wiring the deps is
   // not a GitHub operation: demanding a token to build the port made every
@@ -56,7 +61,7 @@ export function createDevGithubMergeRead(
     if (token === "") {
       throw new Error("GitHub merge reads require an authenticated tracker credential");
     }
-    return createGithubClient({ token, attribution });
+    return createGithubClient({ token, attribution, balance: () => balance.read() });
   };
 
   const routed = (): GithubMergeRead => createGithubMergeRead(client(), actor);
