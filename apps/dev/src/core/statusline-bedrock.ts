@@ -70,7 +70,8 @@ export function renderBedrockProjectBlock(project: ProjectInput): string {
 }
 
 /**
- * The bedrock segment, blocks joined by ` · ` exactly like the rest of the line.
+ * The bedrock segment, space-separated so the only ` · ` on its header is
+ * the boundary before the daemon tail.
  * Never empty: the project block always renders, so a daemon-absent invocation
  * still puts the operator's own facts on screen.
  */
@@ -79,12 +80,12 @@ export function renderStatuslineBedrock(input: StatuslineBedrockInput): string {
   const model = renderModelBlock(input.claude);
   if (model !== null) sections.push(model);
   const context = renderContextBlock(input.claude);
-  if (context !== null) sections.push(context);
+  if (context !== null) sections.push(`ctx=${context}`);
   const usage = renderUsageBlock(input.claude);
   if (usage !== null) sections.push(usage);
   const localDiff = renderLocalDiffBlock(input.localDiff);
   if (localDiff !== null) sections.push(localDiff);
-  return sections.join(" · ");
+  return sections.join(" ");
 }
 
 /**
