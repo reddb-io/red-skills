@@ -10,7 +10,9 @@
  * format bug still has a voice.
  */
 
-import { parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { parseRecords } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 
 export interface RedskilledDecodedLane {
   readonly records: ToonlRecord[];

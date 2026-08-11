@@ -53,7 +53,7 @@ export function createRedskilledRegistrationIntentStore(
       version: 1,
       registrations: [...registrations],
     };
-    await writeFile(temporary, `${encode(snapshot as unknown as JsonValue, { keyedMapCollapse: true })}\n`, {
+    await writeFile(temporary, `${encode(snapshot as unknown as JsonValue)}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });

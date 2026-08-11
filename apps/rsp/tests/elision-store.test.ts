@@ -36,13 +36,13 @@ describe("RspElisionStore", () => {
     const storePath = join(root, "store.rdb");
     const now = new Date("2026-07-10T12:00:00.000Z");
     const original = Buffer.from("legacy elision");
-    const handle = "el:legacy";
+    const handle = "el:123456789abc";
     await writeFile(
       storePath,
       `${JSON.stringify({
         version: 1,
         records: {
-          [handle]: {
+          "record:123456789abc": {
             collection: RSP_ELISION_COLLECTION,
             handle,
             original: original.toString("base64"),
@@ -61,7 +61,7 @@ describe("RspElisionStore", () => {
           version: 1,
           records: [{
             handle,
-            key: "legacy",
+            key: "record:123456789abc",
             bytes: original.length,
             raw_bytes: original.length,
             command: "node legacy.js",

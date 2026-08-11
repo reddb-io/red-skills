@@ -577,6 +577,7 @@ function handleHungOldResidentSocket(socket: Socket, version: string): void {
     buffer += chunk;
     const newline = buffer.indexOf("\n");
     if (newline < 0) return;
+    if (!buffer.slice(0, newline).trimStart().startsWith("{")) return void socket.end(`${JSON.stringify({ id: randomUUID(), ok: false, error: "JSON expected" })}\n`);
     const request = JSON.parse(buffer.slice(0, newline)) as { id?: string; op?: string };
     if (request.op === "ping") {
       socket.write(`${JSON.stringify({ id: request.id, ok: true, value: { pong: true, version } })}\n`, () => {});
@@ -584,7 +585,6 @@ function handleHungOldResidentSocket(socket: Socket, version: string): void {
     }
   });
 }
-
 async function readTelemetryRecords(storeUri: string, collection: string): Promise<unknown[]> {
   const db = await connect(storeUri);
   try {

@@ -8,8 +8,5 @@ import { encode, type JsonValue } from "@reddb-io/toon";
  * encoder owns quoting, indentation, and nested tabular compaction.
  */
 export function encodeRedskilledMcpToon(value: unknown): string {
-  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue, {
-    keyedMapCollapse: true,
-    nestedTabularHeaders: true,
-  });
+  return encode(JSON.parse(JSON.stringify(value ?? null)) as JsonValue);
 }

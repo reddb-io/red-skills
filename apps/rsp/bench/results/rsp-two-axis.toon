@@ -31,12 +31,12 @@ filters[15]:
       source: recorded
     brief:
       median_delta_pct: 61.9
-      p90_delta_pct: 83.6
+      p90_delta_pct: 84.2
       fidelity_pass_rate_pct: 100
       source: measured
     terse:
       median_delta_pct: 57.7
-      p90_delta_pct: 83.6
+      p90_delta_pct: 84.2
       fidelity_pass_rate_pct: 100
       source: measured
     rtk:
@@ -49,42 +49,16 @@ filters[15]:
       p90_delta_pct: 2.7
       fidelity_pass_rate_pct: 100
       source: recorded
-    oracle_capture:
-      raw:
-        token_count: 478
-        capture_pct: 0
-        source: recorded
-      rsp:
-        token_count: 203
-        capture_pct: 100
-        source: measured
-      terse:
-        token_count: 204
-        capture_pct: 99.6
-        source: measured
-      rtk:
-        token_count: 132
-        capture_pct: 65
-        source: recorded
-      headroom:
-        token_count: 468
-        capture_pct: 3.6
-        source: recorded
-      oracle_ceiling:
-        token_count: 203
-        capture_pct: 100
-        source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: 61.9
-        p90_delta_pct: 83.6
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: 57.7
-        p90_delta_pct: 83.6
-        fidelity_pass_rate_pct: 100
-        source: measured
+    oracle_capture[6:]{token_count,capture_pct,source}:
+      raw: 478,0,recorded
+      rsp: 202,99.5,measured
+      terse: 204,99.6,measured
+      rtk: 132,65,recorded
+      headroom: 468,3.6,recorded
+      oracle_ceiling: 203,100,fixture-oracle
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: 61.9,84.2,100,measured
+      terse: 57.7,84.2,100,measured
   - filter: "cat:file"
     mode: active
     fixture_count: 1
@@ -136,17 +110,9 @@ filters[15]:
         token_count: 166
         capture_pct: 100
         source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: 77.7
-        p90_delta_pct: 77.7
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: 87.1
-        p90_delta_pct: 87.1
-        fidelity_pass_rate_pct: 100
-        source: measured
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: 77.7,77.7,100,measured
+      terse: 87.1,87.1,100,measured
   - filter: "exec:--"
     mode: active
     fixture_count: 3
@@ -198,17 +164,9 @@ filters[15]:
         token_count: 345
         capture_pct: 100
         source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: 31.6
-        p90_delta_pct: 99.3
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: 31.6
-        p90_delta_pct: 99.3
-        fidelity_pass_rate_pct: 100
-        source: measured
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: 31.6,99.3,100,measured
+      terse: 31.6,99.3,100,measured
   - filter: "gh:issue"
     mode: passthrough
     fixture_count: 3
@@ -261,17 +219,9 @@ filters[15]:
         token_count: 86
         capture_pct: 100
         source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: -52.7
-        p90_delta_pct: 0
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: -36.4
-        p90_delta_pct: 0
-        fidelity_pass_rate_pct: 66.7
-        source: measured
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: -50.9,0,100,measured
+      terse: -40,0,66.7,measured
   - filter: "gh:pr"
     mode: passthrough
     fixture_count: 3
@@ -324,17 +274,9 @@ filters[15]:
         token_count: 137
         capture_pct: 100
         source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: -70.1
-        p90_delta_pct: -37.5
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: -70.1
-        p90_delta_pct: -62.5
-        fidelity_pass_rate_pct: 66.7
-        source: measured
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: -68.7,-35,100,measured
+      terse: -70,-68.7,66.7,measured
   - filter: "gh:run"
     mode: passthrough
     fixture_count: 3
@@ -387,17 +329,9 @@ filters[15]:
         token_count: 58
         capture_pct: 100
         source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: -18
-        p90_delta_pct: 0
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: -44
-        p90_delta_pct: 0
-        fidelity_pass_rate_pct: 66.7
-        source: measured
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: -16,0,100,measured
+      terse: -46,0,66.7,measured
   - filter: "git:blame"
     mode: passthrough
     fixture_count: 1
@@ -450,17 +384,9 @@ filters[15]:
         token_count: 83
         capture_pct: 100
         source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: 3.4
-        p90_delta_pct: 3.4
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: 0
-        p90_delta_pct: 0
-        fidelity_pass_rate_pct: 0
-        source: measured
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: 3.4,3.4,100,measured
+      terse: -1.1,-1.1,0,measured
   - filter: "git:branch"
     mode: passthrough
     fixture_count: 1
@@ -513,17 +439,9 @@ filters[15]:
         token_count: 100
         capture_pct: 100
         source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: -62.5
-        p90_delta_pct: -62.5
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: -18.8
-        p90_delta_pct: -18.8
-        fidelity_pass_rate_pct: 0
-        source: measured
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: -62.5,-62.5,100,measured
+      terse: -17.2,-17.2,0,measured
   - filter: "git:commit"
     mode: passthrough
     fixture_count: 1
@@ -552,42 +470,16 @@ filters[15]:
       p90_delta_pct: 0
       fidelity_pass_rate_pct: 100
       source: recorded
-    oracle_capture:
-      raw:
-        token_count: 33
-        capture_pct: 47.8
-        source: recorded
-      rsp:
-        token_count: 33
-        capture_pct: 47.8
-        source: measured
-      terse:
-        token_count: 33
-        capture_pct: 47.8
-        source: measured
-      rtk:
-        token_count: 59
-        capture_pct: 85.5
-        source: recorded
-      headroom:
-        token_count: 33
-        capture_pct: 47.8
-        source: recorded
-      oracle_ceiling:
-        token_count: 69
-        capture_pct: 100
-        source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: -109.1
-        p90_delta_pct: -109.1
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: -109.1
-        p90_delta_pct: -109.1
-        fidelity_pass_rate_pct: 100
-        source: measured
+    oracle_capture[6:]{token_count,capture_pct,source}:
+      raw: 33,47.8,recorded
+      rsp: 33,47.8,measured
+      terse: 33,47.8,measured
+      rtk: 59,85.5,recorded
+      headroom: 33,47.8,recorded
+      oracle_ceiling: 69,100,fixture-oracle
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: -109.1,-109.1,100,measured
+      terse: -109.1,-109.1,100,measured
   - filter: "git:diff"
     mode: passthrough
     fixture_count: 2
@@ -616,42 +508,16 @@ filters[15]:
       p90_delta_pct: 0
       fidelity_pass_rate_pct: 100
       source: recorded
-    oracle_capture:
-      raw:
-        token_count: 7526
-        capture_pct: 99.2
-        source: recorded
-      rsp:
-        token_count: 7526
-        capture_pct: 99.2
-        source: measured
-      terse:
-        token_count: 7526
-        capture_pct: 99.2
-        source: measured
-      rtk:
-        token_count: 62
-        capture_pct: 0.8
-        source: recorded
-      headroom:
-        token_count: 7526
-        capture_pct: 99.2
-        source: recorded
-      oracle_ceiling:
-        token_count: 7584
-        capture_pct: 100
-        source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: -6.2
-        p90_delta_pct: 99.1
-        fidelity_pass_rate_pct: 50
-        source: measured
-      terse:
-        median_delta_pct: -19.7
-        p90_delta_pct: 99.1
-        fidelity_pass_rate_pct: 0
-        source: measured
+    oracle_capture[6:]{token_count,capture_pct,source}:
+      raw: 7526,99.2,recorded
+      rsp: 7526,99.2,measured
+      terse: 7526,99.2,measured
+      rtk: 62,0.8,recorded
+      headroom: 7526,99.2,recorded
+      oracle_ceiling: 7584,100,fixture-oracle
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: -6.2,99.1,50,measured
+      terse: -21.6,99.1,0,measured
   - filter: "git:log"
     mode: passthrough
     fixture_count: 2
@@ -680,42 +546,16 @@ filters[15]:
       p90_delta_pct: 0
       fidelity_pass_rate_pct: 100
       source: recorded
-    oracle_capture:
-      raw:
-        token_count: 4467
-        capture_pct: 94.7
-        source: recorded
-      rsp:
-        token_count: 4467
-        capture_pct: 94.7
-        source: measured
-      terse:
-        token_count: 4467
-        capture_pct: 94.7
-        source: measured
-      rtk:
-        token_count: 68
-        capture_pct: 1.4
-        source: recorded
-      headroom:
-        token_count: 4467
-        capture_pct: 94.7
-        source: recorded
-      oracle_ceiling:
-        token_count: 4717
-        capture_pct: 100
-        source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: 15
-        p90_delta_pct: 98.4
-        fidelity_pass_rate_pct: 50
-        source: measured
-      terse:
-        median_delta_pct: 11
-        p90_delta_pct: 98.4
-        fidelity_pass_rate_pct: 0
-        source: measured
+    oracle_capture[6:]{token_count,capture_pct,source}:
+      raw: 4467,94.7,recorded
+      rsp: 4467,94.7,measured
+      terse: 4467,94.7,measured
+      rtk: 68,1.4,recorded
+      headroom: 4467,94.7,recorded
+      oracle_ceiling: 4717,100,fixture-oracle
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: 16.3,98.4,50,measured
+      terse: 13.7,98.4,0,measured
   - filter: "git:push"
     mode: passthrough
     fixture_count: 2
@@ -744,42 +584,16 @@ filters[15]:
       p90_delta_pct: 0
       fidelity_pass_rate_pct: 100
       source: recorded
-    oracle_capture:
-      raw:
-        token_count: 58
-        capture_pct: 56.9
-        source: recorded
-      rsp:
-        token_count: 58
-        capture_pct: 56.9
-        source: measured
-      terse:
-        token_count: 58
-        capture_pct: 56.9
-        source: measured
-      rtk:
-        token_count: 63
-        capture_pct: 61.8
-        source: recorded
-      headroom:
-        token_count: 58
-        capture_pct: 56.9
-        source: recorded
-      oracle_ceiling:
-        token_count: 102
-        capture_pct: 100
-        source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: -37.1
-        p90_delta_pct: 0
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: -32.8
-        p90_delta_pct: 0
-        fidelity_pass_rate_pct: 50
-        source: measured
+    oracle_capture[6:]{token_count,capture_pct,source}:
+      raw: 58,56.9,recorded
+      rsp: 58,56.9,measured
+      terse: 58,56.9,measured
+      rtk: 63,61.8,recorded
+      headroom: 58,56.9,recorded
+      oracle_ceiling: 102,100,fixture-oracle
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: -37.1,0,100,measured
+      terse: -32.8,0,50,measured
   - filter: "git:show"
     mode: passthrough
     fixture_count: 1
@@ -832,17 +646,9 @@ filters[15]:
         token_count: 132
         capture_pct: 100
         source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: -34.7
-        p90_delta_pct: -34.7
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: -42.9
-        p90_delta_pct: -42.9
-        fidelity_pass_rate_pct: 0
-        source: measured
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: -34.7,-34.7,100,measured
+      terse: -39.8,-39.8,0,measured
   - filter: "git:status"
     mode: passthrough
     fixture_count: 2
@@ -871,42 +677,16 @@ filters[15]:
       p90_delta_pct: 0
       fidelity_pass_rate_pct: 100
       source: recorded
-    oracle_capture:
-      raw:
-        token_count: 153
-        capture_pct: 0
-        source: recorded
-      rsp:
-        token_count: 153
-        capture_pct: 0
-        source: measured
-      terse:
-        token_count: 153
-        capture_pct: 0
-        source: measured
-      rtk:
-        token_count: 54
-        capture_pct: 44.3
-        source: recorded
-      headroom:
-        token_count: 153
-        capture_pct: 0
-        source: recorded
-      oracle_ceiling:
-        token_count: 122
-        capture_pct: 100
-        source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: -122.8
-        p90_delta_pct: 46.1
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: -122.8
-        p90_delta_pct: 46.1
-        fidelity_pass_rate_pct: 50
-        source: measured
+    oracle_capture[6:]{token_count,capture_pct,source}:
+      raw: 153,0,recorded
+      rsp: 153,0,measured
+      terse: 153,0,measured
+      rtk: 54,44.3,recorded
+      headroom: 153,0,recorded
+      oracle_ceiling: 122,100,fixture-oracle
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: -122.8,46.1,100,measured
+      terse: -122.8,46.1,50,measured
   - filter: "vitest:run"
     mode: active
     fixture_count: 6
@@ -921,7 +701,7 @@ filters[15]:
       fidelity_pass_rate_pct: 100
       source: measured
     terse:
-      median_delta_pct: 69.9
+      median_delta_pct: 70
       p90_delta_pct: 100
       fidelity_pass_rate_pct: 100
       source: measured
@@ -935,42 +715,16 @@ filters[15]:
       p90_delta_pct: 76.2
       fidelity_pass_rate_pct: 83.3
       source: recorded
-    oracle_capture:
-      raw:
-        token_count: 51368
-        capture_pct: 0
-        source: recorded
-      rsp:
-        token_count: 609
-        capture_pct: 99.7
-        source: measured
-      terse:
-        token_count: 425
-        capture_pct: 96.2
-        source: measured
-      rtk:
-        token_count: 208
-        capture_pct: 47.1
-        source: recorded
-      headroom:
-        token_count: 51060
-        capture_pct: 0.6
-        source: recorded
-      oracle_ceiling:
-        token_count: 442
-        capture_pct: 100
-        source: fixture-oracle
-    hypothetical_active:
-      brief:
-        median_delta_pct: 58.8
-        p90_delta_pct: 100
-        fidelity_pass_rate_pct: 100
-        source: measured
-      terse:
-        median_delta_pct: 69.9
-        p90_delta_pct: 100
-        fidelity_pass_rate_pct: 100
-        source: measured
+    oracle_capture[6:]{token_count,capture_pct,source}:
+      raw: 51368,0,recorded
+      rsp: 607,99.7,measured
+      terse: 421,95.2,measured
+      rtk: 208,47.1,recorded
+      headroom: 51060,0.6,recorded
+      oracle_ceiling: 442,100,fixture-oracle
+    hypothetical_active[2:]{median_delta_pct,p90_delta_pct,fidelity_pass_rate_pct,source}:
+      brief: 58.8,100,100,measured
+      terse: 70,100,100,measured
 aggregate:
   fixture_count: 34
   raw:
@@ -978,11 +732,11 @@ aggregate:
     capture_pct: 0
     source: recorded
   rsp:
-    token_count: 14843
+    token_count: 14840
     capture_pct: 99.4
     source: measured
   terse:
-    token_count: 14494
+    token_count: 14490
     capture_pct: 99.8
     source: measured
   rtk:
@@ -1001,31 +755,13 @@ quality_corpora[4]:
   - corpus: pre-existing-quality
     fixture_count: 31
     filters[14]: "cargo:test","cat:file","gh:issue","gh:pr","gh:run","git:blame","git:branch","git:commit","git:diff","git:log","git:push","git:show","git:status","vitest:run"
-    oracle_capture:
-      raw:
-        token_count: 66183
-        capture_pct: 0
-        source: recorded
-      rsp:
-        token_count: 13992
-        capture_pct: 99.9
-        source: measured
-      terse:
-        token_count: 13669
-        capture_pct: 97.6
-        source: measured
-      rtk:
-        token_count: 646
-        capture_pct: 4.9
-        source: recorded
-      headroom:
-        token_count: 64367
-        capture_pct: 0.6
-        source: recorded
-      oracle_ceiling:
-        token_count: 14001
-        capture_pct: 100
-        source: fixture-oracle
+    oracle_capture[6:]{token_count,capture_pct,source}:
+      raw: 66183,0,recorded
+      rsp: 13989,99.9,measured
+      terse: 13665,97.6,measured
+      rtk: 646,4.9,recorded
+      headroom: 64367,0.6,recorded
+      oracle_ceiling: 14001,100,fixture-oracle
   - corpus: anomaly
     fixture_count: 1
     filters[1]: "exec:--"

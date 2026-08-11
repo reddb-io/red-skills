@@ -24,7 +24,9 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { managerEffortFile, managerEffortsDir } from "@reddb-io/shared/red-paths.js";
-import { encodeRecords, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeRecords, parseRecords } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 
 /** The document schema name every effort file declares in its header record. */
 export const MANAGER_EFFORT_SCHEMA = "red.manager.effort";
@@ -187,7 +189,7 @@ export function encodeEffortDocument(effort: EffortRecord): string {
     schema: MANAGER_EFFORT_SCHEMA,
     version: MANAGER_EFFORT_SCHEMA_VERSION,
   };
-  return encodeRecords([header, encodeEffortRow(effort)]);
+  return encodeRecords([header, encodeEffortRow(effort)], {});
 }
 
 function requireString(row: ToonlRecord, field: string): string {

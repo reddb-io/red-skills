@@ -33,14 +33,11 @@ const WORKER_STATUS = {
 
 const CANONICAL_WORKER_STATUS =
   "status[1]{worker{id,pid,runner,origin,started_at,done,total,current{number,model,effort,iteration,loc_added,wait_kind,wait_pid}},live,active,renderable_live,liveness}:\n" +
-  "  hZCNL,439274,codex,afk,\"2026-08-11T18:58:19.432Z\",0,0,3624,gpt-5.6-sol,high,\"1\",209,\"\",0,true,true,true,active\n";
+  "  hZCNL,439274,codex,afk,\"2026-08-11T18:58:19.432Z\",0,0,3624,gpt-5.6-sol,high,\"1\",209,\"\",0,true,true,true,active";
 
 describe("redskilled MCP canonical TOON", () => {
   it("pins a representative worker status payload to canonical encoder bytes", () => {
-    const expected = encode(WORKER_STATUS as unknown as JsonValue, {
-      keyedMapCollapse: true,
-      nestedTabularHeaders: true,
-    });
+    const expected = encode(WORKER_STATUS as unknown as JsonValue);
 
     expect(expected).toBe(CANONICAL_WORKER_STATUS);
     expect(encodeRedskilledMcpToon(WORKER_STATUS)).toBe(expected);

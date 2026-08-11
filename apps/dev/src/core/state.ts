@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { type JsonValue as ToonValue } from "@reddb-io/toon";
@@ -24,13 +24,11 @@ export function workerStatePath(workspaceDir: string): string {
 }
 
 /**
- * The write-once identity sidecar filename in an attempt dir (issue #1219). The
- * filename is retained across the TOON migration (wave-1 in-place convention):
- * the content flips from raw JSON to TOON but the `.json` name stays, and the
- * reader sniffs JSON-then-TOON so a sidecar written by an older bundle still
- * reads.
+ * The write-once identity sidecar filename in an attempt dir (issue #1219).
+ * Canonical bytes and the extension agree: current writers emit TOON only.
  */
-export const IDENTITY_FILENAME = "identity.json";
+export const IDENTITY_FILENAME = "identity.toon";
+const LEGACY_IDENTITY_FILENAME = "identity.json";
 
 /**
  * The immutable spawn-time identity of one attempt (issue #1219). Written once by
@@ -51,17 +49,34 @@ export interface WorkerIdentity {
 
 /**
  * Write the attempt's {@link WorkerIdentity} sidecar ONCE. Synchronous (same seam
- * as {@link initStateSync}) and write-once: an existing `identity.json` is left
- * untouched so a re-entered attempt keeps its original identity. Best-effort at
- * the call site — a failed write must never block the worker's actual work.
+ * as {@link initStateSync}) and write-once: an existing `identity.toon` is left
+ * untouched so a re-entered attempt keeps its original identity. A pre-cutover
+ * JSON sidecar is converted once, then removed. Best-effort at the call site —
+ * a failed write must never block the worker's actual work.
  */
 export function writeIdentitySync(attemptDir: string, identity: WorkerIdentity): void {
   const path = join(attemptDir, IDENTITY_FILENAME);
   if (existsSync(path)) return;
+  const legacyPath = join(attemptDir, LEGACY_IDENTITY_FILENAME);
+  let value = identity;
+  if (existsSync(legacyPath)) {
+    try {
+      value = parseIdentity(readFileSync(legacyPath, "utf8")) ?? identity;
+    } catch {
+      value = identity;
+    }
+  }
   mkdirSync(attemptDir, { recursive: true });
   const tmp = `${path}.tmp.${process.pid}.sync`;
-  writeFileSync(tmp, encodeDevSnapshotToon(identity as unknown as ToonValue), "utf8");
+  writeFileSync(tmp, encodeDevSnapshotToon(value as unknown as ToonValue), "utf8");
   renameSync(tmp, path);
+  if (existsSync(legacyPath)) {
+    try {
+      unlinkSync(legacyPath);
+    } catch {
+      // The canonical file is already durable; stale legacy cleanup is best-effort.
+    }
+  }
 }
 
 /** Parse a {@link WorkerIdentity} from a sidecar's text (TOON, with a raw-JSON
@@ -92,7 +107,13 @@ export function readIdentitySync(attemptDir: string): WorkerIdentity | null {
   try {
     return parseIdentity(readFileSync(join(attemptDir, IDENTITY_FILENAME), "utf8"));
   } catch {
-    return null;
+    try {
+      const identity = parseIdentity(readFileSync(join(attemptDir, LEGACY_IDENTITY_FILENAME), "utf8"));
+      if (identity) writeIdentitySync(attemptDir, identity);
+      return identity;
+    } catch {
+      return null;
+    }
   }
 }
 

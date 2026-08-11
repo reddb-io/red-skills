@@ -91,6 +91,29 @@ export async function probeRun(id: string, call: GhCallOptions): Promise<Verdict
   return verdictOf("failure", `run ${id} concluded ${conclusion || "unknown"}`, runDetails(row));
 }
 
+/** Observe one Actions job through the resident conditional-REST client. */
+export async function probeJob(id: string, call: GhCallOptions): Promise<Verdict> {
+  if (!/^[1-9][0-9]*$/.test(id)) return indeterminate("missing job id");
+  const result = await ghJson(["job", "view", id], call);
+  if (result.status !== 0) return indeterminate(result.stderr || "GitHub Actions job read failed");
+  return verdictForJob(id, parseRecord(result.stdout));
+}
+
+export function verdictForJob(id: string, row: Record<string, unknown>): Verdict {
+  const status = String(row.status ?? "").toLowerCase();
+  const conclusion = String(row.conclusion ?? "").toLowerCase();
+  if (status !== "completed") return running(`job ${id} is ${status || "pending"}`);
+  const details: JsonObject = {
+    job_id: typeof row.databaseId === "number" ? row.databaseId : id,
+    conclusion,
+    name: String(row.name ?? ""),
+    url: String(row.url ?? ""),
+  };
+  return conclusion === "success"
+    ? verdictOf("success", `job ${id} succeeded`, details)
+    : verdictOf("failure", `job ${id} concluded ${conclusion || "unknown"}`, details);
+}
+
 /**
  * Resolve `--branch <b> --latest` to a concrete run ID.
  *
@@ -109,14 +132,29 @@ export async function latestRunId(branch: string, call: GhCallOptions): Promise<
  * Wait for the NEXT matching release. Only releases published after the wait
  * started count, so an existing tag cannot resolve the wait instantly.
  */
-export async function probeRelease(tagGlob: string | undefined, startedAt: Date, call: GhCallOptions): Promise<Verdict> {
+export async function probeRelease(
+  tagGlob: string | undefined,
+  startedAt: Date,
+  call: GhCallOptions,
+  includeExisting = false,
+): Promise<Verdict> {
+  if (includeExisting && tagGlob && !/[?*]/.test(tagGlob)) {
+    const result = await ghJson(["release", "view", tagGlob, "--json", "tagName,publishedAt,isDraft"], call);
+    if (result.status !== 0) return running(`release ${tagGlob} is not published yet`);
+    const release = parseRecord(result.stdout);
+    if (release.isDraft === true) return running(`release ${tagGlob} is still a draft`);
+    return verdictOf("success", `release ${String(release.tagName || tagGlob)} published`, {
+      tag: String(release.tagName || tagGlob),
+      published_at: String(release.publishedAt ?? ""),
+    });
+  }
   const result = await ghJson(["release", "list", "--limit", "20", "--json", "tagName,publishedAt,isDraft"], call);
   if (result.status !== 0) return indeterminate(result.stderr || "gh release list failed");
   const releases = arrayOfRecords(JSON.parse(result.stdout) as unknown);
   const match = releases.find((release) => {
     const tag = String(release.tagName ?? "");
     const publishedAt = new Date(String(release.publishedAt ?? ""));
-    return release.isDraft !== true && (!tagGlob || globMatches(tagGlob, tag)) && publishedAt >= startedAt;
+    return release.isDraft !== true && (!tagGlob || globMatches(tagGlob, tag)) && (includeExisting || publishedAt >= startedAt);
   });
   if (!match) return running("no matching release is published yet");
   return verdictOf("success", `release ${String(match.tagName)} published`, {

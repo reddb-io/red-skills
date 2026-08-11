@@ -76,7 +76,7 @@ function lease(paths: RedskilledPaths, overrides: Partial<RedskilledLease> = {})
 }
 
 async function writeLease(paths: RedskilledPaths, record: RedskilledLease): Promise<void> {
-  await writeFile(paths.leasePath, `${encode(record as unknown as JsonValue, { keyedMapCollapse: true })}\n`, "utf8");
+  await writeFile(paths.leasePath, `${encode(record as unknown as JsonValue)}\n`, "utf8");
 }
 
 /** A socket that accepts a connection and never answers — the wedged daemon. */

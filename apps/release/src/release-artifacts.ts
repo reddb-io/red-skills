@@ -74,7 +74,7 @@ export function renderReleaseArtifacts(input: ReleaseArtifactInput): RenderedRel
     manifest,
     notes: renderReleaseNotes(manifest),
     json: `${JSON.stringify(manifest, null, 2)}\n`,
-    toon: withTrailingNewline(encode(manifest as unknown as JsonValue, { keyedMapCollapse: true })),
+    toon: withTrailingNewline(encode(manifest as unknown as JsonValue)),
   };
 }
 

@@ -37,8 +37,10 @@ import {
   statSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
+import { encodeToonlLines, parseRecords } from "@reddb-io/toon";
 import { UNSCOPED_PROCESS, readWorkerScopeFacts, type WorkerScopeFacts } from "./worker-scope.js";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
 import {
   buildProcessPresence,
   clearProcessPresence,
@@ -310,7 +312,7 @@ export function appendProcessDeathRecord(
   record: ProcessDeathRecord,
   io: DeathLaneIo = nodeDeathLaneIo,
 ): ProcessDeathRecord {
-  const line = encodeLines({ trailer: false }).push(toRow(record));
+  const line = encodeToonlLines({ trailer: false }).push(toRow(record));
   const lineBytes = Buffer.byteLength(line);
   const inspection = io.inspect(lanePath);
   const separatorBytes = inspection.endsClean ? 0 : 1;
@@ -412,7 +414,7 @@ function retainDeathRecordsWithin(
 
 function encodeDeathLane(records: readonly ProcessDeathRecord[]): string {
   if (records.length === 0) return "";
-  const encoder = encodeLines({ trailer: false });
+  const encoder = encodeToonlLines({ trailer: false });
   return records.map((record) => encoder.push(toRow(record))).join("");
 }
 

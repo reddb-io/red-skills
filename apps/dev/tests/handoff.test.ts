@@ -418,12 +418,12 @@ describe("buildHandoff", () => {
     expect(exitProtocolFor({ runMode: "scout", structuredOutput: true })).toBe(SCOUT_EXIT_PROTOCOL);
   });
 
-  it("exitProtocolFor adds generated rsp guidance for Codex without interception claims", () => {
+  it("exitProtocolFor adds generated rsp guidance for Codex with safe-loop interception", () => {
     const p = exitProtocolFor({ runner: "codex", structuredOutput: false });
     expect(p).toContain("Codex lane");
     expect(p).toContain("rsp git status");
     expect(p).toContain("rsp show el:<id>");
-    expect(p.toLowerCase()).not.toContain("interception");
+    expect(p).toContain("interception hook collapses recognized run, job, and release loops");
   });
 
   it("exitProtocolFor adds generated rsp guidance for Claude and marks interception present", () => {

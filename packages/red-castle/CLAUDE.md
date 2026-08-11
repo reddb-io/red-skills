@@ -40,8 +40,8 @@ repo config YAML `.red/config.yaml` (its protocol owner sets the format).
 
 Whole-document snapshot state files are TOON too (issue #2008): the castle
 `state.toon` snapshots plus the fleet-runtime snapshot surfaces in the consuming
-`apps/dev` workspace — the worker identity stamp (`identity.json`), the
-per-attempt worker state (`afk.state.json`), the supervisor state snapshot
+`apps/dev` workspace — the worker identity stamp (`identity.toon`), the
+per-attempt worker state (`afk.state.toon`), the supervisor state snapshot
 (`state.toon`), its restart ledger (`restarts.toon`), and the monitor log-cursor
 snapshot (`monitor-log-cursors.toon`). The supervisor files live under the
 project's single lane, `.red/tmp/supervisors/default/` — there is exactly one, not

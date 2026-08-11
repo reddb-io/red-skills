@@ -1,6 +1,9 @@
 import { mkdir, appendFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { decode, encode, encodeLines, parseRecords, type JsonValue, type ToonlLineEmitter, type ToonlRecord } from "@reddb-io/toon";
+import { decode, encode, encodeToonlLines, parseRecords, type JsonValue } from "@reddb-io/toon";
+
+type ToonlRecord = Record<string, string | number | boolean | null>;
+type ToonlLineAppender = ReturnType<typeof encodeToonlLines>;
 
 // The JSONL Log Module: owns the AFK structured-log lane format end to end.
 //
@@ -183,7 +186,7 @@ export interface AppendOptions {
   sink?: AppendSink;
 }
 
-const taggedRowEmitters = new Map<string, ToonlLineEmitter>();
+const taggedRowEmitters = new Map<string, ToonlLineAppender>();
 
 function toToonlRecord(record: JsonlLogRecord): ToonlRecord {
   const out: ToonlRecord = {};
@@ -281,7 +284,7 @@ export async function appendRecordToonlTaggedRow(
   const emitterKey = options.sink ? `${path}\0sink` : path;
   let emitter = taggedRowEmitters.get(emitterKey);
   if (!emitter) {
-    emitter = encodeLines({ trailer: false });
+    emitter = encodeToonlLines({ trailer: false });
     taggedRowEmitters.set(emitterKey, emitter);
   }
   const chunk = emitter.pushTagged(type, toToonlRecord(record)).trimEnd();

@@ -1,5 +1,5 @@
 export const GH_MIN_VERSION = "2.47.0";
-export const TQ_PINNED_VERSION = "0.13.0";
+export const TQ_PINNED_VERSION = "0.21.0";
 
 export type GhInstallManager = "asdf" | "apt" | "brew" | "direct" | "unknown";
 export type HostToolchainVerdict = "ok" | "error";
@@ -22,7 +22,7 @@ export interface HostToolchainRow {
   readonly tool: "gh" | "tq";
   readonly version: string;
   readonly required: string;
-  readonly manager: GhInstallManager | "canonical-installer";
+  readonly manager: GhInstallManager | "cargo";
   readonly verdict: HostToolchainVerdict;
 }
 
@@ -31,7 +31,7 @@ export interface HostToolchainFinding {
   readonly kind: HostToolchainFindingKind;
   readonly reason: string;
   readonly remediation: string;
-  readonly manager: GhInstallManager | "canonical-installer";
+  readonly manager: GhInstallManager | "cargo";
 }
 
 export interface HostToolchainReport {
@@ -106,8 +106,7 @@ export function ghUpgradeRecipe(manager: GhInstallManager): string {
 }
 
 export function tqInstallRecipe(): string {
-  const tag = `v${TQ_PINNED_VERSION}`;
-  return `TQ_VERSION=${tag} curl -fsSL https://raw.githubusercontent.com/reddb-io/toon/${tag}/install.sh | sh`;
+  return `cargo install reddb-io-tq --version ${TQ_PINNED_VERSION} --locked --force`;
 }
 
 export function auditHostToolchain(facts: HostToolchainFacts): HostToolchainReport {
@@ -138,7 +137,7 @@ export function auditHostToolchain(facts: HostToolchainFacts): HostToolchainRepo
     findings.push({
       tool: "tq",
       kind: "missing",
-      manager: "canonical-installer",
+      manager: "cargo",
       reason: `tq is missing; required ${TQ_PINNED_VERSION}`,
       remediation: tqInstallRecipe(),
     });
@@ -146,7 +145,7 @@ export function auditHostToolchain(facts: HostToolchainFacts): HostToolchainRepo
     findings.push({
       tool: "tq",
       kind: "toolchain-drift",
-      manager: "canonical-installer",
+      manager: "cargo",
       reason: `tq toolchain drift: required ${TQ_PINNED_VERSION}, config ${facts.tqRecordedVersion ?? "missing"}, observed ${tqVersion}`,
       remediation: tqInstallRecipe(),
     });
@@ -165,7 +164,7 @@ export function auditHostToolchain(facts: HostToolchainFacts): HostToolchainRepo
         tool: "tq",
         version: tqVersion ?? "missing",
         required: TQ_PINNED_VERSION,
-        manager: "canonical-installer",
+        manager: "cargo",
         verdict: findings.some((finding) => finding.tool === "tq") ? "error" : "ok",
       },
     ],
