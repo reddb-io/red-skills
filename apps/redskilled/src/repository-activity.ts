@@ -13,6 +13,13 @@
  * returns without interpreting, exactly as it carries a Worker's last logged line
  * without parsing it.
  *
+ * **ADR 0141 adds two label NAMES, and no meaning.** The ready and human queue
+ * counters moved here from the statusline's own `gh` cache, so a project hands
+ * over the two strings whose open Issues it wants counted apart. The daemon
+ * compares those strings to the label names the representation already carries
+ * and stores two more integers; what makes a label a queue stays with the
+ * project, exactly as a selector it carries but never parses does.
+ *
  * **N round trips, usually zero budget.** Each project has three stable REST
  * list representations. Their ETags make an unchanged collection answer 304,
  * which costs no API budget; GraphQL charged the full aggregate on every poll.
@@ -104,6 +111,25 @@ export interface RedskilledProjectRepository {
   readonly name: string;
   /** The credential this project insists on; anything but the host's is refused. */
   readonly token_ref?: string;
+  /**
+   * The two labels whose open Issues this project wants counted separately.
+   *
+   * Carried, never interpreted: the daemon matches the strings it was handed
+   * against the label names the representation already carries, exactly as it
+   * carries a selector it never parses. What `ready-for-agent` MEANS stays with
+   * the project (ADR 0130 rule 3) — the daemon only knows that two of the
+   * integers it stores were counted by these two names.
+   *
+   * Absent leaves both queue counters `null` rather than zero, because a project
+   * that named no label has an uncounted queue, not a drained one.
+   */
+  readonly queue_labels?: RedskilledActivityQueueLabels;
+}
+
+/** Which label names the ready and human queue counters are keyed by. */
+export interface RedskilledActivityQueueLabels {
+  readonly ready: string;
+  readonly human: string;
 }
 
 /** Raised when a registered project asks to be polled with its own credential. */
@@ -123,12 +149,24 @@ export class RedskilledSplitCredentialError extends Error {
   }
 }
 
-/** What this project's tracker holds, as three integers and nothing more. */
+/** What this project's tracker holds, as integers and nothing more. */
 export interface RedskilledActivityCounts {
   readonly open_pull_requests: number;
   readonly open_issues: number;
   /** Issues and pull requests closed inside the window the fetch asked for. */
   readonly recently_closed: number;
+  /**
+   * Open Issues carrying this project's ready label; `null` when none was named.
+   *
+   * **Counted off the representation the open-Issue count already paid for.**
+   * The open-Issue list carries every item's label names, so a second request
+   * per label would spend budget for bytes this poll already holds — and ADR
+   * 0141 decision 2 moved these counters here precisely to stop the statusline
+   * spending its own quota on them.
+   */
+  readonly ready_queue: number | null;
+  /** Open Issues carrying this project's human label; `null` when none was named. */
+  readonly human_queue: number | null;
 }
 
 /**
@@ -293,6 +331,11 @@ export function parseRepositoryActivityResponse(
             open_pull_requests: openPullRequests,
             open_issues: openIssues,
             recently_closed: recentlyClosed,
+            // The aliased query asks for no label breakdown, so this path
+            // produces no queue counters — and says so with `null` rather than
+            // handing a consumer two zeros it would render as a drained queue.
+            ready_queue: null,
+            human_queue: null,
           },
           detail: `counted ${repository} for project ${JSON.stringify(project.project_label)}`,
         };
@@ -454,6 +497,7 @@ async function fetchConditionalRepositoryActivity(
       ],
     ] as const;
     const counts: number[] = [];
+    let queue: RedskilledActivityQueueCounts = { ready_queue: null, human_queue: null };
     try {
       for (const [kind, route, parameters] of queries) {
         const answer = await list({
@@ -466,6 +510,11 @@ async function fetchConditionalRepositoryActivity(
         const items = kind === "open-prs"
           ? answer.data
           : answer.data.filter((item) => !isRecord(item.pull_request));
+        // The queue counters come out of the open-Issue representation rather
+        // than out of two more label-filtered lists: this poll already holds
+        // every open Issue with its labels, so counting them here is free of
+        // both requests and budget.
+        if (kind === "open-issues" && project.queue_labels != null) queue = countQueueLabels(items, project.queue_labels);
         counts.push(kind === "recently-closed"
           ? items.filter((item) => stringValue(item.closed_at) >= operation.closed_since).length
           : items.length);
@@ -479,6 +528,7 @@ async function fetchConditionalRepositoryActivity(
           open_pull_requests: counts[0]!,
           open_issues: counts[1]!,
           recently_closed: counts[2]!,
+          ...queue,
         },
         detail: `counted ${repository} for project ${JSON.stringify(project.project_label)}`,
       });
@@ -647,6 +697,34 @@ function restBaseUrl(endpoint: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
+/** The two label-keyed counters, as the counted half of one poll's counts. */
+type RedskilledActivityQueueCounts = Pick<RedskilledActivityCounts, "ready_queue" | "human_queue">;
+
+/**
+ * Count the open Issues carrying each named label. PURE.
+ *
+ * The names are compared, never read: this is a string equality over what the
+ * representation already carries, which is the whole of what the daemon does
+ * with a label.
+ */
+function countQueueLabels(
+  items: readonly Record<string, unknown>[],
+  labels: RedskilledActivityQueueLabels,
+): RedskilledActivityQueueCounts {
+  const carries = (item: Record<string, unknown>, label: string): boolean =>
+    Array.isArray(item.labels) && item.labels.some((entry) => labelName(entry) === label);
+  return {
+    ready_queue: items.filter((item) => carries(item, labels.ready)).length,
+    human_queue: items.filter((item) => carries(item, labels.human)).length,
+  };
+}
+
+/** A label's name, from either REST shape: the object, or the bare string. */
+function labelName(entry: unknown): string {
+  if (typeof entry === "string") return entry;
+  return isRecord(entry) ? stringValue(entry.name) : "";
+}
+
 function activityRateLimitFromHeaders(headers: GithubResponseHeaders): RedskilledActivityRateLimit {
   const remaining = integerHeader(headers, "x-ratelimit-remaining");
   const resetSeconds = integerHeader(headers, "x-ratelimit-reset");
@@ -692,6 +770,15 @@ function assertActivityProjects(projects: readonly RedskilledProjectRepository[]
     }
     if (seen.has(project.project_label)) {
       throw new Error(`redskilled holds one repository per project, and ${JSON.stringify(project.project_label)} is registered twice`);
+    }
+    // A blank label matches nothing and would be counted as a drained queue —
+    // the one answer this module refuses everywhere else. A project that names
+    // no labels at all is legal; naming an empty one is not.
+    if (project.queue_labels != null && (project.queue_labels.ready === "" || project.queue_labels.human === "")) {
+      throw new Error(
+        `project ${JSON.stringify(project.project_label)} declares an empty queue label: a label that names nothing ` +
+          `would be counted as an empty queue, so state both label names or state neither`,
+      );
     }
     seen.add(project.project_label);
   }
