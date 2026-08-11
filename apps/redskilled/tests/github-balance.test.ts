@@ -56,6 +56,8 @@ async function start(options: Parameters<typeof startRedskilledDaemon>[0]): Prom
 describe("one poller, and the balance comes from the token", () => {
   it("hydrates a dry pool from durable state without spending a discovery call", async () => {
     let asks = 0;
+    let hydrated!: () => void;
+    const hydration = new Promise<void>((resolve) => { hydrated = resolve; });
     const persisted = parseGithubBalance(answer(0), { askedAt: "2026-08-03T12:30:00.000Z" });
     const daemon = await start({
       paths: await paths(),
@@ -66,12 +68,14 @@ describe("one poller, and the balance comes from the token", () => {
           asks += 1;
           return answer(5_000);
         },
-        store: { read: async () => persisted, write: async () => undefined },
+        store: { read: async () => { hydrated(); return persisted; }, write: async () => undefined },
         intervalMsOverride: 3_600_000,
       },
     });
 
-    const balance = await daemon.pollGithubBalance();
+    await hydration;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const balance = daemon.githubBalance();
 
     expect(asks).toBe(0);
     expect(balance?.pools.graphql?.remaining).toBe(0);
