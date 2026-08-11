@@ -93,7 +93,12 @@ describe("the live engine declares every wait it holds (#3024)", () => {
   });
 
   it("scans the engine packages, and says which", () => {
-    expect(WAIT_SCAN_ROOTS).toEqual(["apps/dev/src", "apps/redskilled/src", "packages/red-castle/src"]);
+    expect(WAIT_SCAN_ROOTS).toEqual([
+      "apps/dev/src",
+      "apps/redskilled/src",
+      "packages/shared/kill-tree.ts",
+      "packages/red-castle/src",
+    ]);
   });
 });
 

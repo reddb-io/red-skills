@@ -16,7 +16,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { UNIX_SOCKET_PATH_LIMIT } from "@reddb-io/shared/resident-core.js";
+import { isPidAlive, UNIX_SOCKET_PATH_LIMIT } from "@reddb-io/shared/resident-core.js";
 import { evaluateWorkerAdmission, UNBOUNDED_HOST_CEILING } from "../src/admission.js";
 import { evaluateMemoryBudgets, sampleWorkerTrees } from "../src/memory-sampler.js";
 import {
@@ -25,6 +25,7 @@ import {
   resolveMachineClaimPath,
 } from "../src/machine-scope.js";
 import { resolveRedskilledPaths, resolveSessionKey, REDSKILLED_SOCKET_FILE } from "../src/paths.js";
+import { stopWorker } from "../src/reattach.js";
 import { launchWorker } from "../src/worker-launch.js";
 import { detectWorkerPlacementProbes, planWorkerPlacement } from "../src/worker-placement.js";
 import type { RedskilledWorkerView } from "../src/host-state.js";
@@ -182,6 +183,56 @@ describe("WSL2 — a Worker is born, unisolated, and the loss is named", () => {
       }
     }
     throw new Error(`the Worker never wrote ${proof}`);
+  });
+
+  it("stops an unisolated Worker's whole process group, including a forked child", async () => {
+    const workspace = await scratch("redskilled-wsl-stop-");
+    const proof = join(workspace, "child-pid");
+    const childProgram = "setInterval(() => {}, 30_000)";
+    const leaderProgram = `
+      const { spawn } = require("node:child_process");
+      const { writeFileSync } = require("node:fs");
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(childProgram)}], { stdio: "ignore" });
+      writeFileSync("child-pid", String(child.pid));
+      setInterval(() => {}, 30_000);
+    `;
+    const launched = launchWorker({
+      admission: evaluateWorkerAdmission({ ceiling: UNBOUNDED_HOST_CEILING, workers: [] }),
+      spec: {
+        worker_id: "wTREE",
+        project_label: "acme/widgets",
+        workspace_path: workspace,
+        command: process.execPath,
+        args: ["-e", leaderProgram],
+      },
+      probes: WSL2_PROBES,
+      env: WSL2_ENV,
+    });
+    let childPid = 0;
+
+    try {
+      await expect.poll(async () => {
+        try {
+          childPid = Number(await readFile(proof, "utf8"));
+          return childPid > 1;
+        } catch {
+          return false;
+        }
+      }, { timeout: 2_000 }).toBe(true);
+
+      expect(await stopWorker(launched.worker)).toBe(true);
+      await expect.poll(() => [isPidAlive(launched.worker.pid), isPidAlive(childPid)], { timeout: 2_000 })
+        .toEqual([false, false]);
+    } finally {
+      try {
+        process.kill(-(launched.worker.pgid ?? launched.worker.pid), "SIGKILL");
+      } catch {}
+      if (childPid > 1) {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {}
+      }
+    }
   });
 });
 

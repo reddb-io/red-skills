@@ -660,6 +660,7 @@ export async function runStop(
       pid: worker.pid,
       unit: worker.unit,
       isolated: worker.isolated,
+      contained: worker.contained,
       survives: worker.survives,
     })),
     detail: report.detail,

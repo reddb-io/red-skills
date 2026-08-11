@@ -1509,14 +1509,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
 
   /** Stop one Worker the daemon holds, and record its death. */
   async function stopWorkerNow(worker: RedskilledWorkerView, detail: string): Promise<boolean> {
-    try {
-      await stopProbe(worker);
-    } catch {
-      // A stop the host refused still ends the daemon's claim: a Worker it keeps
-      // holding a budget for while nothing supervises it is the worse state.
-    }
+    let confirmed = false;
+    // A refused stop still releases the daemon's claim; the event names that the
+    // process group may survive rather than forging host confirmation.
+    try { confirmed = (await stopProbe(worker)) === true; } catch {}
     forgetWorker(worker.worker_id);
-    record("worker-death", worker, detail);
+    const pgid = worker.pgid ?? worker.pid;
+    record("worker-death", worker, confirmed ? detail : `${detail}; unconfirmed-stop: the host did not confirm ` +
+      `process group ${pgid} stopped, so process group ${pgid} may still be alive`);
     armIdleTimer();
     return true;
   }

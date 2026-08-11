@@ -34,6 +34,8 @@ export interface RedskilledStopWorkerView {
   /** The transient unit's name; `null` when the launch was unisolated. */
   readonly unit: string | null;
   readonly isolated: boolean;
+  /** True when the host keeps the surviving Worker inside its own resource scope. */
+  readonly contained: boolean;
   /** True when this Worker outlives the daemon — every Worker does today. */
   readonly survives: boolean;
 }
@@ -102,6 +104,7 @@ export function buildRedskilledStopReport(input: BuildRedskilledStopReportInput)
       held: workers.length,
       projects: projects.length,
       surviving: surviving.length,
+      uncontained: workers.filter((worker) => worker.survives && !worker.contained).length,
     }),
   };
 }
@@ -137,6 +140,7 @@ function toStopWorkerView(worker: RedskilledWorkerView): RedskilledStopWorkerVie
     pid: worker.pid,
     unit: worker.unit ?? null,
     isolated: worker.isolated,
+    contained: worker.isolated,
     // Isolated Workers belong to the init system and unisolated ones are launched
     // detached, so neither is a child this process can take with it.
     survives: true,
@@ -160,12 +164,14 @@ function describeStop(input: {
   readonly held: number;
   readonly projects: number;
   readonly surviving: number;
+  readonly uncontained: number;
 }): string {
   const head = `stopping the redskilled daemon (pid ${input.pid}, version ${input.daemonVersion}) on ` +
     `${JSON.stringify(input.socketPath)}: ${describeRedskilledStopReason(input.reason)}`;
   if (input.held === 0) return `${head}; it holds no Workers, so nothing survives the stop`;
   return `${head}; it holds ${count(input.held, "Worker")} across ${count(input.projects, "project")}, and ` +
-    `${input.surviving} of them survive it — a Worker is an init-system unit, so this is a restart and not an evacuation`;
+    `${input.surviving} of them survive it — ${count(input.uncontained, "uncontained survivor")} ` +
+    `${input.uncontained === 1 ? "runs" : "run"} as detached process groups outside an init-system unit`;
 }
 
 function count(value: number, noun: string): string {
@@ -186,6 +192,12 @@ export function isRedskilledDaemonStopped(value: unknown): value is RedskilledDa
     (stopped.pid === null || typeof stopped.pid === "number") &&
     holding != null &&
     Array.isArray(holding.workers) &&
+    holding.workers.every((worker) =>
+      worker != null &&
+      typeof worker === "object" &&
+      !Array.isArray(worker) &&
+      typeof (worker as Record<string, unknown>).contained === "boolean"
+    ) &&
     Array.isArray(holding.projects) &&
     Array.isArray(stopped.surviving);
 }

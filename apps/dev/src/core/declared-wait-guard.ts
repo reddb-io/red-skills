@@ -88,6 +88,7 @@ export interface DeclaredWait {
 export const WAIT_SCAN_ROOTS: readonly string[] = [
   "apps/dev/src",
   "apps/redskilled/src",
+  "packages/shared/kill-tree.ts",
   "packages/red-castle/src",
 ];
 
@@ -150,6 +151,10 @@ export function readWaitScanFiles(
 ): WaitScanFile[] {
   const files: WaitScanFile[] = [];
   for (const scanRoot of roots) {
+    if (scanRoot.endsWith(SOURCE_EXTENSION)) {
+      files.push({ path: scanRoot, sourceText: readFileSync(join(root, scanRoot), "utf8") });
+      continue;
+    }
     walk(join(root, scanRoot), (absolute) => {
       const path = relative(root, absolute).split(sep).join("/");
       if (isExcludedWaitPath(path)) return;
@@ -668,7 +673,7 @@ export const DECLARED_WAITS: readonly DeclaredWait[] = [
     heartbeat: { sink: "onWait" },
   },
   {
-    path: "apps/dev/src/runtime/kill-tree.ts",
+    path: "packages/shared/kill-tree.ts",
     fn: "killTreeAndWait",
     subject: "the worker process tree dying — after SIGTERM, then SIGKILL, then a group SIGKILL",
     deadline: "`graceTries` (20) then `killTries` (10) twice, at `pollMs` (100) — about 4 seconds",
