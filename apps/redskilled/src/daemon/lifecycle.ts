@@ -118,6 +118,8 @@ import {
   fetchRepositoryActivity,
   type RedskilledRepositoryActivity,
 } from "../repository-activity.js";
+import { createRedskilledActivityPoller } from "./activity-poller.js";
+import { REDSKILLED_ACTIVITY_STALENESS_FACTOR } from "../activity-report.js";
 import {
   DEFAULT_REDSKILLED_QUEUE_MS,
   fetchQueueDiscovery,
@@ -490,7 +492,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let demandTimer: NodeJS.Timeout | undefined;
   let replaceTimer: NodeJS.Timeout | undefined;
   let replaceBootTimer: NodeJS.Timeout | undefined;
-  let activityTimer: NodeJS.Timeout | undefined;
   // A timeout rather than an interval: the window between two balance asks is
   // recomputed from the answer each time, so the poller re-arms itself instead of
   // running on a constant it would have to choose in advance.
@@ -503,6 +504,14 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // The one append that says this daemon left, held so every route to a stop —
   // the op, a signal, idle, a handover — writes it exactly once.
   let departure: Promise<unknown> | null = null;
+  const activityPoller = createRedskilledActivityPoller({
+    poll: () => pollRepositoryActivity(),
+    registrations: () => registrations.values(),
+    clock,
+    attendedMs: activityMs,
+    armed: activityRegistration != null && activityRegistration.projects.length > 0,
+    stopping: () => stopping,
+  });
   let resolveClosed!: () => void;
   const closed = new Promise<void>((resolve) => {
     resolveClosed = resolve;
@@ -707,6 +716,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
       now: clock(),
       reattachedWorkerIds: [...reattached],
       repositoryActivity: lastActivity,
+      // Two windows of the cadence IN FORCE: a threshold pinned to the attended
+      // one would report an idle host's deliberate back-off as a stopped poller.
+      activityStalenessMs: REDSKILLED_ACTIVITY_STALENESS_FACTOR * activityPoller.cadenceMs(),
       githubBalance: lastBalance,
       ...(deathAttributions === undefined ? {} : { deaths: deathAttributions }),
       // Derived here, once, for every surface: the observation history belongs
@@ -1365,6 +1377,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     });
     registrations.set(registration.project_label, registration);
     persistRegistrationIntent();
+    // Somebody is watching now: a poll waiting out an idle window comes forward.
+    activityPoller.nudge();
     // A current registration outranks every historical absence. Remove the old
     // tail now so a later deliberate stop cannot uncover an older lapse and lie
     // about which transition happened most recently.
@@ -1430,6 +1444,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     });
     registrations.set(registration.project_label, registration);
     persistRegistrationIntent();
+    // A renewal is a session saying "I am still here" — the same presence a
+    // registration carries, and the same reason not to wait out a back-off.
+    activityPoller.nudge();
     armIdleTimer();
     return {
       version: 1,
@@ -1956,23 +1973,6 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   }
 
   /**
-   * Arm the poller, once, on its own window.
-   *
-   * Its interval is the tracker's rather than the sampler's: repository activity
-   * moves at human speed and costs shared quota, so polling it as often as the
-   * process table would spend a budget every project on the host draws from.
-   */
-  function armActivityTimer(): void {
-    if (stopping || activityTimer != null) return;
-    if (activityRegistration == null || activityRegistration.projects.length === 0 || activityMs <= 0) return;
-    void pollRepositoryActivity().catch(() => undefined);
-    activityTimer = setInterval(() => {
-      void pollRepositoryActivity().catch(() => undefined);
-    }, activityMs);
-    activityTimer.unref();
-  }
-
-  /**
    * Arm the queue poller on ITS window, which is not the activity poller's.
    *
    * Armed even with nothing registered, unlike the activity poller: the selectors
@@ -2184,7 +2184,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (registrationTimer) clearInterval(registrationTimer);
     if (replaceTimer) clearInterval(replaceTimer);
     if (replaceBootTimer) clearTimeout(replaceBootTimer);
-    if (activityTimer) clearInterval(activityTimer);
+    activityPoller.stop();
     if (balanceTimer) clearTimeout(balanceTimer);
     if (queueTimer) clearTimeout(queueTimer);
     if (demandTimer) clearInterval(demandTimer);
@@ -2429,7 +2429,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   armLeaseTimer();
   armRegistrationTimer();
   armReplaceTimer();
-  armActivityTimer();
+  activityPoller.arm();
   armBalanceTimer();
   armQueueTimer();
   armDemandTimer();

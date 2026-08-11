@@ -88,8 +88,20 @@ export function githubEndpointFor(surface: GithubApiSurface, origin = "https://a
 /** How many repositories one aliased query may span. */
 export const REDSKILLED_ACTIVITY_BATCH_SIZE = 100;
 
-/** Default window between polls: activity moves at human speed, not at sampler speed. */
-export const DEFAULT_REDSKILLED_ACTIVITY_MS = 60_000;
+/**
+ * Default window between polls while an interactive session is watching.
+ *
+ * **The ATTENDED half of a presence-driven cadence** (ADR 0141): the Spec's
+ * ~15–30s, spent only while at least one session holds a registration open. The
+ * backed-off half, and the presence rule that chooses between them, live in
+ * `./activity-cadence.js` — this module spends the request and holds no policy
+ * about when to.
+ *
+ * Not the wished-for 5s: that is line reactivity, and the statusline's
+ * per-render socket read already delivers it against the daemon's cache without
+ * spending GitHub budget.
+ */
+export const DEFAULT_REDSKILLED_ACTIVITY_MS = 20_000;
 
 /** How far back "recently closed" reaches, when a caller states no window. */
 export const DEFAULT_REDSKILLED_ACTIVITY_CLOSED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
