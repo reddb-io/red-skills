@@ -2236,7 +2236,12 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   );
   observations = replayRedskilledMetricObservations(laneEvents, clock());
   const replayed = rehydrateWorkers(laneEvents);
-  const reattachment = await reattachWorkers(replayed, liveness);
+  // Take the active-unit census before attributing any replayed birth as dead.
+  // A per-Worker probe can miss during a watch gap; an independently active unit
+  // is still a Worker the successor can re-attach, never evidence of a death.
+  const activeUnits = new Set(await Promise.resolve(unitInventory()).catch(() => []));
+  const reattachment = await reattachWorkers(replayed, (worker) =>
+    worker.unit != null && activeUnits.has(worker.unit) ? true : liveness(worker));
   for (const worker of reattachment.alive) {
     // Named, never dropped: a Worker whose owning project the lane no longer
     // carries is still a live process charged to this machine, and the label it
@@ -2257,7 +2262,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // unit nobody accounts for is adopted rather than left outside the budget
   // (#2917). Failing to ask costs the sweep and never the start.
   const discovered = discoverUnownedWorkers({
-    units: await Promise.resolve(unitInventory()).catch(() => []),
+    units: [...activeUnits],
     held: [...workers.values()],
     mainPid: unitMainPid,
     now: startedAt,
