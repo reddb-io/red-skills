@@ -61,7 +61,7 @@ export type RedskilledTerminationClassification = "budget-exceeded";
 export const REDSKILLED_STALL_CLASSIFICATION = "stalled";
 
 /** Which declared budget the floor enforced. The budget's own name, verbatim. */
-export type RedskilledBudgetName = "MemoryMax" | "MemoryHigh";
+export type RedskilledBudgetName = "MemoryMax" | "MemoryHigh" | "TasksMax";
 
 /**
  * One Worker the sampler measured over its budget.
@@ -74,16 +74,17 @@ export interface RedskilledBudgetTermination {
   readonly version: 1;
   readonly worker_id: string;
   readonly project_label: string;
-  readonly outcome: "terminated-over-memory-budget";
+  readonly outcome: "terminated-over-memory-budget" | "terminated-over-process-budget";
   readonly classification: RedskilledTerminationClassification;
   /** Never a stall — the daemon measured this Worker, it did not wait on it. */
   readonly stall: false;
   /** The budget that was exceeded, by its own name. */
   readonly budget_name: RedskilledBudgetName;
   /** The budget exactly as the client declared it, unparsed. */
-  readonly budget_declared: string;
-  readonly budget_bytes: number;
-  readonly observed_rss_bytes: number;
+  readonly budget_declared: string | number;
+  readonly budget_bytes?: number;
+  readonly observed_rss_bytes?: number;
+  readonly observed_processes?: number;
   /** The workspace whose branch or PR the client hands forward. */
   readonly workspace_path: string;
   /** A whole sentence naming the budget — what an operator reads. */
@@ -118,6 +119,9 @@ export type RedskilledRssReading = Readonly<Record<string, number>>;
  */
 export type RedskilledCpuReading = Readonly<Record<string, number>>;
 
+/** Number of processes visited in each unisolated Worker's tree. */
+export type RedskilledProcessReading = Readonly<Record<string, number>>;
+
 /**
  * One tick's reading of the whole Worker set — both measurements, one walk.
  *
@@ -128,6 +132,8 @@ export type RedskilledCpuReading = Readonly<Record<string, number>>;
 export interface RedskilledTreeReading {
   readonly rss: RedskilledRssReading;
   readonly cpu_seconds: RedskilledCpuReading;
+  /** Optional for injected legacy samplers; the host sampler always states it. */
+  readonly processes?: RedskilledProcessReading;
   /**
    * Which instrument answered for each Worker, keyed by `worker_id`.
    *
@@ -142,6 +148,11 @@ export interface RedskilledTreeReading {
    * sampleWorkerTrees} always states it.
    */
   readonly sources?: Readonly<Record<string, RedskilledRssSource>>;
+}
+
+/** The complete reading returned by the daemon's host sampler. */
+export interface RedskilledSampledTreeReading extends RedskilledTreeReading {
+  readonly processes: RedskilledProcessReading;
 }
 
 /** Measures the whole Worker set in one call. Injected, so a test needs no process. */
@@ -249,6 +260,57 @@ export function evaluateMemoryBudgets(input: {
   return { terminations, unenforceable };
 }
 
+/** Judge unisolated process-tree counts against declared `max_processes`. PURE. */
+export function evaluateProcessBudgets(input: {
+  readonly workers: readonly RedskilledWorkerView[];
+  readonly processes: RedskilledProcessReading;
+}): RedskilledMemoryTickOutcome {
+  const terminations: RedskilledBudgetTermination[] = [];
+
+  for (const worker of input.workers) {
+    if (worker.isolated) continue;
+    const declared = appliedWorkerBudget(worker).max_processes;
+    if (declared == null || !Number.isSafeInteger(declared) || declared <= 0) continue;
+    const observed = input.processes[worker.worker_id];
+    if (typeof observed !== "number" || !Number.isSafeInteger(observed) || observed < 0) continue;
+    if (observed <= declared) continue;
+
+    const who = `Worker ${JSON.stringify(worker.worker_id)} of project ${JSON.stringify(worker.project_label)}`;
+    terminations.push({
+      version: 1,
+      worker_id: worker.worker_id,
+      project_label: worker.project_label,
+      outcome: "terminated-over-process-budget",
+      classification: "budget-exceeded",
+      stall: false,
+      budget_name: "TasksMax",
+      budget_declared: declared,
+      observed_processes: observed,
+      workspace_path: worker.workspace_path,
+      reason: `redskilled terminated ${who}: its process tree contained ${observed} processes, exceeding its TasksMax ` +
+        `budget of ${declared}. This is a budget termination, not a stall, and the work in ` +
+        `${JSON.stringify(worker.workspace_path)} is handed forward.`,
+    });
+  }
+
+  return { terminations, unenforceable: [] };
+}
+
+/** Evaluate every software-enforced tree budget from one shared reading. PURE. */
+export function evaluateWorkerBudgets(input: {
+  readonly workers: readonly RedskilledWorkerView[];
+  readonly rss: RedskilledRssReading;
+  readonly processes: RedskilledProcessReading;
+  readonly sources?: Readonly<Record<string, RedskilledRssSource>>;
+}): RedskilledMemoryTickOutcome {
+  const memory = evaluateMemoryBudgets(input);
+  const processes = evaluateProcessBudgets(input);
+  return {
+    terminations: [...memory.terminations, ...processes.terminations],
+    unenforceable: [...memory.unenforceable, ...processes.unenforceable],
+  };
+}
+
 /** The terminal outcome document for one budgeted termination. PURE. */
 export function buildBudgetTermination(
   worker: RedskilledWorkerView,
@@ -301,13 +363,14 @@ const PAGE_SIZE_BYTES = 4096;
 export function sampleWorkerTrees(
   workers: readonly RedskilledWorkerView[],
   options: SampleWorkerTreesOptions = {},
-): RedskilledTreeReading {
+): RedskilledSampledTreeReading {
   const platform = options.platform ?? process.platform;
-  const empty: RedskilledTreeReading = { rss: {}, cpu_seconds: {}, sources: {} };
+  const empty: RedskilledSampledTreeReading = { rss: {}, cpu_seconds: {}, processes: {}, sources: {} };
   if (workers.length === 0) return empty;
 
   const rss: Record<string, number> = {};
   const cpuSeconds: Record<string, number> = {};
+  const processes: Record<string, number> = {};
   const sources: Record<string, RedskilledRssSource> = {};
 
   // The kernel's own charge first, for every Worker the daemon put in a unit.
@@ -323,10 +386,10 @@ export function sampleWorkerTrees(
   // The walk answers only for whoever the kernel did not: an unisolated Worker, a
   // host with no cgroup filesystem, or a unit whose directory is already gone.
   const remaining = workers.filter((worker) => sources[worker.worker_id] == null);
-  if (remaining.length === 0) return { rss, cpu_seconds: cpuSeconds, sources };
+  if (remaining.length === 0) return { rss, cpu_seconds: cpuSeconds, processes, sources };
 
   const table = readHostProcessTable(platform, options);
-  if (table.size === 0) return { rss, cpu_seconds: cpuSeconds, sources };
+  if (table.size === 0) return { rss, cpu_seconds: cpuSeconds, processes, sources };
 
   const children = new Map<number, number[]>();
   for (const entry of table.values()) {
@@ -339,6 +402,7 @@ export function sampleWorkerTrees(
     if (!table.has(worker.pid)) continue;
     let totalRss = 0;
     let totalCpu = 0;
+    let processCount = 0;
     const queue = [worker.pid];
     const seen = new Set<number>();
     while (queue.length > 0) {
@@ -347,15 +411,17 @@ export function sampleWorkerTrees(
       seen.add(pid);
       const entry = table.get(pid);
       if (!entry) continue;
+      processCount += 1;
       totalRss += entry.rssBytes;
       totalCpu += entry.cpuSeconds;
       for (const child of children.get(pid) ?? []) queue.push(child);
     }
     rss[worker.worker_id] = totalRss;
     cpuSeconds[worker.worker_id] = totalCpu;
+    processes[worker.worker_id] = processCount;
     sources[worker.worker_id] = "process-tree";
   }
-  return { rss, cpu_seconds: cpuSeconds, sources };
+  return { rss, cpu_seconds: cpuSeconds, processes, sources };
 }
 
 export interface SampleWorkerTreesOptions {

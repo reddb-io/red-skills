@@ -147,7 +147,7 @@ describe("macOS placement — the memory ceiling it refuses to claim", () => {
       },
     });
 
-    expect(reading).toEqual({ rss: {}, cpu_seconds: {}, sources: {} });
+    expect(reading).toEqual({ rss: {}, cpu_seconds: {}, processes: {}, sources: {} });
   });
 
   it("parses `ps` output and ignores every line that is not a process row", () => {
@@ -275,11 +275,12 @@ describe("macOS placement — the rlimits it will and will not set", () => {
     expect(limits.note).toMatch(/cpu_seconds/);
   });
 
-  it("names POSIX-only budget fields as unenforced on a backend that has no equivalent", () => {
-    const linux = plan(LINUX, { budget: { memory_max: "4G", max_processes: 256 } });
+  it("keeps only POSIX-only budget fields in Linux's unenforced warning", () => {
+    const linux = plan(LINUX, { budget: { memory_max: "4G", max_processes: 256, cpu_seconds: 3600 } });
 
     expect(linux.backend).toBe("transient-unit");
-    expect(linux.budgetWarning).toMatch(/max_processes/);
+    expect(linux.budgetWarning).toMatch(/cpu_seconds/);
+    expect(linux.budgetWarning).not.toMatch(/max_processes/);
   });
 
   it("degrades to an unwrapped launch when the host has no POSIX shell to wrap it in", () => {

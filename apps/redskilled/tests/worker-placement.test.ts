@@ -97,6 +97,20 @@ describe("worker placement — Linux with a user session", () => {
     expect(placement.budgetWarning).toBeUndefined();
   });
 
+  it("carries max_processes as TasksMax exactly when it is declared", () => {
+    const declared = plan(LINUX_WITH_SESSION, {
+      budget: { max_processes: 32, cpu_seconds: 60 },
+    });
+    const absent = plan(LINUX_WITH_SESSION, { budget: { cpu_seconds: 60 } });
+
+    expect(declared.args.filter((arg) => arg.startsWith("--property=TasksMax="))).toEqual([
+      "--property=TasksMax=32",
+    ]);
+    expect(absent.args.some((arg) => arg.startsWith("--property=TasksMax="))).toBe(false);
+    expect(declared.budgetWarning).toMatch(/cpu_seconds/);
+    expect(declared.budgetWarning).not.toMatch(/max_processes/);
+  });
+
   it("hands the workspace path to the unit verbatim", () => {
     const placement = plan(LINUX_WITH_SESSION, { workspacePath: "/nowhere/near/a/repo/x y" });
 

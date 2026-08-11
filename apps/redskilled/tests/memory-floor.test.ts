@@ -10,6 +10,7 @@ import { readRedskilledEvents } from "../src/event-lane.js";
 import { isRedskilledWorkerView, type RedskilledWorkerView } from "../src/host-state.js";
 import {
   evaluateMemoryBudgets,
+  evaluateProcessBudgets,
   parseProcStat,
   REDSKILLED_STALL_CLASSIFICATION,
   resolveEnforcedBudget,
@@ -98,6 +99,36 @@ function worker(overrides: Partial<RedskilledWorkerView> = {}): RedskilledWorker
 }
 
 describe("the memory floor", () => {
+  it("names TasksMax in the termination for an over-limit unisolated tree", () => {
+    const { terminations } = evaluateProcessBudgets({
+      workers: [worker({ isolated: false, unit: undefined, budget: { max_processes: 2 } })],
+      processes: { "w-1": 3 },
+    });
+
+    expect(terminations).toEqual([
+      expect.objectContaining({
+        version: 1,
+        worker_id: "w-1",
+        outcome: "terminated-over-process-budget",
+        classification: "budget-exceeded",
+        stall: false,
+        budget_name: "TasksMax",
+        budget_declared: 2,
+        observed_processes: 3,
+      }),
+    ]);
+    expect(terminations[0]!.reason).toContain("TasksMax");
+  });
+
+  it("never terminates a process-budgeted Worker from an absent count", () => {
+    const outcome = evaluateProcessBudgets({
+      workers: [worker({ isolated: false, unit: undefined, budget: { max_processes: 1 } })],
+      processes: {},
+    });
+
+    expect(outcome.terminations).toEqual([]);
+  });
+
   it("terminates a Worker over its budget against a synthetic sampler", async () => {
     const paths = await sessionPaths();
     const stopped: string[] = [];
@@ -121,6 +152,34 @@ describe("the memory floor", () => {
     expect(terminations[0]!.worker_id).toBe("w-1");
     expect(stopped).toEqual(["w-1"]);
     expect(daemon.workerCount()).toBe(0);
+  });
+
+  it("routes an over-limit process tree through worker-budget-kill", async () => {
+    const paths = await sessionPaths();
+    const stopped: string[] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      sampleMs: 0,
+      stopWorker: (w) => {
+        stopped.push(w.worker_id);
+        return true;
+      },
+      treeSampler: () => ({ rss: {}, cpu_seconds: {}, processes: { "w-1": 3 } }),
+    });
+    running.push(daemon);
+    daemon.trackWorker(worker({ isolated: false, unit: undefined, budget: { max_processes: 2 } }));
+
+    const terminations = await daemon.sampleMemoryBudgets();
+    await daemon.flushEvents();
+
+    expect(terminations[0]).toMatchObject({ budget_name: "TasksMax", observed_processes: 3 });
+    expect(stopped).toEqual(["w-1"]);
+    expect(daemon.workerCount()).toBe(0);
+    expect((await readRedskilledEvents(paths.eventLanePath)).at(-1)).toMatchObject({
+      event: "worker-budget-kill",
+      worker_id: "w-1",
+    });
   });
 
   it("names the budget that was exceeded in the terminal outcome", async () => {
@@ -273,6 +332,7 @@ describe("the memory floor", () => {
     const reading = sampleWorkerTrees([worker({ worker_id: "tree", pid: 100 })], { procRoot, platform: "linux" });
 
     expect(reading.rss.tree).toBe((10 + 20 + 30) * 4096);
+    expect(reading.processes.tree).toBe(3);
   });
 
   it("reads a process name containing spaces and parentheses without shifting fields", () => {
@@ -309,7 +369,7 @@ describe("the memory floor", () => {
   });
 
   it("measures nothing when no process table can be read at all, rather than reporting zero", () => {
-    const empty = { rss: {}, cpu_seconds: {}, sources: {} };
+    const empty = { rss: {}, cpu_seconds: {}, processes: {}, sources: {} };
     expect(sampleWorkerTrees([worker()], { platform: "aix" })).toEqual(empty);
     expect(sampleWorkerTrees([worker()], { platform: "darwin", psTable: () => "" })).toEqual(empty);
   });
