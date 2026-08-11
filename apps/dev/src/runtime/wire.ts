@@ -18,29 +18,13 @@ export {
 export type { MonitorInputs, DeadWorkerSweepDeps } from "./wire/monitor.js";
 export { readFleetState, reclaimDeadWorkers, collectMonitorInputs } from "./wire/monitor.js";
 
-export type { StatuslineRefreshSpawnOptions } from "./wire/statusline-cache.js";
-export {
-  STATUSLINE_CACHE_TTL_S,
-  STATUSLINE_REFRESH_LOCK_TTL_S,
-  STATUSLINE_GH_COLD_TIMEOUT_MS,
-  resolveStatuslineCacheTtl,
-  withTimeout,
-  statuslineCountCachePath,
-  parseGitHubRepoSlugFromRemoteUrl,
-  inferGitHubRepoSlug,
-  applyStatuslineCountCacheLabelDelta,
-  editLabelsWithStatuslineCache,
-  refreshStatuslineCountCache,
-  startDetachedStatuslineCountRefresh,
-} from "./wire/statusline-cache.js";
+export { parseGitHubRepoSlugFromRemoteUrl, inferGitHubRepoSlug } from "./wire/github-slug.js";
 
 export {
   collectStatuslineAfk,
   collectStatuslineFleet,
   collectStatuslineValidationGate,
   collectStatuslineWorkers,
-  collectStatuslineRepo,
-  refreshStatuslineRepoCache,
 } from "./wire/statusline.js";
 
 export type { StatuslineLocalGit, StatuslineLocalGitDeps } from "./wire/statusline-git.js";
@@ -48,7 +32,9 @@ export {
   STATUSLINE_GIT_MICRO_TTL_MS,
   STATUSLINE_GIT_DEADLINE_MS,
   collectStatuslineLocalGit,
+  decodeCacheDocument,
   resolveRepoBasename,
+  withTimeout,
 } from "./wire/statusline-git.js";
 
 export { collectStatuslineDocs, collectDocsSweepInput, landDocsSweep } from "./wire/docs.js";

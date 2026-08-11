@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatCacheAge,
   formatRspTickerValue,
   humanizeAlive,
   humanizeCount,
@@ -29,29 +28,6 @@ const baseAfk = (over: Partial<AfkInput> = {}): AfkInput => ({
   removed: 3,
   issues: [17],
   ...over,
-});
-
-describe("statusline — formatCacheAge", () => {
-  it("renders Xs for ages under one minute", () => {
-    expect(formatCacheAge(45)).toBe("45s");
-    expect(formatCacheAge(0)).toBe("0s");
-    expect(formatCacheAge(59)).toBe("59s");
-  });
-
-  it("renders Xm for whole minutes", () => {
-    expect(formatCacheAge(60)).toBe("1m");
-    expect(formatCacheAge(720)).toBe("12m");
-  });
-
-  it("renders XhYm when minutes remain past a full hour", () => {
-    expect(formatCacheAge(3900)).toBe("1h5m");
-    expect(formatCacheAge(3660)).toBe("1h1m");
-  });
-
-  it("renders Xh for whole hours", () => {
-    expect(formatCacheAge(3600)).toBe("1h");
-    expect(formatCacheAge(7200)).toBe("2h");
-  });
 });
 
 describe("statusline — fleet block", () => {
@@ -352,26 +328,10 @@ describe("statusline — repo block", () => {
     expect(renderRepoBlock({ localRemoved: 2 })).toBe("loc=-2");
   });
 
-  it("carries a compact age suffix on prs= when the cache is stale", () => {
-    expect(
-      renderRepoBlock({ openPrs: 3, openIssues: 24, cacheAgeS: 720 }),
-    ).toBe("prs=3 (12m) iss=24");
-  });
-
-  it("carries age suffix on prs= even when cpr= is present", () => {
-    expect(
-      renderRepoBlock({ openPrs: 3, todayPrs: 2, openIssues: 24, cacheAgeS: 720 }),
-    ).toBe("prs=3 (12m) cpr=2 iss=24");
-  });
-
-  it("moves the age suffix to cpr= when openPrs is 0 but todayPrs > 0", () => {
-    expect(
-      renderRepoBlock({ openPrs: 0, todayPrs: 2, openIssues: 24, cacheAgeS: 720 }),
-    ).toBe("cpr=2 (12m) iss=24");
-  });
-
-  it("moves the age suffix to iss= when openPrs is 0 and todayPrs is 0", () => {
-    expect(renderRepoBlock({ openPrs: 0, openIssues: 24, cacheAgeS: 720 })).toBe("iss=24 (12m)");
+  it("dates nothing: the counter ages belong to the daemon that polled them", () => {
+    // The suffix these tokens used to carry described THIS app's `gh` count
+    // cache, which is gone (ADR 0141 decision 2).
+    expect(renderRepoBlock({ openPrs: 3, todayPrs: 2, openIssues: 24 })).toBe("prs=3 cpr=2 iss=24");
   });
 });
 
@@ -555,28 +515,13 @@ describe("statusline — AFK block", () => {
     expect(renderAfkBlock(baseAfk())).toBe("wrk=1 rdy=11 hmn=3 blk=2 loc=+12 -3 #17");
   });
 
-  it("fresh cache (no cacheAgeS) renders plain with no age marker", () => {
-    // cacheAgeS absent → no age annotation on rdy= or hmn=
+  it("renders the queue counters plain, and omits the ones a caller states none of", () => {
+    // No age marker anywhere: the counters and their ages are the daemon's now
+    // (ADR 0141 decision 2), and a caller that holds no count says so by absence.
     expect(renderAfkBlock(baseAfk())).not.toContain("(");
-  });
-
-  it("rdy= carries a compact age suffix when cacheAgeS is set (stale cache)", () => {
-    // 720 s = 12 min stale → (12m) on the rdy= token
-    expect(renderAfkBlock(baseAfk({ cacheAgeS: 720 }))).toBe(
-      "wrk=1 rdy=11 (12m) hmn=3 blk=2 loc=+12 -3 #17",
+    expect(renderAfkBlock(baseAfk({ queue: undefined, human: undefined }))).toBe(
+      "wrk=1 blk=2 loc=+12 -3 #17",
     );
-  });
-
-  it("age suffix moves to hmn= when queue is 0 but human is live", () => {
-    expect(renderAfkBlock(baseAfk({ queue: 0, human: 3, cacheAgeS: 720 }))).toBe(
-      "wrk=1 hmn=3 (12m) blk=2 loc=+12 -3 #17",
-    );
-  });
-
-  it("no age suffix when both queue and human are 0 even if cacheAgeS is set", () => {
-    // 0/0 stale vs 0/0 fresh is indistinguishable in meaning; nothing to annotate
-    const out = renderAfkBlock(baseAfk({ queue: 0, human: 0, cacheAgeS: 720 }));
-    expect(out).not.toContain("(");
   });
 });
 

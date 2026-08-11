@@ -118,8 +118,7 @@ describe("castle-engine write-surface TOON uniformity", () => {
       paths.fleetFirehosePath,
       paths.monitorLogCursorPath,
       paths.supervisorRestartsPath,
-      paths.statuslineCachePath,
-      paths.statuslineRepoCachePath,
+      paths.statuslineGitCachePath,
     ];
     for (const path of surfaces) {
       expect(path.endsWith(".toon") || path.endsWith(".toonl")).toBe(true);

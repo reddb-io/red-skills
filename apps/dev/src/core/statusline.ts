@@ -81,11 +81,12 @@ export interface ClaudeInput {
 export interface AfkInput {
   /** `wk` — number of live workers. */
   workers: number;
-  /** `rq` — cached ready-for-agent (queue) count. */
-  queue: number;
-  /** `rh` — cached ready-for-human count. */
-  human: number;
-  /** `qtn` — cached ADR 0122 issue quarantine count. */
+  /** `rq` — ready-for-agent (queue) count. Daemon-owned since ADR 0141 decision
+   * 2, so it is absent on every input this app assembles from local state. */
+  queue?: number;
+  /** `rh` — ready-for-human count, on the same terms as {@link queue}. */
+  human?: number;
+  /** `qtn` — ADR 0122 issue quarantine count, on the same terms. */
   quarantine?: number;
   /** `bk` — summed blocked count. */
   blocked: number;
@@ -140,12 +141,6 @@ export interface AfkInput {
    * non-empty origin. Sorted by origin for a deterministic token order.
    * Rendered as `go=N afk=M` tokens immediately after `wrk=<total>`. */
   sourceCounts?: ReadonlyArray<{ origin: string; count: number }>;
-  /** Age in seconds of the queue/human count cache when it was served TTL-stale
-   * AND the background refresh failed or timed out. Absent when the cache was
-   * fresh or the refresh succeeded. When set, the `rdy=` (or `hmn=`) token
-   * carries a compact age suffix — e.g. `rdy=3 (12m)` — so stale counts are
-   * never silently rendered as current. */
-  cacheAgeS?: number;
 }
 
 /** Repo-global header inputs (themed line 1, always rendered). Independent of
@@ -161,11 +156,6 @@ export interface RepoInput {
   localAdded?: number;
   /** `-N` — LOCAL branch deletions (committed + uncommitted vs origin/main). */
   localRemoved?: number;
-  /** Age in seconds of the PR/issue count cache when served TTL-stale and the
-   * refresh failed or timed out. Absent when the cache was fresh or refresh
-   * succeeded. When set, the `prs=` (or `iss=`) token carries a compact age
-   * suffix so stale counts are not silently shown as current. */
-  cacheAgeS?: number;
 }
 
 /** Cached/local unlanded `.red/` docs count. */
@@ -321,20 +311,6 @@ export function humanizeAlive(ms: number): string {
   return `${d}d${h % 24}h`;
 }
 
-/**
- * Compact age string for a TTL-stale cache entry: renders seconds as `45s`,
- * whole minutes as `12m`, and hours as `1h5m` / `2h`. Used as the `(Xm)`
- * suffix on remote-count tokens when the cache was stale and refresh failed.
- */
-export function formatCacheAge(ageS: number): string {
-  if (ageS < 60) return `${ageS}s`;
-  const m = Math.floor(ageS / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return rm > 0 ? `${h}h${rm}m` : `${h}h`;
-}
-
 function hasCachedUpdate(project: ProjectInput): boolean {
   return compareSemver(project.latestCachedVersion, project.version) > 0;
 }
@@ -417,20 +393,11 @@ export function afkTokens(afk: AfkInput | undefined): AfkToken[] {
   if (afk.sourceCounts && afk.sourceCounts.length > 0) {
     for (const { origin, count } of afk.sourceCounts) kpi(`${origin}=`, String(count));
   }
-  // Age marker: appended to the first rendered remote-count token so stale
-  // data is never silently shown as current. rdy= takes priority; when queue
-  // is 0 the marker falls to hmn= (if present). Zero/zero with a stale cache
-  // shows nothing — 0/0 stale vs 0/0 fresh is indistinguishable in meaning.
-  const ageSuffix = afk.cacheAgeS !== undefined ? ` (${formatCacheAge(afk.cacheAgeS)})` : "";
-  if (afk.queue > 0) tokens.push({ label: "rdy=", value: String(afk.queue), suffix: ageSuffix });
-  if (afk.human > 0) {
-    const hmSuffix = ageSuffix && afk.queue === 0 ? ageSuffix : "";
-    tokens.push({ label: "hmn=", value: String(afk.human), suffix: hmSuffix });
-  }
-  if (afk.quarantine !== undefined && afk.quarantine > 0) {
-    const qtnSuffix = ageSuffix && afk.queue === 0 && afk.human === 0 ? ageSuffix : "";
-    tokens.push({ label: "qtn=", value: String(afk.quarantine), suffix: qtnSuffix });
-  }
+  // The remote counters carry no age here: they are the daemon's, dated one by
+  // one on its payload, and this render draws whatever a caller states.
+  if (afk.queue !== undefined && afk.queue > 0) kpi("rdy=", String(afk.queue));
+  if (afk.human !== undefined && afk.human > 0) kpi("hmn=", String(afk.human));
+  if (afk.quarantine !== undefined && afk.quarantine > 0) kpi("qtn=", String(afk.quarantine));
   if (afk.blocked > 0) kpi("blk=", String(afk.blocked));
   const diff: string[] = [];
   if (afk.added > 0) diff.push(`+${afk.added}`);
@@ -478,21 +445,9 @@ export function renderUsageBlock(claude: ClaudeInput | undefined): string | null
 export function renderRepoBlock(repo: RepoInput | undefined): string | null {
   if (!repo) return null;
   const parts: string[] = [];
-  const ageSuffix = repo.cacheAgeS !== undefined ? ` (${formatCacheAge(repo.cacheAgeS)})` : "";
-  if (repo.openPrs && repo.openPrs > 0) parts.push(`prs=${repo.openPrs}${ageSuffix}`);
-  if (repo.todayPrs && repo.todayPrs > 0) {
-    // cpr= carries the age suffix only when prs= didn't already carry it.
-    const cprAge = ageSuffix && (!repo.openPrs || repo.openPrs === 0) ? ageSuffix : "";
-    parts.push(`cpr=${repo.todayPrs}${cprAge}`);
-  }
-  if (repo.openIssues && repo.openIssues > 0) {
-    // Age marker falls to iss= only when neither prs= nor cpr= already carried it.
-    const issAge =
-      ageSuffix && (!repo.openPrs || repo.openPrs === 0) && (!repo.todayPrs || repo.todayPrs === 0)
-        ? ageSuffix
-        : "";
-    parts.push(`iss=${repo.openIssues}${issAge}`);
-  }
+  if (repo.openPrs && repo.openPrs > 0) parts.push(`prs=${repo.openPrs}`);
+  if (repo.todayPrs && repo.todayPrs > 0) parts.push(`cpr=${repo.todayPrs}`);
+  if (repo.openIssues && repo.openIssues > 0) parts.push(`iss=${repo.openIssues}`);
   const diff: string[] = [];
   if (repo.localAdded && repo.localAdded > 0) diff.push(`+${repo.localAdded}`);
   if (repo.localRemoved && repo.localRemoved > 0) diff.push(`-${repo.localRemoved}`);
@@ -503,8 +458,7 @@ export function renderRepoBlock(repo: RepoInput | undefined): string | null {
 /** Short preset line-1 repo token: only the open issue count survives. */
 export function renderShortRepoBlock(repo: RepoInput | undefined): string | null {
   if (!repo || !repo.openIssues || repo.openIssues <= 0) return null;
-  const ageSuffix = repo.cacheAgeS !== undefined ? ` (${formatCacheAge(repo.cacheAgeS)})` : "";
-  return `iss=${repo.openIssues}${ageSuffix}`;
+  return `iss=${repo.openIssues}`;
 }
 
 /** Supervisor fleet cell: rendered only after IO proves pid-live and fresh. */

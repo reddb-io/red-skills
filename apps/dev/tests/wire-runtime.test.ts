@@ -3,18 +3,15 @@ import { encodeLines } from "@reddb-io/toon";
 import {
   afkPaths,
   appendCastleHistoryRecord,
-  applyStatuslineCountCacheLabelDelta,
   buildMinimalBootDeps,
   castleStateSnapshotPath,
   collectMonitorInputs,
   collectStatuslineAfk,
   collectStatuslineDocs,
-  collectStatuslineRepo,
   collectStatuslineWorkers,
   createEnginePaths,
   decode,
   dirname,
-  editLabelsWithStatuslineCache,
   encode,
   existsSync,
   fakeBinDir,
@@ -31,13 +28,9 @@ import {
   resolveAttemptProbeArming,
   resolveAttemptHead,
   resolveRunSettings,
-  resolveStatuslineCacheTtl,
   rmSync,
   runBoot,
   scratch,
-  startDetachedStatuslineCountRefresh,
-  statuslineCountCachePath,
-  STATUSLINE_CACHE_TTL_S,
   tmpdir,
   type ExecOutput,
   withTimeout,
@@ -152,8 +145,7 @@ describe("afkPaths", () => {
     expect(p.monitorLogCursorPath).toBe("/repo/.red/tmp/supervisors/default/monitor-log-cursors.toon");
     expect(p.supervisorPidPath).toBe("/repo/.red/tmp/supervisors/default/afk-supervisor.pid");
     expect(p.runnerCircuitDir).toBe("/repo/.red/tmp/supervisors/default/runner-circuit");
-    expect(p.statuslineCachePath).toBe("/repo/.red/state/statusline/statusline-cache.toon");
-    expect(p.statuslineRepoCachePath).toBe("/repo/.red/state/statusline/statusline-repo-cache.toon");
+    expect(p.statuslineGitCachePath).toBe("/repo/.red/state/statusline/statusline-git-cache.toon");
     // Scratch worktrees under the tmp worktrees lane.
     expect(p.landingWorktreesDir).toBe("/repo/.red/tmp/worktrees/landing");
     expect(p.reconcileWorktreesDir).toBe("/repo/.red/tmp/worktrees/reconcile");

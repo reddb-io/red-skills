@@ -1,12 +1,9 @@
-import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type JsonValue as ToonValue } from "@reddb-io/toon";
-import { encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
 import type { CompactWorker } from "../../core/monitor.js";
 import type {
   AfkInput,
   FleetInput,
-  RepoInput,
   ValidationGateInput,
 } from "../../core/statusline.js";
 import {
@@ -14,7 +11,6 @@ import {
   resolveRedskilledHostSettings,
 } from "@reddb-io/redskilled/host-config";
 import type { WorkerVitals } from "../../types/state.js";
-import type { GhContext } from "../gh.js";
 import { readSupervisorLiveness } from "../liveness-anchor.js";
 import { isLivePid } from "../kill-tree.js";
 import {
@@ -28,8 +24,6 @@ import {
   type EnginePaths,
 } from "@reddb-io/red-castle/engine";
 import { createFileBootBreakerStore, isBreakerOpen } from "../../core/supervisor/boot-breaker.js";
-import * as ghx from "../gh.js";
-import * as gitx from "../git.js";
 import {
   readAllWorkerStates,
   currentObservableWorkerRecords,
@@ -38,39 +32,20 @@ import {
 import { allWorkersRoots } from "../../core/worker-paths.js";
 import { afkPaths, type RepoContext } from "./paths.js";
 import { readFleetState } from "./monitor.js";
-import {
-  STATUSLINE_CACHE_TTL_S,
-  STATUSLINE_GH_COLD_TIMEOUT_MS,
-  withTimeout,
-  type StatuslineRefreshSpawnOptions,
-  statuslineCountCachePath,
-  inferGitHubRepoSlug,
-  readStatuslineCache,
-  writeStatuslineCacheAtomic,
-  decodeCacheDocument,
-  startDetachedStatuslineCountRefresh,
-} from "./statusline-cache.js";
 
 /**
  * Aggregate the live /afk workers under the workers root into the statusline's
- * block-4 input, exactly like statusline.sh's per-state loop: count live
- * workers, sum blocked + diffstat (falling back to a worktree `git diff
- * --shortstat origin/main` when the state file's diff fields are both 0), and
- * collect the in-progress issue numbers in directory order. Returns null when
+ * block-4 input: count live workers, sum blocked + the writer-stamped diffstat,
+ * and collect the in-progress issue numbers in directory order. Returns null when
  * there are no live workers, so the caller drops the whole AFK block.
  *
- * The `rq` ready-for-agent / `rh` ready-for-human counts are GitHub-derived and
- * cached for {@link STATUSLINE_CACHE_TTL_S} seconds in
- * `.red/state/statusline/statusline-cache.toon`. The cache refreshes on every stale or cold
- * render — awaited with a bounded deadline so a hanging gh CLI cannot block the
- * statusline process indefinitely. The refresh runs even when there are no live
- * workers so the queue/human badges stay current while the fleet is idle.
+ * **Local worker state only.** The `rdy=` / `hmn=` queue counts used to be
+ * fetched here by `gh` under a 15-minute cache; they are the daemon's now (ADR
+ * 0141 decision 2), served dated on the statusline payload, and this collector
+ * reaches no network at all — the counts it does not hold are absent rather than
+ * zero.
  */
-export async function collectStatuslineAfk(
-  ctx: RepoContext,
-  cacheTtlS: number = STATUSLINE_CACHE_TTL_S,
-  refreshOptions: StatuslineRefreshSpawnOptions = {},
-): Promise<AfkInput | null> {
+export async function collectStatuslineAfk(ctx: RepoContext): Promise<AfkInput | null> {
   const paths = afkPaths(ctx.root);
   // Same single owner as the monitor (core/worker-state-reader).
   const nowMs = Date.now();
@@ -78,7 +53,6 @@ export async function collectStatuslineAfk(
   // statusline counts a live `/go`/`--scout` worker (rendered per-origin via
   // state.origin), not only the `.red/tmp/workers` fleet lane.
   const records = currentRenderableWorkerRecords(await readAllWorkerStates(paths.tmpDir, { nowMs }));
-  const gitCtx: gitx.GitContext = { cwd: ctx.root };
 
   let workers = 0;
   let blocked = 0;
@@ -157,42 +131,6 @@ export async function collectStatuslineAfk(
     }
   }
 
-  // GitHub-derived counts with a 180 s (3 min) cache (configurable, #1217) —
-  // refreshed before the early-return so queue/human stay current even when the
-  // fleet is idle (workers == 0).
-  const cachePath = statuslineCountCachePath(ctx.root);
-  const nowS = Math.floor(Date.now() / 1000);
-  const cached = readStatuslineCache(cachePath);
-  let queue = cached?.queue ?? 0;
-  let human = cached?.human ?? 0;
-  let quarantine = cached?.quarantine ?? 0;
-
-  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo || inferGitHubRepoSlug(ctx.root) };
-  let refreshSucceeded = false;
-  const refresh = async (): Promise<void> => {
-    const counts = await ghx.countStatuslineQueueCounts(ghCtx);
-    queue = counts.queue;
-    human = counts.human;
-    quarantine = counts.quarantine;
-    refreshSucceeded = true;
-    writeStatuslineCacheAtomic(cachePath, { queue, human, quarantine, ts: nowS });
-  };
-
-  let cacheAgeS: number | undefined;
-  if (!cached) {
-    // Cold cache: refresh with a bounded deadline so a hanging gh CLI cannot
-    // block the statusline render indefinitely. queue/human stay 0/0 on timeout
-    // or on any gh/auth/network error.
-    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
-  } else if (nowS - cached.ts >= cacheTtlS) {
-    const staleAgeS = nowS - cached.ts;
-    cacheAgeS = staleAgeS;
-    startDetachedStatuslineCountRefresh(
-      { ...ctx, repo: ghCtx.repo },
-      { ...refreshOptions, nowS },
-    );
-  }
-
   if (workers <= 0) return null;
 
   // Build the per-source count array sorted by origin for a deterministic order.
@@ -206,7 +144,7 @@ export async function collectStatuslineAfk(
       : undefined;
 
   return {
-    workers, queue, human, quarantine, blocked, added, removed,
+    workers, blocked, added, removed,
     locIsPeak: locIsPeak || undefined,
     waiting, tokens, costUsd,
     runner, resolved, issues, phases,
@@ -214,7 +152,6 @@ export async function collectStatuslineAfk(
     model: model || undefined,
     effort: effort || undefined,
     sourceCounts,
-    cacheAgeS,
   };
 }
 
@@ -558,151 +495,4 @@ async function bootWorkerFromDirectory(
     diffAdded: 0,
     diffRemoved: 0,
   };
-}
-
-interface RepoStatsCache {
-  baseRef: string;
-  openPrs: number;
-  todayPrs: number;
-  openIssues: number;
-  localAdded: number;
-  localRemoved: number;
-  ts: number;
-}
-
-function readRepoStatsCache(path: string): RepoStatsCache | null {
-  try {
-    const parsed = decodeCacheDocument(readFileSync(path, "utf8")) as Partial<RepoStatsCache>;
-    return {
-      baseRef: typeof parsed.baseRef === "string" && parsed.baseRef.trim() ? parsed.baseRef.trim() : "origin/main",
-      openPrs: Number(parsed.openPrs ?? 0),
-      todayPrs: Number(parsed.todayPrs ?? 0),
-      openIssues: Number(parsed.openIssues ?? 0),
-      localAdded: Number(parsed.localAdded ?? 0),
-      localRemoved: Number(parsed.localRemoved ?? 0),
-      ts: Number(parsed.ts ?? 0),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writeRepoStatsCacheAtomic(path: string, cache: RepoStatsCache): void {
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-    const tmp = `${path}.tmp`;
-    writeFileSync(tmp, encodeDevSnapshotToon(cache as unknown as ToonValue), "utf8");
-    renameSync(tmp, path);
-  } catch {
-    // best-effort, like the bash `|| true`
-  }
-}
-
-/**
- * Repo-global statusline header inputs (line 1, ALWAYS rendered — unlike the
- * AFK block these show with no live workers): open-PR / open-issue counts from
- * GitHub PLUS the LOCAL branch diffstat (committed + uncommitted vs the
- * resolved base ref)
- * measured at the project root. All three are EXPENSIVE FETCHED numbers (gh/git
- * subprocesses), so all three are cached together for {@link
- * STATUSLINE_CACHE_TTL_S} seconds in `.red/state/statusline/statusline-repo-cache.toon`: a
- * fresh render serves them WITHOUT any gh/git subprocess; a cold/stale render
- * pays one bounded refresh (issue #1178 — never a per-render git diff). Every
- * field is fail-open: any gh/git error leaves it 0.
- */
-/**
- * Rewrite the repo-stats cache from the network. Used by the DETACHED refresher.
- *
- * It exists so the render path never has to: a short-lived statusline process
- * that awaited this was putting `gh` latency in front of a terminal prompt.
- */
-export async function refreshStatuslineRepoCache(
-  ctx: RepoContext,
-  baseRef: string,
-): Promise<void> {
-  const cachePath = afkPaths(ctx.root).statuslineRepoCachePath;
-  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo || inferGitHubRepoSlug(ctx.root) };
-  const [openPrs, todayPrs, openIssues, diff] = await Promise.all([
-    ghx.countOpenPrs(ghCtx),
-    ghx.countPrsCreatedToday(ghCtx),
-    ghx.countOpenIssues(ghCtx),
-    gitx.diffstatShortstat({ cwd: ctx.root }, baseRef),
-  ]);
-  writeRepoStatsCacheAtomic(cachePath, {
-    baseRef,
-    openPrs,
-    todayPrs,
-    openIssues,
-    localAdded: diff.added,
-    localRemoved: diff.removed,
-    ts: Math.floor(Date.now() / 1000),
-  });
-}
-
-export async function collectStatuslineRepo(
-  ctx: RepoContext,
-  cacheTtlS: number = STATUSLINE_CACHE_TTL_S,
-  baseRef = "origin/main",
-  /** Spawn injection for tests; production callers omit it. */
-  refreshSpawn: StatuslineRefreshSpawnOptions = {},
-): Promise<RepoInput> {
-  const paths = afkPaths(ctx.root);
-  const cachePath = paths.statuslineRepoCachePath;
-  const nowS = Math.floor(Date.now() / 1000);
-  const cached = readRepoStatsCache(cachePath);
-  const cacheMatchesBase = cached?.baseRef === baseRef;
-  let openPrs = cached?.openPrs ?? 0;
-  let todayPrs = cached?.todayPrs ?? 0;
-  let openIssues = cached?.openIssues ?? 0;
-  let localAdded = cacheMatchesBase ? (cached?.localAdded ?? 0) : 0;
-  let localRemoved = cacheMatchesBase ? (cached?.localRemoved ?? 0) : 0;
-
-  const ghCtx: GhContext = { cwd: ctx.root, repo: ctx.repo };
-  const refresh = async (): Promise<void> => {
-    // The local branch diff (committed + uncommitted) vs the resolved base ref
-    // is folded into the same refresh as the gh counts — diffstatShortstat
-    // resolves the merge-base, so this counts every commit on the branch plus
-    // the dirty worktree. It is a git subprocess and therefore cacheable: no
-    // per-render git diff.
-    const [p, t, i, diff] = await Promise.all([
-      ghx.countOpenPrs(ghCtx),
-      ghx.countPrsCreatedToday(ghCtx),
-      ghx.countOpenIssues(ghCtx),
-      gitx.diffstatShortstat({ cwd: ctx.root }, baseRef),
-    ]);
-    openPrs = p;
-    todayPrs = t;
-    openIssues = i;
-    localAdded = diff.added;
-    localRemoved = diff.removed;
-    writeRepoStatsCacheAtomic(cachePath, {
-      baseRef,
-      openPrs: p,
-      todayPrs: t,
-      openIssues: i,
-      localAdded: diff.added,
-      localRemoved: diff.removed,
-      ts: nowS,
-    });
-  };
-  let repoCacheAgeS: number | undefined;
-  if (!cached || !cacheMatchesBase) {
-    await withTimeout(refresh(), STATUSLINE_GH_COLD_TIMEOUT_MS, undefined).catch(() => undefined);
-  } else if (nowS - cached.ts >= cacheTtlS) {
-    // Stale: serve the previous value NOW and let a detached child rewrite the
-    // cache for the next render — the shape `collectStatuslineAfk` above has
-    // used all along. Awaiting the refresh here put up to
-    // STATUSLINE_GH_COLD_TIMEOUT_MS of network on the path that redraws a
-    // terminal prompt, and the whole render measured 8s against a 15-minute TTL:
-    // once every TTL, a prompt froze while three `gh` calls ran. The age travels
-    // out so the renderer can say the counts are old, which is the honest answer
-    // and costs nothing.
-    repoCacheAgeS = nowS - cached.ts;
-    startDetachedStatuslineCountRefresh(
-      { ...ctx, repo: ghCtx.repo },
-      { ...refreshSpawn, nowS, baseRef },
-    );
-  }
-
-  return { openPrs, todayPrs, openIssues, localAdded, localRemoved, cacheAgeS: repoCacheAgeS };
 }

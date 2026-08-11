@@ -18,12 +18,40 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { type JsonValue as ToonValue } from "@reddb-io/toon";
+import { decode as decodeToon, type JsonValue as ToonValue } from "@reddb-io/toon";
 import { encodeDevSnapshotToon } from "../../core/toon-snapshot.js";
 import { git as gitExec } from "../exec.js";
 import * as gitx from "../git.js";
 import { afkPaths } from "./paths.js";
-import { decodeCacheDocument, withTimeout } from "./statusline-cache.js";
+
+/**
+ * Race `promise` against a deadline, resolving with `fallback` when the deadline
+ * wins. The loser is left to settle on its own — a refresh that outlived the
+ * render still rewrites the cache for the next one, which is the whole point of
+ * a deadline that costs freshness rather than correctness.
+ */
+export async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Sniff-decode a cache document: TOON is what we write, JSON is what older
+ * bundles wrote, and a reader that accepted only one would discard a live entry
+ * over the encoding it happens to be in. */
+export function decodeCacheDocument(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return decodeToon(text);
+  }
+}
 
 /**
  * The bedrock's local-git freshness window. ~5s is the operator's perception

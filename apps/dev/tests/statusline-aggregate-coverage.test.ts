@@ -61,12 +61,13 @@ const PAYLOAD: StatuslineAggregate = {
     docs_unlanded: 2,
   },
   repo: {
-    open_prs: 3,
-    today_prs: 1,
-    open_issues: 24,
+    // The remote counters are the daemon's since ADR 0141 decision 2; the tool
+    // states their absence until #3568 reads them off the payload.
+    open_prs: null,
+    today_prs: null,
+    open_issues: null,
     local_added: 40,
     local_removed: 7,
-    cache_age_s: 12,
   },
   docs: { unlanded: 2 },
   validation_gate: { occupied: 2, total: 3 },
@@ -137,9 +138,8 @@ const PAYLOAD: StatuslineAggregate = {
     model: "claude-opus-4-8",
     effort: "high",
     sourceCounts: [{ origin: "afk", count: 2 }],
-    cacheAgeS: 12,
   },
-  queue: { ready_for_agent: 6, ready_for_human: 1, cache_age_s: 12 },
+  queue: { ready_for_agent: null, ready_for_human: null },
 };
 
 /**
@@ -157,12 +157,11 @@ const project = (p: StatuslineAggregate): Required<ProjectInput> => ({
 });
 
 const repo = (p: StatuslineAggregate): Required<RepoInput> => ({
-  openPrs: p.repo.open_prs,
-  todayPrs: p.repo.today_prs,
-  openIssues: p.repo.open_issues,
+  openPrs: p.repo.open_prs ?? 0,
+  todayPrs: p.repo.today_prs ?? 0,
+  openIssues: p.repo.open_issues ?? 0,
   localAdded: p.repo.local_added,
   localRemoved: p.repo.local_removed,
-  cacheAgeS: p.repo.cache_age_s ?? 0,
 });
 
 const docs = (p: StatuslineAggregate): Required<DocsInput> => ({
@@ -201,8 +200,8 @@ const afk = (p: StatuslineAggregate): Required<AfkInput> | undefined => {
   if (!block) return undefined;
   return {
     workers: block.workers,
-    queue: p.queue.ready_for_agent,
-    human: p.queue.ready_for_human,
+    queue: p.queue.ready_for_agent ?? 0,
+    human: p.queue.ready_for_human ?? 0,
     quarantine: 0,
     blocked: block.blocked,
     added: block.added,
@@ -219,7 +218,6 @@ const afk = (p: StatuslineAggregate): Required<AfkInput> | undefined => {
     model: block.model ?? "",
     effort: block.effort ?? "",
     sourceCounts: block.sourceCounts ?? [],
-    cacheAgeS: p.queue.cache_age_s ?? 0,
   };
 };
 

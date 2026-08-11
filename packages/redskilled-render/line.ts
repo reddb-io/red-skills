@@ -37,6 +37,7 @@ import {
   type RedskilledDashboardCells,
   type RedskilledDashboardColumn,
 } from "./dashboard.js";
+import { remoteCounterTokens } from "./counters.js";
 import { clamp, flattenPublishedLine, formatBytes, formatDuration, pad, width } from "./format.js";
 import {
   BUDGET_BAND_MARK,
@@ -326,6 +327,12 @@ function renderHead(
     // head states the mismatch instead of an aggregate that reads as calm.
     parts.push(unmatched);
   }
+  // The four remote counters, from the daemon's dated block (ADR 0141 decision
+  // 2). They sit with the project they describe and ahead of the version, and
+  // they render in `local` alone: a `global` head speaks for the host, and one
+  // repository's queue depth on it would be attributed to every project on the
+  // machine.
+  if (options.mode !== "global") parts.push(...remoteCounterTokens(payload, options.project));
   parts.push(engineMark(payload));
   const budget = budgetMark(payload);
   if (budget != null) parts.push(budget);

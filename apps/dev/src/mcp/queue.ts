@@ -13,8 +13,8 @@ import {
   collectStatuslineAfk,
   collectStatuslineDocs,
   collectStatuslineFleet,
+  collectStatuslineLocalGit,
   collectStatuslineValidationGate,
-  collectStatuslineRepo,
   inferGitHubRepoSlug,
 } from "../runtime/wire.js";
 import { resolveProject } from "../commands/statusline.js";
@@ -135,10 +135,10 @@ export async function collectStatuslineAggregate(root: string) {
     remote: "origin",
   };
 
-  const [project, repoStats, docs, afkBlock, fleetChip, fleet, workers, validationGate] =
+  const [project, localGit, docs, afkBlock, fleetChip, fleet, workers, validationGate] =
     await Promise.all([
       resolveProject(root),
-      collectStatuslineRepo(repoCtx),
+      collectStatuslineLocalGit(root),
       collectStatuslineDocs(repoCtx).catch(() => undefined),
       collectStatuslineAfk(repoCtx).catch(() => null),
       collectStatuslineFleet(repoCtx).catch(() => undefined),
@@ -157,13 +157,22 @@ export async function collectStatuslineAggregate(root: string) {
       pointer_version: project.pointerVersion ?? null,
       docs_unlanded: docs?.count ?? 0,
     },
+    /**
+     * The LOCAL repository facts, and honest nulls where the remote ones were.
+     *
+     * The open-PR/open-issue counts came from this app's own `gh` cache, which is
+     * gone (ADR 0141 decision 2): every remote counter is the daemon's, served
+     * dated on its statusline payload, and this tool reads that payload in #3568.
+     * Until it does the numbers are `null` — an absence a consumer can see —
+     * rather than a zero that reads as an empty repository. The diffstat stays
+     * here because it never needed a network.
+     */
     repo: {
-      open_prs: repoStats.openPrs ?? 0,
-      today_prs: repoStats.todayPrs ?? 0,
-      open_issues: repoStats.openIssues ?? 0,
-      local_added: repoStats.localAdded ?? 0,
-      local_removed: repoStats.localRemoved ?? 0,
-      cache_age_s: repoStats.cacheAgeS ?? null,
+      open_prs: null,
+      today_prs: null,
+      open_issues: null,
+      local_added: localGit.localAdded,
+      local_removed: localGit.localRemoved,
     },
     docs: { unlanded: docs?.count ?? 0 },
     validation_gate: validationGate,
@@ -196,10 +205,10 @@ export async function collectStatuslineAggregate(root: string) {
      * it — summed across live workers, including the fleet runner/model/effort
      * label the per-worker rows carry individually. Null when no live worker. */
     afk: afkBlock,
+    /** The queue depths, on the same terms as the counts above: daemon-owned. */
     queue: {
-      ready_for_agent: afkBlock?.queue ?? 0,
-      ready_for_human: afkBlock?.human ?? 0,
-      cache_age_s: afkBlock?.cacheAgeS ?? null,
+      ready_for_agent: null,
+      ready_for_human: null,
     },
   };
 }

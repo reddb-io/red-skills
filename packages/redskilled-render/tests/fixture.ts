@@ -6,11 +6,78 @@
  * draw byte-identically to one a live daemon composed. If it ever does not, the
  * renderer reached for something that was not an argument.
  */
-import type {
-  RedskilledRenderPayload,
-  RedskilledRenderWorker,
-  RedskilledRenderWorkerDisplay,
+import {
+  REDSKILLED_RENDER_COUNTER_NAMES,
+  type RedskilledRenderCounter,
+  type RedskilledRenderCounterName,
+  type RedskilledRenderCounters,
+  type RedskilledRenderPayload,
+  type RedskilledRenderWorker,
+  type RedskilledRenderWorkerDisplay,
 } from "../payload.js";
+
+/**
+ * One dated remote-counter block, as the daemon composes it.
+ *
+ * Values are given per counter name; `null` is the daemon's absence (this poll
+ * produced no such count) and is deliberately expressible, because the whole
+ * reason the block carries `value: null` is that a zero would lie.
+ */
+export function counters(
+  values: Partial<Record<RedskilledRenderCounterName, number | null>>,
+  overrides: {
+    readonly project_label?: string;
+    readonly repository?: string;
+    readonly ageMs?: number;
+    readonly thresholdMs?: number;
+    readonly fetchedAt?: string;
+  } = {},
+): RedskilledRenderCounters {
+  const thresholdMs = overrides.thresholdMs ?? 120_000;
+  const ageMs = overrides.ageMs ?? 5_000;
+  const fetchedAt = overrides.fetchedAt ?? "2026-08-03T00:02:00.000Z";
+  const build = (name: RedskilledRenderCounterName): RedskilledRenderCounter => {
+    const value = values[name] ?? null;
+    if (value == null) {
+      return {
+        name,
+        value: null,
+        fetched_at: null,
+        age_ms: null,
+        threshold_ms: thresholdMs,
+        stale: false,
+        reason: `this poll produced no ${name}, so it is absent rather than zero`,
+      };
+    }
+    const stale = ageMs > thresholdMs;
+    return {
+      name,
+      value,
+      fetched_at: fetchedAt,
+      age_ms: ageMs,
+      threshold_ms: thresholdMs,
+      stale,
+      reason: stale
+        ? `this ${name} is ${ageMs}ms old, past the ${thresholdMs}ms window`
+        : `counted ${ageMs}ms ago, within the ${thresholdMs}ms window`,
+    };
+  };
+  const built = {} as Record<RedskilledRenderCounterName, RedskilledRenderCounter>;
+  for (const name of REDSKILLED_RENDER_COUNTER_NAMES) built[name] = build(name);
+  return {
+    version: 1,
+    threshold_ms: thresholdMs,
+    projects: [
+      {
+        project_label: overrides.project_label ?? "acme/widgets",
+        repository: overrides.repository ?? "acme/widgets",
+        outcome: "counted",
+        counters: built,
+      },
+    ],
+    reason: `every counter here was produced by the poll of ${fetchedAt}, ${ageMs}ms ago`,
+  };
+}
 
 export function worker(overrides: Partial<RedskilledRenderWorker> = {}): RedskilledRenderWorker {
   return {
