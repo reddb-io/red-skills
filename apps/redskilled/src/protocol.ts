@@ -195,7 +195,7 @@ export interface RedskilledDashboardRenderRequest {
 }
 
 export type RedskilledRequest =
-  | { id: string; op: "ping" }
+  | { id: string; op: "ping"; self?: true }
   | { id: string; op: "host-state" }
   | { id: string; op: "reap"; report?: boolean }
   | { id: string; op: "statusline-payload"; session_project?: string; extras?: RedskilledStatuslineExtrasRequest }
