@@ -159,7 +159,7 @@ export const AFKStatusline: Plugin = async (ctx) => {
       const block = [
         "## AFK live state",
         s,
-        "If the user resumes this session, castle \`status { scope: worker }\` is the source of truth for current worker state and liveness — re-read it before acting on any compaction summary; without the MCP, /afk monitor is the fallback.",
+        "If the user resumes this session, redskilled \`status { scope: worker }\` is the source of truth for current Worker state and liveness — re-read it before acting on any compaction summary; without the MCP, /afk monitor is the fallback.",
         "",
       ].join("\\n");
       output.context.push(block);

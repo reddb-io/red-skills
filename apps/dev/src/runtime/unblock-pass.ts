@@ -8,7 +8,7 @@
 //      worker's terminal stage or from `reconcile()` — i.e. only when the AGENT
 //      is the one that closes the blocker;
 //   2. the Unblock Sweep as step 7 of `runBoot`, reachable from an `/afk` boot
-//      and from the castle resident's periodic janitor;
+//      and from the redskilled MCP resident's periodic janitor;
 //   3. the `unblock_sweep` MCP tool, reachable only when somebody calls it.
 //
 // On a repo operated through live sessions only, a HUMAN closes the blocker in

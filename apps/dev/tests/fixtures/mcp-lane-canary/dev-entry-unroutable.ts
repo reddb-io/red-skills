@@ -7,8 +7,8 @@
 
 const argv = process.argv.slice(2);
 process.stderr.write(
-  `castle MCP: unroutable subcommand ${JSON.stringify(argv[0])} — ` +
-    "the castle-mcp bundle routes only `--version` and `--help`; " +
+  `redskilled MCP: unroutable subcommand ${JSON.stringify(argv[0])} — ` +
+    "the redskilled-mcp bundle routes only `--version` and `--help`; " +
     "worker subcommands belong to the dev entry (red-skills-dev)\n",
 );
 process.exitCode = 2;

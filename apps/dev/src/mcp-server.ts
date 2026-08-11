@@ -54,7 +54,7 @@ import {
   refreshPublishedBundleVersion,
 } from "./core/published-version.js";
 
-const buildInfo = readBuildInfo("castle");
+const buildInfo = readBuildInfo("redskilled-mcp");
 const REGISTRATION_DELIVERY_RENEW_MS = 150_000;
 
 /**
@@ -92,8 +92,8 @@ function toon(value: unknown): string {
   });
 }
 
-export function createCastleMcpServer(root = process.cwd()): McpServer {
-  const server = new McpServer({ name: "castle", version: buildInfo.version });
+export function createRedskilledMcpServer(root = process.cwd()): McpServer {
+  const server = new McpServer({ name: "redskilled", version: buildInfo.version });
   const registerTool = server.registerTool.bind(server) as (
     name: string,
     config: {
@@ -186,10 +186,10 @@ async function run(): Promise<void> {
   const deaths = installDeathRecorder({
     lanePath: deathLaneFile(root),
     kind: "launcher",
-    id: `castle-mcp:${process.pid}`,
+    id: `redskilled-mcp:${process.pid}`,
     phase: "connecting",
   });
-  const server = createCastleMcpServer();
+  const server = createRedskilledMcpServer();
   const registrationDelivery = startResidentRegistrationDelivery(root);
   const close = () => {
     void server.close();
@@ -209,12 +209,12 @@ async function run(): Promise<void> {
           if (!sharedBootSweeps) {
             const repo = await resolveRepoSlug(root).catch(() => "");
             sharedBootSweeps = buildProjectBootSweeps(root, repo, (line) =>
-              process.stderr.write(`castle resident: ${line}\n`),
+              process.stderr.write(`redskilled MCP resident: ${line}\n`),
             );
           }
           await sharedBootSweeps();
         },
-        notice: (line) => process.stderr.write(`castle resident: ${line}\n`),
+        notice: (line) => process.stderr.write(`redskilled MCP resident: ${line}\n`),
       }),
     });
   } finally {
@@ -228,7 +228,7 @@ async function run(): Promise<void> {
 export const RESIDENT_CURATOR_INTERVAL_MS = 5 * 60 * 1000;
 export const RESIDENT_MERGE_DRIVER_INTERVAL_MS = 90 * 1000;
 
-/** Start the #2512 merge driver inside the castle resident: every interval it
+/** Start the #2512 merge driver inside the redskilled MCP resident: every interval it
  * reloads the durable armed set from `.red/state/castle/merge-driver.toon` and
  * runs one pass (update-branch when BEHIND, merge-commit when green, bounded
  * retries, terminal classification). A singleton lease keeps multiple stdio
@@ -289,7 +289,7 @@ export async function startResidentMergeDriver(root = process.cwd()): Promise<vo
   timer.unref();
 }
 
-/** Start the ADR 0122 periodic reconciliation owner inside the castle resident.
+/** Start the ADR 0122 periodic reconciliation owner inside the redskilled MCP resident.
  * The singleton lease prevents multiple stdio hosts for the same repo from
  * racing the durable ledger. The first sweep is detached from MCP startup; a
  * slow or unavailable tracker never delays the stdio handshake. */
@@ -354,10 +354,10 @@ export interface McpEntrypointDependencies {
  * that says which subcommands exist answered by refusing an unknown one (#2918).
  * Like `--version`, it is asked when the surrounding machinery is broken.
  */
-export const CASTLE_MCP_USAGE = `Usage: red-skills-castle-mcp [command]
+export const REDSKILLED_MCP_USAGE = `Usage: red-skills-redskilled-mcp [command]
 
 Commands:
-  (none)        serve the castle MCP surface over stdio
+  (none)        serve the redskilled MCP surface over stdio
   --version     print the build stamp (--json for the build info)
   --help        print this usage
 
@@ -377,14 +377,14 @@ export async function main(
     },
     startSelfUpdate: async () => {
       await startResidentSelfUpdate({
-        notice: (line) => process.stderr.write(`castle resident: ${line}\n`),
+        notice: (line) => process.stderr.write(`redskilled MCP resident: ${line}\n`),
       });
     },
     connect: run,
   },
 ): Promise<number> {
   if (argv[0] === "--help" || argv[0] === "-h" || argv[0] === "help") {
-    process.stdout.write(CASTLE_MCP_USAGE);
+    process.stdout.write(REDSKILLED_MCP_USAGE);
     return 0;
   }
   // The lane's canary lives in THIS bundle on purpose (#2706): it must launch
@@ -414,8 +414,8 @@ export async function main(
   const leading = argv[0];
   if (leading !== undefined) {
     process.stderr.write(
-      `castle MCP: unroutable subcommand ${JSON.stringify(leading)} — ` +
-        "the castle-mcp bundle routes only `--version` and `--help`; " +
+      `redskilled MCP: unroutable subcommand ${JSON.stringify(leading)} — ` +
+        "the redskilled-mcp bundle routes only `--version` and `--help`; " +
         "worker subcommands belong to the dev entry (red-skills-dev)\n",
     );
     return 2;
@@ -445,7 +445,7 @@ if (isDirectExecution) {
       process.exitCode = exitCode;
     })
     .catch((error) => {
-      process.stderr.write(`castle MCP fatal: ${String(error)}\n`);
+      process.stderr.write(`redskilled MCP fatal: ${String(error)}\n`);
       process.exitCode = 1;
     });
 }

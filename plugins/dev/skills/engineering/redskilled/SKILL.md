@@ -92,13 +92,13 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
 **A dead Worker still gets a dossier.** A Worker refused at birth produced no agent rounds, so the daemon's refusal line and the death evidence *are* the content. Never report "nothing to debug" when the answer is "it never started, here is why".
 
 1. **Resolve the issue to Worker(s) — tool surface first, lanes second.** Ask the
-   `castle` MCP before touching a file:
+   `redskilled` MCP before touching a file:
 
    - `status { scope: "worker", live_only: false }` — the Worker vitals records.
      Each record's `number` is the issue it holds, so the resolution is a filter
      over that answer. Keep every record whose `number` matches the argument.
    - `claim_status { issue: <n> }` — who holds or held the Ticket's claim.
-   - `history { limit: 200 }` and `events_since {}` — castle history and lane
+   - `history { limit: 200 }` and `events_since {}` — AFK history and lane
      records for the recent past, which name the Worker around park and landing.
 
    Then read the lanes for whatever the tools could not answer — a Worker the
@@ -154,7 +154,7 @@ Treat `redskilled` as the per-machine process authority: it owns Worker birth, d
 5. **Close with the self-serve diagnosis** — the section the operator actually
    acts on. Say what the current phase means, whether the Worker is stuck and on
    what evidence, and what the evidence says about why. Then list the exact next
-   moves as commands and tool calls the operator runs themselves: the `castle`
+   moves as commands and tool calls the operator runs themselves: the `redskilled`
    MCP reads that widen the picture (`status`, `logs`, `claim_status`,
    `deadend_audit`), and the recovery verbs when the state calls for one —
    `hitl_resolve` for a parked human decision, `claim_release` for a claim a dead
@@ -313,7 +313,7 @@ this dossier:
 <what the phase means, whether it is stuck, what the evidence says about why>
 
 ## Next moves
-1. <exact command or castle tool call> — <what it answers or repairs>
+1. <exact command or redskilled tool call> — <what it answers or repairs>
 
 ## References
 - <path-or-url>: <one-line description>
@@ -321,7 +321,7 @@ this dossier:
 
 ## Known gap: no issue-keyed resolver
 
-No castle tool takes an issue number and returns the Worker(s) that ran it. The
+No redskilled tool takes an issue number and returns the Worker(s) that ran it. The
 tool answers are Worker-keyed, so resolution is a client-side filter over
 `status { scope: "worker", live_only: false }` plus `claim_status`, and a Worker
 the daemon refused never appears in either — only the lane scan finds it. This

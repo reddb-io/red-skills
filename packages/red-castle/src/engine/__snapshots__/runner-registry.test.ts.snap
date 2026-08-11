@@ -112,10 +112,10 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": false,
-      "castle": false,
       "navigator": true,
       "red-memory": false,
       "red-ui": false,
+      "redskilled": false,
       "rsp": false,
     },
     "plugins": {
@@ -135,10 +135,10 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": false,
-      "castle": false,
       "navigator": true,
       "red-memory": true,
       "red-ui": false,
+      "redskilled": false,
       "rsp": false,
     },
     "plugins": {
@@ -158,10 +158,10 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": true,
-      "castle": false,
       "navigator": true,
       "red-memory": false,
       "red-ui": false,
+      "redskilled": false,
       "rsp": false,
     },
     "plugins": {
@@ -181,10 +181,10 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": false,
-      "castle": false,
       "navigator": true,
       "red-memory": false,
       "red-ui": true,
+      "redskilled": false,
       "rsp": false,
     },
     "plugins": {
@@ -204,10 +204,10 @@ exports[`engine runner registry > projects the exact codex implementer constrain
     "hooks": false,
     "mcpServers": {
       "brain": false,
-      "castle": false,
       "navigator": true,
       "red-memory": false,
       "red-ui": false,
+      "redskilled": false,
       "rsp": true,
     },
     "plugins": {
@@ -228,9 +228,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": false,
       },
-      "castle": {
-        "enabled": false,
-      },
       "navigator": {
         "enabled": true,
       },
@@ -238,6 +235,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": false,
       },
       "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
         "enabled": false,
       },
       "rsp": {
@@ -261,9 +261,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": false,
       },
-      "castle": {
-        "enabled": false,
-      },
       "navigator": {
         "enabled": true,
       },
@@ -271,6 +268,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": true,
       },
       "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
         "enabled": false,
       },
       "rsp": {
@@ -295,9 +295,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": true,
       },
-      "castle": {
-        "enabled": false,
-      },
       "navigator": {
         "enabled": true,
       },
@@ -305,6 +302,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": false,
       },
       "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
         "enabled": false,
       },
       "rsp": {
@@ -329,9 +329,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": false,
       },
-      "castle": {
-        "enabled": false,
-      },
       "navigator": {
         "enabled": true,
       },
@@ -340,6 +337,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       },
       "red-ui": {
         "enabled": true,
+      },
+      "redskilled": {
+        "enabled": false,
       },
       "rsp": {
         "enabled": false,
@@ -362,9 +362,6 @@ exports[`engine runner registry > projects the exact opencode implementer constr
       "brain": {
         "enabled": false,
       },
-      "castle": {
-        "enabled": false,
-      },
       "navigator": {
         "enabled": true,
       },
@@ -372,6 +369,9 @@ exports[`engine runner registry > projects the exact opencode implementer constr
         "enabled": false,
       },
       "red-ui": {
+        "enabled": false,
+      },
+      "redskilled": {
         "enabled": false,
       },
       "rsp": {

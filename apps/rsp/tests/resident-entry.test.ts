@@ -1,5 +1,5 @@
 // #2736 — the resident auto-spawn must target the rsp entry, never the caller's
-// own argv[1]. A dev-bundle or castle-mcp host that re-execs itself with
+// own argv[1]. A dev-bundle or redskilled-mcp host that re-execs itself with
 // `warm-resident` loses elision in silence, because rsp fails open by contract.
 import { spawnSync } from "node:child_process";
 import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
@@ -76,14 +76,14 @@ describe("resident spawn target (#2736)", () => {
     expect("args" in entry && entry.args.at(-1)).toBe(join(cache, "rsp-2.87.5.bundle.min.mjs"));
   });
 
-  it("targets the plugin-root rsp bundle when a castle-mcp-shaped host asks", async () => {
+  it("targets the plugin-root rsp bundle when a redskilled-mcp-shaped host asks", async () => {
     const root = await tempRoot();
     const pluginRoot = join(root, "plugins", "dev");
     await mkdir(join(pluginRoot, "dist"), { recursive: true });
     await writeFile(join(pluginRoot, "dist", "rsp.bundle.min.mjs"), "// rsp\n");
 
     const entry = resolveRspEntry({}, {
-      callerEntry: join(root, "somewhere", "castle-mcp.bundle.min.mjs"),
+      callerEntry: join(root, "somewhere", "redskilled-mcp.bundle.min.mjs"),
       env: { ...bareEnv(join(root, "empty")), CLAUDE_PLUGIN_ROOT: pluginRoot },
     });
 

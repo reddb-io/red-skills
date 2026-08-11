@@ -1,18 +1,20 @@
-# The `castle` MCP — the castle's complete capability interface
+# The `redskilled` MCP — RedSkills' complete project interface
 
-**red-castle is the AFK MCP: `castle` is the one canonical interface to every
-castle capability, and every other surface is a client of it.** `/afk`, `/go`,
-the `red-skills-dev` CLI, and any future command-center UI all drive the same
-tools over the same value-returning cores (ADR 0120). This file is the client
-contract; the skills that reference it never restate the tool list.
+**The `redskilled` MCP is the one canonical interface to every project execution
+capability, and every other surface is a client of it.** `/afk`, `/go`, the
+`red-skills-dev` CLI, and any future command-center UI all drive the same tools
+over the same value-returning cores (ADR 0120, public name amended by ADR 0142).
+The name identifies the operator-facing system boundary; `red-castle` remains
+the execution substrate and its `Castle*` contracts remain internal. This file
+is the client contract; the skills that reference it never restate the tool list.
 
 ## How to reach the tools
 
-The server is registered as `castle` in `plugins/dev/.mcp.json`, so a host that
+The server is registered as `redskilled` in `plugins/dev/.mcp.json`, so a host that
 loaded the `dev` plugin already has it. **Hosts prefix MCP tool names — call the
 tool your host actually exposes, not the bare name.** Claude Code and Codex
 surface plugin MCP tools as `mcp__<server-slug>__<tool>` (for example
-`mcp__plugin_dev_castle__status` under Claude Code); the slug is derived
+`mcp__plugin_dev_redskilled__status` under Claude Code); the slug is derived
 from the server name, so it never contains a colon — codex rejects `:` in server
 names. Resolve the exact identifier with a tool search for the bare name in the
 table below before the first call, then reuse it for the rest of the session.
@@ -58,7 +60,7 @@ mutating tool with a `MUTATING:` description prefix; the table below mirrors it.
 | --- | --- | --- |
 | `help` | read | Read the daemon, registration, last socket-local queue poll, Workers, and latest refusal; return where this project stands, one pasteable next call, and an intent map generated from this live tool table. It makes no GitHub request. |
 
-When the next castle call is unclear, call `help` and follow its structured
+When the next redskilled call is unclear, call `help` and follow its structured
 `next` action. It is the sole runtime source of operating choreography; this
 document defines the protocol without copying its state-dependent routes.
 
@@ -103,7 +105,7 @@ caller reads an answer rather than an internal error.
 against a bundle that cannot route `run`, so workers created through this
 interface drained zero issues while the CLI lane kept working and no surface
 reported the difference (#2677). Run
-`castle-mcp __mcp-canary --root <scratch-repo>` to walk the shipped lane end to
+`npx -y -p @reddb-io/red-skills@<version> red-skills-redskilled-mcp __mcp-canary --root <scratch-repo>` to walk the shipped lane end to
 end — `project_start` → a registration the daemon holds → no process of the
 project's own → `status {scope: project}` → `project_stop`. It exits non-zero naming the
 step that went inert.
@@ -196,11 +198,11 @@ labels by hand.
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
-| `merge_arm` | mutating | Hand one open PR to the castle merge driver — it owns the PR to a terminal state. |
+| `merge_arm` | mutating | Hand one open PR to the project merge driver — it owns the PR to a terminal state. |
 | `merge_status` | read | The driver's durable per-PR records: armed set, attempts, terminal classifications. |
 | `merge_release` | mutating | Stop driver ownership of one PR (record kept as `released`). |
 
-The driver (#2512) runs in the castle resident on a fixed cadence: BEHIND →
+The driver (#2512) runs in the project MCP resident on a fixed cadence: BEHIND →
 update-branch, green at head → merge with the merge-commit strategy (never an
 admin override), transient faults → bounded retries, DIRTY or failing checks →
 terminal `needs-medic`/`needs-human` classification instead of a loop. Its
@@ -230,15 +232,15 @@ state survives resident restarts in `.red/state/castle/merge-driver.toon`.
 | --- | --- | --- |
 | `logs` | read | Raw `CastleLaneRecord` entries from one lane (`worker`/`supervisor`/`monitor`/`liveness`). |
 | `dashboard` | read | The operational dashboard over a `periodDays` window. |
-| `history` | read | Structured castle history records, newest last. |
-| `statusline_aggregate` | read | Castle-side statusline aggregate (project, repo counters, docs drift, fleet, worker rows, aggregated AFK block, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
+| `history` | read | Structured AFK history records, newest last. |
+| `statusline_aggregate` | read | Project-side statusline aggregate (project, repo counters, docs drift, drain, Worker rows, aggregated AFK block, queue) — the same data the command-backed `statusLine` renders, as structured data with the same 180s cache discipline. Host-side fields (session model/effort, context %, usage quotas) are out of scope. |
 
 ### Queue — what is drainable now
 
 | Tool | Mode | What it does |
 | --- | --- | --- |
 | `queue_status` | read | Trust-partitioned `ready-for-agent` candidates (`eligible` and `held_for_summon`) plus `ready-for-human`. Optional `selector` previews one fleet's scoped view (same facets as fleet selectors, e.g. `tags`/`user`). |
-| `events_since` | read | Castle history events and worker lane records after an opaque cursor, plus the next cursor. |
+| `events_since` | read | AFK history events and Worker lane records after an opaque cursor, plus the next cursor. |
 | `deadend_audit` | read | Every stuck AFK pattern with its recommended cure: dangling claims, red PRs with dead owners, superseded PRs, executable Tickets carrying an active Current blocker, dependency blocks whose `req:*` targets all closed, human-queue age outliers, and stale worktrees. Cache-backed — repeated calls within the refresh window cost zero GitHub quota. Detection only. |
 
 `help` is the first call when operating a drain. Use `queue_status` when its

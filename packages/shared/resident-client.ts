@@ -76,7 +76,7 @@ export { RspResidentEntryError, RSP_ENTRY_UNRESOLVED, resolveRspEntry } from "./
 
 /**
  * Generic client for the resident rsp server. Consumers outside the rsp app
- * (memory, brain, the dev bundle, castle-mcp) need no extra wiring: an
+ * (memory, brain, the dev bundle, redskilled-mcp) need no extra wiring: an
  * auto-start resolves the rsp entry explicitly (`rsp-entry.ts`) rather than
  * re-executing the caller's own entrypoint. `config.serverCommand` stays the
  * override for a host that knows better.

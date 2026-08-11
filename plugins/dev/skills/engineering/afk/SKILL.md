@@ -11,10 +11,10 @@ operandi; `/go` is the ad-hoc-only exception. Drain the agent-ready backlog by
 letting the runtime select issues, create isolated worktrees, run the inner
 agent, validate, land, close, and clean up.
 
-## Operate the castle through the `castle` MCP
+## Operate project execution through the `redskilled` MCP
 
-**The `castle` MCP is the interface; `/afk` is one of its clients.** Every
-castle capability this skill needs — queue, dispatch, fleet, runners, gate,
+**The `redskilled` MCP is the interface; `/afk` is one of its clients.** Every
+execution capability this skill needs — queue, dispatch, runners, gate,
 landing, claim, worktrees, hygiene, observability — is an MCP tool returning
 structured TOON. Drive those tools; do not shell out to reimplement what a tool
 already does. The complete tool surface, the host tool-name prefix rule, and the
@@ -66,7 +66,7 @@ contract live in [`docs/OPERATIONS.md`](./docs/OPERATIONS.md).
 
 ## When To Use
 
-Each verb below names the `castle` tool that serves it; the flag form is the
+Each verb below names the `redskilled` tool that serves it; the flag form is the
 CLI fallback for the same operation.
 
 - `/afk` - drain every open issue labelled `ready-for-agent`. Read the queue
@@ -119,7 +119,7 @@ CLI fallback for the same operation.
   a watchdog respawn would fire. Answers "what is actually running?" without
   cross-referencing pid files and snapshots by hand.
 - `/afk fleet logs --supervisor|--worker <id>|--all [--follow]` - the `logs`
-  tool, one lane per call. Read-only local view over the structured castle
+  tool, one lane per call. Read-only local view over the structured `red-castle`
   lanes: supervisor logs render the supervisor lane; worker logs render a single
   worker lane; `--all` merges all worker lanes and prefixes every line with the
   worker id.
@@ -134,7 +134,7 @@ composite action, or local bundle invocation.
 
 Read the focused reference before touching that concern:
 
-- The `castle` MCP tool surface, host prefixing, mutation modes, and the CLI
+- The `redskilled` MCP tool surface, host prefixing, mutation modes, and the CLI
   fallback rule: [`MCP.md`](./MCP.md).
 - Runtime, sandcastle substrate, CLI forwarding, bootstrap, hard preconditions,
   issue selection, lifecycle, failure labels, per-issue loop, merge/close,
@@ -166,7 +166,8 @@ Read the focused reference before touching that concern:
 
 ## Load-Bearing Rules
 
-- The `castle` MCP is the canonical castle interface (ADR 0120). `/afk` is a
+- The `redskilled` MCP is the canonical project interface (ADR 0120, naming
+  amended by ADR 0142). `/afk` is a
   client of it, so a capability missing from the tools is a gap to file against
   the MCP, never a reason to hand-roll the operation in shell.
 - Tracked work belongs in `/afk`. A queue with zero eligible `ready-for-agent`

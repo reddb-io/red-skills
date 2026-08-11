@@ -1,4 +1,4 @@
-// Dependency wiring for the castle MCP surface.
+// Dependency wiring for the redskilled MCP surface.
 import { join } from "node:path";
 import {
   castleLanePath,

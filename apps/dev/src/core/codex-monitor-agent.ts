@@ -32,7 +32,7 @@ export interface CodexMonitorAgentPromptOptions {
 export const DEFAULT_CODEX_MONITOR_INTERVAL_SECONDS = 30;
 
 /**
- * The castle `status {scope: worker}` intent is the canonical read (ADR 0120/0134); this CLI
+ * The redskilled `status {scope: worker}` intent is the canonical read (ADR 0120/0134); this CLI
  * invocation is the no-MCP fallback for hosts that cannot reach the MCP.
  */
 export const DEFAULT_CODEX_MONITOR_COMMAND =
@@ -67,8 +67,8 @@ export function renderCodexMonitorAgentPrompt(options: CodexMonitorAgentPromptOp
     "Purpose: keep AFK progress visible in the Codex UI while the main session continues working.",
     "",
     "Loop:",
-    `1. Every ${intervalSeconds} seconds, read live state from the castle MCP: call the castle \`status\` tool with \`scope: worker\` for normalized worker state, vitals, and monitor inputs.`,
-    "2. When the castle MCP is not reachable from this host, say so once, then use the no-MCP fallback from the project root:",
+    `1. Every ${intervalSeconds} seconds, read live state from the redskilled MCP: call the redskilled \`status\` tool with \`scope: worker\` for normalized worker state, vitals, and monitor inputs.`,
+    "2. When the redskilled MCP is not reachable from this host, say so once, then use the no-MCP fallback from the project root:",
     `   ${monitorCommand}`,
     "3. Report a concise progress update when live worker state changes, when a worker becomes stale/wedged, or at least every five minutes.",
     "4. Exit once there is no live .red/tmp/supervisors/default/afk-supervisor.pid and the worker status read has no [live] or [quiet] workers.",
@@ -81,7 +81,7 @@ export function renderCodexMonitorAgentPrompt(options: CodexMonitorAgentPromptOp
     "- Do not repair state. Only observe and report.",
     "",
     "Allowed actions:",
-    "- Call the read-only castle `status` tool above, or the fallback command when the MCP is unreachable.",
+    "- Call the read-only redskilled `status` tool above, or the fallback command when the MCP is unreachable.",
     "- Use read-only process/file checks such as ps, test -f, cat, tail, and ls when needed to decide whether to exit.",
     "- Summarize worker id, issue number, runner, stage, live/stale/wedged state, duration, and diffstat.",
   ].join("\n") + "\n";

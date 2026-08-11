@@ -58,7 +58,7 @@ afterEach(async () => {
 });
 
 async function root(): Promise<string> {
-  const value = await mkdtemp(join(tmpdir(), "dev-castle-mcp-"));
+  const value = await mkdtemp(join(tmpdir(), "dev-redskilled-mcp-"));
   roots.push(value);
   return value;
 }
@@ -75,7 +75,7 @@ function granted(pid: number): DispatchedWorkerBirth {
   };
 }
 
-describe("castle MCP host adapter", () => {
+describe("redskilled MCP host adapter", () => {
   // The sibling dev-bundle resolution a dispatch needs now lives on the
   // published-entry path (`resolveDevScriptPath`, covered by its own suite): the
   // adapter's copy existed only to hand a bundle to its own `spawn`, and since
@@ -463,10 +463,10 @@ describe("castle MCP host adapter", () => {
     const deps = createCastleMcpDependencies(cwd, operations);
 
     await expect(
-      deps.gateRun({ branch: "afk/w80UR/2307-castle-mcp-s4" }),
+      deps.gateRun({ branch: "afk/w80UR/2307-redskilled-mcp-s4" }),
     ).resolves.toMatchObject({ ok: true });
     await expect(
-      deps.landBranch({ issue: 2307, branch: "afk/w80UR/2307-castle-mcp-s4" }),
+      deps.landBranch({ issue: 2307, branch: "afk/w80UR/2307-redskilled-mcp-s4" }),
     ).resolves.toMatchObject({ issue: 2307, ok: true });
     await expect(deps.cascadeStatus({ issue: 2307 })).resolves.toMatchObject({
       issue: 2307,
@@ -478,11 +478,11 @@ describe("castle MCP host adapter", () => {
       issue: 2307,
     });
     expect(operations.gateRun).toHaveBeenCalledWith({
-      branch: "afk/w80UR/2307-castle-mcp-s4",
+      branch: "afk/w80UR/2307-redskilled-mcp-s4",
     });
     expect(operations.landBranch).toHaveBeenCalledWith({
       issue: 2307,
-      branch: "afk/w80UR/2307-castle-mcp-s4",
+      branch: "afk/w80UR/2307-redskilled-mcp-s4",
     });
   });
 
@@ -592,11 +592,11 @@ describe("project lifecycle — a registration, never a process (#2909)", () => 
 describe("rsp wait MCP tools", () => {
   it("resolves the sibling rsp CLI bundle from local and cached MCP assets", () => {
     expect(
-      resolveRspCliBundle(join("dist", "castle-mcp.bundle.min.mjs")),
+      resolveRspCliBundle(join("dist", "redskilled-mcp.bundle.min.mjs")),
     ).toBe(join("dist", "rsp.bundle.min.mjs"));
     expect(
       resolveRspCliBundle(
-        join("cache", "castle-mcp-2.76.1.bundle.min.mjs"),
+        join("cache", "redskilled-mcp-2.76.1.bundle.min.mjs"),
       ),
     ).toBe(join("cache", "rsp-2.76.1.bundle.min.mjs"));
   });

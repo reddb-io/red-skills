@@ -4,9 +4,9 @@ This file serves the `afk fleet` branch: starting, re-aiming and stopping `N`
 concurrent `run` workers on one checkout. Reached from *When To Use*
 (`/afk fleet [N]`, `/afk fleet stop`) in [`SKILL.md`](./SKILL.md).
 
-## Drive this project's workers through the `castle` MCP
+## Drive this project's workers through the `redskilled` MCP
 
-**A project has one producer, and the `castle` MCP owns its lifecycle.** The
+**A project has one producer, and the `redskilled` MCP owns its lifecycle.** The
 named fleet is gone (ADR 0130) — with the budget owned host-wide there is nothing
 for a name to address and no registry of profiles to keep. The four project tools
 are the primary surface; the CLI forms documented below are the fallback
@@ -35,7 +35,7 @@ is refused with the replacement named rather than failing internally.
 
 ## Fleet Mode (runner-portable — binding)
 
-`/dev:afk fleet [N]` and `/dev:afk fleet stop` are the user-facing fleet verbs; both are served by the `castle` MCP's project tools, never by a process of the project's own. They spin up (or shut down) `N` concurrent `run` workers on the current checkout, with the daemon handling birth and respawn, the circuit breaker, and per-slot build isolation. The **passive stall detector** reads each slot's canonical `worker.log.toonl` while the protected `liveness.toonl` remains the process anchor. Because heartbeat records share the Worker log with narration, the detector distinguishes a living but quiet phase from a missing Worker instead of asking operators to choose between lanes. A Worker quiet past `RED_AFK_STALL_KILL_THRESHOLD_S=1800` is only a hard-reaper *candidate*: an active `vitest`/`tsc`/`cargo`/… descendant or non-trivial aggregate CPU proves it busy and prevents the kill. A genuinely stuck Worker is killed tree-wide and its no-sentinel envelope carries the tail of `worker.log.toonl`. The kill threshold must remain strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at project startup.
+`/dev:afk fleet [N]` and `/dev:afk fleet stop` are the user-facing fleet verbs; both are served by the `redskilled` MCP's project tools, never by a process of the project's own. They spin up (or shut down) `N` concurrent `run` workers on the current checkout, with the daemon handling birth and respawn, the circuit breaker, and per-slot build isolation. The **passive stall detector** reads each slot's canonical `worker.log.toonl` while the protected `liveness.toonl` remains the process anchor. Because heartbeat records share the Worker log with narration, the detector distinguishes a living but quiet phase from a missing Worker instead of asking operators to choose between lanes. A Worker quiet past `RED_AFK_STALL_KILL_THRESHOLD_S=1800` is only a hard-reaper *candidate*: an active `vitest`/`tsc`/`cargo`/… descendant or non-trivial aggregate CPU proves it busy and prevents the kill. A genuinely stuck Worker is killed tree-wide and its no-sentinel envelope carries the tail of `worker.log.toonl`. The kill threshold must remain strictly greater than `RED_AFK_STALL_THRESHOLD_S`, validated at project startup.
 
 **Worker env passthrough.** Any `RED_AFK_*` variable exported in the operator's shell before `/dev:afk fleet` is auto-forwarded to every worker the supervisor spawns. Use this for worker-side toggles like `RED_AFK_SKIP_PERF=1` or `RED_AFK_SKIP_COMPETITIVE_BASELINE=1` without writing a hook. Internal supervisor knobs (`RED_AFK_TARGET`, `RED_AFK_POLL_S`, `RED_AFK_STALL_*`, `RED_AFK_CIRCUIT_*`, `RED_AFK_RUNNER`, `RED_AFK_REQUEST`, `RED_AFK_PLUGIN_DIR`) and the per-slot `*_BASE` build-isolation vars are excluded — they have dedicated wiring and the supervisor denylists them from passthrough. The supervisor re-pins `RED_AFK_RUNNER=<runner>` for each worker.
 
@@ -64,7 +64,7 @@ than one inferred from a pid it happens to remember.
 **Release recycle rule.** A registration names the bundle a Worker is born
 against, resolved from the PUBLISHED version rather than from the registering
 process's own. After any RedSkills release that changes AFK or
-castle engine behavior, stop and re-register the project before starting or
+`red-castle` engine behavior, stop and re-register the project before starting or
 counting a proving drain; otherwise the drain may still be executing on the
 pre-release engine. `status {scope: worker}` and the statusline fleet cell show the running
 bundle version and mark skew against a newer locally cached bundle so a stale
@@ -163,6 +163,6 @@ The safe fleet width for a given queue is the **degree of disjunction** — the 
 
 ### Refs
 
-- [`MCP.md`](./MCP.md) — the `castle` tool surface; `status`, `project_start`, `project_resize`, `project_reset`, `project_stop`, and `logs` are the primary interface.
+- [`MCP.md`](./MCP.md) — the `redskilled` tool surface; `status`, `project_start`, `project_resize`, `project_reset`, `project_stop`, and `logs` are the primary interface.
 - ADR 0130 Amendment 4 — why a project contributes a registration and holds no process of its own, and why the `fleet` launcher, the `__supervise` entrypoint and the self-heal watchdog were deleted rather than renamed.
 - [`monitor.md`](./monitor.md) — the readonly dashboard and native-task mirror.

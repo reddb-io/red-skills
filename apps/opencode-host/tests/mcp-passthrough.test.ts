@@ -169,7 +169,7 @@ describe("rewriteServer (Claude/Codex → opencode)", () => {
 });
 
 describe("planPluginMcp against the real source tree", () => {
-  it("plans the dev plugin's navigator and castle MCPs", () => {
+  it("plans the dev plugin's navigator and redskilled MCPs", () => {
     const plans = planPluginMcp(REAL_PLUGINS, "dev");
     expect(plans.length).toBeGreaterThanOrEqual(1);
     const codeNav = plans.find((p) => p.name === "navigator");
@@ -179,10 +179,10 @@ describe("planPluginMcp against the real source tree", () => {
     // command must point at the absolute script path.
     expect(codeNav!.entry.command[1]).toMatch(/code-nav-mcp\.sh$/);
 
-    const castle = plans.find((p) => p.name === "castle");
-    expect(castle).toBeDefined();
-    expect(castle!.entry.type).toBe("local");
-    expect(castle!.entry.command[1]).toMatch(/castle-mcp\.sh$/);
+    const redskilled = plans.find((p) => p.name === "redskilled");
+    expect(redskilled).toBeDefined();
+    expect(redskilled!.entry.type).toBe("local");
+    expect(redskilled!.entry.command[1]).toMatch(/redskilled-mcp\.sh$/);
   });
 
   it("keeps the installed RedSkills rsp launcher in the runtime fallback chain", () => {

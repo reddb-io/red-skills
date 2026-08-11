@@ -51,7 +51,7 @@ jobs:
           REDDB_SKIP_POSTINSTALL: "1"
         run: pnpm install --frozen-lockfile
 
-      # Walks the shipped castle-mcp bundle against a live redskilled daemon,
+      # Walks the shipped redskilled-mcp bundle against a live redskilled daemon,
       # and walks a deliberately broken lane — a dead daemon socket — that must
       # come back RED, so a green run here is evidence rather than an assumption.
       - name: Run the MCP lane canary

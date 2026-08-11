@@ -16,7 +16,7 @@ Scalar run settings live in `.red/config.yaml` under the `afk:` key (alongside t
 ### Implementer environment
 
 An AFK inner agent does not inherit the host's full plugin, MCP, hook, or
-statusline environment. Castle projects the existing activation gates into a
+statusline environment. The Worker launcher projects the existing activation gates into a
 discovery-closed constraint owned by each runner-spec row:
 
 | Existing gate | Inner-agent surface |
@@ -32,7 +32,7 @@ surface is present only when its existing gate is exactly `true`; enabling one
 gate does not enable any sibling surface. Claude starts bare with strict MCP
 loading and explicit settings, Codex receives explicit plugin/MCP config,
 OpenCode receives an isolated config projection, and Pi disables discovery and
-receives explicit skills/extensions. Statusline integration, Castle's operator
+receives explicit skills/extensions. Statusline integration and operator
 MCP, and non-essential host hooks are absent from every projection.
 
 | Config key | Env override | Default | Meaning |
@@ -117,7 +117,7 @@ resolved tiers as documented by the model-tier policy.
 
 Every spawn appends a route line to the Worker log and stamps
 `current.model_tier`, `current.model`, and `current.effort` in the Worker state.
-Castle `status { scope: worker }` carries the active tier as a field;
+redskilled `status { scope: worker }` carries the active tier as a field;
 the no-MCP fallback `npx -y -p @reddb-io/red-skills@<version> red-skills-dev monitor` renders it as `tier:<name>` on the
 Worker row, alongside the existing vitals.
 

@@ -18,16 +18,16 @@ import { basename, dirname, join } from "node:path";
 /**
  * The rsp bundle shipped beside the MCP bundle this process is running.
  *
- * In MCP context `process.argv[1]` is the castle-mcp bundle, which routes no
+ * In MCP context `process.argv[1]` is the redskilled-mcp bundle, which routes no
  * `wait` subcommand; its sibling does.
  */
 export function resolveRspCliBundle(mcpBundle: string): string {
   const file = basename(mcpBundle);
-  if (file === "castle-mcp.bundle.min.mjs") {
+  if (file === "redskilled-mcp.bundle.min.mjs") {
     return join(dirname(mcpBundle), "rsp.bundle.min.mjs");
   }
-  if (file.startsWith("castle-mcp-") && file.endsWith(".bundle.min.mjs")) {
-    return join(dirname(mcpBundle), file.replace(/^castle-mcp-/, "rsp-"));
+  if (file.startsWith("redskilled-mcp-") && file.endsWith(".bundle.min.mjs")) {
+    return join(dirname(mcpBundle), file.replace(/^redskilled-mcp-/, "rsp-"));
   }
   throw new Error(
     `cannot spawn rsp wait: unrecognized MCP bundle name ${JSON.stringify(file)}`,

@@ -5,10 +5,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const bundle = join(here, "..", "dist", "castle-mcp.bundle.min.mjs");
+const bundle = join(here, "..", "dist", "redskilled-mcp.bundle.min.mjs");
 if (!existsSync(bundle)) {
   process.stderr.write(
-    `red-skills-castle-mcp: packaged bundle missing at ${bundle}\n`,
+    `red-skills-redskilled-mcp: packaged bundle missing at ${bundle}\n`,
   );
   process.exit(1);
 }

@@ -2,7 +2,7 @@
  * rsp-entry.ts — where the resident's own executable lives, resolved explicitly.
  *
  * The resident auto-spawn used to infer its target from `process.argv[1]`, so a
- * host that is not the rsp CLI (the dev bundle, castle-mcp, memory, brain)
+ * host that is not the rsp CLI (the dev bundle, redskilled-mcp, memory, brain)
  * re-executed *itself* with `warm-resident` — an argument only the rsp CLI
  * routes. rsp fails open by contract, so that spawn died in silence and the
  * surface quietly lost elision, handles and telemetry (#2736, same defect class

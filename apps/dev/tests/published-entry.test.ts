@@ -30,7 +30,7 @@ const dirs: string[] = [];
 const STALE = "2.87.5";
 const PUBLISHED = "2.87.7";
 const CACHE = "/cache/red-skills/bundles";
-const CALLER = "/plugin-cache/dist/castle-mcp.bundle.min.mjs";
+const CALLER = "/plugin-cache/dist/redskilled-mcp.bundle.min.mjs";
 const publishedBundle = join(CACHE, `dev-${PUBLISHED}.bundle.min.mjs`);
 
 function stranded(overrides: PublishedEntryLookup = {}): PublishedEntryLookup {
@@ -61,7 +61,7 @@ describe("published entry resolution (#2808)", () => {
 
     expect(entry.command).toBe("/usr/bin/node");
     expect(entry.args[0]).toBe(publishedBundle);
-    expect(entry.args.join(" ")).not.toContain("castle-mcp");
+    expect(entry.args.join(" ")).not.toContain("redskilled-mcp");
     expect(entry.args.join(" ")).not.toContain(STALE);
     expect(entry.version).toBe(PUBLISHED);
     expect(entry.source).toBe("bundle-cache");
@@ -136,13 +136,13 @@ describe("published-version failures are loud (#2808)", () => {
 });
 
 describe("the dev bundle beside an MCP bundle (#2677)", () => {
-  it("redirects the shipped castle-mcp bundle to its sibling dev bundle", () => {
-    expect(resolveDevScriptPath(join("dist", "castle-mcp.bundle.min.mjs")))
+  it("redirects the shipped redskilled-mcp bundle to its sibling dev bundle", () => {
+    expect(resolveDevScriptPath(join("dist", "redskilled-mcp.bundle.min.mjs")))
       .toBe(join("dist", "dev.bundle.min.mjs"));
   });
 
-  it("redirects a cache-keyed castle-mcp bundle to the dev bundle of the same version", () => {
-    expect(resolveDevScriptPath(join("cache", "castle-mcp-2.76.1.bundle.min.mjs")))
+  it("redirects a cache-keyed redskilled-mcp bundle to the dev bundle of the same version", () => {
+    expect(resolveDevScriptPath(join("cache", "redskilled-mcp-2.76.1.bundle.min.mjs")))
       .toBe(join("cache", "dev-2.76.1.bundle.min.mjs"));
   });
 

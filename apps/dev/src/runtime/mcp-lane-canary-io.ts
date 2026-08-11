@@ -18,7 +18,7 @@ import { workersSegment } from "../core/worker-paths.js";
 import { afkPaths } from "./wire.js";
 
 /** How the canary reaches the MCP server under test. Defaults to the shipped
- * castle-mcp bundle beside this process's own entry. */
+ * redskilled-mcp bundle beside this process's own entry. */
 export interface McpLaneCanaryTarget {
   /** Executable to launch. Defaults to this process's node. */
   readonly command?: string;
@@ -75,7 +75,7 @@ export async function observeWorkersOnDisk(root: string): Promise<readonly Canar
   });
 }
 
-/** Decode one `tools/call` result. Castle tools answer TOON text (ADR 0097);
+/** Decode one `tools/call` result. Redskilled tools answer TOON text (ADR 0097);
  * a server that answers JSON still decodes, so the canary never fails on
  * encoding when the lane itself is healthy. */
 export function decodeToolPayload(text: string): unknown {
@@ -93,18 +93,18 @@ export function decodeToolPayload(text: string): unknown {
 }
 
 /**
- * Resolve the shipped castle-mcp bundle to canary. The whole point is to run
+ * Resolve the shipped redskilled-mcp bundle to canary. The whole point is to run
  * against the SHIPPED artifact, so the default target is the running bundle
- * itself (the canary ships inside castle-mcp) or its castle-mcp sibling when
+ * itself (the canary ships inside redskilled-mcp) or its redskilled-mcp sibling when
  * invoked from the dev entry — never a source file.
  */
 export function resolveShippedMcpEntry(argv1: string): string {
   const dir = dirname(argv1);
   const file = argv1.slice(dir.length + 1);
-  if (file.startsWith("castle-mcp")) return argv1;
+  if (file.startsWith("redskilled-mcp")) return argv1;
   const versioned = file.match(/^dev-(.+)\.bundle\.min\.mjs$/);
-  if (versioned) return join(dir, `castle-mcp-${versioned[1]}.bundle.min.mjs`);
-  return join(dir, "castle-mcp.bundle.min.mjs");
+  if (versioned) return join(dir, `redskilled-mcp-${versioned[1]}.bundle.min.mjs`);
+  return join(dir, "redskilled-mcp.bundle.min.mjs");
 }
 
 /**

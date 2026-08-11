@@ -34,7 +34,7 @@ export type ShippedBinary =
   | "red-skills-brain"
   | "red-skills-redskilled"
   | "red-skills-code-nav"
-  | "red-skills-castle-mcp"
+  | "red-skills-redskilled-mcp"
   | "red-skills-herdr";
 
 /**

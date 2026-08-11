@@ -39,7 +39,7 @@ describe("dev:afk MCP entrypoint routing", () => {
       }),
     ).resolves.toBe(0);
 
-    expect(String(stdout.mock.calls[0]![0])).toContain("Usage: red-skills-castle-mcp");
+    expect(String(stdout.mock.calls[0]![0])).toContain("Usage: red-skills-redskilled-mcp");
     stdout.mockRestore();
     expect(connect).not.toHaveBeenCalled();
   });
@@ -110,7 +110,7 @@ describe("dev:afk MCP entrypoint routing", () => {
   // one thing awake when a human closes a dependent's last `req:*` blocker. The
   // Unblock belt has to start with it — and before the transport, since its own
   // first pass is detached and must not wait on the stdio handshake.
-  it("starts the unblock belt in the castle resident before opening stdio", async () => {
+  it("starts the unblock belt in the redskilled MCP resident before opening stdio", async () => {
     const calls: string[] = [];
 
     await expect(

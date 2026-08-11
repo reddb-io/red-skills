@@ -176,7 +176,7 @@ function deps(): CastleMcpDependencies {
   };
 }
 
-describe("castle MCP tools", () => {
+describe("redskilled MCP tools", () => {
   it("publishes the Fleet and Observability domains", () => {
     expect(createCastleMcpTools(deps()).map((tool) => tool.name)).toEqual([
       "help",
@@ -467,10 +467,10 @@ describe("castle MCP tools", () => {
     await expect(
       tools
         .find((tool) => tool.name === "gate_run")!
-        .invoke({ branch: "afk/w80UR/2307-castle-mcp-s4" }),
+        .invoke({ branch: "afk/w80UR/2307-redskilled-mcp-s4" }),
     ).resolves.toMatchObject({ ok: true });
     expect(d.gateRun).toHaveBeenCalledWith({
-      branch: "afk/w80UR/2307-castle-mcp-s4",
+      branch: "afk/w80UR/2307-redskilled-mcp-s4",
     });
   });
 
@@ -480,10 +480,10 @@ describe("castle MCP tools", () => {
 
     await tools
       .find((tool) => tool.name === "land_branch")!
-      .invoke({ issue: 2307, branch: "afk/w80UR/2307-castle-mcp-s4" });
+      .invoke({ issue: 2307, branch: "afk/w80UR/2307-redskilled-mcp-s4" });
     expect(d.landBranch).toHaveBeenCalledWith({
       issue: 2307,
-      branch: "afk/w80UR/2307-castle-mcp-s4",
+      branch: "afk/w80UR/2307-redskilled-mcp-s4",
     });
 
     await tools

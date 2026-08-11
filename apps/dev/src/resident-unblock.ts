@@ -1,6 +1,6 @@
 // resident-unblock.ts — the session-reachable Unblock belt (#3014).
 //
-// The castle MCP resident is what is awake on a repo operated through live
+// The redskilled MCP resident is what is awake on a repo operated through live
 // sessions only: no `redskilled` daemon, no `/afk` boot, no worker to run the
 // close cascade. Its janitor already runs the Unblock Sweep, but only as step 7
 // of the full boot suite, behind a precheck, the operational probes, and the
@@ -77,7 +77,7 @@ function defaultTimers(): ResidentUnblockTimers {
 }
 
 /**
- * Start the Unblock belt inside the castle resident. Returns the handle, or
+ * Start the Unblock belt inside the redskilled MCP resident. Returns the handle, or
  * `null` when another live host for this repo already owns the singleton.
  *
  * The first pass is DETACHED from the caller: a slow or unavailable tracker

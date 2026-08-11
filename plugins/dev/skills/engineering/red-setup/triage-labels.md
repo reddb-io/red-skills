@@ -13,7 +13,7 @@ The skills speak in terms of canonical triage roles. Map them here to the actual
 | `ready-for-agent`  | `ready-for-agent`    | `/triage`, `/to-tickets`               | `/afk` (when claiming)              |
 | `running`          | `running`            | `/afk` (when claiming an issue)       | `/afk` (on close, blocker, or release) |
 | `ready-for-human`  | `ready-for-human`    | `/triage`, `/afk` (on blocker)        | maintainer                          |
-| `quarantine`       | `quarantine`         | AFK boot probes, castle healer        | castle curator (release or HITL park) |
+| `quarantine`       | `quarantine`         | AFK boot probes, Issue healer         | Issue curator (release or HITL park) |
 | `origin:external`  | `origin:external`    | `red-issues-needs-triage` workflow (author lacks write access) | maintainer (rare — provenance marker) |
 | `wontfix`          | `wontfix`            | `/triage` (then close)                | rarely — usually issue closes       |
 | `needs-slicing`    | `needs-slicing`      | `/to-spec` (on publish)                | `/to-tickets` (when slices are created) |
@@ -129,7 +129,7 @@ $RSD install-type-labels decision:grilling decision:sketch  # a repo's own names
 It creates each label on the tracker **and** merges the HUMAN-ONLY ones into `plugins.dev.afk.labels.hitl_types` — appending to an existing list, never overwriting or duplicating it — writing the declaration first, so a config it cannot write installs no label at all. `/red-doctor` checks the pair: an installed HUMAN-ONLY type label with no declaration is a finding, and `--fix --yes` merges the missing entry after a diff preview.
 
 ### `quarantine`
-An issue-local safety hold for mechanically detected queue incoherence (ADR 0122). The probe removes `ready-for-agent`, adds `quarantine`, and appends its diagnosis to the issue body; healthy sibling issues continue through the same boot. The castle resident curator periodically re-runs the coherence check. It removes `quarantine` and restores `ready-for-agent` when the defect dissolves, or replaces `quarantine` with `ready-for-human` after three failed re-checks so `/hitl` owns the judgment. The per-issue heal ledger uses the same hold instead of applying a third heal within 24 hours.
+An issue-local safety hold for mechanically detected queue incoherence (ADR 0122). The probe removes `ready-for-agent`, adds `quarantine`, and appends its diagnosis to the issue body; healthy sibling issues continue through the same boot. The Issue curator periodically re-runs the coherence check. It removes `quarantine` and restores `ready-for-agent` when the defect dissolves, or replaces `quarantine` with `ready-for-human` after three failed re-checks so `/hitl` owns the judgment. The per-issue heal ledger uses the same hold instead of applying a third heal within 24 hours.
 
 ### `wontfix`
 Will not be actioned. Applied by `/triage`. For bugs, paired with a polite explanation and close. For enhancements, paired with a `.out-of-scope/*.md` entry (see `triage/OUT-OF-SCOPE.md`).

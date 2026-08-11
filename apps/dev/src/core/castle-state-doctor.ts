@@ -228,7 +228,7 @@ async function auditCastleRootSplit(root: string, paths: ReturnType<typeof creat
         join(paths.castleStateRoot, entry.name),
         "castle-live-artifact",
         "error",
-        "live supervisor artifact belongs under .red/tmp/supervisors/default, not the durable castle state lane",
+        "live supervisor artifact belongs under .red/tmp/supervisors/default, not the durable red-castle state lane",
       ),
     );
   }
@@ -256,7 +256,7 @@ export async function auditCastleStateLane(root: string): Promise<CastleStateDoc
         legacyAfkState,
         "legacy-afk-residue",
         "warn",
-        "legacy .red/state/afk contains state alongside the live castle state lane",
+        "legacy .red/state/afk contains state alongside the live red-castle state lane",
       ),
     );
   }

@@ -14,7 +14,7 @@
   },
   "bin": {
     "red-skills-dev": "bin/red-skills-dev.mjs",
-    "red-skills-castle-mcp": "bin/red-skills-castle-mcp.mjs",
+    "red-skills-redskilled-mcp": "bin/red-skills-redskilled-mcp.mjs",
     "red-skills-code-nav": "bin/red-skills-code-nav.mjs",
     "red-skills-memory": "bin/red-skills-memory.mjs",
     "red-skills-brain": "bin/red-skills-brain.mjs",

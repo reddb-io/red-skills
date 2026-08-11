@@ -11,7 +11,7 @@ not empty.
 
 ### Confirm
 
-1. Read the queue with the castle `queue_status` tool, and the live workers with
+1. Read the queue with the redskilled `queue_status` tool, and the live workers with
    `monitor` — both are read tools, free to call. No-MCP fallback:
    `npx -y -p @reddb-io/red-skills@<version> red-skills-dev monitor --once`.
 2. Compare `ready-for-agent` with open non-Spec issues in the issue tracker.
@@ -298,7 +298,7 @@ supervisor.
    ready work stranded and live workers versus target.
 3. If live workers were not adopted, stop the fleet, verify no pids remain live,
    then relaunch from a clean state.
-4. If stale castle supervisor dirs remain after boot, remove only dead `s<PID>`
+4. If stale supervisor dirs remain in the red-castle state lane after boot, remove only dead `s<PID>`
    dirs after confirming the pid is not live.
 
 ### Root fix

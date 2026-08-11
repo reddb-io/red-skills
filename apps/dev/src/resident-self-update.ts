@@ -1,7 +1,7 @@
 // resident-self-update.ts — the session-long bundle self-update belt (#3178).
 //
 // SessionStart warms the cache once, but a long-lived session needs a long-lived
-// owner. The castle resident already owns periodic maintenance, so this belt
+// owner. The redskilled MCP resident already owns periodic maintenance, so this belt
 // performs one immediate registry check and one cheap check every five minutes.
 // A successful update atomically advances the stable pointer through the shared
 // self-update implementation; the next Worker therefore starts on that bundle

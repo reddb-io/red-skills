@@ -117,7 +117,7 @@ export interface CastleMcpDependencies
     StatuslineDependencies {}
 
 /**
- * Compose the published castle tool surface from the per-domain registries.
+ * Compose the published redskilled tool surface from the per-domain registries.
  * The concatenation order IS the published order — `mcp-tool-surface.test.ts`
  * freezes it.
  *

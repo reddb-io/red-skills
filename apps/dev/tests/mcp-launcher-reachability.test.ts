@@ -6,7 +6,7 @@
 //
 // This shipped in `plugins/dev/.mcp.json` with THREE servers and three different
 // resolution strategies: `navigator` carried the installed-marketplace fallback
-// and worked; `castle` and `rsp`, declared three lines away, did not and failed
+// and worked; `redskilled` and `rsp`, declared three lines away, did not and failed
 // in every repo but this one. The difference was invisible because each server's
 // chain reads plausibly on its own.
 import { readdir, readFile } from "node:fs/promises";
@@ -81,7 +81,7 @@ describe("every MCP server resolves from a directory that is not this repo (#318
     // Stated separately because this is the shape that shipped: siblings in one
     // file, one of them correct, and nothing comparing them.
     const dev = (await declarations()).filter((d) => d.file === "plugins/dev/.mcp.json");
-    expect(dev.map((d) => d.server).sort()).toEqual(["castle", "navigator", "rsp"]);
+    expect(dev.map((d) => d.server).sort()).toEqual(["navigator", "redskilled", "rsp"]);
     for (const server of dev) {
       expect(HOME_ANCHORED.test(server.script), `${server.server} lost its $HOME-anchored candidate`).toBe(true);
     }

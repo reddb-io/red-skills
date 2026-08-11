@@ -28,7 +28,7 @@ const destDist = join(pkgRoot, "dist");
 // path falls back to the turbo outfile. No bundle silently skips as "not built".
 const BUNDLES = [
   { dest: "dev.bundle.min.mjs", sources: ["dev.bundle.min.mjs"] },
-  { dest: "castle-mcp.bundle.min.mjs", sources: ["castle-mcp.bundle.min.mjs"] },
+  { dest: "redskilled-mcp.bundle.min.mjs", sources: ["redskilled-mcp.bundle.min.mjs"] },
   { dest: "code-nav.bundle.min.mjs", sources: ["code-nav.bundle.min.mjs", "code-nav-mcp.bundle.min.mjs"] },
   { dest: "memory.bundle.min.mjs", sources: ["memory.bundle.min.mjs"] },
   { dest: "brain.bundle.min.mjs", sources: ["brain.bundle.min.mjs"] },
