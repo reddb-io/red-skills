@@ -466,6 +466,12 @@ export function createRedskilledOrphanReaperRuntime(
           kill_group: killGroup,
         });
         if (!outcome.reaped || !verified) {
+          if (verified && outcome.reason === "group-survived") {
+            await options.record_reaped(
+              adopted,
+              `group-survived: process group ${candidate.process.pgid} survived orphan teardown; ${candidate.detail}`,
+            );
+          }
           report(`${candidate.detail}; ${outcome.reason}`);
           continue;
         }
