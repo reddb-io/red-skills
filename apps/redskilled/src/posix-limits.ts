@@ -1,5 +1,5 @@
 /**
- * posix-limits — the macOS placement backend, and the ceiling it refuses to claim.
+ * posix-limits — the POSIX launch boundary and the macOS limits it can carry.
  *
  * **macOS has no resource-group equivalent, and this backend does not pretend
  * otherwise.** Linux gets a cgroup through a transient unit and Windows gets a
@@ -18,7 +18,9 @@
  * **An rlimit is set only where it behaves predictably.** `ulimit -u` and
  * `ulimit -t` are carried when a client declares them and dropped, by name, when
  * the declared value cannot become one — never silently rounded into something
- * nobody asked for.
+ * nobody asked for. `ulimit -c 0` is unconditional: the same shell argv is also
+ * used by unisolated Linux Workers, so neither POSIX launch leaves a core dump
+ * behind.
  *
  * PURE, entirely: the host is read in `worker-placement`'s probe and nowhere here,
  * which is what lets every case be proven on a machine that is not a Mac.
