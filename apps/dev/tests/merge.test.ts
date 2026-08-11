@@ -260,7 +260,7 @@ describe("landPr (unlocked path)", () => {
     let prMade = false;
     const exec: Exec = async (argv) => {
       const cmd = argv.join(" ");
-      if (cmd.includes("pr create")) prMade = true;
+      if (cmd.includes("api -X POST repos/reddb-io/red-skills/pulls")) prMade = true;
       if (readsPull(argv)) return { code: 0, stdout: MERGED_PR_VIEW, stderr: "" };
       if (cmd.includes("pr list")) {
         return { code: 0, stdout: prMade ? "77\n" : "\n", stderr: "" };
@@ -291,9 +291,10 @@ describe("landPr (unlocked path)", () => {
       "git -C /repo/wt push origin HEAD:refs/heads/afk/wBBBB/9-x --force-with-lease",
     );
     expect(
-      c.some((x) => x.includes("pr create --base main --head afk/wBBBB/9-x")),
+      c.some((x) => x.includes("api -X POST repos/reddb-io/red-skills/pulls") && x.includes("base=main") && x.includes("head=afk/wBBBB/9-x")),
     ).toBe(true);
-    expect(c.some((x) => x.includes("pr merge 77 --merge"))).toBe(true);
+    expect(c.some((x) => x.includes("api -X PUT repos/reddb-io/red-skills/pulls/77/merge") && x.includes("merge_method=merge"))).toBe(true);
+    expect(c.some((x) => /\bpr (?:create|merge)\b/.test(x))).toBe(false);
     // Promotion advances the fleet-owned mirror, not the primary checkout.
     expect(c).toContain("git -C /repo update-ref refs/heads/red-trunk origin-tip");
     expect(c.some((x) => x.includes("symbolic-ref") || x.includes("status --porcelain"))).toBe(false);
