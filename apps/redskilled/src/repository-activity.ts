@@ -102,6 +102,8 @@ export const REDSKILLED_ACTIVITY_BATCH_SIZE = 100;
  * spending GitHub budget.
  */
 export const DEFAULT_REDSKILLED_ACTIVITY_MS = 20_000;
+/** Panorama totals refresh on a human-glance cadence while queue depth stays attended-fast. */
+export const REDSKILLED_PANORAMA_REFRESH_MS = 4 * 60 * 1_000;
 
 /** How far back "recently closed" reaches, when a caller states no window. */
 export const DEFAULT_REDSKILLED_ACTIVITY_CLOSED_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -163,6 +165,8 @@ export class RedskilledSplitCredentialError extends Error {
 export interface RedskilledActivityCounts {
   readonly open_pull_requests: number;
   readonly open_issues: number;
+  /** Pull requests merged since the operator's local calendar day began. */
+  readonly merged_today?: number;
   /** Issues and pull requests closed inside the window the fetch asked for. */
   readonly recently_closed: number;
   /**
@@ -196,6 +200,9 @@ export interface RedskilledProjectActivity {
   readonly outcome: RedskilledActivityOutcome;
   /** The counts; `null` for every outcome but `counted`, never a zero. */
   readonly counts: RedskilledActivityCounts | null;
+  /** The independent cache instants for the slow panorama and fast queue tiers. */
+  readonly panorama_fetched_at?: string;
+  readonly queue_fetched_at?: string;
   readonly detail: string;
 }
 
@@ -231,6 +238,7 @@ export interface RedskilledRepositoryActivity {
 export interface RedskilledActivityAlias {
   readonly alias: string;
   readonly search_alias: string;
+  readonly merged_alias: string;
   readonly project: RedskilledProjectRepository;
 }
 
@@ -239,6 +247,8 @@ export interface RedskilledActivityOperation {
   readonly aliases: readonly RedskilledActivityAlias[];
   /** The instant `recently_closed` counts back from, as the query states it. */
   readonly closed_since: string;
+  /** Operator-local day used by the merged-PR search. */
+  readonly merged_since: string;
 }
 
 /**
@@ -277,16 +287,24 @@ export function buildRepositoryActivityQuery(
   const nowMs = Date.parse(options.now);
   if (!Number.isFinite(nowMs)) throw new Error(`redskilled activity fetch needs an instant, not ${JSON.stringify(options.now)}`);
   const closedSince = new Date(nowMs - Math.max(0, windowMs)).toISOString();
+  const localNow = new Date(nowMs);
+  const mergedSince = [
+    localNow.getFullYear(),
+    String(localNow.getMonth() + 1).padStart(2, "0"),
+    String(localNow.getDate()).padStart(2, "0"),
+  ].join("-");
 
   const aliases: RedskilledActivityAlias[] = projects.map((project, index) => ({
     alias: `r${index}`,
     search_alias: `c${index}`,
+    merged_alias: `m${index}`,
     project,
   }));
-  const fields = aliases.flatMap(({ alias, search_alias, project }) => {
+  const fields = aliases.flatMap(({ alias, search_alias, merged_alias, project }) => {
     const owner = JSON.stringify(project.owner);
     const name = JSON.stringify(project.name);
     const search = JSON.stringify(`repo:${project.owner}/${project.name} is:closed closed:>=${closedSince}`);
+    const merged = JSON.stringify(`repo:${project.owner}/${project.name} is:pr is:merged merged:>=${mergedSince}`);
     return [
       `  ${alias}: repository(owner: ${owner}, name: ${name}) {`,
       "    nameWithOwner",
@@ -294,6 +312,7 @@ export function buildRepositoryActivityQuery(
       "    open_issues: issues(states: OPEN) { totalCount }",
       "  }",
       `  ${search_alias}: search(query: ${search}, type: ISSUE, first: 1) { issueCount }`,
+      `  ${merged_alias}: search(query: ${merged}, type: ISSUE, first: 1) { issueCount }`,
     ];
   });
   const query = [
@@ -302,7 +321,7 @@ export function buildRepositoryActivityQuery(
     ...fields,
     "}",
   ].join("\n");
-  return { query, aliases, closed_since: closedSince };
+  return { query, aliases, closed_since: closedSince, merged_since: mergedSince };
 }
 
 /**
@@ -324,15 +343,17 @@ export function parseRepositoryActivityResponse(
   const errors = Array.isArray(root.errors) ? root.errors.map(asRecord) : [];
   const rateLimit = readRateLimit(data.rateLimit, errors);
 
-  const projects = operation.aliases.map(({ alias, search_alias, project }): RedskilledProjectActivity => {
+  const projects = operation.aliases.map(({ alias, search_alias, merged_alias, project }): RedskilledProjectActivity => {
     const repository = project.owner + "/" + project.name;
     const node = data[alias];
-    const aliasError = errors.find((candidate) => pathIncludes(candidate.path, alias) || pathIncludes(candidate.path, search_alias));
+    const aliasError = errors.find((candidate) =>
+      pathIncludes(candidate.path, alias) || pathIncludes(candidate.path, search_alias) || pathIncludes(candidate.path, merged_alias));
     if (isRecord(node)) {
       const openPullRequests = totalCount(node.open_pull_requests);
       const openIssues = totalCount(node.open_issues);
       const recentlyClosed = issueCount(data[search_alias]);
-      if (openPullRequests != null && openIssues != null && recentlyClosed != null) {
+      const mergedToday = issueCount(data[merged_alias]);
+      if (openPullRequests != null && openIssues != null && recentlyClosed != null && mergedToday != null) {
         return {
           project_label: project.project_label,
           repository,
@@ -340,6 +361,7 @@ export function parseRepositoryActivityResponse(
           counts: {
             open_pull_requests: openPullRequests,
             open_issues: openIssues,
+            merged_today: mergedToday,
             recently_closed: recentlyClosed,
             // The aliased query asks for no label breakdown, so this path
             // produces no queue counters — and says so with `null` rather than
@@ -347,6 +369,8 @@ export function parseRepositoryActivityResponse(
             ready_queue: null,
             human_queue: null,
           },
+          panorama_fetched_at: options.fetchedAt,
+          queue_fetched_at: options.fetchedAt,
           detail: `counted ${repository} for project ${JSON.stringify(project.project_label)}`,
         };
       }
@@ -413,6 +437,9 @@ export interface RedskilledActivityTransport {
   conditionalList?(
     input: RedskilledConditionalListRequest,
   ): Promise<GithubPaginatedRestAnswer<Record<string, unknown>>>;
+  conditionalCount?(
+    input: RedskilledConditionalListRequest,
+  ): Promise<{ readonly data: { readonly total_count: number }; readonly headers: GithubResponseHeaders; readonly requestCount: number }>;
 }
 
 export interface FetchRepositoryActivityInput {
@@ -421,6 +448,8 @@ export interface FetchRepositoryActivityInput {
   readonly transport: RedskilledActivityTransport;
   readonly now: string;
   readonly closedWindowMs?: number;
+  readonly previous?: RedskilledRepositoryActivity | null;
+  readonly panoramaRefreshMs?: number;
 }
 
 /**
@@ -436,7 +465,9 @@ export async function fetchRepositoryActivity(
 ): Promise<RedskilledRepositoryActivity> {
   if (input.projects.length === 0) return emptyRepositoryActivity(input.now);
   assertOneHostToken(input.projects, input.hostTokenRef);
-  if (input.transport.conditionalList) return await fetchConditionalRepositoryActivity(input);
+  if (input.transport.conditionalList && input.transport.conditionalCount) {
+    return await fetchConditionalRepositoryActivity(input);
+  }
   const operation = buildRepositoryActivityQuery(input.projects, {
     now: input.now,
     closedWindowMs: input.closedWindowMs,
@@ -468,6 +499,10 @@ const REDSKILLED_ACTIVITY_REST_OPERATION: GithubAttributedOperation = {
   key: "redskilled repository activity poll",
   budget: "rest",
 };
+const REDSKILLED_MERGED_TODAY_OPERATION: GithubAttributedOperation = {
+  key: "redskilled merged-today poll",
+  budget: "search",
+};
 
 async function fetchConditionalRepositoryActivity(
   input: FetchRepositoryActivityInput,
@@ -486,6 +521,9 @@ async function fetchConditionalRepositoryActivity(
     closedWindowMs: input.closedWindowMs,
   });
   const list = input.transport.conditionalList!;
+  const count = input.transport.conditionalCount!;
+  const previous = new Map((input.previous?.projects ?? []).map((entry) => [entry.project_label, entry]));
+  const panoramaRefreshMs = input.panoramaRefreshMs ?? REDSKILLED_PANORAMA_REFRESH_MS;
   const projects: RedskilledProjectActivity[] = [];
   let requestCount = 0;
   let rateLimit: RedskilledActivityRateLimit = {
@@ -497,49 +535,81 @@ async function fetchConditionalRepositoryActivity(
 
   for (const project of input.projects) {
     const repository = `${project.owner}/${project.name}`;
-    const queries = [
-      ["open-prs", "GET /repos/{owner}/{repo}/pulls", { owner: project.owner, repo: project.name, state: "open" }],
-      ["open-issues", "GET /repos/{owner}/{repo}/issues", { owner: project.owner, repo: project.name, state: "open" }],
-      [
-        "recently-closed",
-        "GET /repos/{owner}/{repo}/issues",
-        { owner: project.owner, repo: project.name, state: "closed", since: operation.closed_since },
-      ],
-    ] as const;
-    const counts: number[] = [];
-    let queue: RedskilledActivityQueueCounts = { ready_queue: null, human_queue: null };
+    const held = previous.get(project.project_label);
+    const heldAt = Date.parse(held?.panorama_fetched_at ?? input.previous?.fetched_at ?? "");
+    const refreshPanorama = held?.counts == null || !Number.isFinite(nowMs) || !Number.isFinite(heldAt) ||
+      nowMs - heldAt >= panoramaRefreshMs;
     try {
-      for (const [kind, route, parameters] of queries) {
-        const answer = await list({
-          cacheKey: `activity:${repository}:${kind}:${JSON.stringify(parameters)}`,
-          route,
-          parameters,
+      const issueParams = { owner: project.owner, repo: project.name, state: "open" };
+      const issueAnswer = await list({
+        cacheKey: `activity:${repository}:open-issues:${JSON.stringify(issueParams)}`,
+        route: "GET /repos/{owner}/{repo}/issues",
+        parameters: issueParams,
+        operation: REDSKILLED_ACTIVITY_REST_OPERATION,
+      });
+      requestCount += issueAnswer.requestCount;
+      rateLimit = mergeActivityRateLimit(rateLimit, activityRateLimitFromHeaders(issueAnswer.headers));
+      const openIssues = issueAnswer.data.filter((item) => !isRecord(item.pull_request));
+      const queue = project.queue_labels == null
+        ? { ready_queue: null, human_queue: null }
+        : countQueueLabels(openIssues, project.queue_labels);
+
+      let panorama = held?.counts ?? null;
+      if (refreshPanorama) {
+        const prParams = { owner: project.owner, repo: project.name, state: "open" };
+        const closedParams = { owner: project.owner, repo: project.name, state: "closed", since: operation.closed_since };
+        const mergedParams = { q: `repo:${repository} is:pr is:merged merged:>=${operation.merged_since}`, per_page: 1 };
+        const prAnswer = await list({
+          cacheKey: `activity:${repository}:open-prs:${JSON.stringify(prParams)}`,
+          route: "GET /repos/{owner}/{repo}/pulls",
+          parameters: prParams,
           operation: REDSKILLED_ACTIVITY_REST_OPERATION,
         });
-        requestCount += answer.requestCount;
-        const items = kind === "open-prs"
-          ? answer.data
-          : answer.data.filter((item) => !isRecord(item.pull_request));
-        // The queue counters come out of the open-Issue representation rather
-        // than out of two more label-filtered lists: this poll already holds
-        // every open Issue with its labels, so counting them here is free of
-        // both requests and budget.
-        if (kind === "open-issues" && project.queue_labels != null) queue = countQueueLabels(items, project.queue_labels);
-        counts.push(kind === "recently-closed"
-          ? items.filter((item) => stringValue(item.closed_at) >= operation.closed_since).length
-          : items.length);
-        rateLimit = mergeActivityRateLimit(rateLimit, activityRateLimitFromHeaders(answer.headers));
+        const closedAnswer = await list({
+          cacheKey: `activity:${repository}:recently-closed:${JSON.stringify(closedParams)}`,
+          route: "GET /repos/{owner}/{repo}/issues",
+          parameters: closedParams,
+          operation: REDSKILLED_ACTIVITY_REST_OPERATION,
+        });
+        const mergedAnswer = await count({
+          cacheKey: `activity:${repository}:merged-today:${operation.merged_since}`,
+          route: "GET /search/issues",
+          parameters: mergedParams,
+          operation: REDSKILLED_MERGED_TODAY_OPERATION,
+        });
+        requestCount += prAnswer.requestCount + closedAnswer.requestCount + mergedAnswer.requestCount;
+        for (const headers of [prAnswer.headers, closedAnswer.headers, mergedAnswer.headers]) {
+          rateLimit = mergeActivityRateLimit(rateLimit, activityRateLimitFromHeaders(headers));
+        }
+        const recentlyClosed = closedAnswer.data
+          .filter((item) => !isRecord(item.pull_request))
+          .filter((item) => stringValue(item.closed_at) >= operation.closed_since).length;
+        if (!Number.isSafeInteger(mergedAnswer.data.total_count) || mergedAnswer.data.total_count < 0) {
+          throw new Error(`GitHub returned no merged-today count for ${repository}`);
+        }
+        panorama = {
+          open_pull_requests: prAnswer.data.length,
+          open_issues: openIssues.length,
+          recently_closed: recentlyClosed,
+          merged_today: mergedAnswer.data.total_count,
+          ready_queue: queue.ready_queue,
+          human_queue: queue.human_queue,
+        };
       }
+      if (panorama == null) throw new Error(`no panorama cache exists for ${repository}`);
       projects.push({
         project_label: project.project_label,
         repository,
         outcome: "counted",
         counts: {
-          open_pull_requests: counts[0]!,
-          open_issues: counts[1]!,
-          recently_closed: counts[2]!,
+          open_pull_requests: panorama.open_pull_requests,
+          open_issues: panorama.open_issues,
+          recently_closed: panorama.recently_closed,
+          merged_today: panorama.merged_today,
           ...queue,
         },
+        panorama_fetched_at: refreshPanorama ? input.now : held?.panorama_fetched_at ?? input.previous?.fetched_at ?? input.now,
+        queue_fetched_at: input.now,
         detail: `counted ${repository} for project ${JSON.stringify(project.project_label)}`,
       });
     } catch (error) {
@@ -550,15 +620,22 @@ async function fetchConditionalRepositoryActivity(
         exhausted: rateLimited,
         point_cost: null,
       });
-      projects.push({
-        project_label: project.project_label,
-        repository,
-        outcome: rateLimited ? "rate-limited" : "unreachable",
-        counts: null,
-        detail:
-          `the activity fetch failed before ${repository} answered: ` +
-          `${error instanceof Error ? error.message : String(error)}`,
-      });
+      const failure = error instanceof Error ? error.message : String(error);
+      projects.push(held?.counts == null
+        ? {
+            project_label: project.project_label,
+            repository,
+            outcome: rateLimited ? "rate-limited" : "unreachable",
+            counts: null,
+            detail: `the activity fetch failed before ${repository} answered: ${failure}`,
+          }
+        : {
+            ...held,
+            // Last-known values retain BOTH of their original instants. The
+            // counter projection will age them honestly while the next cycle
+            // tries again; a transient refusal must not erase the panorama.
+            detail: `serving last-known counters after the activity fetch failed: ${failure}`,
+          });
     }
   }
 
@@ -605,6 +682,15 @@ export function createGitHubActivityTransport(options: {
       parameters: input.parameters,
       operation: input.operation,
     });
+  transport.conditionalCount = async (input) => {
+    const answer = await client.conditionalRest<{ total_count: number }>({
+      cacheKey: input.cacheKey,
+      route: input.route,
+      parameters: input.parameters,
+      operation: input.operation,
+    });
+    return { data: answer.data, headers: answer.headers, requestCount: 1 };
+  };
   return transport;
 }
 
