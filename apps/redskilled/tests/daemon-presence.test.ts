@@ -22,7 +22,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { encode, type JsonValue } from "@reddb-io/toon";
+import type { JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import {
   describeRedskilledPresence,
   ensureRedskilledDaemon,
