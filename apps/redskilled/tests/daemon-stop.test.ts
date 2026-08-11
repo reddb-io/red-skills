@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
+import { decode } from "@reddb-io/toon";
 import { afterEach, describe, expect, it } from "vitest";
 import { runStop } from "../src/cli.js";
 import {
@@ -17,7 +18,11 @@ import {
   stopRedskilledDaemon,
 } from "../src/client.js";
 import { socketAnswers, startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
-import { buildRedskilledNotRunningStop, buildRedskilledStopReport } from "../src/daemon-stop.js";
+import {
+  buildRedskilledNotRunningStop,
+  buildRedskilledStopReport,
+  isRedskilledDaemonStopped,
+} from "../src/daemon-stop.js";
 import { lastRedskilledDaemonStop, readRedskilledEvents, rehydrateWorkers } from "../src/event-lane.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { readRedskilledLeaseFile } from "../src/session-lease.js";
@@ -100,7 +105,7 @@ describe("redskilled stop report", () => {
     expect(report.detail).toContain("an operator asked for it");
   });
 
-  it("states that both isolated and unisolated Workers survive the stop", () => {
+  it("states which surviving Workers remain contained after the stop", () => {
     const report = buildRedskilledStopReport({
       reason: "requested",
       socketPath: "/run/redskilled.sock",
@@ -113,6 +118,17 @@ describe("redskilled stop report", () => {
     // a restart and never an evacuation.
     expect(report.surviving).toEqual(["w-1", "w-2"]);
     expect(report.holding.workers.every((worker) => worker.survives)).toBe(true);
+    expect(report.holding.workers.map((worker) => [worker.worker_id, worker.contained])).toEqual([
+      ["w-1", true],
+      ["w-2", false],
+    ]);
+    expect(report.detail).toContain("1 uncontained survivor");
+    expect(isRedskilledDaemonStopped(report)).toBe(true);
+    const [{ contained: _contained, ...incomplete }, ...rest] = report.holding.workers;
+    expect(isRedskilledDaemonStopped({
+      ...report,
+      holding: { ...report.holding, workers: [incomplete, ...rest] },
+    })).toBe(false);
   });
 
   it("says a daemon holding nothing leaves nothing behind", () => {
@@ -279,6 +295,9 @@ describe("redskilled stop command", () => {
     expect(code).toBe(0);
     expect(printed).toContain("stopped");
     expect(printed).toContain("w-1");
+    expect(decode(printed)).toMatchObject({
+      workers: [{ worker_id: "w-1", contained: true }],
+    });
     expect(await socketAnswers(paths.socketPath)).toBe(false);
   });
 

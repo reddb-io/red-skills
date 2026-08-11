@@ -28,6 +28,7 @@
  * The probes are injected, so both branches are provable without systemd.
  */
 import { spawnSync } from "node:child_process";
+import { killTreeAndWait } from "@reddb-io/shared/kill-tree.js";
 import { isPidAlive } from "@reddb-io/shared/resident-core.js";
 import type { RedskilledWorkerView } from "./host-state.js";
 import { DEFAULT_WORKER_UNIT_PREFIX } from "./worker-placement.js";
@@ -246,21 +247,17 @@ export function nameUnownedProject(worker: RedskilledWorkerView): RedskilledWork
 }
 
 /**
- * Stop one Worker: the unit by name, or the process by pid.
+ * Stop one Worker: the unit by name, or the recorded process group.
  *
  * Stopping the unit rather than the pid is what makes the kill total — a Worker
  * that forked children would otherwise leave them behind, still charged to the
- * budget the daemon just decided to reclaim.
+ * budget the daemon just decided to reclaim. Legacy records without `pgid` use
+ * the detached leader pid, which is the group id by the launch contract.
  */
-export function stopWorker(worker: RedskilledWorkerView): boolean {
+export function stopWorker(worker: RedskilledWorkerView): boolean | Promise<boolean> {
   if (worker.unit != null && worker.unit !== "") {
     const stop = spawnSync("systemctl", ["--user", "stop", worker.unit], { stdio: "ignore" });
     return stop.error == null && stop.status === 0;
   }
-  try {
-    process.kill(worker.pid, "SIGTERM");
-    return true;
-  } catch {
-    return false;
-  }
+  return killTreeAndWait(worker.pgid ?? worker.pid);
 }

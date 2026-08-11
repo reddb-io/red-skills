@@ -12,6 +12,7 @@ import {
   startRedskilledWorker,
 } from "../src/client.js";
 import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
+import { readRedskilledEvents } from "../src/event-lane.js";
 import type { RedskilledWorkerView } from "../src/host-state.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import type {
@@ -316,6 +317,34 @@ describe("the statusline payload", () => {
       { command: "stop", worker_id: "w-404", session_project: "acme/widgets" },
       {},
     )).rejects.toThrow(/refus/i);
+  });
+
+  it("forgets a Worker whose stop is unconfirmed and records the possibly surviving group", async () => {
+    const paths = await sessionPaths();
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      sampleMs: 0,
+      stopWorker: () => {
+        throw new Error("host stop probe failed");
+      },
+    });
+    running.push(daemon);
+    daemon.trackWorker(worker({ pgid: 4342 }));
+
+    const result = await commandRedskilledWorker(
+      paths,
+      { command: "stop", worker_id: "w-1", session_project: "acme/widgets" },
+      {},
+    );
+    await daemon.flushEvents();
+
+    expect(result.applied).toBe(true);
+    expect(daemon.workerCount()).toBe(0);
+    const death = (await readRedskilledEvents(paths.eventLanePath)).at(-1);
+    expect(death).toMatchObject({ event: "worker-death", worker_id: "w-1" });
+    expect(death?.detail).toContain("unconfirmed-stop");
+    expect(death?.detail).toContain("process group 4342 may still be alive");
   });
 
   it("holds no private source: a malformed answer throws instead of being patched up", async () => {
