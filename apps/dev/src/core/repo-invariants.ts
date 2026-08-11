@@ -131,7 +131,7 @@ export const REPO_INVARIANT_SUITES: readonly RepoInvariantSuite[] = [
     name: "invariants:truecolor-extinction",
     scope: "apps/dev",
     script: "test:invariants",
-    why: "ADR 0137 forbids literal truecolor escapes across the dev statusline, VS Code dashboard, and herdr panes; the painted surfaces span three apps, but their ratchet lives in apps/dev",
+    why: "ADR 0137 forbids literal truecolor escapes across the dev statusline, VS Code dashboard, herdr panes, and the shared redskilled render; the painted surfaces span three apps and one package, but their ratchet lives in apps/dev",
   },
   {
     name: "invariants:codex-skill-sidecars",

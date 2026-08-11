@@ -54,18 +54,17 @@ import {
   BAR_CURRENT as BAR_CURRENT_TONE,
   BAR_DONE as BAR_DONE_TONE,
   BOLD,
-  DIM,
-  GOLD,
+  IDENTITY_BG,
+  IDENTITY_INK,
   KEY,
+  MODEL_BG,
   NOBG,
   NOBOLD,
-  RED,
+  PAPER,
   RESET,
   SOFT,
+  SPOTLIGHT,
   VAL,
-  WHITE,
-  WINE,
-  WINE2,
 } from "./palette.js";
 import {
   REDSKILLED_RENDER_DISPLAY_ABSENT,
@@ -441,7 +440,7 @@ function buildHeader(
   if (repairing > 0) {
     const coding = Math.max(0, payload.host.worker_count - repairing);
     parts.push(
-      `${colourKeyValues(`workers=${coding} coding +`)} ${WINE}${WHITE}${repairing} repairing${NOBG}${SOFT}`,
+      `${colourKeyValues(`workers=${coding} coding +`)} ${MODEL_BG}${PAPER}${repairing} repairing${NOBG}${SOFT}`,
     );
   } else {
     parts.push(colourKeyValues(`wrk=${selected.length}/${payload.host.worker_count}`));
@@ -451,7 +450,7 @@ function buildHeader(
     : `slots=${windows.worker_count}/${windows.worker_ceiling}`;
   parts.push(colourKeyValues(`${slots} reserve=${windows.interactive_reservation} interactive`));
   parts.push(colourKeyValues(memoryWindow(windows)));
-  if (model != null) parts.push(`${WINE}${WHITE}${model}${NOBG}${SOFT}`);
+  if (model != null) parts.push(`${MODEL_BG}${PAPER}${model}${NOBG}${SOFT}`);
   // The counters come from the ONE builder both densities share, so the table
   // and the line can never date the same poll differently.
   for (const token of remoteCounterTokens(payload, options.project)) parts.push(colourKeyValues(token));
@@ -509,10 +508,11 @@ function buildHeader(
   };
 }
 
-/** The dashboard's wine identity zone: accent, owner, and quiet version. PURE. */
+/** The dashboard's brand field: accent, owner, and version, all in the one ink —
+ * `neutral.500` has no contrast against `brand.primary`, so nothing dims here. PURE. */
 function dashboardIdentity(repo: string, version: string, currency: string): string {
-  return `${WINE2}${WHITE}${GOLD}»${WHITE} ${BOLD}${repo}${NOBOLD} ${DIM}v${version}${currency}` +
-    `${WHITE}${NOBG}${SOFT}`;
+  return `${IDENTITY_BG}${IDENTITY_INK}» ${BOLD}${repo}${NOBOLD} v${version}${currency}` +
+    `${NOBG}${SOFT}`;
 }
 
 /** Paint every compact `k=v` token while leaving its surrounding prose soft. PURE. */
@@ -779,13 +779,13 @@ export function colourWorkerCell(column: RedskilledDashboardColumn, raw: string)
   if (column === "wid") return `${BOLD}${raw}${NOBOLD}`;
   if (column === "org" && raw.trim() === "lane=repair") {
     const suffix = raw.slice(raw.trimEnd().length);
-    return `${WINE}${WHITE}${raw.trimEnd()}${NOBG}${SOFT}${suffix}`;
+    return `${MODEL_BG}${PAPER}${raw.trimEnd()}${NOBG}${SOFT}${suffix}`;
   }
   if (column === "bar") {
     return raw
       .replace(/█+/g, (done) => `${BAR_DONE_TONE}${done}`)
       .replace("▶", `${BAR_CURRENT_TONE}▶`)
-      .replace("✗", `${RED}✗`)
+      .replace("✗", `${SPOTLIGHT}✗`)
       .replace(/░+/g, (ahead) => `${BAR_AHEAD_TONE}${ahead}`) + SOFT;
   }
   const equals = raw.indexOf("=");

@@ -11,16 +11,6 @@ import { encode as encodeToon } from "@reddb-io/toon";
 import {
   decodeRedskilledPayload,
   detailLadder,
-  BAR_AHEAD,
-  BAR_CURRENT,
-  BAR_DONE,
-  BOLD,
-  DIM,
-  GOLD,
-  KEY,
-  NOBG,
-  RED,
-  RESET,
   RedskilledRenderDecodeError,
   renderRedskilled,
   renderRedskilledDashboard,
@@ -32,13 +22,25 @@ import {
   REDSKILLED_RENDER_ABSENCE,
   REDSKILLED_STATUSLINE_DEFAULTS,
   stripAnsi,
-  SOFT,
-  VAL,
-  WHITE,
-  WINE,
-  WINE2,
   width,
 } from "../index.js";
+import {
+  BAR_AHEAD,
+  BAR_CURRENT,
+  BAR_DONE,
+  BOLD,
+  IDENTITY_BG,
+  IDENTITY_INK,
+  KEY,
+  MODEL_BG,
+  NOBG,
+  NOBOLD,
+  PAPER,
+  RESET,
+  SOFT,
+  SPOTLIGHT,
+  VAL,
+} from "../palette.js";
 import { display, payload, worker } from "./fixture.js";
 
 const LOCAL = { ...REDSKILLED_STATUSLINE_DEFAULTS, project: "acme/widgets" };
@@ -221,7 +223,7 @@ describe("one module, three densities", () => {
       expect(stripAnsi(row)).toContain("lane=repair");
       expect(stripAnsi(row)).toContain("pr=#3291");
       expect(stripAnsi(row)).toContain("merging·regenerate");
-      expect(row).toContain(`${WINE}${WHITE}lane=repair`);
+      expect(row).toContain(`${MODEL_BG}${PAPER}lane=repair`);
     }
     expect(line.line).toContain("1 coding + 1 repairing");
     expect(stripAnsi(table.header.line)).toContain("workers=1 coding + 1 repairing");
@@ -293,7 +295,7 @@ describe("the statusline Worker table (#3151)", () => {
 
   it("uses the failure colour for a failed lifecycle cursor", () => {
     const doc = payload({ workers: [worker({ display: display({ failed: true }) })] });
-    expect(renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).lines[1]).toContain(`${RED}✗`);
+    expect(renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).lines[1]).toContain(`${SPOTLIGHT}✗`);
   });
 
   it.each([
@@ -316,9 +318,9 @@ describe("the coloured panel and dashboard (#3152)", () => {
       project: "acme/widgets",
     }).header.line;
 
-    expect(header).toContain(`${WINE2}${WHITE}${GOLD}»${WHITE} ${BOLD}acme/widgets`);
-    expect(header).toContain(`${DIM}v3.3.11${WHITE}`);
-    expect(header).toContain(`${WINE}${WHITE}claude·claude-opus-5·high${NOBG}${SOFT}`);
+    expect(header).toContain(`${IDENTITY_BG}${IDENTITY_INK}» ${BOLD}acme/widgets`);
+    expect(header).toContain(`${NOBOLD} v3.3.11`);
+    expect(header).toContain(`${MODEL_BG}${PAPER}claude·claude-opus-5·high${NOBG}${SOFT}`);
     for (const key of ["wrk", "slots", "reserve", "mem"]) {
       expect(header).toContain(`${KEY}${key}=${VAL}`);
     }
@@ -327,7 +329,7 @@ describe("the coloured panel and dashboard (#3152)", () => {
 
   it.each([
     ["healthy", false, BAR_CURRENT],
-    ["failed", true, RED],
+    ["failed", true, SPOTLIGHT],
   ])("draws a %s lifecycle cursor in the same tone at every density", (_state, failed, cursorTone) => {
     const doc = payload({ workers: [worker({ display: display({ failed }) })] });
     const line = renderRedskilledStatusline(doc, { ...LOCAL, maxWidth: 240 }).lines[1]!;

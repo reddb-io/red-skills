@@ -54,25 +54,6 @@ export {
 } from "./format.js";
 
 export {
-  BAR_AHEAD,
-  BAR_CURRENT,
-  BAR_DONE,
-  BOLD,
-  DIM,
-  GOLD,
-  KEY,
-  NOBG,
-  NOBOLD,
-  RED,
-  RESET,
-  SOFT,
-  VAL,
-  WHITE,
-  WINE,
-  WINE2,
-} from "./palette.js";
-
-export {
   BUDGET_BAND_MARK,
   BUDGET_SPENT_MARK,
   DEATH_MARK,

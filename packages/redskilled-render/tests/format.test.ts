@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { clamp, pad, shortModel, stripAnsi, width } from "../format.js";
-import { BAR_DONE, KEY, RED, RESET, SOFT, VAL, WINE, WINE2 } from "../palette.js";
+import { BAR_DONE, IDENTITY_BG, KEY, MODEL_BG, RESET, SOFT, SPOTLIGHT, VAL } from "../palette.js";
 
 const ESC = "\x1b";
 
@@ -19,7 +19,7 @@ describe("width measures visible columns, not stored characters", () => {
   });
 
   it("charges nothing for the escapes a fully painted line carries", () => {
-    const painted = `${WINE2}${KEY}acme${RESET}`;
+    const painted = `${IDENTITY_BG}${KEY}acme${RESET}`;
     expect(width(painted)).toBe(4);
     expect(painted.length).toBeGreaterThan(20);
   });
@@ -37,7 +37,7 @@ describe("width measures visible columns, not stored characters", () => {
 
 describe("stripAnsi hands a caller the plain string", () => {
   it("removes every SGR escape and nothing else", () => {
-    expect(stripAnsi(`${WINE}${KEY}iss=${VAL}3096${SOFT}${RESET}`)).toBe("iss=3096");
+    expect(stripAnsi(`${MODEL_BG}${KEY}iss=${VAL}3096${SOFT}${RESET}`)).toBe("iss=3096");
   });
 
   it("leaves a line that carries no colour untouched", () => {
@@ -87,7 +87,7 @@ describe("clamp cuts between columns and closes what it opened", () => {
     expect(clamp(`${KEY}abcdef${ESC}[0;0mghij`, 9).endsWith(RESET)).toBe(false);
     // `39` restores the default FOREGROUND but leaves any background standing,
     // so it is not a close and the cut must still emit one.
-    expect(clamp(`${WINE}abcdef${VAL}ghij`, 9).endsWith(RESET)).toBe(true);
+    expect(clamp(`${MODEL_BG}abcdef${VAL}ghij`, 9).endsWith(RESET)).toBe(true);
   });
 
   it("adds no reset to a line that carried no colour", () => {
@@ -97,8 +97,8 @@ describe("clamp cuts between columns and closes what it opened", () => {
   });
 
   it("keeps the ellipsis at the tightest budget even when the line is painted", () => {
-    expect(clamp(`${RED}iss=3096${RESET}`, 1)).toBe("…");
-    expect(clamp(`${RED}iss=3096${RESET}`, 0)).toBe("");
+    expect(clamp(`${SPOTLIGHT}iss=3096${RESET}`, 1)).toBe("…");
+    expect(clamp(`${SPOTLIGHT}iss=3096${RESET}`, 0)).toBe("");
   });
 });
 
