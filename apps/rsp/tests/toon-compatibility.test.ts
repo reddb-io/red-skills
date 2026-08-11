@@ -31,6 +31,6 @@ describe("published TOON toolchain compatibility", () => {
     }];
 
     expect(parseRecords(input)).toEqual(expected);
-    expect(parseRecords(encodeRecords(expected))).toEqual(expected);
+    expect(parseRecords(encodeRecords(expected, {}))).toEqual(expected);
   });
 });
