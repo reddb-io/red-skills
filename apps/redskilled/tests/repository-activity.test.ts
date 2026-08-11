@@ -12,15 +12,17 @@ import { startRedskilledDaemon, type RedskilledDaemon } from "../src/daemon.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "../src/paths.js";
 import { isRedskilledStatuslinePayload } from "../src/statusline-payload.js";
 import {
-  assertOneHostToken,
   buildActivityReport,
+  isRedskilledActivityReport,
+  REDSKILLED_ACTIVITY_STALENESS_MS,
+} from "../src/activity-report.js";
+import {
+  assertOneHostToken,
   buildRepositoryActivityQuery,
   createGitHubActivityTransport,
   emptyRepositoryActivity,
   fetchRepositoryActivity,
-  isRedskilledActivityReport,
   parseRepositoryActivityResponse,
-  REDSKILLED_ACTIVITY_STALENESS_MS,
   RedskilledSplitCredentialError,
   type RedskilledProjectRepository,
 } from "../src/repository-activity.js";
