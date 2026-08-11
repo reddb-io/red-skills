@@ -311,15 +311,13 @@ function renderHead(
     parts.push(`host ${workerActivity(payload.workers, payload.host.worker_count)}/${payload.host.project_count}p`);
     parts.push(memoryFigure(payload, options));
   } else if (match === "matched" || match === "unregistered") {
-    parts.push(`${options.project} ${workerActivity(workers, workers.length)}`);
-    parts.push(memoryFigure(payload, options));
+    parts.push(workerActivity(workers, workers.length));
     if (workers.length === 0) parts.push("idle");
   } else if (match === "name-only") {
     // The Workers still count — they are running — but the line says out loud
     // that the host holds no registration, and it never says `idle`: a project
     // nothing will be born for is stopped, not resting (#2973).
-    parts.push(`${options.project} ${workerActivity(workers, workers.length)}`);
-    parts.push(memoryFigure(payload, options));
+    parts.push(workerActivity(workers, workers.length));
     parts.push(UNREGISTERED_MARK);
   } else {
     // NOT `0w idle`. An unmatched directory has no Worker count to report — the
@@ -333,6 +331,9 @@ function renderHead(
   // repository's queue depth on it would be attributed to every project on the
   // machine.
   if (options.mode !== "global") parts.push(...remoteCounterTokens(payload, options.project));
+  if (options.mode !== "global" && (match === "matched" || match === "unregistered" || match === "name-only")) {
+    parts.push(memoryFigure(payload, options));
+  }
   parts.push(engineMark(payload));
   const budget = budgetMark(payload);
   if (budget != null) parts.push(budget);
@@ -429,7 +430,10 @@ function deathMark(payload: RedskilledRenderPayload): string | null {
     return `${DEATH_MARK}${count} boot-refused ×${loop.count} in ${compactLoopSpan(loop.span_ms)}` +
       (refusal == null ? "" : ` — ${refusal}`);
   }
-  return `${DEATH_MARK}${count} ${latest.sender_class}`;
+  const current = Object.prototype.hasOwnProperty.call(deaths, "current_sender_attributed")
+    ? deaths.current_sender_attributed ?? null
+    : latest;
+  return current == null ? `${DEATH_MARK}${count}` : `${DEATH_MARK}${count} ${current.sender_class}`;
 }
 
 /** A loop span without zero-valued trailing units (`4m`, not `4m0s`). PURE. */

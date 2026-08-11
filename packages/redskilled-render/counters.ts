@@ -34,22 +34,21 @@ export const REDSKILLED_COUNTER_LABELS: ReadonlyArray<{
   readonly name: RedskilledRenderCounterName;
   readonly key: string;
 }> = [
-  { name: "open_pull_requests", key: "prs" },
-  { name: "open_issues", key: "iss" },
   { name: "ready_queue", key: "rdy" },
-  { name: "human_queue", key: "hmn" },
+  { name: "open_issues", key: "iss" },
+  { name: "open_pull_requests", key: "pr" },
+  { name: "merged_today", key: "mrg" },
 ];
 
 /**
  * The counter tokens for one project, ready to be joined into a head. PURE.
  *
- * Ordered `prs cpr iss rdy hmn`: the repository's own totals, then what closed
- * inside the poll's window, then the two queues an operator acts on. `cpr` comes
- * from the activity report rather than the counter block because it is not one
- * of the four dated counters — it is the poll's own window figure.
+ * Ordered `rdy iss pr mrg`: the actionable queue first, then the compact
+ * repository panorama. The older seven-day `cpr` and human-queue cells remain
+ * available as structured dashboard counts but no longer spend tail width.
  *
- * A daemon that predates the counter block still renders `prs`/`cpr`/`iss` from
- * the poll-dated counts (ADR 0130 rule 3); it simply cannot date them
+ * A daemon that predates the counter block still renders `pr`/`iss` from the
+ * poll-dated counts (ADR 0130 rule 3); it simply cannot date them
  * individually, and the caller's blanket staleness marker stays its answer.
  */
 export function remoteCounterTokens(
@@ -60,10 +59,6 @@ export function remoteCounterTokens(
   const activity = activityProject(payload, project);
   const tokens: string[] = [];
   for (const { name, key } of REDSKILLED_COUNTER_LABELS) {
-    if (key === "iss") {
-      const closed = activity?.counts?.recently_closed;
-      if (closed != null) tokens.push(`cpr=${closed}`);
-    }
     const token = counterToken(key, block?.counters[name], fallbackValue(activity, name));
     if (token != null) tokens.push(token);
   }
@@ -73,6 +68,7 @@ export function remoteCounterTokens(
 /** The repo-global counts a header carries as structure, each `null` when unpolled. */
 export interface RedskilledDashboardCounts {
   readonly open_pull_requests: number | null;
+  readonly merged_today: number | null;
   /** Pull requests and Issues closed inside the poller's window — the `cpr` cell. */
   readonly recently_closed: number | null;
   readonly open_issues: number | null;
@@ -101,6 +97,7 @@ export function dashboardCounts(
   return {
     open_pull_requests: dated?.counters.open_pull_requests.value
       ?? activity?.counts?.open_pull_requests ?? null,
+    merged_today: dated?.counters.merged_today.value ?? activity?.counts?.merged_today ?? null,
     recently_closed: activity?.counts?.recently_closed ?? null,
     open_issues: dated?.counters.open_issues.value ?? activity?.counts?.open_issues ?? null,
     ready_queue: dated?.counters.ready_queue.value ?? null,
@@ -144,6 +141,7 @@ function fallbackValue(
   if (counts == null) return null;
   if (name === "open_pull_requests") return counts.open_pull_requests;
   if (name === "open_issues") return counts.open_issues;
+  if (name === "merged_today") return counts.merged_today ?? null;
   // The queue counts exist only on the dated block: a daemon that never counted
   // them has no number to fall back to, and inventing a zero would render an
   // empty queue for a poll that never asked.

@@ -110,7 +110,7 @@ describe("one module, three densities", () => {
     const table = renderRedskilledDashboard(doc, { ...REDSKILLED_DASHBOARD_DEFAULTS, project: "acme/widgets" });
 
     expect(line.lines).toHaveLength(2);
-    expect(line.line).toContain("acme/widgets 1w");
+    expect(line.line).toBe("1w 512M v3.3.11");
     expect(stripAnsi(line.lines[1]!)).toContain("w-1");
     // The panel's FIRST row is the line density's own output, not a second
     // spelling of it — the composition is the no-drift guarantee.
@@ -182,7 +182,7 @@ describe("one module, three densities", () => {
     const doc = payload();
     const drawn = renderRedskilled(doc, { density: "panel", options: { project: "acme/widgets" } });
     expect(drawn.density).toBe("panel");
-    expect(drawn.lines[0]).toContain("acme/widgets");
+    expect(drawn.lines[0]).toContain("1w 512M v3.3.11");
     expect(renderRedskilled(doc, { density: "line", options: { project: "acme/widgets" } }).lines)
       .toEqual(renderRedskilledStatusline(doc, LOCAL).lines);
   });
@@ -455,7 +455,7 @@ describe("an unknown project's registration history (#3191)", () => {
     expect(rendered.project_match).toBe("unregistered");
     expect(rendered.repair).toBeUndefined();
     expect(rendered.repair_reason).toBeUndefined();
-    expect(rendered.line).toBe("acme/widgets 0w 0B idle v3.3.11");
+    expect(rendered.line).toBe("0w idle 0B v3.3.11");
   });
 
   it.each([

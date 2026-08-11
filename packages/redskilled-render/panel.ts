@@ -190,10 +190,13 @@ function panelNotes(
   const notes: string[] = [];
   const deaths = payload.deaths;
   if (deaths != null && deaths.count > 0 && deaths.latest != null) {
+    const current = Object.prototype.hasOwnProperty.call(deaths, "current_sender_attributed")
+      ? deaths.current_sender_attributed ?? null
+      : deaths.latest;
     notes.push(
       clamp(
-        `${DEATH_MARK} ${deaths.count} posed death(s) — newest ${deaths.latest.sender_class}/` +
-          `${deaths.latest.confidence} on pid ${deaths.latest.pid}`,
+        `${DEATH_MARK} ${deaths.count} posed death(s)` +
+          (current == null ? "" : ` — newest ${current.sender_class}/${current.confidence} on pid ${current.pid}`),
         options.maxWidth,
       ),
     );
