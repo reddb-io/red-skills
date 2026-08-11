@@ -382,10 +382,10 @@ export interface DocsSweepLandResult {
 }
 
 export type DocsSweepLander = (plan: DocsSweepPlan) => Promise<DocsSweepLandResult>;
-
 /** All injected IO + lookups for the boot run. */
 export interface BootDeps {
   fs: BootFs;
+  trimHistory(): Promise<number | null>;
   gh: BootGh;
   git: BootGit;
   lookups: BootLookups;
@@ -419,7 +419,6 @@ export interface BootDeps {
   /** Landing lane for the Docs Sweep. Absent is valid only when the plan is clean. */
   docsSweepLander?: DocsSweepLander;
 }
-
 function shortSha(sha: string | undefined): string {
   return sha ? sha.slice(0, 12) : "unknown";
 }
@@ -915,8 +914,7 @@ export interface BootResult {
  *
  *   0. host prerequisites   — required commands + Bash baseline; failure halts.
  *   1. precheck             — hard preconditions; a failure aborts the run.
- *   2. bootstrap            — ensure .red/tmp + .red/state, gitignore lines,
- *                             per-worker dir + worker.pid (via fs).
+ *   2. bootstrap + trim     — ensure dirs/worker pid; full boots cap castle history.
  *   3. orphan cleanup       — decideOrphanFate per dead-worker attempt dir, then
  *                             apply remove / restore-and-remove / keep (gh + fs).
  *   4. attempt cap          — planAttemptCap per issue, remove the reclaimed dirs.
@@ -1029,6 +1027,8 @@ export async function runBoot(deps: BootDeps, options: BootOptions): Promise<Boo
   if (options.skipSweeps) {
     return { precheck: pre, operationalProbes, quarantinedIssues, bootstrap: { ok: true } };
   }
+
+  await deps.trimHistory();
 
   // ---- 3. orphan cleanup ----
   const orphanCleanup = await runOrphanCleanup(deps, options);
