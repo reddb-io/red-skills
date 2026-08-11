@@ -108,4 +108,92 @@ describe("the daemon's conditional REST poll path", () => {
       '"closed-v1"',
     ]);
   });
+
+  it("counts the ready and human queues off the open-Issue list it already paid for", async () => {
+    const paths: string[] = [];
+    const fetchImpl: typeof fetch = async (url) => {
+      const parsed = new URL(String(url));
+      paths.push(`${parsed.pathname}?${parsed.searchParams.get("state")}`);
+      if (parsed.pathname.endsWith("/pulls")) {
+        return json([{ number: 1 }, { number: 2 }]);
+      }
+      if (parsed.searchParams.get("state") === "closed") return json([]);
+      return json([
+        { number: 10, labels: [{ name: "ready-for-agent" }] },
+        { number: 11, labels: [{ name: "ready-for-agent" }, { name: "type:spec" }] },
+        { number: 12, labels: [{ name: "ready-for-human" }] },
+        { number: 13, labels: [] },
+        // A pull request answered by the Issues route is not an Issue, and it is
+        // not a queue item either — the same filter the open count already uses.
+        { number: 14, labels: [{ name: "ready-for-agent" }], pull_request: {} },
+      ]);
+    };
+    const transport = createGitHubActivityTransport({
+      token: "test-token",
+      endpoint: "https://tracker.example/graphql",
+      fetchImpl,
+      retryCount: 0,
+      throttle: false,
+    });
+
+    const activity = await fetchRepositoryActivity({
+      projects: [{
+        project_label: "acme/widgets",
+        owner: "acme",
+        name: "widgets",
+        queue_labels: { ready: "ready-for-agent", human: "ready-for-human" },
+      }],
+      hostTokenRef: "host",
+      transport,
+      now: FIRST,
+    });
+
+    expect(activity.projects[0]).toMatchObject({
+      outcome: "counted",
+      counts: { open_pull_requests: 2, open_issues: 4, ready_queue: 2, human_queue: 1 },
+    });
+    // Three collections, three requests: the queue counters are a filter over
+    // bytes this poll already holds, never two more label-filtered lists.
+    expect(activity.request_count).toBe(3);
+    expect(paths).toHaveLength(3);
+  });
+
+  it("leaves both queue counters absent when a project names no label", async () => {
+    const transport = createGitHubActivityTransport({
+      token: "test-token",
+      endpoint: "https://tracker.example/graphql",
+      fetchImpl: (async () => json([{ number: 1, labels: [{ name: "ready-for-agent" }] }])) as unknown as typeof fetch,
+      retryCount: 0,
+      throttle: false,
+    });
+
+    const activity = await fetchRepositoryActivity({
+      projects: [{ project_label: "acme/widgets", owner: "acme", name: "widgets" }],
+      hostTokenRef: "host",
+      transport,
+      now: FIRST,
+    });
+
+    // The label is right there in the answer, and it is still not counted: a
+    // project that named no label has an uncounted queue, not a drained one.
+    expect(activity.projects[0]!.counts).toMatchObject({ ready_queue: null, human_queue: null });
+  });
+
+  it("refuses a project that names an empty label rather than counting nothing", async () => {
+    await expect(fetchRepositoryActivity({
+      projects: [{
+        project_label: "acme/widgets",
+        owner: "acme",
+        name: "widgets",
+        queue_labels: { ready: "", human: "ready-for-human" },
+      }],
+      hostTokenRef: "host",
+      transport: (async () => ({})) as never,
+      now: FIRST,
+    })).rejects.toThrow(/empty queue label/);
+  });
 });
+
+function json(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+}

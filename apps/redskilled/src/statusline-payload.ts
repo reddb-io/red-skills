@@ -35,8 +35,14 @@ import {
   buildActivityReport,
   isRedskilledActivityReport,
   type RedskilledActivityReport,
-  type RedskilledRepositoryActivity,
-} from "./repository-activity.js";
+} from "./activity-report.js";
+import {
+  buildRemoteCounterReport,
+  isRedskilledRemoteCounterReport,
+  type RedskilledRemoteCounterReport,
+} from "./remote-counters.js";
+import type { RedskilledRepositoryActivity } from "./repository-activity.js";
+import type { RedskilledStatuslineExtra } from "./statusline-extras.js";
 import type { RedskilledWorkerDisplay, RedskilledWorkerDisplayRecord } from "./worker-display.js";
 import {
   buildDeaths,
@@ -70,6 +76,32 @@ export {
   type RedskilledStatuslineDeath,
   type RedskilledStatuslineDeaths,
 } from "./statusline-deaths.js";
+
+// How much of this document one reader asked for is its own question, answered
+// in `./statusline-extras.js`. Re-exported because the payload interface NAMES
+// the extras — `withheld` is typed by them — and because every caller of the
+// withholding already imports this module for the payload it withholds from.
+export {
+  REDSKILLED_STATUSLINE_EXTRAS,
+  withholdStatuslineExtras,
+  type RedskilledStatuslineExtra,
+  type RedskilledStatuslineExtrasRequest,
+} from "./statusline-extras.js";
+
+// The remote-counter block's own judgements — which counters exist, when an age
+// makes one stale, what an absence reads as — live in `./remote-counters.js`.
+// They are re-exported for the same reason the death block's are: this module's
+// payload interface NAMES them, so a consumer typing a payload reaches them from
+// the module it already imports.
+export {
+  isRedskilledRemoteCounterReport,
+  REDSKILLED_REMOTE_COUNTER_NAMES,
+  REDSKILLED_REMOTE_COUNTERS_UNPOLLED_REASON,
+  type RedskilledProjectRemoteCounters,
+  type RedskilledRemoteCounter,
+  type RedskilledRemoteCounterName,
+  type RedskilledRemoteCounterReport,
+} from "./remote-counters.js";
 
 /** What a Worker is doing, as the daemon knows it. */
 export type RedskilledWorkerState = "running" | "reattached";
@@ -307,6 +339,25 @@ export interface RedskilledStatuslinePayload {
    */
   readonly repository_activity: RedskilledActivityReport;
   /**
+   * The same poll's counters, one by one, each carrying its own age.
+   *
+   * Beside `repository_activity` rather than inside it, because the two answer
+   * different questions: the report dates the POLL — the fact an operator needs
+   * to know whether this daemon is still talking to GitHub — and this block
+   * dates each COUNTER, which is what a line rendering four numbers side by side
+   * needs (ADR 0141 decision 2). One poll-wide age describes an unasked counter
+   * and a second-old one equally badly.
+   *
+   * A counter with no value carries `null` and its own reason, never a zero: "the
+   * queue has drained", "the quota was spent" and "no label was ever named" are
+   * three different facts and only the first is a number.
+   *
+   * OPTIONAL on the wire (ADR 0130 rule 3): a daemon that predates this block
+   * answers completely without it, and a consumer that finds it absent must
+   * render nothing rather than an empty queue.
+   */
+  readonly remote_counters?: RedskilledRemoteCounterReport;
+  /**
    * What the TOKEN has left, asked rather than counted, with its own age.
    *
    * It rides beside the counts deliberately: `"the queue looks empty"` and
@@ -366,78 +417,6 @@ export interface RedskilledStatuslinePayload {
    */
   readonly withheld?: readonly RedskilledStatuslineExtra[];
 }
-
-/**
- * One block that scales with Worker count, and so travels on request.
- *
- * Named individually rather than as one `verbose` boolean because the surfaces
- * want different subsets: a statusline wants vitals and no logs, a dashboard
- * wants the display records, and a health probe wants none of the three.
- */
-export type RedskilledStatuslineExtra = "logs" | "vitals" | "display";
-
-/** Every extra there is, so a caller can ask for the skeleton by subtracting. */
-export const REDSKILLED_STATUSLINE_EXTRAS: readonly RedskilledStatuslineExtra[] = ["logs", "vitals", "display"];
-
-/**
- * Which extras a reader wants; an omitted flag is a block it does not need.
- *
- * A record of opt-INS rather than opt-outs: the expensive direction should be
- * the one a caller had to type.
- */
-export interface RedskilledStatuslineExtrasRequest {
-  readonly logs?: boolean;
-  readonly vitals?: boolean;
-  readonly display?: boolean;
-}
-
-/**
- * The same payload with the extras nobody asked for removed. PURE.
- *
- * **A withheld block is replaced by its own honest absence, never deleted**: the
- * shape stays total, so a consumer written against the full document renders a
- * skeleton response without a single existence check. What it must not do is
- * read the absence as a measurement — which is exactly what `withheld` is for.
- *
- * `undefined` extras means the whole document, because that is what every client
- * pinned to an older bundle asks for by saying nothing (ADR 0130 rule 3). A
- * caller that wants less says so.
- */
-export function withholdStatuslineExtras(
-  payload: RedskilledStatuslinePayload,
-  extras: RedskilledStatuslineExtrasRequest | undefined,
-): RedskilledStatuslinePayload {
-  if (extras === undefined) return payload;
-  const withheld = REDSKILLED_STATUSLINE_EXTRAS.filter((extra) => extras[extra] !== true);
-  if (withheld.length === 0) return payload;
-  const keep = (extra: RedskilledStatuslineExtra) => extras[extra] === true;
-  return {
-    ...payload,
-    workers: payload.workers.map((worker) => ({
-      ...worker,
-      ...(keep("vitals") ? {} : { vitals: WITHHELD_VITALS, budget: { ...worker.budget, used_bytes: null, used_fraction: null } }),
-      ...(keep("logs") ? {} : { log: WITHHELD_LOG }),
-      ...(keep("display") ? {} : { display: null, display_published_at: null }),
-    })),
-    withheld,
-  };
-}
-
-/** The vitals of a Worker nobody asked about — total in shape, empty in fact. */
-const WITHHELD_VITALS: RedskilledStatuslineVitals = {
-  rss_bytes: null,
-  sampled_at: null,
-  age_ms: null,
-  fresh: false,
-  rss_source: null,
-};
-
-/** The log of a Worker nobody asked about. `null`, exactly as an unpublished one. */
-const WITHHELD_LOG: RedskilledStatuslineWorkerLog = {
-  last_line: null,
-  published_at: null,
-  source: null,
-};
 
 export interface BuildStatuslinePayloadInput {
   readonly hostState: RedskilledHostState;
@@ -589,6 +568,14 @@ export function buildStatuslinePayload(input: BuildStatuslinePayloadInput): Reds
       activity: input.repositoryActivity ?? null,
       now: input.now,
       stalenessMs: input.activityStalenessMs,
+    }),
+    // The same document, projected per counter rather than per poll. Both blocks
+    // are derived from ONE stored activity, so no surface can render two ages
+    // for one fetch — the projection is the point, a second source would not be.
+    remote_counters: buildRemoteCounterReport({
+      activity: input.repositoryActivity ?? null,
+      now: input.now,
+      ...(input.activityStalenessMs === undefined ? {} : { stalenessMs: input.activityStalenessMs }),
     }),
     ...(input.deaths === undefined
       ? {}
@@ -828,6 +815,10 @@ export function isRedskilledStatuslinePayload(value: unknown): value is Redskill
     // a field this consumer did not ask for would lose the Worker set — the very
     // version skew one host-scoped daemon exists to stop managing (ADR 0130).
     (payload.repository_activity === undefined || isRedskilledActivityReport(payload.repository_activity)) &&
+    // Absent is accepted for the same reason, and for one more: this block is
+    // newer than the report beside it, so a daemon one release behind serves
+    // every counter's value without their per-counter ages.
+    (payload.remote_counters === undefined || isRedskilledRemoteCounterReport(payload.remote_counters)) &&
     // Absent is accepted for the same reason: a daemon older than the balance
     // poller answers completely without it, and a consumer that rejected the
     // whole payload would lose the Worker set over a badge.
