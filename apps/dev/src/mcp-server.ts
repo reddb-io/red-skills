@@ -2,7 +2,8 @@
 import { renderVersion, readBuildInfo } from "@reddb-io/build-info";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { encode, type JsonValue } from "@reddb-io/toon";
+import type { JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import { deathLaneFile, installDeathRecorder } from "@reddb-io/shared/death-record.js";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
