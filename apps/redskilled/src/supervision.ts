@@ -124,6 +124,7 @@ function renderUnit(command: string, args: readonly string[], paths: RedskilledP
     "",
     "[Service]",
     "Type=simple",
+    "LimitCORE=0",
     `ExecStart=${[command, ...args].map(quoteUnitWord).join(" ")}`,
     // The whole reason the unit exists: a daemon that dies comes back without a
     // client having to want work first.
