@@ -394,6 +394,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     "--wait",
     `--unit=${unit}`,
     `--working-directory=${opts.workspacePath}`,
+    "--property=LimitCORE=0",
   ];
   // `--pipe` connects the unit's stdio to this process's, which is what makes an
   // inherited log fd reach the Worker at all. Without it a transient unit writes
