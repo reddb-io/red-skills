@@ -84,8 +84,12 @@ describe("macOS placement — resolved from probes, with nothing spawned", () =>
     expect(placement.command).toBe("/bin/sh");
     expect(placement.args.slice(-4)).toEqual(["/usr/bin/node", "worker.js", "--issue", "2782"]);
     expect(placement.args[0]).toBe("-c");
-    expect(placement.args[1]).toMatch(/exec '\/usr\/bin\/nice' -n \d+ "\$0" "\$@"/);
+    expect(placement.args[1]).toMatch(/exec '\/usr\/bin\/nice' -n \d+ "\$@"/);
     expect(placement.cwd).toBe("/given/workspace");
+  });
+
+  it("disables core dumps before applying the remaining POSIX launch controls", () => {
+    expect(plan(DARWIN).args[1]).toMatch(/^ulimit -c 0\n/);
   });
 
   it("reads the host once, in the probe, and never on the planning path", () => {
@@ -228,7 +232,7 @@ describe("macOS placement — priority control, the tooth this backend really ha
     const placement = plan(DARWIN_WITHOUT_NICE);
 
     expect(placement.posix?.nice).toBeUndefined();
-    expect(placement.args[1]).toContain('exec "$0" "$@"');
+    expect(placement.args[1]).toContain('exec "$@"');
     expect(placement.warning).toMatch(/no priority control/);
   });
 
