@@ -5,7 +5,7 @@
 // read for real, and a presence anchor left behind exactly as an un-trap-able
 // death leaves one. So the collector under test is the SHIPPED one — no fake
 // evidence object stands in for the code an operator actually runs.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,6 +21,7 @@ import {
   type ProcessPresence,
 } from "./death-attribution.js";
 import {
+  PROCESS_DEATH_LANE_MAX_BYTES,
   PROCESS_DEATH_LANE_RETENTION_MS,
   appendProcessDeathRecord,
   buildProcessDeathRecord,
@@ -268,6 +269,38 @@ describe("the presence anchor", () => {
 });
 
 describe("the boot reaper", () => {
+  it("compacts an oversized death lane before serve boot returns", () => {
+    const stateRoot = scratch();
+    const lanePath = deathLaneFileIn(stateRoot);
+    const record = buildProcessDeathRecord(
+      {
+        ts: "2026-08-08T20:00:00.000Z",
+        kind: "worker",
+        id: "oversized-at-boot",
+        pid: 4242,
+        exit_path: "exit",
+        exit_code: 0,
+        last_phase: "done",
+        detail: "x".repeat(1_000),
+      },
+      SAMPLE,
+    );
+    appendProcessDeathRecord(lanePath, record);
+    const segment = readFileSync(lanePath, "utf8");
+    writeFileSync(
+      lanePath,
+      segment.repeat(Math.ceil((PROCESS_DEATH_LANE_MAX_BYTES + 1) / Buffer.byteLength(segment))),
+    );
+
+    runBootDeathReaper({
+      stateRoot,
+      evidence: collectHostDeathEvidence({ procRoot: poseProc("boot-a", [1]), journalPaths: [] }),
+      now: () => "2026-08-08T20:00:00.000Z",
+    });
+
+    expect(statSync(lanePath).size).toBeLessThanOrEqual(PROCESS_DEATH_LANE_MAX_BYTES / 2);
+  });
+
   it("attributes the absent-but-expected record and clears its anchor", () => {
     const stateRoot = scratch();
     const dir = deathPresenceDirIn(stateRoot);

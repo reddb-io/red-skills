@@ -27,7 +27,18 @@
  * in flight when the process leaves is the very silence the record exists to
  * break.
  */
-import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 import { UNSCOPED_PROCESS, readWorkerScopeFacts, type WorkerScopeFacts } from "./worker-scope.js";
@@ -50,10 +61,16 @@ export const PROCESS_DEATH_RECORD_VERSION = 1;
 
 /**
  * Deaths remain useful for fourteen days. Older host history no longer explains
- * the processes and anchors present today, so every writer advances the lane to
- * this explicit age window before appending its own record.
+ * the processes and anchors present today, so each size-triggered or boot
+ * compaction advances the lane to this explicit age window.
  */
 export const PROCESS_DEATH_LANE_RETENTION_MS = 14 * 24 * 60 * 60 * 1_000;
+
+/** The largest death-lane generation an exit handler asks a reader to decode. */
+export const PROCESS_DEATH_LANE_MAX_BYTES = 4 * 1024 * 1024;
+
+/** A rewrite leaves half the generation free, amortizing the next full decode. */
+const PROCESS_DEATH_LANE_COMPACTION_TARGET_RATIO = 0.5;
 
 /**
  * Which of the engine's three process classes died.
@@ -222,10 +239,10 @@ export function sampleProcessResources(host: DeathRecorderHost): ProcessResource
 /** The synchronous file operations the lane needs; injected so a test can pose them. */
 export interface DeathLaneIo {
   mkdir(dir: string): void;
-  /** True when the lane is absent or already ends on a line boundary. */
-  endsClean(path: string): boolean;
+  /** One-stat append inspection; an absent lane is empty and clean. */
+  inspect(path: string): { readonly size: number; readonly endsClean: boolean };
   append(path: string, text: string): void;
-  /** Atomically replace a complete lane after retention has removed old rows. */
+  /** Atomically replace a complete lane after age/size compaction. */
   replace(path: string, text: string): void;
   read(path: string): string;
 }
@@ -235,20 +252,25 @@ export const nodeDeathLaneIo: DeathLaneIo = {
   mkdir(dir) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   },
-  endsClean(path) {
+  inspect(path) {
     let size: number;
     try {
       size = statSync(path).size;
-    } catch {
-      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { size: 0, endsClean: true };
+      throw error;
     }
-    if (size === 0) return true;
-    // Reading the tail byte alone would need an open/read/close dance in a path
-    // that must not throw; the lane is small and this runs once per process life.
+    if (size === 0) return { size, endsClean: true };
+    let descriptor: number | undefined;
     try {
-      return readFileSync(path, "utf8").endsWith("\n");
+      descriptor = openSync(path, "r");
+      const tail = Buffer.allocUnsafe(1);
+      readSync(descriptor, tail, 0, 1, size - 1);
+      return { size, endsClean: tail[0] === 0x0a };
     } catch {
-      return true;
+      return { size, endsClean: true };
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
     }
   },
   append(path, text) {
@@ -290,11 +312,24 @@ export function appendProcessDeathRecord(
   record: ProcessDeathRecord,
   io: DeathLaneIo = nodeDeathLaneIo,
 ): ProcessDeathRecord {
-  const recordedAt = Date.parse(record.ts);
-  if (Number.isFinite(recordedAt)) compactProcessDeathLane(lanePath, recordedAt, io);
   const line = encodeLines({ trailer: false }).push(toRow(record));
+  const lineBytes = Buffer.byteLength(line);
+  const inspection = io.inspect(lanePath);
+  const separatorBytes = inspection.endsClean ? 0 : 1;
+  const recordedAt = Date.parse(record.ts);
+  const compactedAt = Number.isFinite(recordedAt) ? recordedAt : Date.now();
+  let compacted = false;
+  if (inspection.size + separatorBytes + lineBytes > PROCESS_DEATH_LANE_MAX_BYTES) {
+    const targetBytes = Math.max(
+      0,
+      Math.floor(PROCESS_DEATH_LANE_MAX_BYTES * PROCESS_DEATH_LANE_COMPACTION_TARGET_RATIO) -
+        lineBytes,
+    );
+    compactProcessDeathLaneToTarget(lanePath, compactedAt, io, targetBytes);
+    compacted = true;
+  }
   io.mkdir(dirname(lanePath));
-  if (!io.endsClean(lanePath)) io.append(lanePath, "\n");
+  if (!compacted && !inspection.endsClean && inspection.size > 0) io.append(lanePath, "\n");
   io.append(lanePath, line);
   return record;
 }
@@ -311,24 +346,72 @@ export function compactProcessDeathLane(
   nowMs: number = Date.now(),
   io: DeathLaneIo = nodeDeathLaneIo,
 ): ProcessDeathRecord[] {
+  return compactProcessDeathLaneToTarget(lanePath, nowMs, io);
+}
+
+function compactProcessDeathLaneToTarget(
+  lanePath: string,
+  nowMs: number,
+  io: DeathLaneIo,
+  forcedTargetBytes?: number,
+): ProcessDeathRecord[] {
+  let raw: string;
   let records: ProcessDeathRecord[];
   try {
-    records = decodeProcessDeathRecords(io.read(lanePath));
+    raw = io.read(lanePath);
+    records = decodeProcessDeathRecords(raw);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
 
   const cutoff = nowMs - PROCESS_DEATH_LANE_RETENTION_MS;
-  const retained = records.filter((record) => {
+  const ageRetained = records.filter((record) => {
     const timestamp = Date.parse(record.ts);
     return !Number.isFinite(timestamp) || timestamp >= cutoff;
   });
-  if (retained.length === records.length) return retained;
+  const oversized = Buffer.byteLength(raw) > PROCESS_DEATH_LANE_MAX_BYTES;
+  const targetBytes = forcedTargetBytes ??
+    (oversized
+      ? Math.floor(PROCESS_DEATH_LANE_MAX_BYTES * PROCESS_DEATH_LANE_COMPACTION_TARGET_RATIO)
+      : undefined);
+  const retained = targetBytes === undefined ? ageRetained : retainDeathRecordsWithin(ageRetained, targetBytes);
+  if (forcedTargetBytes === undefined && !oversized && retained.length === records.length) return retained;
 
-  const encoder = encodeLines({ trailer: false });
-  io.replace(lanePath, retained.map((record) => encoder.push(toRow(record))).join(""));
+  io.replace(lanePath, encodeDeathLane(retained));
   return retained;
+}
+
+/** Preserve unknown timestamps, then keep the newest dated history that fits. */
+function retainDeathRecordsWithin(
+  records: readonly ProcessDeathRecord[],
+  targetBytes: number,
+): ProcessDeathRecord[] {
+  const pinnedIndices = new Set<number>();
+  const optionalIndices: number[] = [];
+  records.forEach((record, index) => {
+    if (Number.isFinite(Date.parse(record.ts))) optionalIndices.push(index);
+    else pinnedIndices.add(index);
+  });
+
+  let low = 0;
+  let high = optionalIndices.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const selected = new Set([...pinnedIndices, ...optionalIndices.slice(middle)]);
+    const candidate = records.filter((_record, index) => selected.has(index));
+    if (Buffer.byteLength(encodeDeathLane(candidate)) <= targetBytes) high = middle;
+    else low = middle + 1;
+  }
+
+  const selected = new Set([...pinnedIndices, ...optionalIndices.slice(low)]);
+  return records.filter((_record, index) => selected.has(index));
+}
+
+function encodeDeathLane(records: readonly ProcessDeathRecord[]): string {
+  if (records.length === 0) return "";
+  const encoder = encodeLines({ trailer: false });
+  return records.map((record) => encoder.push(toRow(record))).join("");
 }
 
 /**
