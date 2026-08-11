@@ -25,7 +25,7 @@ import {
   type RedskilledRenderPayload,
 } from "@reddb-io/redskilled-render";
 
-const { localGit, runStatusline } = vi.hoisted(() => ({
+const { localGit, runStatusline, probeStatusline } = vi.hoisted(() => ({
   localGit: vi.fn(async () => ({
     basename: "red-skills",
     branch: "afk/3566-counters",
@@ -36,9 +36,14 @@ const { localGit, runStatusline } = vi.hoisted(() => ({
     _args: readonly string[],
     _io: { readonly write?: (line: string) => void },
   ) => 0),
+  // The lifecycle wire (#3567) reaches the daemon through `probeStatusline`;
+  // unstubbed it rejects, which is the honest daemon-absent default.
+  probeStatusline: vi.fn(async (): Promise<unknown> => {
+    throw new Error("no daemon in this test");
+  }),
 }));
 
-vi.mock("@reddb-io/redskilled/statusline-command", () => ({ runStatusline }));
+vi.mock("@reddb-io/redskilled/statusline-command", () => ({ runStatusline, probeStatusline }));
 vi.mock("../src/runtime/wire.js", () => ({
   collectStatuslineLocalGit: localGit,
   resolveRepoBasename: localGit,
@@ -129,16 +134,21 @@ function daemonPayload(ageMs: number): RedskilledRenderPayload {
 
 /** The daemon, posed as the one thing it is here: a payload and the real render. */
 function serve(ageMs: number): void {
-  runStatusline.mockImplementationOnce(async (
-    _args: readonly string[],
-    io: { readonly write?: (line: string) => void },
-  ) => {
+  // The counters' own ages live inside the payload fixture (per-token ages,
+  // ADR 0141); the PAYLOAD stays fresh, so the lifecycle resolves `live` and
+  // the tail renders — counter age is data, never a lifecycle state.
+  probeStatusline.mockImplementationOnce(async () => {
     const render = renderRedskilledStatusline(daemonPayload(ageMs), {
       ...REDSKILLED_STATUSLINE_DEFAULTS,
       project: PROJECT,
     });
-    io.write?.(`${render.lines.join("\n")}\n`);
-    return 0;
+    return {
+      render: { lines: render.lines, mode: "project", project_match: "matched" },
+      payload: {
+        generated_at: new Date().toISOString(),
+        staleness: { age_ms: 1_000, threshold_ms: 30_000, stale: false },
+      },
+    };
   });
 }
 

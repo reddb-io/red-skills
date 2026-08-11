@@ -16,14 +16,66 @@
  * daemon was down would render an outage as calm. An unreachable host is a
  * stated absence on stdout and a diagnosis on stderr.
  */
-import { readRedskilledStatuslineRender, type RedskilledClientConfig } from "./client.js";
+import {
+  readRedskilledStatuslineRender,
+  type RedskilledClientConfig,
+} from "./client.js";
+import { probeRedskilledStatuslinePayload } from "./statusline-probe.js";
 import { resolveRedskilledPaths, type RedskilledPaths } from "./paths.js";
 import {
   parseRedskilledStatuslineFlags,
   resolveRedskilledStatuslineOptions,
 } from "./statusline-config.js";
 import { readStatuslineProject } from "./statusline-project.js";
-import { renderRedskilledStatuslineAbsence } from "@reddb-io/redskilled-render";
+import type { RedskilledStatuslinePayload } from "./statusline-payload.js";
+import {
+  renderRedskilledStatusline,
+  renderRedskilledStatuslineAbsence,
+  type RedskilledStatuslineRender,
+} from "@reddb-io/redskilled-render";
+
+export interface RedskilledStatuslineProbe {
+  readonly payload: RedskilledStatuslinePayload;
+  readonly render: RedskilledStatuslineRender;
+}
+
+/**
+ * Read one already-running daemon and return both its payload and Shared render.
+ *
+ * This is the importable seam for prompt hosts that need lifecycle facts beside
+ * the rendered tail. It is probe-only by construction: unlike `runStatusline`,
+ * it never enters the client's daemon-start path.
+ */
+export async function probeStatusline(
+  args: readonly string[],
+  io: {
+    readonly cwd?: string;
+    readonly paths?: RedskilledPaths;
+    readonly warn?: (line: string) => void;
+    readonly client?: RedskilledClientConfig;
+  } = {},
+): Promise<RedskilledStatuslineProbe> {
+  const warn = io.warn ?? ((line: string) => process.stderr.write(line));
+  const parsed = parseRedskilledStatuslineFlags(args);
+  const project = readStatuslineProject(io.cwd ?? process.cwd());
+  const resolved = resolveRedskilledStatuslineOptions({
+    ...(project.configText == null ? {} : { configText: project.configText }),
+    project: project.label,
+    flags: parsed.flags,
+  });
+  for (const warning of [...resolved.warnings, ...parsed.warnings]) {
+    warn(`redskilled statusline: ignoring ${warning.key}=${warning.value} — ${warning.reason}\n`);
+  }
+  const payload = await probeRedskilledStatuslinePayload(
+    io.paths ?? resolveRedskilledPaths(),
+    {
+      ...(io.client ?? {}),
+      ...(resolved.options.project == null ? {} : { sessionProject: resolved.options.project }),
+    },
+    { vitals: true, logs: resolved.options.verbose, display: true },
+  );
+  return { payload, render: renderRedskilledStatusline(payload, resolved.options) };
+}
 
 export async function runStatusline(
   args: readonly string[],

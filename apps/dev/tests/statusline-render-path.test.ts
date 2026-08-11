@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { directCollector, localGit, runStatusline, spawned } = vi.hoisted(() => ({
+const { directCollector, localGit, probeStatusline, spawned } = vi.hoisted(() => ({
   directCollector: vi.fn(() => {
     throw new Error("the render path called a project collector");
   }),
@@ -19,19 +19,23 @@ const { directCollector, localGit, runStatusline, spawned } = vi.hoisted(() => (
     localAdded: 142,
     localRemoved: 36,
   })),
-  runStatusline: vi.fn(async (
-    _args: readonly string[],
-    io: { readonly cwd?: string; readonly write?: (line: string) => void },
-  ) => {
-    io.write?.(
-      "acme/widgets 1w 128M v3.12.10\n" +
-      "w123  ███▶░░  run=codex gpt-5.6 xhigh  iss=3546  implementing·tests  00:02:03  loc=+12 -3  tks=45k  tls=9 rsn=2 txt=1\n",
-    );
-    return 0;
-  }),
+  probeStatusline: vi.fn(async () => ({
+    payload: {
+      generated_at: "2026-08-11T12:00:00.000Z",
+      staleness: { age_ms: 5_000, threshold_ms: 30_000, stale: false },
+    },
+    render: {
+      lines: [
+        "acme/widgets 1w 128M v3.12.10",
+        "w123  ███▶░░  run=codex gpt-5.6 xhigh  iss=3546  implementing·tests  00:02:03  loc=+12 -3  tks=45k  tls=9 rsn=2 txt=1",
+      ],
+      mode: "local",
+      project_match: "matched",
+    },
+  })),
 }));
 
-vi.mock("@reddb-io/redskilled/statusline-command", () => ({ runStatusline }));
+vi.mock("@reddb-io/redskilled/statusline-command", () => ({ probeStatusline }));
 
 // Every process this render could start, recorded rather than run. The counters
 // are the daemon's (ADR 0141 decision 2) and the local count caches are deleted,
@@ -129,10 +133,10 @@ describe("dev statusline render path", () => {
     const adapterMs = performance.now() - started;
 
     expect(code).toBe(0);
-    expect(runStatusline).toHaveBeenCalledOnce();
-    expect(runStatusline).toHaveBeenCalledWith(
+    expect(probeStatusline).toHaveBeenCalledOnce();
+    expect(probeStatusline).toHaveBeenCalledWith(
       ["global", "--verbose"],
-      expect.objectContaining({ cwd: root }),
+      expect.objectContaining({ cwd: root, client: { requestTimeoutMs: 150 } }),
     );
     expect(directCollector).not.toHaveBeenCalled();
     // The bedrock LEADS the daemon's header line; the Worker lines follow it
@@ -148,11 +152,8 @@ describe("dev statusline render path", () => {
     expect(adapterMs).toBeLessThan(100);
   });
 
-  it("prints the daemon client's stated absence promptly without a tracker fallback", async () => {
-    runStatusline.mockImplementationOnce(async (_args, io) => {
-      io.write?.("redskilled unreachable — Worker state unknown\n");
-      return 0;
-    });
+  it("prints the bedrock-only lifecycle promptly without a tracker fallback", async () => {
+    probeStatusline.mockRejectedValueOnce(new Error("socket unavailable"));
     const root = await mkdtemp(join(tmpdir(), "statusline-render-path-"));
     roots.push(root);
     const out = sink();
@@ -161,7 +162,7 @@ describe("dev statusline render path", () => {
     const code = await statuslineCommand([root], root, out.stream, fakeStdin(""));
 
     expect(code).toBe(0);
-    expect(out.text()).toContain("redskilled unreachable — Worker state unknown");
+    expect(out.text()).toContain("rsk=bedrock-only");
     expect(directCollector).not.toHaveBeenCalled();
     expect(performance.now() - started).toBeLessThan(100);
   });
@@ -171,7 +172,7 @@ describe("dev statusline render path", () => {
     // the operator's own machine holds must still reach the screen: model·effort
     // and context and the subscription windows from stdin, basename/branch/diff
     // from local git, and the running bundle version (ADR 0141 §1).
-    runStatusline.mockImplementationOnce(async () => 0);
+    probeStatusline.mockRejectedValueOnce(new Error("socket unavailable"));
     const root = await mkdtemp(join(tmpdir(), "statusline-render-path-"));
     roots.push(root);
     const out = sink();
@@ -181,17 +182,14 @@ describe("dev statusline render path", () => {
     expect(code).toBe(0);
     expect(out.text()).toBe(
       `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} · Opus·high · 47k 24% · ` +
-        "5h=23% 7d=41% · loc=+142 -36\n",
+        "5h=23% 7d=41% · loc=+142 -36 · rsk=bedrock-only\n",
     );
     expect(localGit).toHaveBeenCalledOnce();
     expect(directCollector).not.toHaveBeenCalled();
   });
 
-  it("still renders the bedrock when the daemon states its absence", async () => {
-    runStatusline.mockImplementationOnce(async (_args, io) => {
-      io.write?.("redskilled unreachable — Worker state unknown\n");
-      return 0;
-    });
+  it("still renders the bedrock when the daemon probe fails", async () => {
+    probeStatusline.mockRejectedValueOnce(new Error("socket unavailable"));
     const root = await mkdtemp(join(tmpdir(), "statusline-render-path-"));
     roots.push(root);
     const out = sink();
@@ -201,7 +199,7 @@ describe("dev statusline render path", () => {
     expect(code).toBe(0);
     expect(out.text()).toBe(
       `red-skills (afk/3563-bedrock) v${readBuildInfo("dev").version} · Opus·high · 47k 24% · ` +
-        "5h=23% 7d=41% · loc=+142 -36 · redskilled unreachable — Worker state unknown\n",
+        "5h=23% 7d=41% · loc=+142 -36 · rsk=bedrock-only\n",
     );
   });
 
@@ -211,12 +209,9 @@ describe("dev statusline render path", () => {
 
     // Daemon answering, daemon silent, daemon stating its absence: all three are
     // render paths, and none of them may reach a tracker client.
-    runStatusline.mockImplementationOnce(async () => 0);
+    probeStatusline.mockRejectedValueOnce(new Error("socket unavailable"));
     await statuslineCommand([root], root, sink().stream, fakeStdin(JSON.stringify(PAYLOAD)));
-    runStatusline.mockImplementationOnce(async (_args, io) => {
-      io.write?.("redskilled unreachable — Worker state unknown\n");
-      return 0;
-    });
+    probeStatusline.mockRejectedValueOnce(new Error("socket unavailable"));
     await statuslineCommand([root], root, sink().stream, fakeStdin("{}"));
     await statuslineCommand([root, "global"], root, sink().stream, fakeStdin("{}"));
 
