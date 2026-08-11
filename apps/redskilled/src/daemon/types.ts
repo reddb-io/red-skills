@@ -23,6 +23,7 @@ import { type RedskilledMachineClaimStore,
 } from "../machine-scope.js";
 import type {
   RedskilledOrphanReaperMode,
+  RedskilledProcessCensus,
   RedskilledProcessCensusRow,
 } from "../orphan-reaper.js";
 import { type RedskilledLaunchTemplate } from "../launch-template.js";
@@ -144,6 +145,8 @@ export interface RedskilledDaemonOptions {
   readonly orphanReaperMode?: RedskilledOrphanReaperMode;
   /** Process-table census seam; supplying it explicitly authorizes a fixture sweep. */
   readonly orphanCensus?: () => readonly RedskilledProcessCensusRow[] | Promise<readonly RedskilledProcessCensusRow[]>;
+  /** Crash/core dump census seam; detection only and never an unlink authority. */
+  readonly orphanDumpFiles?: () => readonly string[] | Promise<readonly string[]>;
   /** PID-reuse verification seam, immediately before a stamped group kill. */
   readonly orphanStarttime?: (pid: number) => string | null | Promise<string | null>;
   /** Whole-process-group escalating teardown seam. */
@@ -493,6 +496,8 @@ export interface RedskilledDaemon {
   sweepWorkerLiveness(): Promise<readonly RedskilledWorkerView[]>;
   /** Census, adopt, reap or report orphan process groups once. */
   sweepOrphanProcesses(): Promise<{ readonly adopted: number; readonly reaped: number; readonly suspects: number }>;
+  /** Read the shared process census without adoption, signalling or deletion. */
+  censusOrphanProcesses(): Promise<RedskilledProcessCensus>;
   /** The Workers this daemon adopted at start rather than birthing itself. */
   reattached(): readonly RedskilledWorkerView[];
   /** Resolves once every event handed to the lane has reached disk. */

@@ -175,7 +175,7 @@ describe("redDoctorCommand — executable acceptance criteria lint", () => {
 
     expect(collectPrecheckFacts).toHaveBeenCalledWith(
       expect.objectContaining({ root }),
-      expect.objectContaining({ includeLaneCensus: true }),
+      expect.objectContaining({ includeLaneCensus: true, includeProcessCensus: true }),
     );
 
     const output = writes.join("");

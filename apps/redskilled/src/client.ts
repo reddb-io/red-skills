@@ -54,6 +54,7 @@ import {
   isRedskilledProjectRegistered,
   isRedskilledProjectRenewed,
   isRedskilledProjectReset,
+  isRedskilledReapResult,
   isRedskilledStatuslinePayload,
   isRedskilledStatuslineRender,
   isRedskilledWorkerCommandResult,
@@ -64,6 +65,7 @@ import {
   type RedskilledProjectRegistered,
   type RedskilledProjectRenewed,
   type RedskilledProjectReset,
+  type RedskilledReapResult,
   type RedskilledRequest,
   type RedskilledStatuslinePayload,
   type RedskilledStatuslineRender,
@@ -526,6 +528,15 @@ export async function readRedskilledHostState(
 ): Promise<RedskilledHostState> {
   const value = await requestRedskilled(paths, { op: "host-state" }, config);
   if (!isRedskilledHostState(value)) throw new Error("redskilled daemon returned a malformed host state");
+  return value;
+}
+
+/** Run the daemon-owned orphan census, optionally stopping at the report. */
+export async function reapRedskilledProcesses(
+  paths: RedskilledPaths, options: { readonly report?: boolean } = {}, config: RedskilledClientConfig = {},
+): Promise<RedskilledReapResult> {
+  const value = await requestRedskilled(paths, { op: "reap", report: options.report === true }, config);
+  if (!isRedskilledReapResult(value)) throw new Error("redskilled daemon returned a malformed reap report");
   return value;
 }
 

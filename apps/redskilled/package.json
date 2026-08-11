@@ -21,6 +21,7 @@
     "./project-registration": "./src/project-registration.ts",
     "./protocol": "./src/protocol.ts",
     "./queue-discovery": "./src/queue-discovery.ts",
+    "./reattach": "./src/reattach.ts",
     "./reclaim": "./src/reclaim.ts",
     "./provision": "./src/provision.ts",
     "./statusline-payload": "./src/statusline-payload.ts",

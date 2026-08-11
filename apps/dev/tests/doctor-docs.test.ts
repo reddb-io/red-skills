@@ -210,6 +210,19 @@ describe("doctor docs contract", () => {
     expect(apply).toContain("confirm each");
   });
 
+  it("documents the detection-only process census and its incident report", async () => {
+    const skill = await readDoctorSkill();
+
+    expect(skill).toContain("`runtime.process-census`");
+    expect(skill).toContain("active Worker units");
+    expect(skill).toContain("daemon-held Workers");
+    expect(skill).toContain("stamped orphans");
+    expect(skill).toContain("unstamped suspects");
+    expect(skill).toContain("dump files");
+    expect(skill).toContain("red-skills-redskilled reap --report");
+    expect(skill).toContain("Detection only");
+  });
+
   it("validates AFK hook/backpressure commands statically and never executes them", async () => {
     const skill = await readDoctorSkill();
 

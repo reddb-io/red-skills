@@ -20,6 +20,7 @@ import { sweepLaneTemps } from "@reddb-io/shared/lane-retention.js";
 import {
   ensureRedskilledDaemon,
   readRedskilledHostState,
+  reapRedskilledProcesses,
   stopRedskilledDaemon,
   type RedskilledClientConfig,
 } from "./client.js";
@@ -86,6 +87,7 @@ Commands:
   unit                  install | uninstall | status — the optional supervisor
   provision             make this machine ready; --check is the read-only half
   reclaim               clear runtime dirs left by dead sessions
+  reap --report          census Worker processes and crash dumps without acting
 
 Run \`redskilled <command> --help\` for a command's own usage.
 \`--version\` (\`-v\`) prints the build stamp; both answer offline.
@@ -188,6 +190,14 @@ Reports every session runtime dir it looked at and why it kept or removed it.
 
   --dry-run        the same report with nothing removed
   --grace-ms <n>   how long a dir must be idle before it is reclaimed
+`,
+  reap: `Usage: redskilled reap [--report]
+
+Runs the daemon's orphan-process census immediately. The default applies the
+same stamped-orphan reaper the daemon runs periodically; --report is the
+detection-only incident view and performs no adoption, signalling, or deletion.
+
+  --report   return counts only; signal and delete nothing
 `,
 } as const satisfies Record<string, string>;
 
@@ -395,6 +405,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
     | "unit"
     | "provision"
     | "reclaim"
+    | "reap"
   >(argv, {
     commands: {
       serve: {},
@@ -406,6 +417,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
       unit: {},
       provision: {},
       reclaim: {},
+      reap: {},
     },
     default: "host-state",
   });
@@ -535,6 +547,7 @@ export async function runRedskilledCli(argv: readonly string[]): Promise<number>
 
   if (command === "provision") return await runProvision(args);
   if (command === "reclaim") return await runReclaim(args);
+  if (command === "reap") return await runReap(args);
 
   const state = await readRedskilledHostState(resolveRedskilledPaths());
   process.stdout.write(`${JSON.stringify(state, null, 2)}\n`);
@@ -824,6 +837,32 @@ const RECLAIM_FLAGS = {
   "dry-run": { kind: "boolean" },
   "grace-ms": { kind: "value", coerce: (raw: string) => Number(raw) },
 } as const;
+
+const REAP_FLAGS = {
+  report: { kind: "boolean" },
+} as const;
+
+/** `redskilled reap --report` — the read-only incident census over the daemon protocol. */
+export async function runReap(
+  args: readonly string[],
+  io: {
+    readonly paths?: RedskilledPaths;
+    readonly write?: (text: string) => void;
+  } = {},
+): Promise<number> {
+  const { values } = parseFlags(args, REAP_FLAGS);
+  const result = await reapRedskilledProcesses(
+    io.paths ?? resolveRedskilledPaths(),
+    { report: values.report === true },
+  );
+  (io.write ?? ((text: string) => process.stdout.write(text)))(`${encodeToon({
+    version: result.version,
+    mode: result.mode,
+    census: { ...result.census },
+    actions: { ...result.actions },
+  })}\n`);
+  return 0;
+}
 
 /**
  * `redskilled reclaim [--dry-run] [--grace-ms N]` — a host that already

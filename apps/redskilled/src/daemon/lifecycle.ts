@@ -1710,11 +1710,10 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     if (dead.length > 0) armIdleTimer();
     return dead;
   }
-
   const orphanReaper = createRedskilledOrphanReaperRuntime({
     authorized: options.orphanCensus != null ||
       paths.machineClaimPath === resolveMachineClaimPath({ machineIdHash: paths.machineIdHash }),
-    interval_ms: options.orphanReaperMs, mode: options.orphanReaperMode, census: options.orphanCensus,
+    interval_ms: options.orphanReaperMs, mode: options.orphanReaperMode, census: options.orphanCensus, active_worker_units: unitInventory, dump_files: options.orphanDumpFiles,
     read_starttime: options.orphanStarttime, kill_group: options.orphanKillGroup, report: options.orphanReport,
     clock, held_worker_ids: () => workers.keys(), live_births: async () => rehydrateWorkers(await eventLane.read()),
     adopt: async (worker, recordBirth, detail) => {
@@ -2319,6 +2318,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
         };
       }
       if (request.op === "host-state") return { id: request.id, ok: true, value: hostState() };
+      if (request.op === "reap") return { id: request.id, ok: true, value: await orphanReaper.reap(request.report === true) };
       if (request.op === "statusline-payload") {
         // A host read, permitted from any project: seeing the machine is the
         // requirement, and a session that could not would diagnose contention
@@ -2452,7 +2452,7 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
     driveDemand,
     demand: () => lastDemand,
     sweepWorkerLiveness,
-    sweepOrphanProcesses: () => stopping ? Promise.resolve({ adopted: 0, reaped: 0, suspects: 0 }) : orphanReaper.sweep(),
+    sweepOrphanProcesses: () => stopping ? Promise.resolve({ adopted: 0, reaped: 0, suspects: 0 }) : orphanReaper.sweep(), censusOrphanProcesses: () => orphanReaper.census(),
     publishWorkerHeartbeat,
     reattached: () => [...reattached].map((id) => workers.get(id)).filter((w): w is RedskilledWorkerView => w != null),
     flushEvents: async () => { await workerBirthTail; await projectHooks.waitForSettled(); await eventLane.flush(); },
