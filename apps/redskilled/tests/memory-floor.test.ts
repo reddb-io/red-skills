@@ -273,6 +273,7 @@ describe("the memory floor", () => {
     const reading = sampleWorkerTrees([worker({ worker_id: "tree", pid: 100 })], { procRoot, platform: "linux" });
 
     expect(reading.rss.tree).toBe((10 + 20 + 30) * 4096);
+    expect(reading.processes.tree).toBe(3);
   });
 
   it("reads a process name containing spaces and parentheses without shifting fields", () => {
