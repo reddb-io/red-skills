@@ -39,6 +39,8 @@ export const REDSKILLED_BOOT_LOOP_MIN_DEATHS = 3;
 
 /** How many verdicts a payload carries before the rest are counted instead. */
 export const REDSKILLED_RECENT_DEATH_LIMIT = 4;
+/** A class is an alarm about the current scene, not a durable history label. */
+export const REDSKILLED_DEATH_CLASS_FRESHNESS_MS = 10 * 60 * 1_000;
 
 /**
  * One posed death, reduced to what a surface prints.
@@ -88,6 +90,8 @@ export interface RedskilledStatuslineDeaths {
   readonly latest: RedskilledStatuslineDeath | null;
   /** The newest verdict whose evidence names a sender, independent of the capped receipt list. */
   readonly latest_sender_attributed: RedskilledStatuslineDeath | null;
+  /** The sender class still current enough to alarm; `null` keeps only the aggregate. */
+  readonly current_sender_attributed?: RedskilledStatuslineDeath | null;
   /** When the reaper concluded; `null` when it attributed nothing. */
   readonly reaped_at: string | null;
   /** A repeated same-project boot refusal, absent when the deaths do not establish one. */
@@ -106,6 +110,7 @@ export interface RedskilledStatuslineBootLoop {
 export function buildDeaths(
   attributions: readonly RedskilledDeathObservation[],
   limit: number,
+  options: { readonly now?: string; readonly healthyFleet?: boolean; readonly freshnessMs?: number } = {},
 ): RedskilledStatuslineDeaths {
   const ordered = [...attributions].sort((a, b) => (instant(b.ts) ?? 0) - (instant(a.ts) ?? 0));
   const recent = ordered.slice(0, Math.max(0, Math.floor(limit))).map(statuslineDeath);
@@ -114,13 +119,21 @@ export function buildDeaths(
       attribution.observed_exit === true ||
       (attribution.sender_class !== "unknown" && attribution.confidence !== "none"),
   );
-  const bootLoop = buildBootLoop(ordered);
+  const latestSender = senderAttributed[0] == null ? null : statuslineDeath(senderAttributed[0]);
+  const nowMs = options.now == null ? null : instant(options.now);
+  const latestMs = latestSender == null ? null : instant(latestSender.ts);
+  const freshnessMs = options.freshnessMs ?? REDSKILLED_DEATH_CLASS_FRESHNESS_MS;
+  const bootLoop = buildBootLoop(ordered, { nowMs, freshnessMs });
+  const currentSender = options.healthyFleet === true || nowMs == null || latestMs == null || nowMs - latestMs > freshnessMs
+    ? null
+    : latestSender;
   return {
     count: ordered.length,
     sender_attributed_count: senderAttributed.length,
     recent,
     latest: recent[0] ?? null,
-    latest_sender_attributed: senderAttributed[0] == null ? null : statuslineDeath(senderAttributed[0]),
+    latest_sender_attributed: latestSender,
+    current_sender_attributed: currentSender,
     reaped_at: recent[0]?.ts ?? null,
     ...(bootLoop == null ? {} : { boot_loop: bootLoop }),
   };
@@ -145,6 +158,7 @@ function statuslineDeath(attribution: RedskilledDeathObservation): RedskilledSta
 /** Reduce the rolling death window to its strongest same-project boot loop. PURE. */
 function buildBootLoop(
   ordered: readonly RedskilledDeathObservation[],
+  current: { readonly nowMs: number | null; readonly freshnessMs: number },
 ): RedskilledStatuslineBootLoop | null {
   const byProject = new Map<string, RedskilledDeathObservation[]>();
   for (const death of ordered) {
@@ -166,6 +180,7 @@ function buildBootLoop(
     .map(([projectLabel, deaths]): RedskilledStatuslineBootLoop | null => {
       const newest = deaths[0]!;
       const newestAt = instant(newest.ts)!;
+      if (current.nowMs == null || current.nowMs - newestAt > current.freshnessMs) return null;
       const oldestAt = Math.min(...deaths.map((death) => instant(death.ts)!));
       const refusal = newest.detail?.trim() || newest.evidence[0]?.trim();
       if (refusal == null || refusal === "") return null;
