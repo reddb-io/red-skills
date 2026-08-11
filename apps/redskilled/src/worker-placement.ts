@@ -193,9 +193,7 @@ export function detectWorkerPlacementProbes(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): WorkerPlacementProbes {
-  const noPosix = posixLimitsUnavailable(
-    `POSIX rlimit and priority placement is the macOS backend (platform=${platform})`,
-  );
+  const noPosix = posixLimitsUnavailable(`POSIX shell placement is unavailable on platform=${platform}`);
   if (platform === "win32") {
     return {
       platform,
@@ -221,7 +219,7 @@ export function detectWorkerPlacementProbes(
     systemdRun: which("systemd-run", env),
     userSession,
     jobObjects: noJobObjects,
-    posix: noPosix,
+    posix: detectPosixReach(env),
   };
 }
 
@@ -341,27 +339,36 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
   const declaredBudget = budget.memory_high != null || budget.memory_max != null || budget.cpu_weight != null;
   const target = opts.target ?? { isolation: "transient-unit" as const };
 
-  const unisolated = (warning: string): WorkerPlacementPlan => ({
-    isolated: false,
-    backend: "none",
-    command: opts.command,
-    args,
-    cwd: opts.workspacePath,
-    warning,
-    budget,
-    ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
-    // The Worker still learns its ceiling here, and learns WHY it has no scope:
-    // an unscoped death that named neither would be the silent degradation this
-    // whole module refuses.
-    environment: workerPlacementEnvironment(opts, {
-      scope: null,
-      memory_ceiling: ceilingValue,
-      scope_degradation: warning,
-    }),
-    ...(declaredBudget
-      ? { budgetWarning: "a budget was declared but this placement cannot enforce it: the daemon's RSS sampling is the only remaining floor" }
-      : {}),
-  });
+  const unisolated = (isolationWarning: string): WorkerPlacementPlan => {
+    const reach = opts.probes.posix;
+    const coreLimited = opts.probes.platform === "linux" && reach.available;
+    const warning = opts.probes.platform === "linux" && !reach.available
+      ? `${isolationWarning}; core dumps are not capped because ${reach.reason}`
+      : isolationWarning;
+    return {
+      isolated: false,
+      backend: "none",
+      command: coreLimited ? reach.shell : opts.command,
+      args: coreLimited
+        ? posixLimitsShellArgv({ nice: null, command: opts.command, args })
+        : args,
+      cwd: opts.workspacePath,
+      warning,
+      budget,
+      ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
+      // The Worker still learns its ceiling here, and learns WHY it has no scope:
+      // an unscoped death that named neither would be the silent degradation this
+      // whole module refuses.
+      environment: workerPlacementEnvironment(opts, {
+        scope: null,
+        memory_ceiling: ceilingValue,
+        scope_degradation: warning,
+      }),
+      ...(declaredBudget
+        ? { budgetWarning: "a budget was declared but this placement cannot enforce it: the daemon's RSS sampling is the only remaining floor" }
+        : {}),
+    };
+  };
 
   if (target.isolation === "inherit") {
     return unisolated("placement target is `inherit`: the Worker is charged to the daemon's own resource group, so a memory-pressure kill can land on the daemon and every Worker it holds");
