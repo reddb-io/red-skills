@@ -180,8 +180,8 @@ export interface PrecheckFacts {
   labelBodyCoherence?: OperationalProbeContext["labelBodyCoherence"];
   /** Optional local trunk freshness probe facts for red-doctor and boot visibility. */
   baseFreshness?: OperationalProbeContext["baseFreshness"];
-  /** Required command availability and Bash version facts for the earliest boot probe. */
-  hostPrerequisites?: OperationalProbeContext["hostPrerequisites"];
+  /** Required host facts; the detection-only lane census is omitted by boot. */
+  hostPrerequisites?: OperationalProbeContext["hostPrerequisites"]; laneCensus?: OperationalProbeContext["laneCensus"];
 }
 
 /** A pass/fail precheck verdict. On failure, `failed` names the precondition and

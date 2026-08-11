@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { readBuildInfo } from "@reddb-io/build-info";
+import { redskilledHomeDir } from "@reddb-io/shared/redskilled-home.js";
 import { createEnginePaths, createFileHealLedgerStore } from "@reddb-io/red-castle/engine";
 import { hostFingerprintPrefix } from "../../core/host-identity.js";
 import { auditConfigLoad, loadConfig, getConfig } from "../../core/config.js";
@@ -16,6 +18,7 @@ import { parseClaimRecords } from "../../core/claim.js";
 import { workerStatePath } from "../../core/state.js";
 import {
   collectFleetTruthProbeInput,
+  collectLaneCensusProbeInput,
   HOST_PREREQUISITE_COMMANDS,
   type ClaimHygieneCommentInput,
   type ClaimHygieneIssueInput,
@@ -123,6 +126,9 @@ export async function collectBootOptions(
 
 export interface CollectPrecheckFactsOptions {
   readonly includeNpmBundleCoherence?: boolean;
+  /** Detection-only doctor surface; AFK boot deliberately leaves it disabled. */
+  readonly includeLaneCensus?: boolean;
+  readonly laneCensusHostRoot?: string;
   readonly hostPrerequisiteExec?: ExecFn;
 }
 
@@ -357,6 +363,12 @@ export async function collectPrecheckFacts(
     configuredTrunkSource,
     pnpmInstalled,
     hostPrerequisites,
+    laneCensus: options.includeLaneCensus
+      ? await collectLaneCensusProbeInput({
+          projectRoot: ctx.root,
+          hostRoot: options.laneCensusHostRoot ?? redskilledHomeDir(homedir()),
+        })
+      : undefined,
     // CI lanes (the GHA Actions lane) check out an https remote token-authed by
     // GITHUB_TOKEN — the intended setup — so the SSH-only rule must not fire there.
     allowHttpsRemote:

@@ -60,6 +60,7 @@ describe("operational probe registry", () => {
       { id: "afk.claim-hygiene", name: "AFK claim hygiene", verdict: "ok" },
       { id: "afk.label-body-coherence", name: "AFK label/body coherence", verdict: "ok" },
       { id: "config.coherence", name: "Config coherence", verdict: "ok" },
+      { id: "runtime.lane-census", name: "Runtime lane census", verdict: "ok" },
     ]);
     expect(decoded.findings).toHaveLength(1);
     expect(toon).not.toContain("{\n");

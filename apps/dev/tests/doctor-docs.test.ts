@@ -466,6 +466,7 @@ describe("doctor docs contract", () => {
       "afk.claim-hygiene",
       "afk.label-body-coherence",
       "config.coherence",
+      "runtime.lane-census",
     ]) {
       expect(skill).toContain(probe);
     }
@@ -478,5 +479,10 @@ describe("doctor docs contract", () => {
     expect(skill).toContain("superseded local-to-origin SHA pairs");
     expect(skill).toContain("refuses to spawn workers");
     expect(skill).toContain("BootHaltError(\"operational-probe\")");
+    expect(skill).toContain("registered project and host TOONL lanes");
+    expect(skill).toContain("bytes and lines against each declared ceiling");
+    expect(skill).toContain("unregistered TOONL lanes");
+    expect(skill).toContain("dead-pid replacement temps");
+    expect(skill).toContain("Detection only");
   });
 });
