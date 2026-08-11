@@ -7,7 +7,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { encode, type JsonValue } from "@reddb-io/toon";
+import type { JsonValue } from "@reddb-io/toon";
+import { serialize as encode } from "@reddb-io/toon/legacy";
 import type { ImpactClass, QueuedChange } from "./changeset-queue.js";
 
 export interface AttributedReleaseChange extends QueuedChange {
