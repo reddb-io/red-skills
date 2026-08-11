@@ -28,6 +28,8 @@ export interface GithubEtagEntry {
   readonly etag: string;
   readonly data: unknown;
   readonly headers: GithubResponseHeaders;
+  /** When the held body was last confirmed by a 200 response. */
+  readonly storedAt?: string;
 }
 
 /** The ETag and answer are one entry: retaining only the validator makes 304 empty. */
@@ -66,6 +68,15 @@ export interface GithubRestAnswer<T> {
   readonly headers: GithubResponseHeaders;
   /** True when a 304 reused the held answer and consumed no REST request budget. */
   readonly quotaFree: boolean;
+  readonly degraded?: GithubCachedFallback;
+}
+
+export interface GithubCachedFallback {
+  readonly source: "cache";
+  readonly pool: GithubRateBudget;
+  readonly resetAt: string;
+  readonly ageMs: number | null;
+  readonly reason: string;
 }
 
 export interface GithubPaginatedRestAnswer<T> extends GithubRestAnswer<readonly T[]> {
@@ -128,6 +139,7 @@ export interface CreateGithubClientOptions {
   readonly attribution?: GithubAttributionLedger;
   /** The last authoritative token-wide balance; an unknown balance never diverts. */
   readonly balance?: () => GithubBalance | null | Promise<GithubBalance | null>;
+  readonly now?: () => string;
   /** Transient retries; the plugin default in production, overridable in tests. */
   readonly retryCount?: number;
   /** Disable plugin pacing only for a caller-supplied transport test. */
@@ -196,6 +208,7 @@ export class GithubPoolUnavailableError extends Error {
  */
 export function createGithubClient(options: CreateGithubClientOptions): GithubClient {
   const etags = options.etags ?? createMemoryGithubEtagStore();
+  const now = options.now ?? (() => new Date().toISOString());
   const octokit = new Octokit({
     auth: options.token,
     // REST.js logs every non-2xx before the caller can classify it, including
@@ -237,8 +250,12 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
   };
 
   const conditionalRest = async <T>(input: GithubConditionalRestRequest): Promise<GithubRestAnswer<T>> => {
-      refuseSpentPool(await readBalance(), input.operation.budget);
       const held = etags.get(input.cacheKey);
+      const observed = (await readBalance())?.pools[input.operation.budget] ?? null;
+      if (observed !== null && observed.remaining <= 0) {
+        if (held !== undefined) return cachedAnswer<T>(held, input.operation.budget, observed.reset_at, now());
+        throw new GithubPoolUnavailableError(input.operation.budget, observed.reset_at);
+      }
       const parameters = { ...(input.parameters ?? {}) } as Record<string, unknown>;
       const callerHeaders = isRecord(parameters.headers) ? parameters.headers : {};
       parameters.headers = {
@@ -250,7 +267,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         const response = await octokit.request(input.route, parameters);
         const headers = response.headers as GithubResponseHeaders;
         const etag = header(headers, "etag");
-        if (etag !== undefined) etags.set(input.cacheKey, { etag, data: response.data, headers });
+        if (etag !== undefined) etags.set(input.cacheKey, { etag, data: response.data, headers, storedAt: now() });
         await options.attribution?.record({ operation: input.operation, cost: 1, actor: input.actor });
         return { data: response.data as T, headers, quotaFree: false };
       } catch (error) {
@@ -264,12 +281,16 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
           const responseHeaders = errorHeaders(error);
           const headers = { ...held.headers, ...responseHeaders };
           const etag = header(headers, "etag") ?? held.etag;
-          etags.set(input.cacheKey, { etag, data: held.data, headers });
+          etags.set(input.cacheKey, { etag, data: held.data, headers, ...(held.storedAt ? { storedAt: held.storedAt } : {}) });
           await options.attribution?.record({ operation: input.operation, cost: 0, actor: input.actor });
           return { data: held.data as T, headers, quotaFree: true };
         }
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
         if (isGithubRateLimitError(error)) {
+          if (held !== undefined) {
+            const unavailable = unavailableFromError(input.operation.budget, error);
+            return cachedAnswer<T>(held, input.operation.budget, unavailable.resetAt, now());
+          }
           throw unavailableFromError(input.operation.budget, error);
         }
         throw error;
@@ -366,11 +387,13 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       const source = balance?.pools[requested] ?? null;
       const fallback: GithubApiSurface = requested === "rest" ? "graphql" : "rest";
       const destination = balance?.pools[fallback] ?? null;
+      const requestedCache = requested === "rest" && group.every(({ input }) => etags.get(input.cacheKey) !== undefined);
+      const fallbackCache = fallback === "rest" && group.every(({ input }) => etags.get(input.cacheKey) !== undefined);
       let selected = requested;
       let routing: GithubRailRouting | undefined;
 
       if (source !== null && source.remaining <= 0) {
-        if (destination !== null && destination.remaining > 0) {
+        if ((destination !== null && destination.remaining > 0) || fallbackCache) {
           selected = fallback;
           routing = {
             requestedRail: requested,
@@ -380,7 +403,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
             resetAt: source.reset_at,
             reason: `${requested} pool is exhausted until ${source.reset_at}; used the equivalent ${selected} rail`,
           };
-        } else {
+        } else if (!requestedCache) {
           const error = new GithubPoolUnavailableError(requested, source.reset_at, "the equivalent rail has no known budget");
           group.forEach((pending) => pending.reject(error));
           return;
@@ -485,6 +508,28 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         }
         throw error;
       }
+    },
+  };
+}
+
+function cachedAnswer<T>(
+  held: GithubEtagEntry,
+  pool: GithubRateBudget,
+  resetAt: string,
+  now: string,
+): GithubRestAnswer<T> {
+  const current = Date.parse(now);
+  const stored = held.storedAt === undefined ? Number.NaN : Date.parse(held.storedAt);
+  return {
+    data: held.data as T,
+    headers: held.headers,
+    quotaFree: true,
+    degraded: {
+      source: "cache",
+      pool,
+      resetAt,
+      ageMs: Number.isFinite(current) && Number.isFinite(stored) ? Math.max(0, current - stored) : null,
+      reason: `${pool} pool is exhausted until ${resetAt}; serving the last-known answer instead of going dark`,
     },
   };
 }
