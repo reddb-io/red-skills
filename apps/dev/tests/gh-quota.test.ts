@@ -169,6 +169,29 @@ describe("withGhQuotaBackoff", () => {
     expect(slept.length).toBe(2);
   });
 
+  it("doubles the fallback wait each retry instead of hammering a fixed cadence (#3672)", async () => {
+    const { opts, slept } = fakeBackoff({ capMs: 60 * 60_000, defaultWaitMs: 1_000 });
+    let call = 0;
+    const fn = vi.fn(async (): Promise<ExecOutput> => (++call < 5 ? rateLimitedOutput() : successOutput("ok")));
+    const r = await withGhQuotaBackoff(fn, opts);
+    expect(r.code).toBe(0);
+    // 1s, 2s, 4s, 8s — six Workers on a fixed 60s cadence produced ~9,000
+    // retries in one evening; the doubling is what keeps a drained hour cheap.
+    expect(slept).toEqual([1_000, 2_000, 4_000, 8_000]);
+  });
+
+  it("sleeps to the probed reset instant when a probe is injected", async () => {
+    const { opts, slept } = fakeBackoff({ capMs: 60 * 60_000, defaultWaitMs: 1_000 });
+    const withProbe: GhQuotaBackoffOpts = { ...opts, probeResetMs: async () => opts.nowMs() + 30_000 };
+    let call = 0;
+    const fn = vi.fn(async (): Promise<ExecOutput> => (++call < 2 ? rateLimitedOutput() : successOutput("ok")));
+    const r = await withGhQuotaBackoff(fn, withProbe);
+    expect(r.code).toBe(0);
+    // One sleep, aimed past the reset (probe + 5s margin), not a 60s hammer.
+    expect(slept.length).toBe(1);
+    expect(slept[0]).toBeGreaterThanOrEqual(30_000);
+  });
+
   it("returns the rate-limit output after the cap is exhausted by sleeps", async () => {
     const { opts } = fakeBackoff({ capMs: 5_000, defaultWaitMs: 6_000 });
     // After the first sleep of 5000ms, the fake clock is at 5000ms → remaining = 0 → stop.
