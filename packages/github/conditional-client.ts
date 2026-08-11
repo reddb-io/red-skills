@@ -17,7 +17,7 @@ import {
 } from "./aliased-query.js";
 import type { GithubAttributionLedger, GithubAttributedOperation } from "./attribution.js";
 import type { GithubBalance } from "./balance.js";
-import type { GithubApiSurface } from "./surface.js";
+import type { GithubApiSurface, GithubRateBudget } from "./surface.js";
 
 const Octokit = RestOctokit.plugin(retry, throttling);
 
@@ -90,6 +90,8 @@ export interface GithubSingleObjectRequest extends GithubAliasedSingleObjectRead
   readonly cacheKey: string;
   readonly operation: GithubAttributedOperation;
   readonly actor?: string;
+  /** Force one API rail when it is available; an exhausted rail falls back to its declared equivalent. */
+  readonly rail?: GithubApiSurface;
   /** Project REST and GraphQL payloads into one caller-visible object shape. */
   readonly project?: (value: unknown, surface: GithubApiSurface) => unknown;
 }
@@ -99,6 +101,18 @@ export interface GithubSingleObjectAnswer<T> {
   readonly data: T;
   readonly surface: GithubApiSurface;
   readonly quotaFree: boolean;
+  /** Present for an explicit choice or a failover, so routing never becomes invisible. */
+  readonly routing?: GithubRailRouting;
+}
+
+export interface GithubRailRouting {
+  readonly requestedRail: GithubApiSurface;
+  readonly selectedRail: GithubApiSurface;
+  readonly rerouted: boolean;
+  /** The exhausted source pool when rerouted. */
+  readonly pool: GithubRateBudget;
+  readonly resetAt: string | null;
+  readonly reason: string;
 }
 
 export interface GithubGraphqlAttribution {
@@ -156,6 +170,22 @@ export class GithubCredentialError extends Error {
   }
 }
 
+/** A primary pool cannot serve this request and no equivalent/cache can answer it. */
+export class GithubPoolUnavailableError extends Error {
+  readonly pool: GithubRateBudget;
+  readonly resetAt: string;
+
+  constructor(pool: GithubRateBudget, resetAt: string, detail?: string, options?: { readonly cause?: unknown }) {
+    super(
+      `${pool} pool is exhausted; parked until ${resetAt}${detail ? ` (${detail})` : ""}`,
+      options,
+    );
+    this.name = "GithubPoolUnavailableError";
+    this.pool = pool;
+    this.resetAt = resetAt;
+  }
+}
+
 /**
  * Build the typed GitHub transport decided by ADR 0133.
  *
@@ -191,7 +221,23 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         },
   });
 
+  const readBalance = async (): Promise<GithubBalance | null> => {
+    try {
+      return await options.balance?.() ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const refuseSpentPool = (balance: GithubBalance | null, pool: GithubRateBudget): void => {
+    const observed = balance?.pools[pool] ?? null;
+    if (observed !== null && observed.remaining <= 0) {
+      throw new GithubPoolUnavailableError(pool, observed.reset_at);
+    }
+  };
+
   const conditionalRest = async <T>(input: GithubConditionalRestRequest): Promise<GithubRestAnswer<T>> => {
+      refuseSpentPool(await readBalance(), input.operation.budget);
       const held = etags.get(input.cacheKey);
       const parameters = { ...(input.parameters ?? {}) } as Record<string, unknown>;
       const callerHeaders = isRecord(parameters.headers) ? parameters.headers : {};
@@ -223,6 +269,9 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
           return { data: held.data as T, headers, quotaFree: true };
         }
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
+        if (isGithubRateLimitError(error)) {
+          throw unavailableFromError(input.operation.budget, error);
+        }
         throw error;
       }
     };
@@ -233,11 +282,12 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
     readonly reject: (error: unknown) => void;
   }
 
-  const pendingSingleObjects = new Map<GithubSingleObjectRequest["kind"], PendingSingleObjectRead[]>();
+  const pendingSingleObjects = new Map<string, PendingSingleObjectRead[]>();
   let singleObjectFlushScheduled = false;
 
   const readSingleObjectRest = async (
     pending: PendingSingleObjectRead,
+    routing?: GithubRailRouting,
   ): Promise<void> => {
     const input = pending.input;
     const pull = input.kind === "pr";
@@ -259,6 +309,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         data: input.project ? input.project(answer.data, "rest") : answer.data,
         surface: "rest",
         quotaFree: answer.quotaFree,
+        ...(routing ? { routing } : {}),
       });
     } catch (error) {
       pending.reject(error);
@@ -267,6 +318,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
 
   const readSingleObjectBatch = async (
     group: readonly PendingSingleObjectRead[],
+    routing?: GithubRailRouting,
   ): Promise<void> => {
     try {
       const aliased = buildSingleObjectReadsQuery(group.map(({ input }) => input));
@@ -292,6 +344,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
               : row.value,
             surface: "graphql",
             quotaFree: false,
+            ...(routing ? { routing } : {}),
           });
         }
       });
@@ -302,20 +355,55 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
   };
 
   const flushSingleObjects = async (): Promise<void> => {
-    let balance: GithubBalance | null = null;
-    try {
-      balance = await options.balance?.() ?? null;
-    } catch {
-      // An unanswered ask is unknown, never a reason to strand the queue or
-      // infer pressure. Unknown keeps the original single-object REST route.
-    }
+    const balance = await readBalance();
     const threshold = githubSingleObjectCoalescingThreshold(balance);
     singleObjectFlushScheduled = false;
     const groups = [...pendingSingleObjects.values()];
     pendingSingleObjects.clear();
     await Promise.all(groups.map(async (group) => {
-      if (group.length > threshold) await readSingleObjectBatch(group);
-      else await Promise.all(group.map(readSingleObjectRest));
+      const explicit = group[0]!.input.rail;
+      const requested = explicit ?? "rest";
+      const source = balance?.pools[requested] ?? null;
+      const fallback: GithubApiSurface = requested === "rest" ? "graphql" : "rest";
+      const destination = balance?.pools[fallback] ?? null;
+      let selected = requested;
+      let routing: GithubRailRouting | undefined;
+
+      if (source !== null && source.remaining <= 0) {
+        if (destination !== null && destination.remaining > 0) {
+          selected = fallback;
+          routing = {
+            requestedRail: requested,
+            selectedRail: selected,
+            rerouted: true,
+            pool: requested,
+            resetAt: source.reset_at,
+            reason: `${requested} pool is exhausted until ${source.reset_at}; used the equivalent ${selected} rail`,
+          };
+        } else {
+          const error = new GithubPoolUnavailableError(requested, source.reset_at, "the equivalent rail has no known budget");
+          group.forEach((pending) => pending.reject(error));
+          return;
+        }
+      } else if (explicit !== undefined) {
+        routing = {
+          requestedRail: requested,
+          selectedRail: selected,
+          rerouted: false,
+          pool: requested,
+          resetAt: source?.reset_at ?? null,
+          reason: source === null
+            ? `${requested} pool balance is unknown, so the explicit rail is honored reactively`
+            : `${requested} pool has ${source.remaining} remaining, so the explicit rail is honored`,
+        };
+      }
+
+      const warm = group.some(({ input }) => etags.get(input.cacheKey) !== undefined);
+      if (selected === "graphql" || (explicit === undefined && !warm && group.length > threshold)) {
+        await readSingleObjectBatch(group, routing);
+      } else {
+        await Promise.all(group.map((pending) => readSingleObjectRest(pending, routing)));
+      }
     }));
   };
 
@@ -323,23 +411,15 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
     // Rule 1 and its counter-rule stay together here: one object prefers REST,
     // while enough COLD peers may coalesce. A held validator can answer 304 for
     // zero primary quota, so it never gets traded for a charged GraphQL node.
-    if (etags.get(input.cacheKey) !== undefined) {
-      return new Promise<GithubSingleObjectAnswer<T>>((resolve, reject) => {
-        void readSingleObjectRest({
-          input,
-          resolve: resolve as (answer: GithubSingleObjectAnswer<unknown>) => void,
-          reject,
-        });
-      });
-    }
     return new Promise<GithubSingleObjectAnswer<T>>((resolve, reject) => {
-      const group = pendingSingleObjects.get(input.kind) ?? [];
+      const groupKey = `${input.kind}:${input.rail ?? "default"}`;
+      const group = pendingSingleObjects.get(groupKey) ?? [];
       group.push({
         input,
         resolve: resolve as (answer: GithubSingleObjectAnswer<unknown>) => void,
         reject,
       });
-      pendingSingleObjects.set(input.kind, group);
+      pendingSingleObjects.set(groupKey, group);
       if (!singleObjectFlushScheduled) {
         singleObjectFlushScheduled = true;
         // A zero-delay task collects reads started by adjacent promise jobs too;
@@ -385,6 +465,7 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
       attribution?: GithubGraphqlAttribution,
     ): Promise<T> {
       try {
+        refuseSpentPool(await readBalance(), attribution?.operation.budget ?? "graphql");
         const answer = await octokit.graphql(query, variables) as T;
         if (attribution) {
           // Generic GraphQL does not expose the response's point cost. One is
@@ -399,10 +480,22 @@ export function createGithubClient(options: CreateGithubClientOptions): GithubCl
         return answer;
       } catch (error) {
         if (httpStatus(error) === 401) throw new GithubCredentialError({ cause: error });
+        if (isGithubRateLimitError(error)) {
+          throw unavailableFromError(attribution?.operation.budget ?? "graphql", error);
+        }
         throw error;
       }
     },
   };
+}
+
+function unavailableFromError(pool: GithubRateBudget, error: unknown): GithubPoolUnavailableError {
+  const headers = errorHeaders(error);
+  const resetSeconds = Number(header(headers, "x-ratelimit-reset"));
+  const resetAt = Number.isFinite(resetSeconds) && resetSeconds > 0
+    ? new Date(resetSeconds * 1_000).toISOString()
+    : "an unknown reset instant";
+  return new GithubPoolUnavailableError(pool, resetAt, "GitHub refused the live request", { cause: error });
 }
 
 function hasNextPage(headers: GithubResponseHeaders): boolean {
