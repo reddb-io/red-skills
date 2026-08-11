@@ -22,6 +22,7 @@ import {
   type HostPrerequisiteProbeInput,
 } from "../../core/operational-probes.js";
 import { resolveSupervisorConfig } from "../../core/supervisor.js";
+import { historyTrim } from "../../core/history.js";
 import { evaluateFastForwardLocalTarget, fastForwardLocalTarget } from "../../core/merge.js";
 import { liveIssueFromBranch, type IssueMeta } from "../../core/branch-cleanup.js";
 import { readWorkerState } from "../../core/worker-state-reader.js";
@@ -515,6 +516,7 @@ export async function buildBootDeps(
       reapDeadEmptyWorkerShells: fsx.reapDeadEmptyWorkerShells,
       reapProcessGroup: (pgid) => killTreeAndWait(pgid),
     },
+    trimHistory: () => historyTrim(paths.historyPath),
     gh: {
       ensureLabel: (name) => ghx.ensureLabel(ghCtx, name),
       editLabels: async (issue, remove, add) => {
@@ -658,6 +660,7 @@ export function buildMinimalBootDeps(ctx: RepoContext, nowS: number): BootDeps {
       writeWorkerPid: fsx.writeWorkerPid,
       removeDir: fsx.removeDir,
     },
+    trimHistory: async () => unreachable(),
     gh: {
       editLabels: async () => unreachable(),
       comment: async () => unreachable(),
