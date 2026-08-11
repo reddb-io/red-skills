@@ -154,6 +154,34 @@ describe("the memory floor", () => {
     expect(daemon.workerCount()).toBe(0);
   });
 
+  it("routes an over-limit process tree through worker-budget-kill", async () => {
+    const paths = await sessionPaths();
+    const stopped: string[] = [];
+    const daemon = await startRedskilledDaemon({
+      paths,
+      idleMs: 60_000,
+      sampleMs: 0,
+      stopWorker: (w) => {
+        stopped.push(w.worker_id);
+        return true;
+      },
+      treeSampler: () => ({ rss: {}, cpu_seconds: {}, processes: { "w-1": 3 } }),
+    });
+    running.push(daemon);
+    daemon.trackWorker(worker({ isolated: false, unit: undefined, budget: { max_processes: 2 } }));
+
+    const terminations = await daemon.sampleMemoryBudgets();
+    await daemon.flushEvents();
+
+    expect(terminations[0]).toMatchObject({ budget_name: "TasksMax", observed_processes: 3 });
+    expect(stopped).toEqual(["w-1"]);
+    expect(daemon.workerCount()).toBe(0);
+    expect((await readRedskilledEvents(paths.eventLanePath)).at(-1)).toMatchObject({
+      event: "worker-budget-kill",
+      worker_id: "w-1",
+    });
+  });
+
   it("names the budget that was exceeded in the terminal outcome", async () => {
     const paths = await sessionPaths();
     const daemon = await startRedskilledDaemon({
