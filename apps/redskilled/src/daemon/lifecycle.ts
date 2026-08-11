@@ -188,10 +188,12 @@ import {
   prepareRedskilledReplacement,
   probePublishedRedskilledVersion,
   readPublishedObservation,
+  stageRedskilledReplacementSuccessor,
   type RedskilledMajorHold,
   type RedskilledPublishedObservation,
   type RedskilledReplacementDecision,
   type RedskilledReplacementHoldReason,
+  type RedskilledSuccessorControl,
 } from "../self-replace.js";
 import {
   createRedskilledLeaseStore,
@@ -451,6 +453,9 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   let publishedChecks = 0;
   let publishedHoldReason: RedskilledReplacementHoldReason | null = null;
   let replacementState: "none" | "pending" | "in-progress" = "none";
+  // A broken published entry must not be hammered on every overlapping timer or
+  // idle decision. The incumbent keeps serving during this one-minute hold.
+  let nextTakeoverAttemptAtMs = 0;
   // The world's newest version whatever its major, and the hold it implies. Kept
   // beside the in-major answer because that one is capped by construction: on its
   // own it cannot tell a current daemon from one holding at a boundary (#2926).
@@ -1874,17 +1879,43 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   async function checkForReplacement(): Promise<RedskilledReplacementDecision> {
     const decision = await observePublishedVersion();
     if (decision.act !== "replace" || replacementState === "in-progress") return decision;
+    const nowMs = Date.parse(clock());
+    if (Number.isFinite(nowMs) && nowMs < nextTakeoverAttemptAtMs) return decision;
     // The successor is found FIRST. A published bundle this host cannot reach
     // costs the upgrade and nothing else: the throw leaves this daemon serving,
     // still holding every Worker, still reporting the version it actually runs.
     const prepared = prepareRedskilledReplacement(decision, replacementIO, paths, idleMs);
+    if (Number.isFinite(nowMs)) nextTakeoverAttemptAtMs = nowMs + 60_000;
+    let successor: RedskilledSuccessorControl | undefined;
+    try {
+      successor = await stageRedskilledReplacementSuccessor(prepared, paths, {
+        ...(idleMs == null ? {} : { idleMs }),
+        io: replacementIO,
+      });
+    } catch {
+      replacementState = "pending";
+      await eventLane.recordDaemonTakeoverFailed({
+        ts: clock(),
+        pid: owner.pid,
+        socketPath: paths.socketPath,
+        detail:
+          `redskilled ${decision.to} failed its takeover boot handshake; incumbent ${daemonVersion} remains live`,
+      });
+      return decision;
+    }
     replacementState = "in-progress";
     await eventLane.flush().catch(() => undefined);
     await registrationIntentStore.flush().catch(() => undefined);
-    await stop({ reason: "replaced" });
+    try {
+      await stop({ reason: "replaced" });
+    } catch (error) {
+      successor?.abort();
+      throw error;
+    }
     completeRedskilledReplacement(prepared, paths, {
       ...(idleMs == null ? {} : { idleMs }),
       io: replacementIO,
+      ...(successor == null ? {} : { successor }),
     });
     return decision;
   }
