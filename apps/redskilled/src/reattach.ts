@@ -36,8 +36,16 @@ import { DEFAULT_WORKER_UNIT_PREFIX } from "./worker-placement.js";
 /** Answers "is this Worker still running?" for one Worker. */
 export type RedskilledLivenessProbe = (worker: RedskilledWorkerView) => boolean | Promise<boolean>;
 
-/** Stops one Worker; returns whether the host accepted the stop. */
+/** Stops one Worker; returns whether the host confirmed its death. */
 export type RedskilledStopProbe = (worker: RedskilledWorkerView) => boolean | Promise<boolean>;
+
+/** Injectable host operations for a deterministic unit-teardown proof. */
+export interface RedskilledStopWorkerIO {
+  readonly stopUnit: (unit: string) => void;
+  readonly unitActive: (unit: string) => boolean;
+  readonly leaderAlive: (pid: number) => boolean;
+  readonly killTree: (pgid: number) => boolean | Promise<boolean>;
+}
 
 export interface ReattachOutcome {
   /** Workers the host still confirms; the restarted daemon adopts these. */
@@ -277,15 +285,32 @@ export function nameUnownedProject(worker: RedskilledWorkerView): RedskilledWork
 /**
  * Stop one Worker: the unit by name, or the recorded process group.
  *
- * Stopping the unit rather than the pid is what makes the kill total — a Worker
- * that forked children would otherwise leave them behind, still charged to the
- * budget the daemon just decided to reclaim. Legacy records without `pgid` use
- * the detached leader pid, which is the group id by the launch contract.
+ * A successful `systemctl stop` is only a request receipt: death is confirmed by
+ * both the unit becoming inactive and its recorded leader disappearing. Anything
+ * less escalates through the same TERM→grace→KILL→confirm process-group teardown
+ * as an unisolated Worker. Legacy records without `pgid` use the detached leader
+ * pid, which is the group id by the launch contract.
  */
-export function stopWorker(worker: RedskilledWorkerView): boolean | Promise<boolean> {
+export function stopWorker(
+  worker: RedskilledWorkerView,
+  io: RedskilledStopWorkerIO = DEFAULT_STOP_WORKER_IO,
+): boolean | Promise<boolean> {
   if (worker.unit != null && worker.unit !== "") {
-    const stop = spawnSync("systemctl", ["--user", "stop", worker.unit], { stdio: "ignore" });
-    return stop.error == null && stop.status === 0;
+    try {
+      io.stopUnit(worker.unit);
+    } catch {
+      // A failed stop request still reaches the process-group escalation below.
+    }
+    if (!io.unitActive(worker.unit) && !io.leaderAlive(worker.pid)) return true;
   }
-  return killTreeAndWait(worker.pgid ?? worker.pid);
+  return io.killTree(worker.pgid ?? worker.pid);
 }
+
+const DEFAULT_STOP_WORKER_IO: RedskilledStopWorkerIO = {
+  stopUnit: (unit) => {
+    spawnSync("systemctl", ["--user", "stop", unit], { stdio: "ignore" });
+  },
+  unitActive: isUnitActive,
+  leaderAlive: isPidAlive,
+  killTree: killTreeAndWait,
+};
