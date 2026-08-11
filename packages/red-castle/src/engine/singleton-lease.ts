@@ -8,8 +8,8 @@
  */
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { decode, type JsonValue } from "@reddb-io/toon";
-import { serialize as encode } from "@reddb-io/toon/legacy";
+import type { JsonValue } from "@reddb-io/toon";
+import { parse as decode, serialize as encode } from "@reddb-io/toon/legacy";
 import type { EnginePaths } from "./paths.js";
 
 export interface SingletonLeaseOwner {
