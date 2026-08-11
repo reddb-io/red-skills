@@ -3,6 +3,7 @@
 // Worker gets a transient SERVICE unit (never a scope — a scope dies with the
 // caller), and without one the launch still happens but says so out loud.
 import { describe, expect, it } from "vitest";
+import { WORKER_BORN_AT_ENV, WORKER_ID_ENV } from "@reddb-io/shared/worker-scope.js";
 import {
   DEFAULT_WORKER_UNIT_PREFIX,
   placementEnabled,
@@ -104,9 +105,14 @@ describe("worker placement — Linux with a user session", () => {
   });
 
   it("passes the Worker's environment through the unit, not through the daemon's", () => {
-    const placement = plan(LINUX_WITH_SESSION, { env: { RED_WORKER: "1" } });
+    const placement = plan(LINUX_WITH_SESSION, {
+      bornAt: "2026-08-11T13:00:00.000Z",
+      env: { RED_WORKER: "1" },
+    });
 
     expect(placement.args).toContain("--setenv=RED_WORKER=1");
+    expect(placement.args).toContain(`--setenv=${WORKER_ID_ENV}=wQ9F2`);
+    expect(placement.args).toContain(`--setenv=${WORKER_BORN_AT_ENV}=2026-08-11T13:00:00.000Z`);
   });
 });
 

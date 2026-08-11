@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   REDSKILLED_PUBLIC_HOST_EVENT_KINDS,
   buildHostEvent,
+  toWorkerView,
   type RecordWorkerEventInput,
   type RedskilledPublicHostEventKind,
 } from "../src/event-lane.js";
@@ -23,8 +24,10 @@ const PUBLIC_HOST_EVENT_FIELDS = [
   "memory_high",
   "memory_max",
   "model",
+  "pgid",
   "phase",
   "pid",
+  "proc_start_time",
   "project_label",
   "reason",
   "runner",
@@ -43,6 +46,8 @@ const worker: RedskilledWorkerView = {
   worker_id: "wPUB1",
   project_label: "acme/widgets",
   pid: 4242,
+  pgid: 4242,
+  proc_start_time: "987654",
   started_at: "2026-08-08T12:00:00.000Z",
   workspace_path: "/tmp/worker",
   fork_sha: "aaaa1111",
@@ -94,6 +99,17 @@ describe("public host-event contract", () => {
         Object.keys(event).sort(),
         `${kind} public host-event field set`,
       ).toEqual(PUBLIC_HOST_EVENT_FIELDS);
+      expect(event).toMatchObject({ pgid: 4242, proc_start_time: "987654" });
     }
+  });
+
+  it("rehydrates a legacy event that has no process identity fields", () => {
+    const event = buildHostEvent(publicInputs["worker-birth"]);
+    const { pgid: _pgid, proc_start_time: _procStartTime, ...legacy } = event;
+
+    expect(toWorkerView(legacy)).toMatchObject({
+      worker_id: "wPUB1",
+      pid: 4242,
+    });
   });
 });

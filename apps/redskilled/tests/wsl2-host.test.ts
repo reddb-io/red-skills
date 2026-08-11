@@ -144,10 +144,14 @@ describe("WSL2 — a Worker is born, unisolated, and the loss is named", () => {
     const launched = launchWorker({
       admission: evaluateWorkerAdmission({ ceiling: UNBOUNDED_HOST_CEILING, workers: [] }),
       spec: {
+        worker_id: "wWSL2",
         project_label: "acme/widgets",
         workspace_path: workspace,
         command: process.execPath,
-        args: ["-e", "require('node:fs').writeFileSync('proof.txt', process.cwd());"],
+        args: [
+          "-e",
+          "require('node:fs').writeFileSync('proof.json', JSON.stringify({ cwd: process.cwd(), worker_id: process.env.RED_WORKER_ID, born_at: process.env.RED_WORKER_BORN_AT })); setTimeout(() => {}, 250);",
+        ],
         budget: { memory_max: "4G" },
       },
       probes: WSL2_PROBES,
@@ -155,6 +159,8 @@ describe("WSL2 — a Worker is born, unisolated, and the loss is named", () => {
     });
 
     expect(launched.worker.pid).toBeGreaterThan(0);
+    expect(launched.worker.pgid).toBe(launched.worker.pid);
+    expect(launched.worker.proc_start_time).toMatch(/^\d+$/);
     expect(launched.worker.isolated).toBe(false);
     expect(launched.worker.unit).toBeUndefined();
     // The warning reaches the caller AND stays on the record the Worker keeps for
@@ -162,10 +168,14 @@ describe("WSL2 — a Worker is born, unisolated, and the loss is named", () => {
     expect(launched.warnings.join(" ")).toMatch(/systemd-run is not on PATH/);
     expect(launched.worker.warnings).toEqual(launched.warnings);
 
-    const proof = join(workspace, "proof.txt");
+    const proof = join(workspace, "proof.json");
     for (let attempt = 0; attempt < 100; attempt += 1) {
       try {
-        expect(await readFile(proof, "utf8")).toBe(workspace);
+        expect(JSON.parse(await readFile(proof, "utf8"))).toEqual({
+          cwd: workspace,
+          worker_id: launched.worker.worker_id,
+          born_at: launched.worker.started_at,
+        });
         return;
       } catch {
         await new Promise((resolve) => setTimeout(resolve, 50));

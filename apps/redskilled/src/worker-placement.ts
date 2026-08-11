@@ -280,6 +280,8 @@ export function workerUnitName(
 
 export interface PlanWorkerPlacementOptions {
   readonly workerId: string;
+  /** Birth instant stamped into every environment when this plan launches. */
+  readonly bornAt?: string;
   readonly projectLabel: string;
   /** The workspace path, used verbatim — the daemon derives nothing from it. */
   readonly workspacePath: string;
@@ -351,7 +353,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
     // The Worker still learns its ceiling here, and learns WHY it has no scope:
     // an unscoped death that named neither would be the silent degradation this
     // whole module refuses.
-    environment: workerScopeEnvironment({
+    environment: workerPlacementEnvironment(opts, {
       scope: null,
       memory_ceiling: ceilingValue,
       scope_degradation: warning,
@@ -403,7 +405,7 @@ export function planWorkerPlacement(opts: PlanWorkerPlacementOptions): WorkerPla
   if (budget.cpu_weight != null) unitArgs.push(`--property=CPUWeight=${budget.cpu_weight}`);
   // The Worker's own placement joins its environment, so the process that dies
   // inside this unit can name the unit that held it and the ceiling it carried.
-  const environment = workerScopeEnvironment({
+  const environment = workerPlacementEnvironment(opts, {
     scope: unit,
     memory_ceiling: ceilingValue,
     scope_degradation: null,
@@ -470,7 +472,7 @@ function planPosixLimitsPlacement(
     ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
     // No scope: macOS has no resource group to name, so the Worker is told its
     // ceiling and told, in the same breath, that nothing but the floor holds it.
-    environment: workerScopeEnvironment({
+    environment: workerPlacementEnvironment(opts, {
       scope: null,
       memory_ceiling: ceilingValue,
       scope_degradation: warning,
@@ -529,7 +531,7 @@ function planJobObjectPlacement(
     ...(ceilingValue != null ? { memoryCeiling: ceilingValue } : {}),
     // The job IS the scope on Windows, so the Worker names it exactly as a Linux
     // Worker names its unit — one vocabulary, whichever kernel drew the wall.
-    environment: workerScopeEnvironment({
+    environment: workerPlacementEnvironment(opts, {
       scope: name,
       memory_ceiling: ceilingValue,
       scope_degradation: null,
@@ -541,6 +543,19 @@ function planJobObjectPlacement(
       ? `${limits.note}; the daemon's RSS sampling floor is the ceiling for that budget`
       : null, unenforcedPosixBudgetFields(opts.budget))),
   };
+}
+
+/** Join process attribution to placement facts once for every backend. PURE. */
+function workerPlacementEnvironment(
+  opts: Pick<PlanWorkerPlacementOptions, "workerId" | "bornAt">,
+  facts: Parameters<typeof workerScopeEnvironment>[0],
+): Record<string, string> {
+  return workerScopeEnvironment(
+    facts,
+    opts.bornAt == null
+      ? undefined
+      : { worker_id: opts.workerId, born_at: opts.bornAt },
+  );
 }
 
 /** Join what a placement could not carry into one warning, or into none. PURE. */

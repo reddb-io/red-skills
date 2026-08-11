@@ -55,6 +55,10 @@ export interface RedskilledWorkerView {
   readonly worker_id: string;
   readonly project_label: string;
   readonly pid: number;
+  /** Process group leader; equals {@link pid} for the detached birth. */
+  readonly pgid?: number;
+  /** OS process start discriminator paired with {@link pid}, when readable. */
+  readonly proc_start_time?: string;
   readonly started_at: string;
   /** The path the client handed over, used verbatim as the Worker's workspace. */
   readonly workspace_path: string;
@@ -512,6 +516,8 @@ export function isRedskilledWorkerView(value: unknown): value is RedskilledWorke
   return typeof worker.worker_id === "string" &&
     typeof worker.project_label === "string" &&
     Number.isInteger(worker.pid) &&
+    (worker.pgid === undefined || Number.isInteger(worker.pgid)) &&
+    (worker.proc_start_time === undefined || typeof worker.proc_start_time === "string") &&
     typeof worker.started_at === "string" &&
     typeof worker.workspace_path === "string" &&
     (worker.fork_sha === undefined || typeof worker.fork_sha === "string") &&
