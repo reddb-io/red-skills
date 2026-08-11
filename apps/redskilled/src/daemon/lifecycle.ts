@@ -461,6 +461,8 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
   // asked, because "nobody asked yet" and "the budget is full" are opposite facts
   // and the second one admits every call (ADR 0132 Amendment 2).
   let lastBalance: GithubBalance | null = null;
+  let balanceHydrated = false;
+  let balanceHydration: Promise<GithubBalance | null> | null = null;
   // The last queue fetch, held beside the activity one rather than merged into it:
   // two cadences produce two instants, and a document that carried one date for
   // both would age the fast half by the slow half's clock.
@@ -782,7 +784,21 @@ export async function startRedskilledDaemon(options: RedskilledDaemonOptions): P
    */
   async function pollGithubBalance(): Promise<GithubBalance | null> {
     if (balanceRegistration == null) return null;
+    if (!balanceHydrated && balanceRegistration.store) {
+      balanceHydration ??= balanceRegistration.store.read().then((stored) => {
+        balanceHydrated = true;
+        if (stored !== null) lastBalance = stored;
+        return stored;
+      }).finally(() => {
+        balanceHydration = null;
+      });
+      const stored = await balanceHydration;
+      // The first poll after process birth consumes the shared observation. Its
+      // own cadence decides when the token needs to be asked again.
+      if (stored !== null) return stored;
+    }
     lastBalance = await fetchGithubBalance({ transport: balanceRegistration.transport, now: clock() });
+    await balanceRegistration.store?.write(lastBalance).catch(() => undefined);
     return lastBalance;
   }
 
