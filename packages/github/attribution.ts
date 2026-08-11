@@ -8,6 +8,12 @@
 
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  LANE_RETENTION_REGISTRY,
+  laneOverCeiling,
+  trimLaneKeepLast,
+  type LaneRetentionPolicy,
+} from "@reddb-io/shared/lane-retention.js";
 import { encodeLines, parseRecords, type ToonlRecord } from "@reddb-io/toon";
 
 import type { GithubRateBudget } from "./surface.js";
@@ -74,6 +80,8 @@ export interface CreateGithubAttributionLedgerOptions {
   /** Durable TOONL path. The caller owns where project/host state lives. */
   readonly path: string;
   readonly now?: () => string;
+  /** Override the production byte ceiling; exposed for tiny-lane tests. */
+  readonly maxBytes?: number;
 }
 
 /**
@@ -89,6 +97,11 @@ export function createGithubAttributionLedger(
   options: CreateGithubAttributionLedgerOptions,
 ): GithubAttributionLedger {
   const now = options.now ?? (() => new Date().toISOString());
+  const registeredPolicy = LANE_RETENTION_REGISTRY["github-spend"];
+  const retentionPolicy: LaneRetentionPolicy = {
+    ...registeredPolicy,
+    ...(options.maxBytes === undefined ? {} : { maxBytes: options.maxBytes }),
+  };
   // Serialize writes made by one process. Separate processes still append whole
   // JSONL records independently; rebuilding never depends on in-memory state.
   let pendingWrite: Promise<void> = Promise.resolve();
@@ -99,6 +112,19 @@ export function createGithubAttributionLedger(
       const segment = encodeLines().push(toToonlRecord(observation));
       pendingWrite = pendingWrite.then(async () => {
         await mkdir(dirname(options.path), { recursive: true });
+        const incomingBytes = Buffer.byteLength(segment);
+        if (await laneOverCeiling(options.path, incomingBytes, retentionPolicy)) {
+          const ceiling = retentionPolicy.maxBytes!;
+          if (incomingBytes > ceiling) {
+            throw new Error(`GitHub spend observation exceeds its ${ceiling}-byte lane ceiling`);
+          }
+          const rows = await readLaneRows(options.path);
+          const targetBytes = Math.max(
+            Math.floor(ceiling * registeredPolicy.targetRatio),
+            incomingBytes,
+          );
+          await trimLaneKeepLast(options.path, keepLastWithin(rows, incomingBytes, targetBytes));
+        }
         await appendFile(options.path, segment, "utf8");
       });
       return pendingWrite;
@@ -147,6 +173,41 @@ export function createGithubAttributionLedger(
       };
     },
   };
+}
+
+async function readLaneRows(path: string): Promise<ToonlRecord[]> {
+  try {
+    const raw = await readFile(path, "utf8");
+    return raw.trim() === "" ? [] : parseRecords(raw);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function keepLastWithin(
+  rows: readonly ToonlRecord[],
+  incomingBytes: number,
+  targetBytes: number,
+): number {
+  let low = 0;
+  let high = rows.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const retained = encodeRows(rows.slice(-middle));
+    if (Buffer.byteLength(retained) + incomingBytes <= targetBytes) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return low;
+}
+
+function encodeRows(rows: readonly ToonlRecord[]): string {
+  if (rows.length === 0) return "";
+  const writer = encodeLines({ trailer: false });
+  return rows.map((row) => writer.push(row)).join("");
 }
 
 function makeObservation(
